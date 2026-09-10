@@ -173,3 +173,32 @@ Format: Status / Context / Decision / Consequences.
 **Decision:** One uv workspace at the root (`pyproject.toml`, `uv.lock`) with `api/` (and later `pipeline/`, `worker/`) as members; dev tooling in the root `dev` group. Ruff for lint and format with a broad rule set; `mypy --strict` on `api/src`; pytest with `parser` and `live` markers. Hooks under `.claude/hooks/` are Python 3.9-compatible stdlib scripts. `web/` uses pnpm with Node from `.nvmrc`; `agent/` uses Go. Pre-commit runs ruff, uv-lock, gitleaks, actionlint. CI required checks: API quality, parser suite, web quality, harness (3.9 and 3.12), gitleaks, semgrep, trivy. Squash-only merges, linear history, conversation resolution required, no force-push to `main`. The Makefile derives a compose project name and port block per checkout so worktrees can run local stacks concurrently.
 
 **Consequences:** `make ci` is the single local truth and matches CI job for job. Version pins live in one lockfile; Dependabot bumps them under CI. The `web-quality` job runs as a real check from day one and becomes substantive when `web/` lands. Adding a workspace member is a one-line change. Docker Compose is a machine prerequisite documented in `docs/SETUP.md`.
+
+---
+
+## ADR-0015 — Great Vault candidates come from the `/simc` export taken with the vault open
+
+**Status:** Proposed (2026-09-09) — owner decision
+
+**Context:** M2's wedge feature ranks the player's vault choices, but the plan does not say where those choices come from. The Blizzard API does not expose vault contents, and a manual item picker (search item, choose track and item level) is slow, error-prone, and exactly the friction the product exists to remove. The SimulationCraft addon appends a `### Weekly Reward Choices` block (item lines for each vault choice) when `/simc` is run while the Great Vault window is open; this is how Raidbots' vault mode is fed today. *Hypothesis until a fixture confirms it — see `docs/SIMC_FORMAT.md`.*
+
+**Decision:** Vault candidates are read from that comment block in the `/simc` export. The parser captures it into `parsed.vault_choices[]` (named for what it is: choices, not items); the ingest flow and the paste-box copy tell the player to open the vault first. No manual picker ships in M2. The canonical `parsed` shape in plan §8.1 gains `vault_choices[]`, `loadouts[]` (from `### Saved Loadouts`), and `extra{}` (from `### Additional Character Info`). Fallback if a 12.1 fixture shows the block absent or unusable: the player pastes vault item links from chat, scoped as a new ticket, and this ADR is amended — the format is never guessed.
+
+**Consequences:** M1-01 must include a real export captured with the vault open, and M1-02 must parse the block; both are in the backlog. The vault candidate pool the sim sees includes the catalysed variant of any tier-slot choice, so set-bonus boundaries are visible. Because the block is state, snapshot canonicalization keeps comment sections: the same character pasted with and without the vault open is two snapshots (plan §7, amended). Saved loadouts arriving for free seed the M3 loadout library without a second import path.
+
+---
+
+## ADR-0016 — Launch posture: free and open, all specs, public pages, modest hosting, US/EU
+
+**Status:** Proposed (2026-09-09) — owner decision; answers plan §17
+
+**Context:** Plan §17 leaves five product questions open. Several block engineering: the Blizzard API terms restrict commercial use, hosting shape affects `infra/`, and spec breadth affects the fixture corpus and M2 validation.
+
+**Decision:**
+1. **Monetization:** none at launch. Free and open (Apache-2.0). This sidesteps the Blizzard non-commercial restriction and matches the "free unlimited sims" positioning. Revisit only with a separate ADR and a terms review.
+2. **Spec scope:** accept every class and spec via `/simc` from day one (the fixture corpus covers all 13 classes), but validate deeply on three before M2 ships: Augmentation Evoker (support-spec edge cases), one melee DPS, and one healer — the healer to design the non-sim path in `docs/PRODUCT.md`, since SimulationCraft has no maintained healing model.
+3. **Public pages:** yes, read-only. Equipped gear and talents are shown as the Armory shows them; bag alternates, vault choices, saved loadouts and currencies are visible only because the player pasted them, and claiming the character lets them hide those or the whole page.
+4. **Hosting:** through M3, managed Postgres (Supabase), Vercel for `web/`, and one small always-on host for the API and a SimC worker. Move workers to spot capacity only when measured sim volume justifies it; the cache hit rate is instrumented from M2.
+5. **Regions:** US and EU at launch. KR/TW/CN add realm-slug, reset-time and locale work with no early demand; `cn` also needs a separate API gateway.
+
+**Consequences:** No billing, entitlement, or quota code in M0–M3; per-user concurrency limits still apply. `infra/` starts as a compose file and a deployment note, not Terraform. Launch legal review (§15) is limited to attribution and terms of use. Adding a region later is a data change (realm list, reset row), not a schema change.

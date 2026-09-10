@@ -415,7 +415,7 @@ create table game_talents (
 
 ### Model notes for the implementer
 
-- `content_hash` on snapshots means a user can paste the same string ten times and produce one row. Canonicalize before hashing: sort keys, strip timestamps and comments from the SimC string, normalize whitespace.
+- `content_hash` on snapshots means a user can paste the same string ten times and produce one row. The hash is taken over the canonical `parsed` payload (sorted keys, `_raw` and the local-time header excluded), **including** the comment-section collections (`bags`, `vault_choices`, `loadouts`, `extra`): those are state, and a paste taken with the vault open must be a new snapshot, not a dedupe hit. The single definition lives in `docs/SIMC_FORMAT.md` § Canonicalization. *(Amended 2026-09-09; the earlier wording — strip comments before hashing — would have discarded the vault choices.)*
 - The partial unique index on `sim_jobs (profile_hash, simc_version) where status = 'complete'` is the single most important line in this schema. It is what makes free unlimited sims economically possible.
 - `game_*` tables are versioned rather than overwritten so that a snapshot from three patches ago still renders correctly.
 - `characters.owner_user_id` is nullable on purpose. Anyone can look up any character; claiming is a separate, optional flow.
@@ -486,6 +486,18 @@ main_hand=,id=228906,bonus_id=10356,enchant_id=7448,crafted_stats=40/36
 }
 ```
 
+**Amendment (2026-09-09, ADR-0015):** the canonical shape gains three collections parsed from the comment sections the addon writes after the equipped block:
+
+```json
+{
+  "vault_choices": [{"slot": "trinket1", "id": 225649, "bonus_id": [10356], "_raw": "# trinket1=,id=..."}],
+  "loadouts": [{"name": "Raid ST", "talents": "CkEBb..."}],
+  "extra":    {"upgrade_currencies": "c:2245:1234/..."}
+}
+```
+
+`vault_choices` is present only when the export was taken with the Great Vault window open (`### Weekly Reward Choices`); `loadouts` comes from `### Saved Loadouts`; `extra` preserves every key under `### Additional Character Info` verbatim. All three are hypotheses until `docs/SIMC_FORMAT.md` records a confirming fixture.
+
 **Testing:** build a fixture corpus of real `/simc` strings covering every class, both a caster and a physical spec, a character with crafted gear, one with empty sockets, one with tertiary stats, and one Evoker (see §6.1 on Evoker string quirks). Parser tests run against fixtures, never against generated examples.
 
 **Round-trip test (required):** parse → regenerate profile → the regenerated profile must produce a SimC result within statistical noise of the original string's result. This is the only test that proves the parse is lossless in the way that matters.
@@ -511,7 +523,7 @@ Blizzard talent loadout strings are a documented bit-packed format (see `Blizzar
 | Kind | Iterations | Notes |
 |---|---|---|
 | `baseline` | 10,000 | Single profile, one result. Cached hard. |
-| `vault` | 5,000 | 9 candidate items vs baseline. This is a Droptimizer with a fixed 9-item pool. |
+| `vault` | 5,000 | The vault choices vs baseline — a Droptimizer with a fixed pool of up to nine, **plus the catalysed variant of every tier-slot choice** (bonus-id substitution from SimC's data) so set-bonus boundaries are visible to the sim. Every result records the fight profile it assumed. *(Amended 2026-09-09.)* |
 | `droptimizer` | 5,000 | Candidate pool = all loot from a chosen instance/difficulty. |
 | `top_gear` | 10,000 | Combinatorial over the bag pool. Cap combinations; reject requests above a ceiling. |
 | `talent_compare` | 10,000 | N loadouts, identical gear. |
@@ -530,7 +542,7 @@ Blizzard talent loadout strings are a documented bit-packed format (see `Blizzar
 8. Exit.
 ```
 
-Workers are stateless and idempotent — a job re-run must produce a row-identical result modulo RNG variance. Set `deterministic=1` in options for any comparison sim so that A/B deltas are not noise.
+Workers are stateless and idempotent — a job re-run must produce a row-identical result modulo RNG variance. Set `deterministic=1` in options for any comparison sim so that candidate runs share a seed and A/B deltas are stable across re-runs. That is reproducibility, not precision: results still carry ±, and precision is governed by `target_error` under an iteration ceiling per kind, never by raising iterations until a test passes. *(Amended 2026-09-09.)*
 
 **Cost control, in order of importance:**
 1. Profile-hash cache (the partial unique index). Expect a very high hit rate on baselines.
