@@ -129,6 +129,11 @@ A web ticket is not done until all of these are true and were checked by
 - **Fidelity.** Source and age of the underlying snapshot are visible on
   every page that shows a result ("pasted 12 minutes ago", "from the API,
   6 days ago").
+- **Method.** Every sim-derived result carries a methodology disclosure:
+  target error, iterations run, fight length and variance, SimC version, and
+  the time it was computed, including when the hit came from the cache.
+  bloodmallet prints this under every chart; a cached number without a
+  "computed at" reads as live.
 
 ## Anti-features
 
@@ -145,5 +150,12 @@ Sim a vault choice "as dropped" and "fully upgraded" (bonus-id substitution
 from SimC's data, never stat arithmetic); Discord bot (paste in Discord, get
 the card back); guild roster view; group-relative valuation for Augmentation
 and other support specs; patch-delta re-sim of every stored snapshot;
-alt-aware gear routing. All of these fall out of the snapshot + sim
-substrate; none of them ship before vault ranking is loved.
+alt-aware gear routing; personal comparison charts on the player's own
+gear (what bloodmallet sells) and a stat-sweep view; a descriptive "what top
+players run" lane with sample size and recency, labelled as such and never
+as a recommendation; Discord alerts when the vault is simmed or a snapshot
+lands; collections and completion (mounts, pets, toys, transmog) via the
+companion agent; bracket-labelled loadouts and rating history for PvP
+players, with no sim claims. All of these fall out of the snapshot + sim
+substrate; none of them ship before vault ranking is loved. The full ranked
+list and its sources are in `docs/COMPETITIVE_LANDSCAPE.md`.

@@ -25,6 +25,12 @@ per failing step rather than fixing everything in one PR.
    forward with a real fixture.
 6. **Talent codec.** Decode a fresh string. An unknown serialization
    version must fail loudly — do not guess the format; stop and ask.
+6a. **UI source diff.** Read the new patch's commit in
+   `github.com/Gethe/wow-ui-source` (Blizzard's shipped interface code,
+   mirrored per build) for changes to the SavedVariables, talent-string and
+   loadout APIs the addon and codec depend on. It is a reference only:
+   never vendor or copy code from it. Record findings as dated notes in
+   `docs/SIMC_FORMAT.md`.
 7. **External APIs.** Replay fixtures against a manually-tagged live check
    for Blizzard and WCL shapes. A shape change is a data-pipeline decision:
    log it in `docs/DATA_SOURCES.md` (breakage log) and stop and ask.

@@ -196,6 +196,7 @@ Read these in order before touching anything. Several WoW concepts are named mis
 | [`CLAUDE.md`](CLAUDE.md) | Operating context for agents. Hard invariants, conventions, anti-patterns, and when to stop and ask. |
 | [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) | The spec. Landscape, gap analysis, architecture, data model, subsystems, API surface, milestones. |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | Architecture Decision Records. Read before proposing an alternative to anything in the plan. |
+| [`docs/COMPETITIVE_LANDSCAPE.md`](docs/COMPETITIVE_LANDSCAPE.md) | What Raidbots, Warcraft Logs, bloodmallet, Raider.IO and the rest do well and badly, and the ranked list of what Bronze takes from each. |
 | [`docs/GLOSSARY.md`](docs/GLOSSARY.md) | WoW domain terms for people who have not played. Bonus IDs, loadouts, the Great Vault, tier-set discontinuities. |
 | [`docs/BACKLOG.md`](docs/BACKLOG.md) | M0 and M1 tickets with sizes, dependencies, and acceptance criteria. |
 | [`docs/PRODUCT.md`](docs/PRODUCT.md) | Who this is for and what "good" means to a player. |
