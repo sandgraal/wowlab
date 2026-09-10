@@ -34,7 +34,7 @@ Monorepo layout per `docs/IMPLEMENTATION_PLAN.md` §12. Python project under `ap
 
 ---
 
-## [ ] M0-03 — Local development stack
+## [x] M0-03 — Local development stack
 **Size:** M · **Depends on:** M0-02
 
 `docker-compose.yml` with Postgres 16, Redis, the API service, and one worker container. `.env.example` documents every required variable with a comment explaining where to obtain it. `make up` brings the stack to a healthy state. Honour the per-worktree `COMPOSE_PROJECT_NAME`, `DB_PORT`, `REDIS_PORT`, `API_PORT` the Makefile exports (`make env`) so two worktrees can run stacks concurrently.
@@ -74,7 +74,7 @@ Commit `AGENTS.md`/`CLAUDE.md`, `docs/IMPLEMENTATION_PLAN.md`, `docs/DECISIONS.m
 
 ---
 
-## [ ] M0-07 — Repository settings and required checks
+## [x] M0-07 — Repository settings and required checks
 **Size:** S · **Depends on:** M0-02 · **owner** (repo admin, API key)
 
 Apply `scripts/bootstrap-github.sh` (squash-only, ruleset with the required checks from `.github/rulesets/main.json`, secret scanning and push protection, Dependabot security updates, labels). Add the `ANTHROPIC_API_KEY` repository secret so `claude.yml` and `claude-review.yml` run.
@@ -145,7 +145,7 @@ Canonicalization must strip the export timestamp and comments from the string be
 ## [ ] M1-05 — Static game data pipeline
 **Size:** L · **Depends on:** M0-04
 
-Ingest SimC's generated item and spell data for one pinned patch version into `game_items` and `game_spells`, keyed by `game_version`. Idempotent re-run. A CLI entry point that takes a SimC tag. Lives in `pipeline/` as a workspace member.
+Ingest SimC's generated item and spell data for one pinned patch version into `game_items` and `game_spells`, keyed by `game_version`. Idempotent re-run. A CLI entry point that takes a SimC commit SHA (SimC no longer tags releases; ADR-0006 amendment 2026-09-10), derives the `game_version` patch triple by truncating `CLIENT_DATA_WOW_VERSION` in `client_data_version.inc` at that commit, and records the full build, hotfix date, and SHA in an additive per-version manifest. The within-patch hotfix re-ingest rule is an open owner decision on ADR-0007; do not dispatch until it is made. Lives in `pipeline/` as a workspace member.
 
 **Acceptance:** running the pipeline for 12.1 populates the tables; re-running changes nothing. A test asserts that ingesting a second version leaves the first version's rows untouched.
 
