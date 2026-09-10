@@ -252,7 +252,7 @@ That syncs dependencies from the lockfile, installs the pre-commit hooks, and co
 | `make test-parser` | Parser fixtures, determinism, and round-trip suites. Required green for any change to `simc_parser.py`, `profile_builder.py`, or `talent_codec.py`. |
 | `make hooks-test` | The agent hook scripts under Python 3.12 and 3.9. |
 | `make ci` | Everything CI runs. |
-| `make up` | The Docker Compose stack. Lands with ticket M0-03. |
+| `make up` | The Docker Compose stack: Postgres 16, Redis, the API, one SimC worker, waited to healthy. `make down` stops it. The first run compiles SimC (see `docs/SETUP.md`). |
 | `make migrate` | `alembic upgrade head`. Lands with ticket M0-04. |
 
 Every worktree gets its own Compose project name and port block derived from its checkout path, so parallel agents can run `make up` side by side. `make env` prints the values.

@@ -140,6 +140,7 @@ dev = [
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "pytest" },
+    { name = "pyyaml" },
     { name = "ruff" },
 ]
 
@@ -152,6 +153,7 @@ dev = [
     { name = "mypy", specifier = ">=1.19" },
     { name = "pre-commit", specifier = ">=4.3" },
     { name = "pytest", specifier = ">=8.4" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", specifier = "==0.16.6" },
 ]
 

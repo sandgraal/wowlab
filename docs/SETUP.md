@@ -52,6 +52,27 @@ make setup    # uv sync --frozen, pre-commit install, .env
 make ci
 ```
 
+## Local stack (`make up`)
+
+`docker-compose.yml` runs Postgres 16, Redis, the API, and one SimC worker.
+`make up` is `docker compose up -d --build --wait`: it returns when every
+service reports healthy, and `make down` stops this checkout's stack.
+
+- **Per checkout, not per machine.** The Makefile derives `COMPOSE_PROJECT_NAME`
+  and a host-port block (`DB_PORT`, `REDIS_PORT`, `API_PORT`) from the checkout
+  path and exports `DATABASE_URL` / `REDIS_URL` to match, so host-side tools
+  (`make migrate`, pytest) and two worktrees' stacks never collide. `make env`
+  prints the values; anything already exported in your shell wins.
+- **Reach the API:** `curl "http://localhost:$(make -s env | head -1 | sed 's/.*API_PORT=//')/health"`.
+- **First run compiles SimulationCraft** from the commit pinned in
+  `worker/Dockerfile` (`SIMC_REF`): 10–20 minutes, about 1.5 GB RAM per compile
+  job. Give the VM at least 4 GB (`colima start --memory 4 --cpu 4`) or set
+  `SIMC_BUILD_JOBS=1` in `.env`. Later runs reuse the cached layer until the
+  pin changes.
+- Bumping `SIMC_REF` changes `sim_jobs.simc_version` and the sim cache key. It
+  is a deliberate change with an ADR amendment (`.claude/rules/worker.md`).
+- `docker compose down -v` also drops this checkout's Postgres volume.
+
 ## Credentials (never committed)
 
 - **Blizzard:** create a client at https://develop.battle.net/access/clients →

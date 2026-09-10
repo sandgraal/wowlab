@@ -1,0 +1,11 @@
+# Both Dockerfiles build with the repo root as context (the uv lockfile lives
+# here). Allow-list only what they COPY, so .git, .venv, node_modules and the
+# agent worktrees under .claude/ never enter a build context. Last match wins.
+*
+!pyproject.toml
+!uv.lock
+!api/pyproject.toml
+!api/src
+!worker/entrypoint.sh
+**/__pycache__
+**/*.py[cod]

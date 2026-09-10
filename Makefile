@@ -10,13 +10,18 @@ UV ?= uv
 # ─── per-worktree isolation ─────────────────────────────────────────────────
 # Parallel agents run `make up` in different worktrees at the same time. A
 # compose project name and a port block derived from the checkout path keep
-# their containers and host ports apart. Override any of these in .env.
+# their containers and host ports apart. Anything already exported in your
+# shell wins (`?=`); docker-compose.yml reads the same names.
 WT_HASH     := $(shell printf '%s' "$(CURDIR)" | shasum -a 256 | cut -c1-8)
 PORT_OFFSET := $(shell printf '%d' 0x$(shell printf '%s' "$(CURDIR)" | shasum -a 256 | cut -c1-2))
 export COMPOSE_PROJECT_NAME ?= bronze-$(WT_HASH)
 export DB_PORT    ?= $(shell echo $$((15432 + $(PORT_OFFSET))))
 export REDIS_PORT ?= $(shell echo $$((16379 + $(PORT_OFFSET))))
 export API_PORT   ?= $(shell echo $$((18000 + $(PORT_OFFSET))))
+# Host-side tools (alembic, pytest, uvicorn outside Docker) reach this
+# worktree's stack through the published ports.
+export DATABASE_URL ?= postgresql+psycopg://bronze:bronze@localhost:$(DB_PORT)/bronze
+export REDIS_URL    ?= redis://localhost:$(REDIS_PORT)/0
 
 .PHONY: help setup lint format typecheck test test-parser hooks-test ci up down migrate env
 
@@ -56,10 +61,11 @@ ci: lint test test-parser hooks-test ## Everything CI runs
 
 env: ## Print the per-worktree compose values
 	@echo COMPOSE_PROJECT_NAME=$(COMPOSE_PROJECT_NAME) DB_PORT=$(DB_PORT) REDIS_PORT=$(REDIS_PORT) API_PORT=$(API_PORT)
+	@echo DATABASE_URL=$(DATABASE_URL) REDIS_URL=$(REDIS_URL)
 
-up: env ## Local stack (M0-03 adds docker-compose.yml)
-	@[ -f docker-compose.yml ] || { echo "docker-compose.yml is not committed yet (ticket M0-03)"; exit 1; }
-	docker compose up -d --wait
+up: env ## Local stack: Postgres 16, Redis, API, one SimC worker (first run compiles SimC)
+	docker compose up -d --build --wait
+	@echo "API: http://localhost:$(API_PORT)/health"
 
 down: ## Stop the local stack for this worktree
 	@[ -f docker-compose.yml ] && docker compose down || true
