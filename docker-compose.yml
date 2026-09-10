@@ -1,0 +1,109 @@
+# Bronze local stack: Postgres 16, Redis, the API, and one SimC worker.
+#
+#   make up     # docker compose up -d --build --wait, per-worktree project + ports
+#   make down   # stop this worktree's stack (add -v by hand to drop its data)
+#   make env    # print COMPOSE_PROJECT_NAME / DB_PORT / REDIS_PORT / API_PORT
+#
+# Isolation between checkouts comes from the Makefile: it exports a
+# COMPOSE_PROJECT_NAME and a host-port block derived from the checkout path.
+# Every published port below reads one of those variables, nothing sets a
+# fixed container_name, and the Postgres volume is a named volume (Compose
+# prefixes it with the project name), so two worktrees run this file at the
+# same time. Without the Makefile the `:-` defaults apply.
+#
+# Images are pinned by multi-arch index digest so a machine that has never run
+# this project gets the same stack as everyone else. Bump tag and digest together.
+#
+# Local only; this is never the deployment file. Every published port binds
+# 127.0.0.1 (Docker's iptables rules bypass ufw/firewalld, and the stock Redis
+# image has no auth), and the Postgres password is POSTGRES_PASSWORD (default
+# `bronze`), read here and in the Makefile. Do not paste `docker compose config`
+# output into issues or PRs: it prints .env, credentials included, in clear.
+
+services:
+  postgres:
+    image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    environment:
+      POSTGRES_USER: bronze
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bronze}
+      POSTGRES_DB: bronze
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bronze -d bronze"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    # Credentials (BNET_*, WCL_*) come from .env; the two URLs below override
+    # anything in .env because inside the network the services have names.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ENV: local
+      DATABASE_URL: postgresql+psycopg://bronze:${POSTGRES_PASSWORD:-bronze}@postgres:5432/bronze
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    volumes:
+      # Live source for --reload. The image carries its own copy of api/src, so
+      # the same image runs unchanged without this mount.
+      - ./api/src:/app/api/src:ro
+    command:
+      [
+        "/app/.venv/bin/uvicorn",
+        "bronze_api.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+      ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Health: HEALTHCHECK in api/Dockerfile (GET /health).
+
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+      args:
+        # Parallel SimC compile jobs; ~1.5 GB RAM each. Lower it on a small VM.
+        SIMC_BUILD_JOBS: ${SIMC_BUILD_JOBS:-2}
+    init: true
+    # No env_file: the worker has no use for the BNET_* / WCL_* credentials in
+    # .env until M2, so it does not get them.
+    environment:
+      ENV: local
+      DATABASE_URL: postgresql+psycopg://bronze:${POSTGRES_PASSWORD:-bronze}@postgres:5432/bronze
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Health: HEALTHCHECK in worker/Dockerfile (SimC smoke test passed).
+
+volumes:
+  pgdata:

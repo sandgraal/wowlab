@@ -82,3 +82,4 @@ these live; CI replays fixtures. Manually-run live checks are marked
 | Date | Source | What changed | Fixture / evidence | Decision |
 |---|---|---|---|---|
 | 2025-08 (historical) | Blizzard | `loadouts` absent from specializations | — | ADR-0005: `/simc` primary |
+| 2026-09-10 | SimulationCraft | No release tag since `release-830-01`; 12.x work lives on the `midnight` branch as nightlies | `worker/Dockerfile` | The worker pins a commit SHA on `midnight`, exported as `SIMC_REF` (branch as `SIMC_BRANCH`); a bump is an ADR amendment |
