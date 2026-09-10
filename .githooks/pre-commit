@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+# Tracked pre-commit hook, wired via `git config core.hooksPath .githooks`
+# (done by `make setup`). Resolves pre-commit from the *committing*
+# checkout's .venv, so every worktree gets the right environment and no
+# worktree can repoint a hook shared through .git/hooks.
+set -eu
+root=$(git rev-parse --show-toplevel)
+if [ -x "$root/.venv/bin/pre-commit" ]; then
+  exec "$root/.venv/bin/pre-commit" hook-impl --config="$root/.pre-commit-config.yaml" \
+    --hook-type=pre-commit --hook-dir "$root/.githooks" -- "$@"
+fi
+cat >&2 <<MSG
+✗ pre-commit: no .venv in $root. Run \`make setup\` in this checkout, then retry.
+  (The commit is refused rather than skipped: the lint and secret gates are part of the workflow.)
+MSG
+exit 1

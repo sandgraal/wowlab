@@ -1,5 +1,6 @@
 # Local gate. CI runs the same tools; this just fails earlier.
-# Install with `make setup` (runs `pre-commit install`).
+# Wired by `make setup` through the tracked .githooks/pre-commit and
+# core.hooksPath — do not run `pre-commit install` (see docs/AGENT_WORKFLOW.md).
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.6
