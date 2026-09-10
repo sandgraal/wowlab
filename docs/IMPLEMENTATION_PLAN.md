@@ -210,7 +210,7 @@ If `loadouts` is null, the Blizzard API cannot supply talents for any character.
 
 **Fallback:** wago.tools for DB2 tables SimC does not carry.
 
-**Pipeline shape:** on new SimC release, pull the tag, parse the generated data, load into `game_items` / `game_spells` / `game_talents` keyed by `game_version`. Never overwrite a prior version's rows — old snapshots must remain interpretable.
+**Pipeline shape:** when the worker's pinned SimC commit moves (ADR-0004 amendment 2026-09-10; SimC no longer tags releases), pull that commit, parse the generated data, load into `game_items` / `game_spells` / `game_talents` keyed by `game_version`. Never overwrite a prior version's rows — old snapshots must remain interpretable.
 
 ### 6.3 Warcraft Logs API v2
 
@@ -667,7 +667,7 @@ GET    /v1/users/me/plan                                          → weekly pla
 | API | Python 3.12 + FastAPI | Async, typed, fast to write. Matches existing team competence. |
 | DB | Postgres 16 | JSONB for snapshot payloads, partial indexes for the sim cache. Supabase is an acceptable managed path. |
 | Queue | SQS (or Redis + RQ for local dev) | Sim jobs are coarse-grained and interruption-tolerant. |
-| Sim workers | Docker image with SimC compiled from a pinned tag | Pinned version is part of the cache key. |
+| Sim workers | Docker image with SimC compiled from a pinned commit SHA (SimC stopped tagging at `release-830-01`) | Pinned version is part of the cache key. |
 | Worker compute | Fargate Spot or K8s on spot nodes | CPU-bound, bursty, interruptible. |
 | Frontend | Next.js + TypeScript | Server components suit the read-heavy, cache-friendly page model. |
 | Companion agent | Go, single static binary | Cross-platform, no runtime dependency, easy to distribute. |
@@ -778,7 +778,7 @@ bronze/
 │   └── tests/
 │       └── fixtures/simc/          # real /simc strings, one per class
 ├── worker/
-│   ├── Dockerfile                  # builds SimC from a pinned tag
+│   ├── Dockerfile                  # builds SimC from a pinned commit SHA
 │   ├── src/
 │   └── tests/
 ├── agent/                          # Go companion

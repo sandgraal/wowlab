@@ -31,10 +31,14 @@ these live; CI replays fixtures. Manually-run live checks are marked
 
 ## SimulationCraft (engine and static data)
 
-- **Use:** all sim execution (workers, pinned tag) and static item/spell/
-  talent data from `engine/dbc/generated/` (ADR-0006).
-- **Versioning:** the SimC tag is `sim_jobs.simc_version` and the game
-  version tags the `game_*` tables. A new tag is a `/patch-day` event.
+- **Use:** all sim execution (workers, pinned commit SHA) and static
+  item/spell/talent data from `engine/dbc/generated/` (ADR-0006).
+- **Versioning:** SimC stopped tagging at `release-830-01`; 12.x lives on
+  the `midnight` branch. The worker's commit SHA (`SIMC_REF`) is
+  `sim_jobs.simc_version`, and `CLIENT_DATA_WOW_VERSION` at that SHA is the
+  `game_version` of the `game_*` rows. A change to
+  `engine/dbc/generated/client_data_version.inc` on the branch is a
+  `/patch-day` event (ADR-0004 amendment 2026-09-10).
 - **License:** GPL. Run as a separate process; never link or vendor.
 - **Fallback:** wago.tools for DB2 tables SimC does not carry.
 

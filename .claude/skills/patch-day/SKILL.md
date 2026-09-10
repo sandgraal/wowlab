@@ -1,7 +1,7 @@
 ---
 name: patch-day
 description: Runbook for a World of Warcraft patch or SimulationCraft release — the recurring maintenance tax. Versions game data, refreshes fixtures, re-gates the parser and talent codec, and logs breakage per data source.
-argument-hint: 12.2.0 [--simc-tag <tag>]
+argument-hint: 12.2.0 [--simc-ref <commit-sha>]
 ---
 
 Run the patch-day checklist for game version `$ARGUMENTS`. Open one ticket
@@ -9,11 +9,15 @@ per failing step rather than fixing everything in one PR.
 
 1. **Version boundary.** Confirm `game_version` for new snapshots becomes
    the new patch; nothing overwrites prior-version `game_*` rows (ADR-0007).
-2. **SimC.** Check for a new SimulationCraft tag. A bump changes
-   `sim_jobs.simc_version`, invalidates the sim cache by construction, and
-   needs a worker image rebuild and golden-profile re-baseline. Record it
-   with `/adr amend 0004`.
-3. **Static data.** Run the pipeline for the new SimC tag into `game_items`
+2. **SimC.** SimC no longer tags releases (last tag `release-830-01`); the
+   worker pins a commit SHA on the current expansion branch (`midnight` for
+   12.x). Check `engine/dbc/generated/client_data_version.inc` at that
+   branch's head: a new `CLIENT_DATA_WOW_VERSION` or
+   `CLIENT_DATA_HOTFIX_DATE` means re-pin `SIMC_REF` in `worker/Dockerfile`.
+   A re-pin changes `sim_jobs.simc_version`, invalidates the sim cache by
+   construction, and needs a worker image rebuild and golden-profile
+   re-baseline. Record it with `/adr amend 0004`.
+3. **Static data.** Run the pipeline at the same SimC ref into `game_items`
    / `game_spells` / `game_talents` at the new version. Old versions stay.
 4. **Fixtures.** Ask the owner for fresh `/simc` exports at the new patch
    (one per changed class at minimum, one with the vault open). Add with

@@ -52,6 +52,8 @@ Format: Status / Context / Decision / Consequences.
 
 **Consequences:** Profile generation must be byte-deterministic — no timestamps, no unordered iteration, no locale-dependent formatting. Non-determinism silently destroys the cache and the cost model with it, with no test failure to signal it. An explicit determinism test is mandatory. SimC version upgrades invalidate the cache by construction, which is correct since results are not comparable across engine versions.
 
+**Amendment (2026-09-10):** `simc_version` is a full git commit SHA, not a release tag. Evidence: SimulationCraft's newest tag across all 199 is `release-830-01` and it has no GitHub Releases; all 12.x work is nightly commits on the `midnight` branch (verified against the GitHub API during the M0-03 review). The worker image pins `SIMC_REF=ba1d6a064f8b5357b376d32fe915da63854cf2da` (`midnight` head on 2026-09-10; `SC_VERSION 1210-01`, client data `12.1.0.69587`, hotfix date 2026-09-10) together with `SIMC_BRANCH=midnight`, and exports both as environment. The re-pin trigger, replacing "a new tag", is a change to `CLIENT_DATA_WOW_VERSION` or `CLIENT_DATA_HOTFIX_DATE` in `engine/dbc/generated/client_data_version.inc` on that branch, or SimC reporting an unknown item id for a real snapshot; either is a `/patch-day` event. Two consequences for M2: the worker asserts at start that the binary's compiled-in `git_revision` is a prefix of `SIMC_REF`, so a stale layer cannot write results under the wrong key; and the binary is built with `SC_USE_PTR` at its default (PTR data compiled in), so the profile builder must never pass a `ptr=` line through from a paste, and `wow_ptr_status` from the json2 output is persisted with each result. A later additive column for the worker image digest is anticipated, since compiler and flags are part of the effective version and a SHA cannot express them.
+
 ---
 
 ## ADR-0005 — The `/simc` string is the primary ingest path, not the Blizzard API
@@ -77,6 +79,8 @@ Format: Status / Context / Decision / Consequences.
 **Decision:** Ingest SimC's generated data files (`engine/dbc/generated/`), which are extracted from the client DB2s and tagged per patch. Fall back to wago.tools for tables SimC does not carry.
 
 **Consequences:** Avoids tens of thousands of API calls against a 36k/hour budget to build a catalog that goes stale each patch. Data is already normalized for sim use, and patch tagging gives the pipeline a clean version boundary. We inherit SimC's release cadence for new-patch data.
+
+**Amendment (2026-09-10):** there is no SimC release cadence to inherit; see the ADR-0004 amendment of the same date. The pipeline reads `engine/dbc/generated/` at the same commit SHA the worker is built from, and `game_version` for those rows is `CLIENT_DATA_WOW_VERSION` read from `client_data_version.inc` at that SHA, so engine and game data are always coherent. The pipeline's entry point takes a commit SHA, not a tag (M1-05).
 
 ---
 
