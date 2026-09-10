@@ -203,6 +203,8 @@ Format: Status / Context / Decision / Consequences.
 
 **Consequences:** No billing, entitlement, or quota code in M0–M3; per-user concurrency limits still apply. `infra/` starts as a compose file and a deployment note, not Terraform. Launch legal review (§15) is limited to attribution and terms of use. Adding a region later is a data change (realm list, reset row), not a schema change.
 
+---
+
 ## ADR-0017 — A public, documented, read-only API from the first release
 
 **Status:** Proposed (2026-09-10)
