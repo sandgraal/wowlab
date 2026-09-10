@@ -28,7 +28,7 @@ player-facing copy.
 Cloud SimulationCraft. Quick Sim, Top Gear (the most-used tool), Droptimizer
 (sims every drop from a chosen source one swap at a time and gives a DPS
 gain per item plus an **Expected Value per loot source**), SwiftSim
-(Premium: 64 cores vs 32). Input is the same `/simc` string Bronze uses, or
+(Premium: 64 cores vs 32, *verify*). Input is the same `/simc` string Bronze uses, or
 a Battle.net login.
 
 | | |
@@ -36,7 +36,7 @@ a Battle.net login.
 | **Data** | `/simc` export or Battle.net; own SimC cluster |
 | **Money** | Free tier on a shared FIFO queue; Patreon Premium buys queue priority, SwiftSim and some Droptimizer-only options |
 | **Loved** | One Expected Value per boss is the most legible "where should I go this week" answer in the space; explicit caveat text ("evaluates a single-item swap") |
-| **Hated** | Free-tier queue throttled by design to create Premium pressure; stateless, no history; Droptimizer cannot look past one drop |
+| **Hated** | Free-tier queue is slower than Premium's SwiftSim (community-reported) and users read it as pressure toward Premium; stateless, no history; Droptimizer cannot look past one drop |
 
 **Bronze takes:** Expected Value per source on the M3 Droptimizer, plus the
 trend Raidbots cannot show ("best offer three weeks running"). Positioning:
@@ -52,7 +52,7 @@ self-monitoring.
 | | |
 |---|---|
 | **Data** | Guild-uploaded combat logs |
-| **Money** | Silver and Gold subscriptions: banners, faster processing queue, ad-free, and the **Logs Archive**: reports older than 12 months sit behind Gold |
+| **Money** | Silver and Gold subscriptions: banners, faster processing queue, ad-free, and the **Logs Archive**: reports older than 12 months sit behind Gold (*verify*) |
 | **Loved** | Percentile as colour is an instant read; "this boss is not locked yet" flags in-progress numbers |
 | **Hated** | The 12-month archive wall; private-log guilds hide parses; percentile chasing distorts raid strategy |
 
@@ -98,7 +98,8 @@ API as a comparison lane, costed against the points budget in
 Static per-spec SimC charts: trinkets, secondary-stat distribution, races,
 talents, Power Infusion targets. Every chart's subtitle carries its
 generation timestamp; the FAQ prints the fixed method (target_error 0.1%,
-up to 60,000 iterations, 300 s fights, 20% duration variance). Pipeline
+up to 60,000 iterations, 300 s fights, 20% duration variance; *verify* per
+release). Pipeline
 (`bloodytools`) is open source.
 
 | | |
@@ -131,7 +132,7 @@ in `docs/IMPLEMENTATION_PLAN.md` §10, and every number stays SimC's.
 
 M+ score, run history, raid progress, recruitment, weekly affixes, in-game
 addon that shows the score in LFG tooltips. Public OpenAPI 3.0 API (200
-req/min unauthenticated). Premium raises addon refresh frequency and lets
+req/min unauthenticated, *verify* before M1-10 copies the number). Premium raises addon refresh frequency and lets
 users claim characters.
 
 **Loved:** one sticky number everyone recognises. **Hated:** the best
@@ -185,14 +186,16 @@ player's own API key).
 **Bronze takes:** WoW Mate's Deep Diff as a cross-character extension of
 M1-07. RatedTracker's house style (specific claim, sample size, attributed
 cause) is the closest analogue to ADR-0010 in the wild and the model for the
-M5 report. No PvP sims (SimC does not model PvP); at most bracket-labelled
-loadouts and rating history from the Blizzard PvP summary endpoint.
+M5 report. No PvP sims (SimC does not model PvP); at most saved loadouts grouped by
+the name the player gave them and rating history from the Blizzard PvP
+summary endpoint. The export carries only a loadout name and talent
+string (`docs/SIMC_FORMAT.md`), no bracket field.
 
 ### SaddleBag Exchange — `saddlebagexchange.com`
 
 Auction-house analytics: region-wide undercut alerts delivered by Discord
 bot, cross-realm shopping lists, a desktop sniper, a public API with a
-Postman collection. Addon exports AH data as JSON. Freemium ($10–20/mo).
+Postman collection. Addon exports AH data as JSON. Freemium ($10–20/mo, *verify*).
 
 **Bronze takes:** the pattern, not the product: alerts go to Discord where
 players already are, and a public documented API invites a bot ecosystem.
@@ -295,9 +298,11 @@ data) with the Blizzard collections endpoints as a convenience path.
 ADR-0018; needs its own versioning decision.
 
 **11. Minimal PvP awareness** · ArenaMaster, WoW Mate, RatedTracker · later
-Bracket-labelled saved loadouts (the export already carries them) and
-rating history from the Blizzard PvP summary endpoint. No sim claims, no
-ladders, no rankings.
+Saved loadouts shown under the names players gave them (the export carries
+only a name and a talent string, no bracket field; a bracket label would
+have to be inferred from the name, which is unreliable, or from the
+Blizzard PvP summary endpoint's bracket data) and rating history from
+that endpoint. No sim claims, no ladders, no rankings.
 
 **12. Harness and reference notes** · wow-ui-source, WeakAuras, ElvUI, GSE, wow.export
 `/patch-day` checks wow-ui-source for SavedVariables and talent-string
