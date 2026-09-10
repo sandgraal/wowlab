@@ -189,6 +189,15 @@ Structured logging. Metrics for: ingest success rate by source, parser failure r
 
 ---
 
+## [ ] M1-10 — Public read-only API surface
+**Size:** M · **Depends on:** M1-06, M1-07
+
+ADR-0017. Serve the OpenAPI document for the read endpoints (character, snapshots list and detail, diff) and link it from the web footer. Add an unauthenticated per-IP rate limit and an optional free API key that raises it; keys are opaque, revocable rows, not user accounts. Every response keeps the `source` and `captured_at` fidelity fields. An `/api` page restates the attribution requirements Bronze inherits from Blizzard, Wowhead and Raider.IO. Write endpoints are excluded from the published document.
+
+**Acceptance:** `GET /openapi.json` lists only read endpoints; a burst over the limit returns 429 with a `Retry-After`; a request with a valid key gets the higher limit; the `/api` page renders attribution text. Reviewed by `security-reviewer` (rate limits and key handling).
+
+---
+
 # Parallelization
 
 After M0-02 (done), these can run concurrently:
@@ -199,6 +208,8 @@ After M0-02 (done), these can run concurrently:
 - M1-01 (owner; start immediately — collecting real fixtures has human latency)
 
 After M1-02 [IMPL] lands: M1-03, M1-04, and M1-05 are independent of each other.
+
+M1-10 follows M1-06 and M1-07 and is independent of M1-08 and M1-09.
 
 M1-01 is the long pole on wall-clock time because it needs real exports from real characters across thirteen classes. Start it on day one regardless of what else is in flight.
 

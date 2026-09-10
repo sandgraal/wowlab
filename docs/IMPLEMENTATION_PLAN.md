@@ -38,6 +38,14 @@ Everything else in this document exists to serve those three.
 | Blizzard Armory | Official current-state character view. | Current state only. No history, no planning, no sim. |
 | SimulationCraft addon | Exports a complete, high-fidelity character string. | Requires manual copy-paste every single time. |
 | Wago.io | WeakAura and UI profile sharing. | Unrelated to character planning. |
+| Lorrgs | Top-parse cooldown timelines per boss, one row per log, from the WCL API. | Current tier only; no memory of *your* pulls. |
+| WoWSims | In-browser sim with a gear picker and stat-sweep charts. | Its own spec reimplementation, not SimC; parity is inconsistent. |
+| RatedTracker / WoW Mate / ArenaMaster | Rated PvP history, "why you died" breakdowns, character-vs-character Deep Diff. | PvP only; no sim, no gear planning. |
+| Keystone.guru | M+ route viewing and sharing, MDT import. | Routing only. |
+| SaddleBag Exchange | Auction-house alerts by Discord bot, public API. | Economy only. |
+| AllTheThings (addon) | Collection completion tracking, MIT-licensed mapping data. | In-game only; no web view, no history. |
+
+The long form, with what players love and hate about each and what Bronze takes from it, is `docs/COMPETITIVE_LANDSCAPE.md`.
 
 ### The structural observation
 
@@ -68,6 +76,18 @@ Ranked by (demand × feasibility × defensibility).
 **3.9 Patch delta impact.** Guides say what changed. Nobody says what it means for your specific character. Re-sim the stored snapshot against the new SimC build and report the delta per talent, per item, per stat.
 
 **3.10 Alt-aware gear routing.** Which of your characters should get the crafted piece, given each one's marginal gain. Requires the multi-character model; falls out cheaply once 3.5 exists.
+
+**3.11 Personal comparison charts.** bloodmallet's trinket, secondary-distribution, race and talent charts exist only for generic profiles; the personalised run is its paid tier. Run the same chart set on the user's own snapshot, free, with a stat-sweep view (SimC scale factors and profilesets; the browser only draws). Falls out of the M2 sim queue; ships with M3.
+
+**3.12 Expected value per loot source, with trend.** Raidbots' most legible output is one Expected Value per boss. Bronze's Droptimizer (M3) ships the same number and, from snapshot history, whether this source has been the best offer for weeks. Per-item deltas stay one click away.
+
+**3.13 Cross-character diff.** The snapshot diff (M1-07) generalises to any two snapshots, including another player's public page. Cheap once the diff exists; serves the officer persona.
+
+**3.14 A descriptive lane next to the prescriptive one.** Archon.gg and Murlok show what top players run; neither shows sample size, rating floor or recency, and Murlok broke when the Blizzard API dropped loadouts. After M5, Bronze can show the same from WCL rankings or its own opt-in corpus, labelled "what people run" and never "recommended".
+
+**3.15 Notifications and a public API.** SaddleBag Exchange and Raider.IO grew ecosystems by delivering alerts to Discord and documenting a public API. Bronze's events (reset, vault simmed, snapshot uploaded, gap widened) feed the same channel from M4; the read-only API is published from M1 (ADR-0017).
+
+**3.16 Collections.** The one feature that turns a raider workbench into "all things WoW". AllTheThings maintains MIT-licensed item-to-collection mappings; the companion agent can read its SavedVariables as data. After M5 (ADR-0018).
 
 ### Scope decision
 
@@ -702,6 +722,9 @@ Each milestone must be independently shippable and demoable.
 - Droptimizer against a chosen instance and difficulty.
 - Top Gear over the bag pool, with a combination ceiling.
 - Raidbots report import as an onboarding path.
+- Personal comparison charts and stat sweeps on the user's own snapshot (§3.11).
+- Droptimizer Expected Value per source, with the week-over-week trend (§3.12).
+- Cross-character diff on the M1-07 endpoint (§3.13).
 
 *Acceptance:* a user compares three of their own builds against their own gear and sees a ranked answer.
 
@@ -712,6 +735,7 @@ Each milestone must be independently shippable and demoable.
 - Signed, reproducible builds published for Windows and macOS.
 - Account roster view; per-character weekly state (vault progress, currencies, cooldowns).
 - Weekly plan: ranked actions across all characters.
+- Discord webhook alerts for reset, vault simmed, snapshot uploaded (§3.15).
 
 *Acceptance:* a user installs the agent, plays, logs out, and their character page is current without any manual action.
 
@@ -721,6 +745,8 @@ Each milestone must be independently shippable and demoable.
 - Report import, fight and performance normalization.
 - Gap analysis engine with the attribution ruleset (§8.4).
 - Gap report UI with per-cause evidence.
+- Report output spec: Major / Average / Minor severity, conditional phrasing, sample size on every claim (`docs/COMPETITIVE_LANDSCAPE.md` item 4).
+- Own-history cooldown timeline per boss, optional top-parse band (item 5).
 
 *Acceptance:* import a real raid log, get an attributed gap breakdown where every line cites its numbers.
 

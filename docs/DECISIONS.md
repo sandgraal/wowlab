@@ -202,3 +202,25 @@ Format: Status / Context / Decision / Consequences.
 5. **Regions:** US and EU at launch. KR/TW/CN add realm-slug, reset-time and locale work with no early demand; `cn` also needs a separate API gateway.
 
 **Consequences:** No billing, entitlement, or quota code in M0–M3; per-user concurrency limits still apply. `infra/` starts as a compose file and a deployment note, not Terraform. Launch legal review (§15) is limited to attribution and terms of use. Adding a region later is a data change (realm list, reset row), not a schema change.
+
+---
+
+## ADR-0017 — A public, documented, read-only API from the first release
+
+**Status:** Proposed (2026-09-10)
+
+**Context:** Raider.IO, Lorrgs and SaddleBag Exchange each grew a Discord-bot and guild-tool ecosystem on a documented public API; Raidbots, with none, is wrapped by abandoned third-party libraries. Bronze's API surface (plan §9) is served by FastAPI, which already emits an OpenAPI document, and every read endpoint returns only what a public character page shows (ADR-0016 §3). `docs/COMPETITIVE_LANDSCAPE.md` item 8.
+
+**Decision:** The read endpoints in plan §9 (character, snapshots, diff, sim results, vault ranking) are public from M1: the OpenAPI document is served and linked, responses carry the same fidelity fields as the pages, an unauthenticated per-IP rate limit applies, and an optional free API key raises it. Write endpoints (ingest, sim submission, agent upload) are never part of the public surface; they stay behind the paste flow's abuse limits and the companion agent's device token. Attribution requirements inherited from upstream sources (Blizzard, Warcraft Logs, Raider.IO, Wowhead) are restated on the API page so a consumer cannot launder them away.
+
+**Consequences:** Response shapes become a compatibility contract from M1, so breaking changes need a version prefix, not an edit. Rate limiting lands in M1 (ticket M1-10) rather than "later". A public API makes third-party Discord bots possible before Bronze ships its own (plan §3.15), which is the intended outcome. Terms of use for API consumers join the launch legal review (plan §15).
+
+## ADR-0018 — Collections data comes from AllTheThings, read as data through the companion agent
+
+**Status:** Proposed (2026-09-10) — scope for after M5; recorded now so nobody builds it another way
+
+**Context:** "All things WoW" includes mounts, pets, toys and transmog. The Blizzard collections endpoints exist but depend on API availability (ADR-0005 forbids core features that do), and Blizzard's game-data endpoints would need tens of thousands of calls to describe what each item unlocks. The AllTheThings addon maintains, under the MIT licence, the mapping from items, quests and NPCs to collection categories and account completion, and writes account state to SavedVariables. `docs/COMPETITIVE_LANDSCAPE.md` item 10.
+
+**Decision:** Collection completion, when built, is fed by the companion agent reading AllTheThings SavedVariables with the same constrained literal parser used for Bronze's own addon (ADR-0009: data, never executed Lua), stored as a versioned snapshot of collection state, and rendered against a versioned copy of AllTheThings' mapping data ingested per game version like `game_items` (ADR-0007). The Blizzard collections endpoints are a convenience path with the lower-fidelity label, never the only source. Bronze does not compute drop rates, source availability or "obtainable" status itself; it presents what the mapping says.
+
+**Consequences:** A new versioned table family and a new fixture family (real SavedVariables captures with provenance and consent) before any UI. The agent's filesystem scope widens to a second addon's file, which is a stop-and-ask item in `AGENTS.md` and must ship with a scope disclosure in the agent's README. AllTheThings' MIT licence is compatible with Apache-2.0; its attribution travels with the data. Nothing here ships before M5, and the ADR can be superseded if AllTheThings changes licence or format.
