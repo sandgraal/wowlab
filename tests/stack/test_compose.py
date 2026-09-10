@@ -21,6 +21,12 @@ COMPOSE_FILE = REPO / "docker-compose.yml"
 ENV_EXAMPLE = REPO / ".env.example"
 MAKEFILE = REPO / "Makefile"
 DOCKERFILES = {"api": REPO / "api" / "Dockerfile", "worker": REPO / "worker" / "Dockerfile"}
+ENTRYPOINT = REPO / "worker" / "entrypoint.sh"
+SETUP_DOC = REPO / "docs" / "SETUP.md"
+
+# One variable, defaulted in one place, read by every URL and by the container.
+PASSWORD = "${POSTGRES_PASSWORD:-bronze}"
+CONTAINER_DATABASE_URL = f"postgresql+psycopg://bronze:{PASSWORD}@postgres:5432/bronze"
 
 DIGEST = r"@sha256:[0-9a-f]{64}"
 # (service, Makefile variable, container port) — the per-worktree port block.
@@ -78,7 +84,12 @@ def test_api_and_worker_build_from_their_dockerfiles(services: dict[str, Any]) -
 def test_host_ports_come_from_the_makefile_variables(
     services: dict[str, Any], service: str, variable: str, container_port: int
 ) -> None:
-    assert services[service]["ports"] == [f"${{{variable}:-{container_port}}}:{container_port}"]
+    """Loopback only: a bare host port binds 0.0.0.0, and Docker's iptables rules
+    bypass ufw/firewalld on Linux, which would expose Postgres, Redis (no auth in
+    the stock image) and the API to the LAN."""
+    assert services[service]["ports"] == [
+        f"127.0.0.1:${{{variable}:-{container_port}}}:{container_port}"
+    ]
 
 
 def test_worker_publishes_no_host_port(services: dict[str, Any]) -> None:
@@ -101,7 +112,12 @@ def test_makefile_exports_the_variables_compose_reads() -> None:
     makefile = MAKEFILE.read_text(encoding="utf-8")
     for variable in ("COMPOSE_PROJECT_NAME", "DB_PORT", "REDIS_PORT", "API_PORT"):
         assert re.search(rf"^export {variable}\s+\?=", makefile, re.M), variable
-    assert re.search(r"^export DATABASE_URL\s+\?=.*\$\(DB_PORT\)", makefile, re.M)
+    assert re.search(r"^export POSTGRES_PASSWORD\s+\?= bronze$", makefile, re.M)
+    assert re.search(
+        r"^export DATABASE_URL\s+\?=.*bronze:\$\(POSTGRES_PASSWORD\)@localhost:\$\(DB_PORT\)",
+        makefile,
+        re.M,
+    )
     assert re.search(r"^export REDIS_URL\s+\?=.*\$\(REDIS_PORT\)", makefile, re.M)
 
 
@@ -133,22 +149,31 @@ def test_api_and_worker_wait_for_healthy_backing_services(services: dict[str, An
 def test_api_and_worker_address_services_by_compose_name(services: dict[str, Any]) -> None:
     for name in ("api", "worker"):
         env = services[name]["environment"]
-        assert env["DATABASE_URL"] == "postgresql+psycopg://bronze:bronze@postgres:5432/bronze"
+        assert env["DATABASE_URL"] == CONTAINER_DATABASE_URL
         assert env["REDIS_URL"] == "redis://redis:6379/0"
 
 
 def test_postgres_credentials_match_the_urls(services: dict[str, Any]) -> None:
+    """The password is parameterised once, so a copy-pasted deployment cannot
+    inherit the literal default; the literal never appears outside the `:-`."""
     env = services["postgres"]["environment"]
     assert (env["POSTGRES_USER"], env["POSTGRES_PASSWORD"], env["POSTGRES_DB"]) == (
         "bronze",
-        "bronze",
+        PASSWORD,
         "bronze",
     )
+    text = COMPOSE_FILE.read_text(encoding="utf-8")
+    assert "bronze:bronze@" not in text, "hard-coded password in a URL"
+    assert text.count(PASSWORD) == 3, "postgres env + api URL + worker URL"
 
 
 def test_env_file_is_optional_so_a_fresh_clone_still_starts(services: dict[str, Any]) -> None:
-    for name in ("api", "worker"):
-        assert services[name]["env_file"] == [{"path": ".env", "required": False}], name
+    assert services["api"]["env_file"] == [{"path": ".env", "required": False}]
+
+
+def test_worker_does_not_read_env_credentials(services: dict[str, Any]) -> None:
+    """No use for BNET_* / WCL_* until M2, so the worker does not receive them."""
+    assert "env_file" not in services["worker"]
 
 
 # ─── Dockerfiles ────────────────────────────────────────────────────────────
@@ -195,10 +220,46 @@ def test_worker_pins_simc_to_a_full_commit_sha() -> None:
     assert "simulationcraft/simc" in text
 
 
+def test_worker_checks_the_pin_out_onto_a_named_branch() -> None:
+    """SimC's CMake compiles `git rev-parse --abbrev-ref HEAD` into the binary
+    (version banner, json2 `git_branch`); a detached FETCH_HEAD embeds `HEAD`."""
+    text = DOCKERFILES["worker"].read_text(encoding="utf-8")
+    assert re.search(r"^ARG SIMC_BRANCH=[A-Za-z0-9._-]+$", text, re.M)
+    assert 'git checkout -q -b "${SIMC_BRANCH}" FETCH_HEAD' in text
+    assert not re.search(r"git checkout -q FETCH_HEAD", text)
+    assert re.search(r"^\s*SIMC_BRANCH=\$\{SIMC_BRANCH\}", text, re.M), "exported with SIMC_REF"
+
+
+def test_worker_builds_only_the_cli() -> None:
+    text = DOCKERFILES["worker"].read_text(encoding="utf-8")
+    configure = re.search(r"cmake -S \. -B build (.*?)\\?\n", text)
+    assert configure
+    for flag in ("-DBUILD_GUI=OFF", "-DSC_NO_NETWORKING=ON", "-DBUILD_TESTING=OFF"):
+        assert flag in configure.group(1), flag
+
+
 def test_worker_entrypoint_is_copied_and_present() -> None:
-    entrypoint = REPO / "worker" / "entrypoint.sh"
-    assert entrypoint.is_file()
+    assert ENTRYPOINT.is_file()
     assert "worker/entrypoint.sh" in DOCKERFILES["worker"].read_text(encoding="utf-8")
+
+
+def test_worker_health_requires_spell_data_not_just_exit_zero() -> None:
+    """`spell_query` that matches nothing still exits 0; the marker must depend
+    on a real row (spell 133 is Fireball at the pinned ref)."""
+    text = ENTRYPOINT.read_text(encoding="utf-8")
+    assert "spell_query=spell.id=133" in text
+    grep = text.index('grep -q Fireball "$SMOKE_LOG"')
+    marker = text.index('touch "$MARKER"')
+    assert grep < marker, "data check must precede the healthy marker"
+    assert 'head -n 1 "$SMOKE_LOG"' in text, "SimC identity banner echoed to the logs"
+
+
+def test_setup_doc_consumes_all_of_make_env() -> None:
+    """`make env` prints two lines; `head -1` closes the pipe early and make
+    reports SIGPIPE (`Broken pipe: 13`) on every run."""
+    text = SETUP_DOC.read_text(encoding="utf-8")
+    assert "make -s env | head" not in text
+    assert re.search(r"make -s env \| sed -n 's/\.\*API_PORT=", text)
 
 
 def test_dockerignore_allow_lists_the_context() -> None:
@@ -232,7 +293,14 @@ def test_env_example_covers_every_setting() -> None:
 
 def test_env_example_covers_the_compose_variables() -> None:
     text = ENV_EXAMPLE.read_text(encoding="utf-8")
-    for variable in ("COMPOSE_PROJECT_NAME", "DB_PORT", "REDIS_PORT", "API_PORT"):
+    for variable in (
+        "COMPOSE_PROJECT_NAME",
+        "DB_PORT",
+        "REDIS_PORT",
+        "API_PORT",
+        "POSTGRES_PASSWORD",
+        "SIMC_BUILD_JOBS",
+    ):
         assert re.search(rf"^#? ?{variable}=", text, re.M), variable
 
 

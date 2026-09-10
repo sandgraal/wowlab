@@ -19,8 +19,10 @@ export DB_PORT    ?= $(shell echo $$((15432 + $(PORT_OFFSET))))
 export REDIS_PORT ?= $(shell echo $$((16379 + $(PORT_OFFSET))))
 export API_PORT   ?= $(shell echo $$((18000 + $(PORT_OFFSET))))
 # Host-side tools (alembic, pytest, uvicorn outside Docker) reach this
-# worktree's stack through the published ports.
-export DATABASE_URL ?= postgresql+psycopg://bronze:bronze@localhost:$(DB_PORT)/bronze
+# worktree's stack through the published ports. The Postgres password is set
+# once here; docker-compose.yml reads the same POSTGRES_PASSWORD.
+export POSTGRES_PASSWORD ?= bronze
+export DATABASE_URL ?= postgresql+psycopg://bronze:$(POSTGRES_PASSWORD)@localhost:$(DB_PORT)/bronze
 export REDIS_URL    ?= redis://localhost:$(REDIS_PORT)/0
 
 .PHONY: help setup lint format typecheck test test-parser hooks-test ci up down migrate env

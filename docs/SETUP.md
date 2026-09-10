@@ -58,19 +58,31 @@ make ci
 `make up` is `docker compose up -d --build --wait`: it returns when every
 service reports healthy, and `make down` stops this checkout's stack.
 
+- **Local only, never the deployment file.** Every published port binds
+  `127.0.0.1`, and the Postgres password is `POSTGRES_PASSWORD` (default
+  `bronze`), read by both the Makefile and Compose. Do not paste
+  `docker compose config` output into issues or PRs: it prints `.env`, your
+  credentials included, in clear.
 - **Per checkout, not per machine.** The Makefile derives `COMPOSE_PROJECT_NAME`
   and a host-port block (`DB_PORT`, `REDIS_PORT`, `API_PORT`) from the checkout
   path and exports `DATABASE_URL` / `REDIS_URL` to match, so host-side tools
   (`make migrate`, pytest) and two worktrees' stacks never collide. `make env`
   prints the values; anything already exported in your shell wins.
-- **Reach the API:** `curl "http://localhost:$(make -s env | head -1 | sed 's/.*API_PORT=//')/health"`.
+- **Reach the API:** `curl "http://localhost:$(make -s env | sed -n 's/.*API_PORT=\([0-9]*\).*/\1/p')/health"`
+  (`make env` prints two lines; the `sed` consumes both, so make never sees a
+  closed pipe).
 - **First run compiles SimulationCraft** from the commit pinned in
-  `worker/Dockerfile` (`SIMC_REF`): 10–20 minutes, about 1.5 GB RAM per compile
-  job. Give the VM at least 4 GB (`colima start --memory 4 --cpu 4`) or set
+  `worker/Dockerfile`. `SIMC_REF` is a pinned commit SHA on SimC's current
+  expansion branch (`midnight`, exported as `SIMC_BRANCH`); SimC has not tagged
+  a release since patch 8.3, so there is no tag to pin. Budget roughly 10–20
+  minutes and about 1.5 GB RAM per compile job — estimates, not measured on
+  this machine; verify them on the first real `make up` and correct this line.
+  Give the VM at least 4 GB (`colima start --memory 4 --cpu 4`) or set
   `SIMC_BUILD_JOBS=1` in `.env`. Later runs reuse the cached layer until the
-  pin changes.
+  pin changes or `SIMC_BUILD_JOBS` changes (it is a build ARG in the compile
+  stage, so a new value invalidates the cached SimC layer and recompiles).
 - Bumping `SIMC_REF` changes `sim_jobs.simc_version` and the sim cache key. It
-  is a deliberate change with an ADR amendment (`.claude/rules/worker.md`).
+  is a deliberate change with an ADR amendment, never a side effect.
 - `docker compose down -v` also drops this checkout's Postgres volume.
 
 ## Credentials (never committed)

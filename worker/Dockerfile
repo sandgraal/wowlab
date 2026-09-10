@@ -14,10 +14,17 @@
 # effect.
 
 ARG SIMC_REF=ba1d6a064f8b5357b376d32fe915da63854cf2da
+# The branch SIMC_REF lives on. SimC's CMake compiles `git rev-parse
+# --abbrev-ref HEAD` into the binary (the version banner and the `git_branch`
+# field of every json2 result M2 persists), so the pinned commit is checked out
+# onto a branch of this name rather than left detached, which would embed the
+# literal `HEAD`. Exported alongside SIMC_REF.
+ARG SIMC_BRANCH=midnight
 
 # ─── stage 1: build simc ────────────────────────────────────────────────────
 FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS simc-build
 ARG SIMC_REF
+ARG SIMC_BRANCH
 # Parallel compile jobs. SimC's class modules need roughly 1.5 GB each to
 # compile, so keep this at or below (VM memory / 2 GB). Override from compose
 # with SIMC_BUILD_JOBS=1 on a small VM.
@@ -32,11 +39,11 @@ WORKDIR /src/simc
 RUN git init -q . \
  && git remote add origin https://github.com/simulationcraft/simc.git \
  && git fetch -q --depth 1 origin "${SIMC_REF}" \
- && git checkout -q FETCH_HEAD
+ && git checkout -q -b "${SIMC_BRANCH}" FETCH_HEAD
 
-# No GUI (Qt) and no networking (Armory import): workers only ever run
-# profiles we hand them, and dropping libcurl keeps the runtime image lean.
-RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_GUI=OFF -DSC_NO_NETWORKING=ON \
+# No GUI (Qt), no networking (Armory import), no test targets: workers only
+# ever run profiles we hand them, and dropping libcurl keeps the runtime lean.
+RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_GUI=OFF -DSC_NO_NETWORKING=ON -DBUILD_TESTING=OFF \
  && cmake --build build --parallel "${SIMC_BUILD_JOBS}" --target simc \
  && strip build/simc
 
@@ -44,7 +51,9 @@ RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_GUI=OFF -DSC_NO_NETWO
 FROM python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254
 COPY --from=ghcr.io/astral-sh/uv:0.12.12@sha256:73d2665b478d8fa2de1cf105c6841f8e9cb6b09e568fc7700440c09f8fcd7ac4 /uv /uvx /bin/
 ARG SIMC_REF
+ARG SIMC_BRANCH
 ENV SIMC_REF=${SIMC_REF} \
+    SIMC_BRANCH=${SIMC_BRANCH} \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
