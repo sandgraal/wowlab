@@ -34,7 +34,7 @@ Monorepo layout per `docs/IMPLEMENTATION_PLAN.md` §12. Python project under `ap
 
 ---
 
-## [ ] M0-03 — Local development stack
+## [x] M0-03 — Local development stack
 **Size:** M · **Depends on:** M0-02
 
 `docker-compose.yml` with Postgres 16, Redis, the API service, and one worker container. `.env.example` documents every required variable with a comment explaining where to obtain it. `make up` brings the stack to a healthy state. Honour the per-worktree `COMPOSE_PROJECT_NAME`, `DB_PORT`, `REDIS_PORT`, `API_PORT` the Makefile exports (`make env`) so two worktrees can run stacks concurrently.
