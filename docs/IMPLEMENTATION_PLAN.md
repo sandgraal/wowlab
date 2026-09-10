@@ -496,7 +496,7 @@ main_hand=,id=228906,bonus_id=10356,enchant_id=7448,crafted_stats=40/36
 }
 ```
 
-`vault` is present only when the export was taken with the Great Vault window open (`### Weekly Reward Choices`); `loadouts` comes from `### Saved Loadouts`; `extra` preserves every key under `### Additional Character Info` verbatim. All three are hypotheses until `docs/SIMC_FORMAT.md` records a confirming fixture.
+`vault_choices` is present only when the export was taken with the Great Vault window open (`### Weekly Reward Choices`); `loadouts` comes from `### Saved Loadouts`; `extra` preserves every key under `### Additional Character Info` verbatim. All three are hypotheses until `docs/SIMC_FORMAT.md` records a confirming fixture.
 
 **Testing:** build a fixture corpus of real `/simc` strings covering every class, both a caster and a physical spec, a character with crafted gear, one with empty sockets, one with tertiary stats, and one Evoker (see §6.1 on Evoker string quirks). Parser tests run against fixtures, never against generated examples.
 
