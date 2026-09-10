@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="270" viewBox="0 0 1200 270" role="img" aria-label="The three things Bronze does: remembers, sims without a meter, closes the loop">
+  <defs>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1a130b"/><stop offset="1" stop-color="#0a0806"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff4c2"/><stop offset="0.45" stop-color="#f3cb63"/><stop offset="0.6" stop-color="#c98a2e"/><stop offset="1" stop-color="#7d5124"/>
+    </linearGradient>
+    <linearGradient id="iconbg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3a2510"/><stop offset="1" stop-color="#120c06"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#000" flood-opacity="0.85"/>
+    </filter>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <style>
+    .serif { font-family: Georgia, "Palatino Linotype", "Book Antiqua", "Times New Roman", serif; }
+    .glow { animation: glow 4s ease-in-out infinite; }
+    .g2 { animation-delay: -1.3s; } .g3 { animation-delay: -2.6s; }
+    @keyframes glow { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+  </style>
+
+  <!-- card 1: remembers -->
+  <g transform="translate(20,20)">
+    <rect width="370" height="230" rx="8" fill="url(#card)" stroke="#6b4a1e" stroke-width="1.5"/>
+    <rect x="4" y="4" width="362" height="222" rx="6" fill="none" stroke="#c98a2e" stroke-width="1" opacity="0.5"/>
+    <rect x="22" y="22" width="64" height="64" rx="6" fill="url(#iconbg)" stroke="url(#gold)" stroke-width="2.5" filter="url(#shadow)"/>
+    <rect x="18" y="18" width="72" height="72" rx="8" fill="none" stroke="#f3cb63" stroke-width="1" class="glow"/>
+    <g transform="translate(54,54)">
+      <rect x="-14" y="-24" width="28" height="4" rx="1" fill="#f3cb63"/>
+      <rect x="-14" y="20" width="28" height="4" rx="1" fill="#f3cb63"/>
+      <path d="M-11,-20 L11,-20 Q11,-6 0,-1 Q-11,-6 -11,-20 Z" fill="#0a0806" stroke="#e0a458" stroke-width="1.5"/>
+      <path d="M0,1 Q11,6 11,20 L-11,20 Q-11,6 0,1 Z" fill="#0a0806" stroke="#e0a458" stroke-width="1.5"/>
+      <path d="M-8,-11 L8,-11 L0,-3 Z" fill="#f6d386"/>
+      <path d="M-9,20 L9,20 L0,12 Z" fill="#f6d386"/>
+    </g>
+    <text x="106" y="46" class="serif" font-size="22" font-weight="700" fill="url(#gold)">Remembers</text>
+    <text x="106" y="70" class="serif" font-size="12" fill="#b8a27a" letter-spacing="1.5">IMMUTABLE SNAPSHOTS</text>
+    <text class="serif" font-size="15" fill="#f5e6c4">
+      <tspan x="22" y="118">Every character state is a new row, never an</tspan>
+      <tspan x="22" y="140">update. Diff July against today and see what</tspan>
+      <tspan x="22" y="162">changed and what it was worth.</tspan>
+    </text>
+    <text x="22" y="204" class="serif" font-size="14" font-style="italic" fill="#ffd100">"History is the product."</text>
+  </g>
+
+  <!-- card 2: sims without a meter -->
+  <g transform="translate(415,20)">
+    <rect width="370" height="230" rx="8" fill="url(#card)" stroke="#6b4a1e" stroke-width="1.5"/>
+    <rect x="4" y="4" width="362" height="222" rx="6" fill="none" stroke="#c98a2e" stroke-width="1" opacity="0.5"/>
+    <rect x="22" y="22" width="64" height="64" rx="6" fill="url(#iconbg)" stroke="url(#gold)" stroke-width="2.5" filter="url(#shadow)"/>
+    <rect x="18" y="18" width="72" height="72" rx="8" fill="none" stroke="#f3cb63" stroke-width="1" class="glow g2"/>
+    <g transform="translate(54,54)">
+      <rect x="-22" y="4"   width="9" height="18" fill="#8a5a2b"/>
+      <rect x="-10" y="-6"  width="9" height="28" fill="#c98a2e"/>
+      <rect x="2"   y="-16" width="9" height="38" fill="#f3cb63"/>
+      <rect x="14"  y="-24" width="9" height="46" fill="#fff4c2"/>
+      <path d="M-22,-8 L-6,-18 L6,-24 L22,-30" fill="none" stroke="#1eff00" stroke-width="2"/>
+      <polygon points="22,-30 14,-30 20,-24" fill="#1eff00"/>
+    </g>
+    <text x="106" y="46" class="serif" font-size="22" font-weight="700" fill="url(#gold)">Sims without a meter</text>
+    <text x="106" y="70" class="serif" font-size="12" fill="#b8a27a" letter-spacing="1.5">SELF-HOSTED SIMULATIONCRAFT</text>
+    <text class="serif" font-size="15" fill="#f5e6c4">
+      <tspan x="22" y="118">Bronze runs its own SimC workers. Sims are free</tspan>
+      <tspan x="22" y="140">and unlimited, and a byte-deterministic profile</tspan>
+      <tspan x="22" y="162">cache means repeats come back instantly.</tspan>
+    </text>
+    <text x="22" y="204" class="serif" font-size="14" font-style="italic" fill="#ffd100">"No credits. No queue. No meter."</text>
+  </g>
+
+  <!-- card 3: closes the loop -->
+  <g transform="translate(810,20)">
+    <rect width="370" height="230" rx="8" fill="url(#card)" stroke="#6b4a1e" stroke-width="1.5"/>
+    <rect x="4" y="4" width="362" height="222" rx="6" fill="none" stroke="#c98a2e" stroke-width="1" opacity="0.5"/>
+    <rect x="22" y="22" width="64" height="64" rx="6" fill="url(#iconbg)" stroke="url(#gold)" stroke-width="2.5" filter="url(#shadow)"/>
+    <rect x="18" y="18" width="72" height="72" rx="8" fill="none" stroke="#f3cb63" stroke-width="1" class="glow g3"/>
+    <g transform="translate(54,54)" fill="none" stroke-width="3.5">
+      <circle cx="-9" cy="0" r="14" stroke="#a335ee"/>
+      <circle cx="9" cy="0" r="14" stroke="#f3cb63"/>
+      <path d="M-4,-8 A14,14 0 0 1 -4,8" stroke="#fff4c2" filter="url(#soft)"/>
+    </g>
+    <text x="106" y="46" class="serif" font-size="22" font-weight="700" fill="url(#gold)">Closes the loop</text>
+    <text x="106" y="70" class="serif" font-size="12" fill="#b8a27a" letter-spacing="1.5">SIM VS. WARCRAFT LOGS</text>
+    <text class="serif" font-size="15" fill="#f5e6c4">
+      <tspan x="22" y="118">Sim output is theoretical throughput. Your logs</tspan>
+      <tspan x="22" y="140">are actual. Bronze joins them and attributes</tspan>
+      <tspan x="22" y="162">the gap, with every line citing its numbers.</tspan>
+    </text>
+    <text x="22" y="204" class="serif" font-size="14" font-style="italic" fill="#ffd100">"Improve your rotation" is not shippable.</text>
+  </g>
+</svg>

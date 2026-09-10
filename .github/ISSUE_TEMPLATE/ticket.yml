@@ -1,0 +1,42 @@
+name: Agent-sized ticket
+description: A unit of work one agent can complete and one reviewer can verify. Mirrors the docs/BACKLOG.md format.
+title: "M?-??: <title>"
+labels: ["ticket"]
+body:
+  - type: input
+    id: size
+    attributes:
+      label: Size
+      description: S (under half a day), M (about a day), L (multiple days). L usually means split it.
+      placeholder: M
+    validations:
+      required: true
+  - type: input
+    id: depends
+    attributes:
+      label: Depends on
+      placeholder: M0-04, M1-02 (or "nothing")
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What to build, citing docs/IMPLEMENTATION_PLAN.md sections and ADRs. Name the files expected to change.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance
+      description: Verifiable criteria. Each one must map to a command whose output proves it.
+    validations:
+      required: true
+  - type: checkboxes
+    id: flags
+    attributes:
+      label: Flags
+      options:
+        - label: Touches a load-bearing file or a migration (test-writer goes first)
+        - label: Needs the repository owner (credentials, real fixtures, an ADR acceptance)
+        - label: Player-facing (domain-reviewer required)

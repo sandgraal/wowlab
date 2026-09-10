@@ -149,3 +149,27 @@ Format: Status / Context / Decision / Consequences.
 **Decision:** Record real responses as fixtures; replay in CI. Live calls only from a manually-run, explicitly-tagged suite.
 
 **Consequences:** External API rate limits are per-client and shared with production. The Warcraft Logs point budget in particular (roughly 3,600 points/hour, consumed unevenly — event queries are far more expensive than table queries) would be exhausted by a CI loop, breaking live ingest. Fixture staleness is the tradeoff; refresh them deliberately after each patch.
+
+---
+
+## ADR-0013 — Agent operating model: conductor, roles, independent review, autonomous merge
+
+**Status:** Proposed (2026-09-09)
+
+**Context:** The repository is built primarily by Claude Code agents. Without structure, a single session writes code, tests, and review, and grades its own work; parallel sessions collide in one checkout; and "done" drifts to "the agent said so". The owner runs a conductor model on another project and wants it here, adapted to this domain and to current Claude Code mechanisms.
+
+**Decision:** The main session is a conductor that orchestrates and never implements. Work is agent-sized tickets in `docs/BACKLOG.md`; the frontier is computed from ticket status and merged PR titles. Roles live in `.claude/agents/`: `implementer`, `test-writer`, `code-reviewer`, `domain-reviewer`, `security-reviewer`, `pr-shepherd`, each in an isolated worktree. Every branch gets an independent, spec-first review that runs things. For the four load-bearing files (`simc_parser.py`, `profile_builder.py`, `talent_codec.py`, `gap_analysis.py`) and for migrations, graders are written first, by a different agent, as `xfail(strict=True)` tests. A PR merges autonomously when all required checks are green, every review thread is resolved, the reviewer verdicts are clean, and there are no conflicts. Subagents never edit the harness, ADRs, or the backlog; hooks enforce it. ADRs stay `Proposed` until the owner flips them.
+
+**Consequences:** Parallelism is bounded only by dependencies and the harness's concurrency limit. Review quality depends on the reviewer deriving expectations before reading the diff; the agent definitions insist on it. The owner's attention goes to decisions (ADR status, product calls), credentials, and real fixtures rather than to every diff. The harness itself is code: hooks have tests, workflows are linted, and the `harness` CI job is required. The full workflow is documented in `docs/AGENT_WORKFLOW.md`.
+
+---
+
+## ADR-0014 — Toolchain: uv workspace, ruff, mypy strict, pytest; pnpm; Go; required CI checks
+
+**Status:** Proposed (2026-09-09)
+
+**Context:** The plan names Python 3.12, FastAPI, Ruff, and mypy but not how the monorepo is assembled or what CI enforces. Contributor machines may lack a package manager; agents run in parallel worktrees and must not fight over environments or ports.
+
+**Decision:** One uv workspace at the root (`pyproject.toml`, `uv.lock`) with `api/` (and later `pipeline/`, `worker/`) as members; dev tooling in the root `dev` group. Ruff for lint and format with a broad rule set; `mypy --strict` on `api/src`; pytest with `parser` and `live` markers. Hooks under `.claude/hooks/` are Python 3.9-compatible stdlib scripts. `web/` uses pnpm with Node from `.nvmrc`; `agent/` uses Go. Pre-commit runs ruff, uv-lock, gitleaks, actionlint. CI required checks: API quality, parser suite, web quality, harness (3.9 and 3.12), gitleaks, semgrep, trivy. Squash-only merges, linear history, conversation resolution required, no force-push to `main`. The Makefile derives a compose project name and port block per checkout so worktrees can run local stacks concurrently.
+
+**Consequences:** `make ci` is the single local truth and matches CI job for job. Version pins live in one lockfile; Dependabot bumps them under CI. The `web-quality` job runs as a real check from day one and becomes substantive when `web/` lands. Adding a workspace member is a one-line change. Docker Compose is a machine prerequisite documented in `docs/SETUP.md`.
