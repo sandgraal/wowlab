@@ -19,7 +19,10 @@ Contributors on Homebrew or apt can install the same versions their own way.
 ## Install without a package manager (macOS arm64 shown)
 
 ```bash
-mkdir -p ~/.local/bin   # make sure it is on PATH
+mkdir -p ~/.local/bin
+# Put it on PATH for interactive shells too (Claude Code's shell inherits the
+# app's PATH, but a terminal you open yourself does not):
+grep -q 'local/bin' ~/.zshrc || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 
 # uv — verify against the published checksum before installing
 V=0.12.12; cd "$(mktemp -d)"
@@ -55,9 +58,10 @@ make ci
   `BNET_CLIENT_ID` / `BNET_CLIENT_SECRET` in `.env`. Needed for M0-01 and M0-05.
 - **Warcraft Logs:** https://www.warcraftlogs.com/api/clients → `WCL_CLIENT_ID` /
   `WCL_CLIENT_SECRET`. Needed from M5.
-- **GitHub Actions:** `gh secret set ANTHROPIC_API_KEY` enables the `@claude`
-  responder and the automated PR review. Without it both workflows skip
-  with a message.
+- **GitHub Actions:** `gh secret set ANTHROPIC_API_KEY --repo sandgraal/wowlab`
+  enables the `@claude` responder and the automated PR review; `gh` prompts
+  for the value, so the key never goes through a chat or a shell history
+  line. Without it both workflows skip with a message.
 
 ## Claude Code
 
