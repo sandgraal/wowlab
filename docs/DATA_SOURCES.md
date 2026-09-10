@@ -35,10 +35,13 @@ these live; CI replays fixtures. Manually-run live checks are marked
   item/spell/talent data from `engine/dbc/generated/` (ADR-0006).
 - **Versioning:** SimC stopped tagging at `release-830-01`; 12.x lives on
   the `midnight` branch. The worker's commit SHA (`SIMC_REF`) is
-  `sim_jobs.simc_version`, and `CLIENT_DATA_WOW_VERSION` at that SHA is the
-  `game_version` of the `game_*` rows. A change to
-  `engine/dbc/generated/client_data_version.inc` on the branch is a
-  `/patch-day` event (ADR-0004 amendment 2026-09-10).
+  `sim_jobs.simc_version`. The `game_*` rows carry the patch triple that
+  snapshots carry, truncated from `CLIENT_DATA_WOW_VERSION` at that SHA, with
+  the full build, hotfix date, and SHA in a per-version manifest (ADR-0006
+  amendment 2026-09-10; the within-patch hotfix rule is an open ADR-0007
+  question). A change to `engine/dbc/generated/client_data_version.inc` on
+  the branch is a `/patch-day` event, expected roughly weekly during tuning
+  (ADR-0004 amendment 2026-09-10).
 - **License:** GPL. Run as a separate process; never link or vendor.
 - **Fallback:** wago.tools for DB2 tables SimC does not carry.
 

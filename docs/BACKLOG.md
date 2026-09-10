@@ -145,7 +145,7 @@ Canonicalization must strip the export timestamp and comments from the string be
 ## [ ] M1-05 — Static game data pipeline
 **Size:** L · **Depends on:** M0-04
 
-Ingest SimC's generated item and spell data for one pinned patch version into `game_items` and `game_spells`, keyed by `game_version`. Idempotent re-run. A CLI entry point that takes a SimC commit SHA (SimC no longer tags releases; ADR-0006 amendment 2026-09-10) and derives `game_version` from `client_data_version.inc` at that commit. Lives in `pipeline/` as a workspace member.
+Ingest SimC's generated item and spell data for one pinned patch version into `game_items` and `game_spells`, keyed by `game_version`. Idempotent re-run. A CLI entry point that takes a SimC commit SHA (SimC no longer tags releases; ADR-0006 amendment 2026-09-10), derives the `game_version` patch triple by truncating `CLIENT_DATA_WOW_VERSION` in `client_data_version.inc` at that commit, and records the full build, hotfix date, and SHA in an additive per-version manifest. The within-patch hotfix re-ingest rule is an open owner decision on ADR-0007; do not dispatch until it is made. Lives in `pipeline/` as a workspace member.
 
 **Acceptance:** running the pipeline for 12.1 populates the tables; re-running changes nothing. A test asserts that ingesting a second version leaves the first version's rows untouched.
 

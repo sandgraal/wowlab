@@ -16,7 +16,8 @@ per failing step rather than fixing everything in one PR.
    `CLIENT_DATA_HOTFIX_DATE` means re-pin `SIMC_REF` in `worker/Dockerfile`.
    A re-pin changes `sim_jobs.simc_version`, invalidates the sim cache by
    construction, and needs a worker image rebuild and golden-profile
-   re-baseline. Record it with `/adr amend 0004`.
+   re-baseline. Hotfix-date bumps land most weeks during tuning; the cache
+   flush is the point, not a cost to avoid. Record it with `/adr amend 0004`.
 3. **Static data.** Run the pipeline at the same SimC ref into `game_items`
    / `game_spells` / `game_talents` at the new version. Old versions stay.
 4. **Fixtures.** Ask the owner for fresh `/simc` exports at the new patch
