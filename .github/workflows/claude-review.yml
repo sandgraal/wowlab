@@ -31,7 +31,7 @@ jobs:
         if: steps.secret.outputs.present == 'true'
         with:
           version: "0.12.12"
-      - uses: anthropics/claude-code-action@v1
+      - uses: anthropics/claude-code-action@19dda84776b3518d98b8798e591daee763049ed3 # v1.0.220
         if: steps.secret.outputs.present == 'true'
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
