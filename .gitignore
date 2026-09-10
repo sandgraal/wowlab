@@ -1,0 +1,47 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Secrets and local config — never commit
+.env
+.env.local
+.env.*.local
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Claude Code local state
+.claude/worktrees/
+.claude/agent-memory-local/
+
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+htmlcov/
+.coverage
+
+# Node / Next.js
+node_modules/
+web/.next/
+web/out/
+*.tsbuildinfo
+
+# Go
+agent/bin/
+agent/dist/
+
+# SimC worker scratch
+worker/out/
+*.simc.out.json
+
+# Fixture captures that must never be committed raw
+api/tests/fixtures/**/*.token
