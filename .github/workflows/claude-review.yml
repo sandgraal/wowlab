@@ -16,9 +16,10 @@ jobs:
     if: github.actor != 'dependabot[bot]' && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     permissions:
+      checks: read
       contents: read
       pull-requests: write
-      issues: read
+      issues: write
       actions: read
       id-token: write
     steps:
