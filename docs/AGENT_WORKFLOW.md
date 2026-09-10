@@ -109,10 +109,20 @@ and 3.12 because hooks execute on the system interpreter):
 | `format_python.py` | PostToolUse Edit/Write | ruff format + fix on `.py` |
 | `session_start.py` | SessionStart | prints branch state and the frontier |
 
-Limits: the shell guard cannot see writes made from inside `python -c`, a
-heredoc-fed interpreter, or an editor. CI (`harness`, `gitleaks`,
-`semgrep`, `trivy`) and branch rules are the backstop; the hooks exist to
-fail earlier and explain why.
+What the shell guard does see: redirects in every spelling, `tee`, `sed`
+in place, copy/move/link/rsync/dd/patch targets including directory
+destinations, `rm` and `git rm`, `git checkout`/`git restore` pathspecs,
+`cd` inside the same command, `bash -c` and `eval` strings, `$CLAUDE_PROJECT_DIR`
+and `$PWD` indirection, symlinks, and case-only renames. Anything it cannot
+tokenise or resolve is denied, not skipped.
+
+Limits: writes made from inside `python -c`, a heredoc-fed interpreter, or
+an editor are invisible to it, and so is anything a pre-approved tool does
+internally (`uv sync` running a build hook, `docker compose` mounting a
+volume). That is why `uv run python:*` and `uv add:*` are not pre-approved,
+why the Edit/Write path is the one that is fully guarded, and why CI
+(`harness`, `gitleaks`, `semgrep`, `trivy`) and the branch ruleset are the
+backstop. The hooks exist to fail earlier and explain why.
 
 ## How humans participate
 

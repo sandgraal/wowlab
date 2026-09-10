@@ -12,15 +12,15 @@ For engineers who do not play World of Warcraft. Several of these are named misl
 
 **Class** — one of thirteen (Warrior, Evoker, Priest, etc.). Fixed at creation.
 
-**Spec (specialization)** — a subdivision of a class that determines role and playstyle. A class has 3-4. A character can freely switch between their class's specs at any time, at no cost. **A character's spec is not stable state** — it changes between activities. Snapshot the spec at capture time; never treat it as a property of the character.
+**Spec (specialization)** — a subdivision of a class that determines role and playstyle. A class has 2-4 (Demon Hunter has two). A character can freely switch between their class's specs at any time, at no cost. **A character's spec is not stable state** — it changes between activities. Snapshot the spec at capture time; never treat it as a property of the character.
 
 ## Gear
 
 **Slot** — head, neck, shoulder, back, chest, wrist, hands, waist, legs, feet, finger1, finger2, trinket1, trinket2, main_hand, off_hand. Sixteen equipped items.
 
-**Item level (ilvl)** — the power rating of an individual item. Typical current-content range is roughly 600-720. **It is not a character level and not a requirement.** Higher is generally better but not always — a lower-ilvl item with better-matched stats can outperform a higher one, which is exactly why sims exist.
+**Item level (ilvl)** — the power rating of an individual item *as it is right now*. The range shifts every season (the numbers in any example here are illustrative). **It is not a character level, not a requirement, and not upgrade headroom** — a piece at the top of a low track is a dead end; a lower-ilvl piece on a higher track upgrades past it. Higher is generally better but not always — a lower-ilvl item with better-matched stats can outperform a higher one, which is exactly why sims exist. The `/simc` export does not reliably carry a per-item ilvl; Bronze takes it from the Blizzard equipment API or from sim output, never from the base item record or bonus-id arithmetic.
 
-**Equipped item level** — the average across the sixteen slots. The headline "how geared is this character" number.
+**Equipped item level** — the in-game average over equipped slots, with quirks (a two-hander counts twice, empty slots count as zero). The headline "how geared is this character" number. Another reason we read it from a source rather than compute it.
 
 **Bonus IDs** — a list of integers attached to an item instance that modify what that item actually is: its item level, its upgrade track position, whether it has a socket, which affix variant it rolled. **The same base item ID with different bonus IDs is a materially different item.** You cannot identify an item by its item ID alone. This is the single most common modeling mistake for newcomers to WoW data.
 
@@ -44,7 +44,7 @@ For engineers who do not play World of Warcraft. Several of these are named misl
 
 **Secondary stats** — Critical Strike, Haste, Mastery, Versatility. These have non-linear, spec-dependent, and interacting value. Their relative worth is exactly what sims compute and exactly what static "stat priority" lists get wrong.
 
-**Tertiary stats** — Leech, Avoidance, Speed. Random, small, and mostly ignorable.
+**Tertiary stats** — Leech, Avoidance, Speed. Random, small, and not simmed for throughput; Mythic+ players still value Leech and Speed, so they are shown, not hidden.
 
 **Stat weights** — a sim output expressing marginal value per point of each stat. Useful, but only locally valid — they change as gear changes, so they are a snapshot property, not a character property.
 
@@ -68,7 +68,16 @@ Note: talent loadouts disappeared from the Blizzard Profile API in patch 11.2 an
 
 **Great Vault** — a weekly reward chest. Completing content unlocks slots; at weekly reset the player is presented with up to **nine items and must choose exactly one.** This is a recurring, high-stakes, poorly-supported decision that every player makes every week. It is our wedge feature.
 
-**Weekly reset** — Tuesday in US regions, Wednesday in EU. Lockouts, vault progress, and several currencies reset. All weekly planning is anchored to this.
+**Weekly reset** — the instant lockouts, vault progress, and several currencies reset. It differs per region in both day and hour, so it lives in one table (*verify* each row against Blizzard's published maintenance schedule before shipping a countdown):
+
+| Region | Day | UTC hour (*verify*) | Notes |
+|---|---|---|---|
+| `us` | Tuesday | 15:00 | Also covers Oceania and Latin America (same instant, different local time). |
+| `eu` | Wednesday | 07:00 CET / 06:00 UTC | Follows CET/CEST changes. |
+| `kr`, `tw` | Thursday | *verify* | |
+| `cn` | Thursday | *verify* | Separate API gateway; out of launch scope. |
+
+All weekly planning is anchored to the player's region, never to the server's clock.
 
 **Lockout** — per-boss or per-instance limits on how often you can receive loot. Constrains what content is worth running.
 

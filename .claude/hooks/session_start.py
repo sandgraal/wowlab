@@ -88,7 +88,7 @@ def frontier(backlog_text: str, merged: set[str]) -> tuple[list[str], list[str],
 
 
 def main() -> None:
-    data = read_hook_input()
+    data = read_hook_input() or {}
     root = checkout_root(Path(str(data.get("cwd") or Path.cwd())).resolve())
     if root is None:
         return

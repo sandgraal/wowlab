@@ -20,7 +20,7 @@ from _common import checkout_root, read_hook_input
 
 
 def main() -> None:
-    data = read_hook_input()
+    data = read_hook_input() or {}
     if data.get("tool_name") not in {"Edit", "Write", "MultiEdit"}:
         return
     file_path = str(data.get("tool_input", {}).get("file_path", ""))

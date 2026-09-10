@@ -25,6 +25,9 @@ these live; CI replays fixtures. Manually-run live checks are marked
   and any `Authorization` header stripped; gitleaks is the backstop.
 - **Terms:** non-commercial use restriction and attribution requirements.
   ADR-0016 proposes a free, open launch partly for this reason.
+- **Regions:** `cn` uses a separate gateway (`gateway.battlenet.com.cn`) and
+  separate credentials; it is out of launch scope (ADR-0016) and the
+  `region` check constraint keeps the value only so old data stays valid.
 
 ## SimulationCraft (engine and static data)
 
@@ -67,6 +70,12 @@ these live; CI replays fixtures. Manually-run live checks are marked
 
 - The primary ingest path. See `docs/SIMC_FORMAT.md`. Fixtures are real
   exports with consent; see `api/tests/fixtures/simc/README.md`.
+- **Format authority:** the addon's Lua source at
+  https://github.com/simulationcraft/simc-addon. It resolves most format
+  questions before a fixture exists; cite the file and line in
+  `docs/SIMC_FORMAT.md` when it does. Tests still run only against fixtures.
+- **Realm names:** the addon writes a squashed display name, not the API
+  slug; ingest normalises via the realm list (see Blizzard `data/wow/realm/index`).
 
 ## Breakage log
 

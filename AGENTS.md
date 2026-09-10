@@ -143,7 +143,9 @@ is not shippable. "Ebon Might uptime 84% vs sim 99%, estimated 6.2% of the
 27% gap" is.
 
 **Do not tune iteration counts to make a test pass.** Set `deterministic=1`
-for comparison sims instead.
+for comparison sims instead. It makes runs reproducible (same seed), it does
+not make them more precise; results still carry ±, and precision comes from
+`target_error`, not from a bigger iteration count picked to pass.
 
 **Do not ship a number without its uncertainty.** Two options within noise
 are a tie, not a ranking (`docs/PRODUCT.md`).

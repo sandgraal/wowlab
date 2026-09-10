@@ -8,10 +8,14 @@ REPO="${REPO:-sandgraal/wowlab}"
 RULESET_FILE="$(dirname "$0")/../.github/rulesets/main.json"
 
 echo "→ merge strategy: squash only, delete branch on merge, auto-merge allowed"
-gh repo edit "$REPO" \
-  --enable-squash-merge --enable-merge-commit=false --enable-rebase-merge=false \
-  --delete-branch-on-merge --enable-auto-merge \
-  --squash-merge-commit-title PR_TITLE --squash-merge-commit-message PR_BODY >/dev/null
+gh api -X PATCH "repos/$REPO" --silent \
+  -F allow_squash_merge=true -F allow_merge_commit=false -F allow_rebase_merge=false \
+  -F delete_branch_on_merge=true -F allow_auto_merge=true \
+  -f squash_merge_commit_title=PR_TITLE -f squash_merge_commit_message=PR_BODY
+
+echo "→ Actions: default GITHUB_TOKEN read-only; workflows cannot approve PRs"
+gh api -X PUT "repos/$REPO/actions/permissions/workflow" --silent \
+  -f default_workflow_permissions=read -F can_approve_pull_request_reviews=false
 
 echo "→ secret scanning + push protection, dependabot security updates"
 gh api -X PATCH "repos/$REPO" --silent --input - <<'JSON'
@@ -21,7 +25,7 @@ gh api -X PUT "repos/$REPO/vulnerability-alerts" --silent
 gh api -X PUT "repos/$REPO/automated-security-fixes" --silent
 
 echo "→ ruleset 'main' from $RULESET_FILE"
-existing=$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name=="main") | .id' || true)
+existing=$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name=="main") | .id')  # a failed list call aborts (set -e): never create a duplicate
 if [ -n "$existing" ]; then
   gh api -X PUT "repos/$REPO/rulesets/$existing" --silent --input "$RULESET_FILE"
   echo "   updated ruleset $existing"

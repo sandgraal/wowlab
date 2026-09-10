@@ -24,10 +24,14 @@ with the `/fixture` skill, which validates the file and appends the row below.
 
 ## Coverage targets (M1-01)
 
-One per class (13), plus: crafted gear with `crafted_stats`, empty sockets,
-tertiary stats, items in the bag section, an Evoker, a profession line, an
+One per class (13), plus: crafted gear with `crafted_stats` and
+`crafting_quality`, empty sockets, tertiary stats, items in the bag section,
+an Augmentation Evoker (support-spec copy), a Death Knight (runeforge as
+`enchant_id`), a two-hander (no `off_hand` line), a profession line, an
 export captured **with the Great Vault window open** (`### Weekly Reward
-Choices`), one with `### Saved Loadouts`, one healer, one tank.
+Choices`), one with saved loadouts, one healer, one tank, a realm whose name
+has a space and an apostrophe (`Area 52`, `Kel'Thuzad`) and an EU realm, a
+non-English client (localized header), and a sub-max-level character.
 
 ## Index
 

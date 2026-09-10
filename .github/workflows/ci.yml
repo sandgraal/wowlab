@@ -25,8 +25,9 @@ jobs:
   # stop the workflow from triggering, leaving every required check stuck at
   # "Expected". Every downstream job carries `if: ${{ !cancelled() }}` so a
   # failure *here* runs the full suite rather than skipping it (a skipped
-  # required job reports as passing). `.claude/**` and `.github/**` are never
-  # docs-only: harness changes must be validated.
+  # required job reports as passing). `.claude/**`, `.github/**`, AGENTS.md
+  # and CLAUDE.md are never docs-only: they are agent instructions and the
+  # harness, and changes to them must be validated.
   changes:
     name: Detect doc-only changes
     runs-on: ubuntu-latest
@@ -38,6 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
@@ -47,7 +49,10 @@ jobs:
             non_docs:
               - '**'
               - '!docs/**/*.md'
-              - '!*.md'
+              - '!README.md'
+              - '!CONTRIBUTING.md'
+              - '!SECURITY.md'
+              - '!CODE_OF_CONDUCT.md'
 
   api-quality:
     name: API lint, typecheck, tests
@@ -56,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
         env:
           POSTGRES_USER: bronze
           POSTGRES_PASSWORD: bronze
@@ -69,6 +74,8 @@ jobs:
       DATABASE_URL: postgresql+psycopg://bronze:bronze@localhost:5432/bronze
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         with:
@@ -100,6 +107,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         with:
@@ -121,6 +130,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # The job always runs so the required check is real; the steps below
       # become active when M1-08 lands web/package.json.
       - name: Detect web/
@@ -155,6 +166,8 @@ jobs:
         python: ["3.9", "3.12"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: ${{ env.UV_VERSION }}
@@ -187,11 +200,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Install gitleaks
         run: |
           curl -sSfL -o /tmp/gitleaks.tar.gz \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tar.gz" | sha256sum -c -
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
           sudo install /tmp/gitleaks /usr/local/bin/gitleaks
           gitleaks version
@@ -206,9 +221,11 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     container:
-      image: semgrep/semgrep:1.176.0
+      image: semgrep/semgrep:1.176.0@sha256:12672acdb0949e19f9f6a4c2b288edd0b404f268f0ca7738a2c06f372f50362e
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Scan
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         # Rulesets kept narrow on purpose; widen deliberately when web/ and agent/ land.
@@ -226,6 +243,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         with:

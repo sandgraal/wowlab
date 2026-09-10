@@ -22,6 +22,7 @@ from _common import (
     checkout_root,
     command_position,
     deny,
+    git_subcommand,
     read_hook_input,
     split_segments,
 )
@@ -31,11 +32,14 @@ LINT_ARGV = ["make", "lint"]
 
 
 def _is_commit(command: str) -> bool:
-    for seg in split_segments(command):
+    segments = split_segments(command)
+    if segments is None:
+        return "git commit" in command or "commit" in command  # untokenisable: assume the worst
+    for seg in segments:
         i = command_position(seg, "git")
         if i is None:
             continue
-        sub = next((a for a in seg[i + 1 :] if not a.startswith("-")), None)
+        sub, _globals, _args = git_subcommand(seg[i + 1 :])
         if sub == "commit":
             return True
     return False
@@ -43,9 +47,10 @@ def _is_commit(command: str) -> bool:
 
 def main() -> None:
     data = read_hook_input()
-    if data.get("tool_name") != "Bash":
+    if data is None or data.get("tool_name") != "Bash":
         return
-    command = str(data.get("tool_input", {}).get("command", ""))
+    tool_input = data.get("tool_input")
+    command = str(tool_input.get("command", "")) if isinstance(tool_input, dict) else ""
     if not command or not _is_commit(command):
         return
     root = checkout_root(Path(str(data.get("cwd") or Path.cwd())).resolve())
