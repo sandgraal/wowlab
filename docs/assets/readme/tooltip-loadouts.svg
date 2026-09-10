@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="382" viewBox="0 0 400 382" role="img" aria-label="Talent Loadout Library">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#101018" stop-opacity="0.98"/><stop offset="1" stop-color="#05050a" stop-opacity="0.98"/></linearGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0070dd"/><stop offset="1" stop-color="#3a3a4a"/></linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000" flood-opacity="0.9"/></filter>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="2.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <style>text { font-family: Georgia, "Palatino Linotype", "Book Antiqua", "Times New Roman", serif; font-size: 15px; } .t { font-size: 21px; font-weight: 700; } .i { font-style: italic; }</style>
+  <rect x="4" y="4" width="392" height="374" rx="7" fill="url(#bg)" stroke="url(#edge)" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="8" y="8" width="384" height="366" rx="5" fill="none" stroke="#0070dd" stroke-width="0.8" opacity="0.35"/>
+  <text x="18" y="40" class="t" fill="#0070dd" filter="url(#glow)">Talent Loadout Library</text>
+  <text x="18" y="74" fill="#ffffff">Binds to Character</text>
+  <text x="382" y="74" fill="#ffffff" text-anchor="end">Unlimited</text>
+  <text x="18" y="96" fill="#ffffff">Talents</text>
+  <text x="382" y="96" fill="#ffffff" text-anchor="end">Class · Spec · Hero</text>
+  <text x="18" y="118" fill="#ffd100">Item Level 720</text>
+  <text x="18" y="140" fill="#ffffff">+N Saved loadouts with labels</text>
+  <text x="18" y="162" fill="#ffffff">+1 Node-level diff between any two</text>
+  <text x="18" y="206" fill="#1eff00">Equip: Sim each build against your actual</text>
+  <text x="18" y="228" fill="#1eff00">gear, not a generic profile. Wowhead cannot</text>
+  <text x="18" y="250" fill="#1eff00">do this; it has no character context.</text>
+  <text x="18" y="294" fill="#ffd100" class="i">“A loadout is a property of a moment, not of</text>
+  <text x="18" y="316" fill="#ffd100" class="i">a character.”</text>
+  <text x="18" y="360" fill="#1eff00">Arrives in: Milestone 3</text>
+</svg>

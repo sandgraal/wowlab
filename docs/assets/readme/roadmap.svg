@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="560" viewBox="0 0 1200 560" role="img" aria-label="Quest log: the six Bronze milestones">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1a130b"/><stop offset="1" stop-color="#080604"/></linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff4c2"/><stop offset="0.45" stop-color="#f3cb63"/><stop offset="0.6" stop-color="#c98a2e"/><stop offset="1" stop-color="#7d5124"/></linearGradient>
+    <linearGradient id="fill" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#7d5124"/><stop offset="1" stop-color="#f3cb63"/></linearGradient>
+    <linearGradient id="row" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#c98a2e" stop-opacity="0.16"/><stop offset="1" stop-color="#c98a2e" stop-opacity="0"/></linearGradient>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <style>
+    text { font-family: Georgia, "Palatino Linotype", "Book Antiqua", "Times New Roman", serif; }
+    .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    .blink { animation: blink 2.2s ease-in-out infinite; }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+    .shimmer { animation: shimmer 3s ease-in-out infinite; }
+    @keyframes shimmer { 0%, 100% { opacity: 0.75; } 50% { opacity: 1; } }
+  </style>
+  <rect width="1200" height="560" rx="10" fill="url(#bg)"/>
+  <rect x="6" y="6" width="1188" height="548" rx="8" fill="none" stroke="url(#gold)" stroke-width="2.5"/>
+  <rect x="13" y="13" width="1174" height="534" rx="6" fill="none" stroke="#6b4a1e" stroke-width="1" opacity="0.8"/>
+
+  <!-- header -->
+  <text x="34" y="50" font-size="26" font-weight="700" fill="url(#gold)">Quest Log</text>
+  <text x="170" y="50" font-size="15" fill="#b8a27a">Bronze  ·  0 / 6 complete</text>
+  <text x="1166" y="50" font-size="13" fill="#b8a27a" text-anchor="end" letter-spacing="2">EACH MILESTONE SHIPS AND DEMOS ON ITS OWN</text>
+  <rect x="34" y="64" width="1132" height="1" fill="#6b4a1e"/>
+
+  <!-- column labels -->
+  <g font-size="12" fill="#8a7550" letter-spacing="2">
+    <text x="70" y="88">QUEST</text>
+    <text x="520" y="88">OBJECTIVES</text>
+    <text x="940" y="88">PROGRESS</text>
+    <text x="1166" y="88" text-anchor="end">TARGET</text>
+  </g>
+
+  <!-- M0 (in progress) -->
+  <g transform="translate(0,100)">
+    <rect x="34" y="0" width="1132" height="68" rx="4" fill="url(#row)"/>
+    <text x="48" y="36" font-size="30" font-weight="700" fill="#ffd100" class="blink" filter="url(#soft)">!</text>
+    <text x="70" y="28" font-size="18" font-weight="700" fill="#ffd100">M0 · Foundation</text>
+    <text x="70" y="52" font-size="13" fill="#e8d5a8">Repo scaffold · CI · Compose stack · Alembic · Blizzard OAuth</text>
+    <g font-size="13" fill="#f5e6c4"><text x="520" y="28">Verify the Blizzard talent-loadout field (gates M3)</text><text x="520" y="52">Smoke test: create a character row, read it back</text></g>
+    <rect x="940" y="24" width="180" height="12" rx="6" fill="#1a1208" stroke="#6b4a1e"/>
+    <rect x="940" y="24" width="60" height="12" rx="6" fill="url(#fill)" class="shimmer"/>
+    <text x="1030" y="54" font-size="12" fill="#ffd100" text-anchor="middle" class="mono">IN PROGRESS · 2 / 6 tickets</text>
+    <text x="1166" y="42" font-size="14" fill="#b8a27a" text-anchor="end">1 week</text>
+  </g>
+
+  <!-- M1 -->
+  <g transform="translate(0,174)">
+    <text x="70" y="28" font-size="18" font-weight="700" fill="#f5e6c4">M1 · Ingest and character page</text>
+    <text x="70" y="52" font-size="13" fill="#b8a27a">SimC parser + fixtures · dedupe by hash · game data · diffs</text>
+    <g font-size="13" fill="#b8a27a"><text x="520" y="28">Paste a real /simc string, see a correct page</text><text x="520" y="52">Paste it again: no duplicate. Change it: a correct diff</text></g>
+    <rect x="940" y="24" width="180" height="12" rx="6" fill="#1a1208" stroke="#6b4a1e"/>
+    <text x="1030" y="54" font-size="12" fill="#8a7550" text-anchor="middle" class="mono">NOT STARTED · 9 tickets</text>
+    <text x="1166" y="42" font-size="14" fill="#b8a27a" text-anchor="end">2 weeks</text>
+  </g>
+
+  <!-- M2 -->
+  <g transform="translate(0,248)">
+    <text x="70" y="28" font-size="18" font-weight="700" fill="#f5e6c4">M2 · Simulation</text>
+    <text x="70" y="52" font-size="13" fill="#b8a27a">Pinned SimC worker · job queue · profile-hash cache · auto baseline</text>
+    <g font-size="13" fill="#b8a27a"><text x="520" y="28">Ranked Great Vault recommendation within 60 s</text><text x="520" y="52">Second identical request answers instantly from cache</text></g>
+    <rect x="940" y="24" width="180" height="12" rx="6" fill="#1a1208" stroke="#6b4a1e"/>
+    <text x="1030" y="54" font-size="12" fill="#a335ee" text-anchor="middle" class="mono">THE WEDGE FEATURE</text>
+    <text x="1166" y="42" font-size="14" fill="#b8a27a" text-anchor="end">3 weeks</text>
+  </g>
+
+  <!-- M3 -->
+  <g transform="translate(0,322)">
+    <text x="70" y="28" font-size="18" font-weight="700" fill="#f5e6c4">M3 · Planning layer</text>
+    <text x="70" y="52" font-size="13" fill="#b8a27a">Loadouts and diffs · talent compare · droptimizer · top gear</text>
+    <g font-size="13" fill="#b8a27a"><text x="520" y="28">Compare three of your own builds against your own gear</text><text x="520" y="52">Get a ranked answer</text></g>
+    <rect x="940" y="24" width="180" height="12" rx="6" fill="#1a1208" stroke="#6b4a1e"/>
+    <text x="1030" y="54" font-size="12" fill="#8a7550" text-anchor="middle" class="mono">NOT STARTED</text>
+    <text x="1166" y="42" font-size="14" fill="#b8a27a" text-anchor="end">3 weeks</text>
+  </g>
+
+  <!-- M4 -->
+  <g transform="translate(0,396)">
+    <text x="70" y="28" font-size="18" font-weight="700" fill="#f5e6c4">M4 · Companion agent and multi-character</text>
+    <text x="70" y="52" font-size="13" fill="#b8a27a">Addon + Go agent · signed builds · account roster · weekly plan</text>
+    <g font-size="13" fill="#b8a27a"><text x="520" y="28">Install, play, log out</text><text x="520" y="52">Character page is current with zero manual action</text></g>
+    <rect x="940" y="24" width="180" height="12" rx="6" fill="#1a1208" stroke="#6b4a1e"/>
+    <text x="1030" y="54" font-size="12" fill="#1eff00" text-anchor="middle" class="mono">THE RETENTION MOAT</text>
+    <text x="1166" y="42" font-size="14" fill="#b8a27a" text-anchor="end">4 weeks</text>
+  </g>
+
+  <!-- M5 -->
+  <g transform="translate(0,470)">
+    <text x="70" y="28" font-size="18" font-weight="700" fill="#f5e6c4">M5 · Log correlation</text>
+    <text x="70" y="52" font-size="13" fill="#b8a27a">WCL OAuth · points-aware queue · attribution rules · gap UI</text>
+    <g font-size="13" fill="#b8a27a"><text x="520" y="28">Import a real raid log</text><text x="520" y="52">Every line of the gap breakdown cites its numbers</text></g>
+    <rect x="940" y="24" width="180" height="12" rx="6" fill="#1a1208" stroke="#6b4a1e"/>
+    <text x="1030" y="54" font-size="12" fill="#e6cc80" text-anchor="middle" class="mono">THE DIFFERENTIATOR</text>
+    <text x="1166" y="42" font-size="14" fill="#b8a27a" text-anchor="end">4 weeks</text>
+  </g>
+</svg>

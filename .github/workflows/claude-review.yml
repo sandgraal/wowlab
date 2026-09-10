@@ -1,0 +1,55 @@
+name: Claude review
+
+# Automated first-pass review against the project's invariants. Advisory:
+# it is NOT a required check, and it runs only when a PR is opened or marked
+# ready (not on every push) so it cannot loop with pr-shepherd's fix rounds.
+# Needs the ANTHROPIC_API_KEY secret; skips cleanly for forks and Dependabot.
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+
+jobs:
+  review:
+    if: github.actor != 'dependabot[bot]' && github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+      id-token: write
+    steps:
+      - name: Check secret
+        id: secret
+        run: |
+          if [ -n "${{ secrets.ANTHROPIC_API_KEY }}" ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "ANTHROPIC_API_KEY is not set; skipping (see docs/SETUP.md)"; echo "present=false" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/checkout@v7
+        if: steps.secret.outputs.present == 'true'
+        with:
+          fetch-depth: 1
+      - uses: astral-sh/setup-uv@v10
+        if: steps.secret.outputs.present == 'true'
+        with:
+          version: "0.12.12"
+      - uses: anthropics/claude-code-action@v1
+        if: steps.secret.outputs.present == 'true'
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review this pull request as the independent reviewer described in
+            .claude/agents/code-reviewer.md. Read AGENTS.md first and write
+            down what should be true, then read the diff, then run
+            `uv sync --frozen && make lint && make test && make test-parser`.
+
+            Check every hard invariant: snapshots immutable, no item-stat
+            arithmetic, byte-deterministic profile generation, versioned game
+            data, raw input preserved, unknown fields preserved, no live API
+            calls in tests, fixtures are real with provenance rows, migrations
+            downgrade, bonus IDs are part of item identity, no secrets.
+
+            Post findings as inline comments ranked by severity, each citing
+            the invariant or plan section. If there are no findings, post one
+            summary comment stating exactly what you ran.
+          claude_args: |
+            --max-turns 30
+            --allowedTools "Read,Grep,Glob,Bash(uv sync --frozen),Bash(make lint),Bash(make test),Bash(make test-parser),Bash(make hooks-test),mcp__github_inline_comment__create_inline_comment"

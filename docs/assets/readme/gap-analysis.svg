@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400" role="img" aria-label="Illustrative gap analysis readout: projected versus actual DPS with attributed causes">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#14100a"/><stop offset="1" stop-color="#070605"/></linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff4c2"/><stop offset="0.5" stop-color="#f3cb63"/><stop offset="1" stop-color="#7d5124"/></linearGradient>
+    <linearGradient id="red" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#7a1a1a"/><stop offset="1" stop-color="#ff4a3d"/></linearGradient>
+    <linearGradient id="amber" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#7d5124"/><stop offset="1" stop-color="#f3cb63"/></linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0a3f7a"/><stop offset="1" stop-color="#3fa0ff"/></linearGradient>
+    <linearGradient id="grey" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#3a3a3a"/><stop offset="1" stop-color="#9d9d9d"/></linearGradient>
+  </defs>
+  <style>
+    text { font-family: Georgia, "Palatino Linotype", "Book Antiqua", "Times New Roman", serif; }
+    .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+  </style>
+  <rect width="1200" height="400" rx="10" fill="url(#bg)"/>
+  <rect x="6" y="6" width="1188" height="388" rx="8" fill="none" stroke="url(#gold)" stroke-width="2.5"/>
+  <rect x="13" y="13" width="1174" height="374" rx="6" fill="none" stroke="#6b4a1e" stroke-width="1" opacity="0.8"/>
+
+  <text x="34" y="48" font-size="22" font-weight="700" fill="url(#gold)">Gap Analysis</text>
+  <text x="196" y="48" font-size="14" fill="#b8a27a">Augmentation Evoker  ·  Mythic  ·  single pull  ·  snapshot 3 h before the log</text>
+  <text x="1166" y="48" font-size="12" fill="#9d9d9d" text-anchor="end" font-style="italic">illustrative mock, not a real log</text>
+  <rect x="34" y="62" width="1132" height="1" fill="#6b4a1e"/>
+
+  <!-- stat tiles -->
+  <g transform="translate(34,80)">
+    <rect width="240" height="70" rx="6" fill="#0d0a06" stroke="#6b4a1e"/>
+    <text x="16" y="24" font-size="12" fill="#8a7550" letter-spacing="2">PROJECTED (SIM)</text>
+    <text x="16" y="56" font-size="28" font-weight="700" fill="#f3cb63" class="mono">1.24M</text>
+    <text x="224" y="56" font-size="12" fill="#b8a27a" text-anchor="end">DPS</text>
+  </g>
+  <g transform="translate(290,80)">
+    <rect width="240" height="70" rx="6" fill="#0d0a06" stroke="#6b4a1e"/>
+    <text x="16" y="24" font-size="12" fill="#8a7550" letter-spacing="2">ACTUAL (LOG)</text>
+    <text x="16" y="56" font-size="28" font-weight="700" fill="#f5e6c4" class="mono">0.91M</text>
+    <text x="224" y="56" font-size="12" fill="#b8a27a" text-anchor="end">DPS</text>
+  </g>
+  <g transform="translate(546,80)">
+    <rect width="240" height="70" rx="6" fill="#1a0a0a" stroke="#7a1a1a"/>
+    <text x="16" y="24" font-size="12" fill="#c46a6a" letter-spacing="2">GAP</text>
+    <text x="16" y="56" font-size="28" font-weight="700" fill="#ff4a3d" class="mono">26.6%</text>
+    <text x="224" y="56" font-size="12" fill="#c46a6a" text-anchor="end">of projected</text>
+  </g>
+  <g transform="translate(802,80)">
+    <rect width="364" height="70" rx="6" fill="#0d0a06" stroke="#6b4a1e"/>
+    <text x="16" y="24" font-size="12" fill="#8a7550" letter-spacing="2">RULE</text>
+    <text x="16" y="46" font-size="13" fill="#f5e6c4">Every attribution line cites the numbers that</text>
+    <text x="16" y="62" font-size="13" fill="#f5e6c4">produced it. The residual is labelled, not invented.</text>
+  </g>
+
+  <!-- attribution bars: 26.6 pts total, 1000px track from x=34 -> scale ~ 31px per point -> use 26.6 pts = 830px -->
+  <g font-size="14" fill="#f5e6c4">
+    <g transform="translate(34,178)">
+      <text x="0" y="14">Downtime</text>
+      <text x="230" y="14" font-size="12" fill="#b8a27a" class="mono">8.3% GCD idle vs 1.2% sim</text>
+      <rect x="500" y="2" width="300" height="14" rx="3" fill="url(#red)"><animate attributeName="width" from="0" to="300" begin="0.05s" dur="1.2s" fill="freeze" calcMode="spline" keySplines="0.2 0.8 0.2 1"/></rect>
+      <text x="810" y="14" class="mono" fill="#ff4a3d">9.7 pts</text>
+    </g>
+    <g transform="translate(34,214)">
+      <text x="0" y="14">Uptime loss · Ebon Might</text>
+      <text x="230" y="14" font-size="12" fill="#b8a27a" class="mono">84% uptime vs 99% sim</text>
+      <rect x="500" y="2" width="192" height="14" rx="3" fill="url(#amber)"><animate attributeName="width" from="0" to="192" begin="0.15s" dur="1.2s" fill="freeze" calcMode="spline" keySplines="0.2 0.8 0.2 1"/></rect>
+      <text x="702" y="14" class="mono" fill="#f3cb63">6.2 pts</text>
+    </g>
+    <g transform="translate(34,250)">
+      <text x="0" y="14">Cast deficit · Fire Breath</text>
+      <text x="230" y="14" font-size="12" fill="#b8a27a" class="mono">4.1 / min vs 5.0 / min sim</text>
+      <rect x="500" y="2" width="121" height="14" rx="3" fill="url(#amber)"><animate attributeName="width" from="0" to="121" begin="0.3s" dur="1.2s" fill="freeze" calcMode="spline" keySplines="0.2 0.8 0.2 1"/></rect>
+      <text x="631" y="14" class="mono" fill="#f3cb63">3.9 pts</text>
+    </g>
+    <g transform="translate(34,286)">
+      <text x="0" y="14">Target count mismatch</text>
+      <text x="230" y="14" font-size="12" fill="#b8a27a" class="mono">1 target simmed, 3 in the fight</text>
+      <rect x="500" y="2" width="65" height="14" rx="3" fill="url(#blue)"><animate attributeName="width" from="0" to="65" begin="0.45s" dur="1.2s" fill="freeze" calcMode="spline" keySplines="0.2 0.8 0.2 1"/></rect>
+      <text x="575" y="14" class="mono" fill="#3fa0ff">2.1 pts</text>
+    </g>
+    <g transform="translate(34,322)">
+      <text x="0" y="14">Unattributed</text>
+      <text x="230" y="14" font-size="12" fill="#b8a27a" class="mono">movement / mechanics residual</text>
+      <rect x="500" y="2" width="145" height="14" rx="3" fill="url(#grey)"><animate attributeName="width" from="0" to="145" begin="0.6s" dur="1.2s" fill="freeze" calcMode="spline" keySplines="0.2 0.8 0.2 1"/></rect>
+      <text x="655" y="14" class="mono" fill="#9d9d9d">4.7 pts</text>
+    </g>
+  </g>
+  <text x="34" y="374" font-size="12" fill="#8a7550" font-style="italic">Diagnostic, never a score. The sim's fight is not the fight you were in; for support specs the projection is against generic allies.</text>
+</svg>

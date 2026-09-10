@@ -1,0 +1,87 @@
+# Workspace root. Not a package itself; it pins the toolchain and lints every
+# Python project in the monorepo with one configuration.
+[project]
+name = "bronze-workspace"
+version = "0.0.0"
+description = "Bronze monorepo root (uv workspace)"
+requires-python = ">=3.12"
+dependencies = ["bronze-api"]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["api"]
+
+[tool.uv.sources]
+bronze-api = { workspace = true }
+
+[dependency-groups]
+dev = [
+  "ruff==0.16.6",
+  "mypy>=1.19",
+  "pytest>=8.4",
+  "httpx>=0.28",
+  "pre-commit>=4.3",
+]
+
+# ─── ruff ────────────────────────────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [".claude/worktrees", ".venv", "node_modules", "web", "agent"]
+
+[tool.ruff.lint]
+select = [
+  "E", "F", "W",   # pycodestyle / pyflakes
+  "I",             # isort
+  "UP",            # pyupgrade
+  "B",             # bugbear
+  "SIM",           # simplify
+  "C4",            # comprehensions
+  "PTH",           # pathlib over os.path
+  "RUF",           # ruff-specific
+  "N",             # naming
+  "T20",           # no stray print() in library code
+  "ERA",           # no commented-out code
+  "DTZ",           # timezone-aware datetimes only (snapshots are timestamps)
+]
+ignore = [
+  "E501",   # line length is handled by the formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Hook scripts talk to Claude Code over stdout; print is their interface.
+".claude/hooks/*.py" = ["T20"]
+# Tests may print diagnostics and use asserts freely.
+"**/tests/**" = ["T20"]
+# CI helper scripts report through stdout.
+"scripts/*.py" = ["T20"]
+
+# Hooks run under the system interpreter (as old as 3.9) in every contributor
+# session, so pyupgrade must not modernise them past that.
+[tool.ruff.per-file-target-version]
+".claude/hooks/*.py" = "py39"
+"tests/harness/*.py" = "py39"
+
+[tool.ruff.lint.isort]
+known-first-party = ["bronze_api"]
+
+# ─── mypy ────────────────────────────────────────────────────────────────────
+[tool.mypy]
+strict = true
+python_version = "3.12"
+files = ["api/src"]
+exclude = ["\\.claude/worktrees", "\\.venv"]
+warn_unreachable = true
+pretty = true
+
+# ─── pytest ──────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["api/tests", "tests"]
+norecursedirs = [".claude/worktrees", ".venv", "node_modules", "web", "agent", "worker"]
+addopts = "-m 'not live' --strict-markers -ra"
+markers = [
+  "parser: parser fixture, determinism and round-trip suites (make test-parser)",
+  "live: hits a live external API; never runs in CI (ADR-0012)",
+]

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: How this repository is built
+    url: https://github.com/sandgraal/wowlab/blob/main/docs/AGENT_WORKFLOW.md
+    about: Roles, ticket lifecycle, and how humans and agents collaborate here.

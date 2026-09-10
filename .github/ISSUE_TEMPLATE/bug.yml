@@ -1,0 +1,25 @@
+name: Bug report
+description: Something parsed, simmed, or rendered wrong.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Game version / patch
+      placeholder: 12.1.0
+  - type: textarea
+    id: simc
+    attributes:
+      label: /simc export (optional)
+      description: Paste the export if the problem involves your character. It contains your character's public gear and talents, nothing private. You may replace the name and realm.
+      render: text
+  - type: input
+    id: url
+    attributes:
+      label: Page URL (optional)

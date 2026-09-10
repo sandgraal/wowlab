@@ -1,0 +1,240 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Every job below is a required status check on main (see .github/rulesets/main.json).
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  UV_VERSION: "0.12.12"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  # Detects a docs-only PR (docs/**/*.md or root *.md) so the required jobs
+  # can run a trivial, genuinely successful step instead of the full suite.
+  # This is deliberately NOT an `on.pull_request.paths` filter: that would
+  # stop the workflow from triggering, leaving every required check stuck at
+  # "Expected". Every downstream job carries `if: ${{ !cancelled() }}` so a
+  # failure *here* runs the full suite rather than skipping it (a skipped
+  # required job reports as passing). `.claude/**` and `.github/**` are never
+  # docs-only: harness changes must be validated.
+  changes:
+    name: Detect doc-only changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      docs_only: ${{ steps.filter.outputs.non_docs == 'false' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          predicate-quantifier: some-with-excludes
+          filters: |
+            non_docs:
+              - '**'
+              - '!docs/**/*.md'
+              - '!*.md'
+
+  api-quality:
+    name: API lint, typecheck, tests
+    needs: changes
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: bronze
+          POSTGRES_PASSWORD: bronze
+          POSTGRES_DB: bronze
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U bronze" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://bronze:bronze@localhost:5432/bronze
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - name: Install
+        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
+        run: uv sync --frozen
+      - name: ruff check
+        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
+        run: uv run --frozen ruff check --output-format=github .
+      - name: ruff format --check
+        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
+        run: uv run --frozen ruff format --check .
+      - name: mypy --strict
+        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
+        run: uv run --frozen mypy
+      - name: pytest
+        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
+        run: uv run --frozen pytest -q
+      - name: Doc-only PR — skipped
+        if: needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true'
+        run: echo "doc-only PR — API suite skipped"
+
+  parser-suite:
+    name: Parser fixtures and determinism
+    needs: changes
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - name: make test-parser
+        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
+        run: |
+          uv sync --frozen
+          make test-parser
+      - name: Doc-only PR — skipped
+        if: needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true'
+        run: echo "doc-only PR — parser suite skipped"
+
+  web-quality:
+    name: Web lint, typecheck, tests, build
+    needs: changes
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The job always runs so the required check is real; the steps below
+      # become active when M1-08 lands web/package.json.
+      - name: Detect web/
+        id: web
+        run: |
+          if [ -f web/package.json ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; echo "no web/ yet — nothing to check"; fi
+      - uses: pnpm/action-setup@v6
+        if: steps.web.outputs.present == 'true' && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true')
+      - uses: actions/setup-node@v7
+        if: steps.web.outputs.present == 'true' && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true')
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install, lint, typecheck, test, build
+        if: steps.web.outputs.present == 'true' && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true')
+        working-directory: web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+          pnpm build
+
+  harness:
+    name: Agent harness (hooks on 3.9 and 3.12, lockfile, workflows)
+    needs: changes
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - name: Hook tests (python ${{ matrix.python }})
+        run: uv run --python ${{ matrix.python }} --isolated --no-project --with pytest -- pytest -q tests/harness
+      - name: Hooks lint clean (ruff, mypy at 3.10 floor)
+        if: matrix.python == '3.9'
+        run: |
+          uv sync --frozen
+          uv run --frozen ruff check .claude/hooks tests/harness
+          uv run --frozen mypy --python-version 3.10 --strict .claude/hooks
+      - name: Lockfile is current
+        if: matrix.python == '3.12'
+        run: uv lock --check
+      - name: Agent, skill and rule frontmatter is well-formed
+        if: matrix.python == '3.12'
+        run: uv run --python 3.12 --isolated --no-project --with pyyaml -- python scripts/check_frontmatter.py
+      - name: actionlint
+        if: matrix.python == '3.12'
+        uses: raven-actions/actionlint@v2
+
+  gitleaks:
+    name: Secret scan (gitleaks)
+    needs: changes
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: 8.30.1
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        run: |
+          curl -sSfL -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          sudo install /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+      # Full history: a secret that was committed and later deleted still
+      # needs rotating. `gitleaks git` (not `dir`) so build output is ignored.
+      - name: Scan committed history
+        run: gitleaks git . --redact --exit-code 1 --config .gitleaks.toml
+
+  semgrep:
+    name: SAST (semgrep)
+    needs: changes
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep:1.176.0
+    steps:
+      - uses: actions/checkout@v7
+      - name: Scan
+        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
+        # Rulesets kept narrow on purpose; widen deliberately when web/ and agent/ land.
+        run: |
+          semgrep scan --config p/python --config p/secrets --config p/github-actions \
+            --error --metrics=off --exclude .venv --exclude node_modules --exclude .claude/worktrees
+      - name: Doc-only PR — skipped
+        if: needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true'
+        run: echo "doc-only PR — semgrep skipped"
+
+  trivy:
+    name: Dependency and config scan (trivy)
+    needs: changes
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aquasecurity/trivy-action@v0.36.0
+        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig,secret
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Doc-only PR — skipped
+        if: needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true'
+        run: echo "doc-only PR — trivy skipped"

@@ -1,0 +1,40 @@
+{
+  "name": "main",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] } },
+  "rules": [
+    { "type": "deletion" },
+    { "type": "non_fast_forward" },
+    { "type": "required_linear_history" },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": true,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": true,
+        "allowed_merge_methods": ["squash"]
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          { "context": "API lint, typecheck, tests" },
+          { "context": "Parser fixtures and determinism" },
+          { "context": "Web lint, typecheck, tests, build" },
+          { "context": "Agent harness (hooks on 3.9 and 3.12, lockfile, workflows) (3.9)" },
+          { "context": "Agent harness (hooks on 3.9 and 3.12, lockfile, workflows) (3.12)" },
+          { "context": "Secret scan (gitleaks)" },
+          { "context": "SAST (semgrep)" },
+          { "context": "Dependency and config scan (trivy)" }
+        ]
+      }
+    }
+  ],
+  "bypass_actors": []
+}

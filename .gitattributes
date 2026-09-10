@@ -1,0 +1,4 @@
+* text=auto eol=lf
+*.simc -text
+uv.lock linguist-generated=true
+pnpm-lock.yaml linguist-generated=true

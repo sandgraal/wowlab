@@ -1,0 +1,18 @@
+# Extends the default gitleaks ruleset. Keep allowlists narrow and explained.
+title = "bronze"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Values that look like secrets but are game data"
+regexes = [
+  # Blizzard talent loadout strings are dense base64-like blobs, e.g. talents=CkEBb...
+  '''talents=[A-Za-z0-9+/=_-]{20,}''',
+  # SimC addon checksum lines
+  '''#\s*checksum=[a-f0-9]{8,}''',
+]
+paths = [
+  # Real /simc exports; content is public character state, not credentials.
+  '''api/tests/fixtures/simc/.*\.simc$''',
+]
