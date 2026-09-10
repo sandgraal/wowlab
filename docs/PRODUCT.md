@@ -155,7 +155,7 @@ gear (what bloodmallet sells) and a stat-sweep view; a descriptive "what top
 players run" lane with sample size and recency, labelled as such and never
 as a recommendation; Discord alerts when the vault is simmed or a snapshot
 lands; collections and completion (mounts, pets, toys, transmog) via the
-companion agent; saved loadouts by name and rating history for PvP
-players, with no sim claims (the export has no bracket field). All of these fall out of the snapshot + sim
-substrate; none of them ship before vault ranking is loved. The full ranked
-list and its sources are in `docs/COMPETITIVE_LANDSCAPE.md`.
+ companion agent; saved loadouts by name and rating history for PvP
+ players, with no sim claims (the export has no bracket field).
+ All of these fall out of the snapshot + sim substrate; none of them ship before vault ranking is loved. The full ranked
+ list and its sources are in `docs/COMPETITIVE_LANDSCAPE.md`.
