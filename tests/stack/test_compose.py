@@ -9,7 +9,9 @@ does not replace it.
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -260,6 +262,50 @@ def test_setup_doc_consumes_all_of_make_env() -> None:
     text = SETUP_DOC.read_text(encoding="utf-8")
     assert "make -s env | head" not in text
     assert re.search(r"make -s env \| sed -n 's/\.\*API_PORT=", text)
+
+
+# ─── `make env` (run by every `make up`) never echoes a password ────────────
+
+# Scrubbed before `make` runs: the CI test job exports DATABASE_URL itself.
+_URL_VARIABLES = ("POSTGRES_PASSWORD", "DATABASE_URL", "REDIS_URL")
+
+
+def _make_env(**overrides: str) -> str:
+    env = {key: value for key, value in os.environ.items() if key not in _URL_VARIABLES}
+    env.update(overrides)
+    completed = subprocess.run(
+        ["make", "-s", "env"], cwd=REPO, env=env, capture_output=True, text=True, check=True
+    )
+    return completed.stdout
+
+
+def test_make_env_masks_the_postgres_password() -> None:
+    """The exported DATABASE_URL keeps the password for host tools; only the
+    echo is masked, anchored on `:<password>@` so `bronze` survives as the
+    user and database name."""
+    out = _make_env(POSTGRES_PASSWORD="fakepw-xyz")
+    assert "fakepw-xyz" not in out
+    assert re.search(r"DATABASE_URL=postgresql\+psycopg://bronze:\*\*\*@localhost:\d+/bronze ", out)
+    assert len(out.splitlines()) == 2, "SETUP.md's sed consumes exactly two lines"
+
+
+def test_make_env_masks_a_foreign_database_url_password() -> None:
+    """A DATABASE_URL exported by the shell does not carry POSTGRES_PASSWORD,
+    so the mask must not depend on knowing the password."""
+    out = _make_env(DATABASE_URL="postgresql+psycopg://alice:s3cret-abc@db.example:5432/prod")
+    assert "s3cret-abc" not in out
+    assert "DATABASE_URL=postgresql+psycopg://alice:***@db.example:5432/prod " in out
+
+
+def test_make_env_masks_a_redis_password() -> None:
+    out = _make_env(REDIS_URL="redis://:redispw-abc@cache.example:6379/0")
+    assert "redispw-abc" not in out
+    assert out.rstrip().endswith("REDIS_URL=redis://:***@cache.example:6379/0")
+
+
+def test_make_env_leaves_a_passwordless_redis_url_alone() -> None:
+    out = _make_env()
+    assert re.search(r" REDIS_URL=redis://localhost:\d+/0$", out.rstrip())
 
 
 def test_dockerignore_allow_lists_the_context() -> None:

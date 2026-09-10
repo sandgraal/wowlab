@@ -62,12 +62,20 @@ service reports healthy, and `make down` stops this checkout's stack.
   `127.0.0.1`, and the Postgres password is `POSTGRES_PASSWORD` (default
   `bronze`), read by both the Makefile and Compose. Do not paste
   `docker compose config` output into issues or PRs: it prints `.env`, your
-  credentials included, in clear.
+  credentials included, in clear. `make env`, and `make up` which runs it,
+  print the two URLs with the password masked (`bronze:***@`); the exported
+  `DATABASE_URL` that host tools receive still carries it, so `env | grep` or
+  a `.env` dump is as unsafe to paste as `docker compose config`.
 - **Per checkout, not per machine.** The Makefile derives `COMPOSE_PROJECT_NAME`
   and a host-port block (`DB_PORT`, `REDIS_PORT`, `API_PORT`) from the checkout
   path and exports `DATABASE_URL` / `REDIS_URL` to match, so host-side tools
   (`make migrate`, pytest) and two worktrees' stacks never collide. `make env`
-  prints the values; anything already exported in your shell wins.
+  prints the values; anything already exported in your *shell* wins. The
+  Makefile never reads `.env`, and `make up` hands its own values to Compose,
+  so a `DB_PORT` or `POSTGRES_PASSWORD` written in `.env` reaches only a bare
+  `docker compose up` (and `.worktreeinclude` would copy it into every
+  worktree). `SIMC_BUILD_JOBS` is the one local-stack variable `.env` can
+  carry, because the Makefile does not set it.
 - **Reach the API:** `curl "http://localhost:$(make -s env | sed -n 's/.*API_PORT=\([0-9]*\).*/\1/p')/health"`
   (`make env` prints two lines; the `sed` consumes both, so make never sees a
   closed pipe).

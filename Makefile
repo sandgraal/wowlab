@@ -20,10 +20,17 @@ export REDIS_PORT ?= $(shell echo $$((16379 + $(PORT_OFFSET))))
 export API_PORT   ?= $(shell echo $$((18000 + $(PORT_OFFSET))))
 # Host-side tools (alembic, pytest, uvicorn outside Docker) reach this
 # worktree's stack through the published ports. The Postgres password is set
-# once here; docker-compose.yml reads the same POSTGRES_PASSWORD.
+# once here and exported into Compose, which reads the same POSTGRES_PASSWORD.
+# make never reads .env: override these in your shell, not in that file.
 export POSTGRES_PASSWORD ?= bronze
 export DATABASE_URL ?= postgresql+psycopg://bronze:$(POSTGRES_PASSWORD)@localhost:$(DB_PORT)/bronze
 export REDIS_URL    ?= redis://localhost:$(REDIS_PORT)/0
+
+# `make env` runs on every `make up`; a URL's password never reaches the
+# terminal or a pasted log. Anchored on `://<user>:<password>@`, so user and
+# database names stay intact and a foreign DATABASE_URL is masked too. The
+# exported variables are untouched; only the echo is masked.
+mask_url = $(shell printf '%s' '$(1)' | sed -E 's|^([A-Za-z0-9+.-]+://[^:@/]*):[^@]*@|\1:***@|')
 
 .PHONY: help setup lint format typecheck test test-parser hooks-test ci up down migrate env
 
@@ -61,9 +68,9 @@ hooks-test: ## Claude Code hook scripts under 3.12 and 3.9 (hooks run on the sys
 
 ci: lint test test-parser hooks-test ## Everything CI runs
 
-env: ## Print the per-worktree compose values
+env: ## Print the per-worktree compose values (URL passwords masked)
 	@echo COMPOSE_PROJECT_NAME=$(COMPOSE_PROJECT_NAME) DB_PORT=$(DB_PORT) REDIS_PORT=$(REDIS_PORT) API_PORT=$(API_PORT)
-	@echo DATABASE_URL=$(DATABASE_URL) REDIS_URL=$(REDIS_URL)
+	@printf 'DATABASE_URL=%s REDIS_URL=%s\n' '$(call mask_url,$(DATABASE_URL))' '$(call mask_url,$(REDIS_URL))'
 
 up: env ## Local stack: Postgres 16, Redis, API, one SimC worker (first run compiles SimC)
 	docker compose up -d --build --wait
