@@ -223,7 +223,7 @@ offers it only as a labelled complement to the sim answer.
 | tukui-org/ElvUI | licence unconfirmed · very active | reference | Second confirmation of the share-string convention; nothing else |
 | Kruithne/wow.export | MIT · active | admin tool only | DB2 and icon extraction; the *tool* is MIT, the *assets* are Blizzard IP, so self-hosting icons is a stop-and-ask item; prefer the hosted icon CDN |
 | WowUp/WowUp | GPL-3.0 · active | reference | Addon-provider abstraction, relevant only if Bronze ever installs an addon for the user |
-| TimothyLuke/GSE-Advanced-Macro-Compiler | active | skip | Macro automation is ToS-adjacent (PRODUCT anti-features); third confirmation of the share-string convention |
+| TimothyLuke/GSE-Advanced-Macro-Compiler | licence unconfirmed · active | skip | Macro automation is ToS-adjacent (PRODUCT anti-features); third confirmation of the share-string convention |
 | hardcano/GnomeSequencer-Enhanced | stale fork | skip | Superseded by the repository above |
 | spawnixx/Mythic-Plus-Companion | 5 commits, inactive | skip | Evidence the "M+ companion" idea was tried without traction |
 | Blizzard/api-wow-docs | dead, redirects to dev.battle.net | skip | Confirms the shrinking API surface behind ADR-0005 |
