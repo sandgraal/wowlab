@@ -196,31 +196,39 @@ def test_protect_paths_worktree_paths_resolve_inside_worktree(tmp_path: Path) ->
 # ─── precommit_gate ───────────────────────────────────────────────────────────
 
 
-def test_precommit_gate_ignores_non_commits() -> None:
-    assert_allowed(
-        run_hook("precommit_gate.py", bash("git status"), env={"BRONZE_LINT_CMD": "false"})
-    )
+def _fake_checkout(tmp_path: Path, lint_recipe: str) -> Path:
+    """A checkout with .git, .venv and a Makefile whose `lint` target runs `lint_recipe`."""
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / ".venv").mkdir()
+    (repo / "Makefile").write_text(f"lint:\n\t@{lint_recipe}\n")
+    return repo
 
 
-def test_precommit_gate_allows_commit_when_lint_passes() -> None:
-    assert_allowed(
-        run_hook("precommit_gate.py", bash("git commit -m x"), env={"BRONZE_LINT_CMD": "true"})
-    )
+def test_precommit_gate_ignores_non_commits(tmp_path: Path) -> None:
+    repo = _fake_checkout(tmp_path, "exit 1")
+    assert_allowed(run_hook("precommit_gate.py", bash("git status", cwd=str(repo))))
 
 
-def test_precommit_gate_blocks_commit_when_lint_fails() -> None:
-    result = run_hook(
-        "precommit_gate.py",
-        bash("git add -A && git commit -m 'x'"),
-        env={"BRONZE_LINT_CMD": "echo 'E501 too long'; false"},
-    )
+def test_precommit_gate_skips_when_environment_is_missing(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)  # no .venv, no Makefile: setup gap, not a defect
+    assert_allowed(run_hook("precommit_gate.py", bash("git commit -m x", cwd=str(repo))))
+
+
+def test_precommit_gate_allows_commit_when_lint_passes(tmp_path: Path) -> None:
+    repo = _fake_checkout(tmp_path, "echo ok")
+    assert_allowed(run_hook("precommit_gate.py", bash("git commit -m x", cwd=str(repo))))
+
+
+def test_precommit_gate_blocks_commit_when_lint_fails(tmp_path: Path) -> None:
+    repo = _fake_checkout(tmp_path, "echo 'E501 too long'; exit 1")
+    result = run_hook("precommit_gate.py", bash("git add -A && git commit -m 'x'", cwd=str(repo)))
     assert_blocked(result, "make lint failed")
-    assert (
-        "E501"
-        in json.loads(result.stdout.strip().splitlines()[-1])["hookSpecificOutput"][
-            "permissionDecisionReason"
-        ]
-    )
+    reason = json.loads(result.stdout.strip().splitlines()[-1])["hookSpecificOutput"][
+        "permissionDecisionReason"
+    ]
+    assert "E501" in reason
 
 
 # ─── format_python / session_start ────────────────────────────────────────────

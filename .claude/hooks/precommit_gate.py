@@ -6,12 +6,12 @@ makes it correct for agents working in worktrees. Skips silently when the
 project environment does not exist yet (fresh clone, no `.venv`) because that
 is a setup gap, not a code defect; CI still gates the PR.
 
-Set BRONZE_LINT_CMD to override the command (tests use `true`/`false`).
+The command is fixed (`make lint`, argv form, no shell) so that nothing in
+the environment or the hook payload can change what runs.
 """
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -27,6 +27,7 @@ from _common import (
 )
 
 EVENT = "PreToolUse"
+LINT_ARGV = ["make", "lint"]
 
 
 def _is_commit(command: str) -> bool:
@@ -48,24 +49,20 @@ def main() -> None:
     if not command or not _is_commit(command):
         return
     root = checkout_root(Path(str(data.get("cwd") or Path.cwd())).resolve())
-    if root is None:
-        return
-    lint_cmd = os.environ.get("BRONZE_LINT_CMD", "make lint")
-    if lint_cmd == "make lint" and not (root / ".venv").exists():
+    if root is None or not (root / ".venv").exists() or not (root / "Makefile").exists():
         return
     try:
         result = subprocess.run(
-            lint_cmd,
-            shell=True,
+            LINT_ARGV,
             cwd=str(root),
             capture_output=True,
             text=True,
             timeout=220,
             check=False,
         )
-    except subprocess.TimeoutExpired:
+    except (OSError, subprocess.TimeoutExpired):
         deny(
-            EVENT, "make lint timed out; run it yourself and fix what it reports before committing."
+            EVENT, "make lint could not run or timed out; run it yourself and fix what it reports."
         )
         return
     if result.returncode != 0:

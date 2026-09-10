@@ -32,7 +32,7 @@ jobs:
         id: secret
         run: |
           if [ -n "${{ secrets.ANTHROPIC_API_KEY }}" ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "ANTHROPIC_API_KEY is not set; skipping (see docs/SETUP.md)"; echo "present=false" >> "$GITHUB_OUTPUT"; fi
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.secret.outputs.present == 'true'
         with:
           fetch-depth: 1

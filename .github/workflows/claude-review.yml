@@ -23,11 +23,11 @@ jobs:
         id: secret
         run: |
           if [ -n "${{ secrets.ANTHROPIC_API_KEY }}" ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "ANTHROPIC_API_KEY is not set; skipping (see docs/SETUP.md)"; echo "present=false" >> "$GITHUB_OUTPUT"; fi
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.secret.outputs.present == 'true'
         with:
           fetch-depth: 1
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         if: steps.secret.outputs.present == 'true'
         with:
           version: "0.12.12"
