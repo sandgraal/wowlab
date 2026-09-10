@@ -23,9 +23,10 @@ export API_PORT   ?= $(shell echo $$((18000 + $(PORT_OFFSET))))
 help: ## Show targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
-setup: ## One-time: sync deps, install pre-commit, create .env
+setup: ## One-time per checkout: sync deps, wire git hooks, create .env
 	$(UV) sync --frozen
-	$(UV) run pre-commit install
+	git config core.hooksPath .githooks   # tracked hooks resolve per worktree; never `pre-commit install`
+	$(UV) run --frozen pre-commit install-hooks
 	@[ -f .env ] || { cp .env.example .env && echo "created .env from .env.example"; }
 
 lint: ## ruff check + format check + mypy (the commit gate)

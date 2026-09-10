@@ -94,6 +94,10 @@ other ticket moving.
   take `origin/main`'s copy and regenerate.
 - Pytest, ruff and mypy exclude `.claude/worktrees` so the main checkout
   never lints or tests an agent's tree.
+- Git hooks are tracked in `.githooks/` and wired with `core.hooksPath`
+  (by `make setup`). Never run `pre-commit install`: it rewrites the shared
+  `.git/hooks/pre-commit` to point at *one* worktree's `.venv`, and removing
+  that worktree breaks every commit in every checkout — this happened.
 - Remove a worktree after its PR merges (`git worktree remove <path>`).
 
 ## Guardrails and their limits
