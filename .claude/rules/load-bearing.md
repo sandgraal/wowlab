@@ -12,6 +12,7 @@ You are editing one of the four files everything else depends on. Extra rules ap
 
 - **Determinism.** `profile_builder` output is hashed for the sim cache (ADR-0004). No timestamps, no set/dict iteration without sorting, no locale-dependent formatting, `repr`-stable floats. The determinism test in `api/tests/parser/` must stay green and must not be weakened.
 - **Lossless.** `simc_parser` preserves every unrecognised key verbatim in `parsed` and never drops a line it does not understand; `snapshots.simc_raw` always holds the original string. Unknown talent serialization versions raise; they do not guess.
+- **`ptr=` is kept, then filtered.** The worker binary has PTR data compiled in (ADR-0004 amendment 2026-09-10). `simc_parser` preserves a pasted `ptr=` line like any other key; `profile_builder` omits it from generated profile text so a paste can never switch a sim to the PTR data set. Dropping it at parse time would break the lossless rule above.
 - **No item math.** If you are about to compute stats from bonus IDs, upgrade tracks, or crafted quality, stop. SimC computes; we store and present (ADR-0002).
 - **Evidence-only analysis.** `gap_analysis` attributions carry the numbers that produced them and leave the residual as `unattributed` (ADR-0010).
 - **Gate.** `make test-parser` green before you push. A change here without a real fixture exercising it is incomplete.

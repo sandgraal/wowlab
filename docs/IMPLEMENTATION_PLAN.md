@@ -572,6 +572,8 @@ Workers are stateless and idempotent — a job re-run must produce a row-identic
 
 **Version pinning:** `sim_jobs.simc_version` is part of the cache key. A SimC upgrade invalidates the cache by construction, which is correct — results are not comparable across engine versions.
 
+**Data-set provenance (M2 work):** per the ADR-0004 amendment of 2026-09-10, each result records whether PTR data was compiled in, which data set the run used, and the Live `wow_version` and `hotfix_date` SimC reports. M0-04 ships §7 as written, so these sit in `sim_results.raw_json` until an additive M2 migration extracts them into queryable columns, used to cross-check `game_version` per result. Field names are *verify* against the first real json2 fixture.
+
 ### 8.4 Log correlation engine
 
 The differentiating feature. Build it after the sim side is solid.

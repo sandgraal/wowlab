@@ -121,7 +121,7 @@ flowchart LR
   DB[("Postgres 16<br/>snapshots · loadouts<br/>sim_results · log_reports")]
   ORCH["Sim orchestrator<br/>profile hash → cache check"]
   Q["Sim queue<br/>SQS / Redis"]
-  W["SimC workers<br/>pinned tag · spot capacity"]
+  W["SimC workers<br/>pinned commit · spot capacity"]
   READ["Read API<br/>heavily cached"]
   WCL["Log ingest<br/>Warcraft Logs GraphQL v2"]
   GD["Static game data<br/>SimC generated files · per patch"]
@@ -285,7 +285,7 @@ Bronze is built by a team of Claude Code agents coordinated by a conductor sessi
 
 ```
 api/        FastAPI ingest + read API, SQLAlchemy models, Alembic migrations, tests and fixtures
-worker/     SimulationCraft worker image (pinned SimC tag)            — M2
+worker/     SimulationCraft worker image (pinned SimC commit)         — M2
 web/        Next.js frontend                                          — M1-08
 agent/      Go companion agent + in-game addon                        — M4
 pipeline/   Static game-data ingest from SimC's generated files       — M1-05
@@ -316,7 +316,7 @@ docs/       Spec, decisions, glossary, backlog, product, workflow, data sources,
 | API | Python 3.12 + FastAPI | Async, typed, fast to write. |
 | Database | Postgres 16 | JSONB for snapshot payloads. Partial unique indexes enforce the sim cache and snapshot dedupe. |
 | Queue | SQS, or Redis + RQ locally | Sim jobs are coarse-grained and interruption-tolerant. |
-| Sim workers | Docker image with SimC built from a pinned tag | The pinned version is part of the cache key. An upgrade invalidates the cache by construction. |
+| Sim workers | Docker image with SimC built from a pinned commit SHA (SimC stopped tagging at `release-830-01`) | The pinned version is part of the cache key. An upgrade invalidates the cache by construction. |
 | Worker compute | Fargate Spot or spot K8s nodes | CPU-bound, bursty, interruptible. A killed worker just re-queues. |
 | Frontend | Next.js + TypeScript | Server components suit a read-heavy, cache-friendly page model. |
 | Companion agent | Go, single static binary | Cross-platform, no runtime, easy to sign and distribute. |
