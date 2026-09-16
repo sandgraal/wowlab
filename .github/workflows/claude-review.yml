@@ -23,11 +23,19 @@ jobs:
       actions: read
       id-token: write
     env:
-      # Pinned explicitly. Left unset, Claude Code defaulted to
-      # `claude-opus-5[1m]` and the first request failed on every PR through
-      # #11 (is_error, 0 tokens, ~200 ms; the action hid the reason). The
-      # preflight step below names the reason if a pinned model fails too.
+      # Pinned so reviews are reproducible across Claude Code releases.
       REVIEW_MODEL: claude-opus-5
+      # Every run through PR #11 failed on its first request (is_error, 0
+      # tokens). The preflight below named the cause on 2026-09-16: "This API
+      # key is not scoped to a workspace, so this request must include the
+      # anthropic-workspace-id header". Two fixes, either is enough: replace
+      # the ANTHROPIC_API_KEY secret with a workspace-scoped key, or set the
+      # ANTHROPIC_WORKSPACE_ID repository variable (wrkspc_..., Claude
+      # Console > Workspaces). The action's `anthropic_workspace_id` input
+      # applies only to identity federation, so for a static key the header
+      # reaches Claude Code through ANTHROPIC_CUSTOM_HEADERS, which the action
+      # forwards from `env`.
+      ANTHROPIC_CUSTOM_HEADERS: "${{ vars.ANTHROPIC_WORKSPACE_ID != '' && format('anthropic-workspace-id: {0}', vars.ANTHROPIC_WORKSPACE_ID) || '' }}"
     steps:
       - name: Check secret
         id: secret
@@ -36,17 +44,19 @@ jobs:
         run: |
           if [ -n "$KEY" ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "ANTHROPIC_API_KEY is not set; skipping (see docs/SETUP.md)"; echo "present=false" >> "$GITHUB_OUTPUT"; fi
       # The action hides the API's error text (it prints only is_error), so a
-      # rejected model, a billing problem, and a bad key all look identical.
-      # One 1-token request surfaces the real error type and message. API
-      # error bodies carry no secrets; the key is masked by Actions.
+      # rejected model, a missing workspace, billing, and a bad key all look
+      # identical. One 1-token request, sent with the same headers Claude Code
+      # will send, surfaces the real error type and message. API error bodies
+      # carry no secrets; the key is masked by Actions.
       - name: Check API access for the review model
         if: steps.secret.outputs.present == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           body=$(jq -nc --arg m "$REVIEW_MODEL" '{model: $m, max_tokens: 1, messages: [{role: "user", content: "ok"}]}')
-          # The key header goes in on stdin so it never sits in curl's argv.
-          status=$(printf 'x-api-key: %s\n' "$ANTHROPIC_API_KEY" | curl -sS -o "$RUNNER_TEMP/preflight.json" -w '%{http_code}' \
+          # Headers go in on stdin so the key never sits in curl's argv;
+          # ANTHROPIC_CUSTOM_HEADERS (the workspace header, when set) rides along.
+          status=$({ printf 'x-api-key: %s\n' "$ANTHROPIC_API_KEY"; [ -n "$ANTHROPIC_CUSTOM_HEADERS" ] && printf '%s\n' "$ANTHROPIC_CUSTOM_HEADERS"; true; } | curl -sS -o "$RUNNER_TEMP/preflight.json" -w '%{http_code}' \
             https://api.anthropic.com/v1/messages \
             -H @- \
             -H "anthropic-version: 2023-06-01" \

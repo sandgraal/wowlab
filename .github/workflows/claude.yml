@@ -28,6 +28,8 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
+    env:
+      ANTHROPIC_CUSTOM_HEADERS: "${{ vars.ANTHROPIC_WORKSPACE_ID != '' && format('anthropic-workspace-id: {0}', vars.ANTHROPIC_WORKSPACE_ID) || '' }}"
     steps:
       - name: Check secret
         id: secret
@@ -44,8 +46,8 @@ jobs:
         if: steps.secret.outputs.present == 'true'
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          # Pinned for the same reason as claude-review.yml: with no model
-          # set, the default `claude-opus-5[1m]` failed on its first request.
+          # Model pinned and workspace header forwarded as in
+          # claude-review.yml; see the comment on its job `env`.
           claude_args: |
             --model claude-opus-5
             --max-turns 40
