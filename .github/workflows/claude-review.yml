@@ -22,6 +22,12 @@ jobs:
       issues: write
       actions: read
       id-token: write
+    env:
+      # Pinned explicitly. Left unset, Claude Code defaulted to
+      # `claude-opus-5[1m]` and the first request failed on every PR through
+      # #11 (is_error, 0 tokens, ~200 ms; the action hid the reason). The
+      # preflight step below names the reason if a pinned model fails too.
+      REVIEW_MODEL: claude-opus-5
     steps:
       - name: Check secret
         id: secret
@@ -29,6 +35,28 @@ jobs:
           KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           if [ -n "$KEY" ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "ANTHROPIC_API_KEY is not set; skipping (see docs/SETUP.md)"; echo "present=false" >> "$GITHUB_OUTPUT"; fi
+      # The action hides the API's error text (it prints only is_error), so a
+      # rejected model, a billing problem, and a bad key all look identical.
+      # One 1-token request surfaces the real error type and message. API
+      # error bodies carry no secrets; the key is masked by Actions.
+      - name: Check API access for the review model
+        if: steps.secret.outputs.present == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          body=$(jq -nc --arg m "$REVIEW_MODEL" '{model: $m, max_tokens: 1, messages: [{role: "user", content: "ok"}]}')
+          status=$(curl -sS -o "$RUNNER_TEMP/preflight.json" -w '%{http_code}' \
+            https://api.anthropic.com/v1/messages \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d "$body")
+          if [ "$status" != "200" ]; then
+            detail=$(jq -r '(.error.type // "unknown") + ": " + (.error.message // "no message")' "$RUNNER_TEMP/preflight.json" 2>/dev/null || echo "unparseable response")
+            echo "::error title=Anthropic API rejected ${REVIEW_MODEL}::HTTP ${status} ${detail}"
+            exit 1
+          fi
+          echo "API key can call ${REVIEW_MODEL}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.secret.outputs.present == 'true'
         with:
@@ -74,5 +102,6 @@ jobs:
             `verdict: CLEAN | FINDINGS(<n>)`. If there are no findings, that
             summary must state exactly what you read to earn it.
           claude_args: |
+            --model ${{ env.REVIEW_MODEL }}
             --max-turns 30
             --allowedTools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,mcp__github_comment__update_claude_comment,mcp__github_ci__get_ci_status,mcp__github_ci__get_workflow_run_details,mcp__github_ci__download_job_log,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*)"
