@@ -318,6 +318,6 @@ base64 convention; wow.export stays an admin tool.
 | LFG and recruitment boards | Raider.IO, ArenaMaster, WoW Mate | Out of scope; adjacent to the gatekeeping Raider.IO is criticised for |
 | A single aggregate score | Raider.IO | PRODUCT principle 9: diagnostic, never a score |
 | In-browser sim engine | WoWSims | `docs/IMPLEMENTATION_PLAN.md` §10; parity risk; SimC stays the only authority |
-| Macro and rotation tooling | GSE | ToS-adjacent; PRODUCT anti-feature |
+| Macro and rotation tooling | GSE | ToS-adjacent; PRODUCT anti-feature. The owner builds GSE sequence tooling as a separate sibling project; it is not Bronze scope, does not merge into it, and Bronze still never generates or recommends macros. The only shared commitment is one SimC ref: the sibling re-cites its APL sources against Bronze's pinned `SIMC_REF` on patch day (ADR-0004 amendment 2026-09-10) |
 | Private-server and packet projects | mangoszero, WoWee, WowPacketParser | Legal and reputational risk; do not link |
 | AI free-text match review | RatedTracker | Only ever over Bronze's own attributed numbers (ADR-0010), never free-form |
