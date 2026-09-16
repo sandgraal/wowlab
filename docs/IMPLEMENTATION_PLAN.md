@@ -210,7 +210,7 @@ If `loadouts` is null, the Blizzard API cannot supply talents for any character.
 
 **Fallback:** wago.tools for DB2 tables SimC does not carry.
 
-**Pipeline shape:** on new SimC release, pull the tag, parse the generated data, load into `game_items` / `game_spells` / `game_talents` keyed by `game_version`. Never overwrite a prior version's rows — old snapshots must remain interpretable.
+**Pipeline shape:** when the worker's pinned SimC commit moves (ADR-0004 amendment 2026-09-10; SimC no longer tags releases), pull that commit, parse the generated data, load into `game_items` / `game_spells` / `game_talents` keyed by `game_version`. Never overwrite a prior version's rows — old snapshots must remain interpretable.
 
 ### 6.3 Warcraft Logs API v2
 
@@ -572,6 +572,8 @@ Workers are stateless and idempotent — a job re-run must produce a row-identic
 
 **Version pinning:** `sim_jobs.simc_version` is part of the cache key. A SimC upgrade invalidates the cache by construction, which is correct — results are not comparable across engine versions.
 
+**Data-set provenance (M2 work):** per the ADR-0004 amendment of 2026-09-10, each result records whether PTR data was compiled in, which data set the run used, and the Live `wow_version` and `hotfix_date` SimC reports. M0-04 ships §7 as written, so these sit in `sim_results.raw_json` until an additive M2 migration extracts them into queryable columns, used to cross-check `game_version` per result. Field names are *verify* against the first real json2 fixture.
+
 ### 8.4 Log correlation engine
 
 The differentiating feature. Build it after the sim side is solid.
@@ -667,7 +669,7 @@ GET    /v1/users/me/plan                                          → weekly pla
 | API | Python 3.12 + FastAPI | Async, typed, fast to write. Matches existing team competence. |
 | DB | Postgres 16 | JSONB for snapshot payloads, partial indexes for the sim cache. Supabase is an acceptable managed path. |
 | Queue | SQS (or Redis + RQ for local dev) | Sim jobs are coarse-grained and interruption-tolerant. |
-| Sim workers | Docker image with SimC compiled from a pinned tag | Pinned version is part of the cache key. |
+| Sim workers | Docker image with SimC compiled from a pinned commit SHA (SimC stopped tagging at `release-830-01`) | Pinned version is part of the cache key. |
 | Worker compute | Fargate Spot or K8s on spot nodes | CPU-bound, bursty, interruptible. |
 | Frontend | Next.js + TypeScript | Server components suit the read-heavy, cache-friendly page model. |
 | Companion agent | Go, single static binary | Cross-platform, no runtime dependency, easy to distribute. |
@@ -778,7 +780,7 @@ bronze/
 │   └── tests/
 │       └── fixtures/simc/          # real /simc strings, one per class
 ├── worker/
-│   ├── Dockerfile                  # builds SimC from a pinned tag
+│   ├── Dockerfile                  # builds SimC from a pinned commit SHA
 │   ├── src/
 │   └── tests/
 ├── agent/                          # Go companion

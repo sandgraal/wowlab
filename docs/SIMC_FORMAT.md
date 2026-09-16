@@ -50,6 +50,7 @@ main_hand=,id=228906,bonus_id=10356,enchant_id=7448,crafted_stats=40/36,crafting
 | `talents` | Loadout string for the current loadout. Its header encodes serialization version, spec id and a tree hash; the spec id may lie for off-spec exports. |
 | `professions` | `name=skill/name=skill`. *verify* across versions. |
 | `covenant`, `soulbind`, `renown` | Shadowlands-era lines that may still appear in old exports. Tolerate and preserve. |
+| `ptr` | *verify* whether the addon ever emits it. If present, **preserve** it in `parsed` like any key; the profile builder omits it so a paste never selects the PTR data set compiled into the worker (ADR-0004 amendment 2026-09-10). |
 
 The header comment (`# Name - Spec - timestamp - Region/Realm`) is
 **advisory**: cross-check name against the class line, never trust it over
@@ -134,3 +135,5 @@ captured_by, consent, sections, edge_cases`. Add fixtures only with
 - 2026-09-09 — Domain review: realm name vs slug, local-time header,
   per-slot item level provenance, open race/role sets, canonicalization now
   keeps comment sections, `vault` renamed `vault_choices`.
+- 2026-09-16 — `ptr` key: preserved at parse, filtered at profile build
+  (ADR-0004 amendment 2026-09-10, PR #6 review).

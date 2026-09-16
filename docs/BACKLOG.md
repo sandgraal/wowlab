@@ -41,7 +41,7 @@ Monorepo layout per `docs/IMPLEMENTATION_PLAN.md` §12. Python project under `ap
 
 **Acceptance:** `cp .env.example .env && make up` gives a responding `/health` endpoint against a live database on a machine that has never run this project. Two checkouts can run `make up` at the same time.
 
-*Blocked on this machine until the Docker Compose plugin is installed (`docs/SETUP.md`); CI cannot verify it either. The implementer writes it against the Compose spec and the conductor verifies locally once the plugin exists.*
+*Built and merged in PR #5 (2026-09-10), not yet accepted. Proven there: the Compose file renders against the Compose spec for two per-worktree value sets that differ only in project name, published ports, network and volume; `tests/stack` (39 graders) covers services, loopback binds, healthchecks, the SimC pin and `.env.example`; `make ci` green. **Not executed:** `cp .env.example .env && make up` reaching a healthy `/health`, and two checkouts running `make up` at once, because this machine has no Docker Compose plugin (`docs/SETUP.md`) and CI does not build the images. The box stays open until the conductor runs both on a machine with the plugin and pastes the transcript into a `docs(backlog)` PR. M0-04 does not wait on this: its migration proof comes from CI's Postgres service (`docs/handoffs/M0-04.md`).*
 
 ---
 
@@ -74,7 +74,7 @@ Commit `AGENTS.md`/`CLAUDE.md`, `docs/IMPLEMENTATION_PLAN.md`, `docs/DECISIONS.m
 
 ---
 
-## [ ] M0-07 — Repository settings and required checks
+## [x] M0-07 — Repository settings and required checks
 **Size:** S · **Depends on:** M0-02 · **owner** (repo admin, API key)
 
 Apply `scripts/bootstrap-github.sh` (squash-only, ruleset with the required checks from `.github/rulesets/main.json`, secret scanning and push protection, Dependabot security updates, labels). Add the `ANTHROPIC_API_KEY` repository secret so `claude.yml` and `claude-review.yml` run.
@@ -143,11 +143,11 @@ Canonicalization must strip the export timestamp and comments from the string be
 ---
 
 ## [ ] M1-05 — Static game data pipeline
-**Size:** L · **Depends on:** M0-04
+**Size:** L · **Depends on:** M0-04 · **owner** (ADR-0007 within-patch hotfix re-ingest decision; blocks dispatch)
 
-Ingest SimC's generated item and spell data for one pinned patch version into `game_items` and `game_spells`, keyed by `game_version`. Idempotent re-run. A CLI entry point that takes a SimC tag. Lives in `pipeline/` as a workspace member.
+Ingest SimC's generated item and spell data for one pinned patch version into `game_items` and `game_spells`, keyed by `game_version`. Idempotent re-run. A CLI entry point that takes a SimC commit SHA (SimC no longer tags releases; ADR-0006 amendment 2026-09-10), derives the `game_version` patch triple by truncating `CLIENT_DATA_WOW_VERSION` in `client_data_version.inc` at that commit, and records the full build, hotfix date, and SHA in an additive per-version manifest. The within-patch hotfix re-ingest rule is an open owner decision on ADR-0007 (the **owner** marker above); do not dispatch until it is made. Lives in `pipeline/` as a workspace member.
 
-**Acceptance:** running the pipeline for 12.1 populates the tables; re-running changes nothing. A test asserts that ingesting a second version leaves the first version's rows untouched.
+**Acceptance:** running the pipeline for 12.1 populates the tables; re-running **at the same SimC SHA** changes nothing (a re-run at a newer SHA within the same patch follows the ADR-0007 decision, not this line). A test asserts that ingesting a second version leaves the first version's rows untouched.
 
 ---
 
