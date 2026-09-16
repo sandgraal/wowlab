@@ -45,14 +45,16 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           body=$(jq -nc --arg m "$REVIEW_MODEL" '{model: $m, max_tokens: 1, messages: [{role: "user", content: "ok"}]}')
-          status=$(curl -sS -o "$RUNNER_TEMP/preflight.json" -w '%{http_code}' \
+          # The key header goes in on stdin so it never sits in curl's argv.
+          status=$(printf 'x-api-key: %s\n' "$ANTHROPIC_API_KEY" | curl -sS -o "$RUNNER_TEMP/preflight.json" -w '%{http_code}' \
             https://api.anthropic.com/v1/messages \
-            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H @- \
             -H "anthropic-version: 2023-06-01" \
             -H "content-type: application/json" \
             -d "$body")
           if [ "$status" != "200" ]; then
-            detail=$(jq -r '(.error.type // "unknown") + ": " + (.error.message // "no message")' "$RUNNER_TEMP/preflight.json" 2>/dev/null || echo "unparseable response")
+            # Escape %, CR and LF so the message cannot start a new workflow command.
+            detail=$(jq -r '((.error.type // "unknown") + ": " + (.error.message // "no message")) | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A")' "$RUNNER_TEMP/preflight.json" 2>/dev/null || echo "unparseable response")
             echo "::error title=Anthropic API rejected ${REVIEW_MODEL}::HTTP ${status} ${detail}"
             exit 1
           fi
