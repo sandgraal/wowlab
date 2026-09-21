@@ -9,14 +9,36 @@ The rules this module exists to hold:
   under its final name is never replaced, by another build, by a second fetch
   of the same key, or by a process that lost a race. Nothing prunes.
 - **L1.** The cache lives under the user data directory. A cache directory
-  inside an install is refused.
+  that is, or resolves through a symlink to, somewhere inside an install is
+  refused, at construction and again before every directory creation and
+  write.
 - **ADR-0012.** This is the only network client in the library and no test
   exercises it live; tests inject a transport that replays recordings.
 
 Downloads stream into a temp name in the cache directory and are published
-with a no-overwrite link, so an interrupted download never leaves a partial
-file under the final name. The sidecar is written only by the process that
-published the table, so it always describes the bytes on disk.
+under the final name only when complete, so an interrupted download never
+leaves a partial file there. Publishing is a hard link, which fails
+atomically when the name is taken. There is deliberately no POSIX fallback:
+without hard links the only portable primitive left is ``rename``, which
+replaces its target, and no lock file protects against a writer that does
+not take the lock. A cache on such a filesystem is refused with
+``CacheLocationError`` rather than risk L5. On Windows ``rename`` refuses an
+existing target, so it is used when hard links are unavailable.
+
+Bodies are bounded: decoded bytes are counted while streaming (gzip is
+inflated here, in bounded steps, not by the HTTP library), a declared
+``Content-Length`` over the cap is refused up front, and each download has a
+wall-clock deadline. A response that fails any check is never cached.
+
+Known limits, accepted:
+
+- The sidecar is written only by the process that published the table, right
+  after publishing, so it always describes the bytes on disk. A crash between
+  the two leaves a valid table with no sidecar, permanently: a later hit does
+  not invent a fetch record it does not have. ``sidecar()`` returns ``None``.
+- Temp files (``.<name>.<hex>.part``) left by a killed process are never
+  swept; nothing in this cache is pruned implicitly (ADR-0022). They never
+  carry a final name and are never read.
 """
 
 from __future__ import annotations
@@ -24,15 +46,19 @@ from __future__ import annotations
 import contextlib
 import csv
 import hashlib
+import http.cookiejar
 import json
+import os
 import re
 import threading
 import time
 import uuid
+import zlib
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import BinaryIO, Protocol
+from typing import BinaryIO, NamedTuple, Protocol
 
 import httpx
 import platformdirs
@@ -41,6 +67,8 @@ from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 from wowlab_core import __version__
 
 __all__ = [
+    "MAX_BUILDS_BYTES",
+    "MAX_TABLE_BYTES",
     "Build",
     "BuildNotPublished",
     "CacheLocationError",
@@ -65,9 +93,17 @@ REPO_URL = "https://github.com/sandgraal/wowlab"
 USER_AGENT = f"wowlab/{__version__} (+{REPO_URL}; local personal tool; cached by build)"
 WAGO_BASE_URL = "https://wago.tools"
 
+# Decoded-body caps. The recorded listing is about 0.5 MiB; the largest tables
+# the community exports are in the low hundreds of MiB.
+MAX_BUILDS_BYTES = 16 * 1024 * 1024
+MAX_TABLE_BYTES = 1024 * 1024 * 1024
+
 _TABLE_NAME = re.compile(r"[A-Za-z0-9_]+")
 _BUILD_STRING = re.compile(r"[0-9]+(\.[0-9]+){3}")
+_DISPOSITION_FILENAME = re.compile(r'(?:^|;)\s*filename="([^"]*)"', re.IGNORECASE)
 _INSTALL_MARKER = ".build.info"  # what makes a directory an install (LAB_PLAN §6.1)
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+_CHUNK = 1 << 16
 
 
 # ─── errors ──────────────────────────────────────────────────────────────────
@@ -78,14 +114,20 @@ class GameDataError(Exception):
 
 
 class BuildNotPublished(GameDataError):  # noqa: N818 - name fixed by docs/LAB_PLAN.md §6.6
-    """The source does not list this build (yet, or at all)."""
+    """There is no published build to use: the source does not list the
+    version, or the flavor has no version to look up."""
 
     def __init__(self, version: str | None, product: str | None = None) -> None:
         self.version = version
         self.product = product
-        what = f"build {version!r}" if version else "a flavor with no version"
         where = f" (product {product!r})" if product else ""
-        super().__init__(f"{what}{where} is not published by the game data source")
+        if version is None:
+            message = (
+                f"flavor{where} has no version in .build.info, so there is no build to look up"
+            )
+        else:
+            message = f"build {version!r}{where} is not published by the game data source"
+        super().__init__(message)
 
 
 class TableNotPublished(GameDataError):  # noqa: N818
@@ -107,7 +149,8 @@ class SourceUnavailable(GameDataError):  # noqa: N818
 
 
 class UnexpectedResponse(GameDataError):  # noqa: N818
-    """A response that must not be cached: wrong status, type, or build."""
+    """A response that must not be cached: wrong status, type, name, build,
+    size, or one that took too long."""
 
     def __init__(self, url: str, detail: str) -> None:
         self.url = url
@@ -115,11 +158,13 @@ class UnexpectedResponse(GameDataError):  # noqa: N818
 
 
 class MalformedTable(GameDataError):  # noqa: N818
-    """A cached CSV whose row does not match its header."""
+    """A cached CSV that cannot be read as ``dict[str, str]`` rows without
+    losing something (L4)."""
 
 
 class CacheLocationError(GameDataError):
-    """The cache directory is somewhere it must never be (L1)."""
+    """The cache directory is somewhere it must never be (L1), or on a
+    filesystem where a table cannot be published without risking L5."""
 
 
 # ─── models ──────────────────────────────────────────────────────────────────
@@ -190,15 +235,39 @@ class _NotFoundError(Exception):
     pass
 
 
+class _RetryableError(Exception):
+    pass
+
+
+class _Expected(NamedTuple):
+    content_type: str
+    filename: str | None  # exact Content-Disposition filename, for tables
+    max_bytes: int
+
+
+def _no_cookies() -> http.cookiejar.CookieJar:
+    """A jar that accepts nothing: the client is identified by its
+    ``User-Agent`` and by nothing else (ADR-0022)."""
+    return http.cookiejar.CookieJar(http.cookiejar.DefaultCookiePolicy(allowed_domains=[]))
+
+
 class WagoSource:
     """Polite HTTP client for wago.tools.
 
-    One connection, a descriptive ``User-Agent``, no parallel fetches (a lock
-    serialises requests), exponential backoff on 429, 5xx and transport
-    errors, ``Retry-After`` honoured up to ``backoff_cap``.
+    One connection, a descriptive ``User-Agent``, no cookies, no redirects,
+    no parallel fetches (a lock serialises requests), exponential backoff on
+    429, 5xx and transport errors, ``Retry-After`` (seconds or HTTP-date)
+    honoured up to ``backoff_cap``.
 
     URL shapes come from the recordings under ``tests/fixtures/wago/``:
     ``/api/builds`` and ``/db2/<Table>/csv?build=<full build string>``.
+
+    A table response is checked against the recording's
+    ``Content-Disposition: attachment; filename="<Table>.<build>.csv"``: a
+    filename naming another table or build is always refused. With
+    ``require_content_disposition`` a response without the header is refused
+    too; ``GameData``'s default source turns that on, because the recording
+    shows the header on every 200.
     """
 
     name = "wago.tools"
@@ -209,21 +278,40 @@ class WagoSource:
         base_url: str = WAGO_BASE_URL,
         transport: httpx.BaseTransport | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        monotonic: Callable[[], float] = time.monotonic,
         max_attempts: int = 5,
         backoff_base: float = 2.0,
         backoff_cap: float = 120.0,
         timeout: float = 60.0,
+        download_deadline: float = 900.0,
+        max_builds_bytes: int = MAX_BUILDS_BYTES,
+        max_table_bytes: int = MAX_TABLE_BYTES,
+        require_content_disposition: bool = False,
     ) -> None:
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
+        parsed = httpx.URL(base_url)
+        if parsed.scheme != "https" and not (
+            parsed.scheme == "http" and parsed.host in _LOOPBACK_HOSTS
+        ):
+            raise ValueError(f"base_url must be https (http only for loopback): {base_url!r}")
         self._base_url = base_url.rstrip("/")
         self._sleep = sleep
+        self._now = now
+        self._monotonic = monotonic
         self._max_attempts = max_attempts
         self._backoff_base = backoff_base
         self._backoff_cap = backoff_cap
+        self._download_deadline = download_deadline
+        self._max_builds_bytes = max_builds_bytes
+        self._max_table_bytes = max_table_bytes
+        self._require_disposition = require_content_disposition
         self._lock = threading.Lock()
         self._client = httpx.Client(
-            headers={"User-Agent": USER_AGENT},
+            # gzip only: the body is inflated here, in bounded steps.
+            headers={"User-Agent": USER_AGENT, "Accept-Encoding": "gzip"},
+            cookies=_no_cookies(),
             limits=httpx.Limits(max_connections=1, max_keepalive_connections=1),
             timeout=timeout,
             follow_redirects=False,
@@ -241,27 +329,23 @@ class WagoSource:
 
     def fetch_builds(self, dest: BinaryIO) -> str:
         url = f"{self._base_url}/api/builds"
+        expected = _Expected("application/json", None, self._max_builds_bytes)
         try:
-            return self._download(url, {}, dest, content_type="application/json", build=None)
+            return self._download(url, {}, dest, expected)
         except _NotFoundError as exc:
             raise UnexpectedResponse(url, "404 for the builds listing") from exc
 
     def fetch_table(self, table: str, build: str, dest: BinaryIO) -> str:
         _check_key(table, build)
         url = f"{self._base_url}/db2/{table}/csv"
+        expected = _Expected("text/csv", f"{table}.{build}.csv", self._max_table_bytes)
         try:
-            return self._download(url, {"build": build}, dest, content_type="text/csv", build=build)
+            return self._download(url, {"build": build}, dest, expected)
         except _NotFoundError as exc:
             raise TableNotPublished(table, build) from exc
 
     def _download(
-        self,
-        url: str,
-        params: dict[str, str],
-        dest: BinaryIO,
-        *,
-        content_type: str,
-        build: str | None,
+        self, url: str, params: dict[str, str], dest: BinaryIO, expected: _Expected
     ) -> str:
         with self._lock:
             last = "no attempt made"
@@ -270,6 +354,8 @@ class WagoSource:
                 retry_after: float | None = None
                 dest.seek(0)
                 dest.truncate()
+                self._client.cookies.clear()
+                deadline = self._monotonic() + self._download_deadline
                 try:
                     with self._client.stream("GET", url, params=params) as response:
                         full_url = str(response.request.url)
@@ -278,16 +364,21 @@ class WagoSource:
                             raise _NotFoundError(full_url)
                         if status == 429 or status >= 500:
                             last = f"HTTP {status}"
-                            retry_after = _retry_after(response.headers.get("retry-after"))
+                            retry_after = _retry_after(
+                                response.headers.get("retry-after"), self._now()
+                            )
                         elif status != 200:
                             raise UnexpectedResponse(full_url, f"HTTP {status}")
                         else:
-                            _check_headers(full_url, response.headers, content_type, build)
-                            for chunk in response.iter_bytes():
-                                dest.write(chunk)
+                            self._check_headers(full_url, response.headers, expected)
+                            self._copy_body(full_url, response, dest, expected, deadline)
                             return full_url
-                except httpx.TransportError as exc:
+                except (httpx.TransportError, httpx.DecodingError, _RetryableError) as exc:
                     last = f"{type(exc).__name__}: {exc}"
+                except BaseException:
+                    dest.seek(0)
+                    dest.truncate()
+                    raise
                 if attempt + 1 < self._max_attempts:
                     delay = min(self._backoff_cap, self._backoff_base * 2**attempt)
                     if retry_after is not None:
@@ -297,31 +388,111 @@ class WagoSource:
             dest.truncate()
             raise SourceUnavailable(full_url, self._max_attempts, last)
 
+    def _check_headers(self, url: str, headers: httpx.Headers, expected: _Expected) -> None:
+        """Refuse a 200 that is not what was asked for; it would be cached
+        forever (L5)."""
+        got = headers.get("content-type", "")
+        if not got.lower().startswith(expected.content_type):
+            raise UnexpectedResponse(url, f"expected {expected.content_type}, got {got!r}")
+        declared = headers.get("content-length")
+        if (
+            declared is not None
+            and declared.strip().isdigit()
+            and int(declared) > expected.max_bytes
+        ):
+            raise UnexpectedResponse(
+                url, f"Content-Length {declared} is over the {expected.max_bytes}-byte cap"
+            )
+        if expected.filename is None:
+            return
+        disposition = headers.get("content-disposition")
+        if disposition is None:
+            if self._require_disposition:
+                raise UnexpectedResponse(
+                    url, f"no Content-Disposition to confirm {expected.filename!r}"
+                )
+            return
+        match = _DISPOSITION_FILENAME.search(disposition)
+        if match is None or match.group(1) != expected.filename:
+            raise UnexpectedResponse(
+                url, f"asked for {expected.filename!r}, got Content-Disposition {disposition!r}"
+            )
 
-def _retry_after(value: str | None) -> float | None:
-    """Seconds form only; the HTTP-date form falls back to our own backoff."""
+    def _copy_body(
+        self,
+        url: str,
+        response: httpx.Response,
+        dest: BinaryIO,
+        expected: _Expected,
+        deadline: float,
+    ) -> None:
+        encoding = response.headers.get("content-encoding", "identity").strip().lower()
+        chunks: Iterator[bytes]
+        if response.is_stream_consumed:
+            # Only a transport that hands over a pre-read response (a mock) gets
+            # here; httpx has already decoded that body. A network response is
+            # always an unread stream and takes the raw, bounded path below.
+            chunks, encoding = response.iter_bytes(_CHUNK), "identity"
+        else:
+            # As the network delivers, so the deadline is looked at on every read.
+            chunks = response.iter_raw()
+        if encoding in ("", "identity"):
+            inflater = None
+        elif encoding == "gzip":
+            inflater = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        else:
+            raise UnexpectedResponse(url, f"unrequested Content-Encoding {encoding!r}")
+
+        written = 0
+
+        def emit(piece: bytes) -> None:
+            nonlocal written
+            written += len(piece)
+            if written > expected.max_bytes:
+                raise UnexpectedResponse(
+                    url, f"body is over the {expected.max_bytes}-byte cap; not caching it"
+                )
+            dest.write(piece)
+
+        for raw in chunks:
+            if self._monotonic() > deadline:
+                raise UnexpectedResponse(
+                    url, f"download passed its {self._download_deadline:.0f} s deadline"
+                )
+            if inflater is None:
+                emit(raw)
+                continue
+            data = raw
+            while True:
+                try:
+                    piece = inflater.decompress(data, _CHUNK)
+                except zlib.error as exc:
+                    raise _RetryableError(f"corrupt gzip body: {exc}") from exc
+                emit(piece)
+                data = inflater.unconsumed_tail
+                if not data and len(piece) < _CHUNK:
+                    break
+        if inflater is not None and not inflater.eof:
+            raise _RetryableError("gzip body ended early")
+
+
+def _retry_after(value: str | None, now: datetime) -> float | None:
+    """``Retry-After`` as seconds from now: the delta form or the HTTP-date form."""
     if value is None:
         return None
+    text = value.strip()
     try:
-        seconds = float(value.strip())
+        seconds = float(text)
     except ValueError:
-        return None
+        try:
+            when = parsedate_to_datetime(text)
+        except (TypeError, ValueError):
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=UTC)
+        seconds = (when - now).total_seconds()
+        return max(seconds, 0.0)
     return seconds if seconds >= 0 else None
-
-
-def _check_headers(url: str, headers: httpx.Headers, content_type: str, build: str | None) -> None:
-    """Refuse a 200 that is not what was asked for; it would be cached forever.
-
-    The recorded CSV response names its build in ``Content-Disposition``
-    (``filename="<Table>.<build>.csv"``). If the header is present and names
-    another build, the server fell back to a different build: refuse (L5).
-    """
-    got = headers.get("content-type", "")
-    if not got.lower().startswith(content_type):
-        raise UnexpectedResponse(url, f"expected {content_type}, got {got!r}")
-    disposition = headers.get("content-disposition")
-    if build is not None and disposition and f".{build}.csv" not in disposition:
-        raise UnexpectedResponse(url, f"asked for build {build}, got {disposition!r}")
 
 
 def _check_key(table: str, build: str) -> None:
@@ -341,6 +512,7 @@ def default_cache_dir() -> Path:
 
 
 def _refuse_install(path: Path) -> None:
+    """Raise if ``path``, with every symlink resolved, is inside an install."""
     resolved = path.resolve()
     for candidate in (resolved, *resolved.parents):
         if (candidate / _INSTALL_MARKER).exists():
@@ -350,12 +522,29 @@ def _refuse_install(path: Path) -> None:
             )
 
 
+def _writable_dir(path: Path) -> None:
+    """Create ``path`` for writing, refusing an install before the mkdir and
+    again after it (a symlink anywhere along the way resolves differently
+    once the directory exists)."""
+    _refuse_install(path)
+    path.mkdir(parents=True, exist_ok=True)
+    _refuse_install(path)
+
+
 def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
 class GameData:
-    """Tables and builds, from a ``Source``, through the never-overwrite cache."""
+    """Tables and builds, from a ``Source``, through the never-overwrite cache.
+
+    The builds listing is cached for ``builds_ttl``. A lookup that misses
+    against a cached listing refetches it only if the listing is older than
+    ``builds_min_refresh``: a build published a few minutes ago is found, and
+    repeated lookups of a build that is not published yet (the normal state
+    on a beta, where the client patches before the source publishes) cost one
+    listing download per interval, not one per call.
+    """
 
     def __init__(
         self,
@@ -363,12 +552,16 @@ class GameData:
         *,
         cache_dir: Path | None = None,
         builds_ttl: timedelta = timedelta(hours=1),
+        builds_min_refresh: timedelta = timedelta(minutes=5),
         now: Callable[[], datetime] = _utcnow,
     ) -> None:
         self._cache_dir = cache_dir if cache_dir is not None else default_cache_dir()
         _refuse_install(self._cache_dir)
-        self._source: Source = source if source is not None else WagoSource()
+        self._source: Source = (
+            source if source is not None else WagoSource(require_content_disposition=True)
+        )
         self._builds_ttl = builds_ttl
+        self._builds_min_refresh = builds_min_refresh
         self._now = now
 
     @property
@@ -380,44 +573,55 @@ class GameData:
     def builds(self, *, refresh: bool = False) -> dict[str, list[Build]]:
         """Products and their builds. Cached for ``builds_ttl``.
 
-        The listing's order is the source's; it is not "newest first" by
-        date, so nothing here assumes an order.
+        Each product's list arrives sorted by version string, descending, and
+        a product code is reused across game versions, so neither position
+        nor the highest version means "newest". Nothing here reads "latest"
+        from the listing.
         """
         if not refresh:
             cached = self._cached_builds()
             if cached is not None:
-                return cached
+                return cached[0]
         return self._fetch_builds()
 
     def resolve_build(self, flavor: HasVersion) -> Build:
         """The published build matching an installed flavor's version.
 
-        Prefers the entry under the flavor's own product; the same version
-        under another product is the same data and is accepted. A miss
-        against a cached listing refetches once before giving up, because a
-        build published five minutes ago is the common case.
+        Prefers the entry under the flavor's own product. The source's table
+        endpoint is keyed by version string alone, so a version listed only
+        under another product still selects the same export, and such an
+        entry is accepted. From a cross-product match only ``.version``
+        describes the installed flavor; ``product`` and the config hashes
+        describe the other product's build and differ.
         """
         version = flavor.version
         if version is None:
             raise BuildNotPublished(None, flavor.product)
+        product = flavor.product
+        found = self._lookup(lambda listing: _find_build(listing, product, version))
+        if found is None:
+            raise BuildNotPublished(version, product)
+        return found
+
+    def _lookup[T](self, find: Callable[[dict[str, list[Build]]], T | None]) -> T | None:
         cached = self._cached_builds()
         if cached is not None:
-            found = _find_build(cached, flavor.product, version)
-            if found is not None:
+            listing, fetched_at = cached
+            found = find(listing)
+            if found is not None or self._now() - fetched_at < self._builds_min_refresh:
                 return found
-        found = _find_build(self._fetch_builds(), flavor.product, version)
-        if found is None:
-            raise BuildNotPublished(version, flavor.product)
-        return found
+        return find(self._fetch_builds())
 
     def _builds_paths(self) -> tuple[Path, Path]:
         path = self._cache_dir / "builds.json"
         return path, path.with_name("builds.json.meta.json")
 
-    def _cached_builds(self) -> dict[str, list[Build]] | None:
+    def _cached_builds(self) -> tuple[dict[str, list[Build]], datetime] | None:
         path, meta_path = self._builds_paths()
         try:
             meta = Sidecar.model_validate_json(meta_path.read_bytes())
+            if path.stat().st_size > MAX_BUILDS_BYTES:
+                return None
             raw = path.read_bytes()
         except (OSError, ValidationError):
             return None
@@ -427,21 +631,23 @@ class GameData:
         if hashlib.sha256(raw).hexdigest() != meta.sha256:
             return None
         try:
-            return _BUILDS_LISTING.validate_json(raw)
+            return _BUILDS_LISTING.validate_json(raw), meta.fetched_at
         except ValidationError:
             return None
 
     def _fetch_builds(self) -> dict[str, list[Build]]:
         # The listing is not build-keyed data: it is replaced on refresh.
         path, meta_path = self._builds_paths()
-        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        _writable_dir(path.parent)
         tmp = _temp_beside(path)
         try:
             with tmp.open("w+b") as handle:
                 url = self._source.fetch_builds(handle)
                 handle.flush()
                 handle.seek(0)
-                raw = handle.read()
+                raw = handle.read(MAX_BUILDS_BYTES + 1)
+            if len(raw) > MAX_BUILDS_BYTES:
+                raise UnexpectedResponse(url, f"listing is over the {MAX_BUILDS_BYTES}-byte cap")
             try:
                 listing = _BUILDS_LISTING.validate_json(raw)
             except ValidationError as exc:
@@ -453,6 +659,7 @@ class GameData:
                 sha256=hashlib.sha256(raw).hexdigest(),
                 source=self._source.name,
             )
+            _refuse_install(path.parent)
             tmp.replace(path)
             _write_json_replacing(meta_path, meta)
             return listing
@@ -484,7 +691,7 @@ class GameData:
         final = self.table_path(name, build)
         if final.exists():
             return final
-        final.parent.mkdir(parents=True, exist_ok=True)
+        _writable_dir(final.parent)
         tmp = _temp_beside(final)
         try:
             digest = hashlib.sha256()
@@ -492,18 +699,21 @@ class GameData:
                 try:
                     url = self._source.fetch_table(name, build, handle)
                 except TableNotPublished:
-                    if not self._build_is_listed(build):
+                    if not self._lookup(lambda listing: _any_version(listing, build) or None):
                         raise BuildNotPublished(build) from None
                     raise
                 handle.flush()
                 handle.seek(0)
                 size = 0
-                while chunk := handle.read(1 << 16):
+                while chunk := handle.read(_CHUNK):
                     digest.update(chunk)
                     size += len(chunk)
             if size == 0:
                 raise UnexpectedResponse(url, "empty body; not caching it")
+            if size > MAX_TABLE_BYTES:
+                raise UnexpectedResponse(url, f"table is over the {MAX_TABLE_BYTES}-byte cap")
             fetched_at = self._now()
+            _refuse_install(final.parent)
             if _publish_without_overwrite(tmp, final):
                 meta = Sidecar(
                     url=url,
@@ -524,12 +734,6 @@ class GameData:
         path = self.table(name, build)
         return _iter_rows(path)
 
-    def _build_is_listed(self, build: str) -> bool:
-        cached = self._cached_builds()
-        if cached is not None and _any_version(cached, build):
-            return True
-        return _any_version(self._fetch_builds(), build)
-
 
 def _any_version(listing: dict[str, list[Build]], version: str) -> bool:
     return any(b.version == version for entries in listing.values() for b in entries)
@@ -549,11 +753,26 @@ def _find_build(listing: dict[str, list[Build]], product: str, version: str) -> 
 def _iter_rows(path: Path) -> Iterator[dict[str, str]]:
     with path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.reader(handle, strict=True)
-        try:
-            header = next(reader)
-        except StopIteration:
-            return
-        for record in reader:
+        header: list[str] | None = None
+        while True:
+            try:
+                record = next(reader)
+            except StopIteration:
+                return
+            except csv.Error as exc:
+                raise MalformedTable(f"{path}: line {reader.line_num}: {exc}") from exc
+            except UnicodeDecodeError as exc:
+                # Decoding runs ahead of the CSV reader, so the line is a lower bound.
+                raise MalformedTable(f"{path}: after line {reader.line_num}: {exc}") from exc
+            if header is None:
+                header = record
+                repeated = sorted({name for name in header if header.count(name) > 1})
+                if repeated:
+                    raise MalformedTable(
+                        f"{path}: line {reader.line_num}: column names repeat: {repeated}; "
+                        "a dict row would drop a column"
+                    )
+                continue
             if len(record) != len(header):
                 raise MalformedTable(
                     f"{path}: line {reader.line_num}: {len(record)} fields, "
@@ -573,18 +792,25 @@ def _temp_beside(final: Path) -> Path:
 def _publish_without_overwrite(tmp: Path, final: Path) -> bool:
     """Give ``tmp``'s complete content the name ``final`` unless it is taken.
 
-    A hard link fails atomically if the name exists, which ``rename`` does
-    not on POSIX. Filesystems without hard links fall back to check-then-
-    rename (on Windows that rename also refuses an existing target).
+    A hard link fails atomically if the name exists. Without hard links:
+    Windows ``rename`` also refuses an existing target, so it is used there;
+    POSIX ``rename`` replaces its target, so there is nothing safe to fall
+    back to and the cache location is refused (module docstring).
     Returns whether this call published the file.
     """
     try:
         final.hardlink_to(tmp)
     except FileExistsError:
         return False
-    except OSError:
+    except OSError as exc:
         if final.exists():
             return False
+        if os.name != "nt":
+            raise CacheLocationError(
+                f"{final.parent}: the filesystem does not support hard links ({exc}); "
+                "a table cannot be published there without risking an overwrite (L5). "
+                "Put the game data cache on a filesystem that supports them."
+            ) from exc
         try:
             tmp.rename(final)
         except FileExistsError:

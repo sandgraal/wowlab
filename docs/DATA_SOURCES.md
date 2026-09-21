@@ -37,15 +37,22 @@ marked `@pytest.mark.live`.
     is a list of `{product, version, created_at, build_config,
     product_config, cdn_config, is_bgdl}`. `version` is the full build
     string. `created_at` is `YYYY-MM-DD HH:MM:SS` with no zone.
-    `product_config` can be `null`. 13 products, 2271 entries, 1695 distinct
-    versions: one version is listed under several products.
+    `product_config` can be `null`. `is_bgdl` **[verify]** is believed to
+    mark a background-download (pre-patch) build. 13 products, 2271 entries,
+    1695 distinct versions: one version is listed under several products, and
+    all 510 such versions have a different `build_config` per product. Every
+    product's list is sorted by version, descending, and a product code is
+    reused across game versions (`wow_classic_beta` carries 1.13, 2.5, 3.4,
+    4.4, 5.5 and 1.60 builds), so neither position nor the highest version
+    means newest.
   - `GET https://wago.tools/db2/<Table>/csv?build=<full build string>` →
     `200 text/csv; charset=UTF-8`, LF line endings, no BOM, header row, RFC
     4180 quoting. **The parameter is `build=`.** Proof: the request named a
     build that was not the newest for its product and the response carried
     `Content-Disposition: attachment; filename="<Table>.<that build>.csv"`.
-    `gamedata` refuses a response whose `Content-Disposition` names another
-    build, so a silent fall-back to "latest" can never be cached (L5).
+    `gamedata` refuses a response whose `Content-Disposition` filename is not
+    exactly `<Table>.<build>.csv`, and its default source refuses one with no
+    such header, so a silent fall-back to "latest" can never be cached (L5).
   - The same URL with a build that was never published → `404 text/html`
     (a generic "Not Found" page that also sets session cookies). There is no
     fall-back to another build. `gamedata` turns it into `BuildNotPublished`
@@ -59,7 +66,20 @@ marked `@pytest.mark.live`.
   the decompressed body.
 - **Live check:** `uv run pytest -m live lab/core/tests/test_gamedata_live.py`
   (two requests; by hand only, ADR-0012). It fails if the recorded table's
-  bytes change upstream.
+  bytes change upstream. Hypothesis, not yet observed: the expected cause is
+  a header rename when the community column definitions are updated (the
+  recording contains a WoWDBDefs placeholder column,
+  `Field_9_0_1_34490_018`), not a change to the data. The cached copy stays
+  as fetched either way (L5).
+- **Client limits** (M10-08): no cookies are kept or sent; `https` only;
+  decoded bodies are capped (16 MiB for the listing, 1 GiB for a table) and
+  each download has a wall-clock deadline; a lookup that misses refetches the
+  listing at most once per five minutes. Known limits: a crash between
+  publishing a table and writing its sidecar leaves a valid table with no
+  fetch record, which is never reconstructed; temp files from a killed
+  process are never swept (nothing is pruned implicitly, ADR-0022); on a
+  POSIX filesystem without hard links the cache is refused, because `rename`
+  there could replace a cached table.
 - **Terms:** data is Blizzard's, extracted by the community; personal,
   non-commercial use. Do not mirror tables publicly.
 
@@ -98,4 +118,4 @@ findings. Library code must not depend on any of it (L6).
 | Date | Source | What changed | Fixture / evidence | Decision |
 |---|---|---|---|---|
 | 2026-09-20 | Forever beta | New product; modern addon API on a level-60 client; flavor folder, product code and interface number known only from reports | — (M10-03 will capture) | Flavor, product and build are discovered at run time (ADR-0020); nothing hard-coded |
-| 2026-09-21 | wago.tools | First recording. The build parameter is `build=`; an unpublished build is a 404 HTML page, not a fall-back. A product's builds are not listed newest-first by date: the `wow_classic_beta` list opens with `5.5.0.x` and has the `1.60.1.x` builds (69876, 69893, 69913) further down. One version string appears under several products | `lab/core/tests/fixtures/wago/` (M10-08) | `gamedata` never reads "latest" from list position; `resolve_build` matches the exact version, preferring the flavor's own product and accepting the same version under another |
+| 2026-09-21 | wago.tools | First recording. The build parameter is `build=`; an unpublished build is a 404 HTML page, not a fall-back. All 13 product lists are sorted by version, descending, and a product code is reused across game versions: `wow_classic_beta` carries 1.13, 2.5, 3.4, 4.4, 5.5 and 1.60 builds, so its list opens with `5.5.0.x` and has the `1.60.1.x` builds (69876, 69893, 69913) further down; neither position nor the highest version means newest. One version string appears under several products (510 of them, each with a different `build_config` per product). The trailing build number is not unique: `10.0.0.46479` / `10.0.2.46479` under `wowlivetest` and `2.5.5.68575` / `2.5.6.68575` under `wow_anniversary` share a `build_config` | `lab/core/tests/fixtures/wago/` (M10-08) | `gamedata` never reads "latest" from the listing and keys on the full version string, never the trailing build number. `resolve_build` matches the exact version, preferring the flavor's own product. wago's table endpoint is keyed by version string alone, so a version listed only under another product still selects the same export and is accepted; from such a match only `.version` describes the installed flavor, `product` and the config hashes do not |

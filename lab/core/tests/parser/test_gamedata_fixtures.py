@@ -8,7 +8,9 @@ from the fixture bytes with no HTTP layer in between.
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
+import re
 import shutil
 from pathlib import Path
 from typing import BinaryIO
@@ -76,3 +78,18 @@ def test_table_csv_rows_match_the_recorded_bytes(tmp_path: Path) -> None:
     assert warrior["Description_lang"].startswith("Warriors train constantly")
     assert "," in warrior["Description_lang"], "a quoted field with commas stays one field"
     assert warrior["Name_female_lang"] == "", "an empty field is an empty string, not None"
+
+
+@pytest.mark.parser
+def test_builds_recording_decompresses_to_the_body_its_index_row_describes() -> None:
+    """The listing is stored gzip-compressed (it is over the repository's file
+    size limit), so the index row's SHA-256 is what ties the committed file to
+    the body that was served."""
+    index = (FIXTURES.parent / "README.md").read_text(encoding="utf-8")
+    (row,) = [line for line in index.splitlines() if line.startswith("| `wago/builds.json.gz`")]
+    (recorded_sha,) = re.findall(r"sha256 of the decompressed body ([0-9a-f]{64})", row)
+    (recorded_size,) = re.findall(r"body is (\d+) bytes", row)
+
+    body = gzip.decompress((FIXTURES / "builds.json.gz").read_bytes())
+    assert hashlib.sha256(body).hexdigest() == recorded_sha
+    assert len(body) == int(recorded_size)
