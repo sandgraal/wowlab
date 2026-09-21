@@ -76,7 +76,7 @@ def scratch_checkout(tmp_path: Path) -> Path:
     (repo / ".git").mkdir(parents=True)
     (repo / ".claude" / "agents").mkdir(parents=True)
     (repo / "docs").mkdir()
-    (repo / "api").mkdir()
+    (repo / "lab").mkdir()
     (repo / "AGENTS.md").write_text("x\n")
     (repo / "docs" / "BACKLOG.md").write_text("x\n")
     (repo / ".claude" / "settings.json").write_text("{}\n")
@@ -95,7 +95,7 @@ def scratch_checkout(tmp_path: Path) -> Path:
         ("git commit --no-veri -m x", "--no-verify"),
         ("git -c a=b commit --no-verify -m x", "--no-verify"),
         ("git -c core.hooksPath=/dev/null commit -m x", "hooksPath"),
-        ("git push --force origin m1/02-simc-parser", "force-push"),
+        ("git push --force origin m10/04-luadata-parser", "force-push"),
         ("git push -f", "force-push"),
         ("git push -fu origin x", "force-push"),
         ("git push origin +main", "force-push"),
@@ -105,7 +105,7 @@ def scratch_checkout(tmp_path: Path) -> Path:
         ("git push origin main", "push to main"),
         ("git push origin HEAD:main", "push to main"),
         ("git push origin main:main", "push to main"),
-        ("git push origin m1/02-x:main", "push to main"),
+        ("git push origin m10/04-x:main", "push to main"),
         ("git push origin refs/heads/main:refs/heads/main", "push to main"),
         ("git -c user.name=x push origin main", "push to main"),
         ("git -C . push origin main", "push to main"),
@@ -137,11 +137,11 @@ def test_guard_bash_blocks_git_and_gh(command: str, needle: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
-        "git push --force-with-lease origin m1/02-simc-parser",
-        "git push -u origin m1/02-simc-parser",
-        "git push origin HEAD:m1/02-simc-parser",
-        "git -C . push origin m1/02-simc-parser",
-        "git commit -m 'feat(api): mention --no-verify in prose (M1-02)'",
+        "git push --force-with-lease origin m10/04-luadata-parser",
+        "git push -u origin m10/04-luadata-parser",
+        "git push origin HEAD:m10/04-luadata-parser",
+        "git -C . push origin m10/04-luadata-parser",
+        "git commit -m 'feat(luadata): mention --no-verify in prose (M10-04)'",
         "git commit -F - <<'EOF'\nfeat: it's fine\n\nBody mentions --no-verify in prose.\nEOF",
         "git commit -am 'x'",
         "git clean -fd",
@@ -165,12 +165,13 @@ def test_guard_bash_allows_ordinary_git_and_gh(command: str) -> None:
 @pytest.mark.parametrize(
     ("command", "needle"),
     [
-        ("rm -rf api/src", "recursive+force"),
-        ("cd api && rm -r -f ../docs", "recursive+force"),
+        ("rm -rf lab/src", "recursive+force"),
+        ("cd lab && rm -r -f ../docs", "recursive+force"),
         ("sudo rm --recursive --force /Volumes/x", "recursive+force"),
-        ("rm -rf .venv/../api", "recursive+force"),
-        ("rm -rf api/src/coverage_models", "recursive+force"),
-        ("find api -name '*.py' -delete", "find -delete"),
+        ("rm -rf .venv/../lab", "recursive+force"),
+        ("rm -rf lab/src/coverage_models", "recursive+force"),
+        ("rm -rf node_modules", "recursive+force"),  # not a scratch dir in a Python-only repo
+        ("find lab -name '*.py' -delete", "find -delete"),
         ("echo x > .claude/settings.json", "shell write"),
         ("echo x >| AGENTS.md", "shell write"),
         ("echo x > agents.md", "shell write"),
@@ -211,22 +212,22 @@ def test_guard_bash_blocks_destructive_and_shell_writes(command: str, needle: st
 @pytest.mark.parametrize(
     "command",
     [
-        "rm -rf node_modules .venv",
+        "rm -rf .venv .ruff_cache",
         "rm -rf /tmp/scratch",
-        "rm -rf api/.pytest_cache",
+        "rm -rf lab/.pytest_cache",
         "find .pytest_cache -delete",
         "echo x > /dev/null",
-        "echo x > api/src/bronze_api/new.py",
-        "sed -i '' 's/a/b/' api/src/bronze_api/main.py",
-        "cp /tmp/x api/tests/",
-        "mv api/a.py api/b.py",
-        "rm api/tests/review/old_probe.py",
-        "git checkout -b m1/02-x origin/main",
-        "git checkout --detach origin/m1/02-x",
-        "git restore api/src/bronze_api/main.py",
-        "cd api && echo x > new.py",
-        "cat > api/notes.md <<'EOF'\nIt's a file with an apostrophe\nEOF",
-        'echo "it\'s fine" > api/notes.md',
+        "echo x > lab/core/src/wowlab_core/new.py",
+        "sed -i '' 's/a/b/' lab/core/src/wowlab_core/cli.py",
+        "cp /tmp/x lab/tests/",
+        "mv lab/a.py lab/b.py",
+        "rm lab/tests/review/old_probe.py",
+        "git checkout -b m10/04-x origin/main",
+        "git checkout --detach origin/m10/04-x",
+        "git restore lab/core/src/wowlab_core/cli.py",
+        "cd lab && echo x > new.py",
+        "cat > lab/notes.md <<'EOF'\nIt's a file with an apostrophe\nEOF",
+        'echo "it\'s fine" > lab/notes.md',
     ],
 )
 def test_guard_bash_allows_ordinary_writes(command: str) -> None:
@@ -247,10 +248,10 @@ def test_guard_bash_worktree_relative_paths(tmp_path: Path) -> None:
     """A write inside a worktree is judged by its path inside that worktree."""
     main = scratch_checkout(tmp_path)
     wt = main / ".claude" / "worktrees" / "job"
-    (wt / "api").mkdir(parents=True)
+    (wt / "lab").mkdir(parents=True)
     (wt / ".git").write_text("gitdir: elsewhere\n")
     env = {"CLAUDE_PROJECT_DIR": str(main)}
-    assert_allowed(run_hook("guard_bash.py", bash("echo x > api/new.py", cwd=str(wt)), env=env))
+    assert_allowed(run_hook("guard_bash.py", bash("echo x > lab/new.py", cwd=str(wt)), env=env))
     assert_blocked(
         run_hook("guard_bash.py", bash("echo x > AGENTS.md", cwd=str(wt)), env=env), "shell write"
     )
@@ -289,7 +290,8 @@ def test_protect_paths_subagents_cannot_edit_harness(rel: str) -> None:
 def test_protect_paths_subagent_may_edit_source() -> None:
     assert_allowed(
         run_hook(
-            "protect_paths.py", edit(str(REPO / "api/src/bronze_api/main.py"), agent="implementer")
+            "protect_paths.py",
+            edit(str(REPO / "lab/core/src/wowlab_core/cli.py"), agent="implementer"),
         )
     )
 
@@ -338,13 +340,13 @@ def test_protect_paths_fails_closed() -> None:
 def test_protect_paths_worktree_paths_resolve_inside_worktree(tmp_path: Path) -> None:
     main = scratch_checkout(tmp_path)
     wt = main / ".claude" / "worktrees" / "job"
-    (wt / "api").mkdir(parents=True)
+    (wt / "lab").mkdir(parents=True)
     (wt / ".git").write_text("gitdir: elsewhere\n")
     env = {"CLAUDE_PROJECT_DIR": str(main)}
     assert_allowed(
         run_hook(
             "protect_paths.py",
-            edit(str(wt / "api" / "new.py"), cwd=str(wt), agent="implementer"),
+            edit(str(wt / "lab" / "new.py"), cwd=str(wt), agent="implementer"),
             env=env,
         )
     )
@@ -448,11 +450,11 @@ def test_session_start_reports_frontier(tmp_path: Path) -> None:
     (repo / ".git").mkdir(parents=True)
     (repo / "docs").mkdir()
     (repo / "docs" / "BACKLOG.md").write_text(
-        "## [x] M0-01 — Done thing\n**Size:** S · **Depends on:** nothing\n\n"
-        "## [ ] M0-02 — Ready thing\n**Size:** M · **Depends on:** M0-01 · **Blocks:** M0-03\n\n"
-        "## [ ] M0-03 — Blocked thing\n**Size:** M · **Depends on:** M0-02\n\n"
-        "## [ ] M0-04T — Graders [TEST]\n**Size:** S · **Depends on:** M0-01 · **Blocks:** M0-04\n\n"
-        "## [ ] M0-04 — Impl [IMPL]\n**Size:** M · **Depends on:** M0-04T (graders merged)\n"
+        "## [x] M10-01 — Done thing\n**Size:** S · **Depends on:** nothing\n\n"
+        "## [ ] M10-02 — Ready thing\n**Size:** M · **Depends on:** M10-01 · **Blocks:** M10-03\n\n"
+        "## [ ] M10-03 — Blocked thing\n**Size:** M · **Depends on:** M10-02\n\n"
+        "## [ ] M10-04T — Graders [TEST]\n**Size:** S · **Depends on:** M10-01 · **Blocks:** M10-04\n\n"
+        "## [ ] M10-04 — Impl [IMPL]\n**Size:** M · **Depends on:** M10-04T (graders merged)\n"
     )
     result = run_hook(
         "session_start.py",
@@ -460,8 +462,10 @@ def test_session_start_reports_frontier(tmp_path: Path) -> None:
         env={"PATH": "/usr/bin:/bin"},
     )
     assert result.returncode == 0, result.stderr
-    assert "ready   M0-02 Ready thing" in result.stdout
-    assert "blocked M0-03 Blocked thing (needs M0-02)" in result.stdout
-    assert "ready   M0-04T Graders [TEST]" in result.stdout
-    assert "blocked M0-04 Impl [IMPL] (needs M0-04T)" in result.stdout
+    assert "[wowlab] branch=" in result.stdout
+    assert "[wowlab] backlog: 1 done, 2 eligible, 2 blocked" in result.stdout
+    assert "ready   M10-02 Ready thing" in result.stdout
+    assert "blocked M10-03 Blocked thing (needs M10-02)" in result.stdout
+    assert "ready   M10-04T Graders [TEST]" in result.stdout
+    assert "blocked M10-04 Impl [IMPL] (needs M10-04T)" in result.stdout
     assert "/conduct" in result.stdout

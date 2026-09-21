@@ -11,7 +11,6 @@ import json
 import os
 import re
 import shlex
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -29,27 +28,24 @@ if _HOME_BIN not in os.environ.get("PATH", "").split(os.pathsep):
 # case-insensitively: the default macOS filesystem is case-insensitive.
 HARNESS_PATHS = (".claude/", "AGENTS.md", "CLAUDE.md", "docs/DECISIONS.md", "docs/BACKLOG.md")
 PROTECTED_ALWAYS = ("LICENSE",)
-MIGRATIONS_DIR = "api/migrations/versions/"
+# code-reviewer probes live in the `tests/review/` directory of a workspace
+# member (today: lab/core/tests/review/).
 REVIEW_DIR_MARKER = "/tests/review/"
 
 # Directory names where destructive deletes are routine and safe (matched as
 # whole path segments of the normalised path), plus temp roots as prefixes.
 SCRATCH_SEGMENTS = frozenset(
     {
-        "node_modules",
         ".venv",
         "__pycache__",
         ".pytest_cache",
         ".ruff_cache",
         ".mypy_cache",
-        ".next",
         "dist",
         "build",
         "coverage",
         "htmlcov",
         "scratchpad",
-        "playwright-report",
-        "test-results",
     }
 )
 SCRATCH_PREFIXES = ("/tmp/", "/private/tmp/", "/var/folders/", "/private/var/folders/")
@@ -177,21 +173,6 @@ def relative_to_checkout(file_path: str, cwd: str) -> tuple[Path | None, str]:
         return None, p.as_posix()  # outside every checkout we know about
 
 
-def is_on_origin_main(root: Path, rel: str) -> bool:
-    """True if `rel` exists on origin/main (i.e. it has been merged)."""
-    try:
-        result = subprocess.run(
-            ["git", "cat-file", "-e", f"origin/main:{rel}"],
-            cwd=str(root),
-            capture_output=True,
-            timeout=10,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return result.returncode == 0
-
-
 def is_scratch_path(target: str, cwd: str) -> bool:
     p = Path(target)
     if not p.is_absolute():
@@ -216,11 +197,6 @@ def classify_edit(
     """Reason an Edit/Write must be denied, or None when it is allowed."""
     if any(_under(rel, p) for p in PROTECTED_ALWAYS):
         return f"{rel} is fixed (Apache-2.0). Changing the license is an owner decision."
-    if _under(rel, MIGRATIONS_DIR) and root is not None and is_on_origin_main(root, rel):
-        return (
-            f"{rel} is already merged. Never edit a merged migration; "
-            "create a new revision (/migration)."
-        )
     if agent_type:
         if agent_type == "code-reviewer":
             if root is None or REVIEW_DIR_MARKER not in "/" + rel:
@@ -240,7 +216,7 @@ def classify_edit(
     return None
 
 
-def shell_write_denial(rel: str, root: Path | None) -> str | None:
+def shell_write_denial(rel: str) -> str | None:
     """Reason a shell-level write/delete/move of `rel` must be denied."""
     if any(_under(rel, p) for p in PROTECTED_ALWAYS):
         return f"{rel} is fixed and may not be rewritten from the shell."
@@ -250,8 +226,6 @@ def shell_write_denial(rel: str, root: Path | None) -> str | None:
                 f"shell write into {prefix} is blocked; use the Edit/Write tools so the "
                 "path guard can see the change (harness edits are conductor-only)."
             )
-    if _under(rel, MIGRATIONS_DIR) and root is not None and is_on_origin_main(root, rel):
-        return f"{rel} is a merged migration; write a new revision instead."
     return None
 
 

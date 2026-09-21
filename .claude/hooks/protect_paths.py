@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """PreToolUse(Edit|Write|MultiEdit|NotebookEdit): path-based write guard.
 
-Everyone:  LICENSE and migrations already on origin/main are read-only.
+Everyone:  LICENSE is read-only.
 Subagents: `.claude/**`, AGENTS.md, CLAUDE.md, docs/DECISIONS.md and
            docs/BACKLOG.md are conductor-only; `code-reviewer` may write only
-           new probe files under `tests/review/`.
+           new probe files under a `tests/review/` directory
+           (lab/core/tests/review/).
 
 Paths are resolved against the project directory (or the worktree under
 `.claude/worktrees/<name>/` that contains them), with symlinks resolved, so

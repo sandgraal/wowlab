@@ -11,8 +11,8 @@ Blocks, with an explanation the agent can act on:
   * `gh pr merge --admin`; `gh api` with a mutating method (`-X PUT`, `-XPUT`,
     `--method=DELETE`) or a GraphQL mutation other than the two review-thread ones
   * recursive+force `rm`, `find -delete`, `git clean -x` outside scratch dirs
-  * shell writes, deletes and moves touching harness files, ADRs, the backlog,
-    LICENSE, or merged migrations: redirects (`>`, `>>`, `>|`), `tee`,
+  * shell writes, deletes and moves touching harness files, ADRs, the backlog
+    or LICENSE: redirects (`>`, `>>`, `>|`), `tee`,
     `sed -i`/`--in-place`, `cp`/`mv`/`install`/`ln`/`rsync` (including directory
     destinations), `dd of=`, `patch`, `rm`, `git rm`, `git checkout`/`git restore`
     pathspecs — through `bash -c`, `eval`, `cd`, `$CLAUDE_PROJECT_DIR`/`$PWD`,
@@ -260,8 +260,8 @@ def _inspect(command: str, cwd: str, depth: int = 0) -> None:
                     EVENT,
                     f"cannot resolve the variable in write target {target!r}; use a literal path.",
                 )
-            root, rel = relative_to_checkout(expanded, cwd)
-            reason = shell_write_denial(rel, root)
+            _root, rel = relative_to_checkout(expanded, cwd)
+            reason = shell_write_denial(rel)
             if reason:
                 deny(EVENT, reason)
         new_cwd = _cd_target(seg, cwd)
