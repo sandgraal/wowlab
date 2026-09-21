@@ -4,12 +4,13 @@ version = "0.1.0"
 description = "Local-only library and CLI over a World of Warcraft install"
 requires-python = ">=3.12"
 license = "Apache-2.0"
-# Later tickets add httpx and psutil when they first need them
-# (docs/LAB_PLAN.md §6). Anything beyond that list needs a line in the PR body.
+# Later tickets add psutil when they first need it (docs/LAB_PLAN.md §6).
+# Anything beyond that list needs a line in the PR body.
 dependencies = [
-  "platformdirs>=4.3",
   "pydantic>=2.11",
   "typer>=0.16",
+  "httpx>=0.28",
+  "platformdirs>=4.3",
 ]
 
 [project.scripts]
