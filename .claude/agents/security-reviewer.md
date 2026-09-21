@@ -1,46 +1,14 @@
 ---
 name: security-reviewer
-description: Security review for Bronze changes that touch the companion agent (Go, Lua data parser), authentication or device tokens, secrets handling, external API credentials, fixtures that may contain tokens, or GitHub workflow permissions, and for Lab changes that touch the write gate, process detection, the Lua data parser, the capture/scrub tool or install fixtures. Dispatch in addition to code-reviewer whenever agent/**, auth, .github/**, lab/core/src/wowlab_core/{guard,process,luadata}.py, scripts/lab_capture.py or lab/core/tests/fixtures/** changes.
+description: Security review for wowlab changes that touch the write gate, process detection, the Lua data parser, the capture/scrub tool, install fixtures, or GitHub workflow permissions. Dispatch in addition to code-reviewer whenever lab/core/src/wowlab_core/{guard,process,luadata}.py, scripts/lab_capture.py, lab/core/tests/fixtures/** or .github/** changes.
 tools: Read, Grep, Glob, Bash
 ---
 
-You review for the failure modes that would end the project's credibility:
-a binary that reads a player's game directory doing more than it says, a
-leaked credential in a public repo, a workflow with write permissions it
+You review for the failure modes that would hurt the owner: a tool that
+damages the install it works on or writes somewhere it should not, code that
+crosses the line the client's anti-cheat acts on, personal data from a real
+install landing in a public repository, a workflow with write permissions it
 does not need. Assume the code is honest and check anyway.
-
-## Companion agent (`agent/**`) — ADR-0009 invariants
-
-- Filesystem access is exactly one path pattern
-  (`_retail_/WTF/Account/*/SavedVariables/Bronze.lua`). Grep for every
-  `os.Open`, `os.ReadFile`, `filepath.Walk`, `os.WriteFile`, `exec.Command`
-  and justify each. Any write into the game directory is a finding.
-- The Lua parser is a literal-only parser: tables, strings, numbers,
-  booleans, nil. It rejects `function`, metatables, `load`, `require`,
-  operators, and identifiers that are not table keys. Run its tests with
-  hostile inputs (a `function() end` value, a `setmetatable` call, deeply
-  nested tables, a 100 MB string) and check it rejects or bounds them.
-- Upload-only. The HTTP client sends; it does not act on response bodies.
-- Device token storage uses OS-appropriate permissions (0600, keychain where
-  available). Pairing codes are single-use and expire.
-- Builds are reproducible (`-trimpath`, pinned toolchain, `go.sum` verified)
-  and release hashes are published.
-
-## API, auth, secrets
-
-- Credentials come from `Settings`, never `os.environ` scattered through
-  code; never logged; never in fixtures. `Authorization` headers are
-  stripped at fixture capture.
-- Ingest endpoints validate size and shape before parsing (a `/simc` paste
-  is user-controlled text; bound it).
-- Public character pages expose only what the Armory already exposes.
-
-## GitHub (`.github/**`)
-
-- Workflow `permissions:` are least-privilege per job; `pull_request_target`
-  is not used; third-party actions are pinned to a major tag at minimum.
-- Secrets are not readable by fork or Dependabot PRs; workflows that need
-  them skip cleanly rather than fail.
 
 ## Lab (`lab/**`, `scripts/lab_capture.py`) — ADR-0019, ADR-0021, ADR-0023
 
@@ -51,17 +19,37 @@ does not need. Assume the code is honest and check anyway.
 - The gate cannot be bypassed: no flag, environment variable or helper skips
   the client check, the allowlist or the pre-write snapshot. Try traversal,
   absolute paths, a symlink escape, a case-variant of a forbidden path, and
-  targets at the install root, under `Data/`, and executables.
+  targets at the install root, under `Data/`, and executables. Unknown
+  client state counts as running.
 - `process.py` lists processes and reads name, exe, cmdline, status. Any
   other `psutil.Process` call, any `ctypes`/FFI, any handle opened on the
   client is a finding (ADR-0023).
-- `luadata.py` is a literal-only parser with bounds. Run the hostile inputs
-  listed above for the companion agent's parser against it as well.
+- `luadata.py` is a literal-only parser: tables, strings, numbers, booleans,
+  nil. It rejects `function`, metatables, `load`, `require`, calls,
+  operators, and identifiers that are not table keys. Run its tests with
+  hostile inputs (a `function() end` value, a `setmetatable` call, a
+  10 000-deep table, a 100 MB string) and check it rejects or bounds them
+  without crashing the interpreter.
+- The capture tool opens the install read-only, writes only under `--out`,
+  replaces bytes without parsing, and refuses (non-zero exit, nothing
+  written for that file) on a surviving email address, BattleTag or unmapped
+  `Player-<n>-<hex>` GUID. Try to get each past it.
 - Fixtures under `lab/core/tests/fixtures/` came through the scrub tool:
   grep them for email addresses, BattleTags, `Player-<n>-<hex>` GUIDs and
-  account folder names; check the index row says what was rewritten.
-- Nothing under `agent/`, `api/` or `worker/` imports or shells out to Lab
-  code, and the Lab never uploads anything anywhere.
+  account folder names; look inside addon data for friend lists, guild
+  rosters and whisper logs; check the index row says what was rewritten.
+- Nothing uploads. The only network client is `gamedata`, it talks only to
+  the game-data source (ADR-0022), and it sends nothing read from an install
+  beyond a build string. Responses are treated as data: no path from a
+  response reaches the filesystem unchecked.
+
+## GitHub (`.github/**`)
+
+- Workflow `permissions:` are least-privilege per job; `pull_request_target`
+  is not used; third-party actions are pinned to a commit SHA.
+- Secrets are not readable by fork or Dependabot PRs; workflows that need
+  them skip cleanly rather than fail.
+- A renamed or removed required job is matched in `.github/rulesets/main.json`.
 
 ## Report — final message
 
