@@ -34,7 +34,7 @@ import uuid
 import zlib
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from datetime import UTC, datetime
-from pathlib import Path, PurePath, PurePosixPath
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from typing import Any, BinaryIO, Literal
 
 import platformdirs
@@ -151,9 +151,17 @@ class Entry(_Frozen):
     @classmethod
     def _path_stays_inside_the_root(cls, value: str) -> str:
         parts = value.split("/")
-        if "\x00" in value or any(part in ("", ".", "..") for part in parts):
+        windows = PureWindowsPath(value)
+        if (
+            "\x00" in value
+            or "\\" in value
+            or any(part in ("", ".", "..") for part in parts)
+            or windows.drive
+            or windows.root
+        ):
             raise ValueError(
-                f"entry path must be relative, without NUL, empty, '.' or '..' parts: {value!r}"
+                "entry path must be relative POSIX-style, without NUL, '\\', "
+                f"a drive or root, or an empty, '.' or '..' part: {value!r}"
             )
         return value
 
@@ -706,7 +714,14 @@ class SnapshotStore:
         return self._load(self._manifest_path(self.resolve_id(snapshot_id)))
 
     def list(self) -> tuple[Manifest, ...]:
-        """Every snapshot, oldest first."""
+        """Every snapshot, oldest first.
+
+        Raises `ManifestIntegrityError` if any file under `manifests/` fails
+        to load — a store with one damaged manifest does not silently drop
+        it from the listing. `verify()` degrades per-object instead; reach
+        for it to find which snapshots are still restorable when this
+        raises.
+        """
         return tuple(self._load(p) for p in self._manifest_files())
 
     def read_object(self, sha256: str) -> bytes:

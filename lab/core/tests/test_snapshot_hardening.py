@@ -313,7 +313,17 @@ def test_a_sound_object_is_reused_without_being_rewritten(
 
 # ── 6. entry paths are held to the root on load ─────────────────────────────
 
-ESCAPING = ["../../escape.txt", "WTF/../../escape.txt", "/etc/passwd", "WTF//x", "./WTF/x", ""]
+ESCAPING = [
+    "../../escape.txt",
+    "WTF/../../escape.txt",
+    "/etc/passwd",
+    "WTF//x",
+    "./WTF/x",
+    "",
+    "..\\..\\escape.txt",
+    "D:evil.txt",
+    "//server/share/x",
+]
 
 
 @pytest.mark.parametrize("path", [*ESCAPING, "WTF/a\x00b"], ids=lambda s: f"constructed-{s!r}")
