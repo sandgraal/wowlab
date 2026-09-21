@@ -46,31 +46,43 @@ gh pr view <n> --json mergeStateStatus,mergeable,reviewDecision,statusCheckRollu
 gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100){nodes{id isResolved isOutdated path line comments(first:20){nodes{author{login} body url}}}}}}}' -f o=sandgraal -f r=wowlab -F n=<n>
 ```
 
+**What you may change.** You run after the independent review, so nothing you
+commit is graded. Yours: PR title and body, thread replies, clean rebases,
+`uv.lock` regeneration, `ruff format` output, and prose in comments and
+docstrings. Not yours, however small and whatever prompted it (a thread, a
+red check, a rebase conflict): any other change under `lab/*/src/` or
+`scripts/`, including a `cli.py` docstring (Typer prints it as help text);
+any change under `lab/*/tests/` or `tests/` — new tests, changed or deleted
+assertions, parametrize lists, skip/xfail markers, `conftest.py`, fixtures;
+anything that changes what a check enforces — `pyproject.toml`, `Makefile`,
+`.github/`, `.pre-commit-config.yaml`, a `# noqa`, `# type: ignore` or
+`# pragma` comment; and anything that reverses a judgment call the
+implementer reported and a reviewer accepted. Those are `NEEDS_IMPLEMENTER:`
+with the thread or run URL. (In #18 a shepherd edit to `snapshot.py` and a
+loosened assertion, made after a CLEAN review, put a defect on main.)
+
 Handle, in order:
 
 - **Failing required check** → `gh run view <id> --log-failed`; reproduce
-  locally with the same `make` target; fix, commit, push. Infra flake
-  (runner died, network) → `gh run rerun <id> --failed` once, then treat as
-  real. `claude-review` is *not* required; a failure there (missing secret,
-  fork) is informational.
+  locally with the same `make` target. If the fix is yours under the rule
+  above (formatting, stale lock, rebase artefact): fix, commit, push.
+  Otherwise `NEEDS_IMPLEMENTER:` with the run URL. Infra flake (runner
+  died, network) → `gh run rerun <id> --failed` once, then treat as real.
+  `claude-review` is *not* required; a failure there (missing secret, fork,
+  exhausted API credit) is informational.
 - **Unresolved review threads** (the Claude review workflow, a human, or
-  Copilot): read each. Mechanical → fix, commit, push. Substantive and
-  answered by the plan/ADRs → fix. Needs the implementer's context → stop
-  and report `NEEDS_IMPLEMENTER:` with thread URLs. **Mechanical never
-  includes behaviour:** a change to anything under `lab/*/src/`, to
-  `scripts/`, or to what a test asserts is `NEEDS_IMPLEMENTER:`, however
-  small, because it lands after the independent review and nobody grades it.
-  So is anything that reverses a judgment call the implementer reported and
-  a reviewer accepted. Docstrings, comments, PR text, rebases and lock
-  regeneration are yours (the snapshot entry-path rule merged in #18 is why
-  this line exists). Wrong or not applicable
+  Copilot): read each. Fix is yours under the rule above → fix, commit,
+  push. Any other change, including one the plan or an ADR plainly calls
+  for → reply that it is routed to the implementer, leave the thread open,
+  report `NEEDS_IMPLEMENTER:` with thread URLs. Wrong or not applicable
   → reply citing the plan section or ADR. Every thread gets a reply
   (`addPullRequestReviewThreadReply`) before `resolveReviewThread`. Never
   resolve silently. **At most two fix rounds**; a third is `BLOCKED:`.
 - **`mergeable: CONFLICTING`** → `git fetch origin && git rebase origin/main`.
   For a `uv.lock` conflict, never hand-merge: take `origin/main`'s copy
-  (`git checkout origin/main -- uv.lock`), then `uv lock` and continue. Run
-  `make ci`.
+  (`git checkout origin/main -- uv.lock`), then `uv lock` and continue. A
+  textual conflict in a file that is not yours under the rule above →
+  `git rebase --abort`, `NEEDS_IMPLEMENTER:`. Run `make ci`.
   `git push --force-with-lease`. Never bare `--force`.
 - **`BLOCKED` with green checks** → almost always an unresolved thread;
   go back to the thread step. A required check that no longer exists or a
@@ -78,7 +90,8 @@ Handle, in order:
 
 ## 3. Merge
 
-Only when `mergeStateStatus == CLEAN`, every **required** check is SUCCESS
+Only when `mergeStateStatus == CLEAN` (or `UNSTABLE` solely because the
+non-required `claude-review` check failed), every **required** check is SUCCESS
 on the head sha, zero unresolved threads, and the conductor's dispatch said
 the reviewer verdicts are clean. Then
 `gh pr merge <n> --squash --delete-branch` (never `--admin`). Confirm:
@@ -89,7 +102,7 @@ edit `docs/BACKLOG.md`; the conductor batches ticks.
 
 ```
 pr: #<n> <url>
-result: MERGED <sha> | BLOCKED: <reason> | NEEDS_IMPLEMENTER: <thread urls>
+result: MERGED <sha> | BLOCKED: <reason> | NEEDS_IMPLEMENTER: <thread or run urls>
 threads: <n> resolved (<n> fixed, <n> answered), <n> open
 checks: all required green @ <sha> | <which failed and why>
 rebases: <n>   lockfile regenerations: <n>
