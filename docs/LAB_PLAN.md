@@ -1,21 +1,22 @@
 # Lab — Plan
 
-**Status:** Wave 1 specified (2026-09-20). Later waves are chosen by the owner
+**Status:** Wave 1 specified (2026-09-20), revised 2026-09-21 when the Lab
+became the whole repository (ADR-0025). Later waves are chosen by the owner
 after each wave ships (ADR-0024); nothing beyond Wave 1 is specified here on
 purpose.
 
-The Lab is a second track in this repository. Bronze (`docs/IMPLEMENTATION_PLAN.md`)
-is a hosted product for many players. The Lab is a local toolchain for one
-player's own machine: it reads a World of Warcraft install directly, explains
-what is in it, snapshots it, and lets the owner change things and change them
-back. Bronze invariants are untouched by anything here (ADR-0019).
+The Lab is the application this repository exists for, not a track beside
+another product. It is a local toolchain for one player's own machine: it
+reads a World of Warcraft install directly, explains what is in it, snapshots
+it, and lets the owner change things and change them back (ADR-0019).
 
-Read this, then `docs/LAB_FORMATS.md` (file grammars), `docs/LAB_FILE_MAP.md`
-(what every path in an install is), and ADR-0019 through ADR-0024.
+Read `AGENTS.md`, then this, then `docs/LAB_FORMATS.md` (file grammars),
+`docs/LAB_FILE_MAP.md` (what every path in an install is), and ADR-0019
+through ADR-0025.
 
 ## 1. Purpose
 
-Three owner goals drive the track:
+Three owner goals drive the work:
 
 1. Know what every file in the install does, and be able to read all of it
    from code.
@@ -35,7 +36,7 @@ The library is flavor-agnostic (ADR-0020). It must work against any modern
 
 | Product | Flavor folder | Why it matters |
 |---|---|---|
-| Retail (Midnight, 12.x) | `_retail_` | The owner's main characters; Bronze's target |
+| Retail (Midnight, 12.x) | `_retail_` | The owner's main characters |
 | World of Warcraft: Forever (beta from 2026-09-17, launch announced for 2026-11-04) | reported as `_classic_beta_` during beta | The owner's new focus; character customization and offline tools |
 
 Reported facts about Forever that the code must **not** depend on until
@@ -48,19 +49,21 @@ from a constant.
 
 ## 3. Trust boundary
 
-- The Lab runs on the owner's machine, as the owner, against the owner's
-  install. It is never distributed to Bronze users as a binary and is never
-  deployed as a service.
-- The Bronze companion agent (`agent/`, ADR-0009) keeps its one-path,
-  read-only, upload-only scope. It does not import, embed or shell out to
-  Lab code. `api/` and `worker/` do not import `wowlab_core`; `wowlab_core`
-  does not import `bronze_api`. A test enforces both directions.
-- The repository is public. Fixtures captured from a real install are
-  scrubbed by a tool before they are committed (§8).
+- **Local-only.** The Lab runs on the owner's machine, as the owner, against
+  the owner's install. It is never distributed as a binary and never deployed
+  as a service (ADR-0019).
+- **Never uploads anything.** Nothing read from an install leaves the
+  machine. The only network traffic is `gamedata` downloading public game
+  tables (§6.6), which sends nothing about the install beyond a build string.
+- **The repository is public, so fixtures are scrubbed.** Anything captured
+  from a real install passes through the scrub tool before it is committed
+  (§8).
 
-## 4. Hard invariants (Lab)
+## 4. Hard invariants
 
-Violating any of these is a bug even if tests pass. They extend `AGENTS.md`.
+These are the hard invariants in `AGENTS.md`, restated here because the
+module specifications below cite them by number. Violating any of these is a
+bug even if tests pass.
 
 **L1 — Reads never write.** Every module except `guard` opens the install
 read-only. No temp files, caches or lock files inside the install. Caches
@@ -83,11 +86,11 @@ unmodified document, `serialize(parse(x)) == x` byte for byte on every real
 fixture.
 
 **L5 — Game data is keyed by build and never overwritten.** A cached table
-for build A is never replaced by build B (same rule as ADR-0007).
+for build A is never replaced by build B (ADR-0022).
 
 **L6 — Nothing is hard-coded about a flavor.** No `_retail_`, no
-`_classic_beta_`, no interface number, no build number in library code.
-Tests may name them; the library discovers them.
+`_classic_beta_`, no product code, no interface number, no build number in
+library code. Tests may name them; the library discovers them (ADR-0020).
 
 **L7 — Out of scope, permanently, in this repository** (ADR-0023): process
 memory reads or writes, DLL/dylib injection, packet capture or modification,
@@ -418,6 +421,7 @@ lab/
     └── tests/
         ├── fixtures/             # real captures + README.md index (provenance)
         ├── parser/               # @pytest.mark.parser — runs under make test-parser
+        ├── review/               # probes committed by code-reviewer, new files only
         └── …
 scripts/lab_capture.py            # M10-02: capture + scrub tool
 ```
@@ -427,9 +431,9 @@ Later waves add siblings of `core/` under `lab/`. Apps depend on
 
 ## 8. Fixtures and scrubbing
 
-`lab/core/tests/fixtures/README.md` is the index, same rules as the SimC
-corpus (provenance, consent, immutability) with one addition: every capture
-passes through `scripts/lab_capture.py`, which
+`lab/core/tests/fixtures/README.md` is the index and states the rules:
+every file has a provenance row, consent is recorded, a committed fixture is
+never edited. Every capture passes through `scripts/lab_capture.py`, which
 
 - replaces account folder names, character names and realm names with
   stable pseudonyms (same input → same pseudonym within a capture set, so
@@ -449,8 +453,11 @@ yet, and a fixture produced by the thing under test proves nothing).
 
 ## 9. Testing
 
-- `make test-parser` grows to include `lab/core/tests/parser`; the existing
-  required CI check covers it, so the branch ruleset does not change.
+- `make test-parser` is the parser suite: `pytest -m parser
+  lab/core/tests/parser`. It is its own required CI check ("Parser fixtures
+  and round-trip") and the gate for any change to `luadata.py` or another
+  format parser. Its day-one test holds the fixture index to the files on
+  disk, so the check is never an empty job.
 - `luadata.py` and `guard.py` follow the `[TEST]` / `[IMPL]` separation: the
   graders land first as `xfail(strict=True)`.
 - `guard` is tested against a synthetic install tree built in `tmp_path`
@@ -461,7 +468,6 @@ yet, and a fixture produced by the thing under test proves nothing).
   long paths, a locked file) is covered with `pytest.mark.skipif` per
   platform and at least one CI run on `windows-latest` for the `lab` suite,
   added in M10-01 as a non-required job.
-- An architecture test asserts the import boundary of §3.
 
 ## 10. Wave 1 tickets
 
@@ -477,8 +483,9 @@ M10-01 scaffold ─┬─ M10-02 capture tool ── M10-03 owner capture ─┬
                  └─ M10-10 snapshot ┴─ M10-11T → M10-11 guard ── M10-14 CLI ── M10-15 wave review (owner)
 ```
 
-M10-03 is the long pole: it needs ten minutes of the owner's time at the
-machine with the game installed. M10-08, M10-09 and M10-10 do not wait on it.
+M10-01 is done: it landed with the repository reset (ADR-0025). M10-03 is the
+long pole: it needs ten minutes of the owner's time at the machine with the
+game installed. M10-08, M10-09 and M10-10 do not wait on it.
 
 ## 11. How waves work (ADR-0024)
 
@@ -501,5 +508,6 @@ machine with the game installed. M10-08, M10-09 and M10-10 do not wait on it.
    the first fixtures come from; the other follows).
 2. Whether the Forever beta client is installed yet; if not, Wave 1 proceeds
    on retail fixtures and Forever fixtures are added when it is.
-3. Whether the Windows CI job in M10-01 is wanted now or deferred.
-4. Accept or reject ADR-0019 through ADR-0024.
+3. Whether the non-required Windows CI job stays (it was added with M10-01)
+   or is dropped until `guard` needs it.
+4. Accept or reject ADR-0019 through ADR-0025.

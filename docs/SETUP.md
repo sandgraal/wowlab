@@ -1,20 +1,23 @@
 # Machine setup
 
-Bronze targets machines without a system package manager. Every tool below
+wowlab targets machines without a system package manager. Every tool below
 installs into the user's home directory from a verified release artifact.
-Contributors on Homebrew or apt can install the same versions their own way.
+On Homebrew, apt or winget, install the same versions your own way.
 
 ## Required
 
 | Tool | Version | Why |
 |---|---|---|
 | uv | 0.12.12 | Python toolchain; provisions Python 3.12 itself |
-| Python 3.12 | via `uv python install 3.12` | API, pipeline, tests |
+| Python 3.12 | via `uv python install 3.12` | the library, the CLI, tests |
 | Python 3.9+ (system) | any | Claude Code hooks run on it |
-| Docker + Compose plugin | 27+ | local Postgres, Redis, SimC worker (M0-03) |
-| Node 24 + pnpm | `.nvmrc` | `web/` (M1-08) |
-| Go | 1.27.1 | `agent/` (M4), pre-commit's gitleaks/actionlint builds |
+| Go | 1.27.1 | only so pre-commit can build its gitleaks and actionlint hooks |
 | gh | 2.x | PR flow, bootstrap script |
+
+A World of Warcraft install is **not** required to develop or to run the
+test suite: tests use committed fixtures and synthetic trees, and none
+touches a real install. It is required to use the tools, and for the
+owner's fixture capture (`docs/handoffs/M10-03.md`).
 
 ## Install without a package manager (macOS arm64 shown)
 
@@ -40,69 +43,46 @@ tar -C ~/.local -xzf "go$V.darwin-arm64.tar.gz"
 ln -sf ~/.local/go/bin/go ~/.local/bin/go && ln -sf ~/.local/go/bin/gofmt ~/.local/bin/gofmt
 ```
 
-Docker Compose plugin (when `docker compose` says "unknown command"): download
-`docker-compose-darwin-aarch64` from https://github.com/docker/compose/releases,
-verify its `.sha256`, and install to `~/.docker/cli-plugins/docker-compose`
-(`chmod +x`). On colima, `colima start` first.
-
 Then:
 
 ```bash
-make setup    # uv sync --frozen, pre-commit install, .env
-make ci
+make setup    # uv sync --frozen, git hooks via core.hooksPath, pre-commit hook envs, .env
+make ci       # lint, tests, parser suite, hook tests on 3.12 and 3.9
+uv run wowlab --version
 ```
 
-## Local stack (`make up`)
+`make setup` never runs `pre-commit install`; see "Worktree hygiene" in
+`docs/AGENT_WORKFLOW.md` for why.
 
-`docker-compose.yml` runs Postgres 16, Redis, the API, and one SimC worker.
-`make up` is `docker compose up -d --build --wait`: it returns when every
-service reports healthy, and `make down` stops this checkout's stack.
+## Pointing the tools at your install
 
-- **Local only, never the deployment file.** Every published port binds
-  `127.0.0.1`, and the Postgres password is `POSTGRES_PASSWORD` (default
-  `bronze`), read by both the Makefile and Compose. Do not paste
-  `docker compose config` output into issues or PRs: it prints `.env`, your
-  credentials included, in clear. `make env`, and `make up` which runs it,
-  print the two URLs with the password masked (`bronze:***@`); the exported
-  `DATABASE_URL` that host tools receive still carries it, so `env | grep` or
-  a `.env` dump is as unsafe to paste as `docker compose config`.
-- **Per checkout, not per machine.** The Makefile derives `COMPOSE_PROJECT_NAME`
-  and a host-port block (`DB_PORT`, `REDIS_PORT`, `API_PORT`) from the checkout
-  path and exports `DATABASE_URL` / `REDIS_URL` to match, so host-side tools
-  (`make migrate`, pytest) and two worktrees' stacks never collide. `make env`
-  prints the values; anything already exported in your *shell* wins. The
-  Makefile never reads `.env`, and `make up` hands its own values to Compose,
-  so a `DB_PORT` or `POSTGRES_PASSWORD` written in `.env` reaches only a bare
-  `docker compose up` (and `.worktreeinclude` would copy it into every
-  worktree). `SIMC_BUILD_JOBS` is the one local-stack variable `.env` can
-  carry, because the Makefile does not set it.
-- **Reach the API:** `curl "http://localhost:$(make -s env | sed -n 's/.*API_PORT=\([0-9]*\).*/\1/p')/health"`
-  (`make env` prints two lines; the `sed` consumes both, so make never sees a
-  closed pipe).
-- **First run compiles SimulationCraft** from the commit pinned in
-  `worker/Dockerfile`. `SIMC_REF` is a pinned commit SHA on SimC's current
-  expansion branch (`midnight`, exported as `SIMC_BRANCH`); SimC has not tagged
-  a release since patch 8.3, so there is no tag to pin. Budget roughly 10–20
-  minutes and about 1.5 GB RAM per compile job — estimates, not measured on
-  this machine; verify them on the first real `make up` and correct this line.
-  Give the VM at least 4 GB (`colima start --memory 4 --cpu 4`) or set
-  `SIMC_BUILD_JOBS=1` in `.env`. Later runs reuse the cached layer until the
-  pin changes or `SIMC_BUILD_JOBS` changes (it is a build ARG in the compile
-  stage, so a new value invalidates the cached SimC layer and recompiles).
-- Bumping `SIMC_REF` changes `sim_jobs.simc_version` and the sim cache key. It
-  is a deliberate change with an ADR amendment, never a side effect.
-- `docker compose down -v` also drops this checkout's Postgres volume.
+Discovery looks in the platform default locations
+(`/Applications/World of Warcraft`, `C:\Program Files (x86)\World of Warcraft`,
+`C:\Program Files\World of Warcraft` and the same under each fixed drive on
+Windows; `docs/LAB_PLAN.md` §6.1). For anything else, including Linux
+installs under Wine, Lutris or Proton, set the install root, the directory
+that holds `.build.info`:
 
-## Credentials (never committed)
+```bash
+export WOWLAB_WOW_ROOT="/path/to/World of Warcraft"
+```
 
-- **Blizzard:** create a client at https://develop.battle.net/access/clients →
-  `BNET_CLIENT_ID` / `BNET_CLIENT_SECRET` in `.env`. Needed for M0-01 and M0-05.
-- **Warcraft Logs:** https://www.warcraftlogs.com/api/clients → `WCL_CLIENT_ID` /
-  `WCL_CLIENT_SECRET`. Needed from M5.
-- **GitHub Actions:** `gh secret set ANTHROPIC_API_KEY --repo sandgraal/wowlab`
-  enables the `@claude` responder and the automated PR review; `gh` prompts
-  for the value, so the key never goes through a chat or a shell history
-  line. Without it both workflows skip with a message.
+`.env.example` documents the variable; an explicit `--root` argument wins
+over it. There are no credentials anywhere in this project: wowlab reads a
+local install and public game tables, and uploads nothing.
+
+Where wowlab keeps its own data (the snapshot store, the game-table cache):
+the platform user data directory, `platformdirs.user_data_path("wowlab")`.
+Never inside the install and never inside the repository.
+
+## GitHub Actions secret (owner)
+
+`gh secret set ANTHROPIC_API_KEY --repo sandgraal/wowlab` enables the
+`@claude` responder and the automated PR review; `gh` prompts for the value,
+so the key never goes through a chat or a shell history line. Without it
+both workflows skip with a message. If the key is not scoped to a workspace,
+also set the `ANTHROPIC_WORKSPACE_ID` repository variable
+(`.github/workflows/claude-review.yml` explains why).
 
 ## Claude Code
 
@@ -112,7 +92,7 @@ gitignored. A `CLAUDE.local.md` template:
 
 ```markdown
 # Local notes (not committed)
-- Container runtime is colima: `colima start` before `make up`.
-- No Homebrew; user binaries in ~/.local/bin (uv, go, docker, gh).
+- No Homebrew; user binaries in ~/.local/bin (uv, go, gh).
+- WoW install: <path>; flavors present: <list>. WOWLAB_WOW_ROOT is exported in ~/.zshrc.
 - This volume has dropped writes before: verify pushes with `git ls-remote`.
 ```

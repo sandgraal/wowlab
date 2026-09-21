@@ -1,85 +1,81 @@
-# Bronze — Constitution
+# wowlab — Constitution
 
 This file wins over every other instruction in the repository. `CLAUDE.md`
-imports it. Read it, then `docs/IMPLEMENTATION_PLAN.md`, before touching
-anything.
+imports it. Read it, then `docs/LAB_PLAN.md`, before touching anything.
 
 ## What this is
 
-A persistent character workbench for World of Warcraft. Users hand us their
-character state; we store it immutably, run SimulationCraft against it, and
-give them planning tools on top. The differentiators are memory (snapshot
-history), free unlimited sims (self-hosted SimC with aggressive caching), and
-joining sim projections against real combat logs. `docs/PRODUCT.md` says who
-it is for and what "good" looks like to a player.
+wowlab (the Lab) is a local toolchain for one player's own machine. It reads
+a World of Warcraft install directly, explains what every file in it is,
+snapshots it, and lets the owner change the client's configurable state and
+change it back. Wave 1 is a Python library and a CLI (`wowlab_core`,
+`wowlab`); character-customization tools, offline character tools and addon
+experiments are built on that base in later, owner-selected waves. It is
+never distributed, never deployed, and never uploads anything (ADR-0019).
 
 ## Hard invariants
 
 Violating any of these is a bug even if tests pass.
 
-**Snapshots are immutable.** There is no `UPDATE` on the `snapshots` table.
-New character state is a new row. History is the product.
+**L1 — Reads never write.** Every module except `guard` opens the install
+read-only. No temp files, caches or lock files inside the install. Caches
+and the snapshot store live under the user data directory
+(`docs/LAB_PLAN.md` §6.9).
 
-**We do not compute item stats.** Upgrade tracks, crafted quality tiers,
-tertiary stats, set bonuses, and scaling curves are SimC's job. If you find
-yourself writing arithmetic on item stats, stop — you are reimplementing a
-solved problem incorrectly. We store and present; SimC computes.
+**L2 — One write gate.** Every byte written into an install goes through
+`wowlab_core.guard` (ADR-0021): client not running, path inside an
+allowlisted subtree, snapshot taken first, operation journaled, atomic
+replace. There is no second code path and no `force` that skips the snapshot.
 
-**Profile generation must be byte-deterministic.** Same snapshot plus same
-options must produce a byte-identical SimC profile every time. No
-timestamps, no unordered dict iteration, no locale-dependent float
-formatting. The sim cache — and therefore the entire cost model — depends on
-this. There is a test for it. Do not weaken the test.
+**L3 — No Lua execution.** SavedVariables and every other Lua-syntax file
+are parsed as data by a constrained literal parser. No interpreter, no
+`load`, no third-party library that evaluates. Functions, metatables, calls,
+operators and bare identifiers as values are rejected with a position.
 
-**Game data is versioned, never overwritten.** `game_items`, `game_spells`,
-`game_talents` are keyed by `game_version`. A snapshot from three patches
-ago must still render. Never write a migration that drops old-version rows.
+**L4 — Lossless.** Parsers keep what they do not understand. `luadata` keeps
+key order, key style, and the original text of every number. The WTF text
+parsers keep every line, including ones they cannot classify. For an
+unmodified document, `serialize(parse(x)) == x` byte for byte on every real
+fixture.
 
-**Preserve raw input unconditionally.** `snapshots.simc_raw` holds the
-original string even when parsing succeeds. If the parser turns out to be
-wrong, we reparse history.
+**L5 — Game data is keyed by build and never overwritten.** A cached table
+for build A is never replaced by build B (ADR-0022).
 
-**Unknown fields are preserved, not dropped.** The SimC string format gains
-sub-attributes on patch releases. Unrecognized keys go into the parsed
-payload verbatim. A parser that silently discards what it does not recognize
-loses user data on patch day.
+**L6 — Nothing is hard-coded about a flavor.** No `_retail_`, no
+`_classic_beta_`, no product code, no interface number, no build number in
+library code. Tests may name them; the library discovers them (ADR-0020).
+
+**L7 — Out of scope, permanently, in this repository** (ADR-0023): process
+memory reads or writes, DLL/dylib injection, packet capture or modification,
+input automation, editing anything under `Data/` or any executable, and
+bypassing the client's integrity checks. A ticket that seems to need one of
+these is mis-specified; stop and report.
+
+**L8 — Real fixtures.** Any parser of an external format is graded against
+real captures with a provenance row (ADR-0012). Constructed inputs are
+allowed only for hostile-input and boundary tests, and are labelled as such.
 
 ## Where truth lives
 
-- `docs/IMPLEMENTATION_PLAN.md` — architecture, data model, milestones. The spec.
+- `docs/LAB_PLAN.md` — purpose, architecture, per-module specs, testing, waves. The spec.
+- `docs/LAB_FORMATS.md` — grammar reference for every client file format we parse.
+- `docs/LAB_FILE_MAP.md` — every path in an install: what it is, who writes it, edit safety.
+- `docs/LAB_IDEAS.md` — the menu for later waves. A menu, not tickets.
 - `docs/DECISIONS.md` — ADRs. Read before proposing an alternative. Status is
   `Proposed` until the repository owner flips it to `Accepted`; no agent does.
 - `docs/BACKLOG.md` — agent-sized tickets with acceptance criteria. Ticket
-  headings carry status (`## [ ] M1-02 — …`). Implementers never edit it.
-- `docs/GLOSSARY.md` — WoW domain terms. Several are counterintuitive.
-- `docs/PRODUCT.md` — personas, the weekly flow, UX principles, quality bar.
+  headings carry status (`## [ ] M10-04 — …`). Implementers never edit it.
+- `docs/GLOSSARY.md` — WoW domain and client-filesystem terms. Several are counterintuitive.
 - `docs/AGENT_WORKFLOW.md` — how work moves: roles, lifecycle, conventions.
-- `docs/DATA_SOURCES.md` — per-API auth, limits, breakage log.
-- `docs/SIMC_FORMAT.md` — parser reference and fixture index rules.
+- `docs/DATA_SOURCES.md` — the local install, wago.tools, format references, breakage log.
 - `docs/SETUP.md` — machine setup. Machine-specific notes go in `CLAUDE.local.md` (gitignored).
-- `docs/LAB_PLAN.md` — the Lab track (local-only tooling over a WoW install), with
-  `docs/LAB_FORMATS.md`, `docs/LAB_FILE_MAP.md`, and `docs/LAB_IDEAS.md` (a menu, not tickets).
-
-## Second track: the Lab
-
-`lab/` is local-only tooling that reads the owner's WoW install directly
-(ADR-0019). It shares this harness and nothing else with Bronze: no imports
-in either direction, and ADR-0009 still governs `agent/` unchanged. Under
-`lab/`, invariants L1–L8 in `docs/LAB_PLAN.md` §4 are hard invariants too:
-reads never write; `wowlab_core/guard.py` is the only code that writes into
-an install (client closed, allowlisted subtree, snapshot first); Lua is
-parsed as data; parsers are lossless; no flavor, product or build constants;
-no memory, injection, packet or input-automation work, ever (ADR-0023).
-`luadata.py` and `guard.py` are load-bearing: `[TEST]` before `[IMPL]`. Lab
-work runs in owner-selected waves (ADR-0024); stop Lab dispatch at a wave
-review and never build from `docs/LAB_IDEAS.md` without a ticket.
 
 ## Operating mode: conductor
 
 The main session **orchestrates; it does not implement** (ADR-0013). Work
-starts with `/conduct next` (or ticket ids, or `milestone M1`). Feature code
-is written by the `implementer` agent and graders by `test-writer`, each in
-its own worktree; `code-reviewer` grades every branch spec-first;
+starts with `/conduct milestone M10` (or `next`, or ticket ids). Feature
+code is written by the `implementer` agent and graders by `test-writer`,
+each in its own worktree; `code-reviewer` grades every branch spec-first;
 `domain-reviewer` and `security-reviewer` are added by area; `pr-shepherd`
 opens the PR, resolves every thread, and **merges autonomously** once the
 required checks are green, threads are resolved, and reviews are clean.
@@ -89,28 +85,36 @@ required checks are green, threads are resolved, and reviews are clean.
   review comments (`SendMessage` to the implementer that has the context).
 - Parallel is the default. Dispatch every independent eligible ticket at
   once; holding one back needs a named file or interface collision.
-- Test-writer / implementer separation is mandatory for the four
-  load-bearing files (`simc_parser.py`, `profile_builder.py`,
-  `talent_codec.py`, `gap_analysis.py`) and for migrations. The session that
-  writes the code never writes, edits, or weakens the tests that grade it.
+- Test-writer / implementer separation is mandatory for the two
+  load-bearing files, `lab/core/src/wowlab_core/luadata.py` and
+  `lab/core/src/wowlab_core/guard.py`: a `[TEST]` ticket lands graders
+  before the `[IMPL]` ticket starts. The session that writes the code never
+  writes, edits, or weakens the tests that grade it.
+- Work runs in owner-selected waves (ADR-0024). One wave is one milestone.
+  When a wave's review ticket is the only one left, the conductor writes
+  `docs/handoffs/M<n>-review.md` and stops dispatch until the owner picks
+  the next wave. Nothing in `docs/LAB_IDEAS.md` is built without a ticket.
 - Subagents never edit `.claude/`, `AGENTS.md`, `CLAUDE.md`,
   `docs/DECISIONS.md`, or `docs/BACKLOG.md`; a hook enforces it. They report
   the need instead.
 
 ## Conventions
 
-Python 3.12, FastAPI, SQLAlchemy 2.0 style, Pydantic v2. uv workspace, ruff
-for lint and format, `mypy --strict` on `api/src/`. Next.js + TypeScript
-strict under `web/` (pnpm). Go for `agent/`. Alembic for every schema change;
-never edit a merged migration.
+Python 3.12, one uv workspace (members under `lab/`), ruff for lint and
+format, `mypy --strict` on `lab/core/src`, pytest, Pydantic v2 models for
+anything that crosses a module boundary, `pathlib` everywhere. There is no
+other language or runtime in this repository; one arrives only through an
+ADR in the wave that needs it (ADR-0020). Runtime dependencies are limited
+to the list in `docs/LAB_PLAN.md` §6; adding one needs a line in the PR body.
 
 Tests use real fixtures, not generated examples. For anything parsing an
-external format, the fixture must be a real capture from the real source,
-with a provenance and consent row. A test that passes against a made-up
-`/simc` string proves nothing.
+external format, the fixture is a real capture that went through
+`scripts/lab_capture.py`, with a provenance row in
+`lab/core/tests/fixtures/README.md`. The repository is public: an unscrubbed
+capture is a leak. No test needs a real install, and none writes to one.
 
-- Branches: `m<milestone>/<nn>-<slug>` — `m1/02-simc-parser`, `m1/02-simc-parser-tests`.
-- Commits: `type(scope): summary (M1-02)`. Squash-merged; small commits are fine.
+- Branches: `m<milestone>/<nn>-<slug>` — `m10/04-luadata-parser`, `m10/04-luadata-parser-tests`.
+- Commits: `type(scope): summary (M10-04)`. Squash-merged; small commits are fine.
 - PRs: draft on first push, ready when reviews are clean, body from the
   template with proof per acceptance criterion and a `session:` footer.
 - `.claude/rules/` carries area-specific rules that load when you open a file
@@ -120,75 +124,72 @@ with a provenance and consent row. A test that passes against a made-up
 
 ```bash
 make setup         # uv sync, pre-commit, .env
-make lint          # ruff check + format --check + mypy (the commit gate)
+make lint          # ruff check + format --check + mypy --strict (the commit gate)
 make test          # pytest, all suites except @live
-make test-parser   # parser fixtures + determinism + round-trip (run on any parser change)
+make test-parser   # parser fixtures + round-trip (run on any parser change)
 make hooks-test    # harness hooks under 3.12 and 3.9
 make ci            # all of the above
-make up / migrate  # local stack (M0-03) / alembic upgrade head (M0-04)
+uv run wowlab --version
 ```
 
-A change to a load-bearing file requires `make test-parser` green before
-review. A ticket is done when CI is green, acceptance criteria have pasted
-proof, new external-format parsing has a real fixture, schema changes ship
-as a migration that downgrades cleanly, and anything contradicting an ADR
+A change to `luadata.py` or any format parser requires `make test-parser`
+green before review; a change to `guard.py` requires the full suite. A
+ticket is done when CI is green, acceptance criteria have pasted proof, new
+external-format parsing has a real fixture with a provenance row, graders
+were activated by marker deletion only, and anything contradicting an ADR
 ships with a superseding ADR rather than a silent deviation.
 
 ## Anti-patterns specific to this codebase
 
-**Do not hit live external APIs from tests or CI.** Rate limits are shared,
-finite, and per-client. Record responses as fixtures and replay them.
+**Do not call a live service from tests or CI.** wago.tools is community-run
+and unmetered on trust. Record responses as fixtures and replay them; a live
+check is `@pytest.mark.live` and run by hand (ADR-0012).
 
-**Do not add a "refresh" that mutates a character row.** Refresh creates a
-snapshot.
+**Do not write into an install outside `guard`.** No helper, no "just this
+once", no flag that skips the client check, the allowlist or the snapshot. A
+tool that believes it needs to bypass the gate is mis-specified.
 
-**Do not build features that require the Blizzard API to be up.** Talent
-loadouts vanished from the Profile API in patch 11.2 and stayed gone. Every
-core feature must work with zero Blizzard availability via `/simc` and the
-companion agent.
+**Do not execute Lua.** Not to parse, not to "check" a file, not through a
+library that evaluates. Reject function definitions and metatables.
 
-**Do not attempt Raidbots sim submission.** Report *reading* is supported.
-Submission would mean hitting undocumented internal endpoints.
+**Do not hard-code a flavor.** Folder names, product codes, interface and
+build numbers come from discovery. The Forever beta's folder will change at
+launch; a constant is a bug with a date on it.
 
-**Do not execute Lua.** The companion agent parses SavedVariables as data
-with a constrained literal parser — no interpreter, no `load()`. Reject
-function definitions and metatables.
+**Do not build from `docs/LAB_IDEAS.md`.** It is a menu. An agent building
+something from it without a ticket is off-task, however small the thing is.
 
-**Do not write confident analysis without evidence.** "Improve your uptime"
-is not shippable. "Ebon Might uptime 84% vs sim 99%, estimated 6.2% of the
-27% gap" is.
+**Do not parse and re-serialize in the scrub tool.** `scripts/lab_capture.py`
+makes byte-level targeted replacements. A fixture produced by the parser
+under test proves nothing about that parser.
 
-**Do not tune iteration counts to make a test pass.** Set `deterministic=1`
-for comparison sims instead. It makes runs reproducible (same seed), it does
-not make them more precise; results still carry ±, and precision comes from
-`target_error`, not from a bigger iteration count picked to pass.
-
-**Do not ship a number without its uncertainty.** Two options within noise
-are a tie, not a ranking (`docs/PRODUCT.md`).
+**Do not special-case a fixture that will not round-trip.** It is a finding
+against the document model; report it.
 
 ## Stop and ask
 
 Escalate rather than deciding unilaterally when:
 
-- A schema change would touch `snapshots` in a way that is not purely additive.
-- An external API returns a shape that does not match recorded fixtures —
-  usually a patch landed; the fix is a data-pipeline decision.
-- The talent string decoder meets an unknown serialization version. Fail
-  loudly; do not guess.
-- A feature seems to require computing item stats ourselves. It almost
-  certainly does not.
-- Anything touches user credentials, the companion agent's filesystem scope,
-  or binary distribution.
-- A Lab ticket seems to need a write outside `guard`, a path outside its
-  allowlist, or anything ADR-0023 rules out.
+- A ticket seems to need a write outside `guard`, or a path outside its allowlist.
+- Anything touches what ADR-0023 excludes, or comes close enough to argue about.
+- A real fixture contradicts `docs/LAB_FORMATS.md` in a way that changes a
+  deliverable (a contradiction that only changes the reference is an
+  amendment: follow the fixture, date the note, say so in the report).
+- A performance target is missed (`docs/LAB_PLAN.md` §6.4, ADR-0020): report
+  the numbers and stop; no C extension or second language without an ADR.
+- A capture or fixture turns out to contain an identifier the scrub tool missed.
 - An ADR needs to move from Proposed to Accepted, or be superseded.
 - Reviewer and implementer still disagree after two fix rounds.
 
 ## Domain warning
 
-Several things in WoW are named misleadingly and will be modeled wrong by
-anyone reasoning from the names. "Item level" is not a level. "Bonus IDs"
-are not bonuses; they are identity. "Loadout" and "spec" are different
-things and neither is a stable property of a character. A "vault" refreshes
-weekly and contains choices, not items. Read `docs/GLOSSARY.md` before
-designing anything that touches these.
+Several things in the client are named misleadingly and will be modelled
+wrong by anyone reasoning from the names. A "flavor folder" is a directory
+name that changes between beta and launch, not an identifier. The "interface
+version" is a compatibility label derived from the patch number, not an API
+level. A "secret value" is not encrypted; it is a number addon code may
+display but not compute with. SavedVariables are written at logout or
+`/reload`, so an offline tool always sees the previous session, and the
+client overwrites external edits made while it runs. Gear and talent terms
+(item level, bonus IDs, spec versus loadout) mislead the same way. Read
+`docs/GLOSSARY.md` before designing anything that touches these.

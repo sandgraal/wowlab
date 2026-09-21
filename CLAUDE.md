@@ -7,13 +7,10 @@ Claude Code in this repository.
 
 ## Entry points
 
-- `/conduct next` — the conductor loop (frontier, dispatch, route, merge).
-  Also `/conduct M1-02 M1-05` or `/conduct milestone M1`.
-- `/start-ticket M1-02`, `/ship` — what agents run at the start and end of a ticket.
-- `/adr new "…"`, `/adr amend 0005 "…"` — decisions, always `Proposed`.
-- `/fixture <file> …` — the only way a `/simc` export enters the corpus.
-- `/migration "…"` — Alembic revision with the up/down/up proof.
-- `/patch-day 12.2.0` — the maintenance runbook when WoW or SimC releases.
+- `/conduct milestone M10` — the conductor loop (frontier, dispatch, route,
+  merge) for the current wave. Also `/conduct next` or `/conduct M10-08 M10-09`.
+- `/start-ticket M10-04`, `/ship` — what agents run at the start and end of a ticket.
+- `/adr new "…"`, `/adr amend 0022 "…"` — decisions, always `Proposed`.
 
 ## Harness
 
@@ -25,13 +22,13 @@ Claude Code in this repository.
   `tests/harness/`): `guard_bash.py` blocks `--no-verify`, bare force-push,
   pushes to main, `--admin`, destructive `rm`, and shell writes into harness
   files; `precommit_gate.py` runs `make lint` before any `git commit`;
-  `protect_paths.py` keeps merged migrations and `LICENSE` read-only and
-  confines subagents away from the harness; `format_python.py` keeps `.py`
-  files ruff-clean; `session_start.py` prints the ticket frontier.
-  Hooks run on the system `python3` (3.9+) and must stay stdlib-only.
+  `protect_paths.py` keeps `LICENSE` read-only, confines subagents away from
+  the harness and confines `code-reviewer` to new files under `tests/review/`;
+  `format_python.py` keeps `.py` files ruff-clean; `session_start.py` prints
+  the ticket frontier. Hooks run on the system `python3` (3.9+) and must stay
+  stdlib-only.
 - Worktrees live under `.claude/worktrees/` (gitignored).
-  `.worktreeinclude` copies `.env` into each; never `.venv`. The Makefile
-  derives a compose project name and port block per worktree (`make env`).
+  `.worktreeinclude` copies `.env` into each; never `.venv`.
 - Personal overrides: `.claude/settings.local.json` (gitignored). Machine
   notes: `CLAUDE.local.md` (gitignored; see `docs/SETUP.md` for a template).
 
@@ -40,3 +37,6 @@ Claude Code in this repository.
 The shell guard inspects redirects, `tee`, `sed -i`, `cp`, `mv`, and
 `install`. Writes from inside `python -c`, a heredoc-fed interpreter, or an
 editor are not inspected. The Edit/Write path is fully guarded; use it.
+
+The guard also blocks `git rm` under `.claude/` for everyone, the conductor
+included. Deleting a harness file is an owner action in a terminal.

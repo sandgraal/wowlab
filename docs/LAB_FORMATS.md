@@ -1,9 +1,8 @@
 # Lab — File format reference
 
-The grammar reference for every client file `wowlab_core` parses. It plays
-the role `docs/SIMC_FORMAT.md` plays for the SimC parser: `test-writer`
-derives graders from this document and from real fixtures, never from an
-implementation.
+The grammar reference for every client file `wowlab_core` parses.
+`test-writer` derives graders from this document and from real fixtures,
+never from an implementation.
 
 **Authority order:** a real fixture beats this document; this document beats
 memory. Where the two disagree, the fixture is right, this file gets a dated

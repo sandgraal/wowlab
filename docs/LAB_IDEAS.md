@@ -43,16 +43,13 @@ repository if the owner ever wants it.
 | **photo-studio** | Poses, animation frames, lighting, transparent export, turntables | A | character-studio | scene tooling | M |
 | **char-export** | Export to glTF, VRM (avatar use) and print-ready STL | A | character-studio | rigging map, mesh repair via Blender | M |
 | **lab-addon** | The Lab's own data-broker addon: writes gear, talents, customization choices, collections, currencies and professions to SavedVariables on logout. The offline tools' feed. Works on any flavor with the modern API | A | luadata | addon, schema, fixtures | S |
-| **alt-dashboard** | Local page over every character's state from lab-addon captures. Overlaps Bronze M4; decide whether it is a Bronze feature fed by the Lab instead | A | lab-addon, luadata | UI | M |
+| **alt-dashboard** | Local page over every character's state from lab-addon captures | A | lab-addon, luadata | UI | M |
 | **digital-twin** | Timeline of a character built from dated snapshots, addon captures and screenshot timestamps | A | snapshot, lab-addon | timeline store + UI | M |
 | **collection-router** | What is left to collect and the cheapest order to get it | A | lab-addon, db2lake | routing | M |
 | **codex** | A printable book of a character: gear, talents, portrait, history | A | lab-addon, photo-studio (optional) | PDF layout | S |
 | **time-capsule** | Scheduled dated archive of full character state | A | snapshot, lab-addon | scheduler | S |
-
-Bronze already owns sims, snapshots of `/simc` state, and build planning for
-retail. Forever character planning (the reworked talent trees via `C_Traits`
-data, Legacy systems) is a candidate Bronze extension rather than a Lab app;
-raise it at a wave review instead of building a second planner.
+| **char-planner** | The owner's original goal: input or capture a character, view consolidated state offline, plan talent and gear builds; for Forever that means the `C_Traits` talent data and its new systems | A | lab-addon, db2lake | planner model + UI | M |
+| **simc-bridge** | Export a character to a SimulationCraft profile and run a locally installed `simc` as a separate process, results stored beside the character. Depends on simc having data for the flavor | A | lab-addon, luadata | profile writer, process runner, result store | M |
 
 ## D. Bridges and live data
 
