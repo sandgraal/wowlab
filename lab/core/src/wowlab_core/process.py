@@ -6,8 +6,16 @@ five things from each one: `pid`, `name()`, `exe()`, `cmdline()` and
 by this code, no signals, no open-file or connection listing, no `ctypes`.
 A test holds the module to exactly that surface.
 
+`cmdline()` is never called on Windows. There psutil implements it by opening
+the target with PROCESS_VM_READ and reading its PEB with ReadProcessMemory,
+which is a process memory read and out of scope whatever it is used for. On
+other platforms it is a kernel query, and it is used only when `exe()` gave
+nothing.
+
 Fail closed: a process about which nothing could be learned is reported as
-`unknown`, and `guard` treats unknown as running (ADR-0021).
+`unknown`, and `guard` treats unknown as running (ADR-0021). `argv[0]` is
+chosen by the process, so it may add a match and may never clear a process.
+An error psutil did not classify makes that one process `unknown`.
 
 Nothing here knows a flavor (L6). Install roots and flavor folder names come
 from the caller, which gets them from discovery (`install`, M10-05).
@@ -15,6 +23,8 @@ from the caller, which gets them from discovery (`install`, M10-05).
 
 from __future__ import annotations
 
+import sys
+import unicodedata
 from collections.abc import Callable, Iterable, Sequence
 from enum import StrEnum
 from pathlib import Path
@@ -108,6 +118,31 @@ def _system_processes() -> Iterable[ProcessLike]:
     return psutil.process_iter()
 
 
+def _cmdline_is_a_listing_call() -> bool:
+    """False on Windows, where `psutil.Process.cmdline()` is not a listing
+    call: it opens the target with PROCESS_VM_READ and reads its PEB with
+    ReadProcessMemory. That is a process memory read (L7, ADR-0023), so it is
+    never made there. Nothing is lost: Windows derives `name()` from `exe()`
+    and `exe()` needs only a limited-query handle."""
+    return sys.platform != "win32"
+
+
+def _fold(text: str) -> str:
+    """Comparison key for names and path parts: case-insensitive, and blind to
+    Unicode normalisation form (APFS and HFS+ hand back NFD where a caller
+    may hold NFC). A false match only ever makes `guard` more cautious."""
+    return unicodedata.normalize("NFC", text).casefold()
+
+
+def _no_bare_string(value: object, parameter: str) -> None:
+    """A `str` is an iterable of characters; `extra_names="Wow.exe"` would
+    make every process called "w" a client."""
+    if isinstance(value, (str, bytes)):
+        raise TypeError(
+            f"{parameter} takes an iterable of values, not a bare {type(value).__name__}"
+        )
+
+
 def _read_name(proc: ProcessLike) -> str | None:
     try:
         return proc.name() or None
@@ -126,6 +161,8 @@ def _read_path(proc: ProcessLike) -> tuple[Path, Literal["exe", "cmdline"]] | No
         exe = ""
     if exe:
         return Path(exe), "exe"
+    if not _cmdline_is_a_listing_call():
+        return None
     try:
         argv = proc.cmdline()
     except psutil.NoSuchProcess as exc:
@@ -154,7 +191,7 @@ def _parts_under(path: Path, root: Path) -> tuple[str, ...] | None:
     if len(path_parts) <= len(root_parts):
         return None
     for ours, theirs in zip(root_parts, path_parts, strict=False):
-        if ours.casefold() != theirs.casefold():
+        if _fold(ours) != _fold(theirs):
             return None
     return path_parts[len(root_parts) :]
 
@@ -171,8 +208,8 @@ def _root_spellings(root: Path) -> tuple[Path, ...]:
 def _could_be_truncated(name: str, names: Sequence[str]) -> bool:
     if len(name) < _TRUNCATED_NAME_MIN:
         return False
-    folded = name.casefold()
-    return any(len(k) > len(name) and k.casefold().startswith(folded) for k in names)
+    folded = _fold(name)
+    return any(len(k) > len(name) and _fold(k).startswith(folded) for k in names)
 
 
 def running_clients(
@@ -187,25 +224,35 @@ def running_clients(
     A process is `RUNNING` when its executable lives under one of
     `install_roots` (`matched_by="path"`) or when its name, or the file name of
     its executable, is one of `KNOWN_CLIENT_NAMES` or `extra_names`
-    (`matched_by="name"`). It is `UNKNOWN` when access was denied to the point
-    that neither a name nor a path could be read, or when only a possibly
-    truncated name that prefixes a client name could be. Anything else is not
-    reported. Exited and zombie processes are skipped.
+    (`matched_by="name"`). It is `UNKNOWN` when neither a name nor an
+    operating-system-reported executable path could be read, when the only
+    name read may be a truncated client name, or when inspecting it failed
+    with an error psutil did not classify. An `argv[0]` path can add a match
+    but never clears a process. Anything else is not reported. Exited and
+    zombie processes are skipped.
 
     `process_iter` replaces `psutil.process_iter` in tests and in `guard`'s
     graders; it returns objects with the `ProcessLike` surface.
     """
-    roots = [(root, _root_spellings(root)) for root in install_roots]
-    flavors = {folder.casefold(): folder for folder in flavor_folders}
+    _no_bare_string(install_roots, "install_roots")
+    _no_bare_string(flavor_folders, "flavor_folders")
+    _no_bare_string(extra_names, "extra_names")
+    roots = [(root, _root_spellings(Path(root))) for root in install_roots]
+    flavors = {_fold(folder): folder for folder in flavor_folders}
     names = (*KNOWN_CLIENT_NAMES, *extra_names)
-    folded_names = {n.casefold() for n in names}
+    folded_names = {_fold(n) for n in names}
 
     found: list[ClientProcess] = []
     for proc in (process_iter or _system_processes)():
+        pid = proc.pid
         try:
-            found_one = _inspect(proc, roots, flavors, names, folded_names)
+            found_one = _inspect(proc, pid, roots, flavors, names, folded_names)
         except _GoneError:
             continue
+        except (OSError, psutil.Error):
+            # Not a denial and not an exit: something psutil did not classify.
+            # Nothing was learned, so the module fails closed on this process.
+            found_one = ClientProcess(pid=pid, state=ClientState.UNKNOWN)
         if found_one is not None:
             found.append(found_one)
     return sorted(found, key=lambda c: c.pid)
@@ -213,43 +260,45 @@ def running_clients(
 
 def _inspect(
     proc: ProcessLike,
+    pid: int,
     roots: Sequence[tuple[Path, tuple[Path, ...]]],
     flavors: dict[str, str],
     names: Sequence[str],
     folded_names: set[str],
 ) -> ClientProcess | None:
-    pid = proc.pid
     name = _read_name(proc)
     located = _read_path(proc)
+    path, source = located if located is not None else (None, None)
 
-    if located is None:
-        if name is not None and name.casefold() in folded_names:
-            return _running(proc, pid=pid, name=name, matched_by="name")
-        if name is None or _could_be_truncated(name, names):
-            return ClientProcess(pid=pid, state=ClientState.UNKNOWN, name=name)
-        return None
-
-    path, source = located
-    for given, spellings in roots:
-        for spelling in spellings:
-            below = _parts_under(path, spelling)
-            if below is None:
-                continue
-            flavor = flavors.get(below[0].casefold()) if len(below) > 1 else None
-            return _running(
-                proc,
-                pid=pid,
-                name=name,
-                matched_by="path",
-                exe=path,
-                exe_source=source,
-                install_root=given,
-                flavor_folder=flavor,
-            )
-    if path.name.casefold() in folded_names or (
-        name is not None and name.casefold() in folded_names
-    ):
+    # Evidence that adds a match: any path, including a self-chosen argv[0].
+    if path is not None:
+        for given, spellings in roots:
+            for spelling in spellings:
+                below = _parts_under(path, spelling)
+                if below is None:
+                    continue
+                flavor = flavors.get(_fold(below[0])) if len(below) > 1 else None
+                return _running(
+                    proc,
+                    pid=pid,
+                    name=name,
+                    matched_by="path",
+                    exe=path,
+                    exe_source=source,
+                    install_root=given,
+                    flavor_folder=flavor,
+                )
+    name_matches = name is not None and _fold(name) in folded_names
+    if name_matches or (path is not None and _fold(path.name) in folded_names):
         return _running(proc, pid=pid, name=name, matched_by="name", exe=path, exe_source=source)
+
+    # Evidence that clears a process: only what the operating system reports.
+    # A path from `exe()` settles it. An argv[0] does not, so a process known
+    # only by argv[0] is judged exactly as if no path had been read at all.
+    if source == "exe":
+        return None
+    if name is None or _could_be_truncated(name, names):
+        return ClientProcess(pid=pid, state=ClientState.UNKNOWN, name=name)
     return None
 
 

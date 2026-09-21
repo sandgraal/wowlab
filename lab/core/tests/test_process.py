@@ -8,6 +8,7 @@ absolute on whatever platform runs the suite.
 from __future__ import annotations
 
 import ast
+import unicodedata
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,8 @@ class FakeProcess:
 
     def _answer(self, attr: str) -> Any:
         value = self._values[attr]
+        if isinstance(value, BaseException):
+            raise value
         if value is DENIED:
             raise psutil.AccessDenied(self._pid)
         if value is GONE:
@@ -261,6 +264,88 @@ def test_truncated_name_is_settled_by_a_readable_executable() -> None:
     assert running_clients(process_iter=table(launcher)) == []
 
 
+@pytest.fixture
+def cmdline_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The argv[0] fallback is switched off on Windows hosts; tests of the
+    fallback's logic run the same everywhere."""
+    monkeypatch.setattr(process, "_cmdline_is_a_listing_call", lambda: True)
+
+
+@pytest.fixture
+def on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(process.sys, "platform", "win32")
+
+
+@pytest.mark.usefixtures("on_windows")
+@pytest.mark.parametrize("exe", [DENIED, ""], ids=["exe-denied", "exe-empty"])
+@pytest.mark.parametrize("name", [DENIED, "", "svchost.exe", "Wow.exe"])
+def test_cmdline_is_never_touched_on_windows(root: Path, name: Any, exe: Any) -> None:
+    """psutil's Windows cmdline() reads the target's PEB with
+    ReadProcessMemory (L7, ADR-0023). The argv[0] here would match by path,
+    so a fallback that still ran would also show up in the result."""
+    argv0 = str(root / "_retail_" / "Wow.exe")
+    proc = FakeProcess(4, name=name, exe=exe, cmdline=[argv0])
+    found = running_clients([root], flavor_folders=FLAVORS, process_iter=table(proc))
+    assert "cmdline" not in proc.touched
+    assert all(c.exe is None and c.matched_by != "path" for c in found)
+    expected = {"Wow.exe": ClientState.RUNNING, "svchost.exe": None}.get(name, ClientState.UNKNOWN)
+    assert [c.state for c in found] == ([expected] if expected else [])
+
+
+def test_platform_switch_is_read_at_call_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(process.sys, "platform", "win32")
+    assert process._cmdline_is_a_listing_call() is False
+    monkeypatch.setattr(process.sys, "platform", "darwin")
+    assert process._cmdline_is_a_listing_call() is True
+    monkeypatch.setattr(process.sys, "platform", "linux")
+    assert process._cmdline_is_a_listing_call() is True
+
+
+# argv[0] is chosen by the process: it may add a match, never clear one.
+
+
+@pytest.mark.usefixtures("cmdline_allowed")
+def test_unrelated_argv0_does_not_clear_a_process_with_name_and_exe_denied(
+    root: Path, tmp_path: Path
+) -> None:
+    argv0 = str(tmp_path / "usr" / "bin" / "innocent")
+    procs = table(FakeProcess(1, name=DENIED, exe=DENIED, cmdline=[argv0]))
+    [found] = running_clients([root], process_iter=procs)
+    assert found == ClientProcess(pid=1, state=ClientState.UNKNOWN)
+    assert client_state([root], process_iter=procs) is ClientState.UNKNOWN
+
+
+@pytest.mark.usefixtures("cmdline_allowed")
+def test_unrelated_argv0_does_not_clear_a_truncated_client_name(root: Path, tmp_path: Path) -> None:
+    argv0 = str(tmp_path / "opt" / "wrapper" / "run")
+    procs = table(FakeProcess(1, name="World of Warcraf", exe=DENIED, cmdline=[argv0]))
+    [found] = running_clients([root], process_iter=procs)
+    assert (found.state, found.name, found.exe) == (ClientState.UNKNOWN, "World of Warcraf", None)
+    assert client_state([root], process_iter=procs) is ClientState.UNKNOWN
+
+
+@pytest.mark.usefixtures("cmdline_allowed")
+def test_unrelated_argv0_with_an_ordinary_readable_name_is_still_not_a_client(
+    root: Path, tmp_path: Path
+) -> None:
+    argv0 = str(tmp_path / "usr" / "sbin" / "daemon")
+    procs = table(FakeProcess(1, name="daemon", exe=DENIED, cmdline=[argv0]))
+    assert running_clients([root], process_iter=procs) == []
+
+
+@pytest.mark.usefixtures("cmdline_allowed")
+def test_argv0_file_name_can_still_add_a_name_match(tmp_path: Path) -> None:
+    argv0 = str(tmp_path / "x" / "WowClassic.exe")
+    procs = table(FakeProcess(1, name=DENIED, exe=DENIED, cmdline=[argv0]))
+    [found] = running_clients(process_iter=procs)
+    assert (found.state, found.matched_by, found.exe_source) == (
+        ClientState.RUNNING,
+        "name",
+        "cmdline",
+    )
+
+
+@pytest.mark.usefixtures("cmdline_allowed")
 def test_cmdline_stands_in_for_a_denied_exe(root: Path) -> None:
     exe = root / "_retail_" / "client"
     procs = table(FakeProcess(4, name="client", exe=DENIED, cmdline=[str(exe), "-flag"]))
@@ -298,6 +383,87 @@ def test_zombie_client_is_not_running(status: str) -> None:
     assert running_clients(process_iter=procs) == []
 
 
+# ─── errors psutil did not classify ──────────────────────────────────────────
+
+
+@pytest.mark.usefixtures("cmdline_allowed")
+@pytest.mark.parametrize("field", ["name", "exe", "cmdline", "status"])
+@pytest.mark.parametrize(
+    "error",
+    [OSError(5, "Input/output error"), PermissionError(13, "raw EACCES"), psutil.Error("odd")],
+    ids=["oserror", "permissionerror", "psutil-error"],
+)
+def test_unclassified_error_makes_that_one_process_unknown(field: str, error: Exception) -> None:
+    values: dict[str, Any] = {"name": "Wow.exe", "exe": "", "cmdline": [], "status": "running"}
+    values[field] = error
+    procs = table(FakeProcess(3, **values), FakeProcess(4, name="WowT.exe"))
+    found = running_clients(process_iter=procs)
+    assert found[0] == ClientProcess(pid=3, state=ClientState.UNKNOWN)
+    assert [(c.pid, c.state) for c in found[1:]] == [(4, ClientState.RUNNING)]
+
+
+def test_unclassified_error_alone_is_unknown_not_not_running() -> None:
+    procs = table(FakeProcess(3, name=OSError("boom")))
+    assert client_state(process_iter=procs) is ClientState.UNKNOWN
+
+
+def test_programming_errors_are_not_swallowed() -> None:
+    procs = table(FakeProcess(3, name=RuntimeError("bug")))
+    with pytest.raises(RuntimeError, match="bug"):
+        running_clients(process_iter=procs)
+
+
+# ─── Unicode normalisation (APFS / HFS+ report NFD) ──────────────────────────
+
+
+@pytest.mark.parametrize(("root_form", "exe_form"), [("NFC", "NFD"), ("NFD", "NFC")])
+def test_path_match_survives_a_different_normalisation_form(
+    tmp_path: Path, root_form: str, exe_form: str
+) -> None:
+    folder = "Jeux Vidéo"
+    assert unicodedata.normalize("NFC", folder) != unicodedata.normalize("NFD", folder)
+    root = tmp_path / unicodedata.normalize(root_form, folder) / "World of Warcraft"
+    exe = (
+        tmp_path / unicodedata.normalize(exe_form, folder) / "World of Warcraft" / "_retail_" / "c"
+    )
+    assert root.parts != exe.parts[: len(root.parts)]
+    procs = table(FakeProcess(2, name="c", exe=exe))
+    [found] = running_clients([root], flavor_folders=FLAVORS, process_iter=procs)
+    assert (found.matched_by, found.flavor_folder) == ("path", "_retail_")
+
+
+def test_flavor_and_name_match_survive_a_different_normalisation_form(root: Path) -> None:
+    nfc, nfd = (unicodedata.normalize(form, "_béta_") for form in ("NFC", "NFD"))
+    procs = table(FakeProcess(2, name=nfd + ".exe", exe=root / nfd / "x"))
+    [found] = running_clients([root], flavor_folders=[nfc], process_iter=procs)
+    assert found.flavor_folder == nfc
+    [found] = running_clients(extra_names=[nfc + ".exe"], process_iter=procs)
+    assert found.matched_by == "name"
+
+
+# ─── a bare string is not a list of names ────────────────────────────────────
+
+
+@pytest.mark.parametrize("parameter", ["flavor_folders", "extra_names"])
+@pytest.mark.parametrize("value", ["Wow-ARM64.exe", b"Wow-ARM64.exe"], ids=["str", "bytes"])
+def test_bare_string_is_rejected(parameter: str, value: Any) -> None:
+    single_letter = table(FakeProcess(1, name="w"))
+    with pytest.raises(TypeError, match=parameter):
+        running_clients(process_iter=single_letter, **{parameter: value})
+    with pytest.raises(TypeError, match=parameter):
+        client_state(process_iter=single_letter, **{parameter: value})
+
+
+def test_bare_string_install_root_is_rejected(root: Path) -> None:
+    with pytest.raises(TypeError, match="install_roots"):
+        running_clients(str(root), process_iter=table())  # type: ignore[arg-type]
+
+
+def test_single_letter_process_is_not_a_client() -> None:
+    procs = table(FakeProcess(1, name="w"))
+    assert running_clients(extra_names=["Wow-ARM64.exe"], process_iter=procs) == []
+
+
 # ─── the summary guard will use ──────────────────────────────────────────────
 
 
@@ -320,6 +486,7 @@ def test_results_are_sorted_by_pid_and_immutable() -> None:
 # ─── ADR-0023: process listing only ──────────────────────────────────────────
 
 
+@pytest.mark.usefixtures("cmdline_allowed")
 def test_module_touches_nothing_on_a_process_beyond_the_allowed_surface(root: Path) -> None:
     """Every branch of the module, driven through fakes that fail on any
     attribute outside pid/name/exe/cmdline/status."""
@@ -396,6 +563,7 @@ def test_source_uses_only_listing_parts_of_psutil_and_no_ffi() -> None:
         "NoSuchProcess",
         "STATUS_ZOMBIE",
         "STATUS_DEAD",
+        "Error",  # caught per process, to fail closed
     }
 
     imported: set[str] = set()
@@ -409,7 +577,9 @@ def test_source_uses_only_listing_parts_of_psutil_and_no_ffi() -> None:
         "collections",
         "enum",
         "pathlib",
+        "sys",  # platform check that keeps cmdline() off Windows
         "typing",
+        "unicodedata",
         "psutil",
         "pydantic",
     }
