@@ -21,9 +21,17 @@ does not need. Assume the code is honest and check anyway.
   absolute paths, a symlink escape, a case-variant of a forbidden path, and
   targets at the install root, under `Data/`, and executables. Unknown
   client state counts as running.
-- `process.py` lists processes and reads name, exe, cmdline, status. Any
-  other `psutil.Process` call, any `ctypes`/FFI, any handle opened on the
-  client is a finding (ADR-0023).
+- `process.py` lists processes and reads name, exe, status, and cmdline on
+  non-Windows platforms only; on Windows `psutil.Process.cmdline()` must
+  never execute, by any route (it is `PROCESS_VM_READ` plus
+  `ReadProcessMemory` on the target). Any other `psutil.Process` call, any
+  `ctypes`/FFI, and any handle the module opens itself or any call that
+  requests more than psutil's own `PROCESS_QUERY_LIMITED_INFORMATION`
+  enumeration handle is a finding (ADR-0023; `docs/LAB_PLAN.md` §6.7
+  amendment of 2026-09-21). `guard` and the CLI use the module's default
+  probe: passing `process_iter` or wrapping psutil objects outside tests is
+  a finding, and so is a guard that does not treat `unknown` or a probe
+  exception as running.
 - `luadata.py` is a literal-only parser: tables, strings, numbers, booleans,
   nil. It rejects `function`, metatables, `load`, `require`, calls,
   operators, and identifiers that are not table keys. Run its tests with

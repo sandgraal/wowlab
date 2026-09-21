@@ -42,7 +42,12 @@ own internal consistency.
   place; the cache key is the full build string.
 - **L6.** `grep` the package for `_retail_`, `_classic`, product codes,
   interface and build numbers outside comments and tests.
-- **L7.** No `psutil.Process` call beyond pid, name, exe, cmdline, status; no
+- **L7.** No `psutil.Process` call beyond pid, name, exe, status, and
+  cmdline on non-Windows platforms only (on Windows psutil implements it as
+  a read of the target's memory; `docs/LAB_PLAN.md` §6.7 amendment of
+  2026-09-21 has the full rule, including the `cmdline` shadow around
+  `exe()`); only `process.py` touches psutil, and production callers use
+  its default probe; no
   `ctypes`/FFI; nothing that reads memory, injects, sniffs or automates
   input; nothing that touches `Data/` or an executable.
 - **L8.** Parsers are graded on real fixtures with index rows; constructed
