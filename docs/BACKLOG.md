@@ -106,6 +106,8 @@ Graders for `wowlab_core.luadata` parsing, derived from `docs/LAB_PLAN.md` §6.4
 
 **Acceptance:** with a fake process table injected: matches by executable path under an install root and by known names; access-denied yields `unknown`; returns pid, exe path and flavor folder when derivable. A test asserts the module calls nothing on `psutil.Process` beyond `pid`, `name`, `exe`, `cmdline`, `status`. Reviewed by `security-reviewer`.
 
+*Amended 2026-09-21: the allowed surface is `pid`, `name`, `exe`, `status`, `cmdline` (non-Windows only, where it is not a read of the target's process memory), plus set and restore of the instance attribute `cmdline` on `psutil.Process` objects around each `exe()` call; "access-denied yields `unknown`" means the narrower rule in the `docs/LAB_PLAN.md` §6.7 amendment of the same date.*
+
 ---
 
 ## [ ] M10-10 — Snapshot store
