@@ -1040,3 +1040,144 @@ def test_constructed_every_unsupported_errno_is_the_hard_link_refusal(
     with pytest.raises(CacheLocationError, match="does not support hard links"):
         h.data.table(TABLE, BUILD)
     assert h.requests == []
+
+
+# ─── PR threads: the Windows publish path, graded on any machine ─────────────
+#
+# `gamedata._WINDOWS` selects the branch (pathlib reads os.name itself, so that
+# cannot be patched). Path.rename is given Windows semantics: it refuses an
+# existing target. The link error is Windows-shaped: CPython's PC/errmap.h maps
+# ERROR_INVALID_FUNCTION, and every code it does not list, to EINVAL.
+
+
+def _as_windows(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    before_link: Callable[[Path], None] | None = None,
+    before_rename: Callable[[Path], None] | None = None,
+    rename_error: OSError | None = None,
+) -> list[Path]:
+    renamed: list[Path] = []
+    real_rename = Path.rename
+
+    def link_unsupported(self: Path, target: Path) -> None:
+        if before_link is not None:
+            before_link(self)
+        raise OSError(errno.EINVAL, "constructed: Incorrect function (ERROR_INVALID_FUNCTION)")
+
+    def windows_rename(self: Path, target: Path) -> Path:
+        target = Path(target)
+        if before_rename is not None:
+            before_rename(target)
+        if rename_error is not None:
+            raise rename_error
+        if target.exists():
+            raise FileExistsError(errno.EEXIST, "constructed: Windows rename refuses", str(target))
+        renamed.append(target)
+        return real_rename(self, target)
+
+    monkeypatch.setattr(gamedata, "_WINDOWS", True)
+    monkeypatch.setattr(Path, "hardlink_to", link_unsupported)
+    monkeypatch.setattr(Path, "rename", windows_rename)
+    return renamed
+
+
+def test_constructed_windows_unsupported_link_and_free_name_publishes_once_by_rename(
+    make: Callable[..., Harness], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    renamed = _as_windows(monkeypatch)
+    h = make()
+    final = h.data.table_path(TABLE, BUILD)
+
+    for _ in range(3):
+        assert h.data.table(TABLE, BUILD).read_bytes() == CSV_BYTES
+    assert len(h.requests) == 1, "published once, then a cache hit; no location is refused here"
+    assert renamed == [final, final.with_name(final.name + ".json")]
+    assert _tree(h.cache) == {f"tables/{BUILD}/{TABLE}.csv", f"tables/{BUILD}/{TABLE}.csv.json"}
+    sidecar = h.data.sidecar(TABLE, BUILD)
+    assert sidecar is not None
+    assert sidecar.sha256 == hashlib.sha256(CSV_BYTES).hexdigest()
+
+
+@pytest.mark.parametrize("window", ["before_link", "before_rename"])
+def test_constructed_windows_unsupported_link_and_taken_name_keeps_the_existing_bytes(
+    make: Callable[..., Harness], monkeypatch: pytest.MonkeyPatch, window: str
+) -> None:
+    winner = b"ID\nwinner\n"
+    h = make()
+    final = h.data.table_path(TABLE, BUILD)
+
+    def land(path: Path) -> None:
+        if path == final and not final.exists():
+            final.write_bytes(winner)
+
+    if window == "before_link":
+        renamed = _as_windows(monkeypatch, before_link=land)
+    else:
+        renamed = _as_windows(monkeypatch, before_rename=land)
+    assert h.data.table(TABLE, BUILD).read_bytes() == winner, "the existing file is returned (L5)"
+    assert renamed == [], "nothing was renamed onto a taken name"
+    assert _tree(h.cache) == {f"tables/{BUILD}/{TABLE}.csv"}, "no temp file, no sidecar for it"
+    assert len(h.requests) == 1
+
+
+def test_constructed_windows_rename_failing_too_is_raised_as_itself(
+    make: Callable[..., Harness], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _as_windows(monkeypatch, rename_error=PermissionError(errno.EACCES, "constructed"))
+    h = make()
+    with pytest.raises(PermissionError) as caught:
+        h.data.table(TABLE, BUILD)
+    assert not isinstance(caught.value, CacheLocationError)
+    assert isinstance(caught.value.__cause__, OSError)
+    assert caught.value.__cause__.errno == errno.EINVAL, "chained to the link failure"
+    assert _tree(h.cache) == set()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the POSIX branch")
+def test_constructed_posix_einval_from_link_is_not_mistaken_for_no_hard_links(
+    make: Callable[..., Harness], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_link = Path.hardlink_to
+    h = make()
+    final = h.data.table_path(TABLE, BUILD)
+
+    def fails_at_publish(self: Path, target: Path) -> None:
+        if self != final:
+            return real_link(self, target)  # the up-front probe succeeds
+        raise OSError(errno.EINVAL, "constructed")
+
+    def never(self: Path, target: Path) -> Path:
+        raise AssertionError("POSIX rename replaces its target; it must not publish a table")
+
+    monkeypatch.setattr(Path, "hardlink_to", fails_at_publish)
+    monkeypatch.setattr(Path, "rename", never)
+    with pytest.raises(OSError) as caught:
+        h.data.table(TABLE, BUILD)
+    assert not isinstance(caught.value, CacheLocationError)
+    assert caught.value.errno == errno.EINVAL
+    assert _tree(h.cache) == set()
+
+
+# ─── PR threads: a naive timestamp in the builds meta file ───────────────────
+
+
+def test_constructed_naive_timestamp_in_the_builds_meta_is_a_miss_not_a_crash(
+    make: Callable[..., Harness],
+) -> None:
+    h = make()
+    h.data.builds()
+    meta_path = h.cache / "builds.json.meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["fetched_at"] = "2026-09-21T13:00:00"  # constructed: hand-edited, no zone
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    assert list(h.data.builds()) == list(json.loads(BUILDS_BYTES))
+    assert len(h.requests) == 2, "one refetch"
+    repaired = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert datetime.fromisoformat(repaired["fetched_at"]).tzinfo is not None
+
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    build = h.data.resolve_build(FakeFlavor("wow_classic_beta", OTHER_BUILD))
+    assert build.version == OTHER_BUILD
+    assert len(h.requests) == 3

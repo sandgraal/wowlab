@@ -21,11 +21,13 @@ leaves a partial file there. Publishing is a hard link, which fails
 atomically when the name is taken. There is deliberately no POSIX fallback:
 without hard links the only portable primitive left is ``rename``, which
 replaces its target, and no lock file protects against a writer that does
-not take the lock. A cache on such a filesystem is refused with
+not take the lock. On POSIX a cache on such a filesystem is refused with
 ``CacheLocationError`` rather than risk L5, and it is refused before any
 request: hard-link support is probed with a throwaway file when the table's
-directory is prepared. On Windows ``rename`` refuses an existing target, so
-it is used when hard links are unavailable.
+directory is prepared. On Windows no location is refused for this: ``rename``
+there raises ``FileExistsError`` instead of replacing, so when the link fails
+for any reason the table is published by rename, or left alone if the name
+was taken meanwhile.
 
 Bodies are bounded: decoded bytes are counted while streaming (gzip is
 inflated here, in bounded steps, not by the HTTP library), a declared
@@ -114,8 +116,12 @@ _DISPOSITION_FILENAME = re.compile(r'(?:^|;)\s*filename="([^"]*)"', re.IGNORECAS
 _INSTALL_MARKER = ".build.info"  # what makes a directory an install (LAB_PLAN §6.1)
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 _ASCII_DIGITS = re.compile(r"[0-9]+")
-# What a filesystem says when it has no hard links. Anything else (EACCES,
-# ENOSPC, EMLINK, ...) is a different problem and is raised as itself.
+# Publishing differs by platform (see _publish_without_overwrite). A module
+# constant rather than os.name at each use, so both branches can be graded on
+# one machine: pathlib itself reads os.name, so tests cannot patch that.
+_WINDOWS = os.name == "nt"
+# POSIX only: what a filesystem says when it has no hard links. Anything else
+# (EACCES, ENOSPC, EMLINK, ...) is a different problem and is raised as itself.
 _NO_HARD_LINKS = frozenset({errno.ENOTSUP, errno.EOPNOTSUPP, errno.EPERM, errno.ENOSYS})
 _CHUNK = 1 << 16
 
@@ -582,9 +588,11 @@ def _no_hard_links_error(directory: Path, cause: OSError) -> CacheLocationError:
 
 def _refuse_no_hard_links(directory: Path) -> None:
     """Link a throwaway file inside ``directory``; refuse the location if the
-    filesystem cannot. Windows is exempt: its ``rename`` refuses an existing
-    target, which is all publishing needs."""
-    if os.name == "nt":
+    filesystem cannot. Windows is exempt on purpose, not by omission: no
+    location is refused there for lacking hard links, because its ``rename``
+    refuses an existing target and ``_publish_without_overwrite`` falls back
+    to it, so there is nothing to find out before the request."""
+    if _WINDOWS:
         return
     probe = directory / f".hardlink-probe.{uuid.uuid4().hex}.part"
     linked = probe.with_name(probe.name + ".link")
@@ -693,6 +701,10 @@ class GameData:
                 return None
             raw = path.read_bytes()
         except (OSError, ValidationError):
+            return None
+        if meta.fetched_at.utcoffset() is None:
+            # A hand-edited or restored meta file with a naive timestamp: its
+            # age cannot be computed against an aware clock. A miss, not a crash.
             return None
         age = self._now() - meta.fetched_at
         if age < timedelta(0) or age >= self._builds_ttl:
@@ -873,11 +885,23 @@ def _publish_without_overwrite(tmp: Path, final: Path) -> bool:
     """Give ``tmp``'s complete content the name ``final`` unless it is taken.
 
     A hard link fails atomically if the name exists (``EEXIST``: the race
-    was lost). If the filesystem has no hard links: Windows ``rename`` also
-    refuses an existing target, so it is used there; POSIX ``rename``
-    replaces its target, so there is nothing safe to fall back to and the
-    location is refused (normally already done by ``_refuse_no_hard_links``
-    before the download). Any other error is raised as what it is.
+    was lost). When the link fails for another reason:
+
+    - **Windows:** ``rename`` never replaces (``os.rename`` raises
+      ``FileExistsError`` when the target exists), so it is a safe second
+      way to publish and is tried after *any* link failure. The errno is
+      deliberately not consulted: CPython maps Windows errors through
+      ``winerror_to_errno`` (``PC/errmap.h``), where ``ERROR_INVALID_FUNCTION``
+      and every unlisted code become ``EINVAL``, so an "unsupported" link on
+      FAT, exFAT or a network share does not arrive as a POSIX-style errno.
+      Which code ``CreateHardLinkW`` returns on each of those is [verify];
+      this branch does not depend on it. If the rename fails too, its error
+      is raised, chained to the link's.
+    - **POSIX:** ``rename`` replaces its target, so there is nothing safe to
+      fall back to. An errno that means "no hard links here" refuses the
+      location (normally already done by ``_refuse_no_hard_links`` before
+      the download); any other error is raised as what it is.
+
     Returns whether this call published the file.
     """
     try:
@@ -885,16 +909,21 @@ def _publish_without_overwrite(tmp: Path, final: Path) -> bool:
     except FileExistsError:
         return False
     except OSError as exc:
+        if _WINDOWS:
+            if final.exists():
+                return False
+            try:
+                tmp.rename(final)
+            except FileExistsError:
+                return False
+            except OSError as rename_error:
+                raise rename_error from exc
+            return True
         if exc.errno not in _NO_HARD_LINKS:
             raise
         if final.exists():
             return False
-        if os.name != "nt":
-            raise _no_hard_links_error(final.parent, exc) from exc
-        try:
-            tmp.rename(final)
-        except FileExistsError:
-            return False
+        raise _no_hard_links_error(final.parent, exc) from exc
     return True
 
 

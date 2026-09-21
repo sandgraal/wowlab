@@ -84,7 +84,15 @@ marked `@pytest.mark.live`.
   hard links (exFAT, FAT, some network mounts) the cache is refused with
   `CacheLocationError` before any request, because `rename` there could
   replace a cached table. Remedy: choose a cache directory on a filesystem
-  with hard links (`GameData(cache_dir=...)`).
+  with hard links (`GameData(cache_dir=...)`). On Windows no location is
+  refused for this: `rename` there fails instead of replacing, so when the
+  hard link fails for any reason the table is published by rename, or the
+  file that got there first is kept. The errno is not consulted on Windows,
+  because CPython maps `ERROR_INVALID_FUNCTION` and every unlisted Windows
+  error to `EINVAL` (`PC/errmap.h`); which error `CreateHardLinkW` returns
+  on FAT, exFAT or a network share is **[verify]** and the code does not
+  depend on it. A builds-listing meta file with a timestamp that has no
+  zone (hand-edited or restored) is a cache miss, not an error.
 - **Terms:** data is Blizzard's, extracted by the community; personal,
   non-commercial use. Do not mirror tables publicly.
 
