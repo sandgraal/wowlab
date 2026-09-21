@@ -4,7 +4,7 @@ Decisions already made. Read before proposing an alternative. If you believe one
 
 Format: Status / Context / Decision / Consequences. Status is `Proposed` until the repository owner flips it to `Accepted`; no agent does.
 
-> **Note (2026-09-21).** This file is append-only, with one exception made on this date and authorised by the repository owner: it was rewritten when the project this repository used to hold was retired and the repository became the Lab (ADR-0025). That project's ADRs were removed, the three harness ADRs that carry over were revised in place and marked with a dated amendment, and ADR-0019 to ADR-0024 were reworded for a Lab-only repository without changing what they decide. The previous text of every ADR is at the git tag `bronze-final`. From here on the file is append-only again.
+> **Note (2026-09-21).** This file is append-only, with one exception made on this date and authorised by the repository owner: it was rewritten when the project this repository used to hold was retired and the repository became the Lab (ADR-0025). That project's ADRs were removed, the three harness ADRs that carry over were revised in place and marked with a dated amendment, and ADR-0019 to ADR-0024 were reworded for a Lab-only repository without changing what they decide. The previous text of every ADR is at the git tag `bronze-final`. From here on the file is append-only again. On the same date the owner accepted ADR-0013, ADR-0014 and ADR-0019 to ADR-0025, and instructed the conductor session, explicitly and for this one occasion, to make the status edits; the rule that no agent flips a status stands.
 
 ## Retired numbers
 
@@ -46,7 +46,7 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 ## ADR-0013 — Agent operating model: conductor, roles, independent review, autonomous merge
 
-**Status:** Proposed (2026-09-09)
+**Status:** Accepted (2026-09-21; proposed 2026-09-09)
 
 **Context:** The repository is built primarily by Claude Code agents. Without structure, a single session writes code, tests, and review, and grades its own work; parallel sessions collide in one checkout; and "done" drifts to "the agent said so". The owner runs a conductor model on another project and wants it here, adapted to this domain and to current Claude Code mechanisms.
 
@@ -60,7 +60,7 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 ## ADR-0014 — Toolchain: uv workspace, ruff, mypy strict, pytest; required CI checks
 
-**Status:** Proposed (2026-09-09)
+**Status:** Accepted (2026-09-21; proposed 2026-09-09)
 
 **Context:** The plan names Python 3.12 and its quality gates but not how the repository is assembled or what CI enforces. Contributor machines may lack a package manager; agents run in parallel worktrees and must not fight over environments.
 
@@ -74,7 +74,7 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 ## ADR-0019 — wowlab is a local-only personal toolchain
 
-**Status:** Proposed (2026-09-20) — owner decision
+**Status:** Accepted (2026-09-21; proposed 2026-09-20) — owner decision
 
 **Context:** The owner wants tooling that reads a WoW install directly, explains every file, snapshots it, and modifies client configuration reversibly, as a base for character-customization and offline-character tools (`docs/LAB_PLAN.md` §1). That is only reasonable to build because it serves one person on their own machine: software that reads and rewrites a game directory is not something to hand to strangers, and a service that received such data would be a liability with no purpose.
 
@@ -86,7 +86,7 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 ## ADR-0020 — The core is a flavor-agnostic Python package in the uv workspace
 
-**Status:** Proposed (2026-09-20)
+**Status:** Accepted (2026-09-21; proposed 2026-09-20)
 
 **Context:** A Rust core with Python and Node bindings was considered for speed and single-binary distribution. The repository's toolchain, review agents, hooks and CI are Python-first (ADR-0014); the Lab has one user and no distribution requirement (ADR-0019); the hot paths in Wave 1 are a literal parser and file hashing. Separately, the Forever beta installs under a flavor folder that is reported as `_classic_beta_` and will probably change at launch, and the owner also plays retail.
 
@@ -98,7 +98,7 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 ## ADR-0021 — Every write into a game install goes through one write gate
 
-**Status:** Proposed (2026-09-20)
+**Status:** Accepted (2026-09-21; proposed 2026-09-20)
 
 **Context:** The owner's requirement is to modify things at will and go back and forth. The client overwrites its configuration files on logout, can hold them open on Windows, and gives no warning when an external edit is lost. Several later tools (declarative config, profile switching, addon scaffolding, inbound SavedVariables for companion features) will all need to write.
 
@@ -110,7 +110,7 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 ## ADR-0022 — Game data comes from wago.tools per-build exports, cached by build, never overwritten
 
-**Status:** Proposed (2026-09-20)
+**Status:** Accepted (2026-09-21; proposed 2026-09-20)
 
 **Context:** The Lab needs arbitrary client tables (customization options, items, maps, quest text) for whatever build is installed, on whichever product. wago.tools publishes every DB2 table for every build of every product as CSV over HTTP and is what the community's existing Forever tooling uses. Reading the same tables from the local install needs CASC access, which ADR-0020 defers. Game data changes with every build, and anything derived from a table is only meaningful against the build it came from.
 
@@ -122,7 +122,7 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 ## ADR-0023 — Scope stops at files the client treats as user-editable
 
-**Status:** Proposed (2026-09-20) — owner decision
+**Status:** Accepted (2026-09-21; proposed 2026-09-20) — owner decision
 
 **Context:** The owner is comfortable connecting tools directly to game files for personal use. Two facts set the limit. This repository is public and Apache-2.0 under the owner's name, so everything in it is a public statement of what the owner builds. And the client's anti-cheat acts on the account, not on the intent: it does not distinguish a curious read of process memory from a cheat, and the cost of being wrong is the account.
 
@@ -134,7 +134,7 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 ## ADR-0024 — Work proceeds in owner-selected waves; ideas are never pre-ticketed
 
-**Status:** Proposed (2026-09-20) — owner decision
+**Status:** Accepted (2026-09-21; proposed 2026-09-20) — owner decision
 
 **Context:** The Lab has a long idea list (`docs/LAB_IDEAS.md`) and one fixed starting point, the core library. The conductor dispatches every eligible ticket in parallel (ADR-0013), so anything written as a ticket gets built. The owner wants to choose each next step after seeing what the last one produced.
 
@@ -146,7 +146,7 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 ## ADR-0025 — Bronze is retired; this repository is the Lab
 
-**Status:** Proposed (2026-09-21) — owner decision
+**Status:** Accepted (2026-09-21) — owner decision
 
 **Context:** This repository began as Bronze, a hosted character workbench for many players: a FastAPI service over Postgres, self-hosted SimulationCraft workers, a Next.js front end and a Go companion agent, specified through milestones M0 to M5. On 2026-09-20 the Lab was added beside it as a local-only second track (ADR-0019 to ADR-0024 as first written). Running both meant one constitution serving two products with opposite trust models: Bronze's credibility rested on a companion agent that read one file and never wrote, while the Lab exists to read everything and write reversibly. Every Lab document had to defer to Bronze invariants that did not apply to it, and the owner's interest had moved to the Lab and to World of Warcraft: Forever.
 

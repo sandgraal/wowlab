@@ -510,4 +510,5 @@ game installed. M10-08, M10-09 and M10-10 do not wait on it.
    on retail fixtures and Forever fixtures are added when it is.
 3. Whether the non-required Windows CI job stays (it was added with M10-01)
    or is dropped until `guard` needs it.
-4. Accept or reject ADR-0019 through ADR-0025.
+4. ~~Accept or reject ADR-0019 through ADR-0025.~~ Answered 2026-09-21: all
+   accepted, together with ADR-0013 and ADR-0014.
