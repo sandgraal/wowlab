@@ -312,6 +312,41 @@ folder if derivable. `psutil` only; no process memory access, no handles
 opened on the client (L7). Access-denied on a process is reported as
 "unknown", and `guard` treats unknown as running.
 
+> **Amendment 2026-09-21 (M10-09 security review; owner ratifies by merging).**
+> Two sentences above cannot be met as written, and one allowed call turned
+> out to cross ADR-0023 on one platform. They now read as follows.
+>
+> - **Handles.** The module opens no handle itself and makes no call that
+>   requests `PROCESS_VM_*`, `PROCESS_QUERY_INFORMATION`,
+>   `PROCESS_DUP_HANDLE` or `PROCESS_CREATE_THREAD` on any process. On
+>   Windows, `psutil.process_iter()` opens a
+>   `PROCESS_QUERY_LIMITED_INFORMATION` handle on every process while
+>   enumerating (the right Task Manager uses); "no handles opened on the
+>   client" is unachievable with `psutil` there and is withdrawn.
+> - **`cmdline` is never called on Windows.** There `Process.cmdline()` opens
+>   the target with `PROCESS_QUERY_INFORMATION | PROCESS_VM_READ` and reads
+>   its PEB with `ReadProcessMemory` (psutil 7.2.2,
+>   `arch/windows/proc_info.c`), which is a process-memory read (L7). On
+>   other platforms it is a kernel listing call (`sysctl`, `/proc`) and stays
+>   a fallback for a denied or empty `exe()`. A path taken from `argv[0]` may
+>   add a match; it never clears a process.
+> - **Unknown.** A process is reported as unknown when neither a name nor an
+>   OS-reported executable path could be read, when its only name may be a
+>   truncated client name, or when inspecting it raised an error `psutil` did
+>   not classify. A process with a readable, non-matching name and a denied
+>   `exe()` is not reported: on the owner's Mac one of ~810 processes always
+>   denies `exe()`, so the literal rule would make `guard` refuse forever.
+>   Consequence: a client with an unlisted executable name *and* a denied
+>   `exe()` reads as not running, so callers pass the install root they are
+>   writing to and the executable names discovery found (`extra_names`).
+> - **Known residual, accepted.** `psutil`'s own `Process.exe()` wrapper calls
+>   `cmdline()` internally when the platform query is denied or returns an
+>   empty string, and the public API cannot switch that off. On Windows the
+>   platform query (`NtQuerySystemInformation(SystemProcessIdInformation)`)
+>   opens no handle and fails only for pid 0 and pid 4, not for a live
+>   user-mode client. Closing it entirely would mean not calling `exe()` on
+>   Windows, losing path matching and flavor derivation there.
+
 ### 6.8 `combatlog` — tokenizer (M10-13)
 
 Per `docs/LAB_FORMATS.md` §8. A streaming tokenizer: timestamp, event name,
