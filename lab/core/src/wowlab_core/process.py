@@ -2,20 +2,40 @@
 
 Scope (L7, ADR-0023): this module lists processes through `psutil` and reads
 five things from each one: `pid`, `name()`, `exe()`, `cmdline()` and
-`status()`. Nothing else. No process memory, no handles opened on the client
-by this code, no signals, no open-file or connection listing, no `ctypes`.
-A test holds the module to exactly that surface.
+`status()`. Nothing else is read or called. No process memory, no handles
+opened on the client by this code, no signals, no open-file or connection
+listing, no `ctypes`. The one thing it sets is a temporary instance attribute
+named `cmdline` (below). Tests hold the module to exactly that surface.
 
-`cmdline()` is never called on Windows. There psutil implements it by opening
-the target with PROCESS_VM_READ and reading its PEB with ReadProcessMemory,
-which is a process memory read and out of scope whatever it is used for. On
-other platforms it is a kernel query, and it is used only when `exe()` gave
-nothing.
+`cmdline()` and Windows. On Windows psutil implements `cmdline()` by opening
+the target with PROCESS_VM_READ and reading its PEB with ReadProcessMemory.
+That is a process memory read and out of scope whatever it is used for, so on
+Windows `psutil.Process.cmdline()` must not execute at all. There are three
+ways it could, and this is what is done about each:
+
+- this module calling it: it does not when `sys.platform == "win32"`;
+- psutil's public `exe()` calling it: `exe()` is not a thin wrapper. When the
+  platform layer denies access or returns "", it calls `self.cmdline()` and
+  returns argv[0] if that is an executable file. So for the length of every
+  `exe()` call, on every platform, `cmdline` is shadowed on the instance with
+  a stub that returns an empty list, and removed again in a `finally`. This
+  uses only public names; no private psutil attribute is read;
+- psutil's public `name()` calling it: it does so only on POSIX (to repair a
+  truncated name). On Windows `name()` is the file name of the platform
+  layer's exe and never reaches `cmdline()`.
+
+On Windows, then, the calls made on a process are `pid`, `name()`, `exe()`
+(platform layer only) and `status()`, plus one assignment and one deletion of
+the instance attribute `cmdline`. On other platforms `cmdline()` is a kernel
+query, and this module calls it itself only when `exe()` gave nothing.
 
 Fail closed: a process about which nothing could be learned is reported as
 `unknown`, and `guard` treats unknown as running (ADR-0021). `argv[0]` is
-chosen by the process, so it may add a match and may never clear a process.
-An error psutil did not classify makes that one process `unknown`.
+chosen by the process, so it may add a match and may never clear a process;
+the shadowing above is also what guarantees that a path labelled
+`exe_source="exe"` came from the operating system and not from psutil's
+argv[0] guess. An error psutil did not classify makes that one process
+`unknown`.
 
 Nothing here knows a flavor (L6). Install roots and flavor folder names come
 from the caller, which gets them from discovery (`install`, M10-05).
@@ -121,10 +141,47 @@ def _system_processes() -> Iterable[ProcessLike]:
 def _cmdline_is_a_listing_call() -> bool:
     """False on Windows, where `psutil.Process.cmdline()` is not a listing
     call: it opens the target with PROCESS_VM_READ and reads its PEB with
-    ReadProcessMemory. That is a process memory read (L7, ADR-0023), so it is
-    never made there. Nothing is lost: Windows derives `name()` from `exe()`
-    and `exe()` needs only a limited-query handle."""
+    ReadProcessMemory. That is a process memory read (L7, ADR-0023), so this
+    module does not call it there. This switch covers the module's own call
+    only; `_os_reported_exe` is what keeps psutil's `exe()` from making the
+    same call behind it. The cost on Windows is the argv[0] fallback, which
+    could only ever add a match."""
     return sys.platform != "win32"
+
+
+_SHADOWED = "cmdline"
+
+
+def _no_argv() -> list[str]:
+    return []
+
+
+def _os_reported_exe(proc: ProcessLike) -> str:
+    """`proc.exe()` restricted to what the platform layer reports.
+
+    `psutil.Process.exe()` falls back to `self.cmdline()` and returns argv[0]
+    when the platform denies access or has no path. That fallback must not run:
+    on Windows it is a process memory read (L7), and everywhere it would hand
+    back a path the process chose for itself under a label that says the
+    operating system reported it. While `exe()` runs, `cmdline` is shadowed on
+    the instance so the fallback sees an empty command line and gives up,
+    re-raising the original AccessDenied or returning "". The shadow is always
+    removed: psutil caches Process objects between `process_iter` calls.
+
+    A `psutil.Process` that refuses the assignment is not asked for its exe at
+    all. Any other injected object that refuses it (a frozen or slotted fake)
+    has no such fallback to guard against and is simply asked.
+    """
+    try:
+        setattr(proc, _SHADOWED, _no_argv)
+    except (AttributeError, TypeError):
+        if isinstance(proc, psutil.Process):
+            return ""
+        return proc.exe()
+    try:
+        return proc.exe()
+    finally:
+        delattr(proc, _SHADOWED)
 
 
 def _fold(text: str) -> str:
@@ -154,7 +211,7 @@ def _read_name(proc: ProcessLike) -> str | None:
 
 def _read_path(proc: ProcessLike) -> tuple[Path, Literal["exe", "cmdline"]] | None:
     try:
-        exe = proc.exe()
+        exe = _os_reported_exe(proc)
     except psutil.NoSuchProcess as exc:
         raise _GoneError from exc
     except psutil.AccessDenied:
