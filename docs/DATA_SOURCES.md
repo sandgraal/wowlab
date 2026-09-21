@@ -31,12 +31,35 @@ marked `@pytest.mark.live`.
 - **Auth:** none.
 - **Limits:** undocumented; community-run. One connection, descriptive
   `User-Agent`, backoff on 429/5xx, cache forever by `(table, build)`.
-- **Endpoints:** a builds listing and a per-table CSV export selected by
-  build. Exact URL shapes and the build query parameter are recorded by
-  M10-08 from real responses; community tooling shows both `build=` and
-  `version=` in use.
-- **Fixtures:** `lab/core/tests/fixtures/wago/` (created by M10-08), small
-  tables only.
+- **Endpoints** (recorded 2026-09-21 by M10-08; three GETs, no credentials):
+  - `GET https://wago.tools/api/builds` → `200 application/json`, about
+    540 KB (gzip on the wire). One object keyed by product code; each value
+    is a list of `{product, version, created_at, build_config,
+    product_config, cdn_config, is_bgdl}`. `version` is the full build
+    string. `created_at` is `YYYY-MM-DD HH:MM:SS` with no zone.
+    `product_config` can be `null`. 13 products, 2271 entries, 1695 distinct
+    versions: one version is listed under several products.
+  - `GET https://wago.tools/db2/<Table>/csv?build=<full build string>` →
+    `200 text/csv; charset=UTF-8`, LF line endings, no BOM, header row, RFC
+    4180 quoting. **The parameter is `build=`.** Proof: the request named a
+    build that was not the newest for its product and the response carried
+    `Content-Disposition: attachment; filename="<Table>.<that build>.csv"`.
+    `gamedata` refuses a response whose `Content-Disposition` names another
+    build, so a silent fall-back to "latest" can never be cached (L5).
+  - The same URL with a build that was never published → `404 text/html`
+    (a generic "Not Found" page that also sets session cookies). There is no
+    fall-back to another build. `gamedata` turns it into `BuildNotPublished`
+    when the builds listing lacks the build and `TableNotPublished` when it
+    has it.
+- **Fixtures:** `lab/core/tests/fixtures/wago/`, small tables only. Response
+  headers are not committed (the 404 sets cookies); what the tests need from
+  them (status, content type, `Content-Disposition`) is in the index rows.
+  The builds listing is stored gzip-compressed because the verbatim body is
+  over the repository's 512 KB file limit; the index row has the SHA-256 of
+  the decompressed body.
+- **Live check:** `uv run pytest -m live lab/core/tests/test_gamedata_live.py`
+  (two requests; by hand only, ADR-0012). It fails if the recorded table's
+  bytes change upstream.
 - **Terms:** data is Blizzard's, extracted by the community; personal,
   non-commercial use. Do not mirror tables publicly.
 
@@ -75,3 +98,4 @@ findings. Library code must not depend on any of it (L6).
 | Date | Source | What changed | Fixture / evidence | Decision |
 |---|---|---|---|---|
 | 2026-09-20 | Forever beta | New product; modern addon API on a level-60 client; flavor folder, product code and interface number known only from reports | — (M10-03 will capture) | Flavor, product and build are discovered at run time (ADR-0020); nothing hard-coded |
+| 2026-09-21 | wago.tools | First recording. The build parameter is `build=`; an unpublished build is a 404 HTML page, not a fall-back. A product's builds are not listed newest-first by date: the `wow_classic_beta` list opens with `5.5.0.x` and has the `1.60.1.x` builds (69876, 69893, 69913) further down. One version string appears under several products | `lab/core/tests/fixtures/wago/` (M10-08) | `gamedata` never reads "latest" from list position; `resolve_build` matches the exact version, preferring the flavor's own product and accepting the same version under another |
