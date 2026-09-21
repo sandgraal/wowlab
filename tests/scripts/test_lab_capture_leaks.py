@@ -57,8 +57,8 @@ def test_constructed_name_is_found_in_either_normal_form(
     )
     assert not result.problems
     assert b"Thr" not in result.data and b"THR" not in result.data
-    # The pseudonym keeps one non-ASCII letter, in the form the file used.
-    assert unicodedata.normalize(content_form, "Labchára").encode() in result.data
+    # The pseudonym is ASCII whatever the name was (byte-level detectors fold ASCII only).
+    assert result.data == b'["Labchara - x"] = 1, -- LABCHARA\n'
 
 
 # ─── 2. a folder that is no longer an installed flavor ───────────────────────
@@ -347,6 +347,30 @@ def test_constructed_selection_note_is_recomputed_on_the_scrubbed_bytes(
         assert b"|c" in (out / row.split("`")[1]).read_bytes()
 
 
+def test_constructed_file_whose_only_non_ascii_bytes_were_a_name_is_not_called_non_ascii(
+    install: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Pseudonyms are ASCII, so a file like this comes out ASCII: it must not carry the note."""
+    alt = install.joinpath(*RETAIL_ACCOUNT, REALM, "Zoë")
+    _write(alt / "AddOns.txt", "Solo: enabled\n")
+    for stale in (alt / "AddOns.txt", alt):
+        os.utime(stale, (1_000_000_000, 1_000_000_000))
+    _write(saved_variables(install) / "OnlyName.lua", '\nOnlyName = {\n\t["Zoë"] = 1,\n}\n')
+    out = tmp_path / "incoming"
+
+    assert capture(install, out, "--flavor", "_retail_", "--sv", "OnlyName.lua") == 0
+
+    stdout = capsys.readouterr().out
+    assert "OnlyName.lua: no longer 'non-ASCII strings' once scrubbed" in stdout
+    rows = [line for line in stdout.splitlines() if line.startswith("| `")]
+    only_name = next(row for row in rows if "OnlyName.lua" in row)
+    assert "non-ASCII" not in only_name
+    assert (out / only_name.split("`")[1]).read_bytes().isascii()
+    # The note went to a file that still has non-ASCII bytes after the scrub, or to none.
+    for row in (row for row in rows if "non-ASCII strings" in row):
+        assert not (out / row.split("`")[1]).read_bytes().isascii(), row
+
+
 # ─── 12 and 13. platform and kind ────────────────────────────────────────────
 
 
@@ -374,7 +398,7 @@ def test_constructed_kind_colliding_with_another_flavor_folder_is_rejected(
 # ─── 14. shape-preserving pseudonyms ─────────────────────────────────────────
 
 
-def test_constructed_pseudonyms_keep_separators_and_one_non_ascii_letter() -> None:
+def test_constructed_pseudonyms_keep_separators_and_are_always_ascii() -> None:
     identity = Identity(
         accounts=["OLDLOGIN"],
         realms=["Area 52", "Azjol-Nerub", "Mal'Ganis", "Pozzo dell'Eternità", "Hyjal"],
@@ -385,16 +409,14 @@ def test_constructed_pseudonyms_keep_separators_and_one_non_ascii_letter() -> No
         "Azjol-Nerub": "Labrealmb-Partb",
         "Hyjal": "Labrealmc",
         "Mal'Ganis": "Labrealmd'Partb",
-        "Pozzo dell'Eternità": "Labréalme Partb'Partc",
+        "Pozzo dell'Eternità": "Labrealme Partb'Partc",
         MAIN: "Labchara",
-        "Zoë": "Labchárb",
+        "Zoë": "Labcharb",
         "OLDLOGIN": "LABACCOUNTA",
     }
+    assert all(pseudonym.isascii() for pseudonym in identity.names.values())
     result = identity.scrub("Zoë-PozzodellEternità zoë ZOË pozzo-delleternita".encode())
-    assert (
-        result.data
-        == "Labchárb-LabréalmePartbPartc labchárb LABCHÁRB labrealme-partbpartc".encode()
-    )
+    assert result.data == b"Labcharb-LabrealmePartbPartc labcharb LABCHARB labrealme-partbpartc"
     assert not result.problems
 
 

@@ -138,11 +138,16 @@ TOC_KEY_RE = re.compile(
     rb"|SavedVariablesPerCharacter|SavedVariablesMachine|Dependencies|RequiredDeps|Dep"
     rb"|OptionalDeps|LoadOnDemand|LoadWith|LoadManagers|DefaultState|IconTexture|IconAtlas"
     rb"|AddonCompartmentFunc|AddonCompartmentFuncOnEnter|AddonCompartmentFuncOnLeave"
-    rb"|Category|Group|AllowLoad|AllowLoadGameType|OnlyBetaAndPTR)"
+    rb"|Category|Group|AllowLoad|AllowLoadGameType|OnlyBetaAndPTR"
+    # [verify] The six below are spelled from reviewer memory, not yet from a
+    # capture or docs/LAB_FORMATS.md §3 (M10-03 confirms).
+    rb"|LoadSavedVariablesFirst|UseSecureEnvironment|AllowAddOnTableAccess|LoadFirst"
+    rb"|OptionalDep|RequiredDep)"
     # The suffix is a closed list too, and case-sensitive: a free suffix would
-    # be a place for a four-letter name to hide.
+    # be a place for a four-letter name to hide. [verify] `-BCC` is the legacy
+    # suffix as recalled by the domain reviewer (`## Interface-BCC:`).
     rb"(?:-(?:enUS|enGB|deDE|esES|esMX|frFR|itIT|koKR|ptBR|ptPT|ruRU|zhCN|zhTW"
-    rb"|Mainline|Classic|Vanilla|TBC|Wrath|Cata|Mists))?)[ \t]*+:"
+    rb"|Mainline|Classic|Vanilla|TBC|BCC|Wrath|Cata|Mists))?)[ \t]*+:"
 )
 # A lower- or upper-cased identity string this long is replaced even inside a
 # longer word; shorter ones only as a whole word.
@@ -312,14 +317,17 @@ def _realm_forms(realm: str) -> list[str]:
     return forms
 
 
-def _shaped(real: str, stem: str, accented: str, index: int) -> str:
-    """A pseudonym that keeps the real name's separators and, if any, one non-ASCII letter.
+def _shaped(real: str, stem: str, index: int) -> str:
+    """A pseudonym that keeps the real name's separators. Always ASCII.
 
     This reveals the run of spaces, hyphens and apostrophes in the real name
-    (so: its word count) and whether it had a non-ASCII letter. Nothing else.
+    (so: its word count). Nothing else. A non-ASCII name gets an ASCII
+    pseudonym on purpose: the detectors work on bytes, where case folding is
+    ASCII-only, so a pseudonym must never need non-ASCII folding to be
+    recognised. The corpus gets its non-ASCII coverage from the "non-ASCII
+    strings" SavedVariables pick, whose note is recomputed after the scrub.
     """
     real = _nfc(real)
-    base = accented if any(ord(c) > 0x7F for c in real) else stem
     upper = real.isupper()
     out: list[str] = []
     words = 0
@@ -327,7 +335,7 @@ def _shaped(real: str, stem: str, accented: str, index: int) -> str:
         if position % 2:
             out.append(run)
         elif run:
-            word = base + _letters(index) if words == 0 else "Part" + _letters(words)
+            word = stem + _letters(index) if words == 0 else "Part" + _letters(words)
             out.append(word.upper() if upper else word)
             words += 1
     return "".join(out)
@@ -362,11 +370,11 @@ class Identity:
         self.counts: Counter[str] = Counter()
 
         for i, realm in enumerate(self._ordered(realms)):
-            self._add_name(realm, _shaped(realm, "Labrealm", "Labréalm", i), "realm")
+            self._add_name(realm, _shaped(realm, "Labrealm", i), "realm")
         for i, character in enumerate(self._ordered(characters)):
-            self._add_name(character, _shaped(character, "Labchar", "Labchár", i), "character")
+            self._add_name(character, _shaped(character, "Labchar", i), "character")
         for i, extra in enumerate(self._ordered(extras)):
-            self._add_name(extra, _shaped(extra, "Labname", "Labnamé", i), "extra name")
+            self._add_name(extra, _shaped(extra, "Labname", i), "extra name")
         for i, account in enumerate(self._ordered(accounts)):
             self._add_account(account, i)
 
@@ -462,7 +470,7 @@ class Identity:
             return
         numbered = re.fullmatch(r"([0-9]+)#([0-9]+)", real)
         if not numbered:
-            self._add_name(real, _shaped(real, "LABACCOUNT", "LABACCÓUNT", index), "account")
+            self._add_name(real, _shaped(real, "LABACCOUNT", index), "account")
             return
         number = str(90000001 + index)
         self.names[real] = f"{number}#{numbered.group(2)}"

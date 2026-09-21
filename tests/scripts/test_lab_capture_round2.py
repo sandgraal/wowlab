@@ -61,6 +61,25 @@ def test_constructed_identity_inside_a_cvar_name_refuses(line: bytes) -> None:
     assert result.problems
 
 
+def test_constructed_directives_recalled_by_the_domain_reviewer_are_vocabulary() -> None:
+    """A character named like the start of a directive must not rewrite the directive."""
+    toc = (
+        b"## LoadSavedVariablesFirst: 1\n"
+        b"## LoadFirst: 1\n"
+        b"## UseSecureEnvironment: 1\n"
+        b"## AllowAddOnTableAccess: 1\n"
+        b"## OptionalDep: Ace3\n"
+        b"## RequiredDep: Ace3\n"
+        b"## Interface-BCC: 20504\n"
+    )
+    identity = Identity(characters=["Load", "Use", "Allow", "Optional", "Required", "Interface"])
+    result = identity.scrub(toc, toc=True)
+    assert result.data == toc and not result.problems
+    # Still scrubbed on the value side, and an unlisted suffix is ordinary text.
+    other = identity.scrub(b"## LoadFirst: Load\n## Interface-Load: 1\n", toc=True)
+    assert other.data == b"## LoadFirst: Labcharc\n## Labcharb-Labcharc: 1\n"
+
+
 def test_constructed_cvar_name_with_stray_punctuation_is_ordinary_text() -> None:
     result = Identity(characters=[MAIN]).scrub(b'SET Thrallmar\'s-pos "1"\n', blank_cvars=True)
     assert result.data == b'SET Labchara\'s-pos "1"\n' and not result.problems

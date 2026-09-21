@@ -56,9 +56,13 @@ the client:
   values.
 - Pseudonyms (`Labchara`, `Labrealma Partb`, `90000001#1`,
   `Player-9999-00000001`) keep the real name's spaces, hyphens and
-  apostrophes, and one non-ASCII letter when the real name had any, so the
-  relation between a realm's folder spelling and its normalised spellings
-  survives. Their length, letters and casing pattern are invented.
+  apostrophes, so the relation between a realm's folder spelling and its
+  normalised spellings survives. Their length, letters and casing pattern
+  are invented, and they are always ASCII: a non-ASCII name becomes an ASCII
+  pseudonym, so an ASCII name in a fixture says nothing about the real one.
+  Non-ASCII coverage comes from the `non-ASCII strings` SavedVariables pick,
+  a note that is only given to a file that still has such bytes after the
+  scrub.
 - `embedded: n` counts replacements that touched a neighbouring letter or
   digit (a character named like the start of a longer word). Read those
   lines before trusting the file's vocabulary. CVar names and TOC directive
