@@ -80,10 +80,10 @@ Handle, in order:
   resolve silently. **At most two fix rounds**; a third is `BLOCKED:`.
 - **`mergeable: CONFLICTING`** → `git fetch origin && git rebase origin/main`.
   For a `uv.lock` conflict, never hand-merge: take `origin/main`'s copy
-  (`git checkout origin/main -- uv.lock`), then `uv lock` and continue. A
-  textual conflict in a file that is not yours under the rule above →
-  `git rebase --abort`, `NEEDS_IMPLEMENTER:`. Run `make ci`.
-  `git push --force-with-lease`. Never bare `--force`.
+  (`git checkout origin/main -- uv.lock`), then `uv lock` and continue. Run
+  `make ci`. `git push --force-with-lease`. Never bare `--force`. A textual
+  conflict in a file that is not yours under the rule above →
+  `git rebase --abort` and `NEEDS_IMPLEMENTER:` instead; nothing is pushed.
 - **`BLOCKED` with green checks** → almost always an unresolved thread;
   go back to the thread step. A required check that no longer exists or a
   rule you cannot satisfy → `BLOCKED:`.
@@ -91,7 +91,8 @@ Handle, in order:
 ## 3. Merge
 
 Only when `mergeStateStatus == CLEAN` (or `UNSTABLE` solely because the
-non-required `claude-review` check failed), every **required** check is SUCCESS
+non-required `review` job of the `Claude review` workflow failed), every
+**required** check is SUCCESS
 on the head sha, zero unresolved threads, and the conductor's dispatch said
 the reviewer verdicts are clean. Then
 `gh pr merge <n> --squash --delete-branch` (never `--admin`). Confirm:
