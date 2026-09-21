@@ -497,6 +497,33 @@ never edited. Every capture passes through `scripts/lab_capture.py`, which
 - records what it rewrote in the provenance row (`identity-rewritten`,
   `cvars-dropped: n`).
 
+> **Amendment 2026-09-21 (M10-02 reviews).** The tool blanks rather than
+> drops: the line is kept as `SET name ""`, so the row says
+> `cvars-blanked: n`, alongside `guids-rewritten: n` and `embedded: n` (the
+> number of replacements that had a word character next to them, for the
+> owner to read). A blanked line is a scrub artefact, not evidence that the
+> client writes empty values. The deny-list grew to eight names
+> (`docs/LAB_FORMATS.md` §5) and stays provisional until the M10-03 capture.
+> Pseudonyms are ASCII and keep the real name's separators (space, hyphen,
+> apostrophe), so the corpus still shows how a realm's folder spelling
+> relates to its spelling inside SavedVariables keys; nothing else about the
+> name survives, and a uniquely shaped realm name is, to that extent,
+> guessable. The corpus therefore holds no non-ASCII folder or character
+> name; M10-06 covers those with a constructed test. CVar names on `SET`
+> lines, and TOC keys on the client's closed directive list
+> (`docs/LAB_FORMATS.md` §3), are never rewritten, because they are the
+> client's vocabulary and M10-03 reads **[verify]** answers from them; a
+> CVar name that contains one of the owner's names refuses the file instead,
+> and any other TOC key is ordinary text. The refusal list is wider than the
+> three cases above: also a `BNetAccount-`, `Guild-` or `ClubFinder-` GUID,
+> another player's name joined to one of the owner's realms, an identity
+> CVar the blanker could not match, any surviving case variant of an
+> identity string, and an install whose identity folders or config files
+> cannot all be read (nothing is captured then). What the tool cannot know
+> (guild names, friends on other realms, real names in free text) it counts
+> and points at; the owner's eye and `--extra-name` are the control
+> (`docs/handoffs/M10-03.md`).
+
 Structure, key order, number text, escapes, line endings and everything else
 stay byte-for-byte. The scrubber works at the byte level with targeted
 replacements; it does not parse and re-serialize (the parser does not exist
