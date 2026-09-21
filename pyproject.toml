@@ -71,7 +71,8 @@ known-first-party = ["wowlab_core"]
 [tool.mypy]
 strict = true
 python_version = "3.12"
-files = ["lab/core/src"]
+# The scrub tool is the repository's privacy boundary; hold it to the library's standard.
+files = ["lab/core/src", "scripts/lab_capture.py"]
 exclude = ["\\.claude/worktrees", "\\.venv"]
 warn_unreachable = true
 pretty = true

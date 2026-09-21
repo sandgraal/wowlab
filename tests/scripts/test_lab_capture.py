@@ -40,6 +40,9 @@ ACCOUNT_NUMBER = "123456789"
 ACCOUNT_NAME = "SECRETACCT"
 REALM = "Area 52"
 REALM_NORMALISED = "Area52"
+# Pseudonyms keep the separators of the real name, so the two spellings stay related.
+PSEUDO_REALM = "Labrealma Partb"
+PSEUDO_REALM_NORMALISED = "LabrealmaPartb"
 MAIN = "Thrallmar"
 ALT = "Zugzug"
 OWN_GUID = "Player-1234-0ABCDEF0"
@@ -198,8 +201,16 @@ def outputs(out: Path) -> dict[str, bytes]:
 def source_of(root: Path, dest: str) -> Path:
     """Map a pseudonymised output path back to the file it came from."""
     parts = dest.split("/")[1:]  # drop the platform folder
-    real = {"90000001#1": ACCOUNT, "Labrealma": REALM, "Labchara": MAIN, "Labcharb": ALT}
+    real = {"90000001#1": ACCOUNT, PSEUDO_REALM: REALM, "Labchara": MAIN, "Labcharb": ALT}
     return root.joinpath(*[real.get(p, p) for p in parts])
+
+
+def without_blanked_lines(original: bytes) -> bytes:
+    """The original minus its identity-CVar lines, whose values are blanked, not renamed."""
+    names = tuple(f"SET {name} ".encode() for name in lab_capture.IDENTITY_CVARS)
+    return b"".join(
+        line for line in original.splitlines(keepends=True) if not line.startswith(names)
+    )
 
 
 # ─── acceptance: stable pseudonyms ───────────────────────────────────────────
@@ -215,15 +226,19 @@ def test_pseudonyms_are_stable_across_files_paths_and_flavors(
     # Both flavors, the account, the realm and the character all landed on the
     # same pseudonyms, in paths...
     for flavor in ("_retail_", "_classic_beta_"):
-        assert f"macos/{flavor}/WTF/Account/90000001#1/Labrealma/Labchara/AddOns.txt" in written
+        assert (
+            f"macos/{flavor}/WTF/Account/90000001#1/{PSEUDO_REALM}/Labchara/AddOns.txt" in written
+        )
     # ...and in contents: wherever the original named a character, the output
     # names that character's one pseudonym and never the other's.
     seen_main = seen_alt = 0
     for dest, data in written.items():
-        original = source_of(install, dest).read_bytes()
+        original = without_blanked_lines(source_of(install, dest).read_bytes())
         assert data.count(b"Labchara") == original.count(MAIN.encode()), dest
         assert data.count(b"Labcharb") == original.count(ALT.encode()), dest
-        assert data.count(b"Labrealma") == original.count(REALM.encode()) + original.count(
+        # The folder spelling and the normalised spelling stay distinct, and related.
+        assert data.count(PSEUDO_REALM.encode()) == original.count(REALM.encode()), dest
+        assert data.count(PSEUDO_REALM_NORMALISED.encode()) == original.count(
             REALM_NORMALISED.encode()
         ), dest
         seen_main += data.count(b"Labchara")
@@ -266,7 +281,8 @@ def _sensitive_spans(original: bytes) -> list[tuple[int, int]]:
 # What may stand where an identity span stood: nothing (a blanked CVar), one or
 # more pseudonyms, or the span itself (a digit run inside a longer number).
 _PSEUDONYM = (
-    rb"(?:(?i:labchar[a-z]+|labrealm[a-z]+)|9000000[0-9](?:#[0-9])?|Player-9999-[0-9A-F]{8}|[ -])*"
+    rb"(?:(?i:labchar[a-z]+|labrealm[a-z]+|part[a-z]+)|9000000[0-9](?:#[0-9])?"
+    rb"|Player-9999-[0-9A-F]{8}|[ -])*"
 )
 
 
@@ -348,7 +364,7 @@ def test_identity_cvars_are_blanked_and_portal_stays(install: Path, tmp_path: Pa
         b'SET accountName ""\r\n'
         b'SET accountList ""\r\n'
         b'SET lastCharacterGuid ""\r\n'
-        b'SET realmName "Labrealma"\r\n'
+        b'SET realmName ""\r\n'
         b'SET gxMaximize "1"\r\n'
     )
 
@@ -491,7 +507,7 @@ def test_capture_set_matches_the_runbook(install: Path, tmp_path: Path) -> None:
     assert capture(install, out, "--flavor", "_retail_", "--log-lines", "10") == 0
     written = outputs(out)
     account = "macos/_retail_/WTF/Account/90000001#1"
-    character = f"{account}/Labrealma/Labchara"
+    character = f"{account}/{PSEUDO_REALM}/Labchara"
     expected = {
         "macos/.build.info",
         "macos/_retail_/.flavor.info",
@@ -514,7 +530,7 @@ def test_capture_set_matches_the_runbook(install: Path, tmp_path: Path) -> None:
     assert log.count(b"\n") == 10 and log.startswith(
         b"9/20/2026 21:14:03.123-4  COMBAT_LOG_VERSION"
     )
-    assert b'Player-9999-00000001,"Labchara-Labrealma-US"' in log
+    assert b'Player-9999-00000001,"Labchara-LabrealmaPartb-US"' in log
 
 
 def test_prints_one_pasteable_provenance_row_per_file(
@@ -533,7 +549,7 @@ def test_prints_one_pasteable_provenance_row_per_file(
         assert row[6] == "owner"
     config = by_file["macos/_classic_beta_/WTF/Config.wtf"]
     assert config[1:5] == ["config-wtf", "_classic_beta_", "1.60.1.60001", "macos"]
-    assert config[7] == "identity-rewritten: 1; cvars-blanked: 3" and "CRLF" in config[8]
+    assert config[7] == "cvars-blanked: 4" and "CRLF" in config[8]
     assert by_file["macos/_retail_/WTF/Config.wtf"][3] == "12.1.5.65432"
     assert by_file["macos/_retail_/.flavor.info"][7] == "none"
     # Without --show-map the terminal output is as clean as the files.
@@ -561,8 +577,16 @@ def test_kind_renames_the_output_folder_but_not_the_flavor_column(
 def test_identity_edge_cases() -> None:
     identity = lab_capture.Identity(realms=["Azjol-Nerub"], characters=["Thrall", MAIN])
     result = identity.scrub(b'"Thrallmar-AzjolNerub" "Thrall-Azjol-Nerub" "thrall" "enthrall"')
-    # Longest name first; normalised realm form; lower-case only as a whole word.
-    assert result.data == b'"Labcharb-Labrealma" "Labchara-Labrealma" "labchara" "enthrall"'
+    # Longest name first; each realm spelling keeps its own shape; a lower-cased
+    # name of five or more characters is replaced even inside a longer word.
+    assert result.data == (
+        b'"Labcharb-LabrealmaPartb" "Labchara-Labrealma-Partb" "labchara" "enlabchara"'
+    )
+    assert not result.problems
+    assert [e.embedded for e in result.edits] == [False] * 5 + [True]
+    # A short name's other casings are only ever whole words.
+    short = lab_capture.Identity(characters=["Bo"]).scrub(b'"Bo" "bo" "BO" "bob" "Bob"')
+    assert short.data == b'"Labchara" "labchara" "LABCHARA" "bob" "Labcharab"'
 
     with pytest.raises(lab_capture.CaptureError):
         lab_capture.Identity(characters=["True"])
@@ -584,6 +608,17 @@ def test_script_is_standard_library_only_and_names_no_flavor() -> None:
     # Every open is read-only; the single write and the single mkdir are the
     # ones under --out.
     assert re.findall(r"\bopen\(([^)]*)\)", source) == ['"rb"']
-    for forbidden in ("write_text", "unlink", "rmtree", "rename", "replace(", "touch(", "shutil"):
-        assert forbidden not in source.replace('cell.replace("|"', ""), forbidden
+    assert not imported & {"os", "shutil", "tempfile", "subprocess", "socket", "urllib", "http"}
+    for forbidden in (
+        "write_text",
+        "unlink",
+        "rmtree",
+        "rmdir",
+        ".rename(",
+        "touch(",
+        "symlink_to",
+    ):
+        assert forbidden not in source, forbidden
+    # str.replace / bytes.replace take two arguments; Path.replace takes one.
+    assert not re.findall(r"\.replace\(\s*[^,()]+\)", source)
     assert source.count(".write_bytes(") == 1 and source.count(".mkdir(") == 1
