@@ -410,6 +410,34 @@ def test_combat_log_with_another_player_is_refused(install: Path, tmp_path: Path
     assert not [d for d in outputs(out) if "WoWCombatLog" in d]
 
 
+def test_identity_in_a_file_name_is_refused_and_not_printed(
+    install: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    saved = install / "_retail_" / "WTF" / "Account" / ACCOUNT / "SavedVariables"
+    _write(saved / f"{EMAIL}.lua", "\nFine = true\n")
+    out = tmp_path / "incoming"
+    assert capture(install, out, "--flavor", "_retail_", "--sv", f"{EMAIL}.lua") == 1
+    assert not [d for d in outputs(out) if "example" in d]
+    text = capsys.readouterr()
+    assert EMAIL not in text.out + text.err
+    assert "REFUSED  macos/_retail_/<path withheld>: in path: email address" in text.out
+
+
+def test_a_file_with_very_many_identity_hits_scrubs_in_linear_time() -> None:
+    identity = lab_capture.Identity(characters=[MAIN], guids=[OWN_GUID.encode()])
+    line = f'\t["{MAIN}"] = "{OWN_GUID}", -- {MAIN.lower()}\n'.encode()
+    result = identity.scrub(line * 40_000)
+    assert not result.problems
+    assert len(result.edits) == 120_000
+    assert (
+        result.data
+        == line.replace(MAIN.encode(), b"Labchara")
+        .replace(MAIN.lower().encode(), b"labchara")
+        .replace(OWN_GUID.encode(), b"Player-9999-00000001")
+        * 40_000
+    )
+
+
 def test_unblanked_identity_cvar_in_an_unexpected_shape_is_refused() -> None:
     identity = lab_capture.Identity(accounts=[ACCOUNT])
     result = identity.scrub(b"SET accountName unquoted-value\n", blank_cvars=True)

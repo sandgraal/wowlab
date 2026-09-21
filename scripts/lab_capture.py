@@ -31,6 +31,7 @@ product codes and versions are discovered from `.flavor.info` and
 from __future__ import annotations
 
 import argparse
+import bisect
 import re
 import sys
 from collections.abc import Iterable, Iterator, Sequence
@@ -251,21 +252,33 @@ class Identity:
 
     def scrub(self, data: bytes, *, blank_cvars: bool = False) -> ScrubResult:
         """Return `data` with identity replaced, plus every edit and any reason to refuse."""
+        # Three passes over the ORIGINAL bytes, highest priority first. Matches
+        # within a pass never overlap each other; a match that overlaps an
+        # edit from an earlier pass is dropped (those bytes are already going).
         edits: list[Edit] = []
+        owned: list[tuple[int, int]] = []  # spans of earlier passes, sorted
 
         def claim(start: int, end: int, new: bytes, reason: str) -> None:
             if start == end or data[start:end] == new:
                 return
-            if any(start < e.end and e.offset < end for e in edits):
-                return  # an earlier, higher-priority edit owns these bytes
+            at = bisect.bisect_right(owned, (start, sys.maxsize))
+            if at and owned[at - 1][1] > start:
+                return
+            if at < len(owned) and owned[at][0] < end:
+                return
             edits.append(Edit(start, data[start:end], new, reason))
+
+        def close_pass() -> None:
+            owned[:] = sorted((e.offset, e.end) for e in edits)
 
         if blank_cvars:
             for m in self._cvar_value.finditer(data):
                 claim(m.start(1), m.end(1), b"", "cvar")
+            close_pass()
         for m in GUID_RE.finditer(data):
             if m.group(0) in self.guids:
                 claim(m.start(), m.end(), self.guids[m.group(0)], "guid")
+        close_pass()
         if self._identity is not None:
             for m in self._identity.finditer(data):
                 claim(m.start(), m.end(), self._tokens[m.group(0)].replacement, "identity")
@@ -562,7 +575,7 @@ class Planner:
         item.max_lines = max_lines
         outcome = process(item, self.identity)
         if outcome.problems:
-            self.skipped.append(f"{outcome.dest}: {'; '.join(outcome.problems)}")
+            self.skipped.append(f"{outcome.label}: {'; '.join(outcome.problems)}")
         return not outcome.problems
 
     def first_clean(self, candidates: Iterable[Path], taken: set[Path]) -> Path | None:
@@ -636,8 +649,8 @@ class Planner:
             for path in matches:
                 self.add(flavor, path, "requested with --sv")
 
-        stats = [s for s in (sv_stats(p) for p in lua) if s.size > 0]
         cap = self.args.max_sv_bytes
+        stats = [sv_stats(p) for p in lua if 0 < p.stat().st_size <= cap]
         taken: set[Path] = set()
         categories: list[tuple[str, list[SvStats]]] = [
             ("smallest file", sorted(stats, key=lambda s: s.size)),
@@ -736,6 +749,13 @@ class Outcome:
     result: ScrubResult
     problems: list[str]
     path_rewritten: bool = False
+
+    @property
+    def label(self) -> PurePosixPath:
+        """The path as it may be printed: withheld if the path itself is the problem."""
+        if any(p.startswith(("in path", "unsafe path")) for p in self.problems):
+            return PurePosixPath(self.dest.parts[0], "<path withheld>")
+        return self.dest
 
 
 def process(item: Item, identity: Identity, kinds: dict[str, str] | None = None) -> Outcome:
@@ -945,7 +965,7 @@ def run(args: argparse.Namespace) -> int:
     refused = 0
     for item in planner.items.values():
         outcome = process(item, identity, kinds)
-        shown = PurePosixPath(platform) / outcome.dest
+        shown = PurePosixPath(platform) / outcome.label
         if outcome.problems:
             refused += 1
             print(f"REFUSED  {shown}: {'; '.join(outcome.problems)}")
