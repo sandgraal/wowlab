@@ -1,6 +1,6 @@
 name: Agent-sized ticket
-description: A unit of work one agent can complete and one reviewer can verify. Mirrors the docs/BACKLOG.md format.
-title: "M?-??: <title>"
+description: A unit of work one agent can complete and one reviewer can verify. Mirrors the docs/BACKLOG.md format. The backlog holds one owner-selected wave at a time (ADR-0024), so a proposal is considered at the next wave review.
+title: "M??-??: <title>"
 labels: ["ticket"]
 body:
   - type: input
@@ -15,21 +15,21 @@ body:
     id: depends
     attributes:
       label: Depends on
-      placeholder: M0-04, M1-02 (or "nothing")
+      placeholder: M10-05, M10-10 (or "nothing")
     validations:
       required: true
   - type: textarea
     id: scope
     attributes:
       label: Scope
-      description: What to build, citing docs/IMPLEMENTATION_PLAN.md sections and ADRs. Name the files expected to change.
+      description: What to build, citing docs/LAB_PLAN.md sections (or the docs/LAB_IDEAS.md row) and ADRs. Name the files expected to change.
     validations:
       required: true
   - type: textarea
     id: acceptance
     attributes:
       label: Acceptance
-      description: Verifiable criteria. Each one must map to a command whose output proves it.
+      description: Verifiable criteria. Each one must map to a command whose output proves it. No criterion may need a real game install.
     validations:
       required: true
   - type: checkboxes
@@ -37,6 +37,8 @@ body:
     attributes:
       label: Flags
       options:
-        - label: Touches a load-bearing file or a migration (test-writer goes first)
-        - label: Needs the repository owner (credentials, real fixtures, an ADR acceptance)
-        - label: Player-facing (domain-reviewer required)
+        - label: Touches a load-bearing file, luadata.py or guard.py (test-writer goes first)
+        - label: Needs the repository owner (a capture from the real install, a wave pick, an ADR acceptance)
+        - label: Writes into an install (must go through guard; security-reviewer required)
+        - label: Parses a client format, or changes the file map or CLI wording (domain-reviewer required)
+        - label: Stays inside the ADR-0023 scope boundary

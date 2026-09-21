@@ -15,10 +15,11 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
+      # Real captures are stored byte for byte; only their index is normalised.
       - id: trailing-whitespace
-        exclude: '\.simc$|\.md$'
+        exclude: '^lab/core/tests/fixtures/|\.md$'
       - id: end-of-file-fixer
-        exclude: '\.simc$'
+        exclude: '^lab/core/tests/fixtures/(?!README\.md$)'
       - id: check-yaml
       - id: check-json
       - id: check-toml

@@ -1,7 +1,11 @@
 name: Bug report
-description: Something parsed, simmed, or rendered wrong.
+description: Something was discovered, parsed, explained, snapshotted or restored wrong.
 labels: ["bug"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not attach or paste raw files from your `WTF/` folder.** They carry your account name and your characters' names. Describe the shape of the problem, or reduce it to a few lines with names replaced. If you found personal data in a committed fixture, do not open an issue: follow SECURITY.md.
   - type: textarea
     id: what
     attributes:
@@ -9,17 +13,23 @@ body:
     validations:
       required: true
   - type: input
+    id: command
+    attributes:
+      label: Command
+      placeholder: wowlab sv dump <file> --json
+  - type: input
     id: version
     attributes:
-      label: Game version / patch
-      placeholder: 12.1.0
-  - type: textarea
-    id: simc
-    attributes:
-      label: /simc export (optional)
-      description: Paste the export if the problem involves your character. It contains your character's public gear and talents, nothing private. You may replace the name and realm.
-      render: text
+      label: Client version and flavor folder
+      description: From `wowlab doctor`, or the version line of `.build.info`.
+      placeholder: 12.1.5.65432, _retail_
   - type: input
-    id: url
+    id: platform
     attributes:
-      label: Page URL (optional)
+      label: Platform
+      placeholder: macOS 15 / Windows 11 / Linux + Wine
+  - type: textarea
+    id: excerpt
+    attributes:
+      label: Minimal excerpt (optional, names replaced)
+      render: text

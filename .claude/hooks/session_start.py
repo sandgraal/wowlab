@@ -4,7 +4,7 @@
 Output (stdout) is added to the session context, so it is kept short:
 branch and working-tree state, then the eligible ticket frontier from
 docs/BACKLOG.md. A ticket counts as done when its heading is ticked
-(`## [x] M1-02 — …`) or a merged PR title carries `(M1-02)` (best effort via
+(`## [x] M10-04 — …`) or a merged PR title carries `(M10-04)` (best effort via
 `gh`, skipped when offline).
 """
 
@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import checkout_root, read_hook_input
 
 # Ticket ids: M<milestone>-<nn>, with an optional T suffix for the grader
-# ([TEST]) twin of an implementation ticket, e.g. M1-02T precedes M1-02.
+# ([TEST]) twin of an implementation ticket, e.g. M10-04T precedes M10-04.
 HEADING = re.compile(r"^## \[( |x)\] (M\d+-\d+T?) — (.+?)\s*$")
 DEPENDS = re.compile(r"\*\*Depends on:\*\*\s*(.*?)(?:·|$)")
 TICKET = re.compile(r"M\d+-\d+T?")
@@ -95,18 +95,18 @@ def main() -> None:
     branch = _run(["git", "branch", "--show-current"], root) or "(detached)"
     status = _run(["git", "status", "--short"], root)
     dirty = len(status.splitlines())
-    print(f"[bronze] branch={branch} dirty_files={dirty}")
+    print(f"[wowlab] branch={branch} dirty_files={dirty}")
     backlog = root / "docs" / "BACKLOG.md"
     if backlog.exists():
         eligible, blocked, done = frontier(
             backlog.read_text(encoding="utf-8"), merged_ticket_ids(root)
         )
-        print(f"[bronze] backlog: {done} done, {len(eligible)} eligible, {len(blocked)} blocked")
+        print(f"[wowlab] backlog: {done} done, {len(eligible)} eligible, {len(blocked)} blocked")
         for line in eligible[:8]:
             print(f"  ready   {line}")
         for line in blocked[:4]:
             print(f"  blocked {line}")
-    print("[bronze] conductor entry point: /conduct next  (docs/AGENT_WORKFLOW.md)")
+    print("[wowlab] conductor entry point: /conduct next  (docs/AGENT_WORKFLOW.md)")
 
 
 if __name__ == "__main__":

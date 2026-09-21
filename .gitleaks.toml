@@ -1,18 +1,9 @@
-# Extends the default gitleaks ruleset. Keep allowlists narrow and explained.
-# Every file is scanned, fixtures included: a real /simc export must never
-# contain a credential, and gitleaks is what proves it. Only the two shapes
-# of game data that look like secrets are exempted, per line, not per file.
-title = "bronze"
+# Extends the default gitleaks ruleset. Every file is scanned, fixtures
+# included: a capture from a real install must never carry a credential, and
+# gitleaks is what proves it. There is no allowlist. If scrubbed fixture
+# output trips a rule for a benign reason, add a narrow per-line regex here
+# with the reason beside it (ticket M10-02), never a per-file exemption.
+title = "wowlab"
 
 [extend]
 useDefault = true
-
-[allowlist]
-description = "Values that look like secrets but are game data"
-regexTarget = "line"
-regexes = [
-  # Blizzard talent loadout strings are dense base64-like blobs, e.g. talents=CkEBb...
-  '''^#?\s*talents=[A-Za-z0-9+/=_-]{20,}\s*$''',
-  # SimC addon checksum lines
-  '''^#\s*checksum=[a-f0-9]{8,}\s*$''',
-]

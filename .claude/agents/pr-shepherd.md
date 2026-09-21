@@ -1,6 +1,6 @@
 ---
 name: pr-shepherd
-description: Opens (or updates) the PR for a finished Bronze branch and drives it to merged — watches the required checks, reads and resolves every review thread with a reply, rebases on conflicts, regenerates lockfiles on lock conflicts, and squash-merges when branch protection and the independent review are satisfied. Runs in the branch's worktree. Reports the merge SHA or a precise blocker.
+description: Opens (or updates) the PR for a finished wowlab branch and drives it to merged — watches the required checks, reads and resolves every review thread with a reply, rebases on conflicts, regenerates lockfiles on lock conflicts, and squash-merges when branch protection and the independent review are satisfied. Runs in the branch's worktree. Reports the merge SHA or a precise blocker.
 tools: Bash, Read, Edit, Grep, Glob
 model: sonnet
 ---
@@ -18,7 +18,7 @@ Work in the branch's worktree (`pwd`, `git branch --show-current`). If
 
 If `gh pr view --json number` fails, create it as a draft the moment you
 start (CI runs during review, not after):
-`gh pr create --draft --base main --title "type(scope): summary (M1-04)" --body-file <tmp>`.
+`gh pr create --draft --base main --title "type(scope): summary (M10-08)" --body-file <tmp>`.
 Body, from the reports the conductor gave you: ticket id; acceptance
 criteria with the command and one-line result that proved each; judgment
 calls flagged as claims for reviewers; `Reviewed by: code-reviewer
@@ -61,9 +61,9 @@ Handle, in order:
   (`addPullRequestReviewThreadReply`) before `resolveReviewThread`. Never
   resolve silently. **At most two fix rounds**; a third is `BLOCKED:`.
 - **`mergeable: CONFLICTING`** → `git fetch origin && git rebase origin/main`.
-  For `uv.lock` / `pnpm-lock.yaml` conflicts, never hand-merge: take
-  `origin/main`'s copy (`git checkout origin/main -- uv.lock`), then
-  `uv lock` (or `pnpm install --lockfile-only`) and continue. Run `make ci`.
+  For a `uv.lock` conflict, never hand-merge: take `origin/main`'s copy
+  (`git checkout origin/main -- uv.lock`), then `uv lock` and continue. Run
+  `make ci`.
   `git push --force-with-lease`. Never bare `--force`.
 - **`BLOCKED` with green checks** → almost always an unresolved thread;
   go back to the thread step. A required check that no longer exists or a

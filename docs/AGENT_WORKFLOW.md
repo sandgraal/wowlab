@@ -8,19 +8,20 @@ project can copy the setup — see the last section.
 
 | Role | Lives in | Writes | Reads first |
 |---|---|---|---|
-| **Owner** (human) | — | ADR status, credentials, real fixtures, product calls | everything |
-| **Conductor** (main Claude session) | `/conduct` skill | harness, docs, backlog ticks, handoffs | backlog frontier |
-| **implementer** | `.claude/agents/implementer.md` | one ticket, own worktree | ticket, plan sections, rules |
-| **test-writer** | `.claude/agents/test-writer.md` | graders before the implementation exists | plan, format reference, fixtures |
-| **code-reviewer** | `.claude/agents/code-reviewer.md` | probe tests under `tests/review/` only | invariants, then diff |
-| **domain-reviewer** | `.claude/agents/domain-reviewer.md` | nothing | glossary, PRODUCT.md, then diff |
-| **security-reviewer** | `.claude/agents/security-reviewer.md` | nothing | ADR-0009, workflows, then diff |
+| **Owner** (human) | — | ADR status, wave picks, real fixtures from the install | everything |
+| **Conductor** (main Claude session) | `/conduct` skill | harness, docs, backlog ticks, handoffs, wave reviews | backlog frontier |
+| **implementer** | `.claude/agents/implementer.md` | one ticket, own worktree | ticket, `docs/LAB_PLAN.md` sections it cites, rules |
+| **test-writer** | `.claude/agents/test-writer.md` | graders before the implementation exists | `docs/LAB_PLAN.md`, `docs/LAB_FORMATS.md`, fixtures |
+| **code-reviewer** | `.claude/agents/code-reviewer.md` | probe tests under `lab/core/tests/review/` only | invariants L1–L8, then diff |
+| **domain-reviewer** | `.claude/agents/domain-reviewer.md` | nothing | glossary, file map, format reference, then diff |
+| **security-reviewer** | `.claude/agents/security-reviewer.md` | nothing | ADR-0021, ADR-0023, workflows, then diff |
 | **pr-shepherd** | `.claude/agents/pr-shepherd.md` | fixes for review threads, rebases | PR state, checks, threads |
 | **Automated review** | `.github/workflows/claude-review.yml` | PR comments | `AGENTS.md`, diff |
 
-Every writer is graded by someone who did not write the thing. For the four
-load-bearing files and migrations that separation is enforced at the ticket
-level: a `[TEST]` ticket lands graders on `main` as
+Every writer is graded by someone who did not write the thing. For the two
+load-bearing files, `lab/core/src/wowlab_core/luadata.py` and
+`lab/core/src/wowlab_core/guard.py`, that separation is enforced at the
+ticket level: a `[TEST]` ticket lands graders on `main` as
 `pytest.mark.xfail(strict=True)` before the `[IMPL]` ticket starts.
 
 ## Ticket lifecycle
@@ -51,10 +52,16 @@ docs/BACKLOG.md  ──frontier──▶  conductor dispatches (parallel, worktr
 names in parentheses, and whose `Depends on` list is entirely done. The
 SessionStart hook prints it; `/conduct` recomputes it after every merge.
 
+**Waves** (ADR-0024). The backlog holds one wave, which is one milestone.
+When the wave's review ticket is the only one left, the conductor writes
+`docs/handoffs/M<n>-review.md` and stops dispatching. The owner picks the
+next wave from `docs/LAB_IDEAS.md`; the conductor lands the plan section,
+ADRs and tickets in one docs PR; dispatch resumes when it merges.
+
 ## Conventions
 
 - **Branch:** `m<milestone>/<nn>-<slug>`; graders: `…-tests`.
-- **Commit:** `type(scope): summary (M1-02)` — `feat`, `fix`, `test`, `docs`, `chore`, `ci`, `refactor`.
+- **Commit:** `type(scope): summary (M10-04)` — `feat`, `fix`, `test`, `docs`, `chore`, `ci`, `refactor`.
 - **PR title:** same as the squash commit. The ticket id in parentheses is
   how the frontier knows the ticket is done, so it is not optional.
 - **PR body:** the template. Proof per acceptance criterion means the
@@ -68,12 +75,13 @@ SessionStart hook prints it; `/conduct` recomputes it after every merge.
 ## Definition of done
 
 CI green (all required checks); `make ci` output pasted; every acceptance
-criterion has proof; new external-format parsing has a real fixture with a
-provenance row; any change to a load-bearing file has `make test-parser`
-green and graders activated by marker deletion only; schema changes ship as
-a migration with the up/down/up transcript; anything contradicting an ADR
-ships with a superseding ADR (`Proposed`) rather than a silent deviation;
-review threads all replied to and resolved.
+criterion has proof; new external-format parsing has a real, scrubbed
+fixture with a provenance row; any change to a load-bearing file has
+`make test-parser` and the full suite green and graders activated by marker
+deletion only; nothing writes into an install outside `guard`, and no test
+needs or touches a real install; anything contradicting an ADR ships with a
+superseding ADR (`Proposed`) rather than a silent deviation; review threads
+all replied to and resolved.
 
 ## Stop-and-ask
 
@@ -88,10 +96,11 @@ other ticket moving.
 
 - Agents run in `.claude/worktrees/<name>/`. `.worktreeinclude` copies `.env`
   only. Never copy `.venv` (absolute paths inside); run `make setup`.
-- `make env` shows the compose project name and port block derived from the
-  checkout path, so two worktrees can run `make up` at once.
-- Lockfile conflicts (`uv.lock`, `pnpm-lock.yaml`) are never hand-merged:
-  take `origin/main`'s copy and regenerate.
+- Nothing in the toolchain binds a port or shares state between checkouts;
+  the snapshot store and game-table cache live in the user data directory,
+  and tests redirect them to `tmp_path`.
+- `uv.lock` conflicts are never hand-merged: take `origin/main`'s copy and
+  run `uv lock`.
 - Pytest, ruff and mypy exclude `.claude/worktrees` so the main checkout
   never lints or tests an agent's tree.
 - Git hooks are tracked in `.githooks/` and wired with `core.hooksPath`
@@ -107,34 +116,41 @@ and 3.12 because hooks execute on the system interpreter):
 
 | Hook | Event | Enforces |
 |---|---|---|
-| `guard_bash.py` | PreToolUse Bash | no `--no-verify`, no bare force-push, no push to main, no `--admin`, no `rm -rf` outside scratch, no shell writes into harness/ADR/backlog/LICENSE/merged migrations |
+| `guard_bash.py` | PreToolUse Bash | no `--no-verify`, no bare force-push, no push to main, no `--admin`, no `rm -rf` outside scratch, no shell writes or deletes touching the harness, ADRs, the backlog or LICENSE |
 | `precommit_gate.py` | PreToolUse Bash (`git commit`) | `make lint` passes in the committing worktree |
-| `protect_paths.py` | PreToolUse Edit/Write | LICENSE and merged migrations read-only; subagents cannot edit harness, ADRs, backlog; reviewer confined to `tests/review/` |
+| `protect_paths.py` | PreToolUse Edit/Write | LICENSE read-only; subagents cannot edit harness, ADRs, backlog; `code-reviewer` confined to new files under `tests/review/` (in practice `lab/core/tests/review/`) |
 | `format_python.py` | PostToolUse Edit/Write | ruff format + fix on `.py` |
 | `session_start.py` | SessionStart | prints branch state and the frontier |
+
+These hooks guard the repository. They are unrelated to `wowlab_core.guard`,
+which guards the game install at run time.
 
 What the shell guard does see: redirects in every spelling, `tee`, `sed`
 in place, copy/move/link/rsync/dd/patch targets including directory
 destinations, `rm` and `git rm`, `git checkout`/`git restore` pathspecs,
 `cd` inside the same command, `bash -c` and `eval` strings, `$CLAUDE_PROJECT_DIR`
 and `$PWD` indirection, symlinks, and case-only renames. Anything it cannot
-tokenise or resolve is denied, not skipped.
+tokenise or resolve is denied, not skipped. One consequence: nobody, the
+conductor included, can delete a harness file from a Claude Code shell;
+that is an owner action in a terminal.
 
 Limits: writes made from inside `python -c`, a heredoc-fed interpreter, or
 an editor are invisible to it, and so is anything a pre-approved tool does
-internally (`uv sync` running a build hook, `docker compose` mounting a
-volume). That is why `uv run python:*` and `uv add:*` are not pre-approved,
-why the Edit/Write path is the one that is fully guarded, and why CI
-(`harness`, `gitleaks`, `semgrep`, `trivy`) and the branch ruleset are the
-backstop. The hooks exist to fail earlier and explain why.
+internally (`uv sync` running a build hook). That is why `uv run python:*`
+and `uv add:*` are not pre-approved, why the Edit/Write path is the one that
+is fully guarded, and why CI (`harness`, `gitleaks`, `semgrep`, `trivy`) and
+the branch ruleset are the backstop. The hooks exist to fail earlier and
+explain why.
 
 ## How humans participate
 
 Open issues with the ticket template; the conductor folds them into the
-backlog. Review any PR; reply-then-resolve applies to you too. Mention
-`@claude` in an issue or PR comment to get an answer with the repo's
-context loaded. Contribute real `/simc` exports through `/fixture`. Accept
-or reject ADRs by editing their status in a PR you merge yourself.
+backlog if the owner wants them in the current wave. Review any PR;
+reply-then-resolve applies to you too. Mention `@claude` in an issue or PR
+comment to get an answer with the repo's context loaded. Real fixtures come
+from the owner's install through `scripts/lab_capture.py`
+(`docs/handoffs/M10-03.md`). Accept or reject ADRs by editing their status
+in a PR you merge yourself.
 
 ## Reusing this harness in another project
 
@@ -146,7 +162,8 @@ or reject ADRs by editing their status in a PR you merge yourself.
    truth lives, conventions, verification commands, anti-patterns, stop-and-
    ask. Keep it under 200 lines; put machine notes in `CLAUDE.local.md`.
 3. Replace domain content: the rules' `paths:`, the reviewer checklists,
-   `docs/PRODUCT.md`, the fixture policy, the protected paths in
+   the spec the agents read (`docs/LAB_PLAN.md` here), the fixture policy,
+   the load-bearing file list, the protected paths in
    `.claude/hooks/_common.py`.
 4. Write a backlog in the `## [ ] ID — Title` / `**Depends on:**` format;
    the frontier logic and SessionStart hook work unchanged.

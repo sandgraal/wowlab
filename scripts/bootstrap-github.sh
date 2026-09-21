@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# One-time repository settings for sandgraal/wowlab. Idempotent; re-run safely.
-# Run by the repository owner or the conductor after the harness PR merges.
+# Repository settings for sandgraal/wowlab. Idempotent; re-run safely.
+# Run by the repository owner (it needs repo admin, and the agents' shell guard
+# refuses mutating `gh api` calls). Re-run it whenever a required CI job is
+# renamed: the ruleset requires checks by exact name, so a PR that renames one
+# cannot merge until the ruleset in .github/rulesets/main.json is re-applied.
 # Everything here is reversible in the GitHub UI.
 set -euo pipefail
 
@@ -35,7 +38,7 @@ else
 fi
 
 echo "→ labels"
-for spec in "ticket:0e8a16:agent-sized unit of work" "bug:d73a4a:something is wrong" "blocked:b60205:needs the owner" "harness:5319e7:agent harness or CI" "patch-day:fbca04:WoW patch maintenance"; do
+for spec in "ticket:0e8a16:agent-sized unit of work" "bug:d73a4a:something is wrong" "blocked:b60205:needs the owner" "harness:5319e7:agent harness or CI" "wave:fbca04:wave review or next-wave planning"; do
   IFS=: read -r name color desc <<<"$spec"
   gh label create "$name" --repo "$REPO" --color "$color" --description "$desc" --force >/dev/null
 done
