@@ -51,8 +51,8 @@ marked `@pytest.mark.live`.
     build that was not the newest for its product and the response carried
     `Content-Disposition: attachment; filename="<Table>.<that build>.csv"`.
     `gamedata` refuses a response whose `Content-Disposition` filename is not
-    exactly `<Table>.<build>.csv`, and its default source refuses one with no
-    such header, so a silent fall-back to "latest" can never be cached (L5).
+    exactly `<Table>.<build>.csv`, and one with no such header, so a silent
+    fall-back to "latest" can never be cached (L5).
   - The same URL with a build that was never published → `404 text/html`
     (a generic "Not Found" page that also sets session cookies). There is no
     fall-back to another build. `gamedata` turns it into `BuildNotPublished`
@@ -72,14 +72,19 @@ marked `@pytest.mark.live`.
   `Field_9_0_1_34490_018`), not a change to the data. The cached copy stays
   as fetched either way (L5).
 - **Client limits** (M10-08): no cookies are kept or sent; `https` only;
-  decoded bodies are capped (16 MiB for the listing, 1 GiB for a table) and
-  each download has a wall-clock deadline; a lookup that misses refetches the
-  listing at most once per five minutes. Known limits: a crash between
-  publishing a table and writing its sidecar leaves a valid table with no
-  fetch record, which is never reconstructed; temp files from a killed
-  process are never swept (nothing is pruned implicitly, ADR-0022); on a
-  POSIX filesystem without hard links the cache is refused, because `rename`
-  there could replace a cached table.
+  decoded bodies are capped (16 MiB for the listing, 1 GiB for a table); a
+  gzip body with anything after its first member is refused (the recording
+  shows single-member bodies); each download has one 30-minute wall-clock
+  deadline across all its attempts; a table response must carry
+  `Content-Disposition`; a lookup that misses refetches the listing at most
+  once per five minutes. Known limits: a crash between publishing a table
+  and writing its sidecar leaves a valid table with no fetch record, which
+  is never reconstructed; temp files from a killed process are never swept
+  (nothing is pruned implicitly, ADR-0022); on a POSIX filesystem without
+  hard links (exFAT, FAT, some network mounts) the cache is refused with
+  `CacheLocationError` before any request, because `rename` there could
+  replace a cached table. Remedy: choose a cache directory on a filesystem
+  with hard links (`GameData(cache_dir=...)`).
 - **Terms:** data is Blizzard's, extracted by the community; personal,
   non-commercial use. Do not mirror tables publicly.
 

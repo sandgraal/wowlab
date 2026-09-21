@@ -735,19 +735,32 @@ def test_constructed_missing_content_disposition_is_refused_by_the_default_sourc
     assert _tree(h.cache) == set()
 
 
-def test_default_source_requires_content_disposition(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _no_disposition(request: httpx.Request) -> httpx.Response:  # constructed
+    return httpx.Response(
+        200, headers={"content-type": "text/csv; charset=UTF-8"}, content=CSV_BYTES
+    )
+
+
+def test_constructed_bare_wago_source_requires_content_disposition(tmp_path: Path) -> None:
+    with WagoSource(transport=httpx.MockTransport(_no_disposition)) as source:
+        data = GameData(source, cache_dir=tmp_path / "gamedata")
+        with pytest.raises(UnexpectedResponse, match="Content-Disposition"):
+            data.table(TABLE, BUILD)
+    assert _tree(tmp_path / "gamedata") == set()
+
+
+def test_constructed_lax_mode_is_explicit_and_still_refuses_a_wrong_filename(
+    make: Callable[..., Harness],
 ) -> None:
-    made: list[dict[str, Any]] = []
-    real = gamedata.WagoSource
+    h = make(_no_disposition, require_content_disposition=False)
+    assert h.data.table(TABLE, BUILD).read_bytes() == CSV_BYTES
 
-    def spy(**kwargs: Any) -> WagoSource:
-        made.append(kwargs)
-        return real(**kwargs)
-
-    monkeypatch.setattr(gamedata, "WagoSource", spy)
-    GameData(cache_dir=tmp_path / "gamedata")
-    assert made == [{"require_content_disposition": True}]
+    wrong = make(
+        lambda request: httpx.Response(200, headers=CSV_HEADERS, content=CSV_BYTES),
+        require_content_disposition=False,
+    )
+    with pytest.raises(UnexpectedResponse, match="Content-Disposition"):
+        wrong.data.table(TABLE, OTHER_BUILD)
 
 
 @pytest.mark.parametrize(
@@ -844,8 +857,10 @@ def test_constructed_posix_filesystem_without_hard_links_is_refused_not_renamed(
     monkeypatch.setattr(Path, "rename", never)
     monkeypatch.setattr(Path, "replace", never)
     h = make()
-    with pytest.raises(CacheLocationError, match="hard links"):
-        h.data.table(TABLE, BUILD)
+    for _ in range(3):
+        with pytest.raises(CacheLocationError, match="Choose a cache directory"):
+            h.data.table(TABLE, BUILD)
+    assert h.requests == [], "a location that will be refused costs the source nothing"
     assert _tree(h.cache) == set()
 
 
@@ -857,9 +872,12 @@ def test_constructed_winner_survives_without_hard_links(
     h = make()
     final = h.data.table_path(TABLE, BUILD)
 
+    real_link = Path.hardlink_to
+
     def winner_lands_then_no_hard_links(self: Path, target: Path) -> None:
-        if self == final:
-            final.write_bytes(winner)
+        if self != final:
+            return real_link(self, target)  # the up-front probe finds hard links
+        final.write_bytes(winner)  # ...and they are gone by the time of the publish
         raise OSError(errno.ENOTSUP, "constructed: filesystem without hard links")
 
     monkeypatch.setattr(Path, "hardlink_to", winner_lands_then_no_hard_links)
@@ -882,7 +900,11 @@ def _cached(h: Harness, body: bytes) -> None:
         pytest.param(
             b"ID,Field,Field\n1,a,b\n", "column names repeat", id="constructed-dup-header"
         ),
-        pytest.param(b"ID,Name\n1,ok\n2,\xff\xfe\n", "after line", id="constructed-invalid-utf8"),
+        pytest.param(
+            b"ID,Name\n1,ok\n2,\xff\xfe\n",
+            "line 3, byte offset 15: not UTF-8",
+            id="constructed-invalid-utf8",
+        ),
         pytest.param(
             b"ID,Name\n1,ok\n2," + b"x" * (csv.field_size_limit() + 1) + b"\n",
             "line 3: field larger",
@@ -900,3 +922,121 @@ def test_rows_raise_malformed_table(
     with pytest.raises(MalformedTable, match=message):
         list(h.data.rows(TABLE, BUILD))
     assert h.data.table_path(TABLE, BUILD).read_bytes() == body, "the cached file stays as it is"
+
+
+# ─── fix round 2 ─────────────────────────────────────────────────────────────
+
+
+class _Chunks(httpx.SyncByteStream):
+    """An unread body delivered in the given pieces, counting how many were taken."""
+
+    def __init__(self, pieces: list[bytes]) -> None:
+        self.pieces = pieces
+        self.taken = 0
+
+    def __iter__(self) -> Iterator[bytes]:
+        for piece in self.pieces:
+            self.taken += 1
+            yield piece
+
+
+GZIP_CSV_HEADERS = {**CSV_HEADERS, "content-encoding": "gzip"}
+
+
+def test_constructed_two_member_gzip_body_is_refused_not_cached_truncated(
+    make: Callable[..., Harness],
+) -> None:
+    wire = gzip.compress(CSV_BYTES[:2000]) + gzip.compress(CSV_BYTES[2000:])
+    assert gzip.decompress(wire) == CSV_BYTES
+    h = make(lambda request: httpx.Response(200, headers=GZIP_CSV_HEADERS, stream=_Chunks([wire])))
+    with pytest.raises(UnexpectedResponse, match="after the end of the gzip body"):
+        h.data.table(TABLE, BUILD)
+    assert len(h.requests) == 1, "not retried"
+    assert _tree(h.cache) == set()
+
+
+def test_constructed_junk_after_the_gzip_body_is_refused_on_the_first_chunk_past_the_end(
+    make: Callable[..., Harness],
+) -> None:
+    junk = [b"J" * 65536] * 64  # constructed: 4 MiB that must never be read, let alone kept
+    body = _Chunks([gzip.compress(CSV_BYTES), *junk])
+    h = make(lambda request: httpx.Response(200, headers=GZIP_CSV_HEADERS, stream=body))
+    with pytest.raises(UnexpectedResponse, match="after the end of the gzip body"):
+        h.data.table(TABLE, BUILD)
+    assert body.taken == 2, "refused on the first chunk after the end, not after reading it all"
+    assert _tree(h.cache) == set()
+
+
+def test_constructed_one_deadline_covers_every_attempt_and_the_backoff(
+    make: Callable[..., Harness],
+) -> None:
+    clock = [0.0]
+
+    def slow_failure(request: httpx.Request) -> httpx.Response:
+        clock[0] += 400.0  # constructed: each attempt burns 400 s and then fails
+        return httpx.Response(503)
+
+    h = make(slow_failure, max_attempts=10, monotonic=lambda: clock[0], download_deadline=1000.0)
+    with pytest.raises(SourceUnavailable, match="deadline") as caught:
+        h.data.table(TABLE, BUILD)
+    assert len(h.requests) == 3, "attempts stop when the download's one deadline is spent"
+    assert caught.value.attempts == 3
+    assert _tree(h.cache) == set()
+
+
+@pytest.mark.parametrize("value", ["\u00b2", "\u0663", "1e9", "-5", ""])
+def test_constructed_hostile_content_length_never_escapes_as_value_error(
+    make: Callable[..., Harness], value: str
+) -> None:
+    def hostile(request: httpx.Request) -> httpx.Response:
+        response = httpx.Response(200, headers=CSV_HEADERS, stream=_Chunks([CSV_BYTES]))
+        response.headers["content-length"] = value
+        return response
+
+    h = make(hostile)
+    # Not a number we can compare, so the streaming cap is what bounds the body.
+    assert h.data.table(TABLE, BUILD).read_bytes() == CSV_BYTES
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX errno semantics")
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        pytest.param(errno.EACCES, PermissionError, id="constructed-EACCES"),
+        pytest.param(errno.ENOSPC, OSError, id="constructed-ENOSPC"),
+        pytest.param(errno.EMLINK, OSError, id="constructed-EMLINK"),
+    ],
+)
+def test_link_errors_that_do_not_mean_unsupported_are_raised_as_themselves(
+    make: Callable[..., Harness],
+    monkeypatch: pytest.MonkeyPatch,
+    code: int,
+    expected: type[OSError],
+) -> None:
+    def fails(self: Path, target: Path) -> None:
+        raise OSError(code, "constructed")
+
+    monkeypatch.setattr(Path, "hardlink_to", fails)
+    h = make()
+    with pytest.raises(expected) as caught:
+        h.data.table(TABLE, BUILD)
+    assert not isinstance(caught.value, CacheLocationError)
+    assert caught.value.errno == code
+    assert _tree(h.cache) == set()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows publishes by rename instead")
+@pytest.mark.parametrize(
+    "code", [errno.ENOTSUP, errno.EOPNOTSUPP, errno.EPERM, errno.ENOSYS], ids=lambda c: f"errno{c}"
+)
+def test_constructed_every_unsupported_errno_is_the_hard_link_refusal(
+    make: Callable[..., Harness], monkeypatch: pytest.MonkeyPatch, code: int
+) -> None:
+    def unsupported(self: Path, target: Path) -> None:
+        raise OSError(code, "constructed")
+
+    monkeypatch.setattr(Path, "hardlink_to", unsupported)
+    h = make()
+    with pytest.raises(CacheLocationError, match="does not support hard links"):
+        h.data.table(TABLE, BUILD)
+    assert h.requests == []

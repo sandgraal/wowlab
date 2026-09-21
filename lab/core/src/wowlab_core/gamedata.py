@@ -22,13 +22,18 @@ atomically when the name is taken. There is deliberately no POSIX fallback:
 without hard links the only portable primitive left is ``rename``, which
 replaces its target, and no lock file protects against a writer that does
 not take the lock. A cache on such a filesystem is refused with
-``CacheLocationError`` rather than risk L5. On Windows ``rename`` refuses an
-existing target, so it is used when hard links are unavailable.
+``CacheLocationError`` rather than risk L5, and it is refused before any
+request: hard-link support is probed with a throwaway file when the table's
+directory is prepared. On Windows ``rename`` refuses an existing target, so
+it is used when hard links are unavailable.
 
 Bodies are bounded: decoded bytes are counted while streaming (gzip is
 inflated here, in bounded steps, not by the HTTP library), a declared
-``Content-Length`` over the cap is refused up front, and each download has a
-wall-clock deadline. A response that fails any check is never cached.
+``Content-Length`` over the cap is refused up front, a gzip body with anything
+after its first member is refused (the recording shows single-member bodies;
+caching the first member alone would be a truncated table for good), and
+each download has one wall-clock deadline across all its attempts. A
+response that fails any check is never cached.
 
 Known limits, accepted:
 
@@ -45,6 +50,7 @@ from __future__ import annotations
 
 import contextlib
 import csv
+import errno
 import hashlib
 import http.cookiejar
 import json
@@ -67,6 +73,7 @@ from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 from wowlab_core import __version__
 
 __all__ = [
+    "DOWNLOAD_DEADLINE_SECONDS",
     "MAX_BUILDS_BYTES",
     "MAX_TABLE_BYTES",
     "Build",
@@ -97,12 +104,19 @@ WAGO_BASE_URL = "https://wago.tools"
 # the community exports are in the low hundreds of MiB.
 MAX_BUILDS_BYTES = 16 * 1024 * 1024
 MAX_TABLE_BYTES = 1024 * 1024 * 1024
+# One download, all attempts and backoff included. Requests are serialised, so
+# this is also the longest one slow peer can hold the others up.
+DOWNLOAD_DEADLINE_SECONDS = 1800.0
 
 _TABLE_NAME = re.compile(r"[A-Za-z0-9_]+")
 _BUILD_STRING = re.compile(r"[0-9]+(\.[0-9]+){3}")
 _DISPOSITION_FILENAME = re.compile(r'(?:^|;)\s*filename="([^"]*)"', re.IGNORECASE)
 _INSTALL_MARKER = ".build.info"  # what makes a directory an install (LAB_PLAN §6.1)
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+_ASCII_DIGITS = re.compile(r"[0-9]+")
+# What a filesystem says when it has no hard links. Anything else (EACCES,
+# ENOSPC, EMLINK, ...) is a different problem and is raised as itself.
+_NO_HARD_LINKS = frozenset({errno.ENOTSUP, errno.EOPNOTSUPP, errno.EPERM, errno.ENOSYS})
 _CHUNK = 1 << 16
 
 
@@ -264,10 +278,10 @@ class WagoSource:
 
     A table response is checked against the recording's
     ``Content-Disposition: attachment; filename="<Table>.<build>.csv"``: a
-    filename naming another table or build is always refused. With
-    ``require_content_disposition`` a response without the header is refused
-    too; ``GameData``'s default source turns that on, because the recording
-    shows the header on every 200.
+    filename naming another table or build is always refused, and so is a
+    response without the header, because the recording shows it on every 200.
+    ``require_content_disposition=False`` accepts a missing header (never a
+    wrong one); nothing in the library uses it.
     """
 
     name = "wago.tools"
@@ -284,10 +298,10 @@ class WagoSource:
         backoff_base: float = 2.0,
         backoff_cap: float = 120.0,
         timeout: float = 60.0,
-        download_deadline: float = 900.0,
+        download_deadline: float = DOWNLOAD_DEADLINE_SECONDS,
         max_builds_bytes: int = MAX_BUILDS_BYTES,
         max_table_bytes: int = MAX_TABLE_BYTES,
-        require_content_disposition: bool = False,
+        require_content_disposition: bool = True,
     ) -> None:
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
@@ -350,12 +364,18 @@ class WagoSource:
         with self._lock:
             last = "no attempt made"
             full_url = str(httpx.URL(url, params=params))
+            # One deadline for the whole download, attempts and backoff included.
+            deadline = self._monotonic() + self._download_deadline
+            attempts = 0
             for attempt in range(self._max_attempts):
                 retry_after: float | None = None
                 dest.seek(0)
                 dest.truncate()
                 self._client.cookies.clear()
-                deadline = self._monotonic() + self._download_deadline
+                if self._monotonic() > deadline:
+                    last = f"{last}; passed the {self._download_deadline:.0f} s deadline"
+                    break
+                attempts += 1
                 try:
                     with self._client.stream("GET", url, params=params) as response:
                         full_url = str(response.request.url)
@@ -383,10 +403,15 @@ class WagoSource:
                     delay = min(self._backoff_cap, self._backoff_base * 2**attempt)
                     if retry_after is not None:
                         delay = min(self._backoff_cap, max(delay, retry_after))
+                    if self._monotonic() + delay > deadline:
+                        last = (
+                            f"{last}; no time left in the {self._download_deadline:.0f} s deadline"
+                        )
+                        break
                     self._sleep(delay)
             dest.seek(0)
             dest.truncate()
-            raise SourceUnavailable(full_url, self._max_attempts, last)
+            raise SourceUnavailable(full_url, attempts, last)
 
     def _check_headers(self, url: str, headers: httpx.Headers, expected: _Expected) -> None:
         """Refuse a 200 that is not what was asked for; it would be cached
@@ -397,7 +422,7 @@ class WagoSource:
         declared = headers.get("content-length")
         if (
             declared is not None
-            and declared.strip().isdigit()
+            and _ASCII_DIGITS.fullmatch(declared.strip())  # str.isdigit() accepts "²"
             and int(declared) > expected.max_bytes
         ):
             raise UnexpectedResponse(
@@ -444,6 +469,7 @@ class WagoSource:
             raise UnexpectedResponse(url, f"unrequested Content-Encoding {encoding!r}")
 
         written = 0
+        ended = False  # the gzip member is complete
 
         def emit(piece: bytes) -> None:
             nonlocal written
@@ -462,6 +488,8 @@ class WagoSource:
             if inflater is None:
                 emit(raw)
                 continue
+            if ended:
+                raise UnexpectedResponse(url, "data after the end of the gzip body")
             data = raw
             while True:
                 try:
@@ -469,10 +497,17 @@ class WagoSource:
                 except zlib.error as exc:
                     raise _RetryableError(f"corrupt gzip body: {exc}") from exc
                 emit(piece)
+                if inflater.eof:
+                    ended = True
+                    # A second member or junk. Inflating only the first member
+                    # would cache a truncated table for good (L5); refuse.
+                    if inflater.unused_data:
+                        raise UnexpectedResponse(url, "data after the end of the gzip body")
+                    break
                 data = inflater.unconsumed_tail
                 if not data and len(piece) < _CHUNK:
                     break
-        if inflater is not None and not inflater.eof:
+        if inflater is not None and not ended:
             raise _RetryableError("gzip body ended early")
 
 
@@ -522,13 +557,48 @@ def _refuse_install(path: Path) -> None:
             )
 
 
-def _writable_dir(path: Path) -> None:
+def _writable_dir(path: Path, *, publishes_tables: bool = False) -> None:
     """Create ``path`` for writing, refusing an install before the mkdir and
     again after it (a symlink anywhere along the way resolves differently
-    once the directory exists)."""
+    once the directory exists). A directory tables are published into must
+    also be able to publish one without replacing (``_refuse_no_hard_links``);
+    finding that out here means a refused location costs the source nothing.
+    """
     _refuse_install(path)
     path.mkdir(parents=True, exist_ok=True)
     _refuse_install(path)
+    if publishes_tables:
+        _refuse_no_hard_links(path)
+
+
+def _no_hard_links_error(directory: Path, cause: OSError) -> CacheLocationError:
+    return CacheLocationError(
+        f"{directory}: this filesystem does not support hard links ({cause}), so a table "
+        "cannot be published there without risking the replacement of a cached one (L5). "
+        "Choose a cache directory on a filesystem with hard links: pass "
+        "GameData(cache_dir=...), or move the user data directory off this volume."
+    )
+
+
+def _refuse_no_hard_links(directory: Path) -> None:
+    """Link a throwaway file inside ``directory``; refuse the location if the
+    filesystem cannot. Windows is exempt: its ``rename`` refuses an existing
+    target, which is all publishing needs."""
+    if os.name == "nt":
+        return
+    probe = directory / f".hardlink-probe.{uuid.uuid4().hex}.part"
+    linked = probe.with_name(probe.name + ".link")
+    try:
+        probe.touch()
+        try:
+            linked.hardlink_to(probe)
+        except OSError as exc:
+            if exc.errno in _NO_HARD_LINKS:
+                raise _no_hard_links_error(directory, exc) from exc
+            raise
+    finally:
+        linked.unlink(missing_ok=True)
+        probe.unlink(missing_ok=True)
 
 
 def _utcnow() -> datetime:
@@ -557,9 +627,7 @@ class GameData:
     ) -> None:
         self._cache_dir = cache_dir if cache_dir is not None else default_cache_dir()
         _refuse_install(self._cache_dir)
-        self._source: Source = (
-            source if source is not None else WagoSource(require_content_disposition=True)
-        )
+        self._source: Source = source if source is not None else WagoSource()
         self._builds_ttl = builds_ttl
         self._builds_min_refresh = builds_min_refresh
         self._now = now
@@ -573,8 +641,9 @@ class GameData:
     def builds(self, *, refresh: bool = False) -> dict[str, list[Build]]:
         """Products and their builds. Cached for ``builds_ttl``.
 
-        Each product's list arrives sorted by version string, descending, and
-        a product code is reused across game versions, so neither position
+        Each product's list arrives sorted by version, descending (compared
+        numerically per component, not as text), and a product code is reused
+        across game versions, so neither position
         nor the highest version means "newest". Nothing here reads "latest"
         from the listing.
         """
@@ -691,7 +760,7 @@ class GameData:
         final = self.table_path(name, build)
         if final.exists():
             return final
-        _writable_dir(final.parent)
+        _writable_dir(final.parent, publishes_tables=True)
         tmp = _temp_beside(final)
         try:
             digest = hashlib.sha256()
@@ -750,9 +819,23 @@ def _find_build(listing: dict[str, list[Build]], product: str, version: str) -> 
     return None
 
 
+def _decoded_lines(path: Path, handle: BinaryIO) -> Iterator[str]:
+    """Physical lines as text, line endings kept. Decoding here, not in the
+    file object, is what gives bad UTF-8 a line and a byte offset."""
+    offset = 0
+    for number, line in enumerate(handle, start=1):
+        try:
+            yield line.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise MalformedTable(
+                f"{path}: line {number}, byte offset {offset + exc.start}: not UTF-8 ({exc.reason})"
+            ) from exc
+        offset += len(line)
+
+
 def _iter_rows(path: Path) -> Iterator[dict[str, str]]:
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        reader = csv.reader(handle, strict=True)
+    with path.open("rb") as handle:
+        reader = csv.reader(_decoded_lines(path, handle), strict=True)
         header: list[str] | None = None
         while True:
             try:
@@ -761,9 +844,6 @@ def _iter_rows(path: Path) -> Iterator[dict[str, str]]:
                 return
             except csv.Error as exc:
                 raise MalformedTable(f"{path}: line {reader.line_num}: {exc}") from exc
-            except UnicodeDecodeError as exc:
-                # Decoding runs ahead of the CSV reader, so the line is a lower bound.
-                raise MalformedTable(f"{path}: after line {reader.line_num}: {exc}") from exc
             if header is None:
                 header = record
                 repeated = sorted({name for name in header if header.count(name) > 1})
@@ -792,10 +872,12 @@ def _temp_beside(final: Path) -> Path:
 def _publish_without_overwrite(tmp: Path, final: Path) -> bool:
     """Give ``tmp``'s complete content the name ``final`` unless it is taken.
 
-    A hard link fails atomically if the name exists. Without hard links:
-    Windows ``rename`` also refuses an existing target, so it is used there;
-    POSIX ``rename`` replaces its target, so there is nothing safe to fall
-    back to and the cache location is refused (module docstring).
+    A hard link fails atomically if the name exists (``EEXIST``: the race
+    was lost). If the filesystem has no hard links: Windows ``rename`` also
+    refuses an existing target, so it is used there; POSIX ``rename``
+    replaces its target, so there is nothing safe to fall back to and the
+    location is refused (normally already done by ``_refuse_no_hard_links``
+    before the download). Any other error is raised as what it is.
     Returns whether this call published the file.
     """
     try:
@@ -803,14 +885,12 @@ def _publish_without_overwrite(tmp: Path, final: Path) -> bool:
     except FileExistsError:
         return False
     except OSError as exc:
+        if exc.errno not in _NO_HARD_LINKS:
+            raise
         if final.exists():
             return False
         if os.name != "nt":
-            raise CacheLocationError(
-                f"{final.parent}: the filesystem does not support hard links ({exc}); "
-                "a table cannot be published there without risking an overwrite (L5). "
-                "Put the game data cache on a filesystem that supports them."
-            ) from exc
+            raise _no_hard_links_error(final.parent, exc) from exc
         try:
             tmp.rename(final)
         except FileExistsError:
