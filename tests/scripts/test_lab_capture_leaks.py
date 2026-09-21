@@ -186,11 +186,18 @@ def test_constructed_review_notes_count_without_quoting() -> None:
     identity = Identity(realms=[REALM], characters=[MAIN])
     macros = (
         b'VER 3 0000000000000001 "Hi" "INV_MISC_QUESTIONMARK"\n'
-        b"/w Privatefriend hello\n/cast Smite\n/invite Privatefriend\n/target Privatefriend\nEND\n"
+        b"/w Privatefriend hello\n/cast Smite\n/invite Privatefriend\n/target Privatefriend\n"
+        b"  /tell Privatefriend x\n\t/t Privatefriend x\n/friend Privatefriend\n/ignore Privatefriend\n"
+        b"/focus Privatefriend\n/assist Privatefriend\n/follow Privatefriend\n/ginvite Privatefriend\n"
+        b"/cast [@Privatefriend] Heal\n/cast [target=Privatefriend,help] Heal\n"
+        # None of these is a person: unit tokens, and commands that merely start alike.
+        b"/cast [@mouseover,help][@player][@party1][@raid25target][target=focus][@arena2pet] Heal\n"
+        b"/targetenemy\n/tarnish\nEND\n"
     )
     result = identity.scrub(macros)
     assert not result.problems
-    assert [n for n in result.notes if n.startswith("whisper/invite/target macro line x3")]
+    label = "whisper/invite/target macro line or @Name x13"
+    assert [n for n in result.notes if n.startswith(label)], result.notes
     assert "Privatefriend" not in " ".join(result.notes)
     assert not identity.scrub(b'"thrallmar-area52" "Thrallmar - Area 52"').notes
     shaped = identity.scrub(b'["Privatefriend-Illidan"] = 1,\n["Left-Click"] = 2,\n')

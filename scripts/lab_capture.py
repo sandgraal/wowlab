@@ -12,10 +12,10 @@ install and scrubs identity from it per `docs/LAB_PLAN.md` §8:
 - identity CVars have their value blanked;
 - the owner's own `Player-<n>-<hex>` GUIDs become pseudonym GUIDs;
 - a file whose scrubbed bytes or output path still contain an email address,
-  a BattleTag, an unmapped player, account or guild GUID, a surviving identity
-  string in any casing or embedding, an unblanked identity CVar, or a
-  `<someone>-<own realm>` name is refused: nothing is written for it and the
-  exit status is non-zero.
+  a BattleTag, an unmapped player, account, guild or community GUID, a
+  surviving identity string in any casing or embedding (CVar names included),
+  an unblanked identity CVar, or someone else's name joined to an own realm
+  is refused: nothing is written for it and the exit status is non-zero.
 
 How it edits: byte-level, targeted replacement only. Every edit is an
 (offset, old bytes, new bytes) triple against the original file; every byte
@@ -41,7 +41,7 @@ import re
 import sys
 import unicodedata
 from collections import Counter
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -56,6 +56,7 @@ IDENTITY_CVARS: tuple[str, ...] = (
     "accountName",
     "accountList",
     "lastCharacterGuid",
+    # [verify] The five below are spelled from reviewer memory, not from a capture.
     "realmName",
     "lastSelectedClubId",
     "Sound_OutputDriverName",
@@ -73,21 +74,41 @@ RESERVED_WORDS = frozenset({"set", "bind", "end", "ver", "true", "false", "nil",
 
 # Loose on purpose: a false refusal costs one candidate file, a miss is a leak.
 # No top-level domain is required (`user@localhost`); non-ASCII is accepted.
+# Each match is anchored at the start of its run (the lookbehind), so a long
+# unbroken run of letters is walked once, not once per byte.
 EMAIL_RE = re.compile(
-    rb"[A-Za-z0-9._%+\-\x80-\xff]+@[A-Za-z0-9\-\x80-\xff]+(?:\.[A-Za-z0-9\-\x80-\xff]+)*"
+    rb"(?<![A-Za-z0-9._%+\-\x80-\xff])[A-Za-z0-9._%+\-\x80-\xff]+@"
+    rb"[A-Za-z0-9\-\x80-\xff]+(?:\.[A-Za-z0-9\-\x80-\xff]+)*"
 )
 # Name#1234: a name character, '#', four or more digits, whatever follows.
 BATTLETAG_RE = re.compile(rb"[A-Za-z0-9\x80-\xff]#[0-9]{4,}")
 GUID_RE = re.compile(rb"Player-[0-9]+-[0-9A-Fa-f]+", re.IGNORECASE)
-# [verify] spellings recalled by reviewers, not yet seen in a capture (M10-03).
+# [verify] These three families are spelled from reviewer memory, not from a
+# capture (M10-03). Any of them refuses the file.
 ACCOUNT_GUID_RE = re.compile(rb"BNetAccount-[0-9]+-[0-9A-Fa-f]+", re.IGNORECASE)
 GUILD_GUID_RE = re.compile(rb"Guild-[0-9]+-[0-9A-Fa-f]+", re.IGNORECASE)
+CLUB_GUID_RE = re.compile(rb"ClubFinder-[0-9]+-[0-9A-Fa-f-]+", re.IGNORECASE)
 # Combat log: a player GUID immediately followed by its quoted unit name.
 GUID_NAME_RE = re.compile(rb'(Player-[0-9]+-[0-9A-Fa-f]+),"([^"\r\n]*)"', re.IGNORECASE)
-# AceDB `factionrealm` keys ("Horde - <realm>") are client vocabulary, not a player.
-FACTION_WORDS = frozenset({b"horde", b"alliance", b"neutral"})
+# Words that stand next to a realm without being a player: AceDB `factionrealm`
+# keys ("Horde - <realm>"), region tags ("<realm>-US"), DataStore's literal
+# account key ("Default.<realm>.<name>").
+FACTION_WORDS = frozenset({"horde", "alliance", "neutral"})
+VOCABULARY_PARTNERS = FACTION_WORDS | {"us", "eu", "kr", "tw", "cn", "default"}
+_LETTERS = rb"A-Za-z\x80-\xff"
+# What joins a name to a realm: "Name-Realm", "Name - Realm", DataStore's
+# "Default.Realm.Name", and the other single-character joints addons use.
+_JOINT = rb"(?: - |[-.|:/_])"
+_UNIT_TOKENS = (
+    "player|target|focus|mouseover|cursor|pet|none|vehicle|npc|softenemy|softfriend|"
+    "softinteract|party|raid|arena|boss|nameplate"
+)
 SOCIAL_MACRO_RE = re.compile(
-    rb"(?:\A|(?<=[\r\n]))/(?:w|whisper|invite|inv|tar|target)(?=[ \t])", re.IGNORECASE
+    rb"(?:\A|(?<=[\r\n]))[ \t]*/(?:w|whisper|tell|t|invite|inv|ginvite|tar|target|friend|ignore"
+    rb"|focus|assist|follow)(?=[ \t])"
+    rb"|(?:@|target=)(?!(?:%s)(?:target|pet)*[0-9]*(?![%s]))[%s]+"
+    % (_UNIT_TOKENS.encode(), _LETTERS, _LETTERS),
+    re.IGNORECASE,
 )
 NAME_REALM_SHAPE_RE = re.compile(
     rb'"([A-Za-z\x80-\xff]{2,24})(?: - |-)([A-Za-z\x80-\xff][^"\r\n]{1,40})"'
@@ -98,10 +119,31 @@ _WORD_BYTES = frozenset(
     b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 ) | frozenset(range(0x80, 0x100))
 _LINE_START = rb"(?:\A(?:\xef\xbb\xbf)?|(?<=[\r\n]))[ \t]*"
-# Spans the owner does not author and the scrubber therefore never rewrites:
-# the CVar name of a SET line, and a TOC directive key (except open `X-` keys).
-SET_NAME_RE = re.compile(_LINE_START + rb"SET[ \t]+([^ \t\r\n]+)", re.IGNORECASE)
-TOC_KEY_RE = re.compile(_LINE_START + rb"##[ \t]*+(?![Xx]-)([^:\r\n]*[^:\r\n \t])[ \t]*:")
+# Spans the owner does not author and the scrubber therefore never rewrites.
+# Only text that is SHAPED like vocabulary qualifies; `## Notes for <name>:`
+# or `SET <name>_pos` with stray punctuation is ordinary text and is scrubbed.
+#
+# - The CVar name of a SET line, when it is an identifier. The set of CVars is
+#   open, so identity strings are still hunted inside it (whole words, and
+#   anything of EMBEDDED_MIN_CHARS or more): a hit refuses the file.
+# - A TOC directive key, when it is one the client defines (the closed list of
+#   docs/LAB_FORMATS.md §3, with an optional locale or game-type suffix). Such
+#   a key is vocabulary whatever it spells, so it is exempt from the identity
+#   hunt. Any other key, `X-` keys included, is ordinary text.
+SET_NAME_RE = re.compile(
+    _LINE_START + rb"SET[ \t]++([A-Za-z0-9_.]++)(?=[ \t\r\n]|\Z)", re.IGNORECASE
+)
+TOC_KEY_RE = re.compile(
+    _LINE_START + rb"##[ \t]*+((?i:Interface|Title|Notes|Author|Version|SavedVariables"
+    rb"|SavedVariablesPerCharacter|SavedVariablesMachine|Dependencies|RequiredDeps|Dep"
+    rb"|OptionalDeps|LoadOnDemand|LoadWith|LoadManagers|DefaultState|IconTexture|IconAtlas"
+    rb"|AddonCompartmentFunc|AddonCompartmentFuncOnEnter|AddonCompartmentFuncOnLeave"
+    rb"|Category|Group|AllowLoad|AllowLoadGameType|OnlyBetaAndPTR)"
+    # The suffix is a closed list too, and case-sensitive: a free suffix would
+    # be a place for a four-letter name to hide.
+    rb"(?:-(?:enUS|enGB|deDE|esES|esMX|frFR|itIT|koKR|ptBR|ptPT|ruRU|zhCN|zhTW"
+    rb"|Mainline|Classic|Vanilla|TBC|Wrath|Cata|Mists))?)[ \t]*+:"
+)
 # A lower- or upper-cased identity string this long is replaced even inside a
 # longer word; shorter ones only as a whole word.
 EMBEDDED_MIN_CHARS = 5
@@ -120,6 +162,17 @@ CHARACTER_FILES = (
 CONFIG_NAMES = frozenset({"config.wtf", "config-cache.wtf"})
 # Blizzard's exported interface code is not a fixture (fixtures/README.md).
 EXPORTED_ADDON_PREFIX = "blizzard_"
+
+
+Span = tuple[int, int]
+_BEYOND_AFTER = re.compile(_JOINT + rb"([%s]+)" % _LETTERS)
+_BEYOND_BEFORE = re.compile(rb"([%s]+)%s\Z" % (_LETTERS, _JOINT))
+_PAREN_BEFORE = re.compile(rb"([%s]+) ?\(\Z" % _LETTERS)
+
+
+def _fold(word: str) -> str:
+    """Comparison key blind to case and normal form. On str: bytes fold ASCII only."""
+    return unicodedata.normalize("NFC", word).casefold()
 
 
 class CaptureError(Exception):
@@ -231,8 +284,10 @@ def _strip(chars: str) -> Callable[[str], str]:
     return lambda text: text.translate(table)
 
 
-# Every spelling a realm takes: the folder's, the `Name-Realm` normalisations,
-# the web slug, the underscore variant, and the apostrophe as Lua escapes it.
+# Every spelling a realm might take: the folder's; without spaces, and without
+# spaces and hyphens (what `Name-Realm` strings are reported to use) [verify];
+# and the tool's own guesses, which are NOT client normalisations: apostrophe
+# stripped, the web slug, the underscore variant, the Lua-escaped apostrophe.
 # Each is a function, so the pseudonym's form is derived exactly the way the
 # real name's was and the corpus keeps the relation between the spellings.
 REALM_TRANSFORMS: tuple[Callable[[str], str], ...] = (
@@ -300,9 +355,11 @@ class Identity:
         self.names: dict[str, str] = {}
         self._show_names = show_names
         self._tokens: dict[bytes, Token] = {}
-        self._survivors: dict[bytes, str] = {}  # ASCII-lowered form -> mode
+        self._survivors: dict[bytes, str] = {}  # ASCII-lowered long form -> mode
+        self._short_survivors: dict[bytes, str] = {}  # ASCII-lowered short form -> "substring"
         self._realm_pseudonyms: set[bytes] = set()
-        self._partner_words: set[bytes] = set(FACTION_WORDS)
+        self._partner_words: set[str] = set()  # every letter run of every pseudonym, casefolded
+        self.counts: Counter[str] = Counter()
 
         for i, realm in enumerate(self._ordered(realms)):
             self._add_name(realm, _shaped(realm, "Labrealm", "Labréalm", i), "realm")
@@ -332,15 +389,12 @@ class Identity:
 
         self._identity = _trie_regex({t.text: t.mode for t in self._tokens.values()})
         self._survivor = _trie_regex(self._survivors)
-        realm_forms = sorted(self._realm_pseudonyms, key=len, reverse=True)
-        self._foreign_partner = (
-            re.compile(
-                rb"([A-Za-z\x80-\xff]+)(?: - |-)(?:%s)" % b"|".join(map(re.escape, realm_forms)),
-                re.IGNORECASE,
-            )
-            if realm_forms
-            else None
-        )
+        self._short_survivor = _trie_regex(self._short_survivors)
+        # Every own-realm pseudonym in the output is found with one prefix-tree
+        # pattern (its three casings are separate literals), and what stands on
+        # either side of it is then read in a bounded window. No pattern here
+        # walks a long run of letters more than once.
+        self._own_realm = _trie_regex(dict.fromkeys(self._realm_pseudonyms, "substring"))
 
     @staticmethod
     def _ordered(names: Iterable[str]) -> list[str]:
@@ -361,16 +415,19 @@ class Identity:
     def _survivor_form(self, text: str, mode: str | None = None) -> None:
         if len(text) < 2:
             return
-        chosen = mode or ("substring" if len(text) >= EMBEDDED_MIN_CHARS else "word")
         lowered = text.encode("utf-8").lower()
-        if self._survivors.get(lowered) != "substring":
-            self._survivors[lowered] = chosen
+        if mode is None and len(text) < EMBEDDED_MIN_CHARS:
+            # Found anywhere; whether a hit refuses depends on what it touches.
+            self._short_survivors[lowered] = "substring"
+        elif self._survivors.get(lowered) != "substring":
+            self._survivors[lowered] = mode or "substring"
 
     def _add_name(self, real: str, pseudonym: str, category: str) -> None:
         if real in self.names:
             return  # e.g. a character named like a realm: the first category wins
         self._check(real, category)
         self.names[real] = pseudonym
+        self.counts[category] += 1
         transforms = REALM_TRANSFORMS if category == "realm" else PLAIN_TRANSFORMS
         pairs: list[tuple[str, str]] = []
         for transform in transforms:
@@ -394,11 +451,11 @@ class Identity:
             for cased in (form, form.lower(), form.upper(), form.title(), form.casefold()):
                 self._survivor_form(cased)
         for _form, replacement in pairs:
-            encoded = replacement.encode("utf-8")
-            if category == "realm":
-                self._realm_pseudonyms.add(encoded)
-            last_word = re.split(rb"[^A-Za-z\x80-\xff]+", encoded.lower())[-1]
-            self._partner_words.add(last_word)
+            for cased in (replacement, replacement.lower(), replacement.upper()):
+                if category == "realm":
+                    # All three casings: bytes-level IGNORECASE folds ASCII only.
+                    self._realm_pseudonyms.add(cased.encode("utf-8"))
+                self._partner_words.update(_fold(run) for run in re.findall(r"[^\W\d_]+", cased))
 
     def _add_account(self, real: str, index: int) -> None:
         if real in self.names:
@@ -409,6 +466,7 @@ class Identity:
             return
         number = str(90000001 + index)
         self.names[real] = f"{number}#{numbered.group(2)}"
+        self.counts["account"] += 1
         self._token(real, self.names[real], "substring")
         self._survivor_form(real, "substring")
         if len(numbered.group(1)) >= 5:
@@ -419,13 +477,11 @@ class Identity:
     # ── scrubbing ──
 
     @staticmethod
-    def _protected(data: bytes, *, config: bool, toc: bool) -> list[tuple[int, int]]:
-        spans: list[tuple[int, int]] = []
-        if config:
-            spans.extend(m.span(1) for m in SET_NAME_RE.finditer(data))
-        if toc:
-            spans.extend(m.span(1) for m in TOC_KEY_RE.finditer(data))
-        return sorted(spans)
+    def _vocabulary(data: bytes, *, config: bool, toc: bool) -> tuple[list[Span], list[Span]]:
+        """(CVar-name spans, client-defined TOC key spans): never edited. See SET_NAME_RE."""
+        cvar_names = sorted(m.span(1) for m in SET_NAME_RE.finditer(data)) if config else []
+        toc_keys = sorted(m.span(1) for m in TOC_KEY_RE.finditer(data)) if toc else []
+        return cvar_names, toc_keys
 
     def scrub(self, data: bytes, *, blank_cvars: bool = False, toc: bool = False) -> ScrubResult:
         """Return `data` with identity replaced, plus every edit and any reason to refuse.
@@ -434,10 +490,11 @@ class Identity:
         """
         # Three passes over the ORIGINAL bytes, highest priority first. Matches
         # within a pass never overlap each other; a match that overlaps a
-        # protected span or an edit from an earlier pass is dropped.
-        protected = self._protected(data, config=blank_cvars, toc=toc)
+        # vocabulary span or an edit from an earlier pass is dropped.
+        cvar_names, toc_keys = self._vocabulary(data, config=blank_cvars, toc=toc)
+        vocabulary = sorted([*cvar_names, *toc_keys])
         edits: list[Edit] = []
-        owned: list[tuple[int, int]] = list(protected)
+        owned: list[Span] = list(vocabulary)
 
         def claim(start: int, end: int, new: bytes, reason: str) -> None:
             if start == end or data[start:end] == new:
@@ -452,7 +509,7 @@ class Identity:
             )
 
         def close_pass() -> None:
-            owned[:] = sorted([*protected, *((e.offset, e.end) for e in edits)])
+            owned[:] = sorted([*vocabulary, *((e.offset, e.end) for e in edits)])
 
         if blank_cvars:
             for m in self._cvar_value.finditer(data):
@@ -468,44 +525,60 @@ class Identity:
 
         edits.sort(key=lambda e: e.offset)
         out = bytearray()
+        written: list[Span] = []  # where each replacement landed, in output offsets
         cursor = 0
         for edit in edits:
             out += data[cursor : edit.offset]
+            written.append((len(out), len(out) + len(edit.new)))
             out += edit.new
             cursor = edit.end
         out += data[cursor:]
         scrubbed = bytes(out)
-        problems, notes = self.inspect(scrubbed, config=blank_cvars, toc=toc)
+        problems, notes = self.inspect(scrubbed, config=blank_cvars, toc=toc, written=written)
+
+        # A short exact-case name replaced inside a longer name in another
+        # casing ("Al" in "xtHrAlLx") splits it before the scan above can see
+        # it. So the long forms are also hunted in the ORIGINAL bytes: every
+        # hit there must lie inside one edit (it was replaced whole) or inside
+        # a client-defined TOC key.
+        if self._survivor is not None:
+            replaced = [(e.offset, e.end) for e in edits]
+            split = [
+                m
+                for m in self._survivor.finditer(data.lower())
+                if not _inside(replaced, m.start(), m.end())
+                and not _overlaps(toc_keys, m.start(), m.end())
+            ]
+            if split:
+                problems.append(_located("identity string not replaced whole", data, split))
         return ScrubResult(scrubbed, tuple(edits), tuple(problems), tuple(notes))
 
     def inspect(
-        self, scrubbed: bytes, *, config: bool = False, toc: bool = False
+        self,
+        scrubbed: bytes,
+        *,
+        config: bool = False,
+        toc: bool = False,
+        written: Sequence[Span] = (),
     ) -> tuple[list[str], list[str]]:
-        """(reasons these bytes must not be emitted, notes for the eye). Never quotes a match."""
+        """(reasons these bytes must not be emitted, notes for the eye). Never quotes a match.
+
+        `written` is where this scrub put its replacements, if it made any.
+        """
         problems: list[str] = []
         notes: list[str] = []
-        protected = self._protected(scrubbed, config=config, toc=toc)
+        cvar_names, toc_keys = self._vocabulary(scrubbed, config=config, toc=toc)
+        pseudonyms = sorted(written)
 
-        def report(
-            into: list[str],
-            label: str,
-            matches: Iterable[re.Match[bytes]],
-            *,
-            vocabulary_exempt: bool = False,
-        ) -> None:
-            # Only the identity-string checks skip the protected spans (a CVar
-            # name or TOC key that merely spells like a name). Emails, tags,
-            # GUIDs and identity CVars are judged everywhere.
-            hits = [
-                m
-                for m in matches
-                if not (vocabulary_exempt and _overlaps(protected, m.start(), m.end()))
-            ]
+        def report(into: list[str], label: str, matches: Iterable[re.Match[bytes]]) -> None:
+            hits = list(matches)
             if hits:
-                first = hits[0].start()
-                line = scrubbed.count(b"\n", 0, first) + scrubbed.count(b"\r", 0, first) + 1
-                line -= scrubbed.count(b"\r\n", 0, first)
-                into.append(f"{label} x{len(hits)} (first at byte {first}, line {line})")
+                into.append(_located(label, scrubbed, hits))
+
+        def outside(
+            spans: list[Span], matches: Iterable[re.Match[bytes]]
+        ) -> Iterator[re.Match[bytes]]:
+            return (m for m in matches if not _overlaps(spans, m.start(), m.end()))
 
         report(problems, "email address", EMAIL_RE.finditer(scrubbed))
         report(problems, "BattleTag", BATTLETAG_RE.finditer(scrubbed))
@@ -516,45 +589,124 @@ class Identity:
         )
         report(problems, "account GUID", ACCOUNT_GUID_RE.finditer(scrubbed))
         report(problems, "guild GUID", GUILD_GUID_RE.finditer(scrubbed))
+        report(problems, "community GUID", CLUB_GUID_RE.finditer(scrubbed))
         report(problems, "unblanked identity CVar", self._cvar_unblanked.finditer(scrubbed))
+
+        lowered = scrubbed.lower()  # folds ASCII only and keeps every offset
         if self._identity is not None:
+            # Exact spellings. Exempt in both vocabulary spans: a CVar called
+            # AlwaysCompareItems is not a character called Al. The scans below
+            # still look inside CVar names.
             report(
                 problems,
                 "surviving identity string",
-                self._identity.finditer(scrubbed),
-                vocabulary_exempt=True,
+                outside(sorted([*cvar_names, *toc_keys]), self._identity.finditer(scrubbed)),
             )
+        long_hits: list[Span] = []
         if self._survivor is not None:
-            # bytes.lower() folds ASCII only and keeps every offset.
-            report(
-                problems,
-                "surviving identity string (other casing or embedded)",
-                self._survivor.finditer(scrubbed.lower()),
-                vocabulary_exempt=True,
-            )
-        if self._foreign_partner is not None:
-            report(
-                problems,
-                "someone else's name on an own realm",
-                (
-                    m
-                    for m in self._foreign_partner.finditer(scrubbed)
-                    if m.group(1).lower() not in self._partner_words
-                ),
-            )
+            found = list(outside(toc_keys, self._survivor.finditer(lowered)))
+            long_hits = [m.span() for m in found]
+            report(problems, "surviving identity string (other casing or embedded)", found)
+        if self._short_survivor is not None:
+            # Names under EMBEDDED_MIN_CHARS characters, in any casing, anywhere.
+            # Inside a pseudonym they are the pseudonym's own letters. As a whole
+            # word, or glued to a pseudonym or to another identity hit, they
+            # refuse. Anywhere else ("mara" in "marathon") they are counted.
+            masked = bytearray(lowered)
+            for start, end in pseudonyms:
+                masked[start:end] = bytes(end - start)  # NUL: no name contains it
+            hits = self._short_survivor.finditer(bytes(masked))
+            short = list(outside(toc_keys, hits) if toc_keys else hits)
+            # A file can hold a million loose hits of a two-letter name, so
+            # "touches" is two set lookups, not a search.
+            starts = {s for s, _ in pseudonyms} | {s for s, _ in long_hits}
+            ends = {e for _, e in pseudonyms} | {e for _, e in long_hits}
+            starts.update(m.start() for m in short)
+            ends.update(m.end() for m in short)
+            size = len(scrubbed)
+            glued: list[re.Match[bytes]] = []
+            loose: list[re.Match[bytes]] = []
+            for m in short:
+                begin, stop = m.span()
+                whole_word = (begin == 0 or scrubbed[begin - 1] not in _WORD_BYTES) and (
+                    stop == size or scrubbed[stop] not in _WORD_BYTES
+                )
+                (glued if whole_word or begin in ends or stop in starts else loose).append(m)
+            report(problems, "surviving short identity string (whole word or glued)", glued)
+            report(notes, "short identity string inside a longer word", loose)
+
+        if self._own_realm is not None:
+            foreign: list[re.Match[bytes]] = []
+            tolerated: list[re.Match[bytes]] = []
+            for m in self._own_realm.finditer(scrubbed):
+                verdict = self._partner(scrubbed, m)
+                if verdict == "foreign":
+                    foreign.append(m)
+                elif verdict == "vocabulary":
+                    tolerated.append(m)
+            report(problems, "someone else's name on an own realm", foreign)
+            report(notes, "own realm next to a faction, region or 'Default' word", tolerated)
         report(
             notes,
             "Name-Realm-shaped string that is not a pseudonym pair",
             (m for m in NAME_REALM_SHAPE_RE.finditer(scrubbed) if not self._is_pair(m)),
         )
-        report(notes, "whisper/invite/target macro line", SOCIAL_MACRO_RE.finditer(scrubbed))
+        report(
+            notes, "whisper/invite/target macro line or @Name", SOCIAL_MACRO_RE.finditer(scrubbed)
+        )
         return problems, notes
 
+    def _partner(self, scrubbed: bytes, match: re.Match[bytes]) -> str:
+        """Who stands next to this own-realm pseudonym: "own", "vocabulary", or "foreign".
+
+        Looks at `<word><joint><realm>`, `<word> (<realm>)` and
+        `<realm><joint><word>`, and one segment further when the word is a
+        faction. A word longer than the window is cut short, which makes it
+        foreign: the safe direction.
+        """
+
+        def before(position: int) -> re.Match[bytes] | None:
+            return _BEYOND_BEFORE.search(scrubbed, max(0, position - 160), position)
+
+        def after(position: int) -> re.Match[bytes] | None:
+            return _BEYOND_AFTER.match(scrubbed, position)
+
+        # (word, the segment beyond it)
+        words: list[tuple[bytes, re.Match[bytes] | None]] = []
+        leading = before(match.start())
+        if leading is None:
+            leading = _PAREN_BEFORE.search(scrubbed, max(0, match.start() - 160), match.start())
+        if leading is not None:
+            words.append((leading.group(1), before(leading.start())))
+        trailing = after(match.end())
+        if trailing is not None:
+            words.append((trailing.group(1), after(trailing.end())))
+        if not words:
+            return "own"
+
+        verdicts = set()
+        for raw, beyond in words:
+            kind = self._kind(raw)
+            if kind == "vocabulary" and self._word(raw) in FACTION_WORDS and beyond is not None:
+                # "Jaina - Horde - <realm>": the faction is fine, the segment beyond it may not be.
+                kind = "foreign" if self._kind(beyond.group(1)) == "foreign" else kind
+            verdicts.add(kind)
+        return next(v for v in ("foreign", "vocabulary", "own") if v in verdicts)
+
+    @staticmethod
+    def _word(raw: bytes) -> str:
+        return _fold(raw.decode("utf-8", errors="replace"))
+
+    def _kind(self, raw: bytes) -> str:
+        word = self._word(raw)
+        if word in self._partner_words:
+            return "own"
+        return "vocabulary" if word in VOCABULARY_PARTNERS else "foreign"
+
     def _is_pair(self, match: re.Match[bytes]) -> bool:
-        if match.group(1).lower() not in self._partner_words - FACTION_WORDS:
-            return False
-        rest = match.group(2).lower()
-        return any(rest.startswith(realm.lower()) for realm in self._realm_pseudonyms)
+        """Is every word of this quoted string a pseudonym or a faction/region/'Default' word?"""
+        runs = re.findall(rb"[%s]+" % _LETTERS, match.group(0))
+        return all(self._kind(run) != "foreign" for run in runs)
 
     def scrub_path(self, rel: PurePosixPath) -> tuple[PurePosixPath, list[str]]:
         """Pseudonymise each path component; report anything that must not be a path."""
@@ -570,12 +722,26 @@ class Identity:
         return PurePosixPath(*parts), problems
 
 
-def _overlaps(spans: list[tuple[int, int]], start: int, end: int) -> bool:
+def _overlaps(spans: list[Span], start: int, end: int) -> bool:
     """Does [start, end) intersect any of these sorted, disjoint spans?"""
     at = bisect.bisect_right(spans, (start, sys.maxsize))
     if at and spans[at - 1][1] > start:
         return True
     return at < len(spans) and spans[at][0] < end
+
+
+def _inside(spans: list[Span], start: int, end: int) -> bool:
+    """Does one of these sorted, disjoint spans contain all of [start, end)?"""
+    at = bisect.bisect_right(spans, (start, sys.maxsize))
+    return bool(at) and spans[at - 1][0] <= start and end <= spans[at - 1][1]
+
+
+def _located(label: str, data: bytes, hits: Sequence[re.Match[bytes]]) -> str:
+    """`<label> x<count> (first at byte, line)`. Never the matched text."""
+    first = hits[0].start()
+    line = data.count(b"\n", 0, first) + data.count(b"\r", 0, first) + 1
+    line -= data.count(b"\r\n", 0, first)
+    return f"{label} x{len(hits)} (first at byte {first}, line {line})"
 
 
 # ─── reading the install (read-only) ─────────────────────────────────────────
@@ -1128,26 +1294,59 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
     # Every folder under the root that has WTF/Account, whether or not it is
     # still an installed flavor: an uninstalled product leaves WTF/ behind, and
     # a file in one flavor can name a character that lives in another.
-    for folder in subdirs(root):
-        config = descend(folder, "WTF", "Config.wtf")
-        if config is not None:
-            configs.append(config)
-        for account in account_dirs(folder):
+    #
+    # Listed strictly. The lenient `children()` turns an unlistable folder into
+    # an empty one, and here that would mean a shorter identity map and files
+    # captured with those names still in them.
+    def listed(directory: Path) -> list[Path]:
+        try:
+            return sorted(directory.iterdir(), key=lambda p: p.name)
+        except OSError as error:
+            raise CaptureError(
+                "a folder between the install root and WTF/Account/<account>/<realm>/<character> "
+                f"could not be listed ({type(error).__name__}); the identity map would be "
+                "incomplete, so nothing is captured"
+            ) from None
+
+    def folders(entries: Iterable[Path]) -> list[Path]:
+        return [p for p in entries if p.is_dir() and not p.is_symlink()]
+
+    def named(entries: Iterable[Path], name: str) -> Path | None:
+        return next((p for p in folders(entries) if p.name.casefold() == name.casefold()), None)
+
+    def config_files(entries: Iterable[Path]) -> list[Path]:
+        return [p for p in entries if p.name.casefold() in CONFIG_NAMES and p.is_file()]
+
+    for folder in folders(listed(root)):
+        wtf = named(listed(folder), "WTF")
+        if wtf is None:
+            continue
+        in_wtf = listed(wtf)
+        configs.extend(config_files(in_wtf))
+        account_root = named(in_wtf, "Account")
+        for account in folders(listed(account_root)) if account_root else []:
             accounts.add(account.name)
-            configs.extend(p for p in files(account) if p.name.casefold() in CONFIG_NAMES)
-            for realm in realm_dirs(account):
+            in_account = listed(account)
+            configs.extend(config_files(in_account))
+            for realm in folders(in_account):
+                if realm.name.casefold() == SAVED_VARIABLES_DIR.casefold():
+                    continue
                 realms.add(realm.name)
-                for character in subdirs(realm):
+                for character in folders(listed(realm)):
                     characters.add(character.name)
                     pairs.add((character.name, realm.name))
-                    configs.extend(p for p in files(character) if p.name.casefold() in CONFIG_NAMES)
+                    configs.extend(config_files(listed(character)))
 
     guids: set[bytes] = {g.encode() for g in args.own_guid or []}
     for config in configs:
         try:
             data = read_bytes(config)
-        except OSError:
-            continue  # its identity CVars stay unharvested; the file itself will be refused
+        except OSError as error:
+            raise CaptureError(
+                f"a Config.wtf or config-cache.wtf could not be read ({type(error).__name__}); "
+                "its realmName and lastCharacterGuid would be missing from the identity map, "
+                "so nothing is captured"
+            ) from None
         for m in _HARVEST_RE.finditer(data):
             if m.group(1).lower() == b"realmname":
                 # A realm whose folder is gone (deleted character) is still a realm.
@@ -1305,8 +1504,10 @@ def run(args: argparse.Namespace) -> int:
     mode = "DRY RUN, nothing will be written" if args.dry_run else f"writing under {out}"
     print(f"lab_capture: {len(planner.items)} files from {len(flavors)} flavor(s); {mode}")
     print(
-        f"identity map: {len(identity.names)} names, {len(identity.guids)} own GUIDs, "
-        f"{len(identity.cvars)} CVars blanked"
+        f"identity map: {len(identity.names)} names "
+        f"({identity.counts['account']} accounts, {identity.counts['realm']} realms, "
+        f"{identity.counts['character']} characters, {identity.counts['extra name']} extra), "
+        f"{len(identity.guids)} own GUIDs, {len(identity.cvars)} CVars blanked"
     )
     if args.show_map:
         for real, pseudonym in identity.names.items():
