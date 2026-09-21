@@ -38,8 +38,35 @@ Runbook for the owner's capture: `docs/handoffs/M10-03.md`.
 (`build-info`, `flavor-info`, `savedvariables`, `config-wtf`, `bindings`,
 `macros`, `toc`, `combatlog`, `wago-csv`, …). `flavor` is the flavor folder
 as found on disk. `client_version` is the full version string from
-`.build.info`. `scrub` records what the tool rewrote (`identity-rewritten`,
-`cvars-dropped: n`, or `none`).
+`.build.info`. `platform` is the client that last wrote the file (`macos`,
+`windows`), not the machine the capture ran on: it is there to explain line
+endings and path spelling, so a capture made under Wine/Proton or from a
+mounted drive must pass `--platform`. `scrub` records what the tool rewrote,
+as it prints it: `identity-rewritten: n` (or `path only`), `cvars-blanked: n`,
+`guids-rewritten: n`, `embedded: n`, joined with `; `, or `none`. The tool
+prints each row ready to paste. Run it with
+`--kind <flavor folder>=<flavor-kind>` and the `file` cell is already the
+final path: move `incoming/<platform>/` up one level and the rows match.
+
+What the scrub leaves behind is an artefact of the scrub, not evidence about
+the client:
+
+- A blanked line (`SET accountName ""`) says only that the CVar exists and
+  how its line is shaped. It is not evidence that the client writes empty
+  values.
+- Pseudonyms (`Labchara`, `Labrealma Partb`, `90000001#1`,
+  `Player-9999-00000001`) keep the real name's spaces, hyphens and
+  apostrophes, so the relation between a realm's folder spelling and its
+  normalised spellings survives. Their length, letters and casing pattern
+  are invented, and they are always ASCII: a non-ASCII name becomes an ASCII
+  pseudonym, so an ASCII name in a fixture says nothing about the real one.
+  Non-ASCII coverage comes from the `non-ASCII strings` SavedVariables pick,
+  a note that is only given to a file that still has such bytes after the
+  scrub.
+- `embedded: n` counts replacements that touched a neighbouring letter or
+  digit (a character named like the start of a longer word). Read those
+  lines before trusting the file's vocabulary. CVar names and TOC directive
+  keys are never rewritten.
 
 ## Index
 
