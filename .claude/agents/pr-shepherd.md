@@ -56,7 +56,14 @@ Handle, in order:
 - **Unresolved review threads** (the Claude review workflow, a human, or
   Copilot): read each. Mechanical → fix, commit, push. Substantive and
   answered by the plan/ADRs → fix. Needs the implementer's context → stop
-  and report `NEEDS_IMPLEMENTER:` with thread URLs. Wrong or not applicable
+  and report `NEEDS_IMPLEMENTER:` with thread URLs. **Mechanical never
+  includes behaviour:** a change to anything under `lab/*/src/`, to
+  `scripts/`, or to what a test asserts is `NEEDS_IMPLEMENTER:`, however
+  small, because it lands after the independent review and nobody grades it.
+  So is anything that reverses a judgment call the implementer reported and
+  a reviewer accepted. Docstrings, comments, PR text, rebases and lock
+  regeneration are yours (the snapshot entry-path rule merged in #18 is why
+  this line exists). Wrong or not applicable
   → reply citing the plan section or ADR. Every thread gets a reply
   (`addPullRequestReviewThreadReply`) before `resolveReviewThread`. Never
   resolve silently. **At most two fix rounds**; a third is `BLOCKED:`.
