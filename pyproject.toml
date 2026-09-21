@@ -22,6 +22,7 @@ dev = [
   "mypy>=1.19",
   "pytest>=8.4",
   "pre-commit>=4.3",
+  "types-psutil>=7.0",  # psutil ships no py.typed; mypy --strict needs the stubs
 ]
 
 # ─── ruff ────────────────────────────────────────────────────────────────────
