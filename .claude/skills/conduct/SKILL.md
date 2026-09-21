@@ -77,8 +77,11 @@ still defining"), not "might conflict".
   third is a stop condition.
 - All verdicts clean → `pr-shepherd` (background, in that worktree) with all
   reports; it marks the PR ready and drives it to merged.
-- `NEEDS_IMPLEMENTER:` → forward to the implementer, re-dispatch the shepherd
-  on "pushed".
+- `NEEDS_IMPLEMENTER:` → forward to the branch's author (the implementer,
+  or `test-writer` on a `-tests` branch); on "pushed",
+  `code-reviewer` (plus the area reviewers the touched files call for) on
+  the new commits with the thread or run URLs attached; all clean →
+  re-dispatch the shepherd. Nothing that changes behaviour merges ungraded.
 - `MERGED <sha>` → verify on `origin/main`, tick the tracker, note the tick
   for the end-of-session `docs(backlog)` PR, `git worktree remove` the
   agent's worktree, and **dispatch the newly unblocked tickets in the same

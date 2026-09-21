@@ -15,7 +15,7 @@ project can copy the setup — see the last section.
 | **code-reviewer** | `.claude/agents/code-reviewer.md` | probe tests under `lab/core/tests/review/` only | invariants L1–L8, then diff |
 | **domain-reviewer** | `.claude/agents/domain-reviewer.md` | nothing | glossary, file map, format reference, then diff |
 | **security-reviewer** | `.claude/agents/security-reviewer.md` | nothing | ADR-0021, ADR-0023, workflows, then diff |
-| **pr-shepherd** | `.claude/agents/pr-shepherd.md` | fixes for review threads, rebases | PR state, checks, threads |
+| **pr-shepherd** | `.claude/agents/pr-shepherd.md` | PR text, thread replies, comment-level fixes, rebases, lock regeneration | PR state, checks, threads |
 | **Automated review** | `.github/workflows/claude-review.yml` | PR comments | `AGENTS.md`, diff |
 
 Every writer is graded by someone who did not write the thing. For the two
