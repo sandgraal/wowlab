@@ -1,36 +1,34 @@
 # Workspace root. Not a package itself; it pins the toolchain and lints every
-# Python project in the monorepo with one configuration.
+# Python project in the repository with one configuration.
 [project]
-name = "bronze-workspace"
+name = "wowlab-workspace"
 version = "0.0.0"
-description = "Bronze monorepo root (uv workspace)"
+description = "wowlab repository root (uv workspace)"
 requires-python = ">=3.12"
-dependencies = ["bronze-api"]
+dependencies = ["wowlab-core"]
 
 [tool.uv]
 package = false
 
 [tool.uv.workspace]
-members = ["api"]
+members = ["lab/core"]
 
 [tool.uv.sources]
-bronze-api = { workspace = true }
+wowlab-core = { workspace = true }
 
 [dependency-groups]
 dev = [
   "ruff==0.16.7",
   "mypy>=1.19",
   "pytest>=8.4",
-  "httpx>=0.28",
   "pre-commit>=4.3",
-  "pyyaml>=6.0",       # tests/stack reads docker-compose.yml
 ]
 
 # ─── ruff ────────────────────────────────────────────────────────────────────
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-extend-exclude = [".claude/worktrees", ".venv", "node_modules", "web", "agent"]
+extend-exclude = [".claude/worktrees", ".venv"]
 
 [tool.ruff.lint]
 select = [
@@ -45,7 +43,7 @@ select = [
   "N",             # naming
   "T20",           # no stray print() in library code
   "ERA",           # no commented-out code
-  "DTZ",           # timezone-aware datetimes only (snapshots are timestamps)
+  "DTZ",           # timezone-aware datetimes only (snapshot ids are UTC timestamps)
 ]
 ignore = [
   "E501",   # line length is handled by the formatter
@@ -66,23 +64,23 @@ ignore = [
 "tests/harness/*.py" = "py39"
 
 [tool.ruff.lint.isort]
-known-first-party = ["bronze_api"]
+known-first-party = ["wowlab_core"]
 
 # ─── mypy ────────────────────────────────────────────────────────────────────
 [tool.mypy]
 strict = true
 python_version = "3.12"
-files = ["api/src"]
+files = ["lab/core/src"]
 exclude = ["\\.claude/worktrees", "\\.venv"]
 warn_unreachable = true
 pretty = true
 
 # ─── pytest ──────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
-testpaths = ["api/tests", "tests"]
-norecursedirs = [".claude/worktrees", ".venv", "node_modules", "web", "agent", "worker"]
+testpaths = ["lab/core/tests", "tests"]
+norecursedirs = [".claude/worktrees", ".venv"]
 addopts = "-m 'not live' --strict-markers -ra"
 markers = [
-  "parser: parser fixture, determinism and round-trip suites (make test-parser)",
-  "live: hits a live external API; never runs in CI (ADR-0012)",
+  "parser: parser fixture and round-trip suites (make test-parser)",
+  "live: hits a live external service; never runs in CI (ADR-0012)",
 ]

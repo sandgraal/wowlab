@@ -228,3 +228,75 @@ Format: Status / Context / Decision / Consequences.
 **Decision:** Collection completion, when built, is fed by the companion agent reading AllTheThings SavedVariables with the same constrained literal parser used for Bronze's own addon (ADR-0009: data, never executed Lua), stored as a versioned snapshot of collection state, and rendered against a versioned copy of AllTheThings' mapping data ingested per game version like `game_items` (ADR-0007). The Blizzard collections endpoints are a convenience path with the lower-fidelity label, never the only source. Bronze does not compute drop rates, source availability or "obtainable" status itself; it presents what the mapping says.
 
 **Consequences:** A new versioned table family and a new fixture family (real SavedVariables captures with provenance and consent) before any UI. The agent's filesystem scope widens to a second addon's file, which is a stop-and-ask item in `AGENTS.md` and must ship with a scope disclosure in the agent's README. AllTheThings' MIT licence is compatible with Apache-2.0; its attribution travels with the data. Nothing here ships before M5, and the ADR can be superseded if AllTheThings changes licence or format.
+
+---
+
+## ADR-0019 — The Lab is a local-only second track with its own trust boundary
+
+**Status:** Proposed (2026-09-20) — owner decision
+
+**Context:** The owner wants tooling that reads a WoW install directly, explains every file, snapshots it, and modifies client configuration reversibly, as a base for character-customization and offline-character tools (`docs/LAB_PLAN.md` §1). Bronze's companion agent is a distributed binary with a one-path, read-only, upload-only scope (ADR-0009), and that scope is what makes it trustworthy to other players. The two needs are incompatible inside one component and compatible inside one repository.
+
+**Decision:** The repository carries a second track, the Lab, under `lab/`. Lab code runs only on the owner's machine against the owner's install, is never shipped to Bronze users as a binary, and is never deployed as a service. `agent/`, `api/` and `worker/` do not import, embed or invoke Lab code, and `wowlab_core` does not import `bronze_api`; an architecture test enforces both directions. ADR-0009 is unchanged and continues to govern `agent/`. Lab invariants L1–L8 (`docs/LAB_PLAN.md` §4) extend `AGENTS.md` for paths under `lab/`.
+
+**Consequences:** One harness, one backlog and one CI serve both tracks. A Bronze feature that wants Lab data receives it as data through an explicit, reviewed interface decided by a later ADR, never by import. Fixtures captured from a real install enter a public repository, so a scrub tool and a Lab fixture policy are required before the first capture (M10-02). The `AGENTS.md` stop-and-ask item on the companion agent's filesystem scope stays as strict as it is.
+
+---
+
+## ADR-0020 — Lab core is a flavor-agnostic Python package in the uv workspace
+
+**Status:** Proposed (2026-09-20)
+
+**Context:** A Rust core with Python and Node bindings was considered for speed and single-binary distribution. The repository's toolchain, review agents, hooks and CI are Python-first (ADR-0014); the Lab has one user and no distribution requirement; the hot paths in Wave 1 are a literal parser and file hashing. Separately, the Forever beta installs under a flavor folder that is reported as `_classic_beta_` and will probably change at launch, and the owner also plays retail.
+
+**Decision:** The core library is `wowlab-core` (`lab/core/`, import name `wowlab_core`), a uv workspace member held to the same ruff, `mypy --strict` and pytest gates as `api/`. Flavor folder, product code, build and interface version are always discovered from the install at run time and never appear as constants in library code. A second language is introduced only by a superseding ADR that carries measurements showing Python missing a stated target (`docs/LAB_PLAN.md` §6.4 sets the first such target).
+
+**Consequences:** No new toolchain for agents or CI. Local CASC reading, which has no mature pure-Python implementation, is deferred to the wave that needs models or textures and will be decided then (binding vs. a bridge to an existing exporter). Every parser must tolerate both retail and Forever captures from day one, which the fixture corpus (M10-03) has to reflect.
+
+---
+
+## ADR-0021 — Every write into a game install goes through one write gate
+
+**Status:** Proposed (2026-09-20)
+
+**Context:** The owner's requirement is to modify things at will and go back and forth. The client overwrites its configuration files on logout, can hold them open on Windows, and gives no warning when an external edit is lost. Several later tools (declarative config, profile switching, addon scaffolding, inbound SavedVariables for companion features) will all need to write.
+
+**Decision:** `wowlab_core.guard` is the only code in the repository that writes inside an install. A write happens inside a transaction that refuses when the client is running or its state is unknown, accepts only paths under an allowlist (`WTF/`, `Interface/AddOns/`, `Fonts/`, loose `Interface/` overrides), takes a content-addressed snapshot first, journals before/after hashes, replaces files atomically, and rolls back on error. There is no flag that skips the snapshot or the client check. `guard.py` is load-bearing: graders are written by `test-writer` before the implementation, and `security-reviewer` reviews every change.
+
+**Consequences:** Undo is a property of the platform, not of each tool. Tools cannot write while the game is open, by design. The snapshot store must be cheap enough to run on every transaction, which is why it deduplicates by content hash. A later tool that believes it needs to bypass the gate is mis-specified.
+
+---
+
+## ADR-0022 — Lab game data comes from wago.tools per-build exports, cached by build
+
+**Status:** Proposed (2026-09-20)
+
+**Context:** ADR-0006 sources Bronze's static data from SimulationCraft's generated files, which cover what sims need for retail and may not cover the Forever client at all. The Lab needs arbitrary client tables (customization options, items, maps, quest text) for whatever build is installed. wago.tools publishes every DB2 table for every build of every product as CSV over HTTP and is what the community's existing Forever tooling uses. Reading the same tables from the local install needs CASC access, which ADR-0020 defers.
+
+**Decision:** `wowlab_core.gamedata` fetches tables from wago.tools by table name and full build string, caches them under the user data directory keyed by `(table, build)`, never overwrites a cached build (consistent with ADR-0007), and records URL, time, size and SHA-256 beside each file. The client is single-connection, identifies itself, backs off on 429/5xx and is never exercised live in CI (ADR-0012). `gamedata` is written against a `Source` protocol so a local CASC source can be added without changing callers. ADR-0006 continues to govern Bronze.
+
+**Consequences:** The Lab depends on a community service staying up and keeping its URL shape; the recorded fixtures and the breakage log in `docs/DATA_SOURCES.md` are how a change is detected. Server-side hotfixes are not in these exports; overlaying `DBCache.bin` is a later idea. Column typing needs WoWDBDefs and arrives with the first wave that needs typed columns.
+
+---
+
+## ADR-0023 — The Lab's scope stops at files the client treats as user-editable
+
+**Status:** Proposed (2026-09-20) — owner decision
+
+**Context:** The owner is comfortable connecting tools directly to game files for personal use. This repository is public and Apache-2.0 under the owner's name, Bronze's credibility depends on being unambiguously within Blizzard's terms (plan §15), and the client's anti-cheat acts on the account, not on the intent.
+
+**Decision:** In this repository the Lab reads anything in the install and writes only what the client treats as user configuration: `WTF/`, `Interface/AddOns/`, `Fonts/` and loose `Interface/` texture overrides. Permanently out of scope here: reading or writing client process memory, library injection, packet capture or modification, input automation, modifying `Data/` or executables, and defeating integrity checks. Documentation labels each capability `A` (ordinary addon-user behaviour) or `B` (works, unsupported, may be reset by a patch). Experiments beyond this boundary, including private-server sandboxes, belong in a separate private repository and are not planned, ticketed or referenced from this one beyond this sentence.
+
+**Consequences:** Every Lab idea in `docs/LAB_IDEAS.md` is buildable without account risk. Real-time data out of the running client is limited to what the client writes to disk (SavedVariables on logout or `/reload`, combat and chat logs) or shows on screen. `code-reviewer` and `security-reviewer` treat any `psutil` use beyond process listing, any `ctypes`/FFI into the client, and any write outside the allowlist as a finding.
+
+---
+
+## ADR-0024 — Lab work proceeds in owner-selected waves; ideas are never pre-ticketed
+
+**Status:** Proposed (2026-09-20) — owner decision
+
+**Context:** The Lab has a long idea list (`docs/LAB_IDEAS.md`) and one fixed starting point, the core library. The conductor dispatches every eligible ticket in parallel (ADR-0013), so anything written as a ticket gets built. The owner wants to choose each next step after seeing what the last one produced.
+
+**Decision:** Each wave is one milestone (`M10`, `M11`, …). The backlog holds tickets for the current wave only. When a wave's last ticket merges, the conductor writes `docs/handoffs/M<n>-review.md` (what shipped, what was learned, which ideas are now unblocked, a recommended next wave of at most three ideas) and stops Lab dispatch. The owner picks; the conductor lands the plan section, any ADRs and the tickets in one docs PR; dispatch resumes when it merges. Bronze milestones are unaffected and keep moving throughout.
+
+**Consequences:** Lab throughput is gated on one owner decision per wave, deliberately. `docs/LAB_IDEAS.md` stays a menu, and an agent found building from it without a ticket is off-task. Wave reviews are where estimates in the ideas file get corrected.

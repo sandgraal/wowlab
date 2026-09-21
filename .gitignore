@@ -29,19 +29,6 @@ build/
 htmlcov/
 .coverage
 
-# Node / Next.js
-node_modules/
-web/.next/
-web/out/
-*.tsbuildinfo
-
-# Go
-agent/bin/
-agent/dist/
-
-# SimC worker scratch
-worker/out/
-*.simc.out.json
-
-# Fixture captures that must never be committed raw
-api/tests/fixtures/**/*.token
+# Lab scratch — raw captures never get committed unscrubbed
+lab/core/tests/fixtures/incoming/
+lab/**/.cache/

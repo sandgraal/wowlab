@@ -1,4 +1,4 @@
-# Backlog — M0 and M1
+# Backlog — M0, M1 and M10
 
 Agent-sized tickets. Each is independently reviewable and has a verifiable acceptance criterion. Dependencies are explicit; anything with no unmet dependency can be worked in parallel.
 
@@ -198,6 +198,172 @@ ADR-0017. Serve the OpenAPI document for the read endpoints (character, snapshot
 
 ---
 
+# M10 — Lab core library (Wave 1)
+
+Spec: `docs/LAB_PLAN.md`. Formats: `docs/LAB_FORMATS.md`. Paths: `docs/LAB_FILE_MAP.md`. Decisions: ADR-0019 to ADR-0024. Lab invariants L1–L8 (`docs/LAB_PLAN.md` §4) apply to every ticket below. This is the whole of Wave 1; nothing from `docs/LAB_IDEAS.md` is a ticket until the owner picks the next wave (ADR-0024).
+
+## [ ] M10-01 — Lab scaffold and gates
+**Size:** S · **Depends on:** nothing
+
+Create `lab/core/` as uv workspace member `wowlab-core` (import `wowlab_core`, hatchling, `src/` layout, a `wowlab` console-script entry pointing at a Typer app that only implements `--version`). Wire it into the root: workspace `members`, root `dependencies`, `uv.sources`, mypy `files`, pytest `testpaths`, isort `known-first-party`. Extend `make test-parser` to also run `lab/core/tests/parser` under the existing `parser` marker, so the existing required check covers Lab parsers. Add `lab/README.md`, `lab/core/tests/fixtures/README.md` (index table: `file | kind | flavor | client_version | platform | captured_by | consent | scrub | edge_cases`), and `.gitignore` entries for Lab scratch. Add an architecture test asserting that nothing under `api/` or `worker/` imports `wowlab_core` and nothing under `lab/` imports `bronze_api` (AST scan, no imports executed). Add a non-required `lab (windows)` CI job that runs `pytest lab/core/tests` on `windows-latest`. Details and exact expected diffs: `docs/handoffs/M10-01.md`.
+
+**Acceptance:** `make ci` green from a clean clone; `uv run wowlab --version` prints a version; `uv lock --check` clean; the architecture test fails when a forbidden import is added in a scratch commit (show the failing output, then remove it); the Windows job runs and is green. Reviewed by `security-reviewer` (touches `.github/`).
+
+---
+
+## [ ] M10-02 — Fixture capture and scrub tool
+**Size:** M · **Depends on:** M10-01
+
+`scripts/lab_capture.py`, standard library only, runnable as `uv run python scripts/lab_capture.py --root <install> --out lab/core/tests/fixtures/incoming/`. Copies the capture set in `docs/handoffs/M10-03.md` from a real install and scrubs it per `docs/LAB_PLAN.md` §8: stable pseudonyms for account folder, character and realm names (in paths and in file contents), identity CVars blanked, and a hard refusal (non-zero exit, nothing written for that file) if an email address, a BattleTag or an unmapped `Player-<n>-<hex>` GUID survives. Byte-level targeted replacement only; it never parses and re-serializes. Prints a provenance row per file ready to paste into the index. Opens the install read-only and writes only under `--out` (L1).
+
+**Acceptance:** run against a synthetic install tree built in the test (our own layout, so constructed input is legitimate): pseudonyms are stable across files; untouched bytes are identical (assert on a diff of offsets); the three refusal cases refuse; `--dry-run` writes nothing. `gitleaks` config extended if the scrubbed output trips it for a benign reason, with the reason in the PR. Reviewed by `security-reviewer`.
+
+---
+
+## [ ] M10-03 — Capture the Lab fixture corpus
+**Size:** S · **Depends on:** M10-02 · **owner** (needs the machine with the game installed)
+
+Follow `docs/handoffs/M10-03.md`: log one character in and out on each installed flavor (retail; Forever beta if installed), run the capture tool, review the output, commit it with index rows. Record in `docs/DATA_SOURCES.md` (Local install section and breakage log) what the capture shows for every **[verify]** item in `docs/LAB_FORMATS.md` and `docs/LAB_FILE_MAP.md`: Forever's flavor folder, product code, version string, interface number, executable name, preferred TOC suffix, SavedVariables line endings per platform, and whether the Forever client writes a combat log.
+
+**Acceptance:** the corpus covers the coverage list in the handoff; every file has an index row; `gitleaks` clean; `docs/LAB_FORMATS.md` has a dated amendment per **[verify]** item resolved or still open.
+
+*Start this as soon as M10-02 merges. Everything that parses a client format waits on it.*
+
+---
+
+## [ ] M10-04T — luadata parser graders [TEST]
+**Size:** M · **Depends on:** M10-03
+
+Graders for `wowlab_core.luadata` parsing, derived from `docs/LAB_PLAN.md` §6.4, `docs/LAB_FORMATS.md` §4 and the real corpus: every real SavedVariables fixture parses; key order, key style, number source text and trailing comments are preserved; duplicates kept and flagged; `to_python()` behaviour; every rejection in §4.3 raises the typed error with line and column (constructed, labelled); depth, size and string bounds raise rather than truncate or crash; a 10 000-deep table raises without a `RecursionError` escaping. Marked `parser`, `xfail(strict=True, reason="M10-04 not implemented")`.
+
+**Acceptance:** graders fail today for the asserted reason; `make test-parser` reports them as xfail; no implementation code.
+
+---
+
+## [ ] M10-04 — luadata parser [IMPL]
+**Size:** L · **Depends on:** M10-04T
+
+`lab/core/src/wowlab_core/luadata.py` per `docs/LAB_PLAN.md` §6.4 (parsing half). No Lua execution, no third-party parser (L3). Activate graders by deleting marker lines only.
+
+**Acceptance:** `make test-parser` green with all M10-04T markers removed; parse time and peak RSS for the largest real fixture pasted in the PR, plus a generated 50 MB document (generator script in `lab/core/tests/`, labelled constructed) against the §6.4 target. If the target is missed, report numbers and stop (ADR-0020).
+
+---
+
+## [ ] M10-05 — Install discovery
+**Size:** M · **Depends on:** M10-03
+
+`wowlab_core.install` per `docs/LAB_PLAN.md` §6.1 and `docs/LAB_FORMATS.md` §1–§2. No flavor, product or version constants in library code (L6); a test greps the package for `_retail_`, `_classic` and `wow_classic` and fails on a hit outside comments.
+
+**Acceptance:** real `.build.info` / `.flavor.info` fixtures from each captured platform resolve to the expected `Install`; unknown columns preserved; a flavor folder with no matching row is returned with `version=None`; `WOWLAB_WOW_ROOT` and explicit root override defaults; a root without `.build.info` raises the typed error; nothing is written anywhere (assert on a read-only temp tree).
+
+---
+
+## [ ] M10-06 — Layout walker, file map and TOC parser
+**Size:** L · **Depends on:** M10-05
+
+`wowlab_core.layout`, `wowlab_core.toc`, `wowlab_core.filemap` per `docs/LAB_PLAN.md` §6.2–§6.3, `docs/LAB_FORMATS.md` §3, `docs/LAB_FILE_MAP.md`. The file map is one data source shared by the doc and `classify()`; state in the PR which way it is kept in sync and add a test that fails when they drift.
+
+**Acceptance:** against the captured tree: accounts, realms, characters, SavedVariables (scope and owning addon), addons with all their TOCs, WTF files and loose overrides are inventoried; every path in the captured tree gets a `classify()` result or an explicit `Unclassified` (list them in the PR; each becomes a file-map row or a stated omission); real TOC fixtures round-trip directive order and unknown directives; symlinks pointing outside the install are reported and not followed; 400 synthetic addon folders inventory in under two seconds.
+
+---
+
+## [ ] M10-07 — WTF text formats
+**Size:** M · **Depends on:** M10-03
+
+`wowlab_core.wtfconfig` per `docs/LAB_PLAN.md` §6.5 and `docs/LAB_FORMATS.md` §5–§7. Read-only, lossless.
+
+**Acceptance:** for every real `Config.wtf`, `config-cache.wtf`, `bindings-cache.wtf` and `macros-cache.txt` fixture, joining `lines` reproduces the file byte for byte; case-insensitive CVar lookup with original case preserved; duplicate CVars reported with the last effective; multi-line macro bodies intact; unknown lines typed `Unknown` and preserved.
+
+---
+
+## [ ] M10-08 — Game data client
+**Size:** M · **Depends on:** M10-01
+
+`wowlab_core.gamedata` per `docs/LAB_PLAN.md` §6.6 and ADR-0022. Record the builds endpoint and one small table's CSV from wago.tools as fixtures (manual `@pytest.mark.live` capture run by the implementer, responses committed, no credentials involved); add the source to `docs/DATA_SOURCES.md` with the URL shapes the recordings show.
+
+**Acceptance:** replayed tests cover: cache miss then hit; an existing cached build is never overwritten (L5); interrupted download leaves no partial file under the final name; sidecar records URL, time, size, SHA-256; 429 and 5xx back off and retry; `BuildNotPublished` for an unknown build; cache lives under the user data directory, never in the repo or an install. No live call in CI.
+
+---
+
+## [ ] M10-09 — Client process detection
+**Size:** S · **Depends on:** M10-01
+
+`wowlab_core.process` per `docs/LAB_PLAN.md` §6.7. `psutil` process listing only (ADR-0023).
+
+**Acceptance:** with a fake process table injected: matches by executable path under an install root and by known names; access-denied yields `unknown`; returns pid, exe path and flavor folder when derivable. A test asserts the module calls nothing on `psutil.Process` beyond `pid`, `name`, `exe`, `cmdline`, `status`. Reviewed by `security-reviewer`.
+
+---
+
+## [ ] M10-10 — Snapshot store
+**Size:** L · **Depends on:** M10-01
+
+`wowlab_core.snapshot` per `docs/LAB_PLAN.md` §6.9. Works on any directory tree with explicit subtrees; integration with `layout` defaults happens in M10-14.
+
+**Acceptance:** identical trees produce byte-identical manifests apart from id and timestamp fields (assert with those fixed); unchanged files are stored once across snapshots; `diff` reports added, removed, changed; `verify` detects a corrupted object; `gc` dry-run lists exactly the unreferenced objects and a real run removes only those; manifests are immutable (no API mutates one except the guarded label write); store path is under the user data directory and creating a snapshot writes nothing inside the source tree (assert on a read-only source).
+
+---
+
+## [ ] M10-11T — Write gate graders [TEST]
+**Size:** M · **Depends on:** M10-09, M10-10
+
+Graders for `wowlab_core.guard` from `docs/LAB_PLAN.md` §6.10 and ADR-0021, against a synthetic install in `tmp_path` with an injected process probe: refuses when the client is running and when its state is unknown; refuses every path outside the allowlist, including `Data/`, executables, `.build.info`, `.flavor.info`, the install root, `..` traversal, absolute paths, a symlink that escapes, and a case-variant of a forbidden path on a case-insensitive filesystem; takes a snapshot before the first write; journals before/after hashes; atomic replace (a simulated crash between temp write and rename leaves the original intact); an exception inside the transaction rolls every touched path back; `undo()` restores the pre-transaction bytes; dry-run touches nothing; no code path or flag skips the snapshot or the client check (assert on the public signature). `xfail(strict=True, reason="M10-11 not implemented")`.
+
+**Acceptance:** graders fail today for the asserted reason; no implementation code.
+
+---
+
+## [ ] M10-11 — Write gate and restore [IMPL]
+**Size:** L · **Depends on:** M10-11T
+
+`lab/core/src/wowlab_core/guard.py`. Activate graders by deleting marker lines only. A repository-wide test greps `lab/` for `open(` with a write mode, `write_text`, `write_bytes`, `os.replace`, `shutil.copy*`, `shutil.move`, `unlink` and `rmtree` outside `guard.py`, `snapshot.py`, `gamedata.py` and tests, and fails on a hit that is not allowlisted with a reason (L2).
+
+**Acceptance:** all M10-11T graders green; the write-site test green; on Windows CI the locked-file case reports a typed error and rolls back. Reviewed by `security-reviewer`.
+
+---
+
+## [ ] M10-12T — luadata serializer graders [TEST]
+**Size:** S · **Depends on:** M10-04
+
+Graders from `docs/LAB_PLAN.md` §6.4 (serializer half) and `docs/LAB_FORMATS.md` §4.2: `serialize(parse(x)) == x` byte for byte for every real SavedVariables fixture (parametrized over the index); after changing one leaf, every untouched sibling subtree's bytes are unchanged; a new positional entry, string key and number key are written in the client's format with the source document's line ending; 100 runs produce identical bytes, including under a non-C locale. `xfail(strict=True, reason="M10-12 not implemented")`.
+
+**Acceptance:** graders fail today for the asserted reason.
+
+---
+
+## [ ] M10-12 — luadata serializer [IMPL]
+**Size:** M · **Depends on:** M10-12T
+
+**Acceptance:** `make test-parser` green with all M10-12T markers removed. Any real fixture that cannot round-trip is a finding against the parser's document model, reported rather than special-cased.
+
+---
+
+## [ ] M10-13 — Combat log tokenizer
+**Size:** M · **Depends on:** M10-03
+
+`wowlab_core.combatlog` per `docs/LAB_PLAN.md` §6.8 and `docs/LAB_FORMATS.md` §8. If M10-03 found that the Forever client writes no usable combat log, ship against retail fixtures and say so in the module docstring and the PR.
+
+**Acceptance:** every line of each real fixture tokenizes or is yielded as `Unparsed` (report the count and the distinct unparsed shapes); quoted commas and nested `[...]`/`(...)` groups handled (`COMBATANT_INFO` fixture line); `follow()` yields appended records, survives truncation and a rotated file name.
+
+---
+
+## [ ] M10-14 — `wowlab` CLI
+**Size:** M · **Depends on:** M10-04, M10-05, M10-06, M10-07, M10-08, M10-10, M10-11
+
+Commands, flags and exit codes per `docs/LAB_PLAN.md` §6.11. `snap create` uses `layout` to resolve the default subtrees. `snap restore` and `undo` go through `guard`, print the plan, and ask unless `--yes`.
+
+**Acceptance:** each command has a test through Typer's runner against the captured tree or a synthetic install; every data command's `--json` output validates against its Pydantic model; exit code 3 when guard refuses; `wowlab explain <path>` returns the file-map entry for ten representative paths. A transcript of `wowlab doctor`, `tree --explain`, `sv dump`, `snap create`, a guarded edit and `undo` on a synthetic install is pasted in the PR.
+
+---
+
+## [ ] M10-15 — Wave 1 review
+**Size:** S · **Depends on:** M10-12, M10-13, M10-14 · **owner**
+
+The conductor writes `docs/handoffs/M10-review.md` per `docs/LAB_PLAN.md` §11 and stops Lab dispatch. The owner runs the CLI against the real install (`wowlab doctor`, `wowlab snap create -m baseline`, one guarded change and `wowlab undo`), notes what was wrong or missing, and picks Wave 2.
+
+**Acceptance:** the review file exists; the owner's pick is recorded in it; the next wave's plan, ADRs and tickets land in one docs PR.
+
+---
+
 # Parallelization
 
 After M0-02 (done), these can run concurrently:
@@ -212,6 +378,8 @@ After M1-02 [IMPL] lands: M1-03, M1-04, and M1-05 are independent of each other.
 M1-10 follows M1-06 and M1-07 and is independent of M1-08 and M1-09.
 
 M1-01 is the long pole on wall-clock time because it needs real exports from real characters across thirteen classes. Start it on day one regardless of what else is in flight.
+
+M10 (Lab, `docs/LAB_PLAN.md` §10) is independent of M0 and M1 and runs alongside them. After M10-01: M10-02, M10-08, M10-09 and M10-10 are independent. M10-03 needs the owner; M10-04T, M10-05, M10-07 and M10-13 open when it lands. Lab dispatch stops after M10-15 until the owner picks the next wave (ADR-0024).
 
 ---
 

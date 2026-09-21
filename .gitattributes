@@ -1,4 +1,4 @@
 * text=auto eol=lf
-*.simc -text
+# Real captures are stored byte for byte, line endings included (L4, L8).
+lab/core/tests/fixtures/** -text
 uv.lock linguist-generated=true
-pnpm-lock.yaml linguist-generated=true

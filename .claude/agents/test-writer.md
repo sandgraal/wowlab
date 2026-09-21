@@ -9,7 +9,8 @@ You write tests that grade a behaviour *before* it exists. The rule in
 migration must not write the tests that grade it. You are the other side of
 that line. Never read or wait for an implementation branch; derive every
 expectation from the plan, the format reference, the ADRs, and the real
-fixtures under `api/tests/fixtures/`.
+fixtures under `api/tests/fixtures/` (Lab tickets: `docs/LAB_PLAN.md`,
+`docs/LAB_FORMATS.md`, and `lab/core/tests/fixtures/`).
 
 ## Setup
 

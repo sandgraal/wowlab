@@ -57,6 +57,22 @@ loses user data on patch day.
 - `docs/DATA_SOURCES.md` — per-API auth, limits, breakage log.
 - `docs/SIMC_FORMAT.md` — parser reference and fixture index rules.
 - `docs/SETUP.md` — machine setup. Machine-specific notes go in `CLAUDE.local.md` (gitignored).
+- `docs/LAB_PLAN.md` — the Lab track (local-only tooling over a WoW install), with
+  `docs/LAB_FORMATS.md`, `docs/LAB_FILE_MAP.md`, and `docs/LAB_IDEAS.md` (a menu, not tickets).
+
+## Second track: the Lab
+
+`lab/` is local-only tooling that reads the owner's WoW install directly
+(ADR-0019). It shares this harness and nothing else with Bronze: no imports
+in either direction, and ADR-0009 still governs `agent/` unchanged. Under
+`lab/`, invariants L1–L8 in `docs/LAB_PLAN.md` §4 are hard invariants too:
+reads never write; `wowlab_core/guard.py` is the only code that writes into
+an install (client closed, allowlisted subtree, snapshot first); Lua is
+parsed as data; parsers are lossless; no flavor, product or build constants;
+no memory, injection, packet or input-automation work, ever (ADR-0023).
+`luadata.py` and `guard.py` are load-bearing: `[TEST]` before `[IMPL]`. Lab
+work runs in owner-selected waves (ADR-0024); stop Lab dispatch at a wave
+review and never build from `docs/LAB_IDEAS.md` without a ticket.
 
 ## Operating mode: conductor
 
@@ -163,6 +179,8 @@ Escalate rather than deciding unilaterally when:
   certainly does not.
 - Anything touches user credentials, the companion agent's filesystem scope,
   or binary distribution.
+- A Lab ticket seems to need a write outside `guard`, a path outside its
+  allowlist, or anything ADR-0023 rules out.
 - An ADR needs to move from Proposed to Accepted, or be superseded.
 - Reviewer and implementer still disagree after two fix rounds.
 

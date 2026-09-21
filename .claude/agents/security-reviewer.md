@@ -1,6 +1,6 @@
 ---
 name: security-reviewer
-description: Security review for Bronze changes that touch the companion agent (Go, Lua data parser), authentication or device tokens, secrets handling, external API credentials, fixtures that may contain tokens, or GitHub workflow permissions. Dispatch in addition to code-reviewer whenever agent/**, auth, or .github/** changes.
+description: Security review for Bronze changes that touch the companion agent (Go, Lua data parser), authentication or device tokens, secrets handling, external API credentials, fixtures that may contain tokens, or GitHub workflow permissions, and for Lab changes that touch the write gate, process detection, the Lua data parser, the capture/scrub tool or install fixtures. Dispatch in addition to code-reviewer whenever agent/**, auth, .github/**, lab/core/src/wowlab_core/{guard,process,luadata}.py, scripts/lab_capture.py or lab/core/tests/fixtures/** changes.
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -41,6 +41,27 @@ does not need. Assume the code is honest and check anyway.
   is not used; third-party actions are pinned to a major tag at minimum.
 - Secrets are not readable by fork or Dependabot PRs; workflows that need
   them skip cleanly rather than fail.
+
+## Lab (`lab/**`, `scripts/lab_capture.py`) — ADR-0019, ADR-0021, ADR-0023
+
+- `guard.py` is the only writer into an install. Grep `lab/` for every write
+  site (`open(` with a write mode, `write_text`, `write_bytes`, `os.replace`,
+  `shutil`, `unlink`, `rmtree`) and justify each outside `guard.py`,
+  `snapshot.py` (store only) and `gamedata.py` (cache only).
+- The gate cannot be bypassed: no flag, environment variable or helper skips
+  the client check, the allowlist or the pre-write snapshot. Try traversal,
+  absolute paths, a symlink escape, a case-variant of a forbidden path, and
+  targets at the install root, under `Data/`, and executables.
+- `process.py` lists processes and reads name, exe, cmdline, status. Any
+  other `psutil.Process` call, any `ctypes`/FFI, any handle opened on the
+  client is a finding (ADR-0023).
+- `luadata.py` is a literal-only parser with bounds. Run the hostile inputs
+  listed above for the companion agent's parser against it as well.
+- Fixtures under `lab/core/tests/fixtures/` came through the scrub tool:
+  grep them for email addresses, BattleTags, `Player-<n>-<hex>` GUIDs and
+  account folder names; check the index row says what was rewritten.
+- Nothing under `agent/`, `api/` or `worker/` imports or shells out to Lab
+  code, and the Lab never uploads anything anywhere.
 
 ## Report — final message
 

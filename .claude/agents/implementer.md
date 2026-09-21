@@ -24,8 +24,8 @@ return facts in the report format below, not prose.
    file for the area you are about to touch. Write down the acceptance
    criteria and the exact commands that will prove them **before** editing.
 4. If the ticket touches a load-bearing file (`simc_parser.py`,
-   `profile_builder.py`, `talent_codec.py`, `gap_analysis.py`) or a
-   migration, the graders already exist on `main` as
+   `profile_builder.py`, `talent_codec.py`, `gap_analysis.py`; in the Lab,
+   `luadata.py`, `guard.py`) or a migration, the graders already exist on `main` as
    `pytest.mark.xfail(strict=True, reason="<ticket> not implemented")`.
    Activate each by deleting exactly that marker line. Never edit a grader's
    assertions, fixtures, or expectations — if one is wrong, stop and report
@@ -38,6 +38,9 @@ return facts in the report format below, not prose.
   Unknown fields are kept. If a ticket seems to require breaking one of
   these, it does not; stop and report.
 - No live external API calls from tests. Record a fixture, replay it.
+- Lab tickets (`M10-…`, paths under `lab/`): read `docs/LAB_PLAN.md` §4 and
+  the section your ticket cites, plus `docs/LAB_FORMATS.md` for any parser.
+  Only `guard.py` writes into an install; tests never touch a real one.
 - Never touch `docs/BACKLOG.md`, `docs/DECISIONS.md`, `AGENTS.md`,
   `CLAUDE.md`, or anything under `.claude/` (a hook blocks it). If the
   harness needs a change, say so in your report.

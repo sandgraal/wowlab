@@ -25,7 +25,14 @@ standing decision, ADR-0013). The only files you edit are harness, docs,
   that is not on the frontier is not dispatched — name the open predecessor
   and ask, since the owner may know something the backlog does not.
 - Some tickets need the owner, not an agent: M0-01 (Blizzard credentials),
-  M1-01 (real `/simc` exports). Say so and keep going with the rest.
+  M1-01 (real `/simc` exports), M10-03 (capture from the real install;
+  runbook in `docs/handoffs/M10-03.md`), M10-15 (wave review). Say so and
+  keep going with the rest.
+- Lab milestones (`M10` and up) run in owner-selected waves (ADR-0024). When
+  a wave's review ticket is the only open Lab ticket, write
+  `docs/handoffs/M<n>-review.md` per `docs/LAB_PLAN.md` §11 and stop Lab
+  dispatch; Bronze tickets keep moving. Never create tickets from
+  `docs/LAB_IDEAS.md` without the owner's pick.
 - `TaskCreate` one tracker per ticket with subtasks build → review → ship →
   merged. Keep it current.
 
@@ -38,10 +45,12 @@ dependency order and the harness's concurrency limit. Holding one back
 needs a stated collision ("M1-06 reads the `parsed` shape M1-02 is still
 defining"), not "might conflict".
 
-- Load-bearing files and migrations: dispatch `test-writer` first; the
+- Load-bearing files (Bronze's four; the Lab's `luadata.py` and `guard.py`)
+  and migrations: dispatch `test-writer` first; the
   `implementer` starts only after the `[TEST]` PR is **merged**.
 - Everything else: `Agent(subagent_type: "implementer", isolation: "worktree", run_in_background: true)`.
 - Prompt = ticket id + the verbatim ticket text + the plan sections it cites
+  (`docs/IMPLEMENTATION_PLAN.md` for Bronze, `docs/LAB_PLAN.md` for `M10`+)
   + the path of any `docs/handoffs/<ticket>.md` + "report in the format your
   agent definition specifies". Nothing else; the agent reads the docs.
 - Ask `pr-shepherd` to open a **draft PR the moment a branch is pushed**, so
@@ -52,8 +61,9 @@ defining"), not "might conflict".
 - implementer / test-writer done → `code-reviewer` (background) on that
   branch with the report attached. Also dispatch `domain-reviewer` when the
   change touches `parsed`, diffing, sims, planning, `web/`, or player-facing
-  copy, and `security-reviewer` when it touches `agent/`, auth, secrets, or
-  `.github/`. Reviewers run concurrently.
+  copy, and `security-reviewer` when it touches `agent/`, auth, secrets,
+  `.github/`, or the Lab's `guard.py`, `process.py`, `luadata.py`,
+  `scripts/lab_capture.py` or install fixtures. Reviewers run concurrently.
 - Findings → `SendMessage` to the *same* implementer (its context is intact):
   "pull --rebase, fix, re-verify, push, report". At most two rounds; a
   third is a stop condition.

@@ -104,6 +104,30 @@ All weekly planning is anchored to the player's region, never to the server's cl
 **WTF folder** — where SavedVariables live. Path shape:
 `<install>/_retail_/WTF/Account/<ACCOUNT>/SavedVariables/<AddonName>.lua`
 
+**Install, product, flavor** — one Battle.net install directory holds several *products* (retail, Classic, PTR, a beta), each in its own *flavor folder* (`_retail_`, `_classic_`, …) and all sharing one `Data/` store. The product code (`wow`, `wow_classic`, …) is what Battle.net and data sites key on; the flavor folder is what is on disk. Neither is stable across a beta-to-launch transition, so Lab code discovers both and hard-codes neither.
+
+**Build** — the last component of a client version (`12.1.5.65432` → `65432`). Game data tables are valid for exactly one build. "Patch" is the first three components.
+
+**Interface version** — the integer an addon's TOC declares to say which client it supports (`120105`). Derived from the patch number, not the build. A mismatch marks the addon "out of date"; it does not change what API exists.
+
+**TOC** — an addon's manifest (`Foo.toc`): metadata directives and the ordered list of files to load. One addon can ship several TOCs with suffixes so each flavor loads its own.
+
+**CVar** — a client console variable: a named setting persisted in `Config.wtf` or a `config-cache.wtf`. Scope is machine, account or character depending on the variable.
+
+**Account folder** — `WTF/Account/<NAME>/`. The name identifies a Battle.net account (a number with `#1`, or an old account name). It is personal data; fixtures pseudonymize it.
+
+**CASC** — the content-addressed archive format of `Data/`. Files are addressed by content hash and by numeric *FileDataID*; names come from a community-maintained *listfile*, which has gaps. Some content is encrypted until Blizzard releases a key.
+
+**DB2** — the client's static data tables (items, spells, customization options, maps, …), one schema per build. Community definitions (WoWDBDefs) give the columns names.
+
+**Hotfix cache** — `Cache/ADB/<locale>/DBCache.bin`: row-level corrections to DB2 tables pushed by the server at login. Exports of DB2 tables do not include them.
+
+**Secret value** — since 12.0, some API returns in combat or restricted content (unit health is the usual example) are opaque to addon code: they can be passed to Blizzard widgets and cannot be compared, added or branched on. This is why computation-heavy combat addons stopped working and why Lab tooling works on out-of-combat and on-disk data.
+
+**Taint** — the client's tracking of which values and code paths insecure (addon) code has touched. Tainted execution cannot call protected functions (casting, targeting) in combat. Unrelated to secret values, often confused with them.
+
+**Forever** — *World of Warcraft: Forever*: a separate, permanent level-60 product based on the original world with new content, announced 2026-09-12, in beta from 2026-09-17. Reported to run the modern (12.x) addon API rather than the Classic one. See `docs/DATA_SOURCES.md` for what is verified.
+
 ## Terms that mislead
 
 | Term | Does not mean |
@@ -115,3 +139,6 @@ All weekly planning is anchored to the player's region, never to the server's cl
 | Vault | Storage; it is a weekly choice of one from nine |
 | Parse | Text parsing; it is a percentile rank |
 | Key | An auth credential; it is a dungeon item |
+| Flavor folder | A stable identifier; it is a directory name that changes between beta and launch |
+| Interface version | The API level; it is a compatibility label derived from the patch number |
+| Secret value | Encrypted data; it is a number addon code may display but not compute with |

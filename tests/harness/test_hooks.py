@@ -298,19 +298,20 @@ def test_protect_paths_reviewer_confined_to_new_files_in_review_dir() -> None:
     assert_allowed(
         run_hook(
             "protect_paths.py",
-            edit(str(REPO / "api/tests/review/test_probe_m1_02.py"), agent="code-reviewer"),
+            edit(str(REPO / "lab/core/tests/review/test_probe_m10_04.py"), agent="code-reviewer"),
         )
     )
     assert_blocked(
         run_hook(
-            "protect_paths.py", edit(str(REPO / "api/tests/test_health.py"), agent="code-reviewer")
+            "protect_paths.py",
+            edit(str(REPO / "lab/core/tests/test_cli_version.py"), agent="code-reviewer"),
         ),
         "tests/review",
     )
     assert_blocked(
         run_hook(
             "protect_paths.py",
-            edit(str(REPO / "api/tests/review/README.md"), agent="code-reviewer"),
+            edit(str(REPO / "lab/core/tests/review/README.md"), agent="code-reviewer"),
         ),
         "never edits an existing",
     )
