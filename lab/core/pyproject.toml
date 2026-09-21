@@ -4,9 +4,10 @@ version = "0.1.0"
 description = "Local-only library and CLI over a World of Warcraft install"
 requires-python = ">=3.12"
 license = "Apache-2.0"
-# Later tickets add psutil when they first need it (docs/LAB_PLAN.md §6).
+# All runtime dependencies from docs/LAB_PLAN.md §6 are present.
 # Anything beyond that list needs a line in the PR body.
 dependencies = [
+  "psutil>=7.0",  # process listing only (ADR-0023); used by wowlab_core.process
   "pydantic>=2.11",
   "typer>=0.16",
   "httpx>=0.28",
