@@ -201,8 +201,10 @@ jobs:
           gitleaks version
       # Full history: a secret that was committed and later deleted still
       # needs rotating. `gitleaks git` (not `dir`) so build output is ignored.
+      # --max-archive-depth: a compressed fixture (.gz) is scanned decompressed;
+      # without it the blob's contents never reach a rule.
       - name: Scan committed history
-        run: gitleaks git . --redact --exit-code 1 --config .gitleaks.toml
+        run: gitleaks git . --redact --exit-code 1 --config .gitleaks.toml --max-archive-depth 1
 
   semgrep:
     name: SAST (semgrep)

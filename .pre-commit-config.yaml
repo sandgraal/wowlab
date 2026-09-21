@@ -31,6 +31,8 @@ repos:
     rev: v8.30.1
     hooks:
       - id: gitleaks
+        # Scan inside compressed fixtures too (same flag as the CI job).
+        args: [--max-archive-depth=1]
   - repo: https://github.com/rhysd/actionlint
     rev: v1.7.12
     hooks:
