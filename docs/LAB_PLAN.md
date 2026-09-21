@@ -446,6 +446,27 @@ never edited. Every capture passes through `scripts/lab_capture.py`, which
 - records what it rewrote in the provenance row (`identity-rewritten`,
   `cvars-dropped: n`).
 
+> **Amendment 2026-09-21 (M10-02 reviews).** The tool blanks rather than
+> drops: the line is kept as `SET name ""`, so the row says
+> `cvars-blanked: n`, alongside `guids-rewritten: n` and `embedded: n` (the
+> number of replacements that had a word character next to them, for the
+> owner to read). A blanked line is a scrub artefact, not evidence that the
+> client writes empty values. The deny-list grew to eight names
+> (`docs/LAB_FORMATS.md` §5) and stays provisional until the M10-03 capture.
+> Pseudonyms keep the real name's separators (space, hyphen, apostrophe) and
+> one non-ASCII letter when the real name has any, so the corpus still shows
+> how a realm's folder spelling relates to its spelling inside
+> SavedVariables keys; nothing else about the name survives. CVar names on
+> `SET` lines and TOC directive keys are never rewritten, because they are
+> the client's vocabulary and M10-03 reads **[verify]** answers from them.
+> The refusal list is wider than the three cases above: also a
+> `BNetAccount-`/`Guild-` GUID, another player's name in front of one of the
+> owner's realms, an identity CVar the blanker could not match, and any
+> surviving case variant of an identity string. What the tool cannot know
+> (guild names, friends on other realms, real names in free text) it counts
+> and points at; the owner's eye and `--extra-name` are the control
+> (`docs/handoffs/M10-03.md`).
+
 Structure, key order, number text, escapes, line endings and everything else
 stay byte-for-byte. The scrubber works at the byte level with targeted
 replacements; it does not parse and re-serialize (the parser does not exist

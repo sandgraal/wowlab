@@ -197,3 +197,13 @@ small table's CSV export are the reference for `gamedata`
 ## Amendments
 
 Dated entries, newest last. Each names the fixture that prompted it.
+
+- **2026-09-21, §5, no fixture yet (M10-02 security and domain reviews).**
+  The scrubber's identity deny-list is now eight names: `accountName`,
+  `accountList`, `lastCharacterGuid`, `realmName`, `lastSelectedClubId`,
+  `Sound_OutputDriverName`, `Sound_VoiceChatInputDriverName`,
+  `Sound_VoiceChatOutputDriverName`. The last five come from reviewer memory
+  (audio device names often carry the owner's name; a club id identifies a
+  guild or community) and are **[verify]** against the first capture, which
+  may also add names. `portal` stays. The tool blanks the value and keeps
+  the line, so an empty-valued `SET` line in a fixture is a scrub artefact.
