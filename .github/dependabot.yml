@@ -1,8 +1,8 @@
 version: 2
 
 # Every PR Dependabot opens runs the full CI workflow; an update that breaks
-# lint, tests, or a scan cannot merge. Add npm (web/), gomod (agent/) and
-# docker (worker/) ecosystems when those directories land.
+# lint, tests, or a scan cannot merge. The repository is Python only; a new
+# ecosystem is added here in the wave whose ADR introduces it (ADR-0020).
 updates:
   - package-ecosystem: uv
     directory: "/"
@@ -12,10 +12,10 @@ updates:
     open-pull-requests-limit: 5
     groups:
       python-dev-tooling:
-        patterns: ["ruff", "mypy", "pytest", "pytest-*", "pre-commit", "httpx"]
+        patterns: ["ruff", "mypy", "pytest", "pytest-*", "pre-commit"]
         update-types: ["minor", "patch"]
       python-runtime:
-        patterns: ["fastapi", "uvicorn", "pydantic", "pydantic-*", "sqlalchemy", "alembic", "psycopg*"]
+        patterns: ["pydantic", "pydantic-*", "typer", "httpx", "platformdirs", "psutil"]
         update-types: ["minor", "patch"]
 
   - package-ecosystem: github-actions

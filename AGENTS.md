@@ -86,9 +86,9 @@ required checks are green, threads are resolved, and reviews are clean.
 - Parallel is the default. Dispatch every independent eligible ticket at
   once; holding one back needs a named file or interface collision.
 - Test-writer / implementer separation is mandatory for the two
-  load-bearing files, `lab/core/src/wowlab_core/luadata.py` and
-  `lab/core/src/wowlab_core/guard.py`: a `[TEST]` ticket lands graders
-  before the `[IMPL]` ticket starts. The session that writes the code never
+  load-bearing files, `lab/core/src/wowlab_core/luadata.py` (M10-04) and
+  `lab/core/src/wowlab_core/guard.py` (M10-11): a `[TEST]` ticket lands
+  graders before the `[IMPL]` ticket creates the file. The session that writes the code never
   writes, edits, or weakens the tests that grade it.
 - Work runs in owner-selected waves (ADR-0024). One wave is one milestone.
   When a wave's review ticket is the only one left, the conductor writes
@@ -109,7 +109,7 @@ to the list in `docs/LAB_PLAN.md` §6; adding one needs a line in the PR body.
 
 Tests use real fixtures, not generated examples. For anything parsing an
 external format, the fixture is a real capture that went through
-`scripts/lab_capture.py`, with a provenance row in
+`scripts/lab_capture.py` (ticket M10-02 creates it), with a provenance row in
 `lab/core/tests/fixtures/README.md`. The repository is public: an unscrubbed
 capture is a leak. No test needs a real install, and none writes to one.
 

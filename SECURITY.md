@@ -16,7 +16,7 @@ days.
 ### A leaked identifier in a fixture
 
 Fixtures under `lab/core/tests/fixtures/` are real captures that were
-scrubbed by `scripts/lab_capture.py`. If you find something that identifies
+scrubbed by `scripts/lab_capture.py` (the capture tool, ticket M10-02). If you find something that identifies
 a person in one (an account folder name, a character or realm name that is
 not a pseudonym, an email address, a BattleTag, a `Player-<n>-<hex>` GUID, a
 friend or guild roster inside an addon's saved data):

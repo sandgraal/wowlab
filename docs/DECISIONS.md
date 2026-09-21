@@ -4,7 +4,7 @@ Decisions already made. Read before proposing an alternative. If you believe one
 
 Format: Status / Context / Decision / Consequences. Status is `Proposed` until the repository owner flips it to `Accepted`; no agent does.
 
-> **Note (2026-09-21).** This file is append-only, with one exception made on this date and authorised by the repository owner: it was rewritten when the repository stopped being Bronze and became the Lab (ADR-0025). ADRs that belonged to Bronze were removed, the three harness ADRs that carry over were revised in place and marked with a dated amendment, and ADR-0019 to ADR-0024 were reworded for a Lab-only repository without changing what they decide. The previous text of every ADR is at the git tag `bronze-final`. From here on the file is append-only again.
+> **Note (2026-09-21).** This file is append-only, with one exception made on this date and authorised by the repository owner: it was rewritten when the project this repository used to hold was retired and the repository became the Lab (ADR-0025). That project's ADRs were removed, the three harness ADRs that carry over were revised in place and marked with a dated amendment, and ADR-0019 to ADR-0024 were reworded for a Lab-only repository without changing what they decide. The previous text of every ADR is at the git tag `bronze-final`. From here on the file is append-only again.
 
 ## Retired numbers
 
