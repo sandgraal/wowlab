@@ -34,7 +34,7 @@ import uuid
 import zlib
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from datetime import UTC, datetime
-from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
+from pathlib import Path, PurePath, PurePosixPath
 from typing import Any, BinaryIO, Literal
 
 import platformdirs
@@ -137,6 +137,13 @@ class Entry(_Frozen):
     """One path in a snapshot. `path` is relative to the root, POSIX-style."""
 
     path: str
+    """Relative to the root, `/`-separated, as the capturing platform named it.
+
+    The rule is platform-neutral: no NUL and no empty, `.` or `..` part. A
+    backslash or a colon is an ordinary character in a POSIX file name and is
+    kept. Platform-specific path safety (what `a\\b` or `C:x` would mean on
+    Windows) is `guard`'s job at restore time (M10-11), not the manifest's.
+    """
     kind: Literal["file", "symlink"] = "file"
     sha256: str | None = None
     """Content hash; `None` for a symlink, which is recorded and never followed."""
@@ -151,17 +158,9 @@ class Entry(_Frozen):
     @classmethod
     def _path_stays_inside_the_root(cls, value: str) -> str:
         parts = value.split("/")
-        windows = PureWindowsPath(value)
-        if (
-            "\x00" in value
-            or "\\" in value
-            or any(part in ("", ".", "..") for part in parts)
-            or windows.drive
-            or windows.root
-        ):
+        if "\x00" in value or any(part in ("", ".", "..") for part in parts):
             raise ValueError(
-                "entry path must be relative POSIX-style, without NUL, '\\', "
-                f"a drive or root, or an empty, '.' or '..' part: {value!r}"
+                f"entry path must be relative, without NUL or an empty, '.' or '..' part: {value!r}"
             )
         return value
 
@@ -385,6 +384,14 @@ class SnapshotStore:
         is neither a regular file, a directory nor a symlink is ignored. A
         file that cannot be read raises; a partial snapshot is never written.
 
+        Every failure is a `SnapshotError`. Bad arguments and a name the
+        manifest cannot carry fail before anything is stored. A failure part
+        way through the walk (an unreadable file) can leave objects already
+        stored for earlier files; they are complete, content-addressed and
+        referenced by nothing, so they cost space only, are reused by the
+        next `create`, and are collected by `gc`. No manifest and no file
+        under `tmp/` is left behind.
+
         Subtrees and excludes are relative paths; `"."` is the explicit
         spelling of the whole root and the empty string is refused. They are
         recorded, and entry paths are built from them, exactly as given:
@@ -417,6 +424,20 @@ class SnapshotStore:
             raise SnapshotError("`now` must be timezone-aware")
         when = when.astimezone(UTC)
 
+        header: dict[str, Any] = {
+            "created_at": f"{when:%Y-%m-%dT%H:%M:%S}.{when.microsecond:06d}Z",
+            "label": label,
+            "install_root": str(root),
+            "flavor_folder": flavor_folder,
+            "flavor_version": flavor_version,
+            "subtrees": tuple(wanted),
+            "excluded": tuple(excluded),
+            "client_running": client_running,
+        }
+        # Hold the caller's values to the model before anything is stored, so
+        # a bad argument fails with a typed error and an untouched store.
+        self._manifest(header, snapshot_id="", entries=())
+
         found: dict[str, Entry] = {}
         verified: set[str] = set()  # objects re-hashed during this create
         for subtree in wanted:
@@ -430,18 +451,7 @@ class SnapshotStore:
 
         fingerprint = tree_fingerprint(wanted, excluded, entries)
         snapshot_id = f"{when:%Y%m%dT%H%M%S}.{when.microsecond:06d}Z-{fingerprint}"
-        manifest = Manifest(
-            id=snapshot_id,
-            created_at=f"{when:%Y-%m-%dT%H:%M:%S}.{when.microsecond:06d}Z",
-            label=label,
-            install_root=str(root),
-            flavor_folder=flavor_folder,
-            flavor_version=flavor_version,
-            subtrees=tuple(wanted),
-            excluded=tuple(excluded),
-            client_running=client_running,
-            entries=entries,
-        )
+        manifest = self._manifest(header, snapshot_id=snapshot_id, entries=entries)
 
         data = manifest_bytes(manifest)
         target = self._manifest_path(snapshot_id)
@@ -454,6 +464,24 @@ class SnapshotStore:
             raise SnapshotExistsError(f"a different manifest already exists for {snapshot_id}")
         self._write_atomic(target, data)
         return manifest
+
+    @staticmethod
+    def _manifest(
+        header: dict[str, Any], *, snapshot_id: str, entries: tuple[Entry, ...]
+    ) -> Manifest:
+        """Build a manifest; a model rejection is a `SnapshotError`, never pydantic's."""
+        try:
+            return Manifest(id=snapshot_id, entries=entries, **header)
+        except ValidationError as exc:
+            raise SnapshotError(f"cannot describe this snapshot: {exc}") from exc
+
+    @staticmethod
+    def _entry(abs_path: Path, **fields: Any) -> Entry:
+        """Build an entry; a model rejection is a `SnapshotError` naming the file on disk."""
+        try:
+            return Entry(**fields)
+        except ValidationError as exc:
+            raise SnapshotError(f"cannot record {abs_path}: {exc}") from exc
 
     def _refuse_overlap(self, root: Path) -> None:
         """Refuse when either tree contains the other (L1).
@@ -529,10 +557,14 @@ class SnapshotStore:
                     yield rel, Path(child.path)
 
     def _capture(self, rel: str, abs_path: Path, verified: set[str]) -> Entry | None:
+        # Hold the path to the model before any byte is stored: a name the
+        # manifest cannot carry fails here, typed, with no object written.
+        self._entry(abs_path, path=rel)
         try:
             st = abs_path.lstat()
             if stat.S_ISLNK(st.st_mode):
-                return Entry(
+                return self._entry(
+                    abs_path,
                     path=rel,
                     kind="symlink",
                     mode=stat.S_IMODE(st.st_mode),
@@ -555,7 +587,8 @@ class SnapshotStore:
                 digest, size = self._store_stream(handle, verified)
         except OSError as exc:
             raise SnapshotError(f"cannot read {abs_path}: {exc}") from exc
-        return Entry(
+        return self._entry(
+            abs_path,
             path=rel,
             kind="file",
             sha256=digest,

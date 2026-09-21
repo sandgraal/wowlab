@@ -172,9 +172,12 @@ def test_manifest_records_what_the_spec_lists(source: Path, store: SnapshotStore
     entry = m.entry("WTF/Config.wtf")
     assert entry is not None
     assert entry.size == len(FILES["WTF/Config.wtf"])
-    # NTFS resolves timestamps to 100 ns; a nanosecond-exact os.utime round
-    # trip does not hold there, so this is a tolerance rather than equality.
-    assert abs(entry.mtime_ns - FIXED_MTIME_NS) < 1000
+    # NTFS resolves timestamps to 100 ns, so a nanosecond-exact os.utime round
+    # trip does not hold on Windows; everywhere else the value is exact.
+    if sys.platform == "win32":
+        assert abs(entry.mtime_ns - FIXED_MTIME_NS) < 100
+    else:
+        assert entry.mtime_ns == FIXED_MTIME_NS
     assert entry.sha256 is not None and len(entry.sha256) == 64
     if sys.platform != "win32":
         assert entry.mode == 0o644

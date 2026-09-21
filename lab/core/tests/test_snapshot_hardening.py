@@ -320,10 +320,12 @@ ESCAPING = [
     "WTF//x",
     "./WTF/x",
     "",
-    "..\\..\\escape.txt",
-    "D:evil.txt",
-    "//server/share/x",
+    "//server/share/x",  # refused for its empty parts, not for being a UNC spelling
 ]
+
+# Ordinary POSIX file names that would mean something else on Windows. The
+# manifest keeps them; what they mean at restore time is guard's call (M10-11).
+WINDOWS_MEANINGFUL = ["..\\..\\escape.txt", "D:evil.txt", "WTF/a\\b.lua", "WTF/C:x.lua", "a:b.lua"]
 
 
 @pytest.mark.parametrize("path", [*ESCAPING, "WTF/a\x00b"], ids=lambda s: f"constructed-{s!r}")
@@ -356,3 +358,128 @@ def test_a_manifest_with_an_escaping_path_and_a_valid_fingerprint_does_not_load(
     with pytest.raises(ManifestIntegrityError):
         store.gc(dry_run=False)
     assert [x.name for x in store.verify().invalid_manifests] == [forged_file.name]
+
+
+# ── entry paths are platform-neutral (M10-10 follow-up) ─────────────────────
+
+
+@pytest.mark.parametrize("path", WINDOWS_MEANINGFUL, ids=lambda s: f"constructed-{s!r}")
+def test_a_posix_name_that_windows_would_read_differently_is_a_valid_entry(path: str) -> None:
+    entry = Entry(path=path, sha256="0" * 64, size=1)
+    m = Manifest(
+        id="20260101T000000.000000Z-00000000",
+        created_at="2026-01-01T00:00:00.000000Z",
+        install_root="/nowhere",
+        subtrees=(".",),
+        entries=(entry,),
+    )
+    assert Manifest.model_validate_json(manifest_bytes(m)) == m
+
+
+@posix_only
+def test_a_tree_with_backslash_and_colon_names_is_captured_constructed(
+    source: Path, store: SnapshotStore
+) -> None:
+    """What some POSIX unzip tools make of an addon zip built on Windows."""
+    odd = {"WTF/a\\b.lua": b"backslash\n", "a:b.lua": b"colon\n", "C:x.lua": b"drive-like\n"}
+    try:
+        for rel, data in odd.items():
+            (source / rel).write_bytes(data)
+    except OSError:
+        pytest.skip("this volume refuses '\\' or ':' in a file name")
+
+    under = store.create(source, ["WTF"], now=T0)
+    assert [e.path for e in under.entries] == ["WTF/Config.wtf", "WTF/a\\b.lua", "WTF/other.wtf"]
+    whole = store.create(source, ["."], now=T1)
+    assert [e.path for e in whole.entries] == [
+        "C:x.lua",
+        "WTF/Config.wtf",
+        "WTF/a\\b.lua",
+        "WTF/other.wtf",
+        "a:b.lua",
+    ]
+
+    assert store.verify().ok
+    assert store.list() == (under, whole)
+    assert store.show(whole.id) == whole
+    for rel, data in odd.items():
+        assert store.read_file(whole.id, rel) == data
+    assert store.read_file(under.id, "WTF/a\\b.lua") == b"backslash\n"
+    assert store.diff(under.id, whole.id).changed == ()
+
+
+# ── create() raises typed errors only, and leaves nothing behind ────────────
+
+
+def _store_files(store: SnapshotStore) -> list[str]:
+    if not store.path.exists():
+        return []
+    return sorted(
+        p.relative_to(store.path).as_posix() for p in store.path.rglob("*") if p.is_file()
+    )
+
+
+def test_a_name_the_manifest_cannot_carry_is_a_typed_error_naming_the_file_constructed(
+    source: Path, store: SnapshotStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No file system hands us such a name today, so the walk is made to.
+    real_walk = SnapshotStore._walk
+    culprit = source / "WTF" / "other.wtf"
+
+    def walk(self, root, subtree, excluded):  # type: ignore[no-untyped-def]
+        for rel, abs_path in real_walk(self, root, subtree, excluded):
+            yield ("WTF/../escape.wtf" if abs_path == culprit else rel), abs_path
+
+    monkeypatch.setattr(SnapshotStore, "_walk", walk)
+    with pytest.raises(SnapshotError) as caught:
+        store.create(source, ["WTF"], now=T0)
+    assert not isinstance(caught.value, ValidationError)
+    assert str(culprit) in str(caught.value)
+    # The rejected file itself was never stored, and nothing was published.
+    rejected = hashlib.sha256(culprit.read_bytes()).hexdigest()
+    assert not store.object_path(rejected).exists()
+    assert store.list() == ()
+    assert not [f for f in _store_files(store) if f.startswith(("manifests/", "tmp/"))]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"label": 7}, {"flavor_folder": 7}, {"flavor_version": ["x"]}, {"client_running": "maybe"}],
+    ids=lambda k: f"constructed-{next(iter(k))}",
+)
+def test_a_bad_argument_is_a_typed_error_and_touches_nothing(
+    source: Path, store: SnapshotStore, kwargs: dict[str, object]
+) -> None:
+    with pytest.raises(SnapshotError) as caught:
+        store.create(source, ["WTF"], now=T0, **kwargs)  # type: ignore[arg-type]
+    assert not isinstance(caught.value, ValidationError)
+    assert _store_files(store) == []
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+def test_objects_orphaned_by_a_failed_create_are_harmless_and_collected_by_gc(
+    source: Path, store: SnapshotStore
+) -> None:
+    if os.geteuid() == 0:
+        pytest.skip("root reads unreadable files")
+    unreadable = source / "WTF" / "zz-unreadable.wtf"  # sorts last: the others are stored first
+    unreadable.write_bytes(b"secret\n")
+    unreadable.chmod(0o000)
+    try:
+        with pytest.raises(SnapshotError, match="cannot read") as caught:
+            store.create(source, ["WTF"], now=T0)
+        assert str(unreadable) in str(caught.value)
+        assert store.list() == ()
+        left = _store_files(store)
+        assert left and all(f.startswith("objects/") for f in left)  # no manifest, no tmp
+        assert store.verify().ok  # complete, well-formed objects
+
+        report = store.gc(dry_run=False)
+        assert len(report.removed) == len(left)
+        assert _store_files(store) == []
+    finally:
+        unreadable.chmod(0o644)
+
+    # And had gc not run, the next create simply reuses them.
+    m = store.create(source, ["WTF"], now=T1)
+    assert store.verify().ok and len(m.entries) == 3
