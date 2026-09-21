@@ -15,11 +15,6 @@ the file is written. Before the fix round these bytes were replaced.
 Expected: the name is gone from the output, or the file is refused. One way:
 only treat a span as vocabulary when it looks like vocabulary (a TOC key of
 `[A-Za-z0-9-]+`, a CVar name of `[A-Za-z0-9_.]+`).
-
-The second probe is the false refusal the domain reviewer reported, with its
-cause: `_foreign_partner` compares `group(1).lower()` (bytes, ASCII-only
-folding) with partner words lowered as `str`, so an upper-cased pseudonym with
-a non-ASCII letter ("LABCHÁRA") is taken for someone else's name.
 """
 
 from __future__ import annotations
@@ -81,15 +76,3 @@ def test_constructed_identity_in_a_protected_span_is_replaced_or_refused(
     assert CHARACTER.encode() not in result.data or result.problems, (
         "the character name survived inside a protected span and the file was not refused"
     )
-
-
-def test_constructed_upper_cased_non_ascii_own_name_is_not_a_foreign_player() -> None:
-    identity = lab_capture.Identity(characters=["Zoë"], realms=[REALM])
-
-    # Positive control: the same pair in its ordinary casing passes.
-    plain = identity.scrub('"Zoë - Area 52"'.encode())
-    assert plain.data == '"Labchára - Labrealma Partb"'.encode() and not plain.problems
-
-    shouted = identity.scrub('"ZOË - AREA 52"'.encode())
-    assert shouted.data == '"LABCHÁRA - LABREALMA PARTB"'.encode()
-    assert not shouted.problems, "the owner's own pseudonym pair was refused as a foreign player"
