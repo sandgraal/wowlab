@@ -10,6 +10,13 @@ Nothing here knows what a flavor is (L6). Callers say which subtrees to
 capture; the defaults for an install arrive with `layout` integration in
 M10-14.
 
+Strings in a manifest file: JSON cannot carry a lone surrogate, and Python
+hands us one for every undecodable POSIX file-name byte and every unpaired
+UTF-16 unit in a Windows name. `manifest_bytes` therefore writes each code
+point in U+D800..U+DFFF as NUL followed by four hex digits, and a literal NUL
+as NUL `0000`; `Manifest` validation in JSON mode reverses it. A string with
+neither (every ordinary path and label) is written unchanged.
+
 Concurrency: one process at a time writes to a store. `gc` takes a
 `grace_seconds` so an object written (or reused, which refreshes its mtime)
 by a `create` that has not yet written its manifest is not collected.
@@ -25,13 +32,20 @@ import re
 import stat
 import uuid
 import zlib
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path, PurePath, PurePosixPath
-from typing import BinaryIO, Literal
+from typing import Any, BinaryIO, Literal
 
 import platformdirs
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 __all__ = [
     "MANIFEST_FORMAT",
@@ -88,6 +102,33 @@ class ObjectCorruptError(SnapshotError):
     """An object is missing, does not decompress, or does not hash to its name."""
 
 
+_NEEDS_ESCAPE_RE = re.compile("[\x00\ud800-\udfff]")
+_ESCAPED_RE = re.compile("\x00([0-9A-F]{4})")
+
+
+def _escape_text(text: str) -> str:
+    return _NEEDS_ESCAPE_RE.sub(lambda m: f"\x00{ord(m.group()):04X}", text)
+
+
+def _unescape_text(text: str) -> str:
+    if "\x00" not in text:
+        return text
+    restored = _ESCAPED_RE.sub(lambda m: chr(int(m.group(1), 16)), text)
+    if _escape_text(restored) != text:
+        raise ValueError("malformed NUL escape in a manifest string")
+    return restored
+
+
+def _map_strings(value: Any, fn: Callable[[str], str]) -> Any:
+    if isinstance(value, str):
+        return fn(value)
+    if isinstance(value, list | tuple):
+        return [_map_strings(v, fn) for v in value]
+    if isinstance(value, dict):
+        return {k: _map_strings(v, fn) for k, v in value.items()}
+    return value
+
+
 class _Frozen(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -105,6 +146,16 @@ class Entry(_Frozen):
     mtime_ns: int = 0
     target: str | None = None
     """Link target text for a symlink, else `None`."""
+
+    @field_validator("path")
+    @classmethod
+    def _path_stays_inside_the_root(cls, value: str) -> str:
+        parts = value.split("/")
+        if "\x00" in value or any(part in ("", ".", "..") for part in parts):
+            raise ValueError(
+                f"entry path must be relative, without NUL, empty, '.' or '..' parts: {value!r}"
+            )
+        return value
 
 
 class Manifest(_Frozen):
@@ -124,6 +175,12 @@ class Manifest(_Frozen):
     """`True` means SavedVariables on disk were stale relative to the live
     session when this was taken; `None` means the caller did not probe."""
     entries: tuple[Entry, ...]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _unescape_json_strings(cls, data: Any, info: ValidationInfo) -> Any:
+        # JSON mode means "the bytes `manifest_bytes` wrote"; see the module docstring.
+        return _map_strings(data, _unescape_text) if info.mode == "json" else data
 
     @property
     def fingerprint(self) -> str:
@@ -203,9 +260,13 @@ def default_store_path() -> Path:
 
 
 def manifest_bytes(manifest: Manifest) -> bytes:
-    """The one canonical encoding: sorted keys, fixed separators, ASCII, LF."""
+    """The one canonical encoding: sorted keys, fixed separators, ASCII, LF.
+
+    `Manifest.model_validate_json` is the inverse, for every string Python can
+    hold (lone surrogates included; see the module docstring).
+    """
     text = json.dumps(
-        manifest.model_dump(mode="json"),
+        _map_strings(manifest.model_dump(), _escape_text),
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=True,
@@ -231,6 +292,9 @@ def tree_fingerprint(
 
 
 def _normalize_rel(value: str | PurePath, what: str) -> str:
+    text = str(value)
+    if text == "" or "\x00" in text:
+        raise SnapshotError(f"{what} must be a non-empty path without NUL: {value!r}")
     pure = PurePath(value)
     if pure.is_absolute() or pure.drive or pure.root:
         raise SnapshotError(f"{what} must be relative to the root: {value!r}")
@@ -246,6 +310,14 @@ def _is_under(path: str, ancestor: str) -> bool:
 
 def _is_within(child: Path, parent: Path) -> bool:
     return child == parent or parent in child.parents
+
+
+def _same_dir(a: Path, b: Path) -> bool:
+    """Identity, not spelling: true when both exist and are one directory."""
+    try:
+        return a.samefile(b)
+    except (OSError, ValueError):
+        return False
 
 
 class SnapshotStore:
@@ -300,9 +372,22 @@ class SnapshotStore:
 
         `root` is only ever read. A subtree that does not exist is recorded
         in the manifest and contributes no entries. Symlinks are recorded
-        with their target and never followed. Anything that is neither a
-        regular file, a directory nor a symlink is ignored. A file that
-        cannot be read raises; a partial snapshot is never written.
+        with their target and never followed; a subtree that can only be
+        reached through a symlink below the root is refused. Anything that
+        is neither a regular file, a directory nor a symlink is ignored. A
+        file that cannot be read raises; a partial snapshot is never written.
+
+        Subtrees and excludes are relative paths; `"."` is the explicit
+        spelling of the whole root and the empty string is refused. They are
+        recorded, and entry paths are built from them, exactly as given:
+        nothing here folds case, so on a case-insensitive volume `wtf` and
+        `WTF` capture the same files under different paths and `diff` would
+        report every one as removed and added. Pass the spelling discovery
+        found on disk.
+
+        An object already in the store is re-hashed before it is reused and
+        rewritten if it is damaged, so a new snapshot never depends on a bad
+        object.
 
         `now` fixes the clock (timezone-aware); it exists for tests and for
         callers that want one timestamp across several records.
@@ -325,11 +410,12 @@ class SnapshotStore:
         when = when.astimezone(UTC)
 
         found: dict[str, Entry] = {}
+        verified: set[str] = set()  # objects re-hashed during this create
         for subtree in wanted:
             for rel, abs_path in self._walk(root, subtree, excluded):
                 if rel in found:
                     continue  # overlapping subtrees
-                entry = self._capture(rel, abs_path)
+                entry = self._capture(rel, abs_path, verified)
                 if entry is not None:
                     found[rel] = entry
         entries = tuple(found[k] for k in sorted(found))
@@ -351,6 +437,7 @@ class SnapshotStore:
 
         data = manifest_bytes(manifest)
         target = self._manifest_path(snapshot_id)
+        self._check_publishable(manifest, data)
         if target.exists():
             # Same microsecond, same tree. Identical bytes make this a no-op;
             # anything else would be a silent overwrite of an immutable file.
@@ -361,12 +448,41 @@ class SnapshotStore:
         return manifest
 
     def _refuse_overlap(self, root: Path) -> None:
+        """Refuse when either tree contains the other (L1).
+
+        Spelling proves nothing on a case-insensitive or normalising volume,
+        so directories are compared by identity (`samefile`: device and
+        inode) along each side's resolved ancestor chain. The string check
+        stays as a second net for paths that do not exist yet.
+        """
         store = self.path.resolve()
         source = root.resolve()
-        if _is_within(store, source) or _is_within(source, store):
+        overlap = _is_within(store, source) or _is_within(source, store)
+        # The store may not exist yet; its existing ancestors do.
+        overlap = overlap or any(_same_dir(p, source) for p in (store, *store.parents))
+        overlap = overlap or any(_same_dir(p, store) for p in (source, *source.parents))
+        if overlap:
             raise StoreLocationError(
                 f"the store ({store}) and the source tree ({source}) must not contain each other"
             )
+
+    @staticmethod
+    def _refuse_symlinked_parent(root: Path, subtree: str) -> None:
+        """`lstat` protects only the last component; check the ones before it."""
+        current = root
+        for part in PurePosixPath(subtree).parts[:-1]:
+            current = current / part
+            try:
+                mode = current.lstat().st_mode
+            except FileNotFoundError:
+                return  # nothing there; the walk will find nothing either
+            except (OSError, ValueError) as exc:
+                raise SnapshotError(f"cannot inspect {current}: {exc}") from exc
+            if stat.S_ISLNK(mode):
+                raise SnapshotError(
+                    f"subtree {subtree!r} passes through the symlink {current}; "
+                    "symlinks are never followed"
+                )
 
     def _walk(
         self, root: Path, subtree: str, excluded: Sequence[str]
@@ -374,11 +490,14 @@ class SnapshotStore:
         """Yield `(relative posix path, absolute path)` for every non-directory."""
         if any(_is_under(subtree, x) for x in excluded):
             return
+        self._refuse_symlinked_parent(root, subtree)
         start = root if subtree == "." else root / subtree
         try:
             st = start.lstat()
         except FileNotFoundError:
             return
+        except (OSError, ValueError) as exc:
+            raise SnapshotError(f"cannot inspect {start}: {exc}") from exc
         if not stat.S_ISDIR(st.st_mode):
             yield subtree, start
             return
@@ -401,7 +520,7 @@ class SnapshotStore:
                 else:
                     yield rel, Path(child.path)
 
-    def _capture(self, rel: str, abs_path: Path) -> Entry | None:
+    def _capture(self, rel: str, abs_path: Path, verified: set[str]) -> Entry | None:
         try:
             st = abs_path.lstat()
             if stat.S_ISLNK(st.st_mode):
@@ -425,7 +544,7 @@ class SnapshotStore:
                 st = os.fstat(handle.fileno())
                 if not stat.S_ISREG(st.st_mode):
                     return None
-                digest, size = self._store_stream(handle)
+                digest, size = self._store_stream(handle, verified)
         except OSError as exc:
             raise SnapshotError(f"cannot read {abs_path}: {exc}") from exc
         return Entry(
@@ -437,12 +556,15 @@ class SnapshotStore:
             mtime_ns=st.st_mtime_ns,
         )
 
-    def _store_stream(self, stream: BinaryIO) -> tuple[str, int]:
+    def _store_stream(self, stream: BinaryIO, verified: set[str]) -> tuple[str, int]:
         """Hash a readable, seekable binary file; store it if it is new.
 
-        Pass one hashes. Only when the object is missing does pass two read
-        again to compress, and the entry then describes what pass two read,
-        so the manifest always names bytes that are really in the store.
+        Pass one hashes. An object already stored under that hash is reused
+        only after it re-hashes to its name (once per `create`, tracked in
+        `verified`); a damaged one is rewritten. Only when the object is
+        missing or damaged does pass two read again to compress, and the
+        entry then describes what pass two read, so the manifest always
+        names bytes that are really in the store.
         """
         hasher = hashlib.sha256()
         size = 0
@@ -450,9 +572,7 @@ class SnapshotStore:
             hasher.update(chunk)
             size += len(chunk)
         digest = hasher.hexdigest()
-        existing = self.object_path(digest)
-        if existing.is_file():
-            os.utime(existing)  # freshen, so a concurrent gc grace period sees it
+        if self._reusable(digest, verified):
             return digest, size
 
         stream.seek(0)
@@ -471,15 +591,35 @@ class SnapshotStore:
                 out.flush()
                 os.fsync(out.fileno())
             digest = hasher.hexdigest()
-            final = self.object_path(digest)
-            if final.is_file():
-                os.utime(final)
-            else:
+            # The file may have changed between the passes, so ask again.
+            if not self._reusable(digest, verified):
+                final = self.object_path(digest)
                 final.parent.mkdir(parents=True, exist_ok=True)
-                tmp.replace(final)
+                tmp.replace(final)  # new, or healing a damaged object
+                verified.add(digest)
         finally:
             tmp.unlink(missing_ok=True)
         return digest, size
+
+    def _reusable(self, digest: str, verified: set[str]) -> bool:
+        """True when a sound object for `digest` is already in the store."""
+        if digest in verified:
+            return True
+        existing = self.object_path(digest)
+        if not existing.is_file() or self._rehash(existing) != digest:
+            return False
+        os.utime(existing)  # freshen, so a concurrent gc grace period sees it
+        verified.add(digest)
+        return True
+
+    def _check_publishable(self, manifest: Manifest, data: bytes) -> None:
+        """Hold the bytes about to be written to everything `_load` demands."""
+        try:
+            loaded = self._parse(manifest.id, data)
+        except ManifestIntegrityError as exc:
+            raise SnapshotError(f"refusing to write a manifest that would not load: {exc}") from exc
+        if loaded != manifest:
+            raise SnapshotError(f"refusing to write {manifest.id}: it does not round-trip")
 
     def _write_atomic(self, target: Path, data: bytes) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -508,11 +648,24 @@ class SnapshotStore:
         )
 
     def _load(self, path: Path) -> Manifest:
-        """Parse a manifest file and hold it to its own id."""
-        name = path.name.removesuffix(_MANIFEST_SUFFIX)
+        """Read a manifest file and hold it to its own id."""
         try:
-            manifest = Manifest.model_validate_json(path.read_bytes())
-        except (OSError, ValidationError, ValueError) as exc:
+            data = path.read_bytes()
+        except OSError as exc:
+            raise ManifestIntegrityError(f"manifest {path.name} does not load: {exc}") from exc
+        return self._parse(path.name.removesuffix(_MANIFEST_SUFFIX), data)
+
+    @staticmethod
+    def _parse(name: str, data: bytes) -> Manifest:
+        """Validate manifest bytes that are, or are about to be, `<name>.json`.
+
+        Entry paths are held to the root by the `Entry` model itself, so a
+        manifest naming `../x`, an absolute path or a NUL never loads.
+        """
+        path = Path(name + _MANIFEST_SUFFIX)
+        try:
+            manifest = Manifest.model_validate_json(data)
+        except (ValidationError, ValueError) as exc:
             raise ManifestIntegrityError(f"manifest {path.name} does not load: {exc}") from exc
         if manifest.format != MANIFEST_FORMAT:
             raise ManifestIntegrityError(
@@ -623,7 +776,9 @@ class SnapshotStore:
         updated = current.model_copy(update={"label": label})
         if updated.model_dump(exclude={"label"}) != current.model_dump(exclude={"label"}):
             raise ManifestIntegrityError("label write would change another field")
-        self._write_atomic(path, manifest_bytes(updated))
+        data = manifest_bytes(updated)
+        self._check_publishable(updated, data)
+        self._write_atomic(path, data)
         return updated
 
     # -- health ------------------------------------------------------------
