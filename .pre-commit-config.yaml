@@ -2,8 +2,10 @@
 # Wired by `make setup` through the tracked .githooks/pre-commit and
 # core.hooksPath — do not run `pre-commit install` (see docs/AGENT_WORKFLOW.md).
 repos:
+  # Keep in step with the ruff pin in pyproject.toml / uv.lock: Dependabot
+  # bumps those, nothing bumps this rev.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.6
+    rev: v0.16.8
     hooks:
       - id: ruff-check
         args: [--fix]
@@ -24,8 +26,16 @@ repos:
       - id: check-json
       - id: check-toml
       - id: check-merge-conflict
+      # 512 KB everywhere; real captures may be larger (M10-03 asks for one
+      # multi-MB SavedVariables file, and a fixture is never trimmed to fit),
+      # so fixtures get their own 16 MB ceiling instead of no ceiling.
       - id: check-added-large-files
         args: [--maxkb=512]
+        exclude: '^lab/core/tests/fixtures/'
+      - id: check-added-large-files
+        name: check for added large files (fixtures, 16 MB)
+        args: [--maxkb=16384]
+        files: '^lab/core/tests/fixtures/'
       - id: detect-private-key
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.1
