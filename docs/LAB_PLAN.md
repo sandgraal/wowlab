@@ -312,7 +312,8 @@ folder if derivable. `psutil` only; no process memory access, no handles
 opened on the client (L7). Access-denied on a process is reported as
 "unknown", and `guard` treats unknown as running.
 
-> **Amendment 2026-09-21 (M10-09 security review; owner ratifies by merging).**
+> **Amendment 2026-09-21 (M10-09 security review; wording by the
+> security-reviewer, verified against the merged code at 35f2efc).**
 > Two sentences above cannot be met as written, and one allowed call turned
 > out to cross ADR-0023 on one platform. They now read as follows.
 >
@@ -339,13 +340,28 @@ opened on the client (L7). Access-denied on a process is reported as
 >   Consequence: a client with an unlisted executable name *and* a denied
 >   `exe()` reads as not running, so callers pass the install root they are
 >   writing to and the executable names discovery found (`extra_names`).
-> - **Known residual, accepted.** `psutil`'s own `Process.exe()` wrapper calls
->   `cmdline()` internally when the platform query is denied or returns an
->   empty string, and the public API cannot switch that off. On Windows the
->   platform query (`NtQuerySystemInformation(SystemProcessIdInformation)`)
->   opens no handle and fails only for pid 0 and pid 4, not for a live
->   user-mode client. Closing it entirely would mean not calling `exe()` on
->   Windows, losing path matching and flavor derivation there.
+> - **Three routes to `cmdline()` on Windows, all closed.** The module does
+>   not call it there; psutil's `name()` on Windows does not use it; and
+>   psutil's own `Process.exe()` wrapper, which falls back to `cmdline()` when
+>   the platform query is denied or empty, is handled by shadowing `cmdline`
+>   on the `psutil.Process` instance for the duration of each `exe()` call
+>   and restoring the instance exactly afterwards, so the fallback sees an
+>   empty command line. The same shadow guarantees on every platform that a
+>   path labelled as OS-reported is not an `argv[0]` guess. This depends on
+>   psutil reaching that fallback through the instance's public `cmdline`;
+>   tests drive a real `psutil.Process` with the platform layer stubbed and
+>   recorded, on every CI platform including Windows, and fail if that
+>   routing changes. A psutil upgrade that turns those tests red is not
+>   merged until this section is revisited.
+> - **Injection and threads.** The shadow applies to real `psutil.Process`
+>   objects (and subclasses) only; injected objects are never modified.
+>   `process_iter` injection is a test seam: production callers, `guard`
+>   included, use the default probe and never wrap psutil objects. The module
+>   serialises itself with a lock: one inspection runs at a time per
+>   interpreter, and a `process_iter` callable must not call back into the
+>   module.
+> - **`guard` and the probe.** `guard` treats `unknown`, and any exception
+>   raised by the probe, as running (an M10-11T grader).
 
 ### 6.8 `combatlog` — tokenizer (M10-13)
 
