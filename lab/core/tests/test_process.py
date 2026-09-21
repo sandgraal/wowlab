@@ -10,6 +10,8 @@ from __future__ import annotations
 import ast
 import os
 import sys
+import threading
+import time
 import unicodedata
 from collections.abc import Callable, Iterable
 from pathlib import Path
@@ -525,12 +527,11 @@ def test_module_touches_nothing_on_a_process_beyond_the_allowed_surface(root: Pa
     touched = {attr for proc in procs for attr in proc.touched}
     assert touched <= ALLOWED_SURFACE
     assert touched == ALLOWED_SURFACE, "the fakes should exercise the whole allowed surface"
-    # The one write the module makes: `cmdline` shadowed for the length of each
-    # exe() call and removed again. One set, one delete, nothing left behind.
+    # The `cmdline` shadow is for real psutil.Process objects only. An injected
+    # fake is never written to: no set, no delete, of any attribute.
     for proc in procs:
-        assert proc.written in ([], ["set:cmdline", "del:cmdline"]), proc.written
+        assert proc.written == [], proc.written
         assert "cmdline" not in vars(proc)
-    assert any(proc.written for proc in procs)
 
 
 _SPY_LOG: dict[str, set[str]] = {"read": set(), "set": set(), "del": set()}
@@ -700,19 +701,210 @@ def test_real_psutil_os_reported_exe_is_labelled_exe_and_may_clear(
     assert public_cmdline_calls == []
 
 
+# The routing tests above record the PUBLIC cmdline. That alone would miss a
+# psutil whose exe() fallback went straight to the platform layer
+# (self._proc.cmdline()), so these record the platform layer itself and where
+# each call came from. This is the safety argument for an unbounded psutil>=7.0.
+
+
+class _LayerRecorder:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.exe_depth = 0
+        self.exe_impl: Callable[[psutil.Process], str] = psutil.Process.exe
+
+
+@pytest.fixture
+def layer(me: psutil.Process, monkeypatch: pytest.MonkeyPatch) -> _LayerRecorder:
+    """Records every platform-layer cmdline call and whether it happened while
+    the public exe() was on the stack. The public cmdline stays real."""
+    recorder = _LayerRecorder()
+
+    def tracking_exe(self: psutil.Process) -> str:
+        recorder.exe_depth += 1
+        try:
+            return recorder.exe_impl(self)
+        finally:
+            recorder.exe_depth -= 1
+
+    def layer_cmdline(self: object) -> list[str]:
+        recorder.calls.append("inside-exe" if recorder.exe_depth else "outside-exe")
+        return [sys.executable, "-m", "probe"]
+
+    monkeypatch.setattr(psutil.Process, "exe", tracking_exe)
+    monkeypatch.setattr(type(me._proc), "cmdline", layer_cmdline)
+    return recorder
+
+
+@pytest.mark.usefixtures("on_windows")
+@pytest.mark.parametrize("exe", [DENIED, "", sys.executable], ids=["denied", "empty", "readable"])
+@pytest.mark.parametrize("name", [DENIED, "probe", "Wow.exe"])
+def test_platform_layer_cmdline_is_never_reached_on_windows(
+    me: psutil.Process, layer: _LayerRecorder, monkeypatch: pytest.MonkeyPatch, name: Any, exe: Any
+) -> None:
+    _stub_platform_layer(monkeypatch, me, name=name, exe=exe)
+    running_clients([Path(sys.executable).parent.parent], process_iter=lambda: [me])
+    assert layer.calls == []
+
+
+@pytest.mark.usefixtures("cmdline_allowed")
+@pytest.mark.parametrize("exe", [DENIED, "", sys.executable], ids=["denied", "empty", "readable"])
+@pytest.mark.parametrize("name", [DENIED, "probe", "Wow.exe"])
+def test_platform_layer_cmdline_is_never_reached_from_inside_exe_on_any_platform(
+    me: psutil.Process, layer: _LayerRecorder, monkeypatch: pytest.MonkeyPatch, name: Any, exe: Any
+) -> None:
+    _stub_platform_layer(monkeypatch, me, name=name, exe=exe)
+    found = running_clients([Path(sys.executable).parent.parent], process_iter=lambda: [me])
+    assert "inside-exe" not in layer.calls
+    # The module's own, labelled fallback: exactly when exe() gave nothing.
+    assert layer.calls == ([] if exe == sys.executable else ["outside-exe"])
+    assert all(c.exe_source == ("exe" if exe == sys.executable else "cmdline") for c in found)
+    assert "cmdline" not in vars(me)
+
+
+def test_the_layer_recorder_catches_a_psutil_that_bypasses_the_public_cmdline(
+    me: psutil.Process, layer: _LayerRecorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Proof the two tests above are not passing by luck. A simulated future
+    psutil whose exe() fallback calls the platform layer directly defeats the
+    shadow; the recorder sees it, and the mislabelled path it produces."""
+
+    def future_exe(self: psutil.Process) -> str:
+        try:
+            return str(self._proc.exe())
+        except psutil.AccessDenied:
+            return str(self._proc.cmdline()[0])
+
+    layer.exe_impl = future_exe
+    _stub_platform_layer(monkeypatch, me, name="probe", exe=DENIED)
+    [found] = running_clients([Path(sys.executable).parent.parent], process_iter=lambda: [me])
+    assert layer.calls == ["inside-exe"]
+    assert found.exe_source == "exe", "the mislabel the tests above exist to catch"
+
+
+# ─── threads ─────────────────────────────────────────────────────────────────
+
+
+def _shared_observed_table(size: int) -> tuple[list[psutil.Process], list[str]]:
+    """Real psutil.Process subclasses, shared between threads the way
+    process_iter's cache shares them. exe() lingers and checks that its shadow
+    is still in place when it finishes."""
+    problems: list[str] = []
+
+    class Lingering(psutil.Process):
+        def exe(self) -> str:
+            time.sleep(0.002)
+            if "cmdline" not in vars(self):
+                problems.append("exe() ran without its shadow")
+            return ""
+
+        def name(self) -> str:
+            return "zsh"
+
+        def cmdline(self) -> list[str]:
+            return []
+
+    return [Lingering(os.getpid()) for _ in range(size)], problems
+
+
+def test_concurrent_calls_over_the_same_table_complete_and_leave_no_shadow() -> None:
+    table_, problems = _shared_observed_table(8)
+    start = threading.Barrier(4)
+    errors: list[BaseException] = []
+    results: list[list[ClientProcess]] = []
+
+    def worker() -> None:
+        try:
+            start.wait(timeout=10)
+            for _ in range(5):
+                results.append(running_clients(process_iter=lambda: table_))
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+    assert not any(thread.is_alive() for thread in threads), "deadlock"
+    assert errors == []
+    assert problems == []
+    assert results == [[]] * 20
+    assert not any("cmdline" in vars(proc) for proc in table_)
+
+
+def test_the_lock_is_released_when_inspection_raises() -> None:
+    procs = table(FakeProcess(3, name=RuntimeError("bug")))
+    with pytest.raises(RuntimeError):
+        running_clients(process_iter=procs)
+    assert process._SHADOW_LOCK.acquire(timeout=1)
+    process._SHADOW_LOCK.release()
+
+
 @pytest.mark.parametrize("error", [psutil.AccessDenied(1), OSError("boom"), RuntimeError("bug")])
 def test_shadow_is_removed_when_exe_raises(error: Exception) -> None:
-    class Raising:
-        pid = 1
-
+    class Raising(psutil.Process):
         def exe(self) -> str:
             assert vars(self)["cmdline"]() == []
             raise error
 
-    proc = Raising()
+    proc = Raising(os.getpid())
     with pytest.raises(type(error)):
-        process._os_reported_exe(proc)  # type: ignore[arg-type]
+        process._os_reported_exe(proc)
     assert "cmdline" not in vars(proc)
+
+
+@pytest.mark.parametrize("raises", [False, True], ids=["returns", "raises"])
+def test_an_instance_attribute_that_was_already_there_is_put_back(raises: bool) -> None:
+    """Restore exactly: delete only what was absent before."""
+
+    class Observed(psutil.Process):
+        def exe(self) -> str:
+            assert vars(self)["cmdline"]() == [], "shadow in place during exe()"
+            if raises:
+                raise psutil.AccessDenied(self.pid)
+            return "/somewhere/else"
+
+    def own() -> list[str]:
+        return ["mine"]
+
+    proc = Observed(os.getpid())
+    proc.cmdline = own  # type: ignore[method-assign]
+    if raises:
+        with pytest.raises(psutil.AccessDenied):
+            process._os_reported_exe(proc)
+    else:
+        assert process._os_reported_exe(proc) == "/somewhere/else"
+    assert vars(proc)["cmdline"] is own
+
+
+def test_injected_fakes_are_never_modified(root: Path) -> None:
+    """Instance-attribute fakes, a spec'd mock that passes isinstance(), and a
+    fake with a `cmdline` of its own: all come back exactly as they went in."""
+    from types import SimpleNamespace
+    from unittest import mock
+
+    def make_namespace() -> SimpleNamespace:
+        return SimpleNamespace(
+            pid=1, name=lambda: "zsh", exe=lambda: "", cmdline=lambda: [], status=lambda: "running"
+        )
+
+    namespace = make_namespace()
+    before = dict(vars(namespace))
+
+    specced = mock.MagicMock(spec=psutil.Process)
+    assert isinstance(specced, psutil.Process), "the case a bare isinstance() would get wrong"
+    specced.pid = 2
+    specced.name.return_value = "zsh"
+    specced.exe.return_value = ""
+    specced.cmdline.return_value = []
+    specced.status.return_value = "running"
+    specced_cmdline = specced.cmdline
+
+    assert running_clients([root], process_iter=lambda: [namespace, specced]) == []
+    assert vars(namespace) == before
+    assert specced.cmdline is specced_cmdline
+    assert specced.cmdline() == []
 
 
 def test_injected_object_that_refuses_assignment_is_still_asked_for_its_exe(root: Path) -> None:
@@ -774,7 +966,7 @@ def test_source_uses_only_listing_parts_of_psutil_and_no_ffi() -> None:
         "STATUS_ZOMBIE",
         "STATUS_DEAD",
         "Error",  # caught per process, to fail closed
-        "Process",  # isinstance() only; a second assertion below holds it to that
+        "Process",  # type check only; a second assertion below holds it to that
     }
 
     imported: set[str] = set()
@@ -789,6 +981,7 @@ def test_source_uses_only_listing_parts_of_psutil_and_no_ffi() -> None:
         "enum",
         "pathlib",
         "sys",  # platform check that keeps cmdline() off Windows
+        "threading",  # the lock around the shadow
         "typing",
         "unicodedata",
         "psutil",
@@ -812,7 +1005,7 @@ def test_source_uses_only_listing_parts_of_psutil_and_no_ffi() -> None:
         for n in ast.walk(tree)
         if isinstance(n, ast.Call)
         and isinstance(n.func, ast.Name)
-        and n.func.id == "isinstance"
+        and n.func.id in {"isinstance", "issubclass"}
         and len(n.args) == 2
     ]
     assert process_refs

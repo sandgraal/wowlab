@@ -18,8 +18,10 @@ ways it could, and this is what is done about each:
   platform layer denies access or returns "", it calls `self.cmdline()` and
   returns argv[0] if that is an executable file. So for the length of every
   `exe()` call, on every platform, `cmdline` is shadowed on the instance with
-  a stub that returns an empty list, and removed again in a `finally`. This
-  uses only public names; no private psutil attribute is read;
+  a stub that returns an empty list, and the instance is put back exactly as
+  it was in a `finally`. This uses only public names; no private psutil
+  attribute is read. Only real `psutil.Process` objects are touched; an
+  injected fake is never modified;
 - psutil's public `name()` calling it: it does so only on POSIX (to repair a
   truncated name). On Windows `name()` is the file name of the platform
   layer's exe and never reaches `cmdline()`.
@@ -37,6 +39,13 @@ the shadowing above is also what guarantees that a path labelled
 argv[0] guess. An error psutil did not classify makes that one process
 `unknown`.
 
+Threads: `psutil.process_iter()` returns cached `Process` objects shared by
+every caller in the interpreter, and the shadow is a set-call-restore sequence
+on those shared objects, so `running_clients` holds one module-level lock for
+the whole inspection loop and concurrent calls run one after another. The lock
+is not re-entrant: a `process_iter` callable must not call back into this
+module.
+
 Nothing here knows a flavor (L6). Install roots and flavor folder names come
 from the caller, which gets them from discovery (`install`, M10-05).
 """
@@ -44,6 +53,7 @@ from the caller, which gets them from discovery (`install`, M10-05).
 from __future__ import annotations
 
 import sys
+import threading
 import unicodedata
 from collections.abc import Callable, Iterable, Sequence
 from enum import StrEnum
@@ -150,6 +160,13 @@ def _cmdline_is_a_listing_call() -> bool:
 
 
 _SHADOWED = "cmdline"
+_ABSENT = object()
+
+# psutil.process_iter() hands every caller the same cached Process objects, so
+# two threads inspecting at once could interleave the set and the delete of the
+# shadow: one thread's exe() would run unshadowed (on Windows, the PEB read)
+# and the other's delete would raise. One inspection runs at a time.
+_SHADOW_LOCK = threading.Lock()
 
 
 def _no_argv() -> list[str]:
@@ -168,20 +185,30 @@ def _os_reported_exe(proc: ProcessLike) -> str:
     re-raising the original AccessDenied or returning "". The shadow is always
     removed: psutil caches Process objects between `process_iter` calls.
 
-    A `psutil.Process` that refuses the assignment is not asked for its exe at
-    all. Any other injected object that refuses it (a frozen or slotted fake)
-    has no such fallback to guard against and is simply asked.
+    Only a real `psutil.Process` (by type, so a mock with a spec does not
+    count) has that fallback, and only one is ever touched. Any other injected
+    object is simply asked for its exe and is never modified. Afterwards the
+    instance holds exactly what it held before: the shadow is deleted if there
+    was no instance attribute `cmdline`, and the previous value is put back if
+    there was. A `psutil.Process` that refuses the assignment is not asked for
+    its exe at all. Callers hold `_SHADOW_LOCK`; the set-call-restore sequence
+    is not safe to interleave on psutil's shared, cached objects.
     """
+    if not issubclass(type(proc), psutil.Process):
+        return proc.exe()
+    held = vars(proc)
+    previous = held.get(_SHADOWED, _ABSENT)
     try:
         setattr(proc, _SHADOWED, _no_argv)
     except (AttributeError, TypeError):
-        if isinstance(proc, psutil.Process):
-            return ""
-        return proc.exe()
+        return ""
     try:
         return proc.exe()
     finally:
-        delattr(proc, _SHADOWED)
+        if previous is _ABSENT:
+            delattr(proc, _SHADOWED)
+        else:
+            setattr(proc, _SHADOWED, previous)
 
 
 def _fold(text: str) -> str:
@@ -300,18 +327,19 @@ def running_clients(
     folded_names = {_fold(n) for n in names}
 
     found: list[ClientProcess] = []
-    for proc in (process_iter or _system_processes)():
-        pid = proc.pid
-        try:
-            found_one = _inspect(proc, pid, roots, flavors, names, folded_names)
-        except _GoneError:
-            continue
-        except (OSError, psutil.Error):
-            # Not a denial and not an exit: something psutil did not classify.
-            # Nothing was learned, so the module fails closed on this process.
-            found_one = ClientProcess(pid=pid, state=ClientState.UNKNOWN)
-        if found_one is not None:
-            found.append(found_one)
+    with _SHADOW_LOCK:
+        for proc in (process_iter or _system_processes)():
+            pid = proc.pid
+            try:
+                found_one = _inspect(proc, pid, roots, flavors, names, folded_names)
+            except _GoneError:
+                continue
+            except (OSError, psutil.Error):
+                # Not a denial and not an exit: something psutil did not classify.
+                # Nothing was learned, so the module fails closed on this process.
+                found_one = ClientProcess(pid=pid, state=ClientState.UNKNOWN)
+            if found_one is not None:
+                found.append(found_one)
     return sorted(found, key=lambda c: c.pid)
 
 
