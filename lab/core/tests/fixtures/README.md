@@ -38,8 +38,12 @@ Runbook for the owner's capture: `docs/handoffs/M10-03.md`.
 (`build-info`, `flavor-info`, `savedvariables`, `config-wtf`, `bindings`,
 `macros`, `toc`, `combatlog`, `wago-csv`, …). `flavor` is the flavor folder
 as found on disk. `client_version` is the full version string from
-`.build.info`. `scrub` records what the tool rewrote (`identity-rewritten`,
-`cvars-dropped: n`, or `none`).
+`.build.info`. `scrub` records what the tool rewrote, as it prints it:
+`identity-rewritten: n` (or `path only`), `cvars-blanked: n`,
+`guids-rewritten: n`, joined with `; `, or `none`. The tool prints each row
+ready to paste. Run it with `--kind <flavor folder>=<flavor-kind>` and the
+`file` cell is already the final path: move `incoming/<platform>/` up one
+level and the rows match.
 
 ## Index
 
