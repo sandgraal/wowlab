@@ -202,7 +202,8 @@ Dated entries, newest last. Each names the fixture that prompted it.
   missing from the known list, from reviewer memory and all **[verify]**:
   `LoadSavedVariablesFirst`, `UseSecureEnvironment`, `AllowAddOnTableAccess`,
   `LoadFirst`, the singular `OptionalDep` and `RequiredDep`, `Dep`, and the
-  legacy suffix `-BCC` (`## Interface-BCC:`). `scripts/lab_capture.py` treats
+  legacy suffix `-BCC` (`## Interface-BCC:`). `-WOTLKC` is also reported as a
+  legacy Wrath suffix **[verify]**; it is on neither list yet. `scripts/lab_capture.py` treats
   the §3 list as the client's closed vocabulary (those keys are never
   rewritten by the scrubber; any other key is ordinary text), so a directive
   found in a capture that is on neither list is added to both.
