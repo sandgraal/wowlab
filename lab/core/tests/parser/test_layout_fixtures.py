@@ -93,7 +93,7 @@ EXPECTED_ENTRY = {
     f"{A}/flagged-cache-account.txt": "flagged-cache",
     f"{A}/macros-cache.txt": "account-macros-cache",
     f"{A}/tts-cache-account.txt": "tts-cache",
-    f"{A}/1": "numeric-realm-folder",
+    f"{A}/1": "numeric-folder",
     C: "second-name-character-folder",
     f"{C}/chat-cache.txt": "character-chat-cache",
     f"{C}/click-bindings-cache.txt": "character-click-bindings-cache",
@@ -266,7 +266,7 @@ def test_forever_account_realm_and_character(forever: Inventory) -> None:
     (realm,) = [r for r in account.realms if r.folder == "1"]
     assert realm.kind == "numeric", "the digits folder is not a realm name"
     (character,) = [c for c in realm.characters if c.folder == "Labcharb-Labrealmd"]
-    assert character.shape == "numeric_realm"
+    assert character.shape == "numeric_folder"
     assert character.realm_folder == "1"
     assert (character.first_name, character.second_name) == ("Labcharb", "Labrealmd")
     assert set(character.files) >= {

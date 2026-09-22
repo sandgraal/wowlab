@@ -111,9 +111,8 @@ KNOWN_DIRECTIVE_PREFIXES = ("X-", "AddonCompartmentFunc", "Category")
 MAX_TOC_BYTES = 1 << 20
 
 _BOM = b"\xef\xbb\xbf"
-_DIRECTIVE = re.compile(rb"##[ \t]*([^\s:]+)[ \t]*:[ \t]*(.*?)[ \t]*")
-_TRAILING_CONDITION = re.compile(r"(.*?\S)\s+\[([^\[\]]*)\]\s*")
-_LEADING_CONDITION = re.compile(r"\s*\[([^\[\]]*)\]\s+(\S.*)")
+# Linear on any input: the value is taken whole and trimmed afterwards.
+_DIRECTIVE = re.compile(rb"##[ \t]*([^\s:]+)[ \t]*:(.*)")
 _VARIABLE = re.compile(r"\[([^\[\]]*)\]")
 # A localized directive: `Title-deDE`, `X-DBM-Mod-Name-koKR`.
 _LOCALE_SUFFIX = re.compile(r"(.+)-([a-z]{2}[A-Z]{2})")
@@ -170,7 +169,13 @@ class Directive(_Line):
 
     @property
     def locale(self) -> str | None:
-        """The locale suffix of a localized directive (`deDE`), or `None`."""
+        """The locale suffix of a key (`Title-deDE` -> `deDE`), or `None`.
+
+        Keys ending in a locale code also occur on `X-` directives
+        (`X-DBM-Mod-Name-koKR`); for those it is the addon's own naming, and
+        whether the client resolves a locale suffix on anything but `Title`
+        and `Notes` is **[verify]**.
+        """
         m = _LOCALE_SUFFIX.fullmatch(self.key)
         return m.group(2) if m else None
 
@@ -308,29 +313,60 @@ def _split_lines(data: bytes) -> Iterator[tuple[bytes, Ending]]:
         start = lf + 1
 
 
-def _file_line(raw: bytes, ending: Ending) -> FileLine:
-    rest = _text(raw)
+def _split_conditions(text: str) -> tuple[list[Condition], str, list[Condition]]:
+    """(conditions before, path, conditions after) in one pass each way.
+
+    A `[…]` group (no bracket inside) is a condition when whitespace
+    separates it from a non-empty path: leading groups are peeled left to
+    right, trailing groups right to left. Every character is visited a
+    bounded number of times, so hostile lines stay linear.
+    """
+    left, right = 0, len(text.rstrip())
+    while left < right and text[left].isspace():
+        left += 1
     before: list[Condition] = []
+    while left < right and text[left] == "[":
+        close = text.find("]", left + 1, right)
+        if close == -1 or text.find("[", left + 1, close) != -1:
+            break
+        after_ws = close + 1
+        while after_ws < right and text[after_ws].isspace():
+            after_ws += 1
+        if after_ws == close + 1 or after_ws >= right:
+            break  # touching the path (a variable) or nothing after it
+        before.append(Condition(text=text[left + 1 : close], position="before"))
+        left = after_ws
     after: list[Condition] = []
-    while m := _LEADING_CONDITION.fullmatch(rest):
-        before.append(Condition(text=m.group(1), position="before"))
-        rest = m.group(2)
-    while m := _TRAILING_CONDITION.fullmatch(rest):
-        after.append(Condition(text=m.group(2), position="after"))
-        rest = m.group(1)
-    path = rest.strip()
+    while right - left > 1 and text[right - 1] == "]":
+        opening = text.rfind("[", left, right - 1)
+        if opening == -1 or text.find("]", opening + 1, right - 1) != -1:
+            break
+        path_end = opening
+        while path_end > left and text[path_end - 1].isspace():
+            path_end -= 1
+        if path_end in (opening, left):
+            break  # touching the path, or no path before it
+        after.append(Condition(text=text[opening + 1 : right - 1], position="after"))
+        right = path_end
+    after.reverse()
+    return before, text[left:right].strip(), after
+
+
+def _file_line(raw: bytes, ending: Ending) -> FileLine:
+    before, path, after = _split_conditions(_text(raw))
     return FileLine(
         raw=raw,
         ending=ending,
         path=path,
-        conditions=(*before, *reversed(after)),
+        conditions=(*before, *after),
         variables=tuple(_VARIABLE.findall(path)),
     )
 
 
 def _line(raw: bytes, ending: Ending) -> TocLine:
     if m := _DIRECTIVE.fullmatch(raw):
-        return Directive(raw=raw, ending=ending, key=_text(m.group(1)), value=_text(m.group(2)))
+        value = m.group(2).strip(b" \t")
+        return Directive(raw=raw, ending=ending, key=_text(m.group(1)), value=_text(value))
     if raw.startswith(b"#"):
         return Comment(raw=raw, ending=ending)
     if not raw.strip(b" \t"):

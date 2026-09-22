@@ -13,9 +13,8 @@ Account folder shapes (LAB_FILE_MAP "Folder shape", GLOSSARY "Second name"):
 - `WTF/Account/<ACCOUNT>/<Realm>/<Character>/`: the retail shape. The realm
   folder is the realm's display name.
 - `WTF/Account/<ACCOUNT>/<digits>/<First>-<Second>/`: the Forever beta
-  shape. A folder made only of ASCII digits is reported as a numeric realm
-  folder (almost certainly the realm's id, **[verify]**), never as a realm
-  name; its character folders are split at the first hyphen into first and
+  shape. A folder made only of ASCII digits is reported as a numeric folder
+  (probably the realm's numeric id, **[verify]**), never as a realm name; its character folders are split at the first hyphen into first and
   second name (character names are believed not to contain one,
   **[verify]**). The retail-style `<Realm>/<First>/` twin that holds only
   `AddOns.txt` is an ordinary character folder of the first shape;
@@ -90,6 +89,7 @@ __all__ = [
 _WTF = "WTF"
 _ACCOUNT = "Account"
 _SAVED_VARIABLES = "SavedVariables"
+_OS_METADATA = "os-metadata"  # file-map entry id
 _BLIZZARD_SV = "SavedVariables.lua"
 _INTERFACE = "Interface"
 _ADDONS = "AddOns"
@@ -182,10 +182,11 @@ class Character(_Model):
     path: FsText  # relative to the flavor folder
     realm_folder: FsText
     # `realm_name`: under a realm-name folder (`<Realm>/<Character>/`);
-    # `numeric_realm`: under a digits-only folder (`<digits>/<First>-<Second>/`).
-    shape: Literal["realm_name", "numeric_realm"]
+    # `numeric_folder`: under a digits-only folder (`<digits>/<First>-<Second>/`),
+    # probably the realm's numeric id **[verify]**; not asserted to be a realm.
+    shape: Literal["realm_name", "numeric_folder"]
     first_name: FsText  # the folder name, or the part before the first hyphen
-    second_name: FsText | None  # after the first hyphen, numeric_realm shape only
+    second_name: FsText | None  # after the first hyphen, numeric_folder shape only
     files: tuple[FsText, ...]  # regular files directly inside, sorted
     folders: tuple[FsText, ...]  # sub-folders, sorted (e.g. "SavedVariables")
     # Character folders of the other shape in the same account whose first
@@ -196,8 +197,8 @@ class Character(_Model):
 class Realm(_Model):
     folder: FsText
     path: FsText
-    # `name`: a realm display name; `numeric`: a digits-only folder, believed
-    # to be the realm's id **[verify]**; never read as a realm name.
+    # `name`: a realm display name; `numeric`: a digits-only folder, probably
+    # the realm's numeric id **[verify]**; never read as a realm name.
     kind: Literal["name", "numeric"]
     characters: tuple[Character, ...]
 
@@ -260,12 +261,17 @@ class AddonToc(_Model):
 class Addon(_Model):
     name: FsText  # the folder name
     path: FsText
-    blizzard: bool  # a `Blizzard_*` folder (present after an interface export)
+    # A folder named like one of Blizzard's own addons (`Blizzard_*`). The
+    # client loads its own addons from game data, not from here **[verify]**;
+    # an interface export writes under `BlizzardInterfaceCode/` instead
+    # **[verify]**, so one here was most likely copied in.
+    blizzard: bool
     tocs: tuple[AddonToc, ...]  # every `*.toc` directly inside, sorted by file name
-    # The TOC the client would load when that follows from the file names
-    # alone: the one `<Folder>.toc` when no suffixed TOC is present. With
-    # suffixed TOCs the choice depends on the flavor's game type, which is
-    # not encoded here (Forever's preferred suffix is **[verify]**).
+    # The TOC the client would read, if it loads the addon at all, when that
+    # follows from the file names alone: the one `<Folder>.toc` when no
+    # suffixed TOC is present. With suffixed TOCs the choice depends on the
+    # flavor's game type, which is not encoded here (Forever's preferred
+    # suffix is **[verify]**).
     selected_toc: FsText | None
     selection: Literal["single", "depends_on_game_type", "no_toc"]
 
@@ -308,6 +314,9 @@ class Inventory(_Model):
     wtf_files: tuple[WtfFile, ...]
     other: Other
     symlinks: tuple[Symlink, ...]
+    # Files the file map classifies `os-metadata` (`.DS_Store`, `._*`, …):
+    # listed here and kept out of every other list and count.
+    os_metadata: tuple[FsText, ...]
     errors: tuple[WalkError, ...]
     truncated: bool
 
@@ -347,6 +356,7 @@ class _Entry:
 class _Report:
     symlinks: list[Symlink] = field(default_factory=list)
     errors: list[WalkError] = field(default_factory=list)
+    os_metadata: list[str] = field(default_factory=list)
     truncated: bool = False
     entries: int = 0
 
@@ -391,6 +401,7 @@ class Layout:
             raise ValueError(f"{self.flavor_path} is not inside {self.install_root}")
         self.limits = limits if limits is not None else Limits()
         self._filemap = _filemap.load()
+        self._os_entry = self._filemap.entry(_OS_METADATA)
         self._real_root: Path | None = None
 
     @classmethod
@@ -520,6 +531,13 @@ class Layout:
         found = self._filemap.classify(rel, "flavor", "dir" if is_dir else "file")
         return found.id if found else None
 
+    def _os_metadata(self, e: _Entry, report: _Report) -> bool:
+        """True (and recorded) when a file is operating-system metadata."""
+        if e.is_dir or not self._os_entry.matches(e.rel, "file"):
+            return False
+        report.os_metadata.append(_rel_text(e.rel))
+        return True
+
     # ── WTF ────────────────────────────────────────────────────────────────
 
     def _scan_wtf(
@@ -532,7 +550,7 @@ class Layout:
         if wtf is None:
             return accounts, svs, wtf_files
         account_root = self._sub(wtf, _ACCOUNT, report)
-        entries = list(self._walk(wtf, report))
+        entries = [e for e in self._walk(wtf, report) if not self._os_metadata(e, report)]
         by_folder: dict[tuple[str, ...], list[_Entry]] = {}
         for e in entries:
             by_folder.setdefault(e.rel[:-1], []).append(e)
@@ -565,6 +583,8 @@ class Layout:
                     numeric = realm_name.isascii() and realm_name.isdigit()
                     characters = []
                     for char_name in dirs_in(rrel):
+                        if char_name.casefold() == _SAVED_VARIABLES.casefold():
+                            continue  # not a character (review probe, M10-06)
                         crel = (*rrel, char_name)
                         first, sep, second = char_name.partition("-")
                         characters.append(
@@ -572,7 +592,7 @@ class Layout:
                                 folder=char_name,
                                 path=_rel_text(crel),
                                 realm_folder=realm_name,
-                                shape="numeric_realm" if numeric else "realm_name",
+                                shape="numeric_folder" if numeric else "realm_name",
                                 first_name=first if numeric and sep else char_name,
                                 second_name=second if numeric and sep else None,
                                 files=files_in(crel),
@@ -657,7 +677,15 @@ class Layout:
             scope = "machine"
         elif in_accounts and len(sub) == 3:
             scope, account = "account", sub[1]
-        elif in_accounts and len(sub) == 5 and sub[2].casefold() != _SAVED_VARIABLES.casefold():
+        elif (
+            in_accounts
+            and len(sub) == 5
+            and _SAVED_VARIABLES.casefold()
+            not in (
+                sub[2].casefold(),
+                sub[3].casefold(),
+            )
+        ):
             scope, account, realm, character = "character", sub[1], sub[2], sub[3]
         else:
             scope = "other"
@@ -696,6 +724,8 @@ class Layout:
         tocs: list[AddonToc] = []
         for e in self._list(rel, report):
             fname = e.rel[-1]
+            if self._os_metadata(e, report):
+                continue  # e.g. an AppleDouble `._Foo.toc` is not a TOC
             if e.is_dir or not fname.casefold().endswith(_TOC_SUFFIX):
                 continue
             stem = fname[: -len(_TOC_SUFFIX)]
@@ -785,6 +815,8 @@ class Layout:
             sub_report = _Report(entries=report.entries)
             files = folders = size = 0
             for e in self._walk(top, sub_report):
+                if self._os_metadata(e, sub_report):
+                    continue
                 if e.is_dir:
                     folders += 1
                 else:
@@ -794,6 +826,7 @@ class Layout:
                         overrides.append(self._override(e, "fonts"))
             report.entries = sub_report.entries
             report.symlinks.extend(sub_report.symlinks)
+            report.os_metadata.extend(sub_report.os_metadata)
             report.errors.extend(sub_report.errors)
             report.truncated = report.truncated or sub_report.truncated
             areas.append(
@@ -813,11 +846,13 @@ class Layout:
             for child in self._list(interface, report):
                 if child.rel[-1].casefold() == _ADDONS.casefold():
                     continue
+                if self._os_metadata(child, report):
+                    continue
                 if not child.is_dir:
                     overrides.append(self._override(child, "interface"))
                     continue
                 for e in self._walk(child.rel, report):
-                    if not e.is_dir:
+                    if not e.is_dir and not self._os_metadata(e, report):
                         overrides.append(self._override(e, "interface"))
         return Other(areas=tuple(areas), overrides=tuple(overrides))
 
@@ -880,6 +915,7 @@ class Layout:
             wtf_files=tuple(wtf_files),
             other=other,
             symlinks=tuple(sorted(symlinks, key=lambda s: s.path)),
+            os_metadata=tuple(sorted(set(report.os_metadata))),
             errors=tuple(report.errors),
             truncated=report.truncated,
         )
@@ -906,7 +942,7 @@ def _with_twins(realms: list[Realm]) -> tuple[Realm, ...]:
     for realm in realms:
         chars = []
         for c in realm.characters:
-            other = "realm_name" if c.shape == "numeric_realm" else "numeric_realm"
+            other = "realm_name" if c.shape == "numeric_folder" else "numeric_folder"
             twins = tuple(sorted(by_first.get((other, c.first_name.casefold()), [])))
             chars.append(c.model_copy(update={"twins": twins}))
         out.append(realm.model_copy(update={"characters": tuple(chars)}))
@@ -949,31 +985,71 @@ def _kind(path: Path, is_dir: bool | None) -> _filemap.Kind:
     return "any"  # a symlink, never followed to find out, or something else
 
 
+def _same_file(a: Path, b: Path) -> bool:
+    try:
+        return a.samefile(b)
+    except OSError:
+        return False
+
+
+def _relative_parts(target: Path, root: Path) -> tuple[str, ...] | None:
+    """`target`'s parts below `root`, or None when it is not inside.
+
+    An exact prefix is inside. A prefix that differs only in case is inside
+    when it is the same folder on disk (a case-insensitive volume); on a
+    case-sensitive volume the two spellings are different folders.
+    """
+    if _is_within(target, root):
+        return target.relative_to(root).parts
+    t_parts, r_parts = target.parts, root.parts
+    if len(t_parts) < len(r_parts):
+        return None
+    if any(a.casefold() != b.casefold() for a, b in zip(t_parts, r_parts, strict=False)):
+        return None
+    if not _same_file(Path(*t_parts[: len(r_parts)]), root):
+        return None
+    return t_parts[len(r_parts) :]
+
+
+def _flavor_spelling(first: str, root: Path, flavor_folders: set[str]) -> str | None:
+    """The discovered spelling of the flavor folder `first` names, if any:
+    the same string, or one differing only in case that is the same folder
+    on disk."""
+    if first in flavor_folders:
+        return first
+    for folder in sorted(flavor_folders):
+        if folder.casefold() == first.casefold() and _same_file(root / first, root / folder):
+            return folder
+    return None
+
+
 def _classify(
     path: Path, root: Path, flavor_folders: set[str], is_dir: bool | None
 ) -> Classified | Unclassified:
     target = _normalize(path)
     root = _normalize(root)
-    if not _is_within(target, root):
+    parts = _relative_parts(target, root)
+    if parts is None:
         return Unclassified(
             path=str(target), base=None, flavor_folder=None, reason="not inside the install root"
         )
-    rel = target.relative_to(root).parts
+    rel = parts
     if not rel:
         return Unclassified(
             path="", base="root", flavor_folder=None, reason="the install root itself"
         )
     kind = _kind(target, is_dir)
     fm = _filemap.load()
-    if rel[0] in flavor_folders:
+    flavor = _flavor_spelling(rel[0], root, flavor_folders)
+    if flavor is not None:
         sub = rel[1:]
         found = fm.classify(sub, "flavor", kind)
         if found is not None:
-            return Classified(path=_rel_text(sub), base="flavor", flavor_folder=rel[0], entry=found)
+            return Classified(path=_rel_text(sub), base="flavor", flavor_folder=flavor, entry=found)
         return Unclassified(
             path=_rel_text(sub),
             base="flavor",
-            flavor_folder=rel[0],
+            flavor_folder=flavor,
             reason="no file-map row matches",
         )
     found = fm.classify(rel, "root", kind)

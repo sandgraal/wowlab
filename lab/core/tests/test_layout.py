@@ -100,7 +100,7 @@ def test_both_account_shapes_and_twins_constructed(tmp_path: Path) -> None:
 
     chars = {c.path.removeprefix(A + "/"): c for r in account.realms for c in r.characters}
     bee = chars["7/Ann-Bee"]
-    assert (bee.shape, bee.first_name, bee.second_name) == ("numeric_realm", "Ann", "Bee")
+    assert (bee.shape, bee.first_name, bee.second_name) == ("numeric_folder", "Ann", "Bee")
     assert bee.realm_folder == "7", "the digits folder is kept as found, not as a realm name"
     assert bee.folders == ("SavedVariables",)
     assert chars["7/Ann-Cee"].second_name == "Cee"
@@ -119,7 +119,7 @@ def test_both_account_shapes_and_twins_constructed(tmp_path: Path) -> None:
         for rel in (f"{A}/7", f"{A}/Realm Name", f"{A}/7/Ann-Bee", f"{A}/Realm Name/Ann")
     }
     assert {k: v.entry.id for k, v in ids.items() if isinstance(v, Classified)} == {
-        f"{A}/7": "numeric-realm-folder",
+        f"{A}/7": "numeric-folder",
         f"{A}/Realm Name": "realm-folder",
         f"{A}/7/Ann-Bee": "second-name-character-folder",
         f"{A}/Realm Name/Ann": "character-folder",
@@ -353,6 +353,66 @@ def test_other_areas_and_loose_overrides_constructed(tmp_path: Path) -> None:
     }
 
 
+def test_os_metadata_is_listed_apart_from_everything_else_constructed(tmp_path: Path) -> None:
+    _, flavor = _install(
+        tmp_path,
+        {
+            "Interface/.DS_Store": b"",
+            "Interface/Icons/Foo.blp": b"1",
+            "Interface/AddOns/Foo/Foo.toc": REAL_TOC,
+            "Interface/AddOns/Foo/._Foo.toc": b"\x00\x05\x16\x07",
+            "Fonts/.DS_Store": b"",
+            "Fonts/FRIZQT__.TTF": b"123",
+            f"{A}/SavedVariables/._Foo.lua": b"",
+            f"{A}/SavedVariables/Foo.lua": b"x",
+            f"{A}/Realm/Char/desktop.ini": b"",
+            f"{A}/Realm/Char/AddOns.txt": b"",
+            "WTF/.DS_Store": b"",
+            "WTF/Config.wtf": b"",
+        },
+    )
+    inv = Layout(flavor).inventory()
+    assert inv.os_metadata == tuple(
+        sorted(
+            [
+                "Fonts/.DS_Store",
+                "Interface/.DS_Store",
+                "Interface/AddOns/Foo/._Foo.toc",
+                f"{A}/Realm/Char/desktop.ini",
+                f"{A}/SavedVariables/._Foo.lua",
+                "WTF/.DS_Store",
+            ]
+        )
+    )
+    assert [o.path for o in inv.other.overrides] == [
+        "Fonts/FRIZQT__.TTF",
+        "Interface/Icons/Foo.blp",
+    ]
+    assert [sv.addon for sv in inv.saved_variables] == ["Foo"]
+    assert sorted(w.path for w in inv.wtf_files) == [f"{A}/Realm/Char/AddOns.txt", "WTF/Config.wtf"]
+    assert [t.file for t in inv.addons[0].tocs] == ["Foo.toc"]
+    assert inv.addons[0].selection == "single"
+    fonts = next(a for a in inv.other.areas if a.name == "Fonts")
+    assert (fonts.files, fonts.bytes) == (1, 3), "area counts leave OS metadata out"
+    (char,) = inv.accounts[0].realms[0].characters
+    assert char.files == ("AddOns.txt",)
+    assert Inventory.model_validate_json(inv.model_dump_json()) == inv
+
+
+def test_savedvariables_folder_at_realm_depth_is_not_a_character_constructed(
+    tmp_path: Path,
+) -> None:
+    _, flavor = _install(tmp_path, {f"{A}/Realm/SavedVariables/Foo.lua": b"x"})
+    lay = Layout(flavor)
+    (realm,) = lay.accounts()[0].realms
+    assert realm.characters == ()
+    (stray,) = lay.wtf_files()
+    assert (stray.scope, stray.character_folder, stray.entry_id) == ("other", None, None)
+    assert lay.saved_variables() == ()
+    got = lay.classify(f"{A}/Realm/SavedVariables")
+    assert isinstance(got, Unclassified)
+
+
 # ─── symlinks ───────────────────────────────────────────────────────────────
 
 
@@ -561,7 +621,7 @@ def test_classify_outside_root_other_dirs_and_hints_constructed(tmp_path: Path) 
     missing_dir = classify(f"{FLAVOR}/WTF/Account/ACC/", install)
     assert isinstance(missing_dir, Classified) and missing_dir.entry.id == "account-folder"
     missing_any = classify(f"{FLAVOR}/WTF/Account/ACC/9", install)
-    assert isinstance(missing_any, Classified) and missing_any.entry.id == "numeric-realm-folder"
+    assert isinstance(missing_any, Classified) and missing_any.entry.id == "numeric-folder"
     forced = classify(f"{FLAVOR}/WTF/Account/ACC/9", install, is_dir=False)
     assert isinstance(forced, Unclassified) and forced.reason == "no file-map row matches"
     build = classify(".build.info", install)
@@ -619,7 +679,7 @@ def test_file_name_strings_with_lone_surrogates_survive_json_constructed() -> No
         folder=name,
         path=f"{A}/1/{name}",
         realm_folder="1",
-        shape="numeric_realm",
+        shape="numeric_folder",
         first_name=name,
         second_name=None,
         files=(name,),

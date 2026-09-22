@@ -63,6 +63,9 @@ the client:
   Non-ASCII coverage comes from the `non-ASCII strings` SavedVariables pick,
   a note that is only given to a file that still has such bytes after the
   scrub.
+  The Forever second name gets a realm-style pseudonym (`Labrealm…`, as in
+  `Labcharb-Labrealmd`) although it is not a realm (`docs/GLOSSARY.md`,
+  Second name).
 - `embedded: n` counts replacements that touched a neighbouring letter or
   digit (a character named like the start of a longer word). Read those
   lines before trusting the file's vocabulary. CVar names and TOC directive

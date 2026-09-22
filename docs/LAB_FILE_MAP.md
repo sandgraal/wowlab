@@ -32,8 +32,9 @@ Prose outside the markers is written by hand.
 | `.build.info` | Installed products, versions, build keys | Battle.net agent on install/patch | no | A (read) | `install` |
 | `.product.db`, `.patch.result`, `Launcher.db` | Agent state | Battle.net agent | no | — | none |
 | `Data/config/`, `Data/data/`, `Data/indices/` | CASC storage: build/CDN configs, archive blobs (`data.NNN`), index files (`*.idx`) | Agent; client streams into it | no | A (read, later wave) | none in Wave 1 |
-| `World of Warcraft Launcher.exe` / `.app`, `Battle.net` helpers | Launchers | Agent | no | — | none |
-| `.DS_Store`, `Thumbs.db` (anywhere) | Folder view metadata the operating system's file browser leaves behind; not the client's | Finder (macOS), Explorer (Windows) | no | — | none |
+| `Data/`, anything under it not in the row above | Shared game data. Editing anything under `Data/` is out of scope permanently (LAB_PLAN L7) | Agent; client streams into it | no | — | none |
+| `World of Warcraft Launcher.exe` / `.app` | Launchers | Agent | no | — | none |
+| `.DS_Store`, `._*`, `Thumbs.db`, `desktop.ini` (anywhere) | Folder view metadata the operating system's file browser leaves behind, not the client's; `._*` are macOS AppleDouble files on volumes without extended attributes **[verify]**. `layout` lists them apart from everything else | Finder (macOS), Explorer (Windows) | no | — | none |
 <!-- filemap:end root -->
 
 Everything under `Data/` is shared by all flavors. Modifying it is out of
@@ -44,15 +45,15 @@ scope permanently (LAB_PLAN L7).
 <!-- filemap:begin flavor -->
 | Path | What | Written by / when | Edit | Tier | Module |
 |---|---|---|---|---|---|
-| `<flavor>/` (the folder itself) | One installed product: its client, `WTF/`, `Interface/`, caches and logs. The name is as found on disk and changes between beta and launch; discovery finds the folder by its `.flavor.info` | Agent | — | — | `install`, `layout` |
+| `<flavor>/` (the folder itself) | One installed product: its client, `WTF/`, `Interface/`, caches and logs. The name is as found on disk and changes between beta and launch; discovery takes a folder whose name starts and ends with `_` and that holds a regular `.flavor.info` file | Agent | — | — | `install`, `layout` |
 | `.flavor.info` | Product code of this flavor | Agent | no | A (read) | `install` |
 | `Wow.exe`, `WowClassic.exe`, `World of Warcraft.app`, … | Client executable | Agent | no | — | `process` (name only) |
 | `WTF/` | This flavor's configuration and SavedVariables | Client | — | — | `layout` |
 | `WTF/Config.wtf` | Machine-wide CVars: graphics, sound, locale, last account | Client on exit and on some setting changes | gate | A | `wtfconfig` |
 | `WTF/Account/` | Parent of the account folders | Client | — | — | `layout` |
-| `WTF/Account/<ACCOUNT>/` | One folder per Battle.net account that logged in on this machine. Folder name identifies the account; scrub in fixtures | Client | — | — | `layout` |
+| `WTF/Account/<ACCOUNT>/` | One folder per game account that logged in on this machine; the `#<n>` suffix numbers the game accounts under one Battle.net account **[verify]**. Folder name identifies the account; scrub in fixtures | Client | — | — | `layout` |
 | `WTF/Account/<ACCOUNT>/SavedVariables.lua` | Blizzard UI's own account-wide saved state | Client on logout / `/reload` | gate | A | `luadata` |
-| `WTF/Account/<ACCOUNT>/SavedVariables/`, `…/<Character>/SavedVariables/` | One file per addon that saves data, account-wide or for one character by where the folder sits | Client | — | — | `layout` |
+| `WTF/Account/<ACCOUNT>/SavedVariables/`, `…/<Character>/SavedVariables/` | One file per addon that saves data, plus its `.lua.bak`; account-wide (`## SavedVariables:`) or per character (`## SavedVariablesPerCharacter:`) depending on where the folder sits | Client | — | — | `layout` |
 | `WTF/Account/<ACCOUNT>/SavedVariables/<Addon>.lua` | Account-wide addon data (`## SavedVariables:`) | Client on logout / `/reload` | gate | A | `luadata` |
 | `…/SavedVariables/<Addon>.lua.bak`, `WTF/Account/<ACCOUNT>/SavedVariables.lua.bak` | Previous write of the same file (the Blizzard file's `.bak` **[verify]**) | Client | no | A (read) | `luadata` |
 | `WTF/Account/<ACCOUNT>/config-cache.wtf` | Account-scoped CVars | Client | gate | A | `wtfconfig` |
@@ -66,25 +67,25 @@ scope permanently (LAB_PLAN L7).
 | `…/<Character>/edit-mode-cache-character.txt` | Character Edit Mode layouts, same encoding as the account file | Client | gate (server may replace) | A | none (kept by `snapshot`) |
 | `…/<Character>/click-bindings-cache.txt` | Click Casting bindings on unit frames; LF, ends `END` | Client | gate (server may replace) | A | none (kept by `snapshot`) |
 | `WTF/Account/<ACCOUNT>/edit-mode-cache-account.old` | Previous write of the same file | Client | no | A (read) | none (kept by `snapshot`) |
-| `WTF/Account/<ACCOUNT>/<Realm>/` | One folder per realm the account has characters on, named with the realm's display name. On the Forever beta it holds only the `<First>/` twins described below | Client | — | — | `layout` |
-| `WTF/Account/<ACCOUNT>/<digits>/` | Forever beta (2026-09-22): a digits-only folder holding the `<First>-<Second>/` character folders; almost certainly the realm's numeric id **[verify]**. Not a realm name | Client | — | — | `layout` |
-| `WTF/Account/<ACCOUNT>/<Realm>/<Character>/` | One character's folder. On the Forever beta a `<Realm>/<First>/` twin of a `<digits>/<First>-<Second>/` folder, holding only `AddOns.txt`; which realm name pairs with which digits folder is **[verify]** | Client | — | — | `layout` |
+| `WTF/Account/<ACCOUNT>/<Realm>/` | One folder per realm where a character of this account has logged in on this machine; it stays after the character moves or is deleted. Named with the realm's display name. On the Forever beta it holds only the `<First>/` folders described below | Client | — | — | `layout` |
+| `WTF/Account/<ACCOUNT>/<digits>/` | Forever beta (2026-09-22): a digits-only folder holding the `<First>-<Second>/` character folders; probably the realm's numeric id **[verify]** (the scrubbed fixtures give it a pseudonym). Not a realm name | Client | — | — | `layout` |
+| `WTF/Account/<ACCOUNT>/<Realm>/<Character>/` | One character's folder, created at its first login on this machine and left behind by a rename, transfer or deletion. On the Forever beta a `<Realm>/<First>/` twin of a `<digits>/<First>-<Second>/` folder, holding only `AddOns.txt`; which realm name pairs with which digits folder is **[verify]**; one such folder can stand for several `<First>-<Second>` characters **[verify]** | Client | — | — | `layout` |
 | `WTF/Account/<ACCOUNT>/<digits>/<First>-<Second>/` | One Forever character's folder (2026-09-22): first and second name joined by a hyphen, the second name not a realm. Holds everything per character except `AddOns.txt` | Client | — | — | `layout` |
 | `WTF/Account/<ACCOUNT>/<Realm>/<Character>/SavedVariables/<Addon>.lua` | Per-character addon data (`## SavedVariablesPerCharacter:`) | Client on logout / `/reload` | gate | A | `luadata` |
 | `…/<Character>/config-cache.wtf`, `bindings-cache.wtf`, `macros-cache.txt` | Character-scoped CVars, binds, macros. `bindings-cache.wtf` exists only with character-specific key bindings on **[verify]**; the Forever capture had none | Client | gate | A | `wtfconfig` |
-| `…/<Character>/AddOns.txt` | Which addons are enabled for this character; on the Forever beta it is in the `<Realm>/<First>/` twin | Client | gate | A | `layout` (lines) |
+| `…/<Character>/AddOns.txt` | Which addons are enabled for this character. On the Forever beta it sits in the `<Realm>/<First>/` folder, which is named by first name only, so characters that share a first name may share one list **[verify]** | Client | gate | A | `layout` (lines) |
 | `…/<Character>/layout-local.txt` | Legacy UI panel positions; on the Forever beta (2026-09-22) a stub, `Version: 1` and nothing else | Client | gate | A | none (kept by `snapshot`) |
 | `…/<Character>/chat-cache.txt` | Chat window and channel configuration | Client | gate | A | none (kept by `snapshot`) |
 | `Interface/` | Addons and loose-file overrides (the rows below) | You, or an addon manager | — | — | `layout` |
 | `Interface/AddOns/` | One folder per installed addon | You, or an addon manager | — | — | `layout` |
 | `Interface/AddOns/<Addon>/` | Third-party addon: `.toc`, `.lua`, `.xml`, media | You, or an addon manager | gate | A | `layout`, `toc` |
-| `Interface/AddOns/Blizzard_*` | Present only after `ExportInterfaceFiles`; not loaded from disk by modern clients | Console export | no | A (read) | `layout` (flagged) |
-| `BlizzardInterfaceCode/`, `BlizzardInterfaceArt/` | Output of the `ExportInterfaceFiles code` / `art` console commands: Blizzard's Lua/XML and UI textures, for reading | Client on command | no | A (read) | `layout` (flagged) |
+| `Interface/AddOns/Blizzard_*` | A folder named like one of Blizzard's own addons. The client loads its own addons from game data, not from here **[verify]**; an interface export writes under `BlizzardInterfaceCode/` instead **[verify]**, so one here was most likely copied in | You (copied) **[verify]** | no | A (read) | `layout` (flagged) |
+| `BlizzardInterfaceCode/`, `BlizzardInterfaceArt/` | Output of the `ExportInterfaceFiles code` / `art` console commands: Blizzard's Lua/XML and UI textures, for reading. Written inside the flavor folder **[verify]** | Client on command | no | A (read) | `layout` (flagged) |
 | `Interface/<anything outside AddOns>` | Loose-file overrides of base-game UI textures. Works only for textures that exist in the base game; sound overrides and world/model overrides no longer work in modern clients | You | gate | B | `layout` (flagged) |
 | `Fonts/` | Font overrides: `FRIZQT__.TTF` (main UI), `ARIALN.TTF` (chat, numbers), `skurri.ttf` (combat text), `MORPHEUS.ttf` (headers), plus locale variants | You | gate | B | `layout` |
 | `Cache/ADB/<locale>/DBCache.bin` | Hotfixes the server pushed over the shipped DB2 tables | Client | no | A (read, later wave) | none in Wave 1 |
 | `Cache/WDB/<locale>/*.wdb` | Cached server responses for creatures, items, quests, … | Client | no | A (read, later wave) | none |
-| `Cache/`, anything under it not in the two rows above | Other client caches; what they hold is not described here yet **[verify]** | Client | no | — | none |
+| `Cache/`, anything under it not in the two rows above | Other client caches; what they hold is not described here yet **[verify]**. The client rebuilds it; deleting it is ordinary troubleshooting **[verify]** | Client | no | — | none |
 | `Logs/WoWCombatLog*.txt` | Combat log while `/combatlog` is on | Client, batched | no | A (read) | `combatlog` |
 | `Logs/*.log` (`Client.log`, `gx.log`, `Sound.log`, `FrameXML.log`, `taint.log` when enabled) | Diagnostics | Client | no | A (read) | none |
 | `Logs/`, anything under it not in the two rows above | Other client logs; not described here yet **[verify]** | Client | no | — | none |
@@ -92,6 +93,12 @@ scope permanently (LAB_PLAN L7).
 | `Errors/` | Crash dumps and reports | Client | no | — | none |
 | `Utils/`, `*.dll`, `*.dylib` | Client support binaries | Agent | no | — | none |
 <!-- filemap:end flavor -->
+
+Known on disk, no row yet (reported as unclassified): `cache.md5` and
+`*.old` next to cache files, per-character `SavedVariables.lua`,
+`WTF/SavedVariables/` (`## SavedVariablesMachine`), Battle.net helpers,
+other `Data/` contents. (Added 2026-09-22, M10-06; `Data/` has a catch-all
+row so that `explain` says it is never edited.)
 
 ## Timing rules every tool must respect
 
@@ -112,13 +119,15 @@ scope permanently (LAB_PLAN L7).
   server may replace any `*-cache*` file at login (edit-mode layouts and
   click bindings are believed to follow the account on retail); which ones,
   and under which setting, is **[verify]**, so every `*-cache*` row below
-  carries that caveat.
+  carries that caveat. A `cache.md5` next to the cache files may be a factor
+  in what the client decides to replace **[verify]**.
 - **Folder shape under `WTF/Account/<ACCOUNT>/` on the Forever beta
   (2026-09-22, observed; the name rule confirmed by the owner):**
   `<ACCOUNT>/<digits>/<First>-<Second>/`. Forever characters have a first
   and a second name, both chosen by the player, and the folder joins them
   with a hyphen (character names cannot contain one, **[verify]**). The digits folder is
-  almost certainly the numeric id of the realm: every character in it also
+  probably the numeric id of the realm **[verify]** (the scrubbed fixtures
+  give digits folders a pseudonym, so they cannot show it): every character in it also
   has a retail-style twin `<ACCOUNT>/<Realm>/<First>/` under one realm
   display name, holding only `AddOns.txt` (**[verify]** the id). Everything
   else per character — config, bindings, click bindings, macros, chat,
@@ -134,7 +143,7 @@ scope permanently (LAB_PLAN L7).
 
 | Command | Where | Effect |
 |---|---|---|
-| `ExportInterfaceFiles code` / `art` | Login-screen console (launch with `-console`, press `` ` ``) | Dumps Blizzard UI source / art next to the flavor folder |
+| `ExportInterfaceFiles code` / `art` | Login-screen console (launch with `-console`, press `` ` ``) | Dumps Blizzard UI source / art inside or next to the flavor folder **[verify]** |
 | `/reload` | In game | Flushes SavedVariables, reloads the UI |
 | `/combatlog` | In game | Toggles combat logging |
 | `/console <cvar> <value>` | In game | Sets a CVar |

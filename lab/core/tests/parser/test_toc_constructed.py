@@ -223,3 +223,30 @@ def test_read_toc_refuses_an_oversized_file_constructed(tmp_path: Path) -> None:
     with pytest.raises(TocTooLargeError):
         read_toc(path, max_bytes=64)
     assert read_toc(path).to_bytes() == path.read_bytes()
+
+
+@pytest.mark.parser
+@pytest.mark.parametrize(
+    "line",
+    [
+        b"[c] " * 8_000 + b"Foo.lua",
+        b"[a b]" + b" " * 40_000 + b"Foo.lua",
+        b"Foo.lua" + b" " * 40_000 + b"[a]",
+        b"##" + b" " * 40_000 + b"Key" + b"x" * 40_000,
+        b"[" * 20_000 + b"]" * 20_000,
+    ],
+    ids=[
+        "constructed-many-leading",
+        "constructed-long-gap-leading",
+        "constructed-long-gap-trailing",
+        "constructed-no-colon-directive",
+        "constructed-brackets",
+    ],
+)
+def test_hostile_lines_parse_in_linear_time_constructed(line: bytes) -> None:
+    import time
+
+    start = time.perf_counter()
+    doc = parse_toc(line + b"\n")
+    assert time.perf_counter() - start < 1.0
+    assert doc.to_bytes() == line + b"\n"

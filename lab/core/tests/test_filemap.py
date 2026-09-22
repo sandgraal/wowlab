@@ -142,7 +142,7 @@ def _id(parts: str, base: str = "flavor", kind: str = "file") -> str | None:
     ("path", "kind", "expected"),
     [
         ("", "dir", "flavor-folder"),
-        ("WTF/Account/ACC/1/", "dir", "numeric-realm-folder"),
+        ("WTF/Account/ACC/1/", "dir", "numeric-folder"),
         ("WTF/Account/ACC/Area 52/", "dir", "realm-folder"),
         ("WTF/Account/ACC/1/First-Second/", "dir", "second-name-character-folder"),
         ("WTF/Account/ACC/Area 52/First/", "dir", "character-folder"),
@@ -173,6 +173,9 @@ def _id(parts: str, base: str = "flavor", kind: str = "file") -> str | None:
         ("Some.exe", "file", "client-executable"),
         ("Some Client.app/", "dir", "client-executable"),
         ("Interface/AddOns/Foo/.DS_Store", "file", "os-metadata"),
+        ("Interface/AddOns/Foo/._Foo.toc", "file", "os-metadata"),
+        ("Fonts/desktop.ini", "file", "os-metadata"),
+        ("WTF/Account/ACC/Realm/SavedVariables/", "dir", None),
         ("WTF/Account/ACC/unknown-new-file.txt", "file", None),
         ("WTF/Account/ACC/Config.wtf", "file", None),
         ("Interface/AddOns", "file", None),
@@ -192,7 +195,8 @@ def test_matcher_on_constructed_paths(path: str, kind: str, expected: str | None
         ("Data/indices/", "dir", "casc-data"),
         (".DS_Store", "file", "os-metadata"),
         ("WTF/Config.wtf", "file", None),
-        ("Data/other", "file", None),
+        ("Data/other", "file", "data-other"),
+        ("Data/", "dir", "data-other"),
     ],
     ids=lambda v: f"constructed-root-{v}" if isinstance(v, str) and "." in v else None,
 )
@@ -201,7 +205,7 @@ def test_root_rows_on_constructed_paths(path: str, kind: str, expected: str | No
 
 
 def test_unknown_kind_matches_either_constructed() -> None:
-    assert _id("WTF/Account/ACC/1", "flavor", "any") == "numeric-realm-folder"
+    assert _id("WTF/Account/ACC/1", "flavor", "any") == "numeric-folder"
     assert _id("WTF/Account/ACC/config-cache.wtf", "flavor", "any") == "account-config-cache"
 
 

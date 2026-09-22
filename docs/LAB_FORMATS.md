@@ -303,10 +303,15 @@ Dated entries, newest last. Each names the fixture that prompted it.
   `## Interface: 50504, 120100` (so the list form no longer rests on the
   uncommitted Baganator TOC; directives after a blank line still do, and
   stay **[verify]**). The file is 38 directives, one blank line, then 28 file
-  lines, and no comments. Locale suffixes also appear on `X-` directives
-  (`## X-DBM-Mod-Name-koKR:`, `## X-DBM-Mod-SubCategories-deDE:`), so a
-  locale suffix is not limited to `Title` and `Notes`. Directive values
-  carry backslash paths (`## IconTexture: Interface\AddOns\DBM-Core\…`).
+  lines, and no comments. Conditions after the path are seen on the
+  fixture: 20 file lines end in `[AllowLoadGameType standard]`. The
+  before-path form in the §3 example (`[AllowLoadGameType mainline] Foo.lua`)
+  and path variables stay **[verify]**. Whether the Forever client counts as
+  game type `standard` is **[verify]**. Keys ending in a locale code also
+  occur on `X-` directives (`X-DBM-Mod-Name-koKR`). For `X-` keys that is
+  the addon's own naming; whether the client resolves a locale suffix on
+  anything but `Title`/`Notes` is **[verify]**. Directive values carry
+  backslash paths (`## IconTexture: Interface\AddOns\DBM-Core\…`).
   How `wowlab_core.toc` reads the rest of §3, none of it contradicted by the
   fixture and none of it confirmed: a key is a run of characters with no
   whitespace and no `:`, so `## Some words: text` is a comment; a `[…]`
