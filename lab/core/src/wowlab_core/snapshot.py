@@ -30,6 +30,7 @@ import json
 import os
 import re
 import stat
+import sys
 import uuid
 import zlib
 from collections.abc import Callable, Iterable, Iterator, Sequence
@@ -76,6 +77,10 @@ _ID_RE = re.compile(r"\A\d{8}T\d{6}\.\d{6}Z-[0-9a-f]{8}\Z")
 _ID_PREFIX_RE = re.compile(r"\A[0-9a-fTZ.\-]+\Z")
 _SHA_RE = re.compile(r"\A[0-9a-f]{64}\Z")
 _MANIFEST_SUFFIX = ".json"
+_ON_WINDOWS = sys.platform == "win32"
+_REPARSE_NAME_SURROGATE = 0x20000000
+"""The bit in a Windows reparse tag that says "this names another path"
+(symlink, junction, WCI link, ...); cloud placeholders and dedup lack it."""
 
 
 class SnapshotError(Exception):
@@ -152,7 +157,13 @@ class Entry(_Frozen):
     """Permission bits only (`stat.S_IMODE`)."""
     mtime_ns: int = 0
     target: str | None = None
-    """Link target text for a symlink, else `None`."""
+    """Link target text for a symlink, else `None`.
+
+    On Windows a directory that is a junction, or any other name-surrogate
+    reparse point (a WCI link, say), is recorded as a `symlink` entry with
+    its `readlink` target. When `readlink` cannot describe it, `target` is
+    `None`: a `symlink` entry with no target names a link whose destination
+    is unknown, never a real path, and nothing will ever match or recreate it."""
 
     @field_validator("path")
     @classmethod
@@ -311,6 +322,48 @@ def _normalize_rel(value: str | PurePath, what: str) -> str:
     return posix.as_posix()  # "." for the root itself
 
 
+def _is_junction(path: Path | os.DirEntry[str]) -> bool:
+    """True for an NTFS junction (a mount-point reparse point); always False off Windows.
+
+    CPython reports only `IO_REPARSE_TAG_SYMLINK` as a link. A junction
+    `lstat`s as a directory, so `S_ISLNK` and `is_dir(follow_symlinks=False)`
+    both miss it; every place that decides "link or directory" asks here too.
+    Only junctions count: other reparse points (cloud-file placeholders,
+    deduplicated files) hold real content and `readlink` cannot describe them.
+    """
+    return path.is_junction()
+
+
+def _is_link_like_dir(path: Path | os.DirEntry[str]) -> bool:
+    """True for a directory entry that names another path without being a symlink.
+
+    That is a junction, or on Windows any directory whose reparse tag has the
+    name-surrogate bit (a WCI link, say): all of them `lstat` as directories
+    on 3.12. Non-surrogate reparse points (cloud-file placeholders,
+    deduplicated files) hold real content and are walked as directories.
+    Call it only for something already known to be a directory.
+    """
+    if _is_junction(path):
+        return True
+    if not _ON_WINDOWS:
+        return False
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False  # gone, or unreadable: the walk reports it where it matters
+    return bool(int(getattr(st, "st_reparse_tag", 0)) & _REPARSE_NAME_SURROGATE)
+
+
+def _dir_link_target(path: Path) -> str | None:
+    """`readlink` of a link-like directory, or `None` when it cannot say (see `Entry.target`)."""
+    try:
+        return str(path.readlink())
+    except FileNotFoundError:
+        raise  # removed while we walked; `_capture` skips it
+    except (OSError, ValueError):
+        return None
+
+
 def _is_under(path: str, ancestor: str) -> bool:
     return ancestor == "." or path == ancestor or path.startswith(ancestor + "/")
 
@@ -378,9 +431,11 @@ class SnapshotStore:
         """Capture `subtrees` of `root` and return the new manifest.
 
         `root` is only ever read. A subtree that does not exist is recorded
-        in the manifest and contributes no entries. Symlinks are recorded
-        with their target and never followed; a subtree that can only be
-        reached through a symlink below the root is refused. Anything that
+        in the manifest and contributes no entries. Symlinks, and on Windows
+        junctions and other directory links (name-surrogate reparse points),
+        are recorded as `symlink` entries with their target
+        and never followed; a subtree that can only be reached through one
+        below the root is refused. Anything that
         is neither a regular file, a directory nor a symlink is ignored. A
         file that cannot be read raises; a partial snapshot is never written.
 
@@ -519,6 +574,11 @@ class SnapshotStore:
                     f"subtree {subtree!r} passes through the symlink {current}; "
                     "symlinks are never followed"
                 )
+            if stat.S_ISDIR(mode) and _is_link_like_dir(current):
+                raise SnapshotError(
+                    f"subtree {subtree!r} passes through the junction or directory link "
+                    f"{current}; these, like symlinks, are never followed"
+                )
 
     def _walk(
         self, root: Path, subtree: str, excluded: Sequence[str]
@@ -534,8 +594,8 @@ class SnapshotStore:
             return
         except (OSError, ValueError) as exc:
             raise SnapshotError(f"cannot inspect {start}: {exc}") from exc
-        if not stat.S_ISDIR(st.st_mode):
-            yield subtree, start
+        if not stat.S_ISDIR(st.st_mode) or _is_link_like_dir(start):
+            yield subtree, start  # `_capture` records a junction as a link
             return
         stack: list[tuple[str, Path]] = [(subtree, start)]
         while stack:
@@ -551,7 +611,7 @@ class SnapshotStore:
                 rel = child.name if rel_dir == "." else f"{rel_dir}/{child.name}"
                 if any(_is_under(rel, x) for x in excluded):
                     continue
-                if child.is_dir(follow_symlinks=False):
+                if child.is_dir(follow_symlinks=False) and not _is_link_like_dir(child):
                     stack.append((rel, Path(child.path)))
                 else:
                     yield rel, Path(child.path)
@@ -570,6 +630,17 @@ class SnapshotStore:
                     mode=stat.S_IMODE(st.st_mode),
                     mtime_ns=st.st_mtime_ns,
                     target=str(abs_path.readlink()),
+                )
+            # A junction or other directory link is recorded as a symlink is:
+            # its target, never followed.
+            if stat.S_ISDIR(st.st_mode) and _is_link_like_dir(abs_path):
+                return self._entry(
+                    abs_path,
+                    path=rel,
+                    kind="symlink",
+                    mode=stat.S_IMODE(st.st_mode),
+                    mtime_ns=st.st_mtime_ns,
+                    target=_dir_link_target(abs_path),
                 )
             if not stat.S_ISREG(st.st_mode):
                 return None
