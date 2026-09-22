@@ -34,14 +34,38 @@ Claude Code in this repository.
 
 ## Models
 
-Opus-class work runs on Opus 5.5 (`claude-opus-5-5`), pinned by full id:
-the conductor session (`.claude/settings.json`), `implementer`,
-`test-writer`, `code-reviewer`, `domain-reviewer`, `security-reviewer`, and
-both GitHub workflows. Other Opus versions and Fable cost more tokens for no
-gain here and are not used. `pr-shepherd` stays on `sonnet`.
-`scripts/check_frontmatter.py` rejects the bare `opus` alias and `fable` in
-agent frontmatter.
-Do not pass a `model` override to `Agent`; the frontmatter decides.
+Opus-class work runs on Opus 5.5, pinned by full id: the conductor session
+(`.claude/settings.json`), `implementer`, `test-writer`, `code-reviewer`,
+`domain-reviewer`, `security-reviewer`, and both GitHub workflows. Other
+Opus versions and Fable cost more tokens for no gain here and are not used.
+`pr-shepherd` stays on `sonnet`.
+
+Context window: Anthropic's pricing has no per-token premium for the 1M
+window, but every turn resends the whole context. Caching makes that cheaper
+per token, but it is still billed on every turn. A session allowed to grow
+toward 1M pays roughly in proportion to its size on each turn after. Choose
+by how long a session must hold state:
+
+- **`claude-opus-5-5[1m]`: the conductor only.** It runs a whole wave:
+  frontier, parallel dispatches, agent reports, review routing, merges.
+  Compaction mid-wave loses routing state, and that costs more than the
+  larger context.
+- **`claude-opus-5-5` (standard): the repo's agents and both workflows.** Each
+  is scoped to one ticket, review or PR. All of `docs/` is under 40K tokens,
+  and each review on #34 used about 30K, so the standard window fits, and
+  compacting early keeps later turns cheap. The conductor dispatches only
+  the repo agents under `.claude/agents/`. Built-in types such as
+  `general-purpose` have no pin and would likely inherit the 1M session model.
+- **Do not read a fixture whole into context.** Grep it or read the slice
+  you need. The corpus under `lab/core/tests/fixtures/` is already larger
+  than all of `docs/`.
+
+If an agent keeps compacting mid-ticket and losing context, that is the
+signal to split the ticket, not to give the agent the 1M window.
+`scripts/check_frontmatter.py` accepts only `inherit`, `sonnet`, `haiku` and
+`claude-opus-5-5` in agent frontmatter, so it rejects the bare `opus` alias,
+`fable` and the `[1m]` variant. Do not pass a `model` override to `Agent`;
+the frontmatter decides.
 
 ## Known hook gaps
 
