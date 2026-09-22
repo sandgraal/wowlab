@@ -51,11 +51,11 @@ parameter, so they are pinned here, as small as they could be made:
   raised) and `guard.PathNotAllowedError` are subclasses of it and not of
   each other. A write the operating system refuses surfaces as a
   `GuardError`, never a bare `OSError`.
-- The public surface of the module is exactly `transaction`, `undo`,
-  `history`, `GuardError`, `ClientRunningError`, `PathNotAllowedError`
-  (record and plan-item classes are private). The transaction object has
-  exactly the public methods `write`, `delete`, `restore` and the public
-  data attribute `plan`, and is dead after exit.
+- The public surface of the module is `transaction`, `undo`, `history`,
+  `GuardError`, `ClientRunningError`, `PathNotAllowedError`, plus data-only
+  Pydantic models (below). The transaction object has exactly the public
+  methods `write`, `delete`, `restore`, the public data attribute `plan`
+  and optionally read-only properties, and is dead after exit.
 - A history record has `label`, `snapshot_id` (the pre-write snapshot),
   `rolled_back` and `paths`; each item of `paths` has `path` (as the caller
   spelled it), `before` and `after` (SHA-256 hex, `None` for absent).
@@ -66,7 +66,34 @@ parameter, so they are pinned here, as small as they could be made:
   first. Rollback happens on any `BaseException`, `KeyboardInterrupt`
   included, and everything restored from a snapshot or a journal is checked
   against the allowlist again on the restoring platform: the store is
-  untrusted input at restore time, and a symlink is never created.
+  untrusted input at restore time, and a symlink is never created. That
+  holds for every write route (`tx.write`, `tx.delete`, `tx.restore`,
+  rollback and `undo()`): a link (symbolic, junction or hard) planted after
+  an earlier check never redirects a write out of the install, and the
+  parent directory is checked again between the check and the temp-file
+  open and again before the rename.
+- The journal entry is opened on enter, before the body runs, naming the
+  pre-write snapshot, and every touched path is on record once the
+  operation returns (a hard-killed transaction is still in `history()`).
+  A refused enter and a dry run leave `history()` unchanged. `undo()` on a
+  store with no record raises `GuardError` and creates nothing. Labels and
+  paths round-trip through the journal exactly; one transaction is one
+  record, whatever characters they hold.
+- `rolled_back=True` is a claim that every touched path holds its
+  pre-transaction bytes again; a rollback that could not finish says so.
+- "Executable" means a path with any component whose suffix, compared
+  case-insensitively, is one of `EXECUTABLE_SUFFIXES` below (this includes
+  the bundle layouts `.app`, `.bundle`, `.framework`, `.plugin`, so a file
+  inside one is refused too). No content is sniffed.
+- No module global of `guard` other than dunders and `TYPE_CHECKING` is a
+  `bool`: there is no switch to flip.
+- Callers spell allowlist roots canonically (`WTF`, `Interface/AddOns`,
+  `Fonts`); a respelling is refused on every volume. `guard` may map a
+  canonical name to the spelling found on disk (an install with
+  `Interface/Addons`); these graders neither require nor forbid that.
+- Public data classes (history records, plan items) may be public Pydantic
+  models with no public methods of their own; the transaction may add
+  read-only properties beside `plan`.
 
 Nothing is asserted about how the pre-write snapshot is rooted: entry paths
 are matched by suffix, so `WTF/Config.wtf` and `_retail_/WTF/Config.wtf`
@@ -76,10 +103,12 @@ both satisfy these graders.
 from __future__ import annotations
 
 import ast
+import builtins
 import contextlib
 import hashlib
 import importlib
 import inspect
+import io
 import json
 import os
 import shutil
@@ -93,7 +122,7 @@ from typing import Any
 import platformdirs
 import psutil
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from wowlab_core.snapshot import (
     Entry,
@@ -692,6 +721,7 @@ def test_constructed_transaction_refuses_when_the_client_is_running_or_unknown(
     assert not entered, "the body of a refused transaction must never run"
     assert strict_state(world) == before
     assert store.list() == (), "a refused enter takes no snapshot"
+    assert list(guard.history(store=store.path)) == [], "and opens no journal entry"
 
 
 @pytest.mark.xfail(strict=True, reason=MARKER)
@@ -776,26 +806,49 @@ def test_constructed_guard_never_touches_psutil_or_the_environment_itself(guard:
 
 
 @pytest.mark.xfail(strict=True, reason=MARKER)
+@pytest.mark.parametrize("which", [pytest.param(w, id=f"constructed-{w}") for w in REFUSING_TABLES])
 def test_constructed_undo_refuses_while_the_client_runs(
     guard: Any,
     tmp_path: Path,
+    world: Path,
+    install_root: Path,
     flavor: Flavor,
     store: SnapshotStore,
     idle: None,
     monkeypatch: pytest.MonkeyPatch,
+    which: str,
 ) -> None:
+    if which == "running-unlisted-name-exe-denied-but-present-on-disk":
+        (flavor.path / "ForeverClient.exe").write_bytes(b"MZ constructed unlisted client")
     with guard.transaction(flavor, label="to-undo", store=store.path) as tx:
         tx.write(CONFIG, NEW_CONFIG)
+    before = strict_state(world)
+    history = list(guard.history(store=store.path))
+    snapshots = store.list()
 
-    use_probe(monkeypatch, running_table(tmp_path))
+    use_probe(monkeypatch, _refusing_tables(tmp_path, install_root)[which])
     with pytest.raises(guard.ClientRunningError):
         guard.undo(store=store.path)
-    assert (flavor.path / CONFIG).read_bytes() == NEW_CONFIG
 
-    use_probe(monkeypatch, _raising_probe)
-    with pytest.raises(guard.ClientRunningError):
-        guard.undo(store=store.path)
-    assert (flavor.path / CONFIG).read_bytes() == NEW_CONFIG
+    assert strict_state(world) == before
+    assert list(guard.history(store=store.path)) == history, "a refused undo is not recorded"
+    assert store.list() == snapshots, "a refused undo takes no snapshot"
+
+
+@pytest.mark.xfail(strict=True, reason=MARKER)
+def test_constructed_undo_with_nothing_to_undo_is_a_typed_error_and_creates_nothing(
+    guard: Any, tmp_path: Path, world: Path, idle: None, _user_data_redirected: Path
+) -> None:
+    before = strict_state(world)
+    empty = tmp_path / "empty-store"
+    with pytest.raises(guard.GuardError) as refused:
+        guard.undo(store=empty)
+    assert not isinstance(refused.value, guard.ClientRunningError)
+    assert not empty.exists()
+    with pytest.raises(guard.GuardError):
+        guard.undo()
+    assert strict_state(world) == before
+    assert not _user_data_redirected.exists()
 
 
 # ─── the flavor ──────────────────────────────────────────────────────────────
@@ -845,10 +898,66 @@ def test_constructed_flavor_that_is_not_a_flavor_is_refused(
     assert not entered
     assert strict_state(world) == before
     assert store.list() == ()
+    assert list(guard.history(store=store.path)) == []
     assert not _user_data_redirected.exists()
 
 
+@pytest.mark.xfail(strict=True, reason=MARKER)
+def test_constructed_flavor_folder_that_is_a_symlink_out_of_the_install_is_refused(
+    guard: Any, world: Path, install_root: Path, flavor: Flavor, store: SnapshotStore, idle: None
+) -> None:
+    """A flavor folder inside the install that is a link to a directory
+    elsewhere (holding a `.flavor.info`) is not a flavor of this install."""
+    elsewhere = world / "outside" / "_x_"
+    _put(elsewhere, {".flavor.info": FLAVOR_ONLY_FILES[".flavor.info"], CONFIG: b"constructed\n"})
+    link = install_root / "_linked_"
+    symlink_or_skip(link, elsewhere, is_dir=True)
+    linked = flavor.model_copy(update={"folder": "_linked_", "path": link})
+    before = strict_state(world)
+    entered = False
+
+    with (
+        pytest.raises(guard.GuardError),
+        guard.transaction(linked, label="linked-flavor", store=store.path) as tx,
+    ):
+        entered = True
+        tx.write(CONFIG, NEW_CONFIG)
+
+    assert not entered
+    assert strict_state(world) == before
+    assert store.list() == ()
+    assert list(guard.history(store=store.path)) == []
+
+
 # ─── the allowlist ───────────────────────────────────────────────────────────
+
+# What the module docstring calls an executable: any path component with one
+# of these suffixes, compared case-insensitively. No content sniffing.
+EXECUTABLE_SUFFIXES = (
+    ".exe",
+    ".dll",
+    ".dylib",
+    ".so",
+    ".scr",
+    ".com",
+    ".bat",
+    ".cmd",
+    ".ps1",
+    ".sh",
+    ".command",
+    ".app",
+    ".bundle",
+    ".plugin",
+    ".framework",
+    ".vbs",
+    ".js",
+    ".wsf",
+    ".hta",
+    ".msi",
+    ".lnk",
+    ".cpl",
+    ".jar",
+)
 
 # `<WORLD>`, `<FLAVOR>` and `<FLAVOR_FOLDER>` are replaced at run time.
 FORBIDDEN_PATHS: tuple[tuple[str, str], ...] = (
@@ -892,6 +1001,22 @@ FORBIDDEN_PATHS: tuple[tuple[str, str], ...] = (
     ("executable-ps1", "WTF/x.ps1"),
     ("executable-sh", "Fonts/x.sh"),
     ("executable-dll-case-variant", "Interface/AddOns/Thing/THING.DLL"),
+    ("executable-command", "WTF/x.command"),
+    ("executable-command-case-variant", "WTF/x.COMMAND"),
+    ("executable-bundle", "Interface/AddOns/Thing/x.bundle"),
+    ("executable-inside-a-bundle", "Interface/AddOns/Thing/x.bundle/Contents/MacOS/x"),
+    ("executable-plugin", "Interface/AddOns/Thing/x.plugin"),
+    ("executable-framework", "Interface/AddOns/Thing/x.framework"),
+    ("executable-inside-a-framework", "Interface/AddOns/Thing/x.framework/Versions/A/x"),
+    ("executable-vbs", "WTF/x.vbs"),
+    ("executable-js", "Interface/AddOns/Thing/x.js"),
+    ("executable-wsf", "WTF/x.wsf"),
+    ("executable-hta", "WTF/x.hta"),
+    ("executable-msi", "Fonts/x.msi"),
+    ("executable-lnk", "WTF/x.lnk"),
+    ("executable-cpl", "WTF/x.cpl"),
+    ("executable-jar", "Interface/AddOns/Thing/x.jar"),
+    ("executable-jar-case-variant", "Interface/AddOns/Thing/x.Jar"),
     # The allowlist roots and directories: the API is per file.
     ("allowlist-root-wtf", "WTF"),
     ("allowlist-root-wtf-trailing-slash", "WTF/"),
@@ -964,6 +1089,24 @@ def test_constructed_path_outside_the_allowlist_is_refused(
     changed = {k for k in before.keys() | after.keys() if before.get(k) != after.get(k)}
     # Only the control write shows: its file, and the mtime of its directory.
     assert changed <= {flavor_key(CONFIG), flavor_key("WTF")}, sorted(changed)
+
+
+@pytest.mark.xfail(strict=True, reason=MARKER)
+@pytest.mark.parametrize(
+    "rel",
+    [
+        pytest.param(f"Interface/AddOns/Thing/x{spelled}", id=f"constructed-{spelled}")
+        for suffix in EXECUTABLE_SUFFIXES
+        for spelled in (suffix, suffix.upper())
+    ],
+)
+def test_constructed_every_executable_suffix_is_refused_in_either_case(
+    guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None, rel: str
+) -> None:
+    before = strict_state(world)
+    with guard.transaction(flavor, label="executable", store=store.path) as tx:
+        refused_both_ops(guard, tx, rel, guard.PathNotAllowedError)
+    assert strict_state(world) == before
 
 
 @pytest.mark.xfail(strict=True, reason=MARKER)
@@ -1272,6 +1415,57 @@ def test_constructed_journal_records_before_and_after_hashes_for_every_touched_p
 
 
 @pytest.mark.xfail(strict=True, reason=MARKER)
+def test_constructed_journal_entry_is_opened_on_enter_and_names_each_path_as_it_goes(
+    guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
+) -> None:
+    """§6.10: "open a journal entry under the store" on enter. A guard that
+    writes the journal only at exit leaves a hard-killed transaction with
+    nothing on record."""
+    with guard.transaction(flavor, label="ahead", store=store.path) as tx:
+        opened = [r for r in guard.history(store=store.path) if r.label == "ahead"]
+        assert len(opened) == 1, "the record exists before the first operation"
+        (pre,) = store.list()
+        assert opened[0].snapshot_id == pre.id
+        tx.write(CONFIG, NEW_CONFIG)
+        after_one = record_for(guard, store, "ahead")
+        assert CONFIG in [item.path for item in after_one.paths]
+        tx.delete(BINDINGS)
+        after_two = record_for(guard, store, "ahead")
+        assert {CONFIG, BINDINGS} <= {item.path for item in after_two.paths}
+    assert len(list(guard.history(store=store.path))) == 1
+
+
+INJECTED_LABEL = 'x"}\n{"label":"evil"'
+INJECTED_PATH = 'WTF/a"\nb.wtf'
+
+
+@pytest.mark.xfail(strict=True, reason=MARKER)
+def test_constructed_journal_holds_hostile_labels_and_paths_exactly(
+    guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None
+) -> None:
+    """A label or path that looks like journal syntax is refused, or
+    round-trips exactly as one record; it never becomes a second record."""
+    before = content(world)
+    try:
+        with (
+            guard.transaction(flavor, label=INJECTED_LABEL, store=store.path) as tx,
+            contextlib.suppress(guard.GuardError),
+        ):
+            tx.write(INJECTED_PATH, NEW_LUA)
+    except guard.GuardError as refused:
+        assert not isinstance(refused, guard.ClientRunningError)
+        assert list(guard.history(store=store.path)) == []
+        assert content(world) == before
+        return
+
+    records = list(guard.history(store=store.path))
+    assert len(records) == 1, [r.label for r in records]
+    assert records[0].label == INJECTED_LABEL
+    assert [item.path for item in records[0].paths] in ([], [INJECTED_PATH])
+    assert "evil" not in {r.label for r in records}
+
+
+@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_journal_lists_a_path_once_with_its_first_before_and_last_after(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -1335,7 +1529,8 @@ class ReplaceSpy:
 
     Replace calls whose target lies inside the install are recorded (with what
     both sides held at that instant, and whether the source had been fsynced);
-    the `fail_on`-th of them raises `error` once, and `before_call`, if given,
+    the `fail_on`-th of them raises `error` (and every later one, with
+    `persistent`, so a retry cannot succeed), and `before_call`, if given,
     runs just before the real replace. Every other call goes through. Calls
     made with `src_dir_fd` / `dst_dir_fd` are resolved through the descriptor
     so a guard using that defence is recorded, not failed.
@@ -1346,11 +1541,13 @@ class ReplaceSpy:
         install_root: Path,
         *,
         fail_on: int = 0,
+        persistent: bool = False,
         error: BaseException | None = None,
         before_call: Callable[[int, Path, Path], None] | None = None,
     ) -> None:
         self.install_root = install_root
         self.fail_on = fail_on
+        self.persistent = persistent
         self.error = error
         self.before_call = before_call
         self.fsynced: set[FileId] = set()
@@ -1364,8 +1561,9 @@ class ReplaceSpy:
         monkeypatch.setattr(os, "rename", self.replace)
         monkeypatch.setattr(os, "fsync", self.fsync)
 
-    def fsync(self, fd: int) -> None:
-        self.fsynced.add(_file_id(os.fstat(fd)))
+    def fsync(self, fd: Any) -> None:
+        # `os.fsync` accepts a descriptor or any object with `fileno()`.
+        self.fsynced.add(_file_id(os.fstat(fd if isinstance(fd, int) else fd.fileno())))
         self._fsync(fd)
 
     def _dir_of(self, fd: int) -> Path:
@@ -1402,7 +1600,8 @@ class ReplaceSpy:
             )
             if self.before_call is not None:
                 self.before_call(number, source, target)
-            if number == self.fail_on and self.error is not None:
+            failing = number == self.fail_on or (self.persistent and number > self.fail_on > 0)
+            if failing and self.error is not None:
                 raise self.error
         self._replace(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
 
@@ -1541,6 +1740,138 @@ def test_constructed_parent_swapped_for_a_symlink_before_the_rename_does_not_esc
     assert (real / "Config.wtf").read_bytes() in (ALLOWLISTED_FILES[CONFIG], NEW_CONFIG)
 
 
+_WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT
+
+
+class OpenSwap:
+    """Runs `swap` once, at the first write-mode open of a path inside the
+    install (or any open relative to a directory descriptor), just before the
+    real open. Wraps `os.open`, `builtins.open` and `io.open` (which
+    `Path.open` uses)."""
+
+    def __init__(self, install_root: Path, swap: Callable[[], bool]) -> None:
+        self.roots = {str(install_root), str(install_root.resolve())}
+        self.swap = swap
+        self.swapped = False
+        self.fired = False
+        self._os_open = os.open
+        self._io_open = io.open
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(os, "open", self.os_open)
+        monkeypatch.setattr(builtins, "open", self.py_open)
+        monkeypatch.setattr(io, "open", self.py_open)
+
+    def _maybe_swap(self, path: Any, writing: bool, dir_fd: int | None) -> None:
+        if self.fired or not writing or isinstance(path, int):
+            return
+        if dir_fd is None:
+            absolute = str(Path(os.fsdecode(path)).absolute())  # lexical: links not followed
+            if not any(absolute.startswith(root + os.sep) for root in self.roots):
+                return
+        self.fired = True
+        self.swapped = self.swap()
+
+    def os_open(
+        self, path: Any, flags: int, mode: int = 0o777, *, dir_fd: int | None = None
+    ) -> int:
+        self._maybe_swap(path, bool(flags & _WRITE_FLAGS), dir_fd)
+        return self._os_open(path, flags, mode, dir_fd=dir_fd)
+
+    def py_open(self, file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        self._maybe_swap(file, any(c in mode for c in "wxa+"), None)
+        return self._io_open(file, mode, *args, **kwargs)
+
+
+@pytest.mark.xfail(strict=True, reason=MARKER)
+def test_constructed_parent_swapped_for_a_symlink_before_the_temp_open_does_not_escape(
+    guard: Any, world: Path, install_root: Path, flavor: Flavor, store: SnapshotStore, idle: None
+) -> None:
+    """The earlier window: `WTF` becomes a symlink out of the install after
+    the allowlist check and before the temp file is opened. A guard that
+    opens by path and renames by path writes the file outside. Two portable
+    defences pass: opening relative to a directory descriptor taken before
+    the check (POSIX), or re-checking where the opened temp file really is
+    and removing it before raising `GuardError`. Graded on bytes: no file
+    outside gains or changes content. A temp file created and removed again
+    outside is not detectable portably and is not graded (the `dir_fd`
+    defence is not available on Windows)."""
+    wtf = flavor.path / "WTF"
+    real = flavor.path / "WTF_real"
+    outside_before = content(world / "outside")
+
+    def swap() -> bool:
+        try:
+            wtf.rename(real)
+        except OSError:
+            return False
+        try:
+            wtf.symlink_to(world / "outside", target_is_directory=True)
+        except (OSError, NotImplementedError):
+            real.rename(wtf)
+            return False
+        return True
+
+    spy = OpenSwap(install_root, swap)
+    with (
+        contextlib.suppress(guard.GuardError),
+        guard.transaction(flavor, label="open-swap", store=store.path) as tx,
+        pytest.MonkeyPatch.context() as patched,
+    ):
+        spy.install(patched)
+        tx.write(CONFIG, NEW_CONFIG)
+
+    if not spy.swapped:
+        pytest.skip("could not swap the directory for a symlink on this platform")
+    assert content(world / "outside") == outside_before
+    assert (real / "Config.wtf").read_bytes() in (ALLOWLISTED_FILES[CONFIG], NEW_CONFIG)
+
+
+@pytest.mark.xfail(strict=True, reason=MARKER)
+def test_constructed_rollback_that_cannot_finish_does_not_claim_it_did(
+    guard: Any, world: Path, install_root: Path, flavor: Flavor, store: SnapshotStore, idle: None
+) -> None:
+    """Two writes land, the body raises, and every replace from the second
+    rollback replace on is refused. `rolled_back=True` would be a lie."""
+    spy = ReplaceSpy(
+        install_root,
+        fail_on=4,
+        persistent=True,
+        error=PermissionError(13, "constructed: file is locked"),
+    )
+    with (
+        pytest.raises((RuntimeError, guard.GuardError)),
+        pytest.MonkeyPatch.context() as patched,  # outside: still active during rollback
+        guard.transaction(flavor, label="half", store=store.path) as tx,
+    ):
+        spy.install(patched)
+        tx.write(CONFIG, NEW_CONFIG)
+        tx.write(BINDINGS, b"bind S MOVEBACKWARD\n")
+        raise RuntimeError("constructed failure")
+
+    assert len(spy.seen) >= 4, "rollback of two replaced files needs two replaces"
+    assert record_for(guard, store, "half").rolled_back is not True
+
+
+@pytest.mark.xfail(strict=True, reason=MARKER)
+def test_constructed_rollback_through_an_inside_symlink_restores_both_names(
+    guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None
+) -> None:
+    """`WTF/alias.wtf` is a link to `WTF/Config.wtf`, inside the allowlist.
+    Writing through it may be refused; if it is not, rollback must leave the
+    link a link and the file its original bytes."""
+    symlink_or_skip(flavor.path / "WTF" / "alias.wtf", "Config.wtf", is_dir=False)
+    before = content(world)
+    with (
+        pytest.raises((RuntimeError, guard.GuardError)),
+        guard.transaction(flavor, label="alias", store=store.path) as tx,
+    ):
+        with contextlib.suppress(guard.PathNotAllowedError):
+            tx.write("WTF/alias.wtf", NEW_CONFIG)
+        raise RuntimeError("constructed failure")
+    assert content(world) == before
+
+
 # ─── rollback, undo, restore ─────────────────────────────────────────────────
 
 
@@ -1663,6 +1994,7 @@ def forge_manifest(
     *,
     link_target: str | None = None,
     mode: int | None = None,
+    raw: bool = False,
 ) -> str:
     """Publish a manifest that is `base` plus one entry at `hostile_rel`.
 
@@ -1670,10 +2002,13 @@ def forge_manifest(
     store itself accepts: the id matches the entries and `show` loads it. A
     file entry reuses the content object of `WTF/Config.wtf` (with `mode` if
     given); with `link_target` the entry is a symlink, which the store records
-    and never follows (§6.9).
+    and never follows (§6.9). With `raw` the entry path is used as given,
+    without the prefix the snapshot's own entries carry, so a snapshot rooted
+    at the install root names install-root files and other flavors.
     """
     anchor = entry_for(base, CONFIG)
-    path = manifest_prefix(base) + hostile_rel
+    path = hostile_rel if raw else manifest_prefix(base) + hostile_rel
+    assert base.entry(path) is None, f"{path!r} is already in the snapshot"
     if link_target is None:
         fields = {**anchor.model_dump(), "path": path}
         if mode is not None:
@@ -1724,6 +2059,59 @@ WINDOWS_HOSTILE_ENTRIES: tuple[tuple[str, str], ...] = (
     ("rooted", "\\evil.txt"),
 )
 
+
+def _entry_accepts(rel: str) -> bool:
+    try:
+        Entry(path=rel)
+    except ValidationError:
+        return False
+    return True
+
+
+# Every forbidden path the manifest model itself accepts (no `..`, `.`, empty
+# part, NUL or leading `/`), deduplicated against HOSTILE_ENTRIES.
+_NAMED = {rel for _, rel in HOSTILE_ENTRIES}
+FORGEABLE_FORBIDDEN: tuple[tuple[str, str], ...] = tuple(
+    (f"{group}-{name}", rel)
+    for group, table in (
+        ("forbidden", FORBIDDEN_PATHS),
+        ("case-variant", CASE_VARIANTS_OF_FORBIDDEN),
+        ("respelled", RESPELLED_ALLOWLIST_ROOTS),
+    )
+    for name, rel in table
+    if "<" not in rel and rel not in _NAMED and _entry_accepts(rel)
+)
+
+OTHER_FLAVOR = "_classic_"
+
+# Entry paths used raw (see `forge_manifest`): relative to whatever root the
+# snapshot has. None of them is a path this flavor's transaction may write.
+RAW_TARGETS: tuple[tuple[str, str], ...] = (
+    ("raw-build-info", ".build.info"),
+    ("raw-product-db", ".product.db"),
+    ("raw-launcher", "World of Warcraft Launcher.exe"),
+    ("raw-data", "Data/data/data.001"),
+    ("raw-other-flavor-config", f"{OTHER_FLAVOR}/WTF/Config.wtf"),
+    ("raw-other-flavor-new-file", f"{OTHER_FLAVOR}/WTF/New.wtf"),
+    ("raw-other-flavor-info", f"{OTHER_FLAVOR}/.flavor.info"),
+)
+
+# (id, entry path, raw)
+FORGED_ENTRIES: tuple[tuple[str, str, bool], ...] = (
+    *((name, rel, False) for name, rel in HOSTILE_ENTRIES),
+    *((name, rel, False) for name, rel in FORGEABLE_FORBIDDEN),
+    *((name, rel, True) for name, rel in RAW_TARGETS),
+)
+
+
+def add_other_flavor(install_root: Path) -> Path:
+    """A second flavor in the same install, which no transaction on the first
+    one may touch."""
+    other = install_root / OTHER_FLAVOR
+    _put(other, {".flavor.info": b"Product Flavor!STRING:0\nwow_classic\n", CONFIG: b"SET a 1\n"})
+    return other
+
+
 SYMLINK_ENTRY = "WTF/escape"
 SYMLINK_TARGETS: tuple[tuple[str, str], ...] = (
     ("out-of-the-install", "../../../outside"),
@@ -1733,19 +2121,31 @@ SYMLINK_TARGETS: tuple[tuple[str, str], ...] = (
 
 
 def _refuses_forged_restore(
-    guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, hostile_rel: str
+    guard: Any,
+    world: Path,
+    flavor: Flavor,
+    store: SnapshotStore,
+    hostile_rel: str,
+    *,
+    raw: bool = False,
 ) -> None:
+    other = add_other_flavor(flavor.path.parent)
+    other_before = content(other)
     with guard.transaction(flavor, label="base", store=store.path) as tx:
         tx.write(CONFIG, NEW_CONFIG)
     base = store.show(record_for(guard, store, "base").snapshot_id)
-    forged_id = forge_manifest(store, base, hostile_rel)
+    forged_id = forge_manifest(store, base, hostile_rel, raw=raw)
     before = content(world)
+    # A raw entry may simply not be a path of this flavor ("not in the
+    # snapshot"); any other entry is a path refusal.
+    expected = guard.GuardError if raw else guard.PathNotAllowedError
 
     with (
-        pytest.raises(guard.PathNotAllowedError),
+        pytest.raises(expected) as refused,
         guard.transaction(flavor, label="forged", store=store.path) as tx,
     ):
         tx.restore(forged_id)
+    assert not isinstance(refused.value, guard.ClientRunningError)
 
     # Nothing from the forged manifest stays: not the hostile entry, and not
     # the legitimate entries restored before it was reached.
@@ -1754,10 +2154,12 @@ def _refuses_forged_restore(
     # Naming the hostile path outright is refused too.
     with (
         guard.transaction(flavor, label="forged-named", store=store.path) as tx,
-        pytest.raises(guard.PathNotAllowedError),
+        pytest.raises(expected) as refused,
     ):
         tx.restore(forged_id, paths=[hostile_rel])
+    assert not isinstance(refused.value, guard.ClientRunningError)
     assert content(world) == before
+    assert content(other) == other_before
 
     # Positive control: the same store and flavor restore a legitimate path.
     with guard.transaction(flavor, label="legit", store=store.path) as tx:
@@ -1767,12 +2169,19 @@ def _refuses_forged_restore(
 
 @pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize(
-    "hostile_rel", [pytest.param(rel, id=f"constructed-{name}") for name, rel in HOSTILE_ENTRIES]
+    ("hostile_rel", "raw"),
+    [pytest.param(rel, raw, id=f"constructed-{name}") for name, rel, raw in FORGED_ENTRIES],
 )
 def test_constructed_restore_treats_the_manifest_as_untrusted(
-    guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None, hostile_rel: str
+    guard: Any,
+    world: Path,
+    flavor: Flavor,
+    store: SnapshotStore,
+    idle: None,
+    hostile_rel: str,
+    raw: bool,
 ) -> None:
-    _refuses_forged_restore(guard, world, flavor, store, hostile_rel)
+    _refuses_forged_restore(guard, world, flavor, store, hostile_rel, raw=raw)
 
 
 @pytest.mark.xfail(strict=True, reason=MARKER)
@@ -1819,34 +2228,41 @@ def test_constructed_restore_never_creates_a_symlink(
     assert not (flavor.path / SYMLINK_ENTRY).is_symlink()
 
 
-POISONED_SNAPSHOTS: tuple[tuple[str, str, str | None], ...] = (
-    *((name, rel, None) for name, rel in HOSTILE_ENTRIES),
-    *((f"symlink-{name}", SYMLINK_ENTRY, target) for name, target in SYMLINK_TARGETS),
+POISONED_SNAPSHOTS: tuple[tuple[str, str, str | None, bool], ...] = (
+    *((name, rel, None, raw) for name, rel, raw in FORGED_ENTRIES),
+    *((f"symlink-{name}", SYMLINK_ENTRY, target, False) for name, target in SYMLINK_TARGETS),
 )
 
 
 @pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize(
-    ("hostile_rel", "link_target"),
-    [pytest.param(rel, t, id=f"constructed-{name}") for name, rel, t in POISONED_SNAPSHOTS],
+    ("hostile_rel", "link_target", "raw"),
+    [
+        pytest.param(rel, t, raw, id=f"constructed-{name}")
+        for name, rel, t, raw in POISONED_SNAPSHOTS
+    ],
 )
 def test_constructed_rollback_and_undo_treat_the_pre_write_snapshot_as_untrusted(
     guard: Any,
     world: Path,
+    install_root: Path,
     flavor: Flavor,
     store: SnapshotStore,
     idle: None,
     monkeypatch: pytest.MonkeyPatch,
     hostile_rel: str,
     link_target: str | None,
+    raw: bool,
 ) -> None:
     """The journal legitimately points at a pre-write snapshot the store hands
     back; that snapshot is still untrusted input when rollback or `undo()`
     reads it."""
+    other = add_other_flavor(install_root)
+    other_before = content(other)
     with guard.transaction(flavor, label="base", store=store.path) as tx:
         tx.write(CONFIG, NEW_CONFIG)
     base = store.show(record_for(guard, store, "base").snapshot_id)
-    forged = store.show(forge_manifest(store, base, hostile_rel, link_target=link_target))
+    forged = store.show(forge_manifest(store, base, hostile_rel, link_target=link_target, raw=raw))
     # `guard` builds its own SnapshotStore from the path, so the poison goes
     # in at the class: every `create` in this test hands back the forgery.
     monkeypatch.setattr(SnapshotStore, "create", lambda self, *a, **k: forged)
@@ -1857,6 +2273,8 @@ def test_constructed_rollback_and_undo_treat_the_pre_write_snapshot_as_untrusted
         # The hostile entry never lands: an existing target keeps its bytes, a
         # new one is not created, and no symlink appears anywhere.
         assert not hostile_path.is_symlink()
+        assert not (install_root / hostile_rel).is_symlink()
+        assert content(other) == other_before
         after = content(world)
         assert {k: v for k, v in after.items() if k != flavor_key(CONFIG)} == {
             k: v for k, v in before.items() if k != flavor_key(CONFIG)
@@ -1873,12 +2291,105 @@ def test_constructed_rollback_and_undo_treat_the_pre_write_snapshot_as_untrusted
     untouched_but_config()
     assert record_for(guard, store, "poisoned").snapshot_id == forged.id
 
-    # `undo()` of that transaction reads the same snapshot: refused, typed.
-    expected = guard.PathNotAllowedError if link_target is None else guard.GuardError
+    # A committed transaction with the same poisoned pre-write snapshot, so
+    # the undo below grades the untrusted-snapshot rule and nothing about
+    # whether `undo()` acts on a rolled-back record.
+    with guard.transaction(flavor, label="poisoned-commit", store=store.path) as tx:
+        tx.write(CONFIG, NEWER_CONFIG)
+    untouched_but_config()
+    assert record_for(guard, store, "poisoned-commit").snapshot_id == forged.id
+
+    # `undo()` of that transaction reads the poisoned snapshot: refused, typed.
+    expected = guard.PathNotAllowedError if link_target is None and not raw else guard.GuardError
     with pytest.raises(expected) as refused:
         guard.undo(store=store.path)
     assert not isinstance(refused.value, guard.ClientRunningError)
     untouched_but_config()
+
+
+NEW_BINDINGS = b"bind S MOVEBACKWARD\n"
+LINK_PLANTS = ("wtf-root-dir-link", "ancestor-dir-link", "final-file-link", "hard-link")
+LINK_ROUTES = ("undo", "restore", "rollback")
+
+
+def plant_link(kind: str, world: Path, flavor: Flavor) -> None:
+    """Make `WTF/Account/ACCT/bindings-cache.wtf` resolve outside the install.
+
+    Directory links first copy the real directory to `outside/` (so the file
+    the write would reach there already exists) and move the real one out of
+    the install, as an attacker racing the gate would."""
+    outside = world / "outside"
+    if kind in ("wtf-root-dir-link", "ancestor-dir-link"):
+        real = flavor.path / ("WTF" if kind == "wtf-root-dir-link" else "WTF/Account")
+        shutil.copytree(real, outside / real.name, symlinks=True)
+        real.rename(world / f"moved-{real.name}")
+        symlink_or_skip(real, outside / real.name, is_dir=True)
+    elif kind == "final-file-link":
+        (flavor.path / BINDINGS).unlink()
+        symlink_or_skip(flavor.path / BINDINGS, outside / "target.txt", is_dir=False)
+    else:
+        (flavor.path / BINDINGS).unlink()
+        try:
+            os.link(outside / "target.txt", flavor.path / BINDINGS)
+        except OSError as exc:
+            pytest.skip(f"this platform or volume cannot hard-link: {exc}")
+
+
+@pytest.mark.xfail(strict=True, reason=MARKER)
+@pytest.mark.parametrize("kind", [pytest.param(k, id=f"constructed-{k}") for k in LINK_PLANTS])
+@pytest.mark.parametrize("route", [pytest.param(r, id=f"constructed-{r}") for r in LINK_ROUTES])
+def test_constructed_link_planted_after_the_check_never_redirects_undo_restore_or_rollback(
+    guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None, route: str, kind: str
+) -> None:
+    """Every write route resolves links again, per path, at the moment it
+    writes: not only `tx.write` and `tx.delete`. A symbolic link is refused;
+    a hard link may be refused or replaced by a rename (which never touches
+    the other name). Either way nothing outside the install changes."""
+    outside = world / "outside"
+    symbolic = kind != "hard-link"
+
+    if route == "rollback":
+        outside_before: dict[str, bytes | str] = {}
+        with (
+            contextlib.suppress(RuntimeError, guard.GuardError, SnapshotError),
+            guard.transaction(flavor, label="rollback", store=store.path) as tx,
+        ):
+            tx.write(BINDINGS, NEW_BINDINGS)
+            plant_link(kind, world, flavor)
+            outside_before.update(content(outside))
+            raise RuntimeError("constructed failure")
+        assert content(outside) == outside_before
+        if record_for(guard, store, "rollback").rolled_back is True:
+            # A claim of success means the path is a plain file in the install
+            # again, with its original bytes.
+            touched = flavor.path / BINDINGS
+            assert not any(
+                p.is_symlink() for p in (touched, *touched.parents) if flavor.path in p.parents
+            )
+            assert touched.read_bytes() == ALLOWLISTED_FILES[BINDINGS]
+        return
+
+    with guard.transaction(flavor, label="first", store=store.path) as tx:
+        tx.write(BINDINGS, NEW_BINDINGS)
+    pre_id = record_for(guard, store, "first").snapshot_id
+    plant_link(kind, world, flavor)
+    outside_before = content(outside)
+
+    def act() -> None:
+        if route == "undo":
+            guard.undo(store=store.path)
+        else:
+            with guard.transaction(flavor, label="restore", store=store.path) as tx:
+                tx.restore(pre_id)
+
+    if symbolic:
+        with pytest.raises((guard.GuardError, SnapshotError)) as refused:
+            act()
+        assert not isinstance(refused.value, guard.ClientRunningError)
+    else:
+        with contextlib.suppress(guard.GuardError):
+            act()
+    assert content(outside) == outside_before
 
 
 @pytest.mark.xfail(strict=True, reason=MARKER)
@@ -2078,6 +2589,7 @@ def test_constructed_dry_run_returns_the_plan_and_touches_nothing(
         tx.delete(BINDINGS)
 
     assert strict_state(world) == before, "not a byte, a temp file or an mtime"
+    assert list(guard.history(store=store.path)) == [], "a plan is not a transaction"
     plan = tuple(tx.plan)
     assert changes(plan) == {
         CONFIG: (sha(ALLOWLISTED_FILES[CONFIG]), sha(NEW_CONFIG)),
@@ -2178,7 +2690,13 @@ def test_constructed_public_surface_is_exactly_the_gate(
         and callable(obj)
         and getattr(obj, "__module__", None) == guard.__name__
     }
-    assert set(ours) <= PUBLIC_API, sorted(set(ours) - PUBLIC_API)
+    # Beyond the API, only data: public Pydantic models (history records, plan
+    # items) that the CLI can validate `--json` against, with no public
+    # methods of their own.
+    for name in set(ours) - PUBLIC_API:
+        obj = ours[name]
+        assert inspect.isclass(obj) and issubclass(obj, BaseModel), f"not in the API: {name}"
+        assert _own_public_methods(obj) == set(), f"{name} has public methods"
     assert {"transaction", "undo", "history"} <= set(ours)
     for name, obj in vars(guard).items():
         if not name.startswith("_"):
@@ -2186,7 +2704,13 @@ def test_constructed_public_surface_is_exactly_the_gate(
 
     with guard.transaction(flavor, label="surface", store=store.path) as tx:
         assert _own_public_methods(type(tx)) == {"write", "delete", "restore"}
-        assert _own_public_data(tx) == {"plan"}
+        data = _own_public_data(tx)
+        assert "plan" in data
+        # Anything else public is a read-only property: nothing to assign.
+        for name in data - {"plan"}:
+            member = inspect.getattr_static(type(tx), name, None)
+            assert isinstance(member, property), f"public writable attribute: {name}"
+            assert member.fset is None, f"property with a setter: {name}"
 
     transaction = inspect.signature(guard.transaction).parameters
     assert list(transaction) == ["flavor", "label", "store", "dry_run"]
@@ -2212,6 +2736,20 @@ def test_constructed_public_surface_is_exactly_the_gate(
     restore = inspect.signature(tx.restore).parameters
     assert list(restore) == ["snapshot_id", "paths"]
     assert restore["paths"].default is None
+
+
+@pytest.mark.xfail(strict=True, reason=MARKER)
+def test_constructed_no_module_global_is_a_boolean_switch(guard: Any) -> None:
+    """A private `_SKIP_CLIENT_CHECK = False` is a flag one edit or one
+    monkeypatch away from skipping the gate."""
+    switches = [
+        name
+        for name, value in vars(guard).items()
+        if isinstance(value, bool)
+        and not (name.startswith("__") and name.endswith("__"))
+        and name != "TYPE_CHECKING"
+    ]
+    assert switches == []
 
 
 @pytest.mark.xfail(strict=True, reason=MARKER)
