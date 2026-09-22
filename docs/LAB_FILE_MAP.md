@@ -81,7 +81,9 @@ scope permanently (LAB_PLAN L7).
 - **Folder shape under `WTF/Account/<ACCOUNT>/` on the Forever beta
   (2026-09-22, observed, owner to confirm):** the level above the character
   folders appears to be named with digits only (a numeric realm id,
-  **[verify]**) and the character folders `Name-Realm`, not the retail
+  **[verify]**) and the character folders `<Name>-<Suffix>` (the suffix is a
+  realm or a player-chosen second name, **[verify]**: the retail-style twins
+  of those characters all sit under one realm), not the retail
   `<Realm>/<Character>/`. `layout` and the scrub tool must not assume either
   shape.
 - A patch can reset `Interface/` overrides' effect and can change any format
