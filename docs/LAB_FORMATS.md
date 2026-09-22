@@ -232,18 +232,20 @@ Dated entries, newest last. Each names the fixture that prompted it.
   Forever beta's product code `wow_classic_beta` and its flavor folder
   `_classic_beta_` are **resolved**. `Config.wtf` also carries
   `SET agentUID "wow_classic_beta"`.
-- **2026-09-22, §3, same capture (DBM-Challenges and Baganator TOCs).** A bracketed
+- **2026-09-22, §3, same capture (DBM-Challenges TOC; a Baganator TOC was read but not committed, because the scrub rewrote part of a file name in it).** A bracketed
   load condition can *follow* the path, after one space:
   `Shadowlands\Torghast.lua [AllowLoadGameType standard]` (20 lines); the
   directive form is `## AllowLoadGameType: mists, standard`. `mainline` was
   not observed; `[TextLocale]` and `[Family]` stay **[verify]**. A directive
-  can have no space after the colon (`## Title:|cff…`), and `##` directives
-  can follow a blank line, so directive parsing does not stop at the first
-  blank. Both TOCs are CRLF with a final CRLF and no BOM, and carry raw UTF-8
-  in localized keys. Baganator declares
-  `## Interface: 120100, 16001, 50504, 38001, 20506, 11509`. Neither addon
-  ships a suffixed TOC, so Forever's preferred suffix stays **[verify]**. No
-  directive outside the known list appeared.
+  can have no space after the colon (`## Title:|cff…`). The committed TOC is
+  CRLF with a final CRLF and no BOM, and carries raw UTF-8 in localized keys.
+  Observed in the uncommitted Baganator TOC only (so **[verify]** against a
+  committed fixture): `##` directives after a blank line, so directive
+  parsing must not stop at the first blank, and
+  `## Interface: 120100, 16001, 50504, 38001, 20506, 11509`. An addon's
+  `## Interface:` list is what its author claims, not client evidence. No
+  installed addon ships a suffixed TOC, so Forever's preferred suffix stays
+  **[verify]**. No directive outside the known list appeared.
 - **2026-09-22, §5, same capture.** CVar names can contain `-`
   (`SET CACHE-WQST-QuestV2RecordCount "7760"`, eight such lines), and values
   can contain raw control bytes (0x02 in five `config-cache.wtf` lines), so a
@@ -267,6 +269,25 @@ Dated entries, newest last. Each names the fixture that prompted it.
   the platform: one macOS client wrote LF (`Config.wtf`, both
   `config-cache.wtf`, `chat-cache.txt`, `layout-local.txt`, `.build.info`,
   `.flavor.info`), CRLF (`bindings-cache.wtf`, the character
-  `macros-cache.txt`, both TOCs) and neither (the edit-mode caches: one line
-  ending in a NUL byte) in the same install. Serializers keep each document's
+  `macros-cache.txt`, the TOCs), neither (the edit-mode caches, one line
+  ending in a NUL byte; the flagged caches, exactly `2` then a NUL) and both
+  within one file (the text-to-speech caches: first line LF, the rest CRLF)
+  in the same install. A text reader that drops a trailing NUL breaks L4. Serializers keep each document's
   own endings; a writer creating a new file chooses by file kind.
+- **2026-09-22, edit-mode caches, same capture.** `edit-mode-cache-account.txt`
+  and `edit-mode-cache-character.txt` are one line of space-separated tokens
+  ending in a NUL. Layout names are length-prefixed (`3 def`, `6 Priest`,
+  `4 Mage`), so a name can contain spaces and any writer that renames a
+  layout must rewrite the length; the token after each name (`59` here) is
+  probably an entry count **[verify]**. The account file opens `3 38 …`
+  (version and account-wide settings, **[verify]**), the character file
+  `3 4 3 3 3 3` (possibly the active layout per spec, **[verify]**).
+- **2026-09-22, other caches, same capture.** `click-bindings-cache.txt`:
+  LF, ending `END`; lines like `2 0 1 118` read as
+  `<button> <modifiers> <type> <id>` with type 1 a spell (118 and 1459 match
+  the character's own macro spells) **[verify]**. `tts-cache-*.txt` hold
+  small integers and a 20-digit value above the int64 maximum
+  (14126315937103613183), probably a chat-type bitmask **[verify]**: keep it
+  as text. `chat-cache.txt` ends with a blank line, and `ZONECHANNELS` is a
+  bitmask, not a count. The macro icon `134400` is believed to be the
+  question-mark icon, meaning "use the spell's icon" **[verify]**.

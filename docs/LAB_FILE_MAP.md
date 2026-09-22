@@ -42,7 +42,13 @@ scope permanently (LAB_PLAN L7).
 | `WTF/Account/<ACCOUNT>/config-cache.wtf` | Account-scoped CVars | Client | gate | A | `wtfconfig` |
 | `WTF/Account/<ACCOUNT>/bindings-cache.wtf` | Account keybinds | Client | gate | A | `wtfconfig` |
 | `WTF/Account/<ACCOUNT>/macros-cache.txt` | Account macros | Client | gate | A | `wtfconfig` |
-| `WTF/Account/<ACCOUNT>/edit-mode-cache-account.txt` | Edit Mode HUD layouts: one line of space-separated tokens ending in a NUL byte; layout names are typed by the owner | Client | gate | A | none in Wave 1 (kept by `snapshot`) |
+| `WTF/Account/<ACCOUNT>/edit-mode-cache-account.txt` | Edit Mode HUD layouts: one line of space-separated tokens ending in a NUL byte; layout names are typed by the owner and length-prefixed; server may replace (see below) | Client | gate | A | none in Wave 1 (kept by `snapshot`) |
+| `WTF/Account/<ACCOUNT>/chat-frontend-cache.txt` | Unknown; 0 bytes on the Forever beta (2026-09-22) **[verify]** | Client | gate | A | none (kept by `snapshot`; empty kept as empty) |
+| `WTF/Account/<ACCOUNT>/flagged-cache-account.txt`, `…/<Character>/flagged-cache-character.txt` | Unknown; on the Forever beta exactly `2` then a NUL **[verify purpose]** | Client | gate | A | none (kept by `snapshot`) |
+| `WTF/Account/<ACCOUNT>/tts-cache-account.txt`, `…/<Character>/tts-cache-character.txt` | Text-to-speech settings **[verify]**; mixed LF and CRLF within the file | Client | gate (server may replace) | A | none (kept by `snapshot`) |
+| `WTF/Account/<ACCOUNT>/character-list-order.txt` | Character-select order **[verify]**; not captured (its lines refused by the scrub tool) | Client | gate | A | none (kept by `snapshot`) |
+| `…/<Character>/edit-mode-cache-character.txt` | Character Edit Mode layouts, same encoding as the account file | Client | gate (server may replace) | A | none (kept by `snapshot`) |
+| `…/<Character>/click-bindings-cache.txt` | Click Casting bindings on unit frames; LF, ends `END` | Client | gate (server may replace) | A | none (kept by `snapshot`) |
 | `WTF/Account/<ACCOUNT>/edit-mode-cache-account.old` | Previous write of the same file | Client | no | A (read) | none (kept by `snapshot`) |
 | `WTF/Account/<ACCOUNT>/<Realm>/<Character>/SavedVariables/<Addon>.lua` | Per-character addon data (`## SavedVariablesPerCharacter:`) | Client on logout / `/reload` | gate | A | `luadata` |
 | `…/<Character>/config-cache.wtf`, `bindings-cache.wtf`, `macros-cache.txt` | Character-scoped CVars, binds, macros. `bindings-cache.wtf` exists only with character-specific key bindings on **[verify]**; the Forever capture had none | Client | gate | A | `wtfconfig` |
@@ -77,20 +83,24 @@ scope permanently (LAB_PLAN L7).
   local edit can be overwritten from the server at login when sync is on.
   `wowlab doctor` reports these CVars. The Forever beta capture (2026-09-22)
   writes none of them: absent means the client default, reported as "not set
-  (client default)", never "off"; the default itself is **[verify]**.
+  (client default)", never "off"; the default itself is **[verify]**. The
+  server may replace any `*-cache*` file at login (edit-mode layouts and
+  click bindings are believed to follow the account on retail); which ones,
+  and under which setting, is **[verify]**, so every `*-cache*` row below
+  carries that caveat.
 - **Folder shape under `WTF/Account/<ACCOUNT>/` on the Forever beta
   (2026-09-22, observed; the name rule confirmed by the owner):**
   `<ACCOUNT>/<digits>/<First>-<Second>/`. Forever characters have a first
   and a second name, both chosen by the player, and the folder joins them
-  with a hyphen (character names cannot contain one). The digits folder is
+  with a hyphen (character names cannot contain one, **[verify]**). The digits folder is
   almost certainly the numeric id of the realm: every character in it also
   has a retail-style twin `<ACCOUNT>/<Realm>/<First>/` under one realm
   display name, holding only `AddOns.txt` (**[verify]** the id). Everything
   else per character — config, bindings, click bindings, macros, chat,
   edit-mode, flagged and text-to-speech caches, `SavedVariables/` — lives in
-  the `<First>-<Second>` folder. `layout` must handle both shapes and must
-  not read the second name as a realm. The same first name can recur with
-  different second names.
+  the `<First>-<Second>` folder (owner's directory listing). `layout` must
+  handle both shapes and must not read the second name as a realm. The same
+  first name recurs with different second names in the owner's listing.
 - A patch can reset `Interface/` overrides' effect and can change any format
   here. `snapshot` manifests record the flavor version so a diff across a
   patch says so.

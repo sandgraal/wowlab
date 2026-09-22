@@ -23,9 +23,10 @@ marked `@pytest.mark.live`.
   product installed, the Forever beta: flavor folder `_classic_beta_`, product
   code `wow_classic_beta`, version `1.60.1.69913`, branch `us`; no retail
   flavor. Executable `World of Warcraft Beta.app` in the flavor folder
-  (directory listing; the process name is **[verify]**). Interface number
-  `16001`, supported by two captured files (a TOC's `## Interface:` list and
-  `engineSurveyPatch`) but not yet confirmed in game with
+  (directory listing; the process name is **[verify]**). Interface number:
+  `16001` is consistent with the patch-number rule for 1.60.1
+  (1×10000 + 60×100 + 1) and with `SET engineSurveyPatch "16001"`; an addon
+  TOC listing it is only the author's claim. Still to confirm in game with
   `/dump (select(4, GetBuildInfo()))`. Line endings follow the file kind
   (`docs/LAB_FORMATS.md` amendments of 2026-09-22). Combat log, SavedVariables
   line endings, `WOW_PROJECT_ID` and the preferred TOC suffix: still open.
