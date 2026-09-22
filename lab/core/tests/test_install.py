@@ -180,6 +180,20 @@ def test_build_info_that_is_a_directory_is_not_an_install_constructed(tmp_path: 
         read_install(root)
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="POSIX FIFOs")
+def test_fifo_files_are_never_read_constructed(tmp_path: Path) -> None:
+    """A FIFO named `.build.info` or `.flavor.info` would block a read."""
+    root = _make_install(tmp_path, None, {"_pipe_": None})
+    os.mkfifo(root / ".build.info")
+    with pytest.raises(NotAnInstallError):
+        read_install(root)
+
+    (root / ".build.info").unlink()
+    (root / ".build.info").write_bytes(REAL_BUILD_INFO)
+    os.mkfifo(root / "_pipe_" / ".flavor.info")
+    assert read_install(root).flavors == ()
+
+
 def test_relative_and_tilde_roots_are_made_absolute(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

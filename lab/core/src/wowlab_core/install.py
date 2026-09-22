@@ -404,9 +404,12 @@ def _flavor(directory: Path, rows: Sequence[BuildInfoRow]) -> Flavor:
 
 
 def _read(root: Path, source: str) -> Install:
+    # A FIFO or device named `.build.info` is not an install; reading one could block.
+    if not _has_build_info(root):
+        raise NotAnInstallError(root, source)
     try:
         raw = _decode((root / BUILD_INFO).read_bytes())
-    except OSError as exc:  # absent, a directory, unreadable, or gone since the check
+    except OSError as exc:  # unreadable, or gone since the check
         raise NotAnInstallError(root, source) from exc
     rows = parse_build_info(raw).rows
     flavors = sorted((_flavor(d, rows) for d in _flavor_dirs(root)), key=lambda f: f.folder)
