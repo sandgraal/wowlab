@@ -90,6 +90,16 @@ parameter, so they are pinned here, as small as they could be made:
   record, whatever characters they hold.
 - `rolled_back=True` is a claim that every touched path holds its
   pre-transaction bytes again; a rollback that could not finish says so.
+- Write-ahead journal: before any mutation of a path in the install (the
+  replace, rename or unlink that changes it), the journal entry naming that
+  path and its `before` hash (absent for a created path) is on disk and
+  `os.fsync`ed, as a literal string in a file under the store outside
+  `objects/` and `manifests/`. So a process killed right after the
+  mutation, with no rollback and no further journal write, is still undone
+  by `undo()`.
+- Permission bits: a file that exists keeps its mode through a write,
+  restore or undo; a file that restore or undo recreates gets no bit its
+  recorded mode lacks, and no execute bit. POSIX only.
 - "Executable" means a path with any component whose suffix, compared
   case-insensitively, is one of `EXECUTABLE_SUFFIXES` below (this includes
   the bundle layouts `.app`, `.bundle`, `.framework`, `.plugin`, so a file
@@ -1573,16 +1583,23 @@ class ReplaceSpy:
         self._dirs: dict[FileId, Path] = {}
         self._replace = os.replace
         self._fsync = os.fsync
+        self._fdatasync = getattr(os, "fdatasync", os.fsync)
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(os, "replace", self.replace)
         monkeypatch.setattr(os, "rename", self.replace)
         monkeypatch.setattr(os, "fsync", self.fsync)
+        if hasattr(os, "fdatasync"):  # not on every platform (macOS has none)
+            monkeypatch.setattr(os, "fdatasync", self.fdatasync)
 
     def fsync(self, fd: Any) -> None:
         # `os.fsync` accepts a descriptor or any object with `fileno()`.
         self.fsynced.add(_file_id(os.fstat(fd if isinstance(fd, int) else fd.fileno())))
         self._fsync(fd)
+
+    def fdatasync(self, fd: Any) -> None:
+        self.fsynced.add(_file_id(os.fstat(fd if isinstance(fd, int) else fd.fileno())))
+        self._fdatasync(fd)
 
     def _dir_of(self, fd: int) -> Path:
         key = _file_id(os.fstat(fd))
@@ -2687,6 +2704,384 @@ def test_constructed_restore_never_widens_permission_bits(
             mode = stat.S_IMODE(path.stat().st_mode)
             assert mode & 0o7000 == 0, f"{rel}: setuid/setgid/sticky bit {mode:o}"
             assert mode & 0o111 <= original_mode & 0o111, f"{rel}: exec bits widened to {mode:o}"
+
+
+# ─── write-ahead journal ─────────────────────────────────────────────────────
+
+
+def _dir_of_fd(fd: int, roots: Iterable[Path]) -> Path | None:
+    """The directory under one of `roots` that descriptor `fd` refers to,
+    found by device and inode without following links; None if it is not
+    under any of them."""
+    key = _file_id(os.fstat(fd))
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for dirpath, _dirnames, _files in os.walk(root, followlinks=False):
+            if _file_id(Path(dirpath).lstat()) == key:
+                return Path(dirpath)
+    return None
+
+
+def _spelled(path: Any, dir_fd: int | None, roots: Iterable[Path]) -> str | None:
+    """An absolute spelling of `path` without following links. A path
+    relative to a directory descriptor (the `dir_fd` defence) is resolved
+    through the descriptor's directory under `roots`; None when that
+    directory is not under any of them, or `path` is itself a descriptor."""
+    if isinstance(path, int):
+        return None
+    spelled = Path(os.fsdecode(path))
+    if dir_fd is not None and not spelled.is_absolute():
+        base = _dir_of_fd(dir_fd, roots)
+        if base is None:
+            return None
+        spelled = base / spelled
+    return str(spelled.absolute())
+
+
+class KillSwitch:
+    """Simulates the process dying mid-transaction.
+
+    Install-bound mutations (`os.replace`, `os.rename`, `os.unlink`,
+    `os.remove` touching a path inside the install) are counted as they
+    complete, including ones made relative to a directory descriptor
+    (resolved through the descriptor's directory). After the `after`-th
+    completes, `SimulatedCrashError` is raised, and from then on every
+    mutation or write-mode open through these entry points inside the install
+    or the store (or relative to a descriptor that cannot be placed) raises
+    it before doing anything. That blocks the rollback and journal updates
+    this module can see; a guard could still write through a route not
+    wrapped here, which is why this grader is paired with the fsync-before-
+    change grader below."""
+
+    def __init__(self, install_root: Path, store_path: Path, *, after: int) -> None:
+        self.install = {str(install_root), str(install_root.resolve())}
+        store_path.mkdir(parents=True, exist_ok=True)
+        self.guarded = self.install | {str(store_path), str(store_path.resolve())}
+        self.roots = (install_root, store_path)
+        self.after = after
+        self.completed = 0
+        self.killed = False
+        self._real = {
+            name: getattr(os, name)
+            for name in ("replace", "rename", "unlink", "remove", "rmdir", "mkdir", "open")
+        }
+        self._io_open = io.open
+
+    def arm(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for name in ("replace", "rename"):
+            monkeypatch.setattr(os, name, self._two_path(name))
+        for name in ("unlink", "remove", "rmdir", "mkdir"):
+            monkeypatch.setattr(os, name, self._one_path(name))
+        monkeypatch.setattr(os, "open", self._os_open)
+        monkeypatch.setattr(io, "open", self._py_open)
+        monkeypatch.setattr(builtins, "open", self._py_open)
+
+    @staticmethod
+    def _under(spelled: str | None, roots: set[str]) -> bool:
+        return spelled is None or any(spelled == r or spelled.startswith(r + os.sep) for r in roots)
+
+    def _blocked(self, *spellings: str | None) -> None:
+        if self.killed and any(self._under(sp, self.guarded) for sp in spellings):
+            raise SimulatedCrashError("constructed: the process is dead")
+
+    def _count(self, *spellings: str | None) -> None:
+        if not self.killed and any(
+            sp is not None and self._under(sp, self.install) for sp in spellings
+        ):
+            self.completed += 1
+            if self.completed == self.after:
+                self.killed = True
+                raise SimulatedCrashError("constructed: killed right after the mutation")
+
+    def _two_path(self, name: str) -> Callable[..., None]:
+        def call(
+            src: Any, dst: Any, *, src_dir_fd: int | None = None, dst_dir_fd: int | None = None
+        ) -> None:
+            a = _spelled(src, src_dir_fd, self.roots)
+            b = _spelled(dst, dst_dir_fd, self.roots)
+            self._blocked(a, b)
+            self._real[name](src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+            self._count(b if b is not None else a)
+
+        return call
+
+    def _one_path(self, name: str) -> Callable[..., None]:
+        def call(path: Any, *args: Any, dir_fd: int | None = None, **kwargs: Any) -> None:
+            spelled = _spelled(path, dir_fd, self.roots)
+            self._blocked(spelled)
+            self._real[name](path, *args, dir_fd=dir_fd, **kwargs)
+            if name in ("unlink", "remove"):
+                self._count(spelled)
+
+        return call
+
+    def _os_open(
+        self, path: Any, flags: int, mode: int = 0o777, *, dir_fd: int | None = None
+    ) -> int:
+        if flags & _WRITE_FLAGS:
+            self._blocked(_spelled(path, dir_fd, self.roots))
+        return self._real["open"](path, flags, mode, dir_fd=dir_fd)
+
+    def _py_open(self, file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        if not isinstance(file, int) and any(c in mode for c in "wxa+"):
+            self._blocked(_spelled(file, None, self.roots))
+        return self._io_open(file, mode, *args, **kwargs)
+
+
+# (id, operations, which install mutation the kill follows, created path or None)
+KILL_CASES: tuple[tuple[str, tuple[tuple[str, str], ...], int, str | None], ...] = (
+    ("overwrite", (("write", CONFIG),), 1, None),
+    ("create", (("write", NEW_SAVED),), 1, NEW_SAVED),
+    ("delete", (("delete", BINDINGS),), 1, None),
+    ("second-of-two-writes", (("write", CONFIG), ("write", ICON)), 2, None),
+)
+
+
+def _run_ops(tx: Any, ops: Iterable[tuple[str, str]]) -> None:
+    for op, rel in ops:
+        if op == "write":
+            tx.write(rel, MUST_NEVER_LAND)
+        else:
+            tx.delete(rel)
+
+
+@pytest.mark.xfail(strict=True, reason=MARKER)
+@pytest.mark.parametrize(
+    ("ops", "after", "created"),
+    [
+        pytest.param(ops, after, created, id=f"constructed-{name}")
+        for name, ops, after, created in KILL_CASES
+    ],
+)
+def test_constructed_kill_right_after_an_install_mutation_is_undone_from_the_journal(
+    guard: Any,
+    world: Path,
+    install_root: Path,
+    flavor: Flavor,
+    store: SnapshotStore,
+    idle: None,
+    ops: tuple[tuple[str, str], ...],
+    after: int,
+    created: str | None,
+) -> None:
+    """Write-ahead: the journal names a path before the path changes. Here
+    the process dies the instant a mutation lands, so no rollback and no
+    later journal write happens; `undo()` must still put every original byte
+    back and remove what the transaction created. (A guard that journals a
+    path only after writing it has nothing to undo from.) Leftover temp files
+    are what a real kill leaves and are tolerated."""
+    before = content(world)
+    killer = KillSwitch(install_root, store.path, after=after)
+
+    with (
+        pytest.raises(SimulatedCrashError),
+        pytest.MonkeyPatch.context() as patched,  # outermost: the kill outlives the body
+        guard.transaction(flavor, label="killed", store=store.path) as tx,
+    ):
+        killer.arm(patched)
+        _run_ops(tx, ops)
+
+    assert killer.killed, "the kill must have happened inside the install"
+    changed = content(world)
+    assert changed != before, "positive control: the mutation landed before the kill"
+
+    guard.undo(store=store.path)
+
+    after_undo = content(world)
+    assert {k: after_undo.get(k) for k in before} == before
+    if created is not None:
+        assert not (flavor.path / created).exists(), "the created file is removed by undo"
+
+
+class JournalAheadSpy:
+    """At each install mutation that changes a touched path, checks, before
+    calling through, that a file under the store (outside `objects/` and
+    `manifests/`) holds the path and its `before` hash as literal text and
+    has been fsynced (by inode, via `os.fsync` or `os.fdatasync` on a
+    descriptor or a file object). Mutations relative to a directory
+    descriptor are resolved through the descriptor's directory."""
+
+    def __init__(
+        self,
+        flavor: Flavor,
+        store: SnapshotStore,
+        touched: dict[str, str | None],
+    ) -> None:
+        self.store = store
+        self.touched = {
+            str((flavor.path / rel).absolute()): (rel, before) for rel, before in touched.items()
+        }
+        self.roots = (Path(flavor.path),)
+        self.fsynced: set[FileId] = set()
+        self.checked: set[str] = set()
+        self.problems: list[str] = []
+        self._real = {
+            name: getattr(os, name) for name in ("replace", "rename", "unlink", "remove", "fsync")
+        }
+        self._fdatasync = getattr(os, "fdatasync", None)
+
+    def arm(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(os, "fsync", self._fsync)
+        if self._fdatasync is not None:  # not on every platform (macOS has none)
+            monkeypatch.setattr(os, "fdatasync", self._datasync)
+        for name in ("replace", "rename"):
+            monkeypatch.setattr(os, name, self._two_path(name))
+        for name in ("unlink", "remove"):
+            monkeypatch.setattr(os, name, self._one_path(name))
+
+    def _fsync(self, fd: Any) -> None:
+        number = fd if isinstance(fd, int) else fd.fileno()
+        self.fsynced.add(_file_id(os.fstat(number)))
+        self._real["fsync"](fd)
+
+    def _datasync(self, fd: Any) -> None:
+        number = fd if isinstance(fd, int) else fd.fileno()
+        self.fsynced.add(_file_id(os.fstat(number)))
+        assert self._fdatasync is not None
+        self._fdatasync(fd)
+
+    def _journal_files(self) -> list[Path]:
+        skip = (self.store.objects_dir, self.store.manifests_dir)
+        return [
+            p
+            for p in self.store.path.rglob("*")
+            if p.is_file() and not p.is_symlink() and not any(d in p.parents for d in skip)
+        ]
+
+    def _check(self, *spellings: str | None) -> None:
+        for spelled in spellings:
+            if spelled is None or spelled not in self.touched:
+                continue
+            rel, before = self.touched[spelled]
+            needles = [rel.encode()] + ([before.encode()] if before else [])
+            holding = [
+                p for p in self._journal_files() if all(n in p.read_bytes() for n in needles)
+            ]
+            if not holding:
+                self.problems.append(f"{rel}: not in the journal when it was changed")
+            elif not any(_file_id(p.stat()) in self.fsynced for p in holding):
+                self.problems.append(f"{rel}: journal entry written but not fsynced")
+            self.checked.add(rel)
+
+    def _two_path(self, name: str) -> Callable[..., None]:
+        def call(
+            src: Any, dst: Any, *, src_dir_fd: int | None = None, dst_dir_fd: int | None = None
+        ) -> None:
+            self._check(
+                _spelled(src, src_dir_fd, self.roots), _spelled(dst, dst_dir_fd, self.roots)
+            )
+            self._real[name](src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+
+        return call
+
+    def _one_path(self, name: str) -> Callable[..., None]:
+        def call(path: Any, *args: Any, **kwargs: Any) -> None:
+            self._check(_spelled(path, kwargs.get("dir_fd"), self.roots))
+            self._real[name](path, *args, **kwargs)
+
+        return call
+
+
+@pytest.mark.xfail(strict=True, reason=MARKER)
+@pytest.mark.parametrize(
+    "ops",
+    [pytest.param(ops, id=f"constructed-{name}") for name, ops, _, _ in KILL_CASES],
+)
+def test_constructed_journal_entry_is_fsynced_before_the_path_changes(
+    guard: Any,
+    flavor: Flavor,
+    store: SnapshotStore,
+    idle: None,
+    ops: tuple[tuple[str, str], ...],
+) -> None:
+    touched: dict[str, str | None] = {
+        rel: (sha(ALLOWLISTED_FILES[rel]) if rel in ALLOWLISTED_FILES else None) for _, rel in ops
+    }
+    spy = JournalAheadSpy(flavor, store, touched)
+    with (
+        guard.transaction(flavor, label="ahead", store=store.path) as tx,
+        pytest.MonkeyPatch.context() as patched,
+    ):
+        spy.arm(patched)
+        _run_ops(tx, ops)
+
+    assert spy.checked == set(touched), "positive control: every touched path was seen changing"
+    assert spy.problems == []
+
+
+# ─── permission bits through undo and restore ────────────────────────────────
+
+
+@pytest.fixture
+def umask_022() -> Iterator[None]:
+    """A known umask, so a file created with default permissions is 0o644,
+    wider than the 0o600 these graders record."""
+    previous = os.umask(0o022)
+    try:
+        yield
+    finally:
+        os.umask(previous)
+
+
+# Not 0o600: that is what `mkstemp` creates, so a guard that forgets to put
+# the mode back would look right.
+NARROW = 0o640
+
+PERMISSION_CASES: tuple[tuple[str, str, str], ...] = (
+    ("write-then-undo", "write", "undo"),
+    ("write-then-restore-named", "write", "restore"),
+    ("delete-then-undo", "delete", "undo"),
+    ("delete-then-restore-named", "delete", "restore"),
+)
+
+
+@pytest.mark.xfail(strict=True, reason=MARKER)
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX permission bits; Windows has none to keep"
+)
+@pytest.mark.parametrize(
+    ("op", "back"),
+    [pytest.param(op, back, id=f"constructed-{name}") for name, op, back in PERMISSION_CASES],
+)
+def test_constructed_undo_and_restore_never_widen_permission_bits(
+    guard: Any,
+    flavor: Flavor,
+    store: SnapshotStore,
+    idle: None,
+    umask_022: None,
+    op: str,
+    back: str,
+) -> None:
+    """A file made narrower than the default (0o640) goes through a write or
+    a delete and comes back by `undo()` or a named restore, with the same
+    bytes. A file that still existed keeps exactly its mode; a recreated one
+    gets no bit its recorded mode lacks (no group/other write, no execute)
+    and the owner can still read and write it (a mode of 0 would break the
+    client)."""
+    target = flavor.path / BINDINGS
+    target.chmod(NARROW)
+    with guard.transaction(flavor, label="change", store=store.path) as tx:
+        if op == "write":
+            tx.write(BINDINGS, NEW_BINDINGS)
+        else:
+            tx.delete(BINDINGS)
+    assert target.exists() == (op == "write"), "positive control: the change landed"
+
+    if back == "undo":
+        guard.undo(store=store.path)
+    else:
+        pre_id = record_for(guard, store, "change").snapshot_id
+        with guard.transaction(flavor, label="back", store=store.path) as tx:
+            tx.restore(pre_id, paths=[BINDINGS])
+
+    assert target.read_bytes() == ALLOWLISTED_FILES[BINDINGS], "positive control: it came back"
+    mode = stat.S_IMODE(target.stat().st_mode)
+    if op == "write":
+        assert mode == NARROW, f"an existing file's mode changed from {NARROW:o} to {mode:o}"
+    else:
+        assert mode & ~NARROW == 0, f"widened from {NARROW:o} to {mode:o}"
+        assert mode & 0o600 == 0o600, f"owner lost read/write: {mode:o}"
 
 
 # ─── Windows names ───────────────────────────────────────────────────────────
