@@ -232,7 +232,7 @@ Dated entries, newest last. Each names the fixture that prompted it.
   Forever beta's product code `wow_classic_beta` and its flavor folder
   `_classic_beta_` are **resolved**. `Config.wtf` also carries
   `SET agentUID "wow_classic_beta"`.
-- **2026-09-22, §3, same capture (DBM-Challenges TOC; a Baganator TOC was read but not committed, because the scrub rewrote part of a file name in it).** A bracketed
+- **2026-09-22, §3, same capture (DBM-Challenges TOC; a Baganator TOC was read locally and not committed).** A bracketed
   load condition can *follow* the path, after one space:
   `Shadowlands\Torghast.lua [AllowLoadGameType standard]` (20 lines); the
   directive form is `## AllowLoadGameType: mists, standard`. `mainline` was
