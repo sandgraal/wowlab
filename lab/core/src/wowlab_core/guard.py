@@ -1262,8 +1262,12 @@ class _Transaction:
         return current is not None and _sha(current) == entry.sha256
 
     def _same_link(self, parts: Sequence[str], entry: Entry) -> bool:
-        """True when the path on disk is already a link with the entry's target."""
+        """True when the path on disk is already a link (a symlink or a
+        junction) with the entry's target. An entry whose target could not be
+        read when it was captured (`target=None`) never matches."""
         assert self._place is not None
+        if entry.target is None:
+            return False
         found = _look(self._place, parts[:-1], want_dir=True) if len(parts) > 1 else None
         if found is not None and found.st is None:
             return False
