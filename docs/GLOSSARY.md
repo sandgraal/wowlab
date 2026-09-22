@@ -10,6 +10,8 @@ For engineers who do not play World of Warcraft. Several of these are named misl
 
 **Character identity is therefore (region, realm, name), not name.** Characters can also transfer realms, which changes their identity key without changing the character. On disk a character is `WTF/Account/<ACCOUNT>/<Realm>/<Character>/`, so a transfer or rename leaves the old folder behind and starts a new one.
 
+**Second name (Forever)** — Forever characters have a player-chosen first and second name. On disk the character folder is `WTF/Account/<ACCOUNT>/<digits>/<First>-<Second>/` (the digits folder is the realm's numeric id, **[verify]**), with a retail-style twin `<ACCOUNT>/<Realm>/<First>/` holding only `AddOns.txt`. The same first name can appear with several second names (owner's directory listing). The hyphen is a separator, not part of either name; the second name is not a realm.
+
 **Class** — one of thirteen (Warrior, Evoker, Priest, etc.). Fixed at creation.
 
 **Spec (specialization)** — a subdivision of a class that determines role and playstyle. A class has 2-4 (Demon Hunter has two). A character can freely switch between their class's specs at any time, at no cost. **A character's spec is not stable state** — it changes between activities. Record the spec with each capture; never treat it as a property of the character.
@@ -108,7 +110,7 @@ Anything weekly is anchored to the character's region, never to the local machin
 
 **CVar** — a client console variable: a named setting persisted in `Config.wtf` or a `config-cache.wtf`. Scope is machine, account or character depending on the variable.
 
-**Account folder** — `WTF/Account/<NAME>/`. The name identifies a Battle.net account (a number with `#1`, or an old account name). It is personal data; fixtures pseudonymize it.
+**Account folder** — `WTF/Account/<NAME>/`. The name identifies a Battle.net account (a number with `#<n>`, e.g. `#1` or `#6`, or an old account name). It is personal data; fixtures pseudonymize it.
 
 **CASC** — the content-addressed archive format of `Data/`. Files are addressed by content hash and by numeric *FileDataID*; names come from a community-maintained *listfile*, which has gaps. Some content is encrypted until Blizzard releases a key.
 
