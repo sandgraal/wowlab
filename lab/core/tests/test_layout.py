@@ -399,6 +399,23 @@ def test_os_metadata_is_listed_apart_from_everything_else_constructed(tmp_path: 
     assert Inventory.model_validate_json(inv.model_dump_json()) == inv
 
 
+def test_os_metadata_at_the_flavor_root_and_in_addons_folder_constructed(tmp_path: Path) -> None:
+    _, flavor = _install(
+        tmp_path,
+        {
+            ".DS_Store": b"",
+            "desktop.ini": b"",
+            "Interface/AddOns/.DS_Store": b"",
+            "Interface/AddOns/Foo/Foo.toc": REAL_TOC,
+            "Interface/AddOns/Foo/Libs/.DS_Store": b"",  # deeper: not walked
+        },
+    )
+    inv = Layout(flavor).inventory()
+    assert inv.os_metadata == (".DS_Store", "Interface/AddOns/.DS_Store", "desktop.ini")
+    assert [a.name for a in inv.addons] == ["Foo"]
+    assert inv.other.overrides == ()
+
+
 def test_savedvariables_folder_at_realm_depth_is_not_a_character_constructed(
     tmp_path: Path,
 ) -> None:

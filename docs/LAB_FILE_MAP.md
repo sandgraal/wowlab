@@ -67,9 +67,9 @@ scope permanently (LAB_PLAN L7).
 | `…/<Character>/edit-mode-cache-character.txt` | Character Edit Mode layouts, same encoding as the account file | Client | gate (server may replace) | A | none (kept by `snapshot`) |
 | `…/<Character>/click-bindings-cache.txt` | Click Casting bindings on unit frames; LF, ends `END` | Client | gate (server may replace) | A | none (kept by `snapshot`) |
 | `WTF/Account/<ACCOUNT>/edit-mode-cache-account.old` | Previous write of the same file | Client | no | A (read) | none (kept by `snapshot`) |
-| `WTF/Account/<ACCOUNT>/<Realm>/` | One folder per realm where a character of this account has logged in on this machine; it stays after the character moves or is deleted. Named with the realm's display name. On the Forever beta it holds only the `<First>/` folders described below | Client | — | — | `layout` |
+| `WTF/Account/<ACCOUNT>/<Realm>/` | One folder per realm where a character of this account has logged in on this machine; it stays after the character moves (GLOSSARY) or is deleted **[verify]**. Named with the realm's display name. On the Forever beta it holds only the `<First>/` folders described below | Client | — | — | `layout` |
 | `WTF/Account/<ACCOUNT>/<digits>/` | Forever beta (2026-09-22): a digits-only folder holding the `<First>-<Second>/` character folders; probably the realm's numeric id **[verify]** (the scrubbed fixtures give it a pseudonym). Not a realm name | Client | — | — | `layout` |
-| `WTF/Account/<ACCOUNT>/<Realm>/<Character>/` | One character's folder, created at its first login on this machine and left behind by a rename, transfer or deletion. On the Forever beta a `<Realm>/<First>/` twin of a `<digits>/<First>-<Second>/` folder, holding only `AddOns.txt`; which realm name pairs with which digits folder is **[verify]**; one such folder can stand for several `<First>-<Second>` characters **[verify]** | Client | — | — | `layout` |
+| `WTF/Account/<ACCOUNT>/<Realm>/<Character>/` | One character's folder, created at its first login on this machine **[verify]** and left behind by a rename or transfer (and by deletion **[verify]**). On the Forever beta a `<Realm>/<First>/` twin of a `<digits>/<First>-<Second>/` folder, holding only `AddOns.txt`; which realm name pairs with which digits folder is **[verify]**; one such folder can stand for several `<First>-<Second>` characters **[verify]** | Client | — | — | `layout` |
 | `WTF/Account/<ACCOUNT>/<digits>/<First>-<Second>/` | One Forever character's folder (2026-09-22): first and second name joined by a hyphen, the second name not a realm. Holds everything per character except `AddOns.txt` | Client | — | — | `layout` |
 | `WTF/Account/<ACCOUNT>/<Realm>/<Character>/SavedVariables/<Addon>.lua` | Per-character addon data (`## SavedVariablesPerCharacter:`) | Client on logout / `/reload` | gate | A | `luadata` |
 | `…/<Character>/config-cache.wtf`, `bindings-cache.wtf`, `macros-cache.txt` | Character-scoped CVars, binds, macros. `bindings-cache.wtf` exists only with character-specific key bindings on **[verify]**; the Forever capture had none | Client | gate | A | `wtfconfig` |
@@ -94,11 +94,11 @@ scope permanently (LAB_PLAN L7).
 | `Utils/`, `*.dll`, `*.dylib` | Client support binaries | Agent | no | — | none |
 <!-- filemap:end flavor -->
 
-Known on disk, no row yet (reported as unclassified): `cache.md5` and
-`*.old` next to cache files, per-character `SavedVariables.lua`,
-`WTF/SavedVariables/` (`## SavedVariablesMachine`), Battle.net helpers,
-other `Data/` contents. (Added 2026-09-22, M10-06; `Data/` has a catch-all
-row so that `explain` says it is never edited.)
+Seen on the owner's install but not captured, no row yet: `cache.md5` and
+`*.old` next to cache files (handoff M10-03). Expected but not yet seen, no
+row **[verify]**: a per-character `SavedVariables.lua`, `WTF/SavedVariables/`
+(`## SavedVariablesMachine`), Battle.net helpers. All of these are reported
+as unclassified. (Added 2026-09-22, M10-06.)
 
 ## Timing rules every tool must respect
 

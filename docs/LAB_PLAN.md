@@ -255,10 +255,13 @@ return `Classified` or `Unclassified`. (3) **`Layout.inventory()` returns
 `Inventory`**, which holds everything the listing methods return plus
 symlinks, OS-metadata files, read errors and `truncated`. Bounds are set
 with `Limits` (`max_depth`, `max_entries`, `max_toc_bytes`). (4) A TOC over
-`max_toc_bytes` is reported with an error and not read. (5) Files the file
-map classifies `os-metadata` (`.DS_Store`, `._*`, `Thumbs.db`,
-`desktop.ini`) are listed in `Inventory.os_metadata` and kept out of the
-SavedVariables, WTF-file, override and TOC lists and out of area counts.
+`max_toc_bytes` is reported with an error and not read. (5) OS-metadata files
+(the file map's `os-metadata` row: `.DS_Store`, `._*`, `Thumbs.db`,
+`desktop.ini`) met by the walk (the flavor root, the area folders,
+`Interface/AddOns/` itself, SavedVariables folders, and the top level of
+each addon folder) are listed in `Inventory.os_metadata`; deeper addon
+contents are not walked. They are kept out of the SavedVariables, WTF-file,
+override and TOC lists and out of area counts.
 (6) The file map's single source is `wowlab_core/filemap.toml`. The doc
 tables are generated from it by `scripts/gen_file_map.py`, and a test fails
 when the two drift.

@@ -313,9 +313,9 @@ Dated entries, newest last. Each names the fixture that prompted it.
   anything but `Title`/`Notes` is **[verify]**. Directive values carry
   backslash paths (`## IconTexture: Interface\AddOns\DBM-Core\…`).
   How `wowlab_core.toc` reads the rest of §3, none of it contradicted by the
-  fixture and none of it confirmed: a key is a run of characters with no
-  whitespace and no `:`, so `## Some words: text` is a comment; a `[…]`
-  group separated from the path by whitespace is a load condition (before
-  or after the path), and one touching path characters is a variable
+  fixture: a key is a run of characters with no whitespace and no `:`, so
+  `## Some words: text` is a comment; a `[…]` group separated from the path
+  by whitespace is a load condition (after the path, seen above; before it,
+  **[verify]**), and one touching path characters is a variable
   (`Locales\[TextLocale].lua`); a directive that appears twice is kept
   twice, and which one the client honours is **[verify]**.

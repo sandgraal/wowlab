@@ -714,6 +714,7 @@ class Layout:
             return []
         out: list[Addon] = []
         for folder in self._list(addons_rel, report):
+            self._os_metadata(folder, report)  # e.g. `Interface/AddOns/.DS_Store`
             if folder.is_dir:
                 out.append(self._addon(folder.rel, report))
         return out
@@ -896,6 +897,8 @@ class Layout:
         """Everything above in one pass, with every symlink met, every read
         error, and whether a bound was hit."""
         report = _Report()
+        for e in self._list((), report):  # OS metadata at the flavor root
+            self._os_metadata(e, report)
         accounts, svs, wtf_files = self._scan_wtf(report)
         addons = self._scan_addons(report)
         other = self._scan_other(report)
@@ -985,9 +988,18 @@ def _kind(path: Path, is_dir: bool | None) -> _filemap.Kind:
     return "any"  # a symlink, never followed to find out, or something else
 
 
-def _same_file(a: Path, b: Path) -> bool:
+def _same_file(candidate: Path, known: Path) -> bool:
+    """Whether `candidate` is the folder `known` itself, never through a link.
+
+    Compares `lstat` results (`os.path.samestat`), and refuses a candidate
+    that is a symlink or junction, so a case-only spelling is accepted on a
+    case-insensitive volume (same entry) and a link is never followed.
+    """
     try:
-        return a.samefile(b)
+        st = candidate.lstat()
+        if _is_link(candidate, st):
+            return False
+        return os.path.samestat(st, known.lstat())
     except OSError:
         return False
 
