@@ -71,8 +71,9 @@ jobs:
             # than paint every PR red until the limit resets (2026-09-21).
             # A bad key, model or workspace still fails loudly.
             case "$status:$detail" in
-              429:*|529:*|*"usage limit"*|*"rate_limit_error"*|*"overloaded_error"*)
+              429:*|529:*|*:rate_limit_error:*|*:overloaded_error:*|*"specified API usage limits"*|*"credit balance is too low"*)
                 echo "::warning title=Automated review skipped::HTTP ${status} ${detail}"
+                echo "Automated review skipped: HTTP ${status} ${detail}" >> "$GITHUB_STEP_SUMMARY"
                 echo "available=false" >> "$GITHUB_OUTPUT"
                 exit 0
                 ;;
