@@ -16,29 +16,45 @@ does not do it.
 
 Entries marked **[verify]** are confirmed or corrected by M10-03.
 
+**Where the tables come from (M10-06, 2026-09-22):** the two tables below are
+generated from `lab/core/src/wowlab_core/filemap.toml`, which is also what
+`classify()` reads; that file carries each row's match patterns as well.
+Edit the TOML and run `uv run python scripts/gen_file_map.py --write`; never
+edit the rows between the `filemap:begin` / `filemap:end` markers by hand.
+`lab/core/tests/test_filemap.py` fails when the doc and the data drift.
+Prose outside the markers is written by hand.
+
 ## Install root
 
+<!-- filemap:begin root -->
 | Path | What | Written by / when | Edit | Tier | Module |
 |---|---|---|---|---|---|
 | `.build.info` | Installed products, versions, build keys | Battle.net agent on install/patch | no | A (read) | `install` |
 | `.product.db`, `.patch.result`, `Launcher.db` | Agent state | Battle.net agent | no | — | none |
 | `Data/config/`, `Data/data/`, `Data/indices/` | CASC storage: build/CDN configs, archive blobs (`data.NNN`), index files (`*.idx`) | Agent; client streams into it | no | A (read, later wave) | none in Wave 1 |
 | `World of Warcraft Launcher.exe` / `.app`, `Battle.net` helpers | Launchers | Agent | no | — | none |
+| `.DS_Store`, `Thumbs.db` (anywhere) | Folder view metadata the operating system's file browser leaves behind; not the client's | Finder (macOS), Explorer (Windows) | no | — | none |
+<!-- filemap:end root -->
 
 Everything under `Data/` is shared by all flavors. Modifying it is out of
 scope permanently (LAB_PLAN L7).
 
 ## Flavor folder `<flavor>/`
 
+<!-- filemap:begin flavor -->
 | Path | What | Written by / when | Edit | Tier | Module |
 |---|---|---|---|---|---|
+| `<flavor>/` (the folder itself) | One installed product: its client, `WTF/`, `Interface/`, caches and logs. The name is as found on disk and changes between beta and launch; discovery finds the folder by its `.flavor.info` | Agent | — | — | `install`, `layout` |
 | `.flavor.info` | Product code of this flavor | Agent | no | A (read) | `install` |
 | `Wow.exe`, `WowClassic.exe`, `World of Warcraft.app`, … | Client executable | Agent | no | — | `process` (name only) |
+| `WTF/` | This flavor's configuration and SavedVariables | Client | — | — | `layout` |
 | `WTF/Config.wtf` | Machine-wide CVars: graphics, sound, locale, last account | Client on exit and on some setting changes | gate | A | `wtfconfig` |
+| `WTF/Account/` | Parent of the account folders | Client | — | — | `layout` |
 | `WTF/Account/<ACCOUNT>/` | One folder per Battle.net account that logged in on this machine. Folder name identifies the account; scrub in fixtures | Client | — | — | `layout` |
 | `WTF/Account/<ACCOUNT>/SavedVariables.lua` | Blizzard UI's own account-wide saved state | Client on logout / `/reload` | gate | A | `luadata` |
+| `WTF/Account/<ACCOUNT>/SavedVariables/`, `…/<Character>/SavedVariables/` | One file per addon that saves data, account-wide or for one character by where the folder sits | Client | — | — | `layout` |
 | `WTF/Account/<ACCOUNT>/SavedVariables/<Addon>.lua` | Account-wide addon data (`## SavedVariables:`) | Client on logout / `/reload` | gate | A | `luadata` |
-| `…/SavedVariables/<Addon>.lua.bak` | Previous write of the same file | Client | no | A (read) | `luadata` |
+| `…/SavedVariables/<Addon>.lua.bak`, `WTF/Account/<ACCOUNT>/SavedVariables.lua.bak` | Previous write of the same file (the Blizzard file's `.bak` **[verify]**) | Client | no | A (read) | `luadata` |
 | `WTF/Account/<ACCOUNT>/config-cache.wtf` | Account-scoped CVars | Client | gate | A | `wtfconfig` |
 | `WTF/Account/<ACCOUNT>/bindings-cache.wtf` | Account keybinds | Client | gate | A | `wtfconfig` |
 | `WTF/Account/<ACCOUNT>/macros-cache.txt` | Account macros | Client | gate | A | `wtfconfig` |
@@ -50,11 +66,17 @@ scope permanently (LAB_PLAN L7).
 | `…/<Character>/edit-mode-cache-character.txt` | Character Edit Mode layouts, same encoding as the account file | Client | gate (server may replace) | A | none (kept by `snapshot`) |
 | `…/<Character>/click-bindings-cache.txt` | Click Casting bindings on unit frames; LF, ends `END` | Client | gate (server may replace) | A | none (kept by `snapshot`) |
 | `WTF/Account/<ACCOUNT>/edit-mode-cache-account.old` | Previous write of the same file | Client | no | A (read) | none (kept by `snapshot`) |
+| `WTF/Account/<ACCOUNT>/<Realm>/` | One folder per realm the account has characters on, named with the realm's display name. On the Forever beta it holds only the `<First>/` twins described below | Client | — | — | `layout` |
+| `WTF/Account/<ACCOUNT>/<digits>/` | Forever beta (2026-09-22): a digits-only folder holding the `<First>-<Second>/` character folders; almost certainly the realm's numeric id **[verify]**. Not a realm name | Client | — | — | `layout` |
+| `WTF/Account/<ACCOUNT>/<Realm>/<Character>/` | One character's folder. On the Forever beta a `<Realm>/<First>/` twin of a `<digits>/<First>-<Second>/` folder, holding only `AddOns.txt`; which realm name pairs with which digits folder is **[verify]** | Client | — | — | `layout` |
+| `WTF/Account/<ACCOUNT>/<digits>/<First>-<Second>/` | One Forever character's folder (2026-09-22): first and second name joined by a hyphen, the second name not a realm. Holds everything per character except `AddOns.txt` | Client | — | — | `layout` |
 | `WTF/Account/<ACCOUNT>/<Realm>/<Character>/SavedVariables/<Addon>.lua` | Per-character addon data (`## SavedVariablesPerCharacter:`) | Client on logout / `/reload` | gate | A | `luadata` |
 | `…/<Character>/config-cache.wtf`, `bindings-cache.wtf`, `macros-cache.txt` | Character-scoped CVars, binds, macros. `bindings-cache.wtf` exists only with character-specific key bindings on **[verify]**; the Forever capture had none | Client | gate | A | `wtfconfig` |
-| `…/<Character>/AddOns.txt` | Which addons are enabled for this character | Client | gate | A | `layout` (lines) |
+| `…/<Character>/AddOns.txt` | Which addons are enabled for this character; on the Forever beta it is in the `<Realm>/<First>/` twin | Client | gate | A | `layout` (lines) |
 | `…/<Character>/layout-local.txt` | Legacy UI panel positions; on the Forever beta (2026-09-22) a stub, `Version: 1` and nothing else | Client | gate | A | none (kept by `snapshot`) |
 | `…/<Character>/chat-cache.txt` | Chat window and channel configuration | Client | gate | A | none (kept by `snapshot`) |
+| `Interface/` | Addons and loose-file overrides (the rows below) | You, or an addon manager | — | — | `layout` |
+| `Interface/AddOns/` | One folder per installed addon | You, or an addon manager | — | — | `layout` |
 | `Interface/AddOns/<Addon>/` | Third-party addon: `.toc`, `.lua`, `.xml`, media | You, or an addon manager | gate | A | `layout`, `toc` |
 | `Interface/AddOns/Blizzard_*` | Present only after `ExportInterfaceFiles`; not loaded from disk by modern clients | Console export | no | A (read) | `layout` (flagged) |
 | `BlizzardInterfaceCode/`, `BlizzardInterfaceArt/` | Output of the `ExportInterfaceFiles code` / `art` console commands: Blizzard's Lua/XML and UI textures, for reading | Client on command | no | A (read) | `layout` (flagged) |
@@ -62,11 +84,14 @@ scope permanently (LAB_PLAN L7).
 | `Fonts/` | Font overrides: `FRIZQT__.TTF` (main UI), `ARIALN.TTF` (chat, numbers), `skurri.ttf` (combat text), `MORPHEUS.ttf` (headers), plus locale variants | You | gate | B | `layout` |
 | `Cache/ADB/<locale>/DBCache.bin` | Hotfixes the server pushed over the shipped DB2 tables | Client | no | A (read, later wave) | none in Wave 1 |
 | `Cache/WDB/<locale>/*.wdb` | Cached server responses for creatures, items, quests, … | Client | no | A (read, later wave) | none |
+| `Cache/`, anything under it not in the two rows above | Other client caches; what they hold is not described here yet **[verify]** | Client | no | — | none |
 | `Logs/WoWCombatLog*.txt` | Combat log while `/combatlog` is on | Client, batched | no | A (read) | `combatlog` |
 | `Logs/*.log` (`Client.log`, `gx.log`, `Sound.log`, `FrameXML.log`, `taint.log` when enabled) | Diagnostics | Client | no | A (read) | none |
+| `Logs/`, anything under it not in the two rows above | Other client logs; not described here yet **[verify]** | Client | no | — | none |
 | `Screenshots/` | `WoWScrnShot_MMDDYY_HHMMSS.jpg` (or `.tga`/`.png` per CVar) | Client on Print Screen | n/a | A | `layout` |
 | `Errors/` | Crash dumps and reports | Client | no | — | none |
 | `Utils/`, `*.dll`, `*.dylib` | Client support binaries | Agent | no | — | none |
+<!-- filemap:end flavor -->
 
 ## Timing rules every tool must respect
 

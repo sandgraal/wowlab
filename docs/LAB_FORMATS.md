@@ -298,3 +298,19 @@ Dated entries, newest last. Each names the fixture that prompted it.
   `wowlab_core.wtfconfig` keeps `BINDINGMODE`, `modifiedclick` and an
   empty-action line as `Unknown`, and types `bind KEY NONE` as-is (action
   `NONE`).
+- **2026-09-22, §3, the committed DBM-Challenges TOC (M10-06).** The
+  comma-separated `## Interface:` form is now seen on a committed fixture:
+  `## Interface: 50504, 120100` (so the list form no longer rests on the
+  uncommitted Baganator TOC; directives after a blank line still do, and
+  stay **[verify]**). The file is 38 directives, one blank line, then 28 file
+  lines, and no comments. Locale suffixes also appear on `X-` directives
+  (`## X-DBM-Mod-Name-koKR:`, `## X-DBM-Mod-SubCategories-deDE:`), so a
+  locale suffix is not limited to `Title` and `Notes`. Directive values
+  carry backslash paths (`## IconTexture: Interface\AddOns\DBM-Core\…`).
+  How `wowlab_core.toc` reads the rest of §3, none of it contradicted by the
+  fixture and none of it confirmed: a key is a run of characters with no
+  whitespace and no `:`, so `## Some words: text` is a comment; a `[…]`
+  group separated from the path by whitespace is a load condition (before
+  or after the path), and one touching path characters is a variable
+  (`Locales\[TextLocale].lua`); a directive that appears twice is kept
+  twice, and which one the client honours is **[verify]**.
