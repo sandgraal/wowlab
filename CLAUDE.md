@@ -39,7 +39,8 @@ the conductor session (`.claude/settings.json`), `implementer`,
 `test-writer`, `code-reviewer`, `domain-reviewer`, `security-reviewer`, and
 both GitHub workflows. Other Opus versions and Fable cost more tokens for no
 gain here and are not used. `pr-shepherd` stays on `sonnet`.
-`scripts/check_frontmatter.py` rejects the bare `opus` alias and `fable`.
+`scripts/check_frontmatter.py` rejects the bare `opus` alias and `fable` in
+agent frontmatter.
 Do not pass a `model` override to `Agent`; the frontmatter decides.
 
 ## Known hook gaps
