@@ -2789,7 +2789,6 @@ def _run_ops(tx: Any, ops: Iterable[tuple[str, str]]) -> None:
             tx.delete(rel)
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize(
     ("ops", "after", "created"),
     [
@@ -2926,7 +2925,6 @@ class JournalAheadSpy:
         return call
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize(
     "ops",
     [pytest.param(ops, id=f"constructed-{name}") for name, ops, _, _ in KILL_CASES],
@@ -2979,7 +2977,6 @@ PERMISSION_CASES: tuple[tuple[str, str, str], ...] = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.skipif(
     sys.platform == "win32", reason="POSIX permission bits; Windows has none to keep"
 )
