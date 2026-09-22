@@ -25,7 +25,8 @@ Grammars (anything that does not match exactly is ``Unknown``):
   and may be empty or carry control bytes. Names are case-insensitive to the
   client; lookups fold ASCII case only and keep the original spelling.
 - ``bind <key> <action>``: key is a run of bytes other than space, CR, LF;
-  action is the rest of the line (non-empty, no CR or LF). An action written
+  action is the rest of the line (non-empty, not starting with a space, no
+  CR or LF). An action written
   as ``"..."`` with no inner quote is reported unwrapped, with ``quoted``.
 - ``VER <version> <hex id> "<name>" "<icon>"`` opens a macro record; every
   following line is body up to a line whose text is exactly ``END``. Lines
@@ -75,7 +76,7 @@ __all__ = [
 Ending = Literal[b"", b"\n", b"\r\n"]
 
 _SET = re.compile(rb'SET ([^ \r\n]+) "([^"\r\n]*)"')
-_BIND = re.compile(rb"bind ([^ \r\n]+) ([^\r\n]+)")
+_BIND = re.compile(rb"bind ([^ \r\n]+) ([^ \r\n][^\r\n]*)")
 _QUOTED_ACTION = re.compile(rb'"([^"]*)"')
 _VER = re.compile(rb'VER ([0-9]+) ([0-9A-Fa-f]+) "([^"\r\n]*)" "([^"\r\n]*)"')
 _END = b"END"

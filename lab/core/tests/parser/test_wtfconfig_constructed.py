@@ -179,14 +179,17 @@ def test_constructed_click_binding_is_quoted() -> None:
 
 
 def test_constructed_unmatched_binding_lines_are_unknown() -> None:
-    data = b'BINDINGMODE 1\r\n\r\nbind A\r\nbind  A B\r\nBIND A B\r\nbind A "x" y\r\nbind A B\r\n'
+    data = (
+        b"BINDINGMODE 1\r\n\r\nbind A\r\nbind  A B\r\nbind A  B\r\nBIND A B\r\n"
+        b'bind A "x" y\r\nbind A B\r\n'
+    )
     doc = parse_bindings(data)
     assert doc.to_bytes() == data
     kinds = [line.kind for line in doc.lines]
-    assert kinds == ["unknown", "unknown", "unknown", "unknown", "unknown", "bind", "bind"]
+    assert kinds == ["unknown"] * 6 + ["bind", "bind"]
     assert doc.bindings[0].action == '"x" y'
     assert doc.bindings[0].quoted is False
-    assert [b.index for b in doc.bindings] == [5, 6]
+    assert [b.index for b in doc.bindings] == [6, 7]
 
 
 # -------------------------------------------------------------------- macros
