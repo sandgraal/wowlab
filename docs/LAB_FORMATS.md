@@ -216,3 +216,57 @@ Dated entries, newest last. Each names the fixture that prompted it.
   guild or community) and are **[verify]** against the first capture, which
   may also add names. `portal` stays. The tool blanks the value and keeps
   the line, so an empty-valued `SET` line in a fixture is a scrub artefact.
+
+- **2026-09-22, §1, stage-0 capture of the Forever beta, macOS, build 1.60.1.69913 (M10-03; files staged, committed with this ticket).** `.build.info` has the 15 header cells of the §1
+  example, in that order, and one row of 15 cells (a row shorter than the
+  header is still unobserved, **[verify]** stays). Five cells are empty:
+  `Install Key`, `IM Size`, `Armadillo`, `Last Activated`, `KeyRing`. LF, final
+  LF, no BOM. `Branch` `us`, `Version` `1.60.1.69913`, `Product`
+  `wow_classic_beta`. The `Tags` cell carries tokens the example lacks:
+  `OSX x86_64 US? acct-USA? geoip-US? enUS speech?:…` (the `?` are literal).
+  `Build Key` equals wago.tools' `build_config` for that build; `CDN Key` does
+  not equal its `cdn_config`, so nothing joins on the CDN key. The install
+  holds only this product, so a multi-row file is still unexercised.
+- **2026-09-22, §2, same capture.** `.flavor.info` is exactly
+  `Product Flavor!STRING:0\nwow_classic_beta\n` (41 bytes, LF, no BOM). The
+  Forever beta's product code `wow_classic_beta` and its flavor folder
+  `_classic_beta_` are **resolved**. `Config.wtf` also carries
+  `SET agentUID "wow_classic_beta"`.
+- **2026-09-22, §3, same capture (DBM-Challenges and Baganator TOCs).** A bracketed
+  load condition can *follow* the path, after one space:
+  `Shadowlands\Torghast.lua [AllowLoadGameType standard]` (20 lines); the
+  directive form is `## AllowLoadGameType: mists, standard`. `mainline` was
+  not observed; `[TextLocale]` and `[Family]` stay **[verify]**. A directive
+  can have no space after the colon (`## Title:|cff…`), and `##` directives
+  can follow a blank line, so directive parsing does not stop at the first
+  blank. Both TOCs are CRLF with a final CRLF and no BOM, and carry raw UTF-8
+  in localized keys. Baganator declares
+  `## Interface: 120100, 16001, 50504, 38001, 20506, 11509`. Neither addon
+  ships a suffixed TOC, so Forever's preferred suffix stays **[verify]**. No
+  directive outside the known list appeared.
+- **2026-09-22, §5, same capture.** CVar names can contain `-`
+  (`SET CACHE-WQST-QuestV2RecordCount "7760"`, eight such lines), and values
+  can contain raw control bytes (0x02 in five `config-cache.wtf` lines), so a
+  name is any run of non-space bytes and a value any bytes other than `"` and
+  a line break. No embedded quote in 181 `SET` lines. Present and blanked by
+  the scrubber: `accountName`, `accountList`, `Sound_OutputDriverName`
+  (Config.wtf), `lastSelectedClubId` (character file). Absent on this build:
+  `lastCharacterGuid` (Config.wtf has `lastCharacterIndex` instead), `realmName`,
+  both `Sound_VoiceChat*`, and every `synchronize*` CVar (absent is not "off":
+  the default is **[verify]**). Also recorded verbatim, meaning unknown:
+  `portal "test"`, `currentGameMode "15"`, `engineSurveyPatch "16001"`.
+- **2026-09-22, §6, same capture.** Account `bindings-cache.wtf`: three
+  `bind KEY ACTION` lines, CRLF, no header or mode line. The quoted
+  `CLICK …` action form stays unobserved.
+- **2026-09-22, §7, same capture.** `VER 3 0100000000000001 "PolyArc" "134400"`, one
+  body line, `END`, all CRLF including after `END`. The icon is a quoted
+  numeric file id (the icon-name form was not observed); a character macro's
+  id starts `01`. An account `macros-cache.txt` with no macros is 0 bytes and
+  must round-trip.
+- **2026-09-22, line endings, same capture.** Line endings follow the file kind, not
+  the platform: one macOS client wrote LF (`Config.wtf`, both
+  `config-cache.wtf`, `chat-cache.txt`, `layout-local.txt`, `.build.info`,
+  `.flavor.info`), CRLF (`bindings-cache.wtf`, the character
+  `macros-cache.txt`, both TOCs) and neither (the edit-mode caches: one line
+  ending in a NUL byte) in the same install. Serializers keep each document's
+  own endings; a writer creating a new file chooses by file kind.

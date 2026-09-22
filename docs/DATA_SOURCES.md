@@ -19,9 +19,16 @@ marked `@pytest.mark.live`.
 - **Terms:** reading the install and editing `WTF/`, `Interface/AddOns/`,
   `Fonts/` and base-texture overrides is ordinary user behaviour. ADR-0023
   lists what this repository never does.
-- **Known state:** to be filled by M10-03 (flavor folders present, product
-  codes, versions, interface numbers, executable names, line endings, whether
-  the Forever client writes a combat log).
+- **Known state (2026-09-22, owner's macOS machine, M10-03 stage 0):** one
+  product installed, the Forever beta: flavor folder `_classic_beta_`, product
+  code `wow_classic_beta`, version `1.60.1.69913`, branch `us`; no retail
+  flavor. Executable `World of Warcraft Beta.app` in the flavor folder
+  (directory listing; the process name is **[verify]**). Interface number
+  `16001`, supported by two captured files (a TOC's `## Interface:` list and
+  `engineSurveyPatch`) but not yet confirmed in game with
+  `/dump (select(4, GetBuildInfo()))`. Line endings follow the file kind
+  (`docs/LAB_FORMATS.md` amendments of 2026-09-22). Combat log, SavedVariables
+  line endings, `WOW_PROJECT_ID` and the preferred TOC suffix: still open.
 
 ## wago.tools
 
@@ -132,3 +139,4 @@ findings. Library code must not depend on any of it (L6).
 |---|---|---|---|---|
 | 2026-09-20 | Forever beta | New product; modern addon API on a level-60 client; flavor folder, product code and interface number known only from reports | — (M10-03 will capture) | Flavor, product and build are discovered at run time (ADR-0020); nothing hard-coded |
 | 2026-09-21 | wago.tools | First recording. The build parameter is `build=`; an unpublished build is a 404 HTML page, not a fall-back. All 13 product lists are sorted by version, descending, and a product code is reused across game versions: `wow_classic_beta` carries 1.13, 2.5, 3.4, 4.4, 5.5 and 1.60 builds, so its list opens with `5.5.0.x` and has the `1.60.1.x` builds (69876, 69893, 69913) further down; neither position nor the highest version means newest. One version string appears under several products (510 of them, each with a different `build_config` per product). The trailing build number is not unique: `10.0.0.46479` / `10.0.2.46479` under `wowlivetest` and `2.5.5.68575` / `2.5.6.68575` under `wow_anniversary` share a `build_config` | `lab/core/tests/fixtures/wago/` (M10-08) | `gamedata` never reads "latest" from the listing and keys on the full version string, never the trailing build number. `resolve_build` matches the exact version, preferring the flavor's own product. wago's table endpoint is keyed by version string alone, so a version listed only under another product still selects the same export and is accepted; from such a match only `.version` describes the installed flavor, `product` and the config hashes do not |
+| 2026-09-22 | Local install (Forever beta) | First capture. The account's folder tree is not the retail `<Realm>/<Character>/`: a digits-only folder (probably a realm id) holds `Name-Realm` character folders. The scrub tool treated the digits-only folder name as a realm name and replaced it inside ordinary numbers (chat colours, edit-mode offsets, an addon's map ids), and scrubbed `Name-Realm` only as a whole. Separately, a placeholder `--extra-name GUILD` rewrote the client's own `GUILD` chat-channel token | M10-03 stage-0 staging, never committed; four corrupted files dropped | Scrub-tool follow-up (#33): digits-only folder names get a path pseudonym only, `Name-Realm` folders are split into both halves, and an `--extra-name` equal to a word the client writes is refused; stage 0 re-run after it merges |

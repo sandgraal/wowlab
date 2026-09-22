@@ -42,11 +42,12 @@ scope permanently (LAB_PLAN L7).
 | `WTF/Account/<ACCOUNT>/config-cache.wtf` | Account-scoped CVars | Client | gate | A | `wtfconfig` |
 | `WTF/Account/<ACCOUNT>/bindings-cache.wtf` | Account keybinds | Client | gate | A | `wtfconfig` |
 | `WTF/Account/<ACCOUNT>/macros-cache.txt` | Account macros | Client | gate | A | `wtfconfig` |
-| `WTF/Account/<ACCOUNT>/edit-mode-cache-account.txt` | Edit Mode HUD layouts **[verify name]** | Client | gate | A | none in Wave 1 (kept by `snapshot`) |
+| `WTF/Account/<ACCOUNT>/edit-mode-cache-account.txt` | Edit Mode HUD layouts: one line of space-separated tokens ending in a NUL byte; layout names are typed by the owner | Client | gate | A | none in Wave 1 (kept by `snapshot`) |
+| `WTF/Account/<ACCOUNT>/edit-mode-cache-account.old` | Previous write of the same file | Client | no | A (read) | none (kept by `snapshot`) |
 | `WTF/Account/<ACCOUNT>/<Realm>/<Character>/SavedVariables/<Addon>.lua` | Per-character addon data (`## SavedVariablesPerCharacter:`) | Client on logout / `/reload` | gate | A | `luadata` |
-| `…/<Character>/config-cache.wtf`, `bindings-cache.wtf`, `macros-cache.txt` | Character-scoped CVars, binds, macros | Client | gate | A | `wtfconfig` |
+| `…/<Character>/config-cache.wtf`, `bindings-cache.wtf`, `macros-cache.txt` | Character-scoped CVars, binds, macros. `bindings-cache.wtf` exists only with character-specific key bindings on **[verify]**; the Forever capture had none | Client | gate | A | `wtfconfig` |
 | `…/<Character>/AddOns.txt` | Which addons are enabled for this character | Client | gate | A | `layout` (lines) |
-| `…/<Character>/layout-local.txt` | UI panel positions (legacy; still written) | Client | gate | A | none (kept by `snapshot`) |
+| `…/<Character>/layout-local.txt` | Legacy UI panel positions; on the Forever beta (2026-09-22) a stub, `Version: 1` and nothing else | Client | gate | A | none (kept by `snapshot`) |
 | `…/<Character>/chat-cache.txt` | Chat window and channel configuration | Client | gate | A | none (kept by `snapshot`) |
 | `Interface/AddOns/<Addon>/` | Third-party addon: `.toc`, `.lua`, `.xml`, media | You, or an addon manager | gate | A | `layout`, `toc` |
 | `Interface/AddOns/Blizzard_*` | Present only after `ExportInterfaceFiles`; not loaded from disk by modern clients | Console export | no | A (read) | `layout` (flagged) |
@@ -74,7 +75,15 @@ scope permanently (LAB_PLAN L7).
 - Macros and binds may be synced server-side depending on the
   `synchronizeBindings` / `synchronizeMacros` / `synchronizeConfig` CVars; a
   local edit can be overwritten from the server at login when sync is on.
-  `wowlab doctor` reports these CVars.
+  `wowlab doctor` reports these CVars. The Forever beta capture (2026-09-22)
+  writes none of them: absent means the client default, reported as "not set
+  (client default)", never "off"; the default itself is **[verify]**.
+- **Folder shape under `WTF/Account/<ACCOUNT>/` on the Forever beta
+  (2026-09-22, observed, owner to confirm):** the level above the character
+  folders appears to be named with digits only (a numeric realm id,
+  **[verify]**) and the character folders `Name-Realm`, not the retail
+  `<Realm>/<Character>/`. `layout` and the scrub tool must not assume either
+  shape.
 - A patch can reset `Interface/` overrides' effect and can change any format
   here. `snapshot` manifests record the flavor version so a diff across a
   patch says so.
