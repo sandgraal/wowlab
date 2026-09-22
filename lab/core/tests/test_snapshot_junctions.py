@@ -14,6 +14,8 @@ import os
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -192,3 +194,70 @@ def test_is_junction_is_false_for_ordinary_directories_and_files(source: Path) -
     assert not snapshot._is_junction(source / "WTF" / "Config.wtf")
     with os.scandir(source / "WTF") as it:
         assert not any(snapshot._is_junction(entry) for entry in it)
+
+
+# ── other directory links: name-surrogate reparse points (review round 1) ───
+
+IO_REPARSE_TAG_WCI_LINK_1 = 0xA0000027  # name surrogate: names another path
+IO_REPARSE_TAG_CLOUD_6 = 0x9000601A  # OneDrive placeholder: real content, no surrogate bit
+
+
+@pytest.fixture
+def fake_reparse_tags(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """Pretend to be Windows, and give directories named in the returned map an
+    `lstat` result carrying that reparse tag. Everything else is the real `lstat`."""
+    tags: dict[str, int] = {}
+    real_lstat = os.lstat
+
+    def lstat(path: Any, *args: Any, **kwargs: Any) -> Any:
+        real = real_lstat(path, *args, **kwargs)
+        tag = tags.get(Path(path).name)
+        if tag is None:
+            return real
+        fields = {k: getattr(real, k) for k in dir(real) if k.startswith("st_")}
+        return SimpleNamespace(**{**fields, "st_reparse_tag": tag})
+
+    monkeypatch.setattr(snapshot, "_ON_WINDOWS", True)
+    monkeypatch.setattr(os, "lstat", lstat)
+    return tags
+
+
+def test_a_name_surrogate_directory_is_a_link_and_a_placeholder_is_walked_constructed(
+    source: Path, store: SnapshotStore, fake_reparse_tags: dict[str, int]
+) -> None:
+    addons = source / "Interface" / "AddOns"
+    for name, body in (("WciLinked", SECRET), ("Placeholder", b"x\n")):
+        (addons / name / "deeper").mkdir(parents=True)
+        (addons / name / "deeper" / "Inner.lua").write_bytes(body)
+    fake_reparse_tags["WciLinked"] = IO_REPARSE_TAG_WCI_LINK_1
+    fake_reparse_tags["Placeholder"] = IO_REPARSE_TAG_CLOUD_6
+
+    m = store.create(source, ["Interface/AddOns"], now=T0)
+
+    # A real directory cannot be `readlink`ed: the target is recorded as unknown.
+    assert [(e.path, e.kind, e.sha256, e.target) for e in m.entries if e.kind == "symlink"] == [
+        ("Interface/AddOns/WciLinked", "symlink", None, None)
+    ]
+    assert [e.path for e in m.entries if e.kind == "file"] == [
+        "Interface/AddOns/Placeholder/deeper/Inner.lua",
+        "Interface/AddOns/Real/Real.toc",
+    ]
+    assert SECRET not in _stored_contents(store)
+    with pytest.raises(SnapshotError, match="symlink"):
+        store.read_file(m.id, "Interface/AddOns/WciLinked")
+
+
+def test_a_subtree_at_or_through_a_name_surrogate_directory_constructed(
+    source: Path, store: SnapshotStore, fake_reparse_tags: dict[str, int]
+) -> None:
+    (source / "WTF" / "WciLinked" / "deeper").mkdir(parents=True)
+    (source / "WTF" / "WciLinked" / "deeper" / "Secret.lua").write_bytes(SECRET)
+    fake_reparse_tags["WciLinked"] = IO_REPARSE_TAG_WCI_LINK_1
+
+    with pytest.raises(SnapshotError, match="junction or directory link"):
+        store.create(source, ["WTF/WciLinked/deeper"], now=T0)
+    assert store.list() == ()
+
+    m = store.create(source, ["WTF/WciLinked"], now=T1)
+    assert [(e.path, e.kind, e.target) for e in m.entries] == [("WTF/WciLinked", "symlink", None)]
+    assert SECRET not in _stored_contents(store)
