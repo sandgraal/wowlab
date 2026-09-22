@@ -24,7 +24,7 @@ jobs:
       id-token: write
     env:
       # Pinned so reviews are reproducible across Claude Code releases.
-      REVIEW_MODEL: claude-opus-5
+      REVIEW_MODEL: claude-opus-5-5
       # Every run through PR #11 failed on its first request (is_error, 0
       # tokens). The preflight below named the cause on 2026-09-16: "This API
       # key is not scoped to a workspace, so this request must include the
