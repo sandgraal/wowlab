@@ -81,7 +81,7 @@ Graders for `wowlab_core.luadata` parsing, derived from `docs/LAB_PLAN.md` §6.4
 
 ---
 
-## [ ] M10-07 — WTF text formats
+## [x] M10-07 — WTF text formats
 **Size:** M · **Depends on:** M10-03
 
 `wowlab_core.wtfconfig` per `docs/LAB_PLAN.md` §6.5 and `docs/LAB_FORMATS.md` §5–§7. Read-only, lossless.
@@ -119,7 +119,7 @@ Graders for `wowlab_core.luadata` parsing, derived from `docs/LAB_PLAN.md` §6.4
 
 ---
 
-## [ ] M10-11T — Write gate graders [TEST]
+## [x] M10-11T — Write gate graders [TEST]
 **Size:** M · **Depends on:** M10-09, M10-10
 
 Graders for `wowlab_core.guard` from `docs/LAB_PLAN.md` §6.10 and ADR-0021, against a synthetic install in `tmp_path` with an injected process probe: refuses when the client is running and when its state is unknown; refuses every path outside the allowlist, including `Data/`, executables, `.build.info`, `.flavor.info`, the install root, `..` traversal, absolute paths, a symlink that escapes, and a case-variant of a forbidden path on a case-insensitive filesystem; takes a snapshot before the first write; journals before/after hashes; atomic replace (a simulated crash between temp write and rename leaves the original intact); an exception inside the transaction rolls every touched path back; `undo()` restores the pre-transaction bytes; dry-run touches nothing; no code path or flag skips the snapshot or the client check (assert on the public signature). `xfail(strict=True, reason="M10-11 not implemented")`.
@@ -171,7 +171,7 @@ Commands, flags and exit codes per `docs/LAB_PLAN.md` §6.11. `snap create` uses
 
 **Acceptance:** each command has a test through Typer's runner against the captured tree or a synthetic install; every data command's `--json` output validates against its Pydantic model; exit code 3 when guard refuses; `wowlab explain <path>` returns the file-map entry for ten representative paths. A transcript of `wowlab doctor`, `tree --explain`, `sv dump`, `snap create`, a guarded edit and `undo` on a synthetic install is pasted in the PR.
 
-*Amended 2026-09-21 from the M10-08, M10-09 and M10-10 reviews: `snap diff` includes the `luadata`-aware structural diff for `.lua` SavedVariables that `docs/LAB_PLAN.md` §6.9 specifies, falling back to the plain changed-path entry when either side does not parse (deferred from M10-10 because `luadata` did not exist; `SnapshotStore.read_file()` is the seam). Manifest `--json` output goes through `snapshot.manifest_bytes()`, not `model_dump_json()`, which is not the inverse of the manifest wire format. `doctor` passes each discovered install root and the executable names discovery found to `process` (`install_roots`, `extra_names`), and after a cross-product `gamedata.resolve_build` match prints only `.version` as a fact about the install, never the matched `product` or config hashes. `snap list` lists every manifest that loads and names each one that does not, exiting non-zero when any is damaged (`SnapshotStore.list()` raises on the first bad one today; a lenient public listing belongs in `snapshot`, not in private calls from the CLI).*
+*Amended 2026-09-21 from the M10-08, M10-09 and M10-10 reviews: `snap diff` includes the `luadata`-aware structural diff for `.lua` SavedVariables that `docs/LAB_PLAN.md` §6.9 specifies, falling back to the plain changed-path entry when either side does not parse (deferred from M10-10 because `luadata` did not exist; `SnapshotStore.read_file()` is the seam). Manifest `--json` output goes through `snapshot.manifest_bytes()`, not `model_dump_json()`, which is not the inverse of the manifest wire format. `doctor` passes each discovered install root and the executable names it finds in each flavor folder to `process` (`install_roots`, `extra_names`; discovery does not report executable names, reworded 2026-09-22 after the M10-05 review), and after a cross-product `gamedata.resolve_build` match prints only `.version` as a fact about the install, never the matched `product` or config hashes. `snap list` lists every manifest that loads and names each one that does not, exiting non-zero when any is damaged (`SnapshotStore.list()` raises on the first bad one today; a lenient public listing belongs in `snapshot`, not in private calls from the CLI).*
 
 ---
 

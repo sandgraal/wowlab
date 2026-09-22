@@ -339,7 +339,9 @@ opened on the client (L7). Access-denied on a process is reported as
 >   denies `exe()`, so the literal rule would make `guard` refuse forever.
 >   Consequence: a client with an unlisted executable name *and* a denied
 >   `exe()` reads as not running, so callers pass the install root they are
->   writing to and the executable names discovery found (`extra_names`).
+>   writing to and the executable names they find in its flavor folders
+>   (`extra_names`); discovery does not report executable names (reworded
+>   2026-09-22 after the M10-05 review).
 > - **Three routes to `cmdline()` on Windows, all closed.** The module does
 >   not call it there; psutil's `name()` on Windows does not use it; and
 >   psutil's own `Process.exe()` wrapper, which falls back to `cmdline()` when
