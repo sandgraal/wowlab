@@ -454,7 +454,7 @@ def test_parse_flavor_info(text: str, expected: str) -> None:
     assert parse_flavor_info(text) == expected
 
 
-def test_active_flag() -> None:
+def test_active_flag_constructed() -> None:
     rows = parse_build_info("Active!DEC:1\n1\n0\n\n2\nx\n").rows
     assert [r.is_active for r in rows] == [True, False, True, False]
 
