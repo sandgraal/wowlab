@@ -10,12 +10,17 @@ install and scrubs identity from it per `docs/LAB_PLAN.md` §8:
 - account folder, realm and character names become stable pseudonyms, in
   paths and in file contents (same input, same pseudonym, whole capture set).
   Both account layouts are read: `<account>/<Realm>/<Name>/`, and the Forever
-  beta's `<account>/<digits>/<Name>-<Suffix>/`, whose second part is a realm
-  or a player-chosen suffix [verify] and is scrubbed as a name either way. The
-  digits-only folder is a grouping level: never a content token, and given a
-  path-only numeric pseudonym (`1`, `2`, ...) in case it is a realm id;
+  beta's `<account>/<digits>/<First>-<Second>/`, whose second name (chosen by
+  the player) is scrubbed as an identity string of its own, with a realm-style
+  pseudonym. The digits-only folder is a grouping level: never a content
+  token, and given a path-only numeric pseudonym (`1`, `2`, ...) in case it is
+  a realm id;
 - identity CVars have their value blanked;
 - the owner's own `Player-<n>-<hex>` GUIDs become pseudonym GUIDs;
+- in a third-party addon file (any `.toc`, anything under `Interface/AddOns/`)
+  and in an edit-mode cache, an identity match refuses the file instead of
+  being replaced: addon text is public, so a pseudonym there would misstate
+  it and give the name away, and edit-mode layout names are length-prefixed;
 - a file whose scrubbed bytes or output path still contain an email address,
   a BattleTag, an unmapped player, account, guild or community GUID, a
   surviving identity string in any casing or embedding (CVar names included),
@@ -247,6 +252,16 @@ OLD_SUFFIX = ".old"
 CONFIG_NAMES = frozenset({"config.wtf", "config-cache.wtf"})
 # Blizzard's exported interface code is not a fixture (fixtures/README.md).
 EXPORTED_ADDON_PREFIX = "blizzard_"
+# Files whose text the owner did not write and that are publicly distributed
+# (any `.toc`, anything under `<flavor>/Interface/AddOns/`), and edit-mode
+# caches, whose layout names are length-prefixed (`6 Priest`). An identity
+# match in either is not replaced: it refuses the file. In addon text a
+# pseudonym would misstate the addon and, the original being public, reveal
+# the name it replaced; in an edit-mode cache a pseudonym of another length
+# corrupts the file.
+ADDON_TREE = ("interface", "addons")
+THIRD_PARTY_LABEL = "identity string inside a third-party addon file"
+LAYOUT_NAME_LABEL = "identity string inside a length-prefixed layout name"
 
 
 Span = tuple[int, int]
@@ -447,7 +462,7 @@ REALM_TRANSFORMS: tuple[Callable[[str], str], ...] = (
     _slug,
     lambda text: text.replace(" ", "_"),
     lambda text: text.replace("'", "\\'"),
-    # A second part known only from a `<Name>-<Suffix>` folder is written with
+    # A second name known only from a `<First>-<Second>` folder is written with
     # its spaces dropped; SavedVariables keys may still spell it spaced.
     _split_camel,
     lambda text: _split_camel(text, capitals=False),
@@ -512,8 +527,8 @@ class Identity:
         groups: Iterable[str] = (),
     ) -> None:
         """`realm_aliases`: other spellings of a realm in `realms` (a grouped
-        folder's casing), given that realm's pseudonym. `loose`: second parts of
-        `<Name>-<Suffix>` folders, hunted with a space, apostrophe or hyphen
+        folder's casing), given that realm's pseudonym. `loose`: second names of
+        `<First>-<Second>` folders, hunted with a space, apostrophe or hyphen
         between any two letters. `groups`: digits-only group folders, given
         path-only numeric pseudonyms.
         """
@@ -768,7 +783,7 @@ class Identity:
             ]
             if split:
                 problems.append(_located("identity string not replaced whole", data, split))
-        # A second part known only from its folder ("QuelThalas") may be spelled
+        # A second name known only from its folder ("QuelThalas") may be spelled
         # with a space, apostrophe or hyphen inside a file ("Quel'Thalas"). The
         # derived forms cover some of these; any other one refuses.
         if self._loose is not None:
@@ -1129,7 +1144,7 @@ _LOOSE_SEPARATOR = re.compile(rb"[ '\-\\]")
 
 
 def _loose_pattern(part: str) -> bytes | None:
-    """The letters of a second part, with an optional space, apostrophe, hyphen or `\\'`
+    """The letters of a second name, with an optional space, apostrophe, hyphen or `\\'`
     between any two. A short part (under EMBEDDED_MIN_CHARS letters) only as a whole word."""
     chars = [c for c in _nfc(part) if c not in " '-"]
     if len(chars) < 2:
@@ -1156,10 +1171,15 @@ def _inside(spans: list[Span], start: int, end: int) -> bool:
 
 def _located(label: str, data: bytes, hits: Sequence[re.Match[bytes]]) -> str:
     """`<label> x<count> (first at byte, line)`. Never the matched text."""
-    first = hits[0].start()
+    return _located_at(label, data, [m.start() for m in hits])
+
+
+def _located_at(label: str, data: bytes, offsets: Sequence[int]) -> str:
+    """`_located` for hits known by their offsets in `data`."""
+    first = offsets[0]
     line = data.count(b"\n", 0, first) + data.count(b"\r", 0, first) + 1
     line -= data.count(b"\r\n", 0, first)
-    return f"{label} x{len(hits)} (first at byte {first}, line {line})"
+    return f"{label} x{len(offsets)} (first at byte {first}, line {line})"
 
 
 # ─── reading the install (read-only) ─────────────────────────────────────────
@@ -1233,7 +1253,14 @@ def newest(paths: Sequence[Path]) -> Path | None:
 
 
 def newest_unit(units: Sequence[tuple[Path, ...]]) -> tuple[Path, ...] | None:
-    return max(units, key=lambda u: (max(_latest(p) for p in u), u[0].name), default=None)
+    """The most recently played character. The main folder decides: a twin is shared by
+    every `<First>-<Second>` folder with that first name, so its age says nothing about
+    which of them was played last."""
+    return max(
+        units,
+        key=lambda u: (_latest(u[0]), max(_latest(p) for p in u), u[0].name),
+        default=None,
+    )
 
 
 @dataclass(frozen=True)
@@ -1298,8 +1325,8 @@ def realm_dirs(account: Path) -> list[Path]:
 def is_group(name: str) -> bool:
     """A digits-only child of an account folder: a grouping level, never a name.
 
-    The Forever beta keeps characters under `<account>/<digits>/<Name>-<Suffix>/`
-    [verify: the number may be a region or realm-list id]. It is never a
+    The Forever beta keeps characters under `<account>/<digits>/<First>-<Second>/`
+    [verify: the number is almost certainly the realm's id]. It is never a
     content token (numbers in files stay byte-identical) and never a pseudonym
     source; in output paths it becomes a path-only numeric pseudonym.
     """
@@ -1307,11 +1334,12 @@ def is_group(name: str) -> bool:
 
 
 def split_character_folder(name: str) -> tuple[str, str] | None:
-    """`<Name>-<Suffix>` -> (name, second part), split on the FIRST hyphen.
+    """`<First>-<Second>` -> (first name, second name), split on the FIRST hyphen.
 
-    The second part is a realm or a player-chosen suffix [verify]; it is
-    scrubbed as a realm-category name either way. A character name never
-    contains a hyphen; a realm name may (`Azjol-Nerub`).
+    Forever characters have a player-chosen first and second name. The second
+    name is scrubbed as a realm-category name (its pseudonym starts
+    `Labrealm`), which keeps pseudonyms and output paths stable. A character
+    name never contains a hyphen [verify]; a realm name may (`Azjol-Nerub`).
     """
     character, hyphen, realm = name.partition("-")
     return (character, realm) if hyphen else None
@@ -1321,18 +1349,24 @@ def character_units(account: Path) -> list[tuple[Path, ...]]:
     """Each character of an account once, as its folder(s), the main folder first.
 
     Retail shape: `<account>/<Realm>/<Name>/`, one folder. Forever beta shape:
-    `<account>/<digits>/<Name>-<Suffix>/` holds the caches and SavedVariables,
-    and a retail-shaped twin `<account>/<Realm>/<Name>/` beside it holds only
-    AddOns.txt; the twin is matched by name and by the second part being a
-    spelling of its realm (second part: realm or player-chosen suffix, [verify]).
+    `<account>/<digits>/<First>-<Second>/` holds the caches and SavedVariables,
+    and a retail-shaped twin `<account>/<Realm>/<First>/` beside it holds only
+    AddOns.txt. The twin is found by FIRST name, never through the second
+    name: a group pairs with the realm folder(s) whose children are its first
+    names (see `_twin_realms`). One first name with several second names
+    (`70/Alyra-Bloodfist`, `70/Alyra-Sett`) shares its one twin (`Realm/Alyra/`),
+    so a twin may appear in several units.
     """
     parents = realm_dirs(account)
-    retail = [c for realm in parents if not is_group(realm.name) for c in subdirs(realm)]
+    realms = [p for p in parents if not is_group(p.name)]
+    groups = [p for p in parents if is_group(p.name)]
+    retail = [c for realm in realms for c in subdirs(realm)]
+    paired = _twin_realms(groups, realms)
     twinned: set[Path] = set()
     units: list[tuple[Path, ...]] = []
-    for group in (p for p in parents if is_group(p.name)):
+    for group in groups:
         for folder in subdirs(group):
-            twin = _twin(folder.name, [c for c in retail if c not in twinned])
+            twin = _twin(folder.name, paired[group])
             if twin is None:
                 units.append((folder,))
             else:
@@ -1342,20 +1376,70 @@ def character_units(account: Path) -> list[tuple[Path, ...]]:
     return units
 
 
-def _twin(folder_name: str, retail: Sequence[Path]) -> Path | None:
+def _first_names(group: Path) -> set[str]:
+    return {
+        _fold(split[0])
+        for folder in subdirs(group)
+        if (split := split_character_folder(folder.name)) is not None
+    }
+
+
+def _twin_realms(groups: Sequence[Path], realms: Sequence[Path]) -> dict[Path, list[Path]]:
+    """For each digits group, the realm folder(s) that may hold its twins.
+
+    A candidate has at least one child named like one of the group's first
+    names; candidates whose children are ALL first names of the group are
+    preferred. A group is one realm, so a group left with exactly one
+    candidate claims it and no other group keeps it, repeated until nothing
+    changes. A group that stays ambiguous keeps every candidate still free,
+    and its folders are paired one by one in `_twin`.
+    """
+    children_of = {realm: {_fold(c.name) for c in subdirs(realm)} for realm in realms}
+    candidates: dict[Path, list[Path]] = {}
+    for group in groups:
+        firsts = _first_names(group)
+        overlap = [r for r in realms if children_of[r] & firsts]
+        candidates[group] = [r for r in overlap if children_of[r] <= firsts] or overlap
+    settled: dict[Path, Path] = {}
+    changed = True
+    while changed:
+        changed = False
+        for group in groups:
+            if group in settled:
+                continue
+            free = [r for r in candidates[group] if r not in settled.values()]
+            if len(free) == 1:
+                settled[group] = free[0]
+                changed = True
+    return {
+        group: [settled[group]]
+        if group in settled
+        else [r for r in candidates[group] if r not in settled.values()]
+        for group in groups
+    }
+
+
+def _twin(folder_name: str, realms: Sequence[Path]) -> Path | None:
+    """The `<Realm>/<First>/` twin of a `<First>-<Second>` folder among these realm folders.
+
+    Matched by first name. Only when that leaves more than one (the group's
+    realm is ambiguous) does the second name break the tie, and only if it
+    happens to be a spelling of exactly one of the candidates' realms;
+    otherwise the folder stays unpaired.
+    """
     split = split_character_folder(folder_name)
     if split is None:
         return None
-    name, realm = split
-    for candidate in retail:
-        forms = {_fold(form) for form in _realm_forms(candidate.parent.name)}
-        if _fold(candidate.name) == _fold(name) and _fold(realm) in forms:
-            return candidate
-    return None
+    first, second = split
+    found = [c for realm in realms for c in subdirs(realm) if _fold(c.name) == _fold(first)]
+    if len(found) == 1:
+        return found[0]
+    spelled = [c for c in found if _fold(second) in {_fold(f) for f in _realm_forms(c.parent.name)}]
+    return spelled[0] if len(spelled) == 1 else None
 
 
 def character_labels(unit: Sequence[Path]) -> Iterator[str]:
-    """What `--character` accepts for this character: REALM/NAME, or a `<Name>-<Suffix>` folder."""
+    """What `--character` accepts for this character: REALM/NAME, or a `<First>-<Second>` folder."""
     for folder in unit:
         yield f"{folder.parent.name}/{folder.name}"
         if is_group(folder.parent.name):
@@ -1720,6 +1804,15 @@ def process(item: Item, identity: Identity, kinds: dict[str, str] | None = None)
     )
     dest, path_problems = identity.scrub_path(item.rel)
     path_rewritten = dest != item.rel
+    third_party = name.endswith(".toc") or (
+        len(item.rel.parts) > 3 and tuple(p.casefold() for p in item.rel.parts[1:3]) == ADDON_TREE
+    )
+    kept_whole: list[str] = []  # files an identity match refuses rather than rewrites
+    if result.edits and (third_party or kind_of(name) == "edit-mode-cache"):
+        label = THIRD_PARTY_LABEL if third_party else LAYOUT_NAME_LABEL
+        kept_whole.append(_located_at(label, original, [e.offset for e in result.edits]))
+    if third_party and path_rewritten:
+        path_problems = [*path_problems, f"in path: {THIRD_PARTY_LABEL}"]
     if kinds and dest.parts[0] in kinds:
         # The index files fixtures under <platform>/<flavor-kind>/, not the folder name.
         dest = PurePosixPath(kinds[dest.parts[0]], *dest.parts[1:])
@@ -1734,7 +1827,8 @@ def process(item: Item, identity: Identity, kinds: dict[str, str] | None = None)
                 n for n in found if REVIEW_CVAR_RE.search(n) and n.casefold() not in blanked
             )
         )
-    return Outcome(item, dest, result, [*result.problems, *path_problems], path_rewritten, review)
+    problems = [*result.problems, *kept_whole, *path_problems]
+    return Outcome(item, dest, result, problems, path_rewritten, review)
 
 
 def describe_bytes(data: bytes) -> list[str]:
@@ -1797,7 +1891,7 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
     realms: set[str] = set()
     characters: set[str] = set()
     pairs: set[tuple[str, str]] = set()  # (character, realm) folders that exist
-    grouped: set[tuple[str, str]] = set()  # (name, second part) of `<digits>/<Name>-<Suffix>`
+    grouped: set[tuple[str, str]] = set()  # (first, second name) of `<digits>/<First>-<Second>`
     groups: set[str] = set()  # the digits-only folders
     configs: list[Path] = []
 
@@ -1844,8 +1938,8 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
                 if realm.name.casefold() == SAVED_VARIABLES_DIR.casefold():
                     continue
                 if is_group(realm.name):
-                    # A grouping level, not a realm: its children are `<Name>-<Suffix>`,
-                    # the second part a realm or a player-chosen suffix [verify].
+                    # A grouping level, not a realm: its children are `<First>-<Second>`,
+                    # a first and a second name, both chosen by the player.
                     groups.add(realm.name)
                     for character in folders(listed(realm)):
                         split = split_character_folder(character.name)
@@ -1882,11 +1976,11 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
             elif GUID_RE.fullmatch(m.group(2)):
                 guids.add(m.group(2))
 
-    # The second part of a `<Name>-<Suffix>` folder (a realm or a player-chosen
-    # suffix, [verify]) is a realm-category name either way. One that is
+    # The second name of a `<First>-<Second>` folder is a realm-category name
+    # (a `Labrealm` pseudonym, so paths stay stable). One that is
     # already a spelling of a known realm, in any casing, keeps that realm's
     # pseudonym, so the folder `Labchara-LabrealmaPartb` matches
-    # `Labchara - Labrealma Partb` inside files; any other is a realm of its own.
+    # `Labchara - Labrealma Partb` inside files; any other gets a pseudonym of its own.
     known = {_fold(form) for realm in realms for form in _realm_forms(realm)}
     aliases: set[str] = set()
     for _name, second in sorted(grouped):
