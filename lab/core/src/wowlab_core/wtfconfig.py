@@ -30,12 +30,14 @@ Grammars (anything that does not match exactly is ``Unknown``):
   CR or LF). An action written as ``"..."`` with no inner quote is reported
   unwrapped, with ``quoted``.
 - ``VER <version> <hex id> "<name>" "<icon>"`` opens a macro record. The
-  pattern is anchored on the icon (no ``"``, space, CR or LF), so a name
-  that contains ``"`` still parses. Every following line is body up to a
-  line whose text is exactly ``END`` (compared byte for byte: no case
-  folding, no trimming). Lines outside a record are ``Unknown``. A record
-  that reaches the end of the file without ``END`` is reported with
-  ``complete=False``.
+  pattern is anchored on the icon (no ``"``, space, CR or LF: the observed
+  icon is a numeric file id, and icon names are believed to contain neither
+  **[verify]**), so a name containing ``"`` still parses; with more than two
+  quoted fields, everything before the last ``" "`` is the name. Every
+  following line is body up to a line whose text is exactly ``END``
+  (compared byte for byte: no case folding, no trimming). Lines outside a
+  record are ``Unknown``. A record that reaches the end of the file without
+  ``END`` is reported with ``complete=False``.
 
 Hand-edited lines that the client may still read (``set`` in lower case,
 extra spaces or tabs, an unquoted value) **[verify]** do not match these
@@ -254,7 +256,9 @@ class MacroHeaderLine(_Line):
 
     @property
     def name(self) -> str:
-        """The macro name as written; it may contain ``"``."""
+        """The macro name as written. A ``"`` inside it is accepted in case the
+        client writes one; whether the macro editor allows it is not observed
+        **[verify]**."""
         return _text(self._match().group(3))
 
     @property

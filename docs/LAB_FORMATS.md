@@ -155,13 +155,6 @@ capture **[verify]**; the deny-list lives in `scripts/lab_capture.py`.
 `bind BUTTON4 "CLICK SomeAddonButton:LeftButton"`. Header or mode lines
 exist in some versions **[verify]**; keep anything unmatched as `Unknown`.
 
-> **Note 2026-09-22 (M10-07 domain review), all [verify], from memory, none
-> observed:** other line kinds a `bindings-cache.wtf` may carry are
-> `BINDINGMODE <n>`, `modifiedclick <ACTION> <MODIFIER>`, and cleared keys
-> written as `bind KEY NONE` or with an empty action. `wowlab_core.wtfconfig`
-> keeps `BINDINGMODE`, `modifiedclick` and an empty-action line as `Unknown`,
-> and types `bind KEY NONE` as-is (action `NONE`).
-
 ## 7. `macros-cache.txt`
 
 Records:
@@ -298,3 +291,10 @@ Dated entries, newest last. Each names the fixture that prompted it.
   as text. `chat-cache.txt` ends with a blank line, and `ZONECHANNELS` is a
   bitmask, not a count. The macro icon `134400` is believed to be the
   question-mark icon, meaning "use the spell's icon" **[verify]**.
+- **2026-09-22, §6, no fixture (M10-07 domain review).** All **[verify]**,
+  from memory, none observed: other line kinds a `bindings-cache.wtf` may
+  carry are `BINDINGMODE <n>`, `modifiedclick <ACTION> <MODIFIER>`, and
+  cleared keys written as `bind KEY NONE` or with an empty action.
+  `wowlab_core.wtfconfig` keeps `BINDINGMODE`, `modifiedclick` and an
+  empty-action line as `Unknown`, and types `bind KEY NONE` as-is (action
+  `NONE`).
