@@ -17,10 +17,12 @@ install and scrubs identity from it per `docs/LAB_PLAN.md` §8:
   a realm id;
 - identity CVars have their value blanked;
 - the owner's own `Player-<n>-<hex>` GUIDs become pseudonym GUIDs;
-- in a third-party addon file (any `.toc`, anything under `Interface/AddOns/`)
-  and in an edit-mode cache, an identity match refuses the file instead of
-  being replaced: addon text is public, so a pseudonym there would misstate
-  it and give the name away, and edit-mode layout names are length-prefixed;
+- in a third-party addon file (any `.toc`, anything under `Interface/AddOns/`),
+  in AddOns.txt and in an edit-mode cache, an identity match refuses the file
+  instead of being replaced: addon text and addon names are public, so a
+  pseudonym there would misstate them and give the name away, and edit-mode
+  layout names are length-prefixed. A SavedVariables file is refused when a
+  match lands inside a longer word or in the file's own name (addon-named);
 - a file whose scrubbed bytes or output path still contain an email address,
   a BattleTag, an unmapped player, account, guild or community GUID, a
   surviving identity string in any casing or embedding (CVar names included),
@@ -259,9 +261,20 @@ EXPORTED_ADDON_PREFIX = "blizzard_"
 # pseudonym would misstate the addon and, the original being public, reveal
 # the name it replaced; in an edit-mode cache a pseudonym of another length
 # corrupts the file.
+#
+# Addon names are public too: AddOns.txt lists them, and a SavedVariables file
+# is named after its addon and holds keys built from that name. So in
+# AddOns.txt any identity match refuses, and in a SavedVariables file a match
+# inside a longer word, or in the file's own name, refuses.
+#
+# The third-party and addon-list refusals give a count only: an offset into
+# public text would point at the name.
 ADDON_TREE = ("interface", "addons")
 THIRD_PARTY_LABEL = "identity string inside a third-party addon file"
 LAYOUT_NAME_LABEL = "identity string inside a length-prefixed layout name"
+ADDON_LIST_LABEL = "identity string inside an addon name"
+EMBEDDED_LABEL = "identity string inside a longer word"
+ADDON_FILE_NAME_LABEL = "identity string inside an addon's file name"
 
 
 Span = tuple[int, int]
@@ -1352,28 +1365,50 @@ def character_units(account: Path) -> list[tuple[Path, ...]]:
     `<account>/<digits>/<First>-<Second>/` holds the caches and SavedVariables,
     and a retail-shaped twin `<account>/<Realm>/<First>/` beside it holds only
     AddOns.txt. The twin is found by FIRST name, never through the second
-    name: a group pairs with the realm folder(s) whose children are its first
-    names (see `_twin_realms`). One first name with several second names
+    name: a group pairs with the realm folder that holds its first names (see
+    `_twin_realms`). One first name with several second names
     (`70/Alyra-Bloodfist`, `70/Alyra-Qorv`) shares its one twin (`Realm/Alyra/`),
     so a twin may appear in several units.
+
+    A `<Realm>/<First>/` folder named like a first name of ANY group is a twin
+    shape, never a character of its own, even when it cannot be paired: the
+    played character is the `<digits>/<First>-<Second>/` folder, and an
+    unpaired one is captured without an AddOns.txt (see `unpaired_twins`).
     """
     parents = realm_dirs(account)
     realms = [p for p in parents if not is_group(p.name)]
     groups = [p for p in parents if is_group(p.name)]
-    retail = [c for realm in realms for c in subdirs(realm)]
+    firsts = {name for group in groups for name in _first_names(group)}
     paired = _twin_realms(groups, realms)
-    twinned: set[Path] = set()
     units: list[tuple[Path, ...]] = []
     for group in groups:
         for folder in subdirs(group):
             twin = _twin(folder.name, paired[group])
-            if twin is None:
-                units.append((folder,))
-            else:
-                twinned.add(twin)
-                units.append((folder, twin))
-    units.extend((c,) for c in retail if c not in twinned)
+            units.append((folder,) if twin is None else (folder, twin))
+    units.extend((c,) for realm in realms for c in subdirs(realm) if _fold(c.name) not in firsts)
     return units
+
+
+def unpaired_twins(unit: Sequence[Path]) -> int:
+    """How many `<Realm>/<First>/` folders could have been this grouped character's twin.
+
+    Non-zero only for a `<digits>/<First>-<Second>/` unit left without a twin
+    because the pairing was ambiguous.
+    """
+    if len(unit) != 1 or not is_group(unit[0].parent.name):
+        return 0
+    split = split_character_folder(unit[0].name)
+    if split is None:
+        return 0
+    account = unit[0].parent.parent
+    wanted = _fold(split[0])
+    return sum(
+        1
+        for realm in realm_dirs(account)
+        if not is_group(realm.name)
+        for c in subdirs(realm)
+        if _fold(c.name) == wanted
+    )
 
 
 def _first_names(group: Path) -> set[str]:
@@ -1387,36 +1422,60 @@ def _first_names(group: Path) -> set[str]:
 def _twin_realms(groups: Sequence[Path], realms: Sequence[Path]) -> dict[Path, list[Path]]:
     """For each digits group, the realm folder(s) that may hold its twins.
 
+    Nothing here depends on the order of the folders: every round is decided
+    on the whole set of groups at once.
+
     A candidate has at least one child named like one of the group's first
-    names; candidates whose children are ALL first names of the group are
-    preferred. A group is one realm, so a group left with exactly one
-    candidate claims it and no other group keeps it, repeated until nothing
-    changes. A group that stays ambiguous keeps every candidate still free,
-    and its folders are paired one by one in `_twin`.
+    names. A group is one realm, so a group whose only free candidate is R
+    claims R, unless another group's only free candidate is also R (then
+    neither does). When no group can claim that way, the candidates whose
+    children are ALL first names of the group ("preferred") are tried the
+    same way, and such a round is dropped whole if it would leave any other
+    group with no free candidate. Repeated until nothing changes.
+
+    A group that is never settled keeps only the free candidates no other
+    unsettled group also has; its folders are paired one by one in `_twin`,
+    and a contested realm folder pairs with nobody.
     """
     children_of = {realm: {_fold(c.name) for c in subdirs(realm)} for realm in realms}
-    candidates: dict[Path, list[Path]] = {}
-    for group in groups:
-        firsts = _first_names(group)
-        overlap = [r for r in realms if children_of[r] & firsts]
-        candidates[group] = [r for r in overlap if children_of[r] <= firsts] or overlap
+    firsts = {group: _first_names(group) for group in groups}
+    candidates = {g: [r for r in realms if children_of[r] & firsts[g]] for g in groups}
+    preferred = {g: [r for r in candidates[g] if children_of[r] <= firsts[g]] for g in groups}
     settled: dict[Path, Path] = {}
-    changed = True
-    while changed:
-        changed = False
-        for group in groups:
-            if group in settled:
-                continue
-            free = [r for r in candidates[group] if r not in settled.values()]
-            if len(free) == 1:
-                settled[group] = free[0]
-                changed = True
-    return {
-        group: [settled[group]]
-        if group in settled
-        else [r for r in candidates[group] if r not in settled.values()]
-        for group in groups
-    }
+
+    def free(group: Path, pool: dict[Path, list[Path]]) -> list[Path]:
+        return [r for r in pool[group] if r not in settled.values()]
+
+    def claims(pool: dict[Path, list[Path]], guarded: bool) -> dict[Path, Path]:
+        open_groups = [g for g in groups if g not in settled]
+        wanted: dict[Path, list[Path]] = {}
+        for group in open_groups:
+            left = free(group, pool)
+            if len(left) == 1:
+                wanted.setdefault(left[0], []).append(group)
+        won = {group[0]: realm for realm, group in wanted.items() if len(group) == 1}
+        if guarded:
+            taken = set(won.values())
+            for group in open_groups:
+                if group not in won and not [r for r in free(group, candidates) if r not in taken]:
+                    return {}  # preferring would leave this group with nothing
+        return won
+
+    while True:
+        won = claims(candidates, guarded=False) or claims(preferred, guarded=True)
+        if not won:
+            break
+        settled.update(won)
+
+    open_groups = [g for g in groups if g not in settled]
+    result: dict[Path, list[Path]] = {}
+    for group in groups:
+        if group in settled:
+            result[group] = [settled[group]]
+            continue
+        others = {r for g in open_groups if g != group for r in free(g, candidates)}
+        result[group] = [r for r in free(group, candidates) if r not in others]
+    return result
 
 
 def _twin(folder_name: str, realms: Sequence[Path]) -> Path | None:
@@ -1566,6 +1625,7 @@ class Planner:
         self.args = args
         self.items: dict[Path, Item] = {}
         self.skipped: list[str] = []
+        self.notes: list[str] = []  # plan-level, for the owner's eye; never a real name
         self._verdicts: dict[Path, Verdict | None] = {}
 
     def add(
@@ -1662,6 +1722,12 @@ class Planner:
                     u for u in units if key in {_nfc(n).casefold() for n in character_labels(u)}
                 ]
             character = newest_unit(units) or ()
+            candidates = unpaired_twins(character)
+            if candidates:
+                self.notes.append(
+                    f"{flavor.name}: the chosen character's retail-style twin could not be "
+                    f"paired ({candidates} candidate folders); no AddOns.txt is captured for it"
+                )
             for name in (*CHARACTER_FILES, *CHARACTER_CACHE_FILES):
                 for folder in character:
                     self.add(flavor, child(folder, name))
@@ -1789,7 +1855,24 @@ def _os_reason(error: OSError) -> str:
 
 def _scrubbed_label(item: Item, identity: Identity) -> PurePosixPath:
     dest, problems = identity.scrub_path(item.rel)
-    return PurePosixPath(dest.parts[0], "<path withheld>") if problems else dest
+    withhold = problems or _path_refusals(item.rel, dest)
+    return PurePosixPath(dest.parts[0], "<path withheld>") if withhold else dest
+
+
+def _third_party(rel: PurePosixPath) -> bool:
+    """A `.toc` anywhere, or anything under `<flavor>/Interface/AddOns/`, in any casing."""
+    return rel.name.casefold().endswith(".toc") or (
+        len(rel.parts) > 3 and tuple(p.casefold() for p in rel.parts[1:3]) == ADDON_TREE
+    )
+
+
+def _path_refusals(rel: PurePosixPath, dest: PurePosixPath) -> list[str]:
+    """Path problems that come from WHERE a rewrite landed, not from what survived it."""
+    if _third_party(rel) and dest != rel:
+        return [f"in path: {THIRD_PARTY_LABEL}"]
+    if kind_of(rel.name) == "savedvariables" and dest.name != rel.name:
+        return [f"in path: {ADDON_FILE_NAME_LABEL}"]
+    return []
 
 
 def process(item: Item, identity: Identity, kinds: dict[str, str] | None = None) -> Outcome:
@@ -1804,15 +1887,19 @@ def process(item: Item, identity: Identity, kinds: dict[str, str] | None = None)
     )
     dest, path_problems = identity.scrub_path(item.rel)
     path_rewritten = dest != item.rel
-    third_party = name.endswith(".toc") or (
-        len(item.rel.parts) > 3 and tuple(p.casefold() for p in item.rel.parts[1:3]) == ADDON_TREE
-    )
+    kind = kind_of(name)
     kept_whole: list[str] = []  # files an identity match refuses rather than rewrites
-    if result.edits and (third_party or kind_of(name) == "edit-mode-cache"):
-        label = THIRD_PARTY_LABEL if third_party else LAYOUT_NAME_LABEL
-        kept_whole.append(_located_at(label, original, [e.offset for e in result.edits]))
-    if third_party and path_rewritten:
-        path_problems = [*path_problems, f"in path: {THIRD_PARTY_LABEL}"]
+    if result.edits and (_third_party(item.rel) or kind == "addons-txt"):
+        label = ADDON_LIST_LABEL if kind == "addons-txt" else THIRD_PARTY_LABEL
+        kept_whole.append(f"{label} x{len(result.edits)}")  # no offset: see ADDON_TREE
+    elif result.edits and kind == "edit-mode-cache":
+        kept_whole.append(
+            _located_at(LAYOUT_NAME_LABEL, original, [e.offset for e in result.edits])
+        )
+    elif kind == "savedvariables" and result.embedded:
+        glued = [e.offset for e in result.edits if e.embedded]
+        kept_whole.append(_located_at(EMBEDDED_LABEL, original, glued))
+    path_problems = [*path_problems, *_path_refusals(item.rel, dest)]
     if kinds and dest.parts[0] in kinds:
         # The index files fixtures under <platform>/<flavor-kind>/, not the folder name.
         dest = PurePosixPath(kinds[dest.parts[0]], *dest.parts[1:])
@@ -2153,6 +2240,9 @@ def run(args: argparse.Namespace) -> int:
     if args.show_map:
         for real, pseudonym in identity.names.items():
             print(f"  {real!r} -> {pseudonym!r}")
+
+    for note in planner.notes:
+        print(f"note     {note}")
 
     rows: list[str] = []
     written: set[Path] = set()

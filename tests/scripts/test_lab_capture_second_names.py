@@ -167,10 +167,10 @@ def test_constructed_automatic_toc_selection_passes_over_an_identity_match(
     written = outputs(out)
     assert written[f"macos/{FLAVOR}/Interface/AddOns/Plain/Plain.toc"] == PLAIN_TOC.encode()
     assert not [d for d in written if "Anchor" in d]
-    assert (
-        f"  {FLAVOR}/Interface/AddOns/Anchor/Anchor.toc: {THIRD_PARTY} x1 "
-        "(first at byte 43, line 3)"
-    ) in stdout.splitlines()
+    # A count only: an offset into public text would point at the name.
+    assert f"  {FLAVOR}/Interface/AddOns/Anchor/Anchor.toc: {THIRD_PARTY} x1" in (
+        stdout.splitlines()
+    )
     assert "AnchorLabrealm" not in stdout
 
 
@@ -180,10 +180,10 @@ def test_constructed_explicit_toc_with_an_identity_match_is_refused(
     out = tmp_path / "incoming"
     assert capture(forever, out, "--toc", "Anchor") == 1
     stdout = capsys.readouterr().out
-    assert (
-        f"REFUSED  macos/{FLAVOR}/Interface/AddOns/Anchor/Anchor.toc: {THIRD_PARTY} x1 "
-        "(first at byte 43, line 3)"
-    ) in stdout.splitlines()
+    assert f"REFUSED  macos/{FLAVOR}/Interface/AddOns/Anchor/Anchor.toc: {THIRD_PARTY} x1" in (
+        stdout.splitlines()
+    )
+    assert "first at byte" not in stdout
     assert not [d for d in outputs(out) if "Anchor" in d]
 
 
@@ -210,12 +210,89 @@ def test_constructed_any_file_under_interface_addons_is_third_party(tmp_path: Pa
         item = lab_capture.Item(source, PurePosixPath(rel), FLAVOR, "1", "savedvariables")
         return list(lab_capture.process(item, identity).problems)
 
-    assert run(b"local Qorv = 1\n", "_f_/interface/ADDONS/Anchor/Core.lua") == [
-        f"{THIRD_PARTY} x1 (first at byte 6, line 1)"
-    ]
+    assert run(b"local Qorv = 1\n", "_f_/interface/ADDONS/Anchor/Core.lua") == [f"{THIRD_PARTY} x1"]
     assert run(b"local x = 1\n", "_f_/Interface/AddOns/Anchor/Core.lua") == []
     # The same text anywhere else is scrubbed as before.
     assert run(b"local Qorv = 1\n", "_f_/WTF/Account/A/SavedVariables/Core.lua") == []
+
+
+def test_constructed_unreadable_addon_file_never_prints_its_rewritten_folder(
+    forever: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Security S3: the label of an unreadable file withholds a rewritten addon path."""
+    addons = forever / FLAVOR / "Interface" / "AddOns"
+    _write(addons / "AlyraBars" / "AlyraBars.toc", PLAIN_TOC)
+    real_read = lab_capture.read_bytes
+
+    def read(path: Path, max_lines: int | None = None) -> bytes:
+        if path.name == "AlyraBars.toc":
+            raise PermissionError("constructed")
+        return real_read(path, max_lines)
+
+    monkeypatch.setattr(lab_capture, "read_bytes", read)
+    out = tmp_path / "incoming"
+    assert capture(forever, out, "--toc", "AlyraBars") == 1
+    stdout = capsys.readouterr().out
+    assert f"REFUSED  macos/{FLAVOR}/<path withheld>: unreadable (PermissionError)" in stdout
+    assert f"  {FLAVOR}/<path withheld>: unreadable (PermissionError)" in stdout.splitlines()
+    assert "LabcharaBars" not in stdout and "Alyra" not in stdout
+
+
+# ─── security S1: addon names in AddOns.txt and SavedVariables ───────────────
+
+ADDON_LIST = "identity string inside an addon name"
+EMBEDDED = "identity string inside a longer word"
+ADDON_FILE_NAME = "identity string inside an addon's file name"
+
+
+def test_constructed_addons_txt_naming_an_addon_after_a_name_is_refused(
+    forever: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    twin = forever / FLAVOR / "WTF" / "Account" / ACCOUNT / "Some Realm" / "Alyra" / "AddOns.txt"
+    twin.write_bytes(b"AnchorQorvey: enabled\nPlain: enabled\n")
+    os.utime(twin, (OLD + 200, OLD + 200))
+    out = tmp_path / "incoming"
+    assert capture(forever, out) == 1
+    stdout = capsys.readouterr().out
+    assert f"REFUSED  {TWIN_ADDONS}: {ADDON_LIST} x1" in stdout.splitlines()
+    assert TWIN_ADDONS not in outputs(out) and "AnchorLabrealm" not in stdout
+
+
+def test_constructed_savedvariables_with_a_glued_name_or_named_after_one_is_refused(
+    tmp_path: Path,
+) -> None:
+    identity = Identity(characters=["Alyra"], realms=["Some Realm", "Qorv"], loose=["Qorv"])
+    source = tmp_path / "x.lua"
+
+    def run(text: bytes, rel: str) -> list[str]:
+        source.write_bytes(text)
+        item = lab_capture.Item(source, PurePosixPath(rel), FLAVOR, "1", "savedvariables")
+        return list(lab_capture.process(item, identity).problems)
+
+    saved = "_f_/WTF/Account/A/SavedVariables"
+    glued = b'\nAnchorQorveyDB = {\n\t["Alyra"] = 1,\n}\n'
+    assert run(glued, f"{saved}/Anchor.lua") == [f"{EMBEDDED} x1 (first at byte 7, line 2)"]
+    assert run(b"\nAnchorDB = 1\n", f"{saved}/AnchorQorvey.lua") == [f"in path: {ADDON_FILE_NAME}"]
+    assert run(b"\nAnchorDB = 1\n", f"{saved}/AnchorQorvey.lua.bak") == [
+        f"in path: {ADDON_FILE_NAME}"
+    ]
+    # A whole-word name is scrubbed as before.
+    assert run(b'\nAnchorDB = {\n\t["Alyra - Qorv"] = 1,\n}\n', f"{saved}/Anchor.lua") == []
+
+
+def test_constructed_savedvariables_file_named_after_a_name_withholds_its_path(
+    forever: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    saved = forever / FLAVOR / "WTF" / "Account" / ACCOUNT / "SavedVariables"
+    _write(saved / "AnchorQorvey.lua", "\nAnchorDB = 1\n")
+    out = tmp_path / "incoming"
+    assert capture(forever, out, "--sv", "AnchorQorvey.lua") == 1
+    stdout = capsys.readouterr().out
+    assert f"REFUSED  macos/{FLAVOR}/<path withheld>: in path: {ADDON_FILE_NAME}" in stdout
+    assert "AnchorLabrealm" not in stdout and not [d for d in outputs(out) if "Anchor" in d]
 
 
 # ─── 3. an identity match in an edit-mode cache refuses it ───────────────────
@@ -265,3 +342,27 @@ def test_constructed_nul_ended_caches_round_trip_byte_for_byte(
         assert written[dest] == EDIT_MODE, dest
     result = Identity(characters=["Alyra"], realms=["Qorv"]).scrub(EDIT_MODE + FLAGGED)
     assert result.data == EDIT_MODE + FLAGGED and not result.edits and not result.problems
+
+
+# ─── code review C2: an ambiguous twin is never a character of its own ───────
+
+
+def test_constructed_ambiguous_twin_leaves_the_character_captured_with_a_note(
+    forever: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    account = forever / FLAVOR / "WTF" / "Account" / ACCOUNT
+    _write(account / "Other Realm" / "Alyra" / "AddOns.txt", "Plain: enabled\n")
+    _stamp(OLD + 300, account / "Other Realm")  # newest of all, and still not a character
+    out = tmp_path / "incoming"
+    assert capture(forever, out) == 0
+    stdout = capsys.readouterr().out
+    written = outputs(out)
+    assert any(d.endswith("-Labrealmd/chat-cache.txt") for d in written), sorted(written)
+    assert not [d for d in written if d.endswith("AddOns.txt")]
+    assert (
+        f"note     {FLAVOR}: the chosen character's retail-style twin could not be paired "
+        "(2 candidate folders); no AddOns.txt is captured for it"
+    ) in stdout.splitlines()
+    units = lab_capture.character_units(account)
+    assert sorted(u[0].name for u in units) == ["Alyra-Bloodfist", "Alyra-Moon", "Alyra-Qorv"]
+    assert all(len(u) == 1 for u in units)

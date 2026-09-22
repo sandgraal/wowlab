@@ -307,13 +307,16 @@ def test_constructed_name_that_is_a_game_word_leaves_cvar_names_and_toc_keys_alo
 def test_constructed_embedded_count_reaches_the_row_and_the_summary(
     install: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    _write(
-        saved_variables(install) / "Words.lua", f'\nWords = {{\n\t["{MAIN}sBank"] = "{MAIN}",\n}}\n'
-    )
-    assert capture(install, tmp_path / "incoming", "--flavor", "_retail_", "--sv", "Words.lua") == 0
+    # A SavedVariables file with a name glued to a word is now refused (second
+    # follow-up, security S1), so the embedded count is shown on a cache file.
+    character = install.joinpath(*RETAIL_ACCOUNT, REALM, MAIN)
+    _write(character / "layout-local.txt", f"Frame: {MAIN}sBank {MAIN}\n")
+    assert capture(install, tmp_path / "incoming", "--flavor", "_retail_") == 0
     stdout = capsys.readouterr().out
     row = next(
-        line for line in stdout.splitlines() if line.startswith("| `") and "Words.lua" in line
+        line
+        for line in stdout.splitlines()
+        if line.startswith("| `") and "Labchara/layout-local.txt" in line
     )
     assert "identity-rewritten: 2; embedded: 1" in row
     assert "edits, 1 embedded)" in stdout
