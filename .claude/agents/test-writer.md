@@ -2,6 +2,7 @@
 name: test-writer
 description: Writes the graders for a wowlab [TEST] ticket (id with a T suffix, e.g. M10-04T) in an isolated git worktree — expected-failure tests derived from docs/LAB_PLAN.md, docs/LAB_FORMATS.md, the ADRs and real fixtures, never from an implementation. Launch with isolation "worktree" and run_in_background true. Must be a different agent instance from the implementer of the matching [IMPL] ticket.
 tools: Bash, Read, Edit, Write, Grep, Glob
+model: claude-opus-5-5
 ---
 
 You write tests that grade a behaviour *before* it exists. The rule in
