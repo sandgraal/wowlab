@@ -97,15 +97,23 @@ FACTION_WORDS = frozenset({"horde", "alliance", "neutral"})
 VOCABULARY_PARTNERS = FACTION_WORDS | {"us", "eu", "kr", "tw", "cn", "default"}
 _LETTERS = rb"A-Za-z\x80-\xff"
 # What joins a name to a realm: "Name-Realm", "Name - Realm", DataStore's
-# "Default.Realm.Name", and the other single-character joints addons use.
-_JOINT = rb"(?: - |[-.|:/_])"
+# "Default.Realm.Name", and the other single-character joints addons use. Any
+# run of blanks around the joint character counts ("Horde  - Realm" is still
+# the same key), so a stray space never turns a refusal into a note. Bare
+# blanks, commas and words ("Jaina Area52", "Jaina of Area52") are not
+# joints; those neighbours are caught by the capitalised-word note instead.
+_JOINT = rb"(?:[ \t]*[-.|:/_][ \t]*)"
 _UNIT_TOKENS = (
     "player|target|focus|mouseover|cursor|pet|none|vehicle|npc|softenemy|softfriend|"
     "softinteract|party|raid|arena|boss|nameplate"
 )
+# Slash commands that take a player's name, `@Name` / `target=Name` unit
+# references that are not unit tokens, and a `/run` or `/script` line that
+# calls SendChatMessage (its fourth argument is a whisper target).
 SOCIAL_MACRO_RE = re.compile(
-    rb"(?:\A|(?<=[\r\n]))[ \t]*/(?:w|whisper|tell|t|invite|inv|ginvite|tar|target|friend|ignore"
-    rb"|focus|assist|follow)(?=[ \t])"
+    rb"(?:\A|(?<=[\r\n]))[ \t]*/(?:w|whisper|who|tell|t|invite|inv|ginvite|tar|targetexact"
+    rb"|target|friend|ignore|focus|assist|follow|pr|cw)(?=[ \t])"
+    rb"|(?:\A|(?<=[\r\n]))[ \t]*/(?:run|script)[ \t][^\r\n]*?SendChatMessage[ \t]*\("
     rb"|(?:@|target=)(?!(?:%s)(?:target|pet)*[0-9]*(?![%s]))[%s]+"
     % (_UNIT_TOKENS.encode(), _LETTERS, _LETTERS),
     re.IGNORECASE,
@@ -170,9 +178,16 @@ EXPORTED_ADDON_PREFIX = "blizzard_"
 
 
 Span = tuple[int, int]
-_BEYOND_AFTER = re.compile(_JOINT + rb"([%s]+)" % _LETTERS)
-_BEYOND_BEFORE = re.compile(rb"([%s]+)%s\Z" % (_LETTERS, _JOINT))
-_PAREN_BEFORE = re.compile(rb"([%s]+) ?\(\Z" % _LETTERS)
+# A partner word is letters AND digits: "Jaina9" is a word, not an absent
+# neighbour. A word that is only digits ("Realm-2", a profile copy) is nobody
+# and is looked past.
+_BEYOND_AFTER = re.compile(_JOINT + rb"([%s]+)" % _WORD)
+_BEYOND_BEFORE = re.compile(rb"([%s]+)%s\Z" % (_WORD, _JOINT))
+_PAREN_BEFORE = re.compile(rb"([%s]+) ?\(\Z" % _WORD)
+# A word that starts with a capital (or a non-ASCII byte, which may be one),
+# at a word boundary, for the same-line note.
+_CAPITALISED_RE = re.compile(rb"(?<![%s])[A-Z\x80-\xff][%s]*" % (_WORD, _WORD))
+_LINE_BREAK_RE = re.compile(rb"[\r\n]")
 
 
 def _fold(word: str) -> str:
@@ -646,14 +661,24 @@ class Identity:
         if self._own_realm is not None:
             foreign: list[re.Match[bytes]] = []
             tolerated: list[re.Match[bytes]] = []
+            unexplained: list[re.Match[bytes]] = []
+            line: tuple[int, int, bool] = (0, -1, False)  # start, end, has an unexplained word
             for m in self._own_realm.finditer(scrubbed):
                 verdict = self._partner(scrubbed, m)
                 if verdict == "foreign":
                     foreign.append(m)
                 elif verdict == "vocabulary":
                     tolerated.append(m)
+                # A name joined by something that is not a joint ("Jaina Area52",
+                # "Jaina, Area 52", "Jaina of Area52") is not refused: the same
+                # line is read once for any capitalised word nobody accounts for.
+                if m.start() > line[1]:
+                    line = self._line_with_stranger(scrubbed, m.start())
+                if line[2]:
+                    unexplained.append(m)
             report(problems, "someone else's name on an own realm", foreign)
             report(notes, "own realm next to a faction, region or 'Default' word", tolerated)
+            report(notes, "own realm near an unexplained capitalised word", unexplained)
         report(
             notes,
             "Name-Realm-shaped string that is not a pseudonym pair",
@@ -668,9 +693,12 @@ class Identity:
         """Who stands next to this own-realm pseudonym: "own", "vocabulary", or "foreign".
 
         Looks at `<word><joint><realm>`, `<word> (<realm>)` and
-        `<realm><joint><word>`, and one segment further when the word is a
-        faction. A word longer than the window is cut short, which makes it
-        foreign: the safe direction.
+        `<realm><joint><word>`, and keeps looking one segment further for as
+        long as the word is vocabulary (a faction, a region, `Default`) or
+        only digits: "Jaina - Horde - <realm>", "Jaina-US-<realm>",
+        "Default.<realm>.Jaina" and "<realm>-US-Jaina" all end on Jaina. A word
+        longer than the window is cut short, which makes it foreign: the safe
+        direction.
         """
 
         def before(position: int) -> re.Match[bytes] | None:
@@ -679,37 +707,67 @@ class Identity:
         def after(position: int) -> re.Match[bytes] | None:
             return _BEYOND_AFTER.match(scrubbed, position)
 
-        # (word, the segment beyond it)
-        words: list[tuple[bytes, re.Match[bytes] | None]] = []
+        def walk(
+            found: re.Match[bytes],
+            step: Callable[[int], re.Match[bytes] | None],
+            edge: Callable[[re.Match[bytes]], int],
+        ) -> str:
+            """Read one side outward; stop at the first word that is a person or an own name."""
+            chain = [self._kind(found.group(1))]
+            beyond: re.Match[bytes] | None = found
+            while chain[-1] in ("vocabulary", "number") and beyond is not None:
+                # The faction, region or number is fine; the segment beyond it may not be.
+                beyond = step(edge(beyond))
+                if beyond is not None:
+                    chain.append(self._kind(beyond.group(1)))
+            if chain[-1] == "foreign":
+                return "foreign"
+            # A plain number next to the realm ("<realm>-2") is nobody: as good as own.
+            return "vocabulary" if "vocabulary" in chain else "own"
+
+        verdicts: set[str] = set()
         leading = before(match.start())
         if leading is None:
             leading = _PAREN_BEFORE.search(scrubbed, max(0, match.start() - 160), match.start())
         if leading is not None:
-            words.append((leading.group(1), before(leading.start())))
+            verdicts.add(walk(leading, before, lambda m: m.start()))
         trailing = after(match.end())
         if trailing is not None:
-            words.append((trailing.group(1), after(trailing.end())))
-        if not words:
-            return "own"
-
-        verdicts = set()
-        for raw, beyond in words:
-            kind = self._kind(raw)
-            if kind == "vocabulary" and self._word(raw) in FACTION_WORDS and beyond is not None:
-                # "Jaina - Horde - <realm>": the faction is fine, the segment beyond it may not be.
-                kind = "foreign" if self._kind(beyond.group(1)) == "foreign" else kind
-            verdicts.add(kind)
-        return next(v for v in ("foreign", "vocabulary", "own") if v in verdicts)
+            verdicts.add(walk(trailing, after, lambda m: m.end()))
+        return next((v for v in ("foreign", "vocabulary", "own") if v in verdicts), "own")
 
     @staticmethod
     def _word(raw: bytes) -> str:
         return _fold(raw.decode("utf-8", errors="replace"))
 
     def _kind(self, raw: bytes) -> str:
+        """ "own" (a pseudonym word), "vocabulary", "number" (digits only) or "foreign"."""
         word = self._word(raw)
         if word in self._partner_words:
             return "own"
-        return "vocabulary" if word in VOCABULARY_PARTNERS else "foreign"
+        if word in VOCABULARY_PARTNERS:
+            return "vocabulary"
+        return "number" if raw.isdigit() else "foreign"
+
+    def _line_with_stranger(self, scrubbed: bytes, position: int) -> tuple[int, int, bool]:
+        """The line around `position`, and whether it holds a capitalised word nobody accounts for.
+
+        Accounted for: every word of every pseudonym, the faction, region and
+        `Default` vocabulary, and the format keywords (`Player-` GUIDs, `SET`).
+        Read once per line, however many own-realm pseudonyms the line holds.
+        """
+        start = max(scrubbed.rfind(b"\n", 0, position), scrubbed.rfind(b"\r", 0, position)) + 1
+        end_match = _LINE_BREAK_RE.search(scrubbed, position)
+        end = end_match.start() if end_match else len(scrubbed)
+        for m in _CAPITALISED_RE.finditer(scrubbed, start, end):
+            word = self._word(m.group(0))
+            if (
+                word not in self._partner_words
+                and word not in VOCABULARY_PARTNERS
+                and word not in RESERVED_WORDS
+            ):
+                return start, end, True
+        return start, end, False
 
     def _is_pair(self, match: re.Match[bytes]) -> bool:
         """Is every word of this quoted string a pseudonym or a faction/region/'Default' word?"""

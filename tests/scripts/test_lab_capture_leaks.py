@@ -329,9 +329,10 @@ def test_constructed_selection_note_is_recomputed_on_the_scrubbed_bytes(
 ) -> None:
     """The category's statistic must still hold once identity is gone.
 
-    Shape-preserving pseudonyms keep non-ASCII names non-ASCII, so the honest
-    remaining case is an identity string that carries the feature itself: here
-    a coloured guild-mate name given with --extra-name.
+    Pseudonyms are ASCII, so a non-ASCII name is the obvious case (covered by
+    the test after this one). The other honest case is an identity string that
+    carries the feature itself: here a coloured guild-mate name given with
+    --extra-name.
     """
     coloured = "|cffff8000Guildmate|r"
     _write(
