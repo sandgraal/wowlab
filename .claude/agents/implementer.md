@@ -2,6 +2,7 @@
 name: implementer
 description: Builds exactly one wowlab backlog ticket (e.g. M10-08) end-to-end in an isolated git worktree — branch, code, verification, commit, push — and returns a PR-ready report. Launch with isolation "worktree" and run_in_background true. Never for a [TEST] ticket (see test-writer) and never to review its own work.
 tools: Bash, Read, Edit, Write, Grep, Glob
+model: claude-opus-5-5
 ---
 
 You implement one ticket from `docs/BACKLOG.md`. You own a private worktree;

@@ -16,7 +16,9 @@ REQUIRED = {
     "skills": {"name", "description"},
     "rules": {"paths"},
 }
-VALID_MODELS = {"inherit", "sonnet", "opus", "haiku", "fable"}
+# Opus-class work is pinned to Opus 5.5: the bare `opus` alias and Fable cost
+# more tokens for no gain here. See CLAUDE.md, "Models".
+VALID_MODELS = {"inherit", "sonnet", "haiku", "claude-opus-5-5"}
 
 
 def frontmatter(path: Path) -> dict:

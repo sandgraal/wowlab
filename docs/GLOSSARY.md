@@ -102,7 +102,7 @@ Anything weekly is anchored to the character's region, never to the local machin
 
 **Install, product, flavor** — one Battle.net install directory holds several *products* (retail, Classic, PTR, a beta), each in its own *flavor folder* (`_retail_`, `_classic_`, …) and all sharing one `Data/` store. The product code (`wow`, `wow_classic`, …) is what Battle.net and data sites key on; the flavor folder is what is on disk. Neither is stable across a beta-to-launch transition, so library code discovers both and hard-codes neither (L6).
 
-**Build** — the last component of a client version (`12.1.5.65432` → `65432`). Game data tables are valid for exactly one build. "Patch" is the first three components.
+**Build** — the last component of a client version (`12.1.5.65432` → `65432`). Game data tables are valid for exactly one build. "Patch" is the first three components. The last component alone is not unique: the wago.tools recording (M10-08) lists `2.5.5.68575` and `2.5.6.68575` under one product with the same build config, so anything keyed by build uses the full four-part version string, never the integer.
 
 **Interface version** — the integer an addon's TOC declares to say which client it supports (`120105`). Derived from the patch number, not the build. A mismatch marks the addon "out of date"; it does not change what API exists.
 

@@ -25,7 +25,7 @@ Create `lab/core/` as the uv workspace's only member, `wowlab-core` (import `wow
 
 ---
 
-## [ ] M10-02 — Fixture capture and scrub tool
+## [x] M10-02 — Fixture capture and scrub tool
 **Size:** M · **Depends on:** M10-01
 
 `scripts/lab_capture.py`, standard library only, runnable as `uv run python scripts/lab_capture.py --root <install> --out lab/core/tests/fixtures/incoming/`. Copies the capture set in `docs/handoffs/M10-03.md` from a real install and scrubs it per `docs/LAB_PLAN.md` §8: stable pseudonyms for account folder, character and realm names (in paths and in file contents), identity CVars blanked, and a hard refusal (non-zero exit, nothing written for that file) if an email address, a BattleTag or an unmapped `Player-<n>-<hex>` GUID survives. Byte-level targeted replacement only; it never parses and re-serializes. Prints a provenance row per file ready to paste into the index. Opens the install read-only and writes only under `--out` (L1).
@@ -90,7 +90,7 @@ Graders for `wowlab_core.luadata` parsing, derived from `docs/LAB_PLAN.md` §6.4
 
 ---
 
-## [ ] M10-08 — Game data client
+## [x] M10-08 — Game data client
 **Size:** M · **Depends on:** M10-01
 
 `wowlab_core.gamedata` per `docs/LAB_PLAN.md` §6.6 and ADR-0022. Record the builds endpoint and one small table's CSV from wago.tools as fixtures (manual `@pytest.mark.live` capture run by the implementer, responses committed, no credentials involved); add the source to `docs/DATA_SOURCES.md` with the URL shapes the recordings show.
@@ -99,7 +99,7 @@ Graders for `wowlab_core.luadata` parsing, derived from `docs/LAB_PLAN.md` §6.4
 
 ---
 
-## [ ] M10-09 — Client process detection
+## [x] M10-09 — Client process detection
 **Size:** S · **Depends on:** M10-01
 
 `wowlab_core.process` per `docs/LAB_PLAN.md` §6.7. `psutil` process listing only (ADR-0023).
@@ -110,7 +110,7 @@ Graders for `wowlab_core.luadata` parsing, derived from `docs/LAB_PLAN.md` §6.4
 
 ---
 
-## [ ] M10-10 — Snapshot store
+## [x] M10-10 — Snapshot store
 **Size:** L · **Depends on:** M10-01
 
 `wowlab_core.snapshot` per `docs/LAB_PLAN.md` §6.9. Works on any directory tree with explicit subtrees; integration with `layout` defaults happens in M10-14.
@@ -134,6 +134,8 @@ Graders for `wowlab_core.guard` from `docs/LAB_PLAN.md` §6.10 and ADR-0021, aga
 `lab/core/src/wowlab_core/guard.py`. Activate graders by deleting marker lines only. A repository-wide test greps `lab/` for `open(` with a write mode, `write_text`, `write_bytes`, `os.replace`, `shutil.copy*`, `shutil.move`, `unlink` and `rmtree` outside `guard.py`, `snapshot.py`, `gamedata.py` and tests, and fails on a hit that is not allowlisted with a reason (L2).
 
 **Acceptance:** all M10-11T graders green; the write-site test green; on Windows CI the locked-file case reports a typed error and rolls back. Reviewed by `security-reviewer`.
+
+*Amended 2026-09-21 (owner decision after the M10-11T reviews): the non-required `lab (windows)` job must be green on the merge commit, with the run link pasted in the PR, because 32 of the write-gate graders (junctions, alternate data streams, reserved names, drive-letter and backslash escapes, the locked-file rollback) run only there. `guard` calls `wowlab_core.process` with its default probe only, passes the install root and the executable names it finds in the flavor folder, and treats `unknown` or any probe exception as running (`docs/LAB_PLAN.md` §6.7 amendment). Snapshot manifests and the journal are untrusted at rollback, undo and restore time.*
 
 ---
 
@@ -168,6 +170,8 @@ Graders from `docs/LAB_PLAN.md` §6.4 (serializer half) and `docs/LAB_FORMATS.md
 Commands, flags and exit codes per `docs/LAB_PLAN.md` §6.11. `snap create` uses `layout` to resolve the default subtrees. `snap restore` and `undo` go through `guard`, print the plan, and ask unless `--yes`. Reviewed by `domain-reviewer` (output wording).
 
 **Acceptance:** each command has a test through Typer's runner against the captured tree or a synthetic install; every data command's `--json` output validates against its Pydantic model; exit code 3 when guard refuses; `wowlab explain <path>` returns the file-map entry for ten representative paths. A transcript of `wowlab doctor`, `tree --explain`, `sv dump`, `snap create`, a guarded edit and `undo` on a synthetic install is pasted in the PR.
+
+*Amended 2026-09-21 from the M10-08, M10-09 and M10-10 reviews: `snap diff` includes the `luadata`-aware structural diff for `.lua` SavedVariables that `docs/LAB_PLAN.md` §6.9 specifies (deferred from M10-10 because `luadata` did not exist; `SnapshotStore.read_file()` is the seam). Manifest `--json` output goes through `snapshot.manifest_bytes()`, not `model_dump_json()`, which is not the inverse of the manifest wire format. `doctor` passes the executable names discovery found to `process` via `extra_names`, and after a cross-product `gamedata.resolve_build` match prints only `.version` as a fact about the install, never the matched `product` or config hashes. `snap list` must surface loadable manifests even when one is damaged (`SnapshotStore.list()` raises on the first bad one today).*
 
 ---
 

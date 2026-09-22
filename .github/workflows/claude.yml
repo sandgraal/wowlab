@@ -49,6 +49,6 @@ jobs:
           # Model pinned and workspace header forwarded as in
           # claude-review.yml; see the comment on its job `env`.
           claude_args: |
-            --model claude-opus-5
+            --model claude-opus-5-5
             --max-turns 40
             --allowedTools "Read,Grep,Glob"

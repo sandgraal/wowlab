@@ -24,7 +24,7 @@ jobs:
       id-token: write
     env:
       # Pinned so reviews are reproducible across Claude Code releases.
-      REVIEW_MODEL: claude-opus-5
+      REVIEW_MODEL: claude-opus-5-5
       # Every run through PR #11 failed on its first request (is_error, 0
       # tokens). The preflight below named the cause on 2026-09-16: "This API
       # key is not scoped to a workspace, so this request must include the
@@ -49,6 +49,7 @@ jobs:
       # will send, surfaces the real error type and message. API error bodies
       # carry no secrets; the key is masked by Actions.
       - name: Check API access for the review model
+        id: preflight
         if: steps.secret.outputs.present == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -65,17 +66,30 @@ jobs:
           if [ "$status" != "200" ]; then
             # Escape %, CR and LF so the message cannot start a new workflow command.
             detail=$(jq -r '((.error.type // "unknown") + ": " + (.error.message // "no message")) | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A")' "$RUNNER_TEMP/preflight.json" 2>/dev/null || echo "unparseable response")
+            # Exhausted credit, a rate limit or an overloaded API is not a
+            # misconfiguration: skip cleanly (this check is advisory) rather
+            # than paint every PR red until the limit resets (2026-09-21).
+            # A bad key, model or workspace still fails loudly.
+            case "$status:$detail" in
+              429:*|529:*|*:rate_limit_error:*|*:overloaded_error:*|*"specified API usage limits"*|*"credit balance is too low"*)
+                echo "::warning title=Automated review skipped::HTTP ${status} ${detail}"
+                echo "Automated review skipped: HTTP ${status} ${detail}" >> "$GITHUB_STEP_SUMMARY"
+                echo "available=false" >> "$GITHUB_OUTPUT"
+                exit 0
+                ;;
+            esac
             echo "::error title=Anthropic API rejected ${REVIEW_MODEL}::HTTP ${status} ${detail}"
             exit 1
           fi
           echo "API key can call ${REVIEW_MODEL}"
+          echo "available=true" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: steps.secret.outputs.present == 'true'
+        if: steps.preflight.outputs.available == 'true'
         with:
           fetch-depth: 1
           persist-credentials: false
       - uses: anthropics/claude-code-action@4036a180cf690f49529f5d8c79c998855287f590 # v1.0.230
-        if: steps.secret.outputs.present == 'true'
+        if: steps.preflight.outputs.available == 'true'
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # Tracking comment: the reviewer's summary is the final update to
