@@ -84,6 +84,7 @@ EXPECTED: dict[str, dict[str, Any]] = {
                 "version": "1.60.1.69913",
                 "build": 69913,
                 "build_key": _MACOS_BUILD_KEY,
+                "matching_rows": 1,
             }
         ],
         "rows": [
@@ -97,22 +98,23 @@ EXPECTED: dict[str, dict[str, Any]] = {
                     "OSX x86_64 US? acct-USA? geoip-US? enUS speech?:"
                     "OSX x86_64 US? acct-USA? geoip-US? enUS text?"
                 ),
-                "extra": {
-                    "CDN Key": _MACOS_CDN_KEY,
-                    "Install Key": "",
-                    "IM Size": "",
-                    "CDN Path": "tpr/wow",
-                    "CDN Hosts": "level3.blizzard.com us.cdn.blizzard.com",
-                    "CDN Servers": (
+                "extra": (
+                    ("CDN Key", _MACOS_CDN_KEY),
+                    ("Install Key", ""),
+                    ("IM Size", ""),
+                    ("CDN Path", "tpr/wow"),
+                    ("CDN Hosts", "level3.blizzard.com us.cdn.blizzard.com"),
+                    (
+                        "CDN Servers",
                         "http://level3.blizzard.com/?maxhosts=8 "
                         "http://us.cdn.blizzard.com/?maxhosts=4&fallback=1 "
                         "https://level3.ssl.blizzard.com/?maxhosts=4&fallback=1 "
-                        "https://us.cdn.blizzard.com/?maxhosts=4&fallback=1"
+                        "https://us.cdn.blizzard.com/?maxhosts=4&fallback=1",
                     ),
-                    "Armadillo": "",
-                    "Last Activated": "",
-                    "KeyRing": "",
-                },
+                    ("Armadillo", ""),
+                    ("Last Activated", ""),
+                    ("KeyRing", ""),
+                ),
             }
         ],
     },
@@ -147,12 +149,13 @@ def test_real_fixture_resolves_to_expected_install(platform: str, tmp_path: Path
         root=root,
         flavors=tuple(Flavor(**f, path=root / str(f["folder"])) for f in expected["flavors"]),
         products=tuple(BuildInfoRow(**r) for r in expected["rows"]),
-        raw_build_info=raw.decode("utf-8"),
-    )
-    assert install.raw_build_info.encode("utf-8") == raw, (
-        "raw_build_info is the file, byte for byte"
+        other_dirs=(),
+        raw_build_info=raw,
+        decode_errors=False,
     )
     assert read_install(root) == install
+    assert Install.model_validate_json(install.model_dump_json()) == install, "JSON round-trip"
+    assert hash(install) == hash(read_install(root)), "an Install is hashable"
 
 
 @pytest.mark.parser
@@ -162,7 +165,7 @@ def test_real_fixture_every_cell_is_kept_in_header_order(platform: str, tmp_path
     each data line of the real file exactly, in header order."""
     root = _install_from_fixtures(platform, tmp_path)
     install = read_install(root)
-    lines = install.raw_build_info.split("\n")
+    lines = install.raw_build_info.decode("utf-8").split("\n")
     header = lines[0].split("|")
     names = [cell.split("!", 1)[0] for cell in header]
     known = {
@@ -176,9 +179,10 @@ def test_real_fixture_every_cell_is_kept_in_header_order(platform: str, tmp_path
     data_lines = [line for line in lines[1:] if line]
     assert len(data_lines) == len(install.products)
     for line, row in zip(data_lines, install.products, strict=True):
-        assert list(row.extra) == [n for n in names if n not in known], "extra keeps header order"
+        extra_names = [name for name, _ in row.extra]
+        assert extra_names == [n for n in names if n not in known], "extra keeps header order"
         cells = [
-            getattr(row, known[n]) if n in known else row.extra[n]  # rebuilt from the model
+            getattr(row, known[n]) if n in known else row.extra_map[n]  # rebuilt from the model
             for n in names
         ]
         assert "|".join(cells) == line

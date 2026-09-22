@@ -10,7 +10,9 @@ variable or a real default location: `environ` and `defaults` are injected.
 
 from __future__ import annotations
 
+import base64
 import io
+import json
 import os
 import stat
 import sys
@@ -20,11 +22,13 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 import wowlab_core
 from wowlab_core import install as install_mod
 from wowlab_core.install import (
     ENV_ROOT,
+    Install,
     InstallError,
     InstallNotFoundError,
     NotAnInstallError,
@@ -126,9 +130,17 @@ def test_defaults_come_from_default_roots_when_not_given(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     default = _real_install(tmp_path / "default")
-    monkeypatch.setattr(install_mod, "default_roots", lambda: (default,))
+    seen: list[object] = []
 
-    assert discover(environ={}).root == default
+    def fake_default_roots(**kwargs: object) -> tuple[Path, ...]:
+        seen.append(kwargs.get("environ"))
+        return (default,)
+
+    monkeypatch.setattr(install_mod, "default_roots", fake_default_roots)
+    environ = {"SystemDrive": "E:"}
+
+    assert discover(environ=environ).root == default
+    assert seen == [environ], "the injected environ reaches default_roots (SystemDrive)"
 
 
 def test_no_install_anywhere_raises_not_found_with_the_search_list(tmp_path: Path) -> None:
@@ -139,6 +151,11 @@ def test_no_install_anywhere_raises_not_found_with_the_search_list(tmp_path: Pat
 
     assert caught.value.searched == tuple(candidates)
     assert isinstance(caught.value, InstallError)
+    assert str(caught.value) == (
+        f"no WoW install at the default locations (searched: {candidates[0]}, "
+        f"{candidates[1]}); pass the install folder (the one that holds .build.info) "
+        "or set WOWLAB_WOW_ROOT"
+    )
 
 
 def test_explicit_root_without_build_info_raises_typed_error(tmp_path: Path) -> None:
@@ -150,7 +167,11 @@ def test_explicit_root_without_build_info_raises_typed_error(tmp_path: Path) -> 
 
     assert caught.value.root == root
     assert caught.value.source == "argument"
+    assert caught.value.reason == "missing"
     assert isinstance(caught.value, InstallError)
+    assert str(caught.value) == (
+        f"{root} (from argument) is not a WoW install: it has no .build.info"
+    )
 
 
 def test_environment_root_without_build_info_raises_and_does_not_fall_through(
@@ -174,10 +195,88 @@ def test_build_info_that_is_a_directory_is_not_an_install_constructed(tmp_path: 
     root = _make_install(tmp_path, None)
     (root / ".build.info").mkdir()
 
-    with pytest.raises(NotAnInstallError):
+    with pytest.raises(NotAnInstallError) as caught:
         discover(root, environ={}, defaults=[])
+    assert caught.value.reason == "not_regular"
+    assert str(caught.value) == (
+        f"{root} (from argument) is not a WoW install: .build.info is not a regular file"
+    )
     with pytest.raises(NotAnInstallError):
         read_install(root)
+    with pytest.raises(NotAnInstallError) as from_default:
+        discover(environ={}, defaults=[root])
+    assert (from_default.value.source, from_default.value.reason) == ("default", "not_regular")
+
+
+_POSIX_PERMS = pytest.mark.skipif(
+    sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="needs POSIX permission bits and a non-root user",
+)
+
+
+@_POSIX_PERMS
+def test_unreadable_build_info_is_unreadable_not_missing_constructed(tmp_path: Path) -> None:
+    root = _real_install(tmp_path)
+    info = root / ".build.info"
+    info.chmod(0)
+    try:
+        with pytest.raises(NotAnInstallError) as caught:
+            discover(root, environ={}, defaults=[])
+        with pytest.raises(NotAnInstallError) as from_default:
+            discover(environ={}, defaults=[root])
+    finally:
+        info.chmod(0o644)
+    assert caught.value.reason == "unreadable"
+    assert caught.value.strerror
+    assert str(caught.value) == (
+        f"{root} (from argument) is not a WoW install: "
+        f"cannot read .build.info ({caught.value.strerror})"
+    )
+    assert from_default.value.reason == "unreadable", "a refused default is reported, not skipped"
+
+
+@_POSIX_PERMS
+def test_unsearchable_root_is_unreadable_not_missing_constructed(tmp_path: Path) -> None:
+    root = _real_install(tmp_path)
+    root.chmod(0)
+    try:
+        with pytest.raises(NotAnInstallError) as caught:
+            resolve_root(environ={ENV_ROOT: str(root)}, defaults=[])
+    finally:
+        root.chmod(0o755)
+    assert (caught.value.source, caught.value.reason) == ("environment", "unreadable")
+
+
+def test_flavor_folder_passed_as_root_points_at_the_parent(tmp_path: Path) -> None:
+    root = _real_install(tmp_path)
+    flavor = root / REAL_FOLDER
+
+    with pytest.raises(NotAnInstallError) as caught:
+        discover(flavor, environ={}, defaults=[])
+
+    assert str(caught.value) == (
+        f"{flavor} (from argument) is not a WoW install: it has no .build.info"
+        f"; this looks like the flavor folder {REAL_FOLDER!r}; pass its parent {root}"
+    )
+
+
+def test_child_of_install_without_flavor_info_points_at_the_parent_constructed(
+    tmp_path: Path,
+) -> None:
+    root = _make_install(tmp_path, REAL_BUILD_INFO, {"_bare_": None})
+
+    with pytest.raises(NotAnInstallError) as caught:
+        read_install(root / "_bare_")
+
+    assert str(caught.value).endswith(
+        f"; this looks like the flavor folder '_bare_'; pass its parent {root}"
+    )
+
+
+def test_unrelated_folder_gets_no_flavor_hint(tmp_path: Path) -> None:
+    with pytest.raises(NotAnInstallError) as caught:
+        read_install(tmp_path)
+    assert "flavor folder" not in str(caught.value)
 
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="POSIX FIFOs")
@@ -213,17 +312,29 @@ def test_default_roots_macos() -> None:
     assert default_roots("darwin") == (PurePosixPath("/Applications/World of Warcraft"),)
 
 
-def test_default_roots_windows_system_drive_first_then_every_drive() -> None:
-    got = default_roots("win32", drives=["D:\\", "c:\\", "E:\\"])
+def _win_roots(*drives: str) -> tuple[PureWindowsPath, ...]:
+    return tuple(
+        PureWindowsPath(f"{d}:\\{p}World of Warcraft")
+        for d in drives
+        for p in ("", "Program Files (x86)\\", "Program Files\\")
+    )
 
-    assert got == (
+
+def test_default_roots_windows_c_first_without_system_drive_then_every_drive() -> None:
+    got = default_roots("win32", drives=["D:\\", "c:\\", "E:\\"], environ={})
+
+    assert got == _win_roots("C", "D", "E")
+    assert got[:3] == (
+        PureWindowsPath("C:\\World of Warcraft"),
         PureWindowsPath("C:\\Program Files (x86)\\World of Warcraft"),
         PureWindowsPath("C:\\Program Files\\World of Warcraft"),
-        PureWindowsPath("D:\\Program Files (x86)\\World of Warcraft"),
-        PureWindowsPath("D:\\Program Files\\World of Warcraft"),
-        PureWindowsPath("E:\\Program Files (x86)\\World of Warcraft"),
-        PureWindowsPath("E:\\Program Files\\World of Warcraft"),
     )
+
+
+def test_default_roots_windows_system_drive_from_environment_comes_first() -> None:
+    got = default_roots("win32", drives=["C:\\", "D:\\"], environ={"SystemDrive": "d:"})
+
+    assert got == _win_roots("D", "C")
 
 
 @pytest.mark.parametrize("platform", ["linux", "freebsd14", "cygwin"])
@@ -291,6 +402,8 @@ def test_flavor_with_no_matching_row_is_kept_with_version_none_constructed(
     orphan = got.flavors[1]
     assert orphan.product == "wow"
     assert (orphan.version, orphan.build, orphan.build_key) == (None, None, None)
+    assert orphan.matching_rows == 0
+    assert got.flavors[0].matching_rows == 1
     assert got.flavors[0].version == "1.60.1.69913"
 
 
@@ -304,7 +417,9 @@ def test_two_rows_for_one_product_prefer_the_active_one_constructed(tmp_path: Pa
     )
     root = _make_install(tmp_path, text.encode(), {"_retail_": _flavor_info("wow")})
 
-    assert read_install(root).flavors[0].version == "12.1.5.65432"
+    (flavor,) = read_install(root).flavors
+    assert flavor.version == "12.1.5.65432"
+    assert flavor.matching_rows == 2
 
 
 def test_folders_that_are_not_flavors_are_ignored_constructed(tmp_path: Path) -> None:
@@ -321,9 +436,28 @@ def test_folders_that_are_not_flavors_are_ignored_constructed(tmp_path: Path) ->
     )
     (root / "_flavor_info_is_a_dir_").mkdir()
     (root / "_flavor_info_is_a_dir_" / ".flavor.info").mkdir()
-    (root / "_file_").write_bytes(b"")
+    (root / "_file_").write_bytes(b"")  # a regular file is ignored, not listed
 
-    assert [f.folder for f in read_install(root).flavors] == [REAL_FOLDER]
+    got = read_install(root)
+
+    assert [f.folder for f in got.flavors] == [REAL_FOLDER]
+    assert got.other_dirs == ("_flavor_info_is_a_dir_", "_no_flavor_info_")
+
+
+def test_symlinked_flavor_folder_is_listed_not_followed_constructed(tmp_path: Path) -> None:
+    elsewhere = tmp_path / "elsewhere" / "_linked_"
+    elsewhere.mkdir(parents=True)
+    (elsewhere / ".flavor.info").write_bytes(REAL_FLAVOR_INFO)
+    root = _real_install(tmp_path / "install")
+    try:
+        (root / "_linked_").symlink_to(elsewhere, target_is_directory=True)
+    except OSError as exc:  # Windows without the symlink privilege
+        pytest.skip(f"cannot create a symlink here: {exc}")
+
+    got = read_install(root)
+
+    assert [f.folder for f in got.flavors] == [REAL_FOLDER]
+    assert got.other_dirs == ("_linked_",)
 
 
 def test_empty_flavor_info_gives_an_empty_product_and_no_version_constructed(
@@ -341,7 +475,8 @@ def test_empty_build_info_is_an_install_with_no_products_constructed(tmp_path: P
     got = read_install(root)
 
     assert got.products == ()
-    assert got.raw_build_info == ""
+    assert got.raw_build_info == b""
+    assert got.decode_errors is False
     assert got.flavors[0].product == "wow_classic_beta"
     assert got.flavors[0].version is None
 
@@ -367,8 +502,8 @@ def test_unknown_column_is_kept_in_extra_in_header_order_constructed() -> None:
 
     (row,) = parse_build_info(text).rows
 
-    assert row.extra == {"Zeta": "z", "Alpha": "7"}
-    assert list(row.extra) == ["Zeta", "Alpha"]
+    assert row.extra == (("Zeta", "z"), ("Alpha", "7"))
+    assert row.extra_map == {"Zeta": "z", "Alpha": "7"}
     assert (row.product, row.version) == ("wow", "12.1.5.65432")
     assert row.build_key is None, "a column the header lacks is None, not empty"
 
@@ -392,7 +527,7 @@ def test_duplicate_header_name_keeps_both_cells_constructed() -> None:
     (row,) = parse_build_info("Product!STRING:0|Product!STRING:0\nwow|wowt\n").rows
 
     assert row.product == "wow"
-    assert row.extra == {"Product#1": "wowt"}
+    assert row.extra == (("Product#1", "wowt"),)
 
 
 def test_crlf_and_bom_parse_and_raw_keeps_them_constructed(tmp_path: Path) -> None:
@@ -401,7 +536,8 @@ def test_crlf_and_bom_parse_and_raw_keeps_them_constructed(tmp_path: Path) -> No
 
     got = read_install(root)
 
-    assert got.raw_build_info.encode("utf-8") == data
+    assert got.raw_build_info == data
+    assert got.decode_errors is False
     (flavor,) = got.flavors
     assert (flavor.product, flavor.version, flavor.build) == (
         "wow_classic_beta",
@@ -417,8 +553,45 @@ def test_undecodable_bytes_survive_in_raw_build_info_constructed(tmp_path: Path)
 
     got = read_install(root)
 
-    assert got.raw_build_info.encode("utf-8", "surrogateescape") == data
+    assert got.raw_build_info == data
+    assert got.decode_errors is True
+    assert got.products[0].extra_map["CDN Path"] == "tpr/\ufffd\ufffd"
     assert got.flavors[0].version == "1.60.1.69913"
+    assert Install.model_validate_json(got.model_dump_json()) == got
+
+
+def test_undecodable_flavor_info_sets_decode_errors_constructed(tmp_path: Path) -> None:
+    info = REAL_FLAVOR_INFO.replace(b"beta\n", b"beta\xff\n")
+    root = _make_install(tmp_path, REAL_BUILD_INFO, {REAL_FOLDER: info})
+
+    got = read_install(root)
+
+    assert got.decode_errors is True
+    assert got.flavors[0].product == "wow_classic_beta\ufffd"
+    assert got.flavors[0].version is None, "the damaged code joins no row"
+    assert Install.model_validate_json(got.model_dump_json()) == got
+
+
+def test_json_carries_raw_build_info_as_base64(tmp_path: Path) -> None:
+    got = read_install(_real_install(tmp_path))
+    dumped = json.loads(got.model_dump_json())
+
+    assert base64.urlsafe_b64decode(dumped["raw_build_info"]) == REAL_BUILD_INFO
+    assert Install.model_validate_json(got.model_dump_json()) == got
+
+
+def test_install_is_hashable_and_cannot_be_mutated(tmp_path: Path) -> None:
+    got = read_install(_real_install(tmp_path))
+
+    assert hash(got) == hash(read_install(got.root))
+    assert {got: 1}[got] == 1
+    with pytest.raises(ValidationError):
+        got.flavors = ()  # type: ignore[misc]
+    with pytest.raises(ValidationError):
+        got.products[0].extra = ()  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        got.products[0].extra_map["CDN Path"] = "x"  # type: ignore[index]
+    assert isinstance(got.products[0].extra, tuple)
 
 
 def test_non_numeric_last_version_component_gives_no_build_constructed(tmp_path: Path) -> None:

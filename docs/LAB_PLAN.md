@@ -174,6 +174,40 @@ A flavor folder with no matching row is returned with `version=None`, not
 dropped. Discovery never raises on a partial install; it raises only when the
 root has no `.build.info`.
 
+*Amended 2026-09-22 (M10-05 reviews):*
+(1) **Windows defaults.** For each drive `os.listdrives()` returns, the
+search tries `<drive>\World of Warcraft`, then
+`<drive>\Program Files (x86)\World of Warcraft`, then
+`<drive>\Program Files\World of Warcraft`. The system drive
+(`%SystemDrive%`, else `C:`) comes first. Every listed drive is probed,
+because telling fixed drives from removable or network ones needs a Win32
+call, which is out of scope. (2) **Explicit root and `WOWLAB_WOW_ROOT` are
+final.** If either names a directory that is not an install, discovery raises
+`NotAnInstallError` and does not fall through to a default. A default that
+holds a `.build.info` that is not a regular file, or cannot be read, is
+reported, not skipped. (3) **Frozen and hashable.** Each `.build.info` row is
+a `BuildInfoRow` whose `extra` is an immutable tuple of `(name, value)` pairs
+in header order (read-only `extra_map` accessor), not a `dict`, so `Install`
+is hashable and truly frozen. `Install.products` holds the rows in file
+order. (4) **Undecodable bytes.** `Install.raw_build_info` is `bytes`
+(lossless, L4), carried in JSON as base64 and validated back, so
+`model_validate_json(model_dump_json())` is the identity. Parsed text fields
+decode with `errors="replace"`. `Install.decode_errors` is true when
+`.build.info` or any `.flavor.info` had bytes that are not UTF-8.
+(5) **`Flavor.matching_rows`** counts the rows that name the flavor's
+product. When there are several, the first active one wins, else the first.
+This is a deterministic tie-break, not client behaviour **[verify]**.
+(6) **`Install.other_dirs`** lists children named `_*_` that are not reported
+as flavors, because they have no regular `.flavor.info` or are symlinks.
+Symlinked `_*_` folders are not followed, consistent with M10-06.
+(7) **Typed errors.** `NotAnInstallError` carries a `reason` (`missing`,
+`not_regular`, `unreadable`); a permission refusal is never reported as
+absent. The one error is a root without a readable, regular `.build.info`.
+A root that looks like a flavor folder gets a pointer to its parent. When no
+default holds an install, discovery raises `InstallNotFoundError`, which
+lists the locations it searched. Executable names are not part of
+discovery; `guard` finds them itself (M10-11 amendment).
+
 ### 6.2 `layout` — typed walk of a flavor (M10-06)
 
 Pure read. Produces the inventory every later tool starts from:
