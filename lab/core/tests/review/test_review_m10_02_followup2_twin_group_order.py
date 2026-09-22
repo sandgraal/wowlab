@@ -58,8 +58,8 @@ def _pairing(tmp: Path, folders: dict[str, str], twins: list[str]) -> dict[str, 
 
 
 def _both_orders(tmp_path: Path, twins: list[str]) -> tuple[dict[str, str | None], ...]:
-    first = _pairing(tmp_path / "a", {"70": "Alyra-Sett", "71": "Alyra-Glade"}, twins)
-    second = _pairing(tmp_path / "b", {"71": "Alyra-Sett", "70": "Alyra-Glade"}, twins)
+    first = _pairing(tmp_path / "a", {"70": "Alyra-Qorv", "71": "Alyra-Glade"}, twins)
+    second = _pairing(tmp_path / "b", {"71": "Alyra-Qorv", "70": "Alyra-Glade"}, twins)
     return first, second
 
 
@@ -69,7 +69,7 @@ def test_constructed_positive_control_pairing_ignores_the_digits_folder_names(
     """No leftover: the data cannot tell the two realms apart, and in either order
     both characters stay unpaired rather than being guessed."""
     first, second = _both_orders(tmp_path, ["Some Realm/Alyra", "Other Realm/Alyra"])
-    assert first == second == {"Alyra-Sett": None, "Alyra-Glade": None}
+    assert first == second == {"Alyra-Qorv": None, "Alyra-Glade": None}
 
 
 def test_constructed_leftover_twin_does_not_make_pairing_depend_on_folder_order(
@@ -80,6 +80,6 @@ def test_constructed_leftover_twin_does_not_make_pairing_depend_on_folder_order(
     must not move a twin from one character to the other."""
     twins = ["Some Realm/Alyra", "Some Realm/Dax", "Other Realm/Alyra"]
     first, second = _both_orders(tmp_path, twins)
-    # At ffd35b5 the order 70, 71 pairs Alyra-Sett with Other Realm/Alyra and leaves
+    # At ffd35b5 the order 70, 71 pairs Alyra-Qorv with Other Realm/Alyra and leaves
     # Alyra-Glade unpaired; the order 71, 70 does the reverse.
     assert first == second

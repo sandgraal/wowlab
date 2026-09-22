@@ -27,16 +27,16 @@ Identity = lab_capture.Identity
 
 FLAVOR = "_classic_beta_"
 OUT_ACCOUNT = f"macos/{FLAVOR}/WTF/Account/90000001#1"
-# Realm-category names sort bloodfist, moon, sett, some realm: a, b, c, d.
+# Realm-category names sort bloodfist, moon, qorv, some realm: a, b, c, d.
 SETT_DIR = f"{OUT_ACCOUNT}/1/Labchara-Labrealmc"
 MOON_DIR = f"{OUT_ACCOUNT}/1/Labchara-Labrealmb"
 TWIN_ADDONS = f"{OUT_ACCOUNT}/Labrealmd Partb/Labchara/AddOns.txt"
-REAL = ("Alyra", "alyra", "Bloodfist", "Sett", "Moon", "Some Realm", "SomeRealm", ACCOUNT)
+REAL = ("Alyra", "alyra", "Bloodfist", "Qorv", "Moon", "Some Realm", "SomeRealm", ACCOUNT)
 
 FLAGGED = b"2\x00"
 EDIT_MODE = b"1 2 0 3 def 0 6 Priest 0 1 1 0\x00"
 EDIT_MODE_OWNED = b"1 2 0 3 def 0 5 Alyra 0 1 1 0\x00"  # "Alyra" at byte 16
-ANCHOR_TOC = "## Interface: 11507\n## Title: Anchor\nAnchorSetter.lua\n"  # "Sett" at byte 43
+ANCHOR_TOC = "## Interface: 11507\n## Title: Anchor\nAnchorQorvey.lua\n"  # "Qorv" at byte 43
 PLAIN_TOC = "## Interface: 11507\n## Title: Plain\nPlain.lua\n"
 OLD = 1_000_000_000
 
@@ -58,7 +58,7 @@ def build(root: Path) -> Path:
     (account / "flagged-cache-account.txt").write_bytes(FLAGGED)
     (account / "edit-mode-cache-account.txt").write_bytes(EDIT_MODE)
     group = account / "70"
-    for folder in ("Alyra-Bloodfist", "Alyra-Sett", "Alyra-Moon"):
+    for folder in ("Alyra-Bloodfist", "Alyra-Qorv", "Alyra-Moon"):
         character = group / folder
         _write(character / "chat-cache.txt", "SAY 255 255 255\n")
         _write(character / "layout-local.txt", "Version: 1\n")
@@ -68,10 +68,10 @@ def build(root: Path) -> Path:
     addons = base / "Interface" / "AddOns"
     _write(addons / "Anchor" / "Anchor.toc", ANCHOR_TOC)
     _write(addons / "Plain" / "Plain.toc", PLAIN_TOC)
-    # Alyra-Sett was played last; the shared twin is written at every logout,
+    # Alyra-Qorv was played last; the shared twin is written at every logout,
     # so it is newer still and must not decide which character is "last".
     _stamp(OLD, root)
-    _stamp(OLD + 100, group / "Alyra-Sett")
+    _stamp(OLD + 100, group / "Alyra-Qorv")
     _stamp(OLD + 200, account / "Some Realm")
     return account
 
@@ -133,19 +133,19 @@ def test_constructed_twin_is_never_a_character_of_its_own(forever: Path) -> None
     account = forever / FLAVOR / "WTF" / "Account" / ACCOUNT
     units = lab_capture.character_units(account)
     twin = account / "Some Realm" / "Alyra"
-    assert sorted(u[0].name for u in units) == ["Alyra-Bloodfist", "Alyra-Moon", "Alyra-Sett"]
+    assert sorted(u[0].name for u in units) == ["Alyra-Bloodfist", "Alyra-Moon", "Alyra-Qorv"]
     assert all(u[1:] == (twin,) for u in units)
 
 
 def test_constructed_two_groups_each_claim_their_own_realm(tmp_path: Path) -> None:
     account = tmp_path / "account"
-    for folder in ("70/Alyra-Sett", "70/Bren-Moon", "71/Alyra-Glade", "Glade/Loner"):
+    for folder in ("70/Alyra-Qorv", "70/Bren-Moon", "71/Alyra-Glade", "Glade/Loner"):
         (account / folder).mkdir(parents=True)
     for twin in ("Some Realm/Alyra", "Some Realm/Bren", "Other Realm/Alyra"):
         _write(account / twin / "AddOns.txt", "x\n")
     units = {u[0].name: u[1:] for u in lab_capture.character_units(account)}
     assert units == {
-        "Alyra-Sett": (account / "Some Realm" / "Alyra",),
+        "Alyra-Qorv": (account / "Some Realm" / "Alyra",),
         "Bren-Moon": (account / "Some Realm" / "Bren",),
         "Alyra-Glade": (account / "Other Realm" / "Alyra",),
         "Loner": (),  # a retail-shaped character that is nobody's twin
@@ -160,7 +160,7 @@ THIRD_PARTY = "identity string inside a third-party addon file"
 def test_constructed_automatic_toc_selection_passes_over_an_identity_match(
     forever: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The real case: a four-letter second name inside `AnchorSetter.lua`."""
+    """Constructed case: a four-letter second name inside a longer addon file name."""
     out = tmp_path / "incoming"
     assert capture(forever, out) == 0
     stdout = capsys.readouterr().out
@@ -202,7 +202,7 @@ def test_constructed_identity_in_an_addon_path_is_refused_with_the_path_withheld
 
 
 def test_constructed_any_file_under_interface_addons_is_third_party(tmp_path: Path) -> None:
-    identity = Identity(characters=["Alyra"], realms=["Sett"])
+    identity = Identity(characters=["Alyra"], realms=["Qorv"])
     source = tmp_path / "Core.lua"
 
     def run(text: bytes, rel: str) -> list[str]:
@@ -210,12 +210,12 @@ def test_constructed_any_file_under_interface_addons_is_third_party(tmp_path: Pa
         item = lab_capture.Item(source, PurePosixPath(rel), FLAVOR, "1", "savedvariables")
         return list(lab_capture.process(item, identity).problems)
 
-    assert run(b"local Sett = 1\n", "_f_/interface/ADDONS/Anchor/Core.lua") == [
+    assert run(b"local Qorv = 1\n", "_f_/interface/ADDONS/Anchor/Core.lua") == [
         f"{THIRD_PARTY} x1 (first at byte 6, line 1)"
     ]
     assert run(b"local x = 1\n", "_f_/Interface/AddOns/Anchor/Core.lua") == []
     # The same text anywhere else is scrubbed as before.
-    assert run(b"local Sett = 1\n", "_f_/WTF/Account/A/SavedVariables/Core.lua") == []
+    assert run(b"local Qorv = 1\n", "_f_/WTF/Account/A/SavedVariables/Core.lua") == []
 
 
 # ─── 3. an identity match in an edit-mode cache refuses it ───────────────────
@@ -225,7 +225,7 @@ LAYOUT_NAME = "identity string inside a length-prefixed layout name"
 
 @pytest.mark.parametrize(
     "where",
-    ["edit-mode-cache-account.txt", "70/Alyra-Sett/edit-mode-cache-character.txt"],
+    ["edit-mode-cache-account.txt", "70/Alyra-Qorv/edit-mode-cache-character.txt"],
 )
 def test_constructed_owner_named_layout_refuses_the_edit_mode_cache(
     where: str, forever: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -263,5 +263,5 @@ def test_constructed_nul_ended_caches_round_trip_byte_for_byte(
         f"{SETT_DIR}/edit-mode-cache-character.txt",
     ):
         assert written[dest] == EDIT_MODE, dest
-    result = Identity(characters=["Alyra"], realms=["Sett"]).scrub(EDIT_MODE + FLAGGED)
+    result = Identity(characters=["Alyra"], realms=["Qorv"]).scrub(EDIT_MODE + FLAGGED)
     assert result.data == EDIT_MODE + FLAGGED and not result.edits and not result.problems

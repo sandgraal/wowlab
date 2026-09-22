@@ -1354,7 +1354,7 @@ def character_units(account: Path) -> list[tuple[Path, ...]]:
     AddOns.txt. The twin is found by FIRST name, never through the second
     name: a group pairs with the realm folder(s) whose children are its first
     names (see `_twin_realms`). One first name with several second names
-    (`70/Alyra-Bloodfist`, `70/Alyra-Sett`) shares its one twin (`Realm/Alyra/`),
+    (`70/Alyra-Bloodfist`, `70/Alyra-Qorv`) shares its one twin (`Realm/Alyra/`),
     so a twin may appear in several units.
     """
     parents = realm_dirs(account)

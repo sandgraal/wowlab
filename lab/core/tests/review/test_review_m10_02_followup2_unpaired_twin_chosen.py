@@ -2,9 +2,9 @@
 # chosen as the played character, so no `<digits>/<First>-<Second>/` file is captured.
 """Found by running `scripts/lab_capture.py` at ffd35b5 on a tree built here.
 
-One digits group (`70/Alyra-Sett`) and two realm folders that both hold an
+One digits group (`70/Alyra-Qorv`) and two realm folders that both hold an
 `Alyra/` twin (one of them a leftover). `_twin_realms` keeps both as candidates,
-`_twin` finds two `Alyra` folders and the second name `Sett` spells neither
+`_twin` finds two `Alyra` folders and the second name `Qorv` spells neither
 realm, so the character stays unpaired and BOTH twins become characters of
 their own. A twin is written at every logout, so it is at least as new as the
 character folder, and `newest_unit` picks it: the capture holds one AddOns.txt
@@ -67,7 +67,7 @@ def _capture(tmp_path: Path, realm_folders: list[str]) -> list[str]:
     _write(base / ".flavor.info", "Product Flavor!STRING:0\nwow_classic_beta\n")
     _write(base / "WTF" / "Config.wtf", 'SET portal "us"\n')
     account = base / "WTF" / "Account" / ACCOUNT
-    _write(account / "70" / "Alyra-Sett" / "chat-cache.txt", "SAY 255 255 255\n")
+    _write(account / "70" / "Alyra-Qorv" / "chat-cache.txt", "SAY 255 255 255\n")
     for realm in realm_folders:
         _write(account / realm / "Alyra" / "AddOns.txt", "Plain: enabled\n")
     _stamp(OLD, root)
