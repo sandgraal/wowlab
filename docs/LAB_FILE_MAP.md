@@ -79,13 +79,18 @@ scope permanently (LAB_PLAN L7).
   writes none of them: absent means the client default, reported as "not set
   (client default)", never "off"; the default itself is **[verify]**.
 - **Folder shape under `WTF/Account/<ACCOUNT>/` on the Forever beta
-  (2026-09-22, observed, owner to confirm):** the level above the character
-  folders appears to be named with digits only (a numeric realm id,
-  **[verify]**) and the character folders `<Name>-<Suffix>` (the suffix is a
-  realm or a player-chosen second name, **[verify]**: the retail-style twins
-  of those characters all sit under one realm), not the retail
-  `<Realm>/<Character>/`. `layout` and the scrub tool must not assume either
-  shape.
+  (2026-09-22, observed; the name rule confirmed by the owner):**
+  `<ACCOUNT>/<digits>/<First>-<Second>/`. Forever characters have a first
+  and a second name, both chosen by the player, and the folder joins them
+  with a hyphen (character names cannot contain one). The digits folder is
+  almost certainly the numeric id of the realm: every character in it also
+  has a retail-style twin `<ACCOUNT>/<Realm>/<First>/` under one realm
+  display name, holding only `AddOns.txt` (**[verify]** the id). Everything
+  else per character — config, bindings, click bindings, macros, chat,
+  edit-mode, flagged and text-to-speech caches, `SavedVariables/` — lives in
+  the `<First>-<Second>` folder. `layout` must handle both shapes and must
+  not read the second name as a realm. The same first name can recur with
+  different second names.
 - A patch can reset `Interface/` overrides' effect and can change any format
   here. `snapshot` manifests record the flavor version so a diff across a
   patch says so.

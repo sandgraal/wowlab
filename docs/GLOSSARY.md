@@ -10,6 +10,8 @@ For engineers who do not play World of Warcraft. Several of these are named misl
 
 **Character identity is therefore (region, realm, name), not name.** Characters can also transfer realms, which changes their identity key without changing the character. On disk a character is `WTF/Account/<ACCOUNT>/<Realm>/<Character>/`, so a transfer or rename leaves the old folder behind and starts a new one.
 
+**Second name (Forever)** — Forever characters have a player-chosen first and second name. On disk the character folder is `WTF/Account/<ACCOUNT>/<digits>/<First>-<Second>/` (the digits folder is the realm's numeric id, **[verify]**), with a retail-style twin `<ACCOUNT>/<Realm>/<First>/` holding only `AddOns.txt`. The same first name can appear with several second names. The hyphen is a separator, not part of either name; the second name is not a realm.
+
 **Class** — one of thirteen (Warrior, Evoker, Priest, etc.). Fixed at creation.
 
 **Spec (specialization)** — a subdivision of a class that determines role and playstyle. A class has 2-4 (Demon Hunter has two). A character can freely switch between their class's specs at any time, at no cost. **A character's spec is not stable state** — it changes between activities. Record the spec with each capture; never treat it as a property of the character.
