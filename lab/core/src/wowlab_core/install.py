@@ -9,16 +9,19 @@ Root resolution, first hit wins: the explicit argument, then the
 `WOWLAB_WOW_ROOT` environment variable, then the platform defaults
 (`default_roots`). An explicit root or a set environment variable is final:
 if it is not an install, `NotAnInstallError` is raised rather than falling
-through to a default. Only the defaults are searched. There are no registry
+through to a default. Only the defaults are searched: a default that is not
+a readable directory (including a drive that is not ready) is passed over,
+and one that is a directory holding an unusable `.build.info` is reported. There are no registry
 reads and no Battle.net database reads; Linux (Wine, Lutris, Proton) is
 reached through the explicit root or the environment variable only.
 
 A directory is an install if it holds a readable, regular file
 `.build.info`. A flavor is a child directory whose name starts and ends with
 `_` and which holds a regular file `.flavor.info`. A child named `_*_`
-without a regular `.flavor.info`, or one that is a symlink, is not a flavor;
-its name is listed in `other_dirs` (a regular file of that name is ignored).
-Symlinked `_*_` folders are not followed. The flavor's product code comes
+without a regular `.flavor.info`, or one that is a symlink, or whose
+`.flavor.info` is a symlink, is not a flavor; its name is listed in
+`other_dirs` (a regular file of that name is ignored). Symlinks are not
+followed, whether the folder or its `.flavor.info`. The flavor's product code comes
 from `.flavor.info` and is joined to the `.build.info` row with the same
 `Product`. Discovery never raises on a partial install: a flavor with no
 matching row, or with an unreadable `.flavor.info`, is returned with
@@ -110,7 +113,8 @@ class NotAnInstallError(InstallError):
     """The chosen root has no readable, regular `.build.info`.
 
     `reason` is `missing`, `not_regular` (a directory, FIFO, device, ...) or
-    `unreadable` (the operating system refused; `strerror` says why).
+    `unreadable` (the operating system refused; `strerror` says why). A root
+    that does not exist at all is `missing` with `root_exists=False`.
     """
 
     def __init__(
@@ -120,11 +124,17 @@ class NotAnInstallError(InstallError):
         reason: Reason = "missing",
         strerror: str | None = None,
         hint: str = "",
+        *,
+        root_exists: bool = True,
     ) -> None:
         self.root = root
         self.source = source
         self.reason = reason
         self.strerror = strerror
+        self.root_exists = root_exists
+        if not root_exists:
+            super().__init__(f"{root} (from {source}) does not exist")
+            return
         what = {
             "missing": f"it has no {BUILD_INFO}",
             "not_regular": f"{BUILD_INFO} is not a regular file",
@@ -140,7 +150,7 @@ class InstallNotFoundError(InstallError):
         self.searched = tuple(searched)
         where = ", ".join(str(p) for p in self.searched) or "nothing on this platform"
         super().__init__(
-            f"no WoW install at the default locations (searched: {where}); pass the "
+            f"no WoW install at the locations searched by default (searched: {where}); pass the "
             f"install folder (the one that holds {BUILD_INFO}) or set {ENV_ROOT}"
         )
 
@@ -224,8 +234,9 @@ class Install(BaseModel):
     # `.build.info` rows in file order. A row does not show that its flavor
     # folder exists or is complete; see `flavors`.
     products: tuple[BuildInfoRow, ...]
-    # Children named `_*_` that are not flavors (no regular .flavor.info, or
-    # a symlink, which is not followed), sorted.
+    # Children named `_*_` that are not flavors (no regular .flavor.info, a
+    # symlinked .flavor.info, or a symlinked folder; symlinks are not
+    # followed), sorted.
     other_dirs: tuple[str, ...]
     raw_build_info: bytes  # the file, byte for byte (L4)
     # True when .build.info or any .flavor.info had bytes that are not UTF-8;
@@ -339,7 +350,7 @@ def default_roots(
     drives: Sequence[str] | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> tuple[PurePath, ...]:
-    """Platform default install locations, in search order (LAB_PLAN §6.1).
+    """Locations searched when no root is given, in order (LAB_PLAN §6.1).
 
     macOS: `/Applications/World of Warcraft`. Windows: on every drive,
     `<drive>\\World of Warcraft`, then `<drive>\\Program Files (x86)\\World of
@@ -378,15 +389,25 @@ def _as_path(value: Path | str) -> Path:
     return Path(value).expanduser().absolute()
 
 
-def _flavor_folder_hint(root: Path) -> str:
-    """A pointer to the parent when `root` looks like a flavor folder."""
+def _is_regular(path: Path) -> bool:
+    """A regular file, not reached through a symlink at the last component."""
     try:
-        looks_like_flavor = (root / FLAVOR_INFO).is_file() or (root.parent / BUILD_INFO).is_file()
+        return stat.S_ISREG(path.lstat().st_mode)
+    except OSError:
+        return False
+
+
+def _flavor_folder_hint(root: Path) -> str:
+    """A pointer to the parent when `root` is a flavor folder or sits in an install."""
+    if root.parent == root:
+        return ""
+    if _is_regular(root / FLAVOR_INFO):
+        return f"; this looks like the flavor folder {root.name!r}; pass its parent {root.parent}"
+    try:
+        parent_is_install = (root.parent / BUILD_INFO).is_file()
     except OSError:
         return ""
-    if not looks_like_flavor or root.parent == root:
-        return ""
-    return f"; this looks like the flavor folder {root.name!r}; pass its parent {root.parent}"
+    return f"; its parent {root.parent} is an install; pass that" if parent_is_install else ""
 
 
 def _probe(root: Path, source: Source) -> None:
@@ -397,6 +418,12 @@ def _probe(root: Path, source: Source) -> None:
     try:
         st = (root / BUILD_INFO).stat()
     except (FileNotFoundError, NotADirectoryError):
+        try:
+            root_exists = root.exists()
+        except OSError:
+            root_exists = True
+        if not root_exists:
+            raise NotAnInstallError(root, source, "missing", root_exists=False) from None
         raise NotAnInstallError(root, source, "missing", hint=_flavor_folder_hint(root)) from None
     except OSError as exc:
         raise NotAnInstallError(
@@ -423,6 +450,13 @@ def _resolve(
         return chosen, "environment"
     candidates = [Path(p) for p in (default_roots(environ=env) if defaults is None else defaults)]
     for candidate in candidates:
+        # pathlib reads a drive that is not ready (winerror 21 and kin) as
+        # "not a directory"; any other refusal to look is also passed over.
+        try:
+            if not candidate.is_dir():
+                continue
+        except OSError:
+            continue
         try:
             _probe(candidate.absolute(), "default")
         except NotAnInstallError as exc:
@@ -446,8 +480,10 @@ def resolve_root(
     `defaults` defaults to `default_roots()`. Raises `NotAnInstallError` when
     the argument or the variable names a directory without a regular
     `.build.info` (never falling through to a default), or when a default
-    holds one that is not regular or cannot be read; raises
-    `InstallNotFoundError` when no default holds one at all.
+    is a directory holding one that is not regular or cannot be read; raises
+    `InstallNotFoundError` when no default holds one at all. A default that
+    is not a readable directory (a drive that is not ready included) is
+    passed over.
     """
     return _resolve(root, environ, defaults)[0]
 
@@ -498,7 +534,7 @@ def _scan_children(root: Path) -> tuple[list[Path], list[str]]:
             if _is_link(child):
                 others.append(name)
             elif child.is_dir():
-                if (child / FLAVOR_INFO).is_file():
+                if _is_regular(child / FLAVOR_INFO):
                     flavors.append(child)
                 else:
                     others.append(name)

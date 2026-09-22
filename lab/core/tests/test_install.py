@@ -152,7 +152,7 @@ def test_no_install_anywhere_raises_not_found_with_the_search_list(tmp_path: Pat
     assert caught.value.searched == tuple(candidates)
     assert isinstance(caught.value, InstallError)
     assert str(caught.value) == (
-        f"no WoW install at the default locations (searched: {candidates[0]}, "
+        f"no WoW install at the locations searched by default (searched: {candidates[0]}, "
         f"{candidates[1]}); pass the install folder (the one that holds .build.info) "
         "or set WOWLAB_WOW_ROOT"
     )
@@ -260,7 +260,7 @@ def test_flavor_folder_passed_as_root_points_at_the_parent(tmp_path: Path) -> No
     )
 
 
-def test_child_of_install_without_flavor_info_points_at_the_parent_constructed(
+def test_child_of_install_without_flavor_info_points_at_the_install_constructed(
     tmp_path: Path,
 ) -> None:
     root = _make_install(tmp_path, REAL_BUILD_INFO, {"_bare_": None})
@@ -268,9 +268,42 @@ def test_child_of_install_without_flavor_info_points_at_the_parent_constructed(
     with pytest.raises(NotAnInstallError) as caught:
         read_install(root / "_bare_")
 
-    assert str(caught.value).endswith(
-        f"; this looks like the flavor folder '_bare_'; pass its parent {root}"
+    assert str(caught.value) == (
+        f"{root / '_bare_'} (from argument) is not a WoW install: it has no .build.info"
+        f"; its parent {root} is an install; pass that"
     )
+
+
+def test_data_folder_is_not_called_a_flavor_folder_constructed(tmp_path: Path) -> None:
+    root = _real_install(tmp_path)
+    (root / "Data").mkdir()
+
+    with pytest.raises(NotAnInstallError) as caught:
+        discover(root / "Data", environ={}, defaults=[])
+
+    assert "flavor folder" not in str(caught.value)
+    assert str(caught.value).endswith(f"; its parent {root} is an install; pass that")
+
+
+def test_root_that_does_not_exist_says_so(tmp_path: Path) -> None:
+    root = tmp_path / "nowhere"
+
+    with pytest.raises(NotAnInstallError) as caught:
+        discover(root, environ={}, defaults=[])
+    with pytest.raises(NotAnInstallError) as from_env:
+        discover(environ={ENV_ROOT: str(root)}, defaults=[])
+
+    assert (caught.value.reason, caught.value.root_exists) == ("missing", False)
+    assert str(caught.value) == f"{root} (from argument) does not exist"
+    assert str(from_env.value) == f"{root} (from environment) does not exist"
+
+
+def test_default_that_is_not_a_directory_is_passed_over_constructed(tmp_path: Path) -> None:
+    a_file = tmp_path / "World of Warcraft.txt"
+    a_file.write_bytes(b"")
+    real = _real_install(tmp_path / "E")
+
+    assert discover(environ={}, defaults=[a_file, real]).root == real
 
 
 def test_unrelated_folder_gets_no_flavor_hint(tmp_path: Path) -> None:
@@ -442,6 +475,21 @@ def test_folders_that_are_not_flavors_are_ignored_constructed(tmp_path: Path) ->
 
     assert [f.folder for f in got.flavors] == [REAL_FOLDER]
     assert got.other_dirs == ("_flavor_info_is_a_dir_", "_no_flavor_info_")
+
+
+def test_symlinked_flavor_info_is_not_followed_constructed(tmp_path: Path) -> None:
+    target = tmp_path / "elsewhere.flavor.info"
+    target.write_bytes(REAL_FLAVOR_INFO)
+    root = _make_install(tmp_path / "install", REAL_BUILD_INFO, {"_linked_info_": None})
+    try:
+        (root / "_linked_info_" / ".flavor.info").symlink_to(target)
+    except OSError as exc:  # Windows without the symlink privilege
+        pytest.skip(f"cannot create a symlink here: {exc}")
+
+    got = read_install(root)
+
+    assert got.flavors == ()
+    assert got.other_dirs == ("_linked_info_",)
 
 
 def test_symlinked_flavor_folder_is_listed_not_followed_constructed(tmp_path: Path) -> None:

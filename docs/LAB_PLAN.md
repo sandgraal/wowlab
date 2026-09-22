@@ -175,7 +175,7 @@ dropped. Discovery never raises on a partial install; it raises only when the
 root has no `.build.info`.
 
 *Amended 2026-09-22 (M10-05 reviews):*
-(1) **Windows defaults.** For each drive `os.listdrives()` returns, the
+(1) **Windows default search locations.** For each drive `os.listdrives()` returns, the
 search tries `<drive>\World of Warcraft`, then
 `<drive>\Program Files (x86)\World of Warcraft`, then
 `<drive>\Program Files\World of Warcraft`. The system drive
@@ -183,9 +183,10 @@ search tries `<drive>\World of Warcraft`, then
 because telling fixed drives from removable or network ones needs a Win32
 call, which is out of scope. (2) **Explicit root and `WOWLAB_WOW_ROOT` are
 final.** If either names a directory that is not an install, discovery raises
-`NotAnInstallError` and does not fall through to a default. A default that
-holds a `.build.info` that is not a regular file, or cannot be read, is
-reported, not skipped. (3) **Frozen and hashable.** Each `.build.info` row is
+`NotAnInstallError` and does not fall through to a default. A default
+location that is not a readable directory (including a drive that is not
+ready) is passed over; one that is a directory holding an unusable
+`.build.info` (not a regular file, or unreadable) is reported, not skipped. (3) **Frozen and hashable.** Each `.build.info` row is
 a `BuildInfoRow` whose `extra` is an immutable tuple of `(name, value)` pairs
 in header order (read-only `extra_map` accessor), not a `dict`, so `Install`
 is hashable and truly frozen. `Install.products` holds the rows in file
@@ -198,12 +199,16 @@ decode with `errors="replace"`. `Install.decode_errors` is true when
 product. When there are several, the first active one wins, else the first.
 This is a deterministic tie-break, not client behaviour **[verify]**.
 (6) **`Install.other_dirs`** lists children named `_*_` that are not reported
-as flavors, because they have no regular `.flavor.info` or are symlinks.
-Symlinked `_*_` folders are not followed, consistent with M10-06.
+as flavors, because they have no regular `.flavor.info`, their
+`.flavor.info` is a symlink, or the folder is a symlink. Symlinks are not
+followed, whether the folder or its `.flavor.info`, consistent with M10-06.
 (7) **Typed errors.** `NotAnInstallError` carries a `reason` (`missing`,
 `not_regular`, `unreadable`); a permission refusal is never reported as
 absent. The one error is a root without a readable, regular `.build.info`.
-A root that looks like a flavor folder gets a pointer to its parent. When no
+A root that holds a regular `.flavor.info` is called a flavor folder and
+gets a pointer to its parent; any other root whose parent holds
+`.build.info` is told its parent is an install. A root that does not exist
+says so (`reason` stays `missing`). When no
 default holds an install, discovery raises `InstallNotFoundError`, which
 lists the locations it searched. Executable names are not part of
 discovery; `guard` finds them itself (M10-11 amendment).
