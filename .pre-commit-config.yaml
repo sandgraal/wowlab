@@ -30,11 +30,11 @@ repos:
       # multi-MB SavedVariables file, and a fixture is never trimmed to fit),
       # so fixtures get their own 16 MB ceiling instead of no ceiling.
       - id: check-added-large-files
-        args: [--maxkb=512]
+        args: [--maxkb=512, --enforce-all]
         exclude: '^lab/core/tests/fixtures/'
       - id: check-added-large-files
         name: check for added large files (fixtures, 16 MB)
-        args: [--maxkb=16384]
+        args: [--maxkb=16384, --enforce-all]
         files: '^lab/core/tests/fixtures/'
       - id: detect-private-key
   - repo: https://github.com/gitleaks/gitleaks
