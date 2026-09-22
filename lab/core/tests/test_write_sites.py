@@ -16,7 +16,16 @@ A write site is:
 - an `open(...)`, `io.open`, `os.fdopen` or `Path.open(...)` whose mode writes
   (`w`, `a`, `x` or `+`), or whose mode is not a literal; an `os.open` whose
   flags write (`O_WRONLY`, `O_RDWR`, `O_CREAT`, `O_APPEND`, `O_TRUNC`) or are
-  not spelled with `os.O_*` names.
+  not spelled with `os.O_*` names;
+- an aliased or star import of `os` or `shutil`, a `getattr(os, ...)` or
+  `getattr(shutil, ...)`, and `__import__` / `importlib.import_module` of a
+  writing module (each hides the names above from a reader);
+- any import of a module whose job is writing files or running programs
+  (`tempfile`, `subprocess`, `sqlite3`, `zipfile`, `tarfile`, `shelve`, `dbm`,
+  `logging.handlers`), and `logging.FileHandler`, `io.FileIO`, `extractall`,
+  `unpack_archive` and `make_archive` referenced anywhere;
+- `.replace(target)` or `.rename(target)` with one argument, positional or
+  keyword (Path's forms; `str.replace` takes two).
 
 The scanner is graded first on constructed inline sources (writers it must
 find, reads it must pass) and on the exempt modules, which are full of real
@@ -86,6 +95,17 @@ SHUTIL_WRITERS = frozenset(
     }
 )
 WRITE_FLAGS = frozenset({"O_WRONLY", "O_RDWR", "O_CREAT", "O_APPEND", "O_TRUNC"})
+# Modules whose job is writing files (or running programs that do).
+WRITING_MODULES = frozenset(
+    {"tempfile", "subprocess", "sqlite3", "zipfile", "tarfile", "shelve", "dbm", "logging.handlers"}
+)
+# Names that write wherever they appear.
+WRITING_NAMES = frozenset({"FileHandler", "FileIO", "extractall", "unpack_archive", "make_archive"})
+HIDING_OWNERS = ("os", "shutil", "io")
+
+
+def _writing_module(name: str) -> bool:
+    return any(name == m or name.startswith(m + ".") for m in WRITING_MODULES)
 
 
 def _code_tokens(source: str) -> list[tokenize.TokenInfo]:
@@ -104,8 +124,10 @@ def _token_hits(source: str) -> list[tuple[int, str]]:
         if tok.type != tokenize.NAME:
             continue
         before = tokens[i - 2].string if i >= 2 and tokens[i - 1].string == "." else None
-        if tok.string in REFERENCED_NAMES:
+        if tok.string in REFERENCED_NAMES or tok.string in WRITING_NAMES:
             hits.append((tok.start[0], tok.string))
+        elif before == "logging" and tok.string == "handlers":
+            hits.append((tok.start[0], "logging.handlers"))
         elif before == "os" and tok.string in OS_WRITERS:
             hits.append((tok.start[0], f"os.{tok.string}"))
         elif before == "shutil" and (tok.string in SHUTIL_WRITERS or tok.string.startswith("copy")):
@@ -140,18 +162,70 @@ def _call_mode(call: ast.Call, position: int) -> ast.expr | None:
     return call.args[position] if len(call.args) > position else None
 
 
+def _import_hits(node: ast.Import) -> list[tuple[int, str]]:
+    hits: list[tuple[int, str]] = []
+    for alias in node.names:
+        if _writing_module(alias.name):
+            hits.append((node.lineno, f"import {alias.name}"))
+        elif alias.name in ("os", "shutil") and alias.asname:
+            hits.append((node.lineno, f"import {alias.name} as {alias.asname}"))
+    return hits
+
+
+def _import_from_hits(node: ast.ImportFrom) -> list[tuple[int, str]]:
+    module = node.module or ""
+    if _writing_module(module):
+        return [(node.lineno, f"from {module} import ...")]
+    hits: list[tuple[int, str]] = []
+    for alias in node.names:
+        name = alias.name
+        if module in ("os", "shutil"):
+            writers = OS_WRITERS if module == "os" else SHUTIL_WRITERS
+            flagged = name == "*" or name in writers or name.startswith("copy")
+        elif module == "logging":
+            flagged = name in ("*", "handlers") or name.endswith("Handler")
+        elif module == "io":
+            flagged = name in ("*", "FileIO")
+        else:
+            flagged = False
+        if flagged:
+            hits.append((node.lineno, f"from {module} import {name}"))
+    return hits
+
+
 def _ast_hits(source: str) -> list[tuple[int, str]]:
     hits: list[tuple[int, str]] = []
     for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.ImportFrom) and node.module in ("os", "shutil"):
-            writers = OS_WRITERS if node.module == "os" else SHUTIL_WRITERS
-            for alias in node.names:
-                if alias.name in writers or alias.name.startswith("copy"):
-                    hits.append((node.lineno, f"from {node.module} import {alias.name}"))
+        if isinstance(node, ast.Import):
+            hits.extend(_import_hits(node))
+            continue
+        if isinstance(node, ast.ImportFrom):
+            hits.extend(_import_from_hits(node))
             continue
         if not isinstance(node, ast.Call):
             continue
         func = node.func
+        first = node.args[0] if node.args else None
+        if isinstance(func, ast.Name) and func.id == "getattr":
+            # A literal name that does not write (`getattr(os, "O_BINARY", 0)`)
+            # is a read; any other name, or one that is not a literal, is not.
+            name = node.args[1] if len(node.args) > 1 else None
+            literal = name.value if isinstance(name, ast.Constant) else None
+            writes = not isinstance(literal, str) or (
+                literal in OS_WRITERS | SHUTIL_WRITERS | REFERENCED_NAMES | WRITING_NAMES
+                or literal.startswith("copy")
+                or literal in ("open", "fdopen")
+            )
+            if isinstance(first, ast.Name) and first.id in HIDING_OWNERS and writes:
+                hits.append((node.lineno, f"getattr({first.id}, ...)"))
+            continue
+        if (isinstance(func, ast.Name) and func.id == "__import__") or (
+            isinstance(func, ast.Attribute) and func.attr == "import_module"
+        ):
+            literal = first.value if isinstance(first, ast.Constant) else None
+            if not isinstance(literal, str) or literal in HIDING_OWNERS or _writing_module(literal):
+                hits.append((node.lineno, "dynamic import"))
+            continue
         if isinstance(func, ast.Name) and func.id == "open":
             if _mode_writes(_call_mode(node, 1)):
                 hits.append((node.lineno, "open(write mode)"))
@@ -173,8 +247,7 @@ def _ast_hits(source: str) -> list[tuple[int, str]]:
             elif (
                 func.attr in ("replace", "rename")
                 and owner not in ("os",)
-                and len(node.args) == 1
-                and not node.keywords
+                and len(node.args) + len(node.keywords) == 1
             ):
                 # Path.replace / Path.rename take one argument; str.replace takes two.
                 hits.append((node.lineno, f".{func.attr}(target)"))
@@ -222,6 +295,34 @@ CONSTRUCTED_WRITERS: tuple[tuple[str, str], ...] = (
     ("path-touch", "p.touch()\n"),
     ("path-mkdir", "p.mkdir(parents=True)\n"),
     ("path-symlink-to", "p.symlink_to(q)\n"),
+    ("import-os-as", "import os as o\no.replace(a, b)\n"),
+    ("import-shutil-as", "import shutil as sh\n"),
+    ("from-os-import-star", "from os import *\n"),
+    ("from-shutil-import-star", "from shutil import *\n"),
+    ("getattr-os", "getattr(os, 'rep' + 'lace')(a, b)\n"),
+    ("getattr-shutil", "getattr(shutil, name)(a, b)\n"),
+    ("getattr-os-literal-writer", "getattr(os, 'unlink')(p)\n"),
+    ("dunder-import", "__import__('shutil').move(a, b)\n"),
+    ("import-module", "importlib.import_module('os')\n"),
+    ("import-tempfile", "import tempfile\n"),
+    ("from-tempfile", "from tempfile import NamedTemporaryFile\n"),
+    ("import-subprocess", "import " + "subprocess\n"),
+    ("import-sqlite3", "import sqlite3\n"),
+    ("import-zipfile", "import zipfile\n"),
+    ("import-tarfile", "import tarfile\n"),
+    ("import-shelve", "import shelve\n"),
+    ("import-dbm", "import dbm.dumb\n"),
+    ("import-logging-handlers", "import logging.handlers\n"),
+    ("from-logging-handlers", "from logging.handlers import RotatingFileHandler\n"),
+    ("from-logging-import-handlers", "from logging import handlers\n"),
+    ("logging-filehandler", "logging.FileHandler(p)\n"),
+    ("from-logging-filehandler", "from logging import FileHandler\n"),
+    ("io-fileio", "io.FileIO(p, 'w')\n"),
+    ("from-io-fileio", "from io import FileIO\n"),
+    ("extractall", "archive.extractall(d)\n"),
+    ("unpack-archive", "unpack_archive(a, d)\n"),
+    ("path-replace-keyword", "tmp.replace(target=t)\n"),
+    ("path-rename-keyword", "tmp.rename(target=t)\n"),
 )
 
 CONSTRUCTED_READERS: tuple[tuple[str, str], ...] = (
@@ -231,6 +332,12 @@ CONSTRUCTED_READERS: tuple[tuple[str, str], ...] = (
     ("path-open-default", "p.open()\n"),
     ("os-open-rdonly", "os.open(p, os.O_RDONLY | getattr(os, 'O_BINARY', 0))\n"),
     ("str-replace", "s.replace('a', 'b')\n"),
+    ("str-replace-count", "s.replace('a', 'b', 1)\n"),
+    ("import-os", "import os\n"),
+    ("import-logging", "import logging\nlog = logging.getLogger(__name__)\n"),
+    ("getattr-other", "getattr(st, 'st_file_attributes', 0)\n"),
+    ("getattr-os-flag", "getattr(os, 'O_NOFOLLOW', 0)\n"),
+    ("import-module-other", "importlib.import_module('wowlab_core.snapshot')\n"),
     ("read-bytes", "p.read_bytes()\n"),
     ("comment", "# p.unlink() would be wrong here\n"),
     ("docstring", "'''write_text, unlink and rmtree are not called here'''\n"),

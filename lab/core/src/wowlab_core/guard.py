@@ -202,6 +202,11 @@ class PathNotAllowedError(GuardError):
     """The path is outside the allowlist, or reaches outside it on disk."""
 
 
+class _ChangedUnderneathError(GuardError):
+    """A directory on the path changed while a rename or unlink ran: the
+    change may have landed somewhere else, so the transaction cannot commit."""
+
+
 # ─── public data ─────────────────────────────────────────────────────────────
 
 
@@ -526,20 +531,44 @@ def _same_dir(a: Path, b: Path) -> bool:
         return False
 
 
+def _store_places(store_path: Path) -> list[Path]:
+    """Every directory under the store that guard or the snapshot store writes
+    into, existing or not: the store itself, `journal/`, `objects/` (and each
+    object shard already in it), `manifests/` and `tmp/`. A link at any of
+    them would carry those writes wherever it points."""
+    places = [store_path, _journal_dir(store_path)]
+    for name in ("objects", "manifests", "tmp"):
+        places.append(store_path / name)
+    objects = store_path / "objects"
+    with contextlib.suppress(OSError):
+        places.extend(sorted(objects.iterdir()))
+    return places
+
+
+def _overlaps(path: Path, root: Path) -> bool:
+    """True when `path` (resolved) and `root` contain one another, by spelling
+    or by directory identity along either side's ancestors."""
+    if path == root or root in path.parents or path in root.parents:
+        return True
+    if any(_same_dir(p, root) for p in (path, *path.parents)):
+        return True
+    return any(_same_dir(p, path) for p in (root, *root.parents))
+
+
 def _refuse_store_overlap(store_path: Path, place: _Place) -> None:
-    """L1: the store is never inside the install, and never contains it."""
-    try:
-        store = store_path.resolve()
-    except (OSError, RuntimeError) as exc:
-        raise GuardError(f"cannot resolve the store path {store_path}: {exc}") from exc
+    """L1: the store is never inside the install and never contains it, and no
+    directory it writes into is a link that reaches the install."""
     root = place.install_root
-    overlap = store == root or root in store.parents or store in root.parents
-    overlap = overlap or any(_same_dir(p, root) for p in (store, *store.parents))
-    overlap = overlap or any(_same_dir(p, store) for p in (root, *root.parents))
-    if overlap:
-        raise GuardError(
-            f"the store ({store}) and the install ({root}) must not contain each other"
-        )
+    for candidate in _store_places(store_path):
+        try:
+            resolved = candidate.resolve()
+        except (OSError, RuntimeError) as exc:
+            raise GuardError(f"cannot resolve the store path {candidate}: {exc}") from exc
+        if _overlaps(resolved, root):
+            raise GuardError(
+                f"the store ({store_path}) reaches the install ({root}) through {candidate}; "
+                "the store and the install must not contain each other"
+            )
 
 
 def _client_names(flavor_dir: Path) -> list[str]:
@@ -582,13 +611,17 @@ def _is_executable(name: str) -> bool:
     return folded.endswith(_EXECUTABLE_SUFFIXES) or bool(_VERSIONED_SHARED_LIBRARY.search(name))
 
 
-def _check_rel(rel: object, *, directory: bool = False) -> tuple[str, ...]:
+def _check_rel(
+    rel: object, *, directory: bool = False, allow_executable: bool = False
+) -> tuple[str, ...]:
     """Hold a flavor-relative path to the allowlist, lexically. Returns its parts.
 
     A file path is `/`-separated, has at least two parts, starts with an
     allowlist root spelled exactly, contains no executable component and no
     name that means something else on Windows. `directory=True` also accepts
     the allowlist roots themselves (for directories a transaction created).
+    `allow_executable=True` skips only the executable rule; it is used to
+    find an unchanged entry that restore may leave alone, never to write.
     """
     if not isinstance(rel, str):
         raise PathNotAllowedError(f"a path is a str, not {type(rel).__name__}")
@@ -613,7 +646,7 @@ def _check_rel(rel: object, *, directory: bool = False) -> tuple[str, ...]:
             raise PathNotAllowedError(f"{rel!r}: {part!r} is a reserved device name on Windows")
         if len(part.encode("utf-8", "surrogateescape")) > _MAX_NAME_BYTES:
             raise PathNotAllowedError(f"{rel!r}: a name is longer than {_MAX_NAME_BYTES} bytes")
-        if _is_executable(part):
+        if _is_executable(part) and not allow_executable:
             raise PathNotAllowedError(f"{rel!r} is an executable; guard never writes one")
     if parts[0] not in _ROOTS:
         raise PathNotAllowedError(
@@ -652,6 +685,14 @@ def _verify(chain: Iterable[tuple[Path, _Identity]], rel: str) -> None:
             raise GuardError(f"{rel}: {path} changed during the transaction ({exc})") from exc
         if _is_link(st) or not stat.S_ISDIR(st.st_mode) or _identity(st) != expected:
             raise GuardError(f"{rel}: {path} changed during the transaction")
+
+
+def _verify_after(chain: Iterable[tuple[Path, _Identity]], rel: str) -> None:
+    """`_verify` after a rename or unlink has already happened."""
+    try:
+        _verify(chain, rel)
+    except GuardError as exc:
+        raise _ChangedUnderneathError(f"{exc}; the change may have landed elsewhere") from exc
 
 
 def _entry(directory: Path, name: str, rel: str) -> os.stat_result | None:
@@ -806,6 +847,7 @@ def _replace(
         _verify(chain, rel)
         tmp.replace(found.path)
         replaced = True
+        _verify_after(chain, rel)
     except OSError as exc:
         raise GuardError(f"cannot write {rel}: {exc}") from exc
     finally:
@@ -826,6 +868,8 @@ def _mutate(
     """Put `data` at `parts` (None deletes), after walking the path again and
     checking the target is still what `expect` found. Directories made on the
     way are appended to `created` as they are made."""
+    if _check_rel("/".join(parts)) != tuple(parts):
+        raise PathNotAllowedError(f"{'/'.join(parts)!r} is not a path the gate writes")
     found = _look(place, parts)
     rel = found.rel
     if not _same_state(found.st, expect.st):
@@ -838,6 +882,7 @@ def _mutate(
             found.path.unlink()
         except OSError as exc:
             raise GuardError(f"cannot delete {rel}: {exc}") from exc
+        _verify_after(found.chain, rel)
         _fsync_dir(found.path.parent)
         return
     chain = list(found.chain)
@@ -965,6 +1010,7 @@ class _Transaction:
         except SnapshotError as exc:
             raise GuardError(f"cannot read snapshot {snapshot_id!r}: {exc}") from exc
         assert self._place is not None
+        _refuse_foreign_snapshot(manifest, self._place)
         prefix = self._place.folder + "/"
         wanted: list[tuple[str, Entry | None]] = []
         if paths is None:
@@ -1146,6 +1192,11 @@ class _Transaction:
         self._journal_write("open")
         try:
             _mutate(self._place, parts, data, rule, found, self._created)
+        except _ChangedUnderneathError as exc:
+            # The change happened, but maybe not where it was meant to: the
+            # record keeps it, and the transaction can only roll back.
+            self._broken = str(exc)
+            raise
         except Exception:
             # The path did not change: the record says so again.
             self._journal[rel] = (
@@ -1170,7 +1221,14 @@ class _Transaction:
         prove they are sound, one at a time, and not held."""
         ops: list[_Op] = []
         for rel, entry in wanted:
-            parts = _check_rel(rel)
+            try:
+                parts = _check_rel(rel)
+            except PathNotAllowedError:
+                # A whole-snapshot restore leaves alone a file the gate never
+                # writes (an addon's build.sh) when disk already matches it.
+                if named or entry is None or not self._unchanged_executable(rel, entry):
+                    raise
+                continue
             if entry is not None and entry.kind != "file":
                 if not named and self._same_link(parts, entry):
                     continue  # an unchanged link needs no write, and none is made
@@ -1186,6 +1244,23 @@ class _Transaction:
             ops.append((rel, parts, wanted_hash, 0 if entry is None else entry.mode))
         return ops
 
+    def _unchanged_executable(self, rel: str, entry: Entry) -> bool:
+        """True when `rel` is refused only as an executable, and a walk that
+        follows nothing finds a regular file with the entry's bytes and mode.
+        Names refused for any other reason are never opened."""
+        assert self._place is not None
+        if entry.kind != "file" or entry.sha256 is None:
+            return False
+        try:
+            parts = _check_rel(rel, allow_executable=True)
+            found = _look(self._place, parts)
+            if found.st is None or stat.S_IMODE(found.st.st_mode) != entry.mode:
+                return False
+            current = _read(found)
+        except GuardError:
+            return False
+        return current is not None and _sha(current) == entry.sha256
+
     def _same_link(self, parts: Sequence[str], entry: Entry) -> bool:
         """True when the path on disk is already a link with the entry's target."""
         assert self._place is not None
@@ -1194,7 +1269,8 @@ class _Transaction:
             return False
         path = self._place.flavor_dir.joinpath(*parts)
         try:
-            return path.is_symlink() and str(path.readlink()) == entry.target
+            linked = path.is_symlink() or path.is_junction()
+            return linked and str(path.readlink()) == entry.target
         except OSError:
             return False
 
@@ -1249,6 +1325,18 @@ class _Transaction:
         for rel_dir in reversed(created_dirs):
             with contextlib.suppress(GuardError):
                 _remove_dir(self._place, rel_dir)  # only if empty: best effort
+
+
+def _refuse_foreign_snapshot(manifest: Manifest, place: _Place) -> None:
+    """A snapshot restores only into the flavor of the install it was taken
+    from; restoring across installs or flavors is not a thing the gate does."""
+    if manifest.flavor_folder != place.folder or not _same_dir(
+        Path(manifest.install_root), place.install_root
+    ):
+        raise GuardError(
+            f"snapshot {manifest.id} was taken of {manifest.flavor_folder!r} in "
+            f"{manifest.install_root}, not of {place.folder!r} in {place.install_root}"
+        )
 
 
 def _covers(manifest: Manifest, entry_path: str) -> bool:
@@ -1316,12 +1404,18 @@ def undo(*, store: Path | None = None) -> None:
         raise GuardError(f"nothing to undo: the journal in {store_path} is empty")
     last = records[-1]
     place = _place(Path(last.flavor_path), last.flavor_version)
+    if not _same_dir(Path(last.install_root), place.install_root):
+        raise GuardError(
+            f"journal record {last.id} names the install {last.install_root}, "
+            f"but its flavor is in {place.install_root}"
+        )
     _refuse_store_overlap(store_path, place)
     snapshots = SnapshotStore(store_path)
     try:
         manifest = snapshots.show(last.snapshot_id)
     except SnapshotError as exc:
         raise GuardError(f"cannot read the pre-write snapshot {last.snapshot_id!r}: {exc}") from exc
+    _refuse_foreign_snapshot(manifest, place)
     prefix = place.folder + "/"
     ops: list[_Op] = []
     for item in last.paths:
