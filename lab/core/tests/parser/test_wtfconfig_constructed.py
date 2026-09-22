@@ -13,6 +13,7 @@ import pytest
 from pydantic import ValidationError
 
 from wowlab_core.wtfconfig import (
+    BindingsDocument,
     BindLine,
     ConfigDocument,
     MacroBodyLine,
@@ -266,7 +267,8 @@ def test_constructed_record_without_end_is_incomplete() -> None:
         b'VER 3 0x01 "a" "1"',
         b'VER three 01 "a" "1"',
         b'VER 3 01 "a" "1" ',
-        b'VER 3 01 "a"b" "1"',
+        b'VER 3 01 "a" "1 2"',  # a space in the icon
+        b'VER 3 01 "a" "1"2"',  # a quote in the icon
         b"END",  # outside a record
         b"/cast Orphan",
     ],
@@ -276,6 +278,27 @@ def test_constructed_lines_outside_records_are_unknown(line: bytes) -> None:
     doc = parse_macros(line + b"\r\n")
     assert isinstance(doc.lines[0], Unknown)
     assert doc.macros == ()
+
+
+def test_constructed_macro_name_may_contain_a_quote() -> None:
+    data = b'VER 3 01 "say "hi" now" "134400"\r\n/say hi\r\nEND\r\n'
+    doc = parse_macros(data)
+    assert doc.to_bytes() == data
+    (macro,) = doc.macros
+    assert (macro.name, macro.icon) == ('say "hi" now', "134400")
+    (macro,) = parse_macros(b'VER 3 01 "a" "b" "c"\n').macros
+    assert (macro.name, macro.icon) == ('a" "b', "c"), "anchored on the icon"
+
+
+def test_constructed_unknown_lines_are_listed_with_their_index() -> None:
+    config = parse_config(b'SET a "1"\nset b "2"\nSET  c "3"\nSET d "4"\n')
+    assert config.unknown_lines() == ((1, b'set b "2"'), (2, b'SET  c "3"'))
+    assert config.get("b") is None, "a hand-edited line is not seen by the views"
+    bindings = parse_bindings(b"BINDINGMODE 0\r\nbind A B\r\n")
+    assert bindings.unknown_lines() == ((0, b"BINDINGMODE 0"),)
+    macros = parse_macros(b'x\nVER 3 01 "a" "1"\nbody\nEND\n\n')
+    assert macros.unknown_lines() == ((0, b"x"), (4, b""))
+    assert parse_config(b'SET a "1"\n').unknown_lines() == ()
 
 
 def test_constructed_macro_name_and_icon_keep_their_bytes() -> None:
@@ -327,9 +350,34 @@ def test_constructed_documents_reject_a_line_sequence_that_would_not_reparse() -
                 Unknown(text=b"x", ending=b"\n"),
             )
         )
+    with pytest.raises(ValidationError):  # a VER line inside a record is body
+        MacrosDocument(
+            lines=(
+                MacroHeaderLine(text=b'VER 3 01 "a" "1"', ending=b"\n"),
+                MacroHeaderLine(text=b'VER 3 02 "b" "1"', ending=b"\n"),
+            )
+        )
+    with pytest.raises(ValidationError):  # END outside a record is Unknown
+        MacrosDocument(lines=(MacroEndLine(text=b"END", ending=b"\n"),))
+    with pytest.raises(ValidationError):  # SET text in an Unknown line
+        ConfigDocument(lines=(Unknown(text=b'SET a "1"', ending=b"\n"),))
+    # Unknown lines the parser would not type are fine, including in bindings
+    # and macros documents, whose grammars differ.
+    ConfigDocument(lines=(Unknown(text=b"bind A B", ending=b"\n"),))
+    BindingsDocument(lines=(Unknown(text=b'SET a "1"', ending=b"\n"),))
+    MacrosDocument(lines=(Unknown(text=b"END", ending=b"\n"),))
 
 
 def test_constructed_documents_are_frozen() -> None:
     doc = parse_config(b'SET a "1"\n')
     with pytest.raises(ValidationError):
         doc.lines = ()  # type: ignore[misc]
+
+
+def test_constructed_unobserved_binding_line_kinds() -> None:
+    # LAB_FORMATS §6 note 2026-09-22: all [verify], none observed.
+    data = b"bind A NONE\r\nbind B \r\nbind C\r\nBINDINGMODE 1\r\nmodifiedclick SELFCAST ALT\r\n"
+    doc = parse_bindings(data)
+    assert doc.to_bytes() == data
+    assert [line.kind for line in doc.lines] == ["bind"] + ["unknown"] * 4
+    assert [(b.key, b.action) for b in doc.bindings] == [("A", "NONE")]

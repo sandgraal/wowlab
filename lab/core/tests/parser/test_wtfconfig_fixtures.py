@@ -36,6 +36,15 @@ INDEX = FIXTURES / "README.md"
 WTF = FIXTURES / "macos" / "forever" / "WTF"
 ACCOUNT = WTF / "Account" / "90000001#6"
 CHARACTER = ACCOUNT / "1" / "Labcharb-Labrealmd"
+# The three config files of the Forever beta capture of 2026-09-22. Corpus
+# facts (line counts, endings, no duplicates) are pinned to these paths, not
+# to every `config-wtf` row, so a later capture does not break them.
+FOREVER_CONFIGS = [
+    WTF / "Config.wtf",
+    ACCOUNT / "config-cache.wtf",
+    CHARACTER / "config-cache.wtf",
+]
+FOREVER_IDS = [p.relative_to(FIXTURES).as_posix() for p in FOREVER_CONFIGS]
 
 Parser = Callable[[bytes], ConfigDocument | BindingsDocument | MacrosDocument]
 PARSERS: dict[str, Parser] = {
@@ -75,28 +84,30 @@ def test_joining_lines_reproduces_the_file(kind: str, name: str) -> None:
 
 
 @pytest.mark.parser
-@pytest.mark.parametrize("name", _indexed("config-wtf"))
-def test_every_real_config_line_is_a_set_line(name: str) -> None:
-    doc = parse_config((FIXTURES / name).read_bytes())
-    unknown = [line for line in doc.lines if isinstance(line, Unknown)]
-    assert unknown == [], "the capture has no line outside the SET grammar"
+def test_forever_configs_are_indexed() -> None:
+    assert set(FOREVER_IDS) <= set(_indexed("config-wtf"))
+
+
+@pytest.mark.parser
+@pytest.mark.parametrize("path", FOREVER_CONFIGS, ids=FOREVER_IDS)
+def test_every_forever_config_line_is_a_set_line(path: Path) -> None:
+    doc = read_config(path)
+    assert doc.unknown_lines() == (), "the capture has no line outside the SET grammar"
+    assert not any(isinstance(line, Unknown) for line in doc.lines)
     assert {line.ending for line in doc.lines} == {b"\n"}, "LF files (index rows)"
 
 
 @pytest.mark.parser
-def test_the_capture_holds_181_set_lines() -> None:
+def test_the_forever_capture_holds_181_set_lines() -> None:
     # LAB_FORMATS amendment 2026-09-22, §5: "No embedded quote in 181 SET lines."
-    total = sum(
-        len(parse_config((FIXTURES / name).read_bytes()).cvars) for name in _indexed("config-wtf")
-    )
-    assert total == 181
+    assert sum(len(read_config(path).cvars) for path in FOREVER_CONFIGS) == 181
 
 
 @pytest.mark.parser
-@pytest.mark.parametrize("name", _indexed("config-wtf"))
-def test_real_configs_have_no_duplicate_cvars(name: str) -> None:
+@pytest.mark.parametrize("path", FOREVER_CONFIGS, ids=FOREVER_IDS)
+def test_forever_configs_have_no_duplicate_cvars(path: Path) -> None:
     # Corpus fact. Duplicate reporting itself is graded on constructed input.
-    assert parse_config((FIXTURES / name).read_bytes()).duplicates() == ()
+    assert read_config(path).duplicates() == ()
 
 
 @pytest.mark.parser

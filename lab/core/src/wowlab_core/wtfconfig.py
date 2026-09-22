@@ -12,8 +12,9 @@ Line model, from the real files (LAB_FORMATS amendments of 2026-09-22):
 - A line ends at LF. Its ending is ``b"\\r\\n"`` when a CR precedes that LF,
   ``b"\\n"`` otherwise, and ``b""`` for a last line with no break. Endings
   follow the file kind and may mix within one file, so they are per line. A
-  lone CR is not a break; it stays in the line's text (and a typed grammar
-  below never matches it, so such a line is ``Unknown``).
+  lone CR is not a break; it stays in the line's text. The SET, bind and VER
+  grammars below never match a CR, so outside a macro body such a line is
+  ``Unknown``; inside a macro body it is body, like any other line.
 - Nothing is decoded on the way in. Names, values and bodies are exposed as
   ``str`` decoded as UTF-8 with ``surrogateescape``, so a byte that is not
   UTF-8 survives as a lone surrogate and encodes back to the same byte.
@@ -26,12 +27,30 @@ Grammars (anything that does not match exactly is ``Unknown``):
   client; lookups fold ASCII case only and keep the original spelling.
 - ``bind <key> <action>``: key is a run of bytes other than space, CR, LF;
   action is the rest of the line (non-empty, not starting with a space, no
-  CR or LF). An action written
-  as ``"..."`` with no inner quote is reported unwrapped, with ``quoted``.
-- ``VER <version> <hex id> "<name>" "<icon>"`` opens a macro record; every
-  following line is body up to a line whose text is exactly ``END``. Lines
-  outside a record are ``Unknown``. A record that reaches the end of the file
-  without ``END`` is reported with ``complete=False``.
+  CR or LF). An action written as ``"..."`` with no inner quote is reported
+  unwrapped, with ``quoted``.
+- ``VER <version> <hex id> "<name>" "<icon>"`` opens a macro record. The
+  pattern is anchored on the icon (no ``"``, space, CR or LF), so a name
+  that contains ``"`` still parses. Every following line is body up to a
+  line whose text is exactly ``END`` (compared byte for byte: no case
+  folding, no trimming). Lines outside a record are ``Unknown``. A record
+  that reaches the end of the file without ``END`` is reported with
+  ``complete=False``.
+
+Hand-edited lines that the client may still read (``set`` in lower case,
+extra spaces or tabs, an unquoted value) **[verify]** do not match these
+grammars, so they are ``Unknown`` and are not seen by ``cvars``,
+``effective``, ``get``, ``duplicates``, ``bindings`` or ``macros``. A caller
+that reports a value from a document must also report that the document
+has ``Unknown`` lines (``unknown_lines()``).
+
+Documents validate that their lines are exactly what their own parser would
+produce from ``to_bytes()``: a typed line's text matches its grammar, and an
+``Unknown`` line never carries text the parser would type in that position.
+``model_copy(update=...)`` skips that validation and keeps the cached views
+of the original, so never use it on a document: build a new one instead.
+Bytes fields do not survive a JSON round trip; a JSON-facing layer needs its
+own output models.
 
 No writer in Wave 1 (only ``guard`` writes into an install, L2). The typed
 line models validate their own text, so a future writer can build lines and
@@ -78,7 +97,7 @@ Ending = Literal[b"", b"\n", b"\r\n"]
 _SET = re.compile(rb'SET ([^ \r\n]+) "([^"\r\n]*)"')
 _BIND = re.compile(rb"bind ([^ \r\n]+) ([^ \r\n][^\r\n]*)")
 _QUOTED_ACTION = re.compile(rb'"([^"]*)"')
-_VER = re.compile(rb'VER ([0-9]+) ([0-9A-Fa-f]+) "([^"\r\n]*)" "([^"\r\n]*)"')
+_VER = re.compile(rb'VER ([0-9]+) ([0-9A-Fa-f]+) "([^\r\n]*)" "([^" \r\n]*)"')
 _END = b"END"
 _ASCII_FOLD = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 
@@ -235,11 +254,15 @@ class MacroHeaderLine(_Line):
 
     @property
     def name(self) -> str:
+        """The macro name as written; it may contain ``"``."""
         return _text(self._match().group(3))
 
     @property
     def icon(self) -> str:
-        """The icon as written: a numeric file id or an icon name."""
+        """The icon as written. Observed: a numeric file id (``134400``, believed
+        to be the question mark, meaning "use the spell's icon" **[verify]**).
+        The icon-name form (``INV_MISC_QUESTIONMARK``) comes from community
+        documentation and has not been observed **[verify]**."""
         return _text(self._match().group(4))
 
 
@@ -279,6 +302,16 @@ def _join(lines: Sequence[_Line]) -> bytes:
     return b"".join(line.raw for line in lines)
 
 
+def _unknown_lines(lines: Sequence[_Line]) -> tuple[tuple[int, bytes], ...]:
+    return tuple((i, line.text) for i, line in enumerate(lines) if isinstance(line, Unknown))
+
+
+def _reject_typed_text(lines: Sequence[_Line], grammar: re.Pattern[bytes], what: str) -> None:
+    for i, line in enumerate(lines):
+        if isinstance(line, Unknown) and grammar.fullmatch(line.text) is not None:
+            raise ValueError(f"line {i}: an Unknown line cannot hold a {what} line")
+
+
 def _check_line_sequence(lines: Sequence[_Line]) -> None:
     """Only the last line may lack an ending, and it cannot also be empty:
     otherwise joining and re-parsing would not give the same lines back."""
@@ -304,8 +337,9 @@ class CVar(BaseModel):
 
 
 class DuplicateCVar(BaseModel):
-    """A CVar name (case-folded) set on more than one line. The client keeps
-    the last one, so ``effective`` is the last entry."""
+    """A CVar name (case-folded) set on more than one line of one file.
+    ``effective`` is the last entry, per LAB_PLAN §6.5; that the client
+    applies the last line is believed, not observed **[verify]**."""
 
     model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
 
@@ -318,7 +352,12 @@ class DuplicateCVar(BaseModel):
 
 
 class ConfigDocument(BaseModel):
-    """A parsed ``Config.wtf`` or ``config-cache.wtf``."""
+    """A parsed ``Config.wtf`` or ``config-cache.wtf``.
+
+    Frozen, and validated to equal ``parse_config(self.to_bytes())``.
+    ``model_copy(update=...)`` skips validation and keeps the cached views,
+    so build a new document instead.
+    """
 
     model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
 
@@ -327,10 +366,16 @@ class ConfigDocument(BaseModel):
     @model_validator(mode="after")
     def _line_sequence(self) -> ConfigDocument:
         _check_line_sequence(self.lines)
+        _reject_typed_text(self.lines, _SET, "SET")
         return self
 
     def to_bytes(self) -> bytes:
         return _join(self.lines)
+
+    def unknown_lines(self) -> tuple[tuple[int, bytes], ...]:
+        """``(index, text)`` for every ``Unknown`` line. These are not seen
+        by the views below; report them alongside any value."""
+        return _unknown_lines(self.lines)
 
     @cached_property
     def cvars(self) -> tuple[CVar, ...]:
@@ -349,12 +394,22 @@ class ConfigDocument(BaseModel):
         return result
 
     def effective(self) -> dict[str, CVar]:
-        """One entry per name, the last line that sets it, keyed by the case-
-        folded name, in order of each name's first appearance."""
+        """One entry per name: the last line in *this file* that sets it,
+        keyed by the case-folded name, in order of each name's first
+        appearance.
+
+        This is not the value the client uses. That also depends on the
+        other scope files (``Config.wtf``, account and character
+        ``config-cache.wtf``), on the client default for names absent here,
+        on the server, which may replace ``config-cache.wtf`` at login when
+        settings sync is on, and on timing: the file holds only what the
+        client wrote at its last exit. ``Unknown`` lines are not seen.
+        """
         return dict(self._effective)
 
     def get(self, name: str) -> CVar | None:
-        """The effective (last) entry for ``name``, compared case-insensitively."""
+        """The ``effective()`` entry for ``name`` (the last line in this file),
+        compared case-insensitively; see ``effective()`` for what it is not."""
         return self._effective.get(fold_name(name))
 
     def __getitem__(self, name: str) -> str:
@@ -393,7 +448,8 @@ def parse_config(data: bytes) -> ConfigDocument:
 
 
 class Binding(BaseModel):
-    """One ``bind`` line as a key and an action, with its position in ``lines``."""
+    """One ``bind`` line as a key and an action, with its position in ``lines``.
+    An action of ``NONE`` may mean the key was cleared **[verify]**."""
 
     model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
 
@@ -404,7 +460,16 @@ class Binding(BaseModel):
 
 
 class BindingsDocument(BaseModel):
-    """A parsed ``bindings-cache.wtf``."""
+    """A parsed ``bindings-cache.wtf`` (account or character).
+
+    Which file the client applies depends on the per-character bindings
+    toggle, and the server may replace the file at login when bindings sync
+    is on.
+
+    Frozen, and validated to equal ``parse_bindings(self.to_bytes())``.
+    ``model_copy(update=...)`` skips validation and keeps the cached views,
+    so build a new document instead.
+    """
 
     model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
 
@@ -413,10 +478,15 @@ class BindingsDocument(BaseModel):
     @model_validator(mode="after")
     def _line_sequence(self) -> BindingsDocument:
         _check_line_sequence(self.lines)
+        _reject_typed_text(self.lines, _BIND, "bind")
         return self
 
     def to_bytes(self) -> bytes:
         return _join(self.lines)
+
+    def unknown_lines(self) -> tuple[tuple[int, bytes], ...]:
+        """``(index, text)`` for every ``Unknown`` line (not in ``bindings``)."""
+        return _unknown_lines(self.lines)
 
     @cached_property
     def bindings(self) -> tuple[Binding, ...]:
@@ -444,7 +514,10 @@ def parse_bindings(data: bytes) -> BindingsDocument:
 
 class Macro(BaseModel):
     """One macro record. ``body`` is the body lines joined with their own
-    endings, so the line break before ``END`` is part of it."""
+    endings, so the line break before ``END`` is part of it: these are the
+    file's bytes. The macro text the client shows is believed to be
+    ``body_lines`` joined by LF with no final break **[verify]**, and any
+    length limit applies to that, not to ``body``."""
 
     model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
 
@@ -462,7 +535,13 @@ class Macro(BaseModel):
 
 
 class MacrosDocument(BaseModel):
-    """A parsed ``macros-cache.txt`` (account or character)."""
+    """A parsed ``macros-cache.txt`` (account or character). The server may
+    replace the file at login when macro sync is on.
+
+    Frozen, and validated to equal ``parse_macros(self.to_bytes())``.
+    ``model_copy(update=...)`` skips validation and keeps the cached views,
+    so build a new document instead.
+    """
 
     model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
 
@@ -473,6 +552,8 @@ class MacrosDocument(BaseModel):
         _check_line_sequence(self.lines)
         in_record = False
         for i, line in enumerate(self.lines):
+            if isinstance(line, Unknown) and _VER.fullmatch(line.text) is not None:
+                raise ValueError(f"line {i}: a VER line outside a record is a header")
             if isinstance(line, MacroHeaderLine):
                 if in_record:
                     raise ValueError(f"line {i}: a VER line inside a record is body")
@@ -487,6 +568,10 @@ class MacrosDocument(BaseModel):
 
     def to_bytes(self) -> bytes:
         return _join(self.lines)
+
+    def unknown_lines(self) -> tuple[tuple[int, bytes], ...]:
+        """``(index, text)`` for every ``Unknown`` line (outside any record)."""
+        return _unknown_lines(self.lines)
 
     @cached_property
     def macros(self) -> tuple[Macro, ...]:
