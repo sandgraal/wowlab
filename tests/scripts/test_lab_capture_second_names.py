@@ -274,7 +274,7 @@ def test_constructed_savedvariables_with_a_glued_name_or_named_after_one_is_refu
 
     saved = "_f_/WTF/Account/A/SavedVariables"
     glued = b'\nAnchorQorveyDB = {\n\t["Alyra"] = 1,\n}\n'
-    assert run(glued, f"{saved}/Anchor.lua") == [f"{EMBEDDED} x1 (first at byte 7, line 2)"]
+    assert run(glued, f"{saved}/Anchor.lua") == [f"{EMBEDDED} x1"]
     assert run(b"\nAnchorDB = 1\n", f"{saved}/AnchorQorvey.lua") == [f"in path: {ADDON_FILE_NAME}"]
     assert run(b"\nAnchorDB = 1\n", f"{saved}/AnchorQorvey.lua.bak") == [
         f"in path: {ADDON_FILE_NAME}"
@@ -366,3 +366,100 @@ def test_constructed_ambiguous_twin_leaves_the_character_captured_with_a_note(
     units = lab_capture.character_units(account)
     assert sorted(u[0].name for u in units) == ["Alyra-Bloodfist", "Alyra-Moon", "Alyra-Qorv"]
     assert all(len(u) == 1 for u in units)
+
+
+# ─── round 2, security S1: a name glued to a word refuses every file kind ────
+
+
+@pytest.mark.parametrize(
+    ("name", "glued", "whole"),
+    [
+        (
+            "bindings-cache.wtf",
+            b"bind CTRL-2 CLICK AnchorQorveyButton:LeftButton\n",
+            b"bind CTRL-3 MACRO Qorv\n",
+        ),
+        (
+            "macros-cache.txt",
+            b'MACRO 1 "Go" 134400\n/click AnchorQorveyButton\nEND\n',
+            b'MACRO 1 "Qorv" 134400\n/say hi\nEND\n',
+        ),
+        ("layout-local.txt", b"AnchorQorveyFrame: 10 20\n", b"Qorv 10 20\n"),
+        ("click-bindings-cache.txt", b"AnchorQorveyButton 1\nEND\n", b"Qorv 1\nEND\n"),
+        (
+            "WoWCombatLog-010126_000000.txt",
+            b'1/1/2026 00:00:00.000-4  SPELL_DAMAGE,Creature-0-1-2-3-4-0,"Qorvath the Ancient",'
+            b'0xa48,0x0,Creature-0-1-2-3-5-0,"Anchor Qorvey Strike",0x10a48\n',
+            b'1/1/2026 00:00:00.000-4  SAY,"Qorv"\n',
+        ),
+        ("chat-cache.txt", b"CHANNEL AnchorQorvey\n", b"CHANNEL Qorv\n"),
+        ("config-cache.wtf", b'SET lastAddon "AnchorQorvey"\n', b'SET lastAddon "Qorv"\n'),
+    ],
+)
+def test_constructed_glued_identity_refuses_every_file_kind(
+    name: str, glued: bytes, whole: bytes, tmp_path: Path
+) -> None:
+    identity = Identity(characters=["Alyra"], realms=["Some Realm", "Qorv"], loose=["Qorv"])
+    source = tmp_path / name
+    rel = f"{FLAVOR}/WTF/Account/A/Some Realm/Alyra/{name}"
+
+    def run(text: bytes) -> tuple[list[str], bytes]:
+        source.write_bytes(text)
+        item = lab_capture.Item(source, PurePosixPath(rel), FLAVOR, "1", "x")
+        outcome = lab_capture.process(item, identity)
+        return list(outcome.problems), outcome.result.data
+
+    count = glued.count(b"Qorv")
+    assert run(glued)[0] == [f"{EMBEDDED} x{count}"]  # a count only, no offset
+    problems, data = run(whole)
+    assert problems == [] and b"Labrealma" in data and b"Qorv" not in data
+
+
+# ─── round 2, code review C1: a candidate holds every first name ─────────────
+
+
+@pytest.mark.parametrize(
+    ("second", "expected"),
+    [("Glade", None), ("OtherRealm", "Other Realm/Alyra")],
+)
+def test_constructed_two_realm_folders_holding_the_only_first_name_tie(
+    second: str, expected: str | None, tmp_path: Path
+) -> None:
+    """`Some Realm/{Alyra, Dax}` and `Other Realm/{Alyra}` both hold the group's one
+    first name: unpaired, unless the second name spells exactly one of them."""
+    account = tmp_path / "account"
+    (account / "70" / f"Alyra-{second}").mkdir(parents=True)
+    for twin in ("Some Realm/Alyra", "Some Realm/Dax", "Other Realm/Alyra"):
+        _write(account / twin / "AddOns.txt", "x\n")
+    units = [u for u in lab_capture.character_units(account) if u[0].parent.name == "70"]
+    assert [u[1].relative_to(account).as_posix() if len(u) > 1 else None for u in units] == [
+        expected
+    ]
+
+
+# ─── round 2, code review C2: --character that matches nothing stops ─────────
+
+
+def test_constructed_character_matching_nothing_stops_the_run(
+    forever: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out = tmp_path / "incoming"
+    assert capture(forever, out, "--character", "Alyra-Nowhere") == 2
+    err = capsys.readouterr().err
+    assert "lab_capture: --character: no such character in this flavor" in err
+    assert "Nowhere" not in err and not out.exists()
+
+
+def test_constructed_character_naming_an_unpaired_twin_says_so_without_real_names(
+    forever: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    account = forever / FLAVOR / "WTF" / "Account" / ACCOUNT
+    _write(account / "Other Realm" / "Alyra" / "AddOns.txt", "Plain: enabled\n")
+    out = tmp_path / "incoming"
+    assert capture(forever, out, "--character", "Other Realm/Alyra") == 2
+    err = capsys.readouterr().err
+    assert (
+        "lab_capture: --character: the retail-style twin Labrealmc Partb/Labchara could not be "
+        "paired with a character; choose its <First>-<Second> folder instead"
+    ) in err
+    assert "Other" not in err and "Alyra" not in err and not out.exists()

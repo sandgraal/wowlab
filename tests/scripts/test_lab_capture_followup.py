@@ -380,7 +380,7 @@ def test_constructed_character_help_names_both_shapes(capsys: pytest.CaptureFixt
     with pytest.raises(SystemExit):
         lab_capture.parse_args(["--help"])
     help_text = " ".join(capsys.readouterr().out.split())
-    assert "REALM/NAME, or a <Name>-<Suffix> folder name" in help_text
+    assert "REALM/NAME, or a <First>-<Second> folder name" in help_text
 
 
 @pytest.mark.parametrize(

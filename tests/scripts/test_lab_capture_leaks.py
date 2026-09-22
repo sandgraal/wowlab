@@ -304,22 +304,26 @@ def test_constructed_name_that_is_a_game_word_leaves_cvar_names_and_toc_keys_alo
     assert lua.data == b'["LabcharawaysShow"] = "Labchara",\n' and lua.embedded == 1
 
 
-def test_constructed_embedded_count_reaches_the_row_and_the_summary(
+def test_constructed_embedded_count_reaches_the_refusal_and_no_row(
     install: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # A SavedVariables file with a name glued to a word is now refused (second
-    # follow-up, security S1), so the embedded count is shown on a cache file.
+    """A name glued to a word refuses the file in every kind (second follow-up,
+    security S1 of round 2). The count of such edits is what the refusal prints;
+    no written file carries one, so no row or `wrote` line says `embedded`."""
+    saved = saved_variables(install)
+    _write(saved / "Words.lua", f'\nWords = {{\n\t["{MAIN}sBank"] = "{MAIN}",\n}}\n')
     character = install.joinpath(*RETAIL_ACCOUNT, REALM, MAIN)
-    _write(character / "layout-local.txt", f"Frame: {MAIN}sBank {MAIN}\n")
-    assert capture(install, tmp_path / "incoming", "--flavor", "_retail_") == 0
+    _write(character / "layout-local.txt", f"Frame: {MAIN}sBank {MAIN}sVault {MAIN}\n")
+    out = tmp_path / "incoming"
+    assert capture(install, out, "--flavor", "_retail_", "--sv", "Words.lua") == 1
     stdout = capsys.readouterr().out
-    row = next(
-        line
-        for line in stdout.splitlines()
-        if line.startswith("| `") and "Labchara/layout-local.txt" in line
-    )
-    assert "identity-rewritten: 2; embedded: 1" in row
-    assert "edits, 1 embedded)" in stdout
+    refused = sorted(line for line in stdout.splitlines() if line.startswith("REFUSED"))
+    assert len(refused) == 2, refused
+    assert refused[0].endswith("Labchara/layout-local.txt: identity string inside a longer word x2")
+    assert refused[1].endswith("SavedVariables/Words.lua: identity string inside a longer word x1")
+    assert not [d for d in outputs(out) if d.endswith(("layout-local.txt", "Words.lua"))]
+    assert "embedded)" not in stdout and "embedded:" not in stdout
+    # The summary counts only what was written, and the other files still are.
     summary = stdout.split("replacements per pseudonym")[1]
     assert "  Labchara: " in summary and f"  {PSEUDO_REALM}: " in summary
 
