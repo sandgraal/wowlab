@@ -42,10 +42,19 @@ parameter, so they are pinned here, as small as they could be made:
   `rolled_back=False`). So the bytes it discards are always held, and a
   second `undo()` undoes the undo ("most recent" stays literal; redo is
   free). The flavor path a record carries is untrusted: it is validated
-  like any caller's flavor. Design choice: because the snapshot comes
-  first, restoring a path whose current bytes match neither the journal's
-  `after` nor `before` is allowed (it is recoverable); that rule is not
-  graded.
+  like any caller's flavor.
+  Undo is journal-scoped (owner decision, 2026-09-22): it restores only the
+  paths the undone transaction journaled, from that transaction's pre-write
+  snapshot, and refuses (before writing anything) if any of those paths is
+  forbidden, is a symlink entry in the snapshot, or has a snapshot entry
+  whose hash disagrees with the journal's `before` (an entry present where
+  `before` is `None`, or absent where it is not, disagrees too). Entries
+  for paths it did not journal are not its business: an unchanged
+  symlinked addon folder or a `release.sh` inside an addon does not stop
+  an undo. It never creates a symlink.
+  Design choice: because the snapshot comes first, restoring a path whose
+  current bytes match neither the journal's `after` nor `before` is
+  allowed (it is recoverable); that rule is not graded.
 - Errors: `guard.GuardError` is the base of everything `guard` raises on
   purpose; `guard.ClientRunningError` (running, unknown, or a probe that
   raised) and `guard.PathNotAllowedError` are subclasses of it and not of
@@ -92,8 +101,13 @@ parameter, so they are pinned here, as small as they could be made:
   canonical name to the spelling found on disk (an install with
   `Interface/Addons`); these graders neither require nor forbid that.
 - Public data classes (history records, plan items) may be public Pydantic
-  models with no public methods of their own; the transaction may add
-  read-only properties beside `plan`.
+  models, frozen, with no public methods of their own; the transaction may
+  add read-only properties beside `plan`. Every value `tx.plan` or such a
+  property returns is immutable (tuple, str, int, None, or a frozen model
+  or dataclass whose fields are). Public non-callable module globals are
+  modules, types, str, int, tuple, frozenset or Enum members only;
+  `TYPE_CHECKING` is allowed only as imported from `typing` and used only
+  as the test of an `if`.
 
 Nothing is asserted about how the pre-write snapshot is rooted: entry paths
 are matched by suffix, so `WTF/Config.wtf` and `_retail_/WTF/Config.wtf`
@@ -101,10 +115,13 @@ both satisfy these graders.
 """
 
 from __future__ import annotations
+import __future__
 
 import ast
 import builtins
 import contextlib
+import dataclasses
+import enum
 import hashlib
 import importlib
 import inspect
@@ -115,6 +132,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import types
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Any
@@ -1821,6 +1839,7 @@ def test_constructed_parent_swapped_for_a_symlink_before_the_temp_open_does_not_
         spy.install(patched)
         tx.write(CONFIG, NEW_CONFIG)
 
+    assert spy.fired, "no write-mode open inside the install was seen"
     if not spy.swapped:
         pytest.skip("could not swap the directory for a symlink on this platform")
     assert content(world / "outside") == outside_before
@@ -2256,7 +2275,8 @@ def test_constructed_rollback_and_undo_treat_the_pre_write_snapshot_as_untrusted
 ) -> None:
     """The journal legitimately points at a pre-write snapshot the store hands
     back; that snapshot is still untrusted input when rollback or `undo()`
-    reads it."""
+    reads it. The hostile entry sits at a path no transaction here touches,
+    so journal-scoped undo may succeed or refuse; either way it never lands."""
     other = add_other_flavor(install_root)
     other_before = content(other)
     with guard.transaction(flavor, label="base", store=store.path) as tx:
@@ -2299,11 +2319,12 @@ def test_constructed_rollback_and_undo_treat_the_pre_write_snapshot_as_untrusted
     untouched_but_config()
     assert record_for(guard, store, "poisoned-commit").snapshot_id == forged.id
 
-    # `undo()` of that transaction reads the poisoned snapshot: refused, typed.
-    expected = guard.PathNotAllowedError if link_target is None and not raw else guard.GuardError
-    with pytest.raises(expected) as refused:
+    # `undo()` of that transaction reads the poisoned snapshot. It journaled
+    # only Config.wtf, so it may restore that and ignore the rest, or refuse.
+    try:
         guard.undo(store=store.path)
-    assert not isinstance(refused.value, guard.ClientRunningError)
+    except (guard.GuardError, SnapshotError) as refused:
+        assert not isinstance(refused, guard.ClientRunningError)
     untouched_but_config()
 
 
@@ -2392,22 +2413,130 @@ def test_constructed_link_planted_after_the_check_never_redirects_undo_restore_o
     assert content(outside) == outside_before
 
 
+def forge_edited(
+    store: SnapshotStore, base: Manifest, edit: Callable[[dict[str, Entry], str], None]
+) -> Manifest:
+    """Publish `base` with its entries edited in place by `edit(entries,
+    prefix)`, where `entries` maps entry path to `Entry`. The store accepts
+    the result (id matches entries), as with `forge_manifest`."""
+    entries = {e.path: e for e in base.entries}
+    edit(entries, manifest_prefix(base))
+    ordered = tuple(entries[k] for k in sorted(entries))
+    fingerprint = tree_fingerprint(base.subtrees, base.excluded, ordered)
+    forged = Manifest(
+        **{
+            **base.model_dump(),
+            "id": f"20260921T140000.000000Z-{fingerprint}",
+            "created_at": "2026-09-21T14:00:00.000000Z",
+            "label": "constructed: forged",
+            "entries": ordered,
+        }
+    )
+    (store.manifests_dir / f"{forged.id}.json").write_bytes(manifest_bytes(forged))
+    assert store.show(forged.id) == forged
+    return forged
+
+
+def _poison_touched(case: str) -> Callable[[dict[str, Entry], str], None]:
+    def edit(entries: dict[str, Entry], prefix: str) -> None:
+        config = entries[prefix + CONFIG]
+        if case == "config-is-a-symlink-out-of-the-install":
+            entries[prefix + CONFIG] = Entry(
+                path=prefix + CONFIG, kind="symlink", target="../../../outside/target.txt"
+            )
+        elif case == "config-is-a-symlink-to-data":
+            entries[prefix + CONFIG] = Entry(
+                path=prefix + CONFIG, kind="symlink", target="../../Data"
+            )
+        elif case == "config-hash-disagrees-with-before":
+            bindings = entries[prefix + BINDINGS]
+            entries[prefix + CONFIG] = config.model_copy(
+                update={"sha256": bindings.sha256, "size": bindings.size}
+            )
+        elif case == "config-missing-though-it-existed":
+            del entries[prefix + CONFIG]
+        else:  # an entry for a path the transaction created (`before` is None)
+            entries[prefix + NEW_SAVED] = config.model_copy(update={"path": prefix + NEW_SAVED})
+
+    return edit
+
+
+POISONED_TOUCHED = (
+    "config-is-a-symlink-out-of-the-install",
+    "config-is-a-symlink-to-data",
+    "config-hash-disagrees-with-before",
+    "config-missing-though-it-existed",
+    "entry-present-for-a-created-path",
+)
+
+
 @pytest.mark.xfail(strict=True, reason=MARKER)
+@pytest.mark.parametrize("case", [pytest.param(c, id=f"constructed-{c}") for c in POISONED_TOUCHED])
+def test_constructed_undo_refuses_a_poisoned_entry_at_a_path_it_journaled(
+    guard: Any,
+    world: Path,
+    flavor: Flavor,
+    store: SnapshotStore,
+    idle: None,
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+) -> None:
+    """The entries undo does read, the journaled ones, are checked: no
+    symlink, and the hash agrees with the journal's `before`. Refused before
+    anything is written."""
+    with guard.transaction(flavor, label="base", store=store.path):
+        pass
+    base = store.show(record_for(guard, store, "base").snapshot_id)
+    forged = forge_edited(store, base, _poison_touched(case))
+    monkeypatch.setattr(SnapshotStore, "create", lambda self, *a, **k: forged)
+    with guard.transaction(flavor, label="touched", store=store.path) as tx:
+        tx.write(CONFIG, NEW_CONFIG)
+        tx.write(NEW_SAVED, NEW_LUA)
+    assert record_for(guard, store, "touched").snapshot_id == forged.id
+    before = content(world)
+
+    with pytest.raises(guard.GuardError) as refused:
+        guard.undo(store=store.path)
+    assert not isinstance(refused.value, guard.ClientRunningError)
+    assert content(world) == before
+    assert not (flavor.path / CONFIG).is_symlink()
+
+
+JOURNAL_SUBSTITUTES: tuple[tuple[str, str], ...] = (
+    ("traversal-to-build-info", "../.build.info"),
+    ("executable-in-addons", "Interface/AddOns/Thing/evil.dll"),
+    ("client-executable", "Wow.exe"),
+    ("data", "Data/new.bin"),
+)
+
+
+@pytest.mark.xfail(strict=True, reason=MARKER)
+@pytest.mark.parametrize(
+    "substitute", [pytest.param(sub, id=f"constructed-{name}") for name, sub in JOURNAL_SUBSTITUTES]
+)
 def test_constructed_undo_refuses_a_journal_that_names_a_forbidden_path(
-    guard: Any, world: Path, install_root: Path, flavor: Flavor, store: SnapshotStore, idle: None
+    guard: Any,
+    world: Path,
+    install_root: Path,
+    flavor: Flavor,
+    store: SnapshotStore,
+    idle: None,
+    substitute: str,
 ) -> None:
     """Format-agnostic: whatever the journal looks like on disk, the path it
-    recorded for the created file is byte-replaced with a traversal. `undo()`
-    would delete that path (it did not exist before), so it must re-check it."""
+    recorded for the created file is byte-replaced with a forbidden one.
+    `undo()` would delete that path (it did not exist before), so it must
+    re-check it."""
     with guard.transaction(flavor, label="created", store=store.path) as tx:
         tx.write(NEW_SAVED, NEW_LUA)
     build_info = (install_root / ".build.info").read_bytes()
 
     # The journal first (whatever is under the store but not an object or a
     # manifest); every file only if the journal turns out to live elsewhere.
+    new = substitute.encode()
     replaced = byte_replace(
-        store, NEW_SAVED.encode(), b"../.build.info", skip=(store.objects_dir, store.manifests_dir)
-    ) or byte_replace(store, NEW_SAVED.encode(), b"../.build.info")
+        store, NEW_SAVED.encode(), new, skip=(store.objects_dir, store.manifests_dir)
+    ) or byte_replace(store, NEW_SAVED.encode(), new)
     assert replaced >= 1, "the journal is expected to name the path it touched"
     before = content(world)
 
@@ -2416,6 +2545,54 @@ def test_constructed_undo_refuses_a_journal_that_names_a_forbidden_path(
     assert not isinstance(refused.value, guard.ClientRunningError)
     assert (install_root / ".build.info").read_bytes() == build_info
     assert content(world) == before
+
+
+@pytest.mark.xfail(strict=True, reason=MARKER)
+@pytest.mark.parametrize(
+    "route",
+    [
+        pytest.param("undo", id="constructed-undo"),
+        pytest.param("restore-named-path", id="constructed-restore-named-path"),
+    ],
+)
+def test_constructed_unchanged_symlinked_addon_and_script_do_not_block_undo_or_restore(
+    guard: Any,
+    world: Path,
+    install_root: Path,
+    flavor: Flavor,
+    store: SnapshotStore,
+    idle: None,
+    route: str,
+) -> None:
+    """Positive control for journal-scoped undo: an addon folder symlinked in
+    from elsewhere in the install (the common addon-developer layout) and a
+    `release.sh` shipped inside an addon are in every snapshot, unchanged.
+    Neither may stop the owner undoing, or restoring, a Config.wtf edit, and
+    both stay exactly as they were: the link a link, the script its bytes."""
+    _put(install_root / "AddOnDev" / "Linked", {"Linked.toc": b"## Title: Linked\n"})
+    symlink_or_skip(
+        flavor.path / "Interface" / "AddOns" / "Linked",
+        install_root / "AddOnDev" / "Linked",
+        is_dir=True,
+    )
+    (flavor.path / "Interface" / "AddOns" / "Thing" / "release.sh").write_bytes(
+        b"#!/bin/sh\necho constructed\n"
+    )
+    pristine = content(world)
+
+    with guard.transaction(flavor, label="edit", store=store.path) as tx:
+        tx.write(CONFIG, NEW_CONFIG)
+    assert (flavor.path / CONFIG).read_bytes() == NEW_CONFIG
+
+    if route == "undo":
+        guard.undo(store=store.path)
+    else:
+        pre_id = record_for(guard, store, "edit").snapshot_id
+        with guard.transaction(flavor, label="restore", store=store.path) as tx:
+            tx.restore(pre_id, paths=[CONFIG])
+
+    assert (flavor.path / CONFIG).read_bytes() == ALLOWLISTED_FILES[CONFIG]
+    assert content(world) == pristine, "link, script and everything else as before; nothing new"
 
 
 def byte_replace(
@@ -2677,6 +2854,44 @@ def _own_public_data(tx: Any) -> set[str]:
     return instance | slots | properties
 
 
+def _immutable(value: Any) -> bool:
+    """None, str, bytes, numbers, Enum members, and tuples, frozensets,
+    frozen Pydantic models and frozen dataclasses made only of those."""
+    if value is None or isinstance(value, (str, bytes, int, float, enum.Enum)):
+        return True
+    if isinstance(value, (tuple, frozenset)):
+        return all(_immutable(item) for item in value)
+    if isinstance(value, BaseModel):
+        return type(value).model_config.get("frozen") is True and all(
+            _immutable(getattr(value, field)) for field in type(value).model_fields
+        )
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return type(value).__dataclass_params__.frozen and all(  # type: ignore[attr-defined]
+            _immutable(getattr(value, f.name)) for f in dataclasses.fields(value)
+        )
+    return False
+
+
+def _type_checking_is_only_an_if_test(guard: Any) -> None:
+    tree = ast.parse(Path(guard.__file__).read_text(encoding="utf-8"))
+    assert vars(guard)["TYPE_CHECKING"] is False
+    assert any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "typing"
+        and any(a.name == "TYPE_CHECKING" and a.asname is None for a in node.names)
+        for node in ast.walk(tree)
+    ), "TYPE_CHECKING must come from typing"
+    if_tests = {
+        id(node.test)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If) and isinstance(node.test, ast.Name)
+    }
+    uses = [n for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id == "TYPE_CHECKING"]
+    assert all(id(n) in if_tests for n in uses), (
+        "TYPE_CHECKING used other than as `if TYPE_CHECKING:`"
+    )
+
+
 @pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_public_surface_is_exactly_the_gate(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
@@ -2699,8 +2914,19 @@ def test_constructed_public_surface_is_exactly_the_gate(
         assert _own_public_methods(obj) == set(), f"{name} has public methods"
     assert {"transaction", "undo", "history"} <= set(ours)
     for name, obj in vars(guard).items():
-        if not name.startswith("_"):
-            assert not isinstance(obj, (bool, list, set, dict)), f"mutable or boolean: {name}"
+        if name.startswith("_") or callable(obj) or obj is __future__.annotations:
+            continue
+        if name == "TYPE_CHECKING":
+            _type_checking_is_only_an_if_test(guard)
+            continue
+        allowed = isinstance(obj, types.ModuleType) or (
+            isinstance(obj, (str, int, tuple, frozenset, enum.Enum))
+            and not isinstance(obj, bool)
+            and _immutable(obj)
+        )
+        assert allowed, f"public module global {name} is a {type(obj).__name__}"
+    for name in set(ours) - PUBLIC_API:
+        assert ours[name].model_config.get("frozen") is True, f"{name} is not frozen"
 
     with guard.transaction(flavor, label="surface", store=store.path) as tx:
         assert _own_public_methods(type(tx)) == {"write", "delete", "restore"}
@@ -2711,6 +2937,14 @@ def test_constructed_public_surface_is_exactly_the_gate(
             member = inspect.getattr_static(type(tx), name, None)
             assert isinstance(member, property), f"public writable attribute: {name}"
             assert member.fset is None, f"property with a setter: {name}"
+            assert _immutable(getattr(tx, name)), f"{name} hands back a mutable value"
+        assert _immutable(tx.plan)
+    with guard.transaction(
+        flavor, label="surface-plan", store=store.path, dry_run=True
+    ) as planning:
+        planning.write(CONFIG, NEW_CONFIG)
+        assert len(planning.plan) == 1
+        assert _immutable(planning.plan), "plan items are frozen, all the way down"
 
     transaction = inspect.signature(guard.transaction).parameters
     assert list(transaction) == ["flavor", "label", "store", "dry_run"]
