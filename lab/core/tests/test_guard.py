@@ -458,7 +458,6 @@ def refused_both_ops(guard: Any, tx: Any, rel: str, error: type[BaseException]) 
 # ─── positive controls: allowlisted paths are written ────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize(
     ("rel", "data"),
     [
@@ -494,7 +493,6 @@ def test_constructed_allowlisted_path_is_written(
     assert content(world) == expected
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_write_creates_missing_parent_directories_inside_the_allowlist(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -506,7 +504,6 @@ def test_constructed_write_creates_missing_parent_directories_inside_the_allowli
     assert (flavor.path / rel).read_bytes() == b"## Title: Scaffolded\n"
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_delete_removes_an_allowlisted_file(
     guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -520,7 +517,6 @@ def test_constructed_delete_removes_an_allowlisted_file(
     assert content(world) == expected
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.skipif(sys.platform == "win32", reason="permission bits are a POSIX thing")
 def test_constructed_replaced_file_keeps_its_permission_bits(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
@@ -531,7 +527,6 @@ def test_constructed_replaced_file_keeps_its_permission_bits(
     assert stat.S_IMODE((flavor.path / CONFIG).stat().st_mode) == 0o640
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_write_to_a_hard_link_never_reaches_the_other_name(
     guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -556,7 +551,6 @@ def test_constructed_write_to_a_hard_link_never_reaches_the_other_name(
 # ─── the store ───────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize(
     "where",
     [
@@ -604,7 +598,6 @@ def test_constructed_store_inside_the_install_is_refused_on_enter(
     assert strict_state(world) == before
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_symlinked_install_root_is_written_and_still_guarded(
     guard: Any, world: Path, install_root: Path, store: SnapshotStore, idle: None
 ) -> None:
@@ -636,7 +629,6 @@ def test_constructed_symlinked_install_root_is_written_and_still_guarded(
     assert (world / "outside" / "target.txt").read_bytes() == OUTSIDE_TARGET
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_default_store_is_under_the_user_data_directory(
     guard: Any, world: Path, flavor: Flavor, idle: None, _user_data_redirected: Path
 ) -> None:
@@ -721,7 +713,6 @@ REFUSING_TABLES = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize("which", [pytest.param(w, id=f"constructed-{w}") for w in REFUSING_TABLES])
 def test_constructed_transaction_refuses_when_the_client_is_running_or_unknown(
     guard: Any,
@@ -752,7 +743,6 @@ def test_constructed_transaction_refuses_when_the_client_is_running_or_unknown(
     assert list(guard.history(store=store.path)) == [], "and opens no journal entry"
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_client_refusal_is_a_guard_error_and_not_a_path_refusal(guard: Any) -> None:
     assert issubclass(guard.ClientRunningError, guard.GuardError)
     assert issubclass(guard.PathNotAllowedError, guard.GuardError)
@@ -761,7 +751,6 @@ def test_constructed_client_refusal_is_a_guard_error_and_not_a_path_refusal(guar
     assert not issubclass(guard.GuardError, OSError)
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_client_check_uses_the_process_modules_default_probe(
     guard: Any,
     tmp_path: Path,
@@ -804,7 +793,6 @@ FORBIDDEN_OS_NAMES = {
 }
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_guard_never_touches_psutil_or_the_environment_itself(guard: Any) -> None:
     """Process listing belongs to `wowlab_core.process` (ADR-0023, §6.7 as
     amended: production callers use the default probe and never wrap psutil
@@ -833,7 +821,6 @@ def test_constructed_guard_never_touches_psutil_or_the_environment_itself(guard:
     ), "guard must reach the process check and the store through wowlab_core"
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize("which", [pytest.param(w, id=f"constructed-{w}") for w in REFUSING_TABLES])
 def test_constructed_undo_refuses_while_the_client_runs(
     guard: Any,
@@ -863,7 +850,6 @@ def test_constructed_undo_refuses_while_the_client_runs(
     assert store.list() == snapshots, "a refused undo takes no snapshot"
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_undo_with_nothing_to_undo_is_a_typed_error_and_creates_nothing(
     guard: Any, tmp_path: Path, world: Path, idle: None, _user_data_redirected: Path
 ) -> None:
@@ -882,7 +868,6 @@ def test_constructed_undo_with_nothing_to_undo_is_a_typed_error_and_creates_noth
 # ─── the flavor ──────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize(
     "defect",
     [
@@ -930,7 +915,6 @@ def test_constructed_flavor_that_is_not_a_flavor_is_refused(
     assert not _user_data_redirected.exists()
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_flavor_folder_that_is_a_symlink_out_of_the_install_is_refused(
     guard: Any, world: Path, install_root: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -1091,7 +1075,6 @@ def _expand(rel: str, world: Path, flavor: Flavor) -> str:
     )
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize("op", ["write", "delete"])
 @pytest.mark.parametrize(
     "rel", [pytest.param(rel, id=f"constructed-{name}") for name, rel in FORBIDDEN_PATHS]
@@ -1119,7 +1102,6 @@ def test_constructed_path_outside_the_allowlist_is_refused(
     assert changed <= {flavor_key(CONFIG), flavor_key("WTF")}, sorted(changed)
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize(
     "rel",
     [
@@ -1137,7 +1119,6 @@ def test_constructed_every_executable_suffix_is_refused_in_either_case(
     assert strict_state(world) == before
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_refusal_that_propagates_rolls_back_the_writes_before_it(
     guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -1152,7 +1133,6 @@ def test_constructed_refusal_that_propagates_rolls_back_the_writes_before_it(
     assert record_for(guard, store, "refused-midway").rolled_back is True
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_overlong_name_component_is_a_typed_error(
     guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -1177,7 +1157,6 @@ CASE_VARIANTS_OF_FORBIDDEN: tuple[tuple[str, str], ...] = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize("op", ["write", "delete"])
 @pytest.mark.parametrize(
     "rel",
@@ -1209,7 +1188,6 @@ RESPELLED_ALLOWLIST_ROOTS: tuple[tuple[str, str], ...] = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize("op", ["write", "delete"])
 @pytest.mark.parametrize(
     "rel",
@@ -1240,7 +1218,6 @@ CASE_COLLISIONS: tuple[tuple[str, str], ...] = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize(
     "rel", [pytest.param(rel, id=f"constructed-{name}") for name, rel in CASE_COLLISIONS]
 )
@@ -1270,7 +1247,6 @@ def test_constructed_case_collision_with_an_existing_path_is_refused(
 # ─── symlinks and junctions ──────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize(
     "case",
     [
@@ -1315,7 +1291,6 @@ def test_constructed_symlink_that_escapes_the_allowlist_is_refused(
     assert (world / "outside" / "target.txt").read_bytes() == OUTSIDE_TARGET
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_allowlisted_subtree_that_is_itself_an_escaping_symlink_is_refused(
     guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -1338,7 +1313,6 @@ def test_constructed_allowlisted_subtree_that_is_itself_an_escaping_symlink_is_r
     assert not (world / "outside" / "pwned.ttf").exists()
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.skipif(sys.platform != "win32", reason="windows-only: NTFS junctions")
 def test_constructed_windows_junction_that_escapes_the_install_is_refused(
     guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None
@@ -1367,7 +1341,6 @@ def test_constructed_windows_junction_that_escapes_the_install_is_refused(
 # ─── snapshot first ──────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_snapshot_is_taken_on_enter_before_the_first_write(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -1387,7 +1360,6 @@ def test_constructed_snapshot_is_taken_on_enter_before_the_first_write(
     assert record_for(guard, store, "snapshot-first").snapshot_id == pre.id
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_pre_write_snapshot_covers_the_default_subtrees_and_nothing_else(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -1402,7 +1374,6 @@ def test_constructed_pre_write_snapshot_covers_the_default_subtrees_and_nothing_
         assert entry.sha256 == sha(ALLOWLISTED_FILES[entry.path.removeprefix(prefix)])
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_rollback_survives_a_store_gc_during_the_open_transaction(
     guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -1423,7 +1394,6 @@ def test_constructed_rollback_survives_a_store_gc_during_the_open_transaction(
 # ─── the journal ─────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_journal_records_before_and_after_hashes_for_every_touched_path(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -1442,7 +1412,6 @@ def test_constructed_journal_records_before_and_after_hashes_for_every_touched_p
     assert store.show(record.snapshot_id).id == record.snapshot_id
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_journal_entry_is_opened_on_enter_and_names_each_path_as_it_goes(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -1467,7 +1436,6 @@ INJECTED_LABEL = 'x"}\n{"label":"evil"'
 INJECTED_PATH = 'WTF/a"\nb.wtf'
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_journal_holds_hostile_labels_and_paths_exactly(
     guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -1493,7 +1461,6 @@ def test_constructed_journal_holds_hostile_labels_and_paths_exactly(
     assert "evil" not in {r.label for r in records}
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_journal_lists_a_path_once_with_its_first_before_and_last_after(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -1505,7 +1472,6 @@ def test_constructed_journal_lists_a_path_once_with_its_first_before_and_last_af
     assert changes(record.paths) == {CONFIG: (sha(ALLOWLISTED_FILES[CONFIG]), sha(NEWER_CONFIG))}
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_journal_lives_with_the_store_and_leaves_the_store_healthy(
     guard: Any,
     tmp_path: Path,
@@ -1641,7 +1607,6 @@ class ReplaceSpy:
         self._replace(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_crash_between_temp_write_and_rename_leaves_the_original_intact(
     guard: Any, world: Path, install_root: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -1678,7 +1643,6 @@ def test_constructed_crash_between_temp_write_and_rename_leaves_the_original_int
     assert store.show(record.snapshot_id).id == record.snapshot_id
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_keyboard_interrupt_inside_the_transaction_rolls_back(
     guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -1694,7 +1658,6 @@ def test_constructed_keyboard_interrupt_inside_the_transaction_rolls_back(
     assert record_for(guard, store, "interrupt").rolled_back is True
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_operating_system_refusal_is_a_typed_error_and_rolls_everything_back(
     guard: Any, world: Path, install_root: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -1722,7 +1685,6 @@ def test_constructed_operating_system_refusal_is_a_typed_error_and_rolls_everyth
     assert record_for(guard, store, "locked").rolled_back is True
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.skipif(sys.platform != "win32", reason="windows-only: a file held open is locked")
 def test_constructed_windows_locked_file_is_a_typed_error_and_rolls_back(
     guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None
@@ -1745,7 +1707,6 @@ def test_constructed_windows_locked_file_is_a_typed_error_and_rolls_back(
     assert record_for(guard, store, "win-lock").rolled_back is True
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_parent_swapped_for_a_symlink_before_the_rename_does_not_escape(
     guard: Any, world: Path, install_root: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -1818,7 +1779,6 @@ class OpenSwap:
         return self._io_open(file, mode, *args, **kwargs)
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_parent_swapped_for_a_symlink_before_the_temp_open_does_not_escape(
     guard: Any, world: Path, install_root: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -1863,7 +1823,6 @@ def test_constructed_parent_swapped_for_a_symlink_before_the_temp_open_does_not_
     assert (real / "Config.wtf").read_bytes() in (ALLOWLISTED_FILES[CONFIG], NEW_CONFIG)
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_rollback_that_cannot_finish_does_not_claim_it_did(
     guard: Any, world: Path, install_root: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -1889,7 +1848,6 @@ def test_constructed_rollback_that_cannot_finish_does_not_claim_it_did(
     assert record_for(guard, store, "half").rolled_back is not True
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_rollback_through_an_inside_symlink_restores_both_names(
     guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -1911,7 +1869,6 @@ def test_constructed_rollback_through_an_inside_symlink_restores_both_names(
 # ─── rollback, undo, restore ─────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_exception_inside_the_transaction_rolls_every_touched_path_back(
     guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -1939,7 +1896,6 @@ def test_constructed_exception_inside_the_transaction_rolls_every_touched_path_b
     assert record_for(guard, store, "rollback").rolled_back is True
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_undo_restores_the_pre_transaction_bytes(
     guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -1979,7 +1935,6 @@ def test_constructed_undo_restores_the_pre_transaction_bytes(
     assert len(list(guard.history(store=store.path))) == 3
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_undo_reverts_the_most_recent_transaction_only(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -1995,7 +1950,6 @@ def test_constructed_undo_reverts_the_most_recent_transaction_only(
     assert (flavor.path / TOC).read_bytes() == ALLOWLISTED_FILES[TOC]
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_restore_puts_back_the_bytes_of_a_snapshot(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -2203,7 +2157,6 @@ def _refuses_forged_restore(
     assert (flavor.path / CONFIG).read_bytes() == ALLOWLISTED_FILES[CONFIG]
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize(
     ("hostile_rel", "raw"),
     [pytest.param(rel, raw, id=f"constructed-{name}") for name, rel, raw in FORGED_ENTRIES],
@@ -2220,7 +2173,6 @@ def test_constructed_restore_treats_the_manifest_as_untrusted(
     _refuses_forged_restore(guard, world, flavor, store, hostile_rel, raw=raw)
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.skipif(sys.platform != "win32", reason="windows-only: what these names mean on NTFS")
 @pytest.mark.parametrize(
     "hostile_rel",
@@ -2232,7 +2184,6 @@ def test_constructed_windows_restore_refuses_posix_names_that_are_not_plain_path
     _refuses_forged_restore(guard, world, flavor, store, hostile_rel)
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize(
     "target", [pytest.param(t, id=f"constructed-{name}") for name, t in SYMLINK_TARGETS]
 )
@@ -2270,7 +2221,6 @@ POISONED_SNAPSHOTS: tuple[tuple[str, str, str | None, bool], ...] = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize(
     ("hostile_rel", "link_target", "raw"),
     [
@@ -2373,7 +2323,6 @@ def plant_link(kind: str, world: Path, flavor: Flavor) -> None:
             pytest.skip(f"this platform or volume cannot hard-link: {exc}")
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize("kind", [pytest.param(k, id=f"constructed-{k}") for k in LINK_PLANTS])
 @pytest.mark.parametrize("route", [pytest.param(r, id=f"constructed-{r}") for r in LINK_ROUTES])
 def test_constructed_link_planted_after_the_check_never_redirects_undo_restore_or_rollback(
@@ -2487,7 +2436,6 @@ POISONED_TOUCHED = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize("case", [pytest.param(c, id=f"constructed-{c}") for c in POISONED_TOUCHED])
 def test_constructed_undo_refuses_a_poisoned_entry_at_a_path_it_journaled(
     guard: Any,
@@ -2527,7 +2475,6 @@ JOURNAL_SUBSTITUTES: tuple[tuple[str, str], ...] = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize(
     "substitute", [pytest.param(sub, id=f"constructed-{name}") for name, sub in JOURNAL_SUBSTITUTES]
 )
@@ -2564,7 +2511,6 @@ def test_constructed_undo_refuses_a_journal_that_names_a_forbidden_path(
     assert content(world) == before
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize(
     "route",
     [
@@ -2635,7 +2581,6 @@ def _json_spellings(text: str) -> tuple[bytes, ...]:
     return (text.encode(), escaped.encode())
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_undo_refuses_an_install_root_the_store_points_elsewhere(
     guard: Any, world: Path, install_root: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -2661,7 +2606,6 @@ def test_constructed_undo_refuses_an_install_root_the_store_points_elsewhere(
     assert content(world) == before
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_undo_refuses_a_store_inside_the_install(
     guard: Any, world: Path, install_root: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -2677,7 +2621,6 @@ def test_constructed_undo_refuses_a_store_inside_the_install(
     assert strict_state(world) == before
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.skipif(sys.platform == "win32", reason="setuid and exec bits are a POSIX thing")
 def test_constructed_restore_never_widens_permission_bits(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
@@ -3115,7 +3058,6 @@ WINDOWS_NAMES: tuple[tuple[str, str], ...] = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.skipif(sys.platform != "win32", reason="windows-only: what these names mean on NTFS")
 @pytest.mark.parametrize("op", ["write", "delete"])
 @pytest.mark.parametrize(
@@ -3149,7 +3091,6 @@ def planned_size(item: Any) -> int:
     return int(size) if size is not None else len(item.data)
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_dry_run_returns_the_plan_and_touches_nothing(
     guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -3172,7 +3113,6 @@ def test_constructed_dry_run_returns_the_plan_and_touches_nothing(
     assert sizes == {CONFIG: len(NEW_CONFIG), NEW_SAVED: len(NEW_LUA)}
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_dry_run_restore_plans_without_touching_anything(
     guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -3188,7 +3128,6 @@ def test_constructed_dry_run_restore_plans_without_touching_anything(
     assert changes(tx.plan) == {CONFIG: (sha(NEW_CONFIG), sha(ALLOWLISTED_FILES[CONFIG]))}
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_dry_run_still_refuses_a_forbidden_path(
     guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -3287,7 +3226,6 @@ def _type_checking_is_only_an_if_test(guard: Any) -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_public_surface_is_exactly_the_gate(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -3367,7 +3305,6 @@ def test_constructed_public_surface_is_exactly_the_gate(
     assert restore["paths"].default is None
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_no_module_global_is_a_boolean_switch(guard: Any) -> None:
     """A private `_SKIP_CLIENT_CHECK = False` is a flag one edit or one
     monkeypatch away from skipping the gate."""
@@ -3381,7 +3318,6 @@ def test_constructed_no_module_global_is_a_boolean_switch(guard: Any) -> None:
     assert switches == []
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_transaction_object_is_dead_after_exit(
     guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -3402,7 +3338,6 @@ def test_constructed_transaction_object_is_dead_after_exit(
     assert list(guard.history(store=store.path)) == history
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 def test_constructed_no_boolean_flag_skips_the_client_check_or_the_snapshot(
     guard: Any,
     tmp_path: Path,
@@ -3449,7 +3384,6 @@ def test_constructed_no_boolean_flag_skips_the_client_check_or_the_snapshot(
             assert content(world) == pristine
 
 
-@pytest.mark.xfail(strict=True, reason=MARKER)
 @pytest.mark.parametrize(
     "variable",
     [
