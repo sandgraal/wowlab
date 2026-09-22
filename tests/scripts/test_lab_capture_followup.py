@@ -318,3 +318,150 @@ def test_constructed_macro_body_inside_a_lua_string_is_seen() -> None:
     )
     notes = [n for n in result.notes if n.startswith(MACRO)]
     assert notes and " x2 " in notes[0], result.notes
+
+
+# ─── round 2 of #33: code review and security re-review of ebba464 ───────────
+
+
+def test_constructed_folder_only_second_part_is_replaced_in_its_spaced_spelling() -> None:
+    """Code review 1: `StormRage` -> `Storm Rage`; `PvE2` -> both `Pv E 2` and `PvE 2`."""
+    identity = Identity(characters=["Vex"], realms=["StormRage", "PvE2"])
+    result = identity.scrub(b'"Vex - Storm Rage" "storm rage" "PvE 2" "Pv E 2" "Area 52"')
+    assert b"Storm" not in result.data and b"storm" not in result.data
+    assert b"PvE" not in result.data and b"Pv E" not in result.data
+    assert b'"Area 52"' in result.data  # not a name here: untouched
+    assert not result.problems, result.problems
+    # The pseudonyms are the ones the folder spelling always had.
+    assert identity.names == {"PvE2": "Labrealma", "StormRage": "Labrealmb", "Vex": "Labchara"}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '"Jaina  (Area 52)"',
+        '"Jaina\\t(Area52)"',
+        '"Jaina ( Area52)"',
+        '"jaina' + " " * 170 + '(area52)"',  # a blank run longer than the window
+    ],
+)
+def test_constructed_blank_run_before_a_paren_refuses(text: str) -> None:
+    """Code review 2."""
+    result = Identity(characters=[MAIN], realms=[REALM]).scrub(text.encode())
+    assert any(p.startswith(FOREIGN) for p in result.problems), result.problems
+
+
+def test_constructed_own_name_in_parens_after_a_blank_run_still_passes() -> None:
+    result = Identity(characters=[MAIN], realms=[REALM]).scrub(f'"{MAIN} \t (Area 52)"'.encode())
+    assert not result.problems, result.problems
+
+
+def test_constructed_indented_slash_command_after_a_line_break_is_no_joint() -> None:
+    """Code review 4."""
+    identity = Identity(characters=[MAIN], realms=[REALM])
+    for text in (f"/tar {MAIN}-Area52 \n /cast X\n", f"/tar {MAIN}-Area52\r\n\t/cast X\n"):
+        result = identity.scrub(text.encode())
+        assert not result.problems, (text, result.problems)
+    # On the same line a slash is still a joint.
+    assert any(p.startswith(FOREIGN) for p in identity.scrub(b'"Jaina/Area52"').problems)
+
+
+def test_constructed_offsets_after_a_dash_are_offsets_of_the_original_bytes() -> None:
+    """Code review 5: each dash is replaced by a copy of the same length."""
+    identity = Identity(characters=[MAIN], realms=[REALM])
+    prefix = "\u2014\u2013 \u2013\u2014\u2014 ".encode()
+    result = identity.scrub(prefix + '"jaina\u2013Area52"'.encode())
+    problem = next(p for p in result.problems if p.startswith(FOREIGN))
+    assert f"first at byte {result.data.index(b'LabrealmaPartb')}, line 1)" in problem
+    assert result.data.startswith(prefix)  # the dashes themselves are never rewritten
+
+
+def test_constructed_character_help_names_both_shapes(capsys: pytest.CaptureFixture[str]) -> None:
+    """Code review 6."""
+    with pytest.raises(SystemExit):
+        lab_capture.parse_args(["--help"])
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "REALM/NAME, or a <Name>-<Suffix> folder name" in help_text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [b'"Kael - Quel\'Thalas"', b'"quel thalas"', b'"Quel-Thalas"', b'"QUEL\\\'THALAS"'],
+)
+def test_constructed_other_spelling_of_a_folder_only_second_part_refuses(text: bytes) -> None:
+    """Security S1: a space, apostrophe or hyphen between two letters; any casing."""
+    identity = Identity(characters=["Kael"], realms=["QuelThalas"], loose=["QuelThalas"])
+    result = identity.scrub(text)
+    spelled = "surviving identity string (spaced or apostrophe spelling)"
+    if text == b'"quel thalas"':
+        # The CamelCase split form covers this spelling: replaced, not refused.
+        assert result.data == b'"labrealma"' and not result.problems
+    else:
+        assert any(p.startswith(spelled) for p in result.problems), result.problems
+
+
+def test_constructed_loose_spelling_of_a_short_part_needs_a_whole_word() -> None:
+    identity = Identity(characters=["Moon"], realms=["Sett"], loose=["Sett"])
+    assert not identity.scrub(b'"settings" "se ttle" "Sett"').problems
+    assert identity.scrub(b'"se\'tt"').problems
+
+
+def test_constructed_character_list_refuses_a_character_with_no_folder() -> None:
+    """Security S2."""
+    identity = Identity(
+        characters=["Alyra", "Moon"], realms=["Bloodfist", "Glade"], guids=[b"Player-1-0000ABCD"]
+    )
+    good = b"\xef\xbb\xbfAlyra-Bloodfist\r\n\r\nMoon-Glade\r\nPlayer-1-0000ABCD\r\n42\r\n"
+    assert not identity.scrub(good, character_list=True).problems
+    bad = identity.scrub(b"Alyra-Bloodfist\nZedalt-Faerlina\nzedalt\n", character_list=True)
+    label = "character list names a character this install has no folder for"
+    assert [p for p in bad.problems if p.startswith(f"{label} x2 (first at byte 19, line 2)")]
+    assert "Zedalt" not in " ".join(bad.problems)
+    # Any other file is not held to that rule.
+    assert not identity.scrub(b"Zedalt-Faerlina\n").problems
+
+
+def test_constructed_group_folders_get_a_path_only_numeric_pseudonym() -> None:
+    """Security S3: `<flavor>/WTF/Account/<account>/<digits>` only; never a content token."""
+    identity = Identity(characters=["Alyra"], realms=["Bloodfist"], groups=["70", "5"])
+    assert identity.groups == {"5": "1", "70": "2"}
+    path, problems = identity.scrub_path(
+        lab_capture.PurePosixPath("_x_/wtf/account/A1/70/Alyra-Bloodfist/chat-cache.txt")
+    )
+    assert path.parts[4:6] == ("2", "Labchara-Labrealma") and not problems
+    elsewhere, _ = identity.scrub_path(lab_capture.PurePosixPath("_x_/Interface/AddOns/70/a.toc"))
+    assert elsewhere.parts[3] == "70"
+    assert identity.scrub(b"70 170 -270.0 1703 5").data == b"70 170 -270.0 1703 5"
+    _unmapped, problems = Identity().scrub_path(lab_capture.PurePosixPath("f/WTF/Account/A/9/x"))
+    assert problems == ["unsafe path component after scrubbing"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '"jaina-horde area52"',
+        '"jaina us area52"',
+        '"jaina, 2 area52"',
+        "jaina\narea52",
+        "area52\njaina",
+        '"jaina,     area52"',  # a separator of up to 8 bytes
+        f'"jaina-{MAIN.lower()}-area52"',  # one segment past an own name
+    ],
+)
+def test_constructed_lowercase_stranger_past_vocabulary_numbers_and_own_names_is_noted(
+    text: str,
+) -> None:
+    """Security S4: still a note, never a refusal."""
+    result = Identity(characters=[MAIN], realms=[REALM]).scrub(text.encode())
+    assert not result.problems, result.problems
+    assert [n for n in result.notes if n.startswith(LOWERCASE)], result.notes
+
+
+def test_constructed_byte_order_mark_is_never_part_of_a_partner_word() -> None:
+    """Found while writing the S2 test: a BOM is made of word bytes (\\x80-\\xff)."""
+    identity = Identity(characters=[MAIN], realms=[REALM])
+    for text in (f"\ufeff{MAIN}-Area52\n", "\ufeff Area52\n", "\ufeffArea52-US\n"):
+        result = identity.scrub(text.encode())
+        assert not result.problems, (text, result.problems)
+        assert not [n for n in result.notes if n.startswith((UNEXPLAINED, LOWERCASE))], text
+    jaina = identity.scrub("\ufeffJaina-Area52".encode())
+    assert any(p.startswith(FOREIGN) for p in jaina.problems)
