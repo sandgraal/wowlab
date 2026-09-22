@@ -8,7 +8,10 @@ Copies the capture set of `docs/handoffs/M10-03.md` out of a World of Warcraft
 install and scrubs identity from it per `docs/LAB_PLAN.md` §8:
 
 - account folder, realm and character names become stable pseudonyms, in
-  paths and in file contents (same input, same pseudonym, whole capture set);
+  paths and in file contents (same input, same pseudonym, whole capture set).
+  Both account layouts are read: `<account>/<Realm>/<Name>/`, and the Forever
+  beta's `<account>/<digits>/<Name>-<Realm>/`, where the digits-only folder is
+  a grouping level that is kept as it is and never used as a name;
 - identity CVars have their value blanked;
 - the owner's own `Player-<n>-<hex>` GUIDs become pseudonym GUIDs;
 - a file whose scrubbed bytes or output path still contain an email address,
@@ -71,6 +74,45 @@ REVIEW_CVAR_RE = re.compile(
 
 # An identity string equal to one of these would rewrite format keywords.
 RESERVED_WORDS = frozenset({"set", "bind", "end", "ver", "true", "false", "nil", "player"})
+# Words the client writes itself as vocabulary (chat-cache.txt channel and
+# message types). An `--extra-name` equal to one of them, in any casing, is
+# refused: `--extra-name GUILD` would rewrite the client's GUILD token.
+CLIENT_VOCABULARY = RESERVED_WORDS | frozenset(
+    word.casefold()
+    for word in [
+        "SAY",
+        "PARTY",
+        "PARTY_LEADER",
+        "RAID",
+        "RAID_LEADER",
+        "RAID_WARNING",
+        "GUILD",
+        "OFFICER",
+        "WHISPER",
+        "WHISPER_INFORM",
+        "YELL",
+        "EMOTE",
+        "TEXT_EMOTE",
+        "CHANNEL",
+        "SYSTEM",
+        "LOOT",
+        "MONEY",
+        "INSTANCE_CHAT",
+        "INSTANCE_CHAT_LEADER",
+        "BN_WHISPER",
+        "ACHIEVEMENT",
+        "GUILD_ACHIEVEMENT",
+        "COMBAT_XP_GAIN",
+        "COMBAT_HONOR_GAIN",
+        "COMBAT_FACTION_CHANGE",
+        "SKILL",
+        "BG_SYSTEM_NEUTRAL",
+        "OPENING",
+        "TRADESKILLS",
+        "PET_INFO",
+        "COMBAT_MISC_INFO",
+    ]
+)
 
 # Loose on purpose: a false refusal costs one candidate file, a miss is a leak.
 # No top-level domain is required (`user@localhost`); non-ASCII is accepted.
@@ -99,22 +141,34 @@ _LETTERS = rb"A-Za-z\x80-\xff"
 # What joins a name to a realm: "Name-Realm", "Name - Realm", DataStore's
 # "Default.Realm.Name", and the other single-character joints addons use. Any
 # run of blanks around the joint character counts ("Horde  - Realm" is still
-# the same key), so a stray space never turns a refusal into a note. Bare
-# blanks, commas and words ("Jaina Area52", "Jaina of Area52") are not
-# joints; those neighbours are caught by the capitalised-word note instead.
-_JOINT = rb"(?:[ \t]*[-.|:/_][ \t]*)"
+# the same key), line breaks included ("Jaina -\nRealm"), so neither a stray
+# space nor a wrapped line turns a refusal into a note. A `/` right after a
+# line break starts a macro's slash command and is not a joint. En and em
+# dashes are joints too: the detectors read a copy of the bytes in which each
+# is replaced by " - " (the same three bytes long, so every offset holds).
+# Bare blanks, commas and words ("Jaina Area52", "jaina of area52") are not
+# joints; those neighbours get a note instead (see Identity.inspect).
+_JOINT = rb"(?:[ \t\r\n]*(?:[-.|:_]|(?<![\r\n])/)[ \t\r\n]*)"
+_DASHES = (b"\xe2\x80\x93", b"\xe2\x80\x94")  # U+2013, U+2014 in UTF-8
 _UNIT_TOKENS = (
     "player|target|focus|mouseover|cursor|pet|none|vehicle|npc|softenemy|softfriend|"
     "softinteract|party|raid|arena|boss|nameplate"
 )
 # Slash commands that take a player's name, `@Name` / `target=Name` unit
-# references that are not unit tokens, and a `/run` or `/script` line that
-# calls SendChatMessage (its fourth argument is a whisper target).
+# references that are not unit tokens (blanks allowed: `[@ Name]`,
+# `[target = Name]`), and a `/run` or `/script` line that calls an API taking
+# a name. A macro line starts at a line break, or after a literal `\n` escape
+# inside a Lua string (a macro body stored in SavedVariables).
+_MACRO_LINE = rb"(?:\A|(?<=[\r\n])|(?<=\\n))[ \t]*/"
 SOCIAL_MACRO_RE = re.compile(
-    rb"(?:\A|(?<=[\r\n]))[ \t]*/(?:w|whisper|who|tell|t|invite|inv|ginvite|tar|targetexact"
-    rb"|target|friend|ignore|focus|assist|follow|pr|cw)(?=[ \t])"
-    rb"|(?:\A|(?<=[\r\n]))[ \t]*/(?:run|script)[ \t][^\r\n]*?SendChatMessage[ \t]*\("
-    rb"|(?:@|target=)(?!(?:%s)(?:target|pet)*[0-9]*(?![%s]))[%s]+"
+    _MACRO_LINE + rb"(?:w|whisper|who|tell|t|invite|inv|ginvite|tar|targetexact"
+    rb"|target|friend|ignore|focus|assist|follow|pr|cw"
+    # [verify] The commands below are from reviewer memory, not from a capture.
+    rb"|guildinvite|promote|gpromote|gdemote|gkick|guildremove|uninvite|kick|unignore"
+    rb"|removefriend|inspect|duel|fol)(?=[ \t])"
+    rb"|" + _MACRO_LINE + rb"(?:run|script)[ \t][^\r\n]*?"
+    rb"(?:SendChatMessage|InviteUnit|TargetUnit|GuildInvite|AddFriend|BNSendWhisper)"
+    rb"|(?:@[ \t]*|target[ \t]*=[ \t]*)(?!(?:%s)(?:target|pet)*[0-9]*(?![%s]))[%s]+"
     % (_UNIT_TOKENS.encode(), _LETTERS, _LETTERS),
     re.IGNORECASE,
 )
@@ -172,6 +226,21 @@ CHARACTER_FILES = (
     "layout-local.txt",
     "chat-cache.txt",
 )
+# More per-account and per-character caches, found on the Forever beta by the
+# M10-03 capture. `.old` twins (the previous write) are never captured.
+ACCOUNT_CACHE_FILES = (
+    "character-list-order.txt",
+    "chat-frontend-cache.txt",
+    "flagged-cache-account.txt",
+    "tts-cache-account.txt",
+)
+CHARACTER_CACHE_FILES = (
+    "click-bindings-cache.txt",
+    "flagged-cache-character.txt",
+    "tts-cache-character.txt",
+    "edit-mode-cache-character.txt",
+)
+OLD_SUFFIX = ".old"
 CONFIG_NAMES = frozenset({"config.wtf", "config-cache.wtf"})
 # Blizzard's exported interface code is not a fixture (fixtures/README.md).
 EXPORTED_ADDON_PREFIX = "blizzard_"
@@ -181,13 +250,51 @@ Span = tuple[int, int]
 # A partner word is letters AND digits: "Jaina9" is a word, not an absent
 # neighbour. A word that is only digits ("Realm-2", a profile copy) is nobody
 # and is looked past.
+#
+# Backward searches run in a window of _WINDOW bytes and start only at a word
+# boundary (a lookbehind sees past the window's start). A word or a joint that
+# the window cuts is read as a person: the safe direction.
+_WINDOW = 160
 _BEYOND_AFTER = re.compile(_JOINT + rb"([%s]+)" % _WORD)
-_BEYOND_BEFORE = re.compile(rb"([%s]+)%s\Z" % (_WORD, _JOINT))
-_PAREN_BEFORE = re.compile(rb"([%s]+) ?\(\Z" % _WORD)
+_BEYOND_BEFORE = re.compile(rb"(?<![%s])([%s]+)%s\Z" % (_WORD, _WORD, _JOINT))
+_PAREN_BEFORE = re.compile(rb"(?<![%s])([%s]+) ?\(\Z" % (_WORD, _WORD))
+_CUT_BEFORE = re.compile(rb"[%s]*%s" % (_WORD, _JOINT))  # fullmatch over a whole window
+_JOINT_BYTES = frozenset(bytes([b]) for b in b"-.|:/_")  # one-byte slices
+_NOT_SEPARATOR = _WORD_BYTES | frozenset(b"\r\n")
+# The nearest word across a short separator that is not a joint (" ", ", ",
+# " of ", "~", "'s "), in any casing: up to 4 bytes that are neither word
+# bytes nor line breaks.
+_NEAR_WINDOW = 64
+_NEAR_BEFORE = re.compile(rb"(?<![%s])([%s]+)[^%s\r\n]{1,4}\Z" % (_WORD, _WORD, _WORD))
+_NEAR_CUT = re.compile(rb"[%s]*[^%s\r\n]{1,4}" % (_WORD, _WORD))  # fullmatch over a whole window
+_NEAR_AFTER = re.compile(rb"[^%s\r\n]{1,4}([%s]+)" % (_WORD, _WORD))
+# Nothing but blanks and joint characters (fullmatch; dashes already replaced).
+_JOINT_ONLY = re.compile(rb"[ \t\-.|:/_]*")
 # A word that starts with a capital (or a non-ASCII byte, which may be one),
 # at a word boundary, for the same-line note.
 _CAPITALISED_RE = re.compile(rb"(?<![%s])[A-Z\x80-\xff][%s]*" % (_WORD, _WORD))
-_LINE_BREAK_RE = re.compile(rb"[\r\n]")
+_LINE_BREAKS_RE = re.compile(rb"\r\n|\r|\n")
+
+
+class _Lines:
+    """Where each line of a byte string starts and ends. CRLF, CR and LF each end one."""
+
+    def __init__(self, data: bytes) -> None:
+        self._size = len(data)
+        self._breaks = [m.span() for m in _LINE_BREAKS_RE.finditer(data)]
+        self._ends = [end for _, end in self._breaks]
+
+    @property
+    def count(self) -> int:
+        return len(self._breaks) + 1
+
+    def index(self, position: int) -> int:
+        return bisect.bisect_right(self._ends, position)
+
+    def span(self, index: int) -> Span:
+        start = self._breaks[index - 1][1] if index else 0
+        end = self._breaks[index][0] if index < len(self._breaks) else self._size
+        return start, end
 
 
 def _fold(word: str) -> str:
@@ -429,6 +536,18 @@ class Identity:
             raise CaptureError(f"{shown} is too short to replace safely")
         if real.casefold() in RESERVED_WORDS:
             raise CaptureError(f"{shown} is a format keyword; replacing it would corrupt files")
+        if category in ("realm", "character") and not any(c.isalpha() for c in real):
+            # Replaced as a substring, a name like "70" rewrites 170, -270.0 and 1703.
+            raise CaptureError(
+                f"{shown} has no letters, so it cannot be told apart from an ordinary number; "
+                "nothing is captured"
+            )
+        if category == "extra name" and real.casefold() in CLIENT_VOCABULARY:
+            value = repr(real) if self._show_names else f"a value ({len(real)} characters)"
+            raise CaptureError(
+                f"--extra-name: {value} is a word the client writes itself (a chat type or "
+                "channel token); replacing it would corrupt files"
+            )
 
     def _token(self, text: str, replacement: str, mode: str) -> None:
         raw = text.encode("utf-8")
@@ -659,26 +778,39 @@ class Identity:
             report(notes, "short identity string inside a longer word", loose)
 
         if self._own_realm is not None:
+            # Who stands next to each own realm. Beyond any adjacency check, and
+            # left to the owner's eye: a name and the realm in separate fields
+            # of one record (`["name"] = "Jaina", ["realm"] = "<realm>"`).
+            view = scrubbed
+            for dash in _DASHES:
+                view = view.replace(dash, b" - ")  # same length: offsets hold
             foreign: list[re.Match[bytes]] = []
             tolerated: list[re.Match[bytes]] = []
             unexplained: list[re.Match[bytes]] = []
-            line: tuple[int, int, bool] = (0, -1, False)  # start, end, has an unexplained word
-            for m in self._own_realm.finditer(scrubbed):
-                verdict = self._partner(scrubbed, m)
+            nearby: list[re.Match[bytes]] = []
+            lines: _Lines | None = None
+            strangers: dict[int, bool] = {}  # line index -> holds an unexplained capitalised word
+            for m in self._own_realm.finditer(view):
+                verdict = self._partner(view, m)
                 if verdict == "foreign":
                     foreign.append(m)
                 elif verdict == "vocabulary":
                     tolerated.append(m)
                 # A name joined by something that is not a joint ("Jaina Area52",
-                # "Jaina, Area 52", "Jaina of Area52") is not refused: the same
-                # line is read once for any capitalised word nobody accounts for.
-                if m.start() > line[1]:
-                    line = self._line_with_stranger(scrubbed, m.start())
-                if line[2]:
+                # "jaina, area52", "Jaina\nArea52") is not refused, it is noted:
+                # a capitalised word nobody accounts for on the realm's line (or
+                # on the next or previous line, when only blanks and joints stand
+                # between the realm and that line break), else a foreign word of
+                # any casing right next to it. At most one of the two per realm.
+                lines = lines or _Lines(view)
+                if self._capitalised_near(view, lines, strangers, m):
                     unexplained.append(m)
+                elif self._stranger_adjacent(view, m):
+                    nearby.append(m)
             report(problems, "someone else's name on an own realm", foreign)
             report(notes, "own realm next to a faction, region or 'Default' word", tolerated)
             report(notes, "own realm near an unexplained capitalised word", unexplained)
+            report(notes, "own realm next to an unexplained lowercase word", nearby)
         report(
             notes,
             "Name-Realm-shaped string that is not a pseudonym pair",
@@ -697,12 +829,20 @@ class Identity:
         long as the word is vocabulary (a faction, a region, `Default`) or
         only digits: "Jaina - Horde - <realm>", "Jaina-US-<realm>",
         "Default.<realm>.Jaina" and "<realm>-US-Jaina" all end on Jaina. A word
-        longer than the window is cut short, which makes it foreign: the safe
-        direction.
+        or a joint that the backward window cuts makes the verdict foreign: the
+        safe direction.
         """
+        cut = False
 
         def before(position: int) -> re.Match[bytes] | None:
-            return _BEYOND_BEFORE.search(scrubbed, max(0, position - 160), position)
+            nonlocal cut
+            low = max(0, position - _WINDOW)
+            if scrubbed[low:position].rstrip(b" \t\r\n")[-1:] not in _JOINT_BYTES:
+                return None  # no joint character: no match and no cut (the common case)
+            found = _BEYOND_BEFORE.search(scrubbed, low, position)
+            if found is None and low > 0 and _CUT_BEFORE.fullmatch(scrubbed, low, position):
+                cut = True  # "<a word or blanks longer than the window><joint><realm>"
+            return found
 
         def after(position: int) -> re.Match[bytes] | None:
             return _BEYOND_AFTER.match(scrubbed, position)
@@ -718,6 +858,8 @@ class Identity:
             while chain[-1] in ("vocabulary", "number") and beyond is not None:
                 # The faction, region or number is fine; the segment beyond it may not be.
                 beyond = step(edge(beyond))
+                if cut:
+                    return "foreign"
                 if beyond is not None:
                     chain.append(self._kind(beyond.group(1)))
             if chain[-1] == "foreign":
@@ -727,8 +869,13 @@ class Identity:
 
         verdicts: set[str] = set()
         leading = before(match.start())
-        if leading is None:
-            leading = _PAREN_BEFORE.search(scrubbed, max(0, match.start() - 160), match.start())
+        if cut:
+            return "foreign"
+        if leading is None and scrubbed[max(0, match.start() - 2) : match.start()].endswith(
+            (b"(", b"( ")
+        ):
+            low = max(0, match.start() - _WINDOW)
+            leading = _PAREN_BEFORE.search(scrubbed, low, match.start())
         if leading is not None:
             verdicts.add(walk(leading, before, lambda m: m.start()))
         trailing = after(match.end())
@@ -749,25 +896,57 @@ class Identity:
             return "vocabulary"
         return "number" if raw.isdigit() else "foreign"
 
-    def _line_with_stranger(self, scrubbed: bytes, position: int) -> tuple[int, int, bool]:
-        """The line around `position`, and whether it holds a capitalised word nobody accounts for.
+    def _stranger(self, raw: bytes) -> bool:
+        """A word nobody accounts for: not a pseudonym, vocabulary, a number or a keyword."""
+        return (
+            self._kind(raw) == "foreign"
+            and not raw[:1].isdigit()  # `0x511`, `3rd`: character names hold no digit
+            and self._word(raw) not in RESERVED_WORDS
+        )
 
-        Accounted for: every word of every pseudonym, the faction, region and
-        `Default` vocabulary, and the format keywords (`Player-` GUIDs, `SET`).
-        Read once per line, however many own-realm pseudonyms the line holds.
+    def _capitalised_near(
+        self, view: bytes, lines: _Lines, strangers: dict[int, bool], match: re.Match[bytes]
+    ) -> bool:
+        """Is there a capitalised stranger on this realm's line, or across a joint-only line end?
+
+        Each line is read once however many realms it holds (`strangers`
+        remembers), so a file of many short lines or one long line is linear.
         """
-        start = max(scrubbed.rfind(b"\n", 0, position), scrubbed.rfind(b"\r", 0, position)) + 1
-        end_match = _LINE_BREAK_RE.search(scrubbed, position)
-        end = end_match.start() if end_match else len(scrubbed)
-        for m in _CAPITALISED_RE.finditer(scrubbed, start, end):
-            word = self._word(m.group(0))
-            if (
-                word not in self._partner_words
-                and word not in VOCABULARY_PARTNERS
-                and word not in RESERVED_WORDS
-            ):
-                return start, end, True
-        return start, end, False
+
+        def stranger_on(index: int) -> bool:
+            if index not in strangers:
+                start, end = lines.span(index)
+                strangers[index] = any(
+                    self._stranger(m.group(0)) for m in _CAPITALISED_RE.finditer(view, start, end)
+                )
+            return strangers[index]
+
+        index = lines.index(match.start())
+        start, end = lines.span(index)
+        if stranger_on(index):
+            return True
+        if (
+            index > 0
+            and _JOINT_ONLY.fullmatch(view, start, match.start())
+            and stranger_on(index - 1)
+        ):
+            return True
+        return (
+            index + 1 < lines.count
+            and _JOINT_ONLY.fullmatch(view, match.end(), end) is not None
+            and stranger_on(index + 1)
+        )
+
+    def _stranger_adjacent(self, view: bytes, match: re.Match[bytes]) -> bool:
+        """Is the nearest word across a short non-joint separator, on either side, a stranger?"""
+        low = max(0, match.start() - _NEAR_WINDOW)
+        leading: re.Match[bytes] | None = None
+        if match.start() and view[match.start() - 1] not in _NOT_SEPARATOR:
+            leading = _NEAR_BEFORE.search(view, low, match.start())
+            if leading is None and low > 0 and _NEAR_CUT.fullmatch(view, low, match.start()):
+                return True  # a word longer than the window: assume a person
+        trailing = _NEAR_AFTER.match(view, match.end())
+        return any(self._stranger(w.group(1)) for w in (leading, trailing) if w is not None)
 
     def _is_pair(self, match: re.Match[bytes]) -> bool:
         """Is every word of this quoted string a pseudonym or a faction/region/'Default' word?"""
@@ -872,11 +1051,16 @@ def _size(path: Path) -> int:
         return 0
 
 
-def newest(paths: Sequence[Path]) -> Path | None:
-    def latest(path: Path) -> float:
-        return max([_mtime(path), *(_mtime(e) for e in (children(path) if path.is_dir() else []))])
+def _latest(path: Path) -> float:
+    return max([_mtime(path), *(_mtime(e) for e in (children(path) if path.is_dir() else []))])
 
-    return max(paths, key=lambda p: (latest(p), p.name), default=None)
+
+def newest(paths: Sequence[Path]) -> Path | None:
+    return max(paths, key=lambda p: (_latest(p), p.name), default=None)
+
+
+def newest_unit(units: Sequence[tuple[Path, ...]]) -> tuple[Path, ...] | None:
+    return max(units, key=lambda u: (max(_latest(p) for p in u), u[0].name), default=None)
 
 
 @dataclass(frozen=True)
@@ -925,11 +1109,81 @@ def discover_flavors(root: Path) -> list[Flavor]:
 
 
 def account_dirs(flavor_folder: Path) -> list[Path]:
-    return subdirs(descend(flavor_folder, "WTF", "Account"))
+    """Account folders. `WTF/Account/SavedVariables/` is not an account."""
+    return [
+        d
+        for d in subdirs(descend(flavor_folder, "WTF", "Account"))
+        if d.name.casefold() != SAVED_VARIABLES_DIR.casefold()
+    ]
 
 
 def realm_dirs(account: Path) -> list[Path]:
+    """Children of an account that hold characters: realms, and digits-only groups."""
     return [d for d in subdirs(account) if d.name.casefold() != SAVED_VARIABLES_DIR.casefold()]
+
+
+def is_group(name: str) -> bool:
+    """A digits-only child of an account folder: a grouping level, never a name.
+
+    The Forever beta keeps characters under `<account>/<digits>/<Name>-<Realm>/`
+    [verify: the number looks like a region or realm-list id]. The number
+    identifies no person, so it is neither scrubbed nor used as a pseudonym
+    source, and it stays in output paths as the layout's real structure.
+    """
+    return re.fullmatch(r"[0-9]+", name) is not None
+
+
+def split_character_folder(name: str) -> tuple[str, str] | None:
+    """`<Name>-<Realm>` -> (name, realm), split on the FIRST hyphen.
+
+    A character name never contains a hyphen; a realm name may (`Azjol-Nerub`).
+    """
+    character, hyphen, realm = name.partition("-")
+    return (character, realm) if hyphen else None
+
+
+def character_units(account: Path) -> list[tuple[Path, ...]]:
+    """Each character of an account once, as its folder(s), the main folder first.
+
+    Retail shape: `<account>/<Realm>/<Name>/`, one folder. Forever beta shape:
+    `<account>/<digits>/<Name>-<Realm>/` holds the caches and SavedVariables,
+    and a retail-shaped twin `<account>/<Realm>/<Name>/` beside it holds only
+    AddOns.txt; the twin is matched by name and by any spelling of the realm.
+    """
+    parents = realm_dirs(account)
+    retail = [c for realm in parents if not is_group(realm.name) for c in subdirs(realm)]
+    twinned: set[Path] = set()
+    units: list[tuple[Path, ...]] = []
+    for group in (p for p in parents if is_group(p.name)):
+        for folder in subdirs(group):
+            twin = _twin(folder.name, [c for c in retail if c not in twinned])
+            if twin is None:
+                units.append((folder,))
+            else:
+                twinned.add(twin)
+                units.append((folder, twin))
+    units.extend((c,) for c in retail if c not in twinned)
+    return units
+
+
+def _twin(folder_name: str, retail: Sequence[Path]) -> Path | None:
+    split = split_character_folder(folder_name)
+    if split is None:
+        return None
+    name, realm = split
+    for candidate in retail:
+        forms = {_fold(form) for form in _realm_forms(candidate.parent.name)}
+        if _fold(candidate.name) == _fold(name) and _fold(realm) in forms:
+            return candidate
+    return None
+
+
+def character_labels(unit: Sequence[Path]) -> Iterator[str]:
+    """What `--character` accepts for this character: REALM/NAME, or a `<Name>-<Realm>` folder."""
+    for folder in unit:
+        yield f"{folder.parent.name}/{folder.name}"
+        if is_group(folder.parent.name):
+            yield folder.name
 
 
 # ─── choosing the capture set ────────────────────────────────────────────────
@@ -958,6 +1212,13 @@ def kind_of(name: str) -> str:
         "addons.txt": "addons-txt",
         "layout-local.txt": "layout-local",
         "chat-cache.txt": "chat-cache",
+        "character-list-order.txt": "character-list-order",
+        "chat-frontend-cache.txt": "chat-frontend-cache",
+        "flagged-cache-account.txt": "flagged-cache",
+        "flagged-cache-character.txt": "flagged-cache",
+        "tts-cache-account.txt": "tts-cache",
+        "tts-cache-character.txt": "tts-cache",
+        "click-bindings-cache.txt": "click-bindings-cache",
     }
     if lowered in exact:
         return exact[lowered]
@@ -1124,26 +1385,26 @@ class Planner:
         self.add(flavor, descend(flavor.folder, "WTF", "Config.wtf"))
 
         account = self._pick(account_dirs(flavor.folder), self.args.account, "account")
-        character: Path | None = None
+        character: tuple[Path, ...] = ()
         if account is not None:
-            for name in ACCOUNT_FILES:
+            for name in (*ACCOUNT_FILES, *ACCOUNT_CACHE_FILES):
                 self.add(flavor, child(account, name))
             for pattern in ACCOUNT_GLOBS:
                 for path in files(account):
-                    if PurePosixPath(path.name.casefold()).match(pattern):
+                    lowered = path.name.casefold()
+                    if PurePosixPath(lowered).match(pattern) and not lowered.endswith(OLD_SUFFIX):
                         self.add(flavor, path)
-            characters = [c for realm in realm_dirs(account) for c in subdirs(realm)]
+            units = character_units(account)
             wanted = self.args.character
             if wanted:
-                characters = [
-                    c
-                    for c in characters
-                    if _nfc(f"{c.parent.name}/{c.name}").casefold() == _nfc(wanted).casefold()
+                key = _nfc(wanted).casefold()
+                units = [
+                    u for u in units if key in {_nfc(n).casefold() for n in character_labels(u)}
                 ]
-            character = newest(characters)
-            if character is not None:
-                for name in CHARACTER_FILES:
-                    self.add(flavor, child(character, name))
+            character = newest_unit(units) or ()
+            for name in (*CHARACTER_FILES, *CHARACTER_CACHE_FILES):
+                for folder in character:
+                    self.add(flavor, child(folder, name))
 
         self._plan_saved_variables(flavor, account, character)
         self._plan_tocs(flavor)
@@ -1167,10 +1428,10 @@ class Planner:
         return newest(candidates)
 
     def _plan_saved_variables(
-        self, flavor: Flavor, account: Path | None, character: Path | None
+        self, flavor: Flavor, account: Path | None, character: Sequence[Path]
     ) -> None:
         pool: list[Path] = []
-        for owner in (account, character):
+        for owner in (account, *character):
             if owner is not None:
                 pool.extend(files(child(owner, SAVED_VARIABLES_DIR)))
         lua = [p for p in pool if p.name.casefold().endswith(".lua")]
@@ -1355,6 +1616,7 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
     realms: set[str] = set()
     characters: set[str] = set()
     pairs: set[tuple[str, str]] = set()  # (character, realm) folders that exist
+    grouped: set[tuple[str, str]] = set()  # (character, realm) from `<digits>/<Name>-<Realm>`
     configs: list[Path] = []
 
     # Every folder under the root that has WTF/Account, whether or not it is
@@ -1391,11 +1653,24 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
         configs.extend(config_files(in_wtf))
         account_root = named(in_wtf, "Account")
         for account in folders(listed(account_root)) if account_root else []:
+            if account.name.casefold() == SAVED_VARIABLES_DIR.casefold():
+                continue  # WTF/Account/SavedVariables/ is not an account
             accounts.add(account.name)
             in_account = listed(account)
             configs.extend(config_files(in_account))
             for realm in folders(in_account):
                 if realm.name.casefold() == SAVED_VARIABLES_DIR.casefold():
+                    continue
+                if is_group(realm.name):
+                    # A grouping level, not a realm: its children are `<Name>-<Realm>`.
+                    for character in folders(listed(realm)):
+                        split = split_character_folder(character.name)
+                        if split is None:
+                            characters.add(character.name)
+                        else:
+                            characters.add(split[0])
+                            grouped.add(split)
+                        configs.extend(config_files(listed(character)))
                     continue
                 realms.add(realm.name)
                 for character in folders(listed(realm)):
@@ -1417,10 +1692,21 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
             if m.group(1).lower() == b"realmname":
                 # A realm whose folder is gone (deleted character) is still a realm.
                 value = m.group(2).decode("utf-8", errors="replace").strip()
-                if len(value) >= 2:
+                # A value with no letters is no pseudonym source (and is blanked anyway).
+                if len(value) >= 2 and any(c.isalpha() for c in value):
                     realms.add(value)
             elif GUID_RE.fullmatch(m.group(2)):
                 guids.add(m.group(2))
+
+    # A realm spelled in a `<Name>-<Realm>` folder (spaces dropped, say) that is
+    # already a spelling of a known realm keeps that realm's pseudonym, so the
+    # folder `Labchara-LabrealmaPartb` matches `Labchara - Labrealma Partb` inside files.
+    known = {_fold(form) for realm in realms for form in _realm_forms(realm)}
+    for _name, realm_name in sorted(grouped):
+        if _fold(realm_name) not in known:
+            realms.add(realm_name)
+            known.update(_fold(form) for form in _realm_forms(realm_name))
+    pairs |= grouped
 
     own: set[tuple[bytes, bytes]] = set()
     for character_name, realm_name in pairs:
