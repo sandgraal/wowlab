@@ -152,7 +152,8 @@ class Entry(_Frozen):
     """Permission bits only (`stat.S_IMODE`)."""
     mtime_ns: int = 0
     target: str | None = None
-    """Link target text for a symlink, else `None`."""
+    """Link target text for a symlink, else `None`. A Windows junction is
+    recorded as a `symlink` entry with its `readlink` target."""
 
     @field_validator("path")
     @classmethod
@@ -311,6 +312,18 @@ def _normalize_rel(value: str | PurePath, what: str) -> str:
     return posix.as_posix()  # "." for the root itself
 
 
+def _is_junction(path: Path | os.DirEntry[str]) -> bool:
+    """True for an NTFS junction (a mount-point reparse point); always False off Windows.
+
+    CPython reports only `IO_REPARSE_TAG_SYMLINK` as a link. A junction
+    `lstat`s as a directory, so `S_ISLNK` and `is_dir(follow_symlinks=False)`
+    both miss it; every place that decides "link or directory" asks here too.
+    Only junctions count: other reparse points (cloud-file placeholders,
+    deduplicated files) hold real content and `readlink` cannot describe them.
+    """
+    return path.is_junction()
+
+
 def _is_under(path: str, ancestor: str) -> bool:
     return ancestor == "." or path == ancestor or path.startswith(ancestor + "/")
 
@@ -378,9 +391,10 @@ class SnapshotStore:
         """Capture `subtrees` of `root` and return the new manifest.
 
         `root` is only ever read. A subtree that does not exist is recorded
-        in the manifest and contributes no entries. Symlinks are recorded
-        with their target and never followed; a subtree that can only be
-        reached through a symlink below the root is refused. Anything that
+        in the manifest and contributes no entries. Symlinks, and on Windows
+        NTFS junctions, are recorded as `symlink` entries with their target
+        and never followed; a subtree that can only be reached through one
+        below the root is refused. Anything that
         is neither a regular file, a directory nor a symlink is ignored. A
         file that cannot be read raises; a partial snapshot is never written.
 
@@ -519,6 +533,11 @@ class SnapshotStore:
                     f"subtree {subtree!r} passes through the symlink {current}; "
                     "symlinks are never followed"
                 )
+            if stat.S_ISDIR(mode) and _is_junction(current):
+                raise SnapshotError(
+                    f"subtree {subtree!r} passes through the junction {current}; "
+                    "junctions, like symlinks, are never followed"
+                )
 
     def _walk(
         self, root: Path, subtree: str, excluded: Sequence[str]
@@ -534,8 +553,8 @@ class SnapshotStore:
             return
         except (OSError, ValueError) as exc:
             raise SnapshotError(f"cannot inspect {start}: {exc}") from exc
-        if not stat.S_ISDIR(st.st_mode):
-            yield subtree, start
+        if not stat.S_ISDIR(st.st_mode) or _is_junction(start):
+            yield subtree, start  # `_capture` records a junction as a link
             return
         stack: list[tuple[str, Path]] = [(subtree, start)]
         while stack:
@@ -551,7 +570,7 @@ class SnapshotStore:
                 rel = child.name if rel_dir == "." else f"{rel_dir}/{child.name}"
                 if any(_is_under(rel, x) for x in excluded):
                     continue
-                if child.is_dir(follow_symlinks=False):
+                if child.is_dir(follow_symlinks=False) and not _is_junction(child):
                     stack.append((rel, Path(child.path)))
                 else:
                     yield rel, Path(child.path)
@@ -562,7 +581,8 @@ class SnapshotStore:
         self._entry(abs_path, path=rel)
         try:
             st = abs_path.lstat()
-            if stat.S_ISLNK(st.st_mode):
+            # A junction is recorded exactly as a symlink is: target, never followed.
+            if stat.S_ISLNK(st.st_mode) or (stat.S_ISDIR(st.st_mode) and _is_junction(abs_path)):
                 return self._entry(
                     abs_path,
                     path=rel,
