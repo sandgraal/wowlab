@@ -8,6 +8,7 @@ module (the name does not start with `test_`); run it by hand:
 
     uv run python lab/core/tests/luadata_bench_constructed.py              # auction, Forever layout
     uv run python lab/core/tests/luadata_bench_constructed.py --shape all  # every shape and layout
+    uv run python lab/core/tests/luadata_bench_constructed.py --at-bound   # the entry bound
     uv run python lab/core/tests/luadata_bench_constructed.py --parse FILE # time one file
 
 Shapes (all 50 MiB by default, `--mib` to change):
@@ -17,8 +18,11 @@ Shapes (all 50 MiB by default, `--mib` to change):
   negative integer, a boolean, a seller name, a six-entry positional array
   and an empty table.
 - `collection`: one flat table of `[number] = true` (a collection addon).
-- `ids`: one flat positional array of six-digit integers, the densest entry
-  count per byte the client plausibly writes.
+- `ids`: one flat positional array of distinct six-digit integers.
+- `zeros`, `trues`: one flat positional array of `0` or of `true`, the
+  densest entry count per byte in the client's layout (four and seven bytes
+  an entry). At 50 MiB these pass `luadata.MAX_ENTRIES`, so they are refused
+  with `LuaLimitError`; `--mib` smaller measures them under the bound.
 
 Layouts: `forever`, what the Forever client writes (docs/LAB_FORMATS.md §4.2
 amendment of 2026-09-22: CRLF, a leading blank line, no indentation, no
@@ -39,11 +43,11 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 MiB = 1024 * 1024
-SHAPES = ["auction", "collection", "ids"]
+SHAPES = ["auction", "collection", "ids", "zeros", "trues"]
 LAYOUTS = ["forever", "reference"]
 
 
@@ -79,12 +83,26 @@ def _ids(i: int, indent: str, comments: bool) -> Iterator[str]:
     yield f"{indent}{100_000 + i}," + (f" -- [{i + 1}]" if comments else "")
 
 
+def _zeros(i: int, indent: str, comments: bool) -> Iterator[str]:
+    yield f"{indent}0," + (f" -- [{i + 1}]" if comments else "")
+
+
+def _trues(i: int, indent: str, comments: bool) -> Iterator[str]:
+    yield f"{indent}true," + (f" -- [{i + 1}]" if comments else "")
+
+
 def generate(size: int, shape: str, layout: str) -> bytes:
     """A document of at least `size` bytes."""
     comments = layout == "reference"
     eol = "\r\n"
     tab = "\t" if comments else ""
-    record = {"auction": _auction, "collection": _collection, "ids": _ids}[shape]
+    record = {
+        "auction": _auction,
+        "collection": _collection,
+        "ids": _ids,
+        "zeros": _zeros,
+        "trues": _trues,
+    }[shape]
     lines = ["", "CONSTRUCTED_DB = {", f'{tab}["version"] = 3,', f'{tab}["items"] = {{']
     out = [eol.join(lines) + eol]
     total = len(out[0])
@@ -96,6 +114,26 @@ def generate(size: int, shape: str, layout: str) -> bytes:
         i += 1
     out.append(f"{tab}}},{eol}}}{eol}CONSTRUCTED_SETTINGS = nil{eol}")
     return "".join(out).encode("utf-8")
+
+
+# Documents of exactly N entries for the entry bound (`--at-bound`): one flat
+# table, one entry per CRLF line. `zeros` and `trues` are the densest per
+# byte; the others are the costliest per entry (nothing to share).
+BOUND_SHAPES: dict[str, Callable[[int], bytes]] = {
+    "zeros": lambda i: b"0,\r\n",
+    "trues": lambda i: b"true,\r\n",
+    "distinct": lambda i: b"%d,\r\n" % (1_000_000 + i),
+    "tables": lambda i: b"{},\r\n",
+    "numkeys": lambda i: b"[%d] = 1,\r\n" % (1_000_000 + i),
+    "keys": lambda i: b'["k%d"] = 1,\r\n' % (1_000_000 + i),
+}
+
+
+def generate_entries(count: int, shape: str) -> bytes:
+    """`X = {` then exactly `count` entries of `shape`, then `}`."""
+    line = BOUND_SHAPES[shape]
+    body = [line(0) * count] if shape in ("zeros", "trues", "tables") else map(line, range(count))
+    return b"\r\nX = {\r\n" + b"".join(body) + b"}\r\n"
 
 
 def _peak_rss_bytes() -> int:
@@ -110,7 +148,12 @@ def measure(path: Path) -> None:
     size = path.stat().st_size
     rss_before = _peak_rss_bytes()
     started = time.perf_counter()
-    doc = luadata.read(path)
+    try:
+        doc = luadata.read(path)
+    except luadata.LuaLimitError as err:
+        elapsed = time.perf_counter() - started
+        print(f"  {size:,} bytes: refused after {elapsed:.2f} s: {err}", flush=True)
+        return
     elapsed = time.perf_counter() - started
     rss_after = _peak_rss_bytes()
     entries = tables = 0
@@ -136,20 +179,36 @@ def main() -> None:
     parser.add_argument("--shape", choices=[*SHAPES, "all"], default="auction")
     parser.add_argument("--layout", choices=LAYOUTS, default="forever")
     parser.add_argument("--parse", type=Path, help="measure this file instead of generating")
+    parser.add_argument(
+        "--at-bound",
+        action="store_true",
+        help="documents of exactly MAX_ENTRIES entries (and MAX_ENTRIES + 1 for zeros, trues)",
+    )
     args = parser.parse_args()
     if args.parse is not None:
         print(f"file {args.parse.name}")
         measure(args.parse)
         return
+    if args.at_bound:
+        from wowlab_core.luadata import MAX_ENTRIES
+
+        runs_at = [(s, MAX_ENTRIES) for s in BOUND_SHAPES]
+        runs_at += [("zeros", MAX_ENTRIES + 1), ("trues", MAX_ENTRIES + 1)]
+        for shape, count in runs_at:
+            _run(generate_entries(count, shape), f"shape {shape}, {count:,} entries")
+        return
     runs = [(s, lay) for s in SHAPES for lay in LAYOUTS] if args.shape == "all" else []
     for shape, layout in runs or [(args.shape, args.layout)]:
-        data = generate(int(args.mib * MiB), shape, layout)
-        with tempfile.TemporaryDirectory(prefix="luadata-bench-") as folder:
-            target = Path(folder) / "Constructed.lua"
-            target.write_bytes(data)
-            del data
-            print(f"constructed input: shape {shape}, layout {layout}", flush=True)
-            subprocess.run([sys.executable, __file__, "--parse", str(target)], check=True)
+        _run(generate(int(args.mib * MiB), shape, layout), f"shape {shape}, layout {layout}")
+
+
+def _run(data: bytes, label: str) -> None:
+    """Write `data` to a temporary file and measure it in a fresh interpreter."""
+    with tempfile.TemporaryDirectory(prefix="luadata-bench-") as folder:
+        target = Path(folder) / "Constructed.lua"
+        target.write_bytes(data)
+        print(f"constructed input: {label}", flush=True)
+        subprocess.run([sys.executable, __file__, "--parse", str(target)], check=True)
 
 
 if __name__ == "__main__":

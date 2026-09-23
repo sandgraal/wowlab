@@ -388,6 +388,17 @@ with `/dump _VERSION` in game). Grammar changes are mirrored in
    `["a"]`, `[1]` and `[1.0]` and the first positional entry) is flagged
    `duplicate`.
 
+*Amended 2026-09-23 (owner decision after the M10-04 reviews: option 1):*
+two more bounds, each raising `LuaLimitError` with a position. A document
+with more than `MAX_ENTRIES` table entries in total (N, a module constant)
+is refused; N is chosen so a document at the limit, in the densest shape the
+grammar allows, parses within the performance target (measured: 6.5 s, 1,115 MiB
+on the owner's M1). A number literal longer than 4300 characters is refused,
+so no conversion is quadratic (the same limit CPython sets on int parsing).
+The performance target holds for any document within the bounds. The parse
+tree uses immutable tuples for speed; Pydantic models are built at the CLI
+output boundary (M10-14).
+
 ### 6.5 `wtfconfig` — Config.wtf, bindings, macros (M10-07)
 
 Per `docs/LAB_FORMATS.md` §5–§7. Read-only in Wave 1, lossless (L4):

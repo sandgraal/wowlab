@@ -389,3 +389,12 @@ Dated entries, newest last. Each names the fixture that prompted it.
   `boolean`). Long comments (`--[[`, `--[==[`) are rejected unless a fixture
   shows one; `-- [n]` is a line comment. Which escapes the client actually
   writes stays **[verify]** (§4.2 amendment).
+- **2026-09-23, §4.1 and §4.3, no fixture (M10-04 code review).** Number
+  spellings `luadata` refuses although Lua 5.1 lexes some of them: `.5` and
+  `5.` (Lua 5.1 reads both) and hex floats (`0x1p4`); the client's own
+  serializer has not been seen writing any of them. A NUL byte is refused
+  everywhere in a SavedVariables file, inside comments included, not only
+  between tokens and in strings. A number literal longer than 4300
+  characters and a document with more than `luadata.MAX_ENTRIES` table
+  entries are refused as bounds (`docs/LAB_PLAN.md` §6.4, amendment of the
+  same date).

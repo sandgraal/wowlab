@@ -62,15 +62,18 @@ differ; so do `[true]` and `[1]`).
 
 Bounds (constructed hostile inputs, L8): a document over `MAX_FILE_BYTES`, a
 table nested deeper than `MAX_DEPTH` (a table assigned at top level is depth
-1), or a string literal whose source between the quotes is longer than
-`MAX_STRING_BYTES` raises `LuaLimitError`; nothing is truncated. The parser
+1), a string literal whose source between the quotes is longer than
+`MAX_STRING_BYTES`, more than `MAX_ENTRIES` table entries in the document,
+or a number literal longer than `MAX_NUMBER_CHARS` raises `LuaLimitError`
+(§6.4 amendment of 2026-09-23); nothing is truncated. The parser
 is iterative: a 10 000-deep table raises `LuaLimitError`, never
 `RecursionError`.
 
 The value and document types are immutable `NamedTuple`s (a frozen
 dataclass costs about eight times as much to build, and a 50 MB file holds
-millions of entries). They are tuples, so `len(table)` counts fields: count
-entries with `len(table.entries)`.
+millions of entries); Pydantic models are built at the CLI output boundary
+(M10-14). Equality also requires the same type. They are tuples, so
+`len(table)` counts fields: count entries with `len(table.entries)`.
 """
 
 from __future__ import annotations
@@ -79,14 +82,16 @@ import gc
 import math
 import os
 import re
-from decimal import Decimal
+import threading
 from enum import StrEnum
 from pathlib import Path
 from typing import NamedTuple, NoReturn
 
 __all__ = [
     "MAX_DEPTH",
+    "MAX_ENTRIES",
     "MAX_FILE_BYTES",
+    "MAX_NUMBER_CHARS",
     "MAX_STRING_BYTES",
     "Assignment",
     "Entry",
@@ -112,6 +117,15 @@ MAX_DEPTH = 200
 MAX_FILE_BYTES = 256 * _MIB
 #: Longest string literal accepted, counted on its source bytes between the quotes.
 MAX_STRING_BYTES = 64 * _MIB
+#: Most table entries accepted in one document (all tables together), so a
+#: document at the bound parses within the §6.4 performance target.
+MAX_ENTRIES = 3_000_000
+#: Longest number literal accepted, in characters: CPython's own default
+#: limit on int parsing, so no conversion of an accepted literal is quadratic.
+MAX_NUMBER_CHARS = 4300
+# Distinct items each sharing cache of the parser holds (values, string keys,
+# positional entries); past it, objects are built as usual.
+_SHARE_LIMIT = 1 << 16
 
 # Lua 5.1 stores pending positional entries this many at a time
 # (`LFIELDS_PER_FLUSH` in lopcodes.h); §6.4 amendment item 6, **[verify]**.
@@ -143,6 +157,12 @@ class LuaLimitError(LuaDataError):
 # ── the document model ──────────────────────────────────────────────────────
 
 
+def _typed_eq(self: tuple[object, ...], other: object) -> bool:
+    """Tuple equality that also requires the same type, so a value never
+    equals a plain tuple or another node type with the same fields."""
+    return type(other) is type(self) and tuple.__eq__(self, other)
+
+
 class KeyStyle(StrEnum):
     """How an entry's key is written (§6.4, amendment item 8)."""
 
@@ -172,6 +192,15 @@ class LuaString(NamedTuple):
         """`data` decoded as UTF-8 with `surrogateescape` (lossless, not always
         JSON-safe: invalid UTF-8 becomes lone surrogates)."""
         return self.data.decode("utf-8", "surrogateescape")
+
+    def __eq__(self, other: object) -> bool:
+        return _typed_eq(self, other)
+
+    def __ne__(self, other: object) -> bool:
+        return not _typed_eq(self, other)
+
+    def __hash__(self) -> int:
+        return tuple.__hash__(self)
 
 
 class LuaNumber(NamedTuple):
@@ -206,6 +235,15 @@ class LuaNumber(NamedTuple):
         sign; a hex integer beyond the double range gives an infinity)."""
         return _spelled_float(self.raw)
 
+    def __eq__(self, other: object) -> bool:
+        return _typed_eq(self, other)
+
+    def __ne__(self, other: object) -> bool:
+        return not _typed_eq(self, other)
+
+    def __hash__(self) -> int:
+        return tuple.__hash__(self)
+
 
 class LuaBool(NamedTuple):
     """`true` or `false`."""
@@ -213,11 +251,29 @@ class LuaBool(NamedTuple):
     lead: bytes
     value: bool
 
+    def __eq__(self, other: object) -> bool:
+        return _typed_eq(self, other)
+
+    def __ne__(self, other: object) -> bool:
+        return not _typed_eq(self, other)
+
+    def __hash__(self) -> int:
+        return tuple.__hash__(self)
+
 
 class LuaNil(NamedTuple):
     """`nil`; legal only as a top-level value (§4.1)."""
 
     lead: bytes
+
+    def __eq__(self, other: object) -> bool:
+        return _typed_eq(self, other)
+
+    def __ne__(self, other: object) -> bool:
+        return not _typed_eq(self, other)
+
+    def __hash__(self) -> int:
+        return tuple.__hash__(self)
 
 
 class LuaTable(NamedTuple):
@@ -226,6 +282,15 @@ class LuaTable(NamedTuple):
     lead: bytes
     entries: tuple[Entry, ...]
     close_lead: bytes
+
+    def __eq__(self, other: object) -> bool:
+        return _typed_eq(self, other)
+
+    def __ne__(self, other: object) -> bool:
+        return not _typed_eq(self, other)
+
+    def __hash__(self) -> int:
+        return tuple.__hash__(self)
 
 
 LuaValue = LuaTable | LuaString | LuaNumber | LuaBool | LuaNil
@@ -254,6 +319,15 @@ class Entry(NamedTuple):
     comment: bytes | None
     duplicate: bool
 
+    def __eq__(self, other: object) -> bool:
+        return _typed_eq(self, other)
+
+    def __ne__(self, other: object) -> bool:
+        return not _typed_eq(self, other)
+
+    def __hash__(self) -> int:
+        return tuple.__hash__(self)
+
 
 class Assignment(NamedTuple):
     """A top-level `name = value`."""
@@ -262,6 +336,15 @@ class Assignment(NamedTuple):
     name: str
     eq_lead: bytes
     value: LuaValue
+
+    def __eq__(self, other: object) -> bool:
+        return _typed_eq(self, other)
+
+    def __ne__(self, other: object) -> bool:
+        return not _typed_eq(self, other)
+
+    def __hash__(self) -> int:
+        return tuple.__hash__(self)
 
 
 class LuaDocument(NamedTuple):
@@ -298,6 +381,15 @@ class LuaDocument(NamedTuple):
             out[assignment.name] = _to_python(assignment.value)
         return out
 
+    def __eq__(self, other: object) -> bool:
+        return _typed_eq(self, other)
+
+    def __ne__(self, other: object) -> bool:
+        return not _typed_eq(self, other)
+
+    def __hash__(self) -> int:
+        return tuple.__hash__(self)
+
 
 # ── numbers and strings ─────────────────────────────────────────────────────
 
@@ -308,12 +400,9 @@ _FLOAT_SPELLING = re.compile(r"-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?")
 def _spelled_int(text: str) -> int:
     negative = text.startswith("-")
     body = text[1:] if negative else text
-    if body[:2] in ("0x", "0X"):
-        number = int(body[2:], 16)
-    elif len(body) <= 4000:
-        number = int(body, 10)
-    else:  # past `int()`'s default digit limit for text; exact all the same
-        number = int(Decimal(body))
+    # The parser refuses literals over MAX_NUMBER_CHARS, inside CPython's
+    # default limit on decimal text, so this is exact and never quadratic.
+    number = int(body[2:], 16) if body[:2] in ("0x", "0X") else int(body, 10)
     return -number if negative else number
 
 
@@ -325,7 +414,7 @@ def _spelled_float(text: str) -> float:
         try:
             return float(number) if number or not text.startswith("-") else -0.0
         except OverflowError:
-            return math.copysign(math.inf, number)
+            return math.inf if number > 0 else -math.inf  # never converts `number` again
     if _FLOAT_SPELLING.fullmatch(text) is None:
         raise ValueError(f"{text!r} is not a Lua number spelling this parser accepts")
     return float(text)
@@ -420,6 +509,17 @@ _ENTRY = re.compile(
     rb"(?:(?:\[(" + _TRIVIA + rb")(?:(" + _STR + rb")|(" + _NUM + rb")|(" + _BOOL + rb"))"
     rb"(" + _TRIVIA + rb")\]|(" + _NAME + rb"))(" + _TRIVIA + rb")=(?!=)(" + _TRIVIA + rb"))?"
     rb"(?:(?:(" + _STR + rb")|(" + _NUM + rb")|(" + _BOOL + rb"))(" + _TRIVIA + rb")([,;]?)|(\{)))"
+)
+# The common entry shapes the client writes, tried before `_ENTRY` because
+# they match in about half the time: whitespace, then an optional
+# `["plain"] = ` or `[number] = ` key, then a plain string, a number or a
+# boolean followed at once by `,`, or a `{`. Every match is also an `_ENTRY`
+# match with the same parts (kl, kc and sep_lead empty, one space on either
+# side of `=`); anything else falls through to `_ENTRY`.
+_PLAIN = rb'"[^"\\\r\n\x00]*+"'
+_FAST = re.compile(
+    rb"([ \t\r\n]*+)(?:\[(?:(" + _PLAIN + rb")|(" + _NUM + rb"))\] = )?"
+    rb"(?:(?:(" + _PLAIN + rb")|(" + _NUM + rb")|(" + _BOOL + rb")),|(\{))"
 )
 # After an entry with no separator: only the closing brace.
 _CLOSE = re.compile(rb"(" + _TRIVIA + rb")\}")
@@ -561,13 +661,6 @@ class _Diagnoser:
             else:
                 i += 1
 
-    def peek(self, pos: int, width: int = 1) -> bytes:
-        """The next `width` bytes after trivia, without raising (a lookahead
-        must not report a later error before the one being diagnosed)."""
-        m = _TRIVIA_RE.match(self.data, pos)
-        p = m.end() if m else pos
-        return self.data[p : p + width]
-
     def text(self, kind: str, start: int, end: int) -> bytes:
         return b"" if kind == "eof" else self.data[start:end]
 
@@ -590,7 +683,8 @@ class _Diagnoser:
                 self.fail(s, word, "function definitions are rejected (L3)")
             if word in _KEYWORDS:
                 self.fail(s, word, f"keyword {word.decode()!r} is not a value")
-            if self.peek(e) in (b'"', b"'", b"{", b"(", b":"):
+            nxt, ns, _ne = self.token(self.skip(e))  # a refused trivia or byte comes first
+            if nxt in ("string", "{") or data[ns : ns + 1] in (b"(", b":"):
                 self.fail(s, word, "calls are rejected (L3)")
             self.fail(s, word, "bare identifiers are not values (L3)")
         if kind == "longbracket":
@@ -648,9 +742,10 @@ class _Diagnoser:
                 self.fail(s4, self.text(kind, s4, e4), "expected `=` after the key")
             vkind, end = self.value(e4, allow_nil=False)
         elif kind == "name" and data[s:e] not in _KEYWORDS:
-            if self.peek(e) != b"=" or self.peek(e, 2) == b"==":
+            nxt, _ns, ne = self.token(self.skip(e))  # a refused trivia or byte comes first
+            if nxt != "=":
                 self.value(p, allow_nil=False)  # a bare identifier: raises
-            vkind, end = self.value(self.skip(e) + 1, allow_nil=False)
+            vkind, end = self.value(ne, allow_nil=False)
         else:
             vkind, end = self.value(p, allow_nil=False)
         if vkind == "{":
@@ -687,8 +782,14 @@ def parse(data: bytes) -> LuaDocument:
     """Parse a SavedVariables document from its bytes. Never evaluates.
 
     Raises `LuaDataError` (with line, column and token) for anything the
-    grammar refuses, and `LuaLimitError` for the depth, size and string
-    bounds.
+    grammar refuses, and `LuaLimitError` for the depth, size, entry-count,
+    number-length and string-length bounds. Bad input raises nothing else.
+
+    The cyclic garbage collector is paused process-wide while a parse runs
+    (the parse builds millions of small tuples and no reference cycles, so
+    the collector would only re-scan them, about half the parse time on a
+    50 MB file). The caller's collector state is restored when the
+    outermost of any concurrent parses finishes.
     """
     data = bytes(data)  # the same object when it is already `bytes`
     if len(data) > MAX_FILE_BYTES:
@@ -698,15 +799,32 @@ def parse(data: bytes) -> LuaDocument:
             column=1,
             token=b"",
         )
-    # The parse builds millions of small tuples and no reference cycles, so
-    # the cyclic collector would only re-scan them (about half the parse
-    # time on a 50 MB file). It is paused for the parse and restored after.
-    collecting = gc.isenabled()
-    gc.disable()
+    _pause_gc()
     try:
         return _Parser(data).run()
     finally:
-        if collecting:
+        _resume_gc()
+
+
+_gc_lock = threading.Lock()
+_gc_pauses = 0
+_gc_was_enabled = False
+
+
+def _pause_gc() -> None:
+    global _gc_pauses, _gc_was_enabled
+    with _gc_lock:
+        if _gc_pauses == 0:
+            _gc_was_enabled = gc.isenabled()
+            gc.disable()
+        _gc_pauses += 1
+
+
+def _resume_gc() -> None:
+    global _gc_pauses
+    with _gc_lock:
+        _gc_pauses -= 1
+        if _gc_pauses == 0 and _gc_was_enabled:
             gc.enable()
 
 
@@ -734,7 +852,15 @@ class _Parser:
 
     def run(self) -> LuaDocument:
         """One flat loop over grammar-sized matches; the open tables live on
-        an explicit stack, so nesting never recurses."""
+        an explicit stack, so nesting never recurses.
+
+        Identical immutable objects are built once and shared (bounded
+        caches of `_SHARE_LIMIT` distinct items each): scalar values with
+        the same lead and text, string keys with the same lead and text, and
+        whole positional entries with the same lead, value and separator (and
+        nothing between the value and the separator, and no comment).
+        A dense array of repeated values then costs a list slot per entry.
+        """
         data = self.data
         intern = {b"": b"", b"\r\n": b"\r\n", b"\n": b"\n"}.setdefault
         assignments: list[Assignment] = []
@@ -744,21 +870,29 @@ class _Parser:
         # key_close_lead, eq_lead, duplicate).
         stack: list[list[object]] = []
         entry_match = _ENTRY.match
+        fast_match = _FAST.match
         close_match = _CLOSE.match
         sep_match = _SEP.match
         comment_match = _COMMENT_AFTER.match
+        values: dict[tuple[bytes, bytes], LuaValue] = {}  # (lead, text) -> scalar
+        keys: dict[tuple[bytes, bytes], LuaString] = {}  # (lead, text) -> string key
+        positional: dict[tuple[bytes, bytes, bytes], Entry] = {}  # (lead, text, sep)
+        limit = _SHARE_LIMIT
         # The innermost open table, unpacked into locals.
         at = 0
         t_lead = b""
         head: tuple[object, ...] = ()
         entries: list[Entry] = []
         append = entries.append
-        seen: set[object] = set()  # keys of keyed entries (positional keys are 1..npos)
+        # Keys of keyed entries (positional keys are 1..npos): a string or name key
+        # as `"` + data + `"`, a number key as its double, a boolean as a sentinel.
+        seen: set[object] = set()
         npos = 0
         depth = 0
+        count = 0  # entries in the whole document
         pos = 0
         need_close = False
-        value: LuaValue
+        value: LuaValue | None
         key: LuaKey
         lk: object
         while True:
@@ -785,6 +919,8 @@ class _Parser:
                         _Diagnoser(data).top(m.start())
                     value = _new(LuaString, (vl, vs))
                 elif vn:
+                    if len(vn) > MAX_NUMBER_CHARS:
+                        self.number_bound(m, 6)
                     value = _new(LuaNumber, (vl, vn.decode("ascii")))
                 elif vb:
                     value = _new(LuaBool, (vl, vb == b"true"))
@@ -801,28 +937,53 @@ class _Parser:
                 pos = m.end()
                 need_close = False
             else:
-                m = entry_match(data, pos)
-                if m is None:
-                    _Diagnoser(data).entry(pos, at)
-                (lead, close, kl, ks, kn, kb, kc, kw, ke, vl, vs, vn, vb, sl, sep, vt) = m.groups(
-                    b""
-                )
+                m = fast_match(data, pos)
+                if m is not None and m.end() - pos > MAX_NUMBER_CHARS:
+                    m = None  # a long match takes the full path, which checks every bound
+                if m is not None:
+                    lead, ks, kn, vs, vn, vb, vt = m.groups(b"")
+                    close = kl = kb = kc = kw = sl = b""
+                    ke = vl = b" " if ks or kn else b""
+                    sep = b"" if vt else b","
+                else:
+                    m = entry_match(data, pos)
+                    if m is None:
+                        _Diagnoser(data).entry(pos, at)
+                    (lead, close, kl, ks, kn, kb, kc, kw, ke, vl, vs, vn, vb, sl, sep, vt) = (
+                        m.groups(b"")
+                    )
                 if not close:
+                    count += 1
+                    if count > MAX_ENTRIES:
+                        self.entry_bound(m, len(lead))
                     if m.end() - pos > MAX_STRING_BYTES:
                         self.check_string_bound(m, 4, 11)
                     lead = intern(lead, lead)
                     if ks:
+                        style = _S
+                        shared_key = keys.get((kl, ks))
+                        if shared_key is None:
+                            shared_key = _new(LuaString, (kl, ks))
+                            if len(keys) < limit:
+                                keys[kl, ks] = shared_key
+                        key = shared_key
+                        # String and name keys are compared as `"` + data + `"`
+                        # (injective, so Lua key equality): for a plain
+                        # double-quoted literal that is its own raw bytes,
+                        # already held by the key, so nothing new is kept.
                         if b"\\" in ks:
                             if _escape_over_255(ks):
                                 _Diagnoser(data).entry(pos, at)
-                            lk = _unescape(ks[1:-1])
+                            lk = b'"' + _unescape(ks[1:-1]) + b'"'
+                        elif ks[0] == 0x22:
+                            lk = shared_key.raw
                         else:
-                            lk = ks[1:-1]
-                        style = _S
-                        key = _new(LuaString, (kl, ks))
+                            lk = b'"' + ks[1:-1] + b'"'
                         dup = lk in seen
                         seen.add(lk)
                     elif kn:
+                        if len(kn) > MAX_NUMBER_CHARS:
+                            self.number_bound(m, 5)
                         style = _N
                         text = kn.decode("ascii")
                         try:
@@ -835,8 +996,9 @@ class _Parser:
                     elif kw:
                         style = _W
                         key = kw.decode("ascii")
-                        dup = kw in seen
-                        seen.add(kw)
+                        lk = b'"' + kw + b'"'
+                        dup = lk in seen
+                        seen.add(lk)
                     elif kb:
                         style = _B
                         truth = kb == b"true"
@@ -867,14 +1029,6 @@ class _Parser:
                         npos = 0
                         depth += 1
                         continue
-                    if vs:
-                        if b"\\" in vs and _escape_over_255(vs):
-                            _Diagnoser(data).entry(pos, at)
-                        value = _new(LuaString, (vl, vs))
-                    elif vn:
-                        value = _new(LuaNumber, (vl, vn.decode("ascii")))
-                    else:
-                        value = _new(LuaBool, (vl, vb == b"true"))
                     if sep:
                         pos = m.end()
                     else:
@@ -887,7 +1041,32 @@ class _Parser:
                         cm = comment_match(data, pos)
                         if cm is not None:
                             comment = cm.group(1)
-                    append(_new(Entry, (lead, style, key, kc, ke, value, sl, sep, comment, dup)))
+                    text_bytes = vs or vn or vb
+                    shareable = style is _P and sep and not sl and comment is None and not dup
+                    if shareable:
+                        shared = positional.get((lead, text_bytes, sep))
+                        if shared is not None:
+                            append(shared)
+                            continue
+                    if vs:
+                        if b"\\" in vs and _escape_over_255(vs):
+                            _Diagnoser(data).entry(m.start(), at)
+                        value = _new(LuaString, (vl, vs))
+                    else:
+                        value = values.get((vl, text_bytes))
+                        if value is None:
+                            if vn:
+                                if len(vn) > MAX_NUMBER_CHARS:
+                                    self.number_bound(m, 12)
+                                value = _new(LuaNumber, (vl, vn.decode("ascii")))
+                            else:
+                                value = _new(LuaBool, (vl, vb == b"true"))
+                            if len(values) < limit:
+                                values[vl, text_bytes] = value
+                    built = _new(Entry, (lead, style, key, kc, ke, value, sl, sep, comment, dup))
+                    if shareable and len(positional) < limit:
+                        positional[lead, text_bytes, sep] = built
+                    append(built)
                     continue
                 close_lead = intern(lead, lead)
                 pos = m.end()
@@ -920,6 +1099,26 @@ class _Parser:
             append(
                 _new(Entry, (e_lead, e_style, e_key, e_kc, e_eq, table, sl, sep, comment, e_dup))
             )
+
+    def entry_bound(self, m: re.Match[bytes], lead_length: int) -> NoReturn:
+        at = m.start() + lead_length
+        raise _error(
+            self.data,
+            at,
+            self.data[at : min(m.end(), at + 40)],
+            f"more than {MAX_ENTRIES} table entries in the document",
+            LuaLimitError,
+        )
+
+    def number_bound(self, m: re.Match[bytes], group: int) -> NoReturn:
+        text = m.group(group)
+        raise _error(
+            self.data,
+            m.start(group),
+            text[:20],
+            f"number literal of {len(text)} characters, over the {MAX_NUMBER_CHARS} bound",
+            LuaLimitError,
+        )
 
     def check_string_bound(self, m: re.Match[bytes], *groups: int) -> None:
         for group in groups:
