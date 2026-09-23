@@ -388,16 +388,37 @@ with `/dump _VERSION` in game). Grammar changes are mirrored in
    `["a"]`, `[1]` and `[1.0]` and the first positional entry) is flagged
    `duplicate`.
 
-*Amended 2026-09-23 (owner decision after the M10-04 reviews: option 1):*
-two more bounds, each raising `LuaLimitError` with a position. A document
-with more than `MAX_ENTRIES` table entries in total (N, a module constant)
-is refused; N is chosen so a document at the limit, in the densest shape the
-grammar allows, parses within the performance target (measured: 6.5 s, 1,115 MiB
-on the owner's M1). A number literal longer than 4300 characters is refused,
-so no conversion is quadratic (the same limit CPython sets on int parsing).
-The performance target holds for any document within the bounds. The parse
-tree uses immutable tuples for speed; Pydantic models are built at the CLI
-output boundary (M10-14).
+*Amended 2026-09-23 (owner decision after the M10-04 reviews: option 1;
+rewritten after fix round 2):* two more bounds, each raising
+`LuaLimitError` with a position. A number literal longer than 4300
+characters is refused, so no conversion is quadratic (the same limit CPython
+sets on int parsing). And every document is charged against a parse budget,
+`MAX_COST` (a module constant, in bytes): the input buffer, then for each
+table entry and each top-level assignment a base cost plus every object
+built for it that is not shared (each unshared trivia, lead, comment, key
+and value text, counted with its object overhead; a trailing comment twice,
+as it is held twice). An entry or assignment shared whole with an identical
+earlier one still costs a fixed amount, for its parse time. A document over
+the budget is refused at the entry or assignment that crosses it. The
+constants are calibrated by `lab/core/tests/luadata_bench_constructed.py
+--at-budget`, which fills each constructed shape to just under the budget
+and parses it in a fresh interpreter. On the owner's M1 (16 GB), load
+average 2.8 to 4.5 from other work:
+
+| Shape at the budget | Entries | File | Peak RSS | Parse |
+|---|---|---|---|---|
+| Worst RSS: `  [  "k…"  ]  =  "v…"  ,  -- …` (wide trivia, distinct comments) | 1,923,076 | 91.7 MiB | 1,122 MiB | 6.3 s |
+| Slowest: the same with `{  }` for the value | 1,872,963 | 78.6 MiB | 1,028 MiB | 7.6 s |
+| Dense client shape: `0,` one per CRLF line | 6,609,192 | 25.2 MiB | 152 MiB | 5.2 s |
+| Dense client shape: `true,` one per CRLF line | 6,497,172 | 43.4 MiB | 168 MiB | 4.9 s |
+
+Only shapes that were measured are claimed; the bench lists them all
+(distinct numbers and strings, string and number keys, empty tables,
+top-level assignments, §4.2 reference comments, 70-byte distinct comments).
+A 50 MiB positional array of distinct integers (about 3.55 million fit) and a
+50 MiB array of `0,` (about 6.46 million fit) are over the budget and refused. The
+parse tree uses immutable tuples for speed; Pydantic models are built at the
+CLI output boundary (M10-14).
 
 ### 6.5 `wtfconfig` — Config.wtf, bindings, macros (M10-07)
 

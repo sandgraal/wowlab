@@ -8,7 +8,7 @@ module (the name does not start with `test_`); run it by hand:
 
     uv run python lab/core/tests/luadata_bench_constructed.py              # auction, Forever layout
     uv run python lab/core/tests/luadata_bench_constructed.py --shape all  # every shape and layout
-    uv run python lab/core/tests/luadata_bench_constructed.py --at-bound   # the entry bound
+    uv run python lab/core/tests/luadata_bench_constructed.py --at-budget  # the cost budget
     uv run python lab/core/tests/luadata_bench_constructed.py --parse FILE # time one file
 
 Shapes (all 50 MiB by default, `--mib` to change):
@@ -21,8 +21,8 @@ Shapes (all 50 MiB by default, `--mib` to change):
 - `ids`: one flat positional array of distinct six-digit integers.
 - `zeros`, `trues`: one flat positional array of `0` or of `true`, the
   densest entry count per byte in the client's layout (four and seven bytes
-  an entry). At 50 MiB these pass `luadata.MAX_ENTRIES`, so they are refused
-  with `LuaLimitError`; `--mib` smaller measures them under the bound.
+  an entry). At 50 MiB these exceed `luadata.MAX_COST`, so they are
+  refused with `LuaLimitError`; `--at-budget` measures them at the budget.
 
 Layouts: `forever`, what the Forever client writes (docs/LAB_FORMATS.md §4.2
 amendment of 2026-09-22: CRLF, a leading blank line, no indentation, no
@@ -116,24 +116,101 @@ def generate(size: int, shape: str, layout: str) -> bytes:
     return "".join(out).encode("utf-8")
 
 
-# Documents of exactly N entries for the entry bound (`--at-bound`): one flat
-# table, one entry per CRLF line. `zeros` and `trues` are the densest per
-# byte; the others are the costliest per entry (nothing to share).
-BOUND_SHAPES: dict[str, Callable[[int], bytes]] = {
+# Documents for the cost budget (`--at-budget`): one flat table (or, for
+# `assign`, the top level) of fixed-length items, each shape filled to just
+# under `luadata.MAX_COST`. Cheap shapes are what the client writes densely;
+# costly ones carry wide trivia or distinct comments (hand-edited files,
+# §4.1), which the budget charges for.
+BUDGET_SHAPES: dict[str, Callable[[int], bytes]] = {
+    # cheap
     "zeros": lambda i: b"0,\r\n",
     "trues": lambda i: b"true,\r\n",
-    "distinct": lambda i: b"%d,\r\n" % (1_000_000 + i),
-    "tables": lambda i: b"{},\r\n",
     "numkeys": lambda i: b"[%d] = 1,\r\n" % (1_000_000 + i),
-    "keys": lambda i: b'["k%d"] = 1,\r\n' % (1_000_000 + i),
+    "strkeys": lambda i: b'["k%07d"] = 1,\r\n' % i,
+    "distinct-numbers": lambda i: b"%d,\r\n" % (1_000_000 + i),
+    "distinct-strings": lambda i: b'"s%07d",\r\n' % i,
+    "tables": lambda i: b"{},\r\n",
+    "assign": lambda i: b"a=1\n",
+    # costly
+    "wide-tables": lambda i: b'  [  "k%07d"  ]  =  {  }  ,  -- %07d\r\n' % (i, i),
+    "wide-strings": lambda i: b'  [  "k%07d"  ]  =  "v%07d"  ,  -- %07d\r\n' % (i, i, i),
+    "ref-comments": lambda i: b'\t\t"s%07d", -- [%07d]\r\n' % (i, i + 1),
+    "key-comments": lambda i: b"[%d]=1,--%070d\n" % (1_000_000 + i, i),
+    "table-comments": lambda i: b"{--%070d\n},--%070d\n" % (i, i),
 }
 
 
-def generate_entries(count: int, shape: str) -> bytes:
-    """`X = {` then exactly `count` entries of `shape`, then `}`."""
-    line = BOUND_SHAPES[shape]
-    body = [line(0) * count] if shape in ("zeros", "trues", "tables") else map(line, range(count))
-    return b"\r\nX = {\r\n" + b"".join(body) + b"}\r\n"
+def generate_items(count: int, shape: str) -> tuple[bytes, int, int]:
+    """The document, the byte offset of the first item and the item length."""
+    item = BUDGET_SHAPES[shape]
+    head, tail = (b"\r\n", b"") if shape == "assign" else (b"\r\nX = {\r\n", b"}\r\n")
+    repeated = shape in ("zeros", "trues", "tables", "assign")
+    body = item(0) * count if repeated else b"".join(map(item, range(count)))
+    return head + body + tail, len(head), len(item(0))
+
+
+def _count_at_budget(shape: str) -> int:
+    """Items of `shape` that fit the budget: parse an over-full document in a
+    fresh interpreter and read the offset where the budget refused it."""
+    from wowlab_core.luadata import MAX_FILE_BYTES
+
+    item_length = len(BUDGET_SHAPES[shape](0))
+    probe = min(8_999_999, (MAX_FILE_BYTES - 64) // item_length)  # seven-digit ids
+    first_fit = _refused_at(probe, shape)
+    if first_fit is None:
+        raise SystemExit(f"{shape}: {probe:,} items fit the budget; make the probe larger")
+    # The input buffer is charged too, so a smaller document holds more items.
+    # Solve for the count from the per-item charge the first probe implies,
+    # then probe just past it once (or a little further, until refused).
+    from wowlab_core.luadata import MAX_COST
+
+    data_length = len(generate_items(probe, shape)[0])
+    per_item = (MAX_COST - data_length) / first_fit
+    estimate = int(MAX_COST / (per_item + item_length))
+    for step in range(8):
+        probe = int(estimate * (1.002 + 0.01 * step)) + 10
+        fits = _refused_at(probe, shape)
+        if fits is not None:
+            break
+    else:
+        raise SystemExit(f"{shape}: no refusal past the estimate {estimate:,}")
+    # The probe's extra items were input bytes the real document does not
+    # hold: probe just past `fits` until the count settles.
+    for _ in range(4):
+        probe = fits + 2 + int((probe - fits) * item_length / per_item)
+        again = _refused_at(probe, shape)
+        if again is None or again == fits:
+            return fits
+        fits = again
+    return fits
+
+
+def _refused_at(count: int, shape: str) -> int | None:
+    data, first, length = generate_items(count, shape)
+    with tempfile.TemporaryDirectory(prefix="luadata-bench-") as folder:
+        target = Path(folder) / "Overfull.lua"
+        target.write_bytes(data)
+        del data
+        out = subprocess.run(
+            [sys.executable, __file__, "--offset", str(target)],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.split()
+    if out[0] == "parsed":
+        return None
+    return (int(out[1]) - first) // length
+
+
+def _offset(path: Path) -> None:
+    from wowlab_core import luadata
+
+    try:
+        luadata.read(path)
+    except luadata.LuaLimitError as err:
+        print("refused", err.offset, flush=True)
+        return
+    print("parsed", flush=True)
 
 
 def _peak_rss_bytes() -> int:
@@ -180,22 +257,26 @@ def main() -> None:
     parser.add_argument("--layout", choices=LAYOUTS, default="forever")
     parser.add_argument("--parse", type=Path, help="measure this file instead of generating")
     parser.add_argument(
-        "--at-bound",
-        action="store_true",
-        help="documents of exactly MAX_ENTRIES entries (and MAX_ENTRIES + 1 for zeros, trues)",
+        "--at-budget",
+        nargs="*",
+        metavar="SHAPE",
+        help="each budget shape (or those named) filled to just under MAX_COST, then one more",
     )
+    parser.add_argument("--offset", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.parse is not None:
         print(f"file {args.parse.name}")
         measure(args.parse)
         return
-    if args.at_bound:
-        from wowlab_core.luadata import MAX_ENTRIES
-
-        runs_at = [(s, MAX_ENTRIES) for s in BOUND_SHAPES]
-        runs_at += [("zeros", MAX_ENTRIES + 1), ("trues", MAX_ENTRIES + 1)]
-        for shape, count in runs_at:
-            _run(generate_entries(count, shape), f"shape {shape}, {count:,} entries")
+    if args.offset is not None:
+        _offset(args.offset)
+        return
+    if args.at_budget is not None:
+        for shape in args.at_budget or BUDGET_SHAPES:
+            count = _count_at_budget(shape)
+            for n in (count, count + 1):
+                data = generate_items(n, shape)[0]
+                _run(data, f"shape {shape}, {n:,} items, {len(data) / MiB:.1f} MiB")
         return
     runs = [(s, lay) for s in SHAPES for lay in LAYOUTS] if args.shape == "all" else []
     for shape, layout in runs or [(args.shape, args.layout)]:

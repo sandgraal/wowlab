@@ -395,6 +395,5 @@ Dated entries, newest last. Each names the fixture that prompted it.
   serializer has not been seen writing any of them. A NUL byte is refused
   everywhere in a SavedVariables file, inside comments included, not only
   between tokens and in strings. A number literal longer than 4300
-  characters and a document with more than `luadata.MAX_ENTRIES` table
-  entries are refused as bounds (`docs/LAB_PLAN.md` §6.4, amendment of the
-  same date).
+  characters and a document over the `luadata.MAX_COST` parse budget are
+  refused as bounds (`docs/LAB_PLAN.md` §6.4, amendment of the same date).

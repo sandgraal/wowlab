@@ -63,9 +63,11 @@ differ; so do `[true]` and `[1]`).
 Bounds (constructed hostile inputs, L8): a document over `MAX_FILE_BYTES`, a
 table nested deeper than `MAX_DEPTH` (a table assigned at top level is depth
 1), a string literal whose source between the quotes is longer than
-`MAX_STRING_BYTES`, more than `MAX_ENTRIES` table entries in the document,
-or a number literal longer than `MAX_NUMBER_CHARS` raises `LuaLimitError`
-(§6.4 amendment of 2026-09-23); nothing is truncated. The parser
+`MAX_STRING_BYTES`, a number literal longer than `MAX_NUMBER_CHARS`, or a
+document whose table entries and top-level assignments cost more than
+`MAX_COST` (a budget in bytes of what the parse holds; see the budget
+comment below) raises `LuaLimitError` (§6.4 amendment of 2026-09-23);
+nothing is truncated. The parser
 is iterative: a 10 000-deep table raises `LuaLimitError`, never
 `RecursionError`.
 
@@ -74,6 +76,12 @@ dataclass costs about eight times as much to build, and a 50 MB file holds
 millions of entries); Pydantic models are built at the CLI output boundary
 (M10-14). Equality also requires the same type. They are tuples, so
 `len(table)` counts fields: count entries with `len(table.entries)`.
+
+Identical immutable nodes are shared: two equal positional entries, scalar
+values, string keys, trivia or top-level assignments of one document may be
+the same object. So `is` and `id()` do not identify an entry or its place in
+the document; walk by position. The M10-12 serializer must not track edits
+by object identity.
 """
 
 from __future__ import annotations
@@ -88,6 +96,7 @@ from pathlib import Path
 from typing import NamedTuple, NoReturn
 
 __all__ = [
+    "MAX_COST",
     "MAX_DEPTH",
     "MAX_ENTRIES",
     "MAX_FILE_BYTES",
@@ -117,15 +126,53 @@ MAX_DEPTH = 200
 MAX_FILE_BYTES = 256 * _MIB
 #: Longest string literal accepted, counted on its source bytes between the quotes.
 MAX_STRING_BYTES = 64 * _MIB
-#: Most table entries accepted in one document (all tables together), so a
-#: document at the bound parses within the §6.4 performance target.
-MAX_ENTRIES = 3_000_000
 #: Longest number literal accepted, in characters: CPython's own default
 #: limit on int parsing, so no conversion of an accepted literal is quadratic.
 MAX_NUMBER_CHARS = 4300
-# Distinct items each sharing cache of the parser holds (values, string keys,
-# positional entries); past it, objects are built as usual.
+# Distinct items each sharing cache of the parser holds (trivia, values,
+# string keys, positional entries, top-level assignments); past it, objects
+# are built as usual. Only trivia of at most `_SHARE_TRIVIA_BYTES` is cached.
 _SHARE_LIMIT = 1 << 16
+_SHARE_TRIVIA_BYTES = 64
+
+# ── the cost budget (§6.4 amendment of 2026-09-23) ──
+#
+# Every document is charged, in bytes, roughly what the parse holds for it:
+# the input buffer itself, then per table entry and per top-level
+# assignment a base cost plus every object built for it that is not shared
+# (a bytes object costs `_C_BYTES` plus its length; a two-field node
+# `_C_NODE`; a number's text `_C_STR` plus its length; a table `_C_TABLE`).
+# An entry or assignment that is shared whole (an identical positional
+# entry or assignment already built) still costs `_C_SHARED`: it holds
+# almost no memory, but it takes parse time, and that charge is what bounds
+# the time of a dense list. A trailing comment is charged twice, once as
+# `Entry.comment` and once inside the next token's lead, because it is held
+# twice. The constants are calibrated against measured peak RSS in the
+# M10-04 PR (lab/core/tests/luadata_bench_constructed.py --at-budget).
+_C_BYTES = 40
+_C_NODE = 56
+_C_STR = 56
+_C_TABLE = 128
+_C_ENTRY = 190  # the 10-field Entry and its list and tuple slots
+_C_KEYED = 40  # a keyed entry's slot in the table's key set
+_C_ASSIGN = 96  # the 4-field Assignment and its slots
+_C_SHARED = 170
+#: The budget, in the bytes described above, that one document may cost; a
+#: document over it raises `LuaLimitError` at the entry or assignment that
+#: crosses it.
+MAX_COST = 1_150_000_000
+# The most one entry whose source (lead to separator) spans at most 64 bytes
+# can be charged: every object it can build unshared, with each byte of the
+# span counted twice, plus the span itself in the input buffer.
+_SHORT_ENTRY_BYTES = 64
+_C_SHORT_ENTRY_MAX = (
+    _C_ENTRY + _C_KEYED + _C_TABLE + 2 * _C_NODE + _C_STR + 8 * _C_BYTES + 3 * _SHORT_ENTRY_BYTES
+)
+#: Entries every document may hold, whatever their shape, as long as no entry
+#: spans more than 64 source bytes: `MAX_COST` divided by the most such an
+#: entry can be charged. Not itself a bound: the budget refuses, and denser
+#: documents (a list of repeated values costs `_C_SHARED` an entry) hold more.
+MAX_ENTRIES = MAX_COST // _C_SHORT_ENTRY_MAX
 
 # Lua 5.1 stores pending positional entries this many at a time
 # (`LFIELDS_PER_FLUSH` in lopcodes.h); §6.4 amendment item 6, **[verify]**.
@@ -138,15 +185,19 @@ _LFIELDS_PER_FLUSH = 50
 class LuaDataError(ValueError):
     """A document the constrained grammar refuses. Never evaluated.
 
-    `line` and `column` are 1-based (the column counts bytes); `token` is the
-    offending source bytes, `b""` at the end of input.
+    `line` and `column` are 1-based (the column counts bytes); `offset` is the
+    same position as a 0-based byte offset; `token` is the offending source
+    bytes, `b""` at the end of input.
     """
 
-    def __init__(self, message: str, *, line: int, column: int, token: bytes) -> None:
+    def __init__(
+        self, message: str, *, line: int, column: int, token: bytes, offset: int = 0
+    ) -> None:
         self.message = message
         self.line = line
         self.column = column
         self.token = token
+        self.offset = offset
         super().__init__(f"line {line}, column {column}: {message} (at {token!r})")
 
 
@@ -398,6 +449,14 @@ _FLOAT_SPELLING = re.compile(r"-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?")
 
 
 def _spelled_int(text: str) -> int:
+    """The integer a decimal or hex spelling denotes, exactly.
+
+    Relies on CPython's process-wide limit on decimal text (4300 digits by
+    default): the parser refuses literals over `MAX_NUMBER_CHARS`, so with the
+    default limit this never fails and is never quadratic. A host that lowers
+    the limit with `sys.set_int_max_str_digits` gets `ValueError` here (from
+    `as_int()` and `to_python()`) for an accepted literal of up to 4300 digits.
+    """
     negative = text.startswith("-")
     body = text[1:] if negative else text
     # The parser refuses literals over MAX_NUMBER_CHARS, inside CPython's
@@ -553,7 +612,7 @@ def _error(
     data: bytes, offset: int, token: bytes, message: str, cls: type[LuaDataError] = LuaDataError
 ) -> LuaDataError:
     line, column = _position(data, offset)
-    return cls(message, line=line, column=column, token=token)
+    return cls(message, line=line, column=column, token=token, offset=offset)
 
 
 # ── diagnosis of a refused input ────────────────────────────────────────────
@@ -661,6 +720,14 @@ class _Diagnoser:
             else:
                 i += 1
 
+    def peek(self, pos: int) -> bytes:
+        """The next byte after trivia, without raising (for `value()`'s
+        message choice only; `entry()` uses `skip()`/`token()`, since after a
+        name that may be a key, a refused trivia is the first offender)."""
+        m = _TRIVIA_RE.match(self.data, pos)
+        p = m.end() if m else pos
+        return self.data[p : p + 1]
+
     def text(self, kind: str, start: int, end: int) -> bytes:
         return b"" if kind == "eof" else self.data[start:end]
 
@@ -683,8 +750,10 @@ class _Diagnoser:
                 self.fail(s, word, "function definitions are rejected (L3)")
             if word in _KEYWORDS:
                 self.fail(s, word, f"keyword {word.decode()!r} is not a value")
-            nxt, ns, _ne = self.token(self.skip(e))  # a refused trivia or byte comes first
-            if nxt in ("string", "{") or data[ns : ns + 1] in (b"(", b":"):
+            # After `=`, a bare identifier is refused whatever follows it, so it
+            # is the offending token: the lookahead only picks the message and
+            # must not raise on a later long comment or NUL.
+            if self.peek(e) in (b'"', b"'", b"{", b"(", b":"):
                 self.fail(s, word, "calls are rejected (L3)")
             self.fail(s, word, "bare identifiers are not values (L3)")
         if kind == "longbracket":
@@ -782,7 +851,7 @@ def parse(data: bytes) -> LuaDocument:
     """Parse a SavedVariables document from its bytes. Never evaluates.
 
     Raises `LuaDataError` (with line, column and token) for anything the
-    grammar refuses, and `LuaLimitError` for the depth, size, entry-count,
+    grammar refuses, and `LuaLimitError` for the depth, size, cost-budget,
     number-length and string-length bounds. Bad input raises nothing else.
 
     The cyclic garbage collector is paused process-wide while a parse runs
@@ -855,14 +924,37 @@ class _Parser:
         an explicit stack, so nesting never recurses.
 
         Identical immutable objects are built once and shared (bounded
-        caches of `_SHARE_LIMIT` distinct items each): scalar values with
-        the same lead and text, string keys with the same lead and text, and
-        whole positional entries with the same lead, value and separator (and
-        nothing between the value and the separator, and no comment).
-        A dense array of repeated values then costs a list slot per entry.
+        caches of `_SHARE_LIMIT` distinct items each): trivia of at most
+        `_SHARE_TRIVIA_BYTES`, scalar values with the same lead and text,
+        string keys with the same lead and text, whole positional entries
+        with the same lead, value and separator (and nothing between the
+        value and the separator, and no comment), and whole scalar top-level
+        assignments with the same bytes. A dense array of repeated values
+        then costs a list slot per entry. Every entry and assignment is
+        charged against `MAX_COST` as the module's budget comment says.
         """
         data = self.data
-        intern = {b"": b"", b"\r\n": b"\r\n", b"\n": b"\n"}.setdefault
+        limit = _SHARE_LIMIT
+        trivia_max = _SHARE_TRIVIA_BYTES
+        trivia: dict[bytes, bytes] = {}
+        tget = trivia.get
+        cost = len(data)  # the input buffer is held for the whole parse
+        budget = MAX_COST
+
+        def share(text: bytes) -> bytes:
+            """The shared copy of a trivia slot, charging an unshared one.
+            (Empty and one-byte `bytes` are CPython singletons: free.)"""
+            nonlocal cost
+            if len(text) < 2:
+                return text
+            found = tget(text)
+            if found is not None:
+                return found
+            cost += _C_BYTES + len(text)
+            if len(text) <= trivia_max and len(trivia) < limit:
+                trivia[text] = text
+            return text
+
         assignments: list[Assignment] = []
         # Each open table's saved state: [at, lead, head, entries, seen, npos].
         # `head` is what the table's parent needs when it closes: an
@@ -877,7 +969,7 @@ class _Parser:
         values: dict[tuple[bytes, bytes], LuaValue] = {}  # (lead, text) -> scalar
         keys: dict[tuple[bytes, bytes], LuaString] = {}  # (lead, text) -> string key
         positional: dict[tuple[bytes, bytes, bytes], Entry] = {}  # (lead, text, sep)
-        limit = _SHARE_LIMIT
+        whole: dict[bytes, Assignment] = {}  # source bytes -> scalar assignment
         # The innermost open table, unpacked into locals.
         at = 0
         t_lead = b""
@@ -889,7 +981,6 @@ class _Parser:
         seen: set[object] = set()
         npos = 0
         depth = 0
-        count = 0  # entries in the whole document
         pos = 0
         need_close = False
         value: LuaValue | None
@@ -897,6 +988,7 @@ class _Parser:
         lk: object
         while True:
             if not depth:
+                start = pos
                 m = _ASSIGN.match(data, pos)
                 if m is None:
                     _Diagnoser(data).top(pos)
@@ -904,9 +996,13 @@ class _Parser:
                 if m.end() - pos > MAX_STRING_BYTES:
                     self.check_string_bound(m, 5)
                 if not name:
-                    return _new(LuaDocument, (tuple(assignments), lead))
+                    return _new(LuaDocument, (tuple(assignments), share(lead)))
                 pos = m.end()
                 if vt:
+                    cost += _C_ASSIGN + _C_STR + len(name) + _C_TABLE
+                    lead, eq, vl = share(lead), share(eq), share(vl)
+                    if cost > budget:
+                        self.cost_bound(start + len(lead))
                     at, t_lead, head = pos - 1, vl, (lead, name.decode("ascii"), eq)
                     entries = []
                     append = entries.append
@@ -914,29 +1010,53 @@ class _Parser:
                     npos = 0
                     depth = 1
                     continue
+                span = data[start:pos]
+                assignment = whole.get(span)
+                if assignment is not None:
+                    cost += _C_SHARED
+                    if cost > budget:
+                        self.cost_bound(start + len(lead))
+                    assignments.append(assignment)
+                    continue
+                cost += _C_ASSIGN + _C_STR + len(name) + _C_NODE
+                lead, eq, vl = share(lead), share(eq), share(vl)
                 if vs:
                     if b"\\" in vs and _escape_over_255(vs):
-                        _Diagnoser(data).top(m.start())
+                        _Diagnoser(data).top(start)
+                    cost += _C_BYTES + len(vs)
                     value = _new(LuaString, (vl, vs))
                 elif vn:
                     if len(vn) > MAX_NUMBER_CHARS:
                         self.number_bound(m, 6)
+                    cost += _C_STR + len(vn)
                     value = _new(LuaNumber, (vl, vn.decode("ascii")))
                 elif vb:
                     value = _new(LuaBool, (vl, vb == b"true"))
                 else:
                     value = _new(LuaNil, (vl,))
-                assignments.append(_new(Assignment, (lead, name.decode("ascii"), eq, value)))
+                if cost > budget:
+                    self.cost_bound(start + len(lead))
+                assignment = _new(Assignment, (lead, name.decode("ascii"), eq, value))
+                if len(span) <= trivia_max and len(whole) < limit:
+                    whole[span] = assignment
+                assignments.append(assignment)
                 continue
 
             if need_close:
                 m = close_match(data, pos)
                 if m is None:
                     _Diagnoser(data).close(pos, at)
-                close_lead = m.group(1)
+                close_lead = share(m.group(1))
                 pos = m.end()
                 need_close = False
             else:
+                start = pos
+                # `_FAST` and `_ENTRY` number their groups differently: the
+                # unpacking just below, and the group numbers passed to
+                # `check_string_bound` and `number_bound` further down, are
+                # `_ENTRY`'s. A `_FAST` match never reaches those bound checks
+                # (it is at most MAX_NUMBER_CHARS long, far under the string
+                # bound), so the numbers must stay in step with `_ENTRY` only.
                 m = fast_match(data, pos)
                 if m is not None and m.end() - pos > MAX_NUMBER_CHARS:
                     m = None  # a long match takes the full path, which checks every bound
@@ -945,6 +1065,14 @@ class _Parser:
                     close = kl = kb = kc = kw = sl = b""
                     ke = vl = b" " if ks or kn else b""
                     sep = b"" if vt else b","
+                    if len(lead) > 1:
+                        found = tget(lead)
+                        if found is None:
+                            cost += _C_BYTES + len(lead)
+                            if len(lead) <= trivia_max and len(trivia) < limit:
+                                trivia[lead] = lead
+                        else:
+                            lead = found
                 else:
                     m = entry_match(data, pos)
                     if m is None:
@@ -952,17 +1080,25 @@ class _Parser:
                     (lead, close, kl, ks, kn, kb, kc, kw, ke, vl, vs, vn, vb, sl, sep, vt) = (
                         m.groups(b"")
                     )
+                    if close:
+                        close_lead = share(lead)
+                    else:
+                        lead, kl, kc, ke, vl, sl = (
+                            share(lead),
+                            share(kl),
+                            share(kc),
+                            share(ke),
+                            share(vl),
+                            share(sl),
+                        )
                 if not close:
-                    count += 1
-                    if count > MAX_ENTRIES:
-                        self.entry_bound(m, len(lead))
                     if m.end() - pos > MAX_STRING_BYTES:
                         self.check_string_bound(m, 4, 11)
-                    lead = intern(lead, lead)
                     if ks:
                         style = _S
                         shared_key = keys.get((kl, ks))
                         if shared_key is None:
+                            cost += _C_NODE + _C_BYTES + len(ks)
                             shared_key = _new(LuaString, (kl, ks))
                             if len(keys) < limit:
                                 keys[kl, ks] = shared_key
@@ -975,10 +1111,13 @@ class _Parser:
                             if _escape_over_255(ks):
                                 _Diagnoser(data).entry(pos, at)
                             lk = b'"' + _unescape(ks[1:-1]) + b'"'
+                            cost += _C_BYTES + len(ks)
                         elif ks[0] == 0x22:
                             lk = shared_key.raw
                         else:
                             lk = b'"' + ks[1:-1] + b'"'
+                            cost += _C_BYTES + len(ks)
+                        cost += _C_KEYED
                         dup = lk in seen
                         seen.add(lk)
                     elif kn:
@@ -990,6 +1129,7 @@ class _Parser:
                             number = float(kn)  # every decimal spelling
                         except ValueError:
                             number = _spelled_float(text)  # hex
+                        cost += _C_NODE + _C_STR + len(kn) + 24 + _C_KEYED  # and the double
                         key = _new(LuaNumber, (kl, text))
                         dup = number in seen or (number.is_integer() and 1 <= number <= npos)
                         seen.add(number)
@@ -997,12 +1137,14 @@ class _Parser:
                         style = _W
                         key = kw.decode("ascii")
                         lk = b'"' + kw + b'"'
+                        cost += _C_STR + _C_BYTES + 2 * len(kw) + _C_KEYED
                         dup = lk in seen
                         seen.add(lk)
                     elif kb:
                         style = _B
                         truth = kb == b"true"
                         key = _new(LuaBool, (kl, truth))
+                        cost += _C_NODE + _C_KEYED
                         lk = _TRUE_KEY if truth else _FALSE_KEY
                         dup = lk in seen
                         seen.add(lk)
@@ -1020,6 +1162,9 @@ class _Parser:
                                 f"tables nested deeper than {MAX_DEPTH}",
                                 LuaLimitError,
                             )
+                        cost += _C_ENTRY + _C_TABLE
+                        if cost > budget:
+                            self.cost_bound(start + len(lead))
                         stack.append([at, t_lead, head, entries, seen, npos])
                         pos = m.end()
                         at, t_lead, head = pos - 1, vl, (lead, style, key, kc, ke, dup)
@@ -1041,16 +1186,22 @@ class _Parser:
                         cm = comment_match(data, pos)
                         if cm is not None:
                             comment = cm.group(1)
+                            cost += _C_BYTES + len(comment)
                     text_bytes = vs or vn or vb
                     shareable = style is _P and sep and not sl and comment is None and not dup
                     if shareable:
                         shared = positional.get((lead, text_bytes, sep))
                         if shared is not None:
+                            cost += _C_SHARED
+                            if cost > budget:
+                                self.cost_bound(start + len(lead))
                             append(shared)
                             continue
+                    cost += _C_ENTRY
                     if vs:
                         if b"\\" in vs and _escape_over_255(vs):
-                            _Diagnoser(data).entry(m.start(), at)
+                            _Diagnoser(data).entry(start, at)
+                        cost += _C_NODE + _C_BYTES + len(vs)
                         value = _new(LuaString, (vl, vs))
                     else:
                         value = values.get((vl, text_bytes))
@@ -1058,17 +1209,20 @@ class _Parser:
                             if vn:
                                 if len(vn) > MAX_NUMBER_CHARS:
                                     self.number_bound(m, 12)
+                                cost += _C_NODE + _C_STR + len(vn)
                                 value = _new(LuaNumber, (vl, vn.decode("ascii")))
                             else:
+                                cost += _C_NODE
                                 value = _new(LuaBool, (vl, vb == b"true"))
                             if len(values) < limit:
                                 values[vl, text_bytes] = value
+                    if cost > budget:
+                        self.cost_bound(start + len(lead))
                     built = _new(Entry, (lead, style, key, kc, ke, value, sl, sep, comment, dup))
                     if shareable and len(positional) < limit:
                         positional[lead, text_bytes, sep] = built
                     append(built)
                     continue
-                close_lead = intern(lead, lead)
                 pos = m.end()
 
             # The innermost table closes.
@@ -1086,6 +1240,7 @@ class _Parser:
             sl, sep = sm.groups()
             if sep:
                 pos = sm.end()
+                sl = share(sl)
             else:
                 sl = b""
                 need_close = True
@@ -1095,18 +1250,20 @@ class _Parser:
                 cm = comment_match(data, pos)
                 if cm is not None:
                     comment = cm.group(1)
+                    cost += _C_BYTES + len(comment)
+            if cost > budget:
+                self.cost_bound(pos)
             e_lead, e_style, e_key, e_kc, e_eq, e_dup = closed
             append(
                 _new(Entry, (e_lead, e_style, e_key, e_kc, e_eq, table, sl, sep, comment, e_dup))
             )
 
-    def entry_bound(self, m: re.Match[bytes], lead_length: int) -> NoReturn:
-        at = m.start() + lead_length
+    def cost_bound(self, at: int) -> NoReturn:
         raise _error(
             self.data,
             at,
-            self.data[at : min(m.end(), at + 40)],
-            f"more than {MAX_ENTRIES} table entries in the document",
+            self.data[at : at + 40],
+            f"document over the parse budget of {MAX_COST} (MAX_COST)",
             LuaLimitError,
         )
 
