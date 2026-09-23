@@ -527,8 +527,8 @@ after the PR #49 security review; tickets M10-16T and M10-16):*
      `GuardBusyError`. `undo()`'s own transaction runs under the locks
      `undo()` already holds; it does not take them again. A held lock raises `GuardBusyError` (a `GuardError`)
      and nothing is written or journaled; any other failure to open or lock
-     (unsupported on the volume, permission, I/O) raises `GuardError`. guard
-     never proceeds unlocked.
+     (unsupported on the volume, permission, I/O) raises `GuardError`, never
+     `GuardBusyError`. guard never proceeds unlocked.
    - **Lock files.** Opened with `O_CREAT | O_RDWR | O_NOFOLLOW` (on Windows,
      refused if a reparse point), never truncated, written or deleted; each
      must be a regular file by `fstat`. The lock files and `locks/` are part
