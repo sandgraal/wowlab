@@ -26,7 +26,12 @@ install and scrubs identity from it per `docs/LAB_PLAN.md` §8:
   and a SavedVariables file also when the match is in its own name. In a
   combat log (public game text: creature, spell and NPC names) a match is
   replaced only in the quoted unit name after one of the owner's own GUIDs;
-  anywhere else it refuses the file;
+  anywhere else it refuses the file. With `--pseudonymise-other-players`
+  (combat logs only), another player's GUID becomes an invented GUID and the
+  character-name part of their unit name an invented pseudonym (an unknown
+  realm part a realm-style one), consistently for the run; the log is refused
+  if one of those real parts appears anywhere else, or if another player's
+  GUID never stands in a unit pair;
 - a file whose scrubbed bytes or output path still contain an email address,
   a BattleTag, an unmapped player, account, guild or community GUID, a
   surviving identity string in any casing or embedding (CVar names included),
@@ -58,6 +63,7 @@ import sys
 import unicodedata
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -149,7 +155,8 @@ GUID_NAME_RE = re.compile(rb'(Player-[0-9]+-[0-9A-Fa-f]+),"([^"\r\n]*)"', re.IGN
 # keys ("Horde - <realm>"), region tags ("<realm>-US"), DataStore's literal
 # account key ("Default.<realm>.<name>").
 FACTION_WORDS = frozenset({"horde", "alliance", "neutral"})
-VOCABULARY_PARTNERS = FACTION_WORDS | {"us", "eu", "kr", "tw", "cn", "default"}
+REGION_WORDS = frozenset({"us", "eu", "kr", "tw", "cn"})
+VOCABULARY_PARTNERS = FACTION_WORDS | REGION_WORDS | {"default"}
 _LETTERS = rb"A-Za-z\x80-\xff"
 # What joins a name to a realm: "Name-Realm", "Name - Realm", DataStore's
 # "Default.Realm.Name", and the other single-character joints addons use. Any
@@ -288,6 +295,16 @@ ADDON_FILE_NAME_LABEL = "identity string inside an addon's file name"
 # right after one of the owner's own GUIDs (GUID_NAME_RE); any other match
 # refuses the file, with a count only. With no own GUIDs every match refuses.
 COMBAT_LOG_TEXT_LABEL = "identity string in combat-log game text"
+# With --pseudonymise-other-players (combat logs only; see OtherPlayers): a
+# real name part of another player found outside every rewritten unit field,
+# and another player's GUID that never stands in a GUID+name unit pair. Both
+# give a count only.
+OTHER_NAME_LABEL = "other player's name outside a unit field"
+OTHER_GUID_LABEL = "other player's GUID without a unit name"
+# Invented GUIDs for other players: a server id no real GUID of the owner's
+# pseudonyms uses (theirs are Player-9999-...), numbered in order of first
+# appearance, so nothing about the real value survives.
+OTHER_GUID_FORMAT = b"Player-9998-%08X"
 
 
 Span = tuple[int, int]
@@ -565,6 +582,8 @@ class Identity:
         self._short_survivors: dict[bytes, str] = {}  # ASCII-lowered short form -> "substring"
         self._realm_pseudonyms: set[bytes] = set()
         self._partner_words: set[str] = set()  # every letter run of every pseudonym, casefolded
+        # Other players' pseudonym words, known only while one combat log is inspected.
+        self._scoped_words: frozenset[str] = frozenset()
         self.counts: Counter[str] = Counter()
 
         ordered_realms = self._ordered(realms)
@@ -740,11 +759,15 @@ class Identity:
         blank_cvars: bool = False,
         toc: bool = False,
         character_list: bool = False,
+        others: OtherUnits | None = None,
     ) -> ScrubResult:
         """Return `data` with identity replaced, plus every edit and any reason to refuse.
 
         `blank_cvars` marks a Config.wtf-style file, `toc` a TOC file, and
-        `character_list` the account's character-list-order.txt.
+        `character_list` the account's character-list-order.txt. `others`
+        carries other players' GUIDs and unit-name parts to pseudonymise (a
+        combat log under --pseudonymise-other-players); they are claimed after
+        the owner's GUIDs and before any identity string.
         """
         # Three passes over the ORIGINAL bytes, highest priority first. Matches
         # within a pass never overlap each other; a match that overlaps a
@@ -775,9 +798,16 @@ class Identity:
                 claim(m.start(1), m.end(1), b"", "cvar")
             close_pass()
         for m in GUID_RE.finditer(data):
-            if m.group(0).upper() in self.guids:
-                claim(m.start(), m.end(), self.guids[m.group(0).upper()], "guid")
+            key = m.group(0).upper()
+            if key in self.guids:
+                claim(m.start(), m.end(), self.guids[key], "guid")
+            elif others is not None and key in others.guids:
+                claim(m.start(), m.end(), others.guids[key], "other-guid")
         close_pass()
+        if others is not None:
+            for start, end, new in others.edits:
+                claim(start, end, new, "other-name")
+            close_pass()
         if self._identity is not None:
             for m in self._identity.finditer(data):
                 claim(m.start(), m.end(), self._tokens[m.group(0)].replacement, "identity")
@@ -793,7 +823,9 @@ class Identity:
             cursor = edit.end
         out += data[cursor:]
         scrubbed = bytes(out)
-        problems, notes = self.inspect(scrubbed, config=blank_cvars, toc=toc, written=written)
+        problems, notes = self.inspect(
+            scrubbed, config=blank_cvars, toc=toc, written=written, others=others
+        )
 
         # A short exact-case name replaced inside a longer name in another
         # casing ("Al" in "xtHrAlLx") splits it before the scan above can see
@@ -835,18 +867,43 @@ class Identity:
                 problems.append(_located(label, scrubbed, unknown))
         return ScrubResult(scrubbed, tuple(edits), tuple(problems), tuple(notes))
 
-    def stray_in_combat_log(self, data: bytes, edits: Iterable[Edit]) -> int:
+    def stray_in_combat_log(
+        self, data: bytes, edits: Iterable[Edit], other_units: Iterable[Span] = ()
+    ) -> int:
         """Whole-word identity edits in `data` (the ORIGINAL bytes of a combat log) that
         lie outside every own unit-name field. Glued ones are counted as embedded instead.
+
+        `other_units`: other players' unit-name fields (--pseudonymise-other-players).
+        An identity edit there can only be in a part left to the identity rules
+        (an own realm: another player on the owner's realm), so it is allowed.
         """
         own_units = sorted(
-            m.span(2) for m in GUID_NAME_RE.finditer(data) if m.group(1).upper() in self.guids
+            [
+                *(
+                    m.span(2)
+                    for m in GUID_NAME_RE.finditer(data)
+                    if m.group(1).upper() in self.guids
+                ),
+                *other_units,
+            ]
         )
         return sum(
             1
             for e in edits
             if e.reason == "identity" and not e.embedded and not _inside(own_units, e.offset, e.end)
         )
+
+    def known_parts(self, data: bytes, low: int, high: int) -> list[Span]:
+        """Spans of `data[low:high]` that are each one whole identity string, bounded by
+        `-` or by the edges: the parts of a unit name the identity rules scrub."""
+        if self._identity is None:
+            return []
+        return [
+            m.span()
+            for m in self._identity.finditer(data, low, high)
+            if (m.start() == low or data[m.start() - 1] == ord("-"))
+            and (m.end() == high or data[m.end()] == ord("-"))
+        ]
 
     def _known_line(self, match: re.Match[bytes]) -> bool:
         line = match.group(0).replace(_BOM, b"")
@@ -860,11 +917,41 @@ class Identity:
         config: bool = False,
         toc: bool = False,
         written: Sequence[Span] = (),
+        others: OtherUnits | None = None,
     ) -> tuple[list[str], list[str]]:
         """(reasons these bytes must not be emitted, notes for the eye). Never quotes a match.
 
         `written` is where this scrub put its replacements, if it made any.
+        `others`: other players' pseudonym GUIDs are mapped, and their
+        pseudonym words count as pseudonyms, not strangers.
         """
+        with self._also_known(others.words if others is not None else frozenset()):
+            return self._inspect(
+                scrubbed,
+                config=config,
+                toc=toc,
+                written=written,
+                pseudo_guids=others.pseudo_guids if others is not None else frozenset(),
+            )
+
+    @contextmanager
+    def _also_known(self, words: frozenset[str]) -> Iterator[None]:
+        saved = self._scoped_words
+        self._scoped_words = saved | words
+        try:
+            yield
+        finally:
+            self._scoped_words = saved
+
+    def _inspect(
+        self,
+        scrubbed: bytes,
+        *,
+        config: bool,
+        toc: bool,
+        written: Sequence[Span],
+        pseudo_guids: frozenset[bytes],
+    ) -> tuple[list[str], list[str]]:
         problems: list[str] = []
         notes: list[str] = []
         cvar_names, toc_keys = self._vocabulary(scrubbed, config=config, toc=toc)
@@ -885,7 +972,11 @@ class Identity:
         report(
             problems,
             "unmapped player GUID",
-            (m for m in GUID_RE.finditer(scrubbed) if m.group(0) not in self._pseudo_guids),
+            (
+                m
+                for m in GUID_RE.finditer(scrubbed)
+                if m.group(0) not in self._pseudo_guids and m.group(0) not in pseudo_guids
+            ),
         )
         report(problems, "account GUID", ACCOUNT_GUID_RE.finditer(scrubbed))
         report(problems, "guild GUID", GUILD_GUID_RE.finditer(scrubbed))
@@ -1060,7 +1151,7 @@ class Identity:
     def _kind(self, raw: bytes) -> str:
         """ "own" (a pseudonym word), "vocabulary", "number" (digits only) or "foreign"."""
         word = self._word(raw)
-        if word in self._partner_words:
+        if word in self._partner_words or word in self._scoped_words:
             return "own"
         if word in VOCABULARY_PARTNERS:
             return "vocabulary"
@@ -1220,6 +1311,150 @@ def _located_at(label: str, data: bytes, offsets: Sequence[int]) -> str:
     line = data.count(b"\n", 0, first) + data.count(b"\r", 0, first) + 1
     line -= data.count(b"\r\n", 0, first)
     return f"{label} x{len(offsets)} (first at byte {first}, line {line})"
+
+
+# ─── other players in a combat log (opt-in) ──────────────────────────────────
+
+
+@dataclass(frozen=True)
+class OtherUnits:
+    """Other players in one combat log, and what replaces them. Holds real bytes: never print."""
+
+    guids: dict[bytes, bytes]  # upper-cased real GUID -> invented GUID
+    edits: tuple[tuple[int, int, bytes], ...]  # (start, end, pseudonym) in the original bytes
+    fields: tuple[Span, ...]  # every other player's quoted unit-name field
+    hunted: tuple[str, ...]  # real name parts that must not appear anywhere else
+    unpaired: int  # other players' GUIDs never seen in a GUID+name unit pair
+    words: frozenset[str]  # casefolded letter runs of every other-player pseudonym so far
+
+    @property
+    def pseudo_guids(self) -> frozenset[bytes]:
+        return frozenset(self.guids.values())
+
+    def leaks(self, result: ScrubResult) -> int:
+        """How often a hunted name part survives in the scrubbed bytes outside every
+        replacement (each replacement is masked first, so pseudonyms never count).
+
+        A part of EMBEDDED_MIN_CHARS or more characters counts anywhere, even inside
+        a longer word; a shorter one only as a whole word. Any casing, NFC.
+        """
+        terms = sorted(
+            {
+                part
+                for name in self.hunted
+                for part in re.split(r"[\s\-]+", _nfc(name))
+                if len(part) >= 2
+                and any(c.isalpha() for c in part)
+                and part.casefold() not in RESERVED_WORDS | VOCABULARY_PARTNERS
+            },
+            key=lambda t: (-len(t), t),
+        )
+        if not terms:
+            return 0
+        pattern = re.compile(
+            "|".join(
+                re.escape(t) if len(t) >= EMBEDDED_MIN_CHARS else rf"(?<!\w){re.escape(t)}(?!\w)"
+                for t in terms
+            ),
+            re.IGNORECASE,
+        )
+        masked = bytearray(result.data)
+        for start, end in _written(result.edits):
+            masked[start:end] = bytes(end - start)  # NUL: no name contains it
+        text = _nfc(bytes(masked).decode("utf-8", errors="replace"))
+        return sum(1 for _ in pattern.finditer(text))
+
+
+class OtherPlayers:
+    """`--pseudonymise-other-players`: invented GUIDs and names for everyone else in a log.
+
+    One registry per run, so a player keeps one pseudonym in every log of the
+    run. Numbering follows first appearance, never the real value: an invented
+    GUID or name says nothing about the one it replaced.
+
+    In a unit name (`"<Name>-<Realm>-<REGION>"`, parts split on `-`) the part
+    before the first `-` is the character name: always replaced. A later part
+    that is one of the owner's own identity strings (another player on the
+    owner's realm) is left to the identity rules; a region word or an empty
+    part stays; any other part (a realm the tool does not know) gets a
+    realm-style pseudonym. Unit flags and raid flags are never touched.
+    """
+
+    def __init__(self) -> None:
+        self._players: dict[bytes, int] = {}  # upper-cased real GUID -> index
+        self._realms: dict[str, int] = {}  # folded real realm part -> index
+        self._words: set[str] = set()
+
+    def _pseudonym(self, text: str, stem: str, index: int) -> bytes:
+        pseudonym = _shaped(text, stem, index)
+        self._words.update(_fold(run) for run in re.findall(r"[^\W\d_]+", pseudonym))
+        return pseudonym.encode("utf-8")
+
+    def units(self, data: bytes, identity: Identity) -> OtherUnits:
+        """Find every other player's unit pair in `data` (the ORIGINAL bytes of a log)."""
+        edits: list[tuple[int, int, bytes]] = []
+        fields: list[Span] = []
+        hunted: list[str] = []
+        paired: set[bytes] = set()
+        for m in GUID_NAME_RE.finditer(data):
+            key = m.group(1).upper()
+            if key in identity.guids:
+                continue
+            paired.add(key)
+            index = self._players.setdefault(key, len(self._players))
+            start, end = m.span(2)
+            fields.append((start, end))
+            cut = data.find(b"-", start, end)
+            name_end = end if cut < 0 else cut
+            if name_end > start:
+                name = data[start:name_end].decode("utf-8", errors="replace")
+                edits.append((start, name_end, self._pseudonym(name, "Labother", index)))
+                hunted.append(name)
+            if cut >= 0:
+                edits.extend(self._realm_parts(data, cut + 1, end, identity, hunted))
+        guids = {key: OTHER_GUID_FORMAT % (self._players[key] + 1) for key in paired}
+        unpaired = sum(
+            1
+            for m in GUID_RE.finditer(data)
+            if (key := m.group(0).upper()) not in identity.guids and key not in paired
+        )
+        return OtherUnits(
+            guids=guids,
+            edits=tuple(edits),
+            fields=tuple(fields),
+            hunted=tuple(hunted),
+            unpaired=unpaired,
+            words=frozenset(self._words),
+        )
+
+    def _realm_parts(
+        self, data: bytes, low: int, high: int, identity: Identity, hunted: list[str]
+    ) -> Iterator[tuple[int, int, bytes]]:
+        """Edits for the parts after the character name, skipping own identity strings."""
+        cursor = low
+        for known_start, known_end in [*identity.known_parts(data, low, high), (high, high)]:
+            position = cursor
+            for part in data[cursor:known_start].split(b"-"):
+                part_start, position = position, position + len(part) + 1
+                text = part.decode("utf-8", errors="replace")
+                if not part or _fold(text) in REGION_WORDS:
+                    continue
+                index = self._realms.setdefault(_fold(text), len(self._realms))
+                hunted.append(text)
+                pseudonym = self._pseudonym(text, "Labotherrealm", index)
+                yield part_start, part_start + len(part), pseudonym
+            cursor = known_end
+
+
+def _written(edits: Sequence[Edit]) -> list[Span]:
+    """Where each edit's replacement landed in the output (edits sorted by offset)."""
+    spans: list[Span] = []
+    shift = 0
+    for edit in edits:
+        start = edit.offset + shift
+        spans.append((start, start + len(edit.new)))
+        shift += len(edit.new) - len(edit.old)
+    return spans
 
 
 # ─── reading the install (read-only) ─────────────────────────────────────────
@@ -2009,6 +2244,7 @@ class Outcome:
     problems: list[str]
     path_rewritten: bool = False
     review_cvars: tuple[str, ...] = ()
+    other_players: int = 0  # distinct other players pseudonymised in this file
 
     @property
     def label(self) -> PurePosixPath:
@@ -2045,19 +2281,27 @@ def _path_refusals(rel: PurePosixPath, dest: PurePosixPath) -> list[str]:
     return []
 
 
-def process(item: Item, identity: Identity, kinds: dict[str, str] | None = None) -> Outcome:
+def process(
+    item: Item,
+    identity: Identity,
+    kinds: dict[str, str] | None = None,
+    others: OtherPlayers | None = None,
+) -> Outcome:
+    """Scrub one file. `others` (--pseudonymise-other-players) applies to a combat log only."""
     original = read_bytes(item.src, item.max_lines)
     name = item.src.name.casefold()
     config = name in CONFIG_NAMES
+    kind = kind_of(name)
+    units = others.units(original, identity) if others is not None and kind == "combatlog" else None
     result = identity.scrub(
         original,
         blank_cvars=config,
         toc=name.endswith(".toc"),
         character_list=name == "character-list-order.txt",
+        others=units,
     )
     dest, path_problems = identity.scrub_path(item.rel)
     path_rewritten = dest != item.rel
-    kind = kind_of(name)
     kept_whole: list[str] = []  # files an identity match refuses rather than rewrites
     if result.edits and (_third_party(item.rel) or kind == "addons-txt"):
         label = ADDON_LIST_LABEL if kind == "addons-txt" else THIRD_PARTY_LABEL
@@ -2070,9 +2314,18 @@ def process(item: Item, identity: Identity, kinds: dict[str, str] | None = None)
         if result.embedded:
             kept_whole.append(f"{EMBEDDED_LABEL} x{result.embedded}")  # no offset: see ADDON_TREE
         if kind == "combatlog":
-            stray = identity.stray_in_combat_log(original, result.edits)
+            stray = identity.stray_in_combat_log(
+                original, result.edits, units.fields if units is not None else ()
+            )
             if stray:
                 kept_whole.append(f"{COMBAT_LOG_TEXT_LABEL} x{stray}")  # no offset: public text
+        if units is not None:
+            # Counts only: an offset into public text would point at the name.
+            if units.unpaired:
+                kept_whole.append(f"{OTHER_GUID_LABEL} x{units.unpaired}")
+            leaked = units.leaks(result)
+            if leaked:
+                kept_whole.append(f"{OTHER_NAME_LABEL} x{leaked}")
     path_problems = [*path_problems, *_path_refusals(item.rel, dest)]
     if kinds and dest.parts[0] in kinds:
         # The index files fixtures under <platform>/<flavor-kind>/, not the folder name.
@@ -2089,7 +2342,8 @@ def process(item: Item, identity: Identity, kinds: dict[str, str] | None = None)
             )
         )
     problems = [*result.problems, *kept_whole, *path_problems]
-    return Outcome(item, dest, result, problems, path_rewritten, review)
+    other_players = len(units.guids) if units is not None else 0
+    return Outcome(item, dest, result, problems, path_rewritten, review, other_players)
 
 
 def describe_bytes(data: bytes) -> list[str]:
@@ -2122,6 +2376,8 @@ def provenance_row(outcome: Outcome, platform: str, captured_by: str, consent: s
         )
         if result.count(reason)
     ]
+    if outcome.other_players:
+        scrub.append(f"other-players-pseudonymised: {outcome.other_players}")
     if result.embedded:
         scrub.append(f"embedded: {result.embedded}")
     if outcome.path_rewritten and not result.count("identity"):
@@ -2317,6 +2573,12 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--blank-cvar", action="append", help="another identity CVar to blank")
     parser.add_argument("--log-lines", type=int, default=2000, help="combat log lines to keep")
     parser.add_argument(
+        "--pseudonymise-other-players",
+        action="store_true",
+        help="combat logs only: give other players invented GUIDs and names instead of "
+        "refusing the log; still refused if one of their names appears outside a unit field",
+    )
+    parser.add_argument(
         "--max-sv-bytes",
         type=int,
         default=8 * 1024 * 1024,
@@ -2398,6 +2660,7 @@ def run(args: argparse.Namespace) -> int:
     kinds = _kinds(args, flavors)
 
     identity = discover_identity(root, flavors, args)
+    others = OtherPlayers() if args.pseudonymise_other_players else None
     planner = Planner(root, identity, args)
     planner.add(None, child(root, ".build.info"))
     for flavor in flavors:
@@ -2425,7 +2688,7 @@ def run(args: argparse.Namespace) -> int:
     refused = 0
     for item in planner.items.values():
         try:
-            outcome = process(item, identity, kinds)
+            outcome = process(item, identity, kinds, others)
         except OSError as error:
             refused += 1
             label = PurePosixPath(platform) / _scrubbed_label(item, identity)
