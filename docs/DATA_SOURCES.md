@@ -27,17 +27,21 @@ marked `@pytest.mark.live`.
   `16001` is consistent with the patch-number rule for 1.60.1
   (1×10000 + 60×100 + 1) and with `SET engineSurveyPatch "16001"`; an addon
   TOC listing it is only the author's claim. Confirmed in game on
-  2026-09-22 (owner, build 69977): `/dump select(4, GetBuildInfo())`
-  printed `16001`, `""`, `" "` (the interface number, then an empty
-  localized version string and a one-space build type), and
-  `/dump _VERSION` printed `"Lua 5.1"`. Line endings follow the file kind
+  2026-09-22 (owner, on 1.60.1.69977 per the capture rows):
+  `/dump select(4, GetBuildInfo())` printed `16001`, `""`, `" "`: the
+  interface number as a number, then two strings, so `GetBuildInfo` returns
+  six values on this client. Community documentation names the fifth and
+  sixth returns `localizedVersion` and `buildType` **[verify]**; what these
+  values mean is not established, and the Lab reads neither.
+  `/dump _VERSION` printed `"Lua 5.1"`. Evidence: the owner's screenshot,
+  not a committed fixture. Line endings follow the file kind
   (`docs/LAB_FORMATS.md` amendments of 2026-09-22). Combat log, SavedVariables
   line endings (resolved below), `WOW_PROJECT_ID` and the preferred TOC suffix: still open.
 - **Known state update (2026-09-22, M10-03 part 2):** the beta patched from
   1.60.1.69913 to 1.60.1.69977 between the stage-0 and stage-1 captures. The
   69977 version is from the capture tool's rows; its `.build.info` is not
-  committed. The patch is still 1.60.1, so the interface number expected is
-  still `16001`. SavedVariables line endings are resolved on macOS, build
+  committed. The patch is still 1.60.1, and the in-game check above
+  confirms `16001`. SavedVariables line endings are resolved on macOS, build
   69977: CRLF with a leading blank line, no BOM, no indentation (all 105
   files on the install by a byte count); Windows is **[verify]**. No addon in the install ships
   more than one TOC, so the preferred suffix is still open; the Forever
@@ -134,7 +138,8 @@ findings. Library code must not depend on any of it (L6).
 - Beta 2026-09-17 to 2026-10-21, PC (Windows, macOS) through Battle.net;
   launch announced for 2026-11-04; beta characters are wiped.
 - Beta build observed as `1.60.1.69913`, then `1.60.1.69977`; interface version reported as
-  `16001` (one report argues `160001`).
+  `16001` (one report argues `160001`); confirmed `16001` in game on
+  2026-09-22 (Known state above).
 - Product code reported as `wow_classic_beta`, flavor folder `_classic_beta_`.
 - Addon API reported as the modern mainline API (12.1.5 surface), including
   secret values in combat; `WOW_PROJECT_ID` reported equal to the mainline

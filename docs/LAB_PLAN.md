@@ -46,6 +46,11 @@ that matches retail 12.1.5 (including secret values in combat). The beta
 wipes before launch and the flavor folder will probably change at launch.
 That is why flavor, product and build always come from discovery and never
 from a constant.
+*Noted 2026-09-22 (M10-03):* the owner's capture and in-game checks
+confirmed `_classic_beta_`, `wow_classic_beta`, build `1.60.1.69913` then
+`1.60.1.69977`, and interface `16001` (`docs/DATA_SOURCES.md`, Known
+state). The rule above still holds: library code reads all of them from
+discovery.
 
 ## 3. Trust boundary
 
@@ -318,8 +323,13 @@ serialize to their original bytes; new entries follow the document's own
 detected style (owner decision 2026-09-22): its indentation unit or none,
 its array comments or none, its separators and its line endings, so an
 unindented Forever file stays unindented and a tab-indented file with
-`-- [n]` comments keeps them. A new file with no document to copy from uses
-the style observed in real fixtures of the same flavor, else §4.2's.
+`-- [n]` comments (§4.2's reference form; no client has yet been seen
+writing one, **[verify]**) keeps them. A new file with no document to copy
+from uses the style detected, at run time, in the other SavedVariables
+files under the same flavor folder (never a per-flavor constant, L6); with
+none to read, §4.2's. A property the document does not show (indentation
+in a file with no table, the form of a `[number]` key, an empty table's
+form) falls back as for a new file.
 Output is byte-deterministic: same document, same bytes, on every
 platform and locale.
 
@@ -332,7 +342,9 @@ ADR.
 *Amended 2026-09-22 (M10-04T domain review; conductor decisions within
 §4 and L4):* The client's Lua is taken to be Lua 5.1 (community
 documentation, warcraft.wiki.gg "Lua"; confirmed for the Forever client on
-2026-09-22: `/dump _VERSION` in game printed `"Lua 5.1"`). Grammar changes are mirrored in
+2026-09-22: `/dump _VERSION` in game printed `"Lua 5.1"`, the client's
+version string; the escape set below is still from the 5.1 manual, not
+observed). Grammar changes are mirrored in
 `docs/LAB_FORMATS.md` §4 amendments.
 
 1. **Strings are bytes.** A Lua 5.1 string is an 8-bit byte string.

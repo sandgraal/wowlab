@@ -379,8 +379,10 @@ Dated entries, newest last. Each names the fixture that prompted it.
   second name, never by realm.
 - **2026-09-22, §4.1 to §4.3, no fixture (M10-04T reviews; decisions in
   `docs/LAB_PLAN.md` §6.4, amendment of the same date).** The client's Lua is
-  Lua 5.1 (confirmed for Forever on 2026-09-22: `/dump _VERSION` printed
-  `"Lua 5.1"`). Escapes accepted with Lua
+  taken to be Lua 5.1 (community documentation; the Forever client reports
+  `"Lua 5.1"` for `/dump _VERSION`, 2026-09-22, owner's screenshot; retail
+  not checked in game). That is the client's own version string, not a test
+  of the escape rules below, which stay as stated. Escapes accepted with Lua
   5.1 meanings: `\a \b \f \n \r \t \v \\ \" \'`, `\ddd` up to 255 (one byte),
   and a backslash before a line break; `\x`, `\u{}`, `\z`, a `\ddd`
   above 255 and any other character after a backslash are rejected. Strings are byte strings. A raw CR or LF inside a string is
