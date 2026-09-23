@@ -1607,10 +1607,11 @@ _LONG_OPEN_RE = re.compile(rb"\[(=*)\[")
 _LINE_BREAK_RE = re.compile(rb"[\r\n]")
 _BLANKS_RE = re.compile(rb"[ \t\r\n\f\v]*")
 # The body of a quoted string up to its closing quote, a raw line break or the
-# end of the data. A backslash escapes the next byte, a line break included.
+# end of the data. A backslash escapes the next byte, or a whole line break
+# (`\r\n` and `\n\r` are one line break to Lua, so the pair is tried first).
 _QUOTED_BODY_RE = {
-    ord('"'): re.compile(rb'[^"\\\r\n]*(?:\\.[^"\\\r\n]*)*', re.DOTALL),
-    ord("'"): re.compile(rb"[^'\\\r\n]*(?:\\.[^'\\\r\n]*)*", re.DOTALL),
+    ord('"'): re.compile(rb'[^"\\\r\n]*(?:\\(?:\r\n|\n\r|.)[^"\\\r\n]*)*', re.DOTALL),
+    ord("'"): re.compile(rb"[^'\\\r\n]*(?:\\(?:\r\n|\n\r|.)[^'\\\r\n]*)*", re.DOTALL),
 }
 # What starts an entry, after blanks and comments: `}` (no entry), `[` that
 # does not open a long string (a bracketed key: in a table constructor an
