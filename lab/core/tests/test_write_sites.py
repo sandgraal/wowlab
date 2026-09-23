@@ -25,7 +25,15 @@ A write site is:
   `logging.handlers`), and `logging.FileHandler`, `io.FileIO`, `extractall`,
   `unpack_archive` and `make_archive` referenced anywhere;
 - `.replace(target)` or `.rename(target)` with one argument, positional or
-  keyword (Path's forms; `str.replace` takes two).
+  keyword (Path's forms; `str.replace` takes two);
+- the same `os` writers reached through `posix` or `nt` (what `os`
+  re-exports), and the `os` functions that start programs (`system`, `popen`,
+  `spawn*`, `exec*`, `posix_spawn*`, `fork`) or write otherwise (`write`,
+  `chflags`, `setxattr`, `removexattr`, ...);
+- `open`, `builtins.open` or `io.open` referenced without being called
+  (`f = open`), `from io import open` and `from builtins import open`, calls
+  to `exec`, `eval` and `compile`, and imports of `mmap` and `ctypes` (the
+  latter is also the no-FFI rule, L7).
 
 The scanner is graded first on constructed inline sources (writers it must
 find, reads it must pass) and on the exempt modules, which are full of real
@@ -79,8 +87,32 @@ OS_WRITERS = frozenset(
         "utime",
         "mkfifo",
         "mknod",
+        "chflags",
+        "lchflags",
+        "setxattr",
+        "removexattr",
+        "write",
+        "writev",
+        "pwrite",
+        "pwritev",
+        # Launchers: a program started from here can write anything.
+        "system",
+        "popen",
+        "posix_spawn",
+        "posix_spawnp",
+        "fork",
+        "forkpty",
     }
 )
+# `posix` (POSIX) and `nt` (Windows) are what `os` re-exports; same writers.
+OS_OWNERS = ("os", "posix", "nt")
+
+
+def _os_writer(name: str) -> bool:
+    """An `os` function that writes, or starts a program (`spawn*`, `exec*`)."""
+    return name in OS_WRITERS or name.startswith(("spawn", "exec"))
+
+
 SHUTIL_WRITERS = frozenset(
     {
         "copy",
@@ -97,11 +129,24 @@ SHUTIL_WRITERS = frozenset(
 WRITE_FLAGS = frozenset({"O_WRONLY", "O_RDWR", "O_CREAT", "O_APPEND", "O_TRUNC"})
 # Modules whose job is writing files (or running programs that do).
 WRITING_MODULES = frozenset(
-    {"tempfile", "subprocess", "sqlite3", "zipfile", "tarfile", "shelve", "dbm", "logging.handlers"}
+    {
+        "tempfile",
+        "subprocess",
+        "sqlite3",
+        "zipfile",
+        "tarfile",
+        "shelve",
+        "dbm",
+        "logging.handlers",
+        "mmap",
+        "ctypes",  # also the no-FFI rule (L7)
+    }
 )
+# Builtins that run code built at run time, which no scanner can read.
+CODE_RUNNERS = frozenset({"exec", "eval", "compile"})
 # Names that write wherever they appear.
 WRITING_NAMES = frozenset({"FileHandler", "FileIO", "extractall", "unpack_archive", "make_archive"})
-HIDING_OWNERS = ("os", "shutil", "io")
+HIDING_OWNERS = (*OS_OWNERS, "shutil", "io", "builtins")
 
 
 def _writing_module(name: str) -> bool:
@@ -128,8 +173,8 @@ def _token_hits(source: str) -> list[tuple[int, str]]:
             hits.append((tok.start[0], tok.string))
         elif before == "logging" and tok.string == "handlers":
             hits.append((tok.start[0], "logging.handlers"))
-        elif before == "os" and tok.string in OS_WRITERS:
-            hits.append((tok.start[0], f"os.{tok.string}"))
+        elif before in OS_OWNERS and _os_writer(tok.string):
+            hits.append((tok.start[0], f"{before}.{tok.string}"))
         elif before == "shutil" and (tok.string in SHUTIL_WRITERS or tok.string.startswith("copy")):
             hits.append((tok.start[0], f"shutil.{tok.string}"))
     return hits
@@ -167,7 +212,7 @@ def _import_hits(node: ast.Import) -> list[tuple[int, str]]:
     for alias in node.names:
         if _writing_module(alias.name):
             hits.append((node.lineno, f"import {alias.name}"))
-        elif alias.name in ("os", "shutil") and alias.asname:
+        elif alias.name in (*OS_OWNERS, "shutil", "io", "builtins") and alias.asname:
             hits.append((node.lineno, f"import {alias.name} as {alias.asname}"))
     return hits
 
@@ -179,13 +224,16 @@ def _import_from_hits(node: ast.ImportFrom) -> list[tuple[int, str]]:
     hits: list[tuple[int, str]] = []
     for alias in node.names:
         name = alias.name
-        if module in ("os", "shutil"):
-            writers = OS_WRITERS if module == "os" else SHUTIL_WRITERS
-            flagged = name == "*" or name in writers or name.startswith("copy")
+        if module in OS_OWNERS:
+            flagged = name == "*" or _os_writer(name)
+        elif module == "shutil":
+            flagged = name == "*" or name in SHUTIL_WRITERS or name.startswith("copy")
         elif module == "logging":
             flagged = name in ("*", "handlers") or name.endswith("Handler")
         elif module == "io":
-            flagged = name in ("*", "FileIO")
+            flagged = name in ("*", "FileIO", "open")
+        elif module == "builtins":
+            flagged = name in ("*", "open") or name in CODE_RUNNERS
         else:
             flagged = False
         if flagged:
@@ -195,7 +243,28 @@ def _import_from_hits(node: ast.ImportFrom) -> list[tuple[int, str]]:
 
 def _ast_hits(source: str) -> list[tuple[int, str]]:
     hits: list[tuple[int, str]] = []
-    for node in ast.walk(ast.parse(source)):
+    tree = ast.parse(source)
+    called = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
+    for node in ast.walk(tree):
+        # `open` or `builtins.open` handed around instead of called (`f = open`)
+        # escapes the mode check below.
+        if (
+            isinstance(node, ast.Name)
+            and node.id == "open"
+            and isinstance(node.ctx, ast.Load)
+            and id(node) not in called
+        ):
+            hits.append((node.lineno, "open referenced, not called"))
+            continue
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr == "open"
+            and isinstance(node.value, ast.Name)
+            and node.value.id in ("builtins", "io")
+            and id(node) not in called
+        ):
+            hits.append((node.lineno, f"{node.value.id}.open referenced, not called"))
+            continue
         if isinstance(node, ast.Import):
             hits.extend(_import_hits(node))
             continue
@@ -206,13 +275,17 @@ def _ast_hits(source: str) -> list[tuple[int, str]]:
             continue
         func = node.func
         first = node.args[0] if node.args else None
+        if isinstance(func, ast.Name) and func.id in CODE_RUNNERS:
+            hits.append((node.lineno, f"{func.id}(...)"))
+            continue
         if isinstance(func, ast.Name) and func.id == "getattr":
             # A literal name that does not write (`getattr(os, "O_BINARY", 0)`)
             # is a read; any other name, or one that is not a literal, is not.
             name = node.args[1] if len(node.args) > 1 else None
             literal = name.value if isinstance(name, ast.Constant) else None
             writes = not isinstance(literal, str) or (
-                literal in OS_WRITERS | SHUTIL_WRITERS | REFERENCED_NAMES | WRITING_NAMES
+                _os_writer(literal)
+                or literal in SHUTIL_WRITERS | REFERENCED_NAMES | WRITING_NAMES | CODE_RUNNERS
                 or literal.startswith("copy")
                 or literal in ("open", "fdopen")
             )
@@ -231,17 +304,17 @@ def _ast_hits(source: str) -> list[tuple[int, str]]:
                 hits.append((node.lineno, "open(write mode)"))
         elif isinstance(func, ast.Attribute):
             owner = func.value.id if isinstance(func.value, ast.Name) else None
-            if owner == "os" and func.attr == "open":
+            if owner in OS_OWNERS and func.attr == "open":
                 flags = node.args[1] if len(node.args) > 1 else None
                 if flags is None or _flags_write(flags):
-                    hits.append((node.lineno, "os.open(write flags)"))
-            elif owner == "os" and func.attr == "fdopen":
+                    hits.append((node.lineno, f"{owner}.open(write flags)"))
+            elif owner in OS_OWNERS and func.attr == "fdopen":
                 if _mode_writes(_call_mode(node, 1)):
                     hits.append((node.lineno, "os.fdopen(write mode)"))
-            elif owner == "io" and func.attr == "open":
+            elif owner in ("io", "builtins") and func.attr == "open":
                 if _mode_writes(_call_mode(node, 1)):
-                    hits.append((node.lineno, "io.open(write mode)"))
-            elif func.attr == "open" and owner not in ("os", "io"):
+                    hits.append((node.lineno, f"{owner}.open(write mode)"))
+            elif func.attr == "open" and owner not in ("os", "io", "builtins"):
                 if _mode_writes(_call_mode(node, 0)):
                     hits.append((node.lineno, ".open(write mode)"))
             elif (
@@ -323,6 +396,31 @@ CONSTRUCTED_WRITERS: tuple[tuple[str, str], ...] = (
     ("unpack-archive", "unpack_archive(a, d)\n"),
     ("path-replace-keyword", "tmp.replace(target=t)\n"),
     ("path-rename-keyword", "tmp.rename(target=t)\n"),
+    ("os-system", "os.system(command)\n"),
+    ("os-popen", "os.popen(command)\n"),
+    ("os-spawnv", "os.spawnv(os.P_WAIT, program, args)\n"),
+    ("os-execv", "os.execv(program, args)\n"),
+    ("os-posix-spawn", "os.posix_spawn(program, args, env)\n"),
+    ("os-fork", "pid = os.fork()\n"),
+    ("from-io-import-open-as", "from io import open as o\no(p, m)\n"),
+    ("from-io-import-open", "from io import open\n"),
+    ("from-builtins-import-open", "from builtins import open as o\n"),
+    ("open-referenced", "f = open\nf(p, 'w')\n"),
+    ("builtins-open-via-variable", "f = builtins.open\nf(p, 'w')\n"),
+    ("builtins-open-call", "builtins.open(p, 'w')\n"),
+    ("nt-remove", "import nt\nnt.remove(p)\n"),
+    ("posix-unlink-imported", "from posix import unlink\n"),
+    ("nt-open-flags", "nt.open(p, nt.O_WRONLY)\n"),
+    ("os-chflags", "os.chflags(p, 0)\n"),
+    ("os-setxattr", "os.setxattr(p, 'user.x', b'1')\n"),
+    ("os-removexattr", "os.removexattr(p, 'user.x')\n"),
+    ("os-write", "os.write(fd, data)\n"),
+    ("import-mmap", "import mmap\n"),
+    ("exec-call", "exec(source)\n"),
+    ("eval-call", "eval(source)\n"),
+    ("compile-call", "compile(source, name, 'exec')\n"),
+    ("import-ctypes", "import ctypes\n"),
+    ("from-ctypes", "from ctypes import windll\n"),
 )
 
 CONSTRUCTED_READERS: tuple[tuple[str, str], ...] = (
@@ -337,6 +435,11 @@ CONSTRUCTED_READERS: tuple[tuple[str, str], ...] = (
     ("import-logging", "import logging\nlog = logging.getLogger(__name__)\n"),
     ("getattr-other", "getattr(st, 'st_file_attributes', 0)\n"),
     ("getattr-os-flag", "getattr(os, 'O_NOFOLLOW', 0)\n"),
+    ("getattr-os-binary", 'getattr(os, "O_BINARY", 0)\n'),
+    ("getattr-os-listdrives", 'listdrives = getattr(os, "listdrives", None)\n'),
+    ("re-compile", "pattern = re.compile(r'x')\n"),
+    ("path-open-read-method", "handle = path.open\n"),
+    ("os-read", "os.read(fd, 1024)\n"),
     ("import-module-other", "importlib.import_module('wowlab_core.snapshot')\n"),
     ("read-bytes", "p.read_bytes()\n"),
     ("comment", "# p.unlink() would be wrong here\n"),
