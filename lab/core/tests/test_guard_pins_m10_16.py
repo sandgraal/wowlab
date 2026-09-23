@@ -508,8 +508,10 @@ class LookupSpy:
 def _marker(kind: str) -> str:
     if kind == "empty":
         return ""
-    # The distinctive part, whichever separator a lookup spells it with.
-    return NOT_LOCAL[kind].split("/World")[0].lstrip("/")
+    # The first path component (`constructed-server.invalid`,
+    # `constructed-relative`, `constructed-rooted`): it holds no separator, so
+    # it matches a lookup spelled with `/` or with `\` (Windows).
+    return next(part for part in NOT_LOCAL[kind].split("/") if part)
 
 
 def _edit_last_record(store: Path, label: str, **fields: str) -> None:
