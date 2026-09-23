@@ -1595,26 +1595,28 @@ _HIGH_BYTES = bytes(range(0x80, 0x100))
 # semicolons count only outside string literals and comments. Forever
 # SavedVariables are not indented and carry no `-- [n]` comments, so neither
 # leading tabs nor those comments say anything. This only skips spans and looks
-# one token ahead; nothing is parsed or evaluated (L3). A string that never
-# closes fails its branch and is read as ordinary bytes.
-_TABLE_TOKEN_RE = re.compile(
-    rb"--\[(?P<comment>=*)\[.*?\](?P=comment)\]"  # long comment --[==[ ... ]==]
-    rb"|--[^\r\n]*"  # line comment, including the writer's `-- [n]`
-    rb"|\[(?P<long>=*)\[.*?\](?P=long)\]"  # long string [[ ... ]], [=[ ... ]=]
-    rb'|"[^"\\]*(?:\\.[^"\\]*)*"'  # quoted strings, backslash escapes skipped
-    rb"|'[^'\\]*(?:\\.[^'\\]*)*'"
-    rb"|[{},;]",
-    re.DOTALL,
-)
+# one token ahead; nothing is parsed or evaluated (L3).
+#
+# Every byte is read at most a bounded number of times, whatever the input: a
+# long bracket or long comment with no closer runs to the end of the file (as
+# in Lua), and a quoted string with no closing quote ends at its line break
+# (Lua does not allow a raw line break in one). No pattern here searches ahead
+# for a closer that may not exist.
+_TABLE_NEXT_RE = re.compile(rb"--|\[=*\[|[\"'{},;]")
+_LONG_OPEN_RE = re.compile(rb"\[(=*)\[")
+_LINE_BREAK_RE = re.compile(rb"[\r\n]")
+_BLANKS_RE = re.compile(rb"[ \t\r\n\f\v]*")
+# The body of a quoted string up to its closing quote, a raw line break or the
+# end of the data. A backslash escapes the next byte, a line break included.
+_QUOTED_BODY_RE = {
+    ord('"'): re.compile(rb'[^"\\\r\n]*(?:\\.[^"\\\r\n]*)*', re.DOTALL),
+    ord("'"): re.compile(rb"[^'\\\r\n]*(?:\\.[^'\\\r\n]*)*", re.DOTALL),
+}
 # What starts an entry, after blanks and comments: `}` (no entry), `[` that
 # does not open a long string (a bracketed key: in a table constructor an
-# expression never starts with a bare `[`), `name =` (a named key), or
-# anything else (a positional value).
-_ENTRY_RE = re.compile(
-    rb"(?:[ \t\r\n\f\v]+|--\[(?P<comment>=*)\[.*?\](?P=comment)\]|--[^\r\n]*)*"
-    rb"(?:(?P<end>\})|(?P<key>\[(?!=*\[)|[A-Za-z_][A-Za-z0-9_]*[ \t\r\n]*=(?!=))|(?P<value>.))",
-    re.DOTALL,
-)
+# expression never starts with a bare `[`), or `name =` (a named key). Any
+# other byte starts a positional value.
+_NOT_POSITIONAL_RE = re.compile(rb"\}|\[(?!=*\[)|[A-Za-z_][A-Za-z0-9_]*[ \t\r\n\f\v]*=(?!=)")
 # Colour codes (`|cffRRGGBB`, and the named form `|cnIQ0:`) and hyperlinks.
 _ESCAPES_RE = re.compile(rb"\|c[0-9A-Fa-f]{8}|\|cn[A-Za-z0-9_]+:|\|H")
 _SIGNED_OR_LONG_RE = re.compile(rb"= -[0-9]|\.[0-9]{10,}")
@@ -1624,31 +1626,77 @@ _NON_FINITE_RE = re.compile(
 )
 
 
+def _skip_long(data: bytes, at: int) -> int:
+    """End of the long bracket opening at `at` (`[[`, `[==[`), or -1 if it never closes."""
+    opener = _LONG_OPEN_RE.match(data, at)
+    assert opener is not None
+    closer = b"]" + opener.group(1) + b"]"
+    found = data.find(closer, opener.end())
+    return -1 if found < 0 else found + len(closer)
+
+
+def _skip_comment(data: bytes, at: int) -> int:
+    """End of the comment starting with `--` at `at`, or -1 if a long one never closes."""
+    if _LONG_OPEN_RE.match(data, at + 2):
+        return _skip_long(data, at + 2)
+    line_break = _LINE_BREAK_RE.search(data, at)
+    return len(data) if line_break is None else line_break.start()
+
+
+def _skip_quoted(data: bytes, at: int) -> int:
+    """End of the quoted string opening at `at`: after its closing quote, or at the
+    line break or end of data where an unterminated one stops."""
+    stop = _QUOTED_BODY_RE[data[at]].match(data, at + 1)
+    assert stop is not None  # the body pattern matches the empty string
+    end = stop.end()
+    return end + 1 if end < len(data) and data[end] == data[at] else end
+
+
+def _skip_blanks(data: bytes, at: int) -> int:
+    """First byte at or after `at` that is not blank or comment; -1 if a long comment
+    never closes."""
+    while True:
+        blanks = _BLANKS_RE.match(data, at)
+        assert blanks is not None  # the pattern matches the empty string
+        at = blanks.end()
+        if not data.startswith(b"--", at):
+            return at
+        at = _skip_comment(data, at)
+        if at < 0:
+            return -1
+
+
 def table_shape(data: bytes) -> tuple[int, int]:
     """(deepest `{` nesting, positional entries) of Lua-syntax bytes.
 
     Braces, commas and semicolons inside strings and comments do not count.
     """
     depth = deepest = positional = 0
-    for m in _TABLE_TOKEN_RE.finditer(data):
-        token = m.group(0)
-        if token == b"}":
+    at = 0
+    while at >= 0:
+        token = _TABLE_NEXT_RE.search(data, at)
+        if token is None:
+            break
+        first = token.group(0)[:1]
+        if first == b"-":
+            at = _skip_comment(data, token.start())
+        elif first == b"[":
+            at = _skip_long(data, token.start())
+        elif first in (b'"', b"'"):
+            at = _skip_quoted(data, token.start())
+        elif first == b"}":
             depth = max(depth - 1, 0)
-            continue
-        if token == b"{":
-            depth += 1
-            deepest = max(deepest, depth)
-        elif token not in (b",", b";") or not depth:
-            continue
-        entry = _ENTRY_RE.match(data, m.end())
-        if entry is not None and entry.group("value") is not None:
-            positional += 1
+            at = token.end()
+        elif first == b"{" or depth:  # an entry starts after `{`, `,` or `;`
+            if first == b"{":
+                depth += 1
+                deepest = max(deepest, depth)
+            at = _skip_blanks(data, token.end())
+            if 0 <= at < len(data) and not _NOT_POSITIONAL_RE.match(data, at):
+                positional += 1
+        else:
+            at = token.end()  # `,` or `;` outside any table
     return deepest, positional
-
-
-def brace_depth(data: bytes) -> int:
-    """How deeply `{` nests in Lua-syntax bytes, ignoring braces inside strings and comments."""
-    return table_shape(data)[0]
 
 
 def sv_stats(data: bytes) -> SvStats:

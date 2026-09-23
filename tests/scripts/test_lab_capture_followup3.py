@@ -187,7 +187,7 @@ def _nested(levels: int, indent: bool) -> bytes:
 def test_constructed_six_level_file_reports_depth_six_indented_or_not(indent: bool) -> None:
     data = _nested(6, indent)
     assert (b"\t" in data) is indent
-    assert lab_capture.brace_depth(data) == 6
+    assert lab_capture.table_shape(data)[0] == 6
     assert lab_capture.sv_stats(data).depth == 6
 
 
@@ -207,7 +207,7 @@ def test_constructed_six_level_file_reports_depth_six_indented_or_not(indent: bo
 def test_constructed_braces_inside_strings_and_comments_are_not_nesting(
     body: bytes, depth: int
 ) -> None:
-    assert lab_capture.brace_depth(body) == depth
+    assert lab_capture.table_shape(body)[0] == depth
 
 
 def test_constructed_unindented_deep_file_is_picked_as_deepest(
@@ -274,3 +274,26 @@ def test_constructed_unindented_positional_file_is_picked_as_positional_array(
     rows = [line for line in capsys.readouterr().out.splitlines() if "/List.lua`" in line]
     assert len(rows) == 1
     assert "positional array (" in rows[0], rows[0]
+
+
+# ─── 4. hostile input: unclosed openers stay linear (security review of #52) ─
+
+
+@pytest.mark.parametrize(
+    "opener",
+    [b"--[[ open\n", b"--[==[ open ]=]\n", b"[[ open\n", b"[=[ open ]]\n", b",--[[\n", b'"\\'],
+)
+def test_constructed_unclosed_openers_do_not_rescan_the_file(opener: bytes) -> None:
+    """10^4 openers with no closer: a closer search per opener would take seconds."""
+    import time
+
+    data = b"\nX = {\n" + opener * 10_000 + b"{ { } }\n"
+    started = time.perf_counter()
+    depth, _positional = lab_capture.table_shape(data)
+    assert time.perf_counter() - started < 1.0
+    assert depth == 1  # the first unclosed opener runs to the end, as in Lua
+
+
+def test_constructed_unterminated_quote_stops_at_its_line_break() -> None:
+    data = b'\nX = {\n"open, {\n{ 1 },\n}\n' + b"'x\n" * 10_000
+    assert lab_capture.table_shape(data) == (2, 2)  # `"open` and `1`
