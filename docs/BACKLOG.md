@@ -167,7 +167,7 @@ Graders from `docs/LAB_PLAN.md` §6.4 (serializer half) and `docs/LAB_FORMATS.md
 ---
 
 ## [ ] M10-14 — `wowlab` CLI
-**Size:** M · **Depends on:** M10-04, M10-05, M10-06, M10-07, M10-08, M10-10, M10-11
+**Size:** M · **Depends on:** M10-04, M10-05, M10-06, M10-07, M10-08, M10-10, M10-11, M10-16
 
 Commands, flags and exit codes per `docs/LAB_PLAN.md` §6.11. `snap create` uses `layout` to resolve the default subtrees. `snap restore` and `undo` go through `guard`, print the plan, and ask unless `--yes`. Reviewed by `domain-reviewer` (output wording).
 
@@ -177,10 +177,30 @@ Commands, flags and exit codes per `docs/LAB_PLAN.md` §6.11. `snap create` uses
 
 *Amended 2026-09-22 from the final M10-05 domain review (deferred there): when `doctor` or `install show` reports where it looked for an install, a default location that could not be checked (not a directory, or its check raised, including a drive that is not ready) is reported as "could not check", not as searched and empty; `InstallNotFoundError` gains that list, and the two `install.py` docstrings that still say "not a readable directory" are brought in line with the reworded §6.1 amendment ("not a directory, or cannot be checked").*
 
+*Amended 2026-09-22 from the PR #49 security review: `snap gc` runs inside `guard.store_lock(store)` (§6.10 amendment item 4) for its whole run, because rollback and undo now rely only on objects in the store.*
+
+---
+
+## [ ] M10-16T — Guard lock, temp cleanup and changed-file graders [TEST]
+**Size:** M · **Depends on:** M10-11
+
+Graders for the 2026-09-22 amendment to `docs/LAB_PLAN.md` §6.10 (owner decisions after the M10-11 reviews): (1) one writer at a time through two OS advisory locks, `GuardBusyError`; (2) cleanup of guard's own leftover temp files named in earlier journal records; (3) `ChangedSinceSnapshotError` for a file that differs from the pre-write snapshot at first touch or just before replace/unlink. (4) The public surface of item 4: `guard.store_lock` raises `GuardBusyError` while a transaction on that store is open, in another process and in the same one, and a transaction raises it while `store_lock` is held; `GuardBusyError` and `ChangedSinceSnapshotError` are exported; `HistoryRecord.temps_removed`/`temps_left`; a format-1 journal record still reads through `history()` and `undo()`. `guard.py` exists, so each grader is `xfail(strict=True)` with one marker line, fails today only because the behaviour is missing, and is activated by marker deletion. Derived from the spec, not from `guard.py` internals beyond its public API. Amends, per the amendment and only where it makes the old expectation wrong, the existing graders it contradicts: `test_constructed_journal_lives_with_the_store_and_leaves_the_store_healthy` (only `locks/` may appear under the user data directory), and the `…treat_the_pre_write_snapshot_as_untrusted` and `…undo_refuses_a_poisoned_entry…` graders (a refusal with nothing written is also accepted where item 3 applies); each amended grader is listed with its reason in the PR. `FORBIDDEN_IMPORTS` stands. The session that writes these never writes M10-16.
+
+**Acceptance:** every grader fails today for the missing behaviour and no other reason; a scratch patch (not committed) shows they are satisfiable; each behaviour has a mutant that turns its graders red; Windows lock semantics are graded where the platform differs (skips carry a reason); `make ci` green.
+
+---
+
+## [ ] M10-16 — Guard lock, temp cleanup and changed-file refusal [IMPL]
+**Size:** M · **Depends on:** M10-16T
+
+`lab/core/src/wowlab_core/guard.py` per the §6.10 amendment of 2026-09-22. Locks use the standard library only (`fcntl` on POSIX, `msvcrt` on Windows); no new runtime dependency. Activate the M10-16T graders by deleting marker lines only.
+
+**Acceptance:** all M10-16T graders and every existing guard grader, as amended by M10-16T, green; the write-site test green; `lab (windows)` green on the PR's final head with the run link pasted in the PR; reviewed by `security-reviewer`.
+
 ---
 
 ## [ ] M10-15 — Wave 1 review
-**Size:** S · **Depends on:** M10-12, M10-13, M10-14 · **owner**
+**Size:** S · **Depends on:** M10-12, M10-13, M10-14, M10-16 · **owner**
 
 The conductor writes `docs/handoffs/M10-review.md` per `docs/LAB_PLAN.md` §11 and stops dispatch. The owner runs the CLI against the real install (`wowlab doctor`, `wowlab snap create -m baseline`, one guarded change and `wowlab undo`), notes what was wrong or missing, and picks Wave 2.
 

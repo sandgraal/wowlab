@@ -496,6 +496,101 @@ transaction. `guard.history()` lists transactions.
 A dry-run mode returns the plan (paths, before/after hashes, bytes) without
 touching anything; the CLI prints the plan and asks unless `--yes`.
 
+*Amended 2026-09-22 (owner decisions after the M10-11 reviews, worded
+after the PR #49 security review; tickets M10-16T and M10-16):*
+
+1. **One writer at a time.** `transaction()` (and so `tx.restore`) and
+   `undo()` hold two exclusive, non-blocking OS advisory locks for their
+   whole duration: the store lock on `<store>/lock`, and the install lock on
+   `<user data dir>/locks/<key>.lock`, never inside the install (L1).
+   `<key>` is the SHA-256 hex of `"<st_dev>:<st_ino>"` of the install root
+   as guard validated it: the directory's identity, not its spelling, so a
+   symlinked, case-variant, Unicode-variant or firmlinked spelling of one
+   install maps to one lock. guard takes the user data directory from
+   `wowlab_core.snapshot`; it does not import `platformdirs`.
+   - **Order.** `transaction()` validates the flavor and runs the
+     store-overlap check (lock paths included), then takes the store lock,
+     then the install lock, then runs the client check. `undo()` reads the
+     most recent record once without a lock only to find the flavor,
+     validates it and runs the store-overlap check, then takes the store
+     lock (never creating `<store>/`), re-reads the journal and plans only
+     from what it reads under the lock, then takes the install lock for the
+     flavor the re-read record names (a different install by identity
+     raises `GuardError`) and runs the client check. `undo()` on a store
+     directory that does not exist raises `GuardError` without creating it.
+     The locks are released on exit, including on an exception, and the OS
+     releases them when the process ends.
+   - **Mechanism.** `fcntl.flock(fd, LOCK_EX | LOCK_NB)` on POSIX and
+     `msvcrt.locking(fd, LK_NBLCK, 1)` at offset 0 on Windows; `lockf` and
+     `fcntl(F_SETLK)` are not used. A process also refuses, without asking
+     the OS, a lock it already holds, so a nested transaction raises
+     `GuardBusyError`. `undo()`'s own transaction runs under the locks
+     `undo()` already holds; it does not take them again. A held lock raises `GuardBusyError` (a `GuardError`)
+     and nothing is written or journaled; any other failure to open or lock
+     (unsupported on the volume, permission, I/O) raises `GuardError`. guard
+     never proceeds unlocked.
+   - **Lock files.** Opened with `O_CREAT | O_RDWR | O_NOFOLLOW` (on Windows,
+     refused if a reparse point), never truncated, written or deleted; each
+     must be a regular file by `fstat`. The lock files and `locks/` are part
+     of the store-overlap check.
+   - **Dry run.** A dry run takes the same locks; creating the lock files and
+     their directories is the only thing it writes, never inside the install.
+   - **Scope.** The exclusion covers processes of one OS user sharing one
+     user data directory on one machine. Other OS users, another
+     `XDG_DATA_HOME`, or another machine on a network install are not
+     excluded. Within that scope, journal sequence numbers are unique per
+     store and `undo()`'s "most recent transaction" is well defined.
+2. **Leftover temp files are cleaned up.** Before creating a temp file
+   inside the install, guard records its flavor-relative path in the
+   journal, written and fsynced first, like the before-hash. On enter, after
+   the pre-write snapshot and the new journal record are written (not in a
+   dry run), `transaction()` and `undo()` consider each temp path named by an
+   earlier record whose install root and flavor folder are this flavor's (by
+   identity), limited to records of this flavor from the most recent one of
+   this flavor whose cleanup finished, that record included (its own temp
+   paths and its `temps_left` are considered again). A
+   temp path is removed only if its last component fullmatches
+   `\.wowlab-[0-9a-f]{32}\.tmp` exactly as the directory lists it, the path
+   passes the write rules (allowlist, the walk that follows no link,
+   junction or reparse point, the case/Unicode-collision and short-name
+   refusals), and the target is a regular file; the directory chain is
+   re-checked before and after the unlink as for any delete. Each removal is
+   recorded in the new record and fsynced before the unlink; a removal whose
+   unlink fails is moved from `temps_removed` to `temps_left` in the same
+   record. A path that
+   fails any check, or whose removal fails, is left alone and listed; it
+   does not stop the transaction. The cleanup never deletes anything else.
+3. **A file changed after the pre-write snapshot is refused** (not in a dry
+   run, which has no pre-write snapshot). At the first touch of a path in a
+   transaction (write, delete or restore), guard compares the disk with the
+   pre-write snapshot's entry for that path (content hash and kind, or
+   absent against present). If they differ, the operation raises
+   `ChangedSinceSnapshotError` (a `GuardError`) naming the path and telling
+   the caller to retry; nothing is written for that path, every later
+   operation in the transaction raises `GuardError` without touching the
+   disk, and the transaction rolls back on exit and cannot commit, even if
+   the caller catches the error. After the temp file is written and fsynced,
+   and before each replace or unlink, guard re-reads the target and requires
+   the hash it last read or wrote there (for a create: that it is still
+   absent), then checks identity, size and mtime by `lstat` as the last step
+   before the call; a mismatch raises the same error. Where the platform
+   offers a rename that does not replace (`os.rename` on Windows), a create
+   uses it, and a create whose rename finds the target present raises
+   `ChangedSinceSnapshotError`. The window between the last check and the call is not closed
+   and is documented like the module's existing residual window. Rollback
+   and undo therefore only ever need bytes the pre-write snapshot holds.
+4. **Public surface.** `GuardBusyError` and `ChangedSinceSnapshotError` are
+   exported from `wowlab_core.guard`, and so is
+   `guard.store_lock(store: Path | None = None)`, a context manager that
+   takes the store lock alone (same mechanism, same in-process refusal, the
+   same lock-file opening rules: `O_NOFOLLOW`, regular file, never
+   truncated, written or deleted; it has no install, so the store-overlap
+   check does not apply; `GuardBusyError` if held). `HistoryRecord` gains
+   `temps_removed`
+   and `temps_left` (flavor-relative paths). The journal format becomes 2;
+   format-1 records read as naming no temp paths and as having run no
+   cleanup.
+
 ### 6.11 CLI — `wowlab` (M10-14)
 
 ```
