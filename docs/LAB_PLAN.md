@@ -357,6 +357,21 @@ ADR.
    after bracketed ones, so in `{"x", [1] = "y"}` the client loads `"x"`
    for key 1 (**[verify]**). The parser flags the later entry in the source
    as the duplicate; `to_python()` takes the value Lua 5.1 would load.
+7. **The document alone rebuilds the source.** Every token keeps the exact
+   bytes in front of it (whitespace, line breaks, comments) and its
+   separator (`,` or `;`), and the document keeps the bytes after the last
+   token. Comments therefore have a place wherever they occur: between
+   top-level assignments, on their own line inside a table, after a value
+   on the same line, after an opening brace. Rebuilding bytes from the
+   document, without the source, gives the source exactly. M10-04T grades
+   this with a rebuild that uses only the document; M10-12's serializer is
+   then this rebuild for unmodified documents, and M10-04 does not need
+   reopening for it. A comment the client never writes is still kept (L4).
+8. **Key styles.** Besides `positional`, `["string"]`, `[number]` and bare
+   `name`, a `[true]`/`[false]` key (allowed by §4.1) has the style
+   `boolean`. Only the later of two equal keys (Lua key equality: `a` and
+   `["a"]`, `[1]` and `[1.0]` and the first positional entry) is flagged
+   `duplicate`.
 
 ### 6.5 `wtfconfig` — Config.wtf, bindings, macros (M10-07)
 
