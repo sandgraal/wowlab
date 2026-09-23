@@ -582,8 +582,10 @@ after the PR #49 security review; tickets M10-16T and M10-16):*
 4. **Public surface.** `GuardBusyError` and `ChangedSinceSnapshotError` are
    exported from `wowlab_core.guard`, and so is
    `guard.store_lock(store: Path | None = None)`, a context manager that
-   takes the store lock alone (same mechanism, same in-process refusal, same
-   lock-file rules, `GuardBusyError` if held). `HistoryRecord` gains
+   takes the store lock alone (same mechanism, same in-process refusal, the
+   same lock-file opening rules: `O_NOFOLLOW`, regular file, never
+   truncated, written or deleted; it has no install, so the store-overlap
+   check does not apply; `GuardBusyError` if held). `HistoryRecord` gains
    `temps_removed`
    and `temps_left` (flavor-relative paths). The journal format becomes 2;
    format-1 records read as naming no temp paths and as having run no
