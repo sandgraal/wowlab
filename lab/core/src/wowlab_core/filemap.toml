@@ -1,0 +1,699 @@
+# The file map: what every path in a World of Warcraft install is.
+#
+# This file is the single source of truth. `docs/LAB_FILE_MAP.md` carries a
+# rendering of it between `<!-- filemap:begin <section> -->` and
+# `<!-- filemap:end <section> -->` markers; regenerate with
+#
+#     uv run python scripts/gen_file_map.py --write
+#
+# and never edit those tables by hand. `lab/core/tests/test_filemap.py` fails
+# when the two drift.
+#
+# Each `[[entry]]` is one table row. The display columns (`doc_path`, `what`,
+# `written_by`, `edit`, `tier`, `module`) are Markdown, rendered verbatim.
+# `match` and `exclude` are what `classify()` uses; they are never rendered.
+#
+# Patterns are `/`-separated segments relative to `base`:
+#   base = "root"    the install root (the folder holding `.build.info`)
+#   base = "flavor"  a flavor folder, found by discovery, never by name (L6)
+#   base = "any"     either, whichever the path is inside
+# A segment is an fnmatch pattern compared case-insensitively, or one of:
+#   **         zero or more segments
+#   <digits>   a segment made only of ASCII digits
+#   <name>     a segment that is not made only of ASCII digits
+#   .          the base folder itself (only as the whole pattern)
+# A match pattern ending in `/` matches directories only; one ending in `**`
+# matches anything; any other matches files only. `exclude` patterns match
+# regardless of kind. Nothing here names a flavor, product, interface or
+# build (L6).
+
+[[section]]
+id = "root"
+title = "Install root"
+
+[[section]]
+id = "flavor"
+title = "Flavor folder `<flavor>/`"
+
+# ─── install root ────────────────────────────────────────────────────────────
+
+[[entry]]
+id = "build-info"
+section = "root"
+base = "root"
+doc_path = "`.build.info`"
+what = "Installed products, versions, build keys"
+written_by = "Battle.net agent on install/patch"
+edit = "no"
+tier = "A (read)"
+module = "`install`"
+match = [".build.info"]
+
+[[entry]]
+id = "agent-state"
+section = "root"
+base = "root"
+doc_path = "`.product.db`, `.patch.result`, `Launcher.db`"
+what = "Agent state"
+written_by = "Battle.net agent"
+edit = "no"
+tier = "—"
+module = "none"
+match = [".product.db", ".patch.result", "Launcher.db"]
+
+[[entry]]
+id = "casc-data"
+section = "root"
+base = "root"
+doc_path = "`Data/config/`, `Data/data/`, `Data/indices/`"
+what = "CASC storage: build/CDN configs, archive blobs (`data.NNN`), index files (`*.idx`)"
+written_by = "Agent; client streams into it"
+edit = "no"
+tier = "A (read, later wave)"
+module = "none in Wave 1"
+match = [
+  "Data/config/", "Data/config/**",
+  "Data/data/", "Data/data/**",
+  "Data/indices/", "Data/indices/**",
+]
+
+[[entry]]
+id = "data-other"
+section = "root"
+base = "root"
+doc_path = "`Data/`, anything under it not in the row above"
+what = "Shared game data. Editing anything under `Data/` is out of scope permanently (LAB_PLAN L7)"
+written_by = "Agent; client streams into it"
+edit = "no"
+tier = "—"
+module = "none"
+match = ["Data/", "Data/**"]
+
+[[entry]]
+id = "launcher"
+section = "root"
+base = "root"
+doc_path = "`World of Warcraft Launcher.exe` / `.app`"
+what = "Launchers"
+written_by = "Agent"
+edit = "no"
+tier = "—"
+module = "none"
+match = [
+  "World of Warcraft Launcher.exe",
+  "World of Warcraft Launcher.app/", "World of Warcraft Launcher.app/**",
+]
+
+[[entry]]
+id = "os-metadata"
+section = "root"
+base = "any"
+doc_path = "`.DS_Store`, `._*`, `Thumbs.db`, `desktop.ini` (anywhere)"
+what = "Folder view metadata the operating system's file browser leaves behind, not the client's; `._*` are macOS AppleDouble files on volumes without extended attributes **[verify]**. `layout` lists them apart from everything else"
+written_by = "Finder (macOS), Explorer (Windows)"
+edit = "no"
+tier = "—"
+module = "none"
+match = ["**/.DS_Store", "**/._*", "**/Thumbs.db", "**/desktop.ini"]
+
+# ─── flavor folder ───────────────────────────────────────────────────────────
+
+[[entry]]
+id = "flavor-folder"
+section = "flavor"
+base = "flavor"
+doc_path = "`<flavor>/` (the folder itself)"
+what = "One installed product: its client, `WTF/`, `Interface/`, caches and logs. The name is as found on disk and changes between beta and launch; discovery takes a folder whose name starts and ends with `_` and that holds a regular `.flavor.info` file"
+written_by = "Agent"
+edit = "—"
+tier = "—"
+module = "`install`, `layout`"
+match = ["."]
+
+[[entry]]
+id = "flavor-info"
+section = "flavor"
+base = "flavor"
+doc_path = "`.flavor.info`"
+what = "Product code of this flavor"
+written_by = "Agent"
+edit = "no"
+tier = "A (read)"
+module = "`install`"
+match = [".flavor.info"]
+
+[[entry]]
+id = "client-executable"
+section = "flavor"
+base = "flavor"
+doc_path = "`Wow.exe`, `WowClassic.exe`, `World of Warcraft.app`, …"
+what = "Client executable"
+written_by = "Agent"
+edit = "no"
+tier = "—"
+module = "`process` (name only)"
+match = ["*.exe", "*.app/", "*.app/**"]
+
+[[entry]]
+id = "wtf-folder"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/`"
+what = "This flavor's configuration and SavedVariables"
+written_by = "Client"
+edit = "—"
+tier = "—"
+module = "`layout`"
+match = ["WTF/"]
+
+[[entry]]
+id = "config-wtf"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Config.wtf`"
+what = "Machine-wide CVars: graphics, sound, locale, last account"
+written_by = "Client on exit and on some setting changes"
+edit = "gate"
+tier = "A"
+module = "`wtfconfig`"
+match = ["WTF/Config.wtf"]
+
+[[entry]]
+id = "accounts-folder"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Account/`"
+what = "Parent of the account folders"
+written_by = "Client"
+edit = "—"
+tier = "—"
+module = "`layout`"
+match = ["WTF/Account/"]
+
+[[entry]]
+id = "account-folder"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Account/<ACCOUNT>/`"
+what = "One folder per game account that logged in on this machine; the `#<n>` suffix numbers the game accounts under one Battle.net account **[verify]**. Folder name identifies the account; scrub in fixtures"
+written_by = "Client"
+edit = "—"
+tier = "—"
+module = "`layout`"
+match = ["WTF/Account/*/"]
+
+[[entry]]
+id = "account-blizzard-savedvariables"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Account/<ACCOUNT>/SavedVariables.lua`"
+what = "Blizzard UI's own account-wide saved state"
+written_by = "Client on logout / `/reload`"
+edit = "gate"
+tier = "A"
+module = "`luadata`"
+match = ["WTF/Account/*/SavedVariables.lua"]
+
+[[entry]]
+id = "savedvariables-folder"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Account/<ACCOUNT>/SavedVariables/`, `…/<Character>/SavedVariables/`"
+what = "One file per addon that saves data, plus its `.lua.bak`; account-wide (`## SavedVariables:`) or per character (`## SavedVariablesPerCharacter:`) depending on where the folder sits"
+written_by = "Client"
+edit = "—"
+tier = "—"
+module = "`layout`"
+match = ["WTF/Account/*/SavedVariables/", "WTF/Account/*/*/*/SavedVariables/"]
+
+[[entry]]
+id = "account-savedvariables"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Account/<ACCOUNT>/SavedVariables/<Addon>.lua`"
+what = "Account-wide addon data (`## SavedVariables:`)"
+written_by = "Client on logout / `/reload`"
+edit = "gate"
+tier = "A"
+module = "`luadata`"
+match = ["WTF/Account/*/SavedVariables/*.lua"]
+
+[[entry]]
+id = "savedvariables-backup"
+section = "flavor"
+base = "flavor"
+doc_path = "`…/SavedVariables/<Addon>.lua.bak`, `WTF/Account/<ACCOUNT>/SavedVariables.lua.bak`"
+what = "Previous write of the same file (the Blizzard file's `.bak` **[verify]**)"
+written_by = "Client"
+edit = "no"
+tier = "A (read)"
+module = "`luadata`"
+match = [
+  "WTF/Account/*/SavedVariables.lua.bak",
+  "WTF/Account/*/SavedVariables/*.lua.bak",
+  "WTF/Account/*/*/*/SavedVariables/*.lua.bak",
+]
+
+[[entry]]
+id = "account-config-cache"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Account/<ACCOUNT>/config-cache.wtf`"
+what = "Account-scoped CVars"
+written_by = "Client"
+edit = "gate"
+tier = "A"
+module = "`wtfconfig`"
+match = ["WTF/Account/*/config-cache.wtf"]
+
+[[entry]]
+id = "account-bindings-cache"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Account/<ACCOUNT>/bindings-cache.wtf`"
+what = "Account keybinds"
+written_by = "Client"
+edit = "gate"
+tier = "A"
+module = "`wtfconfig`"
+match = ["WTF/Account/*/bindings-cache.wtf"]
+
+[[entry]]
+id = "account-macros-cache"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Account/<ACCOUNT>/macros-cache.txt`"
+what = "Account macros"
+written_by = "Client"
+edit = "gate"
+tier = "A"
+module = "`wtfconfig`"
+match = ["WTF/Account/*/macros-cache.txt"]
+
+[[entry]]
+id = "account-edit-mode-cache"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Account/<ACCOUNT>/edit-mode-cache-account.txt`"
+what = "Edit Mode HUD layouts: one line of space-separated tokens ending in a NUL byte; layout names are typed by the owner and length-prefixed; server may replace (see below)"
+written_by = "Client"
+edit = "gate"
+tier = "A"
+module = "none in Wave 1 (kept by `snapshot`)"
+match = ["WTF/Account/*/edit-mode-cache-account.txt"]
+
+[[entry]]
+id = "account-chat-frontend-cache"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Account/<ACCOUNT>/chat-frontend-cache.txt`"
+what = "Unknown; 0 bytes on the Forever beta (2026-09-22) **[verify]**"
+written_by = "Client"
+edit = "gate"
+tier = "A"
+module = "none (kept by `snapshot`; empty kept as empty)"
+match = ["WTF/Account/*/chat-frontend-cache.txt"]
+
+[[entry]]
+id = "flagged-cache"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Account/<ACCOUNT>/flagged-cache-account.txt`, `…/<Character>/flagged-cache-character.txt`"
+what = "Unknown; on the Forever beta exactly `2` then a NUL **[verify purpose]**"
+written_by = "Client"
+edit = "gate"
+tier = "A"
+module = "none (kept by `snapshot`)"
+match = ["WTF/Account/*/flagged-cache-account.txt", "WTF/Account/*/*/*/flagged-cache-character.txt"]
+
+[[entry]]
+id = "tts-cache"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Account/<ACCOUNT>/tts-cache-account.txt`, `…/<Character>/tts-cache-character.txt`"
+what = "Text-to-speech settings **[verify]**; mixed LF and CRLF within the file"
+written_by = "Client"
+edit = "gate (server may replace)"
+tier = "A"
+module = "none (kept by `snapshot`)"
+match = ["WTF/Account/*/tts-cache-account.txt", "WTF/Account/*/*/*/tts-cache-character.txt"]
+
+[[entry]]
+id = "character-list-order"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Account/<ACCOUNT>/character-list-order.txt`"
+what = "Character-select order **[verify]**; not captured (its lines refused by the scrub tool)"
+written_by = "Client"
+edit = "gate"
+tier = "A"
+module = "none (kept by `snapshot`)"
+match = ["WTF/Account/*/character-list-order.txt"]
+
+[[entry]]
+id = "character-edit-mode-cache"
+section = "flavor"
+base = "flavor"
+doc_path = "`…/<Character>/edit-mode-cache-character.txt`"
+what = "Character Edit Mode layouts, same encoding as the account file"
+written_by = "Client"
+edit = "gate (server may replace)"
+tier = "A"
+module = "none (kept by `snapshot`)"
+match = ["WTF/Account/*/*/*/edit-mode-cache-character.txt"]
+
+[[entry]]
+id = "character-click-bindings-cache"
+section = "flavor"
+base = "flavor"
+doc_path = "`…/<Character>/click-bindings-cache.txt`"
+what = "Click Casting bindings on unit frames; LF, ends `END`"
+written_by = "Client"
+edit = "gate (server may replace)"
+tier = "A"
+module = "none (kept by `snapshot`)"
+match = ["WTF/Account/*/*/*/click-bindings-cache.txt"]
+
+[[entry]]
+id = "account-edit-mode-cache-old"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Account/<ACCOUNT>/edit-mode-cache-account.old`"
+what = "Previous write of the same file"
+written_by = "Client"
+edit = "no"
+tier = "A (read)"
+module = "none (kept by `snapshot`)"
+match = ["WTF/Account/*/edit-mode-cache-account.old"]
+
+[[entry]]
+id = "realm-folder"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Account/<ACCOUNT>/<Realm>/`"
+what = "One folder per realm where a character of this account has logged in on this machine; it stays after the character moves (GLOSSARY) or is deleted **[verify]**. Named with the realm's display name. On the Forever beta it holds only the `<First>/` folders described below"
+written_by = "Client"
+edit = "—"
+tier = "—"
+module = "`layout`"
+match = ["WTF/Account/*/<name>/"]
+exclude = ["WTF/Account/*/SavedVariables"]
+
+[[entry]]
+id = "numeric-folder"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Account/<ACCOUNT>/<digits>/`"
+what = "Forever beta (2026-09-22): a digits-only folder holding the `<First>-<Second>/` character folders; probably the realm's numeric id **[verify]** (the scrubbed fixtures give it a pseudonym). Not a realm name"
+written_by = "Client"
+edit = "—"
+tier = "—"
+module = "`layout`"
+match = ["WTF/Account/*/<digits>/"]
+
+[[entry]]
+id = "character-folder"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Account/<ACCOUNT>/<Realm>/<Character>/`"
+what = "One character's folder, created at its first login on this machine **[verify]** and left behind by a rename or transfer (and by deletion **[verify]**). On the Forever beta a `<Realm>/<First>/` twin of a `<digits>/<First>-<Second>/` folder, holding only `AddOns.txt`; which realm name pairs with which digits folder is **[verify]**; one such folder can stand for several `<First>-<Second>` characters **[verify]**"
+written_by = "Client"
+edit = "—"
+tier = "—"
+module = "`layout`"
+match = ["WTF/Account/*/<name>/*/"]
+exclude = ["WTF/Account/*/SavedVariables/**", "WTF/Account/*/*/SavedVariables"]
+
+[[entry]]
+id = "second-name-character-folder"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Account/<ACCOUNT>/<digits>/<First>-<Second>/`"
+what = "One Forever character's folder (2026-09-22): first and second name joined by a hyphen, the second name not a realm. Holds everything per character except `AddOns.txt`"
+written_by = "Client"
+edit = "—"
+tier = "—"
+module = "`layout`"
+match = ["WTF/Account/*/<digits>/*/"]
+exclude = ["WTF/Account/*/*/SavedVariables"]
+
+[[entry]]
+id = "character-savedvariables"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Account/<ACCOUNT>/<Realm>/<Character>/SavedVariables/<Addon>.lua`"
+what = "Per-character addon data (`## SavedVariablesPerCharacter:`)"
+written_by = "Client on logout / `/reload`"
+edit = "gate"
+tier = "A"
+module = "`luadata`"
+match = ["WTF/Account/*/*/*/SavedVariables/*.lua"]
+
+[[entry]]
+id = "character-wtf-config"
+section = "flavor"
+base = "flavor"
+doc_path = "`…/<Character>/config-cache.wtf`, `bindings-cache.wtf`, `macros-cache.txt`"
+what = "Character-scoped CVars, binds, macros. `bindings-cache.wtf` exists only with character-specific key bindings on **[verify]**; the Forever capture had none"
+written_by = "Client"
+edit = "gate"
+tier = "A"
+module = "`wtfconfig`"
+match = [
+  "WTF/Account/*/*/*/config-cache.wtf",
+  "WTF/Account/*/*/*/bindings-cache.wtf",
+  "WTF/Account/*/*/*/macros-cache.txt",
+]
+
+[[entry]]
+id = "character-addons-txt"
+section = "flavor"
+base = "flavor"
+doc_path = "`…/<Character>/AddOns.txt`"
+what = "Which addons are enabled for this character. On the Forever beta it sits in the `<Realm>/<First>/` folder, which is named by first name only, so characters that share a first name may share one list **[verify]**"
+written_by = "Client"
+edit = "gate"
+tier = "A"
+module = "`layout` (lines)"
+match = ["WTF/Account/*/*/*/AddOns.txt"]
+
+[[entry]]
+id = "character-layout-local"
+section = "flavor"
+base = "flavor"
+doc_path = "`…/<Character>/layout-local.txt`"
+what = "Legacy UI panel positions; on the Forever beta (2026-09-22) a stub, `Version: 1` and nothing else"
+written_by = "Client"
+edit = "gate"
+tier = "A"
+module = "none (kept by `snapshot`)"
+match = ["WTF/Account/*/*/*/layout-local.txt"]
+
+[[entry]]
+id = "character-chat-cache"
+section = "flavor"
+base = "flavor"
+doc_path = "`…/<Character>/chat-cache.txt`"
+what = "Chat window and channel configuration"
+written_by = "Client"
+edit = "gate"
+tier = "A"
+module = "none (kept by `snapshot`)"
+match = ["WTF/Account/*/*/*/chat-cache.txt"]
+
+[[entry]]
+id = "interface-folder"
+section = "flavor"
+base = "flavor"
+doc_path = "`Interface/`"
+what = "Addons and loose-file overrides (the rows below)"
+written_by = "You, or an addon manager"
+edit = "—"
+tier = "—"
+module = "`layout`"
+match = ["Interface/"]
+
+[[entry]]
+id = "addons-folder"
+section = "flavor"
+base = "flavor"
+doc_path = "`Interface/AddOns/`"
+what = "One folder per installed addon"
+written_by = "You, or an addon manager"
+edit = "—"
+tier = "—"
+module = "`layout`"
+match = ["Interface/AddOns/"]
+
+[[entry]]
+id = "addon"
+section = "flavor"
+base = "flavor"
+doc_path = "`Interface/AddOns/<Addon>/`"
+what = "Third-party addon: `.toc`, `.lua`, `.xml`, media"
+written_by = "You, or an addon manager"
+edit = "gate"
+tier = "A"
+module = "`layout`, `toc`"
+match = ["Interface/AddOns/*/", "Interface/AddOns/*/**"]
+exclude = ["Interface/AddOns/Blizzard_*", "Interface/AddOns/Blizzard_*/**"]
+
+[[entry]]
+id = "blizzard-addon-export"
+section = "flavor"
+base = "flavor"
+doc_path = "`Interface/AddOns/Blizzard_*`"
+what = "A folder named like one of Blizzard's own addons. The client loads its own addons from game data, not from here **[verify]**; an interface export writes under `BlizzardInterfaceCode/` instead **[verify]**, so one here was most likely copied in"
+written_by = "You (copied) **[verify]**"
+edit = "no"
+tier = "A (read)"
+module = "`layout` (flagged)"
+match = ["Interface/AddOns/Blizzard_*/", "Interface/AddOns/Blizzard_*/**"]
+
+[[entry]]
+id = "blizzard-interface-export"
+section = "flavor"
+base = "flavor"
+doc_path = "`BlizzardInterfaceCode/`, `BlizzardInterfaceArt/`"
+what = "Output of the `ExportInterfaceFiles code` / `art` console commands: Blizzard's Lua/XML and UI textures, for reading. Written inside the flavor folder **[verify]**"
+written_by = "Client on command"
+edit = "no"
+tier = "A (read)"
+module = "`layout` (flagged)"
+match = [
+  "BlizzardInterfaceCode/", "BlizzardInterfaceCode/**",
+  "BlizzardInterfaceArt/", "BlizzardInterfaceArt/**",
+]
+
+[[entry]]
+id = "interface-override"
+section = "flavor"
+base = "flavor"
+doc_path = "`Interface/<anything outside AddOns>`"
+what = "Loose-file overrides of base-game UI textures. Works only for textures that exist in the base game; sound overrides and world/model overrides no longer work in modern clients"
+written_by = "You"
+edit = "gate"
+tier = "B"
+module = "`layout` (flagged)"
+match = ["Interface/*", "Interface/*/", "Interface/*/**"]
+exclude = ["Interface/AddOns", "Interface/AddOns/**"]
+
+[[entry]]
+id = "fonts"
+section = "flavor"
+base = "flavor"
+doc_path = "`Fonts/`"
+what = "Font overrides: `FRIZQT__.TTF` (main UI), `ARIALN.TTF` (chat, numbers), `skurri.ttf` (combat text), `MORPHEUS.ttf` (headers), plus locale variants"
+written_by = "You"
+edit = "gate"
+tier = "B"
+module = "`layout`"
+match = ["Fonts/", "Fonts/**"]
+
+[[entry]]
+id = "hotfix-cache"
+section = "flavor"
+base = "flavor"
+doc_path = "`Cache/ADB/<locale>/DBCache.bin`"
+what = "Hotfixes the server pushed over the shipped DB2 tables"
+written_by = "Client"
+edit = "no"
+tier = "A (read, later wave)"
+module = "none in Wave 1"
+match = ["Cache/ADB/*/DBCache.bin"]
+
+[[entry]]
+id = "wdb-cache"
+section = "flavor"
+base = "flavor"
+doc_path = "`Cache/WDB/<locale>/*.wdb`"
+what = "Cached server responses for creatures, items, quests, …"
+written_by = "Client"
+edit = "no"
+tier = "A (read, later wave)"
+module = "none"
+match = ["Cache/WDB/*/*.wdb"]
+
+[[entry]]
+id = "cache-other"
+section = "flavor"
+base = "flavor"
+doc_path = "`Cache/`, anything under it not in the two rows above"
+what = "Other client caches; what they hold is not described here yet **[verify]**. The client rebuilds it; deleting it is ordinary troubleshooting **[verify]**"
+written_by = "Client"
+edit = "no"
+tier = "—"
+module = "none"
+match = ["Cache/", "Cache/**"]
+
+[[entry]]
+id = "combat-log"
+section = "flavor"
+base = "flavor"
+doc_path = "`Logs/WoWCombatLog*.txt`"
+what = "Combat log while `/combatlog` is on"
+written_by = "Client, batched"
+edit = "no"
+tier = "A (read)"
+module = "`combatlog`"
+match = ["Logs/WoWCombatLog*.txt"]
+
+[[entry]]
+id = "diagnostic-logs"
+section = "flavor"
+base = "flavor"
+doc_path = "`Logs/*.log` (`Client.log`, `gx.log`, `Sound.log`, `FrameXML.log`, `taint.log` when enabled)"
+what = "Diagnostics"
+written_by = "Client"
+edit = "no"
+tier = "A (read)"
+module = "none"
+match = ["Logs/*.log"]
+
+[[entry]]
+id = "logs-other"
+section = "flavor"
+base = "flavor"
+doc_path = "`Logs/`, anything under it not in the two rows above"
+what = "Other client logs; not described here yet **[verify]**"
+written_by = "Client"
+edit = "no"
+tier = "—"
+module = "none"
+match = ["Logs/", "Logs/**"]
+
+[[entry]]
+id = "screenshots"
+section = "flavor"
+base = "flavor"
+doc_path = "`Screenshots/`"
+what = "`WoWScrnShot_MMDDYY_HHMMSS.jpg` (or `.tga`/`.png` per CVar)"
+written_by = "Client on Print Screen"
+edit = "n/a"
+tier = "A"
+module = "`layout`"
+match = ["Screenshots/", "Screenshots/**"]
+
+[[entry]]
+id = "errors"
+section = "flavor"
+base = "flavor"
+doc_path = "`Errors/`"
+what = "Crash dumps and reports"
+written_by = "Client"
+edit = "no"
+tier = "—"
+module = "none"
+match = ["Errors/", "Errors/**"]
+
+[[entry]]
+id = "support-binaries"
+section = "flavor"
+base = "flavor"
+doc_path = "`Utils/`, `*.dll`, `*.dylib`"
+what = "Client support binaries"
+written_by = "Agent"
+edit = "no"
+tier = "—"
+module = "none"
+match = ["Utils/", "Utils/**", "*.dll", "*.dylib"]

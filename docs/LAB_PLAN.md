@@ -242,6 +242,30 @@ Symlinks are reported and not followed outside the install. Walk depth and
 entry counts are bounded; an `Interface/AddOns` with 400 addons must inventory
 in under two seconds on an SSD.
 
+*Amended 2026-09-22 (M10-06 reviews):* (1) **Symlinks and junctions are never
+followed**, whether they point inside the install or outside it. Each is
+reported in `Inventory.symlinks` with its link text and `inside_install`,
+and left out of the typed lists. `inside_install` uses `Path.resolve()`,
+which reads link text and metadata but never lists or opens anything
+outside. (2) **Signatures:** `classify(path, install, *, is_dir=None)`
+(flavor folders are the ones discovery reported; the install root and
+flavor folder are also matched by their on-disk spelling on a
+case-insensitive volume) and `Layout.classify(path, *, is_dir=None)`. Both
+return `Classified` or `Unclassified`. (3) **`Layout.inventory()` returns
+`Inventory`**, which holds everything the listing methods return plus
+symlinks, OS-metadata files, read errors and `truncated`. Bounds are set
+with `Limits` (`max_depth`, `max_entries`, `max_toc_bytes`). (4) A TOC over
+`max_toc_bytes` is reported with an error and not read. (5) OS-metadata files
+(the file map's `os-metadata` row: `.DS_Store`, `._*`, `Thumbs.db`,
+`desktop.ini`) met by the walk (the flavor root, the area folders,
+`Interface/AddOns/` itself, SavedVariables folders, and the top level of
+each addon folder) are listed in `Inventory.os_metadata`; deeper addon
+contents are not walked. They are kept out of the SavedVariables, WTF-file,
+override and TOC lists and out of area counts.
+(6) The file map's single source is `wowlab_core/filemap.toml`. The doc
+tables are generated from it by `scripts/gen_file_map.py`, and a test fails
+when the two drift.
+
 ### 6.3 `toc` — addon manifest parser (M10-06)
 
 Per `docs/LAB_FORMATS.md` §3. Output keeps directive order, unknown

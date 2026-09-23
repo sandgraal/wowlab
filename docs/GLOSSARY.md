@@ -110,7 +110,7 @@ Anything weekly is anchored to the character's region, never to the local machin
 
 **CVar** — a client console variable: a named setting persisted in `Config.wtf` or a `config-cache.wtf`. Scope is machine, account or character depending on the variable.
 
-**Account folder** — `WTF/Account/<NAME>/`. The name identifies a Battle.net account (a number with `#<n>`, e.g. `#1` or `#6`, or an old account name). It is personal data; fixtures pseudonymize it.
+**Account folder** — `WTF/Account/<NAME>/`. One folder per game account that logged in on the machine: a number with `#<n>` (e.g. `#1` or `#6`), where the `#<n>` suffix numbers the game accounts under one Battle.net account **[verify]**, or an old account name. It is personal data; fixtures pseudonymize it.
 
 **CASC** — the content-addressed archive format of `Data/`. Files are addressed by content hash and by numeric *FileDataID*; names come from a community-maintained *listfile*, which has gaps. Some content is encrypted until Blizzard releases a key.
 
