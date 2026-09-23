@@ -63,7 +63,7 @@ Graders for `wowlab_core.luadata` parsing, derived from `docs/LAB_PLAN.md` §6.4
 
 ---
 
-## [ ] M10-05 — Install discovery
+## [x] M10-05 — Install discovery
 **Size:** M · **Depends on:** M10-03
 
 `wowlab_core.install` per `docs/LAB_PLAN.md` §6.1 and `docs/LAB_FORMATS.md` §1–§2. No flavor, product or version constants in library code (L6); a test greps the package for `_retail_`, `_classic` and `wow_classic` and fails on a hit outside comments.
@@ -72,7 +72,7 @@ Graders for `wowlab_core.luadata` parsing, derived from `docs/LAB_PLAN.md` §6.4
 
 ---
 
-## [ ] M10-06 — Layout walker, file map and TOC parser
+## [x] M10-06 — Layout walker, file map and TOC parser
 **Size:** L · **Depends on:** M10-05
 
 `wowlab_core.layout`, `wowlab_core.toc`, `wowlab_core.filemap` per `docs/LAB_PLAN.md` §6.2–§6.3, `docs/LAB_FORMATS.md` §3, `docs/LAB_FILE_MAP.md`. The file map is one data source shared by the doc and `classify()`; state in the PR which way it is kept in sync and add a test that fails when they drift. Reviewed by `domain-reviewer` (file-map wording).
@@ -172,6 +172,8 @@ Commands, flags and exit codes per `docs/LAB_PLAN.md` §6.11. `snap create` uses
 **Acceptance:** each command has a test through Typer's runner against the captured tree or a synthetic install; every data command's `--json` output validates against its Pydantic model; exit code 3 when guard refuses; `wowlab explain <path>` returns the file-map entry for ten representative paths. A transcript of `wowlab doctor`, `tree --explain`, `sv dump`, `snap create`, a guarded edit and `undo` on a synthetic install is pasted in the PR.
 
 *Amended 2026-09-21 from the M10-08, M10-09 and M10-10 reviews: `snap diff` includes the `luadata`-aware structural diff for `.lua` SavedVariables that `docs/LAB_PLAN.md` §6.9 specifies, falling back to the plain changed-path entry when either side does not parse (deferred from M10-10 because `luadata` did not exist; `SnapshotStore.read_file()` is the seam). Manifest `--json` output goes through `snapshot.manifest_bytes()`, not `model_dump_json()`, which is not the inverse of the manifest wire format. `doctor` passes each discovered install root and the executable names it finds in each flavor folder to `process` (`install_roots`, `extra_names`; discovery does not report executable names, reworded 2026-09-22 after the M10-05 review), and after a cross-product `gamedata.resolve_build` match prints only `.version` as a fact about the install, never the matched `product` or config hashes. `snap list` lists every manifest that loads and names each one that does not, exiting non-zero when any is damaged (`SnapshotStore.list()` raises on the first bad one today; a lenient public listing belongs in `snapshot`, not in private calls from the CLI).*
+
+*Amended 2026-09-22 from the final M10-05 domain review (deferred there): when `doctor` or `install show` reports where it looked for an install, a default location that could not be checked (not a directory, or its check raised, including a drive that is not ready) is reported as "could not check", not as searched and empty; `InstallNotFoundError` gains that list, and the two `install.py` docstrings that still say "not a readable directory" are brought in line with the reworded §6.1 amendment ("not a directory, or cannot be checked").*
 
 ---
 
