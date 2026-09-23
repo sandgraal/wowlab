@@ -830,6 +830,23 @@ never edited. Every capture passes through `scripts/lab_capture.py`, which
 > and points at; the owner's eye and `--extra-name` are the control
 > (`docs/handoffs/M10-03.md`).
 
+> **Amendment 2026-09-23 (M10-02 follow-up 4).** A combat log that names
+> other players is refused by default, as above. With the opt-in flag
+> `--pseudonymise-other-players` (combat logs only; the owner chose it for a
+> log that cannot be recorded again), each other player's GUID becomes an
+> invented one (`Player-9998-<n>`, numbered by first appearance, never
+> derived from the real value) and the character-name part of their quoted
+> unit name an invented pseudonym (`Labother…`), the same for the whole run.
+> A later part of that unit name that is one of the owner's realms is
+> scrubbed by the owner's rules; an unknown realm gets a realm-style
+> pseudonym; a region word stays. The log is still refused, with a count
+> only, if one of those real name parts appears anywhere else in the kept
+> lines (in any normal form or casing, and an unknown realm also in spaced or
+> split spellings), if a part cannot be searched for safely (a format or
+> vocabulary word such as `nil`, `True`, `Default`), or if a GUID of theirs
+> never stands next to its unit name. The provenance row records the number
+> of other players rewritten as `other-players-pseudonymised: N`.
+
 Structure, key order, number text, escapes, line endings and everything else
 stay byte-for-byte. The scrubber works at the byte level with targeted
 replacements; it does not parse and re-serialize (the parser does not exist
