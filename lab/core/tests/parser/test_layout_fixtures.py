@@ -205,15 +205,40 @@ def _inventoried_paths(inv: Inventory) -> dict[str, str]:
     return found
 
 
+# `other()` summarises its areas as counts, not per file (LAB_PLAN §6.2).
+# `Fonts/` is the exception: each of its files is also listed as an override,
+# so an indexed file there is held to the per-file lists like any other.
+PER_FILE_AREAS = frozenset({"Fonts"})
+
+
+def _summarised_area(inv: Inventory, rel: str) -> str | None:
+    """The name of the summarised-only area `rel` lies under, if any."""
+    first, sep, _ = rel.partition("/")
+    if not sep:
+        return None  # a loose file in the flavor folder, not under an area
+    for area in inv.other.areas:
+        if area.name in PER_FILE_AREAS:
+            continue
+        if area.name.casefold() == first.casefold():
+            return area.name
+    return None
+
+
 @pytest.mark.parser
 @pytest.mark.parametrize(("flavor", "inv"), INVENTORIES, ids=[f for f, _ in INVENTORIES])
 def test_every_indexed_file_is_inventoried_once(flavor: str, inv: Inventory) -> None:
     found = _inventoried_paths(inv)
+    under_area: dict[str, list[str]] = {}  # area name -> indexed files under it
     for path in INSTALL_FILES:
         if not path.startswith(flavor + "/"):
             continue
         rel = path.removeprefix(flavor + "/")
         if rel == ".flavor.info":
+            continue
+        area_name = _summarised_area(inv, rel)
+        if area_name is not None:
+            assert rel not in found, f"{path} is in a per-file list and a summarised area"
+            under_area.setdefault(area_name, []).append(rel)
             continue
         assert rel in found, f"{path} is in no inventory list"
         kind = INDEX_ROWS[path]["kind"]
@@ -223,6 +248,15 @@ def test_every_indexed_file_is_inventoried_once(flavor: str, inv: Inventory) -> 
             assert found[rel] == "addons", path
         elif rel.startswith("WTF/"):
             assert found[rel] == "wtf_files", path
+    areas = {a.name: a for a in inv.other.areas}
+    for name, rels in sorted(under_area.items()):
+        area = areas[name]
+        first = {r.split("/", 1)[0] for r in rels}
+        assert area.present is True, f"{name} holds {rels} but is reported absent"
+        assert {area.path} == first, f"{name}: found as {area.path}, indexed as {first}"
+        assert area.symlink is False, name
+        assert area.truncated is False, name
+        assert area.files >= len(rels), f"{name}: {area.files} files, {len(rels)} indexed"
     assert inv.symlinks == ()
     assert inv.errors == ()
     assert inv.truncated is False
@@ -322,7 +356,9 @@ def test_forever_addon_and_its_toc(forever: Inventory) -> None:
 
 @pytest.mark.parser
 def test_forever_other_areas_absent(forever: Inventory) -> None:
-    """The capture holds no caches, logs, screenshots, fonts or overrides."""
+    """Every area the capture does not hold is reported absent, and every
+    override lies under `Interface/` or `Fonts/`. (The capture now holds a
+    combat log under `Logs/`; the test above counts it against that area.)"""
     areas = {a.name: a for a in forever.other.areas}
     for name in ("Cache", "Logs", "Screenshots", "Errors", "Fonts"):
         if not (FIXTURES / F / name).exists():
