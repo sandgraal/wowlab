@@ -603,7 +603,11 @@ after the PR #49 security review; tickets M10-16T and M10-16):*
      The locks are released on exit, including on an exception, and the OS
      releases them when the process ends.
    - **Mechanism.** `fcntl.flock(fd, LOCK_EX | LOCK_NB)` on POSIX and
-     `msvcrt.locking(fd, LK_NBLCK, 1)` at offset 0 on Windows; `lockf` and
+     `msvcrt.locking(fd, LK_NBLCK, 1)` on one byte at offset 2^30 (1 GiB)
+     on Windows, far past the end of the empty lock file, so no ordinary read
+     of the file overlaps the mandatory lock (reworded 2026-09-23 after the
+     `lab (windows)` run on PR #59: a lock at offset 0 made reads of the store
+     fail with a permission error; SQLite uses the same technique); `lockf` and
      `fcntl(F_SETLK)` are not used. A process also refuses, without asking
      the OS, a lock it already holds, so a nested transaction raises
      `GuardBusyError`. `undo()`'s own transaction runs under the locks
