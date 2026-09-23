@@ -30,6 +30,14 @@ marked `@pytest.mark.live`.
   `/dump (select(4, GetBuildInfo()))`. Line endings follow the file kind
   (`docs/LAB_FORMATS.md` amendments of 2026-09-22). Combat log, SavedVariables
   line endings, `WOW_PROJECT_ID` and the preferred TOC suffix: still open.
+- **Known state update (2026-09-22, M10-03 part 2):** the beta patched from
+  1.60.1.69913 to 1.60.1.69977 between the stage-0 and stage-1 captures. The
+  69977 version is from the capture tool's rows; its `.build.info` is not
+  committed. The patch is still 1.60.1, so the interface number expected is
+  still `16001`. SavedVariables line endings are resolved: CRLF with a
+  leading blank line, no BOM, no indentation. No addon in the install ships
+  more than one TOC, so the preferred suffix is still open; the Forever
+  `Logs/` folder holds no combat log yet.
 
 ## wago.tools
 
@@ -121,7 +129,7 @@ findings. Library code must not depend on any of it (L6).
 
 - Beta 2026-09-17 to 2026-10-21, PC (Windows, macOS) through Battle.net;
   launch announced for 2026-11-04; beta characters are wiped.
-- Beta build reported as `1.60.1.69913`; interface version reported as
+- Beta build observed as `1.60.1.69913`, then `1.60.1.69977`; interface version reported as
   `16001` (one report argues `160001`).
 - Product code reported as `wow_classic_beta`, flavor folder `_classic_beta_`.
 - Addon API reported as the modern mainline API (12.1.5 surface), including
@@ -141,3 +149,4 @@ findings. Library code must not depend on any of it (L6).
 | 2026-09-20 | Forever beta | New product; modern addon API on a level-60 client; flavor folder, product code and interface number known only from reports | — (M10-03 will capture) | Flavor, product and build are discovered at run time (ADR-0020); nothing hard-coded |
 | 2026-09-21 | wago.tools | First recording. The build parameter is `build=`; an unpublished build is a 404 HTML page, not a fall-back. All 13 product lists are sorted by version, descending, and a product code is reused across game versions: `wow_classic_beta` carries 1.13, 2.5, 3.4, 4.4, 5.5 and 1.60 builds, so its list opens with `5.5.0.x` and has the `1.60.1.x` builds (69876, 69893, 69913) further down; neither position nor the highest version means newest. One version string appears under several products (510 of them, each with a different `build_config` per product). The trailing build number is not unique: `10.0.0.46479` / `10.0.2.46479` under `wowlivetest` and `2.5.5.68575` / `2.5.6.68575` under `wow_anniversary` share a `build_config` | `lab/core/tests/fixtures/wago/` (M10-08) | `gamedata` never reads "latest" from the listing and keys on the full version string, never the trailing build number. `resolve_build` matches the exact version, preferring the flavor's own product. wago's table endpoint is keyed by version string alone, so a version listed only under another product still selects the same export and is accepted; from such a match only `.version` describes the installed flavor, `product` and the config hashes do not |
 | 2026-09-22 | Local install (Forever beta) | First capture. The account's folder tree is not the retail `<Realm>/<Character>/`: a digits-only folder (almost certainly the realm's numeric id) holds `<First>-<Second>` character folders: Forever characters have a player-chosen first and second name (owner, 2026-09-22), and retail-style `<Realm>/<First>/` twins hold only AddOns.txt. The scrub tool treated the digits-only folder name as a realm name and replaced it inside ordinary numbers, and scrubbed `<First>-<Second>` only as a whole. Separately, a placeholder `--extra-name GUILD` rewrote the client's own `GUILD` chat-channel token | M10-03 stage-0 staging, never committed; four corrupted files dropped | Scrub-tool follow-up (#33): digits-only folder names get a path pseudonym only, `<First>-<Second>` folders are split into both names, and an `--extra-name` equal to a word the client writes is refused; stage 0 re-run after it merges |
+| 2026-09-22 | Local install (Forever beta) | Build changed mid-corpus. The fixture tree now mixes 69913 (`.build.info` and part 1) with 69977 (part 2). 69977 is missing from the 2026-09-21 wago recording, so replaying it gives `BuildNotPublished` | `lab/core/tests/fixtures/README.md` rows | Each row's `client_version` is authoritative; the tree is not a single-build install; re-record the wago listing before relying on 69977 |
