@@ -617,8 +617,19 @@ after the PR #49 security review; tickets M10-16T and M10-16):*
      `GuardBusyError`. guard never proceeds unlocked.
    - **Lock files.** Opened with `O_CREAT | O_RDWR | O_NOFOLLOW` (on Windows,
      refused if a reparse point), never truncated, written or deleted; each
-     must be a regular file by `fstat`. The lock files and `locks/` are part
-     of the store-overlap check.
+     must be a regular file by `fstat` with a link count of 1 (a hard link
+     to another file is refused). The lock files and `locks/` are part of
+     the store-overlap check. *Added 2026-09-23 (M10-16 security review):*
+     a store directory inside any install, not only the one being written,
+     is refused, and so is one of its lock paths: an install is recognised
+     by a `.build.info` on the directory or an ancestor, or a `.flavor.info`
+     in a child of such an ancestor, compared by identity. On enter, a
+     journal that cannot be read raises `GuardError` before the pre-write
+     snapshot (not in a dry run), since a change `undo()` could not reverse
+     must not be written. A path taken from a journal record is compared by
+     identity only when it is a local absolute path (never a UNC `\\` or
+     `//` path, and on Windows only with a drive letter); anything else is
+     treated as another install without being looked up.
    - **Dry run.** A dry run takes the same locks; creating the lock files and
      their directories is the only thing it writes, never inside the install.
    - **Scope.** The exclusion covers processes of one OS user sharing one
@@ -701,9 +712,12 @@ after the PR #49 security review; tickets M10-16T and M10-16):*
    exported from `wowlab_core.guard`, and so is
    `guard.store_lock(store: Path | None = None)`, a context manager that
    takes the store lock alone (same mechanism, same in-process refusal, the
-   same lock-file opening rules: `O_NOFOLLOW`, regular file, never
-   truncated, written or deleted; it has no install, so the store-overlap
-   check does not apply; `GuardBusyError` if held; a store directory that does not exist raises `GuardError` and nothing
+   same lock-file opening rules: `O_NOFOLLOW`, regular file with one link,
+   never truncated, written or deleted; it has no install of its own to
+   compare with, but a store directory inside any install is refused as
+   above (reworded 2026-09-23 after the M10-16 security review; the
+   earlier wording exempted it and would have let it create a lock file
+   under `Data/`); `GuardBusyError` if held; a store directory that does not exist raises `GuardError` and nothing
    is created). `HistoryRecord` gains
    `temps_removed`
    and `temps_left` (flavor-relative paths). The journal format becomes 2;
