@@ -314,8 +314,13 @@ Serializer (M10-12): emits the client's own format exactly (indentation,
 key style, trailing commas, `-- [n]` comments, line endings as found in the
 source document). Property graded on every real fixture:
 `serialize(parse(x)) == x`. For a modified document, untouched subtrees
-serialize to their original bytes; new entries use the format rules of the
-reference. Output is byte-deterministic: same document, same bytes, on every
+serialize to their original bytes; new entries follow the document's own
+detected style (owner decision 2026-09-22): its indentation unit or none,
+its array comments or none, its separators and its line endings, so an
+unindented Forever file stays unindented and a tab-indented file with
+`-- [n]` comments keeps them. A new file with no document to copy from uses
+the style observed in real fixtures of the same flavor, else §4.2's.
+Output is byte-deterministic: same document, same bytes, on every
 platform and locale.
 
 Performance: a 50 MB SavedVariables file (auction or collection addons get
@@ -326,8 +331,8 @@ ADR.
 
 *Amended 2026-09-22 (M10-04T domain review; conductor decisions within
 §4 and L4):* The client's Lua is taken to be Lua 5.1 (community
-documentation, warcraft.wiki.gg "Lua"; **[verify]** for the Forever client,
-with `/dump _VERSION` in game). Grammar changes are mirrored in
+documentation, warcraft.wiki.gg "Lua"; confirmed for the Forever client on
+2026-09-22: `/dump _VERSION` in game printed `"Lua 5.1"`). Grammar changes are mirrored in
 `docs/LAB_FORMATS.md` §4 amendments.
 
 1. **Strings are bytes.** A Lua 5.1 string is an 8-bit byte string.

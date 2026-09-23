@@ -43,6 +43,8 @@ Follow `docs/handoffs/M10-03.md`: log one character in and out on each installed
 
 *Start this as soon as M10-02 merges. Everything that parses a client format waits on it.*
 
+*Amended 2026-09-22 (owner decision): the coverage list's multi-MB SavedVariables file is waived for now: no file on the Forever install is larger than 14 KB. M10-04 measures its performance target on a constructed input and says so (§6.4 amendment item 5); a real large file is added when one exists.*
+
 ---
 
 ## [ ] M10-04T — luadata parser graders [TEST]
@@ -144,7 +146,7 @@ Graders for `wowlab_core.guard` from `docs/LAB_PLAN.md` §6.10 and ADR-0021, aga
 ## [ ] M10-12T — luadata serializer graders [TEST]
 **Size:** S · **Depends on:** M10-04
 
-Graders from `docs/LAB_PLAN.md` §6.4 (serializer half) and `docs/LAB_FORMATS.md` §4.2: `serialize(parse(x)) == x` byte for byte for every real SavedVariables fixture (parametrized over the index); after changing one leaf, every untouched sibling subtree's bytes are unchanged; a new positional entry, string key and number key are written in the client's format with the source document's line ending; 100 runs produce identical bytes, including under a non-C locale. `xfail(strict=True, reason="M10-12 not implemented")`.
+Graders from `docs/LAB_PLAN.md` §6.4 (serializer half) and `docs/LAB_FORMATS.md` §4.2: `serialize(parse(x)) == x` byte for byte for every real SavedVariables fixture (parametrized over the index); after changing one leaf, every untouched sibling subtree's bytes are unchanged; a new positional entry, string key and number key follow the source document's own detected style (indentation or none, `-- [n]` comments or none, separators, line endings; owner decision 2026-09-22, §6.4), graded on an unindented Forever fixture and a constructed tab-indented, commented document; 100 runs produce identical bytes, including under a non-C locale. `xfail(strict=True, reason="M10-12 not implemented")`.
 
 **Acceptance:** graders fail today for the asserted reason.
 

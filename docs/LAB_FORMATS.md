@@ -357,9 +357,8 @@ Dated entries, newest last. Each names the fixture that prompted it.
   **Still unobserved:** `[number]` keys, tab indentation or `-- [n]` from
   any client **[verify]**, non-ASCII strings, single-quoted strings, a
   non-nil top-level scalar, a per-character SavedVariables file, the account
-  `SavedVariables.lua`. **For M10-12:** whether a new entry follows the
-  document's own detected style or the §4.2 style is an owner decision
-  (asked 2026-09-22).
+  `SavedVariables.lua`. **For M10-12:** a new entry follows the document's
+  own detected style (owner decision 2026-09-22, `docs/LAB_PLAN.md` §6.4).
 - **2026-09-22, AddOns.txt, part 2
   (`…/Labrealmb Partb Partc Partd/Labchard/AddOns.txt`, 1.60.1.69977).** One
   `<AddonName>: <state>` per line; CRLF with a final CRLF, no BOM, no header.
@@ -380,7 +379,8 @@ Dated entries, newest last. Each names the fixture that prompted it.
   second name, never by realm.
 - **2026-09-22, §4.1 to §4.3, no fixture (M10-04T reviews; decisions in
   `docs/LAB_PLAN.md` §6.4, amendment of the same date).** The client's Lua is
-  taken to be Lua 5.1 (**[verify]** for Forever). Escapes accepted with Lua
+  Lua 5.1 (confirmed for Forever on 2026-09-22: `/dump _VERSION` printed
+  `"Lua 5.1"`). Escapes accepted with Lua
   5.1 meanings: `\a \b \f \n \r \t \v \\ \" \'`, `\ddd` up to 255 (one byte),
   and a backslash before a line break; `\x`, `\u{}`, `\z`, a `\ddd`
   above 255 and any other character after a backslash are rejected. Strings are byte strings. A raw CR or LF inside a string is

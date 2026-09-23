@@ -26,8 +26,11 @@ marked `@pytest.mark.live`.
   (directory listing; the process name is **[verify]**). Interface number:
   `16001` is consistent with the patch-number rule for 1.60.1
   (1×10000 + 60×100 + 1) and with `SET engineSurveyPatch "16001"`; an addon
-  TOC listing it is only the author's claim. Still to confirm in game with
-  `/dump (select(4, GetBuildInfo()))`. Line endings follow the file kind
+  TOC listing it is only the author's claim. Confirmed in game on
+  2026-09-22 (owner, build 69977): `/dump select(4, GetBuildInfo())`
+  printed `16001`, `""`, `" "` (the interface number, then an empty
+  localized version string and a one-space build type), and
+  `/dump _VERSION` printed `"Lua 5.1"`. Line endings follow the file kind
   (`docs/LAB_FORMATS.md` amendments of 2026-09-22). Combat log, SavedVariables
   line endings (resolved below), `WOW_PROJECT_ID` and the preferred TOC suffix: still open.
 - **Known state update (2026-09-22, M10-03 part 2):** the beta patched from
