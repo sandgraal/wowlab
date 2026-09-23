@@ -173,8 +173,8 @@ Commands, flags and exit codes per `docs/LAB_PLAN.md` §6.11. `snap create` uses
 
 *Amended 2026-09-21 from the M10-08, M10-09 and M10-10 reviews: `snap diff` includes the `luadata`-aware structural diff for `.lua` SavedVariables that `docs/LAB_PLAN.md` §6.9 specifies, falling back to the plain changed-path entry when either side does not parse (deferred from M10-10 because `luadata` did not exist; `SnapshotStore.read_file()` is the seam). Manifest `--json` output goes through `snapshot.manifest_bytes()`, not `model_dump_json()`, which is not the inverse of the manifest wire format. `doctor` passes each discovered install root and the executable names it finds in each flavor folder to `process` (`install_roots`, `extra_names`; discovery does not report executable names, reworded 2026-09-22 after the M10-05 review), and after a cross-product `gamedata.resolve_build` match prints only `.version` as a fact about the install, never the matched `product` or config hashes. `snap list` lists every manifest that loads and names each one that does not, exiting non-zero when any is damaged (`SnapshotStore.list()` raises on the first bad one today; a lenient public listing belongs in `snapshot`, not in private calls from the CLI).*
 
-
 *Amended 2026-09-22 from the final M10-05 domain review (deferred there): when `doctor` or `install show` reports where it looked for an install, a default location that could not be checked (not a directory, or its check raised, including a drive that is not ready) is reported as "could not check", not as searched and empty; `InstallNotFoundError` gains that list, and the two `install.py` docstrings that still say "not a readable directory" are brought in line with the reworded §6.1 amendment ("not a directory, or cannot be checked").*
+
 ---
 
 ## [ ] M10-15 — Wave 1 review
