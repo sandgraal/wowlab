@@ -378,3 +378,14 @@ Dated entries, newest last. Each names the fixture that prompted it.
   the raw file with names masked. That is the addon's view; which API
   returns it is **[verify]**. Match addon records to folders by first and
   second name, never by realm.
+- **2026-09-22, §4.1 to §4.3, no fixture (M10-04T reviews; decisions in
+  `docs/LAB_PLAN.md` §6.4, amendment of the same date).** The client's Lua is
+  taken to be Lua 5.1 (**[verify]** for Forever). Escapes accepted with Lua
+  5.1 meanings: `\a \b \f \n \r \t \v \\ \" \'`, `\ddd` up to 255 (one byte),
+  and a backslash before a line break; `\x`, `\u{}`, `\z`, a `\ddd`
+  above 255 and any other character after a backslash are rejected. Strings are byte strings. A raw CR or LF inside a string is
+  an unterminated string; other raw control bytes are kept; a raw NUL stays
+  rejected (**[verify]**). `[true]`/`[false]` keys are allowed (style
+  `boolean`). Long comments (`--[[`, `--[==[`) are rejected unless a fixture
+  shows one; `-- [n]` is a line comment. Which escapes the client actually
+  writes stays **[verify]** (§4.2 amendment).

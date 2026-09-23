@@ -292,8 +292,9 @@ union: `LuaTable`, `LuaString`, `LuaNumber`, `LuaBool`, `LuaNil`.
   Non-finite spellings found in real fixtures are recorded in
   `docs/LAB_FORMATS.md` as they are met; an unknown spelling raises with
   line and column.
-- `LuaString` stores the decoded value and the raw source; all escapes in
-  §4 of the format reference are decoded; an unknown escape raises.
+- `LuaString` stores the decoded value and the raw source; escapes are
+  decoded as the 2026-09-22 amendment below says (item 2); an unknown escape
+  raises.
 - Convenience: `document.to_python()` returns plain `dict`/`list`/scalars
   for consumers that do not need fidelity; it is one-way and documented as
   lossy (array-like tables become lists only when keys are exactly `1..n`).
@@ -322,6 +323,70 @@ there) parses in under 10 s and under 1.5 GB RSS on the owner's laptop.
 Measure it in the PR; if pure Python misses the target, report the numbers
 and stop. Do not reach for a C extension or a third-party parser without an
 ADR.
+
+*Amended 2026-09-22 (M10-04T domain review; conductor decisions within
+§4 and L4):* The client's Lua is taken to be Lua 5.1 (community
+documentation, warcraft.wiki.gg "Lua"; **[verify]** for the Forever client,
+with `/dump _VERSION` in game). Grammar changes are mirrored in
+`docs/LAB_FORMATS.md` §4 amendments.
+
+1. **Strings are bytes.** A Lua 5.1 string is an 8-bit byte string.
+   `LuaString.data` is the decoded bytes; `LuaString.value` is `data`
+   decoded as UTF-8 with `surrogateescape`, so invalid UTF-8 (reported
+   causes: a name cut mid-character, binary an addon stored, **[verify]**)
+   parses and rebuilds byte for byte; `LuaString.raw` is the source bytes
+   of the literal, quotes included. `\ddd` is
+   one byte (0 to 255), so `"\195\169"` is `"é"`. Raw bytes 0x80 and above
+   are kept as they are. A `value` holding lone surrogates is not JSON-safe:
+   in JSON a string that is valid UTF-8 is carried as text, and one that is
+   not is carried as base64 of `data` with a flag saying so; M10-14's output
+   models name the fields, and the human output says the same thing.
+2. **Escapes are Lua 5.1's.** Accepted, with their Lua 5.1 meanings: `\a`,
+   `\b`, `\f`, `\n`, `\r`, `\t`, `\v`, `\\`, `\"`, `\'`, `\ddd` (one to
+   three digits, at most 255), and a backslash before a line break (CRLF,
+   LFCR, LF or CR counts as one line break, decodes to `"\n"` and advances
+   the line count by one). Rejected with a position: `\x`, `\u{…}`, `\z`, a
+   `\ddd` above 255, and any other character after a backslash. Which of
+   these the client actually writes stays **[verify]** (§4.2 amendment).
+3. **Raw control bytes.** Any byte other than CR, LF and NUL inside a
+   string literal is accepted and kept (a raw tab, 0x02); a raw CR or LF
+   ends the string with an "unterminated string" error; a raw NUL is
+   rejected as §4.3 says
+   (**[verify]**: the same client writes raw control bytes into other
+   files).
+4. **`to_python()`.** A top-level `X = nil` is kept as the key with `None`,
+   so it differs from a file that never names `X`. An empty table becomes
+   `{}`. Every Lua 5.1 number is a double; `int` or `float` in the output
+   follows how the number is written, not a client type, and the
+   docstrings say so.
+5. **Performance.** Until a real file of that size is captured, the M10-04
+   PR measures the target on a constructed input and says it is
+   constructed.
+6. **Positional against bracketed keys.** Lua 5.1 stores pending
+   positional entries in batches of 50 (`LFIELDS_PER_FLUSH`): before the
+   next field once 50 are pending, and at the closing brace. So in
+   `{"x", [1] = "y"}` the client loads `"x"` for key 1, but after 50
+   positional entries a following `[1] = "y"` loads `"y"` (**[verify]**,
+   from memory of `lparser.c`). The parser flags the later entry in the source
+   as the duplicate; `to_python()` takes the value Lua 5.1 would load.
+7. **The document alone rebuilds the source.** Every token keeps the exact
+   bytes in front of it (whitespace, line breaks, comments) and its
+   separator (`,` or `;`), and the document keeps the bytes after the last
+   token. Comments therefore have a place wherever they occur: between
+   top-level assignments, on their own line inside a table, after a value
+   on the same line, after an opening brace. Rebuilding bytes from the
+   document, without the source, gives the source exactly. M10-04T grades
+   this with a rebuild that uses only the document; M10-12's serializer is
+   then this rebuild for unmodified documents, and M10-04 does not need
+   reopening for it. A comment the client never writes is still kept (L4). A long-comment
+   opener (`--[`, zero or more `=`, `[`) is rejected with a position, as
+   long-bracket strings are, unless a fixture shows the client writing one;
+   `-- [1]` and `--[1]` are line comments.
+8. **Key styles.** Besides `positional`, `["string"]`, `[number]` and bare
+   `name`, a `[true]`/`[false]` key (allowed by §4.1) has the style
+   `boolean`. Only the later of two equal keys (Lua key equality: `a` and
+   `["a"]`, `[1]` and `[1.0]` and the first positional entry) is flagged
+   `duplicate`.
 
 ### 6.5 `wtfconfig` — Config.wtf, bindings, macros (M10-07)
 
