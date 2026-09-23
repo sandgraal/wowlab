@@ -114,7 +114,6 @@ def test_positive_control_undo_restores_the_original(tmp_path: Path) -> None:
     assert (flavor.path / CONFIG).read_bytes() == ORIGINAL
 
 
-@pytest.mark.xfail(strict=True, reason="owner ruling pending: item 5 of the M10-11 reviews")
 def test_bytes_changed_after_the_snapshot_stay_recoverable(tmp_path: Path) -> None:
     flavor = _install(tmp_path)
     store = tmp_path / "store"

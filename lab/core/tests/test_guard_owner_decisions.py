@@ -647,7 +647,6 @@ class AfterJournalFsync:
 # ─── (4) the public surface ──────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_busy_and_changed_errors_are_exported_guard_errors(guard: Any) -> None:
     busy = getattr(guard, "GuardBusyError", None)
     changed = getattr(guard, "ChangedSinceSnapshotError", None)
@@ -661,7 +660,6 @@ def test_constructed_busy_and_changed_errors_are_exported_guard_errors(guard: An
     assert not issubclass(changed, busy)
 
 
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_history_records_carry_temps_removed_and_temps_left(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None
 ) -> None:
@@ -675,7 +673,6 @@ def test_constructed_history_records_carry_temps_removed_and_temps_left(
     assert record.temps_left == ()
 
 
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_format_1_journal_record_still_reads_through_history_and_undo(
     guard: Any, tmp_path: Path, install_root: Path, flavor: Flavor, idle: None
 ) -> None:
@@ -722,7 +719,6 @@ def test_constructed_format_1_journal_record_still_reads_through_history_and_und
     assert (flavor.path / CONFIG).read_bytes() == ALLOWLISTED_FILES[CONFIG]
 
 
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_store_lock_is_the_store_lock_alone_in_this_process_and_others(
     guard: Any,
     tmp_path: Path,
@@ -788,7 +784,6 @@ def _write_font(guard: Any, flavor: Flavor, store: Path, label: str) -> None:
         tx.write(FONT, SECOND_FONT)
 
 
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_store_lock_follows_the_lock_file_rules(
     guard: Any, tmp_path: Path, world: Path, idle: None
 ) -> None:
@@ -958,7 +953,6 @@ BUSY_CASES = (
     ("holder", "second", "relation"),
     [pytest.param(h, s, r, id=f"constructed-{h}-then-{s}-{r}") for h, s, r in BUSY_CASES],
 )
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_second_caller_is_busy_while_the_first_holds_the_locks(
     guard: Any,
     tmp_path: Path,
@@ -1000,7 +994,6 @@ def test_constructed_second_caller_is_busy_while_the_first_holds_the_locks(
     _second(second, guard, other, second_store)  # released on exit
 
 
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_locks_are_per_store_and_per_install_not_global(
     guard: Any, tmp_path: Path, world: Path, flavor: Flavor, idle: None
 ) -> None:
@@ -1024,7 +1017,6 @@ def test_constructed_locks_are_per_store_and_per_install_not_global(
         for s in ("canonical", "symlinked-root", "case-variant-root", "default-store")
     ],
 )
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_lock_files_live_in_the_store_and_the_user_data_directory(
     guard: Any,
     tmp_path: Path,
@@ -1064,7 +1056,6 @@ def test_constructed_lock_files_live_in_the_store_and_the_user_data_directory(
     assert sorted(p.name for p in expected_lock.parent.iterdir()) == [expected_lock.name]
 
 
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_dry_run_takes_the_locks_and_writes_only_the_lock_files(
     guard: Any, tmp_path: Path, world: Path, install_root: Path, flavor: Flavor, idle: None
 ) -> None:
@@ -1091,7 +1082,6 @@ def test_constructed_dry_run_takes_the_locks_and_writes_only_the_lock_files(
     assert {k: after[k] for k in before} == before, "nothing else changed anywhere"
 
 
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_a_busy_call_leaves_the_holders_locks_held(
     guard: Any,
     tmp_path: Path,
@@ -1124,7 +1114,6 @@ def test_constructed_a_busy_call_leaves_the_holders_locks_held(
     "mode",
     [pytest.param(m, id=f"constructed-{m}") for m in ("transaction", "dry-run", "store-lock")],
 )
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_a_lock_held_by_a_process_that_died_does_not_block(
     guard: Any,
     tmp_path: Path,
@@ -1190,7 +1179,6 @@ def _refuse_on_enter(how: str, guard: Any, flavor: Flavor, store: Path, mp: Any,
         )
     ],
 )
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_locks_are_released_when_the_call_ends_in_an_error(
     guard: Any,
     tmp_path: Path,
@@ -1231,7 +1219,6 @@ def test_constructed_locks_are_released_when_the_call_ends_in_an_error(
     assert (flavor.path / FONT).read_bytes() == SECOND_FONT
 
 
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_busy_is_decided_before_the_client_check(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1303,7 +1290,6 @@ def _plant(defect: str, tmp_path: Path, world: Path, install_root: Path, store: 
     "route", [pytest.param(r, id=f"constructed-{r}") for r in ("transaction", "dry-run", "undo")]
 )
 @pytest.mark.parametrize("defect", [pytest.param(d, id=f"constructed-{d}") for d in LOCK_DEFECTS])
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_a_lock_that_cannot_be_taken_safely_is_a_guard_error_and_nothing_proceeds(
     guard: Any,
     tmp_path: Path,
@@ -1351,7 +1337,6 @@ def test_constructed_a_lock_that_cannot_be_taken_safely_is_a_guard_error_and_not
     "failure",
     [pytest.param(f, id=f"constructed-{f}") for f in ("held", "unsupported", "io-error")],
 )
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_flock_outcomes_are_busy_or_a_guard_error(
     guard: Any,
     tmp_path: Path,
@@ -1408,7 +1393,6 @@ def test_constructed_flock_outcomes_are_busy_or_a_guard_error(
         )
     ],
 )
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_a_non_busy_failure_on_one_lock_is_a_plain_guard_error(
     guard: Any,
     tmp_path: Path,
@@ -1486,7 +1470,6 @@ def test_constructed_a_non_busy_failure_on_one_lock_is_a_plain_guard_error(
 @pytest.mark.parametrize(
     "route", [pytest.param(r, id=f"constructed-{r}") for r in ("transaction", "dry-run", "undo")]
 )
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_a_user_data_directory_that_reaches_the_install_is_refused(
     guard: Any,
     tmp_path: Path,
@@ -1537,7 +1520,6 @@ def test_constructed_a_user_data_directory_that_reaches_the_install_is_refused(
         assert not (data / "locks").exists(), "no locks/ inside the install"
 
 
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_locks_use_flock_or_msvcrt_locking_and_never_lockf(
     guard: Any, tmp_path: Path, install_root: Path, flavor: Flavor, idle: None
 ) -> None:
@@ -1600,7 +1582,6 @@ def test_constructed_locks_use_flock_or_msvcrt_locking_and_never_lockf(
     assert all(operation == wanted for _, operation in locked), locked
 
 
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_lock_files_are_never_truncated_written_or_deleted(
     guard: Any, tmp_path: Path, install_root: Path, flavor: Flavor, idle: None
 ) -> None:
@@ -1633,7 +1614,6 @@ def test_constructed_lock_files_are_never_truncated_written_or_deleted(
         for b in ("another-install", "the-same-flavor", "another-flavor-of-the-install")
     ],
 )
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_undo_plans_from_the_record_it_reads_under_the_store_lock(
     guard: Any,
     tmp_path: Path,
@@ -1763,7 +1743,6 @@ def _last_record(guard: Any, store: Path) -> Any:
 @pytest.mark.parametrize(
     "route", [pytest.param(r, id=f"constructed-{r}") for r in ("transaction", "undo")]
 )
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_temps_a_dead_transaction_left_are_removed_on_the_next_enter(
     guard: Any,
     tmp_path: Path,
@@ -1800,7 +1779,6 @@ def test_constructed_temps_a_dead_transaction_left_are_removed_on_the_next_enter
     assert G.entry_for(pre, lo.b_rel).sha256 == sha(lo.b_bytes)
 
 
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_a_temp_path_already_cleaned_is_not_considered_again(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, children: list[Child]
 ) -> None:
@@ -1825,7 +1803,6 @@ def test_constructed_a_temp_path_already_cleaned_is_not_considered_again(
     assert later.temps_removed == ()
 
 
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_another_flavors_transactions_neither_clean_nor_move_the_window(
     guard: Any,
     tmp_path: Path,
@@ -2003,7 +1980,6 @@ class LookupSpy:
     "route", [pytest.param(r, id=f"constructed-{r}") for r in ("transaction", "undo")]
 )
 @pytest.mark.parametrize("case", [pytest.param(c, id=f"constructed-{c}") for c in NOT_A_TEMP])
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_cleanup_removes_only_regular_temp_files_inside_the_allowlist(
     guard: Any,
     tmp_path: Path,
@@ -2053,7 +2029,6 @@ def test_constructed_cleanup_removes_only_regular_temp_files_inside_the_allowlis
     assert content(world) == expected, "only the genuine leftover is gone"
 
 
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_cleanup_rechecks_the_directory_chain_around_the_unlink(
     guard: Any,
     tmp_path: Path,
@@ -2106,7 +2081,6 @@ def test_constructed_cleanup_rechecks_the_directory_chain_around_the_unlink(
         for r in ("write-existing", "write-new", "restore", "rollback", "undo")
     ],
 )
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_temp_path_is_journaled_and_fsynced_before_the_temp_file_exists(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, route: str
 ) -> None:
@@ -2191,7 +2165,6 @@ def test_constructed_temp_path_is_journaled_and_fsynced_before_the_temp_file_exi
     assert problems == []
 
 
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_each_removal_is_journaled_and_fsynced_before_the_unlink(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, children: list[Child]
 ) -> None:
@@ -2240,7 +2213,6 @@ def test_constructed_each_removal_is_journaled_and_fsynced_before_the_unlink(
     assert problems == []
 
 
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_a_removal_that_fails_is_left_listed_and_does_not_stop_the_transaction(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, children: list[Child]
 ) -> None:
@@ -2278,7 +2250,6 @@ def test_constructed_a_removal_that_fails_is_left_listed_and_does_not_stop_the_t
     "first",
     [pytest.param(f, id=f"constructed-{f}") for f in ("client-running", "store-busy", "dry-run")],
 )
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_cleanup_waits_for_an_admitted_enter_that_is_not_a_dry_run(
     guard: Any,
     tmp_path: Path,
@@ -2375,7 +2346,6 @@ def _operate(op: str, tx: Any, rel: str, source: str) -> None:
     ("op", "rel", "change"),
     [pytest.param(op, rel, ch, id=f"constructed-{name}") for name, op, rel, ch in CHANGED_CASES],
 )
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_first_touch_of_a_path_changed_since_the_snapshot_is_refused(
     guard: Any,
     tmp_path: Path,
@@ -2500,7 +2470,6 @@ SWAP_CASES = (
     ("op", "rel", "swap", "when"),
     [pytest.param(op, rel, s, w, id=f"constructed-{op}-{s}-{w}") for op, rel, s, w in SWAP_CASES],
 )
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_file_swapped_after_guard_read_it_is_refused_before_the_replace_or_unlink(
     guard: Any,
     tmp_path: Path,
@@ -2584,7 +2553,6 @@ def test_constructed_file_swapped_after_guard_read_it_is_refused_before_the_repl
         )
     ],
 )
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_a_recheck_refusal_caught_in_the_body_still_ends_the_transaction(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, op: str, when: str
 ) -> None:
@@ -2625,7 +2593,6 @@ def test_constructed_a_recheck_refusal_caught_in_the_body_still_ends_the_transac
     assert record_for(guard, SnapshotStore(store), "caught").state != "committed"
 
 
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_dry_run_has_no_snapshot_to_compare_and_is_not_refused(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None
 ) -> None:
@@ -2649,7 +2616,6 @@ def test_constructed_dry_run_has_no_snapshot_to_compare_and_is_not_refused(
     sys.platform != "win32",
     reason="os.rename replaces on POSIX; only Windows has the non-replacing rename item 3 names",
 )
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_windows_create_whose_rename_finds_the_target_is_refused(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None
 ) -> None:
@@ -2699,7 +2665,6 @@ def _touch(op: str, tx: Any, rel: str, data: bytes) -> None:
     ("first", "rel", "change", "second"),
     [pytest.param(f, r, c, s, id=f"constructed-{n}") for n, f, r, c, s in SECOND_TOUCH_CASES],
 )
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_a_path_changed_after_this_transaction_touched_it_is_refused(
     guard: Any,
     tmp_path: Path,
@@ -2761,7 +2726,6 @@ ROLLBACK_CASES = (
     ("op", "rel", "change"),
     [pytest.param(o, r, c, id=f"constructed-{n}") for n, o, r, c in ROLLBACK_CASES],
 )
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_rollback_leaves_a_path_someone_else_changed_and_says_so(
     guard: Any,
     tmp_path: Path,
@@ -2801,7 +2765,6 @@ def test_constructed_rollback_leaves_a_path_someone_else_changed_and_says_so(
     assert record.rolled_back is False
 
 
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_store_lock_never_creates_a_missing_store(
     guard: Any, tmp_path: Path, idle: None, _user_data_redirected: Path
 ) -> None:
@@ -2826,7 +2789,6 @@ def test_constructed_store_lock_never_creates_a_missing_store(
     "gone",
     [pytest.param(g, id=f"constructed-{g}") for g in ("temp-file", "parent-directory")],
 )
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_a_named_temp_that_no_longer_exists_is_listed_nowhere(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, children: list[Child], gone: str
 ) -> None:
@@ -2852,7 +2814,6 @@ def test_constructed_a_named_temp_that_no_longer_exists_is_listed_nowhere(
     assert vanished not in record.temps_left
 
 
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_undo_of_a_rollback_incomplete_record_restores_and_can_be_undone(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None
 ) -> None:
@@ -2892,7 +2853,6 @@ UNDO_CHANGES = (
     ("rel", "change"),
     [pytest.param(r, c, id=f"constructed-{n}") for n, r, c in UNDO_CHANGES],
 )
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_undo_refuses_a_file_changed_after_its_own_pre_write_snapshot(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, rel: str, change: str
 ) -> None:
@@ -2929,7 +2889,6 @@ def test_constructed_undo_refuses_a_file_changed_after_its_own_pre_write_snapsho
 @pytest.mark.parametrize(
     "route", [pytest.param(r, id=f"constructed-{r}") for r in ("rollback", "undo")]
 )
-@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_rollback_and_undo_writes_are_rechecked_after_their_temp_fsync(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, route: str
 ) -> None:
