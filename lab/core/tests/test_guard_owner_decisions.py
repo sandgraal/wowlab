@@ -59,10 +59,6 @@ and written into §6.10 as "Clarified 2026-09-22" (PR #53):
   neither `temps_removed` nor `temps_left`.
 - "Restore" in item 1 is `tx.restore` inside `transaction()`; there is no
   module-level restore to lock.
-
-Not graded, by decision: a file changed between `undo()`'s own pre-write
-snapshot and its first touch. There is no public point at which a test can
-make that change.
 """
 
 from __future__ import annotations
@@ -1398,10 +1394,18 @@ def test_constructed_flock_outcomes_are_busy_or_a_guard_error(
     "failure", [pytest.param(f, id=f"constructed-{f}") for f in ("unsupported", "io-error")]
 )
 @pytest.mark.parametrize(
-    "route",
+    ("route", "which"),
     [
-        pytest.param(r, id=f"constructed-{r}")
-        for r in ("transaction", "dry-run", "undo", "store-lock")
+        pytest.param(r, w, id=f"constructed-{r}-{w}-lock")
+        for r, w in (
+            ("transaction", "install"),
+            ("dry-run", "install"),
+            ("undo", "install"),
+            ("transaction", "store"),
+            ("dry-run", "store"),
+            ("undo", "store"),
+            ("store-lock", "store"),
+        )
     ],
 )
 @pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
@@ -1413,12 +1417,13 @@ def test_constructed_a_non_busy_failure_on_one_lock_is_a_plain_guard_error(
     flavor: Flavor,
     idle: None,
     route: str,
+    which: str,
     failure: str,
 ) -> None:
     """Item 1, mechanism: a failure other than "held" is a `GuardError`,
-    never `GuardBusyError`, on whichever lock it happens: here only the
-    install lock fails (transaction, dry run, undo), or only the store lock
-    (`store_lock`). Nothing is written or journaled, and the lock that was
+    never `GuardBusyError`, on whichever lock it happens: only the install
+    lock fails, or only the store lock (transaction, dry run, undo, and
+    `store_lock`). Nothing is written or journaled, and a lock that was
     taken is released again."""
     import fcntl
 
@@ -1426,7 +1431,7 @@ def test_constructed_a_non_busy_failure_on_one_lock_is_a_plain_guard_error(
     if route == "undo":
         _write_font(guard, flavor, store, "to-undo")
     store.mkdir(parents=True, exist_ok=True)
-    target = store / "lock" if route == "store-lock" else install_lock_file(tmp_path, install_root)
+    target = store / "lock" if which == "store" else install_lock_file(tmp_path, install_root)
     error = {
         "unsupported": OSError(errno.ENOLCK, "constructed: no locks on this volume"),
         "io-error": OSError(errno.EIO, "constructed: I/O error"),
@@ -1474,6 +1479,7 @@ def test_constructed_a_non_busy_failure_on_one_lock_is_a_plain_guard_error(
             "inside-the-allowlist",
             "the-install-root",
             "locks-resolves-to-a-directory-containing-the-install",
+            "itself-a-link-into-the-install",
         )
     ],
 )
@@ -1505,6 +1511,10 @@ def test_constructed_a_user_data_directory_that_reaches_the_install_is_refused(
         data = flavor.path / "WTF" / "wowlab"
     elif where == "the-install-root":
         data = install_root
+    elif where == "itself-a-link-into-the-install":
+        (flavor.path / "WTF" / "wowlab-real").mkdir()
+        data = tmp_path / "userdata-link"
+        symlink_or_skip(data, flavor.path / "WTF" / "wowlab-real", is_dir=True)
     else:
         data = tmp_path / "linked-userdata"
         data.mkdir()
@@ -1691,7 +1701,7 @@ def test_constructed_undo_plans_from_the_record_it_reads_under_the_store_lock(
     assert exc is None, f"undo of the re-read record failed: {exc!r}"
     assert (theirs.path / theirs_rel).read_bytes() == theirs_before, "the re-read record is undone"
     last = guard.history(store=store)[-1]
-    assert "theirs" in last.label and last.label != "theirs", last.label
+    assert [p.path for p in last.paths] == [theirs_rel], "undo journaled the path it restored"
 
 
 # ─── (2) leftover temp files ─────────────────────────────────────────────────
@@ -2564,11 +2574,19 @@ def test_constructed_file_swapped_after_guard_read_it_is_refused_before_the_repl
 
 
 @pytest.mark.parametrize(
-    "op", [pytest.param(o, id=f"constructed-{o}") for o in ("write", "delete")]
+    ("op", "when"),
+    [
+        pytest.param(o, w, id=f"constructed-{o}-{w}")
+        for o, w in (
+            ("write", "before-the-temp-file"),
+            ("write", "after-the-temp-fsync"),
+            ("delete", "after-the-journal-fsync"),
+        )
+    ],
 )
 @pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_a_recheck_refusal_caught_in_the_body_still_ends_the_transaction(
-    guard: Any, tmp_path: Path, flavor: Flavor, idle: None, op: str
+    guard: Any, tmp_path: Path, flavor: Flavor, idle: None, op: str, when: str
 ) -> None:
     """Item 3: a refusal at the re-check has the consequences of any
     `ChangedSinceSnapshotError`: a later operation raises `GuardError`
@@ -2578,8 +2596,10 @@ def test_constructed_a_recheck_refusal_caught_in_the_body_still_ends_the_transac
     rel = CONFIG if op == "write" else BINDINGS
     target = flavor.path / rel
     swap = _swap("another-file", target)
-    if op == "write":
+    if when == "before-the-temp-file":
         hook: Any = BeforeCreateIn(target.parent, target.name, swap)
+    elif when == "after-the-temp-fsync":
+        hook = AfterTempFsync(target.parent, swap)
     else:
         hook = AfterJournalFsync(store, swap)
     reached_end = False
@@ -2859,3 +2879,92 @@ def test_constructed_undo_of_a_rollback_incomplete_record_restores_and_can_be_un
 
     guard.undo(store=store)
     assert config.read_bytes() == EXTERNAL, "a second undo put back what the first replaced"
+
+
+UNDO_CHANGES = (
+    ("modified", CONFIG, "modify"),
+    ("removed", CONFIG, "remove"),
+    ("a-path-the-record-created-then-modified", NEW_SAVED, "modify"),
+)
+
+
+@pytest.mark.parametrize(
+    ("rel", "change"),
+    [pytest.param(r, c, id=f"constructed-{n}") for n, r, c in UNDO_CHANGES],
+)
+@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
+def test_constructed_undo_refuses_a_file_changed_after_its_own_pre_write_snapshot(
+    guard: Any, tmp_path: Path, flavor: Flavor, idle: None, rel: str, change: str
+) -> None:
+    """Item 3 applies to `undo()` too, which is a transaction: a path that
+    changes after undo's own pre-write snapshot and before undo touches it
+    is refused with `ChangedSinceSnapshotError` naming it; the other
+    writer's state stays, and undo's record does not commit. The change is
+    made right after `SnapshotStore.create` returns inside `undo()`."""
+    store = tmp_path / "store"
+    target = flavor.path / rel
+    with guard.transaction(flavor, label="mine", store=store) as tx:
+        tx.write(CONFIG, NEW_CONFIG)
+        tx.write(NEW_SAVED, NEW_LUA)
+    real_create = SnapshotStore.create
+    changed: list[bytes | None] = []
+
+    def create_then_change(self: SnapshotStore, *args: Any, **kwargs: Any) -> Any:
+        manifest = real_create(self, *args, **kwargs)
+        if not changed:
+            changed.append(_change(change, target))
+        return manifest
+
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(SnapshotStore, "create", create_then_change)
+        with refused(guard, "ChangedSinceSnapshotError", naming=rel):
+            guard.undo(store=store)
+    assert changed, "positive control: undo took its pre-write snapshot"
+    assert _held(target) == changed[0], "the other writer's state stays"
+    last = guard.history(store=store)[-1]
+    assert last.label != "mine", "undo journaled a record of its own"
+    assert last.state != "committed"
+
+
+@pytest.mark.parametrize(
+    "route", [pytest.param(r, id=f"constructed-{r}") for r in ("rollback", "undo")]
+)
+@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
+def test_constructed_rollback_and_undo_writes_are_rechecked_after_their_temp_fsync(
+    guard: Any, tmp_path: Path, flavor: Flavor, idle: None, route: str
+) -> None:
+    """Item 3: the re-check after the temp file's fsync guards every write
+    guard makes, its rollback's and `undo()`'s included. Config.wtf changes
+    just after the temp file that would put it back is fsynced: those bytes
+    survive. A rollback ends `rollback_incomplete` and names the path in the
+    error at exit; an `undo()` is refused with `ChangedSinceSnapshotError`
+    and its record ends `rollback_incomplete` (the disk moved since it read
+    the path)."""
+    store = tmp_path / "store"
+    config = flavor.path / CONFIG
+    hook = AfterTempFsync(config.parent, _swap("another-file", config))
+    if route == "rollback":
+        with (
+            pytest.raises(RuntimeError, match="constructed failure") as raised,
+            pytest.MonkeyPatch.context() as patched,  # outermost of the two: covers the exit
+            guard.transaction(flavor, label="failing", store=store) as tx,
+        ):
+            tx.write(CONFIG, NEW_CONFIG)
+            hook.arm(patched)
+            raise RuntimeError("constructed failure")
+        assert hook.fired, "positive control: the rollback wrote a temp file and fsynced it"
+        assert config.read_bytes() == EXTERNAL, "the bytes that arrived survive"
+        assert CONFIG in error_text(raised.value), "the error at exit names the path"
+        assert record_for(guard, SnapshotStore(store), "failing").state == "rollback_incomplete"
+        return
+    with guard.transaction(flavor, label="mine", store=store) as tx:
+        tx.write(CONFIG, NEW_CONFIG)
+    with pytest.MonkeyPatch.context() as patched:
+        hook.arm(patched)
+        with refused(guard, "ChangedSinceSnapshotError", naming=CONFIG):
+            guard.undo(store=store)
+    assert hook.fired, "positive control: undo wrote a temp file and fsynced it"
+    assert config.read_bytes() == EXTERNAL, "the bytes that arrived survive"
+    last = guard.history(store=store)[-1]
+    assert last.label != "mine"
+    assert last.state == "rollback_incomplete"
