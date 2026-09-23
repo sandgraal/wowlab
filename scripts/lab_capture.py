@@ -191,6 +191,7 @@ _WORD = rb"A-Za-z0-9\x80-\xff"
 _WORD_BYTES = frozenset(
     b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 ) | frozenset(range(0x80, 0x100))
+_GLUE_BYTES = _WORD_BYTES | {ord("_")}  # what makes an identity edit "embedded"
 _LINE_START = rb"(?:\A(?:\xef\xbb\xbf)?|(?<=[\r\n]))[ \t]*"
 # Spans the owner does not author and the scrubber therefore never rewrites.
 # Only text that is SHAPED like vocabulary qualifies; `## Notes for <name>:`
@@ -749,8 +750,9 @@ class Identity:
                 return
             if _overlaps(owned, start, end):
                 return
-            touching = (start > 0 and data[start - 1] in _WORD_BYTES) or (
-                end < len(data) and data[end] in _WORD_BYTES
+            # `_` joins words too (`Bar_Name_Frame`): it counts as touching here.
+            touching = (start > 0 and data[start - 1] in _GLUE_BYTES) or (
+                end < len(data) and data[end] in _GLUE_BYTES
             )
             edits.append(
                 Edit(start, data[start:end], new, reason, reason == "identity" and touching)
@@ -1436,7 +1438,9 @@ def _twin_realms(groups: Sequence[Path], realms: Sequence[Path]) -> dict[Path, l
     A group that is never settled keeps only the free candidates no other
     unsettled group also has. With more than one left, its folders are paired
     one by one in `_twin` (the second-name tie-break) or not at all; a
-    contested realm folder pairs with nobody.
+    contested realm folder pairs with nobody. If dropping the contested ones
+    leaves exactly one, the group keeps none: that one was left by the drop,
+    not chosen by the folders.
     """
     children_of = {realm: {_fold(c.name) for c in subdirs(realm)} for realm in realms}
     twinned = set().union(*children_of.values()) if children_of else set()
@@ -1467,7 +1471,11 @@ def _twin_realms(groups: Sequence[Path], realms: Sequence[Path]) -> dict[Path, l
             result[group] = [settled[group]]
             continue
         others = {r for g in open_groups if g != group for r in free(g)}
-        result[group] = [r for r in free(group) if r not in others]
+        kept = [r for r in free(group) if r not in others]
+        # One candidate left only because contested ones were dropped is not the
+        # folders deciding: the group stays unpaired. Two or more go to `_twin`.
+        forced = len(kept) == 1 and len(free(group)) > 1
+        result[group] = [] if forced else kept
     return result
 
 
@@ -1619,6 +1627,8 @@ class Planner:
         self.items: dict[Path, Item] = {}
         self.skipped: list[str] = []
         self.notes: list[str] = []  # plan-level, for the owner's eye; never a real name
+        self._character_matched = False
+        self._character_misses: list[tuple[str, str]] = []  # (flavor folder, why)
         self._verdicts: dict[Path, Verdict | None] = {}
 
     def add(
@@ -1714,8 +1724,14 @@ class Planner:
                 matching = [
                     u for u in units if key in {_nfc(n).casefold() for n in character_labels(u)}
                 ]
-                if units and not matching:  # the same shape as --account in _pick
-                    raise CaptureError(self._no_character(account, wanted))
+                if units and not matching:
+                    # A character lives in one flavor: only a miss in EVERY flavor
+                    # stops the run (check_character).
+                    self._character_misses.append(
+                        (flavor.name, self._no_character(account, wanted))
+                    )
+                elif matching:
+                    self._character_matched = True
                 units = matching
             character = newest_unit(units) or ()
             candidates = unpaired_twins(character)
@@ -1739,6 +1755,18 @@ class Planner:
         if log is not None:
             limit = self.args.log_lines
             self.add(flavor, log, f"first {limit} lines of the log", max_lines=limit)
+
+    def check_character(self) -> None:
+        """After every flavor is planned: stop if `--character` matched in none, else
+        note each flavor with characters where it matched nothing."""
+        if not self._character_misses:
+            return
+        if not self._character_matched:
+            generic = "--character: no such character in this flavor"
+            reasons = [why for _flavor, why in self._character_misses]
+            raise CaptureError(next((why for why in reasons if why != generic), generic))
+        for flavor, _why in self._character_misses:
+            self.notes.append(f"{flavor}: --character matched no character here; skipped")
 
     def _no_character(self, account: Path, wanted: str) -> str:
         """Why `--character` matched nothing, without the real name."""
@@ -2243,6 +2271,7 @@ def run(args: argparse.Namespace) -> int:
     planner.add(None, child(root, ".build.info"))
     for flavor in flavors:
         planner.plan_flavor(flavor)
+    planner.check_character()
 
     mode = "DRY RUN, nothing will be written" if args.dry_run else f"writing under {out}"
     print(f"lab_capture: {len(planner.items)} files from {len(flavors)} flavor(s); {mode}")
