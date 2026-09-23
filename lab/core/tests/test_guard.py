@@ -1495,7 +1495,19 @@ def test_constructed_journal_lives_with_the_store_and_leaves_the_store_healthy(
     # the store it was given, and not in memory or anywhere else.
     assert {r.label for r in guard.history(store=store.path)} == {"first", "second"}
     assert list(guard.history(store=tmp_path / "another-store")) == []
-    assert not _user_data_redirected.exists(), "an injected store means the default is not used"
+    # An injected store means the default is not used. Amended by M10-16T
+    # (§6.10 as amended 2026-09-22, item 1): the install lock lives under the
+    # user data directory, in `locks/`, and that is all that may appear there.
+    under_user_data = (
+        {p.relative_to(_user_data_redirected).as_posix() for p in _user_data_redirected.rglob("*")}
+        if _user_data_redirected.exists()
+        else set()
+    )
+    assert all(
+        rel in ("wowlab", "wowlab/locks")
+        or (rel.startswith("wowlab/locks/") and rel.count("/") == 2 and rel.endswith(".lock"))
+        for rel in under_user_data
+    ), sorted(under_user_data)
 
     # The journal must not break the store's own contracts (§6.9): every
     # manifest still loads, objects verify, and gc still runs.
@@ -2285,8 +2297,16 @@ def test_constructed_rollback_and_undo_treat_the_pre_write_snapshot_as_untrusted
     # A committed transaction with the same poisoned pre-write snapshot, so
     # the undo below grades the untrusted-snapshot rule and nothing about
     # whether `undo()` acts on a rolled-back record.
-    with guard.transaction(flavor, label="poisoned-commit", store=store.path) as tx:
-        tx.write(CONFIG, NEWER_CONFIG)
+    # Amended by M10-16T (§6.10 as amended 2026-09-22, item 3): the forgery is
+    # built from an older snapshot, so it disagrees with the disk at
+    # Config.wtf and the write may be refused instead, with nothing written.
+    before_commit = content(world)
+    try:
+        with guard.transaction(flavor, label="poisoned-commit", store=store.path) as tx:
+            tx.write(CONFIG, NEWER_CONFIG)
+    except guard.GuardError as refused_commit:
+        assert not isinstance(refused_commit, guard.ClientRunningError)
+        assert content(world) == before_commit, "a refused transaction leaves nothing behind"
     untouched_but_config()
     assert record_for(guard, store, "poisoned-commit").snapshot_id == forged.id
 
@@ -2452,15 +2472,35 @@ def test_constructed_undo_refuses_a_poisoned_entry_at_a_path_it_journaled(
 ) -> None:
     """The entries undo does read, the journaled ones, are checked: no
     symlink, and the hash agrees with the journal's `before`. Refused before
-    anything is written."""
+    anything is written.
+
+    Amended by M10-16T (§6.10 as amended 2026-09-22, item 3): every case here
+    forges a pre-write snapshot that disagrees with the disk at a path the
+    transaction then touches, so the transaction itself may be refused
+    (`ChangedSinceSnapshotError`, a `GuardError`) and roll back with nothing
+    written. Then no poisoned entry reaches the install through it or
+    through the `undo()` that follows, whatever that undo decides."""
     with guard.transaction(flavor, label="base", store=store.path):
         pass
     base = store.show(record_for(guard, store, "base").snapshot_id)
     forged = forge_edited(store, base, _poison_touched(case))
     monkeypatch.setattr(SnapshotStore, "create", lambda self, *a, **k: forged)
-    with guard.transaction(flavor, label="touched", store=store.path) as tx:
-        tx.write(CONFIG, NEW_CONFIG)
-        tx.write(NEW_SAVED, NEW_LUA)
+    before_touched = content(world)
+    try:
+        with guard.transaction(flavor, label="touched", store=store.path) as tx:
+            tx.write(CONFIG, NEW_CONFIG)
+            tx.write(NEW_SAVED, NEW_LUA)
+    except guard.GuardError as refused_touch:
+        assert not isinstance(refused_touch, guard.ClientRunningError)
+        assert content(world) == before_touched, "a refused transaction leaves nothing behind"
+        assert record_for(guard, store, "touched").snapshot_id == forged.id
+        try:
+            guard.undo(store=store.path)
+        except guard.GuardError as refused_undo:
+            assert not isinstance(refused_undo, guard.ClientRunningError)
+        assert content(world) == before_touched
+        assert not (flavor.path / CONFIG).is_symlink()
+        return
     assert record_for(guard, store, "touched").snapshot_id == forged.id
     before = content(world)
 
@@ -3152,6 +3192,10 @@ PUBLIC_API = {
     "GuardError",
     "ClientRunningError",
     "PathNotAllowedError",
+    # Amended by M10-16T (§6.10 as amended 2026-09-22, item 4): exported.
+    "GuardBusyError",
+    "ChangedSinceSnapshotError",
+    "store_lock",
 }
 
 
