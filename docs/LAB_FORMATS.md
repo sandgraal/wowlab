@@ -269,8 +269,9 @@ Dated entries, newest last. Each names the fixture that prompted it.
   the platform: one macOS client wrote LF (`Config.wtf`, both
   `config-cache.wtf`, `chat-cache.txt`, `layout-local.txt`, `.build.info`,
   `.flavor.info`), CRLF (`bindings-cache.wtf`, the character
-  `macros-cache.txt`; and, from part 2, every SavedVariables file and
-  `AddOns.txt`), neither (the edit-mode caches, one line
+  `macros-cache.txt`; and, from part 2, `AddOns.txt` and every
+  SavedVariables file, the 5 fixtures and all 105 on the install by a byte
+  count, macOS build 69977), neither (the edit-mode caches, one line
   ending in a NUL byte; the flagged caches, exactly `2` then a NUL) and both
   within one file (the text-to-speech caches: first line LF, the rest CRLF)
   in the same install. A text reader that drops a trailing NUL breaks L4. Serializers keep each document's
@@ -347,7 +348,9 @@ Dated entries, newest last. Each names the fixture that prompted it.
   negative integers (`-260`), whole values with no point (`1`) and floats in
   shortest round-trip form with at most 16 significant digits
   (`0.6745098233222961`, `0.0117647058823529`), with no exponent, hex,
-  negative zero or non-finite value; the only escape seen is `\\`
+  negative zero or non-finite value (no value in the file needs 17 digits, so
+  how the client writes one that does is **[verify]**; §4.2's "up to 17"
+  stays open); the only escape seen is `\\`
   (`\"`, `\n`, `\r` and `\ddd` stay **[verify]**); colour codes include the
   named form `|cnIQ0:` … `|r`, not only `|cffRRGGBB`; item links are
   `|Hitem:<id>::::::::<a>:<b>:…|h[Name]|h` (field meanings **[verify]**).
@@ -362,8 +365,8 @@ Dated entries, newest last. Each names the fixture that prompted it.
   `<AddonName>: <state>` per line; CRLF with a final CRLF, no BOM, no header.
   Only `enabled` is observed; `disabled` is **[verify]**. The file lists two
   Blizzard addons and no third-party addon, although Syndicator demonstrably
-  ran for a character of that first name, so a missing addon means "not
-  recorded", not "disabled". Its effective state (the TOC's `DefaultState`?)
+  ran for a character of that first name, so a missing addon cannot be read
+  as "disabled". Its effective state (the TOC's `DefaultState`?)
   is **[verify]**, and so is whether the Forever client reads this file.
 - **2026-09-22, §3, part 2 (`DBM-Brawlers.toc`).** No blank line separates
   the 34 directives from the 21 file lines, so a parser must not need one. A

@@ -29,13 +29,14 @@ marked `@pytest.mark.live`.
   TOC listing it is only the author's claim. Still to confirm in game with
   `/dump (select(4, GetBuildInfo()))`. Line endings follow the file kind
   (`docs/LAB_FORMATS.md` amendments of 2026-09-22). Combat log, SavedVariables
-  line endings, `WOW_PROJECT_ID` and the preferred TOC suffix: still open.
+  line endings (resolved below), `WOW_PROJECT_ID` and the preferred TOC suffix: still open.
 - **Known state update (2026-09-22, M10-03 part 2):** the beta patched from
   1.60.1.69913 to 1.60.1.69977 between the stage-0 and stage-1 captures. The
   69977 version is from the capture tool's rows; its `.build.info` is not
   committed. The patch is still 1.60.1, so the interface number expected is
-  still `16001`. SavedVariables line endings are resolved: CRLF with a
-  leading blank line, no BOM, no indentation. No addon in the install ships
+  still `16001`. SavedVariables line endings are resolved on macOS, build
+  69977: CRLF with a leading blank line, no BOM, no indentation (all 105
+  files on the install by a byte count); Windows is **[verify]**. No addon in the install ships
   more than one TOC, so the preferred suffix is still open; the Forever
   `Logs/` folder holds no combat log yet.
 
