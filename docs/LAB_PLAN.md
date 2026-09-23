@@ -323,6 +323,41 @@ Measure it in the PR; if pure Python misses the target, report the numbers
 and stop. Do not reach for a C extension or a third-party parser without an
 ADR.
 
+*Amended 2026-09-22 (M10-04T domain review; conductor decisions within
+§4 and L4):*
+
+1. **Strings are bytes.** A Lua 5.1 string is an 8-bit byte string.
+   `LuaString.data` is the decoded bytes; `LuaString.value` is `data`
+   decoded as UTF-8 with `surrogateescape`, so invalid UTF-8 (a name cut
+   mid-character, binary an addon stored) parses and rebuilds byte for
+   byte; `LuaString.raw` is the source bytes between the quotes. `\ddd` is
+   one byte (0 to 255), so `"\195\169"` is `"é"`. Raw bytes 0x80 and above
+   are kept as they are. A `value` holding lone surrogates is not JSON-safe;
+   the CLI's output models (M10-14) carry `data` instead.
+2. **Escapes are Lua 5.1's.** Accepted, with their Lua 5.1 meanings: `\a`,
+   `\b`, `\f`, `\n`, `\r`, `\t`, `\v`, `\\`, `\"`, `\'`, `\ddd` (one to
+   three digits, at most 255), and a backslash before a line break (CRLF,
+   LFCR, LF or CR counts as one line break, decodes to `"\n"` and advances
+   the line count by one). Rejected with a position: `\x`, `\u{…}`, `\z`, a
+   `\ddd` above 255, and any other character after a backslash. Which of
+   these the client actually writes stays **[verify]** (§4.2 amendment).
+3. **Raw control bytes.** A raw tab, 0x02 or other control byte inside a
+   string literal is accepted and kept; a raw NUL is rejected as §4.3 says
+   (**[verify]**: the same client writes raw control bytes into other
+   files).
+4. **`to_python()`.** A top-level `X = nil` is kept as the key with `None`,
+   so it differs from a file that never names `X`. An empty table becomes
+   `{}`. Every Lua 5.1 number is a double; `int` or `float` in the output
+   follows how the number is written, not a client type, and the
+   docstrings say so.
+5. **Performance.** Until a real file of that size is captured, the M10-04
+   PR measures the target on a constructed input and says it is
+   constructed.
+6. **Positional against bracketed keys.** Lua 5.1 stores positional entries
+   after bracketed ones, so in `{"x", [1] = "y"}` the client loads `"x"`
+   for key 1 (**[verify]**). The parser flags the later entry in the source
+   as the duplicate; `to_python()` takes the value Lua 5.1 would load.
+
 ### 6.5 `wtfconfig` — Config.wtf, bindings, macros (M10-07)
 
 Per `docs/LAB_FORMATS.md` §5–§7. Read-only in Wave 1, lossless (L4):
