@@ -496,6 +496,42 @@ transaction. `guard.history()` lists transactions.
 A dry-run mode returns the plan (paths, before/after hashes, bytes) without
 touching anything; the CLI prints the plan and asks unless `--yes`.
 
+*Amended 2026-09-22 (owner decisions after the M10-11 reviews; tickets
+M10-16T and M10-16):*
+
+1. **One writer at a time.** `transaction`, `undo` and `restore` hold two
+   exclusive, non-blocking OS advisory locks for their whole duration: one
+   on `<store>/lock`, and one on a lock file under the user data directory,
+   `platformdirs.user_data_path("wowlab")/locks/<sha256 of the install
+   root's resolved path>.lock`, never inside the install (L1). The locks are
+   taken before the client check and released on exit, including on an
+   exception; the operating system releases them if the process dies, so a
+   lock is never stale. If either is held, the call raises `GuardBusyError`
+   (a `GuardError`) and nothing is written or journaled. A dry run takes the
+   same locks. Journal sequence numbers are therefore unique per store, and
+   `undo()`'s "most recent transaction" is well defined.
+2. **Leftover temp files are cleaned up.** Before creating a temp file
+   inside the install, guard records its path in the journal, written and
+   fsynced first, like the before-hash. On enter, after the locks and the
+   client check and before the pre-write snapshot, `transaction`, `undo` and
+   `restore` remove each temp file that an earlier journal record names and
+   that still exists, but only if it is a regular file (not a link), its
+   name matches guard's temp-file pattern, and it lies inside the
+   allowlist. Anything else a record names is left alone and reported. Each
+   removal is recorded in the new journal entry. The cleanup never deletes
+   anything else.
+3. **A file changed after the pre-write snapshot is refused.** At the first
+   touch of a path in a transaction (write, delete or restore), guard
+   compares the disk with the pre-write snapshot's entry for that path
+   (content hash and kind, or absent against present). If they differ, the
+   operation raises `ChangedSinceSnapshotError` (a `GuardError`) naming the
+   path and telling the caller to retry; nothing is written for that path,
+   and the transaction rolls back on exit and cannot commit, even if the
+   caller catches the error. Immediately before each replace or unlink,
+   guard also re-checks that the file is still the one it read (same
+   identity and hash); a mismatch raises the same error. Rollback and undo
+   therefore only ever need bytes the pre-write snapshot holds.
+
 ### 6.11 CLI — `wowlab` (M10-14)
 
 ```
