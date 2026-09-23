@@ -88,6 +88,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
+import platformdirs
 import pytest
 
 from wowlab_core.snapshot import SnapshotError, SnapshotStore
@@ -253,8 +254,10 @@ def store_state(guard: Any, store: Path) -> tuple[object, ...]:
 
 
 def journal_files(store: Path) -> list[Path]:
-    """Files under the store outside `objects/` and `manifests/`."""
-    skip = (store / "objects", store / "manifests")
+    """Files under the store outside `objects/`, `manifests/` and `tmp/` (the
+    snapshot store's own staging, where a manifest naming a leftover temp
+    is written on its way to `manifests/`)."""
+    skip = (store / "objects", store / "manifests", store / "tmp")
     return [
         p
         for p in store.rglob("*")
@@ -565,14 +568,13 @@ class BeforeCreateIn:
         return self._io_open(file, mode, *args, **kwargs)
 
 
-class AfterJournalFsync:
-    """Runs `action` once, right after the first `os.fsync`/`os.fdatasync` of
-    a file or directory under the store outside `objects/` and `manifests/`
-    (the write-ahead journal naming the path, which comes after guard read
-    it and before the unlink)."""
+class AfterTempFsync:
+    """Runs `action` once, right after the first `os.fsync`/`os.fdatasync`
+    of a file that is a `.wowlab-*.tmp` in `directory` (guard's temp file,
+    written and fsynced; the re-check comes after this)."""
 
-    def __init__(self, store: Path, action: Callable[[], None]) -> None:
-        self.store = store
+    def __init__(self, directory: Path, action: Callable[[], None]) -> None:
+        self.directory = directory
         self.action = action
         self.fired = False
         self._fsync = os.fsync
@@ -583,8 +585,50 @@ class AfterJournalFsync:
         if self._fdatasync is not None:
             monkeypatch.setattr(os, "fdatasync", self._sync(self._fdatasync))
 
+    def _sync(self, real: Callable[[Any], None]) -> Callable[[Any], None]:
+        def call(fd: Any) -> None:
+            real(fd)
+            if self.fired:
+                return
+            ident = G._file_id(os.fstat(fd if isinstance(fd, int) else fd.fileno()))
+            temps = [
+                p
+                for p in self.directory.iterdir()
+                if TEMP_NAME.fullmatch(p.name) and not p.is_symlink()
+            ]
+            if any(G._file_id(p.lstat()) == ident for p in temps):
+                self.fired = True
+                self.action()
+
+        return call
+
+
+class AfterJournalFsync:
+    """Runs `action` once, right after the first `os.fsync`/`os.fdatasync` of
+    a file or directory under the store outside `objects/`, `manifests/` and `tmp/`
+    (the write-ahead journal naming the path, which comes after guard read
+    it and before the unlink)."""
+
+    def __init__(
+        self,
+        store: Path,
+        action: Callable[[], None],
+        when: Callable[[], bool] = lambda: True,
+    ) -> None:
+        self.store = store
+        self.action = action
+        self.when = when
+        self.fired = False
+        self._fsync = os.fsync
+        self._fdatasync = getattr(os, "fdatasync", None)
+
+    def arm(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(os, "fsync", self._sync(self._fsync))
+        if self._fdatasync is not None:
+            monkeypatch.setattr(os, "fdatasync", self._sync(self._fdatasync))
+
     def _journal_ids(self) -> set[tuple[int, int]]:
-        skip = (self.store / "objects", self.store / "manifests")
+        skip = (self.store / "objects", self.store / "manifests", self.store / "tmp")
         found = {G._file_id(self.store.stat())}
         for p in self.store.rglob("*"):
             if not p.is_symlink() and not any(d == p or d in p.parents for d in skip):
@@ -597,7 +641,7 @@ class AfterJournalFsync:
             if self.fired:
                 return
             number = fd if isinstance(fd, int) else fd.fileno()
-            if G._file_id(os.fstat(number)) in self._journal_ids():
+            if G._file_id(os.fstat(number)) in self._journal_ids() and self.when():
                 self.fired = True
                 self.action()
 
@@ -730,6 +774,7 @@ def test_constructed_store_lock_is_the_store_lock_alone_in_this_process_and_othe
     assert holder.line() == "entered"
     assert_busy(guard, attempt(lambda: _store_locked(guard, store)), "store_lock")
     holder.kill()
+    eventually(lambda: _store_locked(guard, store))
     holder = spawn(children, tmp_path, mode="hold-store-lock", **kid)
     assert holder.line() == "entered"
     assert_busy(guard, attempt(lambda: _write_font(guard, flavor, store, "vs-child")), "tx")
@@ -1348,6 +1393,140 @@ def test_constructed_flock_outcomes_are_busy_or_a_guard_error(
     assert (strict_state(world), store_state(guard, store)) == before
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="fcntl.flock is the POSIX mechanism")
+@pytest.mark.parametrize(
+    "failure", [pytest.param(f, id=f"constructed-{f}") for f in ("unsupported", "io-error")]
+)
+@pytest.mark.parametrize(
+    "route",
+    [
+        pytest.param(r, id=f"constructed-{r}")
+        for r in ("transaction", "dry-run", "undo", "store-lock")
+    ],
+)
+@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
+def test_constructed_a_non_busy_failure_on_one_lock_is_a_plain_guard_error(
+    guard: Any,
+    tmp_path: Path,
+    world: Path,
+    install_root: Path,
+    flavor: Flavor,
+    idle: None,
+    route: str,
+    failure: str,
+) -> None:
+    """Item 1, mechanism: a failure other than "held" is a `GuardError`,
+    never `GuardBusyError`, on whichever lock it happens: here only the
+    install lock fails (transaction, dry run, undo), or only the store lock
+    (`store_lock`). Nothing is written or journaled, and the lock that was
+    taken is released again."""
+    import fcntl
+
+    store = tmp_path / "store"
+    if route == "undo":
+        _write_font(guard, flavor, store, "to-undo")
+    store.mkdir(parents=True, exist_ok=True)
+    target = store / "lock" if route == "store-lock" else install_lock_file(tmp_path, install_root)
+    error = {
+        "unsupported": OSError(errno.ENOLCK, "constructed: no locks on this volume"),
+        "io-error": OSError(errno.EIO, "constructed: I/O error"),
+    }[failure]
+    real = fcntl.flock
+    hit: list[bool] = []
+
+    def flock(fd: Any, operation: int) -> None:
+        number = fd if isinstance(fd, int) else fd.fileno()
+        if (
+            operation & fcntl.LOCK_EX
+            and target.is_file()
+            and G._file_id(os.fstat(number)) == G._file_id(target.stat())
+        ):
+            hit.append(True)
+            raise error
+        real(fd, operation)
+
+    def call() -> None:
+        if route == "undo":
+            guard.undo(store=store)
+        elif route == "store-lock":
+            _store_locked(guard, store)
+        else:
+            with guard.transaction(
+                flavor, label="injected", store=store, dry_run=route == "dry-run"
+            ) as tx:
+                tx.write(CONFIG, NEWER_CONFIG)
+
+    before = (strict_state(world), store_state(guard, store))
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(fcntl, "flock", flock)
+        exc = attempt(call)
+    assert hit, "positive control: the lock that fails was asked for"
+    assert_plain_guard_error(guard, exc, f"{route} with a lock that failed ({failure})")
+    assert (strict_state(world), store_state(guard, store)) == before
+    _write_font(guard, flavor, store, "afterwards")  # nothing stayed locked
+
+
+@pytest.mark.parametrize(
+    "where",
+    [
+        pytest.param(w, id=f"constructed-{w}")
+        for w in (
+            "inside-the-allowlist",
+            "the-install-root",
+            "locks-resolves-to-a-directory-containing-the-install",
+        )
+    ],
+)
+@pytest.mark.parametrize(
+    "route", [pytest.param(r, id=f"constructed-{r}") for r in ("transaction", "dry-run", "undo")]
+)
+@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
+def test_constructed_a_user_data_directory_that_reaches_the_install_is_refused(
+    guard: Any,
+    tmp_path: Path,
+    world: Path,
+    install_root: Path,
+    flavor: Flavor,
+    idle: None,
+    monkeypatch: pytest.MonkeyPatch,
+    where: str,
+    route: str,
+) -> None:
+    """Item 1, lock files: `locks/` and the install lock are part of the
+    store-overlap check, so a user data directory inside the install (in an
+    allowlisted subtree, or the install root itself), or one whose `locks/`
+    resolves to a directory containing the install, is refused before any
+    lock file is created: a plain `GuardError`, nothing in the install, no
+    `locks/`. The store itself is elsewhere."""
+    store = tmp_path / "store"
+    if route == "undo":
+        _write_font(guard, flavor, store, "to-undo")
+    if where == "inside-the-allowlist":
+        data = flavor.path / "WTF" / "wowlab"
+    elif where == "the-install-root":
+        data = install_root
+    else:
+        data = tmp_path / "linked-userdata"
+        data.mkdir()
+        symlink_or_skip(data / "locks", world, is_dir=True)
+    monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: data)
+    before = (strict_state(world), store_state(guard, store))
+
+    def call() -> None:
+        if route == "undo":
+            guard.undo(store=store)
+        else:
+            with guard.transaction(
+                flavor, label="reaches", store=store, dry_run=route == "dry-run"
+            ) as tx:
+                tx.write(CONFIG, NEWER_CONFIG)
+
+    assert_plain_guard_error(guard, attempt(call), f"{route} with user data at {where}")
+    assert (strict_state(world), store_state(guard, store)) == before
+    if where != "locks-resolves-to-a-directory-containing-the-install":
+        assert not (data / "locks").exists(), "no locks/ inside the install"
+
+
 @pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_locks_use_flock_or_msvcrt_locking_and_never_lockf(
     guard: Any, tmp_path: Path, install_root: Path, flavor: Flavor, idle: None
@@ -1437,38 +1616,64 @@ def test_constructed_lock_files_are_never_truncated_written_or_deleted(
         assert G._file_id(lock.stat()) == identity, f"{lock} was replaced or recreated"
 
 
+@pytest.mark.parametrize(
+    "between",
+    [
+        pytest.param(b, id=f"constructed-{b}")
+        for b in ("another-install", "the-same-flavor", "another-flavor-of-the-install")
+    ],
+)
 @pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_undo_plans_from_the_record_it_reads_under_the_store_lock(
     guard: Any,
     tmp_path: Path,
     world: Path,
+    install_root: Path,
     flavor: Flavor,
     idle: None,
     children: list[Child],
+    between: str,
 ) -> None:
     """Item 1, order: `undo()` finds the flavor from an unlocked read, takes
     the store lock, re-reads the journal and plans only from that. Here
-    another process commits a transaction on another install through the
-    same store in between; the record undo re-reads names another install,
-    so undo raises `GuardError` and changes nothing in either install."""
+    another process commits a transaction through the same store in between,
+    just before undo opens `<store>/lock`. If the record undo re-reads names
+    another install, undo raises `GuardError` and changes nothing in either
+    install; if it names this install (the same flavor, or another flavor of
+    it), undo reverts that record, not the one it first read."""
+    if between == "another-install":
+        theirs, theirs_rel, theirs_before = (
+            G._other_install(world),
+            CONFIG,
+            ALLOWLISTED_FILES[CONFIG],
+        )
+    elif between == "the-same-flavor":
+        theirs, theirs_rel, theirs_before = flavor, FONT, ALLOWLISTED_FILES[FONT]
+    else:
+        theirs = G._other_flavor(install_root)
+        theirs_rel, theirs_before = CONFIG, (theirs.path / CONFIG).read_bytes()
     store = tmp_path / "store"
     with guard.transaction(flavor, label="mine", store=store) as tx:
         tx.write(CONFIG, NEW_CONFIG)
-    other = G._other_install(world)
     fired: list[str] = []
     real_open = os.open
-    lock_path = str(store / "lock")
+
+    def is_store_lock(path: Any, dir_fd: int | None) -> bool:
+        spelled = G._spelled(path, dir_fd, [store, store.resolve()])
+        if spelled is None or Path(spelled).name != "lock":
+            return False
+        return Path(spelled).parent.exists() and Path(spelled).parent.samefile(store)
 
     def watching(path: Any, flags: int, mode: int = 0o777, *, dir_fd: int | None = None) -> int:
-        if not fired and not isinstance(path, int) and os.fsdecode(path) == lock_path:
+        if not fired and not isinstance(path, int) and is_store_lock(path, dir_fd):
             fired.append(
                 child_says(
                     children,
                     tmp_path,
                     mode="commit",
                     label="theirs",
-                    writes=[[CONFIG, NEWER_CONFIG.hex()]],
-                    flavor=str(other.path),
+                    writes=[[theirs_rel, NEWER_CONFIG.hex()]],
+                    flavor=str(theirs.path),
                     store=str(store),
                 )
             )
@@ -1478,9 +1683,15 @@ def test_constructed_undo_plans_from_the_record_it_reads_under_the_store_lock(
         patched.setattr(os, "open", watching)
         exc = attempt(lambda: guard.undo(store=store))
     assert fired == ["committed"], "undo opened the store lock, and the other commit landed first"
-    assert_plain_guard_error(guard, exc, "undo of a record that changed install under it")
-    assert (flavor.path / CONFIG).read_bytes() == NEW_CONFIG
-    assert (other.path / CONFIG).read_bytes() == NEWER_CONFIG
+    assert (flavor.path / CONFIG).read_bytes() == NEW_CONFIG, "the record first read is left"
+    if between == "another-install":
+        assert_plain_guard_error(guard, exc, "undo of a record that changed install under it")
+        assert (theirs.path / theirs_rel).read_bytes() == NEWER_CONFIG
+        return
+    assert exc is None, f"undo of the re-read record failed: {exc!r}"
+    assert (theirs.path / theirs_rel).read_bytes() == theirs_before, "the re-read record is undone"
+    last = guard.history(store=store)[-1]
+    assert "theirs" in last.label and last.label != "theirs", last.label
 
 
 # ─── (2) leftover temp files ─────────────────────────────────────────────────
@@ -1516,6 +1727,8 @@ def leave_temps(
         store=str(store),
     )
     assert child.wait() == DIED, "the child died inside the rename of Config.wtf"
+    if sys.platform == "win32":  # the system may take a moment to drop the dead child's locks
+        eventually(lambda: _dry_run(flavor, store))
     (a,) = listing(icon_dir) - icon_before - {Path(ICON).name}
     (b,) = listing(config_dir) - config_before
     for name in (a, b):
@@ -1524,6 +1737,13 @@ def leave_temps(
     return Leftovers(
         flavor.path, f"{Path(ICON).parent.as_posix()}/{a}", f"{Path(CONFIG).parent.as_posix()}/{b}"
     )
+
+
+def _dry_run(flavor: Flavor, store: Path) -> None:
+    with sys.modules["wowlab_core.guard"].transaction(
+        flavor, label="probe", store=store, dry_run=True
+    ):
+        pass
 
 
 def _last_record(guard: Any, store: Path) -> Any:
@@ -1737,10 +1957,12 @@ class LookupSpy:
 
     NAMES = ("stat", "lstat", "open", "listdir", "scandir", "access")
 
-    def __init__(self, watched: set[str], marker: str) -> None:
+    def __init__(self, watched: set[str], marker: str, roots: list[Path]) -> None:
         self.watched = watched
         self.marker = marker
+        self.roots = roots
         self.seen: list[str] = []
+        self._resolving = False
         self._real = {n: getattr(os, n) for n in self.NAMES}
 
     def arm(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1749,16 +1971,27 @@ class LookupSpy:
 
     def _wrap(self, name: str) -> Callable[..., Any]:
         def call(*args: Any, **kwargs: Any) -> Any:
-            if args and isinstance(args[0], (str, bytes, os.PathLike)):
-                spelled = os.fsdecode(args[0])
-                normal = os.path.normpath(Path(spelled).absolute())
-                if normal in self.watched or self.marker in spelled:
-                    self.seen.append(f"{name}({spelled})")
+            if not self._resolving and args and isinstance(args[0], (str, bytes, os.PathLike)):
+                spelled: str | None = os.fsdecode(args[0])
+                if kwargs.get("dir_fd") is not None:
+                    # Relative to a directory descriptor: placed like the other spies.
+                    self._resolving = True
+                    try:
+                        spelled = G._spelled(args[0], kwargs["dir_fd"], self.roots)
+                    finally:
+                        self._resolving = False
+                if spelled is not None:
+                    normal = os.path.normpath(Path(spelled).absolute())
+                    if normal in self.watched or self.marker in spelled:
+                        self.seen.append(f"{name}({spelled})")
             return self._real[name](*args, **kwargs)
 
         return call
 
 
+@pytest.mark.parametrize(
+    "route", [pytest.param(r, id=f"constructed-{r}") for r in ("transaction", "undo")]
+)
 @pytest.mark.parametrize("case", [pytest.param(c, id=f"constructed-{c}") for c in NOT_A_TEMP])
 @pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_cleanup_removes_only_regular_temp_files_inside_the_allowlist(
@@ -1770,6 +2003,7 @@ def test_constructed_cleanup_removes_only_regular_temp_files_inside_the_allowlis
     idle: None,
     children: list[Child],
     case: str,
+    route: str,
 ) -> None:
     """Item 2: a temp path is removed only if its last component fullmatches
     the pattern as the directory lists it, the path passes the write rules
@@ -1787,22 +2021,72 @@ def test_constructed_cleanup_removes_only_regular_temp_files_inside_the_allowlis
     if case in NEVER_LOOKED_UP and not left.startswith("//"):
         for base in (flavor.path, flavor.path.resolve()):
             watched.add(os.path.normpath(base / left))
-    spy = LookupSpy(watched, "constructed-server")
+    spy = LookupSpy(watched, "constructed-server", [world, world.resolve()])
 
     with pytest.MonkeyPatch.context() as patched:
         if case in NEVER_LOOKED_UP:
             spy.arm(patched)
-        with guard.transaction(flavor, label="next", store=store) as tx:
-            tx.write(FONT, SECOND_FONT)
-    expected[G.flavor_key(FONT)] = SECOND_FONT
+        if route == "undo":  # undoes the dead child's record, which changed nothing
+            guard.undo(store=store)
+        else:
+            with guard.transaction(flavor, label="next", store=store) as tx:
+                tx.write(FONT, SECOND_FONT)
+            expected[G.flavor_key(FONT)] = SECOND_FONT
     assert spy.seen == [], "a path that fails a write rule is never looked up"
 
-    record = record_for(guard, SnapshotStore(store), "next")
+    record = _last_record(guard, store)
+    assert record.label != "child-died"
     assert record.state == "committed", "a path left alone does not stop the transaction"
     assert lo.a_rel in record.temps_removed
     assert left in record.temps_left, (left, record.temps_left)
     assert left not in record.temps_removed
     assert content(world) == expected, "only the genuine leftover is gone"
+
+
+@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
+def test_constructed_cleanup_rechecks_the_directory_chain_around_the_unlink(
+    guard: Any,
+    tmp_path: Path,
+    world: Path,
+    flavor: Flavor,
+    idle: None,
+    children: list[Child],
+) -> None:
+    """Item 2: the directory chain is re-checked before and after the unlink,
+    as for any delete. `WTF` is swapped for a link to `outside/` (holding a
+    file of the temp's name) right after guard journals that removal and
+    before it unlinks: nothing outside the install is removed, and the path
+    does not count as removed."""
+    G._can_symlink(tmp_path)
+    store = tmp_path / "store"
+    lo = leave_temps(children, tmp_path, flavor, store)
+    outside = world / "outside"
+    (outside / lo.b.name).write_bytes(b"constructed: outside the install, must survive\n")
+    outside_before = content(outside)
+    needles = spellings(lo.b_rel)
+
+    def mentions() -> int:
+        return sum(p.read_bytes().count(n) for p in journal_files(store) for n in needles)
+
+    baseline = mentions()
+
+    def swap() -> None:
+        wtf = flavor.path / "WTF"
+        wtf.rename(wtf.with_name("WTF_real"))
+        wtf.symlink_to(outside, target_is_directory=True)
+
+    def enter_once() -> None:
+        with guard.transaction(flavor, label="next", store=store):
+            pass
+
+    hook = AfterJournalFsync(store, swap, when=lambda: mentions() > baseline)
+    with pytest.MonkeyPatch.context() as patched:
+        hook.arm(patched)
+        attempt(enter_once)
+    assert hook.fired, "positive control: the swap came after guard journaled the removal"
+    assert content(outside) == outside_before, "nothing outside the install was removed"
+    records = [r for r in guard.history(store=store) if r.label == "next"]
+    assert records and lo.b_rel not in records[0].temps_removed
 
 
 @pytest.mark.parametrize(
@@ -2190,16 +2474,21 @@ SWAPS = (
     "removed",
 )
 SWAP_CASES = (
-    *(("write", CONFIG, s) for s in SWAPS),
-    *(("restore", CONFIG, s) for s in SWAPS),
-    *(("delete", BINDINGS, s) for s in SWAPS),
-    ("create", NEW_SAVED, "appeared"),
+    *(
+        (op, CONFIG, s, hook)
+        for hook in ("before-the-temp-file", "after-the-temp-fsync")
+        for op in ("write", "restore")
+        for s in SWAPS
+    ),
+    *(("delete", BINDINGS, s, "after-the-journal-fsync") for s in SWAPS),
+    ("create", NEW_SAVED, "appeared", "before-the-temp-file"),
+    ("create", NEW_SAVED, "appeared", "after-the-temp-fsync"),
 )
 
 
 @pytest.mark.parametrize(
-    ("op", "rel", "swap"),
-    [pytest.param(op, rel, s, id=f"constructed-{op}-{s}") for op, rel, s in SWAP_CASES],
+    ("op", "rel", "swap", "when"),
+    [pytest.param(op, rel, s, w, id=f"constructed-{op}-{s}-{w}") for op, rel, s, w in SWAP_CASES],
 )
 @pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
 def test_constructed_file_swapped_after_guard_read_it_is_refused_before_the_replace_or_unlink(
@@ -2211,6 +2500,7 @@ def test_constructed_file_swapped_after_guard_read_it_is_refused_before_the_repl
     op: str,
     rel: str,
     swap: str,
+    when: str,
 ) -> None:
     """Item 3: after the temp file is written and fsynced, and before the
     replace or unlink, guard re-reads the target and requires the hash it
@@ -2235,8 +2525,10 @@ def test_constructed_file_swapped_after_guard_read_it_is_refused_before_the_repl
         witness["bytes"] = _held(target)
         witness["id"] = G._file_id(target.stat()) if target.exists() else None
 
-    if op == "delete":
+    if when == "after-the-journal-fsync":
         hook: Any = AfterJournalFsync(store, swapped)
+    elif when == "after-the-temp-fsync":
+        hook = AfterTempFsync(target.parent, swapped)
     else:
         hook = BeforeCreateIn(target.parent, target.name, swapped)
 
@@ -2269,6 +2561,48 @@ def test_constructed_file_swapped_after_guard_read_it_is_refused_before_the_repl
     assert state == ("rollback_incomplete" if moved else "rolled_back"), state
     guard.undo(store=store)
     assert _held(target) == witness["bytes"], "undo left the refused path as it is"
+
+
+@pytest.mark.parametrize(
+    "op", [pytest.param(o, id=f"constructed-{o}") for o in ("write", "delete")]
+)
+@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
+def test_constructed_a_recheck_refusal_caught_in_the_body_still_ends_the_transaction(
+    guard: Any, tmp_path: Path, flavor: Flavor, idle: None, op: str
+) -> None:
+    """Item 3: a refusal at the re-check has the consequences of any
+    `ChangedSinceSnapshotError`: a later operation raises `GuardError`
+    without touching the disk, and the transaction cannot commit, although
+    the caller caught the error."""
+    store = tmp_path / "store"
+    rel = CONFIG if op == "write" else BINDINGS
+    target = flavor.path / rel
+    swap = _swap("another-file", target)
+    if op == "write":
+        hook: Any = BeforeCreateIn(target.parent, target.name, swap)
+    else:
+        hook = AfterJournalFsync(store, swap)
+    reached_end = False
+    exit_error: BaseException | None = None
+    try:
+        with guard.transaction(flavor, label="caught", store=store) as tx:
+            with pytest.MonkeyPatch.context() as patched:
+                hook.arm(patched)
+                with refused(guard, "ChangedSinceSnapshotError", naming=rel):
+                    if op == "write":
+                        tx.write(rel, NEWER_CONFIG)
+                    else:
+                        tx.delete(rel)
+            with pytest.raises(guard.GuardError):
+                tx.write(ICON, ICON_NEW)
+            assert (flavor.path / ICON).read_bytes() == ALLOWLISTED_FILES[ICON]
+            reached_end = True
+    except guard.GuardError as exc:
+        exit_error = exc
+    assert hook.fired, "positive control: the swap happened inside the operation"
+    assert reached_end, f"the transaction body did not finish: {exit_error!r}"
+    assert target.read_bytes() == EXTERNAL
+    assert record_for(guard, SnapshotStore(store), "caught").state != "committed"
 
 
 @pytest.mark.xfail(strict=True, reason="M10-16 not implemented")

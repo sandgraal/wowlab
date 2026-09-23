@@ -2285,11 +2285,14 @@ def test_constructed_rollback_and_undo_treat_the_pre_write_snapshot_as_untrusted
         assert after[flavor_key(CONFIG)] in (NEW_CONFIG, NEWER_CONFIG, ALLOWLISTED_FILES[CONFIG])
 
     # Rollback from the poisoned snapshot: the hostile entry never lands.
+    # Amended by M10-16T (§6.10 as amended 2026-09-22, item 3): the write is
+    # to Fonts/, where the forgery agrees with the disk, so no first-touch
+    # refusal intervenes and rollback really reads the poisoned snapshot.
     with (
-        pytest.raises((RuntimeError, guard.GuardError)),
+        pytest.raises(RuntimeError, match="constructed failure"),
         guard.transaction(flavor, label="poisoned", store=store.path) as tx,
     ):
-        tx.write(CONFIG, NEWER_CONFIG)
+        tx.write(FONT, b"\x00\x01\x00\x00constructed: rolled back")
         raise RuntimeError("constructed failure")
     untouched_but_config()
     assert record_for(guard, store, "poisoned").snapshot_id == forged.id
@@ -2304,8 +2307,7 @@ def test_constructed_rollback_and_undo_treat_the_pre_write_snapshot_as_untrusted
     try:
         with guard.transaction(flavor, label="poisoned-commit", store=store.path) as tx:
             tx.write(CONFIG, NEWER_CONFIG)
-    except guard.GuardError as refused_commit:
-        assert not isinstance(refused_commit, guard.ClientRunningError)
+    except getattr(guard, "ChangedSinceSnapshotError", ()):
         assert content(world) == before_commit, "a refused transaction leaves nothing behind"
     untouched_but_config()
     assert record_for(guard, store, "poisoned-commit").snapshot_id == forged.id
@@ -2467,40 +2469,26 @@ def test_constructed_undo_refuses_a_poisoned_entry_at_a_path_it_journaled(
     flavor: Flavor,
     store: SnapshotStore,
     idle: None,
-    monkeypatch: pytest.MonkeyPatch,
     case: str,
 ) -> None:
     """The entries undo does read, the journaled ones, are checked: no
     symlink, and the hash agrees with the journal's `before`. Refused before
     anything is written.
 
-    Amended by M10-16T (§6.10 as amended 2026-09-22, item 3): every case here
-    forges a pre-write snapshot that disagrees with the disk at a path the
-    transaction then touches, so the transaction itself may be refused
-    (`ChangedSinceSnapshotError`, a `GuardError`) and roll back with nothing
-    written. Then no poisoned entry reaches the install through it or
-    through the `undo()` that follows, whatever that undo decides."""
-    with guard.transaction(flavor, label="base", store=store.path):
-        pass
-    base = store.show(record_for(guard, store, "base").snapshot_id)
-    forged = forge_edited(store, base, _poison_touched(case))
-    monkeypatch.setattr(SnapshotStore, "create", lambda self, *a, **k: forged)
-    before_touched = content(world)
-    try:
-        with guard.transaction(flavor, label="touched", store=store.path) as tx:
-            tx.write(CONFIG, NEW_CONFIG)
-            tx.write(NEW_SAVED, NEW_LUA)
-    except guard.GuardError as refused_touch:
-        assert not isinstance(refused_touch, guard.ClientRunningError)
-        assert content(world) == before_touched, "a refused transaction leaves nothing behind"
-        assert record_for(guard, store, "touched").snapshot_id == forged.id
-        try:
-            guard.undo(store=store.path)
-        except guard.GuardError as refused_undo:
-            assert not isinstance(refused_undo, guard.ClientRunningError)
-        assert content(world) == before_touched
-        assert not (flavor.path / CONFIG).is_symlink()
-        return
+    Amended by M10-16T (§6.10 as amended 2026-09-22, item 3): the forgery
+    is made after the transaction committed, from its own pre-write
+    snapshot, and the journal is pointed at it. A pre-write snapshot that
+    lies from the start would now be refused at first touch, and undo's
+    per-entry checks would go ungraded."""
+    with guard.transaction(flavor, label="touched", store=store.path) as tx:
+        tx.write(CONFIG, NEW_CONFIG)
+        tx.write(NEW_SAVED, NEW_LUA)
+    real = store.show(record_for(guard, store, "touched").snapshot_id)
+    forged = forge_edited(store, real, _poison_touched(case))
+    replaced = byte_replace(
+        store, real.id.encode(), forged.id.encode(), skip=(store.objects_dir, store.manifests_dir)
+    )
+    assert replaced >= 1, "the journal names the pre-write snapshot"
     assert record_for(guard, store, "touched").snapshot_id == forged.id
     before = content(world)
 
