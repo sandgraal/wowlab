@@ -39,15 +39,30 @@ The seam, as the amendment fixes it
   and an unlink of that temp the child ignores. Their names are whatever
   guard chose; the graders find them by listing the directory.
 
-Readings of the amendment these graders take (reported with M10-16T):
+Readings of the amendment these graders take, confirmed by the conductor
+and written into §6.10 as "Clarified 2026-09-22" (PR #53):
 - "Nothing is written for that path" (item 3) holds through rollback: a
   path whose only operation was refused keeps what someone else put there,
   after exit too. This matches the PR #48 probe (`test_review_m10_11_first_
   touch_bytes_outside_snapshot.py`): a refusal leaves the changed bytes.
-- An injected lock failure other than "held" is a `GuardError` that is not a
-  `GuardBusyError`.
+- "The hash it last read or wrote there" is guard's own record of the path
+  within the transaction, so a path this transaction wrote, then changed by
+  someone else, then touched again, is refused. On rollback, a path whose
+  disk content differs from what the transaction last wrote or read there
+  is left as it is and the record ends `rollback_incomplete`.
+- An injected lock failure other than "held" is a `GuardError` that is never
+  a `GuardBusyError`. The injected-failure graders are POSIX-only (Windows
+  reports a held `msvcrt.locking` lock as a permission error).
+- `store_lock` never creates the store directory; a missing store is a
+  `GuardError`.
+- A temp path an earlier record names that no longer exists is listed in
+  neither `temps_removed` nor `temps_left`.
 - "Restore" in item 1 is `tx.restore` inside `transaction()`; there is no
   module-level restore to lock.
+
+Not graded, by decision: a file changed between `undo()`'s own pre-write
+snapshot and its first touch. There is no public point at which a test can
+make that change.
 """
 
 from __future__ import annotations
@@ -195,6 +210,11 @@ def refused(guard: Any, name: str, *, naming: str | None = None) -> Iterator[Cau
         caught.value = exc
         return
     pytest.fail(f"expected {name}; the call went through")
+
+
+def error_text(exc: BaseException) -> str:
+    """The message of `exc` and any notes added to it."""
+    return "\n".join((str(exc), *getattr(exc, "__notes__", ())))
 
 
 def asks_for_a_retry(exc: BaseException | None) -> None:
@@ -1623,6 +1643,10 @@ def _not_a_temp(
         lo.b.unlink()
         symlink_or_skip(lo.b, world / "outside" / "target.txt", is_dir=False)
         return lo.b_rel
+    if case == "dangling-link-at-the-path":
+        lo.b.unlink()
+        symlink_or_skip(lo.b, world / "outside" / "nothing-here", is_dir=False)
+        return lo.b_rel
     if case == "directory-at-the-path":
         lo.b.unlink()
         G._put(lo.b, {"inside.txt": b"constructed: a directory with a temp-like name\n"})
@@ -1661,6 +1685,8 @@ def _not_a_temp(
         target = world / "outside" / name
         target.write_bytes(lo.b_bytes)
         forged = target.as_posix()
+    elif case == "unc-path":
+        forged = f"//constructed-server/share/{name}"
     elif case == "through-a-link":
         symlink_or_skip(fdir / "WTF" / "escape", world / "outside", is_dir=True)
         (world / "outside" / name).write_bytes(lo.b_bytes)
@@ -1674,6 +1700,7 @@ def _not_a_temp(
 
 NOT_A_TEMP = (
     "link-at-the-path",
+    "dangling-link-at-the-path",
     "directory-at-the-path",
     "name-with-a-suffix",
     "uppercase-hex-on-disk",
@@ -1685,8 +1712,51 @@ NOT_A_TEMP = (
     "another-flavor-folder",
     "outside-the-install",
     "absolute-path",
+    "unc-path",
     "through-a-link",
 )
+# These fail a write rule on their spelling alone, so they are listed in
+# `temps_left` without being looked up (clarified 2026-09-22).
+NEVER_LOOKED_UP = frozenset(
+    {
+        "outside-the-allowlist",
+        "at-the-install-root",
+        "under-data",
+        "another-flavor-folder",
+        "outside-the-install",
+        "absolute-path",
+        "unc-path",
+    }
+)
+
+
+class LookupSpy:
+    """Records every `os.stat`, `os.lstat`, `os.open`, `os.listdir`,
+    `os.scandir` or `os.access` of a path in `watched` (compared after
+    lexical normalisation) or containing `marker`."""
+
+    NAMES = ("stat", "lstat", "open", "listdir", "scandir", "access")
+
+    def __init__(self, watched: set[str], marker: str) -> None:
+        self.watched = watched
+        self.marker = marker
+        self.seen: list[str] = []
+        self._real = {n: getattr(os, n) for n in self.NAMES}
+
+    def arm(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for name in self.NAMES:
+            monkeypatch.setattr(os, name, self._wrap(name))
+
+    def _wrap(self, name: str) -> Callable[..., Any]:
+        def call(*args: Any, **kwargs: Any) -> Any:
+            if args and isinstance(args[0], (str, bytes, os.PathLike)):
+                spelled = os.fsdecode(args[0])
+                normal = os.path.normpath(Path(spelled).absolute())
+                if normal in self.watched or self.marker in spelled:
+                    self.seen.append(f"{name}({spelled})")
+            return self._real[name](*args, **kwargs)
+
+        return call
 
 
 @pytest.mark.parametrize("case", [pytest.param(c, id=f"constructed-{c}") for c in NOT_A_TEMP])
@@ -1713,10 +1783,19 @@ def test_constructed_cleanup_removes_only_regular_temp_files_inside_the_allowlis
     left = _not_a_temp(case, lo, world, install_root, flavor, store)
     expected = content(world)
     del expected[G.flavor_key(lo.a_rel)]
+    watched: set[str] = set()
+    if case in NEVER_LOOKED_UP and not left.startswith("//"):
+        for base in (flavor.path, flavor.path.resolve()):
+            watched.add(os.path.normpath(base / left))
+    spy = LookupSpy(watched, "constructed-server")
 
-    with guard.transaction(flavor, label="next", store=store) as tx:
-        tx.write(FONT, SECOND_FONT)
+    with pytest.MonkeyPatch.context() as patched:
+        if case in NEVER_LOOKED_UP:
+            spy.arm(patched)
+        with guard.transaction(flavor, label="next", store=store) as tx:
+            tx.write(FONT, SECOND_FONT)
     expected[G.flavor_key(FONT)] = SECOND_FONT
+    assert spy.seen == [], "a path that fails a write rule is never looked up"
 
     record = record_for(guard, SnapshotStore(store), "next")
     assert record.state == "committed", "a path left alone does not stop the transaction"
@@ -2071,6 +2150,10 @@ def test_constructed_first_touch_of_a_path_changed_since_the_snapshot_is_refused
         expected[G.flavor_key(FONT)] = EXTERNAL_FONT
     assert content(world) == expected, "rolled back, and the changed path kept its new state"
 
+    # Clarified 2026-09-22: an undo() of the record leaves the refused path as it is.
+    guard.undo(store=store)
+    assert _held(target) == now, "undo left the path whose only operation was refused"
+
     with guard.transaction(flavor, label="retry", store=store) as tx:
         tx.write(rel, RETRIED)
     assert target.read_bytes() == RETRIED
@@ -2178,7 +2261,14 @@ def test_constructed_file_swapped_after_guard_read_it_is_refused_before_the_repl
     else:
         expected_names = parent_names - {target.name}
     assert listing(target.parent) == expected_names, "no temp file is left behind"
-    assert record_for(guard, SnapshotStore(store), "swapped").state != "committed"
+    # Clarified 2026-09-22: a path whose only operation was refused makes the
+    # record `rollback_incomplete` only if the disk no longer matches what
+    # guard read there (content), and an undo() of the record leaves it.
+    state = record_for(guard, SnapshotStore(store), "swapped").state
+    moved = swap != "identical-bytes-in-a-new-file"
+    assert state == ("rollback_incomplete" if moved else "rolled_back"), state
+    guard.undo(store=store)
+    assert _held(target) == witness["bytes"], "undo left the refused path as it is"
 
 
 @pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
@@ -2232,3 +2322,206 @@ def test_constructed_windows_create_whose_rename_finds_the_target_is_refused(
     assert fired, "positive control: the create went through os.rename"
     assert target.read_bytes() == EXTERNAL
     assert listing(target.parent) == names | {target.name}, "no temp file is left behind"
+
+
+# ─── clarified 2026-09-22 (PR #53) ───────────────────────────────────────────
+
+# (id, first operation, path, what someone else does next, second operation)
+SECOND_TOUCH_CASES = (
+    ("write-after-write", "write", CONFIG, "modify", "write"),
+    ("delete-after-write", "write", CONFIG, "modify", "delete"),
+    ("write-after-delete", "delete", BINDINGS, "create", "write"),
+)
+
+
+def _touch(op: str, tx: Any, rel: str, data: bytes) -> None:
+    if op == "write":
+        tx.write(rel, data)
+    else:
+        tx.delete(rel)
+
+
+@pytest.mark.parametrize(
+    ("first", "rel", "change", "second"),
+    [pytest.param(f, r, c, s, id=f"constructed-{n}") for n, f, r, c, s in SECOND_TOUCH_CASES],
+)
+@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
+def test_constructed_a_path_changed_after_this_transaction_touched_it_is_refused(
+    guard: Any,
+    tmp_path: Path,
+    flavor: Flavor,
+    idle: None,
+    first: str,
+    rel: str,
+    change: str,
+    second: str,
+) -> None:
+    """Item 3 as clarified: "the hash it last read or wrote there" is guard's
+    own record of the path within the transaction. A path this transaction
+    wrote (or deleted), then changed by someone else, then touched again,
+    raises `ChangedSinceSnapshotError`; the other writer's state stays, also
+    through rollback, which ends `rollback_incomplete` for that path."""
+    store = tmp_path / "store"
+    target = flavor.path / rel
+    reached_end = False
+    exit_error: BaseException | None = None
+    try:
+        with guard.transaction(flavor, label="twice", store=store) as tx:
+            tx.write(ICON, ICON_NEW)
+            _touch(first, tx, rel, NEW_CONFIG)
+            now = _change(change, target)
+            with refused(guard, "ChangedSinceSnapshotError", naming=rel) as caught:
+                _touch(second, tx, rel, NEWER_CONFIG)
+            asks_for_a_retry(caught.value)
+            assert _held(target) == now, "nothing was written over the other writer's state"
+            mid = content(flavor.path)
+            for later in (
+                lambda: tx.write(TOC, b"## Title: constructed after the refusal\n"),
+                lambda: tx.delete(ADDON_LUA),
+            ):
+                with pytest.raises(guard.GuardError):
+                    later()
+            assert content(flavor.path) == mid, "later operations touch nothing"
+            reached_end = True
+    except guard.GuardError as exc:
+        exit_error = exc
+    assert reached_end, f"the transaction body did not finish: {exit_error!r}"
+    assert exit_error is not None, "a transaction with a refused path cannot commit"
+    assert rel in error_text(exit_error), "the error at exit names the path left as it is"
+    assert _held(target) == now, "rollback left the other writer's state alone"
+    assert (flavor.path / ICON).read_bytes() == ALLOWLISTED_FILES[ICON], "the rest rolled back"
+    record = record_for(guard, SnapshotStore(store), "twice")
+    assert record.state == "rollback_incomplete"
+    assert record.rolled_back is False
+
+
+ROLLBACK_CASES = (
+    ("overwritten-after-a-write", "write", CONFIG, "modify"),
+    ("removed-after-a-write", "write", CONFIG, "remove"),
+    ("recreated-after-a-delete", "delete", BINDINGS, "create"),
+    ("changed-after-a-create", "write", NEW_SAVED, "modify"),
+)
+
+
+@pytest.mark.parametrize(
+    ("op", "rel", "change"),
+    [pytest.param(o, r, c, id=f"constructed-{n}") for n, o, r, c in ROLLBACK_CASES],
+)
+@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
+def test_constructed_rollback_leaves_a_path_someone_else_changed_and_says_so(
+    guard: Any,
+    tmp_path: Path,
+    flavor: Flavor,
+    idle: None,
+    op: str,
+    rel: str,
+    change: str,
+) -> None:
+    """Item 3 as clarified: on rollback, a path whose disk content differs
+    from what this transaction last wrote or read there is left as it is,
+    and the record ends `rollback_incomplete` (`rolled_back` false). Rollback
+    never overwrites bytes no snapshot or journal entry holds, and never
+    deletes a file someone else put where this transaction created one.
+    Every other touched path is still rolled back."""
+    store = tmp_path / "store"
+    target = flavor.path / rel
+    with (
+        pytest.raises(RuntimeError, match="constructed failure") as raised,
+        guard.transaction(flavor, label="failing", store=store) as tx,
+    ):
+        tx.write(ICON, ICON_NEW)
+        tx.write(FONT, SECOND_FONT)
+        _touch(op, tx, rel, NEW_LUA)
+        now = _change(change, target)
+        # Someone else puts Fonts' pre-transaction bytes back: that path needs
+        # nothing and counts as rolled back.
+        (flavor.path / FONT).write_bytes(ALLOWLISTED_FILES[FONT])
+        raise RuntimeError("constructed failure")
+
+    assert _held(target) == now, "the other writer's state was left as it is"
+    assert rel in error_text(raised.value), "the error at exit names the path left as it is"
+    assert (flavor.path / FONT).read_bytes() == ALLOWLISTED_FILES[FONT]
+    assert (flavor.path / ICON).read_bytes() == ALLOWLISTED_FILES[ICON], "the rest rolled back"
+    record = record_for(guard, SnapshotStore(store), "failing")
+    assert record.state == "rollback_incomplete"
+    assert record.rolled_back is False
+
+
+@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
+def test_constructed_store_lock_never_creates_a_missing_store(
+    guard: Any, tmp_path: Path, idle: None, _user_data_redirected: Path
+) -> None:
+    """Item 4 as clarified: `store_lock` never creates the store directory; a
+    missing store is a `GuardError` (never `GuardBusyError`). Positive
+    control: an existing store is locked, through `<store>/lock`."""
+    missing = tmp_path / "missing-store"
+    assert_plain_guard_error(
+        guard, attempt(lambda: _store_locked(guard, missing)), "a missing store"
+    )
+    assert not missing.exists()
+    assert_plain_guard_error(guard, attempt(lambda: _store_locked(guard, None)), "no default store")
+    assert not _user_data_redirected.exists()
+
+    present = tmp_path / "store"
+    present.mkdir()
+    with guard.store_lock(present):
+        assert (present / "lock").is_file()
+
+
+@pytest.mark.parametrize(
+    "gone",
+    [pytest.param(g, id=f"constructed-{g}") for g in ("temp-file", "parent-directory")],
+)
+@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
+def test_constructed_a_named_temp_that_no_longer_exists_is_listed_nowhere(
+    guard: Any, tmp_path: Path, flavor: Flavor, idle: None, children: list[Child], gone: str
+) -> None:
+    """Item 2 as clarified: a temp path an earlier record names that no longer
+    exists (its last component or a parent directory missing) is listed in
+    neither `temps_removed` nor `temps_left`; the one that still exists is
+    removed in the same enter."""
+    store = tmp_path / "store"
+    lo = leave_temps(children, tmp_path, flavor, store)
+    if gone == "temp-file":  # someone else already removed it
+        lo.b.unlink()
+        vanished, kept, kept_rel = lo.b_rel, lo.a, lo.a_rel
+    else:  # its directory is gone (Interface/Icons, with the icon in it)
+        shutil.rmtree(lo.a.parent)
+        vanished, kept, kept_rel = lo.a_rel, lo.b, lo.b_rel
+
+    with guard.transaction(flavor, label="next", store=store):
+        pass
+
+    assert not kept.exists(), "the leftover that still existed is removed"
+    record = record_for(guard, SnapshotStore(store), "next")
+    assert record.temps_removed == (kept_rel,)
+    assert vanished not in record.temps_left
+
+
+@pytest.mark.xfail(strict=True, reason="M10-16 not implemented")
+def test_constructed_undo_of_a_rollback_incomplete_record_restores_and_can_be_undone(
+    guard: Any, tmp_path: Path, flavor: Flavor, idle: None
+) -> None:
+    """Item 3 as clarified: `undo()` of a `rollback_incomplete` record restores
+    its journaled paths from the pre-write snapshot, replacing what rollback
+    left; the undo's own pre-write snapshot holds those bytes, so a second
+    `undo()` puts them back."""
+    store = tmp_path / "store"
+    config = flavor.path / CONFIG
+    with (
+        pytest.raises(RuntimeError, match="constructed failure"),
+        guard.transaction(flavor, label="failing", store=store) as tx,
+    ):
+        tx.write(ICON, ICON_NEW)
+        tx.write(CONFIG, NEW_CONFIG)
+        config.write_bytes(EXTERNAL)
+        raise RuntimeError("constructed failure")
+    assert record_for(guard, SnapshotStore(store), "failing").state == "rollback_incomplete"
+    assert config.read_bytes() == EXTERNAL
+
+    guard.undo(store=store)
+    assert config.read_bytes() == ALLOWLISTED_FILES[CONFIG], "undo restored the journaled path"
+    assert (flavor.path / ICON).read_bytes() == ALLOWLISTED_FILES[ICON]
+
+    guard.undo(store=store)
+    assert config.read_bytes() == EXTERNAL, "a second undo put back what the first replaced"
