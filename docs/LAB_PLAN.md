@@ -637,7 +637,7 @@ after the PR #49 security review; tickets M10-16T and M10-16):*
      (not in a dry run), since a change `undo()` could not reverse
      must not be written. A path taken from a journal record or a snapshot manifest is
      looked up (`stat`, `lstat`, `samefile`, `resolve`) only when it is a
-     local absolute path: absolute, not beginning with `\\\\` or `//`, and on
+     local absolute path: absolute, not beginning with `\\` or `//`, and on
      Windows with a drive letter. Anything else is treated as another install
      without being looked up, and `undo()` refuses a most recent record whose
      flavor or install path is not such a path.
