@@ -3756,7 +3756,12 @@ def test_constructed_pin_restore_refuses_a_snapshot_of_another_install_or_flavor
             "flavor-path-to-another-install", id="constructed-flavor-path-to-another-install"
         ),
         pytest.param(
-            "install-root-to-another-install", id="constructed-install-root-to-another-install"
+            "install-root-and-flavor-path-to-another-install",
+            id="constructed-install-root-and-flavor-path-to-another-install",
+        ),
+        pytest.param(
+            "install-root-field-only-to-another-install",
+            id="constructed-install-root-field-only-to-another-install",
         ),
         pytest.param(
             "flavor-path-to-another-flavor", id="constructed-flavor-path-to-another-flavor"
@@ -3774,24 +3779,47 @@ def test_constructed_pin_undo_refuses_a_record_that_belongs_to_another_install(
 ) -> None:
     """The journal names the flavor and install it acted on; a record edited
     to name another one (a real flavor of a real install) is refused, because
-    its snapshot and its flavor no longer agree."""
-    if forgery == "flavor-path-to-another-install":
-        old, new = str(flavor.path), str(_other_install(world).path)
-    elif forgery == "install-root-to-another-install":
-        other = _other_install(world)
-        old, new = str(install_root), str(other.path.parent)
+    its snapshot, its flavor and its install no longer agree.
+
+    The byte-replace forgeries rewrite every spelling of a path in the
+    journal (the install root is a prefix of the flavor path, so replacing it
+    rewrites both). `install-root-field-only` edits nothing but the record's
+    `install_root` field, leaving the flavor path and snapshot consistent, so
+    only the check that the two agree can refuse it."""
+    other_install = _other_install(world)
+    if forgery == "install-root-field-only-to-another-install":
+        old, new = "", ""
+    elif forgery == "flavor-path-to-another-install":
+        old, new = str(flavor.path), str(other_install.path)
+    elif forgery == "install-root-and-flavor-path-to-another-install":
+        old, new = str(install_root), str(other_install.path.parent)
     else:
         old, new = str(flavor.path), str(_other_flavor(install_root).path)
     with guard.transaction(flavor, label="mine", store=store.path) as tx:
         tx.write(CONFIG, NEW_CONFIG)
 
-    replaced = 0
-    for o, n in reversed(list(zip(_json_spellings(old), _json_spellings(new), strict=True))):
-        replaced += byte_replace(store, o, n, skip=(store.objects_dir, store.manifests_dir))
-    assert replaced >= 1, "the journal names the flavor it acted on"
-    assert str(guard.history(store=store.path)[-1].flavor_path).startswith(new), (
-        "the forged record still loads: the refusal below is about whose it is"
-    )
+    if old:
+        replaced = 0
+        for o, n in reversed(list(zip(_json_spellings(old), _json_spellings(new), strict=True))):
+            replaced += byte_replace(store, o, n, skip=(store.objects_dir, store.manifests_dir))
+        assert replaced >= 1, "the journal names the flavor it acted on"
+        assert str(guard.history(store=store.path)[-1].flavor_path).startswith(new), (
+            "the forged record still loads: the refusal below is about whose it is"
+        )
+    else:
+        edited = 0
+        for record_file in sorted((store.path / "journal").glob("*.json")):
+            data = json.loads(record_file.read_bytes())
+            if data.get("label") == "mine":
+                assert Path(data["install_root"]) == install_root, "the record names its install"
+                data["install_root"] = str(other_install.path.parent)
+                record_file.write_text(json.dumps(data), encoding="utf-8")
+                edited += 1
+        assert edited == 1, "one journal record for the transaction"
+        loaded = guard.history(store=store.path)[-1]
+        assert (loaded.label, Path(loaded.flavor_path)) == ("mine", flavor.path), (
+            "the forged record still loads with its own flavor: only install_root changed"
+        )
     before = content(world)
 
     with pytest.raises(guard.GuardError) as refused:
