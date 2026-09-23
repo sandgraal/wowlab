@@ -269,11 +269,16 @@ Dated entries, newest last. Each names the fixture that prompted it.
   the platform: one macOS client wrote LF (`Config.wtf`, both
   `config-cache.wtf`, `chat-cache.txt`, `layout-local.txt`, `.build.info`,
   `.flavor.info`), CRLF (`bindings-cache.wtf`, the character
-  `macros-cache.txt`, the TOCs), neither (the edit-mode caches, one line
+  `macros-cache.txt`; and, from part 2, `AddOns.txt` and every
+  SavedVariables file, the 5 fixtures and all 105 on the install by a byte
+  count, macOS build 69977), neither (the edit-mode caches, one line
   ending in a NUL byte; the flagged caches, exactly `2` then a NUL) and both
   within one file (the text-to-speech caches: first line LF, the rest CRLF)
   in the same install. A text reader that drops a trailing NUL breaks L4. Serializers keep each document's
-  own endings; a writer creating a new file chooses by file kind.
+  own endings; a writer creating a new file chooses by file kind. TOC files
+  are written by the addon's author or packager, not the client, so their
+  CRLF is not client evidence (reworded 2026-09-22 after the part-2 domain
+  review).
 - **2026-09-22, edit-mode caches, same capture.** `edit-mode-cache-account.txt`
   and `edit-mode-cache-character.txt` are one line of space-separated tokens
   ending in a NUL. Layout names are length-prefixed (`3 def`, `6 Priest`,
@@ -319,3 +324,57 @@ Dated entries, newest last. Each names the fixture that prompted it.
   **[verify]**), and one touching path characters is a variable
   (`Locales\[TextLocale].lua`); a directive that appears twice is kept
   twice, and which one the client honours is **[verify]**.
+- **2026-09-22, §4.2, Forever beta 1.60.1.69977, macOS (M10-03 part 2:
+  `RareScanner.lua`, `RareScanner.lua.bak`,
+  `Blizzard_GamepadSmartNavigation.lua`, `Syndicator.lua`,
+  `DBM-StatusBarTimers.lua`).** **Contradicts §4.2:** no indentation and no
+  `-- [n]` comments. Every line starts at column 0; positional entries (82
+  in `Syndicator.lua`, tables and one `false`) carry no comment; no file has
+  a comment of any kind. The conductor confirmed the same on every
+  SavedVariables file of the owner's install (0 tab-indented lines, 0
+  `-- [` comments; counts only). Nesting still reaches 6 levels
+  (`Syndicator.lua`) and 3 (`DBM-StatusBarTimers.lua`). An empty table is two
+  lines, `{` then `}` (47 in `Syndicator.lua`), never `{}`. **Confirms
+  §4.2:** the file starts with an empty line, even when it holds only
+  `X = nil`; every table entry ends with `,`, including the last, and the `}`
+  closing a top-level assignment has none; strings are double-quoted with
+  `'` raw inside; keys are positional or `["string"]`, including the empty
+  key `[""]`; CRLF on every line, including the leading blank line and the
+  last; no BOM. **New:** `X = nil` at top level is written (two files); the
+  file is named after the addon, not the variable
+  (`Blizzard_GamepadSmartNavigation.lua` holds `SmartNavigation_Mod_Options`,
+  `DBM-StatusBarTimers.lua` holds `DBT_AllPersistentOptions`);
+  `RareScanner.lua.bak` is byte-identical to `RareScanner.lua`; numbers are
+  negative integers (`-260`), whole values with no point (`1`) and floats in
+  shortest round-trip form with at most 16 significant digits
+  (`0.6745098233222961`, `0.0117647058823529`), with no exponent, hex,
+  negative zero or non-finite value (no value in the file needs 17 digits, so
+  how the client writes one that does is **[verify]**; §4.2's "up to 17"
+  stays open); the only escape seen is `\\`
+  (`\"`, `\n`, `\r` and `\ddd` stay **[verify]**); colour codes include the
+  named form `|cnIQ0:` … `|r`, not only `|cffRRGGBB`; item links are
+  `|Hitem:<id>::::::::<a>:<b>:…|h[Name]|h` (field meanings **[verify]**).
+  **Still unobserved:** `[number]` keys, tab indentation or `-- [n]` from
+  any client **[verify]**, non-ASCII strings, single-quoted strings, a
+  non-nil top-level scalar, a per-character SavedVariables file, the account
+  `SavedVariables.lua`. **For M10-12:** whether a new entry follows the
+  document's own detected style or the §4.2 style is an owner decision
+  (asked 2026-09-22).
+- **2026-09-22, AddOns.txt, part 2
+  (`…/Labrealmb Partb Partc Partd/Labchard/AddOns.txt`, 1.60.1.69977).** One
+  `<AddonName>: <state>` per line; CRLF with a final CRLF, no BOM, no header.
+  Only `enabled` is observed; `disabled` is **[verify]**. The file lists two
+  Blizzard addons and no third-party addon, although Syndicator demonstrably
+  ran for a character of that first name, so a missing addon cannot be read
+  as "disabled". Its effective state (the TOC's `DefaultState`?)
+  is **[verify]**, and so is whether the Forever client reads this file.
+- **2026-09-22, §3, part 2 (`DBM-Brawlers.toc`).** No blank line separates
+  the 34 directives from the 21 file lines, so a parser must not need one. A
+  single-value `## Interface: 120100` on a Forever install is only the
+  author's claim. Localized keys carry raw UTF-8; no BOM.
+- **2026-09-22, addon data spelling of a Forever character (part 2,
+  `Syndicator.lua`).** Addon data spells the character `"<First> <Second>"`,
+  with a space, and an empty realm (`realm = ""`, `ByRealm[""]`); checked on
+  the raw file with names masked. That is the addon's view; which API
+  returns it is **[verify]**. Match addon records to folders by first and
+  second name, never by realm.

@@ -66,6 +66,10 @@ the client:
   The Forever second name gets a realm-style pseudonym (`Labrealm…`, as in
   `Labcharb-Labrealmd`) although it is not a realm (`docs/GLOSSARY.md`,
   Second name).
+  Pseudonyms are stable within one capture run only: the tool assigns them
+  in sorted order of the real names over the whole install, so part 1
+  (`Labcharb-Labrealmd`) and part 2 (`Labchard-Labrealme`) are two runs and
+  a pseudonym in one is not proven to mean the same real name in the other.
 - `embedded: n` counts replacements that touched a neighbouring letter or
   digit (a character named like the start of a longer word). Read those
   lines before trusting the file's vocabulary. CVar names and TOC directive
@@ -97,3 +101,10 @@ the client:
 | `macos/forever/WTF/Account/90000001#6/1/Labcharb-Labrealmd/tts-cache-character.txt` | tts-cache | _classic_beta_ | 1.60.1.69913 | macos | owner | owner | identity-rewritten: path only | mixed CRLF and LF |
 | `macos/forever/WTF/Account/90000001#6/1/Labcharb-Labrealmd/edit-mode-cache-character.txt` | edit-mode-cache | _classic_beta_ | 1.60.1.69913 | macos | owner | owner | identity-rewritten: path only | no trailing newline |
 | `macos/forever/Interface/AddOns/DBM-Challenges/DBM-Challenges.toc` | toc | _classic_beta_ | 1.60.1.69913 | macos | owner | owner | none | bracketed load condition or variable; CRLF |
+| `macos/forever/WTF/Account/90000001#6/Labrealmb Partb Partc Partd/Labchard/AddOns.txt` | addons-txt | _classic_beta_ | 1.60.1.69977 | macos | owner | owner | identity-rewritten: path only | CRLF |
+| `macos/forever/WTF/Account/90000001#6/SavedVariables/RareScanner.lua` | savedvariables | _classic_beta_ | 1.60.1.69977 | macos | owner | owner | identity-rewritten: path only | smallest file (23 bytes, no nesting; `X = nil`); CRLF; leading blank line |
+| `macos/forever/WTF/Account/90000001#6/SavedVariables/Blizzard_GamepadSmartNavigation.lua` | savedvariables | _classic_beta_ | 1.60.1.69977 | macos | owner | owner | identity-rewritten: path only | single `= nil` assignment (37 bytes, no nesting); named as a Blizzard addon **[verify]**, with no `Interface/AddOns/` folder (conductor's listing of the install); file named after the addon, not the variable; CRLF; leading blank line |
+| `macos/forever/WTF/Account/90000001#6/SavedVariables/Syndicator.lua` | savedvariables | _classic_beta_ | 1.60.1.69977 | macos | owner | owner | identity-rewritten: 8 | largest file that passed the scrub (14484 bytes); nesting depth 6, no indentation; 82 positional entries with no `-- [n]` comment; two-line empty tables; empty key `[""]`; named colour-code and item-link escapes; character stored as `"<First> <Second>"` with `realm = ""`; CRLF; leading blank line |
+| `macos/forever/WTF/Account/90000001#6/SavedVariables/DBM-StatusBarTimers.lua` | savedvariables | _classic_beta_ | 1.60.1.69977 | macos | owner | owner | identity-rewritten: path only | negative numbers and long floats (3680 bytes); nesting depth 3, no indentation; `\\` escapes; CRLF; leading blank line |
+| `macos/forever/WTF/Account/90000001#6/SavedVariables/RareScanner.lua.bak` | savedvariables | _classic_beta_ | 1.60.1.69977 | macos | owner | owner | identity-rewritten: path only | previous write (.lua.bak), byte-identical to `RareScanner.lua`; CRLF; leading blank line |
+| `macos/forever/Interface/AddOns/DBM-Brawlers/DBM-Brawlers.toc` | toc | _classic_beta_ | 1.60.1.69977 | macos | owner | owner | none | single-TOC addon; no blank line between the directives and the file lines; single-value `## Interface: 120100` (the author's claim); raw UTF-8 in localized keys; no BOM; CRLF |
