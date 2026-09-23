@@ -1348,17 +1348,19 @@ class OtherUnits:
         Every other part is searched in the scrubbed bytes with each
         replacement masked first (so a pseudonym never counts), compared the
         way the rest of the tool compares (`_fold`: NFC and full case
-        folding). A part of EMBEDDED_MIN_CHARS or more characters counts
-        anywhere, even inside a longer word, and with a space, apostrophe,
-        hyphen, underscore or `\\'` between any two of its letters (the spaced
-        and split spellings the tool derives for the owner's realms:
-        `GloamSpire` is also found as `Gloam Spire`); a shorter one only as a
-        whole word.
+        folding), with U+0307 dropped after folding (see `_hunt_fold`). A
+        part of EMBEDDED_MIN_CHARS or more letters counts anywhere, even
+        inside a longer word, with an optional space, apostrophe, hyphen,
+        underscore or `\\'` between any two of its letters; one written
+        inside the real part is optional too (the spaced and split spellings
+        the tool derives for the owner's realms: `GloamSpire` is also found
+        as `Gloam Spire`, `Kel'Vesh` as `KelVesh`). A shorter one counts only
+        as a whole word.
         """
         terms: set[str] = set()
         uncheckable: set[str] = set()
         for name in self.hunted:
-            for part in re.split(r"[\s\-]+", _fold(name)):
+            for part in re.split(r"[\s\-]+", _hunt_fold(name)):
                 if not part or part.isdigit():
                     continue
                 if len(part) < 2 or part in RESERVED_WORDS | VOCABULARY_PARTNERS:
@@ -1370,8 +1372,11 @@ class OtherUnits:
         separator = r"(?:[ '\-_]|\\')?"
 
         def spelled(term: str) -> str:
-            if len(term) >= EMBEDDED_MIN_CHARS:
-                return separator.join(re.escape(c) for c in term)
+            # A separator inside the real part (`kel'vesh`) is optional too:
+            # it is dropped before the letters are joined.
+            letters = _LOOSE_DROPPED.sub("", term)
+            if len(letters) >= EMBEDDED_MIN_CHARS:
+                return separator.join(re.escape(c) for c in letters)
             return rf"(?<!\w){re.escape(term)}(?!\w)"
 
         pattern = re.compile(
@@ -1380,7 +1385,7 @@ class OtherUnits:
         masked = bytearray(result.data)
         for start, end in _written(result.edits):
             masked[start:end] = bytes(end - start)  # NUL: no name contains it
-        text = _fold(bytes(masked).decode("utf-8", errors="replace"))
+        text = _hunt_fold(bytes(masked).decode("utf-8", errors="replace"))
         return sum(1 for _ in pattern.finditer(text)), len(uncheckable)
 
 
@@ -1463,6 +1468,15 @@ class OtherPlayers:
                 pseudonym = self._pseudonym(text, "Labotherrealm", index)
                 yield part_start, part_start + len(part), pseudonym
             cursor = known_end
+
+
+_LOOSE_DROPPED = re.compile(r"[ '\-_\\]")  # separators a loose spelling may drop or add
+
+
+def _hunt_fold(text: str) -> str:
+    """`_fold`, then without U+0307: casefold turns `İ` into `i` + a combining dot
+    above, which would keep `İlkayda` from matching `ilkayda`."""
+    return _fold(text).replace("\u0307", "")
 
 
 def _written(edits: Sequence[Edit]) -> list[Span]:

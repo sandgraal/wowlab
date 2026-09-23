@@ -477,3 +477,64 @@ def test_constructed_region_empty_and_digit_parts_are_not_uncheckable(tmp_path: 
     ):
         problems, _data, _o = _process(_one_player(unit_name), tmp_path, others=OtherPlayers())
         assert problems == [], unit_name
+
+
+# ─── fix round 2 (security re-review of #63) ─────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("unit_name", "text"),
+    [("İlkayda", "ilkayda"), ("ilkayda", "İLKAYDA")],
+    ids=["dotted-capital-unit", "dotted-capital-text"],
+)
+def test_constructed_dotted_capital_i_still_matches(
+    unit_name: str, text: str, tmp_path: Path
+) -> None:
+    log = _one_player(unit_name.encode() + b"-KestrelHollow-", f"{text} waves.".encode())
+    problems, _data, _o = _process(log, tmp_path, others=OtherPlayers())
+    assert problems == [f"{OTHER_NAME} x1"]
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [b"KelVesh", b"Kel Vesh", b"Kel\\'Vesh", b"Kel'Vesh"],
+    ids=["joined", "spaced", "lua-escaped", "as-written"],
+)
+def test_constructed_separator_inside_an_unknown_realm_is_optional(
+    spelling: bytes, tmp_path: Path
+) -> None:
+    log = _one_player(b"Zorvinth-Kel'Vesh-US", b"The Warden of " + spelling + b" wakes.")
+    problems, _data, _o = _process(log, tmp_path, others=OtherPlayers())
+    assert problems == [f"{OTHER_NAME} x1"]
+
+
+def test_constructed_unknown_realm_with_separator_passes_when_absent(tmp_path: Path) -> None:
+    problems, data, _o = _process(
+        _one_player(b"Zorvinth-Kel'Vesh-US"), tmp_path, others=OtherPlayers()
+    )
+    assert problems == [] and b'"Labothera-Labotherrealma\'Partb-US"' in data
+
+
+def test_constructed_uncheckable_part_counts_beside_searched_parts(tmp_path: Path) -> None:
+    """`GloamSpire` is searched (absent), `Default` cannot be: the count still lands."""
+    problems, _data, _o = _process(
+        _one_player(b"Default-GloamSpire-US"), tmp_path, others=OtherPlayers()
+    )
+    assert problems == [f"{OTHER_UNCHECKABLE} x1"]
+
+
+def test_constructed_one_character_part_is_uncheckable(tmp_path: Path) -> None:
+    problems, _data, _o = _process(_one_player(b"Zorvinth-X-US"), tmp_path, others=OtherPlayers())
+    assert problems == [f"{OTHER_UNCHECKABLE} x1"]
+
+
+def test_constructed_digit_only_part_is_not_searched(tmp_path: Path) -> None:
+    log = _one_player(b"Zorvinth-Gloam-52", b"52 wardens wake, 52 more follow.")
+    problems, _data, _o = _process(log, tmp_path, others=OtherPlayers())
+    assert problems == []
+
+
+def test_constructed_lua_escaped_apostrophe_between_letters_matches(tmp_path: Path) -> None:
+    log = _one_player(b"Zorvinth-KestrelHollow-", b"The Warden glares at Zor\\'vinth!")
+    problems, _data, _o = _process(log, tmp_path, others=OtherPlayers())
+    assert problems == [f"{OTHER_NAME} x1"]
