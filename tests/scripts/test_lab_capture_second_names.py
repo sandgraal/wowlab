@@ -390,7 +390,8 @@ def test_constructed_ambiguous_twin_leaves_the_character_captured_with_a_note(
             "WoWCombatLog-010126_000000.txt",
             b'1/1/2026 00:00:00.000-4  SPELL_DAMAGE,Creature-0-1-2-3-4-0,"Qorvath the Ancient",'
             b'0xa48,0x0,Creature-0-1-2-3-5-0,"Anchor Qorvey Strike",0x10a48\n',
-            b'1/1/2026 00:00:00.000-4  SAY,"Qorv"\n',
+            # A whole word is replaced in a combat log only in an own unit name (M10-02 fu 3).
+            b'1/1/2026 00:00:00.000-4  SPELL_HEAL,Player-1-0000ABCD,"Alyra-Qorv",0x511\n',
         ),
         ("chat-cache.txt", b"CHANNEL AnchorQorvey\n", b"CHANNEL Qorv\n"),
         ("config-cache.wtf", b'SET lastAddon "AnchorQorvey"\n', b'SET lastAddon "Qorv"\n'),
@@ -399,7 +400,12 @@ def test_constructed_ambiguous_twin_leaves_the_character_captured_with_a_note(
 def test_constructed_glued_identity_refuses_every_file_kind(
     name: str, glued: bytes, whole: bytes, tmp_path: Path
 ) -> None:
-    identity = Identity(characters=["Alyra"], realms=["Some Realm", "Qorv"], loose=["Qorv"])
+    identity = Identity(
+        characters=["Alyra"],
+        realms=["Some Realm", "Qorv"],
+        loose=["Qorv"],
+        guids=[b"Player-1-0000ABCD"],
+    )
     source = tmp_path / name
     rel = f"{FLAVOR}/WTF/Account/A/Some Realm/Alyra/{name}"
 
@@ -553,7 +559,12 @@ def test_constructed_contested_drop_leaves_the_groups_unpaired_in_either_order(
 def test_constructed_underscore_joined_identity_refuses_the_file(
     name: str, glued: bytes, whole: bytes, tmp_path: Path
 ) -> None:
-    identity = Identity(characters=["Alyra"], realms=["Some Realm", "Qorv"], loose=["Qorv"])
+    identity = Identity(
+        characters=["Alyra"],
+        realms=["Some Realm", "Qorv"],
+        loose=["Qorv"],
+        guids=[b"Player-1-0000ABCD"],
+    )
     source = tmp_path / name
     rel = f"{FLAVOR}/WTF/Account/A/Some Realm/Alyra/{name}"
 
