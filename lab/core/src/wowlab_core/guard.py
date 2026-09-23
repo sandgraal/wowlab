@@ -16,24 +16,36 @@ What entering a transaction does, in this order, before the body runs:
    journal by `undo()` is validated the same way; it is untrusted.
 2. The store (a directory path; `None` means `snapshot.default_store_path()`)
    must not overlap the install in either direction (L1), and neither may
-   the two lock files nor `locks/` (below), compared after resolving.
+   the two lock files nor `locks/` (below), compared after resolving. None
+   of the store, `<store>/lock`, `locks/` and the install lock may be inside
+   any install at all (§6.10 as amended 2026-09-23): each is resolved, and it
+   and every existing ancestor are examined; a directory holding an entry
+   named `.build.info` or `.flavor.info` is an install, and so is one that
+   cannot be examined. All of this runs before anything is created.
 3. One writer at a time (§6.10 as amended 2026-09-22, item 1): the store
    lock `<store>/lock` is taken, then the install lock
    `<user data dir>/locks/<key>.lock`, `<key>` the SHA-256 hex of
    `"<st_dev>:<st_ino>"` of the validated install root, so every spelling of
    one install (a symlink, a case or Unicode variant, a junction) maps to one
    lock. Both are exclusive and non-blocking: `fcntl.flock(LOCK_EX |
-   LOCK_NB)` on POSIX, `msvcrt.locking(LK_NBLCK, 1)` at offset 0 on Windows.
+   LOCK_NB)` on POSIX; on Windows `msvcrt.locking(LK_NBLCK, 1)` on the one
+   byte at offset 2^30, far past the end of the empty file, because Windows
+   byte-range locks are mandatory and a lock at offset 0 would fail every
+   read of the file (the same offset unlocks; nothing is written through the
+   descriptor).
    A lock this process already holds is refused without asking the system,
    so a nested transaction is refused too. A held lock is `GuardBusyError`;
    any other failure to open or lock is a plain `GuardError`; nothing ever
    proceeds unlocked. Lock files are opened `O_CREAT | O_RDWR | O_NOFOLLOW`
    (on Windows a link or other reparse point is refused before the open and
    the opened file checked against the path after it), must be regular files
-   by `fstat`, and are never truncated, written or deleted. They are held
-   until the transaction exits, whatever way it exits, and the system drops
-   them when the process ends. The exclusion covers the processes of one OS
-   user that share one user data directory on one machine.
+   by `fstat` with one link (a hard link is refused), and are never
+   truncated, written or deleted. They are held until the transaction exits,
+   whatever way it exits, and the system drops them when the process ends. A
+   forked child that unwinds the parent's `with` neither unlocks, rolls back
+   nor journals: it only closes its copies of the descriptors. The exclusion
+   covers the processes of one OS user that share one user data directory on
+   one machine.
 4. `wowlab_core.process` is asked, with its default probe, about the install
    root, the flavor folder and the executable names found in the flavor
    folder. `running`, `unknown`, and any exception count as running (§6.7 as
@@ -42,6 +54,12 @@ What entering a transaction does, in this order, before the body runs:
    taken (§6.9 defaults; `Interface/` holds `AddOns/` and the loose overrides).
 6. A journal record naming that snapshot is written under the store, in
    `journal/`, and fsynced (journal format 2; format-1 records still read).
+   The journal is first read in full, under the locks and before the
+   snapshot: one that cannot be (an I/O error, a damaged record) is a
+   `GuardError` with nothing written, since `undo()` could not reverse the
+   change. A path read from a journal record or a manifest is looked up
+   only when it is a local absolute path (absolute, not `\\\\` or `//`, a
+   drive letter on Windows); anything else names another install.
 7. Leftover temp files are cleaned up (item 2): the temp paths named by this
    flavor's earlier records, from the most recent one whose cleanup finished
    (that one included), are removed if the name is exactly guard's temp
@@ -147,7 +165,7 @@ import unicodedata
 import uuid
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from types import TracebackType
 from typing import Literal, NoReturn, Protocol
 
@@ -554,6 +572,13 @@ def _store_path(store: object) -> Path:
 _HELD_LOCKS: set[_Identity] = set()
 _HELD_LOCKS_MUTEX = threading.Lock()
 
+# Windows byte-range locks are mandatory: a lock on a byte a reader asks for
+# fails the read. So the one locked byte sits far past the end of the empty
+# lock file (the technique SQLite uses). Fixed: guards locking different
+# offsets would not exclude each other (§6.10 as reworded 2026-09-23).
+_WINDOWS_LOCK_OFFSET = 1 << 30
+_INSTALL_MARKERS = (".build.info", ".flavor.info")
+
 
 def _install_lock_path(place: _Place) -> Path:
     """`<user data dir>/locks/<key>.lock`, the key from the install root's
@@ -565,11 +590,49 @@ def _install_lock_path(place: _Place) -> Path:
     return user_data / _LOCKS_DIR / f"{key}.lock"
 
 
+def _refuse_inside_any_install(path: Path, what: str) -> None:
+    """§6.10 as amended 2026-09-23: `path` (resolved, following links and
+    junctions) and every existing ancestor are examined; a directory holding
+    an entry named `.build.info` or `.flavor.info` (of any kind) is an
+    install, and so is one that cannot be examined. Runs before anything at
+    `path` is created."""
+    try:
+        resolved = path.resolve()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise GuardError(f"cannot resolve {what} {path}: {exc}; refusing it") from exc
+    for candidate in (resolved, *resolved.parents):
+        try:
+            st = candidate.lstat()
+        except FileNotFoundError:
+            continue  # not created yet
+        except (OSError, ValueError) as exc:
+            raise GuardError(
+                f"{what} {path}: cannot examine {candidate} ({exc}); it counts as an install"
+            ) from exc
+        if not stat.S_ISDIR(st.st_mode):
+            continue
+        for marker in _INSTALL_MARKERS:
+            try:
+                (candidate / marker).lstat()
+            except FileNotFoundError:
+                continue
+            except (OSError, ValueError) as exc:
+                raise GuardError(
+                    f"{what} {path}: cannot examine {candidate} ({exc}); it counts as an install"
+                ) from exc
+            raise GuardError(
+                f"{what} {path} is inside an install ({candidate} holds {marker}); "
+                "guard creates nothing there"
+            )
+
+
 @dataclass(frozen=True)
 class _HeldLock:
     fd: int
     identity: _Identity
     path: Path
+    pid: int
+    """The process that took it: a forked child never unlocks the parent's lock."""
 
 
 def _plain_dir(path: Path, *, parents: bool) -> None:
@@ -595,7 +658,7 @@ def _os_lock(fd: int, path: Path, what: str) -> None:
         import msvcrt
 
         try:
-            os.lseek(fd, 0, os.SEEK_SET)
+            os.lseek(fd, _WINDOWS_LOCK_OFFSET, os.SEEK_SET)
             msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
         except OSError as exc:
             # A byte another handle has locked is refused with EACCES.
@@ -617,7 +680,7 @@ def _os_unlock(fd: int) -> None:
     if sys.platform == "win32":
         import msvcrt
 
-        os.lseek(fd, 0, os.SEEK_SET)
+        os.lseek(fd, _WINDOWS_LOCK_OFFSET, os.SEEK_SET)
         msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
     else:
         import fcntl
@@ -627,8 +690,8 @@ def _os_unlock(fd: int) -> None:
 
 def _take_lock(path: Path, what: str) -> _HeldLock:
     """Open the lock file (creating it, never following a link, never
-    truncating it) and lock it. `GuardBusyError` when it is held, here or
-    elsewhere; `GuardError` for anything else."""
+    truncating or writing it) and lock it. `GuardBusyError` when it is held,
+    here or elsewhere; `GuardError` for anything else."""
     if os.name == "nt":
         # No O_NOFOLLOW on Windows: refuse a link or reparse point before the
         # open, and check after it that the file opened is the one at the path.
@@ -658,6 +721,10 @@ def _take_lock(path: Path, what: str) -> _HeldLock:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
             raise GuardError(f"the lock file {path} is not a regular file")
+        if st.st_nlink != 1:
+            raise GuardError(
+                f"the lock file {path} has {st.st_nlink} links; a hard link is refused"
+            )
         if os.name == "nt":
             after = path.lstat()
             if _is_link(after) or _identity(after) != _identity(st):
@@ -676,10 +743,17 @@ def _take_lock(path: Path, what: str) -> _HeldLock:
         if isinstance(exc, OSError):
             raise GuardError(f"cannot lock {what} ({path}): {exc}") from exc
         raise
-    return _HeldLock(fd=fd, identity=identity, path=path)
+    return _HeldLock(fd=fd, identity=identity, path=path, pid=os.getpid())
 
 
 def _release_lock(lock: _HeldLock) -> None:
+    """Unlock and close. In a forked child only the descriptor is closed: an
+    unlock there would release the lock the parent still holds (a `flock`
+    lock belongs to the open file description the two share)."""
+    if os.getpid() != lock.pid:
+        with contextlib.suppress(OSError):
+            os.close(lock.fd)
+        return
     try:
         _os_unlock(lock.fd)
     except OSError as exc:  # closing the descriptor releases it anyway
@@ -701,7 +775,10 @@ class _Locks:
 
     def take_store(self, store_path: Path, *, create: bool) -> None:
         """`<store>/lock`. With `create`, a missing store directory is made
-        first (a transaction's store); otherwise it must exist."""
+        first (a transaction's store); otherwise it must exist. Neither the
+        store nor its lock file may be inside any install."""
+        _refuse_inside_any_install(store_path, "the store")
+        _refuse_inside_any_install(store_path / _STORE_LOCK, "the store lock")
         if create:
             try:
                 store_path.mkdir(parents=True, exist_ok=True)
@@ -711,9 +788,24 @@ class _Locks:
 
     def take_install(self, place: _Place) -> None:
         path = _install_lock_path(place)
+        _refuse_inside_any_install(path.parent, "the lock directory")
+        _refuse_inside_any_install(path, "the install lock")
         _plain_dir(path.parent.parent, parents=True)
         _plain_dir(path.parent, parents=False)
         self._held.append(_take_lock(path, "the install lock"))
+
+    def cover(self, store_path: Path, place: _Place) -> bool:
+        """True when these locks, taken by this process, include this store's
+        lock and this install's lock (by the identity of each lock file)."""
+        held = {lock.identity for lock in self._held if lock.pid == os.getpid()}
+        for path in (store_path / _STORE_LOCK, _install_lock_path(place)):
+            try:
+                st = path.lstat()
+            except OSError:
+                return False
+            if _is_link(st) or _identity(st) not in held:
+                return False
+        return True
 
     def release(self) -> None:
         while self._held:
@@ -852,6 +944,28 @@ def _refuse_store_overlap(store_path: Path, place: _Place) -> None:
                 f"{candidate} reaches the install ({root}); the store ({store_path}), the "
                 "lock files and the install must not contain each other"
             )
+    # Not inside any install either, whether or not it is this one (§6.10 as
+    # amended 2026-09-23): checked for all four before any of them is made.
+    for candidate, what in (
+        (store_path, "the store"),
+        (store_path / _STORE_LOCK, "the store lock"),
+        (install_lock.parent, "the lock directory"),
+        (install_lock, "the install lock"),
+    ):
+        _refuse_inside_any_install(candidate, what)
+
+
+def _local_absolute(text: str) -> bool:
+    """A path read from a journal record or a manifest may be looked up only
+    when it is a local absolute path: absolute, not `\\\\` or `//` (a UNC or
+    device path), and on Windows with a drive letter. Anything else is
+    treated as another install, without a lookup."""
+    if not text or "\x00" in text or text.startswith(("\\\\", "//")):
+        return False
+    if os.name == "nt":
+        spelled = PureWindowsPath(text)
+        return re.fullmatch(r"[A-Za-z]:", spelled.drive) is not None and bool(spelled.root)
+    return text.startswith("/")
 
 
 def _client_names(flavor_dir: Path) -> list[str]:
@@ -1284,6 +1398,7 @@ class _Transaction:
         "_order",
         "_overlay",
         "_own_locks",
+        "_pid",
         "_place",
         "_plan",
         "_planned_dirs",
@@ -1315,6 +1430,9 @@ class _Transaction:
         # Locks the caller already holds for this store and install (`undo()`);
         # without them the transaction takes its own on enter.
         self._given_locks = locks
+        # The process that opened it: a forked child neither writes, commits
+        # nor unlocks through it.
+        self._pid = os.getpid()
         self._own_locks: _Locks | None = None
         self._status: Literal["new", "open", "closed"] = "new"
         self._record: _JournalRecord | None = None
@@ -1423,6 +1541,11 @@ class _Transaction:
                 own = _Locks()
                 own.take_store(self._store_path, create=True)
                 own.take_install(place)
+            elif not self._given_locks.cover(self._store_path, place):
+                raise GuardError(
+                    "the locks handed to this transaction are not this store's and this "
+                    "install's; guard never proceeds unlocked"
+                )
             _refuse_if_client_running(place)
             self._place = place
             if not self._dry_run:
@@ -1459,7 +1582,7 @@ class _Transaction:
             if e.path.startswith(prefix)
         }
         # With nothing to consider the cleanup is finished as the record is.
-        self._cleanup_finished = candidates == []
+        self._cleanup_finished = not candidates
         self._record = _JournalRecord(
             format=_JOURNAL_FORMAT,
             id=_next_record_id(self._store_path),
@@ -1479,16 +1602,17 @@ class _Transaction:
         if candidates:
             self._clean_up(place, candidates)
 
-    def _temp_candidates(self, place: _Place) -> list[str] | None:
+    def _temp_candidates(self, place: _Place) -> list[str]:
         """The temp paths item 2 considers: those named by this flavor's
         records (by identity) from the most recent one whose cleanup finished,
-        that one included. None when the journal cannot be read: the cleanup
-        is then left for a later transaction."""
+        that one included. A journal that cannot be read in full raises
+        `GuardError` here, under the locks and before the pre-write snapshot:
+        a change `undo()` could not reverse is not written (§6.10 as amended
+        2026-09-23)."""
         try:
             records = _load_journal(self._store_path)
         except GuardError as exc:
-            _log.warning("leftover temp files not considered: %s", exc)
-            return None
+            raise GuardError(f"{exc}; nothing was written or journaled") from exc
         mine = [r for r in records if _record_is_of(r, place)]
         start = max((i for i, r in enumerate(mine) if r.cleanup_finished), default=0)
         return list(dict.fromkeys(p for r in mine[start:] for p in (*r.temps, *r.temps_left)))
@@ -1549,6 +1673,13 @@ class _Transaction:
             return False
         self._status = "closed"
         try:
+            if os.getpid() != self._pid:
+                # A forked child unwinding the parent's `with`: the record and
+                # the locks are the parent's. Touch neither disk nor journal.
+                raise GuardError(
+                    "this transaction belongs to process "
+                    f"{self._pid}; a forked child cannot commit or roll it back"
+                )
             return self._close(exc)
         finally:
             if self._own_locks is not None:
@@ -1588,6 +1719,8 @@ class _Transaction:
         one (a refused or half-done change) touches nothing more."""
         if self._status != "open":
             raise GuardError("this transaction is not open")
+        if os.getpid() != self._pid:
+            raise GuardError(f"this transaction belongs to process {self._pid}, not this one")
         if self._broken is not None:
             raise GuardError(
                 f"this transaction can only roll back ({self._broken}); nothing more is written"
@@ -1706,10 +1839,10 @@ class _Transaction:
             self._journal[rel] = (previous[0], after)
         self._planned_dirs.extend(d for d in found.missing if d not in self._planned_dirs)
         tmp_name = None if data is None else self._new_temp(parts)
-        # Write-ahead: the path, its `before` and the temp file's name are
-        # durable before anything in the install changes.
-        self._journal_write("open")
         try:
+            # Write-ahead: the path, its `before` and the temp file's name are
+            # durable before anything in the install changes.
+            self._journal_write("open")
             _mutate(
                 self._place,
                 parts,
@@ -1739,9 +1872,11 @@ class _Transaction:
             with contextlib.suppress(GuardError):
                 self._journal_write("open")
             raise
-        except BaseException:
-            # Interrupted inside the mutation: it may or may not have landed.
+        except BaseException as exc:
+            # Interrupted inside the mutation: it may or may not have landed,
+            # and a caller that catches this must not commit a guessed `after`.
             self._last[rel] = (before, after)
+            self._broken = f"{rel}: interrupted while it changed ({type(exc).__name__})"
             raise
         self._last[rel] = (after,)
         self._note_plan(rel, before, after, data)
@@ -1906,7 +2041,10 @@ class _Transaction:
 def _record_is_of(record: _JournalRecord, place: _Place) -> bool:
     """The record's install root and flavor folder are `place`'s, by identity
     (a record names both as guard resolved them, so equal spellings are
-    the common case and need no lookup)."""
+    the common case and need no lookup). A path that is not local and
+    absolute names another install and is never looked up."""
+    if not (_local_absolute(record.flavor_path) and _local_absolute(record.install_root)):
+        return False
     if record.flavor_path == str(place.flavor_dir) and record.install_root == str(
         place.install_root
     ):
@@ -1918,9 +2056,12 @@ def _record_is_of(record: _JournalRecord, place: _Place) -> bool:
 
 def _refuse_foreign_snapshot(manifest: Manifest, place: _Place) -> None:
     """A snapshot restores only into the flavor of the install it was taken
-    from; restoring across installs or flavors is not a thing the gate does."""
-    if manifest.flavor_folder != place.folder or not _same_dir(
-        Path(manifest.install_root), place.install_root
+    from; restoring across installs or flavors is not a thing the gate does.
+    An install root that is not a local absolute path is never looked up."""
+    if (
+        manifest.flavor_folder != place.folder
+        or not _local_absolute(manifest.install_root)
+        or not _same_dir(Path(manifest.install_root), place.install_root)
     ):
         raise GuardError(
             f"snapshot {manifest.id} was taken of {manifest.flavor_folder!r} in "
@@ -2024,7 +2165,14 @@ def _last_record(store_path: Path) -> _JournalRecord:
 
 def _record_place(record: _JournalRecord, *, install: _Place | None = None) -> _Place:
     """The flavor a journal record names, validated like a caller's. With
-    `install`, it must be in that install (by identity)."""
+    `install`, it must be in that install (by identity). Paths that are not
+    local and absolute are refused before any lookup."""
+    for value in (record.flavor_path, record.install_root):
+        if not _local_absolute(value):
+            raise GuardError(
+                f"journal record {record.id} names {value!r}, which is not a local absolute "
+                "path; nothing was undone"
+            )
     place = _place(Path(record.flavor_path), record.flavor_version)
     if not _same_dir(Path(record.install_root), place.install_root):
         raise GuardError(
