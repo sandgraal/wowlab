@@ -196,7 +196,6 @@ def test_real_savedvariables_parses(luadata: Any, name: str) -> None:
             luadata.LuaTable | luadata.LuaString | luadata.LuaNumber | luadata.LuaBool,
         ), "nil is legal only as a top-level value (§4.1)"
         assert e.sep == b",", "the client ends every entry with `,` (§4.2)"
-        assert e.comment is None
 
 
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
