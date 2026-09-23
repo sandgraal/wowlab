@@ -160,7 +160,6 @@ def test_named_fixtures_are_what_the_graders_assume() -> None:
 # ── every indexed SavedVariables file ───────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("name", SAVEDVARIABLES)
 def test_real_savedvariables_rebuilds_byte_for_byte_from_the_document(
     luadata: Any, name: str
@@ -172,7 +171,6 @@ def test_real_savedvariables_rebuilds_byte_for_byte_from_the_document(
     assert rebuild(luadata, luadata.parse(data)) == data
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("name", SAVEDVARIABLES)
 def test_real_savedvariables_keeps_every_token_in_source_order(luadata: Any, name: str) -> None:
     """The structure, not only the bytes: names, key styles, key and value
@@ -182,7 +180,6 @@ def test_real_savedvariables_keeps_every_token_in_source_order(luadata: Any, nam
     assert document_tokens(luadata, luadata.parse(data)) == source_tokens(data)
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("name", SAVEDVARIABLES)
 def test_real_savedvariables_parses(luadata: Any, name: str) -> None:
     doc = luadata.parse(_read(name))
@@ -198,7 +195,6 @@ def test_real_savedvariables_parses(luadata: Any, name: str) -> None:
         assert e.sep == b",", "the client ends every entry with `,` (§4.2)"
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("name", SAVEDVARIABLES)
 def test_real_savedvariables_read_equals_parse(luadata: Any, name: str) -> None:
     """`read()` gets a copy, never the committed fixture tree (a reader that
@@ -214,7 +210,6 @@ def test_real_savedvariables_read_equals_parse(luadata: Any, name: str) -> None:
     assert from_file.to_python() == from_bytes.to_python()
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("name", SAVEDVARIABLES)
 def test_real_savedvariables_to_python_is_plain_data(luadata: Any, name: str) -> None:
     doc = luadata.parse(_read(name))
@@ -236,7 +231,6 @@ def test_real_savedvariables_to_python_is_plain_data(luadata: Any, name: str) ->
     plain(py)
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("name", SAVEDVARIABLES)
 def test_real_savedvariables_has_no_duplicate_flagged(luadata: Any, name: str) -> None:
     """The client writes a table from a Lua table, so its keys are unique;
@@ -245,7 +239,6 @@ def test_real_savedvariables_has_no_duplicate_flagged(luadata: Any, name: str) -
     assert not [e for e in _entries(luadata, doc) if e.duplicate]
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("writable", [False, True], ids=["read-only-folder", "writable-folder"])
 @pytest.mark.parametrize("name", SAVEDVARIABLES)
 def test_read_leaves_the_folder_untouched(
@@ -277,7 +270,6 @@ def test_read_leaves_the_folder_untouched(
 # ── named files ─────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize(
     ("name", "variable"),
     [
@@ -302,7 +294,6 @@ def test_nil_file_is_one_top_level_nil(luadata: Any, name: str, variable: str) -
     assert py[variable] is None
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_syndicator_has_three_assignments_in_file_order(luadata: Any) -> None:
     doc = luadata.parse(_read(SYNDICATOR))
     assert [a.name for a in doc.assignments] == [
@@ -315,7 +306,6 @@ def test_syndicator_has_three_assignments_in_file_order(luadata: Any) -> None:
     assert doc.tail == b"\r\n"
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_syndicator_config_keys_in_file_order(luadata: Any) -> None:
     data = _read(SYNDICATOR)
     doc = luadata.parse(data)
@@ -337,7 +327,6 @@ def test_syndicator_config_keys_in_file_order(luadata: Any) -> None:
     assert entry(luadata, config, "show_guild_banks_in_tooltips").value.value is True
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_syndicator_positional_entries_carry_no_comment(luadata: Any) -> None:
     """82 positional entries, none with a `-- [n]` comment, and no comment
     anywhere (§4.2 amendment): the comment is optional style."""
@@ -350,7 +339,6 @@ def test_syndicator_positional_entries_carry_no_comment(luadata: Any) -> None:
     assert {e.style for e in entries} == {POSITIONAL, STRING}
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_syndicator_empty_tables(luadata: Any) -> None:
     """An empty table is written as `{` then `}` on two lines, 47 times; the
     line break is the `}`'s leading bytes."""
@@ -360,13 +348,11 @@ def test_syndicator_empty_tables(luadata: Any) -> None:
     assert {t.close_lead for t in empty} == {b"\r\n"}
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_syndicator_nests_six_tables_deep(luadata: Any) -> None:
     doc = luadata.parse(_read(SYNDICATOR))
     assert max(d for d, _t in tables(luadata, doc)) == 6
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_syndicator_item_link_is_ordinary_text(luadata: Any) -> None:
     """`|c…|r` colour codes and `|H…|h` links are ordinary bytes, and a `'`
     inside a double-quoted string is raw (§4.2)."""
@@ -394,7 +380,6 @@ def test_syndicator_item_link_is_ordinary_text(luadata: Any) -> None:
     assert len(bags.entries[1].value.entries) == 0
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_syndicator_empty_string_key(luadata: Any) -> None:
     doc = luadata.parse(_read(SYNDICATOR))
     by_realm = path(luadata, doc, "SYNDICATOR_SUMMARIES", "Characters", "ByRealm")
@@ -404,7 +389,6 @@ def test_syndicator_empty_string_key(luadata: Any) -> None:
     assert isinstance(only.value, luadata.LuaTable)
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_syndicator_positional_false_and_positional_empty_table(luadata: Any) -> None:
     doc = luadata.parse(_read(SYNDICATOR))
     pending = path(luadata, doc, "SYNDICATOR_SUMMARIES", "Warband", "Pending")
@@ -419,7 +403,6 @@ def test_syndicator_positional_false_and_positional_empty_table(luadata: Any) ->
     assert len(holder.value.entries) == 0
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_syndicator_to_python(luadata: Any) -> None:
     """Array-like tables (keys exactly 1..n) become lists; an empty table
     becomes `{}` (§6.4 amendment item 4)."""
@@ -442,7 +425,6 @@ def test_syndicator_to_python(luadata: Any) -> None:
     assert list(py["SYNDICATOR_SUMMARIES"]["Characters"]["ByRealm"]) == [""]
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_dbm_keys_in_file_order_all_string_style(luadata: Any) -> None:
     data = _read(DBM)
     doc = luadata.parse(data)
@@ -458,7 +440,6 @@ def test_dbm_keys_in_file_order_all_string_style(luadata: Any) -> None:
     assert max(d for d, _t in tables(luadata, doc)) == 3
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize(
     ("key", "raw", "as_int"),
     [("TimerY", "-260", -260), ("TimerX", "-223", -223), ("HugeTimerY", "-120", -120)],
@@ -474,7 +455,6 @@ def test_dbm_negative_integers_keep_their_text(
     assert number.value.as_float() == float(as_int)
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize(
     ("key", "raw"),
     [
@@ -504,7 +484,6 @@ def test_dbm_floats_keep_their_text(luadata: Any, key: str, raw: str) -> None:
     assert number.as_float() == float(raw)
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_dbm_backslash_escape_is_decoded_and_raw_is_kept(luadata: Any) -> None:
     doc = luadata.parse(_read(DBM))
     options = path(luadata, doc, "DBT_AllPersistentOptions", "Default", "DBM")
@@ -517,7 +496,6 @@ def test_dbm_backslash_escape_is_decoded_and_raw_is_kept(luadata: Any) -> None:
     assert (skin.data, skin.value, skin.raw) == (b"", "", b'""')
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_dbm_to_python_number_types(luadata: Any) -> None:
     """`int` or `float` follows the spelling (`1` is an int although the
     client holds a double)."""

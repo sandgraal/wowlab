@@ -129,7 +129,6 @@ EXAMPLE_PY = {
 }
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("eol", EOLS, ids=EOL_IDS)
 def test_reference_example_rebuilds_byte_for_byte(luadata: Any, eol: bytes) -> None:
     """The §4.2 example, tab-indented with `-- [n]` comments, in each line
@@ -138,7 +137,6 @@ def test_reference_example_rebuilds_byte_for_byte(luadata: Any, eol: bytes) -> N
     assert doc.to_python() == EXAMPLE_PY
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_reference_example_key_styles_and_comments(luadata: Any) -> None:
     doc = luadata.parse(_doc(*EXAMPLE_LINES))
     assert [a.name for a in doc.assignments] == ["MyAddonDB", "OtherVar"]
@@ -186,7 +184,6 @@ ACE3_LINES = [
 ]
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_ace3_profile_rebuilds_and_converts(luadata: Any) -> None:
     """An AceDB-shaped document (namespaces, profileKeys, profiles), as the
     corpus lacks one."""
@@ -225,7 +222,6 @@ EVERYWHERE = [
 ]
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("eol", EOLS, ids=EOL_IDS)
 def test_comments_and_spacing_everywhere_rebuild_byte_for_byte(luadata: Any, eol: bytes) -> None:
     """A comment the client never writes is still kept (L4), wherever it
@@ -241,7 +237,6 @@ def test_comments_and_spacing_everywhere_rebuild_byte_for_byte(luadata: Any, eol
     assert doc.to_python() == {"X": {1: "a", 2: "b", "k": 1, "name": 2, 3: True}, "Y": "s"}
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_line_comments_that_look_like_brackets(luadata: Any) -> None:
     """`-- [1]` and `--[1]` are line comments; so is `--[=x` (no second
     `[`, so not a long-comment opener)."""
@@ -250,7 +245,6 @@ def test_line_comments_that_look_like_brackets(luadata: Any) -> None:
     assert [e.comment for e in table.entries] == [b"-- [1]", b"--[1]", b"--[=x"]
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_trailing_comments_are_kept_verbatim_on_their_entry(luadata: Any) -> None:
     """From `--` to the line break, trailing spaces included; on a
     table-valued entry the comment follows its closing `},`."""
@@ -277,7 +271,6 @@ def test_trailing_comments_are_kept_verbatim_on_their_entry(luadata: Any) -> Non
     assert [e.comment for e in table.entries[3].value.entries] == [b"-- [1]"]
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("data", [b"", b"\r\n", b"\n\n", b"-- only a comment\r\n", b"\r"], ids=repr)
 def test_document_with_no_assignment(luadata: Any, data: bytes) -> None:
     """§4.1: a document is any sequence of blanks, comments and assignments,
@@ -306,7 +299,6 @@ KEY_STYLE_LINES = [
 ]
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_every_key_style_is_kept(luadata: Any) -> None:
     doc = _faithful(luadata, _doc(*KEY_STYLE_LINES))
     table = doc.assignments[0].value
@@ -356,7 +348,6 @@ ORDER = [
 ]
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_key_order_is_source_order(luadata: Any) -> None:
     """Order is the file's, not sorted by key, style or kind."""
     doc = _faithful(luadata, _doc("X = {", *ORDER, "}"))
@@ -399,7 +390,6 @@ NUMBER_TEXTS = [
 ]
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("text", NUMBER_TEXTS)
 def test_number_source_text_is_kept(luadata: Any, text: str) -> None:
     """As a top-level value, a table value, a positional entry and a key.
@@ -418,7 +408,6 @@ def test_number_source_text_is_kept(luadata: Any, text: str) -> None:
     assert table.entries[2].key.raw == text
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
@@ -439,7 +428,6 @@ def test_number_as_int(luadata: Any, text: str, expected: int) -> None:
     assert value == expected
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
@@ -461,7 +449,6 @@ def test_number_as_float(luadata: Any, text: str, expected: float) -> None:
     assert value == expected
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("text", ["-0", "-0.0"])
 def test_negative_zero_keeps_its_sign(luadata: Any, text: str) -> None:
     number = _only_value(luadata, _doc(f"X = {text}"))
@@ -479,7 +466,6 @@ def _within(line: int, column: int, text: str) -> list[tuple[int, int, str]]:
     return [(line, column + i, ch) for i, ch in enumerate(text)]
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("text", NON_FINITE)
 def test_unlisted_non_finite_spelling_raises_with_position(luadata: Any, text: str) -> None:
     """§4.2: no fixture has shown a non-finite spelling, so none is listed
@@ -518,7 +504,6 @@ ESCAPES = [
 ]
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize(
     ("literal", "data"), [(lit, d) for _i, lit, d in ESCAPES], ids=[i for i, _l, _d in ESCAPES]
 )
@@ -534,13 +519,11 @@ def test_string_escapes_decode_to_bytes_and_raw_is_kept(
     assert string.raw == literal
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_decimal_escapes_make_bytes_not_code_points(luadata: Any) -> None:
     assert _only_value(luadata, _doc(r'X = "\195\169"')).value == "é"
     assert _only_value(luadata, _doc(r'X = "\233"')).value == "\udce9"
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("brk", [b"\r\n", b"\n\r", b"\n", b"\r"], ids=["crlf", "lfcr", "lf", "cr"])
 def test_backslash_line_break_is_one_newline_and_one_line(luadata: Any, brk: bytes) -> None:
     """A backslash before a line break decodes to `"\\n"` and counts one
@@ -553,7 +536,6 @@ def test_backslash_line_break_is_one_newline_and_one_line(luadata: Any, brk: byt
     _rejected(luadata, b"\r\nX = " + literal + b"\r\nY = foo\r\n", [(4, 5, "foo")])
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_invalid_utf8_is_kept_as_bytes(luadata: Any) -> None:
     """A name cut mid-character: parsed, kept, rebuilt byte for byte."""
     doc = _faithful(luadata, b'\r\nX = {\r\n["Gr\xc3"] = "Gr\xc3",\r\n}\r\n')
@@ -563,7 +545,6 @@ def test_invalid_utf8_is_kept_as_bytes(luadata: Any) -> None:
     assert doc.to_python() == {"X": {"Gr\udcc3": "Gr\udcc3"}}
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_raw_control_bytes_in_a_string_are_kept(luadata: Any) -> None:
     """A raw tab, 0x02, DEL or ESC inside a literal is kept (the same client
     writes raw 0x02 into config-cache.wtf). A raw NUL is rejected instead
@@ -573,7 +554,6 @@ def test_raw_control_bytes_in_a_string_are_kept(luadata: Any) -> None:
     assert (string.data, string.raw) == (b"a\tb\x02c\x7f\x1b", literal)
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_non_ascii_strings_are_raw_utf8(luadata: Any) -> None:
     """UTF-8 is written raw (§4.2); the corpus has no non-ASCII string."""
     doc = _faithful(luadata, _doc("X = {", '["Ælfrïc"] = "Grüße — 名前 🐉",', "}"))
@@ -584,7 +564,6 @@ def test_non_ascii_strings_are_raw_utf8(luadata: Any) -> None:
     assert only.value.data == "Grüße — 名前 🐉".encode()
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_double_dash_inside_a_string_is_not_a_comment(luadata: Any) -> None:
     doc = _faithful(luadata, _doc("X = {", '["url"] = "a--b",', '["k"] = "--", -- real', "}"))
     first, second = doc.assignments[0].value.entries
@@ -595,7 +574,6 @@ def test_double_dash_inside_a_string_is_not_a_comment(luadata: Any) -> None:
 # ── the accepted superset ───────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize(
     ("data", "expected"),
     [
@@ -644,7 +622,6 @@ def test_accepted_grammar(luadata: Any, data: bytes, expected: dict[str, Any]) -
     assert _faithful(luadata, data).to_python() == expected
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("data", [b"X = {}", b"\r\nX = {\r\n}\r\n"], ids=["inline", "two-lines"])
 def test_empty_table(luadata: Any, data: bytes) -> None:
     """An empty table converts to `{}` (§6.4 amendment item 4)."""
@@ -660,7 +637,6 @@ def test_empty_table(luadata: Any, data: bytes) -> None:
 # ── duplicates ──────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize(
     ("body", "flags"),
     [
@@ -704,7 +680,6 @@ def test_duplicates_are_kept_in_order_and_the_later_is_flagged(
         assert [e.duplicate for e in inner.entries] == [False] * len(inner.entries)
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_duplicate_top_level_assignments_are_kept(luadata: Any) -> None:
     """The client's loader runs the file top to bottom, so `to_python()`
     shows what it would see: the last one."""
@@ -716,7 +691,6 @@ def test_duplicate_top_level_assignments_are_kept(luadata: Any) -> None:
 # ── to_python ───────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize(
     ("body", "expected"),
     [
@@ -759,7 +733,6 @@ def _batch(count: int, key: int) -> bytes:
     return _doc("X = {" + items + f', [{key}] = "y"' + "}")
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize(
     ("count", "key", "winner"),
     [
@@ -792,7 +765,6 @@ def test_positional_against_bracketed_follows_lua_51_flushes(
     assert got[key - 1] == winner
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_bracketed_before_positional_loses(luadata: Any) -> None:
     """`[1]` is stored when reached; the positional `"x"` is stored at the
     closing brace, after it."""
@@ -800,7 +772,6 @@ def test_bracketed_before_positional_loses(luadata: Any) -> None:
     assert luadata.parse(_doc('X = {[2] = "x", "a", "b"}')).to_python() == {"X": ["a", "b"]}
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_to_python_keeps_a_top_level_nil(luadata: Any) -> None:
     """§6.4 amendment item 4: `X = nil` differs from a file that never
     names `X`."""
@@ -810,7 +781,6 @@ def test_to_python_keeps_a_top_level_nil(luadata: Any) -> None:
     assert "X" not in luadata.parse(_doc("Y = 1")).to_python()
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize(
     ("text", "expected", "kind"),
     [("42", 42, int), ("-7", -7, int), ("0x1F", 31, int), ("0.5", 0.5, float), ("1.0", 1.0, float)],
@@ -825,7 +795,6 @@ def test_to_python_number_type_follows_the_spelling(
     assert type(got) is kind
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_to_python_is_one_way(luadata: Any) -> None:
     """A fresh copy each call: changing it changes neither the document nor
     the next call's result."""
@@ -945,7 +914,6 @@ REJECTIONS: list[tuple[str, bytes, list[tuple[int, int, str]]]] = [
 ]
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize(
     ("data", "candidates"),
     [(d, c) for _i, d, c in REJECTIONS],
@@ -974,7 +942,6 @@ def _nested(depth: int, form: str) -> bytes:
     raise AssertionError(form)
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("form", ["positional", "keyed", "client-lines"])
 def test_depth_under_the_bound_parses(luadata: Any, form: str) -> None:
     """190 tables deep, inside §6.4's 200. Whether exactly 200 is the last
@@ -984,7 +951,6 @@ def test_depth_under_the_bound_parses(luadata: Any, form: str) -> None:
     assert max(d for d, _t in tables(luadata, doc)) == 190
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("form", ["positional", "keyed", "client-lines", "unterminated"])
 def test_depth_over_the_bound_raises(luadata: Any, form: str) -> None:
     """Unterminated input deeper than the bound raises the depth error, not
@@ -1008,7 +974,6 @@ def _chain(err: BaseException) -> list[BaseException]:
     return seen
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("form", ["positional", "keyed", "client-lines", "unterminated"])
 def test_ten_thousand_deep_raises_without_recursion_error(luadata: Any, form: str) -> None:
     """§6.4: iterative or depth-guarded, so the bound is hit before the
@@ -1029,7 +994,6 @@ def test_ten_thousand_deep_raises_without_recursion_error(luadata: Any, form: st
         pytest.fail("a 10 000-deep table parsed")
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_string_over_the_bound_raises(luadata: Any) -> None:
     """Longer than §6.4's 64 MB whether MB means 10**6 or 2**20 bytes."""
     data = b'\r\nX = "' + b"a" * (64 * MiB + 1) + b'"\r\n'
@@ -1037,7 +1001,6 @@ def test_string_over_the_bound_raises(luadata: Any) -> None:
         luadata.parse(data)
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_string_under_the_bound_is_kept_whole(luadata: Any) -> None:
     """Shorter than 64 MB under either reading: parsed, not truncated."""
     size = 63_000_000
@@ -1053,13 +1016,11 @@ def _oversized() -> bytes:
     return b"\r\nX = 1\r\n" + b" " * (256 * MiB)
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_file_over_the_bound_raises_from_bytes(luadata: Any) -> None:
     with pytest.raises(luadata.LuaLimitError):
         luadata.parse(_oversized())
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_file_over_the_bound_raises_from_read(luadata: Any, tmp_path: Path) -> None:
     target = tmp_path / "Huge.lua"
     target.write_bytes(_oversized())
@@ -1082,7 +1043,6 @@ RECORD = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_multi_megabyte_document_parses_whole(luadata: Any) -> None:
     """The corpus has no multi-MB file. A ~4 MB document in the Forever
     client's layout parses completely and rebuilds byte for byte. The time
@@ -1128,7 +1088,6 @@ def _imported_modules(node: ast.AST) -> list[str]:
     return []
 
 
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_module_imports_no_interpreter_and_evaluates_nothing(luadata: Any) -> None:
     """L3 and M10-04's "no third-party parser": only the standard library,
     Pydantic and `wowlab_core` (never `guard`: a reader does not write);
