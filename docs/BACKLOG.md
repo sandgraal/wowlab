@@ -47,7 +47,7 @@ Follow `docs/handoffs/M10-03.md`: log one character in and out on each installed
 
 ---
 
-## [ ] M10-04T — luadata parser graders [TEST]
+## [x] M10-04T — luadata parser graders [TEST]
 **Size:** M · **Depends on:** M10-03
 
 Graders for `wowlab_core.luadata` parsing, derived from `docs/LAB_PLAN.md` §6.4, `docs/LAB_FORMATS.md` §4 and the real corpus: every real SavedVariables fixture parses; key order, key style, number source text and trailing comments are preserved; duplicates kept and flagged; `to_python()` behaviour; every rejection in §4.3 raises the typed error with line and column (constructed, labelled); depth, size and string bounds raise rather than truncate or crash; a 10 000-deep table raises without a `RecursionError` escaping. Marked `parser`, `xfail(strict=True, reason="M10-04 not implemented")`.
@@ -183,7 +183,7 @@ Commands, flags and exit codes per `docs/LAB_PLAN.md` §6.11. `snap create` uses
 
 ---
 
-## [ ] M10-16T — Guard lock, temp cleanup and changed-file graders [TEST]
+## [x] M10-16T — Guard lock, temp cleanup and changed-file graders [TEST]
 **Size:** M · **Depends on:** M10-11
 
 Graders for the 2026-09-22 amendment to `docs/LAB_PLAN.md` §6.10 (owner decisions after the M10-11 reviews): (1) one writer at a time through two OS advisory locks, `GuardBusyError`; (2) cleanup of guard's own leftover temp files named in earlier journal records; (3) `ChangedSinceSnapshotError` for a file that differs from the pre-write snapshot at first touch or just before replace/unlink. (4) The public surface of item 4: `guard.store_lock` raises `GuardBusyError` while a transaction on that store is open, in another process and in the same one, and a transaction raises it while `store_lock` is held; `GuardBusyError` and `ChangedSinceSnapshotError` are exported; `HistoryRecord.temps_removed`/`temps_left`; a format-1 journal record still reads through `history()` and `undo()`. `guard.py` exists, so each grader is `xfail(strict=True)` with one marker line, fails today only because the behaviour is missing, and is activated by marker deletion. Derived from the spec, not from `guard.py` internals beyond its public API. Amends, per the amendment and only where it makes the old expectation wrong, the existing graders it contradicts: `test_constructed_journal_lives_with_the_store_and_leaves_the_store_healthy` (only `locks/` may appear under the user data directory), and the `…treat_the_pre_write_snapshot_as_untrusted` and `…undo_refuses_a_poisoned_entry…` graders (a refusal with nothing written is also accepted where item 3 applies); each amended grader is listed with its reason in the PR. `FORBIDDEN_IMPORTS` stands. The session that writes these never writes M10-16.
@@ -192,12 +192,14 @@ Graders for the 2026-09-22 amendment to `docs/LAB_PLAN.md` §6.10 (owner decisio
 
 ---
 
-## [ ] M10-16 — Guard lock, temp cleanup and changed-file refusal [IMPL]
+## [x] M10-16 — Guard lock, temp cleanup and changed-file refusal [IMPL]
 **Size:** M · **Depends on:** M10-16T
 
 `lab/core/src/wowlab_core/guard.py` per the §6.10 amendment of 2026-09-22. Locks use the standard library only (`fcntl` on POSIX, `msvcrt` on Windows); no new runtime dependency. Activate the M10-16T graders by deleting marker lines only.
 
 **Acceptance:** all M10-16T graders and every existing guard grader, as amended by M10-16T, green; the write-site test green; `lab (windows)` green on the PR's final head with the run link pasted in the PR; reviewed by `security-reviewer`.
+
+*Follow-ups recorded 2026-09-23 at merge (#59), not part of this ticket's acceptance: graders (a test-writer ticket) for behaviour the M10-16 reviews verified only with scratch probes: the Windows lock at offset 2^30; store and lock places refused inside any install (including `store_lock`); lock files with more than one link refused; an unreadable journal refused before the snapshot; journal and manifest paths looked up only when local absolute; a forked child neither unlocking nor committing; locks handed to a transaction covering its store and install; an interrupted mutation breaking the transaction; and rules no grader pins yet: store-before-install lock order, the cleanup's chain re-check after the unlink, the link refusals on the user data directory and `locks/`, and a Windows junction at `locks/` or the user data directory.*
 
 ---
 
