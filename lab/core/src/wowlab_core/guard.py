@@ -15,102 +15,182 @@ What entering a transaction does, in this order, before the body runs:
    holds a regular `.build.info` (§6.1). A flavor path read back from the
    journal by `undo()` is validated the same way; it is untrusted.
 2. The store (a directory path; `None` means `snapshot.default_store_path()`)
-   must not overlap the install in either direction (L1).
-3. `wowlab_core.process` is asked, with its default probe, about the install
+   must not overlap the install in either direction (L1), and neither may
+   the two lock files nor `locks/` (below), compared after resolving. None
+   of the store, `<store>/lock`, `locks/` and the install lock may be inside
+   any install at all (§6.10 as amended 2026-09-23): each is resolved, and it
+   and every existing ancestor are examined; a directory holding an entry
+   named `.build.info` or `.flavor.info` is an install, and so is one that
+   cannot be examined. All of this runs before anything is created.
+3. One writer at a time (§6.10 as amended 2026-09-22, item 1): the store
+   lock `<store>/lock` is taken, then the install lock
+   `<user data dir>/locks/<key>.lock`, `<key>` the SHA-256 hex of
+   `"<st_dev>:<st_ino>"` of the validated install root, so every spelling of
+   one install (a symlink, a case or Unicode variant, a junction) maps to one
+   lock. Both are exclusive and non-blocking: `fcntl.flock(LOCK_EX |
+   LOCK_NB)` on POSIX; on Windows `msvcrt.locking(LK_NBLCK, 1)` on the one
+   byte at offset 2^30, far past the end of the empty file, because Windows
+   byte-range locks are mandatory and a lock at offset 0 would fail every
+   read of the file (the same offset unlocks; nothing is written through the
+   descriptor).
+   A lock this process already holds is refused without asking the system,
+   so a nested transaction is refused too. A held lock is `GuardBusyError`;
+   any other failure to open or lock is a plain `GuardError`; nothing ever
+   proceeds unlocked. Lock files are opened `O_CREAT | O_RDWR | O_NOFOLLOW`
+   (on Windows a link or other reparse point is refused before the open and
+   the opened file checked against the path after it), must be regular files
+   by `fstat` with one link (a hard link is refused), and are never
+   truncated, written or deleted. They are held until the transaction exits,
+   whatever way it exits, and the system drops them when the process ends. A
+   forked child that unwinds the parent's `with` neither unlocks, rolls back
+   nor journals: it only closes its copies of the descriptors. The exclusion
+   covers the processes of one OS user that share one user data directory on
+   one machine.
+4. `wowlab_core.process` is asked, with its default probe, about the install
    root, the flavor folder and the executable names found in the flavor
    folder. `running`, `unknown`, and any exception count as running (§6.7 as
    amended).
-4. A pre-write snapshot of the flavor's `WTF/`, `Interface/` and `Fonts/` is
+5. A pre-write snapshot of the flavor's `WTF/`, `Interface/` and `Fonts/` is
    taken (§6.9 defaults; `Interface/` holds `AddOns/` and the loose overrides).
-5. A journal record naming that snapshot is written under the store, in
-   `journal/`, and fsynced.
+6. A journal record naming that snapshot is written under the store, in
+   `journal/`, and fsynced (journal format 2; format-1 records still read).
+   The journal is first read in full, under the locks and before the
+   snapshot: one that cannot be (an I/O error, a damaged record) is a
+   `GuardError` with nothing written, since `undo()` could not reverse the
+   change. A path read from a journal record or a manifest is looked up
+   only when it is a local absolute path (absolute, not `\\\\` or `//`, a
+   drive letter on Windows); anything else names another install.
+7. Leftover temp files are cleaned up (item 2): the temp paths named by this
+   flavor's earlier records, from the most recent one whose cleanup finished
+   (that one included), are removed if the name is exactly guard's temp
+   pattern, the path passes the write rules below and the walk finds a
+   regular file there. A path that fails a lexical rule is never looked up.
+   Each removal is journaled and fsynced before the unlink; a path left
+   alone is listed in the record's `temps_left`; an absent one nowhere.
+
+A dry run takes the locks (the lock files and their directories are the only
+things it writes) and skips 5 to 7.
 
 Each operation then checks the path lexically (the allowlist, executables,
 Windows spellings), walks it on disk without following any link, junction or
 other reparse point, refuses a name that differs only in case or Unicode form
 from one on disk, and refuses a name the file system resolves to something it
-does not list (an 8.3 short name). The path and its `before` hash are written
-to the journal and fsynced before the install is touched (write-ahead), so a
-process killed at any point can still be undone from the journal alone. The
-new bytes go to a temp file in the same directory, which is fsynced, then
-`os.replace`d over the target. The chain of directories from the install root
-down is re-checked (identity, and not a link) before the temp file is
-opened, after it is opened (and the temp file must be where it was created),
-and again before the rename or unlink.
+does not list (an 8.3 short name). A path whose disk state differs from what
+guard expects there is refused with `ChangedSinceSnapshotError` (item 3): at
+its first touch the pre-write snapshot's entry (content hash and kind, or
+absent against present), later guard's own record of the path (the hash of
+its last write there that landed, else the hash read at first touch). The
+path, its `before` hash and the name of the temp file about to be created are
+written to the journal and fsynced before the install is touched
+(write-ahead), so a process killed at any point can still be undone, and its
+temp file found, from the journal alone. The new bytes go to that temp file in
+the same directory, which is fsynced; the target is then read again and must
+still hash to what guard expects (for a create: still be absent), and as the
+last step before the call its identity, size and mtime (by `lstat`) must be
+what the walk found. Only then is the temp file `os.replace`d over the target
+(a create on Windows uses `os.rename`, which never replaces). A delete makes
+the same re-check before its unlink. The chain of directories from the
+install root down is re-checked (identity, and not a link) before the temp
+file is opened, after it is opened (and the temp file must be where it was
+created), and again before the rename or unlink.
+
+After a `ChangedSinceSnapshotError` nothing more is written for that path,
+every later operation raises `GuardError` without touching the disk, and the
+transaction rolls back on exit and cannot commit, even if the caller caught
+the error. A path whose only operation was refused is not journaled as
+changed, keeps what is on disk, and is left alone by `undo()`.
 
 Mutations are made by absolute path, on every platform, so the same code runs
 on Windows (where there are no directory descriptors). The residual window is
 the moment between the last re-check and the rename or unlink; a process of
 the same user that swaps a directory for a link in exactly that moment can
 redirect one rename (whose unguessable temp-file source then does not exist,
-so it fails) or one unlink. Such a process can already write the install
-directly; the checks exist so links planted in advance and ordinary races
-never carry a write out of the install.
+so it fails) or one unlink, and a process that rewrites the target in exactly
+that moment has its bytes replaced. Such a process can already write the
+install directly; the checks exist so links planted in advance, ordinary
+races and edits made while a transaction is open never carry a write out of
+the install or overwrite bytes no snapshot holds.
 
-On an exception of any kind inside the body, every touched path is put back
-to the bytes its journaled `before` hash names, and every directory the
-transaction created is removed again. Those bytes come from the pre-write
-snapshot's object store, looked up by that hash (the store checks content
-against the name, so a manifest cannot substitute other bytes); when the
-snapshot's entry for the path does not name that hash (the file changed
-after the snapshot, or the snapshot lies), the bytes read at first touch are
-kept in memory instead. The record says `rolled_back` only if all of that
-succeeded. A `restore` that fails after changing a path leaves the
-transaction unable to commit: it rolls back on exit even if the caller
-catches the error.
+On an exception of any kind inside the body, every touched path whose disk
+content is still guard's own record of it is put back to the bytes its
+journaled `before` hash names, and every directory the transaction created
+is removed again. Those bytes come from the pre-write snapshot's object
+store, looked up by that hash (the store checks content against the name, so
+a manifest cannot substitute other bytes). A path that already holds its
+pre-transaction bytes needs nothing; a path someone else changed is left as
+it is, named in the record's note and in the error, and the record ends
+`rollback_incomplete`. Rollback therefore never overwrites content that no
+snapshot holds and this transaction did not write. The record says
+`rolled_back` only if all of that succeeded. A `restore` that fails after
+changing a path leaves the transaction unable to commit: it rolls back on
+exit even if the caller catches the error.
 
-`undo()` is itself a transaction: it takes the most recent journal record,
-restores only the paths it journaled from its pre-write snapshot, and refuses
-before writing anything if a journaled path is not allowed, if the snapshot
-holds a link there, or if the snapshot entry disagrees with the journal's
-`before`. Snapshot manifests and the journal are untrusted input at rollback,
-undo and restore time: every path is checked again on the restoring platform
-and a link is never created. Restored and undone files never gain permission
-bits: an existing file keeps no more than its current bits and the recorded
-bits; a recreated one gets its recorded bits less the umask and never an
-execute bit.
+`undo()` is itself a transaction, under the same two locks: it reads the most
+recent journal record without a lock only to find its flavor, takes the
+store lock (never creating the store), reads the journal again and plans only
+from that, takes the install lock of the flavor that record names, and then
+restores only the paths the record journaled from its pre-write snapshot. It
+refuses before writing anything if a journaled path is not allowed, if the
+snapshot holds a link there, or if the snapshot entry disagrees with the
+journal's `before`. Snapshot manifests and the journal are untrusted input
+at rollback, undo, restore and cleanup time: every path is checked again on
+the restoring platform and a link is never created. Restored and undone files
+never gain permission bits: an existing file keeps no more than its current
+bits and the recorded bits; a recreated one gets its recorded bits less the
+umask and never an execute bit.
+
+`store_lock()` takes the store lock alone, for a caller that must keep
+transactions off a store while it works on it.
 
 This module never lists processes itself, never reads the environment, and
-has no switch that skips the client check, the snapshot or the allowlist.
+has no switch that skips the locks, the client check, the snapshot or the
+allowlist.
 """
 
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import datetime
+import errno
 import hashlib
 import json
 import logging
 import os
 import re
 import stat
+import sys
+import threading
 import unicodedata
 import uuid
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from types import TracebackType
-from typing import Literal, Protocol
+from typing import Literal, NoReturn, Protocol
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from wowlab_core import process
+from wowlab_core import snapshot as _snapshots
 from wowlab_core.snapshot import (
     Entry,
     Manifest,
     SnapshotError,
     SnapshotStore,
-    default_store_path,
 )
 
 __all__ = [
+    "ChangedSinceSnapshotError",
     "ClientRunningError",
+    "GuardBusyError",
     "GuardError",
     "HistoryRecord",
     "PathChange",
     "PathNotAllowedError",
     "PlanItem",
     "history",
+    "store_lock",
     "transaction",
     "undo",
 ]
@@ -168,12 +248,22 @@ _MAX_NAME_BYTES = 255
 # ─── the journal ─────────────────────────────────────────────────────────────
 
 _JOURNAL_DIR = "journal"
-_JOURNAL_FORMAT = 1
+_JOURNAL_FORMAT = 2
+# Format 1 is what the M10-11 gate wrote: no temp paths, no cleanup.
+_READABLE_FORMATS = frozenset({1, _JOURNAL_FORMAT})
 _RECORD_NAME = re.compile(r"\A(\d{8})-[0-9a-f]{8}\.json\Z")
 _MAX_RECORD_BYTES = 64 << 20
 _SHA256 = re.compile(r"\A[0-9a-f]{64}\Z")
 _TEMP_PREFIX = ".wowlab-"
+# The only name the leftover cleanup ever removes (§6.10 amended, item 2):
+# what `_temp_name` makes, matched against the name as the directory lists it.
+_TEMP_NAME = re.compile(r"\.wowlab-[0-9a-f]{32}\.tmp")
 _CHUNK = 1 << 20
+
+# ─── the locks ───────────────────────────────────────────────────────────────
+
+_STORE_LOCK = "lock"
+_LOCKS_DIR = "locks"
 
 _State = Literal["open", "committed", "rolled_back", "rollback_incomplete"]
 # How a written file gets its permission bits: "keep" the current file's (a
@@ -200,6 +290,17 @@ class ClientRunningError(GuardError):
 
 class PathNotAllowedError(GuardError):
     """The path is outside the allowlist, or reaches outside it on disk."""
+
+
+class GuardBusyError(GuardError):
+    """Another wowlab call holds the store or the install (one writer at a
+    time). Nothing was written or journaled; try again once it has finished."""
+
+
+class ChangedSinceSnapshotError(GuardError):
+    """A file changed after the pre-write snapshot, or after this transaction
+    last read or wrote it. Nothing was written for it, the transaction cannot
+    commit, and the caller should retry it."""
 
 
 class _ChangedUnderneathError(GuardError):
@@ -238,6 +339,12 @@ class HistoryRecord(_Frozen):
     """True only when every touched path holds its pre-transaction bytes again."""
     paths: tuple[PathChange, ...]
     created_dirs: tuple[str, ...]
+    temps_removed: tuple[str, ...]
+    """Leftover temp files of earlier transactions this one removed on enter
+    (flavor-relative, as the journal named them)."""
+    temps_left: tuple[str, ...]
+    """Temp paths earlier records name that this one left alone: they failed a
+    check, or their removal failed."""
 
 
 class PlanItem(_Frozen):
@@ -283,13 +390,28 @@ class _JournalRecord(_Frozen):
     paths: tuple[_JournalPath, ...]
     created_dirs: tuple[str, ...]
     note: str | None
+    # Format 2. `temps` names every temp file this transaction created (each
+    # written here and fsynced before the file existed); the other three are
+    # the cleanup it ran on enter.
+    temps: tuple[str, ...] = ()
+    temps_removed: tuple[str, ...] = ()
+    temps_left: tuple[str, ...] = ()
+    cleanup_finished: bool = False
 
     @field_validator("format")
     @classmethod
     def _known_format(cls, value: int) -> int:
-        if value != _JOURNAL_FORMAT:
-            raise ValueError(f"journal format {value}, expected {_JOURNAL_FORMAT}")
+        if value not in _READABLE_FORMATS:
+            raise ValueError(f"journal format {value}, expected one of {sorted(_READABLE_FORMATS)}")
         return value
+
+    @model_validator(mode="after")
+    def _format_1_ran_no_cleanup(self) -> _JournalRecord:
+        if self.format == 1 and (
+            self.temps or self.temps_removed or self.temps_left or self.cleanup_finished
+        ):
+            raise ValueError("a format-1 record names no temp paths and ran no cleanup")
+        return self
 
 
 def _journal_dir(store_path: Path) -> Path:
@@ -379,6 +501,8 @@ def _public(record: _JournalRecord) -> HistoryRecord:
         rolled_back=record.state == "rolled_back",
         paths=tuple(PathChange(path=p.path, before=p.before, after=p.after) for p in record.paths),
         created_dirs=record.created_dirs,
+        temps_removed=record.temps_removed,
+        temps_left=record.temps_left,
     )
 
 
@@ -432,13 +556,260 @@ def _fsync_dir(directory: Path) -> None:
 
 def _store_path(store: object) -> Path:
     if store is None:
-        return default_store_path().absolute()
+        return _snapshots.default_store_path().absolute()
     if not isinstance(store, Path):
         raise GuardError(
             f"store is a directory path, not a {type(store).__name__}; "
             "guard builds its own SnapshotStore"
         )
     return store.absolute()
+
+
+# ─── one writer at a time ────────────────────────────────────────────────────
+
+# The lock files this process holds, by identity: a lock already held here is
+# refused without asking the system (a nested transaction, a second thread).
+_HELD_LOCKS: set[_Identity] = set()
+_HELD_LOCKS_MUTEX = threading.Lock()
+
+# Windows byte-range locks are mandatory: a lock on a byte a reader asks for
+# fails the read. So the one locked byte sits far past the end of the empty
+# lock file (the technique SQLite uses). Fixed: guards locking different
+# offsets would not exclude each other (§6.10 as reworded 2026-09-23).
+_WINDOWS_LOCK_OFFSET = 1 << 30
+_INSTALL_MARKERS = (".build.info", ".flavor.info")
+
+
+def _install_lock_path(place: _Place) -> Path:
+    """`<user data dir>/locks/<key>.lock`, the key from the install root's
+    identity as guard validated it, never its spelling. The user data
+    directory is `wowlab_core.snapshot`'s, read at call time."""
+    device, inode = place.root_id
+    key = hashlib.sha256(f"{device}:{inode}".encode("ascii")).hexdigest()
+    user_data = _snapshots.default_store_path().absolute().parent
+    return user_data / _LOCKS_DIR / f"{key}.lock"
+
+
+def _refuse_inside_any_install(path: Path, what: str) -> None:
+    """§6.10 as amended 2026-09-23: `path` (resolved, following links and
+    junctions) and every existing ancestor are examined; a directory holding
+    an entry named `.build.info` or `.flavor.info` (of any kind) is an
+    install, and so is one that cannot be examined. Runs before anything at
+    `path` is created."""
+    try:
+        resolved = path.resolve()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise GuardError(f"cannot resolve {what} {path}: {exc}; refusing it") from exc
+    for candidate in (resolved, *resolved.parents):
+        try:
+            st = candidate.lstat()
+        except FileNotFoundError:
+            continue  # not created yet
+        except (OSError, ValueError) as exc:
+            raise GuardError(
+                f"{what} {path}: cannot examine {candidate} ({exc}); it counts as an install"
+            ) from exc
+        if not stat.S_ISDIR(st.st_mode):
+            continue
+        for marker in _INSTALL_MARKERS:
+            try:
+                (candidate / marker).lstat()
+            except FileNotFoundError:
+                continue
+            except (OSError, ValueError) as exc:
+                raise GuardError(
+                    f"{what} {path}: cannot examine {candidate} ({exc}); it counts as an install"
+                ) from exc
+            raise GuardError(
+                f"{what} {path} is inside an install ({candidate} holds {marker}); "
+                "guard creates nothing there"
+            )
+
+
+@dataclass(frozen=True)
+class _HeldLock:
+    fd: int
+    identity: _Identity
+    path: Path
+    pid: int
+    """The process that took it: a forked child never unlocks the parent's lock."""
+
+
+def _plain_dir(path: Path, *, parents: bool) -> None:
+    """Make `path` if it is missing, then require a real directory there: not
+    a symbolic link, not a junction or any other reparse point."""
+    try:
+        path.mkdir(parents=parents, exist_ok=True)
+        st = path.lstat()
+        junction = path.is_junction()
+    except OSError as exc:
+        raise GuardError(f"cannot make the lock directory {path}: {exc}") from exc
+    if junction or _is_link(st) or not stat.S_ISDIR(st.st_mode):
+        raise GuardError(f"{path} is not a plain directory (links and junctions are refused)")
+
+
+def _os_lock(fd: int, path: Path, what: str) -> None:
+    """The system lock (§6.10 amended, item 1): exclusive and non-blocking."""
+    busy = GuardBusyError(
+        f"{what} ({path}) is held by another wowlab call; one writer at a time, "
+        "so try again when it has finished"
+    )
+    if sys.platform == "win32":
+        import msvcrt
+
+        try:
+            os.lseek(fd, _WINDOWS_LOCK_OFFSET, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        except OSError as exc:
+            # A byte another handle has locked is refused with EACCES.
+            if exc.errno in (errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK)):
+                raise busy from exc
+            raise GuardError(f"cannot lock {what} ({path}): {exc}") from exc
+    else:
+        import fcntl
+
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            if exc.errno in (errno.EWOULDBLOCK, errno.EAGAIN):
+                raise busy from exc
+            raise GuardError(f"cannot lock {what} ({path}): {exc}") from exc
+
+
+def _os_unlock(fd: int) -> None:
+    if sys.platform == "win32":
+        import msvcrt
+
+        os.lseek(fd, _WINDOWS_LOCK_OFFSET, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+def _take_lock(path: Path, what: str) -> _HeldLock:
+    """Open the lock file (creating it, never following a link, never
+    truncating or writing it) and lock it. `GuardBusyError` when it is held,
+    here or elsewhere; `GuardError` for anything else."""
+    if os.name == "nt":
+        # No O_NOFOLLOW on Windows: refuse a link or reparse point before the
+        # open, and check after it that the file opened is the one at the path.
+        try:
+            before = path.lstat()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise GuardError(f"cannot inspect the lock file {path}: {exc}") from exc
+        else:
+            if _is_link(before) or not stat.S_ISREG(before.st_mode):
+                raise GuardError(f"the lock file {path} is not a regular file")
+    flags = (
+        os.O_RDWR
+        | os.O_CREAT
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)  # a FIFO planted there never blocks the open
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOINHERIT", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
+    try:
+        fd = os.open(path, flags, 0o600)
+    except OSError as exc:
+        raise GuardError(f"cannot open the lock file {path}: {exc}") from exc
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise GuardError(f"the lock file {path} is not a regular file")
+        if st.st_nlink != 1:
+            raise GuardError(
+                f"the lock file {path} has {st.st_nlink} links; a hard link is refused"
+            )
+        if os.name == "nt":
+            after = path.lstat()
+            if _is_link(after) or _identity(after) != _identity(st):
+                raise GuardError(f"the lock file {path} changed as it was opened")
+        identity = _identity(st)
+        with _HELD_LOCKS_MUTEX:
+            if identity in _HELD_LOCKS:
+                raise GuardBusyError(
+                    f"{what} ({path}) is already held by this process (a transaction, "
+                    "undo or store_lock is open); try again when it has finished"
+                )
+            _os_lock(fd, path, what)
+            _HELD_LOCKS.add(identity)
+    except BaseException as exc:
+        os.close(fd)
+        if isinstance(exc, OSError):
+            raise GuardError(f"cannot lock {what} ({path}): {exc}") from exc
+        raise
+    return _HeldLock(fd=fd, identity=identity, path=path, pid=os.getpid())
+
+
+def _release_lock(lock: _HeldLock) -> None:
+    """Unlock and close. In a forked child only the descriptor is closed: an
+    unlock there would release the lock the parent still holds (a `flock`
+    lock belongs to the open file description the two share)."""
+    if os.getpid() != lock.pid:
+        with contextlib.suppress(OSError):
+            os.close(lock.fd)
+        return
+    try:
+        _os_unlock(lock.fd)
+    except OSError as exc:  # closing the descriptor releases it anyway
+        _log.warning("could not unlock %s: %s", lock.path, exc)
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(lock.fd)
+        with _HELD_LOCKS_MUTEX:
+            _HELD_LOCKS.discard(lock.identity)
+
+
+class _Locks:
+    """The locks one call holds, released together, last taken first."""
+
+    __slots__ = ("_held",)
+
+    def __init__(self) -> None:
+        self._held: list[_HeldLock] = []
+
+    def take_store(self, store_path: Path, *, create: bool) -> None:
+        """`<store>/lock`. With `create`, a missing store directory is made
+        first (a transaction's store); otherwise it must exist. Neither the
+        store nor its lock file may be inside any install."""
+        _refuse_inside_any_install(store_path, "the store")
+        _refuse_inside_any_install(store_path / _STORE_LOCK, "the store lock")
+        if create:
+            try:
+                store_path.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise GuardError(f"cannot make the store {store_path}: {exc}") from exc
+        self._held.append(_take_lock(store_path / _STORE_LOCK, "the store lock"))
+
+    def take_install(self, place: _Place) -> None:
+        path = _install_lock_path(place)
+        _refuse_inside_any_install(path.parent, "the lock directory")
+        _refuse_inside_any_install(path, "the install lock")
+        _plain_dir(path.parent.parent, parents=True)
+        _plain_dir(path.parent, parents=False)
+        self._held.append(_take_lock(path, "the install lock"))
+
+    def cover(self, store_path: Path, place: _Place) -> bool:
+        """True when these locks, taken by this process, include this store's
+        lock and this install's lock (by the identity of each lock file)."""
+        held = {lock.identity for lock in self._held if lock.pid == os.getpid()}
+        for path in (store_path / _STORE_LOCK, _install_lock_path(place)):
+            try:
+                st = path.lstat()
+            except OSError:
+                return False
+            if _is_link(st) or _identity(st) not in held:
+                return False
+        return True
+
+    def release(self) -> None:
+        while self._held:
+            _release_lock(self._held.pop())
 
 
 # ─── the flavor ──────────────────────────────────────────────────────────────
@@ -532,11 +903,12 @@ def _same_dir(a: Path, b: Path) -> bool:
 
 
 def _store_places(store_path: Path) -> list[Path]:
-    """Every directory under the store that guard or the snapshot store writes
-    into, existing or not: the store itself, `journal/`, `objects/` (and each
-    object shard already in it), `manifests/` and `tmp/`. A link at any of
-    them would carry those writes wherever it points."""
-    places = [store_path, _journal_dir(store_path)]
+    """Every place under the store that guard or the snapshot store writes
+    into, existing or not: the store itself, its lock file, `journal/`,
+    `objects/` (and each object shard already in it), `manifests/` and
+    `tmp/`. A link at any of them would carry those writes wherever it
+    points."""
+    places = [store_path, store_path / _STORE_LOCK, _journal_dir(store_path)]
     for name in ("objects", "manifests", "tmp"):
         places.append(store_path / name)
     objects = store_path / "objects"
@@ -556,19 +928,44 @@ def _overlaps(path: Path, root: Path) -> bool:
 
 
 def _refuse_store_overlap(store_path: Path, place: _Place) -> None:
-    """L1: the store is never inside the install and never contains it, and no
-    directory it writes into is a link that reaches the install."""
+    """L1: the store is never inside the install and never contains it, no
+    directory it writes into is a link that reaches the install, and neither
+    the lock files nor `locks/` do (§6.10 amended, item 1). Runs before any
+    lock file or lock directory is created."""
     root = place.install_root
-    for candidate in _store_places(store_path):
+    install_lock = _install_lock_path(place)
+    for candidate in (*_store_places(store_path), install_lock.parent, install_lock):
         try:
             resolved = candidate.resolve()
         except (OSError, RuntimeError) as exc:
             raise GuardError(f"cannot resolve the store path {candidate}: {exc}") from exc
         if _overlaps(resolved, root):
             raise GuardError(
-                f"the store ({store_path}) reaches the install ({root}) through {candidate}; "
-                "the store and the install must not contain each other"
+                f"{candidate} reaches the install ({root}); the store ({store_path}), the "
+                "lock files and the install must not contain each other"
             )
+    # Not inside any install either, whether or not it is this one (§6.10 as
+    # amended 2026-09-23): checked for all four before any of them is made.
+    for candidate, what in (
+        (store_path, "the store"),
+        (store_path / _STORE_LOCK, "the store lock"),
+        (install_lock.parent, "the lock directory"),
+        (install_lock, "the install lock"),
+    ):
+        _refuse_inside_any_install(candidate, what)
+
+
+def _local_absolute(text: str) -> bool:
+    """A path read from a journal record or a manifest may be looked up only
+    when it is a local absolute path: absolute, not `\\\\` or `//` (a UNC or
+    device path), and on Windows with a drive letter. Anything else is
+    treated as another install, without a lookup."""
+    if not text or "\x00" in text or text.startswith(("\\\\", "//")):
+        return False
+    if os.name == "nt":
+        spelled = PureWindowsPath(text)
+        return re.fullmatch(r"[A-Za-z]:", spelled.drive) is not None and bool(spelled.root)
+    return text.startswith("/")
 
 
 def _client_names(flavor_dir: Path) -> list[str]:
@@ -808,13 +1205,66 @@ def _modes(rule: _ModeRule, current: os.stat_result | None) -> tuple[int, int | 
     return 0o600, recorded & now
 
 
-def _replace(
-    found: _Found, chain: Sequence[tuple[Path, _Identity]], data: bytes, rule: _ModeRule
+def _temp_name() -> str:
+    """A fresh temp-file name: `.wowlab-<32 lowercase hex>.tmp` (`_TEMP_NAME`)."""
+    return f"{_TEMP_PREFIX}{uuid.uuid4().hex}.tmp"
+
+
+def _changed(rel: str, why: str) -> ChangedSinceSnapshotError:
+    return ChangedSinceSnapshotError(
+        f"{rel} {why}; nothing was written for it and this transaction cannot commit. "
+        "Retry the transaction: it will read the file as it is now"
+    )
+
+
+def _stat_or_none(path: Path, rel: str) -> os.stat_result | None:
+    try:
+        return path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise GuardError(f"cannot inspect {rel}: {exc}") from exc
+
+
+def _recheck(
+    found: _Found, chain: Sequence[tuple[Path, _Identity]], expect_hash: str | None
 ) -> None:
-    """Temp file in the same directory, fsync, re-check, atomic replace."""
+    """Item 3, just before a replace or unlink: the target still holds the
+    hash guard last read or wrote there (for a create: it is still absent),
+    the directory chain is unchanged, and, as the last step, `lstat` shows the
+    identity, size and mtime the walk found."""
+    rel = found.rel
+    now = _stat_or_none(found.path, rel)
+    if expect_hash is None:
+        if now is not None:
+            raise _changed(rel, "appeared after guard found it absent")
+    else:
+        if now is None:
+            raise _changed(rel, "was removed after guard read it")
+        if _is_link(now) or not stat.S_ISREG(now.st_mode):
+            raise _changed(rel, "is no longer a regular file")
+        data = _read(dataclasses.replace(found, st=now))
+        if data is None or _sha(data) != expect_hash:
+            raise _changed(rel, "changed after guard read it")
+    _verify(chain, rel)
+    if not _same_state(_stat_or_none(found.path, rel), found.st):
+        raise _changed(rel, "was replaced or touched after guard read it")
+
+
+def _replace(
+    found: _Found,
+    chain: Sequence[tuple[Path, _Identity]],
+    data: bytes,
+    rule: _ModeRule,
+    tmp_name: str,
+    expect_hash: str | None,
+) -> None:
+    """Temp file `tmp_name` (already journaled) in the same directory, fsync,
+    re-check, atomic replace. A create on Windows uses `os.rename`, which
+    never replaces: a file that appeared after the re-check is refused."""
     rel = found.rel
     create_mode, chmod_to = _modes(rule, found.st)
-    tmp = found.path.parent / f"{_TEMP_PREFIX}{uuid.uuid4().hex}.tmp"
+    tmp = found.path.parent / tmp_name
     flags = (
         os.O_WRONLY
         | os.O_CREAT
@@ -844,8 +1294,14 @@ def _replace(
             os.fsync(fd)
         finally:
             os.close(fd)
-        _verify(chain, rel)
-        tmp.replace(found.path)
+        _recheck(found, chain, expect_hash)
+        if found.st is None and os.name == "nt":
+            try:
+                tmp.rename(found.path)  # os.rename: never replaces on Windows
+            except FileExistsError as exc:
+                raise _changed(rel, "appeared after guard found it absent") from exc
+        else:
+            tmp.replace(found.path)
         replaced = True
         _verify_after(chain, rel)
     except OSError as exc:
@@ -864,20 +1320,25 @@ def _mutate(
     rule: _ModeRule,
     expect: _Found,
     created: list[str],
+    *,
+    expect_hash: str | None,
+    tmp_name: str | None,
 ) -> None:
     """Put `data` at `parts` (None deletes), after walking the path again and
-    checking the target is still what `expect` found. Directories made on the
-    way are appended to `created` as they are made."""
+    checking the target is still what `expect` found and still hashes to
+    `expect_hash`. A write goes through the temp file `tmp_name`, which the
+    caller has already journaled. Directories made on the way are appended
+    to `created` as they are made."""
     if _check_rel("/".join(parts)) != tuple(parts):
         raise PathNotAllowedError(f"{'/'.join(parts)!r} is not a path the gate writes")
     found = _look(place, parts)
     rel = found.rel
     if not _same_state(found.st, expect.st):
-        raise GuardError(f"{rel} changed during the transaction")
+        raise _changed(rel, "changed between guard's read and its write")
     if data is None:
         if found.st is None:
             return
-        _verify(found.chain, rel)
+        _recheck(found, found.chain, expect_hash)
         try:
             found.path.unlink()
         except OSError as exc:
@@ -898,7 +1359,9 @@ def _mutate(
         if _is_link(st) or not stat.S_ISDIR(st.st_mode):
             raise GuardError(f"{rel}: {rel_dir} changed as it was created")
         chain.append((directory, _identity(st)))
-    _replace(found, chain, data, rule)
+    if tmp_name is None:
+        raise GuardError(f"{rel}: a write needs a journaled temp-file name")
+    _replace(found, chain, data, rule, tmp_name, expect_hash)
 
 
 def _remove_dir(place: _Place, rel_dir: str) -> None:
@@ -924,20 +1387,29 @@ class _Transaction:
     __slots__ = (
         "_before",
         "_broken",
+        "_cleanup_finished",
         "_created",
         "_dry_run",
         "_flavor",
+        "_given_locks",
         "_journal",
         "_label",
+        "_last",
         "_order",
         "_overlay",
+        "_own_locks",
+        "_pid",
         "_place",
         "_plan",
         "_planned_dirs",
-        "_pre_hashes",
+        "_pre_entries",
         "_record",
+        "_refused",
         "_status",
         "_store_path",
+        "_temps",
+        "_temps_left",
+        "_temps_removed",
     )
 
     def __init__(
@@ -948,25 +1420,44 @@ class _Transaction:
         store_path: Path,
         dry_run: bool,
         place: _Place | None = None,
+        locks: _Locks | None = None,
     ) -> None:
         self._flavor = flavor
         self._label = label
         self._store_path = store_path
         self._dry_run = dry_run
         self._place = place
+        # Locks the caller already holds for this store and install (`undo()`);
+        # without them the transaction takes its own on enter.
+        self._given_locks = locks
+        # The process that opened it: a forked child neither writes, commits
+        # nor unlocks through it.
+        self._pid = os.getpid()
+        self._own_locks: _Locks | None = None
         self._status: Literal["new", "open", "closed"] = "new"
         self._record: _JournalRecord | None = None
         self._order: list[str] = []
         self._journal: dict[str, tuple[str | None, str | None]] = {}
-        # First-touch state of each path: its hash (None: absent), its bytes
-        # when the pre-write snapshot cannot supply them, and its mode.
-        self._before: dict[str, tuple[str | None, bytes | None, int]] = {}
-        self._pre_hashes: dict[str, str | None] = {}
+        # First-touch state of each journaled path: its hash (None: absent)
+        # and its mode.
+        self._before: dict[str, tuple[str | None, int]] = {}
+        # Guard's own record of each journaled path (item 3 as clarified): the
+        # hash of its last write there that landed, else the hash read at its
+        # first touch. Two hashes when a mutation's outcome is unknown.
+        self._last: dict[str, tuple[str | None, ...]] = {}
+        # Paths whose only operation was refused, with what guard read there.
+        self._refused: dict[str, str | None] = {}
+        # The pre-write snapshot's entries: flavor-relative path to (kind, hash).
+        self._pre_entries: dict[str, tuple[str, str | None]] = {}
         self._created: list[str] = []
         self._planned_dirs: list[str] = []
         self._plan: dict[str, PlanItem] = {}
         self._overlay: dict[str, bytes | None] = {}
         self._broken: str | None = None
+        self._temps: list[str] = []
+        self._temps_removed: list[str] = []
+        self._temps_left: list[str] = []
+        self._cleanup_finished = False
 
     # -- public surface ----------------------------------------------------
 
@@ -1044,46 +1535,133 @@ class _Transaction:
                 getattr(self._flavor, "path", None), getattr(self._flavor, "version", None)
             )
         _refuse_store_overlap(self._store_path, place)
-        _refuse_if_client_running(place)
-        self._place = place
-        if not self._dry_run:
-            store = SnapshotStore(self._store_path)
-            try:
-                manifest = store.create(
-                    place.install_root,
-                    [f"{place.folder}/{root}" for root in _ROOTS],
-                    label=f"guard pre-write: {self._label}",
-                    flavor_folder=place.folder,
-                    flavor_version=place.version,
-                    client_running=False,
-                )
-            except SnapshotError as exc:
+        own: _Locks | None = None
+        try:
+            if self._given_locks is None:
+                own = _Locks()
+                own.take_store(self._store_path, create=True)
+                own.take_install(place)
+            elif not self._given_locks.cover(self._store_path, place):
                 raise GuardError(
-                    f"the pre-write snapshot failed; nothing was written: {exc}"
-                ) from exc
-            prefix = place.folder + "/"
-            self._pre_hashes = {
-                e.path.removeprefix(prefix): e.sha256
-                for e in manifest.entries
-                if e.path.startswith(prefix) and e.kind == "file"
-            }
-            self._record = _JournalRecord(
-                format=_JOURNAL_FORMAT,
-                id=_next_record_id(self._store_path),
-                created_at=_now(),
-                label=self._label,
-                snapshot_id=manifest.id,
-                install_root=str(place.install_root),
-                flavor_path=str(place.flavor_dir),
-                flavor_version=place.version,
-                state="open",
-                paths=(),
-                created_dirs=(),
-                note=None,
-            )
-            _write_record(self._store_path, self._record)
+                    "the locks handed to this transaction are not this store's and this "
+                    "install's; guard never proceeds unlocked"
+                )
+            _refuse_if_client_running(place)
+            self._place = place
+            if not self._dry_run:
+                self._open_record(place)
+        except BaseException:
+            if own is not None:
+                own.release()
+            raise
+        self._own_locks = own
         self._status = "open"
         return self
+
+    def _open_record(self, place: _Place) -> None:
+        """Pre-write snapshot, journal record, then the leftover cleanup."""
+        # Read under the store lock, so no other writer's record can appear
+        # before this one is written.
+        candidates = self._temp_candidates(place)
+        store = SnapshotStore(self._store_path)
+        try:
+            manifest = store.create(
+                place.install_root,
+                [f"{place.folder}/{root}" for root in _ROOTS],
+                label=f"guard pre-write: {self._label}",
+                flavor_folder=place.folder,
+                flavor_version=place.version,
+                client_running=False,
+            )
+        except SnapshotError as exc:
+            raise GuardError(f"the pre-write snapshot failed; nothing was written: {exc}") from exc
+        prefix = place.folder + "/"
+        self._pre_entries = {
+            e.path.removeprefix(prefix): (e.kind, e.sha256)
+            for e in manifest.entries
+            if e.path.startswith(prefix)
+        }
+        # With nothing to consider the cleanup is finished as the record is.
+        self._cleanup_finished = not candidates
+        self._record = _JournalRecord(
+            format=_JOURNAL_FORMAT,
+            id=_next_record_id(self._store_path),
+            created_at=_now(),
+            label=self._label,
+            snapshot_id=manifest.id,
+            install_root=str(place.install_root),
+            flavor_path=str(place.flavor_dir),
+            flavor_version=place.version,
+            state="open",
+            paths=(),
+            created_dirs=(),
+            note=None,
+            cleanup_finished=self._cleanup_finished,
+        )
+        _write_record(self._store_path, self._record)
+        if candidates:
+            self._clean_up(place, candidates)
+
+    def _temp_candidates(self, place: _Place) -> list[str]:
+        """The temp paths item 2 considers: those named by this flavor's
+        records (by identity) from the most recent one whose cleanup finished,
+        that one included. A journal that cannot be read in full raises
+        `GuardError` here, under the locks and before the pre-write snapshot:
+        a change `undo()` could not reverse is not written (§6.10 as amended
+        2026-09-23)."""
+        try:
+            records = _load_journal(self._store_path)
+        except GuardError as exc:
+            raise GuardError(f"{exc}; nothing was written or journaled") from exc
+        mine = [r for r in records if _record_is_of(r, place)]
+        start = max((i for i, r in enumerate(mine) if r.cleanup_finished), default=0)
+        return list(dict.fromkeys(p for r in mine[start:] for p in (*r.temps, *r.temps_left)))
+
+    def _clean_up(self, place: _Place, candidates: Sequence[str]) -> None:
+        """Remove the leftover temp files `candidates` name (item 2). Nothing
+        here stops the transaction except a journal that cannot be written."""
+        for rel in candidates:
+            if not _TEMP_NAME.fullmatch(rel.rsplit("/", 1)[-1]):
+                self._temps_left.append(rel)
+                continue
+            try:
+                parts = _check_rel(rel)
+            except PathNotAllowedError:
+                self._temps_left.append(rel)  # never looked up
+                continue
+            try:
+                found = _look(place, parts)
+            except GuardError:
+                self._temps_left.append(rel)  # a link, a directory, a collision...
+                continue
+            if found.st is None:
+                continue  # absent: someone else removed it, or its directory
+            self._temps_removed.append(rel)
+            self._journal_write("open")  # durable before the unlink
+            try:
+                _verify(found.chain, rel)
+                now = _stat_or_none(found.path, rel)
+                if (
+                    now is None
+                    or _is_link(now)
+                    or not stat.S_ISREG(now.st_mode)
+                    or not _same_state(now, found.st)
+                ):
+                    raise GuardError(f"{rel} changed before its removal")
+                try:
+                    found.path.unlink()
+                except OSError as exc:
+                    raise GuardError(f"cannot remove {rel}: {exc}") from exc
+                _verify_after(found.chain, rel)
+            except GuardError as exc:
+                _log.warning("leftover temp file left in place: %s", exc)
+                self._temps_removed.remove(rel)
+                self._temps_left.append(rel)
+                self._journal_write("open")
+                continue
+            _fsync_dir(found.path.parent)
+        self._cleanup_finished = True
+        self._journal_write("open")
 
     def __exit__(
         self,
@@ -1094,6 +1672,21 @@ class _Transaction:
         if self._status != "open":
             return False
         self._status = "closed"
+        try:
+            if os.getpid() != self._pid:
+                # A forked child unwinding the parent's `with`: the record and
+                # the locks are the parent's. Touch neither disk nor journal.
+                raise GuardError(
+                    "this transaction belongs to process "
+                    f"{self._pid}; a forked child cannot commit or roll it back"
+                )
+            return self._close(exc)
+        finally:
+            if self._own_locks is not None:
+                self._own_locks.release()
+                self._own_locks = None
+
+    def _close(self, exc: BaseException | None) -> Literal[False]:
         if self._dry_run:
             return False
         if exc is None and self._broken is None:
@@ -1122,8 +1715,16 @@ class _Transaction:
     # -- internals ---------------------------------------------------------
 
     def _alive(self) -> None:
+        """The transaction takes operations: open, and not broken. A broken
+        one (a refused or half-done change) touches nothing more."""
         if self._status != "open":
             raise GuardError("this transaction is not open")
+        if os.getpid() != self._pid:
+            raise GuardError(f"this transaction belongs to process {self._pid}, not this one")
+        if self._broken is not None:
+            raise GuardError(
+                f"this transaction can only roll back ({self._broken}); nothing more is written"
+            )
 
     def _journal_write(self, state: _State, note: str | None = None) -> None:
         assert self._record is not None
@@ -1138,9 +1739,52 @@ class _Transaction:
                     for rel in self._order
                 ),
                 "created_dirs": tuple(self._planned_dirs),
+                "temps": tuple(self._temps),
+                "temps_removed": tuple(self._temps_removed),
+                "temps_left": tuple(self._temps_left),
+                "cleanup_finished": self._cleanup_finished,
             }
         )
         _write_record(self._store_path, self._record)
+
+    def _new_temp(self, parts: Sequence[str]) -> str:
+        """Name a temp file beside `parts` and add it to what the next journal
+        write records (item 2: journaled and fsynced before it exists)."""
+        name = _temp_name()
+        self._temps.append("/".join((*parts[:-1], name)))
+        return name
+
+    def _matches_snapshot(self, rel: str, digest: str | None) -> bool:
+        """The disk (`digest`, None for absent) agrees with the pre-write
+        snapshot's entry for `rel`: the same content in a regular file, or
+        absent on both sides."""
+        entry = self._pre_entries.get(rel)
+        if digest is None:
+            return entry is None
+        return entry == ("file", digest)
+
+    def _refuse(self, rel: str, read: str | None, *, first: bool, why: str) -> NoReturn:
+        """Item 3: refuse `rel` before anything is written for it."""
+        error = _changed(rel, why)
+        if first:
+            self._refused[rel] = read
+        self._broken = str(error)
+        raise error
+
+    def _unjournal(self, rel: str, previous: tuple[str | None, str | None] | None) -> None:
+        """A change refused after the write-ahead journal named it: nothing
+        landed. The path's first operation is taken out of the record (so
+        `undo()` leaves it alone); a later one goes back to its previous
+        `after`."""
+        if previous is None:
+            read = self._before[rel][0]
+            self._order.remove(rel)
+            del self._journal[rel], self._before[rel], self._last[rel]
+            self._refused[rel] = read
+        else:
+            self._journal[rel] = previous
+        with contextlib.suppress(GuardError):
+            self._journal_write("open")
 
     def _current(self, rel: str, parts: Sequence[str]) -> bytes | None:
         """What the path holds now (in a dry run, after the planned changes)."""
@@ -1172,29 +1816,51 @@ class _Transaction:
         found = _look(self._place, parts)
         current = _read(found)
         mode = 0 if found.st is None else stat.S_IMODE(found.st.st_mode)
-        if data is None and current is None:
-            raise GuardError(f"{rel} does not exist")
         before = None if current is None else _sha(current)
         previous = self._journal.get(rel)
+        # Item 3: the disk must be what guard expects there. At the first
+        # touch that is the pre-write snapshot, so rollback and undo only ever
+        # need bytes the snapshot holds; later, guard's own record of the path.
+        if previous is None:
+            if not self._matches_snapshot(rel, before):
+                self._refuse(rel, before, first=True, why="changed after the pre-write snapshot")
+        elif before not in self._last[rel]:
+            self._refuse(
+                rel, before, first=False, why="changed after this transaction last read or wrote it"
+            )
+        if data is None and current is None:
+            raise GuardError(f"{rel} does not exist")
         if previous is None:
             self._order.append(rel)
-            # The pre-write snapshot holds these bytes when its entry names this
-            # hash; rollback then reads the object by that hash, which the store
-            # verifies. Otherwise (a file changed since the snapshot, or a
-            # snapshot that lies) the bytes are kept here.
-            held = None if before is None or self._pre_hashes.get(rel) == before else current
-            self._before[rel] = (before, held, mode)
+            self._before[rel] = (before, mode)
             self._journal[rel] = (before, after)
+            self._last[rel] = (before,)
         else:
             self._journal[rel] = (previous[0], after)
         self._planned_dirs.extend(d for d in found.missing if d not in self._planned_dirs)
-        # Write-ahead: the path and its `before` are durable before it changes.
-        self._journal_write("open")
+        tmp_name = None if data is None else self._new_temp(parts)
         try:
-            _mutate(self._place, parts, data, rule, found, self._created)
+            # Write-ahead: the path, its `before` and the temp file's name are
+            # durable before anything in the install changes.
+            self._journal_write("open")
+            _mutate(
+                self._place,
+                parts,
+                data,
+                rule,
+                found,
+                self._created,
+                expect_hash=before,
+                tmp_name=tmp_name,
+            )
         except _ChangedUnderneathError as exc:
             # The change happened, but maybe not where it was meant to: the
             # record keeps it, and the transaction can only roll back.
+            self._broken = str(exc)
+            self._last[rel] = (before, after)
+            raise
+        except ChangedSinceSnapshotError as exc:
+            self._unjournal(rel, previous)
             self._broken = str(exc)
             raise
         except Exception:
@@ -1206,6 +1872,13 @@ class _Transaction:
             with contextlib.suppress(GuardError):
                 self._journal_write("open")
             raise
+        except BaseException as exc:
+            # Interrupted inside the mutation: it may or may not have landed,
+            # and a caller that catches this must not commit a guessed `after`.
+            self._last[rel] = (before, after)
+            self._broken = f"{rel}: interrupted while it changed ({type(exc).__name__})"
+            raise
+        self._last[rel] = (after,)
         self._note_plan(rel, before, after, data)
 
     def _restore_ops(
@@ -1294,21 +1967,55 @@ class _Transaction:
             raise
 
     def _rollback(self) -> list[str]:
-        """Put every touched path back from the bytes read when it was first
-        touched; remove the directories this transaction created."""
+        """Put every touched path back to its pre-transaction bytes (from the
+        pre-write snapshot, by hash) where the disk still holds guard's own
+        record of it; leave any path someone else changed, and say so; remove
+        the directories this transaction created."""
         assert self._place is not None
         problems: list[str] = []
         store = SnapshotStore(self._store_path)
         for rel in reversed(self._order):
-            before, held, mode = self._before[rel]
+            before, mode = self._before[rel]
             parts = tuple(rel.split("/"))
             try:
                 found = _look(self._place, parts)
                 current = _read(found)
-                if (None if current is None else _sha(current)) == before:
+                now = None if current is None else _sha(current)
+                if now == before:
+                    continue  # already its pre-transaction content
+                if now not in self._last[rel]:
+                    problems.append(
+                        f"{rel}: changed by something else after this transaction last wrote "
+                        "it; left as it is"
+                    )
                     continue
-                data = held if held is not None or before is None else _fetch(store, before, rel)
-                _mutate(self._place, parts, data, ("exact", mode), found, [])
+                data = None if before is None else _fetch(store, before, rel)
+                tmp_name = None
+                if data is not None:
+                    tmp_name = self._new_temp(parts)
+                    self._journal_write("open")  # the temp file's name, before it exists
+                _mutate(
+                    self._place,
+                    parts,
+                    data,
+                    ("exact", mode),
+                    found,
+                    [],
+                    expect_hash=now,
+                    tmp_name=tmp_name,
+                )
+            except Exception as exc:
+                problems.append(f"{rel}: {exc}")
+        for rel, read in self._refused.items():
+            # Refused before anything landed: kept as it is, but a disk that
+            # moved since guard read it is not "rolled back".
+            try:
+                current = _read(_look(self._place, tuple(rel.split("/"))))
+                if (None if current is None else _sha(current)) != read:
+                    problems.append(
+                        f"{rel}: changed by something else while this transaction ran; "
+                        "left as it is"
+                    )
             except Exception as exc:
                 problems.append(f"{rel}: {exc}")
         for rel_dir in reversed(self._created):
@@ -1331,11 +2038,30 @@ class _Transaction:
                 _remove_dir(self._place, rel_dir)  # only if empty: best effort
 
 
+def _record_is_of(record: _JournalRecord, place: _Place) -> bool:
+    """The record's install root and flavor folder are `place`'s, by identity
+    (a record names both as guard resolved them, so equal spellings are
+    the common case and need no lookup). A path that is not local and
+    absolute names another install and is never looked up."""
+    if not (_local_absolute(record.flavor_path) and _local_absolute(record.install_root)):
+        return False
+    if record.flavor_path == str(place.flavor_dir) and record.install_root == str(
+        place.install_root
+    ):
+        return True
+    return _same_dir(Path(record.flavor_path), place.flavor_dir) and _same_dir(
+        Path(record.install_root), place.install_root
+    )
+
+
 def _refuse_foreign_snapshot(manifest: Manifest, place: _Place) -> None:
     """A snapshot restores only into the flavor of the install it was taken
-    from; restoring across installs or flavors is not a thing the gate does."""
-    if manifest.flavor_folder != place.folder or not _same_dir(
-        Path(manifest.install_root), place.install_root
+    from; restoring across installs or flavors is not a thing the gate does.
+    An install root that is not a local absolute path is never looked up."""
+    if (
+        manifest.flavor_folder != place.folder
+        or not _local_absolute(manifest.install_root)
+        or not _same_dir(Path(manifest.install_root), place.install_root)
     ):
         raise GuardError(
             f"snapshot {manifest.id} was taken of {manifest.flavor_folder!r} in "
@@ -1378,8 +2104,14 @@ def transaction(
 
     `flavor` is anything with a `path` (the flavor folder; `install.Flavor`).
     `store` is the snapshot store directory; `None` means the default under
-    the user data directory. With `dry_run` nothing is written anywhere: the
-    same checks run, and `tx.plan` holds what would change.
+    the user data directory. With `dry_run` nothing is written but the lock
+    files: the same checks run under the same locks, and `tx.plan` holds what
+    would change.
+
+    Entering raises `GuardBusyError` while another transaction, `undo()` or
+    `store_lock()` holds this store or this install (in this process too).
+    An operation on a file that changed after the pre-write snapshot raises
+    `ChangedSinceSnapshotError`; the transaction then cannot commit.
     """
     if not isinstance(label, str):
         raise GuardError(f"label is a str, not {type(label).__name__}")
@@ -1400,20 +2132,63 @@ def undo(*, store: Path | None = None) -> None:
     snapshot. Everything read from the store is checked first: the flavor it
     names, every path, and every snapshot entry against the journal's
     `before`. The undo is journaled like any transaction, so a second
-    `undo()` undoes it.
+    `undo()` undoes it. It holds the store lock from before it reads the
+    record it plans from, and the install lock of that record's flavor
+    (`GuardBusyError` if either is held); a store that does not exist is a
+    `GuardError` and is not created.
     """
     store_path = _store_path(store)
+    # Unlocked, only to find the flavor (and so which install to check).
+    first = _last_record(store_path)
+    place = _record_place(first)
+    _refuse_store_overlap(store_path, place)
+    locks = _Locks()
+    try:
+        locks.take_store(store_path, create=False)
+        # Under the store lock no other writer can add a record: plan only
+        # from what is read now.
+        last = _last_record(store_path)
+        place = _record_place(last, install=place)
+        _refuse_store_overlap(store_path, place)
+        locks.take_install(place)
+        _undo_record(store_path, last, place, locks)
+    finally:
+        locks.release()
+
+
+def _last_record(store_path: Path) -> _JournalRecord:
     records = _load_journal(store_path)
     if not records:
         raise GuardError(f"nothing to undo: the journal in {store_path} is empty")
-    last = records[-1]
-    place = _place(Path(last.flavor_path), last.flavor_version)
-    if not _same_dir(Path(last.install_root), place.install_root):
+    return records[-1]
+
+
+def _record_place(record: _JournalRecord, *, install: _Place | None = None) -> _Place:
+    """The flavor a journal record names, validated like a caller's. With
+    `install`, it must be in that install (by identity). Paths that are not
+    local and absolute are refused before any lookup."""
+    for value in (record.flavor_path, record.install_root):
+        if not _local_absolute(value):
+            raise GuardError(
+                f"journal record {record.id} names {value!r}, which is not a local absolute "
+                "path; nothing was undone"
+            )
+    place = _place(Path(record.flavor_path), record.flavor_version)
+    if not _same_dir(Path(record.install_root), place.install_root):
         raise GuardError(
-            f"journal record {last.id} names the install {last.install_root}, "
+            f"journal record {record.id} names the install {record.install_root}, "
             f"but its flavor is in {place.install_root}"
         )
-    _refuse_store_overlap(store_path, place)
+    if install is not None and place.root_id != install.root_id:
+        raise GuardError(
+            f"the most recent journal record changed to {record.id}, which belongs to "
+            f"{place.install_root}, not {install.install_root}; nothing was undone"
+        )
+    return place
+
+
+def _undo_record(store_path: Path, last: _JournalRecord, place: _Place, locks: _Locks) -> None:
+    """Plan the undo of `last` and run it as a transaction, under `locks`."""
     snapshots = SnapshotStore(store_path)
     try:
         manifest = snapshots.show(last.snapshot_id)
@@ -1443,6 +2218,41 @@ def undo(*, store: Path | None = None) -> None:
     for rel_dir in created_dirs:
         _check_rel(rel_dir, directory=True)
     with _Transaction(
-        None, label=f"undo: {last.label}", store_path=store_path, dry_run=False, place=place
+        None,
+        label=f"undo: {last.label}",
+        store_path=store_path,
+        dry_run=False,
+        place=place,
+        locks=locks,
     ) as tx:
         tx._undo(ops, created_dirs)
+
+
+@contextlib.contextmanager
+def store_lock(store: Path | None = None) -> Iterator[None]:
+    """Hold the store lock alone, for the duration of the `with` block.
+
+    The same lock a transaction or `undo()` takes on `<store>/lock`, with the
+    same mechanism and the same in-process refusal: `GuardBusyError` while
+    one is open on this store, here or in another process, and transactions
+    on the store are busy while this is held. The store directory must exist
+    (`None` means the default store); nothing is ever created but the lock
+    file. The store lock has no install, so no install is checked.
+    """
+    store_path = _store_path(store)
+    try:
+        st = store_path.stat()
+    except FileNotFoundError:
+        raise GuardError(
+            f"there is no store at {store_path}; store_lock never creates one"
+        ) from None
+    except OSError as exc:
+        raise GuardError(f"cannot inspect the store {store_path}: {exc}") from exc
+    if not stat.S_ISDIR(st.st_mode):
+        raise GuardError(f"the store {store_path} is not a directory")
+    locks = _Locks()
+    locks.take_store(store_path, create=False)
+    try:
+        yield
+    finally:
+        locks.release()
