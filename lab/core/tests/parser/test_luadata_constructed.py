@@ -3,17 +3,22 @@
 Every input in this file is constructed, which the file name puts in every
 test id: hostile and boundary cases (`docs/LAB_FORMATS.md` §4.3 and the
 bounds of `docs/LAB_PLAN.md` §6.4), and the grammar points of §4.1 and §4.2
-that no real capture shows yet (tab indentation, `-- [n]` comments, an Ace3
-profile, `[number]` and bare-name keys, single-quoted and non-ASCII strings,
-escapes other than `\\`, duplicates, non-finite spellings, a multi-MB
-document). The real captures are graded in `test_luadata_fixtures.py`,
+(with the 2026-09-22 amendments to both) that no real capture shows yet:
+tab indentation, comments in every position, `;` separators, an Ace3
+profile, `[number]`, bare-name and boolean keys, single-quoted, non-ASCII
+and invalid-UTF-8 strings, the Lua 5.1 escapes, raw control bytes,
+duplicates, non-finite spellings, number text fidelity, a multi-MB
+document. The real captures are graded in `test_luadata_fixtures.py`,
 whose docstring pins the seam these tests use. Every grader carries one
 marker line that M10-04 deletes; nothing else here is the implementer's.
+
+The client's Lua is taken to be Lua 5.1 (**[verify]** for Forever), so
+escapes, key equality and the positional flush follow Lua 5.1.
 
 Positions: a document here starts with the client's blank line, so its
 first assignment is on line 2. Where §4.3 does not say which of two tokens
 is "the offending token" (a call reported at the callee or at its `(`, an
-unterminated construct at its opening or at the end of input, a bad escape
+unterminated construct at its opening or where it breaks off, a bad escape
 at its backslash or at the string's quote), both positions are accepted and
 nothing else is.
 """
@@ -29,6 +34,7 @@ from typing import Any
 
 import pytest
 from _luadata_oracle import (
+    BOOLEAN,
     NAME,
     NUMBER,
     POSITIONAL,
@@ -44,6 +50,8 @@ from _luadata_oracle import (
 pytestmark = pytest.mark.parser
 
 MiB = 1024 * 1024
+EOLS = [b"\r\n", b"\n", b"\r"]
+EOL_IDS = ["crlf", "lf", "cr"]
 
 
 @pytest.fixture
@@ -51,16 +59,26 @@ def luadata() -> Any:
     return load()
 
 
-def _doc(*lines: str, eol: str = "\r\n") -> bytes:
+def _doc(*lines: str | bytes, eol: bytes = b"\r\n") -> bytes:
     """A document in the client's shape: a leading blank line, then `lines`,
     each ended by `eol`."""
-    return (eol + "".join(line + eol for line in lines)).encode("utf-8")
+    body = [line.encode("utf-8") if isinstance(line, str) else line for line in lines]
+    return eol + b"".join(line + eol for line in body)
 
 
 def _only_value(luadata: Any, data: bytes) -> Any:
     doc = luadata.parse(data)
     [assignment] = doc.assignments
     return assignment.value
+
+
+def _faithful(luadata: Any, data: bytes) -> Any:
+    """Parse, and check the document alone rebuilds `data` with the same
+    tokens. Returns the document."""
+    doc = luadata.parse(data)
+    assert rebuild(luadata, doc) == data
+    assert document_tokens(luadata, doc) == source_tokens(data)
+    return doc
 
 
 def _rejected(luadata: Any, data: bytes, candidates: list[tuple[int, int, str]]) -> Any:
@@ -73,6 +91,8 @@ def _rejected(luadata: Any, data: bytes, candidates: list[tuple[int, int, str]])
     assert isinstance(err.line, int)
     assert isinstance(err.column, int)
     token = err.token or ""
+    if isinstance(token, bytes):
+        token = token.decode("utf-8", "surrogateescape")
     assert isinstance(token, str)
     assert any(
         (err.line, err.column) == (line, column) and token.startswith(prefix)
@@ -110,14 +130,11 @@ EXAMPLE_PY = {
 
 
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
-@pytest.mark.parametrize("eol", ["\r\n", "\n"], ids=["crlf", "lf"])
-def test_reference_example_rebuilds_byte_for_byte(luadata: Any, eol: str) -> None:
-    """The §4.2 example, tab-indented with `-- [n]` comments: the parse
-    carries everything but layout, in both line endings."""
-    data = _doc(*EXAMPLE_LINES, eol=eol)
-    doc = luadata.parse(data)
-    assert document_tokens(luadata, doc) == source_tokens(data)
-    assert rebuild(luadata, doc, data) == data
+@pytest.mark.parametrize("eol", EOLS, ids=EOL_IDS)
+def test_reference_example_rebuilds_byte_for_byte(luadata: Any, eol: bytes) -> None:
+    """The §4.2 example, tab-indented with `-- [n]` comments, in each line
+    ending: the document alone gives it back."""
+    doc = _faithful(luadata, _doc(*EXAMPLE_LINES, eol=eol))
     assert doc.to_python() == EXAMPLE_PY
 
 
@@ -134,10 +151,9 @@ def test_reference_example_key_styles_and_comments(luadata: Any) -> None:
     items = path(luadata, doc, "MyAddonDB", "list")
     assert [e.style for e in items.entries] == [POSITIONAL, POSITIONAL]
     assert [e.key for e in items.entries] == [None, None]
-    assert [e.value.value for e in items.entries] == ["first", "second"]
-    assert [e.comment for e in items.entries] == ["-- [1]", "-- [2]"]
-    scale = path(luadata, doc, "MyAddonDB", "scale")
-    assert scale.raw == "0.8500000238418579"
+    assert [e.value.data for e in items.entries] == [b"first", b"second"]
+    assert [e.comment for e in items.entries] == [b"-- [1]", b"-- [2]"]
+    assert path(luadata, doc, "MyAddonDB", "scale").raw == "0.8500000238418579"
 
 
 ACE3_LINES = [
@@ -174,9 +190,7 @@ ACE3_LINES = [
 def test_ace3_profile_rebuilds_and_converts(luadata: Any) -> None:
     """An AceDB-shaped document (namespaces, profileKeys, profiles), as the
     corpus lacks one."""
-    data = _doc(*ACE3_LINES)
-    doc = luadata.parse(data)
-    assert rebuild(luadata, doc, data) == data
+    doc = _faithful(luadata, _doc(*ACE3_LINES))
     assert max(d for d, _t in tables(luadata, doc)) == 5
     py = doc.to_python()["MyAceAddonDB"]
     assert py["namespaces"]["Minimap"]["profiles"]["Default"] == {"hide": True}
@@ -186,9 +200,93 @@ def test_ace3_profile_rebuilds_and_converts(luadata: Any) -> None:
     }
     assert py["profiles"]["Default"]["tracked"] == [12345, 67890]
     assert py["profiles"]["Default"]["scale"] == 1.25
-    assert py["profiles"]["Healer"] in ({}, [])
+    assert py["profiles"]["Healer"] == {}
     tracked = path(luadata, doc, "MyAceAddonDB", "profiles", "Default", "tracked")
-    assert [e.comment for e in tracked.entries] == ["-- [1]", "-- [2]"]
+    assert [e.comment for e in tracked.entries] == [b"-- [1]", b"-- [2]"]
+
+
+# ── trivia: comments and spacing in every position (§6.4 amendment item 7) ──
+
+EVERYWHERE = [
+    "-- header",
+    "",
+    "X = { -- after the opening brace",
+    "  -- on its own line inside the table",
+    '  "a" ; -- after a separator',
+    '  "b" -- between a value and its separator',
+    "  ,",
+    '  [ "k" ]  =  1 ,',
+    "  name=2;",
+    "  [3]=true -- after a value with no separator",
+    "} -- after a top-level value",
+    "-- between assignments",
+    "Y   =\t's'",
+    "-- footer",
+]
+
+
+@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
+@pytest.mark.parametrize("eol", EOLS, ids=EOL_IDS)
+def test_comments_and_spacing_everywhere_rebuild_byte_for_byte(luadata: Any, eol: bytes) -> None:
+    """A comment the client never writes is still kept (L4), wherever it
+    is; mixed `,`/`;`, odd spacing and each line ending survive too."""
+    data = b"".join(line.encode() + eol for line in EVERYWHERE)
+    doc = _faithful(luadata, data)
+    assert doc.assignments[0].lead == b"-- header" + eol + eol
+    assert doc.tail == eol + b"-- footer" + eol
+    table = doc.assignments[0].value
+    assert [e.sep or b"" for e in table.entries] == [b";", b",", b",", b";", b""]
+    assert table.entries[0].comment == b"-- after a separator"
+    assert table.entries[4].comment == b"-- after a value with no separator"
+    assert doc.to_python() == {"X": {1: "a", 2: "b", "k": 1, "name": 2, 3: True}, "Y": "s"}
+
+
+@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
+def test_line_comments_that_look_like_brackets(luadata: Any) -> None:
+    """`-- [1]` and `--[1]` are line comments; so is `--[=x` (no second
+    `[`, so not a long-comment opener)."""
+    doc = _faithful(luadata, _doc("X = {", '"a", -- [1]', '"b", --[1]', '"c", --[=x', "}"))
+    table = doc.assignments[0].value
+    assert [e.comment for e in table.entries] == [b"-- [1]", b"--[1]", b"--[=x"]
+
+
+@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
+def test_trailing_comments_are_kept_verbatim_on_their_entry(luadata: Any) -> None:
+    """From `--` to the line break, trailing spaces included; on a
+    table-valued entry the comment follows its closing `},`."""
+    doc = _faithful(
+        luadata,
+        _doc(
+            "X = {",
+            '"a", -- [1]',
+            '["k"] = 1, --   spaced  text  ',
+            "[5] = true,",
+            '["t"] = {',
+            '"inner", -- [1]',
+            "}, -- end of t",
+            "}",
+        ),
+    )
+    table = doc.assignments[0].value
+    assert [e.comment for e in table.entries] == [
+        b"-- [1]",
+        b"--   spaced  text  ",
+        None,
+        b"-- end of t",
+    ]
+    assert [e.comment for e in table.entries[3].value.entries] == [b"-- [1]"]
+
+
+@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
+@pytest.mark.parametrize("data", [b"", b"\r\n", b"\n\n", b"-- only a comment\r\n", b"\r"], ids=repr)
+def test_document_with_no_assignment(luadata: Any, data: bytes) -> None:
+    """§4.1: a document is any sequence of blanks, comments and assignments,
+    none included; all its bytes are the tail."""
+    doc = luadata.parse(data)
+    assert list(doc.assignments) == []
+    assert doc.tail == data or (data == b"" and not doc.tail)
+    assert rebuild(luadata, doc) == data
+    assert doc.to_python() == {}
 
 
 # ── key styles and order ────────────────────────────────────────────────────
@@ -210,15 +308,23 @@ KEY_STYLE_LINES = [
 
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_every_key_style_is_kept(luadata: Any) -> None:
-    data = _doc(*KEY_STYLE_LINES)
-    doc = luadata.parse(data)
+    doc = _faithful(luadata, _doc(*KEY_STYLE_LINES))
     table = doc.assignments[0].value
-    styles = [e.style for e in table.entries]
-    assert styles[:7] == [POSITIONAL, STRING, STRING, NUMBER, NUMBER, NUMBER, NAME]
+    assert [e.style for e in table.entries] == [
+        POSITIONAL,
+        STRING,
+        STRING,
+        NUMBER,
+        NUMBER,
+        NUMBER,
+        NAME,
+        BOOLEAN,
+        BOOLEAN,
+    ]
     keys = table.entries
     assert keys[0].key is None
-    assert (keys[1].key.value, keys[1].key.raw) == ("str", '"str"')
-    assert (keys[2].key.value, keys[2].key.raw) == ("sq", "'sq'")
+    assert (keys[1].key.data, keys[1].key.raw) == (b"str", b'"str"')
+    assert (keys[2].key.data, keys[2].key.raw) == (b"sq", b"'sq'")
     assert keys[3].key.raw == "7"
     assert keys[4].key.raw == "-1.5"
     assert keys[4].key.as_float() == -1.5
@@ -229,8 +335,6 @@ def test_every_key_style_is_kept(luadata: Any) -> None:
     assert isinstance(keys[8].key, luadata.LuaBool)
     assert keys[8].key.value is False
     assert [e.value.raw for e in keys[1:]] == [str(n) for n in range(1, 9)]
-    assert document_tokens(luadata, doc) == source_tokens(data)
-    assert rebuild(luadata, doc, data) == data
 
 
 ORDER = [
@@ -255,19 +359,22 @@ ORDER = [
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_key_order_is_source_order(luadata: Any) -> None:
     """Order is the file's, not sorted by key, style or kind."""
-    data = _doc("X = {", *ORDER, "}")
-    doc = luadata.parse(data)
+    doc = _faithful(luadata, _doc("X = {", *ORDER, "}"))
     table = doc.assignments[0].value
     assert len(table.entries) == len(ORDER)
-    assert document_tokens(luadata, doc) == source_tokens(data)
     keyed = [e.value.raw for e in table.entries if e.style != POSITIONAL]
     assert keyed == [str(n) for n in range(1, 14)]
-    positional = [e.value.value for e in table.entries if e.style == POSITIONAL]
-    assert positional == ["first positional", "second positional"]
+    positional = [e.value.data for e in table.entries if e.style == POSITIONAL]
+    assert positional == [b"first positional", b"second positional"]
     assert [e.style for e in table.entries].index(POSITIONAL) == 2
 
 
 # ── numbers ─────────────────────────────────────────────────────────────────
+#
+# Every Lua 5.1 number is a double. The document keeps each number's text;
+# `as_int()` reads the integer the text spells, which for 2**53 + 1 is not
+# the double the client loads; `to_python()` gives `int` or `float` by
+# spelling, not by a client type.
 
 NUMBER_TEXTS = [
     "0",
@@ -295,9 +402,13 @@ NUMBER_TEXTS = [
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("text", NUMBER_TEXTS)
 def test_number_source_text_is_kept(luadata: Any, text: str) -> None:
-    """As a top-level value, a table value, a positional entry and a key."""
-    data = _doc(f"X = {text}", "Y = {", f'["v"] = {text},', f"{text},", f"[{text}] = true,", "}")
-    doc = luadata.parse(data)
+    """As a top-level value, a table value, a positional entry and a key.
+    Several of these (`100.000`, `1E-07`, `0x1F`, `-0`, `9007199254740993`)
+    are not what `repr(float(text))` prints, so normalising text fails."""
+    doc = _faithful(
+        luadata,
+        _doc(f"X = {text}", "Y = {", f'["v"] = {text},', f"{text},", f"[{text}] = true,", "}"),
+    )
     top = doc.assignments[0].value
     assert isinstance(top, luadata.LuaNumber)
     assert top.raw == text
@@ -305,7 +416,6 @@ def test_number_source_text_is_kept(luadata: Any, text: str) -> None:
     assert [e.value.raw for e in table.entries[:2]] == [text, text]
     assert table.entries[2].style == NUMBER
     assert table.entries[2].key.raw == text
-    assert rebuild(luadata, doc, data) == data
 
 
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
@@ -322,9 +432,9 @@ def test_number_source_text_is_kept(luadata: Any, text: str) -> None:
     ],
 )
 def test_number_as_int(luadata: Any, text: str, expected: int) -> None:
-    """Exact, from the text: 2**53 + 1 does not go through a float."""
-    number = _only_value(luadata, _doc(f"X = {text}"))
-    value = number.as_int()
+    """Exact, from the text: 2**53 + 1 matches the text, not the double the
+    client would load for it."""
+    value = _only_value(luadata, _doc(f"X = {text}")).as_int()
     assert type(value) is int
     assert value == expected
 
@@ -346,8 +456,7 @@ def test_number_as_int(luadata: Any, text: str, expected: int) -> None:
     ],
 )
 def test_number_as_float(luadata: Any, text: str, expected: float) -> None:
-    number = _only_value(luadata, _doc(f"X = {text}"))
-    value = number.as_float()
+    value = _only_value(luadata, _doc(f"X = {text}")).as_float()
     assert type(value) is float
     assert value == expected
 
@@ -373,115 +482,114 @@ def _within(line: int, column: int, text: str) -> list[tuple[int, int, str]]:
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("text", NON_FINITE)
 def test_unlisted_non_finite_spelling_raises_with_position(luadata: Any, text: str) -> None:
-    """§4.2: no fixture has shown a non-finite spelling yet, so every one is
-    unlisted and raises with line and column (§6.4). When a capture shows
-    one, the amendment that lists it removes it from this table."""
+    """§4.2: no fixture has shown a non-finite spelling, so none is listed
+    and each raises with line and column (§6.4). These are spellings
+    reported for various clients; nothing here says what the Forever client
+    writes or what it would load. A spelling a capture shows is listed by an
+    amendment, which also takes it out of this table."""
     _rejected(luadata, _doc(f"X = {text}"), _within(2, 5, text))
     _rejected(luadata, _doc("X = {", f'["v"] = {text},', "}"), _within(3, 9, text))
 
 
-# ── strings ─────────────────────────────────────────────────────────────────
+# ── strings are bytes (§6.4 amendment items 1 to 3) ─────────────────────────
+
+ESCAPES = [
+    ("quote", rb'"a\"b"', b'a"b'),
+    ("backslash", rb'"C:\\x"', b"C:\\x"),
+    ("newline", rb'"l1\nl2"', b"l1\nl2"),
+    ("carriage-return", rb'"cr\r"', b"cr\r"),
+    ("bell-backspace-formfeed-vtab", rb'"\a\b\f\v"', b"\x07\x08\x0c\x0b"),
+    ("tab", rb'"tab\there"', b"tab\there"),
+    ("apostrophe", rb'"it\'s"', b"it's"),
+    ("apostrophe-single-quoted", rb"'\''", b"'"),
+    ("quote-single-quoted", rb"'\"'", b'"'),
+    ("decimal-1-digit", rb'"\1"', b"\x01"),
+    ("decimal-3-digits", rb'"\001"', b"\x01"),
+    ("decimal-zero", rb'"\000"', b"\x00"),
+    ("decimal-127", rb'"\127"', b"\x7f"),
+    ("decimal-stops-at-3-digits", rb'"\0651"', b"A1"),
+    ("decimal-tab-and-newline", rb'"\9\10"', b"\t\n"),
+    ("decimal-utf8-pair", rb'"\195\169"', b"\xc3\xa9"),
+    ("decimal-lone-high-byte", rb'"\233"', b"\xe9"),
+    ("decimal-255", rb'"\255"', b"\xff"),
+    ("raw-quote-in-single-quotes", b"'a\"b'", b'a"b'),
+    ("raw-apostrophe", b'"it\'s"', b"it's"),
+    ("empty", b'""', b""),
+]
 
 
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize(
-    ("raw", "value"),
-    [
-        (r'"a\"b"', 'a"b'),
-        (r'"C:\\x"', "C:\\x"),
-        (r'"l1\nl2"', "l1\nl2"),
-        (r'"cr\r"', "cr\r"),
-        (r'"\1"', "\x01"),
-        (r'"\001"', "\x01"),
-        (r'"\000"', "\x00"),
-        (r'"\127"', "\x7f"),
-        (r'"\0651"', "A1"),
-        (r'"\9\10"', "\t\n"),
-        ("'a\"b'", 'a"b'),
-        ('"it\'s"', "it's"),
-        ('""', ""),
-    ],
-    ids=lambda v: repr(v),
+    ("literal", "data"), [(lit, d) for _i, lit, d in ESCAPES], ids=[i for i, _l, _d in ESCAPES]
 )
-def test_string_escapes_decode_and_raw_is_kept(luadata: Any, raw: str, value: str) -> None:
-    """The escapes §4.2 lists (`\\"`, `\\\\`, `\\n`, `\\r`, decimal `\\ddd`
-    of one to three digits) and both quote styles of §4.1."""
-    string = _only_value(luadata, _doc(f"X = {raw}"))
+def test_string_escapes_decode_to_bytes_and_raw_is_kept(
+    luadata: Any, literal: bytes, data: bytes
+) -> None:
+    """Lua 5.1 escapes with Lua 5.1 meanings; `\\ddd` is one byte."""
+    doc = _faithful(luadata, _doc(b"X = " + literal))
+    string = doc.assignments[0].value
     assert isinstance(string, luadata.LuaString)
-    assert string.value == value
-    assert string.raw == raw
+    assert string.data == data
+    assert string.value == data.decode("utf-8", "surrogateescape")
+    assert string.raw == literal
+
+
+@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
+def test_decimal_escapes_make_bytes_not_code_points(luadata: Any) -> None:
+    assert _only_value(luadata, _doc(r'X = "\195\169"')).value == "é"
+    assert _only_value(luadata, _doc(r'X = "\233"')).value == "\udce9"
+
+
+@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
+@pytest.mark.parametrize("brk", [b"\r\n", b"\n\r", b"\n", b"\r"], ids=["crlf", "lfcr", "lf", "cr"])
+def test_backslash_line_break_is_one_newline_and_one_line(luadata: Any, brk: bytes) -> None:
+    """A backslash before a line break decodes to `"\\n"` and counts one
+    line, whichever of CRLF, LFCR, LF or CR it is; the error on the next
+    line after it reports that line."""
+    literal = b'"a\\' + brk + b'b"'
+    doc = _faithful(luadata, b"\r\nX = " + literal + b"\r\n")
+    string = doc.assignments[0].value
+    assert (string.data, string.raw) == (b"a\nb", literal)
+    _rejected(luadata, b"\r\nX = " + literal + b"\r\nY = foo\r\n", [(4, 5, "foo")])
+
+
+@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
+def test_invalid_utf8_is_kept_as_bytes(luadata: Any) -> None:
+    """A name cut mid-character: parsed, kept, rebuilt byte for byte."""
+    doc = _faithful(luadata, b'\r\nX = {\r\n["Gr\xc3"] = "Gr\xc3",\r\n}\r\n')
+    [only] = doc.assignments[0].value.entries
+    assert (only.key.data, only.key.value, only.key.raw) == (b"Gr\xc3", "Gr\udcc3", b'"Gr\xc3"')
+    assert (only.value.data, only.value.value) == (b"Gr\xc3", "Gr\udcc3")
+    assert doc.to_python() == {"X": {"Gr\udcc3": "Gr\udcc3"}}
+
+
+@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
+def test_raw_control_bytes_in_a_string_are_kept(luadata: Any) -> None:
+    """A raw tab, 0x02, DEL or ESC inside a literal is kept (the same client
+    writes raw 0x02 into config-cache.wtf). A raw NUL is rejected instead
+    (§4.3; **[verify]**), see the rejection table."""
+    literal = b'"a\tb\x02c\x7f\x1b"'
+    string = _faithful(luadata, _doc(b"X = " + literal)).assignments[0].value
+    assert (string.data, string.raw) == (b"a\tb\x02c\x7f\x1b", literal)
 
 
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_non_ascii_strings_are_raw_utf8(luadata: Any) -> None:
     """UTF-8 is written raw (§4.2); the corpus has no non-ASCII string."""
-    data = _doc("X = {", '["Ælfrïc"] = "Grüße — 名前 🐉",', "}")
-    doc = luadata.parse(data)
+    doc = _faithful(luadata, _doc("X = {", '["Ælfrïc"] = "Grüße — 名前 🐉",', "}"))
     [only] = doc.assignments[0].value.entries
-    assert (only.key.value, only.key.raw) == ("Ælfrïc", '"Ælfrïc"')
+    assert only.key.value == "Ælfrïc"
+    assert only.key.raw == '"Ælfrïc"'.encode()
     assert only.value.value == "Grüße — 名前 🐉"
-    assert only.value.raw == '"Grüße — 名前 🐉"'
-    assert rebuild(luadata, doc, data) == data
+    assert only.value.data == "Grüße — 名前 🐉".encode()
 
 
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_double_dash_inside_a_string_is_not_a_comment(luadata: Any) -> None:
-    data = _doc("X = {", '["url"] = "a--b",', '["k"] = "--", -- real', "}")
-    doc = luadata.parse(data)
+    doc = _faithful(luadata, _doc("X = {", '["url"] = "a--b",', '["k"] = "--", -- real', "}"))
     first, second = doc.assignments[0].value.entries
-    assert (first.value.value, first.comment) == ("a--b", None)
-    assert (second.value.value, second.comment) == ("--", "-- real")
-
-
-# ── comments ────────────────────────────────────────────────────────────────
-
-
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
-def test_trailing_comments_are_kept_verbatim_on_their_entry(luadata: Any) -> None:
-    """From `--` to the line ending, trailing spaces included; on a
-    table-valued entry the comment follows its closing `},`."""
-    data = _doc(
-        "X = {",
-        '"a", -- [1]',
-        '["k"] = 1, --   spaced  text  ',
-        "[5] = true,",
-        '["t"] = {',
-        '"inner", -- [1]',
-        "}, -- end of t",
-        "}",
-    )
-    doc = luadata.parse(data)
-    table = doc.assignments[0].value
-    assert [e.comment for e in table.entries] == [
-        "-- [1]",
-        "--   spaced  text  ",
-        None,
-        "-- end of t",
-    ]
-    assert [e.comment for e in table.entries[3].value.entries] == ["-- [1]"]
-    assert rebuild(luadata, doc, data) == data
-
-
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
-def test_document_leading_and_trailing_comment_lines_are_kept(luadata: Any) -> None:
-    data = b"-- header one\r\n-- header two\r\n\r\nX = 1\r\n-- footer\r\n"
-    doc = luadata.parse(data)
-    assert list(doc.leading_comments) == ["-- header one", "-- header two"]
-    assert list(doc.trailing_comments) == ["-- footer"]
-    assert [a.name for a in doc.assignments] == ["X"]
-    assert document_tokens(luadata, doc) == source_tokens(data)
-
-
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
-@pytest.mark.parametrize("data", [b"", b"\r\n", b"\n\n", b"-- only a comment\r\n"])
-def test_document_with_no_assignment(luadata: Any, data: bytes) -> None:
-    """§4.1: a document is any sequence of blanks, comments and assignments,
-    none included."""
-    doc = luadata.parse(data)
-    assert list(doc.assignments) == []
-    assert doc.to_python() == {}
-    comments = list(doc.leading_comments) + list(doc.trailing_comments)
-    assert comments == (["-- only a comment"] if data.startswith(b"--") else [])
+    assert (first.value.data, first.comment) == (b"a--b", None)
+    assert (second.value.data, second.comment) == (b"--", b"-- real")
 
 
 # ── the accepted superset ───────────────────────────────────────────────────
@@ -493,6 +601,7 @@ def test_document_with_no_assignment(luadata: Any, data: bytes) -> None:
     [
         (b'X={["a"]=1,[2]=true,b="c"}', {"X": {"a": 1, 2: True, "b": "c"}}),
         (b'\nX = {\n["a"] = 1,\n}\n', {"X": {"a": 1}}),
+        (b'\rX = {\r["a"] = 1,\r}\r', {"X": {"a": 1}}),
         (b"X = 1\r\n", {"X": 1}),
         (b"\r\nX = 1", {"X": 1}),
         (b"X = {1; 2; 3}", {"X": [1, 2, 3]}),
@@ -514,6 +623,7 @@ def test_document_with_no_assignment(luadata: Any, data: bytes) -> None:
     ids=[
         "compact",
         "lf-endings",
+        "cr-endings",
         "no-leading-blank-line",
         "no-final-line-ending",
         "semicolons",
@@ -531,16 +641,20 @@ def test_document_with_no_assignment(luadata: Any, data: bytes) -> None:
     ],
 )
 def test_accepted_grammar(luadata: Any, data: bytes, expected: dict[str, Any]) -> None:
-    assert luadata.parse(data).to_python() == expected
+    assert _faithful(luadata, data).to_python() == expected
 
 
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("data", [b"X = {}", b"\r\nX = {\r\n}\r\n"], ids=["inline", "two-lines"])
 def test_empty_table(luadata: Any, data: bytes) -> None:
-    table = _only_value(luadata, data)
+    """An empty table converts to `{}` (§6.4 amendment item 4)."""
+    doc = _faithful(luadata, data)
+    table = doc.assignments[0].value
     assert isinstance(table, luadata.LuaTable)
     assert len(table.entries) == 0
-    assert luadata.parse(data).to_python()["X"] in ({}, [])
+    converted = doc.to_python()["X"]
+    assert converted == {}
+    assert type(converted) is dict
 
 
 # ── duplicates ──────────────────────────────────────────────────────────────
@@ -554,11 +668,13 @@ def test_empty_table(luadata: Any, data: bytes) -> None:
         ('["a"] = 1, a = 2', [False, True]),
         ("a = 1, a = 2", [False, True]),
         ('"x", [1] = "y"', [False, True]),
+        ('[1] = "y", "x"', [False, True]),
         ('[2] = "x", "a", "b"', [False, False, True]),
         ('[1] = "x", [1.0] = "y"', [False, True]),
         ('[16] = "x", [0x10] = "y"', [False, True]),
         ("[true] = 1, [true] = 2", [False, True]),
         ('[1] = "x", ["1"] = "y"', [False, False]),
+        ("[true] = 1, [1] = 2", [False, False]),
         ('["a"] = 1, ["b"] = 2, ["a"] = 3, ["a"] = 4', [False, False, True, True]),
         ('["t"] = {["a"] = 1}, ["u"] = {["a"] = 1}', [False, False]),
     ],
@@ -567,23 +683,23 @@ def test_empty_table(luadata: Any, data: bytes) -> None:
         "string-then-name",
         "name-twice",
         "positional-then-bracketed-1",
+        "bracketed-1-then-positional",
         "bracketed-2-then-second-positional",
         "integer-then-integral-float",
         "decimal-then-hex",
-        "bool-twice",
+        "boolean-twice",
         "number-and-string-differ",
+        "boolean-and-number-differ",
         "three-of-one-key",
         "same-key-in-sibling-tables",
     ],
 )
-def test_duplicates_are_kept_in_order_and_flagged(
+def test_duplicates_are_kept_in_order_and_the_later_is_flagged(
     luadata: Any, body: str, flags: list[bool]
 ) -> None:
-    data = _doc("X = {" + body + "}")
-    doc = luadata.parse(data)
+    doc = _faithful(luadata, _doc("X = {" + body + "}"))
     table = doc.assignments[0].value
     assert [e.duplicate for e in table.entries] == flags
-    assert document_tokens(luadata, doc) == source_tokens(data)
     for _d, inner in list(tables(luadata, doc))[1:]:
         assert [e.duplicate for e in inner.entries] == [False] * len(inner.entries)
 
@@ -592,7 +708,7 @@ def test_duplicates_are_kept_in_order_and_flagged(
 def test_duplicate_top_level_assignments_are_kept(luadata: Any) -> None:
     """The client's loader runs the file top to bottom, so `to_python()`
     shows what it would see: the last one."""
-    doc = luadata.parse(_doc("X = 1", "Y = 2", "X = 3"))
+    doc = _faithful(luadata, _doc("X = 1", "Y = 2", "X = 3"))
     assert [(a.name, a.value.raw) for a in doc.assignments] == [("X", "1"), ("Y", "2"), ("X", "3")]
     assert doc.to_python() == {"X": 3, "Y": 2}
 
@@ -612,6 +728,7 @@ def test_duplicate_top_level_assignments_are_kept(luadata: Any) -> None:
         ('"a", ["x"] = 1', {1: "a", "x": 1}),
         ('[1.5] = "x"', {1.5: "x"}),
         ('["a"] = 1, ["a"] = 2', {"a": 2}),
+        ('[1] = "a", [1] = "b"', ["b"]),
         ("a = 1, b = true", {"a": 1, "b": True}),
         ('["1"] = "s"', {"1": "s"}),
     ],
@@ -624,6 +741,7 @@ def test_duplicate_top_level_assignments_are_kept(luadata: Any) -> None:
         "mixed-is-a-dict",
         "float-key",
         "duplicate-string-key-last-wins",
+        "duplicate-bracketed-key-last-wins",
         "bare-names",
         "string-1-is-not-an-index",
     ],
@@ -636,12 +754,72 @@ def test_to_python_lists_only_for_keys_exactly_1_to_n(
     assert type(got) is type(expected)
 
 
+def _batch(count: int, key: int) -> bytes:
+    items = ", ".join(f'"p{i}"' for i in range(1, count + 1))
+    return _doc("X = {" + items + f', [{key}] = "y"' + "}")
+
+
+@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
+@pytest.mark.parametrize(
+    ("count", "key", "winner"),
+    [
+        (1, 1, "p1"),
+        (49, 1, "p1"),
+        (50, 1, "y"),
+        (51, 1, "y"),
+        (50, 50, "y"),
+        (51, 51, "p51"),
+        (100, 100, "y"),
+        (101, 101, "p101"),
+    ],
+    ids=lambda v: str(v),
+)
+def test_positional_against_bracketed_follows_lua_51_flushes(
+    luadata: Any, count: int, key: int, winner: str
+) -> None:
+    """§6.4 amendment item 6 (**[verify]**): Lua 5.1 stores pending
+    positional entries 50 at a time, before the next field once 50 are
+    pending and at the closing brace, while a bracketed entry is stored when
+    it is reached. So a bracketed key wins over a positional entry already
+    flushed, and loses to one still pending. The later entry in the source
+    is flagged either way."""
+    doc = luadata.parse(_batch(count, key))
+    table = doc.assignments[0].value
+    assert [e.duplicate for e in table.entries] == [False] * count + [True]
+    got = doc.to_python()["X"]
+    assert type(got) is list
+    assert len(got) == count
+    assert got[key - 1] == winner
+
+
+@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
+def test_bracketed_before_positional_loses(luadata: Any) -> None:
+    """`[1]` is stored when reached; the positional `"x"` is stored at the
+    closing brace, after it."""
+    assert luadata.parse(_doc('X = {[1] = "y", "x"}')).to_python() == {"X": ["x"]}
+    assert luadata.parse(_doc('X = {[2] = "x", "a", "b"}')).to_python() == {"X": ["a", "b"]}
+
+
+@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
+def test_to_python_keeps_a_top_level_nil(luadata: Any) -> None:
+    """§6.4 amendment item 4: `X = nil` differs from a file that never
+    names `X`."""
+    with_nil = luadata.parse(_doc("X = nil", "Y = 1")).to_python()
+    assert "X" in with_nil
+    assert with_nil["X"] is None
+    assert "X" not in luadata.parse(_doc("Y = 1")).to_python()
+
+
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize(
     ("text", "expected", "kind"),
     [("42", 42, int), ("-7", -7, int), ("0x1F", 31, int), ("0.5", 0.5, float), ("1.0", 1.0, float)],
 )
-def test_to_python_number_types(luadata: Any, text: str, expected: Any, kind: type) -> None:
+def test_to_python_number_type_follows_the_spelling(
+    luadata: Any, text: str, expected: Any, kind: type
+) -> None:
+    """Every Lua 5.1 number is a double; `int` or `float` here follows how
+    the number is written (`1.0` is a float, `0x1F` an int)."""
     got = luadata.parse(_doc(f"X = {text}")).to_python()["X"]
     assert got == expected
     assert type(got) is kind
@@ -651,16 +829,19 @@ def test_to_python_number_types(luadata: Any, text: str, expected: Any, kind: ty
 def test_to_python_is_one_way(luadata: Any) -> None:
     """A fresh copy each call: changing it changes neither the document nor
     the next call's result."""
-    doc = luadata.parse(_doc(*EXAMPLE_LINES))
+    data = _doc(*EXAMPLE_LINES)
+    doc = luadata.parse(data)
     first = doc.to_python()
     first["MyAddonDB"]["list"].append("third")
     first["MyAddonDB"]["profileKeys"]["Name - Realm"] = "Other"
     first["OtherVar"] = "changed"
     assert doc.to_python() == EXAMPLE_PY
-    assert document_tokens(luadata, doc) == source_tokens(_doc(*EXAMPLE_LINES))
+    assert rebuild(luadata, doc) == data
 
 
 # ── §4.3 rejections ─────────────────────────────────────────────────────────
+
+QUOTE_OR_BACKSLASH = [(2, 6, "\\"), (2, 5, '"')]
 
 REJECTIONS: list[tuple[str, bytes, list[tuple[int, int, str]]]] = [
     ("function-value", _doc("X = function() end"), [(2, 5, "function")]),
@@ -718,6 +899,9 @@ REJECTIONS: list[tuple[str, bytes, list[tuple[int, int, str]]]] = [
     ("long-bracket-string", _doc("X = [[text]]"), [(2, 5, "[")]),
     ("long-bracket-level-2", _doc("X = [==[text]==]"), [(2, 5, "[")]),
     ("long-bracket-in-table", _doc("X = {", '["k"] = [[v]],', "}"), [(3, 9, "[")]),
+    ("long-comment-after-value", _doc("X = 1 --[[ c ]]"), [(2, 7, "--")]),
+    ("long-comment-level-2-own-line", _doc("--[==[ c ]==]", "X = 1"), [(2, 1, "--")]),
+    ("long-comment-in-table", _doc("X = {", '"a", --[[ c', "]]", "}"), [(3, 6, "--")]),
     ("local", _doc("local X = 1"), [(2, 1, "local")]),
     ("return", _doc("return {}"), [(2, 1, "return")]),
     ("do-block", _doc("do end"), [(2, 1, "do")]),
@@ -736,7 +920,9 @@ REJECTIONS: list[tuple[str, bytes, list[tuple[int, int, str]]]] = [
     ("leading-separator", _doc("X = {,1}"), [(2, 6, ",")]),
     ("missing-separator", _doc("X = {1 2}"), [(2, 8, "2")]),
     ("unterminated-string-at-end", b'\r\nX = "abc', [(2, 5, '"'), (2, 9, "")]),
-    ("unterminated-string-at-line-end", _doc('X = "abc', 'def"'), [(2, 5, '"'), (2, 9, "")]),
+    ("unterminated-string-at-crlf", _doc('X = "abc', 'def"'), [(2, 5, '"'), (2, 9, "")]),
+    ("raw-lf-in-string", b'\r\nX = "a\nb"\r\n', [(2, 5, '"'), (2, 7, "")]),
+    ("raw-cr-in-string", b'\r\nX = "a\rb"\r\n', [(2, 5, '"'), (2, 7, "")]),
     ("unterminated-table", _doc("X = {", '["a"] = 1,'), [(2, 5, "{"), (4, 1, "")]),
     (
         "unterminated-outer-table",
@@ -746,10 +932,16 @@ REJECTIONS: list[tuple[str, bytes, list[tuple[int, int, str]]]] = [
     ("nul-between-tokens", b"\r\nX = 1\x00\r\n", [(2, 6, "\x00")]),
     ("nul-in-string", b'\r\nX = "a\x00b"\r\n', [(2, 7, "\x00"), (2, 5, '"')]),
     ("nul-after-last-line", b"\r\nX = 1\r\n\x00", [(3, 1, "\x00")]),
-    ("lone-surrogate-escape", _doc(r'X = "\u{D800}"'), [(2, 6, "\\"), (2, 5, '"')]),
-    ("unknown-escape", _doc(r'X = "a\qb"'), [(2, 7, "\\"), (2, 5, '"')]),
-    ("hex-escape-not-in-the-reference", _doc(r'X = "\x41"'), [(2, 6, "\\"), (2, 5, '"')]),
-    ("decimal-escape-above-255", _doc(r'X = "\256"'), [(2, 6, "\\"), (2, 5, '"')]),
+    ("lone-surrogate-escape", _doc(r'X = "\u{D800}"'), QUOTE_OR_BACKSLASH),
+    ("hex-escape", _doc(r'X = "\x41"'), QUOTE_OR_BACKSLASH),
+    ("z-escape", _doc(r'X = "\z"'), QUOTE_OR_BACKSLASH),
+    ("decimal-escape-above-255", _doc(r'X = "\256"'), QUOTE_OR_BACKSLASH),
+    ("unknown-letter-escape-q", _doc(r'X = "\q"'), QUOTE_OR_BACKSLASH),
+    ("unknown-letter-escape-e", _doc(r'X = "\e"'), QUOTE_OR_BACKSLASH),
+    ("unknown-escape-question-mark", _doc(r'X = "\?"'), QUOTE_OR_BACKSLASH),
+    ("unknown-escape-pipe", _doc(r'X = "\|"'), QUOTE_OR_BACKSLASH),
+    ("unknown-escape-space", _doc(r'X = "\ "'), QUOTE_OR_BACKSLASH),
+    ("unknown-escape-high-byte", _doc(b'X = "\\\xc3\xa9"'), QUOTE_OR_BACKSLASH),
 ]
 
 
@@ -762,7 +954,8 @@ REJECTIONS: list[tuple[str, bytes, list[tuple[int, int, str]]]] = [
 def test_rejected_with_line_column_and_token(
     luadata: Any, data: bytes, candidates: list[tuple[int, int, str]]
 ) -> None:
-    """§4.3 and §6.4 "Rejected": never evaluated, refused with a position."""
+    """§4.3 and §6.4 "Rejected" (as amended): never evaluated, refused with
+    a position."""
     _rejected(luadata, data, candidates)
 
 
@@ -787,17 +980,20 @@ def test_depth_under_the_bound_parses(luadata: Any, form: str) -> None:
     """190 tables deep, inside §6.4's 200. Whether exactly 200 is the last
     accepted depth is not graded (where depth starts counting is not
     specified); 190 and 210 are clear of that question."""
-    doc = luadata.parse(_nested(190, form))
+    doc = _faithful(luadata, _nested(190, form))
     assert max(d for d, _t in tables(luadata, doc)) == 190
 
 
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("form", ["positional", "keyed", "client-lines", "unterminated"])
 def test_depth_over_the_bound_raises(luadata: Any, form: str) -> None:
+    """Unterminated input deeper than the bound raises the depth error, not
+    an end-of-input error."""
     with pytest.raises(luadata.LuaLimitError) as info:
         luadata.parse(_nested(210, form))
     assert isinstance(info.value, luadata.LuaDataError)
-    assert (info.value.token or "").startswith("{")
+    token = info.value.token or ""
+    assert token.startswith(b"{" if isinstance(token, bytes) else "{")
 
 
 def _chain(err: BaseException) -> list[BaseException]:
@@ -823,7 +1019,8 @@ def test_ten_thousand_deep_raises_without_recursion_error(luadata: Any, form: st
         luadata.parse(data)
     except luadata.LuaLimitError as err:
         assert not [e for e in _chain(err) if isinstance(e, RecursionError)]
-        assert (err.token or "").startswith("{")
+        token = err.token or ""
+        assert token.startswith(b"{" if isinstance(token, bytes) else "{")
         if form != "client-lines":
             assert err.line == 2
     except RecursionError:  # pragma: no cover - the failure being graded
@@ -846,7 +1043,7 @@ def test_string_under_the_bound_is_kept_whole(luadata: Any) -> None:
     size = 63_000_000
     data = b'\r\nX = "' + b"a" * size + b'"\r\n'
     string = _only_value(luadata, data)
-    assert len(string.value) == size
+    assert len(string.data) == size
     assert len(string.raw) == size + 2
 
 
@@ -891,7 +1088,8 @@ def test_multi_megabyte_document_parses_whole(luadata: Any) -> None:
     client's layout parses completely and rebuilds byte for byte. The time
     limit only catches a super-linear parser (60 s for 4 MB is ~40 times
     slower than §6.4's 50 MB in 10 s); the target itself is measured in
-    M10-04's PR, not graded here."""
+    M10-04's PR on a constructed input (§6.4 amendment item 5), not graded
+    here."""
     count = 20_000
     lines = ["BIG = {"]
     for i in range(count):
@@ -905,7 +1103,7 @@ def test_multi_megabyte_document_parses_whole(luadata: Any) -> None:
     records = doc.assignments[0].value.entries
     assert len(records) == count
     assert records[-1].value.entries[1].value.raw == str(200_000 + count - 1)
-    assert rebuild(luadata, doc, data) == data
+    assert rebuild(luadata, doc) == data
     assert elapsed < 60, f"{elapsed:.1f} s for {len(data)} bytes"
 
 
@@ -916,6 +1114,20 @@ FORBIDDEN = {"ctypes", "subprocess", "multiprocessing", "socket", "urllib", "htt
 FORBIDDEN |= {"code", "codeop", "runpy", "cffi", "lupa", "lunatic", "slpp", "luadata", "luaparser"}
 
 
+def _imported_modules(node: ast.AST) -> list[str]:
+    """Every module an import statement names, relative imports resolved
+    against `wowlab_core` (so `from .guard import x` is `wowlab_core.guard`)."""
+    if isinstance(node, ast.Import):
+        return [alias.name for alias in node.names]
+    if isinstance(node, ast.ImportFrom):
+        if node.level:
+            base = "wowlab_core" + (f".{node.module}" if node.module else "")
+        else:
+            base = node.module or ""
+        return [base] + [f"{base}.{alias.name}" for alias in node.names]
+    return []
+
+
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_module_imports_no_interpreter_and_evaluates_nothing(luadata: Any) -> None:
     """L3 and M10-04's "no third-party parser": only the standard library,
@@ -923,17 +1135,13 @@ def test_module_imports_no_interpreter_and_evaluates_nothing(luadata: Any) -> No
     no `eval`, `exec`, `compile` or `__import__`."""
     tree = ast.parse(Path(luadata.__file__).read_text(encoding="utf-8"))
     for node in ast.walk(tree):
-        modules: list[str] = []
-        if isinstance(node, ast.Import):
-            modules = [alias.name for alias in node.names]
-        elif isinstance(node, ast.ImportFrom):
-            base = "wowlab_core" if node.level else (node.module or "")
-            modules = [base] + [f"{base}.{alias.name}" for alias in node.names]
-        for module in modules:
+        for module in _imported_modules(node):
             top = module.split(".")[0]
             assert top in sys.stdlib_module_names | ALLOWED_THIRD_PARTY | {"wowlab_core"}, module
             assert top not in FORBIDDEN, module
-            assert module != "wowlab_core.guard", module
+            assert not (module == "wowlab_core.guard" or module.startswith("wowlab_core.guard.")), (
+                module
+            )
         if isinstance(node, ast.Call):
             func = node.func
             name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")

@@ -1,63 +1,82 @@
 """Graders for `wowlab_core.luadata` against the real SavedVariables captures
-(M10-04T; L3, L4, L8).
+(M10-04T; L1, L3, L4, L8).
 
 Written before `luadata.py` exists, from `docs/LAB_PLAN.md` §6.4 (parsing
-half), `docs/LAB_FORMATS.md` §4 with its 2026-09-22 amendment, and the five
-files of the Forever beta part-2 capture. Every grader carries one marker
-line that M10-04 deletes; nothing else in this file is the implementer's to
-change. Constructed inputs (hostile and boundary cases, and the grammar
-points no capture shows yet) are in `test_luadata_constructed.py`.
+half) with its 2026-09-22 amendment, `docs/LAB_FORMATS.md` §4 with its
+2026-09-22 amendments, and the five files of the Forever beta part-2
+capture. Every grader carries one marker line that M10-04 deletes; nothing
+else in this file is the implementer's to change. Constructed inputs
+(hostile and boundary cases, and the grammar points no capture shows yet)
+are in `test_luadata_constructed.py`.
 
 Every `savedvariables` row of the fixture index is graded by the
 parametrized tests, so a new capture is graded the day its row lands. The
-named tests pin facts of named files and never count the corpus.
+named tests pin facts of named files and never count the corpus. No grader
+hands the committed fixture tree to `read()`: it reads a copy.
 
 The seam these graders hold `luadata` to
 ----------------------------------------
 §6.4 names the value types (`LuaTable`, `LuaString`, `LuaNumber`,
-`LuaBool`, `LuaNil`), the key styles, `as_int()` / `as_float()` and
-`document.to_python()`. The rest is pinned here, as small as it could be:
+`LuaBool`, `LuaNil`), the key styles, `LuaString.data` / `.value` / `.raw`,
+`as_int()` / `as_float()` and `document.to_python()`, and (amendment item 7)
+requires the document alone to rebuild the source. The names that rebuild
+needs are pinned here, as few as it could be done with:
 
 - `luadata.parse(data: bytes)` returns the document; `luadata.read(path)`
-  reads a file and returns the same document (the size bound is enforced on
-  both).
-- The document has `assignments` (in source order; each has `name: str` and
-  `value`), `leading_comments` and `trailing_comments` (sequences of `str`,
-  each a comment line's text from `--` up to, not including, its line
-  ending), and `to_python()`.
-- `LuaTable.entries` is a sequence of entries in source order. An entry has
-  `style`, which compares equal to one of `"positional"`, `"string"`,
-  `"number"`, `"name"` (a `str` or a `StrEnum`); `key`, which is `None` for
-  a positional entry, a `LuaString` for `["string"]`, a `LuaNumber` for
-  `[number]`, the identifier as a `str` for a bare `name`, and a `LuaBool`
-  for `[true]` / `[false]` (whose style §6.4 does not name, so it is not
-  graded); `value`; `comment`, the trailing comment on the entry's line as
-  written from `--` to the line ending, or `None`; and `duplicate`, `True`
-  on every entry whose key equals the key of an earlier entry in the same
-  table (Lua key equality: `a = ` and `["a"]` are one key, the n-th
-  positional entry and `[n]` are one key, `[1]` and `[1.0]` are one key,
-  `[1]` and `["1"]` are two).
-- `LuaString.value` is the decoded `str`; `LuaString.raw` is the source
-  text including its quotes. `LuaNumber.raw` is the source text.
+  reads a file and returns the same document (both enforce the size bound).
+- Trivia: every token keeps the bytes in front of it (whitespace, line
+  breaks, comments), as `bytes`:
+  - the document: `assignments` (source order) and `tail`, the bytes after
+    the last token;
+  - an assignment: `lead` (before its name), `name: str`, `eq_lead` (before
+    `=`), `value`;
+  - every value (`LuaTable`, `LuaString`, `LuaNumber`, `LuaBool`,
+    `LuaNil`), including one used as a key: `lead` (before its first
+    token); a `LuaTable` also has `entries` (source order) and
+    `close_lead` (before `}`);
+  - an entry: `lead` (before `[` or the bare name; a positional entry's
+    leading bytes may sit here or on its value), `key_close_lead` (before
+    `]`), `eq_lead` (before `=`), `sep` (`b","`, `b";"`, or `b""` when the
+    entry has none) and `sep_lead` (before the separator).
+  A slot the grammar does not have for that entry may be `b""` or `None`.
+- An entry also has `style`, equal to one of `"positional"`, `"string"`,
+  `"number"`, `"name"`, `"boolean"` (a `str` or a `StrEnum`); `key`: `None`
+  (positional), `LuaString`, `LuaNumber`, the identifier as a `str` (bare
+  name), `LuaBool` (`[true]` / `[false]`); `value`; `comment`, a view of the
+  comment that follows the entry on its line (after its separator, or after
+  its value when it has none), as `bytes` from `--` to the line break, or
+  `None`; and `duplicate`, `True` only on the later of two entries of one
+  table whose keys are equal under Lua key equality (`a` and `["a"]`, `[1]`
+  and `[1.0]` and the first positional entry; `[1]` and `["1"]` differ).
+- `LuaString.data` is the decoded `bytes`; `.value` is `data` decoded as
+  UTF-8 with `surrogateescape`; `.raw` is the literal's source bytes,
+  quotes included. `LuaNumber.raw` is its source text (`str`).
   `LuaBool.value` is a `bool`.
 - `luadata.LuaDataError` is raised for every rejection and carries `line`
-  and `column` (both 1-based; a CRLF or LF ends a line) and `token` (the
-  offending source text, `""` or `None` at end of input).
-  `luadata.LuaLimitError` is its subclass for the depth, file-size and
-  string-length bounds, and is raised for nothing else.
+  and `column` (both 1-based; CRLF, LFCR, LF and CR each end one line, as
+  in Lua 5.1) and `token` (the offending source text as `bytes` or `str`;
+  empty or `None` at the end of input). `luadata.LuaLimitError` is its
+  subclass for the depth, file-size and string-length bounds, and is
+  raised for nothing else.
 
-The oracle in `_luadata_oracle.py` rebuilds each fixture's tokens and bytes
-from the parse, taking only layout (line ending, indent unit, leading blank
-lines) from the source. That is how L4 is graded here without a serializer:
-`serialize(parse(x)) == x` itself is M10-12's, graded by M10-12T.
+Numbers: every Lua 5.1 number is a double (the client's Lua is taken to be
+5.1, **[verify]** for Forever). `int` or `float` out of `to_python()`
+follows how the number is written, not a client type.
 
-Not gradable on real data yet (the corpus has no such file): the §6.4
-performance target (the largest real file is 14 484 bytes), a per-character
+`_luadata_oracle.py` rebuilds tokens and bytes from the document alone;
+M10-12's serializer is that rebuild for unmodified documents.
+
+Not gradable on real data yet (the corpus has no such file or case): the
+§6.4 performance target (the largest real file is 14 484 bytes; M10-04
+measures it on a constructed input in its PR), a per-character
 SavedVariables file, the account `SavedVariables.lua`, an Ace3 profile,
-`-- [n]` comments, tab indentation, `[number]` keys, non-ASCII strings,
-single-quoted strings, escapes other than `\\`, and non-finite numbers.
-The constructed file covers each grammar point; the performance target is
-M10-04's to measure (its acceptance) and is not graded here.
+`-- [n]` or any other comment, tab indentation, `[number]`, bare-name and
+boolean keys, `;` separators, non-ASCII, invalid UTF-8 or single-quoted
+strings, escapes other than `\\`, raw control bytes in strings,
+duplicates, non-finite numbers, and number text fidelity: every number in
+the corpus is already in shortest round-trip form, so a parser that stored
+`repr(float(text))` would still pass here. The constructed file covers
+each of these.
 """
 
 from __future__ import annotations
@@ -65,6 +84,7 @@ from __future__ import annotations
 import re
 import shutil
 import stat
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -96,7 +116,7 @@ NAMED = [RARESCANNER, RARESCANNER_BAK, GAMEPAD, SYNDICATOR, DBM]
 SAVEDVARIABLES = indexed("savedvariables")
 
 IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-ITEM_LINK = "|cnIQ1:|Hitem:277114::::::::7:1490:::::::::|h[Apprentice's Skinning Satchel]|h|r"
+ITEM_LINK = b"|cnIQ1:|Hitem:277114::::::::7:1490:::::::::|h[Apprentice's Skinning Satchel]|h|r"
 
 
 @pytest.fixture
@@ -108,7 +128,11 @@ def _read(name: str) -> bytes:
     return (FIXTURES / name).read_bytes()
 
 
-# ── the corpus (no marker: this is about the index, not luadata) ────────────
+def _entries(luadata: Any, doc: Any) -> list[Any]:
+    return [e for _d, t in tables(luadata, doc) for e in t.entries]
+
+
+# ── the corpus (no marker: these read bytes and never import luadata) ───────
 
 
 def test_index_lists_the_named_savedvariables_fixtures() -> None:
@@ -119,7 +143,43 @@ def test_index_lists_the_named_savedvariables_fixtures() -> None:
         assert (FIXTURES / name).is_file(), name
 
 
+def test_named_fixtures_are_what_the_graders_assume() -> None:
+    """Guards the named graders against a mislabelled path. CRLF on every
+    line, a leading blank line, no tab indentation, no comment (§4.2
+    amendment of 2026-09-22)."""
+    for name in NAMED:
+        data = _read(name)
+        assert data.startswith(b"\r\n"), name
+        assert data.endswith(b"\r\n"), name
+        assert data.count(b"\n") == data.count(b"\r\n") == data.count(b"\r"), name
+        assert b"\t" not in data, name
+        assert b"--" not in data, name
+    assert _read(RARESCANNER) == _read(RARESCANNER_BAK)
+
+
 # ── every indexed SavedVariables file ───────────────────────────────────────
+
+
+@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
+@pytest.mark.parametrize("name", SAVEDVARIABLES)
+def test_real_savedvariables_rebuilds_byte_for_byte_from_the_document(
+    luadata: Any, name: str
+) -> None:
+    """L4 and §6.4 amendment item 7: the document alone gives the file back,
+    exactly. Indentation and `-- [n]` comments are style, not grammar: the
+    Forever files have neither."""
+    data = _read(name)
+    assert rebuild(luadata, luadata.parse(data)) == data
+
+
+@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
+@pytest.mark.parametrize("name", SAVEDVARIABLES)
+def test_real_savedvariables_keeps_every_token_in_source_order(luadata: Any, name: str) -> None:
+    """The structure, not only the bytes: names, key styles, key and value
+    source text, separators, in file order. Nothing is dropped, merged,
+    reordered or normalised, and nothing is hidden in trivia."""
+    data = _read(name)
+    assert document_tokens(luadata, luadata.parse(data)) == source_tokens(data)
 
 
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
@@ -130,40 +190,27 @@ def test_real_savedvariables_parses(luadata: Any, name: str) -> None:
     for assignment in doc.assignments:
         assert isinstance(assignment.name, str)
         assert IDENT.fullmatch(assignment.name)
-    for _depth, table in tables(luadata, doc):
-        for e in table.entries:
-            assert isinstance(
-                e.value,
-                luadata.LuaTable | luadata.LuaString | luadata.LuaNumber | luadata.LuaBool,
-            ), "nil is legal only as a top-level value (§4.1)"
-
-
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
-@pytest.mark.parametrize("name", SAVEDVARIABLES)
-def test_real_savedvariables_keeps_every_token_in_source_order(luadata: Any, name: str) -> None:
-    """L4 at the parse: names, key styles, key and value source text
-    (numbers and strings as written), comments, in file order. Nothing is
-    dropped, merged, reordered or normalised."""
-    data = _read(name)
-    assert document_tokens(luadata, luadata.parse(data)) == source_tokens(data)
-
-
-@pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
-@pytest.mark.parametrize("name", SAVEDVARIABLES)
-def test_real_savedvariables_rebuilds_byte_for_byte_from_the_parse(luadata: Any, name: str) -> None:
-    """L4, byte level: from the parse alone plus the file's own layout, the
-    oracle reproduces the file exactly. Indentation and `-- [n]` comments
-    are style, not grammar: the Forever files have neither."""
-    data = _read(name)
-    assert rebuild(luadata, luadata.parse(data), data) == data
+    for e in _entries(luadata, doc):
+        assert isinstance(
+            e.value,
+            luadata.LuaTable | luadata.LuaString | luadata.LuaNumber | luadata.LuaBool,
+        ), "nil is legal only as a top-level value (§4.1)"
+        assert e.sep == b",", "the client ends every entry with `,` (§4.2)"
+        assert e.comment is None
 
 
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 @pytest.mark.parametrize("name", SAVEDVARIABLES)
 def test_real_savedvariables_read_equals_parse(luadata: Any, name: str) -> None:
+    """`read()` gets a copy, never the committed fixture tree (a reader that
+    wrote beside its file would pollute the corpus)."""
     data = _read(name)
-    from_file = luadata.read(FIXTURES / name)
+    with tempfile.TemporaryDirectory(prefix="luadata-read-") as folder:
+        copy = Path(folder) / Path(name).name
+        copy.write_bytes(data)
+        from_file = luadata.read(copy)
     from_bytes = luadata.parse(data)
+    assert rebuild(luadata, from_file) == data
     assert document_tokens(luadata, from_file) == document_tokens(luadata, from_bytes)
     assert from_file.to_python() == from_bytes.to_python()
 
@@ -174,9 +221,7 @@ def test_real_savedvariables_to_python_is_plain_data(luadata: Any, name: str) ->
     doc = luadata.parse(_read(name))
     py = doc.to_python()
     assert type(py) is dict
-    names = [a.name for a in doc.assignments]
-    non_nil = [a.name for a in doc.assignments if not isinstance(a.value, luadata.LuaNil)]
-    assert set(non_nil) <= set(py) <= set(names)
+    assert list(py) == list(dict.fromkeys(a.name for a in doc.assignments))
 
     def plain(v: Any) -> None:
         if type(v) is dict:
@@ -198,7 +243,7 @@ def test_real_savedvariables_has_no_duplicate_flagged(luadata: Any, name: str) -
     """The client writes a table from a Lua table, so its keys are unique;
     a flag on a real file is a false positive."""
     doc = luadata.parse(_read(name))
-    assert not [e for _d, t in tables(luadata, doc) for e in t.entries if e.duplicate]
+    assert not [e for e in _entries(luadata, doc) if e.duplicate]
 
 
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
@@ -227,7 +272,7 @@ def test_read_leaves_the_folder_untouched(
         target.chmod(stat.S_IRUSR | stat.S_IWUSR)
     assert after == before
     assert target.read_bytes() == _read(name)
-    assert document_tokens(luadata, doc) == source_tokens(_read(name))
+    assert rebuild(luadata, doc) == _read(name)
 
 
 # ── named files ─────────────────────────────────────────────────────────────
@@ -243,14 +288,19 @@ def test_read_leaves_the_folder_untouched(
     ],
 )
 def test_nil_file_is_one_top_level_nil(luadata: Any, name: str, variable: str) -> None:
-    """`X = nil` at top level is written by the client (amendment of
-    2026-09-22); the variable is not named after the file."""
+    """`X = nil` at top level is written by the client (§4.2 amendment); the
+    variable is not named after the file. `to_python()` keeps the key with
+    `None` (§6.4 amendment item 4). The leading blank line is the name's
+    leading bytes; the final CRLF is the document's tail."""
     doc = luadata.parse(_read(name))
-    assert [a.name for a in doc.assignments] == [variable]
-    assert isinstance(doc.assignments[0].value, luadata.LuaNil)
-    assert list(doc.leading_comments) == []
-    assert list(doc.trailing_comments) == []
-    assert doc.to_python().get(variable) is None
+    [assignment] = doc.assignments
+    assert assignment.name == variable
+    assert isinstance(assignment.value, luadata.LuaNil)
+    assert assignment.lead == b"\r\n"
+    assert doc.tail == b"\r\n"
+    py = doc.to_python()
+    assert variable in py
+    assert py[variable] is None
 
 
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
@@ -262,6 +312,8 @@ def test_syndicator_has_three_assignments_in_file_order(luadata: Any) -> None:
         "SYNDICATOR_SUMMARIES",
     ]
     assert all(isinstance(a.value, luadata.LuaTable) for a in doc.assignments)
+    assert [a.lead for a in doc.assignments] == [b"\r\n", b"\r\n", b"\r\n"]
+    assert doc.tail == b"\r\n"
 
 
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
@@ -273,15 +325,15 @@ def test_syndicator_config_keys_in_file_order(luadata: Any) -> None:
     expected = re.findall(rb'^\["([^"]*)"\] = ', block, re.MULTILINE)
     assert len(expected) == 16
     assert [e.style for e in config.entries] == [STRING] * 16
-    assert [e.key.value for e in config.entries] == [k.decode() for k in expected]
-    assert [e.key.raw for e in config.entries] == [f'"{k.decode()}"' for k in expected]
+    assert [e.key.data for e in config.entries] == expected
+    assert [e.key.raw for e in config.entries] == [b'"' + k + b'"' for k in expected]
     limit = entry(luadata, config, "tooltips_character_limit").value
     assert isinstance(limit, luadata.LuaNumber)
     assert limit.raw == "4"
     assert limit.as_int() == 4
     source = entry(luadata, config, "auction_value_source").value
     assert isinstance(source, luadata.LuaString)
-    assert (source.value, source.raw) == ("none", '"none"')
+    assert (source.data, source.value, source.raw) == (b"none", "none", b'"none"')
     assert entry(luadata, config, "debug").value.value is False
     assert entry(luadata, config, "show_guild_banks_in_tooltips").value.value is True
 
@@ -289,9 +341,9 @@ def test_syndicator_config_keys_in_file_order(luadata: Any) -> None:
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_syndicator_positional_entries_carry_no_comment(luadata: Any) -> None:
     """82 positional entries, none with a `-- [n]` comment, and no comment
-    anywhere (amendment of 2026-09-22): the comment is optional style."""
+    anywhere (§4.2 amendment): the comment is optional style."""
     doc = luadata.parse(_read(SYNDICATOR))
-    entries = [e for _d, t in tables(luadata, doc) for e in t.entries]
+    entries = _entries(luadata, doc)
     positional = [e for e in entries if e.style == POSITIONAL]
     assert len(positional) == 82
     assert all(e.key is None for e in positional)
@@ -301,9 +353,12 @@ def test_syndicator_positional_entries_carry_no_comment(luadata: Any) -> None:
 
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_syndicator_empty_tables(luadata: Any) -> None:
-    """An empty table is written as `{` then `}` on two lines, 47 times."""
+    """An empty table is written as `{` then `}` on two lines, 47 times; the
+    line break is the `}`'s leading bytes."""
     doc = luadata.parse(_read(SYNDICATOR))
-    assert len([t for _d, t in tables(luadata, doc) if len(t.entries) == 0]) == 47
+    empty = [t for _d, t in tables(luadata, doc) if len(t.entries) == 0]
+    assert len(empty) == 47
+    assert {t.close_lead for t in empty} == {b"\r\n"}
 
 
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
@@ -314,8 +369,8 @@ def test_syndicator_nests_six_tables_deep(luadata: Any) -> None:
 
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_syndicator_item_link_is_ordinary_text(luadata: Any) -> None:
-    """`|c…|r` colour codes and `|H…|h` links are ordinary characters, and a
-    `'` inside a double-quoted string is raw (§4.2)."""
+    """`|c…|r` colour codes and `|H…|h` links are ordinary bytes, and a `'`
+    inside a double-quoted string is raw (§4.2)."""
     doc = luadata.parse(_read(SYNDICATOR))
     bags = path(
         luadata,
@@ -331,8 +386,9 @@ def test_syndicator_item_link_is_ordinary_text(luadata: Any) -> None:
     assert isinstance(first, luadata.LuaTable)
     link = entry(luadata, first, "itemLink").value
     assert isinstance(link, luadata.LuaString)
-    assert link.value == ITEM_LINK
-    assert link.raw == f'"{ITEM_LINK}"'
+    assert link.data == ITEM_LINK
+    assert link.value == ITEM_LINK.decode("ascii")
+    assert link.raw == b'"' + ITEM_LINK + b'"'
     item_id = entry(luadata, first, "itemID").value
     assert (item_id.raw, item_id.as_int()) == ("277114", 277114)
     assert isinstance(bags.entries[1].value, luadata.LuaTable)
@@ -345,7 +401,7 @@ def test_syndicator_empty_string_key(luadata: Any) -> None:
     by_realm = path(luadata, doc, "SYNDICATOR_SUMMARIES", "Characters", "ByRealm")
     [only] = by_realm.entries
     assert only.style == STRING
-    assert (only.key.value, only.key.raw) == ("", '""')
+    assert (only.key.data, only.key.value, only.key.raw) == (b"", "", b'""')
     assert isinstance(only.value, luadata.LuaTable)
 
 
@@ -366,8 +422,8 @@ def test_syndicator_positional_false_and_positional_empty_table(luadata: Any) ->
 
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_syndicator_to_python(luadata: Any) -> None:
-    """Array-like tables (keys exactly 1..n) become lists; an empty table is
-    an empty container (whether `[]` or `{}` is not specified)."""
+    """Array-like tables (keys exactly 1..n) become lists; an empty table
+    becomes `{}` (§6.4 amendment item 4)."""
     py = luadata.parse(_read(SYNDICATOR)).to_python()
     assert list(py) == ["SYNDICATOR_CONFIG", "SYNDICATOR_DATA", "SYNDICATOR_SUMMARIES"]
     assert py["SYNDICATOR_CONFIG"]["tooltips_character_limit"] == 4
@@ -377,14 +433,13 @@ def test_syndicator_to_python(luadata: Any) -> None:
     bags = character["containerInfo"]["bags"]
     assert type(bags) is list
     assert len(bags) == 5
-    assert bags[0]["itemLink"] == ITEM_LINK
+    assert bags[0]["itemLink"] == ITEM_LINK.decode("ascii")
     assert bags[0]["itemID"] == 277114
-    assert bags[1] in ({}, [])
+    assert bags[1] == {}
+    assert type(bags[1]) is dict
     warband = py["SYNDICATOR_SUMMARIES"]["Warband"]
     assert warband["Pending"] == [False]
-    assert type(warband["Summary"]) is list
-    assert len(warband["Summary"]) == 1
-    assert warband["Summary"][0] in ({}, [])
+    assert warband["Summary"] == [{}]
     assert list(py["SYNDICATOR_SUMMARIES"]["Characters"]["ByRealm"]) == [""]
 
 
@@ -400,6 +455,7 @@ def test_dbm_keys_in_file_order_all_string_style(luadata: Any) -> None:
     assert expected[0] == "HugeBorderColorG"
     assert expected[-1] == "VarianceTexture"
     assert all(e.style == STRING for e in options.entries)
+    assert {e.lead for e in options.entries} == {b"\r\n"}
     assert max(d for d, _t in tables(luadata, doc)) == 3
 
 
@@ -434,8 +490,12 @@ def test_dbm_negative_integers_keep_their_text(
     ],
 )
 def test_dbm_floats_keep_their_text(luadata: Any, key: str, raw: str) -> None:
-    """The source text survives exactly, including a 16-digit shortest form
-    whose float would print differently (`0.0117647058823529`)."""
+    """The source text of the file's floats, up to 16 significant digits
+    (`0.6745098233222961`; `0.0117647058823529` has 15). Every one is
+    already the shortest round-trip form, so this cannot tell kept text from
+    `repr(float(text))`; the constructed number-text graders
+    (`test_number_source_text_is_kept`: `100.000`, `1E-07`, `0x1F`, `-0`)
+    are what grade fidelity."""
     doc = luadata.parse(_read(DBM))
     number = entry(
         luadata, path(luadata, doc, "DBT_AllPersistentOptions", "Default", "DBM"), key
@@ -450,14 +510,18 @@ def test_dbm_backslash_escape_is_decoded_and_raw_is_kept(luadata: Any) -> None:
     doc = luadata.parse(_read(DBM))
     options = path(luadata, doc, "DBT_AllPersistentOptions", "Default", "DBM")
     texture = entry(luadata, options, "Texture").value
-    assert texture.value == "Interface\\AddOns\\DBM-StatusBarTimers\\textures\\default.blp"
-    assert texture.raw == '"Interface\\\\AddOns\\\\DBM-StatusBarTimers\\\\textures\\\\default.blp"'
+    decoded = b"Interface\\AddOns\\DBM-StatusBarTimers\\textures\\default.blp"
+    assert texture.data == decoded
+    assert texture.value == decoded.decode("ascii")
+    assert texture.raw == b'"' + decoded.replace(b"\\", b"\\\\") + b'"'
     skin = entry(luadata, options, "Skin").value
-    assert (skin.value, skin.raw) == ("", '""')
+    assert (skin.data, skin.value, skin.raw) == (b"", "", b'""')
 
 
 @pytest.mark.xfail(strict=True, reason="M10-04 not implemented")
 def test_dbm_to_python_number_types(luadata: Any) -> None:
+    """`int` or `float` follows the spelling (`1` is an int although the
+    client holds a double)."""
     py = luadata.parse(_read(DBM)).to_python()
     options = py["DBT_AllPersistentOptions"]["Default"]["DBM"]
     assert len(options) == 140
@@ -470,17 +534,3 @@ def test_dbm_to_python_number_types(luadata: Any) -> None:
     )
     assert options["HugeBarsEnabled"] is True
     assert options["Skin"] == ""
-
-
-def test_named_fixtures_are_what_the_graders_assume() -> None:
-    """Guards the named graders against a mislabelled path (no marker: this
-    reads bytes only). CRLF on every line, a leading blank line, no tab
-    indentation, no comment (amendment of 2026-09-22)."""
-    for name in NAMED:
-        data = _read(name)
-        assert data.startswith(b"\r\n"), name
-        assert data.endswith(b"\r\n"), name
-        assert data.count(b"\n") == data.count(b"\r\n"), name
-        assert b"\t" not in data, name
-        assert b"--" not in data, name
-    assert _read(RARESCANNER) == _read(RARESCANNER_BAK)

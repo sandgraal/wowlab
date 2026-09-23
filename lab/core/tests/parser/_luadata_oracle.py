@@ -3,12 +3,10 @@
 Not a parser and not a serializer: nothing here is on the library's path.
 It reads a parsed document through the seam pinned in
 `test_luadata_fixtures.py` and turns it back into (a) the document's tokens
-and (b) the document's bytes, taking layout from the source bytes and
-everything else from the parse. Both graders therefore check the parse
-alone; `serialize()` is M10-12's and is graded by M10-12T.
+and (b) the document's bytes, from the document alone (`docs/LAB_PLAN.md`
+§6.4, amendment of 2026-09-22, item 7). Nothing is taken from the source.
 
-Kept deliberately small so a reviewer can check it against
-`docs/LAB_FORMATS.md` §4.2 (as amended 2026-09-22) at a glance.
+Kept small so a reviewer can check it against §6.4 at a glance.
 """
 
 from __future__ import annotations
@@ -22,8 +20,8 @@ from typing import Any
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 INDEX = FIXTURES / "README.md"
 
-# The key styles §6.4 names, as the graders spell them.
-POSITIONAL, STRING, NUMBER, NAME = "positional", "string", "number", "name"
+# The key styles of §6.4 (as amended, item 8), as the graders spell them.
+POSITIONAL, STRING, NUMBER, NAME, BOOLEAN = "positional", "string", "number", "name", "boolean"
 
 
 def load() -> Any:
@@ -42,137 +40,128 @@ def indexed(kind: str) -> list[str]:
     return found
 
 
-# ── tokens ──────────────────────────────────────────────────────────────────
+def _b(value: Any) -> bytes:
+    """Trivia may be absent where the grammar has no such token (`None`)."""
+    if value is None:
+        return b""
+    assert isinstance(value, bytes), f"trivia must be bytes, not {type(value).__name__}"
+    return value
 
+
+# ── tokens (no trivia) ──────────────────────────────────────────────────────
+
+_ESC = rb"\\(?:\r\n|\n\r|.)"
 _TOKEN = re.compile(
-    r"""
-      (?P<ws>\s+)
-    | (?P<comment>--[^\r\n]*)
-    | (?P<string>"(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*')
-    | (?P<number>-?(?:0[xX][0-9A-Fa-f]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?))
-    | (?P<name>[A-Za-z_][A-Za-z0-9_]*)
-    | (?P<punct>[{}\[\]=,;])
-    """,
-    re.VERBOSE,
+    rb"(?P<ws>[ \t\r\n\f\v]+)"
+    rb"|(?P<comment>--[^\r\n]*)"
+    rb'|(?P<string>"(?:[^"\\\r\n]|' + _ESC + rb')*"|\'(?:[^\'\\\r\n]|' + _ESC + rb")*')"
+    rb"|(?P<number>-?(?:0[xX][0-9A-Fa-f]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?))"
+    rb"|(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+    rb"|(?P<punct>[{}\[\]=,;])",
+    re.DOTALL,
 )
 
 
-def source_tokens(data: bytes) -> list[str]:
+def source_tokens(data: bytes) -> list[bytes]:
     """Every token of a well-formed document in source order, separators
-    (`,` and `;`) and whitespace dropped, comments kept verbatim."""
-    text = data.decode("utf-8")
-    out: list[str] = []
+    included, whitespace and comments dropped."""
+    out: list[bytes] = []
     pos = 0
-    while pos < len(text):
-        m = _TOKEN.match(text, pos)
-        assert m, f"oracle cannot tokenize at offset {pos}: {text[pos : pos + 20]!r}"
-        if m.lastgroup not in ("ws",) and m.group() not in (",", ";"):
+    while pos < len(data):
+        m = _TOKEN.match(data, pos)
+        assert m, f"oracle cannot tokenize at offset {pos}: {data[pos : pos + 20]!r}"
+        if m.lastgroup not in ("ws", "comment"):
             out.append(m.group())
         pos = m.end()
     return out
 
 
-def _scalar_text(lua: Any, value: Any) -> str:
-    if isinstance(value, lua.LuaString | lua.LuaNumber):
-        text = value.raw
-        assert isinstance(text, str)
-        return text
+def _scalar(lua: Any, value: Any) -> bytes:
+    if isinstance(value, lua.LuaString):
+        assert isinstance(value.raw, bytes)
+        assert value.raw[:1] in (b'"', b"'"), value.raw
+        return value.raw
+    if isinstance(value, lua.LuaNumber):
+        assert isinstance(value.raw, str)
+        return value.raw.encode("ascii")
     if isinstance(value, lua.LuaBool):
         assert isinstance(value.value, bool)
-        return "true" if value.value else "false"
+        return b"true" if value.value else b"false"
     if isinstance(value, lua.LuaNil):
-        return "nil"
+        return b"nil"
     raise AssertionError(f"not one of the five value types of §6.4: {value!r}")
 
 
-def _key_tokens(lua: Any, entry: Any) -> list[str]:
+def _key_check(lua: Any, entry: Any) -> None:
     style = entry.style
     if style == POSITIONAL:
         assert entry.key is None
-        return []
-    if style == NAME:
+    elif style == NAME:
         assert isinstance(entry.key, str)
-        return [entry.key, "="]
-    if style == STRING:
+    elif style == STRING:
         assert isinstance(entry.key, lua.LuaString)
     elif style == NUMBER:
         assert isinstance(entry.key, lua.LuaNumber)
     else:
-        # §4.1 allows `[true]` / `[false]`; §6.4 does not name their style.
-        assert isinstance(entry.key, lua.LuaBool), f"unknown key style {style!r}"
-    return ["[", _scalar_text(lua, entry.key), "]", "="]
+        assert style == BOOLEAN, f"unknown key style {style!r}"
+        assert isinstance(entry.key, lua.LuaBool)
 
 
-def document_tokens(lua: Any, doc: Any) -> list[str]:
-    """The same projection as `source_tokens`, rebuilt from a parse."""
-    out: list[str] = list(doc.leading_comments)
+def document_tokens(lua: Any, doc: Any) -> list[bytes]:
+    """The same projection as `source_tokens`, from the document."""
 
-    def value(v: Any) -> Iterator[str]:
-        if isinstance(v, lua.LuaTable):
-            yield "{"
-            for entry in v.entries:
-                yield from _key_tokens(lua, entry)
-                yield from value(entry.value)
-                if entry.comment is not None:
-                    yield entry.comment
-            yield "}"
-        else:
-            yield _scalar_text(lua, v)
+    def value(v: Any) -> Iterator[bytes]:
+        if not isinstance(v, lua.LuaTable):
+            yield _scalar(lua, v)
+            return
+        yield b"{"
+        for e in v.entries:
+            _key_check(lua, e)
+            if e.style == NAME:
+                yield from (e.key.encode("ascii"), b"=")
+            elif e.style != POSITIONAL:
+                yield from (b"[", _scalar(lua, e.key), b"]", b"=")
+            yield from value(e.value)
+            if e.sep:
+                yield e.sep
+        yield b"}"
 
-    for assignment in doc.assignments:
-        out += [assignment.name, "="]
-        out += list(value(assignment.value))
-    out += list(doc.trailing_comments)
+    out: list[bytes] = []
+    for a in doc.assignments:
+        out += [a.name.encode("ascii"), b"="]
+        out += list(value(a.value))
     return out
 
 
-# ── bytes ───────────────────────────────────────────────────────────────────
+# ── bytes, from the document alone ──────────────────────────────────────────
 
 
-def rebuild(lua: Any, doc: Any, data: bytes) -> bytes:
-    """The document's bytes in the client's own layout (§4.2 as amended
-    2026-09-22): one entry per line, `,` after every entry including the
-    last, none after the `}` that closes a top-level assignment, a trailing
-    comment after one space, `[key] = ` for bracketed keys and `name = ` for
-    bare ones.
+def rebuild(lua: Any, doc: Any) -> bytes:
+    """Every token with the bytes kept in front of it, then the document's
+    tail. Positional entries have no key tokens, so their leading bytes may
+    sit on the entry or on its value; either rebuilds the same."""
 
-    Layout is taken from `data`: its line ending (CRLF if it has one), its
-    indent unit (a tab per level if any line starts with a tab, otherwise
-    none, as the Forever client writes) and its leading blank lines.
-    Everything else (names, key styles, key and value source text, order,
-    comments) comes from the parse."""
-    text = data.decode("utf-8")
-    eol = "\r\n" if "\r\n" in text else "\n"
-    unit = "\t" if re.search(r"^\t", text, re.MULTILINE) else ""
-    lead = re.match(r"(?:[ \t]*\r?\n)*", text)
-    assert lead is not None
-    out: list[str] = [lead.group()]
-    for comment in doc.leading_comments:
-        out += [comment, eol]
-
-    def value(v: Any, level: int) -> str:
+    def value(v: Any) -> bytes:
+        head = _b(v.lead)
         if not isinstance(v, lua.LuaTable):
-            return _scalar_text(lua, v)
-        lines = ["{", eol]
-        for entry in v.entries:
-            key = _key_tokens(lua, entry)
-            prefix = ""
-            if key and key[0] == "[":
-                prefix = f"[{key[1]}] = "
-            elif key:
-                prefix = f"{key[0]} = "
-            line = unit * (level + 1) + prefix + value(entry.value, level + 1) + ","
-            if entry.comment is not None:
-                line += " " + entry.comment
-            lines += [line, eol]
-        lines.append(unit * level + "}")
-        return "".join(lines)
+            return head + _scalar(lua, v)
+        parts = [head, b"{"]
+        for e in v.entries:
+            _key_check(lua, e)
+            parts.append(_b(e.lead))
+            if e.style == NAME:
+                parts += [e.key.encode("ascii"), _b(e.eq_lead), b"="]
+            elif e.style != POSITIONAL:
+                parts += [b"[", value(e.key), _b(e.key_close_lead), b"]", _b(e.eq_lead), b"="]
+            parts += [value(e.value), _b(e.sep_lead), _b(e.sep)]
+        parts += [_b(v.close_lead), b"}"]
+        return b"".join(parts)
 
-    for assignment in doc.assignments:
-        out += [f"{assignment.name} = ", value(assignment.value, 0), eol]
-    for comment in doc.trailing_comments:
-        out += [comment, eol]
-    return "".join(out).encode("utf-8")
+    out = [
+        _b(a.lead) + a.name.encode("ascii") + _b(a.eq_lead) + b"=" + value(a.value)
+        for a in doc.assignments
+    ]
+    return b"".join(out) + _b(doc.tail)
 
 
 # ── walking ─────────────────────────────────────────────────────────────────
