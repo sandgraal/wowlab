@@ -559,8 +559,13 @@ after the PR #49 security review; tickets M10-16T and M10-16):*
    unlink fails is moved from `temps_removed` to `temps_left` in the same
    record. A path that
    fails any check, or whose removal fails, is left alone and listed; it
-   does not stop the transaction. A named temp path that no longer exists is
-   listed in neither `temps_removed` nor `temps_left`. The cleanup never
+   does not stop the transaction. A named temp path is looked up only after
+   it passes the write rules, and only by the walk that follows no link,
+   junction or reparse point; a path that fails a rule is listed in
+   `temps_left` without being looked up. A path that passes them and that
+   the walk finds absent (its last component or a parent directory missing)
+   is listed in neither `temps_removed` nor `temps_left`; a link, junction,
+   reparse point or directory at the name is not absent. The cleanup never
    deletes anything else.
 3. **A file changed after the pre-write snapshot is refused** (not in a dry
    run, which has no pre-write snapshot). At the first touch of a path in a
@@ -583,21 +588,37 @@ after the PR #49 security review; tickets M10-16T and M10-16):*
    and undo therefore only ever need bytes the pre-write snapshot holds.
    *Clarified 2026-09-22 from the M10-16T graders:* "the hash it last read
    or wrote there" is guard's own record of the path within this
-   transaction, not a fresh read at the start of the operation. So a path
-   this transaction already wrote, then changed by something else, then
-   touched again, raises `ChangedSinceSnapshotError`. On rollback, a path
-   whose disk content differs from what this transaction last wrote or read
-   there is left as it is and listed as not rolled back (the record ends
-   `rollback_incomplete`); rollback never overwrites bytes no snapshot or
-   journal entry holds. A path whose only operation was refused keeps
-   whatever is on disk.
+   transaction (the hash of its last write there that landed, else the hash
+   read at its first touch), not a fresh read at the start of the
+   operation. So a path this transaction already wrote, then changed by
+   something else, then touched again, raises `ChangedSinceSnapshotError`,
+   with the same consequences as a refusal at first touch: nothing more is
+   written for it, every later operation raises `GuardError` without
+   touching the disk, and the transaction cannot commit. On rollback each
+   touched path is compared with that record. A path whose disk matches it
+   is put back to its pre-transaction content; a path whose disk already
+   holds its pre-transaction content needs nothing and counts as rolled
+   back; any other path is left as it is, named in the record's note and in
+   the error raised at exit, and the record ends `rollback_incomplete`.
+   Rollback replaces or removes only content whose hash is guard's own
+   record for that path; it never overwrites content that no snapshot holds
+   and this transaction did not write. A path whose only operation was
+   refused (at first touch or at the re-check) is compared the same way
+   with what guard read there: it keeps whatever is on disk, makes the
+   record `rollback_incomplete` only if the disk no longer matches that
+   read, and is left as it is by an `undo()` of the record. `undo()` of a
+   `rollback_incomplete` record restores its other journaled paths from the
+   pre-write snapshot as for any record, replacing what rollback left; its
+   own pre-write snapshot holds those bytes, so a second `undo()` puts them
+   back.
 4. **Public surface.** `GuardBusyError` and `ChangedSinceSnapshotError` are
    exported from `wowlab_core.guard`, and so is
    `guard.store_lock(store: Path | None = None)`, a context manager that
    takes the store lock alone (same mechanism, same in-process refusal, the
    same lock-file opening rules: `O_NOFOLLOW`, regular file, never
    truncated, written or deleted; it has no install, so the store-overlap
-   check does not apply; `GuardBusyError` if held; it never creates the store directory, and a missing store raises `GuardError`). `HistoryRecord` gains
+   check does not apply; `GuardBusyError` if held; a store directory that does not exist raises `GuardError` and nothing
+   is created). `HistoryRecord` gains
    `temps_removed`
    and `temps_left` (flavor-relative paths). The journal format becomes 2;
    format-1 records read as naming no temp paths and as having run no
