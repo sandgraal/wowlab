@@ -382,8 +382,8 @@ Dated entries, newest last. Each names the fixture that prompted it.
   `docs/LAB_PLAN.md` §6.4, amendment of the same date).** The client's Lua is
   taken to be Lua 5.1 (**[verify]** for Forever). Escapes accepted with Lua
   5.1 meanings: `\a \b \f \n \r \t \v \\ \" \'`, `\ddd` up to 255 (one byte),
-  and a backslash before a line break; `\x`, `\u{}`, `\z` and other letters
-  are rejected. Strings are byte strings. A raw CR or LF inside a string is
+  and a backslash before a line break; `\x`, `\u{}`, `\z`, a `\ddd`
+  above 255 and any other character after a backslash are rejected. Strings are byte strings. A raw CR or LF inside a string is
   an unterminated string; other raw control bytes are kept; a raw NUL stays
   rejected (**[verify]**). `[true]`/`[false]` keys are allowed (style
   `boolean`). Long comments (`--[[`, `--[==[`) are rejected unless a fixture
