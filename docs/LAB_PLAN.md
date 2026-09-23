@@ -607,7 +607,11 @@ after the PR #49 security review; tickets M10-16T and M10-16):*
      on Windows, far past the end of the empty lock file, so no ordinary read
      of the file overlaps the mandatory lock (reworded 2026-09-23 after the
      `lab (windows)` run on PR #59: a lock at offset 0 made reads of the store
-     fail with a permission error; SQLite uses the same technique); `lockf` and
+     fail with a permission error; SQLite uses the same technique; the same
+     offset is used to unlock, nothing is ever written through the
+     descriptor (so the file stays empty and is never extended), and the
+     offset is fixed, since guards locking different offsets would not
+     exclude each other); `lockf` and
      `fcntl(F_SETLK)` are not used. A process also refuses, without asking
      the OS, a lock it already holds, so a nested transaction raises
      `GuardBusyError`. `undo()`'s own transaction runs under the locks
@@ -620,16 +624,23 @@ after the PR #49 security review; tickets M10-16T and M10-16):*
      must be a regular file by `fstat` with a link count of 1 (a hard link
      to another file is refused). The lock files and `locks/` are part of
      the store-overlap check. *Added 2026-09-23 (M10-16 security review):*
-     a store directory inside any install, not only the one being written,
-     is refused, and so is one of its lock paths: an install is recognised
-     by a `.build.info` on the directory or an ancestor, or a `.flavor.info`
-     in a child of such an ancestor, compared by identity. On enter, a
-     journal that cannot be read raises `GuardError` before the pre-write
-     snapshot (not in a dry run), since a change `undo()` could not reverse
-     must not be written. A path taken from a journal record is compared by
-     identity only when it is a local absolute path (never a UNC `\\` or
-     `//` path, and on Windows only with a drive letter); anything else is
-     treated as another install without being looked up.
+     the store directory, `<store>/lock`, `<user data dir>/locks/` and the
+     install lock are each refused, before anything is created, if they are
+     inside any install, not only the one being written. Each is resolved
+     (following links and junctions), and it and every existing ancestor are
+     examined: a directory holding an entry named `.build.info` or
+     `.flavor.info` (of any kind, by `lstat`) is an install, and an error
+     other than not-found while examining one counts as an install. On enter, a
+     journal that cannot be read in full (an I/O error, or any record
+     `history()` would refuse as damaged) raises `GuardError` under the locks
+     and before the pre-write snapshot, with nothing written or journaled
+     (not in a dry run), since a change `undo()` could not reverse
+     must not be written. A path taken from a journal record or a snapshot manifest is
+     looked up (`stat`, `lstat`, `samefile`, `resolve`) only when it is a
+     local absolute path: absolute, not beginning with `\\\\` or `//`, and on
+     Windows with a drive letter. Anything else is treated as another install
+     without being looked up, and `undo()` refuses a most recent record whose
+     flavor or install path is not such a path.
    - **Dry run.** A dry run takes the same locks; creating the lock files and
      their directories is the only thing it writes, never inside the install.
    - **Scope.** The exclusion covers processes of one OS user sharing one
