@@ -23,7 +23,10 @@ install and scrubs identity from it per `docs/LAB_PLAN.md` §8:
   pseudonym there would misstate them and give the name away, and edit-mode
   layout names are length-prefixed. Any other file is refused when a match
   lands inside a longer word (frame, button and spell names are public too),
-  and a SavedVariables file also when the match is in its own name;
+  and a SavedVariables file also when the match is in its own name. In a
+  combat log (public game text: creature, spell and NPC names) a match is
+  replaced only in the quoted unit name after one of the owner's own GUIDs;
+  anywhere else it refuses the file;
 - a file whose scrubbed bytes or output path still contain an email address,
   a BattleTag, an unmapped player, account, guild or community GUID, a
   surviving identity string in any casing or embedding (CVar names included),
@@ -279,6 +282,12 @@ LAYOUT_NAME_LABEL = "identity string inside a length-prefixed layout name"
 ADDON_LIST_LABEL = "identity string inside an addon name"
 EMBEDDED_LABEL = "identity string inside a longer word"
 ADDON_FILE_NAME_LABEL = "identity string inside an addon's file name"
+# A combat log is almost all public game text: creature, spell and NPC names.
+# A pseudonym in `"<name>'s Spirit"` is reversed by looking the spell up. So in
+# a combat log an identity match is replaced only inside the quoted unit name
+# right after one of the owner's own GUIDs (GUID_NAME_RE); any other match
+# refuses the file, with a count only. With no own GUIDs every match refuses.
+COMBAT_LOG_TEXT_LABEL = "identity string in combat-log game text"
 
 
 Span = tuple[int, int]
@@ -825,6 +834,19 @@ class Identity:
                 label = "character list names a character this install has no folder for"
                 problems.append(_located(label, scrubbed, unknown))
         return ScrubResult(scrubbed, tuple(edits), tuple(problems), tuple(notes))
+
+    def stray_in_combat_log(self, data: bytes, edits: Iterable[Edit]) -> int:
+        """Whole-word identity edits in `data` (the ORIGINAL bytes of a combat log) that
+        lie outside every own unit-name field. Glued ones are counted as embedded instead.
+        """
+        own_units = sorted(
+            m.span(2) for m in GUID_NAME_RE.finditer(data) if m.group(1).upper() in self.guids
+        )
+        return sum(
+            1
+            for e in edits
+            if e.reason == "identity" and not e.embedded and not _inside(own_units, e.offset, e.end)
+        )
 
     def _known_line(self, match: re.Match[bytes]) -> bool:
         line = match.group(0).replace(_BOM, b"")
@@ -1558,8 +1580,8 @@ class SvStats:
     """Shape of a SavedVariables file, measured on raw bytes (nothing is parsed)."""
 
     size: int
-    depth: int
-    array_comments: int
+    depth: int  # deepest `{` nesting outside strings and comments
+    positional: int  # table entries with no `[key] =` or `name =` in front
     non_ascii: int
     escapes: int
     signed_or_long: int
@@ -1568,8 +1590,36 @@ class SvStats:
 
 
 _HIGH_BYTES = bytes(range(0x80, 0x100))
-_TABS_RE = re.compile(rb"^\t+", re.MULTILINE)
-_ESCAPES_RE = re.compile(rb"\|c[0-9A-Fa-f]{8}|\|H")
+# Table shape, read from the bytes: how deeply `{` nests, and how many entries
+# are positional (no `[key] =` or `name =` in front). Braces, commas and
+# semicolons count only outside string literals and comments. Forever
+# SavedVariables are not indented and carry no `-- [n]` comments, so neither
+# leading tabs nor those comments say anything. This only skips spans and looks
+# one token ahead; nothing is parsed or evaluated (L3).
+#
+# Every byte is read at most a bounded number of times, whatever the input: a
+# long bracket or long comment with no closer runs to the end of the file (as
+# in Lua), and a quoted string with no closing quote ends at its line break
+# (Lua does not allow a raw line break in one). No pattern here searches ahead
+# for a closer that may not exist.
+_TABLE_NEXT_RE = re.compile(rb"--|\[=*\[|[\"'{},;]")
+_LONG_OPEN_RE = re.compile(rb"\[(=*)\[")
+_LINE_BREAK_RE = re.compile(rb"[\r\n]")
+_BLANKS_RE = re.compile(rb"[ \t\r\n\f\v]*")
+# The body of a quoted string up to its closing quote, a raw line break or the
+# end of the data. A backslash escapes the next byte, or a whole line break
+# (`\r\n` and `\n\r` are one line break to Lua, so the pair is tried first).
+_QUOTED_BODY_RE = {
+    ord('"'): re.compile(rb'[^"\\\r\n]*(?:\\(?:\r\n|\n\r|.)[^"\\\r\n]*)*', re.DOTALL),
+    ord("'"): re.compile(rb"[^'\\\r\n]*(?:\\(?:\r\n|\n\r|.)[^'\\\r\n]*)*", re.DOTALL),
+}
+# What starts an entry, after blanks and comments: `}` (no entry), `[` that
+# does not open a long string (a bracketed key: in a table constructor an
+# expression never starts with a bare `[`), or `name =` (a named key). Any
+# other byte starts a positional value.
+_NOT_POSITIONAL_RE = re.compile(rb"\}|\[(?!=*\[)|[A-Za-z_][A-Za-z0-9_]*[ \t\r\n\f\v]*=(?!=)")
+# Colour codes (`|cffRRGGBB`, and the named form `|cnIQ0:`) and hyperlinks.
+_ESCAPES_RE = re.compile(rb"\|c[0-9A-Fa-f]{8}|\|cn[A-Za-z0-9_]+:|\|H")
 _SIGNED_OR_LONG_RE = re.compile(rb"= -[0-9]|\.[0-9]{10,}")
 _NON_FINITE_RE = re.compile(
     rb"(?:=[ \t]*|^[ \t]*)-?(?:1\.#[A-Za-z]+|inf|nan(?:\(ind\))?)[ \t]*,",
@@ -1577,11 +1627,85 @@ _NON_FINITE_RE = re.compile(
 )
 
 
+def _skip_long(data: bytes, at: int) -> int:
+    """End of the long bracket opening at `at` (`[[`, `[==[`), or -1 if it never closes."""
+    opener = _LONG_OPEN_RE.match(data, at)
+    assert opener is not None
+    closer = b"]" + opener.group(1) + b"]"
+    found = data.find(closer, opener.end())
+    return -1 if found < 0 else found + len(closer)
+
+
+def _skip_comment(data: bytes, at: int) -> int:
+    """End of the comment starting with `--` at `at`, or -1 if a long one never closes."""
+    if _LONG_OPEN_RE.match(data, at + 2):
+        return _skip_long(data, at + 2)
+    line_break = _LINE_BREAK_RE.search(data, at)
+    return len(data) if line_break is None else line_break.start()
+
+
+def _skip_quoted(data: bytes, at: int) -> int:
+    """End of the quoted string opening at `at`: after its closing quote, or at the
+    line break or end of data where an unterminated one stops."""
+    stop = _QUOTED_BODY_RE[data[at]].match(data, at + 1)
+    assert stop is not None  # the body pattern matches the empty string
+    end = stop.end()
+    return end + 1 if end < len(data) and data[end] == data[at] else end
+
+
+def _skip_blanks(data: bytes, at: int) -> int:
+    """First byte at or after `at` that is not blank or comment; -1 if a long comment
+    never closes."""
+    while True:
+        blanks = _BLANKS_RE.match(data, at)
+        assert blanks is not None  # the pattern matches the empty string
+        at = blanks.end()
+        if not data.startswith(b"--", at):
+            return at
+        at = _skip_comment(data, at)
+        if at < 0:
+            return -1
+
+
+def table_shape(data: bytes) -> tuple[int, int]:
+    """(deepest `{` nesting, positional entries) of Lua-syntax bytes.
+
+    Braces, commas and semicolons inside strings and comments do not count.
+    """
+    depth = deepest = positional = 0
+    at = 0
+    while at >= 0:
+        token = _TABLE_NEXT_RE.search(data, at)
+        if token is None:
+            break
+        first = token.group(0)[:1]
+        if first == b"-":
+            at = _skip_comment(data, token.start())
+        elif first == b"[":
+            at = _skip_long(data, token.start())
+        elif first in (b'"', b"'"):
+            at = _skip_quoted(data, token.start())
+        elif first == b"}":
+            depth = max(depth - 1, 0)
+            at = token.end()
+        elif first == b"{" or depth:  # an entry starts after `{`, `,` or `;`
+            if first == b"{":
+                depth += 1
+                deepest = max(deepest, depth)
+            at = _skip_blanks(data, token.end())
+            if 0 <= at < len(data) and not _NOT_POSITIONAL_RE.match(data, at):
+                positional += 1
+        else:
+            at = token.end()  # `,` or `;` outside any table
+    return deepest, positional
+
+
 def sv_stats(data: bytes) -> SvStats:
+    depth, positional = table_shape(data)
     return SvStats(
         size=len(data),
-        depth=max((len(m.group(0)) for m in _TABS_RE.finditer(data)), default=0),
-        array_comments=data.count(b"-- ["),
+        depth=depth,
+        positional=positional,
         non_ascii=len(data) - len(data.translate(None, _HIGH_BYTES)),
         escapes=len(_ESCAPES_RE.findall(data)),
         signed_or_long=len(_SIGNED_OR_LONG_RE.findall(data)),
@@ -1605,7 +1729,7 @@ SV_CATEGORIES: tuple[tuple[str, Callable[[SvStats], float], Callable[[SvStats], 
     ("single scalar assignment", lambda s: s.size, lambda s: s.scalar_only),
     ("largest file", lambda s: -s.size, lambda s: True),
     ("deepest nesting", lambda s: -s.depth, lambda s: s.depth >= 4),
-    ("positional array comments", lambda s: -s.array_comments, lambda s: s.array_comments > 0),
+    ("positional array", lambda s: -s.positional, lambda s: s.positional > 0),
     ("non-ASCII strings", lambda s: -s.non_ascii, lambda s: s.non_ascii > 0),
     ("colour and link escapes", lambda s: -s.escapes, lambda s: s.escapes > 0),
     (
@@ -1828,7 +1952,9 @@ class Planner:
                 verdict = self.verdict(chosen)
                 assert verdict is not None
                 after = verdict.stats
-                self.add(flavor, chosen, f"{label} ({after.size} bytes, depth {after.depth})")
+                self.add(
+                    flavor, chosen, f"{label} ({after.size} bytes, nesting depth {after.depth})"
+                )
         backup = self.first_clean(
             sorted((p for p in backups if 0 < _size(p) <= cap), key=_size), taken
         )
@@ -1940,8 +2066,13 @@ def process(item: Item, identity: Identity, kinds: dict[str, str] | None = None)
         kept_whole.append(
             _located_at(LAYOUT_NAME_LABEL, original, [e.offset for e in result.edits])
         )
-    elif result.embedded:
-        kept_whole.append(f"{EMBEDDED_LABEL} x{result.embedded}")  # no offset: see ADDON_TREE
+    else:
+        if result.embedded:
+            kept_whole.append(f"{EMBEDDED_LABEL} x{result.embedded}")  # no offset: see ADDON_TREE
+        if kind == "combatlog":
+            stray = identity.stray_in_combat_log(original, result.edits)
+            if stray:
+                kept_whole.append(f"{COMBAT_LOG_TEXT_LABEL} x{stray}")  # no offset: public text
     path_problems = [*path_problems, *_path_refusals(item.rel, dest)]
     if kinds and dest.parts[0] in kinds:
         # The index files fixtures under <platform>/<flavor-kind>/, not the folder name.
