@@ -5,6 +5,10 @@ amended and §6.9 for the two modules it consumes), ADR-0021, ADR-0023 and
 invariants L1, L2 and L7. Every test carries one marker line that M10-11
 deletes; nothing else in this file is the implementer's to change.
 
+The section "pins" at the end was written after M10-11 merged: regression
+graders for behaviours its reviews verified, which carry no marker and pass
+against `guard.py` as merged.
+
 Everything here is constructed, as the ticket requires: the install is a
 synthetic tree under `tmp_path`, the snapshot store is a directory under
 `tmp_path`, the user data directory is redirected, and the process table is
@@ -3424,3 +3428,492 @@ def test_constructed_no_environment_variable_skips_the_gate(
         assert len(store.list()) == 1, "the snapshot is still taken first"
         tx.write(CONFIG, NEW_CONFIG)
     assert (flavor.path / CONFIG).read_bytes() == NEW_CONFIG
+
+
+# ─── pins: behaviours verified in the M10-11 reviews ─────────────────────────
+#
+# Regression graders, written after `guard.py` merged. No marker: each passes
+# against the merged gate and fails against a mutant that removes the
+# behaviour. Expectations come from docs/LAB_PLAN.md §6.10, ADR-0021, the
+# M10-11 amendment and the gate's public docstring.
+
+
+def _can_symlink(tmp_path: Path) -> None:
+    probe = tmp_path / "symlink-probe"
+    try:
+        probe.symlink_to(tmp_path, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"this platform or account cannot create symlinks: {exc}")
+    probe.unlink()
+
+
+def _swap_for_link(directory: Path, target: Path) -> None:
+    """`directory` moves aside (`<name>_real`) and a link to `target` takes
+    its place."""
+    directory.rename(directory.with_name(directory.name + "_real"))
+    directory.symlink_to(target, target_is_directory=True)
+
+
+class AfterMutation:
+    """Runs `hook` once, right after the first `os.replace`/`os.rename` or
+    `os.unlink`/`os.remove` whose target is named `name` has completed."""
+
+    def __init__(self, name: str, hook: Callable[[], None]) -> None:
+        self.name = name
+        self.hook = hook
+        self.fired = False
+        self._real = {n: getattr(os, n) for n in ("replace", "rename", "unlink", "remove")}
+
+    def arm(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for n in ("replace", "rename"):
+            monkeypatch.setattr(os, n, self._two(n))
+        for n in ("unlink", "remove"):
+            monkeypatch.setattr(os, n, self._one(n))
+
+    def _after(self, path: Any) -> None:
+        if (
+            not self.fired
+            and not isinstance(path, int)
+            and Path(os.fsdecode(path)).name == self.name
+        ):
+            self.fired = True
+            self.hook()
+
+    def _two(self, n: str) -> Callable[..., None]:
+        def call(src: Any, dst: Any, **kwargs: Any) -> None:
+            self._real[n](src, dst, **kwargs)
+            self._after(dst)
+
+        return call
+
+    def _one(self, n: str) -> Callable[..., None]:
+        def call(path: Any, *args: Any, **kwargs: Any) -> None:
+            self._real[n](path, *args, **kwargs)
+            self._after(path)
+
+        return call
+
+
+@pytest.mark.parametrize(
+    ("op", "rel"),
+    [
+        pytest.param("write", CONFIG, id="constructed-after-a-rename"),
+        pytest.param("delete", BINDINGS, id="constructed-after-an-unlink"),
+    ],
+)
+def test_constructed_pin_directory_swapped_right_after_a_mutation_breaks_the_transaction(
+    guard: Any,
+    tmp_path: Path,
+    world: Path,
+    flavor: Flavor,
+    store: SnapshotStore,
+    idle: None,
+    op: str,
+    rel: str,
+) -> None:
+    """`WTF` becomes a link out of the install the moment guard's rename (or
+    unlink) lands. The change may have landed somewhere else, so the
+    operation raises `GuardError`; the caller catches it and keeps writing;
+    the transaction still cannot commit: exit rolls back what it can, raises
+    `GuardError`, and nothing outside the install changes."""
+    _can_symlink(tmp_path)
+    outside = world / "outside"
+    spy = AfterMutation(Path(rel).name, lambda: _swap_for_link(flavor.path / "WTF", outside))
+    outside_after_swap: dict[str, bytes | str] = {}
+
+    with pytest.raises(guard.GuardError) as at_exit:  # noqa: SIM117 - the exit is what raises
+        with guard.transaction(flavor, label="swapped", store=store.path) as tx:
+            with pytest.MonkeyPatch.context() as patched:
+                spy.arm(patched)
+                with pytest.raises(guard.GuardError) as first:
+                    if op == "write":
+                        tx.write(rel, NEW_CONFIG)
+                    else:
+                        tx.delete(rel)
+            assert spy.fired, "the swap happened after the mutation"
+            assert not isinstance(first.value, guard.ClientRunningError)
+            outside_after_swap.update(content(outside))
+            # The caller swallows the error and carries on.
+            with contextlib.suppress(guard.GuardError):
+                tx.write(ICON, b"BLP2 constructed after the error")
+
+    assert not isinstance(at_exit.value, guard.ClientRunningError)
+    assert content(outside) == outside_after_swap, "nothing was written through the link"
+    assert (flavor.path / ICON).read_bytes() == ALLOWLISTED_FILES[ICON], (
+        "the later write rolled back"
+    )
+    record = record_for(guard, store, "swapped")
+    assert record.state != "committed"
+    assert record.state in ("rolled_back", "rollback_incomplete")
+
+
+EXEC_IN_ADDON = "Interface/AddOns/Thing/release.sh"
+EXEC_BYTES = b"#!/bin/sh\necho constructed\n"
+EXEC_MODE = 0o755
+RESERVED_IN_ADDON = "Interface/AddOns/Thing/NUL.lua"
+
+
+def _snapshot_with_an_executable(
+    guard: Any, flavor: Flavor, store: SnapshotStore, *, reserved: bool = False
+) -> str:
+    """An addon ships `release.sh` (and, with `reserved`, a file named like a
+    Windows device); a transaction edits Config.wtf. Returns the pre-write
+    snapshot id, which holds all of them."""
+    script = flavor.path / EXEC_IN_ADDON
+    script.write_bytes(EXEC_BYTES)
+    script.chmod(EXEC_MODE)
+    if reserved:
+        (flavor.path / RESERVED_IN_ADDON).write_bytes(b"-- constructed\n")
+    with guard.transaction(flavor, label="edit", store=store.path) as tx:
+        tx.write(CONFIG, NEW_CONFIG)
+    snapshot_id = record_for(guard, store, "edit").snapshot_id
+    held = {e.path.rsplit("/", 1)[-1] for e in store.show(snapshot_id).entries}
+    assert "release.sh" in held and (not reserved or "NUL.lua" in held)
+    return str(snapshot_id)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits are part of 'unchanged'")
+def test_constructed_pin_full_restore_leaves_an_unchanged_executable_and_restores_the_rest(
+    guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None
+) -> None:
+    snapshot_id = _snapshot_with_an_executable(guard, flavor, store)
+    script = flavor.path / EXEC_IN_ADDON
+    untouched = script.lstat()
+
+    with guard.transaction(flavor, label="restore-all", store=store.path) as tx:
+        tx.restore(snapshot_id)
+
+    assert (flavor.path / CONFIG).read_bytes() == ALLOWLISTED_FILES[CONFIG]
+    after = script.lstat()
+    assert (after.st_ino, after.st_mtime_ns, stat.S_IMODE(after.st_mode)) == (
+        untouched.st_ino,
+        untouched.st_mtime_ns,
+        EXEC_MODE,
+    ), "the executable was left alone, not rewritten"
+    assert record_for(guard, store, "restore-all").state == "committed"
+
+
+def _differ_by_mode(flavor: Flavor, world: Path) -> None:
+    (flavor.path / EXEC_IN_ADDON).chmod(0o744)
+
+
+def _missing(flavor: Flavor, world: Path) -> None:
+    (flavor.path / EXEC_IN_ADDON).unlink()
+
+
+def _link_to_identical_bytes(flavor: Flavor, world: Path) -> None:
+    twin = world / "World of Warcraft" / "AddOnDev" / "release.sh"
+    twin.parent.mkdir(parents=True, exist_ok=True)
+    twin.write_bytes(EXEC_BYTES)
+    twin.chmod(EXEC_MODE)
+    (flavor.path / EXEC_IN_ADDON).unlink()
+    symlink_or_skip(flavor.path / EXEC_IN_ADDON, twin, is_dir=False)
+
+
+EXEC_REFUSALS: dict[str, Callable[[Flavor, Path], None] | None] = {
+    "differs-by-mode-only": _differ_by_mode,
+    "missing": _missing,
+    "symlink-to-identical-bytes": _link_to_identical_bytes,
+    "named-in-paths": None,
+}
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits and symlinks")
+@pytest.mark.parametrize("case", [pytest.param(c, id=f"constructed-{c}") for c in EXEC_REFUSALS])
+def test_constructed_pin_full_restore_refuses_an_executable_that_is_not_unchanged(
+    guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None, case: str
+) -> None:
+    """The skip is only for an executable that is exactly as captured (bytes,
+    mode, a regular file) in a whole-snapshot restore. Anything else is the
+    gate's ordinary refusal, and the restore writes nothing at all."""
+    snapshot_id = _snapshot_with_an_executable(guard, flavor, store)
+    alter = EXEC_REFUSALS[case]
+    if alter is not None:
+        alter(flavor, world)
+    paths = [CONFIG, EXEC_IN_ADDON] if case == "named-in-paths" else None
+    before = strict_state(world)
+
+    with (
+        guard.transaction(flavor, label="refused", store=store.path) as tx,
+        pytest.raises(guard.PathNotAllowedError),
+    ):
+        tx.restore(snapshot_id, paths=paths)
+
+    assert strict_state(world) == before, "nothing written, Config.wtf included"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a file named NUL.lua cannot exist on Windows")
+def test_constructed_pin_full_restore_refuses_a_reserved_name_without_opening_it(
+    guard: Any, world: Path, flavor: Flavor, store: SnapshotStore, idle: None
+) -> None:
+    """A file captured on POSIX under a name that is a device on Windows is
+    refused by name; the refusal happens before anything opens it (on Windows
+    opening it would open the device)."""
+    snapshot_id = _snapshot_with_an_executable(guard, flavor, store, reserved=True)
+    before = strict_state(world)
+    opened: list[str] = []
+    real_os_open, real_io_open = os.open, io.open
+
+    def watch(path: Any) -> None:
+        if not isinstance(path, int) and Path(os.fsdecode(path)).name == "NUL.lua":
+            opened.append(os.fsdecode(path))
+
+    def os_open(path: Any, *args: Any, **kwargs: Any) -> int:
+        watch(path)
+        return real_os_open(path, *args, **kwargs)
+
+    def py_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+        watch(file)
+        return real_io_open(file, *args, **kwargs)
+
+    with (
+        guard.transaction(flavor, label="reserved", store=store.path) as tx,
+        pytest.MonkeyPatch.context() as patched,
+    ):
+        patched.setattr(os, "open", os_open)
+        patched.setattr(io, "open", py_open)
+        patched.setattr(builtins, "open", py_open)
+        with pytest.raises(guard.PathNotAllowedError):
+            tx.restore(snapshot_id)
+
+    assert opened == [], f"the reserved name was opened: {opened}"
+    assert strict_state(world) == before
+
+
+def _other_install(world: Path) -> Flavor:
+    """A second, complete install beside the first."""
+    root = world / "Other WoW"
+    _put(root, ROOT_FILES)
+    _put(root / FLAVOR_FOLDER, FLAVOR_ONLY_FILES)
+    _put(root / FLAVOR_FOLDER, ALLOWLISTED_FILES)
+    return Flavor(
+        folder=FLAVOR_FOLDER,
+        product="wow",
+        version=None,
+        build=None,
+        build_key=None,
+        path=root / FLAVOR_FOLDER,
+    )
+
+
+def _other_flavor(install_root: Path) -> Flavor:
+    """A second flavor of the same install, complete enough to transact in."""
+    other = add_other_flavor(install_root)
+    _put(other, {BINDINGS: b"bind W MOVEFORWARD\n"})
+    return Flavor(
+        folder=OTHER_FLAVOR,
+        product="wow_classic",
+        version=None,
+        build=None,
+        build_key=None,
+        path=other,
+    )
+
+
+@pytest.mark.parametrize(
+    ("where", "paths"),
+    [
+        pytest.param("another-install", None, id="constructed-another-install-whole"),
+        pytest.param("another-install", [CONFIG], id="constructed-another-install-named"),
+        pytest.param("another-flavor", None, id="constructed-another-flavor-whole"),
+        pytest.param("another-flavor", [CONFIG], id="constructed-another-flavor-named"),
+    ],
+)
+def test_constructed_pin_restore_refuses_a_snapshot_of_another_install_or_flavor(
+    guard: Any,
+    world: Path,
+    install_root: Path,
+    flavor: Flavor,
+    store: SnapshotStore,
+    idle: None,
+    where: str,
+    paths: list[str] | None,
+) -> None:
+    target = _other_install(world) if where == "another-install" else _other_flavor(install_root)
+    with guard.transaction(flavor, label="source", store=store.path) as tx:
+        tx.write(CONFIG, NEW_CONFIG)
+    foreign = record_for(guard, store, "source").snapshot_id
+    before = content(world)
+
+    with (
+        guard.transaction(target, label="cross", store=store.path) as tx,
+        pytest.raises(guard.GuardError) as refused,
+    ):
+        tx.restore(foreign, paths=paths)
+    assert not isinstance(refused.value, guard.ClientRunningError)
+    assert content(world) == before
+
+    # Positive control: the same snapshot restores into its own flavor.
+    with guard.transaction(flavor, label="own", store=store.path) as tx:
+        tx.restore(foreign, paths=[CONFIG])
+    assert (flavor.path / CONFIG).read_bytes() == ALLOWLISTED_FILES[CONFIG]
+
+
+@pytest.mark.parametrize(
+    "forgery",
+    [
+        pytest.param(
+            "flavor-path-to-another-install", id="constructed-flavor-path-to-another-install"
+        ),
+        pytest.param(
+            "install-root-and-flavor-path-to-another-install",
+            id="constructed-install-root-and-flavor-path-to-another-install",
+        ),
+        pytest.param(
+            "install-root-field-only-to-another-install",
+            id="constructed-install-root-field-only-to-another-install",
+        ),
+        pytest.param(
+            "flavor-path-to-another-flavor", id="constructed-flavor-path-to-another-flavor"
+        ),
+    ],
+)
+def test_constructed_pin_undo_refuses_a_record_that_belongs_to_another_install(
+    guard: Any,
+    world: Path,
+    install_root: Path,
+    flavor: Flavor,
+    store: SnapshotStore,
+    idle: None,
+    forgery: str,
+) -> None:
+    """The journal names the flavor and install it acted on; a record edited
+    to name another one (a real flavor of a real install) is refused, because
+    its snapshot, its flavor and its install no longer agree.
+
+    The byte-replace forgeries rewrite every spelling of a path in the
+    journal (the install root is a prefix of the flavor path, so replacing it
+    rewrites both). `install-root-field-only` edits nothing but the record's
+    `install_root` field, leaving the flavor path and snapshot consistent, so
+    only the check that the two agree can refuse it."""
+    other_install = _other_install(world)
+    if forgery == "install-root-field-only-to-another-install":
+        old, new = "", ""
+    elif forgery == "flavor-path-to-another-install":
+        old, new = str(flavor.path), str(other_install.path)
+    elif forgery == "install-root-and-flavor-path-to-another-install":
+        old, new = str(install_root), str(other_install.path.parent)
+    else:
+        old, new = str(flavor.path), str(_other_flavor(install_root).path)
+    with guard.transaction(flavor, label="mine", store=store.path) as tx:
+        tx.write(CONFIG, NEW_CONFIG)
+
+    if old:
+        replaced = 0
+        for o, n in reversed(list(zip(_json_spellings(old), _json_spellings(new), strict=True))):
+            replaced += byte_replace(store, o, n, skip=(store.objects_dir, store.manifests_dir))
+        assert replaced >= 1, "the journal names the flavor it acted on"
+        assert str(guard.history(store=store.path)[-1].flavor_path).startswith(new), (
+            "the forged record still loads: the refusal below is about whose it is"
+        )
+    else:
+        edited = 0
+        for record_file in sorted((store.path / "journal").glob("*.json")):
+            data = json.loads(record_file.read_bytes())
+            if data.get("label") == "mine":
+                assert Path(data["install_root"]) == install_root, "the record names its install"
+                data["install_root"] = str(other_install.path.parent)
+                record_file.write_text(json.dumps(data), encoding="utf-8")
+                edited += 1
+        assert edited == 1, "one journal record for the transaction"
+        loaded = guard.history(store=store.path)[-1]
+        assert (loaded.label, Path(loaded.flavor_path)) == ("mine", flavor.path), (
+            "the forged record still loads with its own flavor: only install_root changed"
+        )
+    before = content(world)
+
+    with pytest.raises(guard.GuardError) as refused:
+        guard.undo(store=store.path)
+    assert not isinstance(refused.value, guard.ClientRunningError)
+    assert content(world) == before
+
+
+def _shard_of(data: bytes) -> str:
+    return sha(data)[:2]
+
+
+@pytest.mark.parametrize(
+    "subdir",
+    [
+        pytest.param("shard", id="constructed-object-shard"),
+        pytest.param("tmp", id="constructed-tmp"),
+    ],
+)
+def test_constructed_pin_store_subdirectory_linked_into_the_install_is_refused_on_enter(
+    guard: Any,
+    tmp_path: Path,
+    world: Path,
+    install_root: Path,
+    flavor: Flavor,
+    store: SnapshotStore,
+    idle: None,
+    subdir: str,
+) -> None:
+    """Every directory the store writes into is part of the overlap check
+    (L1), not only the store itself: here an object shard the pre-write
+    snapshot writes Config.wtf into, and `tmp/`. The review probes cover
+    `journal/`, `objects/` and `manifests/`."""
+    _can_symlink(tmp_path)
+    if subdir == "shard":
+        (store.path / "objects").mkdir(parents=True)
+        link = store.path / "objects" / _shard_of(ALLOWLISTED_FILES[CONFIG])
+    else:
+        store.path.mkdir(parents=True)
+        link = store.tmp_dir
+    link.symlink_to(install_root / "Data", target_is_directory=True)
+    before = strict_state(world)
+    entered = False
+
+    with (
+        pytest.raises(guard.GuardError),
+        guard.transaction(flavor, label="linked", store=store.path) as tx,
+    ):
+        entered = True
+        tx.write(CONFIG, NEW_CONFIG)
+
+    assert not entered
+    assert strict_state(world) == before, "nothing lands in the install through the link"
+
+
+@pytest.mark.parametrize(
+    "then",
+    [
+        pytest.param("exits", id="constructed-caller-catches-and-exits"),
+        pytest.param("keeps-writing", id="constructed-caller-catches-and-keeps-writing"),
+    ],
+)
+def test_constructed_pin_restore_failing_part_way_rolls_back_on_exit_even_when_caught(
+    guard: Any,
+    world: Path,
+    install_root: Path,
+    flavor: Flavor,
+    store: SnapshotStore,
+    idle: None,
+    then: str,
+) -> None:
+    """A restore whose second write is refused by the operating system has
+    already changed one path. The caller catches the error; the transaction
+    still rolls back on exit and raises `GuardError`."""
+    with guard.transaction(flavor, label="edit", store=store.path) as tx:
+        tx.write(CONFIG, NEW_CONFIG)
+        tx.write(ICON, b"BLP2 constructed edit")
+    snapshot_id = record_for(guard, store, "edit").snapshot_id
+    before = content(world)
+    spy = ReplaceSpy(install_root, fail_on=2, error=PermissionError(13, "constructed: locked"))
+
+    with pytest.raises(guard.GuardError) as at_exit:  # noqa: SIM117 - the exit is what raises
+        with guard.transaction(flavor, label="partial", store=store.path) as tx:
+            with pytest.MonkeyPatch.context() as patched:
+                spy.install(patched)
+                with pytest.raises(guard.GuardError):
+                    tx.restore(snapshot_id)
+            assert len(spy.seen) >= 2, "one path was restored before the failure"
+            if then == "keeps-writing":
+                with contextlib.suppress(guard.GuardError):
+                    tx.write(TOC, b"## Title: constructed after the error\n")
+
+    assert not isinstance(at_exit.value, guard.ClientRunningError)
+    assert content(world) == before, "every path the transaction touched is back"
+    record = record_for(guard, store, "partial")
+    assert record.state == "rolled_back"
+    assert record.rolled_back is True
