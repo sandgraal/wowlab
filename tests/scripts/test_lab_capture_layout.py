@@ -1,9 +1,9 @@
 """`scripts/lab_capture.py`: the Forever beta account layout (M10-02, found by M10-03).
 
 The tree is built here, in `tmp_path`, in the shape the owner's first capture
-reported: characters under `<account>/<digits>/<Name>-<Suffix>/` (second part:
-a realm or a player-chosen suffix, [verify]), retail-style
-`<account>/<Realm>/<Name>/AddOns.txt` twins beside them, and SavedVariables
+reported: characters under `<account>/<digits>/<First>-<Second>/` (a first and
+a second name, both player-chosen), retail-style
+`<account>/<Realm>/<First>/AddOns.txt` twins beside them, and SavedVariables
 folders outside any account. Every name is invented and every input is
 constructed. No test needs or touches a real install (ADR-0012).
 """
@@ -161,7 +161,7 @@ def test_constructed_forever_layout_end_to_end(
     assert written[f"macos/{FLAVOR}/WTF/Config.wtf"] == b'SET portal "us"\nSET realmName ""\n'
 
     # "Name - Realm" inside a file is scrubbed through both halves, exactly as
-    # the `<Name>-<Suffix>` folder is, and the numbers beside it are untouched.
+    # the `<First>-<Second>` folder is, and the numbers beside it are untouched.
     assert written[f"{MAIN_DIR}/SavedVariables/DBM-Core.lua"] == (
         DBM.replace("Alyra - Bloodfist", "Labchara - Labrealmb")
         .replace("Alyra - Area 52", "Labchara - Labrealma Partb")

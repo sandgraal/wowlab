@@ -380,7 +380,7 @@ def test_constructed_character_help_names_both_shapes(capsys: pytest.CaptureFixt
     with pytest.raises(SystemExit):
         lab_capture.parse_args(["--help"])
     help_text = " ".join(capsys.readouterr().out.split())
-    assert "REALM/NAME, or a <Name>-<Suffix> folder name" in help_text
+    assert "REALM/NAME, or a <First>-<Second> folder name" in help_text
 
 
 @pytest.mark.parametrize(
@@ -400,9 +400,9 @@ def test_constructed_other_spelling_of_a_folder_only_second_part_refuses(text: b
 
 
 def test_constructed_loose_spelling_of_a_short_part_needs_a_whole_word() -> None:
-    identity = Identity(characters=["Moon"], realms=["Sett"], loose=["Sett"])
-    assert not identity.scrub(b'"settings" "se ttle" "Sett"').problems
-    assert identity.scrub(b'"se\'tt"').problems
+    identity = Identity(characters=["Moon"], realms=["Qorv"], loose=["Qorv"])
+    assert not identity.scrub(b'"qorvings" "qo rvle" "Qorv"').problems
+    assert identity.scrub(b'"qo\'rv"').problems
 
 
 def test_constructed_character_list_refuses_a_character_with_no_folder() -> None:

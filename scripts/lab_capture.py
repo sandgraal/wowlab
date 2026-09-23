@@ -10,12 +10,20 @@ install and scrubs identity from it per `docs/LAB_PLAN.md` §8:
 - account folder, realm and character names become stable pseudonyms, in
   paths and in file contents (same input, same pseudonym, whole capture set).
   Both account layouts are read: `<account>/<Realm>/<Name>/`, and the Forever
-  beta's `<account>/<digits>/<Name>-<Suffix>/`, whose second part is a realm
-  or a player-chosen suffix [verify] and is scrubbed as a name either way. The
-  digits-only folder is a grouping level: never a content token, and given a
-  path-only numeric pseudonym (`1`, `2`, ...) in case it is a realm id;
+  beta's `<account>/<digits>/<First>-<Second>/`, whose second name (chosen by
+  the player) is scrubbed as an identity string of its own, with a realm-style
+  pseudonym. The digits-only folder is a grouping level: never a content
+  token, and given a path-only numeric pseudonym (`1`, `2`, ...) in case it is
+  a realm id;
 - identity CVars have their value blanked;
 - the owner's own `Player-<n>-<hex>` GUIDs become pseudonym GUIDs;
+- in a third-party addon file (any `.toc`, anything under `Interface/AddOns/`),
+  in AddOns.txt and in an edit-mode cache, an identity match refuses the file
+  instead of being replaced: addon text and addon names are public, so a
+  pseudonym there would misstate them and give the name away, and edit-mode
+  layout names are length-prefixed. Any other file is refused when a match
+  lands inside a longer word (frame, button and spell names are public too),
+  and a SavedVariables file also when the match is in its own name;
 - a file whose scrubbed bytes or output path still contain an email address,
   a BattleTag, an unmapped player, account, guild or community GUID, a
   surviving identity string in any casing or embedding (CVar names included),
@@ -183,6 +191,7 @@ _WORD = rb"A-Za-z0-9\x80-\xff"
 _WORD_BYTES = frozenset(
     b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 ) | frozenset(range(0x80, 0x100))
+_GLUE_BYTES = _WORD_BYTES | {ord("_")}  # what makes an identity edit "embedded"
 _LINE_START = rb"(?:\A(?:\xef\xbb\xbf)?|(?<=[\r\n]))[ \t]*"
 # Spans the owner does not author and the scrubber therefore never rewrites.
 # Only text that is SHAPED like vocabulary qualifies; `## Notes for <name>:`
@@ -247,6 +256,29 @@ OLD_SUFFIX = ".old"
 CONFIG_NAMES = frozenset({"config.wtf", "config-cache.wtf"})
 # Blizzard's exported interface code is not a fixture (fixtures/README.md).
 EXPORTED_ADDON_PREFIX = "blizzard_"
+# Files whose text the owner did not write and that are publicly distributed
+# (any `.toc`, anything under `<flavor>/Interface/AddOns/`), and edit-mode
+# caches, whose layout names are length-prefixed (`6 Priest`). An identity
+# match in either is not replaced: it refuses the file. In addon text a
+# pseudonym would misstate the addon and, the original being public, reveal
+# the name it replaced; in an edit-mode cache a pseudonym of another length
+# corrupts the file.
+#
+# Addon names are public too: AddOns.txt lists them, a SavedVariables file is
+# named after its addon, and frame, button and spell names built from them
+# turn up in every file kind (`CLICK AnchorQorveyButton`, a combat log's NPC
+# and spell names). So in AddOns.txt any identity match refuses; in every
+# other file a match inside a longer word refuses (a whole-word match is still
+# replaced), and so does a match in a SavedVariables file's own name.
+#
+# These refusals give a count only: an offset into public text would point at
+# the name. Only the edit-mode refusal keeps its offset.
+ADDON_TREE = ("interface", "addons")
+THIRD_PARTY_LABEL = "identity string inside a third-party addon file"
+LAYOUT_NAME_LABEL = "identity string inside a length-prefixed layout name"
+ADDON_LIST_LABEL = "identity string inside an addon name"
+EMBEDDED_LABEL = "identity string inside a longer word"
+ADDON_FILE_NAME_LABEL = "identity string inside an addon's file name"
 
 
 Span = tuple[int, int]
@@ -447,7 +479,7 @@ REALM_TRANSFORMS: tuple[Callable[[str], str], ...] = (
     _slug,
     lambda text: text.replace(" ", "_"),
     lambda text: text.replace("'", "\\'"),
-    # A second part known only from a `<Name>-<Suffix>` folder is written with
+    # A second name known only from a `<First>-<Second>` folder is written with
     # its spaces dropped; SavedVariables keys may still spell it spaced.
     _split_camel,
     lambda text: _split_camel(text, capitals=False),
@@ -512,8 +544,8 @@ class Identity:
         groups: Iterable[str] = (),
     ) -> None:
         """`realm_aliases`: other spellings of a realm in `realms` (a grouped
-        folder's casing), given that realm's pseudonym. `loose`: second parts of
-        `<Name>-<Suffix>` folders, hunted with a space, apostrophe or hyphen
+        folder's casing), given that realm's pseudonym. `loose`: second names of
+        `<First>-<Second>` folders, hunted with a space, apostrophe or hyphen
         between any two letters. `groups`: digits-only group folders, given
         path-only numeric pseudonyms.
         """
@@ -718,8 +750,9 @@ class Identity:
                 return
             if _overlaps(owned, start, end):
                 return
-            touching = (start > 0 and data[start - 1] in _WORD_BYTES) or (
-                end < len(data) and data[end] in _WORD_BYTES
+            # `_` joins words too (`Bar_Name_Frame`): it counts as touching here.
+            touching = (start > 0 and data[start - 1] in _GLUE_BYTES) or (
+                end < len(data) and data[end] in _GLUE_BYTES
             )
             edits.append(
                 Edit(start, data[start:end], new, reason, reason == "identity" and touching)
@@ -768,7 +801,7 @@ class Identity:
             ]
             if split:
                 problems.append(_located("identity string not replaced whole", data, split))
-        # A second part known only from its folder ("QuelThalas") may be spelled
+        # A second name known only from its folder ("QuelThalas") may be spelled
         # with a space, apostrophe or hyphen inside a file ("Quel'Thalas"). The
         # derived forms cover some of these; any other one refuses.
         if self._loose is not None:
@@ -1129,7 +1162,7 @@ _LOOSE_SEPARATOR = re.compile(rb"[ '\-\\]")
 
 
 def _loose_pattern(part: str) -> bytes | None:
-    """The letters of a second part, with an optional space, apostrophe, hyphen or `\\'`
+    """The letters of a second name, with an optional space, apostrophe, hyphen or `\\'`
     between any two. A short part (under EMBEDDED_MIN_CHARS letters) only as a whole word."""
     chars = [c for c in _nfc(part) if c not in " '-"]
     if len(chars) < 2:
@@ -1156,10 +1189,15 @@ def _inside(spans: list[Span], start: int, end: int) -> bool:
 
 def _located(label: str, data: bytes, hits: Sequence[re.Match[bytes]]) -> str:
     """`<label> x<count> (first at byte, line)`. Never the matched text."""
-    first = hits[0].start()
+    return _located_at(label, data, [m.start() for m in hits])
+
+
+def _located_at(label: str, data: bytes, offsets: Sequence[int]) -> str:
+    """`_located` for hits known by their offsets in `data`."""
+    first = offsets[0]
     line = data.count(b"\n", 0, first) + data.count(b"\r", 0, first) + 1
     line -= data.count(b"\r\n", 0, first)
-    return f"{label} x{len(hits)} (first at byte {first}, line {line})"
+    return f"{label} x{len(offsets)} (first at byte {first}, line {line})"
 
 
 # ─── reading the install (read-only) ─────────────────────────────────────────
@@ -1233,7 +1271,14 @@ def newest(paths: Sequence[Path]) -> Path | None:
 
 
 def newest_unit(units: Sequence[tuple[Path, ...]]) -> tuple[Path, ...] | None:
-    return max(units, key=lambda u: (max(_latest(p) for p in u), u[0].name), default=None)
+    """The most recently played character. The main folder decides: a twin is shared by
+    every `<First>-<Second>` folder with that first name, so its age says nothing about
+    which of them was played last."""
+    return max(
+        units,
+        key=lambda u: (_latest(u[0]), max(_latest(p) for p in u), u[0].name),
+        default=None,
+    )
 
 
 @dataclass(frozen=True)
@@ -1298,8 +1343,8 @@ def realm_dirs(account: Path) -> list[Path]:
 def is_group(name: str) -> bool:
     """A digits-only child of an account folder: a grouping level, never a name.
 
-    The Forever beta keeps characters under `<account>/<digits>/<Name>-<Suffix>/`
-    [verify: the number may be a region or realm-list id]. It is never a
+    The Forever beta keeps characters under `<account>/<digits>/<First>-<Second>/`
+    [verify: the number is almost certainly the realm's id]. It is never a
     content token (numbers in files stay byte-identical) and never a pseudonym
     source; in output paths it becomes a path-only numeric pseudonym.
     """
@@ -1307,11 +1352,12 @@ def is_group(name: str) -> bool:
 
 
 def split_character_folder(name: str) -> tuple[str, str] | None:
-    """`<Name>-<Suffix>` -> (name, second part), split on the FIRST hyphen.
+    """`<First>-<Second>` -> (first name, second name), split on the FIRST hyphen.
 
-    The second part is a realm or a player-chosen suffix [verify]; it is
-    scrubbed as a realm-category name either way. A character name never
-    contains a hyphen; a realm name may (`Azjol-Nerub`).
+    Forever characters have a player-chosen first and second name. The second
+    name is scrubbed as a realm-category name (its pseudonym starts
+    `Labrealm`), which keeps pseudonyms and output paths stable. A character
+    name never contains a hyphen [verify]; a realm name may (`Azjol-Nerub`).
     """
     character, hyphen, realm = name.partition("-")
     return (character, realm) if hyphen else None
@@ -1321,41 +1367,139 @@ def character_units(account: Path) -> list[tuple[Path, ...]]:
     """Each character of an account once, as its folder(s), the main folder first.
 
     Retail shape: `<account>/<Realm>/<Name>/`, one folder. Forever beta shape:
-    `<account>/<digits>/<Name>-<Suffix>/` holds the caches and SavedVariables,
-    and a retail-shaped twin `<account>/<Realm>/<Name>/` beside it holds only
-    AddOns.txt; the twin is matched by name and by the second part being a
-    spelling of its realm (second part: realm or player-chosen suffix, [verify]).
+    `<account>/<digits>/<First>-<Second>/` holds the caches and SavedVariables,
+    and a retail-shaped twin `<account>/<Realm>/<First>/` beside it holds only
+    AddOns.txt. The twin is found by FIRST name, never through the second
+    name: a group pairs with the realm folder that holds its first names (see
+    `_twin_realms`). One first name with several second names
+    (`70/Alyra-Bloodfist`, `70/Alyra-Qorv`) shares its one twin (`Realm/Alyra/`),
+    so a twin may appear in several units.
+
+    A `<Realm>/<First>/` folder named like a first name of ANY group is a twin
+    shape, never a character of its own, even when it cannot be paired: the
+    played character is the `<digits>/<First>-<Second>/` folder, and an
+    unpaired one is captured without an AddOns.txt (see `unpaired_twins`).
     """
     parents = realm_dirs(account)
-    retail = [c for realm in parents if not is_group(realm.name) for c in subdirs(realm)]
-    twinned: set[Path] = set()
+    realms = [p for p in parents if not is_group(p.name)]
+    groups = [p for p in parents if is_group(p.name)]
+    firsts = {name for group in groups for name in _first_names(group)}
+    paired = _twin_realms(groups, realms)
     units: list[tuple[Path, ...]] = []
-    for group in (p for p in parents if is_group(p.name)):
+    for group in groups:
         for folder in subdirs(group):
-            twin = _twin(folder.name, [c for c in retail if c not in twinned])
-            if twin is None:
-                units.append((folder,))
-            else:
-                twinned.add(twin)
-                units.append((folder, twin))
-    units.extend((c,) for c in retail if c not in twinned)
+            twin = _twin(folder.name, paired[group])
+            units.append((folder,) if twin is None else (folder, twin))
+    units.extend((c,) for realm in realms for c in subdirs(realm) if _fold(c.name) not in firsts)
     return units
 
 
-def _twin(folder_name: str, retail: Sequence[Path]) -> Path | None:
+def unpaired_twins(unit: Sequence[Path]) -> int:
+    """How many `<Realm>/<First>/` folders could have been this grouped character's twin.
+
+    Non-zero only for a `<digits>/<First>-<Second>/` unit left without a twin
+    because the pairing was ambiguous.
+    """
+    if len(unit) != 1 or not is_group(unit[0].parent.name):
+        return 0
+    split = split_character_folder(unit[0].name)
+    if split is None:
+        return 0
+    account = unit[0].parent.parent
+    wanted = _fold(split[0])
+    return sum(
+        1
+        for realm in realm_dirs(account)
+        if not is_group(realm.name)
+        for c in subdirs(realm)
+        if _fold(c.name) == wanted
+    )
+
+
+def _first_names(group: Path) -> set[str]:
+    return {
+        _fold(split[0])
+        for folder in subdirs(group)
+        if (split := split_character_folder(folder.name)) is not None
+    }
+
+
+def _twin_realms(groups: Sequence[Path], realms: Sequence[Path]) -> dict[Path, list[Path]]:
+    """For each digits group, the realm folder(s) that may hold its twins.
+
+    A realm folder is a candidate for a group only if it holds a twin for
+    EVERY first name of the group that has a twin anywhere in the account (a
+    first name with no twin at all says nothing about which realm is which).
+    A group is one realm, so a group whose only free candidate is R claims R,
+    unless another group's only free candidate is also R (then neither does).
+    Every round is decided on all groups at once, so nothing depends on the
+    order of the folders. Repeated until nothing changes.
+
+    A group that is never settled keeps only the free candidates no other
+    unsettled group also has. With more than one left, its folders are paired
+    one by one in `_twin` (the second-name tie-break) or not at all; a
+    contested realm folder pairs with nobody. If dropping the contested ones
+    leaves exactly one, the group keeps none: that one was left by the drop,
+    not chosen by the folders.
+    """
+    children_of = {realm: {_fold(c.name) for c in subdirs(realm)} for realm in realms}
+    twinned = set().union(*children_of.values()) if children_of else set()
+    candidates: dict[Path, list[Path]] = {}
+    for group in groups:
+        needed = _first_names(group) & twinned
+        candidates[group] = [r for r in realms if needed and needed <= children_of[r]]
+    settled: dict[Path, Path] = {}
+
+    def free(group: Path) -> list[Path]:
+        return [r for r in candidates[group] if r not in settled.values()]
+
+    while True:
+        wanted: dict[Path, list[Path]] = {}
+        for group in groups:
+            left = free(group) if group not in settled else []
+            if len(left) == 1:
+                wanted.setdefault(left[0], []).append(group)
+        won = {claimants[0]: realm for realm, claimants in wanted.items() if len(claimants) == 1}
+        if not won:
+            break
+        settled.update(won)
+
+    open_groups = [g for g in groups if g not in settled]
+    result: dict[Path, list[Path]] = {}
+    for group in groups:
+        if group in settled:
+            result[group] = [settled[group]]
+            continue
+        others = {r for g in open_groups if g != group for r in free(g)}
+        kept = [r for r in free(group) if r not in others]
+        # One candidate left only because contested ones were dropped is not the
+        # folders deciding: the group stays unpaired. Two or more go to `_twin`.
+        forced = len(kept) == 1 and len(free(group)) > 1
+        result[group] = [] if forced else kept
+    return result
+
+
+def _twin(folder_name: str, realms: Sequence[Path]) -> Path | None:
+    """The `<Realm>/<First>/` twin of a `<First>-<Second>` folder among these realm folders.
+
+    Matched by first name. Only when that leaves more than one (the group's
+    realm is ambiguous) does the second name break the tie, and only if it
+    happens to be a spelling of exactly one of the candidates' realms;
+    otherwise the folder stays unpaired.
+    """
     split = split_character_folder(folder_name)
     if split is None:
         return None
-    name, realm = split
-    for candidate in retail:
-        forms = {_fold(form) for form in _realm_forms(candidate.parent.name)}
-        if _fold(candidate.name) == _fold(name) and _fold(realm) in forms:
-            return candidate
-    return None
+    first, second = split
+    found = [c for realm in realms for c in subdirs(realm) if _fold(c.name) == _fold(first)]
+    if len(found) == 1:
+        return found[0]
+    spelled = [c for c in found if _fold(second) in {_fold(f) for f in _realm_forms(c.parent.name)}]
+    return spelled[0] if len(spelled) == 1 else None
 
 
 def character_labels(unit: Sequence[Path]) -> Iterator[str]:
-    """What `--character` accepts for this character: REALM/NAME, or a `<Name>-<Suffix>` folder."""
+    """What `--character` accepts for this character: REALM/NAME, or a `<First>-<Second>` folder."""
     for folder in unit:
         yield f"{folder.parent.name}/{folder.name}"
         if is_group(folder.parent.name):
@@ -1482,6 +1626,9 @@ class Planner:
         self.args = args
         self.items: dict[Path, Item] = {}
         self.skipped: list[str] = []
+        self.notes: list[str] = []  # plan-level, for the owner's eye; never a real name
+        self._character_matched = False
+        self._character_misses: list[tuple[str, str]] = []  # (flavor folder, why)
         self._verdicts: dict[Path, Verdict | None] = {}
 
     def add(
@@ -1574,10 +1721,25 @@ class Planner:
             wanted = self.args.character
             if wanted:
                 key = _nfc(wanted).casefold()
-                units = [
+                matching = [
                     u for u in units if key in {_nfc(n).casefold() for n in character_labels(u)}
                 ]
+                if units and not matching:
+                    # A character lives in one flavor: only a miss in EVERY flavor
+                    # stops the run (check_character).
+                    self._character_misses.append(
+                        (flavor.name, self._no_character(account, wanted))
+                    )
+                elif matching:
+                    self._character_matched = True
+                units = matching
             character = newest_unit(units) or ()
+            candidates = unpaired_twins(character)
+            if candidates:
+                self.notes.append(
+                    f"{flavor.name}: the chosen character's retail-style twin could not be "
+                    f"paired ({candidates} candidate folders); no AddOns.txt is captured for it"
+                )
             for name in (*CHARACTER_FILES, *CHARACTER_CACHE_FILES):
                 for folder in character:
                     self.add(flavor, child(folder, name))
@@ -1593,6 +1755,38 @@ class Planner:
         if log is not None:
             limit = self.args.log_lines
             self.add(flavor, log, f"first {limit} lines of the log", max_lines=limit)
+
+    def check_character(self) -> None:
+        """After every flavor is planned: stop if `--character` matched in none, else
+        note each flavor with characters where it matched nothing."""
+        if not self._character_misses:
+            return
+        if not self._character_matched:
+            generic = "--character: no such character in this flavor"
+            reasons = [why for _flavor, why in self._character_misses]
+            raise CaptureError(next((why for why in reasons if why != generic), generic))
+        for flavor, _why in self._character_misses:
+            self.notes.append(f"{flavor}: --character matched no character here; skipped")
+
+    def _no_character(self, account: Path, wanted: str) -> str:
+        """Why `--character` matched nothing, without the real name."""
+        key = _nfc(wanted).casefold()
+        twins = [
+            c
+            for realm in realm_dirs(account)
+            if not is_group(realm.name)
+            for c in subdirs(realm)
+            if _nfc(f"{realm.name}/{c.name}").casefold() == key
+        ]
+        if not twins:
+            return "--character: no such character in this flavor"
+        # Every retail-shaped folder that is not a unit is a twin nobody could be paired with.
+        scrubbed = self.identity.scrub(wanted.encode("utf-8"))
+        shown = "" if scrubbed.problems else f" {scrubbed.data.decode('utf-8', 'replace')}"
+        return (
+            f"--character: the retail-style twin{shown} could not be paired with a character; "
+            "choose its <First>-<Second> folder instead"
+        )
 
     def _pick(self, candidates: list[Path], wanted: str | None, what: str) -> Path | None:
         if wanted:
@@ -1705,7 +1899,24 @@ def _os_reason(error: OSError) -> str:
 
 def _scrubbed_label(item: Item, identity: Identity) -> PurePosixPath:
     dest, problems = identity.scrub_path(item.rel)
-    return PurePosixPath(dest.parts[0], "<path withheld>") if problems else dest
+    withhold = problems or _path_refusals(item.rel, dest)
+    return PurePosixPath(dest.parts[0], "<path withheld>") if withhold else dest
+
+
+def _third_party(rel: PurePosixPath) -> bool:
+    """A `.toc` anywhere, or anything under `<flavor>/Interface/AddOns/`, in any casing."""
+    return rel.name.casefold().endswith(".toc") or (
+        len(rel.parts) > 3 and tuple(p.casefold() for p in rel.parts[1:3]) == ADDON_TREE
+    )
+
+
+def _path_refusals(rel: PurePosixPath, dest: PurePosixPath) -> list[str]:
+    """Path problems that come from WHERE a rewrite landed, not from what survived it."""
+    if _third_party(rel) and dest != rel:
+        return [f"in path: {THIRD_PARTY_LABEL}"]
+    if kind_of(rel.name) == "savedvariables" and dest.name != rel.name:
+        return [f"in path: {ADDON_FILE_NAME_LABEL}"]
+    return []
 
 
 def process(item: Item, identity: Identity, kinds: dict[str, str] | None = None) -> Outcome:
@@ -1720,6 +1931,18 @@ def process(item: Item, identity: Identity, kinds: dict[str, str] | None = None)
     )
     dest, path_problems = identity.scrub_path(item.rel)
     path_rewritten = dest != item.rel
+    kind = kind_of(name)
+    kept_whole: list[str] = []  # files an identity match refuses rather than rewrites
+    if result.edits and (_third_party(item.rel) or kind == "addons-txt"):
+        label = ADDON_LIST_LABEL if kind == "addons-txt" else THIRD_PARTY_LABEL
+        kept_whole.append(f"{label} x{len(result.edits)}")  # no offset: see ADDON_TREE
+    elif result.edits and kind == "edit-mode-cache":
+        kept_whole.append(
+            _located_at(LAYOUT_NAME_LABEL, original, [e.offset for e in result.edits])
+        )
+    elif result.embedded:
+        kept_whole.append(f"{EMBEDDED_LABEL} x{result.embedded}")  # no offset: see ADDON_TREE
+    path_problems = [*path_problems, *_path_refusals(item.rel, dest)]
     if kinds and dest.parts[0] in kinds:
         # The index files fixtures under <platform>/<flavor-kind>/, not the folder name.
         dest = PurePosixPath(kinds[dest.parts[0]], *dest.parts[1:])
@@ -1734,7 +1957,8 @@ def process(item: Item, identity: Identity, kinds: dict[str, str] | None = None)
                 n for n in found if REVIEW_CVAR_RE.search(n) and n.casefold() not in blanked
             )
         )
-    return Outcome(item, dest, result, [*result.problems, *path_problems], path_rewritten, review)
+    problems = [*result.problems, *kept_whole, *path_problems]
+    return Outcome(item, dest, result, problems, path_rewritten, review)
 
 
 def describe_bytes(data: bytes) -> list[str]:
@@ -1797,7 +2021,7 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
     realms: set[str] = set()
     characters: set[str] = set()
     pairs: set[tuple[str, str]] = set()  # (character, realm) folders that exist
-    grouped: set[tuple[str, str]] = set()  # (name, second part) of `<digits>/<Name>-<Suffix>`
+    grouped: set[tuple[str, str]] = set()  # (first, second name) of `<digits>/<First>-<Second>`
     groups: set[str] = set()  # the digits-only folders
     configs: list[Path] = []
 
@@ -1844,8 +2068,8 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
                 if realm.name.casefold() == SAVED_VARIABLES_DIR.casefold():
                     continue
                 if is_group(realm.name):
-                    # A grouping level, not a realm: its children are `<Name>-<Suffix>`,
-                    # the second part a realm or a player-chosen suffix [verify].
+                    # A grouping level, not a realm: its children are `<First>-<Second>`,
+                    # a first and a second name, both chosen by the player.
                     groups.add(realm.name)
                     for character in folders(listed(realm)):
                         split = split_character_folder(character.name)
@@ -1882,11 +2106,11 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
             elif GUID_RE.fullmatch(m.group(2)):
                 guids.add(m.group(2))
 
-    # The second part of a `<Name>-<Suffix>` folder (a realm or a player-chosen
-    # suffix, [verify]) is a realm-category name either way. One that is
+    # The second name of a `<First>-<Second>` folder is a realm-category name
+    # (a `Labrealm` pseudonym, so paths stay stable). One that is
     # already a spelling of a known realm, in any casing, keeps that realm's
     # pseudonym, so the folder `Labchara-LabrealmaPartb` matches
-    # `Labchara - Labrealma Partb` inside files; any other is a realm of its own.
+    # `Labchara - Labrealma Partb` inside files; any other gets a pseudonym of its own.
     known = {_fold(form) for realm in realms for form in _realm_forms(realm)}
     aliases: set[str] = set()
     for _name, second in sorted(grouped):
@@ -1953,7 +2177,7 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--account", help="account folder to capture (default: most recent)")
     parser.add_argument(
         "--character",
-        help="REALM/NAME, or a <Name>-<Suffix> folder name, to capture (default: most recent)",
+        help="REALM/NAME, or a <First>-<Second> folder name, to capture (default: most recent)",
     )
     parser.add_argument("--sv", action="append", help="also capture this SavedVariables file name")
     parser.add_argument("--toc", action="append", help="also capture this addon's TOC files")
@@ -2047,6 +2271,7 @@ def run(args: argparse.Namespace) -> int:
     planner.add(None, child(root, ".build.info"))
     for flavor in flavors:
         planner.plan_flavor(flavor)
+    planner.check_character()
 
     mode = "DRY RUN, nothing will be written" if args.dry_run else f"writing under {out}"
     print(f"lab_capture: {len(planner.items)} files from {len(flavors)} flavor(s); {mode}")
@@ -2059,6 +2284,9 @@ def run(args: argparse.Namespace) -> int:
     if args.show_map:
         for real, pseudonym in identity.names.items():
             print(f"  {real!r} -> {pseudonym!r}")
+
+    for note in planner.notes:
+        print(f"note     {note}")
 
     rows: list[str] = []
     written: set[Path] = set()
