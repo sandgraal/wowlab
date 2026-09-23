@@ -13,10 +13,10 @@ helpers this file reuses (loaded, not copied): the install is a tree under
 injected, and second processes run `CHILD_SCRIPT` with the same
 redirections.
 
-Not pinned here: that a transaction handed locks by `undo()` checks they
-cover its store and install (`_Locks.cover`). Only the private
-`_Transaction(..., locks=...)` reaches that check; no public call can hand a
-transaction someone else's locks.
+`undo()` hands its own transaction the locks it took. That transaction
+checks they still cover its store and install (by the identity of each
+lock file); the check is reached through public `undo()` when a held
+lock file is replaced while undo plans (pinned below).
 """
 
 from __future__ import annotations
@@ -443,10 +443,28 @@ def test_constructed_pin_the_journal_is_read_under_the_store_lock(
 # ─── 5. journal and manifest paths are looked up only when local absolute ────
 
 NOT_LOCAL = {
-    "unc": "//constructed-server/share/World of Warcraft",
+    "unc": "//constructed-server.invalid/share/World of Warcraft",
     "relative": "constructed-relative/World of Warcraft",
     "empty": "",
+    # Rooted but without a drive letter: not local and absolute on Windows.
+    "rooted-without-a-drive": "/constructed-rooted/World of Warcraft",
 }
+
+LOOKUP_CASES = [
+    pytest.param(route, kind, id=f"constructed-{route}-constructed-{kind}")
+    for route in ("undo", "restore", "cleanup")
+    for kind in ("unc", "relative", "empty")
+] + [
+    pytest.param(
+        route,
+        "rooted-without-a-drive",
+        id=f"constructed-{route}-constructed-rooted-without-a-drive",
+        marks=pytest.mark.skipif(
+            sys.platform != "win32", reason="a rooted path without a drive is local on POSIX"
+        ),
+    )
+    for route in ("restore", "cleanup")
+]
 
 
 class LookupSpy:
@@ -488,7 +506,10 @@ class LookupSpy:
 
 
 def _marker(kind: str) -> str:
-    return NOT_LOCAL[kind].split("/World")[0] if kind != "empty" else ""
+    if kind == "empty":
+        return ""
+    # The distinctive part, whichever separator a lookup spells it with.
+    return NOT_LOCAL[kind].split("/World")[0].lstrip("/")
 
 
 def _edit_last_record(store: Path, label: str, **fields: str) -> None:
@@ -502,11 +523,7 @@ def _edit_last_record(store: Path, label: str, **fields: str) -> None:
     assert edited == 1, "one journal record carries the label"
 
 
-@pytest.mark.parametrize("kind", [pytest.param(k, id=f"constructed-{k}") for k in NOT_LOCAL])
-@pytest.mark.parametrize(
-    "route",
-    [pytest.param(r, id=f"constructed-{r}") for r in ("undo", "restore", "cleanup")],
-)
+@pytest.mark.parametrize(("route", "kind"), LOOKUP_CASES)
 def test_constructed_pin_paths_from_the_store_are_looked_up_only_when_local_absolute(
     guard: Any,
     tmp_path: Path,
@@ -803,3 +820,51 @@ def test_constructed_pin_a_linked_user_data_directory_or_locks_is_refused(
     assert_plain_guard_error(guard, attempt(call), f"{route} with {where}")
     assert (strict_state(world), store_state(guard, store)) == before
     assert list(target.iterdir()) == [], "nothing was created through the link"
+
+
+# ─── 7. undo's transaction checks the locks it is handed ─────────────────────
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows cannot remove a lock file held open")
+@pytest.mark.parametrize(
+    "which", [pytest.param(w, id=f"constructed-{w}-lock") for w in ("store", "install")]
+)
+def test_constructed_pin_undo_refuses_when_a_held_lock_file_is_replaced(
+    guard: Any,
+    tmp_path: Path,
+    world: Path,
+    install_root: Path,
+    flavor: Flavor,
+    idle: None,
+    which: str,
+) -> None:
+    """Item 1: `undo()`'s own transaction runs under the locks `undo()`
+    holds, and only if they still cover this store and this install. Here the
+    held lock file is removed and recreated (a file nobody holds) while undo
+    plans under its locks (inside `SnapshotStore.show`): undo raises a plain
+    `GuardError` and changes nothing. Positive control: the next undo, which
+    takes the new lock file, goes through."""
+    store = tmp_path / "store"
+    with guard.transaction(flavor, label="mine", store=store) as tx:
+        tx.write(CONFIG, NEW_CONFIG)
+    lock = store / "lock" if which == "store" else install_lock_file(tmp_path, install_root)
+    real_show = SnapshotStore.show
+    replaced: list[bool] = []
+
+    def show(self: SnapshotStore, *args: Any, **kwargs: Any) -> Any:
+        if not replaced:
+            replaced.append(True)
+            lock.unlink()
+            lock.write_bytes(b"")
+        return real_show(self, *args, **kwargs)
+
+    before = content(world)
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(SnapshotStore, "show", show)
+        exc = attempt(lambda: guard.undo(store=store))
+    assert replaced, "positive control: undo planned from the store under its locks"
+    assert_plain_guard_error(guard, exc, f"undo after its {which} lock file was replaced")
+    assert content(world) == before
+
+    guard.undo(store=store)
+    assert (flavor.path / CONFIG).read_bytes() == ALLOWLISTED_FILES[CONFIG]
