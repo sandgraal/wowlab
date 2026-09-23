@@ -128,7 +128,7 @@ Graders for `wowlab_core.guard` from `docs/LAB_PLAN.md` §6.10 and ADR-0021, aga
 
 ---
 
-## [ ] M10-11 — Write gate and restore [IMPL]
+## [x] M10-11 — Write gate and restore [IMPL]
 **Size:** L · **Depends on:** M10-11T
 
 `lab/core/src/wowlab_core/guard.py`. Activate graders by deleting marker lines only. A repository-wide test greps `lab/` for `open(` with a write mode, `write_text`, `write_bytes`, `os.replace`, `shutil.copy*`, `shutil.move`, `unlink` and `rmtree` outside `guard.py`, `snapshot.py`, `gamedata.py` and tests, and fails on a hit that is not allowlisted with a reason (L2).
@@ -136,6 +136,8 @@ Graders for `wowlab_core.guard` from `docs/LAB_PLAN.md` §6.10 and ADR-0021, aga
 **Acceptance:** all M10-11T graders green; the write-site test green; on Windows CI the locked-file case reports a typed error and rolls back. Reviewed by `security-reviewer`.
 
 *Amended 2026-09-21 (owner decision after the M10-11T reviews): the non-required `lab (windows)` job must be green on the PR's final head (the `pull_request` run, which GitHub makes on the test merge commit), with the run link pasted in the PR before merge, because 32 of the write-gate graders (junctions, alternate data streams, reserved names, drive-letter and backslash escapes, the locked-file rollback) run only there. `guard` calls `wowlab_core.process` with its default probe only (no probe parameter on `transaction` or `undo`), passes the install root (`install_roots`), the flavor folder (`flavor_folders`) and the executable names it finds in the flavor folder (`extra_names`), and treats `unknown` or any probe exception as running (`docs/LAB_PLAN.md` §6.7 amendment). Snapshot manifests and the journal are untrusted at rollback, undo and restore time.*
+
+*Follow-ups recorded 2026-09-22 at merge (#43), not part of this ticket's acceptance: (1) graders pinning behaviour the M10-11 reviews verified but no grader covers: the chain re-check after each rename/unlink forcing rollback, the restore-all skip rules for an unchanged executable-suffix file (mode, missing, symlink, reserved names), undo/restore refusing another install, the store-shard overlap check, the target-unchanged check and the part-way-restore rollback; (2) a lock against two concurrent transactions on one install or store (the spec is silent; `_next_record_id` can collide); (3) cleanup of `.wowlab-*.tmp` files a hard kill leaves inside the install. (2) and (3) need a spec decision before a ticket.*
 
 ---
 
