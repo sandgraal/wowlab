@@ -297,10 +297,14 @@ ADDON_FILE_NAME_LABEL = "identity string inside an addon's file name"
 COMBAT_LOG_TEXT_LABEL = "identity string in combat-log game text"
 # With --pseudonymise-other-players (combat logs only; see OtherPlayers): a
 # real name part of another player found outside every rewritten unit field,
-# and another player's GUID that never stands in a GUID+name unit pair. Both
-# give a count only.
+# and another player's GUID that never stands in a GUID+name unit pair
+# anywhere in the kept lines. Both give a count only.
 OTHER_NAME_LABEL = "other player's name outside a unit field"
 OTHER_GUID_LABEL = "other player's GUID without a unit name"
+# A name part that is a format or vocabulary word (`nil`, `True`, `Default`)
+# or one character long cannot be searched for without matching the log's own
+# text: the log is refused rather than written unchecked. Count only.
+OTHER_UNCHECKABLE_LABEL = "other player's name cannot be checked"
 # Invented GUIDs for other players: a server id no real GUID of the owner's
 # pseudonyms uses (theirs are Player-9999-...), numbered in order of first
 # appearance, so nothing about the real value survives.
@@ -1331,38 +1335,53 @@ class OtherUnits:
     def pseudo_guids(self) -> frozenset[bytes]:
         return frozenset(self.guids.values())
 
-    def leaks(self, result: ScrubResult) -> int:
-        """How often a hunted name part survives in the scrubbed bytes outside every
-        replacement (each replacement is masked first, so pseudonyms never count).
+    def leaks(self, result: ScrubResult) -> tuple[int, int]:
+        """(hits, parts that cannot be checked) for the hunted real name parts.
 
-        A part of EMBEDDED_MIN_CHARS or more characters counts anywhere, even inside
-        a longer word; a shorter one only as a whole word. Any casing, NFC.
+        Each hunted string is split on blanks and `-`. A part made only of
+        digits is no name and is skipped. A part of one character, or one that
+        is a word the format or the tool's vocabulary uses (`nil`, `player`,
+        `true`, `neutral`, `default`, a region...), cannot be told apart from
+        the log's own text, so it is counted as uncheckable (the log is refused
+        for it) instead of being searched.
+
+        Every other part is searched in the scrubbed bytes with each
+        replacement masked first (so a pseudonym never counts), compared the
+        way the rest of the tool compares (`_fold`: NFC and full case
+        folding). A part of EMBEDDED_MIN_CHARS or more characters counts
+        anywhere, even inside a longer word, and with a space, apostrophe,
+        hyphen, underscore or `\\'` between any two of its letters (the spaced
+        and split spellings the tool derives for the owner's realms:
+        `GloamSpire` is also found as `Gloam Spire`); a shorter one only as a
+        whole word.
         """
-        terms = sorted(
-            {
-                part
-                for name in self.hunted
-                for part in re.split(r"[\s\-]+", _nfc(name))
-                if len(part) >= 2
-                and any(c.isalpha() for c in part)
-                and part.casefold() not in RESERVED_WORDS | VOCABULARY_PARTNERS
-            },
-            key=lambda t: (-len(t), t),
-        )
+        terms: set[str] = set()
+        uncheckable: set[str] = set()
+        for name in self.hunted:
+            for part in re.split(r"[\s\-]+", _fold(name)):
+                if not part or part.isdigit():
+                    continue
+                if len(part) < 2 or part in RESERVED_WORDS | VOCABULARY_PARTNERS:
+                    uncheckable.add(part)
+                else:
+                    terms.add(part)
         if not terms:
-            return 0
+            return 0, len(uncheckable)
+        separator = r"(?:[ '\-_]|\\')?"
+
+        def spelled(term: str) -> str:
+            if len(term) >= EMBEDDED_MIN_CHARS:
+                return separator.join(re.escape(c) for c in term)
+            return rf"(?<!\w){re.escape(term)}(?!\w)"
+
         pattern = re.compile(
-            "|".join(
-                re.escape(t) if len(t) >= EMBEDDED_MIN_CHARS else rf"(?<!\w){re.escape(t)}(?!\w)"
-                for t in terms
-            ),
-            re.IGNORECASE,
+            "|".join(spelled(t) for t in sorted(terms, key=lambda t: (-len(t), t)))
         )
         masked = bytearray(result.data)
         for start, end in _written(result.edits):
             masked[start:end] = bytes(end - start)  # NUL: no name contains it
-        text = _nfc(bytes(masked).decode("utf-8", errors="replace"))
-        return sum(1 for _ in pattern.finditer(text))
+        text = _fold(bytes(masked).decode("utf-8", errors="replace"))
+        return sum(1 for _ in pattern.finditer(text)), len(uncheckable)
 
 
 class OtherPlayers:
@@ -2323,9 +2342,11 @@ def process(
             # Counts only: an offset into public text would point at the name.
             if units.unpaired:
                 kept_whole.append(f"{OTHER_GUID_LABEL} x{units.unpaired}")
-            leaked = units.leaks(result)
+            leaked, uncheckable = units.leaks(result)
             if leaked:
                 kept_whole.append(f"{OTHER_NAME_LABEL} x{leaked}")
+            if uncheckable:
+                kept_whole.append(f"{OTHER_UNCHECKABLE_LABEL} x{uncheckable}")
     path_problems = [*path_problems, *_path_refusals(item.rel, dest)]
     if kinds and dest.parts[0] in kinds:
         # The index files fixtures under <platform>/<flavor-kind>/, not the folder name.

@@ -370,3 +370,110 @@ def test_constructed_cli_flag_leaves_every_other_file_unchanged(tmp_path: Path) 
     assert capture(root, plain) == 0
     assert capture(root, flagged, "--pseudonymise-other-players") == 0
     assert outputs(plain) == outputs(flagged)
+
+
+# ─── fix round 1 (review of #63) ─────────────────────────────────────────────
+
+OTHER_UNCHECKABLE = lab_capture.OTHER_UNCHECKABLE_LABEL
+
+
+def _one_player(unit_name: bytes, text: bytes = b"The Grave Warden wakes.") -> bytes:
+    unit = b'Player-1-00C0FFEE,"' + unit_name + b'",0x512,0x0'
+    return (
+        HEADER
+        + _line(b"SWING_DAMAGE," + unit + b"," + DUMMY + b",1,-1,1,0,0,0,nil,nil,nil")
+        + _line(b"SPELL_DAMAGE," + OWN_UNIT + b"," + DUMMY + b',585,"Smite",0x2,100')
+        + _line(
+            b'EMOTE,Creature-0-1-2-3-4-0000000000,"Grave Warden",0000000000000000,nil,"'
+            + text
+            + b'"'
+        )
+    )
+
+
+def test_constructed_names_inside_pseudonyms_are_masked_not_refused(tmp_path: Path) -> None:
+    """`Other` sits inside `Labothera`, `Chara` inside the owner's `Labchara`."""
+    log = (
+        HEADER
+        + _line(b'SWING_DAMAGE,Player-1-00C0FFEE,"Other-KestrelHollow-",0x512,0x0,' + DUMMY)
+        + _line(b'SWING_DAMAGE,Player-1-00BEEF01,"Chara-KestrelHollow-",0x512,0x0,' + DUMMY)
+        + _line(b"SPELL_DAMAGE," + OWN_UNIT + b"," + DUMMY + b',585,"Smite",0x2,100')
+    )
+    problems, data, _o = _process(log, tmp_path, others=OtherPlayers())
+    assert problems == []
+    assert b'"Labothera-LabrealmaPartb-"' in data and b'"Labotherb-LabrealmaPartb-"' in data
+
+
+@pytest.mark.parametrize(
+    ("unit_name", "text"),
+    [
+        ("Zoëlinde", "Zoëlinde"),  # NFC in the unit, NFD in the text
+        ("Zoëlinde", "Zoëlinde"),  # and the other way round
+        ("Weißbart", "WEISSBART"),  # full case folding, not simple
+        ("WEISSBART", "Weißbart"),
+    ],
+    ids=["nfc-unit-nfd-text", "nfd-unit-nfc-text", "sharp-s-upper", "upper-sharp-s"],
+)
+def test_constructed_name_found_whatever_its_normal_form_or_casing(
+    unit_name: str, text: str, tmp_path: Path
+) -> None:
+    log = _one_player(unit_name.encode() + b"-KestrelHollow-", f"{text} waves.".encode())
+    problems, _data, _o = _process(log, tmp_path, others=OtherPlayers())
+    assert problems == [f"{OTHER_NAME} x1"]
+
+
+@pytest.mark.parametrize(
+    "spelling", [b"Gloam Spire", b"Gloam_Spire", b"gloam-spire", b"Gloam'Spire"]
+)
+def test_constructed_unknown_realm_found_in_spaced_and_split_spellings(
+    spelling: bytes, tmp_path: Path
+) -> None:
+    log = _one_player(b"Zorvinth-GloamSpire-US", b"The Warden of " + spelling + b" wakes.")
+    problems, _data, _o = _process(log, tmp_path, others=OtherPlayers())
+    assert problems == [f"{OTHER_NAME} x1"]
+
+
+def test_constructed_own_realm_only_counts_as_a_whole_unit_name_part(tmp_path: Path) -> None:
+    """`KestrelHollowmere` holds the owner's realm but is not it: pseudonymised whole."""
+    problems, data, _o = _process(
+        _one_player(b"Zorvinth-KestrelHollowmere-"), tmp_path, others=OtherPlayers()
+    )
+    assert problems == []
+    assert b'"Labothera-Labotherrealma-"' in data
+    assert b"Kestrel" not in data and b"mere" not in data
+
+
+def test_constructed_other_pseudonyms_stop_counting_as_known_after_the_log(
+    tmp_path: Path,
+) -> None:
+    identity = _identity(OWN)
+    problems, _data, _o = _process(TWO_PLAYERS, tmp_path, others=OtherPlayers(), identity=identity)
+    assert problems == []
+    assert identity._scoped_words == frozenset()
+    source = tmp_path / "Tracker.lua"
+    source.write_bytes(b'\nTrackerDB = {\n["Labothera - Kestrel Hollow"] = 1,\n}\n')
+    rel = PurePosixPath("_retail_/WTF/Account/A/SavedVariables/Tracker.lua")
+    item = lab_capture.Item(source, rel, "_retail_", "1", "savedvariables")
+    after = lab_capture.process(item, identity)
+    assert any(p.startswith("someone else's name on an own realm") for p in after.problems)
+
+
+@pytest.mark.parametrize(
+    "name", [b"Neutral", b"Default", b"True", b"Nil", b"Player", b"Us", b"Bind"]
+)
+def test_constructed_vocabulary_name_refuses_as_uncheckable(name: bytes, tmp_path: Path) -> None:
+    """Not searched (it would match the log's own words), so never written unchecked."""
+    problems, _data, _o = _process(
+        _one_player(name + b"-KestrelHollow-"), tmp_path, others=OtherPlayers()
+    )
+    assert problems == [f"{OTHER_UNCHECKABLE} x1"]
+
+
+def test_constructed_region_empty_and_digit_parts_are_not_uncheckable(tmp_path: Path) -> None:
+    for unit_name in (
+        b"Zorvinth-KestrelHollow-US",
+        b"Zorvinth-KestrelHollow-",
+        b"Zorvinth-Gloam-52",
+    ):
+        problems, _data, _o = _process(_one_player(unit_name), tmp_path, others=OtherPlayers())
+        assert problems == [], unit_name
