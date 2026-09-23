@@ -508,18 +508,24 @@ after the PR #49 security review; tickets M10-16T and M10-16):*
    symlinked, case-variant, Unicode-variant or firmlinked spelling of one
    install maps to one lock. guard takes the user data directory from
    `wowlab_core.snapshot`; it does not import `platformdirs`.
-   - **Order.** `transaction()` takes the store lock, then the install lock,
-     then runs the client check. `undo()` takes the store lock before it
-     reads the journal and the install lock before the client check;
-     everything it plans is read under both. `undo()` on a store directory
-     that does not exist raises `GuardError` without creating it. The locks
-     are released on exit, including on an exception, and the OS releases
-     them when the process ends.
+   - **Order.** `transaction()` validates the flavor and runs the
+     store-overlap check (lock paths included), then takes the store lock,
+     then the install lock, then runs the client check. `undo()` reads the
+     most recent record once without a lock only to find the flavor,
+     validates it and runs the store-overlap check, then takes the store
+     lock (never creating `<store>/`), re-reads the journal and plans only
+     from what it reads under the lock, then takes the install lock for the
+     flavor the re-read record names (a different install by identity
+     raises `GuardError`) and runs the client check. `undo()` on a store
+     directory that does not exist raises `GuardError` without creating it.
+     The locks are released on exit, including on an exception, and the OS
+     releases them when the process ends.
    - **Mechanism.** `fcntl.flock(fd, LOCK_EX | LOCK_NB)` on POSIX and
      `msvcrt.locking(fd, LK_NBLCK, 1)` at offset 0 on Windows; `lockf` and
      `fcntl(F_SETLK)` are not used. A process also refuses, without asking
      the OS, a lock it already holds, so a nested transaction raises
-     `GuardBusyError`. A held lock raises `GuardBusyError` (a `GuardError`)
+     `GuardBusyError`. `undo()`'s own transaction runs under the locks
+     `undo()` already holds; it does not take them again. A held lock raises `GuardBusyError` (a `GuardError`)
      and nothing is written or journaled; any other failure to open or lock
      (unsupported on the volume, permission, I/O) raises `GuardError`. guard
      never proceeds unlocked.
@@ -540,14 +546,18 @@ after the PR #49 security review; tickets M10-16T and M10-16):*
    the pre-write snapshot and the new journal record are written (not in a
    dry run), `transaction()` and `undo()` consider each temp path named by an
    earlier record whose install root and flavor folder are this flavor's (by
-   identity), limited to records after the last one that ran a cleanup. A
+   identity), limited to records of this flavor from the most recent one of
+   this flavor whose cleanup finished, that record included (its own temp
+   paths and its `temps_left` are considered again). A
    temp path is removed only if its last component fullmatches
    `\.wowlab-[0-9a-f]{32}\.tmp` exactly as the directory lists it, the path
    passes the write rules (allowlist, the walk that follows no link,
    junction or reparse point, the case/Unicode-collision and short-name
    refusals), and the target is a regular file; the directory chain is
    re-checked before and after the unlink as for any delete. Each removal is
-   recorded in the new record and fsynced before the unlink. A path that
+   recorded in the new record and fsynced before the unlink; a removal whose
+   unlink fails is moved from `temps_removed` to `temps_left` in the same
+   record. A path that
    fails any check, or whose removal fails, is left alone and listed; it
    does not stop the transaction. The cleanup never deletes anything else.
 3. **A file changed after the pre-write snapshot is refused** (not in a dry
@@ -565,11 +575,16 @@ after the PR #49 security review; tickets M10-16T and M10-16):*
    absent), then checks identity, size and mtime by `lstat` as the last step
    before the call; a mismatch raises the same error. Where the platform
    offers a rename that does not replace (`os.rename` on Windows), a create
-   uses it. The window between the last check and the call is not closed
+   uses it, and a create whose rename finds the target present raises
+   `ChangedSinceSnapshotError`. The window between the last check and the call is not closed
    and is documented like the module's existing residual window. Rollback
    and undo therefore only ever need bytes the pre-write snapshot holds.
 4. **Public surface.** `GuardBusyError` and `ChangedSinceSnapshotError` are
-   exported from `wowlab_core.guard`. `HistoryRecord` gains `temps_removed`
+   exported from `wowlab_core.guard`, and so is
+   `guard.store_lock(store: Path | None = None)`, a context manager that
+   takes the store lock alone (same mechanism, same in-process refusal, same
+   lock-file rules, `GuardBusyError` if held). `HistoryRecord` gains
+   `temps_removed`
    and `temps_left` (flavor-relative paths). The journal format becomes 2;
    format-1 records read as naming no temp paths and as having run no
    cleanup.

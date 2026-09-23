@@ -167,7 +167,7 @@ Graders from `docs/LAB_PLAN.md` §6.4 (serializer half) and `docs/LAB_FORMATS.md
 ---
 
 ## [ ] M10-14 — `wowlab` CLI
-**Size:** M · **Depends on:** M10-04, M10-05, M10-06, M10-07, M10-08, M10-10, M10-11
+**Size:** M · **Depends on:** M10-04, M10-05, M10-06, M10-07, M10-08, M10-10, M10-11, M10-16
 
 Commands, flags and exit codes per `docs/LAB_PLAN.md` §6.11. `snap create` uses `layout` to resolve the default subtrees. `snap restore` and `undo` go through `guard`, print the plan, and ask unless `--yes`. Reviewed by `domain-reviewer` (output wording).
 
@@ -177,7 +177,7 @@ Commands, flags and exit codes per `docs/LAB_PLAN.md` §6.11. `snap create` uses
 
 *Amended 2026-09-22 from the final M10-05 domain review (deferred there): when `doctor` or `install show` reports where it looked for an install, a default location that could not be checked (not a directory, or its check raised, including a drive that is not ready) is reported as "could not check", not as searched and empty; `InstallNotFoundError` gains that list, and the two `install.py` docstrings that still say "not a readable directory" are brought in line with the reworded §6.1 amendment ("not a directory, or cannot be checked").*
 
-*Amended 2026-09-22 from the PR #49 security review: `snap gc` takes the store lock (the §6.10 amendment item 1 lock on `<store>/lock`) for its whole run, because rollback and undo now rely only on objects in the store.*
+*Amended 2026-09-22 from the PR #49 security review: `snap gc` runs inside `guard.store_lock(store)` (§6.10 amendment item 4) for its whole run, because rollback and undo now rely only on objects in the store.*
 
 ---
 
