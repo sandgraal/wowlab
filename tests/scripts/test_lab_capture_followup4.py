@@ -164,6 +164,7 @@ def test_constructed_invented_guids_are_not_derived_from_the_real_ones(tmp_path:
         # glued inside a longer word: a long name part counts anywhere
         b'SPELL_DAMAGE,Pet-0-1-2-3-4-0000000001,"Zorvinthpaw",0x1114,0x0,' + DUMMY + b",1,-1",
     ],
+    ids=["emote", "aura-text-uppercase", "pet-named-after-player", "glued-long-name"],
 )
 def test_constructed_other_players_name_outside_a_unit_field_refuses(
     line: bytes, tmp_path: Path
@@ -260,6 +261,7 @@ def test_constructed_without_the_flag_the_log_still_refuses(tmp_path: Path) -> N
         TWO_PLAYERS + _line(b"COMBATANT_INFO,Player-1-00FACADE,1,2,3,[(1,2)]"),
         HEADER + _line(b"SWING_DAMAGE," + FAR + b"," + DUMMY + b",10,-1,1,0,0,0,nil,nil,nil"),
     ],
+    ids=["two-players", "name-in-emote", "unpaired-guid", "foreign-realm"],
 )
 def test_constructed_every_log_here_is_refused_without_the_flag(log: bytes, tmp_path: Path) -> None:
     """Differential: nothing that was refused before passes now unless the flag is given."""
