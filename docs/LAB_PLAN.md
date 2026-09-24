@@ -847,6 +847,99 @@ never edited. Every capture passes through `scripts/lab_capture.py`, which
 > never stands next to its unit name. The provenance row records the number
 > of other players rewritten as `other-players-pseudonymised: N`.
 
+> **Amendment 2026-09-24 (M10-02 follow-up 5, with its review rounds 1 and 2 and
+> the owner's decision of the same day).** Four changes to combat logs,
+> applied with or without `--pseudonymise-other-players`.
+>
+> *Unit GUIDs.* Each non-player unit GUID
+> `<Type>-0-<serverID>-<instanceID>-<zoneUID>-<ID>-<spawnUID>` (Creature,
+> Pet, Vehicle, GameObject and any other type of that shape) keeps its type,
+> the leading `0` and the NPC or object `<ID>`, which are game data. The
+> server id, instance id and zone UID share one decimal sequence (1, 2, 3, …,
+> in order of first appearance, keyed by field and value); of these three, a
+> field that is all zeros stays as written. The spawn UID always becomes
+> invented upper-case hex of the same width, numbered from 0 in order of
+> first appearance (a real zero spawn UID is renumbered too). The mapping is
+> one registry per run, so a real value maps to the same invented one in
+> every log of the run, and two different real GUIDs never become the same
+> one. `0000000000000000` and `nil` stay. The log is refused, with a count
+> only, for any other token shaped like a GUID (letters, `-`, digits, `-`, …)
+> that is not a Player, BNetAccount, Guild or ClubFinder GUID: a `Cast-`
+> GUID, a field short or long, a lower-case spawn UID, a type glued to the
+> byte before it. It is also refused for a GUID body with no type or with
+> lookalike dashes (five or more dash-separated digit groups ending in six or
+> more hex digits, dashes including U+2010 to U+2015, U+2212, U+FE63 and
+> U+FF0D). The row records `unit-guids-rewritten: N`, and the per-file
+> summary line gives the same count.
+>
+> *Timestamps.* Every record's timestamp, and the `MMDDYY_HHMMSS` stamp in a
+> `WoWCombatLog-MMDDYY_HHMMSS.txt` file name, moves by an offset drawn for
+> that log alone: a whole number of seconds from `secrets`, between 60 and
+> 400 days either way, never printed, logged or recorded. No two logs share
+> an offset by design. So if a log's unshifted original was ever published,
+> comparing it with the shifted copy reveals that one log's offset and no
+> other's. The shifted timestamp has one fixed shape,
+> `M/D/YYYY HH:MM:SS<fraction><suffix>`: the month and day are unpadded, the
+> year has four digits, the hour always has two, and the fraction and the
+> `-4`-style UTC-offset suffix are copied as written. Verified on 2026-09-24
+> against the owner's real logs (count-only check): the hour is always two
+> digits, the month is unpadded, the year has four digits; day padding is
+> unverified (no real log had a day below 10). The log is refused, with a
+> count only, for:
+>
+> - a source line in any other shape (a zero-padded day, which the owner
+>   reports; a padded month; a one-digit hour; a missing or two-digit year);
+> - a UTC-offset suffix that changes partway through the log (a
+>   daylight-saving change would give the offset away);
+> - a line that does not start with a recognised timestamp;
+> - a timestamp that is no valid date;
+> - a date or time inside a record (`9/21`, `21:15`, `2026-09-21`; no record
+>   type is known to carry one).
+>
+> The output path and the provenance row carry the shifted name, and the row
+> records `timestamps-shifted`. `--combat-log` still takes the real name, and
+> its messages name the option by position only ("the 2nd --combat-log"),
+> never by the name, which encodes the real date.
+>
+> *What the shift hides, and what it does not.* It hides the time of day and
+> the exact date of the session. The date stays bounded. It falls inside the
+> live window of the build, which is in the row, in the log's header and in
+> the committed wago.tools listing, and it falls before the date of the
+> commit. The kept suffix shows whether the session was in daylight-saving
+> time. Health, position, damage, healing and gear values stay real, and they
+> are the same in any other group member's log of the same fight. Someone who
+> already holds such a log can still match it to ours by those values, so a
+> group fight stays linkable to that extent. A solo log has nothing to match
+> against.
+>
+> *What is captured.* Only `WoWCombatLog.txt` and
+> `WoWCombatLog-MMDDYY_HHMMSS.txt` (exact case) are picked, by default the
+> newest non-empty one. `--combat-log NAME` (repeatable) captures only the
+> named files, each directly under a flavor's `Logs/`. The newest is then
+> not captured unless it is named too. A name of any other shape, or one that
+> is not the combat-log kind, stops the run before anything is written, and
+> the message names it by position, not by name. A
+> log that starts with a gzip, zip, bzip2, xz or zstd signature, holds a NUL
+> byte or is not valid UTF-8 is refused unscrubbed. Each captured log gets
+> its own row and its own checks.
+>
+> *Folded spellings.* The owner's own identity strings, other players' names
+> (`--pseudonymise-other-players`) and loose second names are also hunted in
+> a folded copy of the text. The fold is NFKD, then format characters (Cf)
+> and non-spacing marks (Mn) are dropped, then the text is casefolded. So
+> full-width letters, added or dropped accents, zero-width spaces and soft
+> hyphens are all caught. Between letters, the hunt reads past any run of
+> blanks (`\s`: tab, NBSP, doubled spaces), apostrophes and U+2018, U+2019,
+> U+02BC, hyphens and U+2010 to U+2015, underscores and `\'`. For the
+> owner's names, a hit refuses the file with
+> `surviving identity string (folded or separated spelling) xN`. This check
+> only detects and refuses. The rewrite itself is unchanged: byte-exact, on
+> the spellings listed above.
+>
+> Why: the unit GUID's location fields were the last real server numbers in
+> a captured log. A spawn UID or a real timestamp can tie the log to another
+> player's published log of the same fight, and that log names the owner.
+
 Structure, key order, number text, escapes, line endings and everything else
 stay byte-for-byte. The scrubber works at the byte level with targeted
 replacements; it does not parse and re-serialize (the parser does not exist
