@@ -32,6 +32,8 @@ Create `lab/core/` as the uv workspace's only member, `wowlab-core` (import `wow
 
 **Acceptance:** run against a synthetic install tree built in the test (our own layout, so constructed input is legitimate): pseudonyms are stable across files; untouched bytes are identical (assert on a diff of offsets); the three refusal cases refuse; `--dry-run` writes nothing. `gitleaks` config extended if the scrubbed output trips it for a benign reason, with the reason in the PR. Reviewed by `security-reviewer`.
 
+*Follow-ups 4 and 5 merged (#63, 2026-09-23; #64, 2026-09-27): `--pseudonymise-other-players`; invented location parts of unit GUIDs in combat logs; each combat log's timestamps and file name moved by its own secret offset (owner decision 2026-09-24); `--combat-log NAME`; folded identity checks. Not scheduled: U+2212, U+2043, U+30FC, prime and backtick between letters are not treated as separators (the client does not write them); the byte-oracle test proves bytes outside spans, not what each span became; scrub time about 1.4× on large non-ASCII SavedVariables.*
+
 ---
 
 ## [ ] M10-03 — Capture the fixture corpus
@@ -56,12 +58,14 @@ Graders for `wowlab_core.luadata` parsing, derived from `docs/LAB_PLAN.md` §6.4
 
 ---
 
-## [ ] M10-04 — luadata parser [IMPL]
+## [x] M10-04 — luadata parser [IMPL]
 **Size:** L · **Depends on:** M10-04T
 
 `lab/core/src/wowlab_core/luadata.py` per `docs/LAB_PLAN.md` §6.4 (parsing half). No Lua execution, no third-party parser (L3). Activate graders by deleting marker lines only.
 
 **Acceptance:** `make test-parser` green with all M10-04T markers removed; parse time and peak RSS for the largest real fixture pasted in the PR, plus a generated 50 MB document (generator script in `lab/core/tests/`, labelled constructed) against the §6.4 target. If the target is missed, report numbers and stop (ADR-0020).
+
+*Merged 2026-09-27 (#58), pure Python under the §6.4 cost budget (`MAX_COST`); owner decisions of 2026-09-23 (option 1), 2026-09-24 (a document over the budget is refused even under 50 MB) and third and fourth fix rounds (2026-09-24, 2026-09-27). Follow-ups recorded at merge: a `m10/04-luadata-followups` ticket is running for the Windows CI timing probes, the refusal speed on mixed line endings, the backslash-before-NUL message and the §6.4 "Slowest" row. Not scheduled: `to_python()` on one key of about 10M escaped line breaks takes about 6.6 s (bounded by the per-backslash charge); the review probe `test_m10_04_bounded_document_misses_memory_target.py` still imports `MAX_ENTRIES` as if it were the bound (passes; stale).*
 
 ---
 
@@ -166,6 +170,8 @@ Graders from `docs/LAB_PLAN.md` §6.4 (serializer half) and `docs/LAB_FORMATS.md
 
 **Acceptance:** every line of each real fixture tokenizes or is yielded as `Unparsed` (report the count and the distinct unparsed shapes); quoted commas and nested `[...]`/`(...)` groups handled (`COMBATANT_INFO` fixture line); `follow()` yields appended records, survives truncation and a rotated file name.
 
+
+*Amended 2026-09-27 (owner, 2026-09-24): the Forever fixture is an open-world log with no `COMBATANT_INFO` and no `[...]`/`(...)` groups (`docs/LAB_FORMATS.md` §8 amendment). Until a real boss-pull log is captured (the owner will record one), quoted commas and nested groups are graded on constructed lines labelled `constructed` (L8), written from §8 and community documentation and marked **[verify]**; every line of the real fixture must still tokenize. When a real `COMBATANT_INFO` line is committed, a grader on it replaces the constructed one. Records carry shifted timestamps (M10-02 follow-up 5): the tokenizer must not assume the timestamp is the real time.*
 ---
 
 ## [ ] M10-14 — `wowlab` CLI
