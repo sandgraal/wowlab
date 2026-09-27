@@ -333,6 +333,58 @@ form) falls back as for a new file.
 Output is byte-deterministic: same document, same bytes, on every
 platform and locale.
 
+*Amended 2026-09-27 (owner decisions after the M10-12T reviews; replaces
+"with none to read, §4.2's" above):*
+
+1. **Seam.** `luadata.serialize(document, *, target=None,
+   lab_written=frozenset()) -> bytes` writes nothing (L1, L2). A trivia slot
+   (`lead`, `eq_lead`, `key_close_lead`, `sep_lead`, `close_lead`, `tail`)
+   or `sep` holding `None` is filled from the detected style; bytes are
+   written as given. To append to a parsed table the caller sets its
+   `close_lead` to `None`; the old last entry's `Entry.comment` is written
+   after its separator with one space, and own-line comments that stood
+   before the old `}` are dropped by that edit. Identical nodes may be
+   shared (M10-04), so edits are never tracked by object identity.
+2. **Data only (owner).** `serialize` raises `LuaDataError` when a given
+   trivia slot holds anything but whitespace and `--` line comments (no long
+   comments, no NUL), or a `raw`, key or name is not a literal §4.1 accepts.
+   Its output always parses as data: L3 holds for writes as well as reads.
+3. **Siblings.** Style is detected, at run time, in the client-written
+   SavedVariables of the flavor folder that holds `target`:
+   `WTF/Account/*/SavedVariables.lua`, `WTF/Account/*/SavedVariables/*.lua`
+   and `WTF/Account/*/*/*/SavedVariables/*.lua` (the retail
+   `<Realm>/<Character>` and the Forever `<digits>/<First>-<Second>` shapes
+   alike), account-wide and per-character pooled, since one client binary
+   writes both. Never the target itself, never `*.lua.bak`, never another
+   flavor folder, never a renamed copy of `WTF`, never `Interface/`, and no
+   per-flavor constant (L6). A sibling that cannot be read, does not parse
+   or is over a bound is skipped and never makes `serialize` raise;
+   detection may read a bounded prefix of a sibling.
+4. **Disagreement (owner).** Where siblings disagree on a property, the most
+   recently modified sibling that shows it decides, excluding the paths in
+   `lab_written` (the caller passes the files the guard journal records as
+   last written by the Lab); ties break on the byte-wise path relative to
+   the flavor folder, so the output never depends on directory order. (A
+   file of an addon not loaded at logout, or of a character not logged in
+   since a patch, keeps an older client's layout **[verify]**.)
+5. **Pairing (owner).** Indentation and array comments are one pairing: a
+   document or sibling that shows either decides both. Every capture shows
+   neither; the remembered retail form shows both; no file has been seen
+   with one and not the other **[verify]**. The other properties (separator,
+   line ending, leading empty line, `[number]` key form, empty-table form)
+   are decided one by one in the same order: document, siblings, fallback.
+6. **Fallback (owner).** With nothing to read, the layout every captured
+   file shows: no indentation, no `-- [n]`, CRLF, a leading empty line, `,`
+   after every entry, an empty table as `{` and `}` on two lines (Forever
+   beta 1.60.1, macOS, 105 of 105 files). §4.2's tab-indented, commented
+   form is the remembered retail layout **[verify]**: it is followed when a
+   document or sibling shows it and graded on constructed documents, never
+   chosen by default.
+7. **Scope of "exactly".** Style preservation gives the smallest diff until
+   the client's next write of that file, which re-emits it in the client's
+   own layout, key order and number format; the placement of new entries is
+   the Lab's own, not the client's.
+
 Performance: a 50 MB SavedVariables file (auction or collection addons get
 there) parses in under 10 s and under 1.5 GB RSS on the owner's laptop
 (within the `luadata.MAX_COST` budget; see the amendment below).

@@ -399,3 +399,19 @@ Dated entries, newest last. Each names the fixture that prompted it.
   between tokens and in strings. A number literal longer than 4300
   characters and a document over the `luadata.MAX_COST` parse budget are
   refused as bounds (`docs/LAB_PLAN.md` §6.4, amendment of the same date).
+- **2026-09-27, §4.2, after the M10-12T reviews (owner decisions in
+  `docs/LAB_PLAN.md` §6.4, amendment of the same date).** Line endings: CRLF
+  on every line, the leading empty line and the last included, in every
+  SavedVariables file captured (Forever beta 1.60.1.69977, macOS, 105
+  files); Windows and retail are **[verify]**. An existing document keeps its
+  own endings; a new file takes its siblings'; with none to read, CRLF. The
+  §4.2 bullets "Indentation is one tab per level" and "written positionally
+  with a `-- [n]` comment" describe the remembered retail form, not yet seen
+  from any client **[verify]**; the Forever beta writes neither (amendment of
+  2026-09-22). The 2026-09-22 wording "floats in shortest round-trip form"
+  is corrected: the client writes floats with at most 16 significant
+  digits, which do not always read back as the same double
+  (`49.99999618530273`, uncommitted capture `Blizzard_PTRFeedback.lua`,
+  1.60.1; **[verify]** on a committed fixture). The Lab keeps every number's
+  text and never reformats a number it did not create; a number built from
+  a Python float must not use `repr()`, which can give 17 digits.
