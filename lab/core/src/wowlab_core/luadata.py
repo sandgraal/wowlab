@@ -663,7 +663,6 @@ _COMMENT_AFTER = re.compile(rb"[ \t\f\v]*(--[^\r\n\x00]*)")
 _TRIVIA_RE = re.compile(_TRIVIA)
 _NUM_RE = re.compile(_NUM)
 _NAME_RUN = re.compile(rb"[A-Za-z_][A-Za-z0-9_]*")
-_LINE_PAIR = re.compile(rb"\r\n|\n\r")
 _LONG_OPEN = re.compile(rb"\[=*\[")
 # A string body the grammar accepts: ordinary bytes and well-formed escapes.
 _BODY_DQ = re.compile(_DQ_BODY).match
@@ -677,26 +676,102 @@ def _position(data: bytes, offset: int) -> tuple[int, int]:
 
     Every CR and LF is a line break except the second byte of a pair, and
     Lua pairs a CR with an LF next to it greedily from the left, which is
-    exactly the leftmost-first matching of `\\r\\n|\\n\\r`. Counted in
-    constant memory: at C speed when the prefix has only one pair order
-    (then the pairs are simply its occurrences, as nothing can consume their
-    first byte), and one regex match at a time when it has both."""
+    exactly the leftmost-first matching of `\\r\\n|\\n\\r`. Counted at C
+    speed and in memory bounded by `_POSITION_CHUNK`: directly when the
+    prefix has only CRs, only LFs or only CRLFs, and otherwise by
+    `_mixed_pairs`."""
     line_start = max(data.rfind(b"\n", 0, offset), data.rfind(b"\r", 0, offset)) + 1
     column = offset - line_start + 1
     lfs = data.count(b"\n", 0, line_start)
     crs = data.count(b"\r", 0, line_start)
     if not lfs or not crs:
         return lfs + crs + 1, column
-    crlfs = data.count(b"\r\n", 0, line_start)
-    if crlfs == lfs == crs:  # pure CRLF, the client's: greedy pairing starts at every CR
+    if data.count(b"\r\n", 0, line_start) == lfs == crs:  # pure CRLF, the client's
         return lfs + 1, column
-    if data.find(b"\n\r", 0, line_start) < 0:
-        pairs = crlfs
-    elif data.find(b"\r\n", 0, line_start) < 0:
-        pairs = data.count(b"\n\r", 0, line_start)
-    else:
-        pairs = sum(1 for _ in _LINE_PAIR.finditer(data, 0, line_start))
-    return lfs + crs - pairs + 1, column
+    return lfs + crs - _mixed_pairs(data, line_start) + 1, column
+
+
+# `_mixed_pairs` reads at most this many bytes at a time (module-level so a
+# test can make it tiny and put a cut at every offset).
+_POSITION_CHUNK = 1 << 20
+_CR_MASK = bytes(0xFF if b == 0x0D else 0 for b in range(256))
+_LF_MASK = bytes(0xFF if b == 0x0A else 0 for b in range(256))
+
+
+def _mixed_pairs(data: bytes, end: int) -> int:
+    """The number of leftmost-first `\\r\\n|\\n\\r` matches in `data[:end]`.
+
+    The pure-CRLF prefix, up to the slice holding the first stray CR or LF,
+    is counted with `bytes.count` (`_crlf_prefix`). The rest is read in
+    slices of `_POSITION_CHUNK` bytes, each counted from its first byte by
+    `_pairs`. A slice may end anywhere, even inside a run of line breaks:
+    greedy pairing restarts at every slice start unless the cut splits a
+    pair, which happens only when the slice's last byte is left unpaired
+    and the next byte is the other line break. Then that pair is counted
+    here, and the next slice starts after it."""
+    begin, pairs = _crlf_prefix(data, end)
+    even = int.from_bytes(b"\x01\x00" * (_POSITION_CHUNK // 2 + 1), "little")
+    while begin < end:
+        cut = min(begin + _POSITION_CHUNK, end)
+        count, last_paired = _pairs(data, begin, cut, even)
+        pairs += count
+        begin = cut
+        if not last_paired and cut < end:
+            before, after = data[cut - 1], data[cut]
+            if before != after and before in b"\r\n" and after in b"\r\n":
+                pairs += 1
+                begin = cut + 1
+    return pairs
+
+
+def _crlf_prefix(data: bytes, end: int) -> tuple[int, int]:
+    """Where the pure-CRLF prefix of `data[:end]` ends, as a slice start, and
+    the pairs before it.
+
+    A slice is pure when every CR in it is followed by an LF and every LF
+    follows a CR, which three `bytes.count` calls confirm; then its pairs
+    are its CRLFs. Every slice here ends just after an LF, so no pair is
+    split. The start returned is that of the first slice that is not pure,
+    or `end`."""
+    begin = pairs = 0
+    while begin < end:
+        cut = data.find(b"\n", min(begin + _POSITION_CHUNK, end) - 1, end)
+        cut = end if cut < 0 else cut + 1
+        crlfs = data.count(b"\r\n", begin, cut)
+        if not crlfs == data.count(b"\r", begin, cut) == data.count(b"\n", begin, cut):
+            break
+        pairs += crlfs
+        begin = cut
+    return begin, pairs
+
+
+def _pairs(data: bytes, begin: int, end: int, even: int) -> tuple[int, bool]:
+    """Leftmost-first `\\r\\n|\\n\\r` matches in `data[begin:end]`, counted
+    from `begin` at C speed, and whether the last byte is the second byte of
+    one. `even` has a 1 in the low bit of every even-numbered byte, at least
+    as long as the slice.
+
+    With one pair order only, the pairs are its occurrences. With both, the
+    line-break bytes form maximal alternating runs (a run ends at any other
+    byte or at two equal breaks side by side), greedy pairing restarts at
+    each run's start and takes every second byte from there. That is done
+    with integer bit operations on one mask byte per input byte: `d` marks
+    each byte that is a CR or LF followed by the other, and adding a run's
+    first bit to `d` ripples a carry through the run, which picks out the
+    runs that start on an even byte."""
+    if data.find(b"\n\r", begin, end) < 0:
+        return data.count(b"\r\n", begin, end), data.endswith(b"\r\n", begin, end)
+    if data.find(b"\r\n", begin, end) < 0:
+        return data.count(b"\n\r", begin, end), data.endswith(b"\n\r", begin, end)
+    chunk = data[begin:end]
+    cr = int.from_bytes(chunk.translate(_CR_MASK), "little")
+    lf = int.from_bytes(chunk.translate(_LF_MASK), "little")
+    d = (cr & (lf >> 8)) | (lf & (cr >> 8))  # 0xFF where a pair can start
+    starts = d ^ (d & (d << 8))
+    even_runs = d ^ (d & (d + (starts & even)))  # the carry clears each even-start run
+    odd_runs = d ^ even_runs
+    taken = (even_runs & even) | (odd_runs & (even << 8))  # 1 where a pair starts
+    return taken.bit_count(), bool(taken >> (8 * (len(chunk) - 2)))
 
 
 # An error keeps at most this many bytes of its offending token (and says how
@@ -820,6 +895,8 @@ class _Diagnoser:
         if c == 0x5C:
             if i + 1 >= n:
                 self.fail_span(p, i, "unterminated string")
+            if data[i + 1] == 0:  # the NUL is what is refused, as it is anywhere else
+                self.fail(i + 1, b"\x00", "a NUL byte is rejected (§4.3)")
             self.fail(i, data[i : i + 2], "not a Lua 5.1 escape")
         if c == 0:
             self.fail(i, b"\x00", "a NUL byte is rejected (§4.3)")
