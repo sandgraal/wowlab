@@ -334,7 +334,8 @@ Output is byte-deterministic: same document, same bytes, on every
 platform and locale.
 
 Performance: a 50 MB SavedVariables file (auction or collection addons get
-there) parses in under 10 s and under 1.5 GB RSS on the owner's laptop.
+there) parses in under 10 s and under 1.5 GB RSS on the owner's laptop
+(within the `luadata.MAX_COST` budget; see the amendment below).
 Measure it in the PR; if pure Python misses the target, report the numbers
 and stop. Do not reach for a C extension or a third-party parser without an
 ADR.
@@ -404,6 +405,62 @@ observed). Grammar changes are mirrored in
    `boolean`. Only the later of two equal keys (Lua key equality: `a` and
    `["a"]`, `[1]` and `[1.0]` and the first positional entry) is flagged
    `duplicate`.
+
+*Amended 2026-09-23 (owner decision after the M10-04 reviews: option 1;
+rewritten after fix rounds 2 to 4):* two more bounds, each raising
+`LuaLimitError` with a position. A number literal longer than 4300
+characters is refused, so no conversion is quadratic (the same limit CPython
+sets on int parsing). And every document is charged against a parse budget,
+`MAX_COST` (a module constant, in bytes): the input buffer, then for each
+table entry and each top-level assignment a base cost plus every object
+built for it that is not shared (each unshared trivia, lead, comment, key
+and value text, counted with its object overhead; a trailing comment twice,
+as it is held twice), plus time charges: an entry the fast regex cannot
+take, a table, every backslash in a string literal (which bounds the escapes
+decoded later), every escaped key, and decoding each distinct escaped key
+at parse. An entry or assignment shared whole with an identical earlier one
+still costs a fixed amount, for its parse time. A document over the budget
+is refused at the entry or assignment that crosses it. The target covers
+every document within the budget, whatever its shape. The constants are
+calibrated by `lab/core/tests/luadata_bench_constructed.py --at-budget`,
+which fills each constructed shape to just under the budget and parses it
+in a fresh interpreter. Measured on the owner's M1 (16 GB) on 2026-09-27,
+load average 1.8 to 3.7, peak memory as `/usr/bin/time -l` reports it
+(which counts compressed memory; `ru_maxrss` can under-report):
+
+| Shape at the budget | Entries | File | Peak memory | Parse |
+|---|---|---|---|---|
+| Most memory: `[1000000] = 1,` one per CRLF line (distinct number keys) | 2,956,296 | 45.1 MiB | 1,121 MiB | 4.3 s |
+| Slowest: `  [  "k…"  ]  =  {  }  ,  -- …` (wide trivia, distinct comments) | 1,408,267 | 59.1 MiB | 810 MiB | 6.4 s |
+| `["n"]=true;` (one short key, repeated) | 4,771,781 | 50.1 MiB | 764 MiB | 6.0 s |
+| `["\1"]=0,` (one escaped key, repeated) | 2,744,626 | 23.6 MiB | 442 MiB | 4.5 s |
+| `["\1…"]=0,` (distinct escaped keys) | 1,057,499 | 16.1 MiB | 409 MiB | 4.3 s |
+| `["\` line break `"]=0,` (escaped line break key, repeated) | 2,744,626 | 23.6 MiB | 442 MiB | 4.1 s |
+| Dense client shape: `0,` one per CRLF line | 6,609,191 | 25.2 MiB | 194 MiB | 5.4 s |
+| Dense client shape: `true,` one per CRLF line | 6,497,171 | 43.4 MiB | 210 MiB | 5.1 s |
+
+The bench's other shapes (distinct numbers and strings, string keys, empty
+tables, top-level assignments, `0;` and `\v0,` lists, comment-led lists,
+§4.2 reference-layout comments with distinct strings, 70-byte distinct
+comments) all measured between these rows. *Owner decision 2026-09-24:* the
+budget, not the file size, decides what parses. A document over `MAX_COST`
+is refused with `LuaLimitError` even when it is smaller than the 50 MB the
+performance target names; the target holds for documents within the
+budget. Measured refusal points for 50 MiB files in the Forever layout
+(`lab/core/tests/luadata_bench_constructed.py --shape ids|zeros`): a flat
+positional array of distinct six-digit integers, 5.33 million entries in the
+file, is refused at about 3.51 million entries; an array of `0,`, 13.1
+million entries, is refused at about 6.46 million. The same holds, sooner,
+for the §4.2 reference layout that the retail client writes (tab indentation
+and a `-- [n]` comment after each positional entry; each comment is charged
+twice, as it is held twice). A 50 MiB array of distinct six-digit integers
+in that layout, 2.18 million entries, is refused at about 2.03 million; an
+array of `0`, 2.82 million entries, at about 2.62 million. The Forever
+client writes no `-- [n]` comments (`docs/LAB_FORMATS.md` §4.2 amendment of
+2026-09-22), so this matters only if a retail install's SavedVariables are
+read. The auction, collection and `true` shapes at 50 MiB parse in both
+layouts. The parse tree uses immutable tuples for speed; Pydantic models
+are built at the CLI output boundary (M10-14).
 
 ### 6.5 `wtfconfig` — Config.wtf, bindings, macros (M10-07)
 
