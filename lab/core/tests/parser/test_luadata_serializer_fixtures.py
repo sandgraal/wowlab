@@ -1,64 +1,75 @@
 """Graders for the `wowlab_core.luadata` serializer against the real
-SavedVariables captures (M10-12T; L1, L4, L6, L8).
+SavedVariables captures (M10-12T; L1, L3, L4, L6, L8).
 
 Written before the serializer exists, from `docs/LAB_PLAN.md` §6.4
 (serializer half, the owner decision of 2026-09-22 on the document's own
-style, and the sibling-file fallback) and `docs/LAB_FORMATS.md` §4.2 with
-its 2026-09-22 amendments (the Forever part-2 capture: no indentation, no
-`-- [n]` comments, CRLF everywhere, a leading empty line, `,` after every
-entry, two-line empty tables). Every grader carries one marker line that
-M10-12 deletes; nothing else here is the implementer's to change.
-Constructed inputs (§4.2's tab-indented, commented reference layout, other
-separators and indentation units, sibling trees made of constructed files)
-are in `test_luadata_serializer_constructed.py`; a grader here that mixes in
-a constructed file says `constructed` in its test id.
+style, and the amendment of 2026-09-27, items 1 to 7) and
+`docs/LAB_FORMATS.md` §4.2 with its 2026-09-22 and 2026-09-27 amendments
+(the Forever part-2 capture: no indentation, no `-- [n]` comments, CRLF
+everywhere, a leading empty line, `,` after every entry, two-line empty
+tables). Every grader carries one marker line that M10-12 deletes; nothing
+else here is the implementer's to change. Constructed inputs (§4.2's
+remembered retail layout, other separators and indentation units, hostile
+documents for the data-only rule) are in
+`test_luadata_serializer_constructed.py`; a grader here that mixes in a
+constructed file says `constructed` in its test id.
 
-The seam, added to the one `test_luadata_fixtures.py` pins for the parser
-------------------------------------------------------------------------
-- `luadata.serialize(document, *, target=None) -> bytes`: the bytes of the
-  file for `document`, a `LuaDocument` from `parse` or `read`, possibly
-  edited, or one the caller built. It writes nothing, anywhere (L1; the
-  write is `guard`'s, L2).
+The seam (§6.4 amendment 2026-09-27, item 1), added to the one
+`test_luadata_fixtures.py` pins for the parser
+----------------------------------------------------------------------
+- `luadata.serialize(document, *, target=None, lab_written=frozenset())
+  -> bytes`: the bytes of the file for `document`, a `LuaDocument` from
+  `parse` or `read`, possibly edited, or one the caller built. It writes
+  nothing, anywhere (L1; the write is `guard`'s, L2).
 - `target` (`str`, `Path` or `None`) is the path the bytes are meant for; it
-  need not exist. It is only a place to look from. A layout property the
-  document does not show is detected, at run time, in the other
-  SavedVariables files (`*.lua` in a `SavedVariables` folder, account or
-  character) under the same flavor folder as `target`, the folder holding
-  the `WTF` folder above it; with none to read, or no `target`, it is
-  §4.2's. Nothing about a flavor is a constant (L6): the graders' flavor
-  folders have made-up names.
+  need not exist, and it is only a place to look from. `lab_written` holds
+  the paths of files the guard journal records as last written by the Lab;
+  the graders pass them as the same absolute `Path`s they built the tree
+  with.
 - Edits use the public immutable model (`_replace`, the NamedTuple
   constructors, `KeyStyle`). A trivia slot (`lead` of any value, entry or
   assignment; `eq_lead`, `key_close_lead`, `sep_lead`, `close_lead`; the
-  document's `tail`) or an entry's `sep` that holds `None` is left to the
-  serializer, which fills it from the detected style; one that holds bytes
-  is written as given. So a node from the parse, untouched, is its original
-  bytes. A new entry has `comment=None` and `duplicate=False`; whether a
-  `-- [n]` follows it is the style's call.
+  document's `tail`) or an entry's `sep` that holds `None` is filled from the
+  detected style; one that holds bytes is written as given, so a node from
+  the parse, untouched, is its original bytes. A new entry has
+  `comment=None` and `duplicate=False`.
 - To append after the last entry of a parsed table the caller also sets the
-  table's `close_lead` to `None`: those bytes hold the old last entry's line
-  comment and the closing brace's indentation, and they now belong after the
-  new entry. The old last entry's comment (`Entry.comment`) is kept.
+  table's `close_lead` to `None`. The old last entry's `Entry.comment` is
+  then written after its separator with one space; own-line comments that
+  stood before the old `}` are dropped by that edit.
 - Edits are graded by bytes, never by object identity: the parser shares
-  identical immutable nodes (`luadata` module docstring), so the graders
-  edit one of two equal subtrees and place one new node object twice.
+  identical immutable nodes, so the graders edit one of two equal subtrees
+  and place one new node object twice.
+- Data only (item 2): `serialize` raises `LuaDataError` when a given trivia
+  slot holds anything but whitespace and `--` line comments, or a `raw`,
+  key or name is not a literal §4.1 accepts. Its output always parses.
 
-The style (§6.4, owner decision 2026-09-22), as graded: the indentation unit
-or none, the `-- [n]` comments on positional entries or none, the entry
-separator, the line ending, and the forms the client writes around them (a
-leading empty line, ` = ` between key and value, a separator after every
-entry including the last, none after a top-level value, one assignment per
-line). Properties a document can fail to show: indentation (no table, or no
-entry on its own line), array comments (no positional entry), the form of a
-`[number]` key, an empty table's form. §4.2's line ending is CRLF: its
-example writes line breaks as ⏎, and the 2026-09-22 line-endings amendment
-records CRLF on every SavedVariables file and says a writer creating a new
-file chooses by file kind. §4.2 shows no empty table, so no grader asks the
-§4.2 fallback for one.
+Where the style comes from (items 3 to 6), as graded:
+- In order: the document, then its siblings, then the fallback. Indentation
+  and `-- [n]` array comments are one pairing (item 5): whoever shows either
+  decides both, so a document or sibling that shows entries at column 0
+  also decides "no comments", and one that shows only `-- [n]` also decides
+  tab indentation. The line ending, separator, leading empty line,
+  `[number]` key form and empty-table form are decided one by one.
+- Siblings (item 3): `WTF/Account/*/SavedVariables.lua`,
+  `WTF/Account/*/SavedVariables/*.lua` and
+  `WTF/Account/*/*/*/SavedVariables/*.lua` under the flavor folder holding
+  `target`; never the target, a `*.lua.bak`, another flavor folder, a
+  renamed copy of `WTF` or `Interface/`. A sibling that cannot be read or
+  parsed is skipped, never raised. The graders' flavor folders have
+  made-up names (L6).
+- Disagreement (item 4): the most recently modified sibling that shows the
+  property decides, excluding `lab_written`; a tie breaks on the byte-wise
+  path relative to the flavor folder, the lowest path first.
+- Fallback (item 6): the observed Forever layout: no indentation, no
+  `-- [n]`, CRLF, a leading empty line, `,` after every entry, an empty
+  table on two lines. The `[number]` key form, which no capture and no
+  item states, is `[42] = ` as in §4.1 and §4.2.
 
 Not gradable on real data yet (the corpus has no such file): a tab-indented
 or `-- [n]`-commented capture, a `[number]` key, `;` separators, LF
-SavedVariables. The constructed file stands in for each until one does.
+SavedVariables, an account `SavedVariables.lua`, siblings that disagree.
+The constructed files stand in for each until one does.
 """
 
 from __future__ import annotations
@@ -73,6 +84,7 @@ from typing import Any
 
 import pytest
 from _luadata_edits import (
+    ACCOUNT,
     ACCOUNT_SV,
     CHARACTER_SV,
     DBM,
@@ -93,6 +105,7 @@ from _luadata_edits import (
     replace_nth_after,
     replace_once,
     set_leaf,
+    set_mtime,
     string,
     table,
     tree_state,
@@ -103,9 +116,13 @@ pytestmark = pytest.mark.parser
 
 SAVEDVARIABLES = indexed("savedvariables")
 CRLF = b"\r\n"
+FLAT_CRLF = reference_text(indent=b"", comments=False, eol=CRLF)
+TABS_LF = reference_text(indent=b"\t", comments=True, eol=b"\n")
+OLD, NEW, NEWER = 1_700_000_000, 1_700_000_100, 1_700_000_200
 
-# A constructed sibling in §4.2's reference layout (tab indentation, `-- [n]`
-# comments), LF: a stand-in until a real capture shows that style (L8).
+# A constructed sibling in §4.2's remembered retail layout (tab indentation,
+# `-- [n]` comments), LF: a stand-in until a real capture shows that style
+# (L8).
 CONSTRUCTED_TAB_LF_SIBLING = (
     b"\n"
     b"LabSiblingDB = {\n"
@@ -133,9 +150,6 @@ def _forever_install(root: Path) -> Path:
         f"{ACCOUNT_SV}/DBM-StatusBarTimers.lua": fixture(DBM),
     }
     return install(root, {"_lab_one_": files})
-
-
-# ── unmodified: byte for byte (L4) ──────────────────────────────────────────
 
 
 @pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
@@ -358,7 +372,8 @@ def test_new_entries_follow_the_unindented_forever_style(
     per entry at column 0, CRLF, `,` after it, no `-- [n]` on a positional
     entry (the file shows positional entries without one), an empty table on
     two lines (the file shows that form). DBM has no `[number]` key, so that
-    key's form falls back to §4.2's `[42] = `, the rest from the file."""
+    key's form comes from the fallback, `[42] = ` (§4.1, §4.2), the rest
+    from the file."""
     source = fixture(name)
     doc = append(luadata, luadata.parse(source), variable, steps, *new(luadata))
     assert luadata.serialize(doc) == expected(source)
@@ -395,27 +410,19 @@ def test_one_new_node_object_placed_twice_is_laid_out_per_place(luadata: Any) ->
 
 # ── a property the document does not show falls back as for a new file ─────
 
+RARESCANNER_FLAT = (
+    b"\r\nRareScannerDB = {\r\n"
+    b'["lab_key"] = "text",\r\n'
+    b'["lab_list"] = {\r\n'
+    b'"first",\r\n'
+    b'"second",\r\n'
+    b"},\r\n"
+    b"[42] = true,\r\n"
+    b"}\r\n"
+)
 RARESCANNER_NEW_TABLE_EXPECTED = {
-    "no-target": (
-        b"\r\nRareScannerDB = {\r\n"
-        b'\t["lab_key"] = "text",\r\n'
-        b'\t["lab_list"] = {\r\n'
-        b'\t\t"first", -- [1]\r\n'
-        b'\t\t"second", -- [2]\r\n'
-        b"\t},\r\n"
-        b"\t[42] = true,\r\n"
-        b"}\r\n"
-    ),
-    "forever-siblings": (
-        b"\r\nRareScannerDB = {\r\n"
-        b'["lab_key"] = "text",\r\n'
-        b'["lab_list"] = {\r\n'
-        b'"first",\r\n'
-        b'"second",\r\n'
-        b"},\r\n"
-        b"[42] = true,\r\n"
-        b"}\r\n"
-    ),
+    "no-target": RARESCANNER_FLAT,
+    "forever-siblings": RARESCANNER_FLAT,
     "constructed-tab-lf-sibling": (
         b"\r\nRareScannerDB = {\r\n"
         b'\t["lab_key"] = "text",\r\n'
@@ -442,14 +449,14 @@ def _siblings(case: str) -> dict[str, bytes] | None:
 
 @pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize("case", list(RARESCANNER_NEW_TABLE_EXPECTED))
-def test_table_in_a_file_without_one_takes_absent_properties_from_siblings_else_reference(
+def test_table_in_a_file_without_one_takes_the_pairing_from_siblings_else_the_fallback(
     luadata: Any, case: str, tmp_path: Path
 ) -> None:
     """RareScanner.lua is `RareScannerDB = nil`: it shows CRLF, the leading
-    empty line and ` = `, but no indentation and no array comments. Setting
-    the variable to a table takes those two from the sibling files under the
-    same flavor folder (unindented, no comments for the Forever files;
-    tab-indented and commented for the constructed LF file), else §4.2's; the
+    empty line and ` = `, but neither indentation nor array comments. Setting
+    the variable to a table takes that pairing from the siblings under the
+    same flavor folder (flat for the Forever files; tab-indented and
+    commented for the constructed LF file), else the Forever fallback; the
     line ending stays the document's own CRLF in every case."""
     siblings = _siblings(case)
     if siblings is None:
@@ -497,22 +504,16 @@ def test_empty_table_form_comes_from_forever_siblings(luadata: Any, tmp_path: Pa
     )
 
 
-DBM_POSITIONAL_EXPECTED = {
-    "no-target": b'"lab", -- [1]\r\n',
-    "forever-siblings": b'"lab",\r\n',
-    "constructed-tab-lf-sibling": b'"lab", -- [1]\r\n',
-}
-
-
 @pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
-@pytest.mark.parametrize("case", list(DBM_POSITIONAL_EXPECTED))
-def test_positional_entry_in_a_file_without_one_takes_comments_from_siblings_else_reference(
+@pytest.mark.parametrize("case", ["no-target", "forever-siblings", "constructed-tab-lf-sibling"])
+def test_a_document_showing_no_indentation_writes_no_array_comment(
     luadata: Any, case: str, tmp_path: Path
 ) -> None:
-    """DBM-StatusBarTimers.lua has no positional entry, so it does not show
-    whether one carries `-- [n]`. The sibling Syndicator.lua shows 82 without
-    one; the constructed sibling shows them with one; §4.2 writes one. The
-    indentation (none) and CRLF stay the document's own."""
+    """Pairing (§6.4 amendment 2026-09-27, item 5): DBM-StatusBarTimers.lua
+    has no positional entry, but its entries at column 0 show "no
+    indentation", which decides "no `-- [n]`" too. So a new positional entry
+    gets no comment whatever the siblings show, even a tab-indented,
+    commented one (constructed)."""
     siblings = {
         "no-target": None,
         "forever-siblings": {f"{ACCOUNT_SV}/Syndicator.lua": fixture(SYNDICATOR)},
@@ -533,11 +534,11 @@ def test_positional_entry_in_a_file_without_one_takes_comments_from_siblings_els
         ("Default", "DBM"),
         positional(luadata, string(luadata, "lab")),
     )
-    expected = insert_after_line(source, b'["VarianceTexture"]', DBM_POSITIONAL_EXPECTED[case])
+    expected = insert_after_line(source, b'["VarianceTexture"]', b'"lab",\r\n')
     assert luadata.serialize(doc, target=target) == expected
 
 
-# ── a new document: the sibling files' style, else §4.2 ─────────────────────
+# ── a new document: the sibling files' style, else the fallback ─────────────
 
 
 @pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
@@ -546,9 +547,9 @@ def test_new_document_follows_the_forever_sibling_files(
     luadata: Any, where: str, tmp_path: Path
 ) -> None:
     """A new file under a flavor folder whose SavedVariables (account-wide,
-    or only a character's) are the real Forever captures: §4.2's example
-    document comes out unindented, uncommented, CRLF, with the leading empty
-    line."""
+    or only a character's, in the Forever `<digits>/<First>-<Second>` shape)
+    are the real Forever captures: §4.2's example document comes out
+    unindented, uncommented, CRLF, with the leading empty line."""
     folder = ACCOUNT_SV if where == "account" else CHARACTER_SV
     root = install(
         tmp_path / "install",
@@ -560,17 +561,16 @@ def test_new_document_follows_the_forever_sibling_files(
         },
     )
     target = root / "_lab_one_" / ACCOUNT_SV / "LabNewAddon.lua"
-    out = luadata.serialize(reference_document(luadata), target=target)
-    assert out == reference_text(indent=b"", comments=False, eol=CRLF)
+    assert luadata.serialize(reference_document(luadata), target=target) == FLAT_CRLF
 
 
 @pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
-def test_new_document_takes_what_siblings_do_not_show_from_the_reference(
+def test_a_sibling_showing_no_indentation_decides_no_array_comments(
     luadata: Any, tmp_path: Path
 ) -> None:
-    """Siblings that show no positional entry (DBM-StatusBarTimers.lua,
-    RareScanner.lua) leave the array comments to §4.2; indentation (none)
-    and CRLF come from the siblings."""
+    """Pairing: the only siblings (DBM-StatusBarTimers.lua, RareScanner.lua)
+    show no positional entry, but DBM's entries at column 0 decide the whole
+    pairing: no indentation and no `-- [n]`. No mixed layout."""
     root = install(
         tmp_path / "install",
         {
@@ -581,35 +581,197 @@ def test_new_document_takes_what_siblings_do_not_show_from_the_reference(
         },
     )
     target = root / "_lab_one_" / ACCOUNT_SV / "LabNewAddon.lua"
-    out = luadata.serialize(reference_document(luadata), target=target)
-    assert out == reference_text(indent=b"", comments=True, eol=CRLF)
+    assert luadata.serialize(reference_document(luadata), target=target) == FLAT_CRLF
+
+
+@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
+def test_new_document_in_a_flavor_with_no_savedvariables_is_the_fallback(
+    luadata: Any, tmp_path: Path
+) -> None:
+    """The target's flavor folder has no SavedVariables of its own; the
+    newest SavedVariables of the install, tab-indented and LF, sit in
+    another flavor folder (constructed) and are not siblings. So the
+    fallback: flat, CRLF. (The case with no target at all is graded in the
+    constructed file.)"""
+    root = install(
+        tmp_path / "install",
+        {
+            "_lab_empty_": {},
+            "_lab_other_": {
+                f"{ACCOUNT_SV}/Syndicator.lua": fixture(SYNDICATOR),
+                f"{ACCOUNT_SV}/Constructed.lua": CONSTRUCTED_TAB_LF_SIBLING,
+            },
+        },
+    )
+    set_mtime(root / "_lab_other_" / ACCOUNT_SV / "Syndicator.lua", OLD)
+    set_mtime(root / "_lab_other_" / ACCOUNT_SV / "Constructed.lua", NEWER)
+    target = root / "_lab_empty_" / ACCOUNT_SV / "LabNewAddon.lua"
+    assert luadata.serialize(reference_document(luadata), target=target) == FLAT_CRLF
+
+
+# ── siblings: which files, which one decides (§6.4 amendment items 3, 4) ────
+
+SYN, DBM_, TAB, NIL_LF = "syndicator", "dbm", "constructed-tab-lf", "constructed-nil-lf"
+_CONTENT = {
+    SYN: lambda: fixture(SYNDICATOR),
+    DBM_: lambda: fixture(DBM),
+    TAB: lambda: CONSTRUCTED_TAB_LF_SIBLING,
+    NIL_LF: lambda: b"\nLabX = nil\n",
+}
+
+
+def _tree(root: Path, flavors: dict[str, dict[str, tuple[str, int]]]) -> Path:
+    """An install whose files carry fixed modification times:
+    `{flavor: {path relative to the flavor folder: (content, mtime)}}`."""
+    install(
+        root,
+        {
+            f: {rel: _CONTENT[kind]() for rel, (kind, _t) in files.items()}
+            for f, files in flavors.items()
+        },
+    )
+    for flavor, files in flavors.items():
+        for rel, (_kind, seconds) in files.items():
+            set_mtime(root / flavor / rel, seconds)
+    return root
+
+
+DISAGREEING = {
+    "constructed-tab-newest": ({"Syndicator.lua": (SYN, OLD), "Tab.lua": (TAB, NEW)}, (), TABS_LF),
+    "flat-newest-constructed-tab-older": (
+        {"Syndicator.lua": (SYN, NEW), "Tab.lua": (TAB, OLD)},
+        (),
+        FLAT_CRLF,
+    ),
+    "constructed-tab-newest-but-lab-written": (
+        {"Syndicator.lua": (SYN, OLD), "Tab.lua": (TAB, NEW)},
+        ("Tab.lua",),
+        FLAT_CRLF,
+    ),
+    "constructed-tie-lowest-byte-path-Zeta-before-alpha": (
+        {"alpha.lua": (SYN, NEW), "Zeta.lua": (TAB, NEW)},
+        (),
+        TABS_LF,
+    ),
+    "constructed-tie-lowest-byte-path-Alpha-before-beta": (
+        {"Alpha.lua": (SYN, NEW), "beta.lua": (TAB, NEW)},
+        (),
+        FLAT_CRLF,
+    ),
+    "constructed-newest-shows-only-the-line-ending": (
+        {"Nil.lua": (NIL_LF, NEWER), "Syndicator.lua": (SYN, NEW), "Tab.lua": (TAB, OLD)},
+        (),
+        reference_text(indent=b"", comments=False, eol=b"\n"),
+    ),
+}
 
 
 @pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize(
-    "target_rel", [None, "no-savedvariables"], ids=["no-target", "other-flavor-only"]
+    ("files", "written", "expected"), list(DISAGREEING.values()), ids=list(DISAGREEING)
 )
-def test_new_document_with_no_sibling_to_read_is_the_reference_layout(
-    luadata: Any, target_rel: str | None, tmp_path: Path
+def test_disagreeing_siblings_newest_showing_the_property_decides(
+    luadata: Any,
+    files: dict[str, tuple[str, int]],
+    written: tuple[str, ...],
+    expected: bytes,
+    tmp_path: Path,
 ) -> None:
-    """With no target, or a target in a flavor folder with no SavedVariables
-    of its own, §4.2's layout: tab indentation, `-- [n]`, CRLF. The Forever
-    files in another flavor folder of the same install are not siblings."""
-    target = None
-    if target_rel is not None:
-        root = install(
-            tmp_path / "install",
-            {
-                "_lab_empty_": {},
-                "_lab_other_": {
-                    f"{ACCOUNT_SV}/Syndicator.lua": fixture(SYNDICATOR),
-                    f"{ACCOUNT_SV}/DBM-StatusBarTimers.lua": fixture(DBM),
-                },
+    """Item 4 (owner): per property, the most recently modified sibling that
+    shows it decides, leaving out the files in `lab_written`; equal times
+    break on the byte-wise path relative to the flavor folder, lowest first
+    (`Z` 0x5A sorts before `a` 0x61, so neither case folding nor directory
+    order can pass both tie cases). A newest sibling that shows only its
+    line ending decides that alone; the pairing comes from the next one."""
+    root = _tree(
+        tmp_path / "install",
+        {"_lab_one_": {f"{ACCOUNT_SV}/{name}": spec for name, spec in files.items()}},
+    )
+    folder = root / "_lab_one_" / ACCOUNT_SV
+    out = luadata.serialize(
+        reference_document(luadata),
+        target=folder / "LabNewAddon.lua",
+        lab_written=frozenset(folder / name for name in written),
+    )
+    assert out == expected
+
+
+SIBLING_SETS = {
+    "decoys-ignored": (
+        {
+            "_lab_one_": {
+                f"{ACCOUNT_SV}/Syndicator.lua": (SYN, OLD),
+                "WTF.old/Account/90000001#6/SavedVariables/Decoy.lua": (TAB, NEWER),
+                "Interface/AddOns/LabDecoy/SavedVariables/Decoy.lua": (TAB, NEWER),
+                f"{ACCOUNT_SV}/Syndicator.lua.bak": (TAB, NEWER),
+                f"{ACCOUNT_SV}/LabNewAddon.lua": (TAB, NEWER),
             },
-        )
-        target = root / "_lab_empty_" / ACCOUNT_SV / "LabNewAddon.lua"
-    out = luadata.serialize(reference_document(luadata), target=target)
-    assert out == reference_text(indent=b"\t", comments=True, eol=CRLF)
+            "_lab_other_": {f"{ACCOUNT_SV}/Decoy.lua": (TAB, NEWER)},
+        },
+        FLAT_CRLF,
+    ),
+    "constructed-account-savedvariables-lua": (
+        {
+            "_lab_one_": {
+                f"{ACCOUNT_SV}/Syndicator.lua": (SYN, OLD),
+                f"{ACCOUNT}/SavedVariables.lua": (TAB, NEWER),
+            }
+        },
+        TABS_LF,
+    ),
+    "constructed-retail-realm-character-shape": (
+        {
+            "_lab_one_": {
+                f"{ACCOUNT_SV}/Syndicator.lua": (SYN, OLD),
+                f"{ACCOUNT}/Labrealm/Labchar/SavedVariables/Addon.lua": (TAB, NEWER),
+            }
+        },
+        TABS_LF,
+    ),
+}
+
+
+@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
+@pytest.mark.parametrize(
+    ("flavors", "expected"), list(SIBLING_SETS.values()), ids=list(SIBLING_SETS)
+)
+def test_sibling_set_is_decided_by_path(
+    luadata: Any, flavors: dict[str, dict[str, tuple[str, int]]], expected: bytes, tmp_path: Path
+) -> None:
+    """Item 3: next to a real Forever file, tab-indented decoys that are
+    newer (a renamed `WTF.old`, an addon's own folder under `Interface/`, a
+    `.lua.bak`, the target itself, another flavor folder) change nothing; an
+    account-level `SavedVariables.lua` and a retail-shaped
+    `<Realm>/<Character>/SavedVariables/` file are siblings, and being
+    newest they decide."""
+    root = _tree(tmp_path / "install", flavors)
+    target = root / "_lab_one_" / ACCOUNT_SV / "LabNewAddon.lua"
+    assert luadata.serialize(reference_document(luadata), target=target) == expected
+
+
+@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
+def test_unreadable_unparsable_and_empty_siblings_are_skipped(luadata: Any, tmp_path: Path) -> None:
+    """Item 3: a sibling that is empty, cut off mid-table, over the depth
+    bound, or not a file at all is skipped, even when it is the newest, and
+    never makes `serialize` raise; Syndicator.lua decides."""
+    root = install(
+        tmp_path / "install",
+        {
+            "_lab_one_": {
+                f"{ACCOUNT_SV}/Syndicator.lua": fixture(SYNDICATOR),
+                f"{ACCOUNT_SV}/Empty.lua": b"",
+                f"{ACCOUNT_SV}/Broken.lua": b"\r\nX = {\r\n",
+                f"{ACCOUNT_SV}/Deep.lua": b"\r\nX = " + b"{" * 300 + b"}" * 300 + b"\r\n",
+            }
+        },
+    )
+    folder = root / "_lab_one_" / ACCOUNT_SV
+    (folder / "Folder.lua").mkdir()
+    set_mtime(folder / "Syndicator.lua", OLD)
+    for name in ("Empty.lua", "Broken.lua", "Deep.lua", "Folder.lua"):
+        set_mtime(folder / name, NEWER)
+    target = folder / "LabNewAddon.lua"
+    assert luadata.serialize(reference_document(luadata), target=target) == FLAT_CRLF
 
 
 @pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
@@ -631,40 +793,65 @@ def test_serialize_writes_nothing(luadata: Any, tmp_path: Path) -> None:
 
 # ── determinism: same document, same bytes (§6.4) ───────────────────────────
 
-NON_C_LOCALES = (
+DECIMAL_COMMA_LOCALES = (
     "de_DE.UTF-8",
     "de_DE.utf8",
     "fr_FR.UTF-8",
     "fr_FR.utf8",
-    "tr_TR.UTF-8",
-    "tr_TR.utf8",
+    "ru_RU.UTF-8",
+    "ru_RU.utf8",
+    "es_ES.UTF-8",
+    "es_ES.utf8",
     "German_Germany.1252",
     "de-DE",
-    "en_US.UTF-8",
-    "en_US.utf8",
-    "English_United States.1252",
+    "French_France.1252",
+    "fr-FR",
 )
 
 
-def _non_c_locale() -> str:
-    """The first locale of `NON_C_LOCALES` this machine has. None at all
-    fails the grader: a determinism claim with no non-C locale is untested."""
+def _decimal_comma_locale() -> str:
+    """The first locale of `DECIMAL_COMMA_LOCALES` this machine has whose
+    decimal point is not `.`. Where there is none, the grader is skipped with
+    that reason: a determinism claim under a locale that formats numbers
+    like C proves nothing."""
     saved = locale.setlocale(locale.LC_ALL)
     try:
-        for name in NON_C_LOCALES:
+        for name in DECIMAL_COMMA_LOCALES:
             try:
                 locale.setlocale(locale.LC_ALL, name)
             except locale.Error:
                 continue
-            return name
+            if locale.localeconv()["decimal_point"] != ".":
+                return name
     finally:
         locale.setlocale(locale.LC_ALL, saved)
-    pytest.fail(f"no non-C locale available among {NON_C_LOCALES}")
+    pytest.skip(
+        "no locale with a decimal point other than '.' on this machine "
+        f"(tried {', '.join(DECIMAL_COMMA_LOCALES)}); on Linux, generate one with "
+        "`sudo locale-gen de_DE.UTF-8`"
+    )
 
 
-def _determinism_cases(luadata: Any, root: Path) -> list[tuple[Any, Path | None]]:
-    """An edited real file (untouched subtrees plus new entries), and §4.2's
-    example as a new file with and without Forever siblings."""
+def _determinism_cases(luadata: Any, root: Path) -> list[tuple[Any, Path | None, frozenset[Path]]]:
+    """An edited real file (untouched subtrees plus new entries); §4.2's
+    example as a new file with Forever siblings, with none, and in a
+    disagreeing tree whose decision rests on a tie between equal times and on
+    `lab_written` (so neither directory order nor set order can show)."""
+    _tree(
+        root,
+        {
+            "_lab_one_": {
+                f"{ACCOUNT_SV}/Syndicator.lua": (SYN, OLD),
+                f"{ACCOUNT_SV}/DBM-StatusBarTimers.lua": (DBM_, OLD),
+            },
+            "_lab_tie_": {
+                f"{ACCOUNT_SV}/alpha.lua": (SYN, NEW),
+                f"{ACCOUNT_SV}/Zeta.lua": (TAB, NEW),
+                f"{ACCOUNT_SV}/Written.lua": (SYN, NEWER),
+                f"{CHARACTER_SV}/Written.lua": (DBM_, NEWER),
+            },
+        },
+    )
     syndicator = luadata.parse(fixture(SYNDICATOR))
     syndicator = set_leaf(
         luadata,
@@ -688,40 +875,53 @@ def _determinism_cases(luadata: Any, root: Path) -> list[tuple[Any, Path | None]
         (*PERSON, "details"),
         keyed(luadata, "t", table(luadata)),
     )
-    target = root / "_lab_one_" / ACCOUNT_SV / "LabNewAddon.lua"
+    tie = root / "_lab_tie_"
+    written = frozenset({tie / ACCOUNT_SV / "Written.lua", tie / CHARACTER_SV / "Written.lua"})
+    none: frozenset[Path] = frozenset()
     return [
-        (syndicator, None),
-        (reference_document(luadata), target),
-        (reference_document(luadata), None),
+        (syndicator, None, none),
+        (reference_document(luadata), root / "_lab_one_" / ACCOUNT_SV / "LabNewAddon.lua", none),
+        (reference_document(luadata), None, none),
+        (reference_document(luadata), tie / ACCOUNT_SV / "LabNewAddon.lua", written),
     ]
 
 
+def _serialize_all(
+    luadata: Any, cases: list[tuple[Any, Path | None, frozenset[Path]]]
+) -> list[bytes]:
+    return [luadata.serialize(doc, target=t, lab_written=w) for doc, t, w in cases]
+
+
 @pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
-def test_hundred_runs_give_identical_bytes_under_a_non_c_locale(
+def test_hundred_runs_give_identical_bytes_under_a_decimal_comma_locale(
     luadata: Any, tmp_path: Path
 ) -> None:
-    """100 serializations of each case under the C locale's opposite (a
-    decimal comma where the machine has one), each identical to the first
-    under the process's own locale."""
-    root = _forever_install(tmp_path / "install")
-    cases = _determinism_cases(luadata, root)
-    first = [luadata.serialize(doc, target=target) for doc, target in cases]
+    """100 serializations of each case under a locale whose decimal point
+    is not `.`, each identical to the first under the process's own locale.
+    The tie case is also checked against its expected bytes."""
+    cases = _determinism_cases(luadata, tmp_path / "install")
+    first = _serialize_all(luadata, cases)
+    assert first[3] == TABS_LF
+    name = _decimal_comma_locale()
     saved = locale.setlocale(locale.LC_ALL)
     try:
-        locale.setlocale(locale.LC_ALL, _non_c_locale())
+        locale.setlocale(locale.LC_ALL, name)
         for _ in range(100):
-            assert [luadata.serialize(doc, target=target) for doc, target in cases] == first
+            assert _serialize_all(luadata, cases) == first
     finally:
         locale.setlocale(locale.LC_ALL, saved)
 
 
 _CHILD = """
 import locale, pickle, sys
-locale.setlocale(locale.LC_ALL, "")
+locale.setlocale(locale.LC_ALL, sys.argv[3])
+assert locale.localeconv()["decimal_point"] != "."
 from wowlab_core import luadata
-cases = pickle.loads(open(sys.argv[1], "rb").read())
-out = [luadata.serialize(doc, target=target) for doc, target in cases]
-open(sys.argv[2], "wb").write(pickle.dumps(out))
+with open(sys.argv[1], "rb") as handle:
+    cases = pickle.load(handle)
+out = [luadata.serialize(doc, target=t, lab_written=w) for doc, t, w in cases]
+with open(sys.argv[2], "wb") as handle:
+    pickle.dump(out, handle)
 """
 
 
@@ -729,23 +929,22 @@ open(sys.argv[2], "wb").write(pickle.dumps(out))
 def test_fresh_interpreters_with_other_hash_seeds_and_locales_give_the_same_bytes(
     luadata: Any, tmp_path: Path
 ) -> None:
-    """Same documents, same bytes, in fresh interpreters under a non-C
-    locale from the environment and different hash seeds (so no set or dict
-    order of `str` keys can leak into the output)."""
-    root = _forever_install(tmp_path / "install")
-    cases = _determinism_cases(luadata, root)
-    expected = [luadata.serialize(doc, target=target) for doc, target in cases]
-    name = _non_c_locale()
+    """Same documents, same bytes, in fresh interpreters under a
+    decimal-comma locale and different hash seeds (so no set or dict order of
+    `str` keys, and no directory listing order, can leak into the output)."""
+    cases = _determinism_cases(luadata, tmp_path / "install")
+    expected = _serialize_all(luadata, cases)
+    name = _decimal_comma_locale()
     (tmp_path / "cases.pickle").write_bytes(pickle.dumps(cases))
     for seed in ("0", "1", "4242"):
         env = {**os.environ, "LC_ALL": name, "LANG": name, "PYTHONHASHSEED": seed}
         out_path = tmp_path / f"out-{seed}.pickle"
         subprocess.run(
-            [sys.executable, "-c", _CHILD, str(tmp_path / "cases.pickle"), str(out_path)],
+            [sys.executable, "-c", _CHILD, str(tmp_path / "cases.pickle"), str(out_path), name],
             env=env,
             check=True,
             timeout=120,
         )
         assert pickle.loads(out_path.read_bytes()) == expected, (
-            f"PYTHONHASHSEED={seed}, LC_ALL={name}"
+            f"PYTHONHASHSEED={seed}, locale {name}"
         )

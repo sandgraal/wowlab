@@ -270,6 +270,12 @@ def install(root: Path, flavors: dict[str, dict[str, bytes]]) -> Path:
     return root
 
 
+def set_mtime(path: Path, seconds: int) -> None:
+    """Fix a sibling's modification time (§6.4 amendment 2026-09-27 item 4:
+    the most recently modified sibling decides)."""
+    os.utime(path, ns=(seconds * 1_000_000_000, seconds * 1_000_000_000))
+
+
 def tree_state(root: Path) -> dict[str, tuple[str, bytes, int]]:
     """Every path under `root` with its kind, bytes and mtime."""
     state: dict[str, tuple[str, bytes, int]] = {}

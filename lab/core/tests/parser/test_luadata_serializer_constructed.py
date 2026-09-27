@@ -1,17 +1,22 @@
 """Graders for the `wowlab_core.luadata` serializer on constructed inputs
-(M10-12T; L4, L6, L8).
+(M10-12T; L3, L4, L6, L8).
 
 Every input here is constructed, which the file name puts in every test id.
-The main one is §4.2's reference layout (`docs/LAB_FORMATS.md`: tab
-indentation, a `-- [n]` comment after each positional entry), in LF and
-CRLF. L8: it is a stand-in until a real capture shows that style (no client
-has yet been seen writing it, §6.4 **[verify]**); replace it with that
-capture when one lands. The rest are boundary cases no capture shows: `;`
-separators, a two-space indentation unit, sibling trees made of constructed
-files, and unmodified documents in shapes the grammar accepts but the
-client does not write. The real captures, and the seam every grader here
-uses (`serialize(document, *, target=None)`, `None` slots left to the
-serializer, `close_lead=None` when appending), are in
+The main one is §4.2's example in the remembered retail layout
+(`docs/LAB_FORMATS.md`: tab indentation, a `-- [n]` comment after each
+positional entry), in LF and CRLF. L8: it is a stand-in until a real
+capture shows that style (no client has yet been seen writing it, §6.4
+amendment 2026-09-27 item 6, **[verify]**); replace it with that capture
+when one lands. The layout is followed when a document or sibling shows it,
+never chosen by default. The rest are boundary cases no capture shows: `;`
+separators, a two-space indentation unit, documents and siblings showing
+only half of the indentation/comment pairing, sibling trees made of
+constructed files, unmodified documents in shapes the grammar accepts but
+the client does not write, and hostile edits the data-only rule refuses
+(§6.4 amendment 2026-09-27 item 2). The real captures, and the seam every
+grader here uses (`serialize(document, *, target=None,
+lab_written=frozenset())`, `None` slots left to the serializer,
+`close_lead=None` when appending), are in
 `test_luadata_serializer_fixtures.py`. Every grader carries one marker line
 that M10-12 deletes; nothing else here is the implementer's.
 """
@@ -28,6 +33,7 @@ from _luadata_edits import (
     append,
     assignment,
     boolean,
+    document,
     edit,
     install,
     keyed,
@@ -190,20 +196,47 @@ def _cases(eol: bytes) -> list[Any]:
             ),
             id="new-table-indented",
         ),
+        pytest.param(
+            eol,
+            ("list",),
+            lambda lua: [positional(lua, table(lua, keyed(lua, "a", number(lua, "1"))))],
+            (
+                b'\t\t"second", -- [2]' + eol + b"\t},",
+                b'\t\t"second", -- [2]'
+                + eol
+                + b"\t\t{"
+                + eol
+                + b'\t\t\t["a"] = 1,'
+                + eol
+                + b"\t\t}, -- [3]"
+                + eol
+                + b"\t},",
+            ),
+            id="positional-table-comment-on-closing-line-verify",
+        ),
+    ]
+
+
+def _all_cases() -> list[Any]:
+    return [
+        pytest.param(*case.values, id=f"{eol_id}-{case.id}")
+        for eol, eol_id in zip(EOLS, EOL_IDS, strict=True)
+        for case in _cases(eol)
     ]
 
 
 @pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
-@pytest.mark.parametrize(
-    ("eol", "steps", "new", "change"), [case for eol in EOLS for case in _cases(eol)]
-)
+@pytest.mark.parametrize(("eol", "steps", "new", "change"), _all_cases())
 def test_new_entries_follow_the_reference_layout(
     luadata: Any, eol: bytes, steps: tuple[str, ...], new: Any, change: tuple[bytes, bytes]
 ) -> None:
     """A tab-indented, commented document keeps both (owner decision
     2026-09-22): one tab per level, `,` after every entry, `-- [n]` after a
     new positional entry numbered from its place, the old last entry's
-    comment kept, and the document's own line ending (LF stays LF)."""
+    comment kept after its separator with one space, and the document's own
+    line ending (LF stays LF). A positional table's `-- [n]` goes after its
+    closing `},` (**[verify]**: remembered retail form, no capture shows
+    it)."""
     source = _reference(eol)
     doc = append(luadata, luadata.parse(source), "MyAddonDB", steps, *new(luadata))
     assert luadata.serialize(doc) == replace_once(source, *change)
@@ -376,7 +409,60 @@ def test_new_entries_keep_the_documents_separator_and_indentation_unit(
     assert luadata.serialize(doc) == replace_once(source, *change)
 
 
-# ── new documents: sibling files, else §4.2 ─────────────────────────────────
+# ── the indentation / comment pairing (§6.4 amendment 2026-09-27, item 5) ───
+
+INDENT_ONLY = _lines(b"\n", b"", b"LabIndentDB = {", b'\t["a"] = 1,', b"}")
+COMMENTS_ONLY = _lines(b"\n", b"", b'LabCommentsDB = {"a", -- [1]', b"}")
+
+
+@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
+@pytest.mark.parametrize(
+    ("source", "variable", "change"),
+    [
+        pytest.param(
+            INDENT_ONLY,
+            "LabIndentDB",
+            (b'\t["a"] = 1,\n}', b'\t["a"] = 1,\n\t"p", -- [1]\n}'),
+            id="shows-only-tab-indentation",
+        ),
+        pytest.param(
+            COMMENTS_ONLY,
+            "LabCommentsDB",
+            (b'{"a", -- [1]\n}', b'{"a", -- [1]\n\t"p", -- [2]\n}'),
+            id="shows-only-array-comments",
+        ),
+    ],
+)
+def test_a_document_showing_half_the_pairing_decides_both(
+    luadata: Any, source: bytes, variable: str, change: tuple[bytes, bytes]
+) -> None:
+    """Item 5 (owner): indentation and `-- [n]` are one pairing. A document
+    whose only table is tab-indented but has no positional entry writes
+    `-- [n]` on a new one; a document whose only positional entry carries
+    `-- [1]` but sits on the brace's line (showing no indentation) indents a
+    new one by a tab."""
+    doc = append(
+        luadata, luadata.parse(source), variable, (), positional(luadata, string(luadata, "p"))
+    )
+    assert luadata.serialize(doc) == replace_once(source, *change)
+
+
+@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
+def test_appending_drops_own_line_comments_before_the_old_brace(luadata: Any) -> None:
+    """Item 1: with `close_lead=None`, the old last entry's comment is
+    written after its separator with one space, and an own-line comment that
+    stood before the old `}` is dropped by that edit."""
+    source = _lines(
+        b"\r\n", b"", b"LabNoteDB = {", b'["a"] = 1, -- keep me', b"-- dropped by the edit", b"}"
+    )
+    doc = append(
+        luadata, luadata.parse(source), "LabNoteDB", (), keyed(luadata, "b", number(luadata, "2"))
+    )
+    expected = _lines(b"\r\n", b"", b"LabNoteDB = {", b'["a"] = 1, -- keep me', b'["b"] = 2,', b"}")
+    assert luadata.serialize(doc) == expected
+
+
+# ── new documents: sibling files, else the Forever fallback ─────────────────
 
 TAB_SIBLING = (
     b"",
@@ -418,16 +504,34 @@ def test_new_document_follows_a_tab_indented_commented_sibling(
 
 
 @pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
+@pytest.mark.parametrize(
+    "sibling",
+    [INDENT_ONLY, COMMENTS_ONLY],
+    ids=["sibling-shows-only-tab-indentation", "sibling-shows-only-array-comments"],
+)
+def test_a_sibling_showing_half_the_pairing_decides_both(
+    luadata: Any, sibling: bytes, tmp_path: Path
+) -> None:
+    """Item 5: a sibling that shows only tab indentation, or only `-- [n]`,
+    gives a new file both, with its LF."""
+    root = install(tmp_path / "install", {"_lab_one_": {f"{ACCOUNT_SV}/Sibling.lua": sibling}})
+    target = root / "_lab_one_" / ACCOUNT_SV / "LabNewAddon.lua"
+    assert luadata.serialize(reference_document(luadata), target=target) == _reference(b"\n")
+
+
+@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 def test_new_document_takes_each_property_from_where_it_is_shown(
     luadata: Any, tmp_path: Path
 ) -> None:
     """The only sibling is `LabX = nil`, LF: it shows the line ending and
-    nothing else, so indentation and comments are §4.2's."""
+    nothing else, so the pairing is the fallback's (flat, no `-- [n]`) and
+    the line ending is the sibling's LF."""
     root = install(
         tmp_path / "install", {"_lab_one_": {f"{ACCOUNT_SV}/Nil.lua": b"\nLabX = nil\n"}}
     )
     target = root / "_lab_one_" / ACCOUNT_SV / "LabNewAddon.lua"
-    assert luadata.serialize(reference_document(luadata), target=target) == _reference(b"\n")
+    out = luadata.serialize(reference_document(luadata), target=target)
+    assert out == reference_text(indent=b"", comments=False, eol=b"\n")
 
 
 @pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
@@ -450,9 +554,127 @@ def test_each_flavor_folder_uses_its_own_siblings(luadata: Any, tmp_path: Path) 
 
 
 @pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
-def test_new_document_without_source_or_siblings_is_the_reference_layout(luadata: Any) -> None:
-    """No document, no target: §4.2's layout, with the line ending chosen
-    by file kind (CRLF, 2026-09-22 amendment), not by platform."""
+def test_new_document_without_source_or_siblings_is_the_forever_layout(luadata: Any) -> None:
+    """Item 6 (owner): with nothing to read, the layout every captured file
+    shows: no indentation, no `-- [n]`, CRLF, a leading empty line, `,`
+    after every entry. §4.2's tab-indented form is never the default."""
     out = luadata.serialize(reference_document(luadata))
-    assert out == _reference(b"\r\n")
+    assert out == reference_text(indent=b"", comments=False, eol=b"\r\n")
+    assert luadata.serialize(luadata.parse(out)) == out
+
+
+@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
+def test_new_empty_table_without_source_or_siblings_is_two_lines(luadata: Any) -> None:
+    """Item 6: the fallback's empty table is `{` and `}` on two lines."""
+    doc = document(
+        luadata,
+        assignment(luadata, "LabEmptyDB", table(luadata, keyed(luadata, "e", table(luadata)))),
+    )
+    assert luadata.serialize(doc) == b'\r\nLabEmptyDB = {\r\n["e"] = {\r\n},\r\n}\r\n'
+
+
+# ── data only: serialize refuses what would not parse (item 2) ──────────────
+
+DATA_SOURCE = _lines(
+    b"\r\n",
+    b"",
+    b"LabDataDB = {",
+    b'\t["a"] = 1,',
+    b'\t["list"] = {',
+    b'\t\t"x", -- [1]',
+    b"\t},",
+    b"}",
+)
+
+
+def _with_first_assignment(doc: Any, **changes: Any) -> Any:
+    first = doc.assignments[0]._replace(**changes)
+    return doc._replace(assignments=(first, *doc.assignments[1:]))
+
+
+def _with_entry_a(lua: Any, doc: Any, **changes: Any) -> Any:
+    """`doc` with the `["a"]` entry (the first of `LabDataDB`) changed."""
+    table_value = doc.assignments[0].value
+    entries = (table_value.entries[0]._replace(**changes), *table_value.entries[1:])
+    return _with_first_assignment(doc, value=table_value._replace(entries=entries))
+
+
+def _with_close_lead(doc: Any, close_lead: bytes) -> Any:
+    return _with_first_assignment(
+        doc, value=doc.assignments[0].value._replace(close_lead=close_lead)
+    )
+
+
+HOSTILE = {
+    "lead-holds-a-call": lambda lua, d: _with_first_assignment(d, lead=b"\r\nos.exit()\r\n"),
+    "lead-holds-a-long-comment": lambda lua, d: _with_entry_a(lua, d, lead=b"\r\n--[[ hidden ]]\t"),
+    "lead-holds-a-level-long-comment": lambda lua, d: _with_entry_a(
+        lua, d, lead=b"\r\n--[==[ x ]==]\t"
+    ),
+    "tail-holds-a-nul": lambda lua, d: d._replace(tail=b"\r\n\x00"),
+    "comment-holds-a-nul": lambda lua, d: _with_entry_a(lua, d, lead=b"\r\n-- a\x00b\r\n\t"),
+    "eq-lead-holds-an-operator": lambda lua, d: _with_entry_a(lua, d, eq_lead=b" + 1 "),
+    "close-lead-holds-setmetatable": lambda lua, d: _with_close_lead(
+        d, b"\r\nsetmetatable({}, {})\r\n"
+    ),
+    "string-raw-is-a-function": lambda lua, d: _with_entry_a(
+        lua, d, value=lua.LuaString(lead=b" ", raw=b"function() end")
+    ),
+    "number-raw-is-a-function": lambda lua, d: _with_entry_a(
+        lua, d, value=lua.LuaNumber(lead=b" ", raw="function() end")
+    ),
+    "number-raw-is-arithmetic": lambda lua, d: _with_entry_a(
+        lua, d, value=lua.LuaNumber(lead=b" ", raw="1+1")
+    ),
+    "string-raw-is-a-concatenation": lambda lua, d: _with_entry_a(
+        lua, d, value=lua.LuaString(lead=b" ", raw=b'"a" .. "b"')
+    ),
+    "string-raw-holds-a-raw-line-break": lambda lua, d: _with_entry_a(
+        lua, d, value=lua.LuaString(lead=b" ", raw=b'"a\r\nb"')
+    ),
+    "string-key-is-a-call": lambda lua, d: _with_entry_a(
+        lua, d, key=lua.LuaString(lead=b"", raw=b"f()")
+    ),
+    "number-key-is-a-name": lambda lua, d: _with_entry_a(
+        lua, d, style=lua.KeyStyle.NUMBER, key=lua.LuaNumber(lead=b"", raw="math.huge")
+    ),
+    "name-key-is-a-path": lambda lua, d: _with_entry_a(
+        lua, d, style=lua.KeyStyle.NAME, key="os.exit"
+    ),
+    "name-key-is-a-keyword": lambda lua, d: _with_entry_a(
+        lua, d, style=lua.KeyStyle.NAME, key="function"
+    ),
+    "assignment-name-is-a-path": lambda lua, d: _with_first_assignment(d, name="a.b"),
+    "assignment-name-is-a-keyword": lambda lua, d: _with_first_assignment(d, name="end"),
+}
+
+
+@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
+@pytest.mark.parametrize("hostile", list(HOSTILE.values()), ids=list(HOSTILE))
+def test_serialize_refuses_what_is_not_data(luadata: Any, hostile: Any) -> None:
+    """Item 2 (owner): a given trivia slot holding anything but whitespace
+    and `--` line comments (a call, a long comment, a NUL, an operator), or a
+    `raw`, key or name that is not a literal §4.1 accepts, raises
+    `LuaDataError`; no bytes come back. L3 holds for writes."""
+    doc = hostile(luadata, luadata.parse(DATA_SOURCE))
+    with pytest.raises(luadata.LuaDataError):
+        luadata.serialize(doc)
+
+
+@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
+def test_serialize_writes_legal_comments_and_whitespace_as_given(luadata: Any) -> None:
+    """The positive control for the data-only rule: given slots holding
+    whitespace (space, tab, form feed, vertical tab, line breaks) and `--`
+    line comments, `--[1]` included, are written exactly, and the output
+    parses back to the same bytes."""
+    doc = luadata.parse(DATA_SOURCE)
+    doc = _with_first_assignment(doc, lead=b"\r\n-- a comment line\r\n \t")
+    doc = _with_entry_a(luadata, doc, lead=b"\r\n\t--[1] not a long comment\r\n\t", eq_lead=b"  \t")
+    doc = _with_close_lead(doc, b" -- after the list\r\n\f\v")
+    doc = doc._replace(tail=b"\r\n-- end\r\n")
+    out = luadata.serialize(doc)
+    assert out == rebuild(luadata, doc)
+    assert out.startswith(
+        b"\r\n-- a comment line\r\n \tLabDataDB = {\r\n\t--[1] not a long comment"
+    )
     assert luadata.serialize(luadata.parse(out)) == out
