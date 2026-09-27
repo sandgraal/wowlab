@@ -32,6 +32,17 @@ install and scrubs identity from it per `docs/LAB_PLAN.md` §8:
   realm part a realm-style one), consistently for the run; the log is refused
   if one of those real parts appears anywhere else, or if another player's
   GUID never stands in a unit pair;
+- in every combat log, whatever the flags, each non-player unit GUID
+  (`Creature-0-<server>-<instance>-<zone>-<id>-<spawn>`, and Pet, Vehicle,
+  GameObject and any other type of that shape) keeps its type and NPC or
+  object id and gets invented server, instance, zone and spawn parts,
+  consistently for the run (UnitGuids); a GUID-like token of any other shape
+  refuses the log. Every timestamp, and the date in the log's file name, moves
+  by a secret offset drawn for that log alone (TimeShift); a date or time in a record, or
+  a line without a recognised timestamp, refuses the log. Only
+  `WoWCombatLog[-MMDDYY_HHMMSS].txt` is captured, and a compressed, NUL-holding
+  or non-UTF-8 log is refused. `--combat-log NAME` (repeatable) captures only
+  the named logs instead of the newest;
 - a file whose scrubbed bytes or output path still contain an email address,
   a BattleTag, an unmapped player, account, guild or community GUID, a
   surviving identity string in any casing or embedding (CVar names included),
@@ -59,12 +70,14 @@ from __future__ import annotations
 import argparse
 import bisect
 import re
+import secrets
 import sys
 import unicodedata
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path, PurePosixPath
 
 # ─── deny-lists and detectors ────────────────────────────────────────────────
@@ -263,6 +276,10 @@ CHARACTER_CACHE_FILES = (
     "edit-mode-cache-character.txt",
 )
 OLD_SUFFIX = ".old"
+# The only combat-log file names captured, by default or with --combat-log:
+# `WoWCombatLog.txt` or `WoWCombatLog-MMDDYY_HHMMSS.txt`, in this case. A
+# compressed, renamed or otherwise suffixed copy is never picked.
+COMBAT_LOG_NAME_RE = re.compile(r"WoWCombatLog(?:-[0-9]{6}_[0-9]{6})?\.txt")
 CONFIG_NAMES = frozenset({"config.wtf", "config-cache.wtf"})
 # Blizzard's exported interface code is not a fixture (fixtures/README.md).
 EXPORTED_ADDON_PREFIX = "blizzard_"
@@ -309,6 +326,34 @@ OTHER_UNCHECKABLE_LABEL = "other player's name cannot be checked"
 # pseudonyms uses (theirs are Player-9999-...), numbered in order of first
 # appearance, so nothing about the real value survives.
 OTHER_GUID_FORMAT = b"Player-9998-%08X"
+# Combat log, always (see UnitGuids): every token shaped like a GUID, that is a
+# letter run, `-`, a digit run, `-` and whatever GUID characters follow. The
+# letter run is maximal to the left (nothing but a letter may not stand before
+# it), and the tail takes `_` too, so a glued suffix makes the token
+# unclassifiable instead of being cut off and kept.
+GUID_LIKE_RE = re.compile(rb"(?<![A-Za-z])[A-Za-z]+-[0-9]+-[0-9A-Za-z_\-]*")
+# A non-player unit GUID: `<Type>-0-<serverID>-<instanceID>-<zoneUID>-<ID>-<spawnUID>`
+# (Creature, Pet, Vehicle, GameObject, Vignette and any other type of this
+# shape). Matched against a whole GUID_LIKE_RE token. The spawnUID is upper-case
+# hex; any other spelling of the shape is unclassifiable.
+UNIT_GUID_RE = re.compile(rb"([A-Za-z]+)-0-([0-9]+)-([0-9]+)-([0-9]+)-([0-9]+)-([0-9A-F]+)")
+# Types whose GUIDs are identity, not location: never rewritten as a unit.
+# Player GUIDs have their own rules; the other three families refuse the file.
+IDENTITY_GUID_TYPES = frozenset({b"player", b"bnetaccount", b"guild", b"clubfinder"})
+# Refuse-only: a GUID body without a (well-formed) type, or with lookalike
+# dashes (U+2010 to U+2015, U+2212, U+FE63, U+FF0D in UTF-8): five or more
+# dash-separated digit groups ending in six or more hex digits. Counted as
+# unclassifiable unless it lies inside a GUID_LIKE_RE token (already handled).
+_ANY_DASH = rb"(?:-|\xe2\x80[\x90-\x95]|\xe2\x88\x92|\xef\xb9\xa3|\xef\xbc\x8d)"
+BROKEN_GUID_RE = re.compile(
+    rb"(?<![0-9])[0-9]+(?:%s[0-9]+){4,}%s[0-9A-Fa-f]{6,}" % (_ANY_DASH, _ANY_DASH)
+)
+# What may stand right before a unit GUID's type: a field boundary in a log line.
+_GUID_BEFORE = frozenset(b',"([{ \t\r\n=')
+UNIT_GUID_UNCLASSIFIED_LABEL = "GUID-like token the tool cannot classify"
+# An owner's identity string found only once the text is folded (see
+# Identity._folded_hits). Count only.
+FOLDED_SURVIVOR_LABEL = "surviving identity string (folded or separated spelling)"
 
 
 Span = tuple[int, int]
@@ -393,7 +438,7 @@ class Edit:
     offset: int
     old: bytes
     new: bytes
-    reason: str  # "cvar" | "guid" | "identity"
+    reason: str  # "cvar" | "guid" | "other-guid" | "unit-guid" | "timestamp" | "other-name" | "identity"
     embedded: bool = False  # a word character touched it: review by eye
 
     @property
@@ -589,6 +634,8 @@ class Identity:
         # Other players' pseudonym words, known only while one combat log is inspected.
         self._scoped_words: frozenset[str] = frozenset()
         self.counts: Counter[str] = Counter()
+        self._fold_sources: list[str] = []  # real spellings for the folded hunt (_folded_hits)
+        self._loose_names = {_nfc(name) for name in loose}
 
         ordered_realms = self._ordered(realms)
         for i, realm in enumerate(ordered_realms):
@@ -633,6 +680,7 @@ class Identity:
         # either side of it is then read in a bounded window. No pattern here
         # walks a long run of letters more than once.
         self._own_realm = _trie_regex(dict.fromkeys(self._realm_pseudonyms, "substring"))
+        self._folded_long, self._folded_short = self._folded_forms()
 
     @staticmethod
     def _ordered(names: Iterable[str]) -> list[str]:
@@ -678,6 +726,7 @@ class Identity:
         self._check(real, category)
         self.names[real] = pseudonym
         self.counts[category] += 1
+        self._fold_sources.append(real)
         transforms = REALM_TRANSFORMS if category == "realm" else PLAIN_TRANSFORMS
         pairs: list[tuple[str, str]] = []
         for transform in transforms:
@@ -698,6 +747,7 @@ class Identity:
         with that form's pseudonym, so the path is scrubbed, not refused.
         """
         wanted = _fold(alias)
+        self._fold_sources.append(alias)
         for real in realms:
             for transform in REALM_TRANSFORMS:
                 if _fold(transform(real)) == wanted:
@@ -708,6 +758,65 @@ class Identity:
                     ]
                     self._register(pairs, "realm")
                     return
+
+    def _folded_forms(self) -> tuple[tuple[str, ...], re.Pattern[str] | None]:
+        """(long letter runs, short-name pattern) for `_folded_hits`.
+
+        Each real spelling is folded by `_hunt_fold` and its separators dropped.
+        One of EMBEDDED_MIN_CHARS or more letters is hunted as that letter run
+        in a copy of the text with every separator dropped: found anywhere, with
+        any separators between its letters. A shorter one is hunted as a whole
+        word, exactly as folded; a loose second name also with separators
+        between its letters. Numbered accounts (`digits#digits`) are left to
+        their byte-level number rules.
+        """
+        long_forms: set[str] = set()
+        short: list[str] = []
+        for real in self._fold_sources:
+            folded = _hunt_fold(real)
+            letters = _LOOSE_DROPPED.sub("", folded)
+            if len(letters) < 2 or not any(c.isalpha() for c in letters):
+                continue
+            if len(letters) >= EMBEDDED_MIN_CHARS:
+                long_forms.add(letters)
+                continue
+            if real in self._loose_names:
+                body = _HUNT_SEPARATOR.join(re.escape(c) for c in letters)
+            else:
+                body = re.escape(folded)
+            short.append(rf"(?<!\w)(?:{body})(?!\w)")
+        pattern = re.compile("|".join(sorted(set(short), key=lambda b: (-len(b), b))))
+        return tuple(sorted(long_forms)), pattern if short else None
+
+    def _folded_hits(self, scrubbed: bytes, masked_spans: Iterable[Span]) -> int:
+        """Real identity strings left in `scrubbed` in a spelling the byte-level
+        checks do not see: full-width or other compatibility letters, accents
+        added or dropped, format characters (zero-width space, soft hyphen)
+        inside, tabs, NBSPs, lookalike dashes or apostrophes, or doubled
+        separators. Detect and refuse only: nothing is rewritten from this.
+
+        `masked_spans` (pseudonyms this scrub wrote, client TOC keys) are
+        blanked first. A pure-ASCII text is only lower-cased (its fold); the
+        short names are then left to the byte-level checks, which see every
+        ASCII spelling of them already.
+        """
+        if not self._folded_long and self._folded_short is None:
+            return 0
+        masked = bytearray(scrubbed)
+        for start, end in masked_spans:
+            masked[start:end] = bytes(end - start)  # NUL: no name contains it
+        raw = bytes(masked)
+        ascii_only = raw.isascii()
+        text = (
+            raw.decode("ascii").lower()
+            if ascii_only
+            else _hunt_fold(raw.decode("utf-8", "replace"))
+        )
+        joined = _LOOSE_DROPPED.sub("", text)
+        hits = sum(joined.count(form) for form in self._folded_long)
+        if self._folded_short is not None and not ascii_only:
+            hits += sum(1 for _ in self._folded_short.finditer(text))
+        return hits
 
     def _register(self, pairs: Sequence[tuple[str, str]], category: str) -> None:
         """Tokens, survivor forms and partner words for (real form, pseudonym form) pairs."""
@@ -764,6 +873,8 @@ class Identity:
         toc: bool = False,
         character_list: bool = False,
         others: OtherUnits | None = None,
+        unit_guids: Sequence[tuple[int, int, bytes]] = (),
+        timestamps: Sequence[tuple[int, int, bytes]] = (),
     ) -> ScrubResult:
         """Return `data` with identity replaced, plus every edit and any reason to refuse.
 
@@ -771,7 +882,10 @@ class Identity:
         `character_list` the account's character-list-order.txt. `others`
         carries other players' GUIDs and unit-name parts to pseudonymise (a
         combat log under --pseudonymise-other-players); they are claimed after
-        the owner's GUIDs and before any identity string.
+        the owner's GUIDs and before any identity string. `unit_guids` are a
+        combat log's non-player unit GUIDs with their invented replacements
+        (UnitGuids), and `timestamps` its shifted timestamps (TimeShift); both are
+        claimed with the player GUIDs.
         """
         # Three passes over the ORIGINAL bytes, highest priority first. Matches
         # within a pass never overlap each other; a match that overlaps a
@@ -807,6 +921,10 @@ class Identity:
                 claim(m.start(), m.end(), self.guids[key], "guid")
             elif others is not None and key in others.guids:
                 claim(m.start(), m.end(), others.guids[key], "other-guid")
+        for start, end, new in unit_guids:
+            claim(start, end, new, "unit-guid")
+        for start, end, new in timestamps:
+            claim(start, end, new, "timestamp")
         close_pass()
         if others is not None:
             for start, end, new in others.edits:
@@ -864,6 +982,13 @@ class Identity:
         # The account's list of characters holds alts that have no folder here,
         # so nothing in the identity map covers them: every line must be only
         # pseudonyms (and pseudonym GUIDs), or the file is refused.
+        # The same names in the spellings the byte-level hunts cannot see (full-width,
+        # accents, invisible characters, odd or doubled separators): a count only,
+        # since offsets in the folded text do not line up with the bytes.
+        toc_out = self._vocabulary(scrubbed, config=False, toc=toc)[1]
+        folded = self._folded_hits(scrubbed, [*written, *toc_out])
+        if folded:
+            problems.append(f"{FOLDED_SURVIVOR_LABEL} x{folded}")
         if character_list:
             unknown = [m for m in _LINE_TEXT_RE.finditer(scrubbed) if not self._known_line(m)]
             if unknown:
@@ -1275,16 +1400,21 @@ class Identity:
 
 
 _BOM = b"\xef\xbb\xbf"
-_LOOSE_SEPARATOR = re.compile(rb"[ '\-\\]")
+# What a second name may carry between two letters: space, apostrophe, hyphen,
+# tab, NBSP, zero-width space (U+00A0 and U+200B in UTF-8), or `\\'`. Detection
+# only: a hit refuses the file, nothing is rewritten.
+_LOOSE_SEPARATOR = re.compile(rb"[ '\-\\\t]|\xc2\xa0|\xe2\x80\x8b")
+_LOOSE_BETWEEN = rb"(?:[ '\-\t]|\\'|\xc2\xa0|\xe2\x80\x8b)*"
 
 
 def _loose_pattern(part: str) -> bytes | None:
-    """The letters of a second name, with an optional space, apostrophe, hyphen or `\\'`
-    between any two. A short part (under EMBEDDED_MIN_CHARS letters) only as a whole word."""
+    """The letters of a second name, with any run of separators (`_LOOSE_BETWEEN`: a
+    doubled one counts as one) between any two. A short part (under
+    EMBEDDED_MIN_CHARS letters) only as a whole word."""
     chars = [c for c in _nfc(part) if c not in " '-"]
     if len(chars) < 2:
         return None
-    body = rb"(?:[ '\-]|\\')?".join(re.escape(c.encode("utf-8")) for c in chars)
+    body = _LOOSE_BETWEEN.join(re.escape(c.encode("utf-8")) for c in chars)
     if len(chars) < EMBEDDED_MIN_CHARS:
         body = rb"(?<![%s])(?:%s)(?![%s])" % (_WORD, body, _WORD)
     return body
@@ -1338,7 +1468,7 @@ class OtherUnits:
     def leaks(self, result: ScrubResult) -> tuple[int, int]:
         """(hits, parts that cannot be checked) for the hunted real name parts.
 
-        Each hunted string is split on blanks and `-`. A part made only of
+        Each hunted string is split on blanks, zero-width spaces and `-`. A part made only of
         digits is no name and is skipped. A part of one character, or one that
         is a word the format or the tool's vocabulary uses (`nil`, `player`,
         `true`, `neutral`, `default`, a region...), cannot be told apart from
@@ -1346,21 +1476,21 @@ class OtherUnits:
         for it) instead of being searched.
 
         Every other part is searched in the scrubbed bytes with each
-        replacement masked first (so a pseudonym never counts), compared the
-        way the rest of the tool compares (`_fold`: NFC and full case
-        folding), with U+0307 dropped after folding (see `_hunt_fold`). A
-        part of EMBEDDED_MIN_CHARS or more letters counts anywhere, even
-        inside a longer word, with an optional space, apostrophe, hyphen,
-        underscore or `\\'` between any two of its letters; one written
-        inside the real part is optional too (the spaced and split spellings
-        the tool derives for the owner's realms: `GloamSpire` is also found
-        as `Gloam Spire`, `Kel'Vesh` as `KelVesh`). A shorter one counts only
-        as a whole word.
+        replacement masked first (so a pseudonym never counts), both sides
+        folded by `_hunt_fold` (NFKC, full case folding, U+0307 dropped), so
+        a full-width spelling is found too. A part of EMBEDDED_MIN_CHARS or
+        more letters counts anywhere, even inside a longer word, with any run
+        of spaces, apostrophes, hyphens, underscores, tabs, NBSPs, zero-width
+        spaces or `\\'` between any two of its letters (`_HUNT_SEPARATOR`: a
+        doubled separator counts as one); one written inside the real part is
+        optional too (the spaced and split spellings the tool derives for the
+        owner's realms: `GloamSpire` is also found as `Gloam Spire`,
+        `Kel'Vesh` as `KelVesh`). A shorter one counts only as a whole word.
         """
         terms: set[str] = set()
         uncheckable: set[str] = set()
         for name in self.hunted:
-            for part in re.split(r"[\s\-]+", _hunt_fold(name)):
+            for part in _HUNT_SPLIT.split(_hunt_fold(name)):
                 if not part or part.isdigit():
                     continue
                 if len(part) < 2 or part in RESERVED_WORDS | VOCABULARY_PARTNERS:
@@ -1369,14 +1499,13 @@ class OtherUnits:
                     terms.add(part)
         if not terms:
             return 0, len(uncheckable)
-        separator = r"(?:[ '\-_]|\\')?"
 
         def spelled(term: str) -> str:
             # A separator inside the real part (`kel'vesh`) is optional too:
             # it is dropped before the letters are joined.
             letters = _LOOSE_DROPPED.sub("", term)
             if len(letters) >= EMBEDDED_MIN_CHARS:
-                return separator.join(re.escape(c) for c in letters)
+                return _HUNT_SEPARATOR.join(re.escape(c) for c in letters)
             return rf"(?<!\w){re.escape(term)}(?!\w)"
 
         pattern = re.compile(
@@ -1470,13 +1599,146 @@ class OtherPlayers:
             cursor = known_end
 
 
-_LOOSE_DROPPED = re.compile(r"[ '\-_\\]")  # separators a loose spelling may drop or add
+# ─── non-player unit GUIDs in a combat log (always) ──────────────────────────
+
+
+@dataclass(frozen=True)
+class UnitScan:
+    """What UnitGuids found in one combat log. Holds no real bytes."""
+
+    edits: tuple[tuple[int, int, bytes], ...]  # (start, end, invented GUID) in the original
+    unclassified: int  # GUID-like tokens that are neither a unit nor an identity family
+
+
+class UnitGuids:
+    """Invented location parts for every non-player unit GUID in a combat log.
+
+    `<Type>-0-<serverID>-<instanceID>-<zoneUID>-<ID>-<spawnUID>`: the type, the
+    leading `0` and the NPC or object `<ID>` are game data and stay. The server
+    id, instance id, zone UID and spawn UID say where and when the unit was
+    spawned; a spawn UID and a timestamp can tie the log to another player's
+    published log of the same fight, so each is replaced.
+
+    One registry per run: the same real value in the same field always gets
+    the same invented value, in every log of the run, and each field's mapping
+    is one-to-one, so two different real GUIDs never become the same one.
+    Numbering follows first appearance, never the real value:
+
+    - server id, instance id and zone UID share one decimal sequence (1, 2,
+      3, ...) keyed by field and value, so an invented number is never reused
+      across fields and says nothing about the one it replaced. A field that is
+      all zeros stays as it is: it carries nothing.
+    - a spawn UID keeps its width and becomes upper-case hex from 0 upwards,
+      one sequence per width. A width too narrow for another value makes the
+      GUID unclassifiable (the log is refused); a value is never reused.
+    """
+
+    def __init__(self) -> None:
+        self._numbers: dict[tuple[int, bytes], bytes] = {}
+        self._spawns: dict[bytes, bytes] = {}
+        self._next_spawn: Counter[int] = Counter()
+
+    def _number(self, field_index: int, real: bytes) -> bytes:
+        if not real.strip(b"0"):
+            return real
+        key = (field_index, real)
+        if key not in self._numbers:
+            self._numbers[key] = b"%d" % (len(self._numbers) + 1)
+        return self._numbers[key]
+
+    def _spawn(self, real: bytes) -> bytes | None:
+        if real not in self._spawns:
+            width = len(real)
+            number = self._next_spawn[width]
+            if number >= 16**width:
+                return None
+            self._next_spawn[width] = number + 1
+            self._spawns[real] = b"%0*X" % (width, number)
+        return self._spawns[real]
+
+    def _invent(self, unit: re.Match[bytes]) -> bytes | None:
+        spawn = self._spawn(unit.group(6))
+        if spawn is None:
+            return None
+        server, instance, zone = (self._number(i, unit.group(i)) for i in (2, 3, 4))
+        return b"-".join((unit.group(1), b"0", server, instance, zone, unit.group(5), spawn))
+
+    def scan(self, data: bytes) -> UnitScan:
+        """Edits for every unit GUID in `data` (the ORIGINAL bytes of a log), and the
+        count of GUID-like tokens that are none of: a unit GUID, a Player GUID, or a
+        BNetAccount, Guild or ClubFinder GUID (those have detectors of their own).
+
+        A token glued to the byte before it (anything but a field boundary,
+        `_GUID_BEFORE`) is broken, not a unit. So is every BROKEN_GUID_RE body
+        (no type, or lookalike dashes) that is not inside a token; one that
+        overlaps a token already counted is not counted twice."""
+        edits: list[tuple[int, int, bytes]] = []
+        unclassified = 0
+        tokens: list[Span] = []
+        counted: list[Span] = []
+        for m in GUID_LIKE_RE.finditer(data):
+            tokens.append(m.span())
+            token = m.group(0)
+            unit = UNIT_GUID_RE.fullmatch(token)
+            bounded = m.start() == 0 or data[m.start() - 1] in _GUID_BEFORE
+            if unit is not None and bounded and unit.group(1).lower() not in IDENTITY_GUID_TYPES:
+                invented = self._invent(unit)
+                if invented is None:
+                    unclassified += 1
+                    counted.append(m.span())
+                else:
+                    edits.append((m.start(), m.end(), invented))
+            elif unit is not None or not any(
+                family.fullmatch(token)
+                for family in (GUID_RE, ACCOUNT_GUID_RE, GUILD_GUID_RE, CLUB_GUID_RE)
+            ):
+                unclassified += 1
+                counted.append(m.span())
+        # A body with no type, a broken type, or lookalike dashes (`Creature\u20110\u2011...`).
+        unclassified += sum(
+            1
+            for m in BROKEN_GUID_RE.finditer(data)
+            if not _inside(tokens, m.start(), m.end()) and not _overlaps(counted, *m.span())
+        )
+        return UnitScan(tuple(edits), unclassified)
+
+
+# Separators the hunts read past between two letters, in the folded form: any
+# blank (`\s`: space, tab, NBSP, line breaks), apostrophe and its lookalikes
+# (U+2018, U+2019, U+02BC), hyphen and its lookalikes (U+2010 to U+2015),
+# underscore, `\'`, and the invisible ones (soft hyphen U+00AD, zero-width
+# space U+200B; `_hunt_fold` already drops them as format characters). A run
+# of them counts as one (`Zor  vinth`).
+_HUNT_SEPARATOR_CHARS = r"\s'\-_\u2018\u2019\u02bc\u2010-\u2015\u00ad\u200b"
+_HUNT_SEPARATOR = r"(?:[" + _HUNT_SEPARATOR_CHARS + r"]|\\')*"
+_LOOSE_DROPPED = re.compile(r"\\'|[" + _HUNT_SEPARATOR_CHARS + r"\\]")  # dropped before joining
+_HUNT_SPLIT = re.compile(r"[\s\-\u2010-\u2015]+")  # what splits a hunted name into parts
+
+
+class _DropMarks(dict[int, int | None]):
+    """`str.translate` table: format characters (Cf: zero-width space, soft hyphen,
+    direction marks) and non-spacing marks (Mn: accents, U+0307) map to None.
+    Filled lazily, one category lookup per distinct code point."""
+
+    def __missing__(self, code: int) -> int | None:
+        dropped = unicodedata.category(chr(code)) in ("Cf", "Mn")
+        self[code] = None if dropped else code
+        return self[code]
+
+
+_DROP_MARKS = _DropMarks()
 
 
 def _hunt_fold(text: str) -> str:
-    """`_fold`, then without U+0307: casefold turns `İ` into `i` + a combining dot
-    above, which would keep `İlkayda` from matching `ilkayda`."""
-    return _fold(text).replace("\u0307", "")
+    """The hunts' comparison key: NFKD (a full-width letter is its ASCII letter, NBSP a
+    space, a ligature its letters), without format characters and non-spacing
+    marks (so `Zoe`, `Zoë` and `Zo\u200be` are one spelling, and `İ` is `i`), then
+    full case folding, decomposed and stripped once more.
+
+    Detection only: nothing is rewritten from this form, and its offsets do not
+    line up with the bytes."""
+    stripped = unicodedata.normalize("NFKD", text).translate(_DROP_MARKS).casefold()
+    return unicodedata.normalize("NFKD", stripped).translate(_DROP_MARKS)
 
 
 def _written(edits: Sequence[Edit]) -> list[Span]:
@@ -1488,6 +1750,182 @@ def _written(edits: Sequence[Edit]) -> list[Span]:
         spans.append((start, start + len(edit.new)))
         shift += len(edit.new) - len(edit.old)
     return spans
+
+
+# ─── combat-log timestamps (always) ──────────────────────────────────────────
+
+# The timestamp that starts a combat-log record: month/day, an optional year,
+# the time, optional fractional seconds and an optional UTC-offset suffix, then
+# a blank. Only month, day, year and the time are rewritten; the fraction and
+# the suffix are copied as written.
+_STAMP_RE = re.compile(
+    rb"([0-9]{1,2})/([0-9]{1,2})(?:/([0-9]{4}|[0-9]{2}))? ([0-9]{1,2}):([0-9]{2}):([0-9]{2})"
+    rb"(?:\.[0-9]+)?([+-][0-9]{1,2}(?::?[0-9]{2})?)?(?= )"
+)
+# A date or time anywhere in a record after its timestamp (none is known in any
+# record type): `9/20`, `9/20/2026`, `21:14`, `21:14:05`, `2026-09-20`. The ISO
+# form must not touch a `-`, so a GUID's digit groups never match it.
+_RECORD_TIME_RE = re.compile(
+    rb"(?<![0-9])[0-9]{1,4}/[0-9]{1,2}(?![0-9])"
+    rb"|(?<![0-9])[0-9]{1,2}:[0-9]{2}(?![0-9])"
+    rb"|(?<![0-9\-])[0-9]{4}-[0-9]{2}-[0-9]{2}(?![0-9\-])"
+)
+_LOG_NAME_STAMP_RE = re.compile(r"(WoWCombatLog-)([0-9]{6}_[0-9]{6})(\.txt)")
+# Each log's offset: a whole number of seconds, drawn with `secrets` for that
+# log alone, at least SHIFT_MIN_SECONDS and at most SHIFT_MAX_SECONDS either
+# way. Never printed, logged or recorded.
+SHIFT_MIN_SECONDS = 60 * 86400
+SHIFT_MAX_SECONDS = 400 * 86400
+UNSTAMPED_LABEL = "combat-log line without a recognised timestamp"
+UNSHIFTABLE_LABEL = "combat-log timestamp that cannot be shifted"
+UNVERIFIED_STAMP_LABEL = "combat-log timestamp in a shape not verified on real logs"
+SUFFIX_CHANGE_LABEL = "combat-log UTC-offset suffix that changes within the log"
+RECORD_TIME_LABEL = "date or time inside a combat-log record"
+LOG_NAME_UNSHIFTABLE_LABEL = "in path: combat-log file name date that cannot be shifted"
+TIMESTAMPS_SHIFTED = "timestamps-shifted"
+
+
+def draw_time_shift() -> int:
+    """One log's timestamp offset in seconds. Tests replace this function."""
+    span = SHIFT_MAX_SECONDS - SHIFT_MIN_SECONDS + 1
+    magnitude = SHIFT_MIN_SECONDS + secrets.randbelow(span)
+    return magnitude if secrets.randbelow(2) else -magnitude
+
+
+@dataclass(frozen=True)
+class ShiftScan:
+    """What TimeShift found in one combat log. Counts only."""
+
+    edits: tuple[tuple[int, int, bytes], ...]  # (start, end, shifted date and time)
+    unstamped: int  # non-empty lines that do not start with a recognised timestamp
+    unverified: int  # timestamps not in the verified shape (see TimeShift)
+    unshiftable: int  # timestamps that are no valid date
+    suffix_changes: int  # timestamps whose UTC-offset suffix differs from the first one's
+    record_times: int  # dates or times inside records
+
+
+class TimeShift:
+    """Moves every timestamp of one combat log, and the stamp in its file name, by that
+    log's own offset (docs/LAB_PLAN.md section 8, amendment 2026-09-24).
+
+    One fixed shape, `M/D/YYYY HH:MM:SS.mmm<suffix>`. Verified on 2026-09-24
+    against the owner's real logs (count-only check): the hour is always two
+    digits, the month is unpadded, the year has four digits; day padding is
+    unverified (no real log had a day below 10), so the day is written
+    unpadded and a zero-padded source day is refused, as is a padded month, a
+    one-digit hour, and a year that is missing or not four digits. The fraction and the UTC-offset suffix
+    are copied as written; a suffix that changes within the log (a
+    daylight-saving change would give the offset away) refuses it. The offset
+    is never shown: `repr` hides it.
+    """
+
+    def __init__(self, seconds: int) -> None:
+        self._delta = timedelta(seconds=seconds)
+
+    def __repr__(self) -> str:
+        return "TimeShift(<hidden>)"
+
+    def file_name(self, name: str) -> str | None:
+        """`WoWCombatLog-MMDDYY_HHMMSS.txt` moved by the offset; any other name as it is;
+        None if the stamp in the name is no valid date."""
+        m = _LOG_NAME_STAMP_RE.fullmatch(name)
+        if m is None:
+            return name
+        try:
+            # Wall-clock time as the client wrote it: naive on purpose, no zone.
+            moved = datetime.strptime(m.group(2), "%m%d%y_%H%M%S") + self._delta  # noqa: DTZ007
+        except (ValueError, OverflowError):
+            return None
+        return m.group(1) + moved.strftime("%m%d%y_%H%M%S") + m.group(3)
+
+    def scan(self, data: bytes) -> ShiftScan:
+        """Edits moving every record's timestamp in `data` (the ORIGINAL bytes of a log)."""
+        edits: list[tuple[int, int, bytes]] = []
+        unstamped = unverified = unshiftable = suffix_changes = record_times = 0
+        first_suffix: bytes | None = None
+        seen = False
+        for line in _LINE_TEXT_RE.finditer(data):
+            start, end = line.span()
+            if start == 0 and data.startswith(_BOM):
+                start = len(_BOM)
+            if start >= end:
+                continue
+            m = _STAMP_RE.match(data, start, end)
+            if m is None:
+                unstamped += 1
+                continue
+            record_times += sum(1 for _ in _RECORD_TIME_RE.finditer(data, m.end(), end))
+            if not seen:
+                first_suffix, seen = m.group(7), True
+            elif m.group(7) != first_suffix:
+                suffix_changes += 1
+            if not self._verified(m):
+                unverified += 1
+                continue
+            moved = self._moved(m)
+            if moved is None:
+                unshiftable += 1
+            else:
+                edits.append((m.start(), m.end(6), moved))
+        return ShiftScan(
+            tuple(edits), unstamped, unverified, unshiftable, suffix_changes, record_times
+        )
+
+    @staticmethod
+    def _verified(m: re.Match[bytes]) -> bool:
+        month, day, year, hour = m.group(1), m.group(2), m.group(3), m.group(4)
+        return (
+            not (len(month) == 2 and month.startswith(b"0"))
+            and not (len(day) == 2 and day.startswith(b"0"))
+            and year is not None
+            and len(year) == 4
+            and len(hour) == 2
+        )
+
+    def _moved(self, m: re.Match[bytes]) -> bytes | None:
+        year, month, day, hour, minute, second = (int(m.group(i)) for i in (3, 1, 2, 4, 5, 6))
+        try:
+            # Wall-clock time as the client wrote it: naive on purpose, no zone.
+            moved = datetime(year, month, day, hour, minute, second) + self._delta  # noqa: DTZ001
+        except (ValueError, OverflowError):
+            return None
+        text = f"{moved.month}/{moved.day}/{moved.year:04d} "
+        text += f"{moved.hour:02d}:{moved.minute:02d}:{moved.second:02d}"
+        return text.encode("ascii")
+
+
+# Combat-log content that is not a plain-text log: refused before any scrub.
+_COMPRESSED_SIGNATURES = (
+    b"\x1f\x8b",  # gzip
+    b"PK\x03\x04",  # zip
+    b"PK\x05\x06",
+    b"PK\x07\x08",
+    b"BZh",  # bzip2
+    b"\xfd7zXZ\x00",  # xz
+    b"\x28\xb5\x2f\xfd",  # zstd
+)
+
+
+def _log_content_refusals(data: bytes) -> list[str]:
+    """Why these combat-log bytes are no plain UTF-8 text log (nothing is scrubbed then)."""
+    problems: list[str] = []
+    if data.startswith(_COMPRESSED_SIGNATURES):
+        problems.append("combat log starts with a compressed-file signature")
+    if b"\x00" in data:
+        problems.append("combat log holds a NUL byte")
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        problems.append("combat log is not valid UTF-8")
+    return problems
+
+
+def _shifted_dest(dest: PurePosixPath, kind: str, shift: TimeShift | None) -> PurePosixPath | None:
+    """`dest` with a combat log's file-name stamp moved; None if it cannot be."""
+    if shift is None or kind != "combatlog":
+        return dest
+    name = shift.file_name(dest.name)
+    return None if name is None else dest.with_name(name)
 
 
 # ─── reading the install (read-only) ─────────────────────────────────────────
@@ -2022,6 +2460,7 @@ class Planner:
         self._character_matched = False
         self._character_misses: list[tuple[str, str]] = []  # (flavor folder, why)
         self._verdicts: dict[Path, Verdict | None] = {}
+        self._combat_logs_found: set[str] = set()  # --combat-log names found in some flavor
 
     def add(
         self,
@@ -2138,15 +2577,35 @@ class Planner:
 
         self._plan_saved_variables(flavor, account, character)
         self._plan_tocs(flavor)
-        logs = [
-            p
-            for p in files(child(flavor.folder, "Logs"))
-            if kind_of(p.name) == "combatlog" and _size(p) > 0
-        ]
-        log = newest(logs)
-        if log is not None:
-            limit = self.args.log_lines
-            self.add(flavor, log, f"first {limit} lines of the log", max_lines=limit)
+        self._plan_combat_logs(flavor)
+
+    def _plan_combat_logs(self, flavor: Flavor) -> None:
+        """The newest non-empty log, or with `--combat-log` each named one found here."""
+        present = files(child(flavor.folder, "Logs"))
+        limit = self.args.log_lines
+        note = f"first {limit} lines of the log"
+        wanted = self.args.combat_log
+        if not wanted:
+            logs = [p for p in present if COMBAT_LOG_NAME_RE.fullmatch(p.name) and _size(p) > 0]
+            log = newest(logs)
+            self.add(flavor, log, note, max_lines=limit)
+            return
+        by_name = {p.name: p for p in present}  # exact: no case folding, no normal form
+        found = [name for name in dict.fromkeys(wanted) if name in by_name]
+        for name in found:
+            self.add(flavor, by_name[name], f"{note}; requested with --combat-log", max_lines=limit)
+        self._combat_logs_found.update(found)
+        if not found:
+            self.notes.append(f"{flavor.name}: --combat-log named no log here; none captured")
+
+    def check_combat_logs(self) -> None:
+        """After every flavor is planned: stop if a `--combat-log` name was found in none."""
+        for position, name in enumerate(self.args.combat_log or [], 1):
+            if name not in self._combat_logs_found:
+                raise CaptureError(
+                    f"the {_ordinal(position)} --combat-log: no such file directly under "
+                    "Logs/ in any captured flavor; nothing is captured"
+                )
 
     def check_character(self) -> None:
         """After every flavor is planned: stop if `--character` matched in none, else
@@ -2278,6 +2737,7 @@ class Outcome:
     path_rewritten: bool = False
     review_cvars: tuple[str, ...] = ()
     other_players: int = 0  # distinct other players pseudonymised in this file
+    timestamps_shifted: bool = False  # a combat log whose timestamps and name were moved
 
     @property
     def label(self) -> PurePosixPath:
@@ -2292,10 +2752,15 @@ def _os_reason(error: OSError) -> str:
     return f"unreadable ({type(error).__name__})"
 
 
-def _scrubbed_label(item: Item, identity: Identity) -> PurePosixPath:
+def _scrubbed_label(
+    item: Item, identity: Identity, shift: TimeShift | None = None
+) -> PurePosixPath:
     dest, problems = identity.scrub_path(item.rel)
     withhold = problems or _path_refusals(item.rel, dest)
-    return PurePosixPath(dest.parts[0], "<path withheld>") if withhold else dest
+    moved = _shifted_dest(dest, kind_of(item.rel.name), shift)
+    if withhold or moved is None:
+        return PurePosixPath(dest.parts[0], "<path withheld>")
+    return moved
 
 
 def _third_party(rel: PurePosixPath) -> bool:
@@ -2319,22 +2784,43 @@ def process(
     identity: Identity,
     kinds: dict[str, str] | None = None,
     others: OtherPlayers | None = None,
+    locations: UnitGuids | None = None,
+    shift: TimeShift | None = None,
 ) -> Outcome:
-    """Scrub one file. `others` (--pseudonymise-other-players) applies to a combat log only."""
+    """Scrub one file. `others` (--pseudonymise-other-players) applies to a combat log only.
+
+    `locations` is the run's UnitGuids registry, applied to every combat log
+    whatever the flags; without one, the file gets a registry of its own.
+    `shift` is the run's TimeShift: `run` always passes one, and every combat
+    log's timestamps and file-name stamp move by it; without one (direct
+    calls in tests) timestamps are left as they are."""
     original = read_bytes(item.src, item.max_lines)
     name = item.src.name.casefold()
     config = name in CONFIG_NAMES
     kind = kind_of(name)
+    dest, path_problems = identity.scrub_path(item.rel)
+    path_rewritten = dest != item.rel
+    moved = _shifted_dest(dest, kind, shift)
+    if moved is None:
+        path_problems.append(LOG_NAME_UNSHIFTABLE_LABEL)
+    else:
+        dest = moved
+    if kind == "combatlog" and (binary := _log_content_refusals(original)):
+        # Not a plain-text log: nothing below could scrub it, so nothing runs.
+        problems = [*binary, *path_problems]
+        return Outcome(item, dest, ScrubResult(b"", (), tuple(binary)), problems)
     units = others.units(original, identity) if others is not None and kind == "combatlog" else None
+    located = (locations or UnitGuids()).scan(original) if kind == "combatlog" else None
+    stamped = shift.scan(original) if shift is not None and kind == "combatlog" else None
     result = identity.scrub(
         original,
         blank_cvars=config,
         toc=name.endswith(".toc"),
         character_list=name == "character-list-order.txt",
         others=units,
+        unit_guids=located.edits if located is not None else (),
+        timestamps=stamped.edits if stamped is not None else (),
     )
-    dest, path_problems = identity.scrub_path(item.rel)
-    path_rewritten = dest != item.rel
     kept_whole: list[str] = []  # files an identity match refuses rather than rewrites
     if result.edits and (_third_party(item.rel) or kind == "addons-txt"):
         label = ADDON_LIST_LABEL if kind == "addons-txt" else THIRD_PARTY_LABEL
@@ -2352,6 +2838,20 @@ def process(
             )
             if stray:
                 kept_whole.append(f"{COMBAT_LOG_TEXT_LABEL} x{stray}")  # no offset: public text
+        if located is not None and located.unclassified:
+            # Count only: the token may be an identifier, and its offset points at it.
+            kept_whole.append(f"{UNIT_GUID_UNCLASSIFIED_LABEL} x{located.unclassified}")
+        if stamped is not None:
+            # Counts only: an offset would say which line kept its real time.
+            for count, label in (
+                (stamped.unstamped, UNSTAMPED_LABEL),
+                (stamped.unverified, UNVERIFIED_STAMP_LABEL),
+                (stamped.unshiftable, UNSHIFTABLE_LABEL),
+                (stamped.suffix_changes, SUFFIX_CHANGE_LABEL),
+                (stamped.record_times, RECORD_TIME_LABEL),
+            ):
+                if count:
+                    kept_whole.append(f"{label} x{count}")
         if units is not None:
             # Counts only: an offset into public text would point at the name.
             if units.unpaired:
@@ -2378,7 +2878,9 @@ def process(
         )
     problems = [*result.problems, *kept_whole, *path_problems]
     other_players = len(units.guids) if units is not None else 0
-    return Outcome(item, dest, result, problems, path_rewritten, review, other_players)
+    return Outcome(
+        item, dest, result, problems, path_rewritten, review, other_players, stamped is not None
+    )
 
 
 def describe_bytes(data: bytes) -> list[str]:
@@ -2408,11 +2910,14 @@ def provenance_row(outcome: Outcome, platform: str, captured_by: str, consent: s
             ("identity", "identity-rewritten"),
             ("cvar", "cvars-blanked"),
             ("guid", "guids-rewritten"),
+            ("unit-guid", "unit-guids-rewritten"),
         )
         if result.count(reason)
     ]
     if outcome.other_players:
         scrub.append(f"other-players-pseudonymised: {outcome.other_players}")
+    if outcome.timestamps_shifted:
+        scrub.append(TIMESTAMPS_SHIFTED)
     if result.embedded:
         scrub.append(f"embedded: {result.embedded}")
     if outcome.path_rewritten and not result.count("identity"):
@@ -2608,6 +3113,13 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--blank-cvar", action="append", help="another identity CVar to blank")
     parser.add_argument("--log-lines", type=int, default=2000, help="combat log lines to keep")
     parser.add_argument(
+        "--combat-log",
+        action="append",
+        metavar="NAME",
+        help="capture this log (an exact file name directly under a flavor's Logs/, starting "
+        "WoWCombatLog) instead of only the newest; repeatable",
+    )
+    parser.add_argument(
         "--pseudonymise-other-players",
         action="store_true",
         help="combat logs only: give other players invented GUIDs and names instead of "
@@ -2661,6 +3173,30 @@ def _kinds(args: argparse.Namespace, flavors: Sequence[Flavor]) -> dict[str, str
     return kinds
 
 
+def _check_combat_log_names(names: Sequence[str]) -> None:
+    """A `--combat-log` name is a bare file name under Logs/: no path, no `..`.
+
+    The message names the option by its position, never the name: a log file name
+    encodes the real date and time of the session, which the capture hides."""
+    for position, name in enumerate(names, 1):
+        if (
+            any(bad in name for bad in ("/", "\\", "..", "\0"))
+            or not COMBAT_LOG_NAME_RE.fullmatch(name)
+            or kind_of(name) != "combatlog"
+        ):
+            raise CaptureError(
+                f"the {_ordinal(position)} --combat-log: expected a file name directly under "
+                "Logs/ of the form WoWCombatLog.txt or WoWCombatLog-MMDDYY_HHMMSS.txt; "
+                "nothing is captured"
+            )
+
+
+def _ordinal(n: int) -> str:
+    """1st, 2nd, 3rd, 4th, ..., 11th, 12th, 13th, 21st, ..."""
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
 def run(args: argparse.Namespace) -> int:
     root = args.root.resolve()
     out = args.out.resolve()
@@ -2693,14 +3229,17 @@ def run(args: argparse.Namespace) -> int:
     if not flavors:
         raise CaptureError("no flavor folder (a directory with .flavor.info) found under --root")
     kinds = _kinds(args, flavors)
+    _check_combat_log_names(args.combat_log or [])
 
     identity = discover_identity(root, flavors, args)
     others = OtherPlayers() if args.pseudonymise_other_players else None
+    locations = UnitGuids()  # every combat log, one registry for the run
     planner = Planner(root, identity, args)
     planner.add(None, child(root, ".build.info"))
     for flavor in flavors:
         planner.plan_flavor(flavor)
     planner.check_character()
+    planner.check_combat_logs()
 
     mode = "DRY RUN, nothing will be written" if args.dry_run else f"writing under {out}"
     print(f"lab_capture: {len(planner.items)} files from {len(flavors)} flavor(s); {mode}")
@@ -2722,11 +3261,14 @@ def run(args: argparse.Namespace) -> int:
     hits: Counter[bytes] = Counter()
     refused = 0
     for item in planner.items.values():
+        # Each combat log gets its own offset, so a published original of one log
+        # gives away that log's offset and no other. Never shown.
+        shift = TimeShift(draw_time_shift()) if item.kind == "combatlog" else None
         try:
-            outcome = process(item, identity, kinds, others)
+            outcome = process(item, identity, kinds, others, locations, shift)
         except OSError as error:
             refused += 1
-            label = PurePosixPath(platform) / _scrubbed_label(item, identity)
+            label = PurePosixPath(platform) / _scrubbed_label(item, identity, shift)
             print(f"REFUSED  {label}: {_os_reason(error)}")
             continue
         shown = PurePosixPath(platform) / outcome.label
@@ -2751,7 +3293,12 @@ def run(args: argparse.Namespace) -> int:
         hits.update(e.new for e in result.edits if e.reason == "identity")
         verb = "would write" if args.dry_run else "wrote"
         embedded = f", {result.embedded} embedded" if result.embedded else ""
-        print(f"{verb:<8} {shown} ({len(result.data)} bytes, {len(result.edits)} edits{embedded})")
+        units = result.count("unit-guid")
+        located = f", {units} unit GUIDs rewritten" if units else ""
+        print(
+            f"{verb:<8} {shown} ({len(result.data)} bytes, {len(result.edits)} edits"
+            f"{embedded}{located})"
+        )
         for note in result.notes:
             print(f"  look   {note}")
         if outcome.review_cvars:

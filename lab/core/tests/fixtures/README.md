@@ -43,7 +43,9 @@ as found on disk. `client_version` is the full version string from
 endings and path spelling, so a capture made under Wine/Proton or from a
 mounted drive must pass `--platform`. `scrub` records what the tool rewrote,
 as it prints it: `identity-rewritten: n` (or `path only`), `cvars-blanked: n`,
-`guids-rewritten: n`, `embedded: n`, joined with `; `, or `none`. The tool
+`guids-rewritten: n`, `unit-guids-rewritten: n`,
+`other-players-pseudonymised: n`, `timestamps-shifted`, `embedded: n`,
+joined with `; `, or `none`. The tool
 prints each row ready to paste. Run it with
 `--kind <flavor folder>=<flavor-kind>` and the `file` cell is already the
 final path: move `incoming/<platform>/` up one level and the rows match.
@@ -70,6 +72,24 @@ the client:
   in sorted order of the real names over the whole install, so part 1
   (`Labcharb-Labrealmd`) and part 2 (`Labchard-Labrealme`) are two runs and
   a pseudonym in one is not proven to mean the same real name in the other.
+- In a combat log, the server, instance, zone and spawn parts of every
+  non-player unit GUID (`Creature-0-1-0-2-<npc id>-0000000000`) are invented,
+  numbered in order of first appearance, from 2026-09-24 on
+  (`unit-guids-rewritten: n`). The type and the NPC or object id are real. A
+  zero server, instance or zone field is kept; a spawn UID is always
+  renumbered. Equal invented values mean equal real values within one run
+  only; the numbers themselves say nothing about the server, zone or spawn
+  time.
+- From 2026-09-24 on, a combat log's timestamps and the date in its file
+  name are moved by a secret offset drawn for that log alone
+  (`timestamps-shifted`). Every shifted timestamp is written in one fixed
+  shape, `M/D/YYYY HH:MM:SS`, with the milliseconds and the UTC-offset suffix
+  copied as written. That shape was verified on 2026-09-24 against the
+  owner's real logs (count-only check). The time of day and the exact date are not the
+  session's. The date is still bounded by the build's live window and by the
+  commit date. The suffix still shows whether the session was in
+  daylight-saving time. Durations and the order of events within a log are
+  real.
 - `embedded: n` counts replacements that touched a neighbouring letter or
   digit (a character named like the start of a longer word). Read those
   lines before trusting the file's vocabulary. CVar names and TOC directive
