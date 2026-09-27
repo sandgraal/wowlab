@@ -9,6 +9,9 @@ the test ids say so. No install, no fixture tree.
 
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
 
 from wowlab_core import luadata
@@ -124,3 +127,37 @@ def test_constructed_error_keeps_at_most_forty_bytes_of_its_token(data: bytes) -
     assert len(err.token) <= 40
     assert len(str(err)) < 400
     assert "-byte token" in err.message
+
+
+# ── the error position is counted in constant memory (fix round 4, item 1) ──
+
+POSITION_CHILD = r"""
+import resource, sys
+from wowlab_core import luadata
+size = int(sys.argv[1])
+data = b"\nX = 1" + b"\r\n\n" * (size // 3) + b"@\n"
+scale = 1 if sys.platform == "darwin" else 1024
+before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * scale
+try:
+    luadata.parse(data)
+except luadata.LuaDataError as err:
+    after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * scale
+    print(err.line, err.column, after - before)
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="uses the resource module")
+def test_constructed_refusal_after_a_long_mixed_line_break_run_stays_small() -> None:
+    """16 MiB of `\\r\\n\\n` (both pair orders, so no C-speed shortcut) and
+    then a refused byte: the line count is right and positioning the error
+    adds far less than the input's size (it once took about 1 GB here)."""
+    size = 16 * 1024 * 1024
+    out = subprocess.run(
+        [sys.executable, "-c", POSITION_CHILD, str(size)],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    line, column, grown = int(out[0]), int(out[1]), int(out[2])
+    assert (line, column) == (2 + 2 * (size // 3), 1)
+    assert grown < 64 * 1024 * 1024, f"positioning the error grew RSS by {grown} bytes"

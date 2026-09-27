@@ -141,6 +141,11 @@ BUDGET_SHAPES: dict[str, Callable[[int], bytes]] = {
     "semicolons": lambda i: b"0;\n",
     "vtab-zeros": lambda i: b"\v0,",
     "comment-zeros": lambda i: b"--\n0,",
+    # escaped keys, decoded at parse (reviewer's round-4 shapes)
+    "escaped-keys": lambda i: b'["\\1"]=0,',
+    "escaped-keys-distinct": lambda i: b'["\\1%07d"]=0,' % i,
+    "break-escaped-keys": lambda i: b'["\\\n"]=0,',
+    "short-keys": lambda i: b'["n"]=true;',
 }
 
 
@@ -156,6 +161,9 @@ def generate_items(count: int, shape: str) -> tuple[bytes, int, int]:
         "semicolons",
         "vtab-zeros",
         "comment-zeros",
+        "escaped-keys",
+        "break-escaped-keys",
+        "short-keys",
     )
     body = item(0) * count if repeated else b"".join(map(item, range(count)))
     return head + body + tail, len(head), len(item(0))

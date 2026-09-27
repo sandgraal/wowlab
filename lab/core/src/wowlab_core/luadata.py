@@ -161,9 +161,13 @@ _C_SHARED = 170
 # an entry the fast regex cannot take costs `_C_SLOW` more, since the full
 # `_ENTRY` path takes about twice as long; every backslash in a string
 # literal (key or value, shared or not) costs `_C_ESCAPE`, which bounds the
-# escapes decoded at parse (keys) and later (`LuaString.data`, `to_python()`).
+# escapes decoded later (`LuaString.data`, `to_python()`); decoding an
+# escaped key at parse costs `_C_DECODE`, once per distinct short key text,
+# and every escaped-key occurrence `_C_ESCAPED_KEY`.
 _C_SLOW = 120
 _C_ESCAPE = 100
+_C_DECODE = 500  # decoding one escaped key at parse (once per distinct short text)
+_C_ESCAPED_KEY = 80  # every escaped-key occurrence: its lookup and key-set entry
 #: The budget, in the bytes described above, that one document may cost; a
 #: document over it raises `LuaLimitError` at the entry or assignment that
 #: crosses it.
@@ -178,6 +182,8 @@ _C_SHORT_ENTRY_MAX = (
     + _C_KEYED
     + _C_TABLE
     + _C_SLOW
+    + _C_DECODE
+    + _C_ESCAPED_KEY
     + 3 * _C_NODE
     + 2 * _C_STR
     + 8 * _C_BYTES
@@ -499,31 +505,38 @@ def _spelled_float(text: str) -> float:
 # exactly Lua 5.1's simple escapes (`\a \b \f \n \r \t \v \\ \" \'`) and octal
 # `\ooo`, and passes every other byte through as Latin-1, so encoding the
 # result as Latin-1 gives the bytes back. Only the two Lua escapes it reads
-# differently are rewritten first: a backslash before a line break (to `\n`,
-# one regex substitution) and decimal `\ddd` (to the same byte in octal, one
-# call per decimal escape). Every escape the grammar refuses (`\x`, `\u`,
+# differently are rewritten first, in one linear pass into a `bytearray`: a
+# backslash before a line break (to `\n`) and decimal `\ddd` (to the same
+# byte in octal). Every escape the grammar refuses (`\x`, `\u`,
 # `\N`, `\z`, any other) is refused here before the codec sees it.
 _ESCAPE_BAD = re.compile(rb"(?<!\\)(?:\\\\)*+\\(?![abfnrtv\\\"'0-9\r\n])")
 _ESCAPE_SPECIAL = re.compile(rb"(?<!\\)(?:\\\\)*+\\[0-9\r\n]")
-_ESCAPE_BREAK = re.compile(rb"(?<!\\)((?:\\\\)*+)\\(?:\r\n|\n\r|\r|\n)")
-_ESCAPE_DECIMAL = re.compile(rb"(?<!\\)((?:\\\\)*+)\\([0-9]{1,3}+)")
+# A decimal escape (group 2) or an escaped line break (group 3), after any
+# run of escaped backslashes (group 1).
+_ESCAPE_REWRITE = re.compile(rb"(?<!\\)((?:\\\\)*+)\\(?:([0-9]{1,3}+)|(\r\n|\n\r|\r|\n))")
 _OCTAL = {b"%d" % code: b"\\%03o" % code for code in range(256)}
 _OCTAL.update({b"%02d" % code: b"\\%03o" % code for code in range(100)})
 _OCTAL.update({b"%03d" % code: b"\\%03o" % code for code in range(256)})
 
 
-def _decimal_to_octal(body: bytes) -> bytes:
-    """`body` with every decimal escape rewritten in octal, built in one
-    `bytearray` (linear memory; one loop step per decimal escape)."""
+def _rewrite_escapes(body: bytes) -> bytes:
+    """`body` with every decimal escape rewritten in octal and every escaped
+    line break as `\\n`, built in one `bytearray` (linear memory, one loop
+    step per rewritten escape)."""
     out = bytearray()
     view = memoryview(body)
     last = 0
-    for m in _ESCAPE_DECIMAL.finditer(body):
-        octal = _OCTAL.get(m.group(2))
-        if octal is None:
-            raise ValueError(f"escape \\{m.group(2)!r} is above 255")
-        out += view[last : m.start(2) - 1]  # up to the escape's backslash
-        out += octal
+    for m in _ESCAPE_REWRITE.finditer(body):
+        digits = m.group(2)
+        if digits is None:
+            replacement = b"\\n"
+        else:
+            octal = _OCTAL.get(digits)
+            if octal is None:
+                raise ValueError(f"escape \\{digits!r} is above 255")
+            replacement = octal
+        out += view[last : m.end(1)]  # up to the escape's backslash
+        out += replacement
         last = m.end()
     out += view[last:]
     return bytes(out)
@@ -532,15 +545,14 @@ def _decimal_to_octal(body: bytes) -> bytes:
 def _unescape(body: bytes) -> bytes:
     """The bytes a string literal's body (quotes removed) decodes to under
     Lua 5.1's escapes. Memory is linear in the body; runs of ordinary bytes
-    and simple escapes are decoded at C speed, decimal escapes at one loop
-    step each (the parser charges every backslash against `MAX_COST`).
+    and simple escapes are decoded at C speed, decimal escapes and escaped
+    line breaks at one loop step each (the parser charges every backslash against `MAX_COST`).
     Raises `ValueError` for an escape the grammar refuses (only reachable for
     a hand-built `LuaString`: the parser refuses those first)."""
     if _ESCAPE_BAD.search(body) is not None:
         raise ValueError("not a Lua 5.1 escape, or a lone backslash at the end")
     if _ESCAPE_SPECIAL.search(body) is not None:
-        body = _ESCAPE_BREAK.sub(rb"\1\\n", body)
-        body = _decimal_to_octal(body)
+        body = _rewrite_escapes(body)
     return body.decode("unicode_escape").encode("latin-1")
 
 
@@ -630,16 +642,17 @@ _ENTRY = re.compile(
     rb"(" + _TRIVIA + rb")\]|(" + _NAME + rb"))(" + _TRIVIA + rb")=(?!=)(" + _TRIVIA + rb"))?"
     rb"(?:(?:(" + _STR + rb")|(" + _NUM + rb")|(" + _BOOL + rb"))(" + _TRIVIA + rb")([,;]?)|(\{)))"
 )
-# The common entry shapes the client writes, tried before `_ENTRY` because
-# they match in about half the time: whitespace, then an optional
-# `["plain"] = ` or `[number] = ` key, then a plain string, a number or a
-# boolean followed at once by `,` or `;`, or a `{`. Every match is also an `_ENTRY`
-# match with the same parts (kl, kc and sep_lead empty, one space on either
-# side of `=`); anything else falls through to `_ENTRY`.
-_PLAIN = rb'"[^"\\\r\n\x00]*+"'
+# The common entry shapes, tried before `_ENTRY` because they match in
+# about half the time: whitespace, then an optional `["string"] = ` or
+# `[number] = ` key (no trivia inside the brackets, at most one space on
+# either side of `=`), then a double-quoted string, a number or a boolean
+# followed at once by `,` or `;`, or a `{`. Every match is also an `_ENTRY`
+# match with the same parts (kl, kc and sep_lead empty; eq_lead and the
+# value's lead are the captured spaces); anything else falls through to
+# `_ENTRY`. Strings are checked for escapes above 255 after either match.
 _FAST = re.compile(
-    rb"([ \t\r\n\f\v]*+)(?:\[(?:(" + _PLAIN + rb")|(" + _NUM + rb"))\] = )?"
-    rb"(?:(?:(" + _PLAIN + rb")|(" + _NUM + rb")|(" + _BOOL + rb"))([,;])|(\{))"
+    rb"([ \t\r\n\f\v]*+)(?:\[(?:(" + _DQ + rb")|(" + _NUM + rb"))\]( ?)=(?!=)( ?))?"
+    rb"(?:(?:(" + _DQ + rb")|(" + _NUM + rb")|(" + _BOOL + rb"))([,;])|(\{))"
 )
 # After an entry with no separator: only the closing brace.
 _CLOSE = re.compile(rb"(" + _TRIVIA + rb")\}")
@@ -662,28 +675,28 @@ def _position(data: bytes, offset: int) -> tuple[int, int]:
     """1-based line and byte column of `offset`; CRLF, LFCR, LF and CR each
     end one line (Lua 5.1's `inclinenumber`).
 
-    Counted at C speed, so refusing a document near the end of a large file
-    stays cheap: every CR and LF is a line break except the second byte of
-    a pair, and Lua pairs a CR with an LF next to it greedily from the left,
-    which is exactly the leftmost-first matching of `\\r\\n|\\n\\r`. The pairs
-    are counted in chunks that never end inside a run of line-break bytes."""
+    Every CR and LF is a line break except the second byte of a pair, and
+    Lua pairs a CR with an LF next to it greedily from the left, which is
+    exactly the leftmost-first matching of `\\r\\n|\\n\\r`. Counted in
+    constant memory: at C speed when the prefix has only one pair order
+    (then the pairs are simply its occurrences, as nothing can consume their
+    first byte), and one regex match at a time when it has both."""
     line_start = max(data.rfind(b"\n", 0, offset), data.rfind(b"\r", 0, offset)) + 1
+    column = offset - line_start + 1
     lfs = data.count(b"\n", 0, line_start)
     crs = data.count(b"\r", 0, line_start)
     if not lfs or not crs:
-        return lfs + crs + 1, offset - line_start + 1
-    if data.count(b"\r\n", 0, line_start) == lfs == crs:  # pure CRLF, the client's
-        return lfs + 1, offset - line_start + 1
-    breaks = lfs + crs
-    chunk = 1 << 20  # `subn` keeps a list of the pieces it joins: bound it
-    begin = 0
-    while begin < line_start:
-        end = min(begin + chunk, line_start)
-        while end < line_start and data[end - 1] in b"\r\n":
-            end += 1
-        breaks -= _LINE_PAIR.subn(b"", data[begin:end])[1]
-        begin = end
-    return breaks + 1, offset - line_start + 1
+        return lfs + crs + 1, column
+    crlfs = data.count(b"\r\n", 0, line_start)
+    if crlfs == lfs == crs:  # pure CRLF, the client's: greedy pairing starts at every CR
+        return lfs + 1, column
+    if data.find(b"\n\r", 0, line_start) < 0:
+        pairs = crlfs
+    elif data.find(b"\r\n", 0, line_start) < 0:
+        pairs = data.count(b"\n\r", 0, line_start)
+    else:
+        pairs = sum(1 for _ in _LINE_PAIR.finditer(data, 0, line_start))
+    return lfs + crs - pairs + 1, column
 
 
 # An error keeps at most this many bytes of its offending token (and says how
@@ -1052,6 +1065,7 @@ class _Parser:
         values: dict[tuple[bytes, bytes], LuaValue] = {}  # (lead, text) -> scalar
         keys: dict[tuple[bytes, bytes], LuaString] = {}  # (lead, text) -> string key
         positional: dict[tuple[bytes, bytes, bytes], Entry] = {}  # (lead, text, sep)
+        decoded: dict[bytes, bytes] = {}  # escaped key text -> its `"` + data + `"`
         whole: dict[bytes, Assignment] = {}  # source bytes -> scalar assignment
         # The innermost open table, unpacked into locals.
         at = 0
@@ -1149,9 +1163,8 @@ class _Parser:
                 if m is not None and m.end() - pos > MAX_NUMBER_CHARS:
                     m = None  # a long match takes the full path, which checks every bound
                 if m is not None:
-                    lead, ks, kn, vs, vn, vb, sep, vt = m.groups(b"")
+                    lead, ks, kn, ke, vl, vs, vn, vb, sep, vt = m.groups(b"")
                     close = kl = kb = kc = kw = sl = b""
-                    ke = vl = b" " if ks or kn else b""
                     if len(lead) > 1:
                         found = tget(lead)
                         if found is None:
@@ -1199,12 +1212,21 @@ class _Parser:
                         # double-quoted literal that is its own raw bytes,
                         # already held by the key, so nothing new is kept.
                         if b"\\" in ks:
-                            if _escape_over_255(ks):
-                                _Diagnoser(data).entry(pos, at)
-                            cost += _C_BYTES + len(ks) + _C_ESCAPE * ks.count(b"\\")
-                            if cost > budget:
-                                self.cost_bound(start + len(lead))  # before decoding it
-                            lk = b'"' + _unescape(ks[1:-1]) + b'"'
+                            # Every occurrence pays for its backslashes (later
+                            # decoding, `to_python()`); decoding at parse
+                            # happens once per distinct short key text.
+                            cost += _C_ESCAPED_KEY + _C_ESCAPE * ks.count(b"\\")
+                            known = decoded.get(ks)
+                            if known is None:
+                                if _escape_over_255(ks):
+                                    _Diagnoser(data).entry(pos, at)
+                                cost += _C_DECODE + _C_BYTES + len(ks)
+                                if cost > budget:
+                                    self.cost_bound(start + len(lead))  # before decoding it
+                                known = b'"' + _unescape(ks[1:-1]) + b'"'
+                                if len(ks) <= trivia_max and len(decoded) < limit:
+                                    decoded[ks] = known
+                            lk = known
                         elif ks[0] == 0x22:
                             lk = shared_key.raw
                         else:
