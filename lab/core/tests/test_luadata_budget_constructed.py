@@ -63,3 +63,64 @@ def test_constructed_distinct_assignments_are_charged_more(
         return caught.value.line - 2
 
     assert fitting(None) < fitting(b"v000000=000000\n")
+
+
+# ── escapes are charged (M10-04 fix round 3, security finding S1) ───────────
+
+
+@pytest.mark.parametrize(
+    "template",
+    [b'X = {["%s"] = 1}', b'X = {"%s"}', b'X = "%s"'],
+    ids=["constructed-escaped-key", "constructed-escaped-value", "constructed-escaped-top-level"],
+)
+def test_constructed_large_escaped_string_is_refused_by_the_budget(
+    template: bytes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every backslash in a string literal is charged: a string of 100 000
+    `\\n` escapes is refused under a lowered budget (a key before it is
+    decoded), and 1000 of them fit."""
+    monkeypatch.setattr(luadata, "MAX_COST", 1_000_000)
+    with pytest.raises(luadata.LuaLimitError) as caught:
+        luadata.parse(template.replace(b"%s", b"\\n" * 100_000))
+    assert "MAX_COST" in caught.value.message
+    doc = luadata.parse(template.replace(b"%s", b"\\n" * 1000))
+    assert doc.to_python()["X"] in ({"\n" * 1000: 1}, ["\n" * 1000], "\n" * 1000)
+
+
+def test_constructed_escaped_value_decodes_to_the_right_bytes() -> None:
+    """A 4 MiB value of simple, decimal and line-break escapes decodes to
+    the bytes Lua 5.1 gives (`_unescape` builds its output at C speed and
+    in linear memory)."""
+    unit = b"a\\n\\065\\\\\\\r\n"
+    count = 4 * 1024 * 1024 // len(unit)
+    doc = luadata.parse(b'X = "' + unit * count + b'"')
+    assert doc.assignments[0].value.data == b"a\nA\\\n" * count
+
+
+# ── an error keeps a short token (security finding S2) ──────────────────────
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        b"X = " + b"a" * (1024 * 1024),
+        b'X = "' + b"a" * (1024 * 1024),
+        b'X = "' + b"\\1" * (512 * 1024),
+        b"X = {" + b"b" * (1024 * 1024) + b"}",
+        b"X = 1" + b"a" * (1024 * 1024),
+    ],
+    ids=[
+        "constructed-huge-bare-identifier",
+        "constructed-huge-unterminated-string",
+        "constructed-huge-unterminated-escapes",
+        "constructed-huge-bare-identifier-in-table",
+        "constructed-huge-malformed-number",
+    ],
+)
+def test_constructed_error_keeps_at_most_forty_bytes_of_its_token(data: bytes) -> None:
+    with pytest.raises(luadata.LuaDataError) as caught:
+        luadata.parse(data)
+    err = caught.value
+    assert len(err.token) <= 40
+    assert len(str(err)) < 400
+    assert "-byte token" in err.message

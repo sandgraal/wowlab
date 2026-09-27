@@ -319,7 +319,8 @@ reference. Output is byte-deterministic: same document, same bytes, on every
 platform and locale.
 
 Performance: a 50 MB SavedVariables file (auction or collection addons get
-there) parses in under 10 s and under 1.5 GB RSS on the owner's laptop.
+there) parses in under 10 s and under 1.5 GB RSS on the owner's laptop
+(within the `luadata.MAX_COST` budget; see the amendment below).
 Measure it in the PR; if pure Python misses the target, report the numbers
 and stop. Do not reach for a C extension or a third-party parser without an
 ADR.
@@ -389,7 +390,7 @@ with `/dump _VERSION` in game). Grammar changes are mirrored in
    `duplicate`.
 
 *Amended 2026-09-23 (owner decision after the M10-04 reviews: option 1;
-rewritten after fix round 2):* two more bounds, each raising
+rewritten after fix rounds 2 and 3):* two more bounds, each raising
 `LuaLimitError` with a position. A number literal longer than 4300
 characters is refused, so no conversion is quadratic (the same limit CPython
 sets on int parsing). And every document is charged against a parse budget,
@@ -397,28 +398,40 @@ sets on int parsing). And every document is charged against a parse budget,
 table entry and each top-level assignment a base cost plus every object
 built for it that is not shared (each unshared trivia, lead, comment, key
 and value text, counted with its object overhead; a trailing comment twice,
-as it is held twice). An entry or assignment shared whole with an identical
-earlier one still costs a fixed amount, for its parse time. A document over
-the budget is refused at the entry or assignment that crosses it. The
-constants are calibrated by `lab/core/tests/luadata_bench_constructed.py
---at-budget`, which fills each constructed shape to just under the budget
-and parses it in a fresh interpreter. On the owner's M1 (16 GB), load
-average 2.8 to 4.5 from other work:
+as it is held twice), plus time charges: an entry the fast regex cannot
+take, a table, and every backslash in a string literal (which bounds the
+escapes decoded at parse and later). An entry or assignment shared whole
+with an identical earlier one still costs a fixed amount, for its parse
+time. A document over the budget is refused at the entry or assignment that
+crosses it. The target covers every document within the budget, whatever
+its shape. The constants are calibrated by
+`lab/core/tests/luadata_bench_constructed.py --at-budget`, which fills each
+constructed shape to just under the budget and parses it in a fresh
+interpreter. Measured on the owner's M1 (16 GB) on 2026-09-27, load average
+1.9 to 2.9, peak memory as `/usr/bin/time -l` reports it (which counts
+compressed memory; `ru_maxrss` can under-report):
 
-| Shape at the budget | Entries | File | Peak RSS | Parse |
+| Shape at the budget | Entries | File | Peak memory | Parse |
 |---|---|---|---|---|
-| Worst RSS: `  [  "k…"  ]  =  "v…"  ,  -- …` (wide trivia, distinct comments) | 1,923,076 | 91.7 MiB | 1,122 MiB | 6.3 s |
-| Slowest: the same with `{  }` for the value | 1,872,963 | 78.6 MiB | 1,028 MiB | 7.6 s |
-| Dense client shape: `0,` one per CRLF line | 6,609,192 | 25.2 MiB | 152 MiB | 5.2 s |
-| Dense client shape: `true,` one per CRLF line | 6,497,172 | 43.4 MiB | 168 MiB | 4.9 s |
+| Most memory: `[1000000] = 1,` one per CRLF line (distinct number keys) | 2,956,296 | 45.1 MiB | 1,121 MiB | 3.9 s |
+| Slowest: `  [  "k…"  ]  =  {  }  ,  -- …` (wide trivia, distinct comments) | 1,408,267 | 59.1 MiB | 810 MiB | 6.2 s |
+| Dense client shape: `0,` one per CRLF line | 6,609,191 | 25.2 MiB | 194 MiB | 5.2 s |
+| Dense client shape: `true,` one per CRLF line | 6,497,171 | 43.4 MiB | 210 MiB | 5.0 s |
 
-Only shapes that were measured are claimed; the bench lists them all
-(distinct numbers and strings, string and number keys, empty tables,
-top-level assignments, §4.2 reference comments, 70-byte distinct comments).
-A 50 MiB positional array of distinct integers (about 3.55 million fit) and a
-50 MiB array of `0,` (about 6.46 million fit) are over the budget and refused. The
-parse tree uses immutable tuples for speed; Pydantic models are built at the
-CLI output boundary (M10-14).
+The bench's other shapes (distinct numbers and strings, string keys, empty
+tables, top-level assignments, `0;` and `\v0,` lists, comment-led lists,
+§4.2 reference comments, 70-byte distinct comments) all measured between
+these rows. *Owner decision 2026-09-24:* the budget, not the file size,
+decides what parses. A document over `MAX_COST` is refused with
+`LuaLimitError` even when it is smaller than the 50 MB the performance
+target names; the target holds for documents within the budget. Measured
+refusal points for 50 MiB files in the Forever layout
+(`lab/core/tests/luadata_bench_constructed.py --shape ids|zeros`): a flat
+positional array of distinct six-digit integers, 5.33 million entries in the
+file, is refused at about 3.51 million entries; an array of `0,`, 13.1
+million entries, is refused at about 6.46 million. The auction and
+collection shapes at 50 MiB parse. The parse tree uses immutable tuples for
+speed; Pydantic models are built at the CLI output boundary (M10-14).
 
 ### 6.5 `wtfconfig` — Config.wtf, bindings, macros (M10-07)
 

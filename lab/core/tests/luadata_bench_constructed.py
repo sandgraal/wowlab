@@ -137,6 +137,10 @@ BUDGET_SHAPES: dict[str, Callable[[int], bytes]] = {
     "ref-comments": lambda i: b'\t\t"s%07d", -- [%07d]\r\n' % (i, i + 1),
     "key-comments": lambda i: b"[%d]=1,--%070d\n" % (1_000_000 + i, i),
     "table-comments": lambda i: b"{--%070d\n},--%070d\n" % (i, i),
+    # shared entries the fast regex does not take (reviewer's C1 shapes)
+    "semicolons": lambda i: b"0;\n",
+    "vtab-zeros": lambda i: b"\v0,",
+    "comment-zeros": lambda i: b"--\n0,",
 }
 
 
@@ -144,7 +148,15 @@ def generate_items(count: int, shape: str) -> tuple[bytes, int, int]:
     """The document, the byte offset of the first item and the item length."""
     item = BUDGET_SHAPES[shape]
     head, tail = (b"\r\n", b"") if shape == "assign" else (b"\r\nX = {\r\n", b"}\r\n")
-    repeated = shape in ("zeros", "trues", "tables", "assign")
+    repeated = shape in (
+        "zeros",
+        "trues",
+        "tables",
+        "assign",
+        "semicolons",
+        "vtab-zeros",
+        "comment-zeros",
+    )
     body = item(0) * count if repeated else b"".join(map(item, range(count)))
     return head + body + tail, len(head), len(item(0))
 
@@ -284,12 +296,28 @@ def main() -> None:
 
 
 def _run(data: bytes, label: str) -> None:
-    """Write `data` to a temporary file and measure it in a fresh interpreter."""
+    """Write `data` to a temporary file and measure it in a fresh interpreter.
+
+    On macOS the child also runs under `/usr/bin/time -l`, whose "peak memory
+    footprint" counts memory the system has compressed, which `ru_maxrss`
+    (resident pages only) can under-report."""
     with tempfile.TemporaryDirectory(prefix="luadata-bench-") as folder:
         target = Path(folder) / "Constructed.lua"
         target.write_bytes(data)
         print(f"constructed input: {label}", flush=True)
-        subprocess.run([sys.executable, __file__, "--parse", str(target)], check=True)
+        command = [sys.executable, __file__, "--parse", str(target)]
+        timer = Path("/usr/bin/time")
+        if sys.platform != "darwin" or not timer.exists():
+            subprocess.run(command, check=True)
+            return
+        done = subprocess.run([str(timer), "-l", *command], capture_output=True, text=True)
+        print(done.stdout, end="", flush=True)
+        for line in done.stderr.splitlines():
+            if "peak memory footprint" in line:
+                footprint = int(line.split()[0])
+                print(f"  peak memory footprint {footprint / MiB:,.0f} MiB", flush=True)
+        if done.returncode:
+            raise SystemExit(done.stderr)
 
 
 if __name__ == "__main__":

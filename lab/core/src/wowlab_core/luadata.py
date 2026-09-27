@@ -152,26 +152,42 @@ _SHARE_TRIVIA_BYTES = 64
 _C_BYTES = 40
 _C_NODE = 56
 _C_STR = 56
-_C_TABLE = 128
+_C_TABLE = 208  # the LuaTable and its entries tuple, and the time its close takes
 _C_ENTRY = 190  # the 10-field Entry and its list and tuple slots
 _C_KEYED = 40  # a keyed entry's slot in the table's key set
 _C_ASSIGN = 96  # the 4-field Assignment and its slots
 _C_SHARED = 170
+# Time charges, in the same unit (the budget is also what bounds parse time):
+# an entry the fast regex cannot take costs `_C_SLOW` more, since the full
+# `_ENTRY` path takes about twice as long; every backslash in a string
+# literal (key or value, shared or not) costs `_C_ESCAPE`, which bounds the
+# escapes decoded at parse (keys) and later (`LuaString.data`, `to_python()`).
+_C_SLOW = 120
+_C_ESCAPE = 100
 #: The budget, in the bytes described above, that one document may cost; a
 #: document over it raises `LuaLimitError` at the entry or assignment that
 #: crosses it.
 MAX_COST = 1_150_000_000
 # The most one entry whose source (lead to separator) spans at most 64 bytes
 # can be charged: every object it can build unshared, with each byte of the
-# span counted twice, plus the span itself in the input buffer.
+# span counted twice, every byte of it a backslash, plus the span itself in
+# the input buffer.
 _SHORT_ENTRY_BYTES = 64
 _C_SHORT_ENTRY_MAX = (
-    _C_ENTRY + _C_KEYED + _C_TABLE + 2 * _C_NODE + _C_STR + 8 * _C_BYTES + 3 * _SHORT_ENTRY_BYTES
+    _C_ENTRY
+    + _C_KEYED
+    + _C_TABLE
+    + _C_SLOW
+    + 3 * _C_NODE
+    + 2 * _C_STR
+    + 8 * _C_BYTES
+    + (3 + _C_ESCAPE) * _SHORT_ENTRY_BYTES
 )
-#: Entries every document may hold, whatever their shape, as long as no entry
-#: spans more than 64 source bytes: `MAX_COST` divided by the most such an
-#: entry can be charged. Not itself a bound: the budget refuses, and denser
-#: documents (a list of repeated values costs `_C_SHARED` an entry) hold more.
+#: How many table entries of up to 64 source bytes each (lead to separator)
+#: fit the budget, whatever they hold, in a document holding nothing else:
+#: `MAX_COST` divided by the most such an entry can be charged. Not itself a
+#: bound: the budget refuses, and denser documents (a list of repeated values
+#: costs `_C_SHARED` an entry) hold far more.
 MAX_ENTRIES = MAX_COST // _C_SHORT_ENTRY_MAX
 
 # Lua 5.1 stores pending positional entries this many at a time
@@ -479,59 +495,97 @@ def _spelled_float(text: str) -> float:
     return float(text)
 
 
-_SIMPLE_ESCAPES = {
-    ord("a"): b"\x07",
-    ord("b"): b"\x08",
-    ord("f"): b"\x0c",
-    ord("n"): b"\n",
-    ord("r"): b"\r",
-    ord("t"): b"\t",
-    ord("v"): b"\x0b",
-    ord("\\"): b"\\",
-    ord('"'): b'"',
-    ord("'"): b"'",
-}
-_ESCAPE = re.compile(rb"\\(?:([0-9]{1,3})|(\r\n|\n\r|\r|\n)|(.))", re.DOTALL)
+# Escapes are decoded at C speed: CPython's `unicode_escape` codec reads
+# exactly Lua 5.1's simple escapes (`\a \b \f \n \r \t \v \\ \" \'`) and octal
+# `\ooo`, and passes every other byte through as Latin-1, so encoding the
+# result as Latin-1 gives the bytes back. Only the two Lua escapes it reads
+# differently are rewritten first: a backslash before a line break (to `\n`,
+# one regex substitution) and decimal `\ddd` (to the same byte in octal, one
+# call per decimal escape). Every escape the grammar refuses (`\x`, `\u`,
+# `\N`, `\z`, any other) is refused here before the codec sees it.
+_ESCAPE_BAD = re.compile(rb"(?<!\\)(?:\\\\)*+\\(?![abfnrtv\\\"'0-9\r\n])")
+_ESCAPE_SPECIAL = re.compile(rb"(?<!\\)(?:\\\\)*+\\[0-9\r\n]")
+_ESCAPE_BREAK = re.compile(rb"(?<!\\)((?:\\\\)*+)\\(?:\r\n|\n\r|\r|\n)")
+_ESCAPE_DECIMAL = re.compile(rb"(?<!\\)((?:\\\\)*+)\\([0-9]{1,3}+)")
+_OCTAL = {b"%d" % code: b"\\%03o" % code for code in range(256)}
+_OCTAL.update({b"%02d" % code: b"\\%03o" % code for code in range(100)})
+_OCTAL.update({b"%03d" % code: b"\\%03o" % code for code in range(256)})
 
 
-def _unescape_one(m: re.Match[bytes]) -> bytes:
-    digits, _brk, other = m.groups()
-    if digits is not None:
-        code = int(digits)
-        if code > 255:
-            raise ValueError(f"escape {m.group()!r} is above 255")
-        return bytes((code,))
-    if other is None:
-        return b"\n"
-    replacement = _SIMPLE_ESCAPES.get(other[0])
-    if replacement is None:
-        raise ValueError(f"escape {m.group()!r} is not a Lua 5.1 escape")
-    return replacement
+def _decimal_to_octal(body: bytes) -> bytes:
+    """`body` with every decimal escape rewritten in octal, built in one
+    `bytearray` (linear memory; one loop step per decimal escape)."""
+    out = bytearray()
+    view = memoryview(body)
+    last = 0
+    for m in _ESCAPE_DECIMAL.finditer(body):
+        octal = _OCTAL.get(m.group(2))
+        if octal is None:
+            raise ValueError(f"escape \\{m.group(2)!r} is above 255")
+        out += view[last : m.start(2) - 1]  # up to the escape's backslash
+        out += octal
+        last = m.end()
+    out += view[last:]
+    return bytes(out)
 
 
 def _unescape(body: bytes) -> bytes:
-    parts: list[bytes] = []
-    last = 0
-    for m in _ESCAPE.finditer(body):
-        parts += (body[last : m.start()], _unescape_one(m))
-        last = m.end()
-    rest = body[last:]
-    if b"\\" in rest:
-        raise ValueError("string ends in a lone backslash")
-    parts.append(rest)
-    return b"".join(parts)
+    """The bytes a string literal's body (quotes removed) decodes to under
+    Lua 5.1's escapes. Memory is linear in the body; runs of ordinary bytes
+    and simple escapes are decoded at C speed, decimal escapes at one loop
+    step each (the parser charges every backslash against `MAX_COST`).
+    Raises `ValueError` for an escape the grammar refuses (only reachable for
+    a hand-built `LuaString`: the parser refuses those first)."""
+    if _ESCAPE_BAD.search(body) is not None:
+        raise ValueError("not a Lua 5.1 escape, or a lone backslash at the end")
+    if _ESCAPE_SPECIAL.search(body) is not None:
+        body = _ESCAPE_BREAK.sub(rb"\1\\n", body)
+        body = _decimal_to_octal(body)
+    return body.decode("unicode_escape").encode("latin-1")
 
 
 def _escape_over_255(raw: bytes) -> bool:
     """For a literal whose escapes the grammar has already checked, whether
-    one `\\ddd` is above 255. A backslash starts an escape when an even
-    run of backslashes precedes it, so the check is one linear search."""
-    return _OVER_255.search(raw) is not None
+    one `\\ddd` is above 255."""
+    return _first_over_255(raw, 0, len(raw)) >= 0
 
 
-# An odd backslash (after a whole run of `\\\\` pairs), then three digits
-# above 255 (a `\\ddd` escape takes at most three digits).
-_OVER_255 = re.compile(rb"(?<!\\)(?:\\\\)*+\\(?:25[6-9]|2[6-9][0-9]|[3-9][0-9]{2})")
+# A backslash and three digits above 255 (a `\\ddd` escape takes at most
+# three digits). It starts with a literal byte, so the regex engine finds
+# candidates at C speed; a candidate is an escape only if an even run of
+# backslashes precedes it.
+_OVER_255 = re.compile(rb"\\(?:25[6-9]|2[6-9][0-9]|[3-9][0-9]{2})")
+
+
+def _first_over_255(data: bytes, start: int, end: int) -> int:
+    """Offset of the backslash of the first decimal escape above 255 in
+    `data[start:end]` (a run of the grammar's string body), or -1."""
+    search = _OVER_255.search
+    pos = start
+    while True:
+        m = search(data, pos, end)
+        if m is None:
+            return -1
+        at = m.start()
+        if _backslashes_before(data, at, start) % 2 == 0:
+            return at
+        pos = at + 1
+
+
+def _backslashes_before(data: bytes, at: int, start: int) -> int:
+    """How many backslashes immediately precede `at` (not before `start`),
+    counted in doubling chunks at C speed, so a long run costs its length
+    once."""
+    count = 0
+    width = 64
+    while True:
+        low = max(start, at - count - width)
+        chunk = data[low : at - count]
+        kept = chunk.rstrip(b"\\")
+        count += len(chunk) - len(kept)
+        if kept or low == start:
+            return count
+        width *= 2
 
 
 # ── the grammar as regular expressions ──────────────────────────────────────
@@ -544,8 +598,15 @@ _OVER_255 = re.compile(rb"(?<!\\)(?:\\\\)*+\\(?:25[6-9]|2[6-9][0-9]|[3-9][0-9]{2
 
 _WS = rb"[ \t\r\n\f\v]"
 _TRIVIA = rb"(?>" + _WS + rb"*(?:--(?!\[=*\[)[^\r\n\x00]*" + _WS + rb"*)*)"
-_DQ = rb'(?>"[^"\\\r\n\x00]*+(?:\\(?:\r\n|\n\r|[0-9]{1,3}+|[abfnrtv\\"\'\r\n])[^"\\\r\n\x00]*+)*+")'
-_SQ = rb"(?>'[^'\\\r\n\x00]*+(?:\\(?:\r\n|\n\r|[0-9]{1,3}+|[abfnrtv\\\"'\r\n])[^'\\\r\n\x00]*+)*+')"
+# A string body: runs of ordinary bytes, runs of one-line escapes (simple or
+# decimal: a whole run is one regex step, so an escape-dense string is
+# scanned about three times faster than escape by escape), and escaped line
+# breaks.
+_ESCAPES = rb"(?:\\(?:[0-9]{1,3}+|[abfnrtv\\\"']))++|\\(?:\r\n|\n\r|[\r\n])"
+_DQ_BODY = rb'(?:[^"\\\r\n\x00]++|' + _ESCAPES + rb")*+"
+_SQ_BODY = rb"(?:[^'\\\r\n\x00]++|" + _ESCAPES + rb")*+"
+_DQ = rb'(?>"' + _DQ_BODY + rb'")'
+_SQ = rb"(?>'" + _SQ_BODY + rb"')"
 _STR = _DQ + rb"|" + _SQ
 _NUM = rb"(?>-?(?:0[xX][0-9A-Fa-f]+|[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?))(?![0-9A-Za-z_.])"
 _BOOL = rb"(?:true|false)(?![A-Za-z0-9_])"
@@ -572,13 +633,13 @@ _ENTRY = re.compile(
 # The common entry shapes the client writes, tried before `_ENTRY` because
 # they match in about half the time: whitespace, then an optional
 # `["plain"] = ` or `[number] = ` key, then a plain string, a number or a
-# boolean followed at once by `,`, or a `{`. Every match is also an `_ENTRY`
+# boolean followed at once by `,` or `;`, or a `{`. Every match is also an `_ENTRY`
 # match with the same parts (kl, kc and sep_lead empty, one space on either
 # side of `=`); anything else falls through to `_ENTRY`.
 _PLAIN = rb'"[^"\\\r\n\x00]*+"'
 _FAST = re.compile(
-    rb"([ \t\r\n]*+)(?:\[(?:(" + _PLAIN + rb")|(" + _NUM + rb"))\] = )?"
-    rb"(?:(?:(" + _PLAIN + rb")|(" + _NUM + rb")|(" + _BOOL + rb")),|(\{))"
+    rb"([ \t\r\n\f\v]*+)(?:\[(?:(" + _PLAIN + rb")|(" + _NUM + rb"))\] = )?"
+    rb"(?:(?:(" + _PLAIN + rb")|(" + _NUM + rb")|(" + _BOOL + rb"))([,;])|(\{))"
 )
 # After an entry with no separator: only the closing brace.
 _CLOSE = re.compile(rb"(" + _TRIVIA + rb")\}")
@@ -589,28 +650,59 @@ _COMMENT_AFTER = re.compile(rb"[ \t\f\v]*(--[^\r\n\x00]*)")
 _TRIVIA_RE = re.compile(_TRIVIA)
 _NUM_RE = re.compile(_NUM)
 _NAME_RUN = re.compile(rb"[A-Za-z_][A-Za-z0-9_]*")
-_LINE_BREAK = re.compile(rb"\r\n|\n\r|\r|\n")
+_LINE_PAIR = re.compile(rb"\r\n|\n\r")
 _LONG_OPEN = re.compile(rb"\[=*\[")
-_PLAIN_DQ = re.compile(rb'[^"\\\r\n\x00]*').match
-_PLAIN_SQ = re.compile(rb"[^'\\\r\n\x00]*").match
-_SIMPLE_ESCAPES_RUN = re.compile(rb"(?:\\[abfnrtv\\\"'])++").match
+# A string body the grammar accepts: ordinary bytes and well-formed escapes.
+_BODY_DQ = re.compile(_DQ_BODY).match
+_BODY_SQ = re.compile(_SQ_BODY).match
 _BAD_RUN = re.compile(rb"[^ \t\r\n\f\v,;{}\[\]=]+")
 
 
 def _position(data: bytes, offset: int) -> tuple[int, int]:
     """1-based line and byte column of `offset`; CRLF, LFCR, LF and CR each
-    end one line (Lua 5.1's `inclinenumber`)."""
-    line = 1
-    start = 0
-    for m in _LINE_BREAK.finditer(data, 0, offset):
-        line += 1
-        start = m.end()
-    return line, offset - start + 1
+    end one line (Lua 5.1's `inclinenumber`).
+
+    Counted at C speed, so refusing a document near the end of a large file
+    stays cheap: every CR and LF is a line break except the second byte of
+    a pair, and Lua pairs a CR with an LF next to it greedily from the left,
+    which is exactly the leftmost-first matching of `\\r\\n|\\n\\r`. The pairs
+    are counted in chunks that never end inside a run of line-break bytes."""
+    line_start = max(data.rfind(b"\n", 0, offset), data.rfind(b"\r", 0, offset)) + 1
+    lfs = data.count(b"\n", 0, line_start)
+    crs = data.count(b"\r", 0, line_start)
+    if not lfs or not crs:
+        return lfs + crs + 1, offset - line_start + 1
+    if data.count(b"\r\n", 0, line_start) == lfs == crs:  # pure CRLF, the client's
+        return lfs + 1, offset - line_start + 1
+    breaks = lfs + crs
+    chunk = 1 << 20  # `subn` keeps a list of the pieces it joins: bound it
+    begin = 0
+    while begin < line_start:
+        end = min(begin + chunk, line_start)
+        while end < line_start and data[end - 1] in b"\r\n":
+            end += 1
+        breaks -= _LINE_PAIR.subn(b"", data[begin:end])[1]
+        begin = end
+    return breaks + 1, offset - line_start + 1
+
+
+# An error keeps at most this many bytes of its offending token (and says how
+# long the token was), so refusing a huge token never copies it into a message.
+_TOKEN_KEEP = 40
 
 
 def _error(
-    data: bytes, offset: int, token: bytes, message: str, cls: type[LuaDataError] = LuaDataError
+    data: bytes,
+    offset: int,
+    token: bytes,
+    message: str,
+    cls: type[LuaDataError] = LuaDataError,
+    length: int | None = None,
 ) -> LuaDataError:
+    length = len(token) if length is None else length
+    if length > _TOKEN_KEEP:
+        token = token[:_TOKEN_KEEP]
+        message = f"{message} (a {length}-byte token; its first {_TOKEN_KEEP} bytes are kept)"
     line, column = _position(data, offset)
     return cls(message, line=line, column=column, token=token, offset=offset)
 
@@ -627,6 +719,22 @@ class _Diagnoser:
 
     def fail(self, offset: int, token: bytes, message: str) -> NoReturn:
         raise _error(self.data, offset, token, message)
+
+    def fail_span(self, start: int, end: int, message: str) -> NoReturn:
+        """Refuse the token `data[start:end]` without copying more of it than
+        the error keeps."""
+        raise _error(
+            self.data,
+            start,
+            self.data[start : min(end, start + _TOKEN_KEEP)],
+            message,
+            length=end - start,
+        )
+
+    def word(self, start: int, end: int) -> bytes:
+        """A name's bytes for comparing with keywords: a name longer than any
+        keyword is cut (it cannot equal one), so a huge name is never copied."""
+        return self.data[start : min(end, start + 16)]
 
     def skip(self, pos: int) -> int:
         data = self.data
@@ -655,8 +763,9 @@ class _Diagnoser:
             m = _NUM_RE.match(data, p)
             if m is None:
                 run = _BAD_RUN.match(data, p)
-                token = run.group() if run else data[p : p + 1]
-                self.fail(p, token, "not a number this parser accepts (§4.2, §6.4)")
+                self.fail_span(
+                    p, run.end() if run else p + 1, "not a number this parser accepts (§4.2, §6.4)"
+                )
             return "number", p, m.end()
         if c == 0x5F or 0x41 <= c <= 0x5A or 0x61 <= c <= 0x7A:
             m = _NAME_RUN.match(data, p)
@@ -676,49 +785,32 @@ class _Diagnoser:
         return "other", p, end
 
     def string(self, p: int) -> int:
-        """End of the string literal at `p`, or the positioned error."""
+        """End of the string literal at `p`, or the positioned error.
+
+        One regex takes the longest run of the body the grammar accepts
+        (ordinary bytes and well-formed escapes) at C speed; the first
+        decimal escape above 255 in that run is found with `_first_over_255`; the
+        byte where the run stops says what is wrong."""
         data = self.data
         n = len(data)
-        quote = data[p]
-        plain = _PLAIN_DQ if quote == 0x22 else _PLAIN_SQ
-        i = p + 1
-        while True:
-            run = plain(data, i)  # a run of ordinary bytes, at C speed
-            i = run.end() if run else i
-            if i >= n:
-                self.fail(p, data[p : min(i, p + 40)], "unterminated string")
-            c = data[i]
-            if c == quote:
-                return i + 1
-            if c == 0x5C:
-                simple = _SIMPLE_ESCAPES_RUN(data, i)
-                if simple:
-                    i = simple.end()
-                    continue
-                d = data[i + 1] if i + 1 < n else -1
-                if d == -1:
-                    self.fail(p, data[p : min(i, p + 40)], "unterminated string")
-                if d in b"abfnrtv\\\"'":
-                    i += 2
-                elif d in (0x0A, 0x0D):
-                    i += 2
-                    if i < n and data[i] in (0x0A, 0x0D) and data[i] != d:
-                        i += 1
-                elif 0x30 <= d <= 0x39:
-                    j = i + 1
-                    while j < n and j < i + 4 and 0x30 <= data[j] <= 0x39:
-                        j += 1
-                    if int(data[i + 1 : j]) > 255:
-                        self.fail(i, data[i:j], "decimal escape above 255")
-                    i = j
-                else:
-                    self.fail(i, data[i : i + 2], "not a Lua 5.1 escape")
-            elif c in (0x0A, 0x0D):
-                self.fail(p, data[p : min(i, p + 40)], "unterminated string (raw line break)")
-            elif c == 0:
-                self.fail(i, b"\x00", "a NUL byte is rejected (§4.3)")
-            else:
-                i += 1
+        body = _BODY_DQ if data[p] == 0x22 else _BODY_SQ
+        m = body(data, p + 1)
+        i = m.end() if m else p + 1
+        at = _first_over_255(data, p + 1, i)
+        if at >= 0:
+            self.fail(at, data[at : at + 4], "decimal escape above 255")
+        if i >= n:
+            self.fail_span(p, i, "unterminated string")
+        c = data[i]
+        if c == data[p]:
+            return i + 1
+        if c == 0x5C:
+            if i + 1 >= n:
+                self.fail_span(p, i, "unterminated string")
+            self.fail(i, data[i : i + 2], "not a Lua 5.1 escape")
+        if c == 0:
+            self.fail(i, b"\x00", "a NUL byte is rejected (§4.3)")
+        self.fail_span(p, i, "unterminated string (raw line break)")
 
     def peek(self, pos: int) -> bytes:
         """The next byte after trivia, without raising (for `value()`'s
@@ -728,9 +820,6 @@ class _Diagnoser:
         p = m.end() if m else pos
         return self.data[p : p + 1]
 
-    def text(self, kind: str, start: int, end: int) -> bytes:
-        return b"" if kind == "eof" else self.data[start:end]
-
     def value(self, pos: int, *, allow_nil: bool) -> tuple[str, int]:
         """Checks one value head at `pos`; returns (kind, end) when it is
         acceptable, raises otherwise."""
@@ -739,7 +828,7 @@ class _Diagnoser:
         if kind in ("string", "number", "{"):
             return kind, e
         if kind == "name":
-            word = data[s:e]
+            word = self.word(s, e)
             if word in (b"true", b"false"):
                 return "bool", e
             if word == b"nil":
@@ -754,43 +843,41 @@ class _Diagnoser:
             # is the offending token: the lookahead only picks the message and
             # must not raise on a later long comment or NUL.
             if self.peek(e) in (b'"', b"'", b"{", b"(", b":"):
-                self.fail(s, word, "calls are rejected (L3)")
-            self.fail(s, word, "bare identifiers are not values (L3)")
+                self.fail_span(s, e, "calls are rejected (L3)")
+            self.fail_span(s, e, "bare identifiers are not values (L3)")
         if kind == "longbracket":
             opener = _LONG_OPEN.match(data, s)
             token = opener.group() if opener else data[s : s + 1]
             self.fail(s, token, "long-bracket strings are rejected (§6.4)")
         if kind == "eof":
             self.fail(s, b"", "unexpected end of input, expected a value")
-        self.fail(s, data[s:e], "expected a value (operators and expressions are rejected)")
+        self.fail_span(s, e, "expected a value (operators and expressions are rejected)")
 
     def internal(self, pos: int) -> NoReturn:
         self.fail(pos, self.data[pos : pos + 20], "input refused (no single offending token)")
 
     def top(self, pos: int) -> NoReturn:
-        data = self.data
         kind, s, e = self.token(self.skip(pos))
         if kind != "name":
             what = "end of input" if kind == "eof" else "this"
-            self.fail(s, self.text(kind, s, e), f"expected `name = value`, found {what}")
-        word = data[s:e]
+            self.fail_span(s, e, f"expected `name = value`, found {what}")
+        word = self.word(s, e)
         if word in _KEYWORDS:
             self.fail(s, word, "only top-level `name = value` assignments are accepted")
         kind, s2, e2 = self.token(self.skip(e))
         if kind != "=":
-            self.fail(s2, self.text(kind, s2, e2), "expected `=` after the name")
+            self.fail_span(s2, e2, "expected `=` after the name")
         self.value(e2, allow_nil=True)
         self.internal(pos)
 
     def entry(self, pos: int, table_at: int) -> NoReturn:
-        data = self.data
         p = self.skip(pos)
         kind, s, e = self.token(p)
         if kind == "eof":
             self.unterminated(table_at)
         if kind == "[":
             kind, s2, e2 = self.token(self.skip(e))
-            word = data[s2:e2]
+            word = self.word(s2, e2)
             if kind == "name" and word in (b"true", b"false"):
                 pass
             elif kind == "name" and word == b"nil":
@@ -798,19 +885,15 @@ class _Diagnoser:
             elif kind in ("string", "number"):
                 pass
             else:
-                self.fail(
-                    s2,
-                    self.text(kind, s2, e2),
-                    "a bracketed key is a string, a number, true or false",
-                )
+                self.fail_span(s2, e2, "a bracketed key is a string, a number, true or false")
             kind, s3, e3 = self.token(self.skip(e2))
             if kind != "]":
-                self.fail(s3, self.text(kind, s3, e3), "expected `]`")
+                self.fail_span(s3, e3, "expected `]`")
             kind, s4, e4 = self.token(self.skip(e3))
             if kind != "=":
-                self.fail(s4, self.text(kind, s4, e4), "expected `=` after the key")
+                self.fail_span(s4, e4, "expected `=` after the key")
             vkind, end = self.value(e4, allow_nil=False)
-        elif kind == "name" and data[s:e] not in _KEYWORDS:
+        elif kind == "name" and self.word(s, e) not in _KEYWORDS:
             nxt, _ns, ne = self.token(self.skip(e))  # a refused trivia or byte comes first
             if nxt != "=":
                 self.value(p, allow_nil=False)  # a bare identifier: raises
@@ -827,7 +910,7 @@ class _Diagnoser:
             self.unterminated(table_at)
         if kind in (",", ";", "}"):
             self.internal(pos)
-        self.fail(s, self.text(kind, s, e), "expected `,`, `;` or `}` after a table entry")
+        self.fail_span(s, e, "expected `,`, `;` or `}` after a table entry")
 
     def unterminated(self, table_at: int) -> NoReturn:
         self.fail(table_at, b"{", "unterminated table (end of input before its `}`)")
@@ -992,6 +1075,8 @@ class _Parser:
                 m = _ASSIGN.match(data, pos)
                 if m is None:
                     _Diagnoser(data).top(pos)
+                if m.end() - start > trivia_max and cost + m.end() - start > budget:
+                    self.cost_bound(max(m.start(2), start))  # before copying the match
                 lead, name, eq, vl, vs, vn, vb, _nil, vt, _end = m.groups(b"")
                 if m.end() - pos > MAX_STRING_BYTES:
                     self.check_string_bound(m, 5)
@@ -1010,8 +1095,8 @@ class _Parser:
                     npos = 0
                     depth = 1
                     continue
-                span = data[start:pos]
-                assignment = whole.get(span)
+                span = data[start:pos] if pos - start <= trivia_max else b""
+                assignment = whole.get(span) if span else None
                 if assignment is not None:
                     cost += _C_SHARED
                     if cost > budget:
@@ -1021,8 +1106,10 @@ class _Parser:
                 cost += _C_ASSIGN + _C_STR + len(name) + _C_NODE
                 lead, eq, vl = share(lead), share(eq), share(vl)
                 if vs:
-                    if b"\\" in vs and _escape_over_255(vs):
-                        _Diagnoser(data).top(start)
+                    if b"\\" in vs:
+                        if _escape_over_255(vs):
+                            _Diagnoser(data).top(start)
+                        cost += _C_ESCAPE * vs.count(b"\\")
                     cost += _C_BYTES + len(vs)
                     value = _new(LuaString, (vl, vs))
                 elif vn:
@@ -1037,8 +1124,9 @@ class _Parser:
                 if cost > budget:
                     self.cost_bound(start + len(lead))
                 assignment = _new(Assignment, (lead, name.decode("ascii"), eq, value))
-                if len(span) <= trivia_max and len(whole) < limit:
+                if span and len(whole) < limit:
                     whole[span] = assignment
+                    cost += _C_BYTES + len(span)
                 assignments.append(assignment)
                 continue
 
@@ -1061,10 +1149,9 @@ class _Parser:
                 if m is not None and m.end() - pos > MAX_NUMBER_CHARS:
                     m = None  # a long match takes the full path, which checks every bound
                 if m is not None:
-                    lead, ks, kn, vs, vn, vb, vt = m.groups(b"")
+                    lead, ks, kn, vs, vn, vb, sep, vt = m.groups(b"")
                     close = kl = kb = kc = kw = sl = b""
                     ke = vl = b" " if ks or kn else b""
-                    sep = b"" if vt else b","
                     if len(lead) > 1:
                         found = tget(lead)
                         if found is None:
@@ -1077,12 +1164,15 @@ class _Parser:
                     m = entry_match(data, pos)
                     if m is None:
                         _Diagnoser(data).entry(pos, at)
+                    if m.end() - pos > trivia_max and cost + m.end() - pos > budget:
+                        self.cost_bound(pos)  # before copying the match
                     (lead, close, kl, ks, kn, kb, kc, kw, ke, vl, vs, vn, vb, sl, sep, vt) = (
                         m.groups(b"")
                     )
                     if close:
                         close_lead = share(lead)
                     else:
+                        cost += _C_SLOW
                         lead, kl, kc, ke, vl, sl = (
                             share(lead),
                             share(kl),
@@ -1102,6 +1192,7 @@ class _Parser:
                             shared_key = _new(LuaString, (kl, ks))
                             if len(keys) < limit:
                                 keys[kl, ks] = shared_key
+                                cost += _C_NODE
                         key = shared_key
                         # String and name keys are compared as `"` + data + `"`
                         # (injective, so Lua key equality): for a plain
@@ -1110,8 +1201,10 @@ class _Parser:
                         if b"\\" in ks:
                             if _escape_over_255(ks):
                                 _Diagnoser(data).entry(pos, at)
+                            cost += _C_BYTES + len(ks) + _C_ESCAPE * ks.count(b"\\")
+                            if cost > budget:
+                                self.cost_bound(start + len(lead))  # before decoding it
                             lk = b'"' + _unescape(ks[1:-1]) + b'"'
-                            cost += _C_BYTES + len(ks)
                         elif ks[0] == 0x22:
                             lk = shared_key.raw
                         else:
@@ -1188,6 +1281,8 @@ class _Parser:
                             comment = cm.group(1)
                             cost += _C_BYTES + len(comment)
                     text_bytes = vs or vn or vb
+                    if vs and b"\\" in vs:
+                        cost += _C_ESCAPE * vs.count(b"\\")
                     shareable = style is _P and sep and not sl and comment is None and not dup
                     if shareable:
                         shared = positional.get((lead, text_bytes, sep))
@@ -1216,11 +1311,13 @@ class _Parser:
                                 value = _new(LuaBool, (vl, vb == b"true"))
                             if len(values) < limit:
                                 values[vl, text_bytes] = value
+                                cost += _C_NODE + _C_BYTES + len(text_bytes)
                     if cost > budget:
                         self.cost_bound(start + len(lead))
                     built = _new(Entry, (lead, style, key, kc, ke, value, sl, sep, comment, dup))
                     if shareable and len(positional) < limit:
                         positional[lead, text_bytes, sep] = built
+                        cost += _C_NODE + _C_BYTES + len(text_bytes)
                     append(built)
                     continue
                 pos = m.end()
