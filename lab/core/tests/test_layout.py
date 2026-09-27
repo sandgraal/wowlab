@@ -258,6 +258,17 @@ def test_folder_names_are_found_case_insensitively_constructed(tmp_path: Path) -
     assert (addon.selection, addon.selected_toc) == ("single", "foo.TOC")
 
 
+def test_snapshot_subtrees_use_the_disk_spelling_constructed(tmp_path: Path) -> None:
+    """M10-14: `snap create` takes its default subtrees from here (§6.9)."""
+    _, flavor = _install(
+        tmp_path,
+        {"wtf/Config.wtf": b"", "Interface/AddOns/": b"", "Cache/": b"", "Logs/": b""},
+    )
+    lay = Layout(flavor)
+    assert lay.snapshot_subtrees() == ("wtf", "Interface", "Fonts")
+    assert lay.snapshot_subtrees(screenshots=True) == ("wtf", "Interface", "Fonts", "Screenshots")
+
+
 # ─── addons ─────────────────────────────────────────────────────────────────
 
 

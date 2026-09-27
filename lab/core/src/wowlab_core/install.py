@@ -10,8 +10,11 @@ Root resolution, first hit wins: the explicit argument, then the
 (`default_roots`). An explicit root or a set environment variable is final:
 if it is not an install, `NotAnInstallError` is raised rather than falling
 through to a default. Only the defaults are searched: a default that is not
-a readable directory (including a drive that is not ready) is passed over,
-and one that is a directory holding an unusable `.build.info` is reported. There are no registry
+a directory, or cannot be checked (including a drive that is not ready), is
+passed over, and one that is a directory holding an unusable `.build.info` is
+reported. When no default holds an install, `InstallNotFoundError` lists the
+locations that were searched (absent, or a directory without `.build.info`)
+apart from the ones that could not be checked. There are no registry
 reads and no Battle.net database reads; Linux (Wine, Lutris, Proton) is
 reached through the explicit root or the environment variable only.
 
@@ -144,14 +147,43 @@ class NotAnInstallError(InstallError):
 
 
 class InstallNotFoundError(InstallError):
-    """No root was given and no platform default holds an install."""
+    """No root was given and no platform default holds an install.
 
-    def __init__(self, searched: Sequence[Path]) -> None:
+    `searched` are the defaults that were looked at and hold no install:
+    nothing exists there, or it is a directory without `.build.info`.
+    `unchecked` are the defaults that could not be checked: something that
+    is not a directory is there, or looking raised an error (a drive that is
+    not ready, a refusal); `unchecked_reasons` says why, in the same order.
+    A location is in one list or the other, never both.
+    """
+
+    def __init__(
+        self,
+        searched: Sequence[Path],
+        unchecked: Sequence[Path] = (),
+        unchecked_reasons: Sequence[str] = (),
+    ) -> None:
         self.searched = tuple(searched)
-        where = ", ".join(str(p) for p in self.searched) or "nothing on this platform"
+        self.unchecked = tuple(unchecked)
+        reasons = tuple(unchecked_reasons)
+        self.unchecked_reasons = reasons + ("",) * (len(self.unchecked) - len(reasons))
+        if self.searched:
+            where = ", ".join(str(p) for p in self.searched)
+        elif self.unchecked:
+            where = "nothing"
+        else:
+            where = "nothing on this platform"
+        not_checked = ""
+        if self.unchecked:
+            items = ", ".join(
+                f"{p} ({why})" if why else str(p)
+                for p, why in zip(self.unchecked, self.unchecked_reasons, strict=True)
+            )
+            not_checked = f"; could not check: {items}"
         super().__init__(
-            f"no WoW install at the locations searched by default (searched: {where}); pass the "
-            f"install folder (the one that holds {BUILD_INFO}) or set {ENV_ROOT}"
+            f"no WoW install at the locations searched by default (searched: {where}"
+            f"{not_checked}); pass the install folder (the one that holds {BUILD_INFO}) "
+            f"or set {ENV_ROOT}"
         )
 
 
@@ -449,14 +481,28 @@ def _resolve(
         _probe(chosen, "environment")
         return chosen, "environment"
     candidates = [Path(p) for p in (default_roots(environ=env) if defaults is None else defaults)]
+    searched: list[Path] = []
+    unchecked: list[Path] = []
+    reasons: list[str] = []
     for candidate in candidates:
-        # pathlib reads a drive that is not ready (winerror 21 and kin) as
-        # "not a directory"; any other refusal to look is also passed over.
+        # Absent (the name or a parent is missing) is searched and empty. A
+        # drive that is not ready (winerror 21 and kin), a refusal, or
+        # something there that is not a directory could not be checked: it is
+        # passed over and reported as such, never as searched.
         try:
-            if not candidate.is_dir():
-                continue
-        except OSError:
+            st = candidate.stat()
+        except (FileNotFoundError, NotADirectoryError):
+            searched.append(candidate)
             continue
+        except (OSError, ValueError) as exc:
+            unchecked.append(candidate)
+            reasons.append((exc.strerror or str(exc)) if isinstance(exc, OSError) else str(exc))
+            continue
+        if not stat.S_ISDIR(st.st_mode):
+            unchecked.append(candidate)
+            reasons.append("not a directory")
+            continue
+        searched.append(candidate)
         try:
             _probe(candidate.absolute(), "default")
         except NotAnInstallError as exc:
@@ -464,7 +510,7 @@ def _resolve(
                 continue
             raise  # present but not usable: say so rather than skip it
         return candidate.absolute(), "default"
-    raise InstallNotFoundError(candidates)
+    raise InstallNotFoundError(searched, unchecked, reasons)
 
 
 def resolve_root(
@@ -482,8 +528,8 @@ def resolve_root(
     `.build.info` (never falling through to a default), or when a default
     is a directory holding one that is not regular or cannot be read; raises
     `InstallNotFoundError` when no default holds one at all. A default that
-    is not a readable directory (a drive that is not ready included) is
-    passed over.
+    is not a directory, or cannot be checked (a drive that is not ready
+    included), is passed over, and the error names it as not checked.
     """
     return _resolve(root, environ, defaults)[0]
 

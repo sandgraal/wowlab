@@ -61,6 +61,7 @@ __all__ = [
     "SnapshotDiff",
     "SnapshotError",
     "SnapshotExistsError",
+    "SnapshotListing",
     "SnapshotNotFoundError",
     "SnapshotStore",
     "StoreLocationError",
@@ -247,6 +248,18 @@ class MissingObject(_Frozen):
 class InvalidManifest(_Frozen):
     name: str
     reason: str
+
+
+class SnapshotListing(_Frozen):
+    """What `SnapshotStore.list_lenient()` found: every manifest that loads,
+    oldest first, and every file under `manifests/` that does not."""
+
+    manifests: tuple[Manifest, ...]
+    invalid: tuple[InvalidManifest, ...]
+
+    @property
+    def ok(self) -> bool:
+        return not self.invalid
 
 
 class VerifyReport(_Frozen):
@@ -827,6 +840,24 @@ class SnapshotStore:
         raises.
         """
         return tuple(self._load(p) for p in self._manifest_files())
+
+    def list_lenient(self) -> SnapshotListing:
+        """Every snapshot that loads, oldest first, and each manifest file
+        that does not, named with the reason.
+
+        The lenient sibling of `list()`: one damaged manifest does not hide
+        the others, and it is never dropped silently either, since it is
+        named in `invalid`. Reads only; a store that does not exist is an
+        empty listing.
+        """
+        manifests: list[Manifest] = []
+        invalid: list[InvalidManifest] = []
+        for path in self._manifest_files():
+            try:
+                manifests.append(self._load(path))
+            except ManifestIntegrityError as exc:
+                invalid.append(InvalidManifest(name=path.name, reason=str(exc)))
+        return SnapshotListing(manifests=tuple(manifests), invalid=tuple(invalid))
 
     def read_object(self, sha256: str) -> bytes:
         """Decompressed content of one object, checked against its name."""
