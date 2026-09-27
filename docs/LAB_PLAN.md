@@ -431,13 +431,22 @@ load average 1.8 to 3.7, peak memory as `/usr/bin/time -l` reports it
 | Shape at the budget | Entries | File | Peak memory | Parse |
 |---|---|---|---|---|
 | Most memory: `[1000000] = 1,` one per CRLF line (distinct number keys) | 2,956,296 | 45.1 MiB | 1,121 MiB | 4.3 s |
-| Slowest: `  [  "k…"  ]  =  {  }  ,  -- …` (wide trivia, distinct comments) | 1,408,267 | 59.1 MiB | 810 MiB | 6.4 s |
+| Slowest (±5 %, see below): `  [  "k…"  ]  =  {  }  ,  -- …` (wide trivia, distinct comments) | 1,408,267 | 59.1 MiB | 810 MiB | 6.4 s |
 | `["n"]=true;` (one short key, repeated) | 4,771,781 | 50.1 MiB | 764 MiB | 6.0 s |
 | `["\1"]=0,` (one escaped key, repeated) | 2,744,626 | 23.6 MiB | 442 MiB | 4.5 s |
 | `["\1…"]=0,` (distinct escaped keys) | 1,057,499 | 16.1 MiB | 409 MiB | 4.3 s |
 | `["\` line break `"]=0,` (escaped line break key, repeated) | 2,744,626 | 23.6 MiB | 442 MiB | 4.1 s |
 | Dense client shape: `0,` one per CRLF line | 6,609,191 | 25.2 MiB | 194 MiB | 5.4 s |
 | Dense client shape: `true,` one per CRLF line | 6,497,171 | 43.4 MiB | 210 MiB | 5.1 s |
+
+"Slowest" holds only within about ±5 %, which is the spread machine load
+alone produces at the budget. The comment-led `--`-line-break-`0,` list
+(3,221,286 entries, 15.4 MiB, 651 MiB) is as slow within that margin: the
+M10-04 code review's interleaved rounds measured it at 6.3 s against 6.1 s
+for wide trivia. Re-measured on 2026-09-27 on the owner's M1 with
+`--at-budget wide-tables` and `--at-budget comment-zeros`, interleaved, three
+rounds, load average 1.3 to 2.3: wide trivia 6.04, 6.05 and 6.06 s; the
+comment-led list 5.95, 5.96 and 5.99 s.
 
 The bench's other shapes (distinct numbers and strings, string keys, empty
 tables, top-level assignments, `0;` and `\v0,` lists, comment-led lists,
