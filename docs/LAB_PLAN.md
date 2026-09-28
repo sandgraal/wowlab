@@ -412,6 +412,29 @@ platform and locale.
    `.column` give where the refused bytes would start in the output built so
    far, and `.token` holds at most the first 40 bytes of the refused slot.
 
+*Amended 2026-09-28 (M10-18T/M10-18, owner-approved follow-ups from the
+M10-12 reviews; conductor rulings on #86):*
+
+10. **Per-folder cap.** During detection, a folder that is listed
+    (`WTF/Account` itself, a per-account folder, a `SavedVariables` folder,
+    a realm or `<digits>` folder, a character folder) and holds more than
+    65,536 entries is skipped whole: at most 65,537 of its entries are read
+    from the listing, it is never sorted, and whether it is skipped depends
+    only on its entry count, never on listing order. Exactly 65,536 is
+    listed. A skipped `WTF/Account` leaves the item 6 fallback.
+11. **Scan budget (ruling d).** A skipped folder takes nothing from item 4's
+    16,384-entry budget; only entries of folders that are listed count.
+12. **Case of a missing path.** Item 8's comparison of a missing target or
+    `lab_written` path, after `Path.resolve()`, folds case only where its
+    volume is case-insensitive. Case sensitivity is probed read-only: the
+    nearest existing name on the resolved path that holds an ASCII letter
+    (its parent on the same device) is looked up again in swapped ASCII
+    case; the same file (`st_dev`, `st_ino`) means the volume folds case,
+    a missing name means it does not. Nothing is written to probe. Where it
+    cannot be told, case is folded, which can only drop a style source. So
+    on a case-sensitive volume a missing `a.lua` no longer excludes a
+    separate sibling `A.lua`.
+
 Performance: a 50 MB SavedVariables file (auction or collection addons get
 there) parses in under 10 s and under 1.5 GB RSS on the owner's laptop
 (within the `luadata.MAX_COST` budget; see the amendment below).

@@ -156,7 +156,6 @@ def test_positive_control_case_insensitive_volume_excludes_a_case_variant(
 
 @pytest.mark.parametrize("role", ["target", "lab-written"])
 @pytest.mark.parametrize("spelling", list(SPELLINGS))
-@pytest.mark.xfail(strict=True, reason="M10-18 not implemented")
 def test_case_sensitive_volume_keeps_a_sibling_that_differs_in_case(
     tmp_path: Path, spelling: str, role: str
 ) -> None:

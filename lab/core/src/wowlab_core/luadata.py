@@ -95,6 +95,7 @@ are placed and never tracks edits by object identity.
 from __future__ import annotations
 
 import gc
+import itertools
 import math
 import os
 import re
@@ -1641,6 +1642,10 @@ SIBLING_PREFIX_BYTES = 1 << 16
 SIBLING_READ_LIMIT = 64
 # At most this many directory entries are examined while listing siblings.
 _SIBLING_SCAN_LIMIT = 1 << 14
+# A folder listed during detection that holds more entries than this is
+# skipped whole (§6.4, 2026-09-28): at most this many plus one are read from
+# its listing, it is never sorted, and it takes nothing from the scan limit.
+_SIBLING_FOLDER_LIMIT = 1 << 16
 
 # With nothing to read (item 6): the layout every captured file shows. A
 # `[number]` key is written `[n] = ` (item 8).
@@ -1706,7 +1711,10 @@ def serialize(
     and never a file in `lab_written` (the files the guard journal records
     as last written by the Lab). A file is the target or in `lab_written`
     when it is the same file (`st_dev`, `st_ino`), whatever its spelling; a
-    path that does not exist is compared after `Path.resolve()`. For each
+    path that does not exist is compared after `Path.resolve()`, with case
+    folded only where its volume is case-insensitive (probed read-only by
+    looking an existing name on the path up again in swapped ASCII case;
+    folded when that cannot be told). For each
     property the most recently modified sibling that shows it decides, ties
     going to the lowest byte-wise path relative to the flavor folder.
     Siblings are only read, at most `SIBLING_PREFIX_BYTES` of each and at
@@ -1716,7 +1724,11 @@ def serialize(
     account's `SavedVariables.lua` and `SavedVariables/*.lua` first, then the
     character folders, each folder in byte-wise name order, and stops after
     16384 directory entries; past that bound an older character file may
-    decide where a newer, unlisted one would have.
+    decide where a newer, unlisted one would have. A folder listed on the
+    way (`WTF/Account` itself included) that holds more than 65536 entries
+    is skipped whole: at most 65537 of its entries are read, it is never
+    sorted, whether it is skipped depends only on its entry count, and it
+    takes nothing from the 16384-entry bound.
 
     Positions: a new entry goes on its own line (the line ending plus one
     indentation unit per level); after a new positional entry that ends its
@@ -2409,7 +2421,8 @@ def _sibling_paths(
     following links, so a `WTF` that is a link (to a sync folder, say) still
     counts as this flavor's. A file is the target or in `lab_written` when
     it is the same file (`st_dev`, `st_ino`), whatever its spelling; a path
-    that does not exist is compared after `Path.resolve()`."""
+    that does not exist is compared after `Path.resolve()`, with case folded
+    only where `_folds_case` finds its volume case-insensitive."""
     try:
         target_path = Path(os.path.normpath(Path(target).absolute()))
     except (TypeError, ValueError):
@@ -2419,16 +2432,24 @@ def _sibling_paths(
         return []
     flavor, account = folders
     skip_ids: set[tuple[int, int]] = set()
-    skip_paths: set[str] = set()
+    # Missing paths, resolved: compared as written where the volume is
+    # case-sensitive, with case folded where it is not (or cannot be told).
+    skip_exact: set[str] = set()
+    skip_folded: set[str] = set()
+    folds: dict[Path, bool] = {}
     for path in (target_path, *lab_written):
         identity = _file_id(path)
         if identity is not None:
             skip_ids.add(identity)
             continue
         try:
-            skip_paths.add(_path_key(Path(path).resolve()))
+            resolved = Path(path).resolve()
         except (OSError, RuntimeError, TypeError, ValueError):
             continue
+        if _folds_case(resolved, folds):
+            skip_folded.add(_path_key(resolved, fold=True))
+        else:
+            skip_exact.add(_path_key(resolved, fold=False))
     ranked: list[tuple[int, bytes, Path]] = []
     for path in _list_siblings(account):
         try:
@@ -2439,11 +2460,14 @@ def _sibling_paths(
             continue
         if info.st_ino and (info.st_dev, info.st_ino) in skip_ids:
             continue
-        if skip_paths:
+        if skip_exact or skip_folded:
             try:
-                if _path_key(path.resolve()) in skip_paths:
-                    continue
+                real = path.resolve()
             except (OSError, RuntimeError, ValueError):
+                continue
+            if _path_key(real, fold=False) in skip_exact:
+                continue
+            if skip_folded and _path_key(real, fold=True) in skip_folded:
                 continue
         order = os.fsencode(path.relative_to(flavor).as_posix())
         ranked.append((-info.st_mtime_ns, order, path))
@@ -2452,10 +2476,61 @@ def _sibling_paths(
     return [(path, root) for _time, _order, path in ranked[:SIBLING_READ_LIMIT]]
 
 
-def _path_key(path: Path) -> str:
-    """A resolved path compared as the file system compares names where no
-    file identity is available (case-insensitive on macOS and Windows)."""
-    return os.path.normcase(path).casefold()
+def _path_key(path: Path, *, fold: bool) -> str:
+    """A resolved path as text for comparing where no file identity is
+    available: with case folded when `fold` (a case-insensitive volume),
+    else as written."""
+    return os.path.normcase(path).casefold() if fold else os.fspath(path)
+
+
+def _folds_case(path: Path, cache: dict[Path, bool]) -> bool:
+    """Whether the volume a missing, resolved `path` would lie on compares
+    names case-insensitively. Probed read-only (nothing is created): from
+    the nearest existing file or folder on `path`, the first name holding
+    an ASCII letter whose parent is on the same device is looked up again,
+    ASCII case swapped, in that parent. The volume folds case when the
+    swapped spelling is the same file (`st_dev`, `st_ino`), and does not
+    when it is missing or another file. Where it cannot be told (no such
+    name, no file identity, an error), case is folded: that can only drop a
+    style source, never keep a file that should have been excluded."""
+    for known in (path, *path.parents):
+        try:
+            device = known.lstat().st_dev
+        except (OSError, ValueError):
+            continue
+        break
+    else:
+        return True
+    if known not in cache:
+        cache[known] = _probe_folds_case(known, device)
+    return cache[known]
+
+
+_ASCII_SWAP = str.maketrans(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+)
+
+
+def _probe_folds_case(known: Path, device: int) -> bool:
+    """`_folds_case` for an existing `known` on `device`."""
+    for folder in (known, *known.parents):
+        swapped = folder.name.translate(_ASCII_SWAP)
+        if swapped == folder.name:
+            continue  # no ASCII letter (or the root): try the parent's name
+        try:
+            here = folder.lstat()
+            if here.st_dev != device or folder.parent.lstat().st_dev != device:
+                return True  # another volume above: cannot tell from here
+            if not here.st_ino:
+                return True
+            other = (folder.parent / swapped).lstat()
+        except FileNotFoundError:
+            return False
+        except (OSError, ValueError):
+            return True
+        return (other.st_dev, other.st_ino) == (here.st_dev, here.st_ino)
+    return True
 
 
 def _list_siblings(account: Path) -> list[Path]:
@@ -2467,7 +2542,14 @@ def _list_siblings(account: Path) -> list[Path]:
     byte-wise name order, so what is listed never depends on the order the
     file system returns them. Links and junctions below `account` are not
     followed. At most `_SIBLING_SCAN_LIMIT` directory entries are taken in
-    all; past that, the rest is not listed."""
+    all; past that, the rest is not listed.
+
+    A folder (`account` itself included) holding more than
+    `_SIBLING_FOLDER_LIMIT` entries is skipped whole: at most that many plus
+    one are pulled from its listing, which is then closed unsorted, so
+    whether it is skipped depends only on its entry count, never on the
+    order the file system lists it in. A skipped folder takes nothing from
+    `_SIBLING_SCAN_LIMIT`."""
     found: list[Path] = []
     left = _SIBLING_SCAN_LIMIT
 
@@ -2476,10 +2558,15 @@ def _list_siblings(account: Path) -> list[Path]:
         if left <= 0:
             return []
         try:
+            # `os.scandir` looked up at call time, on a path (never a
+            # descriptor), and never iterated past the bound plus one.
             with os.scandir(folder) as it:
-                listed = sorted(it, key=lambda entry: os.fsencode(entry.name))
+                listed = list(itertools.islice(it, _SIBLING_FOLDER_LIMIT + 1))
         except OSError:
             return []
+        if len(listed) > _SIBLING_FOLDER_LIMIT:
+            return []
+        listed.sort(key=lambda entry: os.fsencode(entry.name))
         taken = listed[: max(left, 0)]
         left -= len(taken)
         return taken
