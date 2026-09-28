@@ -249,7 +249,9 @@ def test_class_mask_that_excludes_the_class_is_refused(model: Customizations) ->
     )
     assert _kinds(check) == ([FindingKind.CLASS_EXCLUDED], [])
     assert check.refusals[0].choice_id == DK_SKIN
-    assert f"no class in build {BUILD}" in check.refusals[0].message
+    assert check.refusals[0].message.endswith(
+        f"(it allows only class id 6, which build {BUILD}'s ChrClasses does not have)"
+    )
 
 
 def test_class_mask_without_a_class_is_noted_not_refused(model: Customizations) -> None:

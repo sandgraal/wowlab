@@ -753,9 +753,13 @@ class Customizations(_Frozen):
 
     def _class_list(self, req: Requirement) -> str:
         admitted = req.classes(self.classes)
-        if not admitted:
-            return f"no class in build {self.build} (ClassMask {req.class_mask:#x})"
         return ", ".join(f"{self.classes[c].name} ({c})" for c in admitted)
+
+    @staticmethod
+    def _mask_ids(req: Requirement) -> str:
+        """The class ids the mask allows, from its bits (bit c - 1 is class c)."""
+        ids = [i + 1 for i in range(32) if req.class_mask >> i & 1]
+        return f"class id {ids[0]}" if len(ids) == 1 else "class ids " + ", ".join(map(str, ids))
 
     def _option_label(self, option_id: int) -> str:
         option = self.options.get(option_id)
@@ -809,16 +813,29 @@ class Customizations(_Frozen):
             )
         if req.class_restricted:
             if look.class_id is None:
-                if set(req.classes(self.classes)) != set(self.classes):
+                if not req.classes(self.classes):
+                    add(
+                        FindingKind.CLASS_RESTRICTED,
+                        f"no class in build {self.build} can use this: its ClassMask "
+                        f"{req.class_mask:#x} allows only {self._mask_ids(req)}, which the "
+                        "build's ChrClasses does not have; a look with any class of this "
+                        "build is refused",
+                    )
+                elif set(req.classes(self.classes)) != set(self.classes):
                     add(
                         FindingKind.CLASS_RESTRICTED,
                         f"only for {self._class_list(req)} (no class given)",
                     )
             elif not req.admits_class(look.class_id):
+                allows = (
+                    f"allows {self._class_list(req)}"
+                    if req.classes(self.classes)
+                    else f"it allows only {self._mask_ids(req)}, which build {self.build}'s "
+                    "ChrClasses does not have"
+                )
                 add(
                     FindingKind.CLASS_EXCLUDED,
-                    f"requirement {req.id} excludes class {look.class_id} "
-                    f"(allows {self._class_list(req)})",
+                    f"requirement {req.id} excludes class {look.class_id} ({allows})",
                 )
         for unlock in req.unlocks():
             add(FindingKind.NEEDS_UNLOCK, unlock)

@@ -3343,8 +3343,19 @@ def profile_apply(
 
 _PLAYABLE_NOTE = (
     "Flagged playable by the build's ChrRaces rows (a PlayableRaceBit, not NPC-only); "
-    "not a claim about what a server lets anyone create."
+    "not a claim about what a server lets anyone create. Body types are numbered as the "
+    "tables number them (ChrRaceXChrModel.Sex 0 and 1); the game's own screens may number "
+    "them differently [verify]."
 )
+_EXPORTED_ONLY = (
+    "Checked against build {version}'s exported tables only: not what a server allows, not "
+    "hotfixes the server sends (Cache/ADB), and not what this account has unlocked."
+)
+_HOTFIX_HINT = (
+    "is not in build {version}'s tables: check the id with `wowlab looks options`; an id "
+    "read from the game may come from a hotfix the exported tables lack"
+)
+_ID = re.compile(r"[0-9]{1,9}")
 _ALLIANCE_WORDS = {0: "Alliance", 1: "Horde", 2: "neither faction"}
 _SEX_WORDS = {"male": 0, "female": 1}
 
@@ -3472,6 +3483,7 @@ class LooksCompareReport(_Out):
     same_class: bool
     same: list[LooksChoiceRef]  # options both looks set to the same choice
     different: list[LooksDifference]  # set to different choices, or by one look only
+    remarks: list[str]
 
 
 LooksBuildOpt = Annotated[
@@ -3569,40 +3581,70 @@ def _race_label(race: looks.Race) -> str:
     return f"{race.name} ({race.id})"
 
 
-def _resolve_race(model: looks.Customizations, text: str) -> looks.Race:
+def _as_id(text: str) -> int | None:
+    """An id typed on the command line: ASCII digits, nine at most; else None."""
+    stripped = text.strip()
+    return int(stripped) if _ID.fullmatch(stripped) else None
+
+
+def _faction(alliance: int) -> str:
+    return _ALLIANCE_WORDS.get(alliance, f"Alliance column {alliance}")
+
+
+def _resolve_race(model: looks.Customizations, text: str) -> tuple[looks.Race, list[str]]:
+    """The race `text` names, and a remark when the playable flag chose between rows."""
     playable = ", ".join(_race_label(r) for r in model.playable_races())
-    if text.strip().isdigit():
-        race = model.races.get(int(text))
+    race_id = _as_id(text)
+    if race_id is not None:
+        race = model.races.get(race_id)
         if race is None:
             raise CliError(
                 f"no race {text} in build {model.build}'s ChrRaces (flagged playable: {playable})",
                 EXIT_USAGE,
             )
-        return race
-    folded = text.strip().casefold()
+        return race, []
+    typed = text.strip()
+    folded = typed.casefold()
     matches = [r for _, r in sorted(model.races.items()) if r.name.casefold() == folded] or [
         r for _, r in sorted(model.races.items()) if r.client_file_string.casefold() == folded
     ]
+    remarks: list[str] = []
     if len(matches) > 1:
-        matches = [r for r in matches if r.flagged_playable] or matches
+        flagged = [r for r in matches if r.flagged_playable]
+        if len(flagged) == 1:
+            others = [r for r in matches if not r.flagged_playable]
+            remarks.append(
+                f"{typed!r} also names {', '.join(_race_label(r) for r in others)}, not flagged "
+                f"playable; using {_race_label(flagged[0])}. Give "
+                f"{' or '.join(str(r.id) for r in others)} for that row."
+            )
+        matches = flagged or matches
     if len(matches) == 1:
-        return matches[0]
+        return matches[0], remarks
     if not matches:
         raise CliError(
             f"no race {text!r} in build {model.build}'s ChrRaces (flagged playable: {playable})",
             EXIT_USAGE,
         )
-    raise CliError(
-        f"race {text!r} matches {', '.join(_race_label(r) for r in matches)}; give the id",
-        EXIT_USAGE,
-    )
+    listed = ", ".join(f"{r.name} ({r.id}, {_faction(r.alliance)})" for r in matches)
+    shared_models = len({r.body_types for r in matches}) == 1
+    factions = len({r.alliance for r in matches}) == len(matches)
+    if shared_models and factions:
+        count = "two" if len(matches) == 2 else str(len(matches))
+        raise CliError(
+            f"race {typed!r} matches {listed}: one race's {count} faction rows, sharing "
+            "models; give the id (race-masked choices are checked against it)",
+            EXIT_USAGE,
+        )
+    raise CliError(f"race {typed!r} matches {listed}; give the id", EXIT_USAGE)
 
 
 def _resolve_class(model: looks.Customizations, text: str | None) -> int | None:
     if text is None:
         return None
-    if text.strip().isdigit():
-        return int(text)
+    typed = _as_id(text)
+    if typed is not None:
+        return typed
     folded = text.strip().casefold()
     for class_id, player_class in sorted(model.classes.items()):
         if player_class.name.casefold() == folded:
@@ -3617,8 +3659,9 @@ def _parse_sex(text: str | None) -> int | None:
     word = text.strip().casefold()
     if word in _SEX_WORDS:
         return _SEX_WORDS[word]
-    if word.isdigit():
-        return int(word)
+    number = _as_id(word)
+    if number is not None:
+        return number
     raise CliError(f"--sex takes 0, 1, male or female, not {text!r}", EXIT_USAGE)
 
 
@@ -3626,16 +3669,16 @@ def _parse_choices(pairs: Sequence[str]) -> dict[int, int]:
     out: dict[int, int] = {}
     for pair in pairs:
         option, sep, choice = pair.partition("=")
-        if not sep or not option.strip().isdigit() or not choice.strip().isdigit():
+        option_id, choice_id = _as_id(option), _as_id(choice)
+        if not sep or option_id is None or choice_id is None:
             raise CliError(
-                f"--choice takes OPTION=CHOICE with two ids, as `wowlab looks options` "
-                f"lists them, not {pair!r}",
+                f"--choice takes OPTION=CHOICE with two ids (digits 0-9, nine at most), as "
+                f"`wowlab looks options` lists them, not {pair!r}",
                 EXIT_USAGE,
             )
-        option_id = int(option)
         if option_id in out:
             raise CliError(f"option {option_id} is given twice", EXIT_USAGE)
-        out[option_id] = int(choice)
+        out[option_id] = choice_id
     return out
 
 
@@ -3671,6 +3714,7 @@ def _look_report(
         notes.append(
             f"Saved against build {saved.saved_build}; checked here against build {model.build}."
         )
+    notes.append(_EXPORTED_ONLY.format(version=model.build))
     return LookReport(
         name=look.name,
         path=str(path) if path is not None else None,
@@ -3687,6 +3731,33 @@ def _look_report(
         notes=list(verdict.notes),
         remarks=notes,
     )
+
+
+def _save_wording(model: looks.Customizations, report: LookReport) -> LookReport:
+    """`save` words an id the build lacks as a thing to check, since it was just
+    typed; `show` and `compare` keep the model's "(possibly a hotfix)"."""
+    hint = _HOTFIX_HINT.format(version=model.build)
+
+    def reworded(f: looks.Finding) -> looks.Finding:
+        if f.kind is not looks.FindingKind.UNKNOWN_TO_BUILD:
+            return f
+        if f.option_id is not None and f.message.startswith(f"option {f.option_id} is unknown"):
+            return f.model_copy(update={"message": f"option {f.option_id} {hint}"})
+        option = model.options.get(f.option_id) if f.option_id is not None else None
+        if (
+            option is not None
+            and f.choice_id is not None
+            and f.message.startswith(f"choice {f.choice_id} is unknown")
+        ):
+            return f.model_copy(
+                update={
+                    "message": f"choice {f.choice_id} of option {option.name!r} ({option.id}) "
+                    f"{hint}"
+                }
+            )
+        return f
+
+    return report.model_copy(update={"notes": [reworded(f) for f in report.notes]})
 
 
 def _ref_text(ref: LooksChoiceRef) -> str:
@@ -3758,7 +3829,7 @@ def looks_races(
     if json_out:
         _emit(report)
         return
-    _say(f"Races in build {version}:")
+    _say(f"Races flagged playable in build {version}'s ChrRaces:")
     for r in report.races:
         side = _ALLIANCE_WORDS.get(r.alliance, f"Alliance column {r.alliance}")
         bodies = ", ".join(f"{b.body_type} (model {b.chr_model_id})" for b in r.body_types)
@@ -3767,61 +3838,109 @@ def looks_races(
         _say(n)
 
 
+def _choice_text(choice: looks.Choice, subject: str, f: looks.Finding) -> str | None:
+    """The text after "<choice label> of <option subject>: " (the model's wording),
+    or None when the finding is not about this choice."""
+    label = f"choice {choice.name!r} ({choice.id})" if choice.name else f"choice {choice.id}"
+    prefix = f"{label} of {subject}: "
+    return f.message[len(prefix) :] if f.message.startswith(prefix) else None
+
+
+def _option_out(
+    model: looks.Customizations,
+    race: looks.Race,
+    body: looks.BodyType,
+    class_id: int | None,
+    option: looks.Option,
+) -> LooksOption:
+    """One option, each choice with the check of a look holding only that choice.
+
+    A finding on the option itself (its requirement, its model), which starts
+    with the option's subject, is the same for every choice and is shown once
+    on the option, whatever the number of choices. A finding every choice has,
+    compared on its kind and the text after the choice's label, is shown once
+    on the option as "every choice: <text>"."""
+    checked: list[tuple[looks.Choice, looks.LookCheck]] = [
+        (
+            choice,
+            model.check(
+                looks.Look(
+                    name="-",
+                    race_id=race.id,
+                    body_type=body.body_type,
+                    class_id=class_id,
+                    choices={option.id: choice.id},
+                )
+            ),
+        )
+        for choice in option.choices
+    ]
+    subject = f"option {option.name!r} ({option.id})"
+    option_notes: list[looks.Finding] = []
+    on_option: set[tuple[str, str]] = set()
+    for _, verdict in checked:
+        for f in (*verdict.refusals, *verdict.notes):
+            key = (f.kind.value, f.message)
+            if f.message.startswith(subject) and key not in on_option:
+                on_option.add(key)
+                option_notes.append(f.model_copy(update={"choice_id": None}))
+    shared: set[tuple[str, str]] = set()
+    if len(checked) > 1:
+        shared = set.intersection(
+            *(
+                {
+                    (f.kind.value, text)
+                    for f in (*verdict.refusals, *verdict.notes)
+                    if (text := _choice_text(choice, subject, f)) is not None
+                }
+                for choice, verdict in checked
+            )
+        )
+        first_choice, first = checked[0]
+        for f in (*first.refusals, *first.notes):
+            text = _choice_text(first_choice, subject, f)
+            if text is not None and (f.kind.value, text) in shared:
+                option_notes.append(
+                    f.model_copy(update={"choice_id": None, "message": f"every choice: {text}"})
+                )
+
+    def keep(choice: looks.Choice, f: looks.Finding) -> bool:
+        if (f.kind.value, f.message) in on_option:
+            return False
+        text = _choice_text(choice, subject, f)
+        return text is None or (f.kind.value, text) not in shared
+
+    category = model.categories.get(option.category_id)
+    return LooksOption(
+        id=option.id,
+        name=option.name,
+        chr_model_id=option.chr_model_id,
+        category=category.name if category else None,
+        form_or_pet=model.is_form_or_pet(option),
+        notes=option_notes,
+        choices=[
+            LooksChoice(
+                id=choice.id,
+                name=choice.name,
+                refusals=[f for f in verdict.refusals if keep(choice, f)],
+                notes=[f for f in verdict.notes if keep(choice, f)],
+            )
+            for choice, verdict in checked
+        ],
+    )
+
+
 def _options_for_body(
     model: looks.Customizations, race: looks.Race, body: looks.BodyType, class_id: int | None
 ) -> LooksBodyType:
-    out: list[LooksOption] = []
-    for option in model.options_for(race.id, body.body_type, class_id):
-        checked: list[tuple[looks.Choice, looks.LookCheck]] = [
-            (
-                choice,
-                model.check(
-                    looks.Look(
-                        name="-",
-                        race_id=race.id,
-                        body_type=body.body_type,
-                        class_id=class_id,
-                        choices={option.id: choice.id},
-                    )
-                ),
-            )
-            for choice in option.choices
-        ]
-        shared: set[tuple[str, str]] = set()
-        if len(checked) > 1:
-            keys = [
-                {(f.kind.value, f.message) for f in (*v.refusals, *v.notes)} for _, v in checked
-            ]
-            shared = set.intersection(*keys)
-        option_notes: list[looks.Finding] = []
-        if checked:
-            first = checked[0][1]
-            option_notes = [
-                f.model_copy(update={"choice_id": None})
-                for f in (*first.refusals, *first.notes)
-                if (f.kind.value, f.message) in shared
-            ]
-        category = model.categories.get(option.category_id)
-        out.append(
-            LooksOption(
-                id=option.id,
-                name=option.name,
-                chr_model_id=option.chr_model_id,
-                category=category.name if category else None,
-                form_or_pet=model.is_form_or_pet(option),
-                notes=option_notes,
-                choices=[
-                    LooksChoice(
-                        id=choice.id,
-                        name=choice.name,
-                        refusals=[f for f in v.refusals if (f.kind.value, f.message) not in shared],
-                        notes=[f for f in v.notes if (f.kind.value, f.message) not in shared],
-                    )
-                    for choice, v in checked
-                ],
-            )
-        )
-    return LooksBodyType(body_type=body.body_type, chr_model_id=body.chr_model_id, options=out)
+    return LooksBodyType(
+        body_type=body.body_type,
+        chr_model_id=body.chr_model_id,
+        options=[
+            _option_out(model, race, body, class_id, option)
+            for option in model.options_for(race.id, body.body_type, class_id)
+        ],
+    )
 
 
 @looks_app.command("options")
@@ -3842,7 +3961,7 @@ def looks_options(
     with _open_gamedata() as data:
         version, remarks = _looks_build(data, build, root, flavor)
         model = _load_model(data, version)
-    chosen = _resolve_race(model, race)
+    chosen, race_remarks = _resolve_race(model, race)
     class_id = _resolve_class(model, class_)
     bodies = [b for b in chosen.body_types if body_type is None or b.body_type == body_type]
     if not bodies:
@@ -3852,7 +3971,7 @@ def looks_options(
             f"(it has {have})",
             EXIT_USAGE,
         )
-    notes = list(remarks)
+    notes = [*race_remarks, *remarks]
     if not chosen.flagged_playable:
         notes.append(f"{_race_label(chosen)} is not flagged playable in build {version}.")
     if class_id is not None and class_id not in model.classes:
@@ -3935,7 +4054,8 @@ def looks_save(
     with _open_gamedata() as data:
         version, remarks = _looks_build(data, build, root, flavor)
         model = _load_model(data, version)
-    chosen = _resolve_race(model, race)
+    chosen, race_remarks = _resolve_race(model, race)
+    remarks = [*race_remarks, *remarks]
     look = looks.Look(
         name=name,
         race_id=chosen.id,
@@ -3944,7 +4064,7 @@ def looks_save(
         choices=choices,
     )
     saved = lookstore.SavedLook(saved_build=version, look=look)
-    report = _look_report(model, saved, None, remarks)
+    report = _save_wording(model, _look_report(model, saved, None, remarks))
     if report.refused:
         if json_out:
             _emit(report)
@@ -3952,7 +4072,7 @@ def looks_save(
             _print_look(report, heading="Not saved: the tables refuse look")
         raise CliError(f"look {name} is refused by build {version}'s tables; nothing was saved")
     path = lookstore.LookStore().save(saved, replace=replace)
-    report = _look_report(model, saved, path, remarks)
+    report = _save_wording(model, _look_report(model, saved, path, remarks))
     if json_out:
         _emit(report)
     else:
@@ -4002,6 +4122,7 @@ def looks_show(
                 data, build, root, flavor, [s.saved_build for s in found]
             )
             model = _load_model(data, version_used)
+        list_remarks = [*list_remarks, _EXPORTED_ONLY.format(version=version_used)]
         for s in found:
             verdict = model.check(s.look)
             race = model.races.get(s.look.race_id)
@@ -4103,6 +4224,7 @@ def looks_compare(
         same_class=la.class_id == lb.class_id,
         same=same,
         different=different,
+        remarks=list(dict.fromkeys([*ra.remarks, *rb.remarks])),
     )
     if json_out:
         _emit(report)
@@ -4118,7 +4240,7 @@ def looks_compare(
 
     def side(ref: LooksChoiceRef | None) -> str:
         if ref is None:
-            return "(not set)"
+            return "(not set in this look)"
         if ref.choice_name is None:
             return f"{ref.choice_id} (unknown to this build)"
         return f"{ref.choice_id} {ref.choice_name!r}" if ref.choice_name else str(ref.choice_id)
@@ -4137,7 +4259,7 @@ def looks_compare(
         verdict = f"refused ({len(r.refusals)} reason(s))" if r.refused else "not refused"
         _say(f"  {r.name}: {verdict}, {len(r.notes)} note(s)")
         _print_findings(r.refusals, r.notes, "    ")
-    for remark in dict.fromkeys([*ra.remarks, *rb.remarks]):
+    for remark in report.remarks:
         _say(remark)
 
 

@@ -1416,6 +1416,10 @@ shown once on the option. `save <name> --race R --sex S [--class C]
 [--choice OPTION=CHOICE]…` runs the check: a look the tables refuse is not
 written (exit 1), and notes ("needs <unlock>", "unknown to build <version>
 (possibly a hotfix)", undecided dependencies) are shown and do not stop it.
+A look without `--class` is not refused for a class-restricted choice,
+including one whose ClassMask allows no class the build has; that choice is
+noted as "no class in build <version> can use this", and any `--class` would
+refuse it.
 `show [NAME]` checks one look, or lists every look with its verdict and exits
 1 after naming a damaged file. `compare <a> <b>` checks both against one
 build and lists the options set to the same choice and those that differ.

@@ -55,6 +55,16 @@ PLAIN_SKIN, OTHER_SKIN = 1, 2  # choices of option 9; requirement 141 limits not
 DK_SKIN = 13  # option 9; requirement 53: death knight only, and Face must be 20, 22 or 31
 FACE_ALLOWED, FACE_OTHER = 20, 21
 BEAR_FORM = 901  # druid form option on model 189
+IMP_STYLE = 1528  # warlock Imp "Style" (model 148): three choices, each warlock only
+TYRANT_STYLE = 8668  # warlock Tyrant "Style" (model 198): one choice
+EXPORTED_ONLY = (
+    f"Checked against build {BUILD}'s exported tables only: not what a server allows, not "
+    "hotfixes the server sends (Cache/ADB), and not what this account has unlocked."
+)
+HOTFIX_HINT = (
+    f"is not in build {BUILD}'s tables: check the id with `wowlab looks options`; an id read "
+    "from the game may come from a hotfix the exported tables lack"
+)
 
 runner = CliRunner()
 
@@ -188,9 +198,13 @@ def test_races_lists_what_the_tables_flag_playable() -> None:
     assert (human.name, [b.body_type for b in human.body_types]) == ("Human", [0, 1])
 
     text = ok("looks", "races", "--build", BUILD).stdout
-    assert f"Races in build {BUILD}:" in text
+    assert f"Races flagged playable in build {BUILD}'s ChrRaces:" in text
     assert "Human  [Alliance]  body types 0 (model 1), 1 (model 2)" in text
     assert "not a claim about what a server lets anyone create" in text
+    assert (
+        "Body types are numbered as the tables number them (ChrRaceXChrModel.Sex 0 and 1); "
+        "the game's own screens may number them differently [verify]."
+    ) in text
 
 
 def test_races_takes_the_build_from_discovery(root: Path, source: _Source) -> None:
@@ -239,6 +253,11 @@ def test_options_follow_options_for(model: Customizations) -> None:
     kinds = {f.kind for f in dk.notes}
     assert FindingKind.CLASS_RESTRICTED in kinds  # no class given: noted, not refused
     assert FindingKind.UNDECIDED_DEPENDENCY in kinds  # Face is not set
+    assert (
+        f"choice 13 of option 'Skin Color' (9): no class in build {BUILD} can use this: its "
+        "ClassMask 0x20 allows only class id 6, which the build's ChrClasses does not have; "
+        "a look with any class of this build is refused"
+    ) in [f.message for f in dk.notes]
     plain = next(c for c in skin.choices if c.id == PLAIN_SKIN)
     assert (plain.refusals, plain.notes) == ([], [])
 
@@ -253,7 +272,10 @@ def test_options_with_a_class_show_the_refusal(model: Customizations) -> None:
     assert [o.id for o in body.options] == [o.id for o in model.options_for(HUMAN, 0, WARRIOR)]
     skin = next(o for o in body.options if o.id == HUMAN_BODY_0_SKIN)
     dk = next(c for c in skin.choices if c.id == DK_SKIN)
-    assert [f.kind for f in dk.refusals] == [FindingKind.CLASS_EXCLUDED]
+    assert [f.message for f in dk.refusals] == [
+        "choice 13 of option 'Skin Color' (9): requirement 53 excludes class 1 (it allows "
+        f"only class id 6, which build {BUILD}'s ChrClasses does not have)"
+    ]
 
     text = ok(
         "looks", "options", "human", "--sex", "0", "--class", "1", "--build", BUILD
@@ -261,6 +283,38 @@ def test_options_with_a_class_show_the_refusal(model: Customizations) -> None:
     assert f"Human (1), Warrior (1), body type 0 (model 1), build {BUILD}:" in text
     assert f"option {HUMAN_BODY_0_SKIN}  Skin Color" in text
     assert "refused: " in text and "excludes class 1" in text
+
+
+def test_options_lift_what_every_choice_shares() -> None:
+    """The Imp's Style: the form-or-pet note is on the option itself, and the
+    warlock-only note every choice carries is shown once as "every choice"."""
+    report = _json(
+        cli.LooksOptionsReport, "looks", "options", "human", "--sex", "0", "--build", BUILD
+    )
+    options = {o.id: o for o in report.body_types[0].options}
+    imp = options[IMP_STYLE]
+    assert len(imp.choices) == 3
+    assert [(f.kind, f.message, f.choice_id) for f in imp.notes] == [
+        (
+            FindingKind.FORM_OR_PET_OPTION,
+            "option 'Style' (1528) (Imp) is on model 148, which no race and body type uses: "
+            "a form, pet or mount option, checked by its requirements only [verify]",
+            None,
+        ),
+        (
+            FindingKind.CLASS_RESTRICTED,
+            "every choice: only for Warlock (9) (no class given)",
+            None,
+        ),
+    ]
+    assert all(c.notes == [] and c.refusals == [] for c in imp.choices)
+    tyrant = options[TYRANT_STYLE]  # one choice: its option finding is still lifted
+    assert len(tyrant.choices) == 1
+    assert [f.kind for f in tyrant.notes] == [FindingKind.FORM_OR_PET_OPTION]
+    assert all(f.kind is not FindingKind.FORM_OR_PET_OPTION for f in tyrant.choices[0].notes)
+
+    text = ok("looks", "options", "human", "--sex", "0", "--build", BUILD).stdout
+    assert "note: every choice: only for Warlock (9) (no class given)" in text
 
 
 def test_options_without_sex_cover_every_body_type() -> None:
@@ -288,7 +342,12 @@ def test_options_list_forms_for_the_class_that_has_them() -> None:
 @pytest.mark.parametrize(
     ("args", "words"),
     [
-        (("skyborne",), "give the id"),  # two ChrRaces rows share the file string
+        (
+            ("skyborne",),  # two ChrRaces rows share the file string and the models
+            "race 'skyborne' matches High Order Skyborne (95, Alliance), Windshaper Skyborne "
+            "(96, Horde): one race's two faction rows, sharing models; give the id "
+            "(race-masked choices are checked against it)",
+        ),
         (("no-such-race",), "no race 'no-such-race'"),
         (("999999",), "no race 999999"),
         (("human", "--sex", "7"), "has no body type 7"),
@@ -300,6 +359,20 @@ def test_options_usage_errors(args: tuple[str, ...], words: str) -> None:
     result = run("looks", "options", *args, "--build", BUILD)
     assert result.exit_code == 2, (result.stdout, result.stderr)
     assert words in result.stderr
+
+
+def test_options_say_when_the_playable_flag_chose_the_race() -> None:
+    """ChrRaces has two rows named Human; only race 1 is flagged playable."""
+    report = _json(
+        cli.LooksOptionsReport, "looks", "options", "human", "--sex", "0", "--build", BUILD
+    )
+    remark = "'human' also names Human (33), not flagged playable; using Human (1). Give 33 for that row."
+    assert report.race.id == HUMAN and remark in report.notes
+    assert remark in ok("looks", "options", "human", "--sex", "0", "--build", BUILD).stdout
+    by_id = _json(cli.LooksOptionsReport, "looks", "options", "1", "--sex", "0", "--build", BUILD)
+    assert not any("also names" in n for n in by_id.notes)
+    saved = _save("mine", f"9={PLAIN_SKIN}", extra=("--json",))
+    assert remark in cli.LookReport.model_validate_json(saved.stdout).remarks
 
 
 def test_options_show_needs_unlock_constructed(source: _Source, model: Customizations) -> None:
@@ -348,7 +421,10 @@ def test_save_text_output() -> None:
     assert "class:     not given" in result.stdout
     assert f"Skin Color (9) = {DK_SKIN}" in result.stdout
     assert "verdict:   not refused" in result.stdout
-    assert "note: " in result.stdout and "no class given" in result.stdout
+    assert (
+        f"note: choice 13 of option 'Skin Color' (9): no class in build {BUILD} can use this"
+    ) in result.stdout
+    assert EXPORTED_ONLY in result.stdout
 
 
 def test_save_refused_by_the_tables_writes_nothing(user_data: Path) -> None:
@@ -382,10 +458,17 @@ def test_save_keeps_an_unknown_choice_as_a_note_constructed() -> None:
     assert not report.refused
     assert report.choices[0].choice_name is None
     assert [f.message for f in report.notes] == [
+        f"choice 999999 of option 'Skin Color' (9) {HOTFIX_HINT}"
+    ]
+    shown = _json(cli.LookReport, "looks", "show", "hotfix", "--build", BUILD)
+    assert [f.message for f in shown.notes] == [
         f"choice 999999 is unknown to build {BUILD} (possibly a hotfix)"
     ]
-    text = ok("looks", "show", "hotfix", "--build", BUILD).stdout
-    assert f"unknown to build {BUILD} (possibly a hotfix)" in text
+    option = _save("hotfix2", "77777=1", extra=("--json",))
+    assert option.exit_code == 0, option.stderr
+    assert [f.message for f in cli.LookReport.model_validate_json(option.stdout).notes] == [
+        f"option 77777 {HOTFIX_HINT}"
+    ]
 
 
 def test_save_needs_unlock_is_a_note_constructed(source: _Source) -> None:
@@ -461,6 +544,7 @@ def test_show_one_look() -> None:
     assert (report.name, report.build, report.saved_build) == ("mine", BUILD, BUILD)
     assert (report.class_id, report.class_name) == (WARRIOR, "Warrior")
     assert any("the build the look was saved against" in r for r in report.remarks)
+    assert EXPORTED_ONLY in report.remarks
     text = ok("looks", "show", "mine").stdout
     assert f"Look mine (checked against build {BUILD})" in text
     assert "class:     Warrior (1)" in text
@@ -476,6 +560,7 @@ def test_show_lists_every_look_with_its_verdict() -> None:
         ("beta", False, 1),
     ]
     assert report.looks[1].notes >= 2  # class restricted, undecided dependency
+    assert EXPORTED_ONLY in report.remarks
     text = ok("looks", "show").stdout
     assert "alpha  Human (1), body type 0, 1 choice(s): not refused, 0 note(s)" in text
 
@@ -541,7 +626,9 @@ def test_compare_two_looks() -> None:
     text = ok("looks", "compare", "a", "b").stdout
     assert f"Looks a | b, checked against build {BUILD}" in text
     assert f"Skin Color (9): {PLAIN_SKIN} | {OTHER_SKIN}" in text
-    assert "option 999999: (not set) | 999998 (unknown to this build)" in text
+    assert "option 999999: (not set in this look) | 999998 (unknown to this build)" in text
+    assert report.remarks.count(EXPORTED_ONLY) == 1
+    assert text.count(EXPORTED_ONLY) == 1
     assert "same choice on 1 option(s)" in text
 
 
