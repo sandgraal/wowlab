@@ -364,7 +364,13 @@ platform and locale.
    recently modified sibling that shows it decides, excluding the paths in
    `lab_written` (the caller passes the files the guard journal records as
    last written by the Lab); ties break on the byte-wise path relative to
-   the flavor folder, so the output never depends on directory order. (A
+   the flavor folder, so the output does not depend on directory order
+   while listing stays within its bound. Listing takes every account's
+   `SavedVariables.lua` and `SavedVariables/*.lua` first, since those
+   account-wide files are rewritten at every logout or `/reload` of any
+   character, then the character folders, each folder's entries in
+   byte-wise name order; past 16384 entries the rest is not listed, and at
+   most the 64 newest siblings are read. (A
    file of an addon not loaded at logout, or of a character not logged in
    since a patch, keeps an older client's layout **[verify]**.)
 5. **Pairing (owner).** Indentation and array comments are one pairing: a
@@ -386,7 +392,9 @@ platform and locale.
    the Lab's own, not the client's.
 8. **Clarifications (conductor, 2026-09-27, from the M10-12T fix round).**
    A tie in item 4 goes to the lowest byte-wise relative path. `lab_written`
-   holds paths compared after `Path.resolve()`. With nothing to read, a
+   paths and the target are matched as the same file (`st_dev`, `st_ino`),
+   whatever their spelling; a path that does not exist is compared after
+   `Path.resolve()`. With nothing to read, a
    `[number]` key is written `[n] = ` (§4.1, §4.2). A document whose only
    positional entry shares the `{` line shows array comments but not
    indentation, and by item 5 that decides both (tab indentation and

@@ -71,7 +71,6 @@ def _reference(eol: bytes) -> bytes:
 # ── unmodified: byte for byte ───────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize("eol", EOLS, ids=EOL_IDS)
 def test_reference_layout_round_trips(luadata: Any, eol: bytes) -> None:
     data = _reference(eol)
@@ -102,7 +101,6 @@ UNMODIFIED = {
 }
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize("data", list(UNMODIFIED.values()), ids=list(UNMODIFIED))
 def test_unmodified_accepted_documents_round_trip(luadata: Any, data: bytes) -> None:
     """§6.4 amendment item 7: for an unmodified document the serializer is
@@ -225,7 +223,6 @@ def _all_cases() -> list[Any]:
     ]
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize(("eol", "steps", "new", "change"), _all_cases())
 def test_new_entries_follow_the_reference_layout(
     luadata: Any, eol: bytes, steps: tuple[str, ...], new: Any, change: tuple[bytes, bytes]
@@ -242,7 +239,6 @@ def test_new_entries_follow_the_reference_layout(
     assert luadata.serialize(doc) == replace_once(source, *change)
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize("eol", EOLS, ids=EOL_IDS)
 def test_new_assignment_follows_the_reference_layout(luadata: Any, eol: bytes) -> None:
     source = _reference(eol)
@@ -253,7 +249,6 @@ def test_new_assignment_follows_the_reference_layout(luadata: Any, eol: bytes) -
     assert luadata.serialize(doc) == source + b"LabNewVar = 5" + eol
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize("eol", EOLS, ids=EOL_IDS)
 def test_one_new_node_object_is_laid_out_per_place(luadata: Any, eol: bytes) -> None:
     """Placement, not identity: one entry object appended at depth 1 and at
@@ -284,7 +279,6 @@ def test_one_new_node_object_is_laid_out_per_place(luadata: Any, eol: bytes) -> 
     assert luadata.serialize(doc) == expected
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize("keep_lead", [True, False], ids=["lead-kept", "lead-none"])
 @pytest.mark.parametrize("eol", EOLS, ids=EOL_IDS)
 def test_leaf_edit_keeps_the_comments_and_every_other_byte(
@@ -309,7 +303,6 @@ def test_leaf_edit_keeps_the_comments_and_every_other_byte(
     assert luadata.serialize(doc) == expected
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize("eol", EOLS, ids=EOL_IDS)
 def test_replacing_a_subtree_keeps_its_siblings(luadata: Any, eol: bytes) -> None:
     """A new table in place of `profileKeys` is laid out in the document's
@@ -393,7 +386,6 @@ OTHER_STYLES = [
 ]
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize(("source", "variable", "steps", "new", "change"), OTHER_STYLES)
 def test_new_entries_keep_the_documents_separator_and_indentation_unit(
     luadata: Any,
@@ -415,7 +407,6 @@ INDENT_ONLY = _lines(b"\n", b"", b"LabIndentDB = {", b'\t["a"] = 1,', b"}")
 COMMENTS_ONLY = _lines(b"\n", b"", b'LabCommentsDB = {"a", -- [1]', b"}")
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize(
     ("source", "variable", "change"),
     [
@@ -447,7 +438,6 @@ def test_a_document_showing_half_the_pairing_decides_both(
     assert luadata.serialize(doc) == replace_once(source, *change)
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 def test_appending_drops_own_line_comments_before_the_old_brace(luadata: Any) -> None:
     """Item 1: with `close_lead=None`, the old last entry's comment is
     written after its separator with one space, and an own-line comment that
@@ -488,7 +478,6 @@ FLAT_SIBLING = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize("eol", EOLS, ids=EOL_IDS)
 def test_new_document_follows_a_tab_indented_commented_sibling(
     luadata: Any, eol: bytes, tmp_path: Path
@@ -503,7 +492,6 @@ def test_new_document_follows_a_tab_indented_commented_sibling(
     assert luadata.serialize(reference_document(luadata), target=target) == _reference(eol)
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize(
     "sibling",
     [INDENT_ONLY, COMMENTS_ONLY],
@@ -519,7 +507,6 @@ def test_a_sibling_showing_half_the_pairing_decides_both(
     assert luadata.serialize(reference_document(luadata), target=target) == _reference(b"\n")
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 def test_new_document_takes_each_property_from_where_it_is_shown(
     luadata: Any, tmp_path: Path
 ) -> None:
@@ -534,7 +521,6 @@ def test_new_document_takes_each_property_from_where_it_is_shown(
     assert out == reference_text(indent=b"", comments=False, eol=b"\n")
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 def test_each_flavor_folder_uses_its_own_siblings(luadata: Any, tmp_path: Path) -> None:
     """L6: two flavor folders of one install, with made-up names and
     different styles (tab and LF; flat and CRLF, in a character's
@@ -553,7 +539,6 @@ def test_each_flavor_folder_uses_its_own_siblings(luadata: Any, tmp_path: Path) 
     assert flat == reference_text(indent=b"", comments=False, eol=b"\r\n")
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 def test_new_document_without_source_or_siblings_is_the_forever_layout(luadata: Any) -> None:
     """Item 6 (owner): with nothing to read, the layout every captured file
     shows: no indentation, no `-- [n]`, CRLF, a leading empty line, `,`
@@ -563,7 +548,6 @@ def test_new_document_without_source_or_siblings_is_the_forever_layout(luadata: 
     assert luadata.serialize(luadata.parse(out)) == out
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 def test_new_empty_table_without_source_or_siblings_is_two_lines(luadata: Any) -> None:
     """Item 6: the fallback's empty table is `{` and `}` on two lines."""
     doc = document(
@@ -749,7 +733,6 @@ HOSTILE: dict[str, tuple[Any, tuple[bytes, ...], tuple[int, int] | None]] = {
 }
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize(
     ("hostile", "refused", "position"), list(HOSTILE.values()), ids=list(HOSTILE)
 )
@@ -802,7 +785,6 @@ LEGAL_SLOTS = {
 }
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize(("legal", "expected"), list(LEGAL_SLOTS.values()), ids=list(LEGAL_SLOTS))
 def test_serialize_writes_legal_slot_contents_as_given(
     luadata: Any, legal: Any, expected: bytes | None
