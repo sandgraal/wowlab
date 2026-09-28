@@ -20,8 +20,8 @@ Claude Code in this repository.
   matching file is opened.
 - Hooks (`.claude/settings.json`, scripts in `.claude/hooks/`, tests in
   `tests/harness/`): `guard_bash.py` blocks `--no-verify`, bare force-push,
-  pushes to main, `--admin`, destructive `rm`, and shell writes into harness
-  files; `precommit_gate.py` runs `make lint` before any `git commit`;
+  pushes to main, `--admin`, destructive `rm`, `pkill`/`killall` (they hit
+  other worktrees' processes), and shell writes into harness files; `precommit_gate.py` runs `make lint` before any `git commit`;
   `protect_paths.py` keeps `LICENSE` read-only, confines subagents away from
   the harness and confines `code-reviewer` to new files under `tests/review/`;
   `format_python.py` keeps `.py` files ruff-clean; `session_start.py` prints
