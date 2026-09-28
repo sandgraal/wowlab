@@ -3465,8 +3465,10 @@ def addon_install(
         if plan.unchanged and plan.plan:
             show(f"  {len(plan.unchanged)} file(s) already up to date.")
         _print_left(show, plan.left)
+        # The load note is for after an install that happened (text); JSON keeps it.
         for n in plan.notes:
-            show(n)
+            if n != addoninstall.LOAD_NOTE:
+                show(n)
     if not plan.plan:
         if json_out:
             _emit(report(applied=False))
@@ -3497,6 +3499,8 @@ def addon_install(
         f"Installed the lab-addon: {len(plan.plan)} change(s). `wowlab undo` puts back what "
         "was there before."
     )
+    if addoninstall.LOAD_NOTE in plan.notes:
+        _say(addoninstall.LOAD_NOTE)
 
 
 @addon_app.command("remove")

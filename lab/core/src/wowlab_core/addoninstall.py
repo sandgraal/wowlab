@@ -34,10 +34,9 @@ every path again. Inside the transaction, with the gate's locks held, the
 folder is listed again and the up-to-date files are read again; any
 difference from the plan raises `AddonChangedError`, so the gate rolls back.
 
-The sources are found from this package: the nearest ancestor folder of it,
-up to the workspace root (the first ancestor holding `.git` or a
-`pyproject.toml` that declares the uv workspace), holding
-`lab/addon/WowLab/WowLab.toc`. A link in `lab`, `addon` or `WowLab` is
+The sources are found from this package: `lab/addon/WowLab/WowLab.toc` in
+the workspace root, the nearest ancestor holding `.git` or a
+`pyproject.toml` that declares the uv workspace, and nowhere else. A link in `lab`, `addon` or `WowLab` is
 refused, and each source file is opened without following a link and
 checked to be the regular file its `lstat` saw. Anywhere else
 `AddonSourceError` says so.
@@ -70,8 +69,10 @@ __all__ = [
     "MAX_SOURCE_BYTES",
     "MAX_VERSION_DIGITS",
     "PATCH_NOTE",
+    "REMOVE_REFUSED_NOTE",
     "SAVED_VARIABLES_NOTE",
     "SOURCE_PARTS",
+    "TOC_LEFT_NOTE",
     "TOC_NAME",
     "AddonChangedError",
     "AddonError",
@@ -122,10 +123,21 @@ FOLDER_STAYS_NOTE = (
 )
 FOLDER_LEFT_NOTE = "It still holds the path(s) listed above as left alone."
 """Added to `FOLDER_STAYS_NOTE` when a removal leaves paths alone."""
+TOC_LEFT_NOTE = (
+    "It still holds a .toc listed above as left alone, so the client may still find an addon there."
+)
+"""Replaces `FOLDER_STAYS_NOTE` when a removal leaves a `.toc` alone."""
+REMOVE_REFUSED_NOTE = (
+    "Nothing was deleted: `wowlab addon remove lab` removes the folder's files all together or "
+    "not at all, and this path is not one wowlab will delete. The lab-addon is still installed, "
+    "so the client will load it at its next start; to stop it loading, untick WowLab in the "
+    "AddOns list at character select."
+)
+"""Follows the gate's reason(s) when `remove` is refused."""
 LOAD_NOTE = (
     "Start the client. At character select, open AddOns, choose each character you will play "
     "(or all characters) in the drop-down, and check that WowLab is listed and ticked. If it "
-    "is marked out of date, the ## Interface: value wowlab derived does not match this "
+    "is marked out of date now, the ## Interface: value wowlab derived does not match this "
     "client: report it. WowLab.lua appears under WTF/ only after your first logout or /reload."
 )
 PATCH_NOTE = (
@@ -311,22 +323,29 @@ def _candidate(folder: Path) -> Path | None:
 
 
 def find_source(start: Path | None = None) -> Path:
-    """The lab-addon's source folder: `lab/addon/WowLab/` in the nearest
-    ancestor of `start` (default: this package's folder), up to the
-    workspace root, that holds one with a `WowLab.toc`. Raises
-    `AddonSourceError` when there is none, as when wowlab runs from an
-    installed package rather than a checkout."""
+    """The lab-addon's source folder: `lab/addon/WowLab/` in the workspace
+    root, the nearest ancestor of `start` (default: this package's folder)
+    holding `.git` or a `pyproject.toml` that declares the uv workspace. A
+    `lab/addon/WowLab/` in any other folder is never used. Raises
+    `AddonSourceError` when there is no workspace root above `start`, as
+    when wowlab runs from an installed package rather than a checkout, or
+    when the root holds no sources."""
     here = (start if start is not None else _HERE).resolve()
     for folder in (here, *here.parents):
+        if not _is_workspace_root(folder):
+            continue
         found = _candidate(folder)
-        if found is not None:
-            return found
-        if _is_workspace_root(folder):
-            break
+        if found is None:
+            raise AddonSourceError(
+                f"the workspace root {folder} holds no lab-addon sources "
+                f"({'/'.join(SOURCE_PARTS)}/{TOC_NAME}); nothing was changed"
+            )
+        return found
     raise AddonSourceError(
-        f"the lab-addon's sources ({'/'.join(SOURCE_PARTS)}/{TOC_NAME}) were not found in any "
-        f"folder above {here} up to the workspace root; `wowlab addon install lab` runs from a "
-        "checkout of the wowlab repository (uv run wowlab ...)"
+        f"no workspace root (a folder holding .git or the uv workspace's pyproject.toml) above "
+        f"{here}, so the lab-addon's sources ({'/'.join(SOURCE_PARTS)}/{TOC_NAME}) were not "
+        "found; `wowlab addon install lab` runs from a checkout of the wowlab repository "
+        "(uv run wowlab ...)"
     )
 
 
@@ -489,8 +508,10 @@ def _listed(files: Sequence[str], left: Sequence[LeftPath]) -> tuple[str, ...]:
 
 
 def _in_folder(rel: str) -> None:
-    """Refuse a path outside the addon folder: nothing else is ever touched."""
-    if not rel.startswith(ADDON_FOLDER + "/"):
+    """Refuse a path outside the addon folder, or one with an empty, `.` or
+    `..` component: nothing else is ever touched."""
+    parts = rel.split("/")
+    if not rel.startswith(ADDON_FOLDER + "/") or any(p in ("", ".", "..") for p in parts):
         raise AddonError(f"{rel!r} is not under {ADDON_FOLDER}/; wowlab refuses to touch it")
 
 
@@ -620,20 +641,31 @@ _REMOVE_LABEL = f"addon remove {LAB_ADDON}"
 
 def _remove_notes(left: Sequence[LeftPath], exists: bool) -> tuple[str, ...]:
     notes = [SAVED_VARIABLES_NOTE]
-    if exists and not any(lp.path.casefold().endswith(".toc") for lp in left):
+    if any(lp.path.casefold().endswith(".toc") for lp in left):
+        notes.append(TOC_LEFT_NOTE)
+    elif exists:
         notes.append(FOLDER_STAYS_NOTE + (" " + FOLDER_LEFT_NOTE if left else ""))
     return tuple(notes)
 
 
 def plan_remove(flavor: _FlavorLike, *, store: Path | None = None) -> RemovePlan:
     """What `remove` would delete: every regular file under the addon folder,
-    from a dry run of the gate. SavedVariables are never part of it. A
-    delete the gate refuses raises its `guard.GuardError`: the removal is
-    refused as a whole."""
+    from a dry run of the gate. SavedVariables are never part of it. When
+    the gate refuses any delete, the removal is refused as a whole: a
+    `guard.GuardError` (the CLI's exit 3) names every refused path with the
+    gate's reason, followed by `REMOVE_REFUSED_NOTE`."""
     present, left, exists = _installed(flavor.path)
+    refused: list[str] = []
     with guard.transaction(flavor, label=_REMOVE_LABEL, store=store, dry_run=True) as tx:
-        _deletes(tx, present, None)
+        for rel in present:
+            _in_folder(rel)
+            try:
+                tx.delete(rel)
+            except guard.PathNotAllowedError as exc:
+                refused.append(str(exc))
         whole = tx.plan
+    if refused:
+        raise guard.GuardError("\n".join([*refused, REMOVE_REFUSED_NOTE]))
     return RemovePlan(
         flavor_path=str(flavor.path),
         plan=whole,

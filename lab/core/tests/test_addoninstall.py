@@ -335,12 +335,16 @@ def test_an_executable_name_in_the_folder_is_left_alone_by_install_constructed(
 
 def test_remove_refused_by_the_gate_exits_3_with_its_reason_constructed(root: Path) -> None:
     ok("addon", "install", "lab", "--yes")
-    planted = root / FLAVOR / LAB / "helper.dll"
-    planted.write_bytes(b"constructed, not an executable")
+    for name in ("helper.dll", "tool.exe"):
+        (root / FLAVOR / LAB / name).write_bytes(b"constructed, not an executable")
     before = _tree(root)
     result = run("addon", "remove", "lab", "--yes")
     assert result.exit_code == 3, (result.stdout, result.stderr)
-    assert "refused by the write gate" in result.stderr and "executable" in result.stderr
+    err = " ".join(result.stderr.split())
+    assert "refused by the write gate" in err
+    assert f"'{LAB}/helper.dll' is an executable" in err  # every refused path is named
+    assert f"'{LAB}/tool.exe' is an executable" in err
+    assert " ".join(addoninstall.REMOVE_REFUSED_NOTE.split()) in err
     assert "Nothing to remove" not in result.stdout
     assert _tree(root) == before
     assert len(guard.history()) == 1
@@ -570,15 +574,30 @@ def test_the_source_walk_stops_at_the_workspace_root_constructed(
         (ws / ".git").write_text("gitdir: elsewhere\n")
     else:
         (ws / "pyproject.toml").write_text('[tool.uv.workspace]\nmembers = ["pkg"]\n')
-    with pytest.raises(addoninstall.AddonSourceError, match="workspace root"):
+    with pytest.raises(addoninstall.AddonSourceError, match="holds no lab-addon sources"):
         addoninstall.find_source(ws / "pkg")
-    assert addoninstall.find_source(tmp_path / "elsewhere-without-a-root") == above
+
+
+def test_an_installed_package_never_uses_a_lab_folder_above_it_constructed(
+    tmp_path: Path,
+) -> None:
+    """A package under site-packages with no workspace root above it, and a
+    hostile `lab/addon/WowLab/` higher up: refused, never used."""
+    hostile = tmp_path.joinpath(*addoninstall.SOURCE_PARTS)
+    hostile.mkdir(parents=True)
+    (hostile / "WowLab.toc").write_bytes(b"## Interface: @WOWLAB_INTERFACE@\n")
+    (hostile / "Evil.lua").write_bytes(b"-- constructed, must never be installed\n")
+    package = tmp_path / "venv" / "lib" / "python3.12" / "site-packages" / "wowlab_core"
+    package.mkdir(parents=True)
+    with pytest.raises(addoninstall.AddonSourceError, match="no workspace root"):
+        addoninstall.find_source(package)
 
 
 def test_a_member_pyproject_is_not_the_workspace_root_constructed(tmp_path: Path) -> None:
     found = tmp_path.joinpath(*addoninstall.SOURCE_PARTS)
     found.mkdir(parents=True)
     (found / "WowLab.toc").write_bytes((SOURCE / "WowLab.toc").read_bytes())
+    (tmp_path / ".git").mkdir()
     member = tmp_path / "lab" / "core"
     member.mkdir(parents=True)
     (member / "pyproject.toml").write_text('[project]\nname = "x"\n')
@@ -617,15 +636,18 @@ PATCH_TEXT = (
 
 def test_install_notes_are_the_same_in_text_and_json_on_every_path(root: Path) -> None:
     expected = [PATCH_TEXT, addoninstall.LOAD_NOTE]
+    assert "If it is marked out of date now," in addoninstall.LOAD_NOTE
     dry = ok("addon", "install", "lab", "--dry-run").stdout
-    assert all(n in dry for n in expected)
+    assert PATCH_TEXT in dry and addoninstall.LOAD_NOTE not in dry
     assert _json_of(cli.AddonInstallReport, "addon", "install", "lab", "--dry-run").notes == (
         expected
     )
     done = ok("addon", "install", "lab", "--yes").stdout
-    assert all(n in done for n in expected)
+    installed = done.index("Installed the lab-addon")
+    assert done.index(PATCH_TEXT) < installed < done.index(addoninstall.LOAD_NOTE)
     again = ok("addon", "install", "lab", "--yes").stdout
-    assert "Nothing to install" in again and all(n in again for n in expected)
+    assert "Nothing to install" in again and PATCH_TEXT in again
+    assert addoninstall.LOAD_NOTE not in again
     assert _json_of(cli.AddonInstallReport, "addon", "install", "lab").notes == expected
 
 
@@ -644,7 +666,7 @@ def test_remove_notes_are_printed_on_every_path(root: Path) -> None:
 @pytest.mark.parametrize(
     ("name", "folder_note"),
     [
-        ("Linked.toc", None),
+        ("Linked.toc", addoninstall.TOC_LEFT_NOTE),
         (
             "linked-notes",
             addoninstall.FOLDER_STAYS_NOTE + " " + addoninstall.FOLDER_LEFT_NOTE,
@@ -653,7 +675,7 @@ def test_remove_notes_are_printed_on_every_path(root: Path) -> None:
     ids=["toc-left-constructed", "other-left-constructed"],
 )
 def test_the_folder_note_follows_what_is_left_alone(
-    root: Path, flavor: Path, tmp_path: Path, name: str, folder_note: str | None
+    root: Path, flavor: Path, tmp_path: Path, name: str, folder_note: str
 ) -> None:
     ok("addon", "install", "lab", "--yes")
     target = tmp_path / "link-target"
@@ -661,6 +683,22 @@ def test_the_folder_note_follows_what_is_left_alone(
     (flavor / LAB / name).symlink_to(target)
     report = _json_of(cli.AddonRemoveReport, "addon", "remove", "lab", "--yes")
     assert [lp.path for lp in report.left] == [f"{LAB}/{name}"]
-    expected = [addoninstall.SAVED_VARIABLES_NOTE] + ([folder_note] if folder_note else [])
-    assert report.notes == expected
+    assert report.notes == [addoninstall.SAVED_VARIABLES_NOTE, folder_note]
     assert (flavor / LAB / name).is_symlink()
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        f"{LAB}/../../../WTF/Config.wtf",
+        f"{LAB}/./Core.lua",
+        f"{LAB}//Core.lua",
+        f"{LAB}/",
+        f"{LAB}/sub/..",
+    ],
+    ids=["dotdot", "dot", "empty-segment", "trailing-slash", "dotdot-last"],
+)
+def test_in_folder_refuses_dot_and_empty_components_constructed(rel: str) -> None:
+    with pytest.raises(addoninstall.AddonError, match="is not under"):
+        addoninstall._in_folder(rel)
+    addoninstall._in_folder(f"{LAB}/Core.lua")  # the ordinary case passes
