@@ -3018,7 +3018,7 @@ def _profile_summary(p: profiles.Profile) -> ProfileSummary:
 def _profile_report(p: profiles.Profile) -> ProfileReport:
     m = p.manifest
     scope = profiles.PRESET_SCOPE_NOTE if p.presets else profiles.SUBTREE_SCOPE_NOTE
-    notes = [scope, profiles.SERVER_SIDE_NOTE]
+    notes = [scope, profiles.SERVER_SIDE_NOTE, *profiles.linked_root_notes(m)]
     if m.client_running is not False:
         notes.append(
             "wowlab could not confirm the client was closed when this was saved: "
@@ -3092,7 +3092,9 @@ def profile_save(
     files created in those places since the save. An explicit --subtree is a
     whole file or folder: files added anywhere under it since are deleted by
     an apply. The lab-addon (Interface/AddOns/WowLab/ and WowLab.lua) is never
-    in a profile. Action-bar contents and talents are not in these files (the
+    in a profile. A saved subtree that is itself a link (a symlinked
+    Interface/AddOns, say) is held as the link, not what is behind it, and the
+    output says so. Action-bar contents and talents are not in these files (the
     server keeps them; not yet verified on this client), so no profile saves or
     restores them. JSON: ProfileReport."""
     if bool(preset) == bool(subtree):
@@ -3158,7 +3160,8 @@ def profile_list(json_out: JsonOpt = False) -> None:
 @profile_app.command("show")
 @_handled
 def profile_show(name: NameArg, json_out: JsonOpt = False) -> None:
-    """One profile and every file in it. JSON: ProfileReport."""
+    """One profile and every file in it, with the notes `save` gave (a saved
+    subtree that was a link is held as the link). JSON: ProfileReport."""
     report = _profile_report(profiles.find(snapshot.SnapshotStore(), name))
     if json_out:
         _emit(report)

@@ -1468,7 +1468,17 @@ the whole restore and `profiles` compares entries with the disk itself, it
 reads through no link: every folder from the flavor folder down is checked
 with `lstat`, a file is opened with `O_NOFOLLOW` and must be a regular file
 by `fstat`, and an entry behind a symlinked or junctioned folder is not read
-and is listed as left alone (fix round 2, 2026-09-28). Folders emptied by a
+and is listed as left alone (fix round 2, 2026-09-28). On POSIX that walk
+goes by directory descriptor from the install root, each folder checked and
+then opened relative to the one before with `O_NOFOLLOW`, so a folder
+swapped for a link between the check and the open is never read through;
+Windows, where `os.open` takes no `dir_fd`, keeps the `lstat` walk and the
+junction check (M11-12, 2026-09-28). `profile save` and `profile show` note
+each saved subtree root that is itself a symlink or junction ("<path> is a
+link; this profile holds the link, not what is behind it"), in human and
+`--json` output; a root reached through a linked folder (`WTF` itself a
+link) is refused by the snapshot, so nothing is saved (M11-12, 2026-09-28).
+Folders emptied by a
 deletion stay, since the gate deletes files only. Every `*-cache*` file in
 the plan is listed, a write with "the server may replace this at your next
 login (synchronize* CVars; see `wowlab doctor`)" and a delete with "the
