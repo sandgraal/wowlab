@@ -1,13 +1,14 @@
 -- Collections (docs/LAB_PLAN.md §13.1): mounts, toys and pets (by species id
 -- and count; no battle-pet ids, they are GUIDs). Appearances are never
--- gathered and always written as absent: the transmog collection's
--- per-category enumeration hit a C++ assertion in the Forever client and
--- crashed it on the first M11-03 login, which pcall cannot catch (M11-20).
--- A list read through a filtered journal says so (`filtered = true`); the addon never changes the owner's
--- filters, search text or collapsed headers. Every API here is [verify] for
--- M11-03 (all are present on 69893 per forever-addon-kit's API baseline, but
--- nothing exercised them there). Collections stay per-character until M11-03
--- shows which are account-wide on Forever.
+-- gathered and always written as absent: on the first M11-03 login one call
+-- asking the client for the appearance collection hit a C++ assertion and
+-- crashed the Forever client, which pcall cannot catch (M11-20). A list read
+-- through a filtered journal says so (`filtered = true`); the addon never
+-- changes the owner's filters, search text or collapsed headers. Every API
+-- here is [verify] for M11-03 (all are present on 69893 per
+-- forever-addon-kit's API baseline, but nothing exercised them there).
+-- Collections stay per-character until M11-03 shows which are account-wide
+-- on Forever.
 
 local _, ns = ...
 
@@ -132,5 +133,5 @@ ns.Section({
 ns.Section({
     key = "collections.appearances",
     path = { "collections", "appearances" },
-    not_gathered = "not gathered: the transmog collection enumeration asserts in the Forever client (M11-03)",
+    not_gathered = "not gathered: asking the client for the appearance collection crashed the Forever client once (M11-03); the addon no longer asks",
 })

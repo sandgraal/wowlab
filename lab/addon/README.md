@@ -84,12 +84,14 @@ Notes on the fields:
   invisible to the addon). Without any record the section is
   `absent = "no barber-shop visit recorded with the addon enabled"`.
 - `collections.appearances` is always
-  `{ absent = "not gathered: the transmog collection enumeration asserts in the Forever client (M11-03)" }`.
-  On the first M11-03 login, `C_TransmogCollection.GetCategoryAppearances`,
-  called for each `Enum.TransmogCollectionType` category, hit a C++
-  assertion in the Forever client and crashed it; `pcall` cannot catch
-  that. The addon never calls it and registers no transmog events
-  (2026-09-28, M11-20).
+  `{ absent = "not gathered: asking the client for the appearance collection crashed the Forever client once (M11-03); the addon no longer asks" }`.
+  On the first M11-03 login (build 1.60.1.70009), one call,
+  `GetCategoryAppearances(9)` (9 is Waist on Retail), made about 4 s after
+  entering the world, hit the client assertion `BC_ASSERT(this->m_has_value)`
+  and crashed the client. Whether other categories were called before it is
+  not known (the loop walked the enum with `pairs`). `pcall` cannot catch a
+  C++ assertion. The addon now calls nothing in `C_TransmogCollection` on
+  any client and registers no transmog events (2026-09-28, M11-20).
 - `professions`: whether `GetProfessionInfo`'s rank and maximum are per
   expansion tier or overall on Forever is **[verify]**.
 - `probe.lost` is set when `WowLabCharDB` loaded as a table without a probe,
