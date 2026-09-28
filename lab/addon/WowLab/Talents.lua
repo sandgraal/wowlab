@@ -42,7 +42,7 @@ function ns.Spec()
         return nil, "no GetSpecialization API (C_SpecializationInfo or global)"
     end
     local index = ns.Call(getSpec)
-    local spec = { index = index, api = api }
+    local spec = { index = ns.Number(index), api = api }
     if type(index) == "number" and index > 0 and getInfo then
         -- First return only: the spec id. Name and description are not kept.
         local id = ns.Call(getInfo, index)
@@ -99,10 +99,10 @@ local function treeCurrencies(configID, treeID)
         for _, currency in ipairs(list) do
             if type(currency) == "table" then
                 out[#out + 1] = {
-                    id = currency.traitCurrencyID,
-                    quantity = currency.quantity,
-                    max_quantity = currency.maxQuantity,
-                    spent = currency.spent,
+                    id = ns.Number(currency.traitCurrencyID),
+                    quantity = ns.Number(currency.quantity),
+                    max_quantity = ns.Number(currency.maxQuantity),
+                    spent = ns.Number(currency.spent),
                 }
             end
         end
@@ -119,29 +119,29 @@ local function dumpNode(configID, nodeID)
         return nil
     end
     local record = {
-        id = nodeID,
-        ranks_purchased = node.ranksPurchased,
-        active_rank = node.activeRank,
-        current_rank = node.currentRank,
-        max_ranks = node.maxRanks,
-        is_visible = node.isVisible,
+        id = ns.Number(nodeID),
+        ranks_purchased = ns.Number(node.ranksPurchased),
+        active_rank = ns.Number(node.activeRank),
+        current_rank = ns.Number(node.currentRank),
+        max_ranks = ns.Number(node.maxRanks),
+        is_visible = ns.Bool(node.isVisible),
         entries = ns.Numbers(node.entryIDs),
-        sub_tree = node.subTreeID,
+        sub_tree = ns.Number(node.subTreeID),
     }
     if type(node.activeEntry) == "table" then
-        record.active_entry = node.activeEntry.entryID
-        record.active_entry_rank = node.activeEntry.rank
+        record.active_entry = ns.Number(node.activeEntry.entryID)
+        record.active_entry_rank = ns.Number(node.activeEntry.rank)
     end
     return record
 end
 
 local function dumpTree(configID, treeID)
-    local tree = { id = treeID, nodes = {} }
+    local tree = { id = ns.Number(treeID), nodes = {} }
     -- C_Traits.GetSystemIDByTreeID: confirmed by forever-addon-kit on 69893,
     -- re-verify in M11-03.
     local systemOf = ns.Fn(C_Traits, "GetSystemIDByTreeID")
     if systemOf then
-        tree.system_id = ns.Call(systemOf, treeID)
+        tree.system_id = ns.Number(ns.Call(systemOf, treeID))
     end
     tree.currencies = treeCurrencies(configID, treeID)
     local nodeIDs = ns.Call(C_Traits.GetTreeNodes, treeID)
@@ -157,10 +157,10 @@ end
 local function dumpConfig(configID)
     local info = ns.Call(C_Traits.GetConfigInfo, configID)
     if type(info) ~= "table" then
-        return { id = configID, absent = "C_Traits.GetConfigInfo returned nothing" }
+        return { id = ns.Number(configID), absent = "C_Traits.GetConfigInfo returned nothing" }
     end
     -- info.name (the loadout name) is never read.
-    local config = { id = configID, type = info.type, trees = {} }
+    local config = { id = ns.Number(configID), type = ns.Number(info.type), trees = {} }
     for _, treeID in ipairs(ns.Numbers(info.treeIDs)) do
         config.trees[#config.trees + 1] = dumpTree(configID, treeID)
     end
@@ -217,7 +217,7 @@ ns.Section({
         -- baseline; its output on Forever is [verify].
         local export = ns.Fn(C_Traits, "GenerateImportString")
         if export then
-            record.export = ns.Call(export, configID)
+            record.export = ns.String(ns.Call(export, configID))
         else
             record.export_absent = "C_Traits.GenerateImportString missing"
         end
@@ -233,7 +233,7 @@ ns.Section({
         elseif not (spec and spec.id) then
             record.last_selected_config_absent = "no spec id to ask with"
         else
-            record.last_selected_config = ns.Call(lastSaved, spec.id)
+            record.last_selected_config = ns.Number(ns.Call(lastSaved, spec.id))
         end
         return record
     end,
@@ -262,10 +262,10 @@ local function legacyConfigs(classConfig)
         end
         if not foundBy[configID] then
             foundBy[configID] = {}
-            order[#order + 1] = configID
+            order[#order + 1] = ns.Number(configID)
         end
         local list = foundBy[configID]
-        list[#list + 1] = how
+        list[#list + 1] = ns.String(how)
     end
 
     local skipped = {}
@@ -343,7 +343,7 @@ ns.Section({
             -- The unlock level is the client's rule; the level explains an
             -- empty list without a constant of ours. UnitLevel("player"):
             -- confirmed by forever-addon-kit on 69893, re-verify in M11-03.
-            player_level = type(UnitLevel) == "function" and UnitLevel("player") or nil,
+            player_level = type(UnitLevel) == "function" and ns.Number(UnitLevel("player")) or nil,
             skipped_types = skipped,
             configs = {},
         }

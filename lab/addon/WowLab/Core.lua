@@ -40,8 +40,35 @@ local isEventValid = type(C_EventUtils) == "table" and type(C_EventUtils.IsEvent
 
 -- Helpers ---------------------------------------------------------------------
 
+-- Type checks for every value the addon stores from a client API, a function
+-- argument or the loaded file: each returns `value` when it has that type and
+-- nil otherwise, so a table (or a function) the client hands back is never
+-- written whole. A value may instead be stored directly inside an
+-- `if type(value) == "number" then` (or "string", "boolean") block.
+-- tests/addon/test_lab_addon.py checks every stored value this way.
+function ns.Number(value)
+    if type(value) == "number" then
+        return value
+    end
+    return nil
+end
+
+function ns.String(value)
+    if type(value) == "string" then
+        return value
+    end
+    return nil
+end
+
+function ns.Bool(value)
+    if type(value) == "boolean" then
+        return value
+    end
+    return nil
+end
+
 function ns.Absent(reason)
-    return { absent = reason }
+    return { absent = ns.String(reason) }
 end
 
 -- Returns `tbl[key]` when `tbl` is a table and that field is a function.
@@ -198,7 +225,7 @@ local function clientInfo()
     end
     -- The third return is the build's compile date; it is not recorded.
     local version, build, _, interface = GetBuildInfo()
-    return { version = version, build = build, interface = interface }
+    return { version = ns.String(version), build = ns.String(build), interface = ns.Number(interface) }
 end
 
 local function place(db, path, record)
@@ -247,7 +274,7 @@ local function loadProbe(saved)
     if type(saved) == "table" then
         local prior = saved.probe
         if type(prior) == "table" and type(prior.loads) == "number" then
-            probe.loads = prior.loads + 1
+            probe.loads = ns.Number(prior.loads + 1)
         else
             probe.lost = true
         end

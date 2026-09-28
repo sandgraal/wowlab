@@ -50,15 +50,15 @@ local function toys()
     local filter = {}
     local collectedShown = ns.Fn(C_ToyBox, "GetCollectedShown")
     if collectedShown then
-        filter.collected_shown = ns.Call(collectedShown)
+        filter.collected_shown = ns.Bool(ns.Call(collectedShown))
     end
     local uncollectedShown = ns.Fn(C_ToyBox, "GetUncollectedShown")
     if uncollectedShown then
-        filter.uncollected_shown = ns.Call(uncollectedShown)
+        filter.uncollected_shown = ns.Bool(ns.Call(uncollectedShown))
     end
     local unusableShown = ns.Fn(C_ToyBox, "GetUnusableShown")
     if unusableShown then
-        filter.unusable_shown = ns.Call(unusableShown)
+        filter.unusable_shown = ns.Bool(ns.Call(unusableShown))
     end
     return { collected = collected, filtered = true, filter = filter }
 end
@@ -85,12 +85,12 @@ local function pets()
     table.sort(species)
     local out = {}
     for _, speciesID in ipairs(species) do
-        out[#out + 1] = { species = speciesID, count = ns.Call(collectedInfo, speciesID) }
+        out[#out + 1] = { species = speciesID, count = ns.Number(ns.Call(collectedInfo, speciesID)) }
     end
     local record = { species = out, filtered = true }
     local default = ns.Fn(C_PetJournal, "IsUsingDefaultFilters")
     if default then
-        record.default_filters = ns.Call(default)
+        record.default_filters = ns.Bool(ns.Call(default))
     end
     return record
 end
@@ -129,7 +129,7 @@ local function appearances()
     local record = { sources = collected, filtered = true }
     local default = ns.Fn(C_TransmogCollection, "IsUsingDefaultFilters")
     if default then
-        record.default_filters = ns.Call(default)
+        record.default_filters = ns.Bool(ns.Call(default))
     end
     return record
 end

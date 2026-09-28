@@ -89,10 +89,6 @@ def test_positive_control_is_rejected(tmp_path: Path, tag: str) -> None:
     assert _failing_tests(tmp_path, tag, CONTROLS[tag])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="deferred to M11-13 by owner decision 2026-09-28: carry value check moves onto tokens",
-)
 @pytest.mark.parametrize("tag", sorted(CASES))
 def test_saved_subtable_is_rejected(tmp_path: Path, tag: str) -> None:
     assert _failing_tests(tmp_path, tag, CASES[tag])

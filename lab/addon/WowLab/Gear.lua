@@ -48,7 +48,7 @@ ns.Section({
         if type(GetInventoryItemLink) ~= "function" then
             return ns.Absent("GetInventoryItemLink missing")
         end
-        local record = { first_slot = first, last_slot = last, slots = {} }
+        local record = { first_slot = ns.Number(first), last_slot = ns.Number(last), slots = {} }
         for slot = first, last do
             local raw = GetInventoryItemLink("player", slot)
             if type(raw) == "string" then
@@ -67,7 +67,7 @@ ns.Section({
             -- overall: best items owned, bags included; equipped: the
             -- character-sheet figure.
             local overall, equipped, pvp = GetAverageItemLevel()
-            record.average = { overall = overall, equipped = equipped, pvp = pvp }
+            record.average = { overall = ns.Number(overall), equipped = ns.Number(equipped), pvp = ns.Number(pvp) }
         else
             record.average = ns.Absent("GetAverageItemLevel missing")
         end

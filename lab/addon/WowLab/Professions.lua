@@ -25,10 +25,10 @@ ns.Section({
                 local rank, maximum, _, _, skillLine, modifier = select(3, GetProfessionInfo(index))
                 list[#list + 1] = {
                     position = position,
-                    skill_line = skillLine,
-                    rank = rank,
-                    max_rank = maximum,
-                    modifier = modifier,
+                    skill_line = ns.Number(skillLine),
+                    rank = ns.Number(rank),
+                    max_rank = ns.Number(maximum),
+                    modifier = ns.Number(modifier),
                 }
             end
         end
