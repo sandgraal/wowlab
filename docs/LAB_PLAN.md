@@ -669,8 +669,8 @@ Whether Forever writes a useful combat log at all is an open question for
 M10-03. If the owner's capture shows it does not, this module ships against
 retail fixtures only and says so.
 
-*Amended 2026-09-28 (M10-13 review):* one exception to L4. A line longer
-than 1 MiB (`combatlog.MAX_LINE_BYTES`; hostile input, since no real line
+*Amended 2026-09-28 (M10-13 review):* an exception to L4 granted by the
+owner on 2026-09-28, recorded in AGENTS.md. A line longer than 1 MiB (`combatlog.MAX_LINE_BYTES`; hostile input, since no real line
 comes near it) is yielded as `Unparsed` holding only its first 1 MiB, flagged
 `truncated`, with the line's full byte `length` and its real ending. That
 keeps memory bounded, and the same line gives the same entry however the file

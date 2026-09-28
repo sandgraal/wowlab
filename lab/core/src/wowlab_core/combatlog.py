@@ -453,7 +453,9 @@ class _Splitter:
                 out.append(_line(data[pos:nl], self.start + pos, "\n"))
             pos = nl + 1
         rest = data[pos:]
-        if len(rest) > MAX_LINE_BYTES:
+        # Measured without a trailing CR: its LF may start the next chunk, and a
+        # line of exactly MAX_LINE_BYTES ended by CRLF is not over-long.
+        if len(rest) - rest.endswith(b"\r") > MAX_LINE_BYTES:
             self.long = _Long(rest, self.start + pos, len(rest))
             self.start += len(data)
             self.pending = b""

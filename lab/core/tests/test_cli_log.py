@@ -288,6 +288,30 @@ def test_log_tail_marks_a_cut_line_constructed(flavor: Path) -> None:
     assert (cut.truncated, cut.length, cut.ending) == (True, len(long), "\r\n")
 
 
+def test_log_tail_counts_the_kept_bytes_of_a_cut_line_of_two_byte_characters_constructed(
+    flavor: Path,
+) -> None:
+    # "é" is two bytes in UTF-8: the first MAX_LINE_BYTES bytes are half as many characters.
+    long = "é".encode() * (combatlog.MAX_LINE_BYTES // 2 + 10)
+    (flavor / LATER).write_bytes(long + b"\n")
+    out = ok("log", "tail").stdout.splitlines()
+    assert f"(cut to its first {combatlog.MAX_LINE_BYTES} of {len(long)} bytes)" in out[1]
+    report = LogTailReport.model_validate_json(ok("log", "tail", "--json").stdout)
+    (cut,) = report.entries
+    assert isinstance(cut, combatlog.Unparsed)
+    assert len(cut.raw) == combatlog.MAX_LINE_BYTES // 2
+    assert (cut.truncated, cut.length) == (True, len(long))
+
+
+def test_log_tail_follow_json_prints_the_batches_note_on_stderr(
+    flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _script(monkeypatch, [])
+    result = ok("log", "tail", "--follow", "--json", "-n", "0")
+    assert result.stderr.count(cli._BATCHES) == 1
+    assert all(LogTailLine.model_validate_json(line) for line in result.stdout.splitlines())
+
+
 # ─── L1 ──────────────────────────────────────────────────────────────────────
 
 

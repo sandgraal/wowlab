@@ -1989,7 +1989,9 @@ class LogTailReport(_Out):
 
     file: str | None  # relative to the flavor folder; None when there is no combat log
     entries: list[combatlog.Entry]
-    notes: list[str]  # the caveats the text output prints on stderr
+    notes: list[
+        str
+    ]  # the caveats the text output also prints (the no-log message on stdout, the others on stderr)
 
 
 def _logs_dir(lay: layout.Layout) -> Path | None:
@@ -2022,11 +2024,10 @@ def _print_log_entry(entry: combatlog.Entry | LogFollowing, json_out: bool) -> N
     elif isinstance(entry, LogFollowing):
         _say(f"==> {entry.file}{_FOLLOWING_WORDS[entry.reason]} <==")
     elif isinstance(entry, combatlog.Unparsed):
-        cut = (
-            f" (cut to its first {len(entry.raw)} of {entry.length} bytes)"
-            if entry.truncated
-            else ""
-        )
+        cut = ""
+        if entry.truncated:
+            kept = len(entry.raw.encode("utf-8", "surrogateescape"))  # bytes, not characters
+            cut = f" (cut to its first {kept} of {entry.length} bytes)"
         _say(f"(not tokenized: {entry.reason}){cut} {entry.raw}")
     else:
         _say(entry.raw)
@@ -2060,7 +2061,7 @@ def _follow_log(
                 _print_log_entry(
                     LogFollowing(file=_rel(lay, item.path), reason=item.reason), json_out
                 )
-                if not json_out and not noted:
+                if not noted:
                     _note(_BATCHES)
                     noted = True
                 if item.reason == "start":

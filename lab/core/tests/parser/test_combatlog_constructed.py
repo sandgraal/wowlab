@@ -384,7 +384,7 @@ def _long_line_in_pieces(pieces: list[bytes]) -> list[Record | Unparsed]:
     out: list[Record | Unparsed] = []
     for piece in pieces:
         out.extend(splitter.feed(piece))
-        assert len(splitter.pending) <= MAX_LINE_BYTES
+        assert len(splitter.pending) <= MAX_LINE_BYTES + 1  # + a CR whose LF is next
     return out + splitter.end()
 
 
@@ -432,3 +432,13 @@ def test_an_unclosed_quote_over_a_megabyte_is_refused_in_linear_time_constructed
     assert elapsed < 1.0, f"{elapsed:.2f}s for a {len(line)}-byte line"
     closed = tokenize_line(head + 'x"' + ",a" * ((MAX_LINE_BYTES - len(head)) // 2))
     assert isinstance(closed, Record)
+
+
+@pytest.mark.parser
+def test_a_line_of_exactly_the_limit_split_between_cr_and_lf_is_a_record_constructed() -> None:
+    head = f"{TS}  EVENT,".encode()
+    line = head + b"x" * (MAX_LINE_BYTES - len(head))
+    data = line + b"\r\n" + f"{TS}  NEXT,1\r\n".encode()
+    streamed = _long_line_in_pieces([data[: len(line) + 1], data[len(line) + 1 :]])
+    assert streamed == list(tokenize(data))
+    assert isinstance(streamed[0], Record) and streamed[0].ending == "\r\n"
