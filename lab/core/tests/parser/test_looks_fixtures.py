@@ -25,6 +25,7 @@ BUILD = "1.60.1.70009"
 # Every table §13.2 names, all published for the build (checked 2026-09-28).
 TABLES = {
     "ChrRaces": 58,
+    "ChrClasses": 9,
     "ChrModel": 127,
     "ChrRaceXChrModel": 116,
     "ChrCustomizationOption": 1173,
