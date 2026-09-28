@@ -50,7 +50,7 @@ marked `@pytest.mark.live`.
   to 1.60.1.70009 (capture rows). The Forever client writes a combat log
   (`docs/LAB_FORMATS.md` §8 amendment of 2026-09-28): CRLF; `PROJECT_ID,18`
   (not 1; whether it equals `WOW_PROJECT_ID` is **[verify]**);
-  `BUILD_VERSION,1.60.1`, the patch only as on retail, so a log alone does
+  `BUILD_VERSION,1.60.1`, the patch only (retail is reported to do the same **[verify]**), so a log alone does
   not say which 1.60.1 build wrote it. The committed log is one short solo
   open-world fight with its file name and timestamps shifted by the capture
   tool. No instance or boss log was recorded, so `COMBATANT_INFO`, bracketed
