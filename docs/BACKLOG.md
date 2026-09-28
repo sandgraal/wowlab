@@ -301,3 +301,104 @@ Dependency shape: `docs/LAB_PLAN.md` §10.
 # Definition of done
 
 A ticket is done when: CI is green on every required check; each acceptance criterion has pasted proof; `make lint` passes, `mypy --strict` included; new external-format parsing is covered by a real, scrubbed fixture with a provenance row; any change to a load-bearing file (`luadata.py`, `guard.py`) has `make test-parser` and the full suite green with graders activated by marker deletion only; nothing writes into an install outside `guard` and no test needs a real install; the independent review verdict is clean; every review thread was replied to and resolved; and anything contradicting an existing ADR ships with a superseding ADR (`Proposed`) rather than a silent deviation. Full lifecycle: `docs/AGENT_WORKFLOW.md`.
+
+---
+
+# M11 — lab-addon, customization-sandbox, profiles, sv-merge (Wave 2)
+
+Spec: `docs/LAB_PLAN.md` §13. Decisions: ADR-0026, ADR-0027 (Proposed). Owner pick 2026-09-28. L1–L8 apply to every ticket.
+
+## [ ] M11-01 — lab-addon sources and Lua lint
+**Size:** M · **Depends on:** —
+
+`lab/addon/WowLab/` per §13.1 and ADR-0026: a TOC template (no interface number; filled at install), Lua 5.1 sources writing the versioned tables at `PLAYER_LOGOUT` and on `/wowlab save`; no names, realms, GUIDs, guild or chat. A static Lua linter on `lab/addon/` only, pinned, no network at test time (the CI workflow change is harness work: the implementer reports the exact step and the conductor lands it). No Lua is executed anywhere in the Lab.
+
+**Acceptance:** the linter passes; a test asserts the template has no interface number and the sources mention no name/realm/GUID/guild/chat API; a reviewer checks every API used against community documentation, marking each **[verify]** for the owner capture.
+
+---
+
+## [ ] M11-02 — `wowlab addon install/remove lab`
+**Size:** S · **Depends on:** M11-01
+
+Copies `lab/addon/WowLab/` into `Interface/AddOns/WowLab/` through one `guard` transaction, filling `## Interface:` from discovery (L6); `remove` deletes it through `guard`. Plan, prompt, `--yes`, `--json`, exit 3 on refusal, as §6.11.
+
+**Acceptance:** tests on a synthetic install: install then undo restores the tree byte for byte; the written TOC carries the discovered interface; a running client refuses with exit 3; nothing written outside `Interface/AddOns/WowLab/`.
+
+---
+
+## [ ] M11-03 — Capture the lab-addon's output
+**Size:** S · **Depends on:** M11-02 · **owner**
+
+Install with `wowlab addon install lab`, log in and out on each character, then capture `WowLab*.lua` (account and per-character) and one addon's SavedVariables from two characters, with `scripts/lab_capture.py` (extended with `--sv` patterns if needed, as a scrub-tool follow-up with `security-reviewer`). Index rows; `docs/LAB_FORMATS.md` amendment for what each API section actually returned on Forever.
+
+**Acceptance:** fixtures committed with rows; security and domain reviews clean; every **[verify]** from M11-01 resolved or recorded open.
+
+---
+
+## [ ] M11-04 — `wowlab_core.labaddon` reader and `wowlab char show`
+**Size:** S · **Depends on:** M11-03
+
+Pydantic models per section and schema version; unknown keys kept; absent sections reported with the addon's reason. `wowlab char show [--json]`.
+
+**Acceptance:** every M11-03 fixture reads; `--json` validates; a constructed schema-2 document (labelled) is refused with a clear message.
+
+---
+
+## [ ] M11-05 — Customization tables and the looks model
+**Size:** M · **Depends on:** —
+
+Record the `ChrCustomization*`, `ChrRaces` and model tables for the Forever build from wago.tools as fixtures (ADR-0012; table set checked against the build listing). `wowlab_core.looks`: races, body types, options, choices, requirements; a look validated against it.
+
+**Acceptance:** the model loads from the recorded tables; every race in `ChrRaces` playable on the build has options; a look with an unknown choice or an unmet requirement is refused.
+
+---
+
+## [ ] M11-06 — `wowlab looks` CLI
+**Size:** S · **Depends on:** M11-05 (and M11-04 for `import-char`)
+
+`races`, `options`, `save`, `show`, `compare`, `import-char`; looks as JSON under the user data directory; `--json` on every data command.
+
+**Acceptance:** Typer-runner tests per command; `--json` validates; `import-char` reads the M11-03 capture.
+
+---
+
+## [ ] M11-07 — `wowlab looks page`
+**Size:** S · **Depends on:** M11-06
+
+One self-contained HTML file per ADR-0027 (inline CSS/JS, embedded JSON, CSP forbidding external requests), written under the user data directory or `--out`, never into an install.
+
+**Acceptance:** the embedded JSON parses back to the model's data; the CSP and the absence of any external URL are asserted; a refusal when `--out` is inside an install.
+
+---
+
+## [ ] M11-08 — profiles
+**Size:** M · **Depends on:** —
+
+`wowlab profile save | apply | list | show | delete` per §13.3 on `snapshot` and `guard`; presets as data; the add-since-save behaviour decided and written into §13.3.
+
+**Acceptance:** tests on a synthetic install: save then change then apply returns the chosen subtrees to the saved bytes and leaves others alone; Edit `no` files skipped; undo reverses an apply; exit 3 on refusal.
+
+---
+
+## [ ] M11-09T — sv-merge graders [TEST]
+**Size:** S · **Depends on:** M11-03
+
+Graders for §13.4 on the M11-03 two-character captures and constructed documents (labelled): one-sided changes taken, same change taken once, conflicts listed and nothing written, `--key` limits, output in the target document's style, written through `guard`. `xfail(strict=True)` one marker line each.
+
+**Acceptance:** fail today for the missing behaviour only; satisfiable by a scratch patch; `make ci` green.
+
+---
+
+## [ ] M11-09 — sv-merge [IMPL]
+**Size:** M · **Depends on:** M11-09T
+
+`wowlab sv merge` per §13.4. Activate graders by marker deletion only.
+
+**Acceptance:** all M11-09T graders green; reviewed by `security-reviewer` (it rewrites user data).
+
+---
+
+## [ ] M11-10 — Wave 2 review
+**Size:** S · **Depends on:** all M11 tickets · **owner**
+
+`docs/handoffs/M11-review.md` per §11; stop dispatch until the owner picks.

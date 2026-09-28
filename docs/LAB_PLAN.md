@@ -1228,3 +1228,92 @@ game installed. M10-08, M10-09 and M10-10 do not wait on it.
    or is dropped until `guard` needs it.
 4. ~~Accept or reject ADR-0019 through ADR-0025.~~ Answered 2026-09-21: all
    accepted, together with ADR-0013 and ADR-0014.
+
+## 13. Wave 2 (M11): lab-addon, customization-sandbox, profiles, sv-merge
+
+Owner pick, 2026-09-28 (ADR-0024). Decisions: ADR-0026 (the addon is Lua
+for the client only) and ADR-0027 (generated pages are self-contained static
+HTML), both Proposed. Owner choices of the same date: the addon is installed
+by `wowlab` through `guard`; it records everything the idea lists; the
+sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
+
+### 13.1 lab-addon
+
+- **Addon** `lab/addon/WowLab/`: a TOC template and Lua sources. On
+  `PLAYER_LOGOUT` (and on `/wowlab save`) it fills its SavedVariables with a
+  versioned table (`schema = 1`): equipped gear (item links as strings, so
+  bonus IDs and enchants survive), talents (the active loadout through
+  `C_Traits`: config, tree, node and entry ids and ranks), customization
+  choices (option id to choice id), collections (mount, pet, toy and
+  appearance ids known), currencies (id, quantity, maximum) and professions
+  (skill line, rank, maximum). Per-character data goes in
+  `SavedVariablesPerCharacter` (`WowLabCharDB`), account-wide collections in
+  `SavedVariables` (`WowLabDB`). No names, realms, GUIDs, guild or chat of
+  anyone (ADR-0026). Which of these APIs the Forever client exposes, and how
+  the player's own customization choices can be read outside the barber
+  shop, are **[verify]**; a section the client cannot provide is written as
+  absent with a reason, never guessed.
+- **Install** `wowlab addon install lab` / `wowlab addon remove lab`: copies
+  the addon into `Interface/AddOns/WowLab/` through a `guard` transaction
+  (client closed, snapshot first, undoable), filling the TOC's
+  `## Interface:` from the discovered flavor (L6).
+- **Reader** `wowlab_core.labaddon`: reads `WowLab*.lua` through `luadata`
+  into Pydantic models, one per section, keyed by schema version; unknown
+  keys are kept, not dropped (L4 spirit). CLI `wowlab char show [--json]`
+  over the latest capture.
+- **Capture** (owner): install, log in and out on each character, capture
+  the addon's files with `scripts/lab_capture.py` (it gains `--sv WowLab*`
+  if needed), plus the same addon's SavedVariables from two characters for
+  sv-merge.
+
+### 13.2 customization-sandbox (data-only)
+
+- **Data** from `gamedata` for the flavor's build: `ChrRaces`,
+  `ChrModel`, `ChrRaceXChrModel`, `ChrCustomizationOption`,
+  `ChrCustomizationChoice`, `ChrCustomizationReq`,
+  `ChrCustomizationElement` (table set **[verify]** against the build's
+  wago listing), recorded as fixtures (ADR-0012).
+- **Model** `wowlab_core.looks`: per race and body type, the options, their
+  choices and the requirements that gate them; a look is a named mapping of
+  option to choice, validated against the model.
+- **CLI** `wowlab looks races | options <race> | save <name> … | show | compare
+  <a> <b> | import-char` (the current character's choices from a lab-addon
+  capture). Looks are JSON under the user data directory.
+- **Page** `wowlab looks page [--out PATH]`: one self-contained HTML file
+  (ADR-0027) to browse races and options and view saved looks.
+
+### 13.3 profiles
+
+Named whole-UI states on top of `snapshot` and `guard`. `wowlab profile save
+<name> [--preset P | --subtree S…]` takes a snapshot restricted to the chosen
+subtrees and labels it; `profile apply <name>` restores those subtrees
+through `guard` (plan, prompt, undo), skipping file-map Edit `no` files as a
+whole restore does (owner decision 2026-09-27); `profile list | show |
+delete`. Presets are data, not flavor constants: `ui` (Config.wtf, the
+`config-cache.wtf`, `layout-local.txt` and edit-mode caches), `bindings`,
+`macros`, `addons` (`Interface/AddOns/`, `AddOns.txt` and the SavedVariables).
+Whether `apply` also removes files added since the profile was saved is
+decided in the ticket and stated in the plan.
+
+### 13.4 sv-merge
+
+`wowlab sv merge <file> --from <character|snapshot> --into <character>
+[--key PATH…]`: a three-way structural merge of one SavedVariables document
+with `luadata` (base: the latest snapshot copy of the target, else empty;
+ours: the target; theirs: the source), by key path. A key changed on one
+side is taken; changed on both sides the same way is taken once; changed
+differently is a conflict, listed, never guessed, and nothing is written
+unless `--take ours|theirs` resolves it. `--key` limits the merge to named
+subtrees (copy one addon profile). Output goes through the serializer (the
+document's own style) and is written by `guard`. Graders come first
+(`M11-09T`), since it rewrites user data.
+
+### 13.5 Order
+
+```
+M11-01 addon + lint ── M11-02 addon install ── M11-03 owner capture ─┬─ M11-04 labaddon reader + char show
+                                                                     └─ M11-09T → M11-09 sv-merge
+M11-05 customization tables + looks model ── M11-06 looks CLI ── M11-07 looks page
+M11-08 profiles
+                                                                        all ── M11-10 wave review
+```
