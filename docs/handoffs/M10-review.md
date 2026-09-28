@@ -22,11 +22,11 @@ proposing one.
 | Snapshot store | M10-10 | #18, #24, #44 |
 | Write gate and restore (graders first) | M10-11T, M10-11 | #29, #41, #48, #43 |
 | `luadata` serializer (graders first) | M10-12T, M10-12 | #66, #74 |
-| Combat log tokenizer, `follow()`, `wowlab log tail` | M10-13 | #87 |
+| Combat log tokenizer, `follow()`, `wowlab log tail` | M10-13 | #80 (fixture), #87 |
 | `wowlab` CLI | M10-14 | #68 |
 | Guard lock, temp cleanup, changed-file refusal | M10-16T, M10-16 | #56, #62, #59 |
 | Guard store creation, undo by id | M10-17T, M10-17 | #73, #77 |
-| Serializer sibling-listing follow-ups | M10-18T, M10-18 | #86, (M10-18 PR) |
+| Serializer sibling-listing follow-ups | M10-18T, M10-18 | #86, #91 |
 | Guard grader polish; `snap create` overlap order | M10-19T, M10-19 | #82, #83 |
 
 Every change to `luadata.py` and `guard.py` went through a separate
@@ -67,6 +67,9 @@ review; format and wording work had a domain review.
 - **Performance targets.** The `luadata` memory and time target took four fix
   rounds (owner-approved) and ended as a cost budget: every document within
   `MAX_COST` parses in at most about 6.4 s and 1.1 GB on the owner's M1.
+- **Constitution.** One owner-granted exception to L4 (lossless): a
+  combat-log line over 1 MiB keeps its first 1 MiB, flagged truncated with
+  its true length (#93).
 - **Harness.** Agents share one scratchpad (a PR body was swapped once); agent
   worktrees under `/private/tmp` break the hook tests; usage limits stop agents
   mid-task. All three are now in the conductor's briefs.
@@ -96,6 +99,14 @@ Picked by the owner on 2026-09-28: lab-addon, customization-sandbox
 accepted. The plan, tickets and the owner's review are in the M11 plan PR
 (#84). The wave is 10 tickets, four of them M-sized; the M11-10 review
 compares actual effort against that.
+
+## Follow-ups recorded, not scheduled
+
+- `luadata` sibling listing: state a worst-case listing ceiling in §6.4;
+  narrow the `try` in the case probe to the swapped lookup; fix a stale
+  comment on the scan limit (#91).
+- `docs/LAB_PLAN.md` §6.8: re-wrap one reworded line (#87).
+- Earlier ones are recorded under their tickets in `docs/BACKLOG.md`.
 
 ## Owner actions outstanding
 
