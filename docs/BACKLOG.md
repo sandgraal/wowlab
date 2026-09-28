@@ -14,9 +14,9 @@ The backlog holds the current wave only (ADR-0024). Milestone numbers start at `
 
 Spec: `docs/LAB_PLAN.md` §13. Decisions: ADR-0026, ADR-0027 (accepted 2026-09-28). Owner pick 2026-09-28. L1–L8 apply to every ticket.
 
-The wave is 15 tickets (10 planned plus the follow-ups M11-11T, M11-11, M11-12, M11-13 and M11-14 added 2026-09-28), four of them M-sized (M11-01, M11-05, M11-08, M11-09), not the four S-sized ideas listed in `docs/LAB_IDEAS.md`; the M11-10 review compares actual effort against that. Wave 1 closes before M11 dispatch (§13.5); the critical path M11-01 → M11-02 → M11-03 goes first.
+The wave is 19 tickets (10 planned plus the follow-ups M11-11T, M11-11, M11-12, M11-13, M11-14, M11-15, M11-16T and M11-17 added 2026-09-28), four of them M-sized (M11-01, M11-05, M11-08, M11-09), not the four S-sized ideas listed in `docs/LAB_IDEAS.md`; the M11-10 review compares actual effort against that. Wave 1 closes before M11 dispatch (§13.5); the critical path M11-01 → M11-02 → M11-03 goes first.
 
-## [ ] M11-01 — lab-addon sources and Lua lint
+## [x] M11-01 — lab-addon sources and Lua lint
 **Size:** M · **Depends on:** —
 
 `lab/addon/WowLab/` per §13.1 and ADR-0026: a TOC template (no interface number; filled at install), Lua 5.1 sources writing the versioned tables at `PLAYER_LOGOUT` and on `/wowlab save`; no names, realms, GUIDs, guild or chat. A static Lua linter on `lab/addon/` only, pinned, no network at test time (the CI workflow change is harness work: the implementer reports the exact step and the conductor lands it). No Lua is executed anywhere in the Lab.
@@ -27,7 +27,7 @@ Before writing the talents section, the implementer reads the trait walker of ht
 
 ---
 
-## [ ] M11-02 — `wowlab addon install/remove lab`
+## [x] M11-02 — `wowlab addon install/remove lab`
 **Size:** S · **Depends on:** M11-01, M10-14
 
 Copies `lab/addon/WowLab/` into `Interface/AddOns/WowLab/` through one `guard` transaction, filling `## Interface:` from discovery (L6); `remove` deletes it through `guard`. Plan, prompt, `--yes`, `--json`, exit 3 on refusal, as §6.11.
@@ -63,7 +63,7 @@ Record the `ChrCustomization*`, `ChrRaces` and model tables for the Forever buil
 
 ---
 
-## [ ] M11-06 — `wowlab looks` CLI
+## [x] M11-06 — `wowlab looks` CLI
 **Size:** S · **Depends on:** M11-05, M10-14
 
 `races`, `options`, `save`, `show`, `compare`; looks as JSON under the user data directory; `--json` on every data command. `import-char` moved to M11-04 (2026-09-28).
@@ -108,7 +108,7 @@ Graders for §13.4 on the M11-03 two-character captures and constructed document
 
 ---
 
-## [ ] M11-11T — guard and store reads never block graders [TEST]
+## [x] M11-11T — guard and store reads never block graders [TEST]
 **Size:** S · **Depends on:** —
 
 Follow-up from the M11-08 security review (#96). `guard._read` opens with `O_RDONLY | O_BINARY | O_NOFOLLOW` but no `O_NONBLOCK`, and checks `fstat` only after the open returns, so a file swapped for a FIFO during a read blocks forever while guard holds the store and install locks. Graders (constructed, labelled; POSIX-only, skipped where `os.mkfifo` is missing): a FIFO swapped in between the walk and the open (hooked the way the reviewer did) at every `guard._read` site is refused within a bounded time, and nothing is written; a FIFO already in place before the walk is refused today and is pinned as passing (amended 2026-09-28 after #99's review). Scope widened 2026-09-28 (#99 code and security reviews): the same blocking read in `snapshot.SnapshotStore._capture` (lstat then open without `O_NONBLOCK`, run inside guard's pre-write snapshot and by `snap create`/`profile save`), `SnapshotStore.read_object` (`read_bytes` with no type check, follows links, no size cap: a FIFO planted at a predictable object path blocks restore and undo with no race), and `guard._load_journal` (lstat then `read_bytes`, so a swapped symlink passes the size check). Also an empty-target case, so the `fstat` check is necessary. `xfail(strict=True)` one marker line each.
@@ -120,7 +120,7 @@ Follow-up from the M11-08 security review (#96). `guard._read` opens with `O_RDO
 ## [ ] M11-11 — guard and store reads never block [IMPL]
 **Size:** S · **Depends on:** M11-11T
 
-In `guard.py` and `snapshot.py` (widened 2026-09-28): open with `getattr(os, "O_NONBLOCK", 0)` (and `O_NOCTTY`) as guard's lock-file open already does, then `fstat` must show a regular file, in `guard._read`, `guard._load_journal`, `SnapshotStore._capture` and `SnapshotStore.read_object`; `read_object` and `_load_journal` also open with `O_NOFOLLOW` and read at most their size cap plus one byte; close the descriptor on every path (no `os.fdopen` on an unchecked descriptor, the leak fixed in `profiles._hash_fd` by #100). Sweep the other store reads with the same pattern (manifest `_load`, `_rehash`) and list what changed. Activate graders by marker deletion only, including review probe 74cfbde.
+In `guard.py` and `snapshot.py` (widened 2026-09-28): open with `getattr(os, "O_NONBLOCK", 0)` (and `O_NOCTTY`) as guard's lock-file open already does, then `fstat` must show a regular file, in `guard._read`, `guard._load_journal`, `SnapshotStore._capture` and `SnapshotStore.read_object`; `read_object` and `_load_journal` also open with `O_NOFOLLOW`, and `_load_journal` reads at most its record cap plus one byte (§6.9 sets no object size cap; capping `read_object`'s inflation moved to M11-15, 2026-09-28); close the descriptor on every path (no `os.fdopen` on an unchecked descriptor, the leak fixed in `profiles._hash_fd` by #100). Sweep the other store reads with the same pattern (manifest `_load`, `_rehash`) and list what changed. Activate graders by marker deletion only, including review probe 74cfbde.
 
 **Acceptance:** all M11-11T graders and 74cfbde green; full suite green (a `guard.py` change); reviewed by `security-reviewer`.
 
@@ -144,10 +144,37 @@ Follow-ups from the #97 reviews (owner decision 2026-09-28: merge #97, defer the
 
 ---
 
-## [ ] M11-14 — small CLI follow-ups
+## [x] M11-14 — small CLI follow-ups
 **Size:** S · **Depends on:** M11-06
 
-From the #101 reviews: `db2 fetch`/`db2 head` turn a malformed `--build` or table name into a usage error (exit 2), not an uncaught `ValueError`; `looks` `_choice_ref` gives `choice_name: null` when the choice is not in that option; `compare --json` states the tables-only remark once; the "no race" message prints the trimmed argument. From #100: a sentence in §13.3 that on POSIX a real file with `:` or `\` in its name always counts as changed in the profiles fallback path (harmless: guard rewrites the saved bytes).
+From the #101 reviews: `db2 fetch`/`db2 head` turn a malformed `--build` or table name into a usage error (exit 2), not an uncaught `ValueError`; `looks` `_choice_ref` gives `choice_name: null` when the choice is not in that option; `compare --json` states the tables-only remark once; the "no race" message prints the trimmed argument. From #100: a sentence in §13.3 that on POSIX a real file with `:` or `\` in its name is never written or deleted by guard, so a profile apply lists it as left alone and never puts back a changed or removed one (corrected 2026-09-28 in #103; the first wording said guard rewrites it).
+
+**Acceptance:** a test per item; `make ci` green.
+
+---
+
+## [ ] M11-15 — snapshot store hardening
+**Size:** S · **Depends on:** M11-11
+
+Follow-ups from the #107 reviews, `snapshot.py` (and its callers in `guard.py` for (b)). (a) `gc` can delete a file outside the store: `_object_files`/`_manifest_files` trust `is_dir()`/`is_file()`, which follow links, so a symlinked object shard makes `gc(dry_run=False)` delete a file in the link's target (pre-existing; needs write access to the owner's store). List shards and items with `lstat`, skip links and non-regular entries, and never delete through a link. (b) `read_object` inflates without a bound: a 260 KB object inflated to 256 MiB before the hash check; cap the inflation at the manifest entry's recorded `size` plus one byte. (c) `_reuse`'s `os.utime(existing)` follows a link swapped in after the rehash; act on the checked descriptor where the platform allows. Add a dated §6.9 sentence per item.
+
+**Acceptance:** constructed, labelled tests for each (a symlinked shard with a victim file outside the store survives `gc`; an over-inflating object is refused with bounded memory; the utime race does not touch the link target); full suite green; reviewed by `security-reviewer`.
+
+---
+
+## [ ] M11-16T — load-tolerant timing probes [TEST]
+**Size:** S · **Depends on:** —
+
+The M10-04 review probes `test_m10_04_semicolon_list_at_budget_misses_time_target.py` and `test_m10_04_escaped_key_list_at_budget_misses_time_target.py` time a subprocess by wall clock against the §6.4 10 s target, so they fail when the machine is busy (seen in several review runs on 2026-09-28) and pass alone. They grade `luadata.py`, a load-bearing file, so a test-writer changes them: measure the child's CPU time (`resource.getrusage(RUSAGE_CHILDREN)` deltas, or `time.process_time()` printed by the child) where the platform has it, keep wall clock only where it does not, and keep the §6.4 target and every assertion's meaning. Say in each module docstring what is measured and why.
+
+**Acceptance:** both probes pass under a CPU-saturating background load (show the run) and still fail against a constructed slow parse (a scratch patch that spins in the parse, reverted); `make ci` green; reviewed by `code-reviewer`.
+
+---
+
+## [ ] M11-17 — addon install and looks page follow-ups
+**Size:** S · **Depends on:** M11-02, M11-07
+
+From the #104 and #105 reviews. `addoninstall.py`: `TOC_LEFT_NOTE` becomes "The folder Interface/AddOns/WowLab/ stays and still holds a .toc listed above as left alone, so the client may still find an addon there."; `REMOVE_REFUSED_NOTE` says "the path(s) named above are not ones wowlab will delete" and drops its "The lab-addon is still installed …" sentence when no `WowLab.toc` is among the files found; `--json` `notes` carry `LOAD_NOTE` only when the install was applied (as the text does). `lookspage.py`: `check_target` refuses a `pages/` folder that is itself a link, and refuses any path within the `store`, `gamedata` or `looks` folders by name as well as by identity.
 
 **Acceptance:** a test per item; `make ci` green.
 
