@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import zlib
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -995,7 +996,10 @@ def test_whole_restore_skips_files_the_client_manages(root: Path, flavor: Path) 
         (DS_STORE, "os-metadata"),
     }
     text = ok("snap", "restore", a.id, "--dry-run").stdout
-    assert "Skipped 2 file(s) the client manages" in text
+    assert (
+        '  Skipped 2 file(s) wowlab leaves alone (file-map Edit "no": client-written backups, '
+        "Blizzard_* folders, file-browser metadata; name one with --paths to restore it):"
+    ) in text
     assert "name one with --paths to restore it" in text
 
     ok("snap", "restore", a.id, "--yes")
@@ -1100,26 +1104,102 @@ def test_snap_diff_marks_an_unreadable_side(root: Path, flavor: Path, user_data:
     assert changed.lua_note is not None and changed.lua_note.startswith("contents unreadable")
 
 
-def test_snap_create_holds_the_store_lock_even_for_the_first_snapshot(
-    root: Path, user_data: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Security review 1: a `snap gc` started while a create is between
-    storing its objects and writing its manifest is refused, so it cannot
-    collect those objects; this holds for the first create too."""
-    assert not (user_data / "store").exists()
+def _gc_during_create(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Run `snap gc --yes` once, while a create has stored its objects but
+    not yet written its manifest."""
     real = snapshot.manifest_bytes
-    during: list[int] = []
+    during: list[Any] = []
 
     def gc_meanwhile(manifest: Manifest) -> bytes:
         if not during:
-            during.append(run("snap", "gc", "--yes").exit_code)
+            during.append(run("snap", "gc", "--yes", "--json"))
         return real(manifest)
 
     monkeypatch.setattr(snapshot, "manifest_bytes", gc_meanwhile)
+    return during
+
+
+def test_the_first_snap_create_runs_unlocked_and_gc_keeps_its_young_objects(
+    root: Path, user_data: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Security review 1, as fix round 2 leaves it: with no store yet, `snap
+    create` cannot take `guard.store_lock` (it never creates a store), so a gc
+    can run in the middle of it; the gc grace period keeps the new objects."""
+    assert not (user_data / "store").exists()
+    during = _gc_during_create(monkeypatch)
     ok("snap", "create")
-    monkeypatch.setattr(snapshot, "manifest_bytes", real)
-    assert during == [3], "the gc was refused by the store lock"
+    monkeypatch.undo()
+    (gc,) = during
+    assert gc.exit_code == 0, "unlocked: the gc ran"
+    assert GcReport.model_validate_json(gc.stdout).removed == ()
     assert _json(VerifyReport, "snap", "verify").ok
+
+
+def test_a_later_snap_create_holds_the_store_lock(
+    root: Path, user_data: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _create("first")
+    during = _gc_during_create(monkeypatch)
+    ok("snap", "create")
+    monkeypatch.undo()
+    (gc,) = during
+    assert gc.exit_code == 3, "the gc was refused by the store lock"
+    assert _json(VerifyReport, "snap", "verify").ok
+
+
+_REAL_USER_DATA_PATH = platformdirs.user_data_path
+
+
+def _tree_names(root: Path) -> set[str]:
+    return {p.relative_to(root).as_posix() for p in root.rglob("*")}
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
+def test_a_user_data_dir_linked_into_an_install_creates_nothing_there_constructed(
+    root: Path, flavor: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Security repro A: the user data directory is a symlink into the install."""
+    link = tmp_path / "linked-user-data"
+    link.symlink_to(flavor / "WTF", target_is_directory=True)
+    monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: link / "wowlab")
+    before = _tree_names(root)
+    result = run("snap", "create")
+    assert result.exit_code == 1
+    assert "must not contain each other" in result.stderr
+    assert run("snap", "gc", "--yes").exit_code == 0  # no store: nothing to collect
+    assert _tree_names(root) == before
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the Windows data folder does not follow HOME")
+def test_home_inside_an_install_creates_nothing_there_constructed(
+    root: Path, flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Security repro B: HOME (so the platform's user data directory) is
+    inside the install."""
+    monkeypatch.setattr(platformdirs, "user_data_path", _REAL_USER_DATA_PATH)
+    home = flavor / "WTF" / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    assert root in platformdirs.user_data_path("wowlab").parents
+    before = _tree_names(root)
+    result = run("snap", "create")
+    assert result.exit_code == 1
+    assert _tree_names(root) == before
+
+
+def test_a_user_data_dir_inside_another_install_creates_nothing_there_constructed(
+    root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The store is refused inside any install, not only the one captured."""
+    other = tmp_path / "other" / "World of Warcraft"
+    shutil.copytree(root, other)
+    inside = other / FLAVOR / "WTF" / "ud" / "wowlab"
+    monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: inside)
+    before = _tree_names(other)
+    result = run("snap", "create")
+    assert result.exit_code == 1
+    assert "is inside an install" in result.stderr
+    assert _tree_names(other) == before
 
 
 def test_snap_gc_keeps_young_unreferenced_objects(root: Path, user_data: Path) -> None:
@@ -1189,8 +1269,8 @@ def test_control_characters_never_reach_the_terminal_constructed(
 def test_explain_words_for_edit_and_tier(root: Path) -> None:
     bak = ok("explain", BAK).stdout
     assert (
-        "edit:         no; the client manages it, so wowlab leaves it alone (a restore writes "
-        "it only if you name it with --paths)"
+        "edit:         no; wowlab leaves it alone (a restore writes it only if you name it "
+        "with --paths)"
     ) in bak
     assert "tier:         A (read): reading it is ordinary addon-user behaviour" in bak
     lines = bak.splitlines()
@@ -1217,3 +1297,41 @@ def test_notes_carry_the_caveats_in_json(root: Path) -> None:
     none = _json(cli.BindsReport, "binds", "list", "--character", CHARACTER)
     assert none.notes == [cli._NO_CHARACTER_BINDINGS]
     assert _json(cli.MacrosReport, "macros", "list").notes == [cli._MACRO_SYNC]
+
+
+def test_json_prompts_show_the_text_plan_on_stderr(root: Path, flavor: Path) -> None:
+    """Security review (round 2): with --json and a prompt, the plan is on
+    stderr before the question; stdout stays JSON."""
+    a = _create("a")
+    _flip_syndicator(flavor)
+    result = run("snap", "restore", a.id, "--json", input="n\n")
+    assert result.exit_code == 1
+    plan_at = result.stderr.index(f"replace  {SYNDICATOR}")
+    assert plan_at < result.stderr.index("Apply these changes?")
+    assert not cli.RestoreReport.model_validate_json(
+        result.stdout[result.stdout.index("{") :]
+    ).applied
+    quiet = run("snap", "restore", a.id, "--json", "--dry-run")
+    assert "replace" not in quiet.stderr, "no prompt, no text plan"
+
+    ok("snap", "restore", a.id, "--yes")
+    undo = run("undo", "--json", input="n\n")
+    assert undo.exit_code == 1
+    assert undo.stderr.index(f"put back   {SYNDICATOR}") < undo.stderr.index("Undo it?")
+    assert "put back" not in ok("undo", "--json", "--yes").stderr
+
+
+def test_a_missing_version_reads_no_recorded_version_constructed(root: Path, flavor: Path) -> None:
+    info = root / ".build.info"
+    original = info.read_bytes()
+    info.write_bytes(original.replace(b"wow_classic_beta", b"wow_constructed"))
+    a = _create("a")
+    assert a.flavor_version is None
+    info.write_bytes(original)
+    _flip_syndicator(flavor)
+    b = _create("b")
+    out = ok("snap", "restore", a.id, "--dry-run").stdout
+    assert f"Taken on version no recorded version; {FLAVOR} is now on {VERSION}." in out
+    diff = ok("snap", "diff", a.id, b.id).stdout
+    assert f"({a.id} was taken on no recorded version; {b.id} on {VERSION})" in diff
+    assert "None" not in out + diff

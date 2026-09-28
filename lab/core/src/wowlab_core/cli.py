@@ -1073,8 +1073,7 @@ def _edit_words(edit: str, tier: str = "", *, restorable: bool = False) -> str:
             words = _GATE_WORDS + (f" {rest}" if rest else "")
     elif edit == "no":
         words = (
-            "no; the client manages it, so wowlab leaves it alone (a restore writes it only if "
-            "you name it with --paths)"
+            "no; wowlab leaves it alone (a restore writes it only if you name it with --paths)"
             if restorable
             else "no; wowlab never writes it"
         )
@@ -2120,10 +2119,26 @@ def _client_running(inst: install.Install, chosen: install.Flavor) -> bool | Non
 
 
 # `snap gc` leaves objects younger than this, even when no manifest refers to
-# them: defence in depth for a writer that does not take the store lock (a
-# library caller of `SnapshotStore.create`). Every command here that writes
-# the store holds `guard.store_lock`, so this is not what keeps them apart.
+# them. It is what keeps gc off the objects of a create that has stored them
+# but not yet written its manifest when that create holds no store lock: the
+# very first `snap create` (no store yet, and `guard.store_lock` never
+# creates one) and any library caller of `SnapshotStore.create`.
 GC_GRACE_SECONDS = 3600.0
+
+
+@contextmanager
+def _store_lock_if_present(store: snapshot.SnapshotStore) -> Iterator[None]:
+    """The write gate's store lock, when the store exists. A store that does
+    not exist yet is made by `SnapshotStore.create`, which refuses a store
+    inside any install before creating anything (L1); that first create runs
+    unlocked, and `GC_GRACE_SECONDS` keeps a concurrent gc off its objects.
+    A `store_lock(create=True)` in guard would close this; it needs its own
+    graders first."""
+    if not store.path.is_dir():
+        yield
+        return
+    with guard.store_lock(store.path):
+        yield
 
 
 @snap_app.command("create")
@@ -2143,10 +2158,7 @@ def snap_create(
     subtrees = [f"{chosen.folder}/{s}" for s in lay.snapshot_subtrees(screenshots=screenshots)]
     running = _client_running(inst, chosen)
     store = snapshot.SnapshotStore()
-    # Always under the store lock, so `snap gc` never sees this create's
-    # objects before its manifest exists; `store_lock` needs the directory.
-    store.ensure_exists()
-    with guard.store_lock(store.path):
+    with _store_lock_if_present(store):
         manifest = store.create(
             Path(inst.root),
             subtrees,
@@ -2341,7 +2353,7 @@ def snap_diff(
         return
     _say(f"From {diff.a} to {diff.b}:")
     if a_version != b_version:
-        _say(f"  ({diff.a} was taken on {a_version}; {diff.b} on {b_version})")
+        _say(f"  ({diff.a} was taken on {_version(a_version)}; {diff.b} on {_version(b_version)})")
     if diff.is_empty:
         _say("  no differences")
     for e in report.added:
@@ -2440,6 +2452,10 @@ _RELOGIN = (
 )
 
 
+def _version(version: str | None) -> str:
+    return version if version is not None else "no recorded version"
+
+
 def _relogin_notes(paths: Sequence[str]) -> list[str]:
     """The login caveat, when a change touches Config.wtf or a *-cache file."""
     for path in paths:
@@ -2501,9 +2517,10 @@ class UndoReport(_Out):
 def _client_managed(
     lay: layout.Layout, plan: Sequence[guard.PlanItem]
 ) -> tuple[list[guard.PlanItem], list[SkippedPath]]:
-    """Split a whole-snapshot plan: files whose file-map row says `no` (the
-    client or Blizzard manages them: `.lua.bak`, `.old`, `Blizzard_*`
-    folders, OS metadata) are skipped unless named with --paths."""
+    """Split a whole-snapshot plan: files whose file-map row says `no` are
+    ones wowlab leaves alone (client-written backups such as `.lua.bak` and
+    `.old`, `Blizzard_*` folders, most likely copied in by the owner, and
+    file-browser metadata); they are skipped unless named with --paths."""
     kept: list[guard.PlanItem] = []
     skipped: list[SkippedPath] = []
     for item in plan:
@@ -2527,7 +2544,7 @@ def snap_restore(
             "--paths",
             help="Only this path, relative to the flavor folder; repeat for more. "
             "A path the snapshot covers but does not hold is deleted. A named path is "
-            "restored even when the client manages it.",
+            "restored even when its file-map row says wowlab leaves it alone.",
         ),
     ] = None,
     dry_run: Annotated[
@@ -2540,9 +2557,10 @@ def snap_restore(
     """Put back files from a snapshot, through the write gate: the client must be
     closed, a pre-write snapshot is taken first, and `wowlab undo` reverses it.
 
-    Without --paths, files the client manages (file-map Edit `no`: `.lua.bak`,
-    `.old`, `Interface/AddOns/Blizzard_*`, OS metadata) are left alone and
-    counted in the plan; name one with --paths to restore it. JSON: RestoreReport."""
+    Without --paths, files whose file-map Edit is `no` (client-written
+    backups such as `.lua.bak` and `.old`, `Interface/AddOns/Blizzard_*`,
+    file-browser metadata) are left alone and counted in the plan; name one
+    with --paths to restore it. JSON: RestoreReport."""
     store = snapshot.SnapshotStore()
     manifest = store.show(snapshot_id)
     inst, _ = _discover(root)
@@ -2558,6 +2576,10 @@ def snap_restore(
         )
     chosen = match[0]
     say = _note if json_out else _say
+    # With --json the plan goes to stdout as JSON at the end; when a prompt
+    # will ask first, the text plan goes to stderr so the question is not blind.
+    prompting = json_out and not yes and not dry_run
+    show = _say if not json_out else _note
     label = f"restore {manifest.id}"
     if paths:
         label += " (" + ", ".join(paths) + ")"
@@ -2589,22 +2611,23 @@ def snap_restore(
             notes=notes,
         )
 
-    if not json_out and (plan or skipped):
-        _say(f"Restore from snapshot {manifest.id} into {chosen.path}: {len(plan)} change(s)")
+    if (not json_out or (prompting and plan)) and (plan or skipped):
+        show(f"Restore from snapshot {manifest.id} into {chosen.path}: {len(plan)} change(s)")
         if manifest.flavor_version != chosen.version:
-            _say(
-                f"  Taken on version {manifest.flavor_version}; {chosen.folder} is now on "
-                f"{chosen.version}."
+            show(
+                f"  Taken on version {_version(manifest.flavor_version)}; {chosen.folder} is "
+                f"now on {_version(chosen.version)}."
             )
         for item in plan:
-            _say(_plan_line(item))
+            show(_plan_line(item))
         if skipped:
-            _say(
-                f"  Skipped {len(skipped)} file(s) the client manages (wowlab leaves them "
-                "alone; name one with --paths to restore it):"
+            show(
+                f'  Skipped {len(skipped)} file(s) wowlab leaves alone (file-map Edit "no": '
+                "client-written backups, Blizzard_* folders, file-browser metadata; name one "
+                "with --paths to restore it):"
             )
             for sk in skipped:
-                _say(f"    {sk.path}  [{sk.entry_id}]")
+                show(f"    {sk.path}  [{sk.entry_id}]")
     if not plan:
         if json_out:
             _emit(report(applied=False))
@@ -2680,18 +2703,20 @@ def undo(yes: YesOpt = False, json_out: JsonOpt = False) -> None:
         else:
             _say(f'The most recent transaction, {last.id} ("{last.label}"), changed no files.')
         return
-    if not json_out:
-        _say(f'Undo {last.id} ("{last.label}", {last.state}, {last.created_at})')
-        _say(f"  in {last.flavor_path}:")
+    # With --json, the text plan goes to stderr when a prompt will ask first.
+    show = _say if not json_out else _note
+    if not json_out or not yes:
+        show(f'Undo {last.id} ("{last.label}", {last.state}, {last.created_at})')
+        show(f"  in {last.flavor_path}:")
         for p in last.paths:
             if p.before is None:
-                _say(f"  delete     {p.path}  (created by that transaction)")
+                show(f"  delete     {p.path}  (created by that transaction)")
             elif p.after is None:
-                _say(f"  recreate   {p.path}  (deleted by that transaction)")
+                show(f"  recreate   {p.path}  (deleted by that transaction)")
             else:
-                _say(f"  put back   {p.path}  (as it was before that transaction)")
+                show(f"  put back   {p.path}  (as it was before that transaction)")
         for d in last.created_dirs:
-            _say(f"  remove folder {d}  (created by that transaction, if empty)")
+            show(f"  remove folder {d}  (created by that transaction, if empty)")
     try:
         _confirm("Undo it?", yes)
     except typer.Exit:

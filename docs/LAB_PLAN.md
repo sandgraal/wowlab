@@ -878,15 +878,16 @@ it is implied. Every command that prints data has `--json`. Exit codes:
 
 *Amended 2026-09-27 (owner decision after the PR #68 reviews):* a
 whole-snapshot `wowlab snap restore` (no `--paths`) skips every file whose
-file-map row has Edit `no`, the files the client or Blizzard manages:
-`*.lua.bak`, `SavedVariables.lua.bak`, `edit-mode-cache-account.old`,
-`Interface/AddOns/Blizzard_*`, OS metadata (`.DS_Store`, `._*`, …) and any
-other `no` row. The plan says how many were skipped and why. Such a file is
-restored only when it is named with `--paths`. `wowlab explain` words that
-Edit cell, for a path inside the gate's subtrees, as "no; the client
-manages it, so wowlab leaves it alone (a restore writes it only if you name
-it with --paths)". `snap restore` and `undo` also take `--json` (the plan,
-and with `--yes` the result).
+file-map row has Edit `no`: files the client writes (`*.bak`, `.old`),
+`Blizzard_*` folders (most likely copied in by the owner **[verify]**) and
+file-browser metadata. That covers `*.lua.bak`, `SavedVariables.lua.bak`,
+`edit-mode-cache-account.old`, `Interface/AddOns/Blizzard_*`, `.DS_Store`,
+`._*`, … and any other `no` row. The plan says how many were skipped and
+why. Such a file is restored only when it is named with `--paths`.
+`wowlab explain` words that Edit cell, for a path inside the gate's
+subtrees, as "no; wowlab leaves it alone (a restore writes it only if you
+name it with --paths)". `snap restore` and `undo` also take `--json` (the
+plan, and with `--yes` the result).
 
 ## 7. Repository layout
 

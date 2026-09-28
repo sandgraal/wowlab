@@ -530,7 +530,6 @@ def test_no_operation_but_set_label_changes_a_manifest_file(
     m2 = store.create(source, SUBTREES, now=T1)
     store.list()
     store.list_lenient()
-    store.ensure_exists()
     store.show(m1.id)
     store.diff(m1.id, m2.id)
     store.verify()
@@ -547,7 +546,6 @@ def test_no_operation_but_set_label_changes_a_manifest_file(
         "create",
         "list",
         "list_lenient",
-        "ensure_exists",
         "show",
         "diff",
         "verify",
@@ -678,6 +676,21 @@ def test_store_and_source_must_not_overlap(source: Path, where: str) -> None:
     with pytest.raises(StoreLocationError):
         store.create(root, ["."], now=T0)
     assert tree_state(source) == before
+
+
+@pytest.mark.parametrize("marker", [".build.info", ".flavor.info"])
+def test_a_store_inside_any_install_is_refused_before_anything_is_created_constructed(
+    source: Path, tmp_path: Path, marker: str
+) -> None:
+    """M10-14 fix round 2 (L1): not only the captured tree; a directory holding
+    `.build.info` or `.flavor.info` on the store's path is an install."""
+    other = tmp_path / "other-install"
+    other.mkdir()
+    (other / marker).write_bytes(b"")
+    store = SnapshotStore(other / "WTF" / "wowlab" / "store")
+    with pytest.raises(StoreLocationError, match="inside an install"):
+        store.create(source, SUBTREES, now=T0)
+    assert sorted(p.name for p in other.iterdir()) == [marker]
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")

@@ -78,6 +78,8 @@ _ID_RE = re.compile(r"\A\d{8}T\d{6}\.\d{6}Z-[0-9a-f]{8}\Z")
 _ID_PREFIX_RE = re.compile(r"\A[0-9a-fTZ.\-]+\Z")
 _SHA_RE = re.compile(r"\A[0-9a-f]{64}\Z")
 _MANIFEST_SUFFIX = ".json"
+# What makes a directory an install or a flavor folder (docs/LAB_PLAN.md §6.1).
+_INSTALL_MARKERS = (".build.info", ".flavor.info")
 _ON_WINDOWS = sys.platform == "win32"
 _REPARSE_NAME_SURROGATE = 0x20000000
 """The bit in a Windows reparse tag that says "this names another path"
@@ -427,19 +429,6 @@ class SnapshotStore:
             raise SnapshotError(f"not a snapshot id: {snapshot_id!r}")
         return self.manifests_dir / (snapshot_id + _MANIFEST_SUFFIX)
 
-    def ensure_exists(self) -> None:
-        """Create the store directory (and its parents) if it is missing.
-
-        The store is under the user data directory (L1). A caller that must
-        hold `guard.store_lock` around its first `create` makes the directory
-        with this first, since `store_lock` never creates a store. Nothing
-        else is created; an existing store is left as it is.
-        """
-        try:
-            self.path.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            raise SnapshotError(f"cannot create the store {self.path}: {exc}") from exc
-
     # -- create ------------------------------------------------------------
 
     def create(
@@ -582,6 +571,46 @@ class SnapshotStore:
             raise StoreLocationError(
                 f"the store ({store}) and the source tree ({source}) must not contain each other"
             )
+        self._refuse_inside_any_install()
+
+    def _refuse_inside_any_install(self) -> None:
+        """Refuse a store inside any install, not only the one being captured
+        (L1), before anything is created: the store is resolved (following
+        links), and it and every existing ancestor are examined. A directory
+        holding an entry named `.build.info` or `.flavor.info` (of any kind)
+        is an install, and so is one that cannot be examined. The marker rule
+        `guard` applies to the store (docs/LAB_PLAN.md §6.10, amended
+        2026-09-23)."""
+        try:
+            resolved = self.path.resolve()
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise StoreLocationError(f"cannot resolve the store {self.path}: {exc}") from exc
+        for candidate in (resolved, *resolved.parents):
+            try:
+                st = candidate.lstat()
+            except FileNotFoundError:
+                continue  # not created yet
+            except (OSError, ValueError) as exc:
+                raise StoreLocationError(
+                    f"the store {self.path}: cannot examine {candidate} ({exc}); "
+                    "it counts as an install"
+                ) from exc
+            if not stat.S_ISDIR(st.st_mode):
+                continue
+            for marker in _INSTALL_MARKERS:
+                try:
+                    (candidate / marker).lstat()
+                except FileNotFoundError:
+                    continue
+                except (OSError, ValueError) as exc:
+                    raise StoreLocationError(
+                        f"the store {self.path}: cannot examine {candidate} ({exc}); "
+                        "it counts as an install"
+                    ) from exc
+                raise StoreLocationError(
+                    f"the store {self.path} is inside an install ({candidate} holds {marker}); "
+                    "nothing was created"
+                )
 
     @staticmethod
     def _refuse_symlinked_parent(root: Path, subtree: str) -> None:
