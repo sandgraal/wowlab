@@ -26,6 +26,9 @@ repository if the owner ever wants it.
 | **addon-provenance** | For each installed addon, find where it came from (CurseForge, Wago or GitHub release), compare its file hashes to the upstream archive, and flag repacks or local edits | A | layout, snapshot hashing | upstream fetchers, hash compare | S |
 | **addon-manager** | Install, update and pin addons from GitHub releases, CurseForge or Wago, with every change going through guard; undo reverts a bad update, including the addon's SavedVariables | A | guard, snapshot, toc | release fetchers, lockfile | M |
 | **sv-health** | A doctor check that SavedVariables round-trip: lab-addon writes a login counter and wowlab checks it increments across a restart. Catches Forever's loader bug and any regression of it | A | luadata, lab-addon | probe + check | S |
+| **keybind-coach** | Fix keybinds from what you actually cast: flags frequently cast spells on hard keys, spells you cast with no bind (you click them), and binds to spells you never cast; suggests a layout and applies it through guard with undo. Bindings map keys to action-bar slots (`ACTIONBUTTON3`), not spells, and slot contents live on the server, so the slot-to-spell map comes from lab-addon | A | wtfconfig, combatlog (cast counts from `SPELL_CAST_SUCCESS`), lab-addon (action bars), guard | bindings writer, cast statistics, layout suggester | S–M |
+| **macro-doctor** | Lint `macros-cache.txt`: spell names checked against your spellbook and ranks, bad conditional syntax, macros over 255 characters, macros on no action bar, duplicates; fixes through guard with undo. Whether an explicit rank (`Frostbolt(Rank 3)`) goes stale or fails once a higher rank is learned is **[verify]** (it is believed to keep casting that rank) | A | wtfconfig, lab-addon (spellbook, action bars), gamedata, guard | macros writer, rule set | S |
+| **crash-forensics** | Link crashes to causes: parse the crash reports and error logs the client writes and correlate them with the addon set, CVars and zone from the latest snapshot. Where the Mac client writes crash reports (inside `Errors/` or `~/Library/Logs/DiagnosticReports`) is **[verify]**; reading outside the install is local only | A | layout, snapshot, wtfconfig | crash-report parsers, correlation | S |
 
 ## B. Game data
 
@@ -37,12 +40,14 @@ repository if the owner ever wants it.
 | **casc-source** | Read files straight from the install's `Data/` (needed by everything 3D) | A | install, gamedata `Source` | CASC binding or a wow.export CLI bridge | M |
 | **azeroth-graph** | Item ↔ spell ↔ quest ↔ NPC ↔ zone relationships queryable as a graph | A | db2lake | relationship extraction | M |
 | **quest-recorder** | lab-addon records givers, turn-ins, objectives and coordinates for Forever's new quests (the client tables only carry the quest IDs, which is why Questie is missing them); output as JSON, plus an export in the format Questie takes corrections in | A | lab-addon, luadata, db2lake | recorder schema, exporter | M (est.) |
+| **market-memory** | Price history and supply shocks: keep your own auction-house scans over time (Auctionator's saved price data is already on the install) and cross them with build-diff, so a recipe change in a patch is linked to a price change; alert when datamined changes will move prices you care about. Whether the scan data holds seller names is **[verify]**; none are kept | A | luadata, build-diff, db2lake | price store, change-to-price linker | M |
 
 ## C. Character, offline (the owner's main interest)
 
 | Idea | What it is | Tier | Needs | New | Size |
 |---|---|---|---|---|---|
 | **customization-sandbox** | Browse every race's customization options from the `ChrCustomization*` tables; save and compare looks; starts as data-only, gains a viewer when casc-source exists | A | gamedata | option model; later a viewer | S → M |
+| **look-from-image** | Match a concept image to your character: extract its palette and find the nearest customization choices and collected appearance sources. Not strictly data-only: colour matching needs the icon or texture images, from casc-source or an outside icon host **[verify]** | A | customization-sandbox, lab-addon (collections), casc-source | palette extraction, colour matching | S → M |
 | **character-studio** | Your character rendered in the browser from your own game files, with gear and transmog; outfit designer | A | casc-source, gamedata, luadata | M2/BLP → glTF pipeline, three.js viewer | L |
 | **photo-studio** | Poses, animation frames, lighting, transparent export, turntables | A | character-studio | scene tooling | M |
 | **char-export** | Export to glTF, VRM (avatar use) and print-ready STL | A | character-studio | rigging map, mesh repair via Blender | M |
@@ -50,10 +55,14 @@ repository if the owner ever wants it.
 | **alt-dashboard** | Local page over every character's state from lab-addon captures | A | lab-addon, luadata | UI | M |
 | **digital-twin** | Timeline of a character built from dated snapshots, addon captures and screenshot timestamps | A | snapshot, lab-addon | timeline store + UI | M |
 | **collection-router** | What is left to collect and the cheapest order to get it | A | lab-addon, db2lake | routing | M |
-| **codex** | A printable book of a character: gear, talents, portrait, history | A | lab-addon, photo-studio (optional) | PDF layout | S |
+| **codex** | A printable book of a character: gear, talents, portrait, history; also a narrative journal of its adventures from digital-twin (firsts, zones, deaths, levels, notable fights) and an export as a roleplay profile for Forever's roleplay communities (absorbs the chronicle-book idea) | A | lab-addon, digital-twin (for the journal), photo-studio (optional) | PDF layout, journal writer, roleplay-profile export | S → M |
 | **time-capsule** | Scheduled dated archive of full character state | A | snapshot, lab-addon | scheduler | S |
 | **char-planner** | The owner's original goal: input or capture a character, view consolidated state offline, plan talent and gear builds; for Forever that means the `C_Traits` talent data and its new systems | A | lab-addon, db2lake | planner model + UI | M |
 | **simc-bridge** | Export a character to a SimulationCraft profile and run a locally installed `simc` as a separate process, results stored beside the character. Depends on simc having data for the flavor | A | lab-addon, luadata | profile writer, process runner, result store | M |
+| **drill-cards** | Spaced-repetition cards from your own data: spellbook, talents, boss abilities from the encounter journal tables, and what killed you in your logs; ten a night, weighted toward recent deaths. "What killed you" needs combat-log event meaning, which the Wave 1 tokenizer does not provide | A | lab-addon, gamedata, combatlog | card generator, death analysis, scheduler | S |
+| **bag-triage** | Find dead weight across all characters: join Syndicator's inventory data with DB2 to find vendor trash, finished quest items, gear no alt can use and reagents no one on the account can craft with; says what to sell, delete or mail to which alt | A | luadata, db2lake, lab-addon (professions) | rules, per-alt advice | S–M |
+| **crew-book** | Remember people worth grouping with again: who you grouped with, their role and level, your note and rating; warns when they are near. **Stores other players' names, which ADR-0026 forbids for the lab-addon and the repository's privacy rules keep out of fixtures: it needs its own privacy ADR (opt-in, local only, never exported, never in test data) before it can be picked** | A | lab-addon, luadata, privacy ADR | contact store, proximity check | S |
+| **comp-builder** | Which groups are possible right now: from the online guild roster, propose viable dungeon groups by level band and role. **Same privacy ADR as crew-book (guild roster names)** | A | lab-addon, privacy ADR | group solver | S |
 
 ## D. Bridges and live data
 
@@ -101,6 +110,13 @@ These are observations about dependencies, not a plan.
   Wave 1 and deliver the customization interest early.
 - **wow-as-code** and **profiles** are the direct payoff of `guard` and the
   serializer.
-- **sv-health** and **quest-recorder** stand on **lab-addon**; **addon-audit**
+- **sv-health**, **quest-recorder**, **keybind-coach**, **macro-doctor**,
+  **drill-cards** and **bag-triage** all stand on **lab-addon**, which makes
+  it the hub of most later waves; **addon-audit**
   needs **api-types** first. **addon-manager** and **addon-provenance** need
   only Wave 1 plus network fetchers for the addon sites.
+- **crew-book** and **comp-builder** cannot be picked until a privacy ADR
+  settles how other players' names may be stored locally.
+- **keybind-coach** and **macro-doctor** need writers for the WTF text
+  formats, which **wow-as-code** needs too; building those writers once serves
+  all three.
