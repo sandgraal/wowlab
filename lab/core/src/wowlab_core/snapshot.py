@@ -108,6 +108,135 @@ class ObjectCorruptError(SnapshotError):
     """An object is missing, does not decompress, or does not hash to its name."""
 
 
+# ─── reading a file that must be a regular file (M11-11) ────────────────────
+#
+# Every read of a file this package did not just create itself goes through
+# `open_regular_file`: guard's reads of install files and journal records, and
+# the store's reads of captured files, objects and manifests. A path checked
+# by `lstat` can be replaced before it is opened. A FIFO put there would block
+# an ordinary open until a writer appeared, and guard makes these reads while
+# it holds the store and install locks. A terminal put there could become the
+# controlling terminal, and a symbolic link could send the read elsewhere. So
+# the open never blocks, never adopts a terminal and never follows a final
+# link, and the descriptor is then held to being a regular file by `fstat`
+# before a byte is read. It is closed on every path out; `os.fdopen` only ever
+# wraps a descriptor that passed that check.
+
+_O_NOFOLLOW: int = getattr(os, "O_NOFOLLOW", 0)
+"""0 on Windows, where a link is refused by `lstat` before the open and the
+opened file compared with the path after it, as guard's lock-file open does."""
+
+
+class UnsafeReadError(OSError):
+    """A path opened to read is not a regular file, is a link, is not the file
+    the caller looked at, or holds more bytes than the caller's bound."""
+
+
+def _file_identity(st: os.stat_result) -> tuple[int, int]:
+    return (st.st_dev, st.st_ino)
+
+
+def _is_link_stat(st: os.stat_result) -> bool:
+    """A symbolic link, or on Windows a reparse point that names another path
+    (the name-surrogate bit: junctions, WCI links). Other reparse points
+    (cloud-file placeholders, deduplicated files) hold real content and are
+    read, as `create` walks them (`_is_link_like_dir`)."""
+    if stat.S_ISLNK(st.st_mode):
+        return True
+    attributes = int(getattr(st, "st_file_attributes", 0))
+    tag = int(getattr(st, "st_reparse_tag", 0))
+    return bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT) and bool(
+        tag & _REPARSE_NAME_SURROGATE
+    )
+
+
+def open_regular_file(
+    path: Path, *, expect: os.stat_result | None = None
+) -> tuple[int, os.stat_result]:
+    """Open `path` read-only and return the descriptor with its `fstat`.
+
+    The open uses `O_RDONLY | O_BINARY | O_NOFOLLOW | O_NONBLOCK | O_NOCTTY`
+    (each where the platform has it), so it returns at once on a FIFO, never
+    makes a terminal the controlling one, and refuses a final symbolic link
+    (`ELOOP`). The descriptor must then be a regular file, and when `expect`
+    is given (an earlier `lstat` of the path) the same file by device and
+    inode; otherwise `UnsafeReadError`. Where the platform has no
+    `O_NOFOLLOW`, a link or reparse point is refused by `lstat` before the
+    open, and the path is checked after it to still name the opened file.
+    The caller owns the descriptor returned; on any error it is closed here.
+    A missing path raises `FileNotFoundError`.
+    """
+    nofollow = _O_NOFOLLOW
+    before: os.stat_result | None = None
+    if not nofollow:
+        before = os.lstat(path)
+        if _is_link_stat(before) or not stat.S_ISREG(before.st_mode):
+            raise UnsafeReadError(f"{path} is not a regular file")
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | nofollow
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_NOCTTY", 0)
+    )
+    fd = os.open(path, flags)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise UnsafeReadError(f"{path} is not a regular file")
+        if expect is not None and _file_identity(st) != _file_identity(expect):
+            raise UnsafeReadError(f"{path} was replaced before it was opened")
+        if before is not None:
+            after = os.lstat(path)
+            if _is_link_stat(after) or _file_identity(after) != _file_identity(st):
+                raise UnsafeReadError(f"{path} changed as it was opened")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd, st
+
+
+def read_regular_file(
+    path: Path, *, limit: int | None = None, expect: os.stat_result | None = None
+) -> bytes:
+    """The bytes of `path`, opened as `open_regular_file` opens it.
+
+    With a `limit`, a file whose `fstat` size is over it is refused before
+    any read, and at most `limit + 1` bytes are read, so one that grows past
+    it while being read is refused too (`UnsafeReadError`). The descriptor is
+    closed on every path.
+    """
+    fd, st = open_regular_file(path, expect=expect)
+    try:
+        if limit is not None and st.st_size > limit:
+            raise UnsafeReadError(f"{path} holds {st.st_size} bytes, more than {limit}")
+        budget = None if limit is None else limit + 1
+        chunks: list[bytes] = []
+        total = 0
+        while budget is None or total < budget:
+            want = _CHUNK if budget is None else min(_CHUNK, budget - total)
+            chunk = os.read(fd, want)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+        if limit is not None and total > limit:
+            raise UnsafeReadError(f"{path} holds more than {limit} bytes")
+    finally:
+        os.close(fd)
+    return b"".join(chunks)
+
+
+def _checked_stream(fd: int) -> BinaryIO:
+    """A buffered reader on a descriptor `open_regular_file` returned (and so
+    checked); the descriptor is closed if the wrapping fails."""
+    try:
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 _NEEDS_ESCAPE_RE = re.compile("[\x00\ud800-\udfff]")
 _ESCAPED_RE = re.compile("\x00([0-9A-F]{4})")
 
@@ -549,10 +678,21 @@ class SnapshotStore:
         data = manifest_bytes(manifest)
         target = self._manifest_path(snapshot_id)
         self._check_publishable(manifest, data)
-        if target.exists():
-            # Same microsecond, same tree. Identical bytes make this a no-op;
-            # anything else would be a silent overwrite of an immutable file.
-            if target.read_bytes() == data:
+        # Same microsecond, same tree. Identical bytes make this a no-op;
+        # anything else would be a silent overwrite of an immutable file. The
+        # existing one is read as every store file is (M11-11): never
+        # blocking, never through a link, and no more than one byte past
+        # the length it would need to be identical.
+        try:
+            existing = read_regular_file(target, limit=len(data))
+        except FileNotFoundError:
+            existing = None
+        except OSError as exc:
+            raise SnapshotExistsError(
+                f"a different manifest already exists for {snapshot_id}: {exc}"
+            ) from exc
+        if existing is not None:
+            if existing == data:
                 return manifest
             raise SnapshotExistsError(f"a different manifest already exists for {snapshot_id}")
         self._write_atomic(target, data)
@@ -725,17 +865,18 @@ class SnapshotStore:
                 )
             if not stat.S_ISREG(st.st_mode):
                 return None
-            flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
-            fd = os.open(abs_path, flags)
+            # Opened without blocking or following a link, and held to a
+            # regular file by fstat (M11-11): a FIFO or device swapped in
+            # after the lstat is skipped, as one found by the lstat is.
+            fd, st = open_regular_file(abs_path)
         except FileNotFoundError:
             return None  # removed while we walked
+        except UnsafeReadError:
+            return None  # no longer a regular file: replaced while we walked
         except OSError as exc:
             raise SnapshotError(f"cannot read {abs_path}: {exc}") from exc
         try:
-            with os.fdopen(fd, "rb") as handle:
-                st = os.fstat(handle.fileno())
-                if not stat.S_ISREG(st.st_mode):
-                    return None
+            with _checked_stream(fd) as handle:
                 digest, size = self._store_stream(handle, verified)
         except OSError as exc:
             raise SnapshotError(f"cannot read {abs_path}: {exc}") from exc
@@ -799,7 +940,7 @@ class SnapshotStore:
         if digest in verified:
             return True
         existing = self.object_path(digest)
-        if not existing.is_file() or self._rehash(existing) != digest:
+        if self._rehash(existing) != digest:  # None when missing or not a regular file
             return False
         os.utime(existing)  # freshen, so a concurrent gc grace period sees it
         verified.add(digest)
@@ -841,9 +982,10 @@ class SnapshotStore:
         )
 
     def _load(self, path: Path) -> Manifest:
-        """Read a manifest file and hold it to its own id."""
+        """Read a manifest file and hold it to its own id. A link, a FIFO or
+        anything else not a regular file does not load (M11-11)."""
         try:
-            data = path.read_bytes()
+            data = read_regular_file(path)
         except OSError as exc:
             raise ManifestIntegrityError(f"manifest {path.name} does not load: {exc}") from exc
         return self._parse(path.name.removesuffix(_MANIFEST_SUFFIX), data)
@@ -932,10 +1074,14 @@ class SnapshotStore:
         path = self.object_path(sha256)
         inflater = zlib.decompressobj()
         try:
-            data = inflater.decompress(path.read_bytes()) + inflater.flush()
+            # Never blocking and never through a link (M11-11): an object path
+            # is predictable, so a FIFO or link planted there is refused.
+            data = inflater.decompress(read_regular_file(path)) + inflater.flush()
         except FileNotFoundError as exc:
             raise ObjectCorruptError(f"object {sha256} is missing") from exc
-        except (OSError, zlib.error) as exc:
+        except OSError as exc:
+            raise ObjectCorruptError(f"object {sha256} cannot be read: {exc}") from exc
+        except zlib.error as exc:
             raise ObjectCorruptError(f"object {sha256} does not decompress: {exc}") from exc
         if not inflater.eof or inflater.unused_data:
             raise ObjectCorruptError(f"object {sha256} is truncated or has trailing bytes")
@@ -1059,10 +1205,14 @@ class SnapshotStore:
 
     @staticmethod
     def _rehash(path: Path) -> str | None:
+        """The SHA-256 of an object's decompressed bytes; None when it is
+        missing, is not a regular file (a link is not followed, a FIFO never
+        blocks: M11-11), or does not decompress cleanly."""
         hasher = hashlib.sha256()
         inflater = zlib.decompressobj()
         try:
-            with path.open("rb") as handle:
+            fd, _ = open_regular_file(path)
+            with _checked_stream(fd) as handle:
                 while chunk := handle.read(_CHUNK):
                     data: bytes = chunk
                     while data:

@@ -94,6 +94,16 @@ install root down is re-checked (identity, and not a link) before the temp
 file is opened, after it is opened (and the temp file must be where it was
 created), and again before the rename or unlink.
 
+Every read guard makes of a file (a target, a journal record, a store object,
+and the pre-write snapshot's capture) goes through
+`snapshot.open_regular_file` (M11-11): opened `O_RDONLY | O_NOFOLLOW |
+O_NONBLOCK | O_NOCTTY` where the platform has each (on Windows a link is
+refused by `lstat` before the open and the path compared with the opened file
+after it), then held by `fstat` to a regular file, for a target or a journal
+record the one `lstat` found, before a byte is read. A FIFO swapped in never
+blocks the gate while it holds its locks. A journal record is read to at most
+one byte past its size cap.
+
 After a `ChangedSinceSnapshotError` nothing more is written for that path,
 every later operation raises `GuardError` without touching the disk, and the
 transaction rolls back on exit and cannot commit, even if the caller caught
@@ -264,7 +274,6 @@ _TEMP_PREFIX = ".wowlab-"
 # The only name the leftover cleanup ever removes (§6.10 amended, item 2):
 # what `_temp_name` makes, matched against the name as the directory lists it.
 _TEMP_NAME = re.compile(r"\.wowlab-[0-9a-f]{32}\.tmp")
-_CHUNK = 1 << 20
 
 # ─── the locks ───────────────────────────────────────────────────────────────
 
@@ -444,7 +453,11 @@ def _load_journal(store_path: Path) -> list[_JournalRecord]:
             st = path.lstat()
             if not stat.S_ISREG(st.st_mode) or st.st_size > _MAX_RECORD_BYTES:
                 raise GuardError("not a regular file of a sane size")
-            raw = json.loads(path.read_bytes().decode("ascii"))
+            # The record the lstat saw, and no other (M11-11): opened without
+            # blocking or following a link, held by fstat to that regular
+            # file, and read to at most one byte past the cap.
+            body = _snapshots.read_regular_file(path, limit=_MAX_RECORD_BYTES, expect=st)
+            raw = json.loads(body.decode("ascii"))
             record = _JournalRecord.model_validate(raw)
         except (OSError, ValueError, GuardError) as exc:  # ValidationError is a ValueError
             raise GuardError(f"journal record {path} is damaged: {exc}") from exc
@@ -1208,23 +1221,15 @@ def _read(found: _Found) -> bytes | None:
     file the walk found; None when it does not exist."""
     if found.st is None:
         return None
-    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    # Opened without blocking, adopting a terminal or following a link, and
+    # held by fstat to the regular file the walk found before a byte is read
+    # (M11-11): a FIFO swapped in never blocks the gate while it holds its locks.
     try:
-        fd = os.open(found.path, flags)
+        return _snapshots.read_regular_file(found.path, expect=found.st)
+    except _snapshots.UnsafeReadError as exc:
+        raise GuardError(f"{found.rel} changed while it was being read: {exc}") from exc
     except OSError as exc:
         raise GuardError(f"cannot read {found.rel}: {exc}") from exc
-    try:
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode) or _identity(st) != _identity(found.st):
-            raise GuardError(f"{found.rel} changed while it was being read")
-        chunks: list[bytes] = []
-        while chunk := os.read(fd, _CHUNK):
-            chunks.append(chunk)
-    except OSError as exc:
-        raise GuardError(f"cannot read {found.rel}: {exc}") from exc
-    finally:
-        os.close(fd)
-    return b"".join(chunks)
 
 
 def _same_state(a: os.stat_result | None, b: os.stat_result | None) -> bool:
