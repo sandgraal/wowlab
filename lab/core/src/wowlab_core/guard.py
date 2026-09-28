@@ -139,8 +139,14 @@ never gain permission bits: an existing file keeps no more than its current
 bits and the recorded bits; a recreated one gets its recorded bits less the
 umask and never an execute bit.
 
+`undo(expected_id=...)` compares the id of the record the caller approved
+with the most recent record it reads under the store lock, exactly, and
+refuses with nothing changed when they differ (§6.10 as amended 2026-09-28).
+
 `store_lock()` takes the store lock alone, for a caller that must keep
-transactions off a store while it works on it.
+transactions off a store while it works on it. With `create=True` it makes a
+missing store (and its parents) first, after the inside-any-install check has
+passed, so the first `snap create` is locked like every later one.
 
 This module never lists processes itself, never reads the environment, and
 has no switch that skips the locks, the client check, the snapshot or the
@@ -590,12 +596,14 @@ def _install_lock_path(place: _Place) -> Path:
     return user_data / _LOCKS_DIR / f"{key}.lock"
 
 
-def _refuse_inside_any_install(path: Path, what: str) -> None:
+def _refuse_inside_any_install(path: Path, what: str) -> Path:
     """§6.10 as amended 2026-09-23: `path` (resolved, following links and
     junctions) and every existing ancestor are examined; a directory holding
     an entry named `.build.info` or `.flavor.info` (of any kind) is an
     install, and so is one that cannot be examined. Runs before anything at
-    `path` is created."""
+    `path` is created. Returns the resolved path it examined.
+
+    The one copy of the rule: `snapshot` calls it for its store too."""
     try:
         resolved = path.resolve()
     except (OSError, RuntimeError, ValueError) as exc:
@@ -624,6 +632,7 @@ def _refuse_inside_any_install(path: Path, what: str) -> None:
                 f"{what} {path} is inside an install ({candidate} holds {marker}); "
                 "guard creates nothing there"
             )
+    return resolved
 
 
 @dataclass(frozen=True)
@@ -774,16 +783,26 @@ class _Locks:
         self._held: list[_HeldLock] = []
 
     def take_store(self, store_path: Path, *, create: bool) -> None:
-        """`<store>/lock`. With `create`, a missing store directory is made
-        first (a transaction's store); otherwise it must exist. Neither the
-        store nor its lock file may be inside any install."""
-        _refuse_inside_any_install(store_path, "the store")
+        """`<store>/lock`. With `create`, a missing store directory (and any
+        missing parent) is made first (a transaction's store, or
+        `store_lock(create=True)`); otherwise it must exist. Neither the
+        store nor its lock file may be inside any install, and both are
+        checked before anything is created (§6.10 as amended 2026-09-28).
+
+        The directories are made at the resolved path the check examined, so
+        what is created is what was checked; the check runs again after
+        creating, as defence in depth, before the lock file is opened. A
+        process of the same user that plants a link or a marker between the
+        check and the mkdir is out of scope (§6.10, 2026-09-28)."""
+        resolved = _refuse_inside_any_install(store_path, "the store")
         _refuse_inside_any_install(store_path / _STORE_LOCK, "the store lock")
         if create:
             try:
-                store_path.mkdir(parents=True, exist_ok=True)
+                resolved.mkdir(parents=True, exist_ok=True)
             except OSError as exc:
                 raise GuardError(f"cannot make the store {store_path}: {exc}") from exc
+            _refuse_inside_any_install(store_path, "the store")
+            _refuse_inside_any_install(store_path / _STORE_LOCK, "the store lock")
         self._held.append(_take_lock(store_path / _STORE_LOCK, "the store lock"))
 
     def take_install(self, place: _Place) -> None:
@@ -2125,7 +2144,7 @@ def history(*, store: Path | None = None) -> tuple[HistoryRecord, ...]:
     return tuple(_public(record) for record in _load_journal(_store_path(store)))
 
 
-def undo(*, store: Path | None = None) -> None:
+def undo(*, store: Path | None = None, expected_id: str | None = None) -> None:
     """Undo the most recent transaction, as a transaction of its own.
 
     Only the paths that transaction journaled are restored, from its pre-write
@@ -2136,18 +2155,28 @@ def undo(*, store: Path | None = None) -> None:
     record it plans from, and the install lock of that record's flavor
     (`GuardBusyError` if either is held); a store that does not exist is a
     `GuardError` and is not created.
+
+    With `expected_id` (§6.10 as amended 2026-09-28), the id of the record
+    the caller showed its user: once the store lock is held and the journal
+    re-read, a most recent record whose id is not exactly `expected_id`
+    (another transaction committed meanwhile, or the id names no record) is
+    a `GuardError` naming both ids, with nothing changed in the store or the
+    install. Without it, the most recent record is undone, whatever it is.
     """
+    if expected_id is not None and not isinstance(expected_id, str):
+        raise GuardError(f"expected_id is a str, not {type(expected_id).__name__}")
     store_path = _store_path(store)
-    # Unlocked, only to find the flavor (and so which install to check).
-    first = _last_record(store_path)
+    # Unlocked, only to find the flavor (and so which install to check). A
+    # mismatch here is already final: the journal only ever grows.
+    first = _last_record(store_path, expected_id)
     place = _record_place(first)
     _refuse_store_overlap(store_path, place)
     locks = _Locks()
     try:
         locks.take_store(store_path, create=False)
         # Under the store lock no other writer can add a record: plan only
-        # from what is read now.
-        last = _last_record(store_path)
+        # from what is read now, and compare the id with it.
+        last = _last_record(store_path, expected_id)
         place = _record_place(last, install=place)
         _refuse_store_overlap(store_path, place)
         locks.take_install(place)
@@ -2156,11 +2185,21 @@ def undo(*, store: Path | None = None) -> None:
         locks.release()
 
 
-def _last_record(store_path: Path) -> _JournalRecord:
+def _last_record(store_path: Path, expected_id: str | None = None) -> _JournalRecord:
+    """The journal's most recent record; with `expected_id`, it must have
+    exactly that id (a whole-string compare, nothing looser)."""
     records = _load_journal(store_path)
     if not records:
-        raise GuardError(f"nothing to undo: the journal in {store_path} is empty")
-    return records[-1]
+        wanted = "" if expected_id is None else f" (expected record {expected_id!r})"
+        raise GuardError(f"nothing to undo: the journal in {store_path} is empty{wanted}")
+    last = records[-1]
+    if expected_id is not None and last.id != expected_id:
+        raise GuardError(
+            f"the most recent journal record is {last.id}, not the expected {expected_id!r}: "
+            "another change was journaled after it was read, or that id names no record; "
+            "nothing was undone. Look at the history again and retry"
+        )
+    return last
 
 
 def _record_place(record: _JournalRecord, *, install: _Place | None = None) -> _Place:
@@ -2229,29 +2268,40 @@ def _undo_record(store_path: Path, last: _JournalRecord, place: _Place, locks: _
 
 
 @contextlib.contextmanager
-def store_lock(store: Path | None = None) -> Iterator[None]:
+def store_lock(store: Path | None = None, create: bool = False) -> Iterator[None]:
     """Hold the store lock alone, for the duration of the `with` block.
 
     The same lock a transaction or `undo()` takes on `<store>/lock`, with the
     same mechanism and the same in-process refusal: `GuardBusyError` while
     one is open on this store, here or in another process, and transactions
-    on the store are busy while this is held. The store directory must exist
-    (`None` means the default store); nothing is ever created but the lock
-    file. The store lock has no install, so no install is checked.
+    on the store are busy while this is held. `None` means the default
+    store. The store lock has no install to compare with, but a store or
+    lock file inside any install is refused.
+
+    Without `create` the store directory must exist, and nothing is ever
+    created but the lock file. With `create` (§6.10 as amended 2026-09-28)
+    the inside-any-install check runs first, on the store and every
+    ancestor, through links and junctions; only then are the store and any
+    missing parents created and the lock taken, so a first `snap create`
+    holds the store lock like every later one. Nothing is created anywhere
+    when it refuses.
     """
+    if not isinstance(create, bool):
+        raise GuardError(f"create is a bool, not {type(create).__name__}")
     store_path = _store_path(store)
-    try:
-        st = store_path.stat()
-    except FileNotFoundError:
-        raise GuardError(
-            f"there is no store at {store_path}; store_lock never creates one"
-        ) from None
-    except OSError as exc:
-        raise GuardError(f"cannot inspect the store {store_path}: {exc}") from exc
-    if not stat.S_ISDIR(st.st_mode):
-        raise GuardError(f"the store {store_path} is not a directory")
+    if not create:
+        try:
+            st = store_path.stat()
+        except FileNotFoundError:
+            raise GuardError(
+                f"there is no store at {store_path}; store_lock creates one only with create=True"
+            ) from None
+        except OSError as exc:
+            raise GuardError(f"cannot inspect the store {store_path}: {exc}") from exc
+        if not stat.S_ISDIR(st.st_mode):
+            raise GuardError(f"the store {store_path} is not a directory")
     locks = _Locks()
-    locks.take_store(store_path, create=False)
+    locks.take_store(store_path, create=create)
     try:
         yield
     finally:

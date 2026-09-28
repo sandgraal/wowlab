@@ -78,8 +78,6 @@ _ID_RE = re.compile(r"\A\d{8}T\d{6}\.\d{6}Z-[0-9a-f]{8}\Z")
 _ID_PREFIX_RE = re.compile(r"\A[0-9a-fTZ.\-]+\Z")
 _SHA_RE = re.compile(r"\A[0-9a-f]{64}\Z")
 _MANIFEST_SUFFIX = ".json"
-# What makes a directory an install or a flavor folder (docs/LAB_PLAN.md §6.1).
-_INSTALL_MARKERS = (".build.info", ".flavor.info")
 _ON_WINDOWS = sys.platform == "win32"
 _REPARSE_NAME_SURROGATE = 0x20000000
 """The bit in a Windows reparse tag that says "this names another path"
@@ -575,42 +573,20 @@ class SnapshotStore:
 
     def _refuse_inside_any_install(self) -> None:
         """Refuse a store inside any install, not only the one being captured
-        (L1), before anything is created: the store is resolved (following
-        links), and it and every existing ancestor are examined. A directory
-        holding an entry named `.build.info` or `.flavor.info` (of any kind)
-        is an install, and so is one that cannot be examined. The marker rule
-        `guard` applies to the store (docs/LAB_PLAN.md §6.10, amended
-        2026-09-23)."""
+        (L1), before anything is created. The rule is `guard`'s, called here
+        rather than copied (docs/LAB_PLAN.md §6.10, amended 2026-09-23;
+        M10-17): the store is resolved (following links and junctions), and
+        it and every existing ancestor are examined. A directory holding an
+        entry named `.build.info` or `.flavor.info` (of any kind) is an
+        install, and so is one that cannot be examined."""
+        # Imported here: `guard` imports this module, so a module-level import
+        # would be circular. `guard` is fully loaded by the time a store is used.
+        from wowlab_core import guard
+
         try:
-            resolved = self.path.resolve()
-        except (OSError, RuntimeError, ValueError) as exc:
-            raise StoreLocationError(f"cannot resolve the store {self.path}: {exc}") from exc
-        for candidate in (resolved, *resolved.parents):
-            try:
-                st = candidate.lstat()
-            except FileNotFoundError:
-                continue  # not created yet
-            except (OSError, ValueError) as exc:
-                raise StoreLocationError(
-                    f"the store {self.path}: cannot examine {candidate} ({exc}); "
-                    "it counts as an install"
-                ) from exc
-            if not stat.S_ISDIR(st.st_mode):
-                continue
-            for marker in _INSTALL_MARKERS:
-                try:
-                    (candidate / marker).lstat()
-                except FileNotFoundError:
-                    continue
-                except (OSError, ValueError) as exc:
-                    raise StoreLocationError(
-                        f"the store {self.path}: cannot examine {candidate} ({exc}); "
-                        "it counts as an install"
-                    ) from exc
-                raise StoreLocationError(
-                    f"the store {self.path} is inside an install ({candidate} holds {marker}); "
-                    "nothing was created"
-                )
+            guard._refuse_inside_any_install(self.path, "the store")
+        except guard.GuardError as exc:
+            raise StoreLocationError(str(exc)) from exc
 
     @staticmethod
     def _refuse_symlinked_parent(root: Path, subtree: str) -> None:

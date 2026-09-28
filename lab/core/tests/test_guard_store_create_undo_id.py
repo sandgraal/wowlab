@@ -129,7 +129,6 @@ def _kid(flavor: Flavor, store: Path) -> dict[str, str]:
 # ─── the seam ────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M10-17 not implemented")
 def test_constructed_store_lock_takes_create_and_undo_takes_expected_id(guard: Any) -> None:
     """`store_lock(store=None, create=False)` and
     `undo(*, store=None, expected_id=None)`: the new parameters default to
@@ -153,7 +152,6 @@ def test_constructed_store_lock_takes_create_and_undo_takes_expected_id(guard: A
 # ─── 1. store_lock(create=True) makes the store and holds its lock ───────────
 
 
-@pytest.mark.xfail(strict=True, reason="M10-17 not implemented")
 @pytest.mark.parametrize(
     "where",
     [
@@ -227,7 +225,6 @@ def test_constructed_store_lock_create_makes_the_store_and_holds_its_lock(
     assert (flavor.path / FONT).read_bytes() == SECOND_FONT
 
 
-@pytest.mark.xfail(strict=True, reason="M10-17 not implemented")
 @pytest.mark.parametrize(
     "holder",
     [
@@ -282,7 +279,6 @@ def test_constructed_store_lock_create_is_busy_while_another_holds_the_store(
     eventually(lambda: _created_store_locked(guard, store))
 
 
-@pytest.mark.xfail(strict=True, reason="M10-17 not implemented")
 @pytest.mark.skipif(
     sys.platform != "win32",
     reason="mandatory byte-range locks are Windows'; POSIX flock never blocks a read",
@@ -408,7 +404,6 @@ def _windows_only() -> None:
         pytest.skip("junctions are a Windows facility")
 
 
-@pytest.mark.xfail(strict=True, reason="M10-17 not implemented")
 @pytest.mark.parametrize("where", [pytest.param(w, id=f"constructed-{w}") for w in INSIDE])
 def test_constructed_store_lock_create_refuses_a_store_inside_any_install_creating_nothing(
     guard: Any,
@@ -538,7 +533,6 @@ HOSTILE_LOCKS = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason="M10-17 not implemented")
 @pytest.mark.parametrize(
     "lock_kind", [pytest.param(k, id=f"constructed-existing-store-{k}") for k in HOSTILE_LOCKS]
 )
@@ -587,7 +581,6 @@ def test_constructed_store_lock_create_on_an_existing_store_follows_the_lock_fil
 # ─── 1. ... and create=False keeps today's behaviour ─────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M10-17 not implemented")
 def test_constructed_store_lock_without_create_never_creates_the_store(
     guard: Any, tmp_path: Path, install_root: Path, idle: None
 ) -> None:
@@ -676,7 +669,6 @@ def _just_before_the_store_lock(store: Path, action: Callable[[], None]) -> Iter
         yield fired
 
 
-@pytest.mark.xfail(strict=True, reason="M10-17 not implemented")
 def test_constructed_undo_with_the_most_recent_id_undoes_that_record(
     guard: Any, tmp_path: Path, world: Path, flavor: Flavor, idle: None
 ) -> None:
@@ -717,7 +709,6 @@ NOT_A_RACE = {
 }
 
 
-@pytest.mark.xfail(strict=True, reason="M10-17 not implemented")
 @pytest.mark.parametrize("race", [pytest.param(r, id=f"constructed-{r}") for r in UNDO_RACES])
 def test_constructed_undo_refuses_when_the_most_recent_record_is_not_the_expected_one(
     guard: Any,
@@ -814,7 +805,6 @@ def test_constructed_undo_refuses_when_the_most_recent_record_is_not_the_expecte
         assert (flavor.path / CONFIG).read_bytes() == NEW_CONFIG, "A is left as it is"
 
 
-@pytest.mark.xfail(strict=True, reason="M10-17 not implemented")
 def test_constructed_undo_without_expected_id_acts_on_whatever_is_most_recent(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None
 ) -> None:

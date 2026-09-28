@@ -2119,26 +2119,11 @@ def _client_running(inst: install.Install, chosen: install.Flavor) -> bool | Non
 
 
 # `snap gc` leaves objects younger than this, even when no manifest refers to
-# them. It is what keeps gc off the objects of a create that has stored them
-# but not yet written its manifest when that create holds no store lock: the
-# very first `snap create` (no store yet, and `guard.store_lock` never
-# creates one) and any library caller of `SnapshotStore.create`.
+# them. Every `snap create` now holds the store lock, the first one included
+# (`guard.store_lock(create=True)`, M10-17), so gc cannot run in the middle of
+# one; the grace period stays as defence in depth for a create that holds no
+# store lock: any library caller of `SnapshotStore.create`.
 GC_GRACE_SECONDS = 3600.0
-
-
-@contextmanager
-def _store_lock_if_present(store: snapshot.SnapshotStore) -> Iterator[None]:
-    """The write gate's store lock, when the store exists. A store that does
-    not exist yet is made by `SnapshotStore.create`, which refuses a store
-    inside any install before creating anything (L1); that first create runs
-    unlocked, and `GC_GRACE_SECONDS` keeps a concurrent gc off its objects.
-    A `store_lock(create=True)` in guard would close this; it needs its own
-    graders first."""
-    if not store.path.is_dir():
-        yield
-        return
-    with guard.store_lock(store.path):
-        yield
 
 
 @snap_app.command("create")
@@ -2158,7 +2143,9 @@ def snap_create(
     subtrees = [f"{chosen.folder}/{s}" for s in lay.snapshot_subtrees(screenshots=screenshots)]
     running = _client_running(inst, chosen)
     store = snapshot.SnapshotStore()
-    with _store_lock_if_present(store):
+    # The first create makes the store; guard refuses one inside any install
+    # before creating anything (L1), then holds its lock like every later one.
+    with guard.store_lock(store.path, create=True):
         manifest = store.create(
             Path(inst.root),
             subtrees,
@@ -2673,10 +2660,9 @@ def undo(yes: YesOpt = False, json_out: JsonOpt = False) -> None:
     earlier undo), from the snapshot taken before it. JSON: UndoReport.
 
     The journal is read again after you answer, and the undo is refused if
-    its most recent record changed meanwhile. A window remains between that
-    re-read and the gate taking its store lock inside `guard.undo()`; closing
-    it needs `guard.undo(expected_id=...)`, a change to the gate with its
-    own graders first."""
+    its most recent record changed meanwhile. The gate compares again under
+    its store lock (`guard.undo(expected_id=...)`), so a change journaled
+    after that re-read is refused too: only the record shown is undone."""
     records = guard.history()
     if not records:
         raise CliError("nothing to undo: the write gate's journal is empty")
@@ -2729,7 +2715,7 @@ def undo(yes: YesOpt = False, json_out: JsonOpt = False) -> None:
             "the journal changed after the plan was shown; nothing was undone, run the "
             "command again to see the new plan"
         )
-    guard.undo()
+    guard.undo(expected_id=last.id)
     done = report(applied=True, transaction=guard.history()[-1].id)
     if json_out:
         _emit(done)
