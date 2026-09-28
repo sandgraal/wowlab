@@ -1271,6 +1271,50 @@ def test_a_user_data_dir_inside_another_install_creates_nothing_there_constructe
     assert _tree_names(other) == before
 
 
+def _install_under_the_store(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The captured install copied to `<user data>/wowlab/store/World of
+    Warcraft`, so the store is an existing ancestor of the install, outside
+    every install; `WOWLAB_WOW_ROOT` names the copy. Returns the store."""
+    store = tmp_path / "ud" / "wowlab" / "store"
+    shutil.copytree(root, store / "World of Warcraft")
+    monkeypatch.setenv(install.ENV_ROOT, str(store / "World of Warcraft"))
+    return store
+
+
+def _refused_as_overlap_with_nothing_created(tmp_path: Path, store: Path) -> None:
+    before = _state(tmp_path)
+    result = run("snap", "create")
+    assert result.exit_code == 1, (result.stdout, result.stderr)  # snapshot's refusal, §6.11
+    assert "must not contain each other" in result.stderr
+    assert not (store / "lock").exists()
+    assert _state(tmp_path) == before, "nothing created, changed or removed anywhere"
+
+
+def test_a_store_that_holds_the_install_is_refused_with_nothing_created_constructed(
+    root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M10-19 (M10-17 security review): the store is an existing ancestor of
+    the install. The gate's `store_lock(create=True)` allows it (it is inside
+    no install), so the overlap is refused before the lock is taken: exit 1
+    and no `<store>/lock`, or anything else, left behind."""
+    store = _install_under_the_store(root, tmp_path, monkeypatch)
+    monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: store.parent)
+    _refused_as_overlap_with_nothing_created(tmp_path, store)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
+def test_a_store_that_holds_the_install_through_a_link_is_refused_constructed(
+    root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M10-19: the same, with the user data directory spelled through a
+    symlink, so only the resolved store holds the install."""
+    store = _install_under_the_store(root, tmp_path, monkeypatch)
+    alias = tmp_path / "alias"
+    alias.symlink_to(store.parent.parent, target_is_directory=True)
+    monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: alias / "wowlab")
+    _refused_as_overlap_with_nothing_created(tmp_path, store)
+
+
 def test_snap_gc_keeps_young_unreferenced_objects(root: Path, user_data: Path) -> None:
     _create("keep")
     store = SnapshotStore(user_data / "store")
