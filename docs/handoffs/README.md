@@ -11,5 +11,10 @@ owner ticket (`M10-03.md`, the fixture capture) and the wave review the
 conductor writes when a wave's last ticket merges (`M10-review.md`,
 `docs/LAB_PLAN.md` §11).
 
+One kind is addressed to the next conductor session: `M<n>-status.md`,
+written when a conductor session ends mid-wave, says what is merged, what is
+open, what waits on the owner, the owner's decisions so far and the
+follow-ups not yet ticketed. The next session reads it before `/conduct`.
+
 Delete a handoff when its ticket is done and nothing in it outlives the
 ticket.
