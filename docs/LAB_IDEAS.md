@@ -23,6 +23,9 @@ repository if the owner ever wants it.
 | **profiles** | Named whole-UI states (`raid`, `gamepad`, `clean`) switched with one command; built on snapshots restricted to chosen subtrees | A | snapshot, guard | subtree presets, merge rules | S |
 | **sv-merge** | Three-way structural merge of SavedVariables (copy one addon's settings between characters or machines without clobbering the rest) | A | luadata | merge engine | S |
 | **skin-packs** | Reversible font and base-texture override packs with install/uninstall | B | guard, snapshot | pack format | S |
+| **addon-provenance** | For each installed addon, find where it came from (CurseForge, Wago or GitHub release), compare its file hashes to the upstream archive, and flag repacks or local edits | A | layout, snapshot hashing | upstream fetchers, hash compare | S |
+| **addon-manager** | Install, update and pin addons from GitHub releases, CurseForge or Wago, with every change going through guard; undo reverts a bad update, including the addon's SavedVariables | A | guard, snapshot, toc | release fetchers, lockfile | M |
+| **sv-health** | A doctor check that SavedVariables round-trip: lab-addon writes a login counter and wowlab checks it increments across a restart. Catches Forever's loader bug and any regression of it | A | luadata, lab-addon | probe + check | S |
 
 ## B. Game data
 
@@ -33,6 +36,7 @@ repository if the owner ever wants it.
 | **hotfix-reader** | Decode `Cache/ADB/DBCache.bin` and overlay hotfixes on tables | A | layout, gamedata | DBCache parser | M |
 | **casc-source** | Read files straight from the install's `Data/` (needed by everything 3D) | A | install, gamedata `Source` | CASC binding or a wow.export CLI bridge | M |
 | **azeroth-graph** | Item ↔ spell ↔ quest ↔ NPC ↔ zone relationships queryable as a graph | A | db2lake | relationship extraction | M |
+| **quest-recorder** | lab-addon records givers, turn-ins, objectives and coordinates for Forever's new quests (the client tables only carry the quest IDs, which is why Questie is missing them); output as JSON, plus an export in the format Questie takes corrections in | A | lab-addon, luadata, db2lake | recorder schema, exporter | M (est.) |
 
 ## C. Character, offline (the owner's main interest)
 
@@ -66,6 +70,7 @@ repository if the owner ever wants it.
 |---|---|---|---|---|---|
 | **addon-kit** | `wowlab addon new`: scaffold with the right TOC for the discovered flavor, luacheck, LuaLS config, link into `Interface/AddOns` through guard | A | install, toc, guard | templates | S |
 | **api-types** | LuaLS type stubs generated from the flavor's exported `Blizzard_APIDocumentation` | A | layout | doc parser, stub emitter | S |
+| **addon-audit** | Static scan of `Interface/AddOns` for Forever breakage: missing `16001` in the TOC, the build-number trap (`select(4, GetBuildInfo()) >= 100000`), removed Classic globals (`GetItemInfo`, `UnitAura`, `GetSpecialization`, …), and calls whose results go secret in combat. Reports per addon; fixes nothing | A | toc, layout, api-types | rule set, report | S |
 | **addon-harness** | Headless Lua test harness with a mock of the API surface addons touch, including secret-value behaviour | A | api-types | mock runtime (runs Lua under a real interpreter, outside `wowlab_core`; LAB_PLAN L3 governs parsing game files, not testing addon code) | M |
 | **dev-console** | In-game REPL and snippet notebook addon; wrappers for `/fstack`, `/etrace`, `/tinspect`; explains why a value is secret or tainted | A | — | addon | S |
 | **api-rag** | Retrieval over exported FrameXML and API docs for agent-written addons, flagging calls that break under 12.x restrictions | A | layout | index + prompt tooling | S |
@@ -96,3 +101,6 @@ These are observations about dependencies, not a plan.
   Wave 1 and deliver the customization interest early.
 - **wow-as-code** and **profiles** are the direct payoff of `guard` and the
   serializer.
+- **sv-health** and **quest-recorder** stand on **lab-addon**; **addon-audit**
+  needs **api-types** first. **addon-manager** and **addon-provenance** need
+  only Wave 1 plus network fetchers for the addon sites.
