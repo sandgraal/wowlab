@@ -1398,6 +1398,29 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
 - **Page** `wowlab looks page [--out PATH]`: one self-contained HTML file
   (ADR-0027) to browse races and options and view saved looks.
 
+*Amended 2026-09-28 (M11-06):* the looks CLI as built. `import-char` is
+M11-04's. A look is `<user data>/wowlab/looks/<name>.json`, a `SavedLook`
+(`wowlab_core.lookstore`): format 1, the build it was checked against when it
+was saved, and the `Look`. Names follow the profile rule (a letter or digit,
+then letters, digits, `.`, `_`, `-`; 64 at most) and are compared without
+case. `save` refuses a taken name unless `--replace`, and refuses the folder
+when it or a folder above it holds `.build.info` or `.flavor.info`. The build
+is `--build`, else the flavor's version from discovery; only when no install
+is found at all (no `--root`, no `$WOWLAB_WOW_ROOT`), it is the build the
+looks were saved against, or else the one build whose customization tables
+are all cached, and the output says which. `races` lists
+`playable_races()`. `options <race> [--sex 0|1] [--class C]` lists
+`options_for` per body type, each choice with the model's check of a look
+that holds only that choice; findings every choice of an option shares are
+shown once on the option. `save <name> --race R --sex S [--class C]
+[--choice OPTION=CHOICE]…` runs the check: a look the tables refuse is not
+written (exit 1), and notes ("needs <unlock>", "unknown to build <version>
+(possibly a hotfix)", undecided dependencies) are shown and do not stop it.
+`show [NAME]` checks one look, or lists every look with its verdict and exits
+1 after naming a damaged file. `compare <a> <b>` checks both against one
+build and lists the options set to the same choice and those that differ.
+Every data command takes `--json`.
+
 ### 13.3 profiles
 
 Named sets of the client's local UI files (not the whole UI: action-bar

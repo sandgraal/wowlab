@@ -5,8 +5,8 @@ spec names and prints text, or JSON with `--json`; the only commands that
 change an install are `snap restore`, `profile apply` (§13.3, M11-08) and
 `undo`, and all go through `wowlab_core.guard` (L2, ADR-0021): they print
 the plan and ask before writing unless `--yes` is given. Nothing here writes a file itself; the
-snapshot store and the game-data cache are written by `snapshot` and
-`gamedata`, under the user data directory (L1).
+snapshot store, the game-data cache and saved looks are written by `snapshot`,
+`gamedata` and `lookstore`, under the user data directory (L1).
 
 Exit codes: 0 ok, 1 error, 2 usage (including "more than one flavor, pick
 one with --flavor"), 3 refused by the write gate (any `guard.GuardError`:
@@ -40,6 +40,12 @@ Its `--json` is one `LogTailReport`, or with `--follow` one `LogTailLine` per
 line of output (JSON Lines), since a stream that never ends is not one
 document. Timestamps are printed as the log has them; they are local times
 the client wrote, and in the committed fixtures shifted, never parsed here.
+
+`looks` (§13.2, M11-06) reads the customization tables of one build through
+`gamedata` and checks looks with `wowlab_core.looks`; saved looks are JSON
+files `lookstore` writes under the user data directory, never in an install.
+The build is `--build` or the flavor's version; only when no install is found
+does it fall back to a saved look's build or the one fully cached build.
 """
 
 import base64
@@ -66,6 +72,8 @@ from wowlab_core import (
     guard,
     install,
     layout,
+    looks,
+    lookstore,
     luadata,
     process,
     profiles,
@@ -97,6 +105,12 @@ db2_app = typer.Typer(
 )
 snap_app = typer.Typer(help="The snapshot store.", no_args_is_help=True)
 log_app = typer.Typer(help="The combat log (read only).", no_args_is_help=True)
+looks_app = typer.Typer(
+    help="Character customization looks: races, options and choices from a build's tables, "
+    "and looks saved as JSON under the user data directory. Data only: nothing here writes "
+    "into an install or reaches the game.",
+    no_args_is_help=True,
+)
 profile_app = typer.Typer(
     help="Named sets of the client's local UI files, saved into the snapshot store and "
     "applied through the write gate (`wowlab undo` reverses an apply). A profile covers "
@@ -115,6 +129,7 @@ app.add_typer(db2_app, name="db2")
 app.add_typer(snap_app, name="snap")
 app.add_typer(log_app, name="log")
 app.add_typer(profile_app, name="profile")
+app.add_typer(looks_app, name="looks")
 
 
 # ─── options ─────────────────────────────────────────────────────────────────
@@ -268,6 +283,7 @@ def _handled[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
             snapshot.SnapshotError,
             profiles.ProfileError,
             gamedata.GameDataError,
+            lookstore.LookStoreError,
             OSError,
         ) as exc:
             _fail(str(exc), EXIT_ERROR)
@@ -3321,6 +3337,808 @@ def profile_apply(
     if profiles.MACROS_NOTE in plan.notes:
         _say(profiles.MACROS_NOTE)
     _say(profiles.LOGIN_NOTE)
+
+
+# ─── looks ───────────────────────────────────────────────────────────────────
+
+_PLAYABLE_NOTE = (
+    "Flagged playable by the build's ChrRaces rows (a PlayableRaceBit, not NPC-only); "
+    "not a claim about what a server lets anyone create."
+)
+_ALLIANCE_WORDS = {0: "Alliance", 1: "Horde", 2: "neither faction"}
+_SEX_WORDS = {"male": 0, "female": 1}
+
+
+class LooksRace(_Out):
+    id: int
+    name: str
+    client_file_string: str
+    alliance: int  # ChrRaces.Alliance: 0 Alliance, 1 Horde, 2 neither
+    flagged_playable: bool
+    body_types: list[looks.BodyType]  # body_type as ChrRaceXChrModel.Sex
+
+
+class LooksRacesReport(_Out):
+    """`wowlab looks races --json`."""
+
+    build: str
+    races: list[LooksRace]
+    notes: list[str]
+
+
+class LooksChoice(_Out):
+    id: int
+    name: str
+    # The model's check of a look holding only this choice, less the findings
+    # every choice of the option shares (those are the option's `notes`).
+    refusals: list[looks.Finding]
+    notes: list[looks.Finding]
+
+
+class LooksOption(_Out):
+    id: int
+    name: str
+    chr_model_id: int
+    category: str | None
+    form_or_pet: bool  # on a model no race uses (druid form, demon, pet) [verify]
+    notes: list[looks.Finding]  # findings every choice shares (two or more choices)
+    choices: list[LooksChoice]
+
+
+class LooksBodyType(_Out):
+    body_type: int
+    chr_model_id: int
+    options: list[LooksOption]
+
+
+class LooksOptionsReport(_Out):
+    """`wowlab looks options --json`."""
+
+    build: str
+    race: LooksRace
+    class_id: int | None
+    class_name: str | None
+    body_types: list[LooksBodyType]
+    notes: list[str]
+
+
+class LooksChoiceRef(_Out):
+    option_id: int
+    option_name: str | None  # None: the option is unknown to the build
+    choice_id: int
+    choice_name: str | None  # None: unknown to the build; "" when the table names none
+
+
+class LookReport(_Out):
+    """`wowlab looks save --json` and `wowlab looks show NAME --json`.
+
+    `path` is None when `save` refused the look (nothing was written)."""
+
+    name: str
+    path: str | None
+    saved_build: str | None  # the build whose tables checked it when it was saved
+    build: str  # the build whose tables checked it now
+    race_id: int
+    race_name: str | None
+    body_type: int
+    class_id: int | None
+    class_name: str | None
+    choices: list[LooksChoiceRef]
+    refused: bool
+    refusals: list[looks.Finding]
+    notes: list[looks.Finding]
+    remarks: list[str]
+
+
+class LookSummary(_Out):
+    name: str
+    saved_build: str
+    race_id: int
+    race_name: str | None
+    body_type: int
+    class_id: int | None
+    choices: int
+    refused: bool
+    refusals: int
+    notes: int
+
+
+class LooksListReport(_Out):
+    """`wowlab looks show --json` (no name). The command exits 1 when `damaged`
+    is not empty. `build` is None when there is no look to check."""
+
+    directory: str
+    build: str | None
+    looks: list[LookSummary]
+    damaged: list[lookstore.DamagedLook]
+    remarks: list[str]
+
+
+class LooksDifference(_Out):
+    option_id: int
+    option_name: str | None
+    a: LooksChoiceRef | None  # None: the look does not set this option
+    b: LooksChoiceRef | None
+
+
+class LooksCompareReport(_Out):
+    """`wowlab looks compare --json`: both looks checked against one build."""
+
+    build: str
+    a: LookReport
+    b: LookReport
+    same_race: bool
+    same_body_type: bool
+    same_class: bool
+    same: list[LooksChoiceRef]  # options both looks set to the same choice
+    different: list[LooksDifference]  # set to different choices, or by one look only
+
+
+LooksBuildOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--build",
+        help="Full version string whose tables to use. Default: the flavor's version; "
+        "with no install found, the build a saved look was checked against, or the one "
+        "build whose customization tables are cached.",
+    ),
+]
+SexOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--sex",
+        help="Body type as the tables number it (ChrRaceXChrModel.Sex): 0 or 1; "
+        "'male' and 'female' are read as 0 and 1.",
+    ),
+]
+ClassOpt = Annotated[
+    str | None,
+    typer.Option("--class", help="Class id or name, as the build's ChrClasses has it."),
+]
+LookNameArg = Annotated[str, typer.Argument(metavar="NAME", help="The look's name.")]
+
+
+def _cached_look_builds(data: gamedata.GameData) -> list[str]:
+    """Builds whose every customization table is in the cache (a listing only)."""
+    tables = data.cache_dir / "tables"
+    if not tables.is_dir():
+        return []
+    found: list[str] = []
+    for entry in sorted(tables.iterdir()):
+        try:
+            if all(data.table_path(name, entry.name).is_file() for name in looks.REQUIRED_TABLES):
+                found.append(entry.name)
+        except ValueError:  # not a build folder
+            continue
+    return found
+
+
+def _looks_build(
+    data: gamedata.GameData,
+    build: str | None,
+    root: Path | None,
+    flavor: str | None,
+    saved_builds: Sequence[str] = (),
+) -> tuple[str, list[str]]:
+    """The build to check against, and a remark when it did not come from
+    `--build` or the install (L6: nothing here names a build)."""
+    if build is not None:
+        return build, []
+    try:
+        return _build_for(None, root, flavor), []
+    except install.InstallNotFoundError as exc:
+        saved = sorted(set(saved_builds))
+        if len(saved) == 1:
+            return saved[0], [
+                f"No install found; checked against build {saved[0]}, the build the look "
+                "was saved against (--build chooses another)."
+            ]
+        cached = _cached_look_builds(data)
+        if len(cached) == 1:
+            return cached[0], [
+                f"No install found; using build {cached[0]}, the one build whose "
+                "customization tables are cached (--build chooses another)."
+            ]
+        have = f" (cached: {', '.join(cached)})" if cached else ""
+        raise CliError(f"{exc}; pass --build with a full version string{have}") from exc
+
+
+def _load_model(data: gamedata.GameData, build: str) -> looks.Customizations:
+    try:
+        data.table_path(looks.REQUIRED_TABLES[0], build)
+    except ValueError as exc:
+        raise CliError(str(exc), EXIT_USAGE) from exc
+    try:
+        return looks.Customizations.from_gamedata(data, build)
+    except looks.LooksDataError as exc:
+        raise CliError(f"the customization tables of build {build} cannot be read: {exc}") from exc
+
+
+def _race_out(race: looks.Race) -> LooksRace:
+    return LooksRace(
+        id=race.id,
+        name=race.name,
+        client_file_string=race.client_file_string,
+        alliance=race.alliance,
+        flagged_playable=race.flagged_playable,
+        body_types=list(race.body_types),
+    )
+
+
+def _race_label(race: looks.Race) -> str:
+    return f"{race.name} ({race.id})"
+
+
+def _resolve_race(model: looks.Customizations, text: str) -> looks.Race:
+    playable = ", ".join(_race_label(r) for r in model.playable_races())
+    if text.strip().isdigit():
+        race = model.races.get(int(text))
+        if race is None:
+            raise CliError(
+                f"no race {text} in build {model.build}'s ChrRaces (flagged playable: {playable})",
+                EXIT_USAGE,
+            )
+        return race
+    folded = text.strip().casefold()
+    matches = [r for _, r in sorted(model.races.items()) if r.name.casefold() == folded] or [
+        r for _, r in sorted(model.races.items()) if r.client_file_string.casefold() == folded
+    ]
+    if len(matches) > 1:
+        matches = [r for r in matches if r.flagged_playable] or matches
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise CliError(
+            f"no race {text!r} in build {model.build}'s ChrRaces (flagged playable: {playable})",
+            EXIT_USAGE,
+        )
+    raise CliError(
+        f"race {text!r} matches {', '.join(_race_label(r) for r in matches)}; give the id",
+        EXIT_USAGE,
+    )
+
+
+def _resolve_class(model: looks.Customizations, text: str | None) -> int | None:
+    if text is None:
+        return None
+    if text.strip().isdigit():
+        return int(text)
+    folded = text.strip().casefold()
+    for class_id, player_class in sorted(model.classes.items()):
+        if player_class.name.casefold() == folded:
+            return class_id
+    known = ", ".join(f"{c.name} ({i})" for i, c in sorted(model.classes.items()))
+    raise CliError(f"no class {text!r} in build {model.build}'s ChrClasses ({known})", EXIT_USAGE)
+
+
+def _parse_sex(text: str | None) -> int | None:
+    if text is None:
+        return None
+    word = text.strip().casefold()
+    if word in _SEX_WORDS:
+        return _SEX_WORDS[word]
+    if word.isdigit():
+        return int(word)
+    raise CliError(f"--sex takes 0, 1, male or female, not {text!r}", EXIT_USAGE)
+
+
+def _parse_choices(pairs: Sequence[str]) -> dict[int, int]:
+    out: dict[int, int] = {}
+    for pair in pairs:
+        option, sep, choice = pair.partition("=")
+        if not sep or not option.strip().isdigit() or not choice.strip().isdigit():
+            raise CliError(
+                f"--choice takes OPTION=CHOICE with two ids, as `wowlab looks options` "
+                f"lists them, not {pair!r}",
+                EXIT_USAGE,
+            )
+        option_id = int(option)
+        if option_id in out:
+            raise CliError(f"option {option_id} is given twice", EXIT_USAGE)
+        out[option_id] = int(choice)
+    return out
+
+
+def _class_name(model: looks.Customizations, class_id: int | None) -> str | None:
+    if class_id is None:
+        return None
+    found = model.classes.get(class_id)
+    return found.name if found else None
+
+
+def _choice_ref(model: looks.Customizations, option_id: int, choice_id: int) -> LooksChoiceRef:
+    option = model.options.get(option_id)
+    choice = model.choices.get(choice_id)
+    return LooksChoiceRef(
+        option_id=option_id,
+        option_name=option.name if option else None,
+        choice_id=choice_id,
+        choice_name=choice.name if choice else None,
+    )
+
+
+def _look_report(
+    model: looks.Customizations,
+    saved: lookstore.SavedLook,
+    path: Path | None,
+    remarks: Sequence[str] = (),
+) -> LookReport:
+    look = saved.look
+    verdict = model.check(look)
+    race = model.races.get(look.race_id)
+    notes = list(remarks)
+    if saved.saved_build != model.build:
+        notes.append(
+            f"Saved against build {saved.saved_build}; checked here against build {model.build}."
+        )
+    return LookReport(
+        name=look.name,
+        path=str(path) if path is not None else None,
+        saved_build=saved.saved_build if path is not None else None,
+        build=model.build,
+        race_id=look.race_id,
+        race_name=race.name if race else None,
+        body_type=look.body_type,
+        class_id=look.class_id,
+        class_name=_class_name(model, look.class_id),
+        choices=[_choice_ref(model, o, c) for o, c in look.choices.items()],
+        refused=verdict.refused,
+        refusals=list(verdict.refusals),
+        notes=list(verdict.notes),
+        remarks=notes,
+    )
+
+
+def _ref_text(ref: LooksChoiceRef) -> str:
+    option = (
+        f"{ref.option_name} ({ref.option_id})"
+        if ref.option_name is not None
+        else f"option {ref.option_id} (unknown to this build)"
+    )
+    if ref.choice_name is None:
+        choice = f"{ref.choice_id} (unknown to this build)"
+    elif ref.choice_name:
+        choice = f"{ref.choice_id} {ref.choice_name!r}"
+    else:
+        choice = str(ref.choice_id)
+    return f"{option} = {choice}"
+
+
+def _print_findings(
+    refusals: Sequence[looks.Finding], notes: Sequence[looks.Finding], pad: str
+) -> None:
+    for f in refusals:
+        _say(f"{pad}refused: {f.message}")
+    for f in notes:
+        _say(f"{pad}note: {f.message}")
+
+
+def _print_look(report: LookReport, *, heading: str) -> None:
+    _say(f"{heading} {report.name} (checked against build {report.build})")
+    if report.path is not None:
+        _say(f"  file:      {report.path}")
+    race = f"{report.race_name} ({report.race_id})" if report.race_name else f"{report.race_id}"
+    _say(f"  race:      {race}, body type {report.body_type}")
+    if report.class_id is None:
+        _say("  class:     not given (class-restricted choices are noted, not refused)")
+    else:
+        _say(f"  class:     {report.class_name or 'not in this build'} ({report.class_id})")
+    _say(f"  choices:   {len(report.choices)}")
+    for ref in report.choices:
+        _say(f"    {_ref_text(ref)}")
+    if report.refused:
+        _say(
+            f"  verdict:   refused ({len(report.refusals)} reason(s)), {len(report.notes)} note(s)"
+        )
+    else:
+        _say(f"  verdict:   not refused, {len(report.notes)} note(s)")
+    _print_findings(report.refusals, report.notes, "    ")
+    for remark in report.remarks:
+        _say(remark)
+
+
+@looks_app.command("races")
+@_handled
+def looks_races(
+    build: LooksBuildOpt = None,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+) -> None:
+    """Races the build's tables flag as playable, with their body types.
+    JSON: LooksRacesReport."""
+    with _open_gamedata() as data:
+        version, remarks = _looks_build(data, build, root, flavor)
+        model = _load_model(data, version)
+    report = LooksRacesReport(
+        build=version,
+        races=[_race_out(r) for r in model.playable_races()],
+        notes=[_PLAYABLE_NOTE, *remarks],
+    )
+    if json_out:
+        _emit(report)
+        return
+    _say(f"Races in build {version}:")
+    for r in report.races:
+        side = _ALLIANCE_WORDS.get(r.alliance, f"Alliance column {r.alliance}")
+        bodies = ", ".join(f"{b.body_type} (model {b.chr_model_id})" for b in r.body_types)
+        _say(f"  {r.id:>4}  {r.name}  [{side}]  body types {bodies or 'none'}")
+    for n in report.notes:
+        _say(n)
+
+
+def _options_for_body(
+    model: looks.Customizations, race: looks.Race, body: looks.BodyType, class_id: int | None
+) -> LooksBodyType:
+    out: list[LooksOption] = []
+    for option in model.options_for(race.id, body.body_type, class_id):
+        checked: list[tuple[looks.Choice, looks.LookCheck]] = [
+            (
+                choice,
+                model.check(
+                    looks.Look(
+                        name="-",
+                        race_id=race.id,
+                        body_type=body.body_type,
+                        class_id=class_id,
+                        choices={option.id: choice.id},
+                    )
+                ),
+            )
+            for choice in option.choices
+        ]
+        shared: set[tuple[str, str]] = set()
+        if len(checked) > 1:
+            keys = [
+                {(f.kind.value, f.message) for f in (*v.refusals, *v.notes)} for _, v in checked
+            ]
+            shared = set.intersection(*keys)
+        option_notes: list[looks.Finding] = []
+        if checked:
+            first = checked[0][1]
+            option_notes = [
+                f.model_copy(update={"choice_id": None})
+                for f in (*first.refusals, *first.notes)
+                if (f.kind.value, f.message) in shared
+            ]
+        category = model.categories.get(option.category_id)
+        out.append(
+            LooksOption(
+                id=option.id,
+                name=option.name,
+                chr_model_id=option.chr_model_id,
+                category=category.name if category else None,
+                form_or_pet=model.is_form_or_pet(option),
+                notes=option_notes,
+                choices=[
+                    LooksChoice(
+                        id=choice.id,
+                        name=choice.name,
+                        refusals=[f for f in v.refusals if (f.kind.value, f.message) not in shared],
+                        notes=[f for f in v.notes if (f.kind.value, f.message) not in shared],
+                    )
+                    for choice, v in checked
+                ],
+            )
+        )
+    return LooksBodyType(body_type=body.body_type, chr_model_id=body.chr_model_id, options=out)
+
+
+@looks_app.command("options")
+@_handled
+def looks_options(
+    race: Annotated[str, typer.Argument(help="Race id or name, as `looks races` lists it.")],
+    sex: SexOpt = None,
+    class_: ClassOpt = None,
+    build: LooksBuildOpt = None,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+) -> None:
+    """A race's options and choices per body type (every body type unless --sex),
+    for a class when --class is given, with what the tables say about each
+    choice: refusals, "needs <unlock>" and other notes. JSON: LooksOptionsReport."""
+    body_type = _parse_sex(sex)
+    with _open_gamedata() as data:
+        version, remarks = _looks_build(data, build, root, flavor)
+        model = _load_model(data, version)
+    chosen = _resolve_race(model, race)
+    class_id = _resolve_class(model, class_)
+    bodies = [b for b in chosen.body_types if body_type is None or b.body_type == body_type]
+    if not bodies:
+        have = [b.body_type for b in chosen.body_types]
+        raise CliError(
+            f"race {_race_label(chosen)} has no body type {body_type} in build {version} "
+            f"(it has {have})",
+            EXIT_USAGE,
+        )
+    notes = list(remarks)
+    if not chosen.flagged_playable:
+        notes.append(f"{_race_label(chosen)} is not flagged playable in build {version}.")
+    if class_id is not None and class_id not in model.classes:
+        notes.append(f"Class {class_id} is not in build {version}'s ChrClasses.")
+    if class_id is None:
+        notes.append("No --class: class-restricted choices are listed with a note.")
+    report = LooksOptionsReport(
+        build=version,
+        race=_race_out(chosen),
+        class_id=class_id,
+        class_name=_class_name(model, class_id),
+        body_types=[_options_for_body(model, chosen, b, class_id) for b in bodies],
+        notes=notes,
+    )
+    if json_out:
+        _emit(report)
+        return
+    who = _race_label(chosen)
+    if class_id is not None:
+        who += f", {report.class_name or 'class'} ({class_id})"
+    for body in report.body_types:
+        _say(f"{who}, body type {body.body_type} (model {body.chr_model_id}), build {version}:")
+        for option in body.options:
+            where = f" [{option.category}]" if option.category else ""
+            form = " (form or pet option)" if option.form_or_pet else ""
+            _say(
+                f"  option {option.id}  {option.name}{where}{form}: {len(option.choices)} choice(s)"
+            )
+            _print_findings(
+                [f for f in option.notes if f.refuses],
+                [f for f in option.notes if not f.refuses],
+                "      ",
+            )
+            for choice in option.choices:
+                _say(f"    {choice.id:>7}  {choice.name}".rstrip())
+                _print_findings(choice.refusals, choice.notes, "             ")
+    for n in notes:
+        _say(n)
+
+
+@looks_app.command("save")
+@_handled
+def looks_save(
+    name: LookNameArg,
+    race: Annotated[str, typer.Option("--race", help="Race id or name.")],
+    sex: Annotated[
+        str,
+        typer.Option(
+            "--sex",
+            help="Body type (ChrRaceXChrModel.Sex): 0 or 1; 'male' and 'female' read as 0 and 1.",
+        ),
+    ],
+    choice: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--choice",
+            help="OPTION=CHOICE, two ids as `wowlab looks options` lists them. Repeat for more.",
+        ),
+    ] = None,
+    class_: ClassOpt = None,
+    replace: Annotated[
+        bool, typer.Option("--replace", help="Overwrite a saved look with this name.")
+    ] = False,
+    build: LooksBuildOpt = None,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+) -> None:
+    """Check a look against the build's tables and save it under the user data
+    directory (never in an install). A look the tables refuse is not saved
+    (exit 1); notes ("needs <unlock>", "unknown to build ...") are shown and do
+    not stop the save. JSON: LookReport."""
+    try:
+        lookstore.check_name(name)
+    except lookstore.LookStoreError as exc:
+        raise CliError(str(exc), EXIT_USAGE) from exc
+    body_type = _parse_sex(sex)
+    assert body_type is not None
+    choices = _parse_choices(choice or ())
+    with _open_gamedata() as data:
+        version, remarks = _looks_build(data, build, root, flavor)
+        model = _load_model(data, version)
+    chosen = _resolve_race(model, race)
+    look = looks.Look(
+        name=name,
+        race_id=chosen.id,
+        body_type=body_type,
+        class_id=_resolve_class(model, class_),
+        choices=choices,
+    )
+    saved = lookstore.SavedLook(saved_build=version, look=look)
+    report = _look_report(model, saved, None, remarks)
+    if report.refused:
+        if json_out:
+            _emit(report)
+        else:
+            _print_look(report, heading="Not saved: the tables refuse look")
+        raise CliError(f"look {name} is refused by build {version}'s tables; nothing was saved")
+    path = lookstore.LookStore().save(saved, replace=replace)
+    report = _look_report(model, saved, path, remarks)
+    if json_out:
+        _emit(report)
+    else:
+        _print_look(report, heading="Saved look")
+
+
+@looks_app.command("show")
+@_handled
+def looks_show(
+    name: Annotated[
+        str | None,
+        typer.Argument(metavar="[NAME]", help="A saved look. Default: every saved look."),
+    ] = None,
+    build: LooksBuildOpt = None,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+) -> None:
+    """One saved look checked against the build's tables, or every saved look
+    with its verdict; names each damaged file and then exits 1.
+    JSON: LookReport with NAME, else LooksListReport."""
+    store = lookstore.LookStore()
+    try:
+        if name is not None:
+            lookstore.check_name(name)
+    except lookstore.LookStoreError as exc:
+        raise CliError(str(exc), EXIT_USAGE) from exc
+    if name is not None:
+        path = store.locate(name)
+        one = store.read(path)
+        with _open_gamedata() as data:
+            version, remarks = _looks_build(data, build, root, flavor, [one.saved_build])
+            model = _load_model(data, version)
+        report = _look_report(model, one, path, remarks)
+        if json_out:
+            _emit(report)
+        else:
+            _print_look(report, heading="Look")
+        return
+    found, damaged = store.listing()
+    summaries: list[LookSummary] = []
+    version_used: str | None = None
+    list_remarks: list[str] = []
+    if found:
+        with _open_gamedata() as data:
+            version_used, list_remarks = _looks_build(
+                data, build, root, flavor, [s.saved_build for s in found]
+            )
+            model = _load_model(data, version_used)
+        for s in found:
+            verdict = model.check(s.look)
+            race = model.races.get(s.look.race_id)
+            summaries.append(
+                LookSummary(
+                    name=s.look.name,
+                    saved_build=s.saved_build,
+                    race_id=s.look.race_id,
+                    race_name=race.name if race else None,
+                    body_type=s.look.body_type,
+                    class_id=s.look.class_id,
+                    choices=len(s.look.choices),
+                    refused=verdict.refused,
+                    refusals=len(verdict.refusals),
+                    notes=len(verdict.notes),
+                )
+            )
+    listing = LooksListReport(
+        directory=str(store.root),
+        build=version_used,
+        looks=summaries,
+        damaged=damaged,
+        remarks=list_remarks,
+    )
+    if json_out:
+        _emit(listing)
+    else:
+        if not summaries and not damaged:
+            _say(f"No saved looks (in {store.root}).")
+        else:
+            _say(f"Saved looks in {store.root}, checked against build {version_used}:")
+        for item in summaries:
+            who = f"{item.race_name} ({item.race_id})" if item.race_name else str(item.race_id)
+            verdict_text = (
+                f"refused ({item.refusals})" if item.refused else "not refused"
+            ) + f", {item.notes} note(s)"
+            _say(
+                f"  {item.name}  {who}, body type {item.body_type}, "
+                f"{item.choices} choice(s): {verdict_text}"
+            )
+        for remark in list_remarks:
+            _say(remark)
+    for bad in damaged:
+        _note(f"wowlab: damaged look file {bad.file}: {bad.error}")
+    if damaged:
+        raise typer.Exit(EXIT_ERROR)
+
+
+@looks_app.command("compare")
+@_handled
+def looks_compare(
+    a: Annotated[str, typer.Argument(metavar="A", help="A saved look.")],
+    b: Annotated[str, typer.Argument(metavar="B", help="Another saved look.")],
+    build: LooksBuildOpt = None,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+) -> None:
+    """Two saved looks side by side, both checked against one build's tables.
+    JSON: LooksCompareReport."""
+    store = lookstore.LookStore()
+    try:
+        lookstore.check_name(a)
+        lookstore.check_name(b)
+    except lookstore.LookStoreError as exc:
+        raise CliError(str(exc), EXIT_USAGE) from exc
+    path_a, path_b = store.locate(a), store.locate(b)
+    first, second = store.read(path_a), store.read(path_b)
+    with _open_gamedata() as data:
+        version, remarks = _looks_build(
+            data, build, root, flavor, [first.saved_build, second.saved_build]
+        )
+        model = _load_model(data, version)
+    ra = _look_report(model, first, path_a, remarks)
+    rb = _look_report(model, second, path_b, remarks)
+    la, lb = first.look, second.look
+    same: list[LooksChoiceRef] = []
+    different: list[LooksDifference] = []
+    for option_id in list(dict.fromkeys([*la.choices, *lb.choices])):
+        ca, cb = la.choices.get(option_id), lb.choices.get(option_id)
+        if ca is not None and ca == cb:
+            same.append(_choice_ref(model, option_id, ca))
+            continue
+        option = model.options.get(option_id)
+        different.append(
+            LooksDifference(
+                option_id=option_id,
+                option_name=option.name if option else None,
+                a=_choice_ref(model, option_id, ca) if ca is not None else None,
+                b=_choice_ref(model, option_id, cb) if cb is not None else None,
+            )
+        )
+    report = LooksCompareReport(
+        build=version,
+        a=ra,
+        b=rb,
+        same_race=la.race_id == lb.race_id,
+        same_body_type=la.body_type == lb.body_type,
+        same_class=la.class_id == lb.class_id,
+        same=same,
+        different=different,
+    )
+    if json_out:
+        _emit(report)
+        return
+
+    def race(r: LookReport) -> str:
+        return f"{r.race_name} ({r.race_id})" if r.race_name else str(r.race_id)
+
+    def cls(r: LookReport) -> str:
+        if r.class_id is None:
+            return "not given"
+        return f"{r.class_name or 'not in this build'} ({r.class_id})"
+
+    def side(ref: LooksChoiceRef | None) -> str:
+        if ref is None:
+            return "(not set)"
+        if ref.choice_name is None:
+            return f"{ref.choice_id} (unknown to this build)"
+        return f"{ref.choice_id} {ref.choice_name!r}" if ref.choice_name else str(ref.choice_id)
+
+    _say(f"Looks {ra.name} | {rb.name}, checked against build {version}")
+    _say(f"  race:      {race(ra)} | {race(rb)}")
+    _say(f"  body type: {ra.body_type} | {rb.body_type}")
+    _say(f"  class:     {cls(ra)} | {cls(rb)}")
+    _say(f"  same choice on {len(same)} option(s)")
+    if different:
+        _say(f"  different on {len(different)} option(s):")
+    for d in different:
+        label = f"{d.option_name} ({d.option_id})" if d.option_name else f"option {d.option_id}"
+        _say(f"    {label}: {side(d.a)} | {side(d.b)}")
+    for r in (ra, rb):
+        verdict = f"refused ({len(r.refusals)} reason(s))" if r.refused else "not refused"
+        _say(f"  {r.name}: {verdict}, {len(r.notes)} note(s)")
+        _print_findings(r.refusals, r.notes, "    ")
+    for remark in dict.fromkeys([*ra.remarks, *rb.remarks]):
+        _say(remark)
 
 
 # ─── version ─────────────────────────────────────────────────────────────────
