@@ -14,7 +14,7 @@ The backlog holds the current wave only (ADR-0024). Milestone numbers start at `
 
 Spec: `docs/LAB_PLAN.md` §13. Decisions: ADR-0026, ADR-0027 (accepted 2026-09-28). Owner pick 2026-09-28. L1–L8 apply to every ticket.
 
-The wave is 10 tickets, four of them M-sized (M11-01, M11-05, M11-08, M11-09), not the four S-sized ideas listed in `docs/LAB_IDEAS.md`; the M11-10 review compares actual effort against that. Wave 1 closes before M11 dispatch (§13.5); the critical path M11-01 → M11-02 → M11-03 goes first.
+The wave is 13 tickets (10 planned plus the follow-ups M11-11T, M11-11 and M11-12 added 2026-09-28), four of them M-sized (M11-01, M11-05, M11-08, M11-09), not the four S-sized ideas listed in `docs/LAB_IDEAS.md`; the M11-10 review compares actual effort against that. Wave 1 closes before M11 dispatch (§13.5); the critical path M11-01 → M11-02 → M11-03 goes first.
 
 ## [ ] M11-01 — lab-addon sources and Lua lint
 **Size:** M · **Depends on:** —
@@ -45,16 +45,16 @@ Install with `wowlab addon install lab`; on each character log in, then log out 
 
 ---
 
-## [ ] M11-04 — `wowlab_core.labaddon` reader and `wowlab char show`
-**Size:** S · **Depends on:** M11-03, M10-14
+## [ ] M11-04 — `wowlab_core.labaddon` reader, `wowlab char show` and `looks import-char`
+**Size:** S · **Depends on:** M11-03, M10-14, M11-06
 
-Pydantic models per section and schema version; unknown keys kept; absent sections reported with the addon's reason. `wowlab char show [--json]`. The reader and `char show` handle `talents.legacy` present, absent (with its reason) and empty (below level 25), and an optional spec.
+Pydantic models per section and schema version; unknown keys kept; absent sections reported with the addon's reason. `wowlab char show [--json]`. The reader and `char show` handle `talents.legacy` present, absent (with its reason) and empty (below level 25), and an optional spec. The customization section is carried across sessions (§13.1): show it as "as of the last barber-shop visit with the addon enabled, N logins or reloads ago" from `recorded_load` and `probe.loads`, and say that a paid appearance change keeping the race is invisible to the addon. Also `wowlab looks import-char` (moved here from M11-06 on 2026-09-28 so the looks CLI need not wait for the capture): reads the capture's customization section into a look and checks it with the M11-05 model.
 
-**Acceptance:** every M11-03 fixture reads; `--json` validates; a constructed schema-2 document (labelled) is refused with a clear message.
+**Acceptance:** every M11-03 fixture reads; `--json` validates; a constructed schema-2 document (labelled) is refused with a clear message; `import-char` reads the M11-03 capture and a character without a recorded visit gets the addon's reason.
 
 ---
 
-## [ ] M11-05 — Customization tables and the looks model
+## [x] M11-05 — Customization tables and the looks model
 **Size:** M · **Depends on:** —
 
 Record the `ChrCustomization*`, `ChrRaces` and model tables for the Forever build from wago.tools as fixtures (ADR-0012; table set checked against the build listing). `wowlab_core.looks`: races, body types, options, choices, requirements; a look validated against it.
@@ -64,11 +64,11 @@ Record the `ChrCustomization*`, `ChrRaces` and model tables for the Forever buil
 ---
 
 ## [ ] M11-06 — `wowlab looks` CLI
-**Size:** S · **Depends on:** M11-05, M10-14 (and M11-04 for `import-char`)
+**Size:** S · **Depends on:** M11-05, M10-14
 
-`races`, `options`, `save`, `show`, `compare`, `import-char`; looks as JSON under the user data directory; `--json` on every data command.
+`races`, `options`, `save`, `show`, `compare`; looks as JSON under the user data directory; `--json` on every data command. `import-char` moved to M11-04 (2026-09-28).
 
-**Acceptance:** Typer-runner tests per command; `--json` validates; `import-char` reads the M11-03 capture.
+**Acceptance:** Typer-runner tests per command; `--json` validates.
 
 ---
 
@@ -81,7 +81,7 @@ One self-contained HTML file per ADR-0027 (inline CSS/JS, embedded JSON, CSP for
 
 ---
 
-## [ ] M11-08 — profiles
+## [x] M11-08 — profiles
 **Size:** M · **Depends on:** M10-14
 
 `wowlab profile save | apply | list | show | delete` per §13.3 on `snapshot` and `guard`; presets as data; the add-since-save behaviour decided and written into §13.3.
@@ -105,6 +105,33 @@ Graders for §13.4 on the M11-03 two-character captures and constructed document
 `wowlab sv merge` per §13.4. Activate graders by marker deletion only.
 
 **Acceptance:** all M11-09T graders green; reviewed by `security-reviewer` (it rewrites user data).
+
+---
+
+## [ ] M11-11T — guard reads never block graders [TEST]
+**Size:** S · **Depends on:** —
+
+Follow-up from the M11-08 security review (#96). `guard._read` opens with `O_RDONLY | O_BINARY | O_NOFOLLOW` but no `O_NONBLOCK`, and checks `fstat` only after the open returns, so a file swapped for a FIFO during a read blocks forever while guard holds the store and install locks. Graders (constructed, labelled; POSIX-only, skipped where `os.mkfifo` is missing): a FIFO in place of a file that guard reads during a restore or snapshot is refused as not a regular file within a bounded time, and nothing is written; a FIFO swapped in between the walk and the open (hooked the way the reviewer did) is refused the same way. `xfail(strict=True)` one marker line each.
+
+**Acceptance:** fail today for the missing behaviour only (with a test timeout, never a hang); satisfiable by a scratch patch; `make ci` green.
+
+---
+
+## [ ] M11-11 — guard reads never block [IMPL]
+**Size:** S · **Depends on:** M11-11T
+
+Open with `getattr(os, "O_NONBLOCK", 0)` as guard's lock-file open already does, then `fstat` must show a regular file. Activate graders by marker deletion only.
+
+**Acceptance:** all M11-11T graders green; full suite green (a `guard.py` change); reviewed by `security-reviewer`.
+
+---
+
+## [ ] M11-12 — profiles hardening follow-ups
+**Size:** S · **Depends on:** —
+
+Follow-ups from the M11-08 reviews (#96), `profiles.py` only: (a) `_differs` walks parent folders with directory descriptors (`dir_fd`, `O_NOFOLLOW` per component where the platform allows) so a parent swapped for a link between the check and the open is never read through; (b) `profile save` notes when `Interface/AddOns` or `WTF` (or any saved subtree root) is itself a link: "<path> is a link; this profile holds the link, not what is behind it".
+
+**Acceptance:** constructed, labelled tests for both on POSIX (a Windows junction case where it can be created); no read outside the install in (a); the note in human and `--json` output for (b); reviewed by `security-reviewer`.
 
 ---
 
