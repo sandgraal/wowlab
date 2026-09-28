@@ -59,6 +59,11 @@ criterion.
 
 Both are eligible now.
 
+Also open at handoff: Dependabot PRs #113 (GitHub Actions group, which touches
+`.github/`, so security-reviewer first), #114 (ruff 0.16.8 → 0.16.9, dev
+tooling) and #115 (platformdirs 4.11.10 → 4.11.14, runtime). Shepherd each
+once CI is green; a ruff bump can reformat, so check `make lint` on it.
+
 ## Owner decisions this wave (all recorded in the plan)
 
 - Wave 2 pick: lab-addon, customization sandbox (data-only), profiles, sv-merge.
