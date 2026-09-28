@@ -529,6 +529,7 @@ def test_no_operation_but_set_label_changes_a_manifest_file(
     (source / "WTF" / "Config.wtf").write_bytes(b"changed\n")
     m2 = store.create(source, SUBTREES, now=T1)
     store.list()
+    store.list_lenient()
     store.show(m1.id)
     store.diff(m1.id, m2.id)
     store.verify()
@@ -544,6 +545,7 @@ def test_no_operation_but_set_label_changes_a_manifest_file(
     assert mutators == {
         "create",
         "list",
+        "list_lenient",
         "show",
         "diff",
         "verify",
@@ -676,6 +678,21 @@ def test_store_and_source_must_not_overlap(source: Path, where: str) -> None:
     assert tree_state(source) == before
 
 
+@pytest.mark.parametrize("marker", [".build.info", ".flavor.info"])
+def test_a_store_inside_any_install_is_refused_before_anything_is_created_constructed(
+    source: Path, tmp_path: Path, marker: str
+) -> None:
+    """M10-14 fix round 2 (L1): not only the captured tree; a directory holding
+    `.build.info` or `.flavor.info` on the store's path is an install."""
+    other = tmp_path / "other-install"
+    other.mkdir()
+    (other / marker).write_bytes(b"")
+    store = SnapshotStore(other / "WTF" / "wowlab" / "store")
+    with pytest.raises(StoreLocationError, match="inside an install"):
+        store.create(source, SUBTREES, now=T0)
+    assert sorted(p.name for p in other.iterdir()) == [marker]
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
 def test_a_symlinked_store_inside_the_source_is_still_refused(source: Path, tmp_path: Path) -> None:
     alias = tmp_path / "alias"
@@ -712,6 +729,29 @@ def test_list_is_oldest_first_and_show_accepts_a_unique_prefix(
         store.show("20260921T12")
     with pytest.raises(SnapshotNotFoundError, match="no snapshot"):
         store.show("19990101")
+
+
+def test_list_lenient_names_damaged_manifests_and_keeps_the_rest_constructed(
+    source: Path, store: SnapshotStore
+) -> None:
+    """M10-14: one damaged manifest (constructed) hides nothing and is named."""
+    assert store.list_lenient().manifests == ()
+    assert store.list_lenient().ok
+    assert not store.path.exists(), "an absent store is an empty listing, not created"
+    m0 = store.create(source, SUBTREES, now=T0)
+    m1 = store.create(source, SUBTREES, label="second", now=T1)
+    damaged = manifest_file(store, m0.id).with_name("20260101T000000.000000Z-00000000.json")
+    damaged.write_bytes(b"{not json")
+    altered = manifest_file(store, m1.id)
+    assert b'"format":1,' in altered.read_bytes()
+    altered.write_bytes(altered.read_bytes().replace(b'"format":1,', b'"format":9,'))
+    listing = store.list_lenient()
+    assert [m.id for m in listing.manifests] == [m0.id]
+    assert [bad.name for bad in listing.invalid] == [damaged.name, altered.name]
+    assert all(bad.reason for bad in listing.invalid)
+    assert not listing.ok
+    with pytest.raises(ManifestIntegrityError):
+        store.list()
 
 
 @pytest.mark.parametrize(

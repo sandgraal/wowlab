@@ -61,6 +61,7 @@ __all__ = [
     "SnapshotDiff",
     "SnapshotError",
     "SnapshotExistsError",
+    "SnapshotListing",
     "SnapshotNotFoundError",
     "SnapshotStore",
     "StoreLocationError",
@@ -77,6 +78,8 @@ _ID_RE = re.compile(r"\A\d{8}T\d{6}\.\d{6}Z-[0-9a-f]{8}\Z")
 _ID_PREFIX_RE = re.compile(r"\A[0-9a-fTZ.\-]+\Z")
 _SHA_RE = re.compile(r"\A[0-9a-f]{64}\Z")
 _MANIFEST_SUFFIX = ".json"
+# What makes a directory an install or a flavor folder (docs/LAB_PLAN.md §6.1).
+_INSTALL_MARKERS = (".build.info", ".flavor.info")
 _ON_WINDOWS = sys.platform == "win32"
 _REPARSE_NAME_SURROGATE = 0x20000000
 """The bit in a Windows reparse tag that says "this names another path"
@@ -247,6 +250,18 @@ class MissingObject(_Frozen):
 class InvalidManifest(_Frozen):
     name: str
     reason: str
+
+
+class SnapshotListing(_Frozen):
+    """What `SnapshotStore.list_lenient()` found: every manifest that loads,
+    oldest first, and every file under `manifests/` that does not."""
+
+    manifests: tuple[Manifest, ...]
+    invalid: tuple[InvalidManifest, ...]
+
+    @property
+    def ok(self) -> bool:
+        return not self.invalid
 
 
 class VerifyReport(_Frozen):
@@ -556,6 +571,46 @@ class SnapshotStore:
             raise StoreLocationError(
                 f"the store ({store}) and the source tree ({source}) must not contain each other"
             )
+        self._refuse_inside_any_install()
+
+    def _refuse_inside_any_install(self) -> None:
+        """Refuse a store inside any install, not only the one being captured
+        (L1), before anything is created: the store is resolved (following
+        links), and it and every existing ancestor are examined. A directory
+        holding an entry named `.build.info` or `.flavor.info` (of any kind)
+        is an install, and so is one that cannot be examined. The marker rule
+        `guard` applies to the store (docs/LAB_PLAN.md §6.10, amended
+        2026-09-23)."""
+        try:
+            resolved = self.path.resolve()
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise StoreLocationError(f"cannot resolve the store {self.path}: {exc}") from exc
+        for candidate in (resolved, *resolved.parents):
+            try:
+                st = candidate.lstat()
+            except FileNotFoundError:
+                continue  # not created yet
+            except (OSError, ValueError) as exc:
+                raise StoreLocationError(
+                    f"the store {self.path}: cannot examine {candidate} ({exc}); "
+                    "it counts as an install"
+                ) from exc
+            if not stat.S_ISDIR(st.st_mode):
+                continue
+            for marker in _INSTALL_MARKERS:
+                try:
+                    (candidate / marker).lstat()
+                except FileNotFoundError:
+                    continue
+                except (OSError, ValueError) as exc:
+                    raise StoreLocationError(
+                        f"the store {self.path}: cannot examine {candidate} ({exc}); "
+                        "it counts as an install"
+                    ) from exc
+                raise StoreLocationError(
+                    f"the store {self.path} is inside an install ({candidate} holds {marker}); "
+                    "nothing was created"
+                )
 
     @staticmethod
     def _refuse_symlinked_parent(root: Path, subtree: str) -> None:
@@ -827,6 +882,24 @@ class SnapshotStore:
         raises.
         """
         return tuple(self._load(p) for p in self._manifest_files())
+
+    def list_lenient(self) -> SnapshotListing:
+        """Every snapshot that loads, oldest first, and each manifest file
+        that does not, named with the reason.
+
+        The lenient sibling of `list()`: one damaged manifest does not hide
+        the others, and it is never dropped silently either, since it is
+        named in `invalid`. Reads only; a store that does not exist is an
+        empty listing.
+        """
+        manifests: list[Manifest] = []
+        invalid: list[InvalidManifest] = []
+        for path in self._manifest_files():
+            try:
+                manifests.append(self._load(path))
+            except ManifestIntegrityError as exc:
+                invalid.append(InvalidManifest(name=path.name, reason=str(exc)))
+        return SnapshotListing(manifests=tuple(manifests), invalid=tuple(invalid))
 
     def read_object(self, sha256: str) -> bytes:
         """Decompressed content of one object, checked against its name."""

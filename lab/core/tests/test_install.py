@@ -158,6 +158,38 @@ def test_no_install_anywhere_raises_not_found_with_the_search_list(tmp_path: Pat
     )
 
 
+def test_defaults_that_could_not_be_checked_are_named_apart_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M10-14 amendment: a default that is not a directory, or whose check
+    raised, is "could not check", never "searched"."""
+    absent = tmp_path / "absent"
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    a_file = tmp_path / "a-file"
+    a_file.write_bytes(b"")
+    refused = tmp_path / "refused"
+    real_stat = Path.stat
+
+    def fake_stat(self: Path, *args: object, **kwargs: object) -> os.stat_result:
+        if self == refused:
+            raise PermissionError(13, "The device is not ready", str(self))
+        return real_stat(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "stat", fake_stat)
+    with pytest.raises(InstallNotFoundError) as caught:
+        discover(environ={}, defaults=[absent, a_file, empty, refused])
+
+    assert caught.value.searched == (absent, empty)
+    assert caught.value.unchecked == (a_file, refused)
+    assert caught.value.unchecked_reasons == ("not a directory", "The device is not ready")
+    assert str(caught.value) == (
+        f"no WoW install at the locations searched by default (searched: {absent}, {empty}; "
+        f"could not check: {a_file} (not a directory), {refused} (The device is not ready)); "
+        "pass the install folder (the one that holds .build.info) or set WOWLAB_WOW_ROOT"
+    )
+
+
 def test_explicit_root_without_build_info_raises_typed_error(tmp_path: Path) -> None:
     root = _make_install(tmp_path, None, {REAL_FOLDER: REAL_FLAVOR_INFO})
     default = _real_install(tmp_path / "default")

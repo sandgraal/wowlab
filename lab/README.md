@@ -14,7 +14,13 @@ distributed, deployed, or uploads anything (ADR-0019).
 ```bash
 make setup
 uv run wowlab --version
+uv run wowlab doctor     # the install, its flavors, whether the client runs, the store
+uv run wowlab --help     # every command (docs/LAB_PLAN.md §6.11)
 ```
+
+Exit codes: 0 ok, 1 error, 2 usage, 3 refused by the write gate. Only
+`wowlab snap restore` and `wowlab undo` change an install, both through the
+gate, and both print the plan and ask first unless given `--yes`.
 
 `WOWLAB_WOW_ROOT` points the tools at an install when it is not in a default
 location (`.env.example`).

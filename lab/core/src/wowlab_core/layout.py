@@ -94,6 +94,7 @@ _BLIZZARD_SV = "SavedVariables.lua"
 _INTERFACE = "Interface"
 _ADDONS = "AddOns"
 _FONTS = "Fonts"
+_SCREENSHOTS = "Screenshots"
 _SV_SUFFIX = ".lua"
 _BAK_SUFFIX = ".lua.bak"
 _TOC_SUFFIX = ".toc"
@@ -102,7 +103,7 @@ _BLIZZARD_ADDON_PREFIX = "Blizzard_"
 _AREAS = (
     "Cache",
     "Logs",
-    "Screenshots",
+    _SCREENSHOTS,
     "Errors",
     _FONTS,
     "BlizzardInterfaceCode",
@@ -922,6 +923,22 @@ class Layout:
             errors=tuple(report.errors),
             truncated=report.truncated,
         )
+
+    def snapshot_subtrees(self, *, screenshots: bool = False) -> tuple[str, ...]:
+        """The default snapshot subtrees of this flavor (LAB_PLAN §6.9),
+        relative to the flavor folder: `WTF/`, `Interface/` (which holds
+        `AddOns/` and the loose overrides outside it) and `Fonts/`, plus
+        `Screenshots/` when `screenshots` is set. Each is named as it is
+        spelled on disk (compared with case folded), or as the client
+        spells it when it is absent. `Cache/`, `Logs/`, `Errors/`, the
+        interface exports and anything outside the flavor folder (`Data/`)
+        are never among them. Lists the flavor folder only; reads nothing else.
+        """
+        names = [_WTF, _INTERFACE, _FONTS]
+        if screenshots:
+            names.append(_SCREENSHOTS)
+        report = _Report()
+        return tuple(self._child((), name, report) or name for name in names)
 
     def classify(
         self, path: Path | str, *, is_dir: bool | None = None
