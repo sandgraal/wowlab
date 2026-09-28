@@ -17,9 +17,9 @@ proposing one.
 | Install discovery | M10-05 | #40 |
 | Layout walker, file map, TOC parser | M10-06 | #45 |
 | `wtfconfig` (Config.wtf, bindings, macros), lossless | M10-07 | #39 |
-| Game data client (wago.tools, build-keyed) | M10-08 | #20 era |
-| Client process detection | M10-09 | #22 era |
-| Snapshot store | M10-10 | #44 era |
+| Game data client (wago.tools, build-keyed) | M10-08 | #19, #20 |
+| Client process detection | M10-09 | #17, #22 |
+| Snapshot store | M10-10 | #18, #24, #44 |
 | Write gate and restore (graders first) | M10-11T, M10-11 | #29, #41, #48, #43 |
 | `luadata` serializer (graders first) | M10-12T, M10-12 | #66, #74 |
 | Combat log tokenizer, `follow()`, `wowlab log tail` | M10-13 | #87 |
