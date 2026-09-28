@@ -58,6 +58,8 @@ __all__ = [
 LOOKS_FORMAT: Literal[1] = 1
 MAX_LOOK_BYTES = 1 << 20
 _SUFFIX = ".json"
+# ERROR_CANT_RESOLVE_FILENAME: Windows' word for a symlink loop (pathlib reads it too)
+_CANT_RESOLVE_FILENAME = 1921
 _NAME_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 # errno values meaning "this filesystem cannot make a hard link"
 _NO_HARD_LINKS = frozenset(
@@ -134,6 +136,15 @@ def refuse_install(path: Path, what: str = "saved looks") -> None:
         resolved = path.resolve()
     except (RuntimeError, OSError) as exc:
         raise LookLocationError(f"{path} cannot be resolved ({exc})") from None
+    try:
+        # Non-strict resolve() does not see every loop: on Windows a path
+        # through two links that name each other resolves without an error.
+        # A strict walk does; only a loop is refused here, a missing tail is
+        # the usual case for a file about to be written.
+        os.path.realpath(path, strict=True)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP or getattr(exc, "winerror", 0) == _CANT_RESOLVE_FILENAME:
+            raise LookLocationError(f"{path} cannot be resolved ({exc})") from None
     for candidate in (resolved, *resolved.parents):
         for marker in (BUILD_INFO, FLAVOR_INFO):
             if (candidate / marker).exists():

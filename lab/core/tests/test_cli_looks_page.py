@@ -621,15 +621,17 @@ def test_the_page_shows_home_as_a_tilde(
     report = cli.LooksPageReport.model_validate_json(result.stdout)
     page = Path(report.path).read_text(encoding="utf-8")
     data = _data(page)
-    looks_dir = "~/" + (user_data / "looks").relative_to(tmp_path).as_posix()
+    # Native separators, as `looks show` prints paths on this system.
+    looks_dir = str(Path("~") / (user_data / "looks").relative_to(tmp_path))
+    fine = str(Path(looks_dir) / "fine.json")
     assert data.looks_directory == looks_dir
-    assert data.looks[0].report.path == f"{looks_dir}/fine.json"
-    assert dict(data.looks[0].facts)["file"] == f"{looks_dir}/fine.json"
-    assert data.damaged[0].error.startswith(f"{looks_dir}/broken.json ")
+    assert data.looks[0].report.path == fine
+    assert dict(data.looks[0].facts)["file"] == fine
+    assert data.damaged[0].error.startswith(str(Path(looks_dir) / "broken.json") + " ")
     assert str(tmp_path) not in page
     printed = _json(cli.LookReport, "looks", "show", "fine", "--build", BUILD)
     assert printed.path == str(user_data / "looks" / "fine.json")  # the CLI keeps it whole
-    assert data.looks[0].report == printed.model_copy(update={"path": f"{looks_dir}/fine.json"})
+    assert data.looks[0].report == printed.model_copy(update={"path": fine})
 
 
 # ─── round 2 (#104 security review): other spellings of the user data path ───
@@ -675,7 +677,10 @@ def test_a_case_variant_is_refused_before_the_folder_exists_constructed(
 
 def test_a_case_variant_of_pages_is_still_pages_constructed(user_data: Path) -> None:
     (user_data / "pages").mkdir(parents=True)
-    out = user_data.with_name(user_data.name.upper()) / "PAGES" / "looks.html"
+    variant = user_data.with_name(user_data.name.upper())
+    if not (variant / "PAGES").exists():
+        pytest.skip("this volume is case-sensitive")
+    out = variant / "PAGES" / "looks.html"
     ok("looks", "page", "--build", BUILD, "--out", str(out))
     assert (user_data / "pages" / "looks.html").read_bytes().startswith(lookspage.PAGE_HEADER)
 
