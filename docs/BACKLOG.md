@@ -147,13 +147,15 @@ Graders for `wowlab_core.guard` from `docs/LAB_PLAN.md` §6.10 and ADR-0021, aga
 
 ---
 
-## [ ] M10-12T — luadata serializer graders [TEST]
+## [x] M10-12T — luadata serializer graders [TEST]
 **Size:** S · **Depends on:** M10-04
 
 Graders from `docs/LAB_PLAN.md` §6.4 (serializer half) and `docs/LAB_FORMATS.md` §4.2: `serialize(parse(x)) == x` byte for byte for every real SavedVariables fixture (parametrized over the index); after changing one leaf, every untouched sibling subtree's bytes are unchanged; a new positional entry, string key and number key follow the source document's own detected style (indentation or none, `-- [n]` comments or none, separators, line endings; owner decision 2026-09-22, §6.4), graded on an unindented Forever fixture and a constructed tab-indented, commented document (labelled `constructed`, L8: a stand-in until a real capture shows that style; replace it when one does); a new document with no source follows the sibling-file style, else §4.2; a property absent from the document falls back the same way; 100 runs produce identical bytes, including under a non-C locale. `xfail(strict=True, reason="M10-12 not implemented")`.
 
 **Acceptance:** graders fail today for the asserted reason.
 
+
+*Merged 2026-09-28 (#66): 142 graders of the §6.4 amendment of 2026-09-27, items 1–9 (owner decisions: fallback layout, pairing, newest sibling wins, data only; clarifications #70, #71). For M10-12: a refused `Entry.comment` is positioned at its `--` and a refused `nil` at `nil` (conductor ruling). Not graded yet: positions in CR-only or LF-CR documents; `lab_written` through a symlink.*
 ---
 
 ## [ ] M10-12 — luadata serializer [IMPL]
@@ -172,6 +174,8 @@ Graders from `docs/LAB_PLAN.md` §6.4 (serializer half) and `docs/LAB_FORMATS.md
 
 
 *Amended 2026-09-27 (owner, 2026-09-24): the Forever fixture is an open-world log with no `COMBATANT_INFO` and no `[...]`/`(...)` groups (`docs/LAB_FORMATS.md` §8 amendment). Until a real boss-pull log is captured (the owner will record one), quoted commas and nested groups are graded on constructed lines labelled `constructed` (L8), written from §8 and community documentation and marked **[verify]**; every line of the real fixture must still tokenize. When a real `COMBATANT_INFO` line is committed, a grader on it replaces the constructed one. Records carry shifted timestamps (M10-02 follow-up 5): the tokenizer must not assume the timestamp is the real time.*
+
+*Amended 2026-09-28 from the M10-14 review: `wowlab log tail` (§6.11) is built with this ticket, on top of `combatlog.follow()`, since M10-14 shipped without it.*
 ---
 
 ## [ ] M10-14 — `wowlab` CLI
@@ -206,6 +210,24 @@ Graders for the 2026-09-22 amendment to `docs/LAB_PLAN.md` §6.10 (owner decisio
 **Acceptance:** all M10-16T graders and every existing guard grader, as amended by M10-16T, green; the write-site test green; `lab (windows)` green on the PR's final head with the run link pasted in the PR; reviewed by `security-reviewer`.
 
 *Follow-ups recorded 2026-09-23 at merge (#59), not part of this ticket's acceptance: graders (a test-writer ticket) for behaviour the M10-16 reviews verified only with scratch probes: the Windows lock at offset 2^30; store and lock places refused inside any install (including `store_lock`); lock files with more than one link refused; an unreadable journal refused before the snapshot; journal and manifest paths looked up only when local absolute; a forked child neither unlocking nor committing; locks handed to a transaction covering its store and install; an interrupted mutation breaking the transaction; and rules no grader pins yet: store-before-install lock order, the cleanup's chain re-check after the unlink, the link refusals on the user data directory and `locks/`, and a Windows junction at `locks/` or the user data directory.*
+
+---
+
+## [ ] M10-17T — Guard store creation and undo-by-id graders [TEST]
+**Size:** S · **Depends on:** M10-16, M10-14
+
+Graders from the M10-14 reviews (2026-09-27/28), for `lab/core/src/wowlab_core/guard.py`'s public API: (1) `guard.store_lock(store, create=True)` refuses a store inside any install (a `.build.info`/`.flavor.info` marker on the place or an ancestor, through links and junctions) before anything at the path is created, then creates the store and takes the lock, so a first `snap create` holds the store lock like every later one; (2) `guard.undo(..., expected_id=...)` checks the journal's last record id under the store lock and refuses with nothing written when it differs, so an undo never acts on a record the user did not approve. Each grader `xfail(strict=True)` with one marker line, activated by marker deletion. The session that writes these never writes M10-17.
+
+**Acceptance:** every grader fails today for the missing behaviour only; a scratch patch (not committed) shows they are satisfiable; a mutant per behaviour turns its graders red; `make ci` green.
+
+---
+
+## [ ] M10-17 — Guard store creation and undo-by-id [IMPL]
+**Size:** S · **Depends on:** M10-17T
+
+`guard.store_lock(create=True)` and `guard.undo(expected_id=...)` per M10-17T; then the CLI takes the store lock for the first `snap create` (dropping the one-hour gc grace as the only protection, or keeping it as defence in depth; say which) and passes `expected_id` from `undo`, and `snapshot.py`'s copy of the inside-any-install rule is replaced by guard's. Activate graders by marker deletion only.
+
+**Acceptance:** all M10-17T graders and every existing guard grader green; the write-site test green; `lab (windows)` green on the final head; reviewed by `security-reviewer`.
 
 ---
 
