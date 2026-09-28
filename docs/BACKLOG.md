@@ -14,7 +14,7 @@ The backlog holds the current wave only (ADR-0024). Milestone numbers start at `
 
 Spec: `docs/LAB_PLAN.md` §13. Decisions: ADR-0026, ADR-0027 (accepted 2026-09-28). Owner pick 2026-09-28. L1–L8 apply to every ticket.
 
-The wave is 13 tickets (10 planned plus the follow-ups M11-11T, M11-11 and M11-12 added 2026-09-28), four of them M-sized (M11-01, M11-05, M11-08, M11-09), not the four S-sized ideas listed in `docs/LAB_IDEAS.md`; the M11-10 review compares actual effort against that. Wave 1 closes before M11 dispatch (§13.5); the critical path M11-01 → M11-02 → M11-03 goes first.
+The wave is 15 tickets (10 planned plus the follow-ups M11-11T, M11-11, M11-12, M11-13 and M11-14 added 2026-09-28), four of them M-sized (M11-01, M11-05, M11-08, M11-09), not the four S-sized ideas listed in `docs/LAB_IDEAS.md`; the M11-10 review compares actual effort against that. Wave 1 closes before M11 dispatch (§13.5); the critical path M11-01 → M11-02 → M11-03 goes first.
 
 ## [ ] M11-01 — lab-addon sources and Lua lint
 **Size:** M · **Depends on:** —
@@ -48,9 +48,9 @@ Install with `wowlab addon install lab`; on each character log in, then log out 
 ## [ ] M11-04 — `wowlab_core.labaddon` reader, `wowlab char show` and `looks import-char`
 **Size:** S · **Depends on:** M11-03, M10-14, M11-06
 
-Pydantic models per section and schema version; unknown keys kept; absent sections reported with the addon's reason. `wowlab char show [--json]`. The reader and `char show` handle `talents.legacy` present, absent (with its reason) and empty (below level 25), and an optional spec. The customization section is carried across sessions (§13.1): show it as "as of the last barber-shop visit with the addon enabled, N logins or reloads ago" from `recorded_load` and `probe.loads`, and say that a paid appearance change keeping the race is invisible to the addon. Also `wowlab looks import-char` (moved here from M11-06 on 2026-09-28 so the looks CLI need not wait for the capture): reads the capture's customization section into a look and checks it with the M11-05 model.
+Pydantic models per section and schema version; unknown keys kept, but a string value is accepted only in the fields the addon writes as strings (`link`, `export`, the enum-like fields such as `recorded_at`), so a hand-edited or tampered capture cannot pass free text through (#97 security review); exact numeric and boolean types; absent sections reported with the addon's reason. `wowlab char show [--json]`. The reader and `char show` handle `talents.legacy` present, absent (with its reason) and empty (below level 25), and an optional spec. The customization section is carried across sessions (§13.1): show it as "as of the last barber-shop visit with the addon enabled, N logins or reloads ago" from `recorded_load` and `probe.loads`, and say that a paid appearance change keeping the race is invisible to the addon. Also `wowlab looks import-char` (moved here from M11-06 on 2026-09-28 so the looks CLI need not wait for the capture): reads the capture's customization section into a look and checks it with the M11-05 model.
 
-**Acceptance:** every M11-03 fixture reads; `--json` validates; a constructed schema-2 document (labelled) is refused with a clear message; `import-char` reads the M11-03 capture and a character without a recorded visit gets the addon's reason.
+**Acceptance:** every M11-03 fixture reads; `--json` validates; a constructed schema-2 document (labelled) is refused with a clear message; `import-char` reads the M11-03 capture and a character without a recorded visit gets the addon's reason; a saved look records its origin (typed or imported) so `show`/`compare` keep the right unknown-id wording (#101 domain review).
 
 ---
 
@@ -108,30 +108,48 @@ Graders for §13.4 on the M11-03 two-character captures and constructed document
 
 ---
 
-## [ ] M11-11T — guard reads never block graders [TEST]
+## [ ] M11-11T — guard and store reads never block graders [TEST]
 **Size:** S · **Depends on:** —
 
-Follow-up from the M11-08 security review (#96). `guard._read` opens with `O_RDONLY | O_BINARY | O_NOFOLLOW` but no `O_NONBLOCK`, and checks `fstat` only after the open returns, so a file swapped for a FIFO during a read blocks forever while guard holds the store and install locks. Graders (constructed, labelled; POSIX-only, skipped where `os.mkfifo` is missing): a FIFO in place of a file that guard reads during a restore or snapshot is refused as not a regular file within a bounded time, and nothing is written; a FIFO swapped in between the walk and the open (hooked the way the reviewer did) is refused the same way. `xfail(strict=True)` one marker line each.
+Follow-up from the M11-08 security review (#96). `guard._read` opens with `O_RDONLY | O_BINARY | O_NOFOLLOW` but no `O_NONBLOCK`, and checks `fstat` only after the open returns, so a file swapped for a FIFO during a read blocks forever while guard holds the store and install locks. Graders (constructed, labelled; POSIX-only, skipped where `os.mkfifo` is missing): a FIFO swapped in between the walk and the open (hooked the way the reviewer did) at every `guard._read` site is refused within a bounded time, and nothing is written; a FIFO already in place before the walk is refused today and is pinned as passing (amended 2026-09-28 after #99's review). Scope widened 2026-09-28 (#99 code and security reviews): the same blocking read in `snapshot.SnapshotStore._capture` (lstat then open without `O_NONBLOCK`, run inside guard's pre-write snapshot and by `snap create`/`profile save`), `SnapshotStore.read_object` (`read_bytes` with no type check, follows links, no size cap: a FIFO planted at a predictable object path blocks restore and undo with no race), and `guard._load_journal` (lstat then `read_bytes`, so a swapped symlink passes the size check). Also an empty-target case, so the `fstat` check is necessary. `xfail(strict=True)` one marker line each.
 
 **Acceptance:** fail today for the missing behaviour only (with a test timeout, never a hang); satisfiable by a scratch patch; `make ci` green.
 
 ---
 
-## [ ] M11-11 — guard reads never block [IMPL]
+## [ ] M11-11 — guard and store reads never block [IMPL]
 **Size:** S · **Depends on:** M11-11T
 
-Open with `getattr(os, "O_NONBLOCK", 0)` as guard's lock-file open already does, then `fstat` must show a regular file. Activate graders by marker deletion only.
+In `guard.py` and `snapshot.py` (widened 2026-09-28): open with `getattr(os, "O_NONBLOCK", 0)` (and `O_NOCTTY`) as guard's lock-file open already does, then `fstat` must show a regular file, in `guard._read`, `guard._load_journal`, `SnapshotStore._capture` and `SnapshotStore.read_object`; `read_object` and `_load_journal` also open with `O_NOFOLLOW` and read at most their size cap plus one byte; close the descriptor on every path (no `os.fdopen` on an unchecked descriptor, the leak fixed in `profiles._hash_fd` by #100). Sweep the other store reads with the same pattern (manifest `_load`, `_rehash`) and list what changed. Activate graders by marker deletion only, including review probe 74cfbde.
 
-**Acceptance:** all M11-11T graders green; full suite green (a `guard.py` change); reviewed by `security-reviewer`.
+**Acceptance:** all M11-11T graders and 74cfbde green; full suite green (a `guard.py` change); reviewed by `security-reviewer`.
 
 ---
 
-## [ ] M11-12 — profiles hardening follow-ups
+## [x] M11-12 — profiles hardening follow-ups
 **Size:** S · **Depends on:** —
 
 Follow-ups from the M11-08 reviews (#96), `profiles.py` only: (a) `_differs` walks parent folders with directory descriptors (`dir_fd`, `O_NOFOLLOW` per component where the platform allows) so a parent swapped for a link between the check and the open is never read through; (b) `profile save` notes when `Interface/AddOns` or `WTF` (or any saved subtree root) is itself a link: "<path> is a link; this profile holds the link, not what is behind it".
 
 **Acceptance:** constructed, labelled tests for both on POSIX (a Windows junction case where it can be created); no read outside the install in (a); the note in human and `--json` output for (b); reviewed by `security-reviewer`.
+
+---
+
+## [ ] M11-13 — lab-addon static-check hardening
+**Size:** S · **Depends on:** M11-01
+
+Follow-ups from the #97 reviews (owner decision 2026-09-28: merge #97, defer these). In `tests/addon/test_lab_addon.py`: move the carry value check onto tokens so every chain starting `r.`, `r[`, `c.` or `c[` inside `carry` is allowed only as the argument of `type(...)`/`ipairs(...)`, one side of `== "<literal>"`, the `X` in `type(X) == "number" and X or nil`, or the whole right-hand side of an assignment directly inside `if type(X) == "number" then`; activate review probe f321c1a by marker deletion. In the addon: type-check each API return before storing it (the 12 sites the security review listed), so a whole API table can never be written. Deliberate obfuscation (aliasing a client table or `ns`, keys built with `string.format`/`string.lower`) stays review-only; say so in the test module docstring.
+
+**Acceptance:** f321c1a green with its marker deleted; mutation proof for the new rule; selene and `make ci` green; reviewed by `security-reviewer`.
+
+---
+
+## [ ] M11-14 — small CLI follow-ups
+**Size:** S · **Depends on:** M11-06
+
+From the #101 reviews: `db2 fetch`/`db2 head` turn a malformed `--build` or table name into a usage error (exit 2), not an uncaught `ValueError`; `looks` `_choice_ref` gives `choice_name: null` when the choice is not in that option; `compare --json` states the tables-only remark once; the "no race" message prints the trimmed argument. From #100: a sentence in §13.3 that on POSIX a real file with `:` or `\` in its name always counts as changed in the profiles fallback path (harmless: guard rewrites the saved bytes).
+
+**Acceptance:** a test per item; `make ci` green.
 
 ---
 
