@@ -300,7 +300,6 @@ def test_nothing_below_a_folder_over_the_bound_decides(
 
 @pytest.mark.parametrize("reverse", ORDERS, ids=ORDER_IDS)
 @pytest.mark.parametrize("site", FILE_SITES)
-@pytest.mark.xfail(strict=True, reason="M10-18 not implemented")
 def test_a_folder_over_the_bound_is_skipped_whole(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, site: str, reverse: bool
 ) -> None:
@@ -315,7 +314,6 @@ def test_a_folder_over_the_bound_is_skipped_whole(
 
 @pytest.mark.parametrize("reverse", ORDERS, ids=ORDER_IDS)
 @pytest.mark.parametrize("site", list(SITES))
-@pytest.mark.xfail(strict=True, reason="M10-18 not implemented")
 def test_an_oversized_folder_is_never_read_in_full(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, site: str, reverse: bool
 ) -> None:
@@ -335,7 +333,6 @@ def test_an_oversized_folder_is_never_read_in_full(
     sys.platform == "win32",
     reason="creates 65,537 real files, slow on the Windows runner; the padded graders run there",
 )
-@pytest.mark.xfail(strict=True, reason="M10-18 not implemented")
 def test_a_real_folder_over_the_bound_is_skipped_whole(tmp_path: Path) -> None:
     """65,537 real entries (the newest sibling and 65,536 empty `.txt`
     files) in account `B`'s `SavedVariables`, nothing patched: the folder
