@@ -504,9 +504,18 @@ def test_stored_item_links_only_come_from_crafter_blanking() -> None:
 
 
 def _fn_call_problems(path: Path, tokens: list[Token]) -> list[str]:
-    """Every `ns.Fn(` call, other than its definition, is `ns.Fn(<Name>, "<literal>")`,
-    so no API can be looked up by a computed key."""
+    """Checks, on tokens: every `ns.Fn(` call other than its definition
+    (`function ns.Fn(`) is exactly `ns.Fn(<Name>, "<string literal>")`; `ns.Fn`
+    never appears except followed by `(` (so it is never aliased or passed
+    around); and no string literal is "Fn" (so it is not reached as `ns["Fn"]`)."""
     problems = []
+    for i, t in enumerate(tokens):
+        if t.kind == "string" and t.text == "Fn":
+            problems.append(f"{_where(path, t)} string literal 'Fn'")
+        if [x.text for x in tokens[i : i + 3]] == ["ns", ".", "Fn"] and (
+            i + 3 >= len(tokens) or tokens[i + 3].text != "("
+        ):
+            problems.append(f"{_where(path, t)} ns.Fn not followed by '('")
     for i in range(len(tokens) - 3):
         if [t.text for t in tokens[i : i + 4]] != ["ns", ".", "Fn", "("]:
             continue
@@ -615,43 +624,166 @@ def test_raw_item_link_only_reaches_item_level_and_blanking() -> None:
     assert not problems, problems
 
 
-def _binding_rhs(lines: list[str], name: str) -> list[str]:
-    """Right-hand sides of `local <name> = ...` lines (one line each)."""
-    pattern = re.compile(rf"^\s*local\s+{re.escape(name)}\s*=\s*(.*)$")
-    return [m.group(1) for line in lines if (m := pattern.match(line))]
+_BINARY_OPS = frozenset(
+    {"and", "or", "..", "+", "-", "*", "/", "%", "^", "==", "~=", "<", ">", "<=", ">="}
+)
+_CONTINUES = _BINARY_OPS | {".", ":", "[", "(", "{"}
 
 
-def _loop_source(lines: list[str], name: str) -> list[str]:
-    """For `for a, <name> in pairs(X) do`: the X of each such loop."""
-    pattern = re.compile(
-        rf"^\s*for\s+[\w\s,]*\b{re.escape(name)}\b[\w\s,]*\s+in\s+i?pairs\((\w+)\)\s+do\s*$"
+def _std_top_level() -> set[str]:
+    return {name.split(".")[0] for name in _std_globals()}
+
+
+def _chain_end(tokens: list[Token], i: int) -> tuple[str, int]:
+    """The dotted name `A.B.C` starting at token i, and the index after it."""
+    parts = [tokens[i].text]
+    j = i + 1
+    while j + 1 < len(tokens) and tokens[j].text == "." and tokens[j + 1].kind == "name":
+        parts.append(tokens[j + 1].text)
+        j += 2
+    return ".".join(parts), j
+
+
+def _ends_expression(tokens: list[Token], j: int) -> bool:
+    return j >= len(tokens) or (
+        tokens[j].text not in _CONTINUES and tokens[j].kind not in {"string", "number"}
     )
-    return [m.group(1) for line in lines if (m := pattern.match(line))]
+
+
+def _classify_rhs(tokens: list[Token], j: int, std: set[str]) -> bool:
+    """Is the expression starting at token j one of: a table constructor
+    `{...}`, `nil`, a std-declared client table `A.B`, or
+    `type(A) == "table" and A.B or nil` with `A.B` std-declared? Nothing may
+    follow it in the same expression."""
+    if j >= len(tokens):
+        return False
+    first = tokens[j]
+    if first.text == "{":
+        depth = 0
+        for k in range(j, len(tokens)):
+            if tokens[k].text == "{":
+                depth += 1
+            elif tokens[k].text == "}":
+                depth -= 1
+                if depth == 0:
+                    return _ends_expression(tokens, k + 1)
+        return False
+    if first.text == "nil":
+        return _ends_expression(tokens, j + 1)
+    if first.kind == "name" and first.text == "type":
+        head = [t.text for t in tokens[j : j + 7]]
+        guarded = (
+            len(head) == 7
+            and head[1] == "("
+            and head[3] == ")"
+            and head[4] == "=="
+            and tokens[j + 5].kind == "string"
+            and tokens[j + 5].text == "table"
+            and head[6] == "and"
+        )
+        if guarded:
+            chain, k = _chain_end(tokens, j + 7)
+            if chain in std and chain.split(".")[0] == head[2]:
+                tail = [t.text for t in tokens[k : k + 2]]
+                return tail == ["or", "nil"] and _ends_expression(tokens, k + 2)
+        return False
+    if first.kind == "name":
+        chain, k = _chain_end(tokens, j)
+        return chain in std and _ends_expression(tokens, k)
+    return False
+
+
+def _function_params(tokens: list[Token]) -> set[str]:
+    params = set()
+    for i, t in enumerate(tokens):
+        if t.text != "function":
+            continue
+        k = i + 1
+        while k < len(tokens) and tokens[k].text != "(":
+            k += 1
+        k += 1
+        while k < len(tokens) and tokens[k].text != ")":
+            if tokens[k].kind == "name":
+                params.add(tokens[k].text)
+            k += 1
+    return params
+
+
+def _bindings(tokens: list[Token], name: str) -> list[tuple[str, int]]:
+    """Every place `name` is assigned or bound, as (kind, index):
+    ("assign", index of the first rhs token) for `[local] name = rhs`;
+    ("multi", i) for a multiple assignment or a loop key; ("loop", index of
+    the iterated name) for `for k, name in pairs|ipairs(X) do`."""
+    found = []
+    for i, t in enumerate(tokens):
+        if t.kind != "name" or t.text != name or _is_field(tokens, i):
+            continue
+        prev = tokens[i - 1].text if i > 0 else ""
+        nxt = tokens[i + 1].text if i + 1 < len(tokens) else ""
+        # for <names> in ...
+        k = i
+        while k > 0 and tokens[k - 1].text == "," and tokens[k - 2].kind == "name":
+            k -= 2
+        in_for = k > 0 and tokens[k - 1].text == "for"
+        if in_for:
+            names_end = i
+            while tokens[names_end + 1].text == ",":
+                names_end += 2
+            position = (i - k) // 2
+            source = tokens[names_end + 2 : names_end + 6]
+            ok = (
+                tokens[names_end + 1].text == "in"
+                and position == 1
+                and len(source) == 4
+                and source[0].text in {"pairs", "ipairs"}
+                and source[1].text == "("
+                and source[2].kind == "name"
+                and source[3].text == ")"
+            )
+            found.append(("loop", names_end + 4) if ok else ("multi", i))
+            continue
+        if nxt == "," or (prev == "," and tokens[k - 1].text == "local"):
+            # part of a name list; is it being assigned?
+            j = i
+            while tokens[j + 1].text == ",":
+                j += 2
+            if tokens[j + 1].text == "=" or prev == ",":
+                found.append(("multi", i))
+            continue
+        if nxt == "=":
+            found.append(("assign", i + 2))
+    return found
 
 
 @pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
 def test_pairs_and_next_never_walk_an_api_result(path: Path) -> None:
     """Walking the keys of an API result could copy unknown fields (a name,
-    a GUID) into the capture. `pairs`/`next` take a bare name that is a table
-    the addon builds, a client table (Enum/Constants, not a call result), or a
-    loop value of one of those; never a call or a value bound from a call."""
+    a GUID) into the capture. On tokens, across line breaks: the argument of
+    `pairs`/`next` is a bare name, and EVERY assignment or binding of that name
+    in the file must be classifiable as a table constructor `{...}`, `nil`, a
+    std-declared client table (`Enum.X`, `Constants`, optionally as
+    `type(Enum) == "table" and Enum.X or nil`), or the value of a
+    `for _, v in pairs|ipairs(Y)` loop over a name that passes the same test.
+    A name with no binding must be a std-declared client table. Function
+    parameters, multiple assignments and anything else fail (closed)."""
     tokens = _tokens(path)
-    lines = [re.sub(r"--.*$", "", line) for line in path.read_text(encoding="utf-8").splitlines()]
     std = _std_globals()
+    params = _function_params(tokens)
     problems = []
 
     def allowed(name: str, depth: int = 0) -> bool:
-        if depth > 4:
+        if depth > 4 or name in params:
             return False
-        rhs = _binding_rhs(lines, name)
-        loops = _loop_source(lines, name)
-        if not rhs and not loops:
+        found = _bindings(tokens, name)
+        if not found:
             return name in std or any(g.startswith(name + ".") for g in std)
-        for text in rhs:
-            without_type = re.sub(r"\btype\(\w+\)", "", text)
-            if "(" in without_type:
-                return False
-        return all(allowed(source, depth + 1) for source in loops)
+        for kind, j in found:
+            if kind == "assign" and _classify_rhs(tokens, j, std):
+                continue
+            if kind == "loop" and allowed(tokens[j].text, depth + 1):
+                continue
+            return False
+        return True
 
     for i, t in enumerate(tokens):
         if t.kind != "name" or t.text not in {"pairs", "next"} or _is_field(tokens, i):
@@ -660,8 +792,27 @@ def test_pairs_and_next_never_walk_an_api_result(path: Path) -> None:
         if tokens[i + 1].text != "(" or arg.kind != "name" or close.text != ")":
             problems.append(f"{_where(path, t)} {t.text} over {_render(tokens[i + 1 : i + 6])!r}")
         elif not allowed(arg.text):
-            problems.append(f"{_where(path, t)} {t.text}({arg.text}): bound from a call")
+            problems.append(
+                f"{_where(path, t)} {t.text}({arg.text}): a binding is not a built or client table"
+            )
     assert not problems, problems
+
+
+@pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
+def test_std_globals_are_never_indexed_by_brackets(path: Path) -> None:
+    """A global declared in wow_client.yml (client or the addon's own) is never
+    directly followed by `[`, so no field of it is reached by a computed key."""
+    tokens = _tokens(path)
+    top = _std_top_level()
+    bad = [
+        f"{_where(path, t)} {t.text}["
+        for i, t in enumerate(tokens[:-1])
+        if t.kind == "name"
+        and t.text in top
+        and not _is_field(tokens, i)
+        and tokens[i + 1].text == "["
+    ]
+    assert not bad, bad
 
 
 _CONCAT = re.compile(r"(?<!\.)\.\.(?!\.)")  # the `..` operator, not the `...` vararg
@@ -669,9 +820,12 @@ _CONCAT = re.compile(r"(?<!\.)\.\.(?!\.)")  # the `..` operator, not the `...` v
 
 @pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
 def test_no_concatenated_value_is_used_as_an_index(path: Path) -> None:
-    """A name assigned an expression containing `..` never appears inside
-    `[...]`, so no key is assembled at run time (with the `..`-inside-`[...]`
-    rule above, and literal `ns.Fn` keys)."""
+    """Checks, line by line: a name on the left of an assignment whose
+    right-hand side contains the `..` operator (on that line or on
+    continuation lines starting with `..`) is never a token inside `[...]`
+    anywhere in the file. With the `..`-inside-`[...]` rule above, this keeps
+    concatenated strings out of index expressions; it does not trace values
+    through function calls or table fields."""
     tokens = _tokens(path)
     # Line-based: `local a, b = <expr>` / `a = <expr>`, plus continuation lines
     # that start with `..` (they extend the previous assignment).
@@ -761,6 +915,51 @@ def test_carried_customization_is_rebuilt_from_checked_values() -> None:
             if not (inline or numeric or enum):
                 problems.append(f"line {n}: unchecked copy of {access}: {line.strip()!r}")
     assert not problems, problems
+
+
+def _carry_body(tokens: list[Token]) -> tuple[int, int]:
+    """Token range of the body of `carry = function(saved) ... end` (block
+    keywords counted, so it does not depend on formatting)."""
+    head = ["carry", "=", "function", "(", "saved", ")"]
+    start = next(i for i in range(len(tokens)) if [t.text for t in tokens[i : i + 6]] == head)
+    depth = 1
+    for k in range(start + 6, len(tokens)):
+        text = tokens[k].text if tokens[k].kind == "name" else ""
+        if text in {"function", "if", "do", "repeat"}:
+            depth += 1
+        elif text in {"end", "until"}:
+            depth -= 1
+            if depth == 0:
+                return start + 6, k
+    raise AssertionError("carry has no matching end")
+
+
+def test_carry_reads_saved_tables_only_through_fields() -> None:
+    """Security review, M11-01 (round 3), on tokens: inside `carry`, the names
+    `saved`, `r` and `c` (the saved file, its customization record and each
+    saved choice) appear only immediately followed by `.` or `[`, as the sole
+    argument of `type(...)` or `ipairs(...)`, or where they are bound
+    (`local r =`, `for _, c in`). Passing one to a call (`table.insert(t, c)`),
+    storing it as a value or putting it in a table constructor fails."""
+    path = ADDON / "Customization.lua"
+    tokens = _tokens(path)
+    body_start, body_end = _carry_body(tokens)
+    bad = []
+    for i in range(body_start, body_end):
+        t = tokens[i]
+        if t.kind != "name" or t.text not in {"saved", "r", "c"} or _is_field(tokens, i):
+            continue
+        prev, nxt = tokens[i - 1].text, tokens[i + 1].text
+        if nxt in {".", "["}:
+            continue
+        if prev == "(" and tokens[i - 2].text in {"type", "ipairs"} and nxt == ")":
+            continue
+        if t.text == "r" and prev == "local" and nxt == "=":
+            continue
+        if t.text == "c" and prev == "," and nxt == "in":
+            continue
+        bad.append(f"{_where(path, t)} {_render(tokens[i - 3 : i + 3])!r}")
+    assert not bad, bad
 
 
 # --- API inventory: std file, sources, README -----------------------------------

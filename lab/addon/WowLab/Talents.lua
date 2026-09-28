@@ -5,8 +5,7 @@
 -- missing:
 --   talents.class   the class talents active now, the last selected saved
 --                   loadout's config id, and the loadout export string;
---   talents.legacy  the Legacy trees (the panel ToggleLegacySystemUI opens,
---                   unlocked at level 25); empty below that level.
+--   talents.legacy  Legacy-tree candidates: every non-Combat, non-Profession trait config (the panel ToggleLegacySystemUI opens, unlocked at level 25); empty below that level.
 -- No loadout names: C_Traits.GetConfigInfo's `name` is text the owner typed
 -- and is never read.
 --
