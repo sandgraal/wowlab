@@ -152,7 +152,6 @@ def _forever_install(root: Path) -> Path:
     return install(root, {"_lab_one_": files})
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize("name", SAVEDVARIABLES)
 def test_serialize_parse_is_the_file_byte_for_byte(luadata: Any, name: str) -> None:
     """L4 and §6.4: `serialize(parse(x)) == x` for every indexed capture."""
@@ -162,7 +161,6 @@ def test_serialize_parse_is_the_file_byte_for_byte(luadata: Any, name: str) -> N
     assert out == data
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize("name", SAVEDVARIABLES)
 def test_serialize_read_copy_is_the_file_byte_for_byte(
     luadata: Any, name: str, tmp_path: Path
@@ -173,7 +171,6 @@ def test_serialize_read_copy_is_the_file_byte_for_byte(
     assert luadata.serialize(luadata.read(copy)) == fixture(name)
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize("name", SAVEDVARIABLES)
 def test_unmodified_file_ignores_constructed_sibling_style(
     luadata: Any, name: str, tmp_path: Path
@@ -251,7 +248,6 @@ def _scalar(luadata: Any, kind: str, value: Any) -> Any:
     return {"number": number, "string": string, "bool": boolean}[kind](luadata, value)
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize("keep_lead", [True, False], ids=["lead-kept", "lead-none"])
 @pytest.mark.parametrize(("name", "variable", "steps", "new", "expected"), LEAF_EDITS)
 def test_leaf_edit_changes_only_that_leaf(
@@ -358,7 +354,6 @@ NEW_ENTRIES = [
 ]
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize(("name", "variable", "steps", "new", "expected"), NEW_ENTRIES)
 def test_new_entries_follow_the_unindented_forever_style(
     luadata: Any,
@@ -379,7 +374,6 @@ def test_new_entries_follow_the_unindented_forever_style(
     assert luadata.serialize(doc) == expected(source)
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 def test_new_assignment_follows_the_forever_style(luadata: Any) -> None:
     """A new top-level assignment goes on its own line after the last one;
     the file's tail stays after it."""
@@ -392,7 +386,6 @@ def test_new_assignment_follows_the_forever_style(luadata: Any) -> None:
     assert luadata.serialize(doc) == source + b'LabNewVar = "text"\r\n'
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 def test_one_new_node_object_placed_twice_is_laid_out_per_place(luadata: Any) -> None:
     """Placement, not identity: the same new entry object appended to a
     depth-1 and a depth-4 table of a Forever file (no indentation, so the
@@ -447,7 +440,6 @@ def _siblings(case: str) -> dict[str, bytes] | None:
     return None
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize("case", list(RARESCANNER_NEW_TABLE_EXPECTED))
 def test_table_in_a_file_without_one_takes_the_pairing_from_siblings_else_the_fallback(
     luadata: Any, case: str, tmp_path: Path
@@ -486,7 +478,6 @@ def test_table_in_a_file_without_one_takes_the_pairing_from_siblings_else_the_fa
     assert luadata.serialize(doc, target=target) == RARESCANNER_NEW_TABLE_EXPECTED[case]
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 def test_empty_table_form_comes_from_forever_siblings(luadata: Any, tmp_path: Path) -> None:
     """RareScanner.lua shows no empty table; Syndicator.lua, a sibling under
     the same flavor folder, writes one as `{` then `}` on two lines."""
@@ -504,7 +495,6 @@ def test_empty_table_form_comes_from_forever_siblings(luadata: Any, tmp_path: Pa
     )
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize("case", ["no-target", "forever-siblings", "constructed-tab-lf-sibling"])
 def test_a_document_showing_no_indentation_writes_no_array_comment(
     luadata: Any, case: str, tmp_path: Path
@@ -541,7 +531,6 @@ def test_a_document_showing_no_indentation_writes_no_array_comment(
 # ── a new document: the sibling files' style, else the fallback ─────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize("where", ["account", "character"])
 def test_new_document_follows_the_forever_sibling_files(
     luadata: Any, where: str, tmp_path: Path
@@ -564,7 +553,6 @@ def test_new_document_follows_the_forever_sibling_files(
     assert luadata.serialize(reference_document(luadata), target=target) == FLAT_CRLF
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 def test_a_sibling_showing_no_indentation_decides_no_array_comments(
     luadata: Any, tmp_path: Path
 ) -> None:
@@ -584,7 +572,6 @@ def test_a_sibling_showing_no_indentation_decides_no_array_comments(
     assert luadata.serialize(reference_document(luadata), target=target) == FLAT_CRLF
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 def test_constructed_other_flavor_is_no_sibling_so_a_new_document_is_the_fallback(
     luadata: Any, tmp_path: Path
 ) -> None:
@@ -671,7 +658,6 @@ DISAGREEING = {
 }
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize(
     ("files", "written", "expected"), list(DISAGREEING.values()), ids=list(DISAGREEING)
 )
@@ -738,7 +724,6 @@ SIBLING_SETS = {
 }
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 @pytest.mark.parametrize(
     ("flavors", "expected"), list(SIBLING_SETS.values()), ids=list(SIBLING_SETS)
 )
@@ -756,7 +741,6 @@ def test_sibling_set_is_decided_by_path(
     assert luadata.serialize(reference_document(luadata), target=target) == expected
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 def test_constructed_unreadable_unparsable_and_empty_siblings_are_skipped(
     luadata: Any, tmp_path: Path
 ) -> None:
@@ -783,7 +767,6 @@ def test_constructed_unreadable_unparsable_and_empty_siblings_are_skipped(
     assert luadata.serialize(reference_document(luadata), target=target) == FLAT_CRLF
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 def test_serialize_writes_nothing(luadata: Any, tmp_path: Path) -> None:
     """L1/L2: serializing reads siblings and returns bytes. It creates,
     changes and removes nothing, and the target stays absent."""
@@ -901,7 +884,6 @@ def _serialize_all(
     return [luadata.serialize(doc, target=t, lab_written=w) for doc, t, w in cases]
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 def test_constructed_trees_hundred_runs_give_identical_bytes_under_a_decimal_comma_locale(
     luadata: Any, tmp_path: Path
 ) -> None:
@@ -934,7 +916,6 @@ with open(sys.argv[2], "wb") as handle:
 """
 
 
-@pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
 def test_constructed_trees_fresh_interpreters_with_other_hash_seeds_and_locales_agree(
     luadata: Any, tmp_path: Path
 ) -> None:
