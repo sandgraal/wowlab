@@ -695,6 +695,16 @@ an install (L1), never inside the repository.
   manifest (`client_running: true`); SavedVariables on disk are then stale
   relative to the session, and `show` says so.
 
+*Amended 2026-09-28 (M10-19, from the M10-17 security review):*
+`SnapshotStore.refuse_holding(root)` refuses, reading only, a store that is
+an ancestor of `root` (`StoreLocationError`, the message `create` uses).
+That is the one overlap a store outside every install can have, so
+`wowlab snap create` runs it before `guard.store_lock(create=True)`. That
+case is refused with exit 1 and nothing created, not even `<store>/lock`.
+A store inside any install, including one that also holds the captured
+install, is not `refuse_holding`'s case: the gate still refuses it, with
+exit 3.
+
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 
 The only module that writes into an install (L2, ADR-0021).

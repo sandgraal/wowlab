@@ -393,6 +393,18 @@ def _same_dir(a: Path, b: Path) -> bool:
         return False
 
 
+def _strictly_holds(outer: Path, inner: Path) -> bool:
+    """`outer` is a proper ancestor of `inner` (both resolved): by spelling,
+    or by identity with one of `inner`'s existing ancestors."""
+    return outer in inner.parents or any(_same_dir(p, outer) for p in inner.parents)
+
+
+def _overlap_error(store: Path, source: Path) -> StoreLocationError:
+    return StoreLocationError(
+        f"the store ({store}) and the source tree ({source}) must not contain each other"
+    )
+
+
 class SnapshotStore:
     """A store at `path`, by default under the user data directory.
 
@@ -561,15 +573,40 @@ class SnapshotStore:
         """
         store = self.path.resolve()
         source = root.resolve()
-        overlap = _is_within(store, source) or _is_within(source, store)
+        overlap = store == source or _same_dir(store, source)
         # The store may not exist yet; its existing ancestors do.
-        overlap = overlap or any(_same_dir(p, source) for p in (store, *store.parents))
-        overlap = overlap or any(_same_dir(p, store) for p in (source, *source.parents))
+        overlap = overlap or _strictly_holds(source, store) or _strictly_holds(store, source)
         if overlap:
-            raise StoreLocationError(
-                f"the store ({store}) and the source tree ({source}) must not contain each other"
-            )
+            raise _overlap_error(store, source)
         self._refuse_inside_any_install()
+
+    def refuse_holding(self, root: Path) -> None:
+        """Refuse, before anything is created, a store that is an ancestor of
+        `root`: the one overlap `create` refuses that a store outside every
+        install can have. Raises `StoreLocationError` with `create`'s message.
+
+        Reads only, and creates nothing, here or at the store. The comparison
+        is `create`'s: resolved paths, by spelling and by directory identity
+        along `root`'s ancestor chain. A store inside `root`, or `root`
+        itself, is not this method's case; `create` refuses it, and when
+        `root` is an install so does the inside-any-install rule
+        (`guard.store_lock(create=True)`) before creating anything. Added
+        2026-09-28 (M10-19) so `wowlab snap create` can refuse the ancestor
+        case before it takes the store lock, which creates `<store>/lock`.
+
+        A store inside any install is not this method's case either, even
+        when it also holds `root`: that refusal is L1's and the gate's
+        (`guard.store_lock(create=True)`, exit 3 in the CLI), so this method
+        steps aside and leaves it to them rather than masking it as an overlap.
+        """
+        try:
+            self._refuse_inside_any_install()
+        except StoreLocationError:
+            return
+        store = self.path.resolve()
+        source = Path(root).absolute().resolve()
+        if _strictly_holds(store, source):
+            raise _overlap_error(store, source)
 
     def _refuse_inside_any_install(self) -> None:
         """Refuse a store inside any install, not only the one being captured

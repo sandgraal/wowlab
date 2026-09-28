@@ -535,6 +535,7 @@ def test_no_operation_but_set_label_changes_a_manifest_file(
     store.verify()
     store.gc(dry_run=False)
     store.read_file(m1.id, "WTF/Config.wtf")
+    store.refuse_holding(source)  # M10-19
     assert path.read_bytes() == original
 
     mutators = {
@@ -555,6 +556,7 @@ def test_no_operation_but_set_label_changes_a_manifest_file(
         "read_file",
         "resolve_id",
         "object_path",
+        "refuse_holding",  # M10-19: reads only
     }
 
 
@@ -676,6 +678,48 @@ def test_store_and_source_must_not_overlap(source: Path, where: str) -> None:
     with pytest.raises(StoreLocationError):
         store.create(root, ["."], now=T0)
     assert tree_state(source) == before
+
+
+@pytest.mark.parametrize(
+    ("where", "refused"),
+    [("inside", False), ("is-root", False), ("contains", True), ("grandparent", True)],
+)
+def test_refuse_holding_is_the_ancestor_case_alone(source: Path, where: str, refused: bool) -> None:
+    """M10-19: `refuse_holding` refuses only a store that is an ancestor of
+    the root, with `create`'s message, and creates nothing; the other overlaps
+    stay `create`'s (and, for an install, the gate's)."""
+    stores = {
+        "inside": source / "WTF" / ".wowlab-store",
+        "is-root": source,
+        "contains": source.parent,
+        "grandparent": source.parent.parent,
+    }
+    store = SnapshotStore(stores[where])
+    before = tree_state(source)
+    if refused:
+        with pytest.raises(StoreLocationError, match="must not contain each other"):
+            store.refuse_holding(source)
+    else:
+        store.refuse_holding(source)
+    assert tree_state(source) == before
+    assert not (store.path / "lock").exists()
+
+
+def test_refuse_holding_leaves_a_store_inside_an_install_to_the_gate_constructed(
+    tmp_path: Path,
+) -> None:
+    """M10-19 review round 1: a store inside an install that also holds the
+    root is L1's refusal (the gate's), not an overlap; `refuse_holding` steps
+    aside and `create` still refuses it as inside an install."""
+    other = tmp_path / "A"
+    other.mkdir()
+    (other / ".build.info").write_bytes(b"")
+    store = SnapshotStore(other / "wowlab" / "store")
+    held = build_tree(store.path / "World of Warcraft")
+    store.refuse_holding(held)
+    with pytest.raises(StoreLocationError):
+        store.create(held, SUBTREES, now=T0)
+    assert not (store.path / "lock").exists()
 
 
 @pytest.mark.parametrize("marker", [".build.info", ".flavor.info"])

@@ -2143,6 +2143,10 @@ def snap_create(
     subtrees = [f"{chosen.folder}/{s}" for s in lay.snapshot_subtrees(screenshots=screenshots)]
     running = _client_running(inst, chosen)
     store = snapshot.SnapshotStore()
+    # A store that is an ancestor of the install is outside every install, so
+    # the gate would create it and its `lock` before `create` refused the
+    # overlap (exit 1). Refuse it first, with nothing created (M10-19).
+    store.refuse_holding(Path(inst.root))
     # The first create makes the store; guard refuses one inside any install
     # before creating anything (L1), then holds its lock like every later one.
     with guard.store_lock(store.path, create=True):
