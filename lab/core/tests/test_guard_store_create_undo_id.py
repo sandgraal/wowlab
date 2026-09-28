@@ -3,16 +3,19 @@
 Written before M10-17, from the ticket text in docs/BACKLOG.md (M10-17T,
 from the M10-14 reviews of 2026-09-27/28) and docs/LAB_PLAN.md §6.10 with
 its amendments: item 1 (locks, order, the inside-any-install rule added
-2026-09-23) and item 4 (`store_lock`). Every grader carries one marker line
-that M10-17 deletes; nothing else in this file is the implementer's to
-change.
+2026-09-23), item 4 (`store_lock`) and the amendment of 2026-09-28
+(`create`, `expected_id`). Fix round 1 (PR #73 reviews) added the
+creating-call check, the exact-id, hostile-lock, marker-lookup and
+symlinked-user-data cases. Every grader carries one marker line that M10-17
+deletes; nothing else in this file is the implementer's to change.
 
 The seam these graders hold `guard` to
 --------------------------------------
 - `guard.store_lock(store: Path | None = None, create: bool = False)`.
   With `create=True` the store (and any missing parent) is created and its
   lock taken, so a first `snap create` holds the store lock like every later
-  one. Before anything is created, the store is refused with a plain
+  one. Before anything is created (no `mkdir`, no `open` with `O_CREAT`,
+  not even briefly), the store is refused with a plain
   `GuardError` if it is inside any install: resolved (following links,
   junctions and `..`), it and every existing ancestor are examined, and a
   directory holding an entry named `.build.info` or `.flavor.info` (of any
@@ -22,7 +25,9 @@ The seam these graders hold `guard` to
   `GuardError` and nothing is created.
 - `guard.undo(*, store: Path | None = None, expected_id: str | None = None)`.
   With `expected_id`, once the store lock is held and the journal re-read,
-  a most recent record whose id differs raises a plain `GuardError` naming
+  a most recent record whose id is not exactly `expected_id` (a whole-string
+  compare: not a prefix, not the sequence part, not empty-as-`None`)
+  raises a plain `GuardError` naming
   an id, with nothing written in the install and nothing in the store (no
   pre-write snapshot, no record). A match undoes that record. Without it
   (omitted or `None`), `undo()` acts on whatever is most recent, as today.
@@ -317,7 +322,10 @@ INSIDE = (
     "case-variant-spelling-of-an-install",
     "unexaminable-ancestor-eio",
     "unexaminable-ancestor-eacces",
+    "unexaminable-marker-eio",
+    "unexaminable-marker-eacces",
     "default-store-with-user-data-inside-an-install",
+    "default-store-through-a-symlinked-user-data-dir",
     "windows-junction-ancestor-into-an-install",
     "windows-junction-store-into-an-install",
 )
@@ -328,25 +336,33 @@ INSIDE = (
 NAMES_NO_INSTALL = {
     "unexaminable-ancestor-eio",
     "unexaminable-ancestor-eacces",
+    "unexaminable-marker-eio",
+    "unexaminable-marker-eacces",
     "store-is-a-dangling-symlink-into-an-install",
     "windows-junction-store-into-an-install",
 }
 
+_MARKER_SPELLINGS = (".build.info", ".flavor.info", ".BUILD.INFO", ".FLAVOR.INFO")
+
 
 @contextlib.contextmanager
-def _unexaminable(directory: Path, error: int) -> Iterator[None]:
-    """Every way of examining `directory` or a marker name in it fails with
-    `error`: `stat`/`lstat` (which `Path.stat`, `lstat`, `exists`, `is_dir`
-    use), `scandir` and `listdir`. Creating things in it still works."""
-    blocked = {os.fsdecode(directory)} | {
-        os.fsdecode(directory / name)
-        for name in (".build.info", ".flavor.info", ".BUILD.INFO", ".FLAVOR.INFO")
-    }
-    real = {name: getattr(os, name) for name in ("stat", "lstat", "scandir", "listdir")}
+def _unexaminable(directory: Path, error: int, *, directory_itself: bool) -> Iterator[None]:
+    """Examining the marker names in `directory` fails with `error`, and so
+    does listing it (`scandir`, `listdir`), for an implementation that
+    lists rather than looks names up. With `directory_itself`, `stat` and
+    `lstat` of the directory fail too (which `Path.stat`, `lstat`,
+    `exists`, `is_dir` use); without it they succeed, so only the marker
+    lookup fails. Creating things in it still works."""
+    spellings = {directory, directory.resolve()}
+    listed = {os.fsdecode(d) for d in spellings}
+    marker_names = {os.fsdecode(d / name) for d in spellings for name in _MARKER_SPELLINGS}
+    looked_up = marker_names | (listed if directory_itself else set())
+    blocked = {"stat": looked_up, "lstat": looked_up, "scandir": listed, "listdir": listed}
+    real = {name: getattr(os, name) for name in blocked}
 
     def failing(name: str) -> Callable[..., Any]:
         def call(path: Any = ".", *args: Any, **kwargs: Any) -> Any:
-            if not isinstance(path, int) and os.fsdecode(os.fspath(path)) in blocked:
+            if not isinstance(path, int) and os.fsdecode(os.fspath(path)) in blocked[name]:
                 raise OSError(error, f"constructed: {os.strerror(error)} while examining")
             return real[name](path, *args, **kwargs)
 
@@ -356,6 +372,30 @@ def _unexaminable(directory: Path, error: int) -> Iterator[None]:
         for name in real:
             patched.setattr(os, name, failing(name))
         yield
+
+
+@contextlib.contextmanager
+def _creating_calls() -> Iterator[list[str]]:
+    """Records every call that creates something: `os.mkdir` (which
+    `Path.mkdir` and `os.makedirs` go through) and `os.open` with
+    `O_CREAT`. The calls still run, so a create-then-check-then-remove
+    implementation is caught here even though it leaves nothing behind."""
+    made: list[str] = []
+    real_mkdir, real_open = os.mkdir, os.open
+
+    def mkdir(path: Any, *args: Any, **kwargs: Any) -> None:
+        made.append(f"mkdir {os.fsdecode(os.fspath(path))}")
+        real_mkdir(path, *args, **kwargs)
+
+    def open_(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        if flags & os.O_CREAT:
+            made.append(f"open(O_CREAT) {os.fsdecode(os.fspath(path))}")
+        return real_open(path, flags, *args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(os, "mkdir", mkdir)
+        patched.setattr(os, "open", open_)
+        yield made
 
 
 def _case_insensitive_or_skip(directory: Path) -> None:
@@ -435,13 +475,19 @@ def test_constructed_store_lock_create_refuses_a_store_inside_any_install_creati
     elif where == "case-variant-spelling-of-an-install":
         _case_insensitive_or_skip(tmp_path)
         store_arg = world / root.name.swapcase() / "dATA" / "store"
-    elif where.startswith("unexaminable-ancestor-"):
+    elif where.startswith("unexaminable-"):
         unexaminable = tmp_path / "flaky"
         unexaminable.mkdir()
         store_arg = unexaminable / "store"
     elif where == "default-store-with-user-data-inside-an-install":
         inside = root / FLAVOR_FOLDER / "WTF" / "ud" / "wowlab"
         monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: inside)
+        store_arg = None
+    elif where == "default-store-through-a-symlinked-user-data-dir":
+        # Also the shape of a home directory inside an install.
+        symlink_or_skip(tmp_path / "ud-link", root / FLAVOR_FOLDER / "WTF", is_dir=True)
+        linked = tmp_path / "ud-link" / "wowlab"
+        monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: linked)
         store_arg = None
     elif where == "windows-junction-ancestor-into-an-install":
         _windows_only()
@@ -455,14 +501,19 @@ def test_constructed_store_lock_create_refuses_a_store_inside_any_install_creati
     else:
         raise AssertionError(where)
 
-    before = content(tmp_path)
-    if unexaminable is not None:
-        with _unexaminable(unexaminable, UNEXAMINABLE[where.rsplit("-", 1)[1]]):
-            exc = attempt(lambda: _created_store_locked(guard, store_arg))
-    else:
+    # `strict_state` has every directory's mtime, so an entry made and removed
+    # again still shows; `_creating_calls` catches it even where it would not.
+    before = strict_state(tmp_path)
+    with contextlib.ExitStack() as stack:
+        made = stack.enter_context(_creating_calls())
+        if unexaminable is not None:
+            error = UNEXAMINABLE[where.rsplit("-", 1)[1]]
+            itself = where.startswith("unexaminable-ancestor-")
+            stack.enter_context(_unexaminable(unexaminable, error, directory_itself=itself))
         exc = attempt(lambda: _created_store_locked(guard, store_arg))
     assert_plain_guard_error(guard, exc, f"store_lock(create=True) with a store {where}")
-    assert content(tmp_path) == before, "nothing was created anywhere, in or out of the install"
+    assert made == [], f"the refusal comes before anything is created, even briefly: {made}"
+    assert strict_state(tmp_path) == before, "nothing was created or changed anywhere"
     if where not in NAMES_NO_INSTALL:
         assert exc is not None and "install" in error_text(exc).lower(), (
             f"the refusal says the store is inside an install: {exc}"
@@ -477,6 +528,60 @@ def test_constructed_store_lock_create_refuses_a_store_inside_any_install_creati
         fine = tmp_path / "fine" / "store"
         _created_store_locked(guard, fine)
         assert (fine / "lock").is_file()
+
+
+HOSTILE_LOCKS = (
+    "lock-is-a-dangling-symlink-into-an-install",
+    "lock-is-a-symlink-to-a-file-outside",
+    "lock-is-a-hard-link",
+    "lock-is-a-directory",
+)
+
+
+@pytest.mark.xfail(strict=True, reason="M10-17 not implemented")
+@pytest.mark.parametrize(
+    "lock_kind", [pytest.param(k, id=f"constructed-existing-store-{k}") for k in HOSTILE_LOCKS]
+)
+def test_constructed_store_lock_create_on_an_existing_store_follows_the_lock_file_rules(
+    guard: Any, tmp_path: Path, world: Path, install_root: Path, idle: None, lock_kind: str
+) -> None:
+    """`create=True` on a store that exists opens `<store>/lock` by the same
+    rules as every lock file (item 1, item 4): `O_NOFOLLOW` (a link there is
+    refused, never followed, so a dangling one never creates its target), a
+    regular file (not a directory) with one link (a hard link to another
+    file is refused). A plain `GuardError`, nothing created or changed
+    anywhere; positive control: with a lock file of its own, the call goes
+    through."""
+    store = tmp_path / "store"
+    store.mkdir()
+    lock = store / "lock"
+    target = install_root / "Data" / "pwned.lock"
+    if lock_kind == "lock-is-a-dangling-symlink-into-an-install":
+        symlink_or_skip(lock, target, is_dir=False)
+    elif lock_kind == "lock-is-a-symlink-to-a-file-outside":
+        symlink_or_skip(lock, world / "outside" / "target.txt", is_dir=False)
+    elif lock_kind == "lock-is-a-hard-link":
+        elsewhere = tmp_path / "elsewhere.bin"
+        elsewhere.write_bytes(b"constructed: another file\n")
+        try:
+            os.link(elsewhere, lock)
+        except OSError as exc:
+            pytest.skip(f"this volume cannot hard-link: {exc}")
+    else:
+        lock.mkdir()
+
+    before = strict_state(tmp_path)
+    exc = attempt(lambda: _created_store_locked(guard, store))
+    assert_plain_guard_error(guard, exc, f"store_lock(create=True) where the {lock_kind}")
+    assert strict_state(tmp_path) == before, "nothing created, written or followed"
+    assert not target.exists() and not target.is_symlink(), "no lock file inside the install"
+
+    if lock.is_dir() and not lock.is_symlink():
+        lock.rmdir()
+    else:
+        lock.unlink()
+    _created_store_locked(guard, store)
+    assert lock.is_file() and not lock.is_symlink() and lock.stat().st_nlink == 1
 
 
 # ─── 1. ... and create=False keeps today's behaviour ─────────────────────────
@@ -598,7 +703,18 @@ UNDO_RACES = (
     "committed-in-another-process-after-approval",
     "committed-while-undo-reaches-for-the-store-lock",
     "expected-id-names-no-record",
+    "expected-id-is-empty",
+    "expected-id-is-the-bare-sequence-of-the-last-id",
+    "expected-id-from-another-store-with-the-same-sequence",
 )
+# No transaction B: the approved record A is still the most recent, and the
+# expected id is not exactly its id.
+NOT_A_RACE = {
+    "expected-id-names-no-record",
+    "expected-id-is-empty",
+    "expected-id-is-the-bare-sequence-of-the-last-id",
+    "expected-id-from-another-store-with-the-same-sequence",
+}
 
 
 @pytest.mark.xfail(strict=True, reason="M10-17 not implemented")
@@ -616,13 +732,30 @@ def test_constructed_undo_refuses_when_the_most_recent_record_is_not_the_expecte
     the store lock and re-reads the journal, another transaction B is the
     most recent (committed before the call, here or in another process, or
     in the window between undo's unlocked read and its lock), or A never
-    existed. The undo is a plain `GuardError` naming an id; nothing is
-    written in the install, and the store gains no snapshot and no record.
-    Positive control: an undo that expects B then undoes B, and only B."""
+    existed. Or A is still the most recent but the expected id is not
+    exactly its id: empty (which is not `None`), only its sequence part, or
+    the id of another store's record with the same sequence number (the ids
+    match only if compared loosely). The undo is a plain `GuardError` naming
+    an id; nothing is written in the install, and the store gains no
+    snapshot and no record. Positive control: an undo that expects the id
+    that really is the most recent undoes that record, and only it."""
     store = tmp_path / "store"
     _write_config(guard, flavor, store, "approved")
     approved = _last_id(guard, store)
-    expected = "00000000-0badc0de" if race == "expected-id-names-no-record" else approved
+    expected = approved
+    if race == "expected-id-names-no-record":
+        expected = "00000000-0badc0de"
+    elif race == "expected-id-is-empty":
+        expected = ""
+    elif race == "expected-id-is-the-bare-sequence-of-the-last-id":
+        assert "-" in approved, f"record ids are <sequence>-<suffix>: {approved!r}"
+        expected = approved.split("-")[0]
+    elif race == "expected-id-from-another-store-with-the-same-sequence":
+        other_store = tmp_path / "other-store"
+        _write_font(guard, flavor, other_store, "first-in-another-store")
+        expected = _last_id(guard, other_store)
+        assert expected.split("-")[0] == approved.split("-")[0], (expected, approved)
+        assert expected != approved, "two stores' first records have different ids"
     state: dict[str, object] = {}
 
     def commit_b_elsewhere() -> None:
@@ -663,15 +796,17 @@ def test_constructed_undo_refuses_when_the_most_recent_record_is_not_the_expecte
     assert after == state["before"], "nothing written in the install, nothing in the store"
     latest = _last_id(guard, store)
     assert exc is not None
-    assert expected in error_text(exc) or latest in error_text(exc), (
-        f"the refusal names the expected or the most recent record id: {exc}"
-    )
+    names = latest in error_text(exc) or (expected != "" and expected in error_text(exc))
+    assert names, f"the refusal names the expected or the most recent record id: {exc}"
 
     # Positive control: the lock was released, and expecting the record that
     # really is the most recent undoes it and nothing else.
-    if race == "expected-id-names-no-record":
+    if race in NOT_A_RACE:
+        assert latest == approved
+        font = (flavor.path / FONT).read_bytes()
         guard.undo(store=store, expected_id=latest)
         assert (flavor.path / CONFIG).read_bytes() == ALLOWLISTED_FILES[CONFIG]
+        assert (flavor.path / FONT).read_bytes() == font, "only A is undone"
     else:
         assert latest != approved
         guard.undo(store=store, expected_id=latest)
