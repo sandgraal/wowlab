@@ -72,6 +72,13 @@ the client:
   in sorted order of the real names over the whole install, so part 1
   (`Labcharb-Labrealmd`) and part 2 (`Labchard-Labrealme`) are two runs and
   a pseudonym in one is not proven to mean the same real name in the other.
+  Part 3 is a third run (build 70009): its log and `DBM-Party-Vanilla.lua`
+  use its own spellings (`Labchard`, `Labrealmg`, `LabrealmbPartbPartcPartd`),
+  which prove nothing about parts 1 and 2.
+- Combat logs from part 3 on are captured with shifted timestamps (M10-02
+  follow-up 5, `timestamps-shifted`): every stamp and the file name moved by
+  one secret offset per log, format kept, so neither the date nor the time
+  of day in a combat-log fixture is real.
 - In a combat log, the server, instance, zone and spawn parts of every
   non-player unit GUID (`Creature-0-1-0-2-<npc id>-0000000000`) are invented,
   numbered in order of first appearance, from 2026-09-24 on
@@ -128,3 +135,6 @@ the client:
 | `macos/forever/WTF/Account/90000001#6/SavedVariables/DBM-StatusBarTimers.lua` | savedvariables | _classic_beta_ | 1.60.1.69977 | macos | owner | owner | identity-rewritten: path only | negative numbers and long floats (3680 bytes); nesting depth 3, no indentation; `\\` escapes; CRLF; leading blank line |
 | `macos/forever/WTF/Account/90000001#6/SavedVariables/RareScanner.lua.bak` | savedvariables | _classic_beta_ | 1.60.1.69977 | macos | owner | owner | identity-rewritten: path only | previous write (.lua.bak), byte-identical to `RareScanner.lua`; CRLF; leading blank line |
 | `macos/forever/Interface/AddOns/DBM-Brawlers/DBM-Brawlers.toc` | toc | _classic_beta_ | 1.60.1.69977 | macos | owner | owner | none | single-TOC addon; no blank line between the directives and the file lines; single-value `## Interface: 120100` (the author's claim); raw UTF-8 in localized keys; no BOM; CRLF |
+| `macos/forever/WTF/Account/90000001#6/SavedVariables/Blizzard_AuctionHouseUI.lua` | savedvariables | _classic_beta_ | 1.60.1.70009 | macos | owner | owner | identity-rewritten: path only | mixed table (2360 bytes): 23 positional entries without `-- [n]` comments, 20 holding two tables and 3 empty ones written over two lines, then the string key `["auctionHouseSortVersion"]`; nesting depth 3, no indentation; CRLF; leading blank line |
+| `macos/forever/WTF/Account/90000001#6/SavedVariables/DBM-Party-Vanilla.lua` | savedvariables | _classic_beta_ | 1.60.1.70009 | macos | owner | owner | identity-rewritten: 2 | largest SavedVariables fixture (19592 bytes, 1757 lines, nesting depth 4); one top-level variable `DBMPartyVanilla_AllSavedVars`; character key `"<First> <Second>"` with a space (both pseudonymised; the second name gets a `Labrealm…` pseudonym and is not a realm); no indentation, no `-- [n]`; ASCII only; CRLF; leading blank line; explicit integer key `[0]` (350) and digit-string keys such as `["452"]` (188), the first of either in the corpus |
+| `macos/forever/Logs/WoWCombatLog-040126_021630.txt` | combatlog | _classic_beta_ | 1.60.1.70009 | macos | owner | owner | identity-rewritten: 154; guids-rewritten: 97; unit-guids-rewritten: 104; timestamps-shifted | whole log, 79 lines, one solo open-world fight against one NPC, no other players; `client_version` is the install's build at capture, the log header names only the patch (`BUILD_VERSION,1.60.1,PROJECT_ID,18`); file name and every stamp shifted by a secret offset (shape `M/D/YYYY HH:MM:SS.mmm-4`; the single-digit day and month are written by the tool); unit names `"<Name>-<Realm>-"` (77) with an empty third component, the realm without its spaces and no second name; `0000000000000000,nil,0x80000000,0x80000000` for an absent unit; flags owner `0x511`, NPC `0x10a48`; advanced block on cast-success, damage, periodic-damage, heal and swing records; `SWING_DAMAGE_LANDED` repeating every `SWING_DAMAGE`; `SPELL_AURA_REFRESH`; `SPELL_CAST_FAILED` ending in a quoted reason; no `COMBATANT_INFO` and no `[...]` or `(...)` groups; CRLF |

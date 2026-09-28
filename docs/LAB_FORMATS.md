@@ -188,6 +188,93 @@ Written only while combat logging is on (`/combatlog`), flushed in batches.
 - Restricted environments in 12.x change what is logged in instances. What
   the Forever client logs is an M10-03 finding.
 
+*Amended 2026-09-28 (M10-03 part 3; fixture
+`macos/forever/Logs/WoWCombatLog-040126_021630.txt`, Forever 1.60.1, macOS,
+one solo open-world fight against one NPC, 79 lines, no instance, no group;
+file name and timestamps shifted by the capture tool, so neither is real):*
+the Forever client writes a combat log. What follows is what this one file
+shows; anything wider is **[verify]**.
+
+- File name `WoWCombatLog-MMDDYY_HHMMSS.txt`, matching the first line's
+  local time. Whether the client starts a new file each time logging is
+  turned on, and whether the header repeats inside a file, are **[verify]**.
+- Header `COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,1.60.1,PROJECT_ID,18`.
+  `BUILD_VERSION` is the patch only (the retail example above is
+  illustrative; retail writing the patch only is community documentation
+  **[verify]**), so a log does not identify its four-part version. This
+  install has run 1.60.1 as 69913, 69977 and 70009, and wago lists earlier
+  1.60.1 builds. The install's build is the build at capture time, not
+  necessarily the one that wrote the log: a log recorded before a patch came
+  from an earlier build. Report a log's build as the patch alone, or as
+  unknown, never as the install's current build. `PROJECT_ID` is 18, not 1,
+  although Forever is reported to use the modern API; whether it equals
+  `WOW_PROJECT_ID` is **[verify]**, and nothing infers an API or flavor from
+  it.
+- Timestamp shape `M/D/YYYY HH:MM:SS.mmm-4`: month not zero-padded, four-digit
+  year, the hour always two digits, three fractional digits, local time with
+  the UTC offset written as whole hours (verified 2026-09-24 on the owner's
+  real logs by a count-only check). Day padding is unverified: no real log
+  had a day below 10. The capture tool writes the shifted month and day
+  unpadded and the hour padded, whatever the original was, so this fixture's
+  single-digit day (`4/1/2026`) is the tool's, not the client's. The
+  tokenizer accepts a one- or two-digit day, padded or not. The fraction and
+  the offset suffix are copied from the real log. A positive or half-hour
+  offset, and UTC itself, are **[verify]**.
+- Unit names are `"<Name>-<Realm>-"` (all 77 player unit names). The third
+  component is the region on retail per community documentation
+  **[verify]**; it is empty on every name here, for reasons unknown. The
+  realm component matches the retail-style `<ACCOUNT>/<Realm>/` folder name
+  with its spaces removed, as checked against the real names at capture (the
+  committed pseudonyms come from different capture runs and do not show it);
+  whether hyphens and apostrophes are also dropped is
+  **[verify]**. The owner's character appears as `<First>-<Realm>-`, with no
+  second name. A unit name's second component is a realm; a
+  `<First>-<Second>` folder's is not (`docs/GLOSSARY.md`, Second name).
+  Whether first names are unique on a realm is **[verify]**; key units by
+  GUID.
+- An absent unit is `0000000000000000,nil,0x80000000,0x80000000`;
+  `0000000000000000` also fills the advanced block's owner slot. Raid flags
+  are `0x80000000` on every unit, present or absent, where the example above
+  shows `0x0`; the meaning is **[verify]**. Unit flags: owner `0x511`, the
+  NPC `0x10a48`. Per community documentation **[verify]**, unit flags
+  describe a unit relative to the logging player (affiliation, reaction,
+  control, type) and include a bit for that player's current target, so the
+  same NPC can log other values. Do not key on them.
+- Records seen: `SPELL_CAST_START`, `SPELL_CAST_SUCCESS`,
+  `SPELL_CAST_FAILED`, `SPELL_AURA_APPLIED`, `SPELL_AURA_REFRESH`,
+  `SPELL_AURA_REMOVED`, `SPELL_DAMAGE`, `SPELL_PERIODIC_DAMAGE`,
+  `SPELL_HEAL`, `SWING_DAMAGE`, `SWING_DAMAGE_LANDED`, `SWING_MISSED`,
+  `UNIT_DIED`, `PARTY_KILL`, `ZONE_CHANGE`, `MAP_CHANGE`.
+- Advanced parameters on `SPELL_CAST_SUCCESS`, `SPELL_DAMAGE`,
+  `SPELL_PERIODIC_DAMAGE`, `SPELL_HEAL`, `SWING_DAMAGE` and
+  `SWING_DAMAGE_LANDED`; none on cast starts, cast failures, auras, misses,
+  deaths or kills. Field names are not established **[verify]**.
+- The advanced block is 19 fields wide on all 56 records that carry it. It
+  describes the source on `SPELL_CAST_SUCCESS` and `SWING_DAMAGE`, and the
+  target on `SPELL_DAMAGE`, `SPELL_PERIODIC_DAMAGE` and `SWING_DAMAGE_LANDED`
+  (`SPELL_HEAL` is self-cast here, so undetermined). Its last field is `1`
+  for the player and `9` for the NPC; do not read it as character level. The
+  owner slot is `0000000000000000` because this log has no pet or guardian.
+- `SWING_DAMAGE_LANDED` follows every `SWING_DAMAGE` here (11 each; same
+  source, target and amount), but it is not a copy. The advanced block of
+  `SWING_DAMAGE` describes the attacker; that of `SWING_DAMAGE_LANDED`
+  describes the unit hit. On the killing blow the third damage field is `0`
+  on one and `-1` on the other. The two need not be adjacent: the killing
+  blow's `SWING_DAMAGE_LANDED` comes four lines after its `SWING_DAMAGE`,
+  after `PARTY_KILL`. Counting both double-counts melee damage; which one a
+  total should use is **[verify]**.
+- Tokens: `1`/`nil` flags; a bare `ST` after spell damage fields, none after
+  swing fields; bare `BUFF`/`DEBUFF`; `SPELL_CAST_FAILED` ends in a quoted
+  reason, client-localized per community documentation **[verify]**;
+  `UNIT_DIED` and `PARTY_KILL` end in one extra field. CRLF on every line,
+  the last included.
+- Still open: `COMBATANT_INFO`, every `[...]`/`(...)` group, and any quoted
+  string holding a comma or a quote (none here: every quoted string in this
+  log is a plain name). M10-13 grades these on constructed lines until a
+  boss-pull log is captured. Also still open: values other than `ST` in that
+  slot, pets and guardians (the advanced block's owner slot), instance
+  logging, group logs, and Windows.
+
 ## 9. wago.tools responses
 
 Recorded, not specified. The fixture for the builds endpoint and for one
