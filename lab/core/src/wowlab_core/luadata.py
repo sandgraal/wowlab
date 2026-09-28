@@ -1,9 +1,12 @@
-"""luadata: SavedVariables parser (docs/LAB_PLAN.md §6.4, docs/LAB_FORMATS.md §4, M10-04).
+"""luadata: SavedVariables parser and serializer (docs/LAB_PLAN.md §6.4,
+docs/LAB_FORMATS.md §4; M10-04, M10-12).
 
 Load-bearing. SavedVariables are Lua-syntax *data*: this module reads them
 with a constrained literal grammar and never evaluates anything (L3). It
 imports no interpreter and no third-party parser, and it opens files
-read-only (L1). The serializer half is M10-12.
+read-only (L1). `serialize` turns a document back into bytes and writes
+nothing (writing into an install is `guard`'s, L2); it refuses anything
+that is not data, so its output always parses (L3 for writes).
 
 Grammar (LAB_FORMATS §4.1 with the 2026-09-22 amendments; the client's Lua
 is taken to be Lua 5.1, **[verify]** for Forever)::
@@ -55,6 +58,11 @@ view of the line comment that follows the entry on its line (after its
 separator, or after its value when it has none); the same bytes stay in the
 next token's `lead`, which is what rebuilds the file.
 
+A parsed document holds bytes in every slot. An edited or built one may hold
+`None` in any trivia slot (`lead`, `eq_lead`, `key_close_lead`, `sep_lead`,
+`close_lead`, `tail`) or in `sep`: `serialize` fills it from the detected
+style (§6.4 amendment of 2026-09-27; see `serialize`).
+
 Duplicates are kept in source order. `Entry.duplicate` is `True` only on the
 later of two entries whose keys are equal under Lua key equality (`a` and
 `["a"]`; `[1]`, `[1.0]` and the first positional entry; `[1]` and `["1"]`
@@ -80,8 +88,8 @@ millions of entries); Pydantic models are built at the CLI output boundary
 Identical immutable nodes are shared: two equal positional entries, scalar
 values, string keys, trivia or top-level assignments of one document may be
 the same object. So `is` and `id()` do not identify an entry or its place in
-the document; walk by position. The M10-12 serializer must not track edits
-by object identity.
+the document; walk by position. `serialize` lays nodes out by where they
+are placed and never tracks edits by object identity.
 """
 
 from __future__ import annotations
@@ -90,10 +98,12 @@ import gc
 import math
 import os
 import re
+import stat
 import threading
+from collections.abc import Iterable, Iterator
 from enum import StrEnum
 from pathlib import Path
-from typing import NamedTuple, NoReturn
+from typing import NamedTuple, NoReturn, cast
 
 __all__ = [
     "MAX_COST",
@@ -102,6 +112,7 @@ __all__ = [
     "MAX_FILE_BYTES",
     "MAX_NUMBER_CHARS",
     "MAX_STRING_BYTES",
+    "SIBLING_PREFIX_BYTES",
     "Assignment",
     "Entry",
     "KeyStyle",
@@ -117,6 +128,7 @@ __all__ = [
     "LuaValue",
     "parse",
     "read",
+    "serialize",
 ]
 
 _MIB = 1024 * 1024
@@ -249,7 +261,7 @@ class KeyStyle(StrEnum):
 class LuaString(NamedTuple):
     """A string literal. `raw` is its source bytes, quotes included."""
 
-    lead: bytes
+    lead: bytes | None
     raw: bytes
 
     @property
@@ -281,7 +293,7 @@ class LuaNumber(NamedTuple):
     `1E-07`, `0x1F` and `-0` stay as written). Lua 5.1 holds every number as
     a double; the conversions read the text."""
 
-    lead: bytes
+    lead: bytes | None
     raw: str
 
     @property
@@ -321,7 +333,7 @@ class LuaNumber(NamedTuple):
 class LuaBool(NamedTuple):
     """`true` or `false`."""
 
-    lead: bytes
+    lead: bytes | None
     value: bool
 
     def __eq__(self, other: object) -> bool:
@@ -337,7 +349,7 @@ class LuaBool(NamedTuple):
 class LuaNil(NamedTuple):
     """`nil`; legal only as a top-level value (§4.1)."""
 
-    lead: bytes
+    lead: bytes | None
 
     def __eq__(self, other: object) -> bool:
         return _typed_eq(self, other)
@@ -352,9 +364,9 @@ class LuaNil(NamedTuple):
 class LuaTable(NamedTuple):
     """A table constructor: `lead "{" entries close_lead "}"`."""
 
-    lead: bytes
+    lead: bytes | None
     entries: tuple[Entry, ...]
-    close_lead: bytes
+    close_lead: bytes | None
 
     def __eq__(self, other: object) -> bool:
         return _typed_eq(self, other)
@@ -375,20 +387,21 @@ class Entry(NamedTuple):
     """One table entry, in source order.
 
     `key` is `None` (positional), a `LuaString`, a `LuaNumber`, the bare
-    identifier as a `str`, or a `LuaBool`. `sep` is `b","`, `b";"` or `b""`.
+    identifier as a `str`, or a `LuaBool`. `sep` is `b","`, `b";"` or `b""`
+    (or `None` in an edit, for `serialize` to fill; so may any trivia slot).
     `comment` is a view of the line comment after the entry on its line,
     from `--` to the line break, or `None`. `duplicate` flags the later of
     two entries with equal Lua keys.
     """
 
-    lead: bytes
+    lead: bytes | None
     style: KeyStyle
     key: LuaKey
-    key_close_lead: bytes
-    eq_lead: bytes
+    key_close_lead: bytes | None
+    eq_lead: bytes | None
     value: LuaValue
-    sep_lead: bytes
-    sep: bytes
+    sep_lead: bytes | None
+    sep: bytes | None
     comment: bytes | None
     duplicate: bool
 
@@ -405,9 +418,9 @@ class Entry(NamedTuple):
 class Assignment(NamedTuple):
     """A top-level `name = value`."""
 
-    lead: bytes
+    lead: bytes | None
     name: str
-    eq_lead: bytes
+    eq_lead: bytes | None
     value: LuaValue
 
     def __eq__(self, other: object) -> bool:
@@ -425,7 +438,7 @@ class LuaDocument(NamedTuple):
     bytes after the last token."""
 
     assignments: tuple[Assignment, ...]
-    tail: bytes
+    tail: bytes | None
 
     def to_python(self) -> dict[str, object]:
         """Plain `dict`/`list`/scalars, a fresh copy on every call. One-way and
@@ -1086,11 +1099,29 @@ def read(path: str | Path) -> LuaDocument:
     return parse(data)
 
 
-class _Parser:
-    __slots__ = ("data",)
+def _parse_prefix(data: bytes) -> LuaDocument:
+    """Parse a prefix of a document, cut after a line break, for sibling
+    style detection only (never returned to a caller). Where the input ends
+    inside open tables, they are closed with `close_lead=None` (their real
+    end is unknown); anything else the grammar refuses still raises."""
+    _pause_gc()
+    try:
+        return _Parser(data, partial=True).run()
+    finally:
+        _resume_gc()
 
-    def __init__(self, data: bytes) -> None:
+
+def _only_trivia_left(data: bytes, pos: int) -> bool:
+    m = _TRIVIA_RE.match(data, pos)
+    return m is not None and m.end() == len(data)
+
+
+class _Parser:
+    __slots__ = ("data", "partial")
+
+    def __init__(self, data: bytes, *, partial: bool = False) -> None:
         self.data = data
+        self.partial = partial
 
     def run(self) -> LuaDocument:
         """One flat loop over grammar-sized matches; the open tables live on
@@ -1157,6 +1188,8 @@ class _Parser:
         depth = 0
         pos = 0
         need_close = False
+        partial = self.partial
+        close_lead: bytes | None
         value: LuaValue | None
         key: LuaKey
         lk: object
@@ -1224,9 +1257,13 @@ class _Parser:
             if need_close:
                 m = close_match(data, pos)
                 if m is None:
-                    _Diagnoser(data).close(pos, at)
-                close_lead = share(m.group(1))
-                pos = m.end()
+                    if not (partial and _only_trivia_left(data, pos)):
+                        _Diagnoser(data).close(pos, at)
+                    close_lead = None  # a prefix ends inside this table
+                    pos = len(data)
+                else:
+                    close_lead = share(m.group(1))
+                    pos = m.end()
                 need_close = False
             else:
                 start = pos
@@ -1253,6 +1290,9 @@ class _Parser:
                 else:
                     m = entry_match(data, pos)
                     if m is None:
+                        if partial and _only_trivia_left(data, pos):
+                            need_close = True  # a prefix ends inside this table
+                            continue
                         _Diagnoser(data).entry(pos, at)
                     if m.end() - pos > trivia_max and cost + m.end() - pos > budget:
                         self.cost_bound(pos)  # before copying the match
@@ -1555,3 +1595,766 @@ def _table_to_python(table: LuaTable) -> object:
     if all(_is_index(k, count) for k in order):
         return [_to_python(stored[i]) for i in range(1, count + 1)]
     return {python_key: _to_python(stored[k]) for k, python_key in order.items()}
+
+
+# ── the serializer (M10-12) ─────────────────────────────────────────────────
+#
+# `serialize` writes every given slot's bytes as they are, so an unmodified
+# document is its own source byte for byte (§6.4, amendment 2026-09-22 item
+# 7), and fills every slot holding `None` from the detected style (§6.4,
+# amendment 2026-09-27): the document's own, else its sibling SavedVariables'
+# (newest first), else the Forever fallback. Everything it writes is checked
+# as data first (items 2, 8, 9), so its output always parses (L3 for writes).
+
+# A given trivia slot: whitespace and `--` line comments, never a long
+# comment and never a NUL. In every slot but the document's tail a comment
+# ends with a line break inside the slot, so it cannot swallow what follows.
+_SLOT_OK = re.compile(rb"(?:[ \t\r\n\f\v]++|--(?!\[=*\[)[^\r\n\x00]*+[\r\n])*+").fullmatch
+_TAIL_OK = re.compile(rb"(?:[ \t\r\n\f\v]++|--(?!\[=*\[)[^\r\n\x00]*+(?:[\r\n]|\Z))*+").fullmatch
+# `Entry.comment`: one line comment, no line break in it.
+_COMMENT_OK = re.compile(rb"--(?!\[=*\[)[^\r\n\x00]*+").fullmatch
+_STR_OK = re.compile(_STR).fullmatch
+_NUM_OK = re.compile(_NUM).fullmatch
+_NAME_OK = re.compile(_NAME).fullmatch
+_SEPARATORS = (b",", b";", b"")
+_NODES = (LuaTable, LuaString, LuaNumber, LuaBool, LuaNil)
+_NODE_TYPES = frozenset(_NODES)
+
+# Style detection reads a key or `=` spacing only when it is spaces and tabs,
+# and an indentation only when it is a whole number of one unit per level.
+_SPACING_OK = re.compile(rb"[ \t]*+").fullmatch
+_INDENT_OK = re.compile(rb"[ \t]++").fullmatch
+_LINE_BREAK = re.compile(rb"\r\n|\n\r|\r|\n")
+_ARRAY_COMMENT = re.compile(rb"--[ \t]*+\[[0-9]++\][ \t]*+").fullmatch
+
+#: The most of each sibling file that style detection reads, in bytes. A
+#: longer sibling is read up to its last line break within the bound and
+#: parsed as a prefix (tables still open there are left unclosed); a prefix
+#: the grammar refuses skips the sibling like any unparsable one.
+SIBLING_PREFIX_BYTES = 1 << 16
+# Client-written SavedVariables under `<flavor>/WTF/Account/` (§6.4 amendment
+# 2026-09-27 item 3): account-wide, per account, and per character in either
+# `<Realm>/<Character>` or `<digits>/<First>-<Second>` shape.
+_SIBLING_GLOBS = ("*/SavedVariables.lua", "*/SavedVariables/*.lua", "*/*/*/SavedVariables/*.lua")
+
+# With nothing to read (item 6): the layout every captured file shows. A
+# `[number]` key is written `[n] = ` (item 8).
+_FALLBACK: dict[object, object] = {
+    "eol": b"\r\n",
+    "blank": True,
+    "sep": b",",
+    "empty": None,  # `{`, a line break, the closing indentation, `}`
+    "pairing": (b"", False),  # (indentation unit, `-- [n]` array comments)
+}
+_FALLBACK_SPACING = {"klead": b"", "kclose": b"", "eq": b" ", "val": b" "}
+_ASSIGN_FORM = "assign"
+# Every property but the pairing a document can show: the five above but the
+# pairing, `=` and value spacing of an assignment, key lead, key close, `=`
+# and value spacing of each bracketed key style, and `=` and value spacing
+# of a name key.
+_PROPERTY_COUNT = 4 + 2 + 3 * 4 + 2
+# The spacing properties of each keyed style: key lead, key close, `=` and
+# value spacing (a name key has no brackets, so only the last two apply).
+_FORM_KEYS = {
+    kind: ((kind, "klead"), (kind, "kclose"), (kind, "eq"), (kind, "val"))
+    for kind in (KeyStyle.STRING, KeyStyle.NUMBER, KeyStyle.BOOLEAN, KeyStyle.NAME)
+}
+
+
+def serialize(
+    document: LuaDocument,
+    *,
+    target: str | os.PathLike[str] | None = None,
+    lab_written: Iterable[str | os.PathLike[str]] = frozenset(),
+) -> bytes:
+    """The bytes of the SavedVariables file for `document`. Writes nothing,
+    anywhere (L1; writing is `guard`'s, L2).
+
+    Every given slot (a `bytes` trivia slot or `sep`, a `raw`, a key, a
+    name) is written exactly as it is, so `serialize(parse(x)) == x` and an
+    edited document keeps the bytes of every node it did not change. A slot
+    holding `None` is filled from the detected style (§6.4, amendment
+    2026-09-27), property by property: what the document itself shows, else
+    what its sibling SavedVariables show, else the Forever layout (no
+    indentation, no `-- [n]`, CRLF, a leading empty line, `,` after every
+    entry, an empty table as `{` and `}` on two lines, `[n] = `).
+    Indentation and `-- [n]` array comments are decided together: whoever
+    shows either decides both (tab indentation if it shows only comments;
+    comments if it shows an indentation, none if it shows column 0).
+
+    `target` is the path the bytes are meant for (it need not exist); it is
+    only a place to look from. The siblings are the client-written
+    `WTF/Account/*/SavedVariables.lua`, `WTF/Account/*/SavedVariables/*.lua`
+    and `WTF/Account/*/*/*/SavedVariables/*.lua` of the flavor folder whose
+    `WTF/Account` holds `target`; never the target, a `*.lua.bak`, a file in
+    another flavor folder or outside `WTF/Account`, and never a path in
+    `lab_written` (the files the guard journal records as last written by
+    the Lab), compared after `Path.resolve()`. For each property the most
+    recently modified sibling that shows it decides, ties going to the
+    lowest byte-wise path relative to the flavor folder. Siblings are only
+    read, at most `SIBLING_PREFIX_BYTES` of each, and only when a slot
+    needs them; one that cannot be read or parsed is skipped.
+
+    Positions: a new entry goes on its own line (the line ending plus one
+    indentation unit per level); after a new positional entry that ends its
+    line, `-- [n]` when the layout has array comments. To append to a parsed
+    table set its `close_lead` to `None`: the old last entry's
+    `Entry.comment`, whose bytes were in that `close_lead`, is written after
+    its separator with one space, and own-line comments that stood before
+    the old `}` go with it. A comment is written after an entry only when
+    the slot after the entry is generated too. Nodes are laid out by where
+    they are placed, never by object identity.
+
+    Data only (L3 for writes): `LuaDataError` (`LuaLimitError` for a bound)
+    when a given trivia slot holds anything but whitespace and `--` line
+    comments (a comment outside the document's `tail` must end with a line
+    break inside its slot), `sep` is not `,`, `;` or empty (or is empty
+    before another entry), `Entry.comment` is not one line comment, a
+    `raw`, key or name is not a literal the parser accepts, a `nil` is
+    inside a table, an empty lead would join a name to the value before it,
+    a node is not of the model's types, tables nest deeper than `MAX_DEPTH`,
+    or the output would be over `MAX_FILE_BYTES`. `line` and `column` give
+    where the refused bytes would start in the output built so far (a
+    refused `Entry.comment` at its `--`, a refused `nil` at `nil`), and
+    `token` holds at most the first 40 bytes of the refused slot. The
+    `MAX_COST` parse budget is not re-checked: a document edited far past a
+    parsed one's size may serialize to bytes `parse` refuses as over budget.
+    """
+    return _Writer(_Style(document, target, lab_written)).document(document)
+
+
+def _token(value: object) -> bytes:
+    """The bytes an error shows for a node or slot of the wrong type."""
+    return repr(value).encode("ascii", "backslashreplace")[:_TOKEN_KEEP]
+
+
+class _Writer:
+    """Lays out one document into `buf`, checking every slot it writes."""
+
+    __slots__ = ("buf", "known", "numbers", "strings", "style")
+
+    def __init__(self, style: _Style) -> None:
+        self.buf = bytearray()
+        self.style = style
+        # Short given trivia slots, string literals and number texts already
+        # checked (the parser shares them, so a big document checks each
+        # distinct one once), each bounded to `_SHARE_LIMIT` items.
+        self.known: set[bytes] = {b""}
+        self.strings: set[bytes] = set()
+        self.numbers: dict[str, bytes] = {}
+
+    def refuse(
+        self, token: bytes, message: str, cls: type[LuaDataError] = LuaDataError
+    ) -> NoReturn:
+        data = bytes(self.buf)
+        raise _error(data, len(data), token, message, cls)
+
+    def trivia(self, slot: object, what: str) -> None:
+        if not isinstance(slot, bytes):
+            self.refuse(_token(slot), f"{what} is {type(slot).__name__}, not bytes or None")
+        if slot not in self.known:
+            if _SLOT_OK(slot) is None:
+                self.refuse(
+                    slot,
+                    f"{what} holds something other than whitespace and `--` line "
+                    "comments that end in a line break (L3)",
+                )
+            if len(slot) <= _SHARE_TRIVIA_BYTES and len(self.known) < _SHARE_LIMIT:
+                self.known.add(slot)
+        self.buf += slot
+
+    def name(self, name: object, what: str) -> bytes:
+        if isinstance(name, str):
+            text = name.encode("utf-8", "backslashreplace")
+            if name.isascii() and _NAME_OK(text) is not None:
+                return text
+        else:
+            text = _token(name)
+        self.refuse(text, f"{what} is not a Lua name (L3)")
+
+    def scalar(self, value: object, *, allow_nil: bool) -> None:
+        buf = self.buf
+        if isinstance(value, LuaString):
+            raw = value.raw
+            if not isinstance(raw, bytes):
+                self.refuse(_token(raw), "a LuaString's raw is bytes")
+            if len(raw) - 2 > MAX_STRING_BYTES:
+                self.refuse(
+                    raw, f"string literal over the {MAX_STRING_BYTES}-byte bound", LuaLimitError
+                )
+            if _STR_OK(raw) is None:
+                self.refuse(raw, "not a string literal the grammar accepts (L3)")
+            if b"\\" in raw and _escape_over_255(raw):
+                self.refuse(raw, "decimal escape above 255")
+            if len(raw) <= _SHARE_TRIVIA_BYTES and len(self.strings) < _SHARE_LIMIT:
+                self.strings.add(raw)
+            buf += raw
+        elif isinstance(value, LuaNumber):
+            number = value.raw
+            if not isinstance(number, str):
+                self.refuse(_token(number), "a LuaNumber's raw is str")
+            text = number.encode("utf-8", "backslashreplace")
+            if len(text) > MAX_NUMBER_CHARS:
+                self.refuse(
+                    text,
+                    f"number literal of {len(text)} characters, over the {MAX_NUMBER_CHARS} bound",
+                    LuaLimitError,
+                )
+            if _NUM_OK(text) is None:
+                self.refuse(text, "not a number literal the grammar accepts (L3)")
+            if len(text) <= _SHARE_TRIVIA_BYTES and len(self.numbers) < _SHARE_LIMIT:
+                self.numbers[number] = text
+            buf += text
+        elif isinstance(value, LuaBool):
+            truth = value.value
+            if truth is True:
+                buf += b"true"
+            elif truth is False:
+                buf += b"false"
+            else:
+                self.refuse(_token(truth), "a LuaBool's value is a bool")
+        elif isinstance(value, LuaNil):
+            if not allow_nil:
+                self.refuse(b"nil", "nil is legal only as a top-level value (§4.1)")
+            buf += b"nil"
+        else:
+            self.refuse(_token(value), "not a LuaTable, LuaString, LuaNumber, LuaBool or LuaNil")
+
+    def document(self, document: object) -> bytes:
+        if not isinstance(document, LuaDocument):
+            self.refuse(_token(document), "not a LuaDocument")
+        assignments = document.assignments
+        if not isinstance(assignments, tuple | list):
+            self.refuse(_token(assignments), "a LuaDocument's assignments are a tuple")
+        buf = self.buf
+        style = self.style
+        for index, assignment in enumerate(assignments):
+            if not isinstance(assignment, Assignment):
+                self.refuse(_token(assignment), "not an Assignment")
+            lead = assignment.lead
+            if lead is None:
+                buf += style.eol() if index or style.blank() else b""
+            else:
+                self.trivia(lead, "an assignment's lead")
+            name = self.name(assignment.name, "an assignment's name")
+            if index and lead is not None and not lead and buf[-1:].isalnum():
+                self.refuse(name, "an empty lead would join this name to the value before it")
+            buf += name
+            eq = assignment.eq_lead
+            if eq is None:
+                buf += style.spacing((_ASSIGN_FORM, "eq"))
+            else:
+                self.trivia(eq, "an assignment's eq_lead")
+            buf += b"="
+            value = assignment.value
+            if not isinstance(value, _NODES):
+                self.refuse(
+                    _token(value), "not a LuaTable, LuaString, LuaNumber, LuaBool or LuaNil"
+                )
+            if value.lead is None:
+                buf += style.spacing((_ASSIGN_FORM, "val"))
+            else:
+                self.trivia(value.lead, "a value's lead")
+            if isinstance(value, LuaTable):
+                self.table(value, 1)
+            else:
+                self.scalar(value, allow_nil=True)
+        tail = document.tail
+        if tail is None:
+            buf += style.eol()
+        elif not isinstance(tail, bytes) or _TAIL_OK(tail) is None:
+            self.refuse(
+                tail if isinstance(tail, bytes) else _token(tail),
+                "the document's tail holds something other than whitespace and `--` line "
+                "comments (L3)",
+            )
+        else:
+            buf += tail
+        if len(buf) > MAX_FILE_BYTES:
+            self.refuse(b"", f"output over the {MAX_FILE_BYTES}-byte bound", LuaLimitError)
+        return bytes(buf)
+
+    def table(self, table: LuaTable, depth: int) -> None:
+        """`{`, the entries, the closing bytes and `}` of a table at `depth`
+        (a table assigned at top level is depth 1). Recursion is bounded by
+        `MAX_DEPTH`. Slots and scalars already checked in this document are
+        written on a fast path; everything else goes through the checks."""
+        buf = self.buf
+        style = self.style
+        trivia = self.trivia
+        known = self.known
+        numbers = self.numbers
+        strings = self.strings
+        if depth > MAX_DEPTH:
+            self.refuse(b"{", f"tables nested deeper than {MAX_DEPTH}", LuaLimitError)
+        buf += b"{"
+        entries = table.entries
+        if not isinstance(entries, tuple | list):
+            self.refuse(_token(entries), "a LuaTable's entries are a tuple of Entry")
+        close_lead = table.close_lead
+        last = len(entries) - 1
+        npos = 0
+        for index, entry in enumerate(entries):
+            if type(entry) is not Entry and not isinstance(entry, Entry):
+                self.refuse(_token(entry), "not an Entry")
+            lead = entry.lead
+            if lead is None:
+                buf += style.line(depth)
+            elif type(lead) is bytes and lead in known:
+                buf += lead
+            else:
+                trivia(lead, "an entry's lead")
+            kind = entry.style
+            if kind.__class__ is not KeyStyle:
+                try:
+                    kind = KeyStyle(kind)
+                except (TypeError, ValueError):
+                    self.refuse(_token(kind), "not a KeyStyle")
+            key = entry.key
+            if kind is _P:
+                if key is not None:
+                    self.refuse(_token(key), "a positional entry has no key")
+                npos += 1
+            else:
+                if kind is _W:
+                    buf += self.name(key, "a name key")
+                else:
+                    buf += b"["
+                    wanted = LuaString if kind is _S else LuaNumber if kind is _N else LuaBool
+                    if not isinstance(key, wanted):
+                        self.refuse(_token(key), f"a {kind} key is a {wanted.__name__}")
+                    if key.lead is None:
+                        buf += style.spacing((kind, "klead"))
+                    else:
+                        trivia(key.lead, "a key's lead")
+                    if type(key) is LuaString and type(key.raw) is bytes and key.raw in strings:
+                        buf += key.raw
+                    else:
+                        self.scalar(key, allow_nil=False)
+                    close = entry.key_close_lead
+                    if close is None:
+                        buf += style.spacing((kind, "kclose"))
+                    elif type(close) is bytes and close in known:
+                        buf += close
+                    else:
+                        trivia(close, "an entry's key_close_lead")
+                    buf += b"]"
+                eq = entry.eq_lead
+                if eq is None:
+                    buf += style.spacing((kind, "eq"))
+                elif type(eq) is bytes and eq in known:
+                    buf += eq
+                else:
+                    trivia(eq, "an entry's eq_lead")
+                buf += b"="
+            value = entry.value
+            if type(value) not in _NODE_TYPES and not isinstance(value, _NODES):
+                self.refuse(
+                    _token(value), "not a LuaTable, LuaString, LuaNumber, LuaBool or LuaNil"
+                )
+            value_lead = value.lead
+            if value_lead is None:
+                if kind is not _P:  # a positional entry's leading bytes are the entry's
+                    buf += style.spacing((kind, "val"))
+            elif type(value_lead) is bytes and value_lead in known:
+                buf += value_lead
+            else:
+                trivia(value_lead, "a value's lead")
+            if type(value) is LuaTable:
+                self.table(value, depth + 1)
+            elif type(value) is LuaNumber and type(value.raw) is str and value.raw in numbers:
+                buf += numbers[value.raw]
+            elif type(value) is LuaString and type(value.raw) is bytes and value.raw in strings:
+                buf += value.raw
+            elif type(value) is LuaBool and value.value is True:
+                buf += b"true"
+            elif type(value) is LuaBool and value.value is False:
+                buf += b"false"
+            elif isinstance(value, LuaTable):
+                self.table(value, depth + 1)
+            else:
+                self.scalar(value, allow_nil=False)
+            sep_lead = entry.sep_lead
+            if sep_lead is not None:
+                if type(sep_lead) is bytes and sep_lead in known:
+                    buf += sep_lead
+                else:
+                    trivia(sep_lead, "an entry's sep_lead")
+            sep = entry.sep
+            if sep is None:
+                sep = style.sep()
+            elif type(sep) is not bytes or sep not in _SEPARATORS:
+                self.refuse(
+                    sep if isinstance(sep, bytes) and sep else _token(sep),
+                    "a separator is `,`, `;` or empty",
+                )
+            elif not sep and index < last:
+                self.refuse(b"", "an entry followed by another needs a separator")
+            buf += sep
+            comment = entry.comment
+            if comment is None and (lead is not None or kind is not _P):
+                continue
+            # What comes after this entry: a comment is written only when that
+            # slot is generated too (a given slot already holds its bytes).
+            if index < last:
+                following = entries[index + 1]
+                after = following.lead if isinstance(following, Entry) else b""
+            else:
+                after = close_lead
+            if comment is not None:
+                buf += b" "  # where the comment goes, so a refusal points at its `--`
+                if not isinstance(comment, bytes) or _COMMENT_OK(comment) is None:
+                    self.refuse(
+                        comment if isinstance(comment, bytes) else _token(comment),
+                        "an Entry.comment is one `--` line comment with no line break",
+                    )
+                if after is None:
+                    buf += comment
+                else:
+                    del buf[-1:]
+            elif after is None and style.comments():  # a new positional entry
+                buf += b" -- [%d]" % npos
+        if close_lead is None:
+            if entries:
+                buf += style.line(depth - 1)
+            else:
+                form = style.empty()
+                buf += style.line(depth - 1) if form is None else form
+        else:
+            trivia(close_lead, "a table's close_lead")
+        buf += b"}"
+
+
+# ── style detection ─────────────────────────────────────────────────────────
+
+
+class _Style:
+    """The style a `None` slot is filled from, property by property, each
+    resolved on first use: the document, then its siblings newest first,
+    then `_FALLBACK`."""
+
+    __slots__ = ("_cache", "_lab_written", "_lines", "_own", "_paths", "_siblings", "_target")
+
+    def __init__(
+        self,
+        document: object,
+        target: str | os.PathLike[str] | None,
+        lab_written: Iterable[str | os.PathLike[str]],
+    ) -> None:
+        self._own = _Shown(document)
+        self._target = target
+        self._lab_written = lab_written
+        self._paths: list[Path] | None = None
+        self._siblings: list[_Shown] = []
+        self._cache: dict[object, object] = {}
+        self._lines: dict[int, bytes] = {}
+
+    def get(self, key: object) -> object:
+        try:
+            return self._cache[key]
+        except KeyError:
+            pass
+        found, value = self._own.get(key)
+        if not found:
+            for shown in self._each_sibling():
+                found, value = shown.get(key)
+                if found:
+                    break
+            else:
+                value = _FALLBACK_SPACING[key[1]] if isinstance(key, tuple) else _FALLBACK[key]
+        self._cache[key] = value
+        return value
+
+    def _each_sibling(self) -> Iterator[_Shown]:
+        """The parsed siblings in decision order, read on demand."""
+        if self._paths is None:
+            target = self._target
+            self._paths = [] if target is None else _sibling_paths(target, self._lab_written)
+            self._paths.reverse()  # popped from the end, newest first
+        index = 0
+        while True:
+            if index < len(self._siblings):
+                yield self._siblings[index]
+                index += 1
+            elif self._paths:
+                document = _read_sibling(self._paths.pop())
+                if document is not None:
+                    self._siblings.append(_Shown(document))
+            else:
+                return
+
+    def eol(self) -> bytes:
+        return cast(bytes, self.get("eol"))
+
+    def blank(self) -> bool:
+        return cast(bool, self.get("blank"))
+
+    def sep(self) -> bytes:
+        return cast(bytes, self.get("sep"))
+
+    def empty(self) -> bytes | None:
+        return cast(bytes | None, self.get("empty"))
+
+    def comments(self) -> bool:
+        return cast(tuple[bytes, bool], self.get("pairing"))[1]
+
+    def spacing(self, key: tuple[str, str]) -> bytes:
+        return cast(bytes, self.get(key))
+
+    def line(self, depth: int) -> bytes:
+        """A line break, then the indentation of `depth` levels."""
+        text = self._lines.get(depth)
+        if text is None:
+            unit = cast(tuple[bytes, bool], self.get("pairing"))[0]
+            text = self._lines[depth] = self.eol() + unit * depth
+        return text
+
+
+class _Shown:
+    """The style properties one document shows, each taken from its first
+    showing in document order; the document is walked only as far as the
+    properties asked for need."""
+
+    __slots__ = ("comments", "found", "indent", "steps")
+
+    def __init__(self, document: object) -> None:
+        self.found: dict[object, object] = {}
+        self.indent: bytes | None = None
+        self.comments: bool | None = None
+        self.steps: Iterator[None] | None = _walk(document, self)
+
+    def get(self, key: object) -> tuple[bool, object]:
+        """(True, value) when the document shows the property `key`."""
+        found = self.found
+        while True:
+            if key == "pairing":
+                if self.indent is not None and self.comments is not None:
+                    break
+            elif key in found:
+                return True, found[key]
+            if self.steps is None:
+                break
+            try:
+                next(self.steps)
+            except StopIteration:
+                self.steps = None
+        if key != "pairing":
+            return False, None
+        indent, comments = self.indent, self.comments
+        if indent is None and comments is None:
+            return False, None
+        if indent is None:
+            indent = b"\t" if comments else b""  # §4.2's form goes with its comments
+        if comments is None:
+            comments = indent != b""
+        return True, (indent, comments)
+
+
+def _walk(document: object, shown: _Shown) -> Iterator[None]:
+    """Record in `shown` what `document` shows, in document order, pausing
+    after each entry that showed something new. Only given `bytes` slots
+    show anything; a node of the wrong type is passed over (the writer
+    refuses it)."""
+    found = shown.found
+    progress = 0  # bumped whenever something new is recorded
+
+    def eol(slot: object) -> None:
+        nonlocal progress
+        if "eol" not in found and isinstance(slot, bytes):
+            m = _LINE_BREAK.search(slot)
+            if m is not None:
+                found["eol"] = m.group()
+                progress += 1
+
+    def spacing(key: object, slot: object) -> None:
+        nonlocal progress
+        if key not in found and isinstance(slot, bytes) and _SPACING_OK(slot) is not None:
+            found[key] = slot
+            progress += 1
+
+    if not isinstance(document, LuaDocument) or not isinstance(document.assignments, tuple | list):
+        return
+    assignments: tuple[object, ...] | list[object] = document.assignments
+    first = assignments[0] if assignments else None
+    if isinstance(first, Assignment) and isinstance(first.lead, bytes):
+        found["blank"] = first.lead[:1] in (b"\r", b"\n")
+    seen = -1
+    for assignment in assignments:
+        if not isinstance(assignment, Assignment):
+            continue
+        eol(assignment.lead)
+        eol(assignment.eq_lead)
+        spacing((_ASSIGN_FORM, "eq"), assignment.eq_lead)
+        value = assignment.value
+        if isinstance(value, _NODES):
+            eol(value.lead)
+            spacing((_ASSIGN_FORM, "val"), value.lead)
+        if progress != seen:
+            seen = progress
+            yield
+        if not isinstance(value, LuaTable):
+            continue
+        work: list[tuple[LuaTable, int, int]] = [(value, 1, 0)]
+        while work:
+            table, depth, index = work.pop()
+            entries: object = table.entries
+            if not isinstance(entries, tuple | list):
+                continue
+            descended = False
+            while index < len(entries):
+                entry = entries[index]
+                index += 1
+                if not isinstance(entry, Entry):
+                    continue
+                style = entry.style
+                kind = style if style.__class__ is KeyStyle else None
+                if kind is None:
+                    for member in KeyStyle:
+                        if style == member:
+                            kind = member
+                lead = entry.lead
+                child = entry.value
+                child_lead = child.lead if isinstance(child, _NODES) else None
+                if "eol" not in found:
+                    eol(lead)
+                    if kind is not _P:
+                        eol(getattr(entry.key, "lead", None))
+                        eol(entry.key_close_lead)
+                        eol(entry.eq_lead)
+                    eol(child_lead)
+                    eol(entry.sep_lead)
+                if isinstance(lead, bytes):
+                    if shown.indent is None:
+                        cut = max(lead.rfind(b"\n"), lead.rfind(b"\r"))
+                        run = lead[cut + 1 :]
+                        if cut < 0:
+                            pass  # on the line of what comes before: shows nothing
+                        elif not run:
+                            shown.indent = b""
+                        elif _INDENT_OK(run) is not None and len(run) % depth == 0:
+                            unit = run[: len(run) // depth]
+                            if unit * depth == run:
+                                shown.indent = unit
+                        if shown.indent is not None:
+                            progress += 1
+                    if shown.comments is None and kind is _P:
+                        comment = entry.comment
+                        if comment is None:
+                            shown.comments = False
+                        elif isinstance(comment, bytes) and _ARRAY_COMMENT(comment) is not None:
+                            shown.comments = True
+                        if shown.comments is not None:
+                            progress += 1
+                if kind is not None and kind is not _P:
+                    klead, kclose, eq, val = _FORM_KEYS[kind]
+                    if kind is not _W:
+                        if klead not in found:
+                            spacing(klead, getattr(entry.key, "lead", None))
+                        if kclose not in found:
+                            spacing(kclose, entry.key_close_lead)
+                    if eq not in found:
+                        spacing(eq, entry.eq_lead)
+                    if val not in found:
+                        spacing(val, child_lead)
+                if "sep" not in found:
+                    sep = entry.sep
+                    if sep == b"," or sep == b";":
+                        found["sep"] = sep
+                        progress += 1
+                if progress != seen:
+                    seen = progress
+                    yield
+                    if (
+                        len(found) >= _PROPERTY_COUNT
+                        and shown.indent is not None
+                        and shown.comments is not None
+                    ):
+                        return
+                if isinstance(child, LuaTable) and depth < MAX_DEPTH:
+                    work.append((table, depth, index))
+                    work.append((child, depth + 1, 0))
+                    descended = True
+                    break
+            if descended:
+                continue
+            close = table.close_lead
+            eol(close)
+            if not entries and "empty" not in found and isinstance(close, bytes):
+                if _LINE_BREAK.search(close) is not None:
+                    found["empty"] = None
+                    progress += 1
+                elif _SPACING_OK(close) is not None:
+                    found["empty"] = close
+                    progress += 1
+            if progress != seen:
+                seen = progress
+                yield
+    eol(document.tail)
+
+
+def _flavor_folder(target: Path) -> Path | None:
+    """The folder holding the nearest `WTF/Account` above `target`."""
+    parts = target.parts
+    for i in range(len(parts) - 2, 0, -1):
+        if parts[i] == "WTF" and parts[i + 1] == "Account":
+            return Path(*parts[:i])
+    return None
+
+
+def _sibling_paths(
+    target: str | os.PathLike[str], lab_written: Iterable[str | os.PathLike[str]]
+) -> list[Path]:
+    """The sibling files of `target`, resolved, newest first; equal times in
+    byte-wise order of the path relative to the flavor folder."""
+    try:
+        target_path = Path(target).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return []
+    flavor = _flavor_folder(target_path)
+    if flavor is None:
+        return []
+    account = flavor / "WTF" / "Account"
+    skip = {target_path}
+    for written in lab_written:
+        try:
+            skip.add(Path(written).resolve())
+        except (OSError, RuntimeError, TypeError, ValueError):
+            continue
+    ranked: list[tuple[int, bytes, Path]] = []
+    for pattern in _SIBLING_GLOBS:
+        try:
+            matches = list(account.glob(pattern))
+        except OSError:
+            continue
+        for path in matches:
+            try:
+                real = path.resolve()
+                if real in skip or not real.is_relative_to(account):
+                    continue
+                info = real.stat()
+            except (OSError, RuntimeError, ValueError):
+                continue
+            if not stat.S_ISREG(info.st_mode):
+                continue
+            order = os.fsencode(path.relative_to(flavor).as_posix())
+            ranked.append((-info.st_mtime_ns, order, real))
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    return [real for _time, _order, real in ranked]
+
+
+def _read_sibling(path: Path) -> LuaDocument | None:
+    """A sibling's document, from at most `SIBLING_PREFIX_BYTES` of it, or
+    `None` when it cannot be read or does not parse. Read-only (L1)."""
+    try:
+        with path.open("rb") as handle:
+            data = handle.read(SIBLING_PREFIX_BYTES + 1)
+    except OSError:
+        return None
+    try:
+        if len(data) <= SIBLING_PREFIX_BYTES:
+            return parse(data)
+        data = data[:SIBLING_PREFIX_BYTES]
+        cut = max(data.rfind(b"\n"), data.rfind(b"\r")) + 1
+        return _parse_prefix(data[:cut]) if cut else None
+    except LuaDataError:
+        return None
