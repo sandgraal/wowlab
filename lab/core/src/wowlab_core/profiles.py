@@ -58,6 +58,7 @@ __all__ = [
     "DELETED_PREFIX",
     "LABEL_PREFIX",
     "LAB_ADDON_REASON",
+    "LINKED_ROOT_NOTE",
     "LOGIN_NOTE",
     "MACROS_NOTE",
     "MAX_DELETES",
@@ -89,6 +90,8 @@ __all__ = [
     "find",
     "is_always_excluded",
     "label_for",
+    "linked_root_notes",
+    "linked_roots",
     "listing",
     "parse_label",
     "parse_presets",
@@ -151,6 +154,8 @@ LAB_ADDON_REASON = (
     "the lab-addon; a profile never saves, restores or deletes it (only `wowlab addon "
     "install|remove lab` changes it)"
 )
+LINKED_ROOT_NOTE = "{path} is a link; this profile holds the link, not what is behind it"
+"""`str.format` with `path`, a subtree as the manifest records it (install-relative)."""
 
 
 class ProfileError(Exception):
@@ -528,6 +533,26 @@ def save(
     return Profile(name=name, presets=tuple(dict.fromkeys(preset_names)), manifest=manifest)
 
 
+def linked_roots(manifest: Manifest) -> tuple[str, ...]:
+    """The subtrees `manifest` holds as a link: a subtree root that was a
+    symlink (on Windows also a junction or other directory link) when the
+    snapshot was taken, recorded as one `symlink` entry at the subtree's own
+    path and never followed, so nothing behind it is in the profile.
+
+    Read from the manifest, not the disk: the note is about what the profile
+    holds, and the snapshot's own capture decided that (`_is_link`'s test,
+    S_ISLNK or a junction, plus any other name-surrogate reparse point the
+    snapshot records as a link). A root reached through a linked folder
+    (`WTF` itself a link) never gets here: the snapshot refuses the save."""
+    links = {e.path for e in manifest.entries if e.kind == "symlink"}
+    return tuple(s for s in manifest.subtrees if s in links)
+
+
+def linked_root_notes(manifest: Manifest) -> tuple[str, ...]:
+    """One `LINKED_ROOT_NOTE` per `linked_roots(manifest)`."""
+    return tuple(LINKED_ROOT_NOTE.format(path=p) for p in linked_roots(manifest))
+
+
 def delete(store: SnapshotStore, name: str) -> tuple[Manifest, ...]:
     """Relabel the profile's snapshot `deleted-profile:<name>`; the snapshot stays.
 
@@ -603,6 +628,17 @@ def _edit_no(lay: layout.Layout, rel: str) -> layout.Classified | None:
 
 _Disk = Literal["same", "differs", "behind_link"]
 
+_DIR_FD_WALK = (
+    os.open in os.supports_dir_fd
+    and os.stat in os.supports_dir_fd
+    and os.readlink in os.supports_dir_fd
+    and os.stat in os.supports_follow_symlinks
+    and hasattr(os, "O_DIRECTORY")
+    and hasattr(os, "O_NOFOLLOW")
+)
+"""True where `_differs` walks by directory descriptor (POSIX); False on
+Windows, where `os.open` takes no `dir_fd` and the `lstat` walk is used."""
+
 
 def _is_link(path: Path, st: os.stat_result) -> bool:
     """A symlink, or on Windows a junction or other directory link."""
@@ -614,29 +650,138 @@ def _is_link(path: Path, st: os.stat_result) -> bool:
         return True
 
 
+def _entry_parts(flavor_folder: str, entry: Entry) -> list[str] | None:
+    """The folders from the install root to `entry` (the flavor folder first)
+    and its name last; None for a path that could leave the folder it names."""
+    parts = [flavor_folder, *entry.path.removeprefix(flavor_folder + "/").split("/")]
+    if any(p in ("", ".", "..") or "/" in p or "\x00" in p for p in parts):
+        return None
+    return parts
+
+
+def _hash_fd(fd: int, entry: Entry) -> _Disk:
+    """Close `fd` after hashing it; `differs` unless it is a regular file with
+    the entry's content."""
+    digest = hashlib.sha256()
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                return "differs"
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+    except OSError:
+        return "differs"
+    return "same" if digest.hexdigest() == entry.sha256 else "differs"
+
+
 def _differs(root: Path, flavor_folder: str, entry: Entry) -> _Disk:
     """Whether the disk still holds `entry`: `same`, `differs`, or
-    `behind_link` when a folder between the flavor folder and the entry is a
-    link (or a junction), in which case nothing is read there.
+    `behind_link` when the flavor folder or a folder between it and the entry
+    is a link (or a junction), in which case nothing is read there.
 
-    Reads only, and never through a link: every parent from the flavor folder
-    down is checked with `lstat`; a file is opened as `snapshot._capture`
-    opens one (`O_RDONLY | O_NOFOLLOW | O_NONBLOCK` where the platform has
-    them) and must be a regular file by `fstat`. A symlink entry is compared
-    by its link text."""
-    rel = entry.path.removeprefix(flavor_folder + "/").split("/")
-    current = root / flavor_folder
-    for part in rel[:-1]:
+    Reads only, and never through a link. On POSIX (`_DIR_FD_WALK`) the walk
+    goes by directory descriptor: the install root is opened, then each
+    folder from the flavor folder down is checked (`lstat` relative to the
+    one before: a link is `behind_link` and is not opened) and opened
+    relative to the one before with `O_DIRECTORY | O_NOFOLLOW`, and the entry
+    is `lstat`ed, read (`readlink`) or opened (`O_NOFOLLOW | O_NONBLOCK`)
+    relative to its folder's descriptor. Every component is opened as the last one of its path, so
+    `O_NOFOLLOW` covers all of them: a folder swapped for a link after it was
+    looked at is either refused at its open or, if the swap comes after the
+    open, the descriptor still names the folder that was checked. Where
+    `os.open` takes no `dir_fd` (Windows) the `lstat` walk is kept: each
+    folder is `lstat`ed and checked for a symlink or junction (`_is_link`),
+    then the file is opened by its full path with `O_NOFOLLOW` where the
+    platform has it; a folder swapped for a junction between that check and
+    the open is not caught there. Either way a file must be a regular file by
+    `fstat`, and a symlink entry is compared by its link text."""
+    parts = _entry_parts(flavor_folder, entry)
+    if parts is None:
+        return "differs"
+    if _DIR_FD_WALK:
+        return _differs_at(root, parts, entry)
+    return _differs_lstat(root, parts, entry)
+
+
+def _differs_at(root: Path, parts: list[str], entry: Entry) -> _Disk:
+    """`_differs` by directory descriptor (POSIX)."""
+    try:
+        fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0))
+    except OSError:
+        return "differs"
+    try:
+        for part in parts[:-1]:
+            try:
+                st = os.stat(part, dir_fd=fd, follow_symlinks=False)
+            except OSError:
+                return "differs"  # the entry's folder is gone
+            if stat.S_ISLNK(st.st_mode):
+                return "behind_link"  # checked: not even opened
+            if not stat.S_ISDIR(st.st_mode):
+                return "differs"
+            try:
+                child = os.open(
+                    part,
+                    os.O_RDONLY
+                    | getattr(os, "O_DIRECTORY", 0)
+                    | getattr(os, "O_NOFOLLOW", 0)
+                    | getattr(os, "O_NONBLOCK", 0)
+                    | getattr(os, "O_CLOEXEC", 0),
+                    dir_fd=fd,
+                )
+            except OSError:
+                # Swapped since the check: O_NOFOLLOW refuses a link (ELOOP on
+                # Linux and macOS, EMLINK on FreeBSD); say which, following
+                # nothing.
+                try:
+                    st = os.stat(part, dir_fd=fd, follow_symlinks=False)
+                except OSError:
+                    return "differs"
+                return "behind_link" if stat.S_ISLNK(st.st_mode) else "differs"
+            parent, fd = fd, child
+            os.close(parent)
+        name = parts[-1]
+        try:
+            st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+        except OSError:
+            return "differs"
+        if entry.kind == "symlink":
+            try:
+                same = stat.S_ISLNK(st.st_mode) and os.readlink(name, dir_fd=fd) == entry.target
+            except OSError:
+                return "differs"
+            return "same" if same else "differs"
+        if not stat.S_ISREG(st.st_mode):
+            return "differs"
+        try:
+            file_fd = os.open(
+                name,
+                os.O_RDONLY
+                | getattr(os, "O_BINARY", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0)
+                | getattr(os, "O_CLOEXEC", 0),
+                dir_fd=fd,
+            )
+        except OSError:
+            return "differs"
+        return _hash_fd(file_fd, entry)
+    finally:
+        os.close(fd)
+
+
+def _differs_lstat(root: Path, parts: list[str], entry: Entry) -> _Disk:
+    """`_differs` by `lstat` walk, where `os.open` takes no `dir_fd` (Windows)."""
+    current = root
+    for part in parts[:-1]:
         current = current / part
         try:
             st = current.lstat()
-        except FileNotFoundError:
-            return "differs"  # the entry's folder is gone
         except OSError:
-            return "differs"
+            return "differs"  # the entry's folder is gone
         if _is_link(current, st):
             return "behind_link"
-    path = current / rel[-1]
+    path = current / parts[-1]
     try:
         st = path.lstat()
     except OSError:
@@ -655,20 +800,12 @@ def _differs(root: Path, flavor_folder: str, entry: Entry) -> _Disk:
             os.O_RDONLY
             | getattr(os, "O_BINARY", 0)
             | getattr(os, "O_NOFOLLOW", 0)
-            | getattr(os, "O_NONBLOCK", 0),
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_CLOEXEC", 0),
         )
     except OSError:
         return "differs"
-    digest = hashlib.sha256()
-    try:
-        with os.fdopen(fd, "rb") as handle:
-            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
-                return "differs"
-            for chunk in iter(lambda: handle.read(1 << 20), b""):
-                digest.update(chunk)
-    except OSError:
-        return "differs"
-    return "same" if digest.hexdigest() == entry.sha256 else "differs"
+    return _hash_fd(fd, entry)
 
 
 class _Restorer(Protocol):
