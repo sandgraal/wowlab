@@ -34,6 +34,8 @@ Create `lab/core/` as the uv workspace's only member, `wowlab-core` (import `wow
 
 *Follow-ups 4 and 5 merged (#63, 2026-09-23; #64, 2026-09-27): `--pseudonymise-other-players`; invented location parts of unit GUIDs in combat logs; each combat log's timestamps and file name moved by its own secret offset (owner decision 2026-09-24); `--combat-log NAME`; folded identity checks. Not scheduled: U+2212, U+2043, U+30FC, prime and backtick between letters are not treated as separators (the client does not write them); the byte-oracle test proves bytes outside spans, not what each span became; scrub time about 1.4× on large non-ASCII SavedVariables.*
 
+*Follow-up 6 (owner-approved 2026-09-28): treat U+2212, U+2043, U+30FC, prime (U+2032) and backtick as separators between letters in every identity check (detect and refuse only), with constructed tests; the client does not write them, so this is defence in depth. Reviewed by `security-reviewer`.*
+
 ---
 
 ## [ ] M10-03 — Capture the fixture corpus
@@ -233,6 +235,42 @@ Graders from the M10-14 reviews (2026-09-27/28), for `lab/core/src/wowlab_core/g
 
 
 *Merged 2026-09-28 (#73 graders, #77 implementation). Follow-ups, not scheduled: a test-writer comment on the `dotdot-after-a-symlink` grader saying it intentionally requires refusing both readings (Windows collapses `..` as text before following links); optionally run the store/source overlap check before `store_lock` in `snap create`, so a store that is an ancestor of the install gets no stray empty lock file (outside the install).*
+---
+
+## [ ] M10-18T — luadata sibling-listing follow-up graders [TEST]
+**Size:** S · **Depends on:** M10-12
+
+Owner-approved follow-ups (2026-09-28) from the M10-12 reviews, graded on `luadata.serialize`'s public behaviour: (1) a sibling folder holding more than 65,536 entries is skipped whole during style detection (never read or sorted in full), and whether a folder is skipped depends only on its entry count, never on listing order; (2) on Windows, a directory junction under `WTF/Account` (made with `_winapi.CreateJunction`, no privilege needed) is never walked into or read; (3) a missing target or `lab_written` path is compared case-insensitively only where the filesystem is case-insensitive, so on a case-sensitive volume a separate sibling `A.lua` still counts when the target is `a.lua`. Constructed trees, labelled per L8; `xfail(strict=True)` with one marker line each. The session that writes these never writes M10-18.
+
+**Acceptance:** every grader fails today for the missing behaviour only; satisfiable by an uncommitted scratch patch; a mutant per behaviour; `make ci` green.
+
+---
+
+## [ ] M10-18 — luadata sibling-listing follow-ups [IMPL]
+**Size:** S · **Depends on:** M10-18T
+
+`luadata.py` per M10-18T, with a dated line in `docs/LAB_PLAN.md` §6.4 for the per-folder cap. Activate graders by marker deletion only.
+
+**Acceptance:** all M10-18T and every existing luadata grader green; `make test-parser` green; `lab (windows)` green on the final head; reviewed by `security-reviewer`.
+
+---
+
+## [ ] M10-19T — Guard grader polish [TEST]
+**Size:** S · **Depends on:** M10-17
+
+From the M10-17 reviews (owner-approved 2026-09-28), test-only: a comment on the `dotdot-after-a-symlink` grader saying it intentionally requires refusing both readings (Windows collapses `..` as text before following links); the creating-call recorder in `test_guard_store_create_undo_id.py` also records builtin `open`/`io.open` in create or write modes, `os.link`, `os.symlink`, `os.mkfifo`, `os.mknod` and the destinations of `os.rename`/`os.replace`, so a create-and-remove is caught on filesystems with coarse timestamps. No grader is weakened; every existing assertion stays.
+
+**Acceptance:** the guard suite green on the current `guard.py`; a mutant that creates a file with builtin `open` before the check turns a grader red; `make ci` green.
+
+---
+
+## [ ] M10-19 — `snap create` checks overlap before taking the store lock
+**Size:** S · **Depends on:** M10-17
+
+From the M10-17 security review (owner-approved 2026-09-28): `wowlab snap create` runs the store/source overlap check before `guard.store_lock(create=True)`, so a store path that is an ancestor of the install is refused without leaving an empty `lock` file there. Tests through Typer's runner; `snapshot`/`guard` public APIs only.
+
+**Acceptance:** a test shows the ancestor case refused with nothing created; the existing CLI tests green; `make ci` green.
+
 ---
 
 ## [ ] M10-15 — Wave 1 review
