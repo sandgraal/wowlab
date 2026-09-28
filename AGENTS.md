@@ -37,6 +37,10 @@ key order, key style, and the original text of every number. The WTF text
 parsers keep every line, including ones they cannot classify. For an
 unmodified document, `serialize(parse(x)) == x` byte for byte on every real
 fixture.
+One exception, granted by the owner on 2026-09-28: a combat-log line longer
+than 1 MiB keeps only its first 1 MiB, flagged as truncated with its true
+byte length, so a crafted file cannot exhaust memory (`docs/LAB_PLAN.md`
+§6.8). No other parser may drop bytes without a new owner decision here.
 
 **L5 — Game data is keyed by build and never overwritten.** A cached table
 for build A is never replaced by build B (ADR-0022).
