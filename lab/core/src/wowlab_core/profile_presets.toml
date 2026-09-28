@@ -55,7 +55,7 @@ account = ["macros-cache.txt"]
 character = ["macros-cache.txt"]
 
 [presets.addons]
-summary = "Interface/AddOns/ as saved (addons installed since are removed, updates since are undone), AddOns.txt, addon SavedVariables except the lab-addon's"
+summary = "Interface/AddOns/ as saved (addons installed since are removed, updates since are undone), AddOns.txt, addon SavedVariables; never the lab-addon (Interface/AddOns/WowLab/, WowLab.lua)"
 flavor = ["Interface/AddOns"]
 account = ["SavedVariables"]
 character = ["AddOns.txt", "SavedVariables"]

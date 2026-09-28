@@ -1410,7 +1410,8 @@ after the PR #96 reviews:*
   help and the plan say so (owner decision 2026-09-28). A character folder
   created after a preset save is not a recorded subtree and is not touched.
   An explicit `--subtree` is a whole file or folder: files added anywhere
-  under it since the save are deleted, and the plan says so. A `--subtree`
+  under it since the save are deleted, including every file in a character
+  folder created under it since, and the plan says so. A `--subtree`
   broader than one account folder (`WTF`, `WTF/Account`, `Interface`,
   `Fonts`) is refused with a pointer to `snap create` and `snap restore`.
 - **`apply` removes files added since the profile was saved, and rolls back
@@ -1438,7 +1439,12 @@ after the PR #96 reviews:*
 Also left alone, and listed: file-map Edit `no` files (never written or
 deleted, as in a whole `snap restore`), anything added that is not a regular
 file, and any path the gate will not write or delete (an executable, changed,
-removed or added): the rest of the apply goes ahead. Folders emptied by a
+removed or added): the rest of the apply goes ahead. When the gate refuses
+the whole restore and `profiles` compares entries with the disk itself, it
+reads through no link: every folder from the flavor folder down is checked
+with `lstat`, a file is opened with `O_NOFOLLOW` and must be a regular file
+by `fstat`, and an entry behind a symlinked or junctioned folder is not read
+and is listed as left alone (fix round 2, 2026-09-28). Folders emptied by a
 deletion stay, since the gate deletes files only. Every `*-cache*` file in
 the plan is listed, a write with "the server may replace this at your next
 login (synchronize* CVars; see `wowlab doctor`)" and a delete with "the

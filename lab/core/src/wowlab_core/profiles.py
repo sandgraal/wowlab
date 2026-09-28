@@ -24,11 +24,12 @@ that it does not hold (added since the save) is deleted. A preset profile's
 subtrees are the files and folders it joined to every account and character
 folder found at save time, so a character folder created later is not
 touched; an explicit `--subtree` is a whole folder, and files added anywhere
-under it are deleted. Left alone, and reported: file-map Edit `no` files (as
-a whole `snap restore` leaves them), the lab-addon (`[exclude]` in the data
+under it are deleted, including every file in a character folder created
+under it since. Left alone, and reported: file-map Edit `no` files (as a
+whole `snap restore` leaves them), the lab-addon (`[exclude]` in the data
 file: never saved, restored or deleted by a profile), anything that is not a
-regular file, and anything the gate will not write or delete (an
-executable). Every change is in the plan and `wowlab undo` reverses the
+regular file, anything the gate will not write or delete (an executable),
+and an entry behind a symlinked or junctioned folder, which is never read. Every change is in the plan and `wowlab undo` reverses the
 whole apply from the gate's pre-write snapshot. Folders emptied by a
 deletion stay (the gate deletes files only).
 """
@@ -37,6 +38,7 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import os
 import re
 import stat
 import tomllib
@@ -52,6 +54,7 @@ from wowlab_core import guard, layout
 from wowlab_core.snapshot import Entry, InvalidManifest, Manifest, SnapshotStore
 
 __all__ = [
+    "BEHIND_LINK_REASON",
     "DELETED_PREFIX",
     "LABEL_PREFIX",
     "LAB_ADDON_REASON",
@@ -137,7 +140,12 @@ PRESET_SCOPE_NOTE = (
     "are deleted. Character folders created since are not touched."
 )
 SUBTREE_SCOPE_NOTE = (
-    "An explicit subtree: files added anywhere under it since the save are deleted."
+    "An explicit subtree: files added anywhere under it since the save are deleted, "
+    "including every file in a character folder created under it since."
+)
+BEHIND_LINK_REASON = (
+    "it sits behind a link (a folder on its path is a symlink or junction); wowlab never "
+    "reads or writes through one"
 )
 LAB_ADDON_REASON = (
     "the lab-addon; a profile never saves, restores or deletes it (only `wowlab addon "
@@ -593,30 +601,74 @@ def _edit_no(lay: layout.Layout, rel: str) -> layout.Classified | None:
     return None
 
 
-def _differs(root: Path, entry: Entry) -> bool:
-    """Whether the disk no longer holds `entry` (read only, links not followed)."""
-    path = root / entry.path
-    try:
-        st = path.lstat()
-    except FileNotFoundError:
+_Disk = Literal["same", "differs", "behind_link"]
+
+
+def _is_link(path: Path, st: os.stat_result) -> bool:
+    """A symlink, or on Windows a junction or other directory link."""
+    if stat.S_ISLNK(st.st_mode):
         return True
+    try:
+        return stat.S_ISDIR(st.st_mode) and path.is_junction()
     except OSError:
         return True
+
+
+def _differs(root: Path, flavor_folder: str, entry: Entry) -> _Disk:
+    """Whether the disk still holds `entry`: `same`, `differs`, or
+    `behind_link` when a folder between the flavor folder and the entry is a
+    link (or a junction), in which case nothing is read there.
+
+    Reads only, and never through a link: every parent from the flavor folder
+    down is checked with `lstat`; a file is opened as `snapshot._capture`
+    opens one (`O_RDONLY | O_NOFOLLOW | O_NONBLOCK` where the platform has
+    them) and must be a regular file by `fstat`. A symlink entry is compared
+    by its link text."""
+    rel = entry.path.removeprefix(flavor_folder + "/").split("/")
+    current = root / flavor_folder
+    for part in rel[:-1]:
+        current = current / part
+        try:
+            st = current.lstat()
+        except FileNotFoundError:
+            return "differs"  # the entry's folder is gone
+        except OSError:
+            return "differs"
+        if _is_link(current, st):
+            return "behind_link"
+    path = current / rel[-1]
+    try:
+        st = path.lstat()
+    except OSError:
+        return "differs"
     if entry.kind == "symlink":
         try:
-            return not (stat.S_ISLNK(st.st_mode) and str(path.readlink()) == entry.target)
+            same = stat.S_ISLNK(st.st_mode) and str(path.readlink()) == entry.target
         except OSError:
-            return True
+            return "differs"
+        return "same" if same else "differs"
     if not stat.S_ISREG(st.st_mode):
-        return True
+        return "differs"
+    try:
+        fd = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0),
+        )
+    except OSError:
+        return "differs"
     digest = hashlib.sha256()
     try:
-        with path.open("rb") as handle:
+        with os.fdopen(fd, "rb") as handle:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                return "differs"
             for chunk in iter(lambda: handle.read(1 << 20), b""):
                 digest.update(chunk)
     except OSError:
-        return True
-    return digest.hexdigest() != entry.sha256
+        return "differs"
+    return "same" if digest.hexdigest() == entry.sha256 else "differs"
 
 
 class _Restorer(Protocol):
@@ -692,12 +744,19 @@ def plan_apply(
             tx.restore(manifest.id)
         except guard.PathNotAllowedError:
             # One entry the gate will not write (a changed executable or link):
-            # restore the rest by name and set that one aside.
-            changed = [
-                e.path.removeprefix(prefix)
-                for e in manifest.entries
-                if e.path.startswith(prefix) and _differs(root, e)
-            ]
+            # restore the rest by name and set that one aside. An entry behind
+            # a link is not read and not named; it is left alone.
+            changed: list[str] = []
+            for e in manifest.entries:
+                if not e.path.startswith(prefix):
+                    continue
+                disk = _differs(root, flavor.folder, e)
+                if disk == "behind_link":
+                    left.append(
+                        LeftPath(path=e.path.removeprefix(prefix), reason=BEHIND_LINK_REASON)
+                    )
+                elif disk == "differs":
+                    changed.append(e.path.removeprefix(prefix))
             _restore_split(tx, manifest.id, changed, left)
         for frel in to_delete:
             try:

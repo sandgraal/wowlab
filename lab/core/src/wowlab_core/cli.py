@@ -3017,7 +3017,8 @@ def _profile_summary(p: profiles.Profile) -> ProfileSummary:
 
 def _profile_report(p: profiles.Profile) -> ProfileReport:
     m = p.manifest
-    notes = [profiles.SERVER_SIDE_NOTE]
+    scope = profiles.PRESET_SCOPE_NOTE if p.presets else profiles.SUBTREE_SCOPE_NOTE
+    notes = [scope, profiles.SERVER_SIDE_NOTE]
     if m.client_running is not False:
         notes.append(
             "wowlab could not confirm the client was closed when this was saved: "
@@ -3065,7 +3066,8 @@ SubtreeOpt = Annotated[
         "--subtree",
         help="A file or folder relative to the flavor folder, under WTF/, Interface/ or "
         "Fonts/ and narrower than WTF/Account/ (for a whole area use snap create and snap "
-        "restore); files added anywhere under it since the save are deleted by an apply. "
+        "restore); files added anywhere under it since the save, including in character "
+        "folders created since, are deleted by an apply. "
         "Repeat for more.",
     ),
 ]
@@ -3200,7 +3202,7 @@ def _print_apply_plan(show: Callable[[str], None], plan: profiles.ApplyPlan) -> 
         show("  *-cache files in this change:")
         for c in plan.cache_files:
             show(f"    {c.path}: {c.note}")
-    for n in plan.notes:
+    for n in plan.notes[1:]:  # the scope note (first) is printed under the header
         show(n)
 
 
@@ -3278,6 +3280,7 @@ def profile_apply(
             f"Apply profile {name} (snapshot {manifest.id}) to {chosen.path}: "
             f"{len(plan.plan)} change(s)"
         )
+        show(f"  {plan.notes[0]}")
         if manifest.flavor_version != chosen.version:
             show(
                 f"  Saved on version {_version(manifest.flavor_version)}; {chosen.folder} is "

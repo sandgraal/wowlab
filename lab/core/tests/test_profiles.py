@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 from test_cli import (
@@ -104,7 +105,11 @@ def test_presets_are_the_four_of_13_3_and_name_no_flavor() -> None:
     assert set(found["addons"].character) == {"AddOns.txt", "SavedVariables"}
     assert found["ui"].summary.startswith("Config.wtf (machine-wide: also graphics, sound,")
     assert "check your bars after applying" in found["macros"].summary
-    assert "addons installed since are removed" in found["addons"].summary
+    assert found["addons"].summary == (
+        "Interface/AddOns/ as saved (addons installed since are removed, updates since are "
+        "undone), AddOns.txt, addon SavedVariables; never the lab-addon "
+        "(Interface/AddOns/WowLab/, WowLab.lua)"
+    )
     # L6: no flavor folder (`_x_`), product code or interface/build number in the data.
     data = "\n".join(
         line
@@ -344,8 +349,29 @@ def test_an_explicit_subtree_deletes_files_added_anywhere_under_it_constructed(
     assert dry.added == [f"{ACCT}/1/Newchar-Labsecondc/macros-cache.txt"]
     assert profiles.SUBTREE_SCOPE_NOTE in dry.notes
     assert profiles.PRESET_SCOPE_NOTE not in dry.notes
-    text = _plain(ok("profile", "apply", "acct", "--dry-run").stdout)
-    assert "An explicit subtree: files added anywhere under it since the save are deleted." in text
+    assert profiles.SUBTREE_SCOPE_NOTE == (
+        "An explicit subtree: files added anywhere under it since the save are deleted, "
+        "including every file in a character folder created under it since."
+    )
+    lines = _plain(ok("profile", "apply", "acct", "--dry-run").stdout).splitlines()
+    assert lines[0].startswith("Apply profile acct")
+    assert lines[1] == f"  {profiles.SUBTREE_SCOPE_NOTE}", "the scope note is under the header"
+    shown = _json_of(cli.ProfileReport, "profile", "show", "acct")
+    assert shown.notes[0] == profiles.SUBTREE_SCOPE_NOTE
+
+
+def test_save_and_show_state_the_preset_scope_constructed(root: Path) -> None:
+    saved = _json_of(cli.ProfileReport, "profile", "save", "look", "--preset", "ui")
+    assert saved.notes[0] == profiles.PRESET_SCOPE_NOTE
+    assert _json_of(cli.ProfileReport, "profile", "show", "look").notes[0] == (
+        profiles.PRESET_SCOPE_NOTE
+    )
+    assert profiles.PRESET_SCOPE_NOTE in " ".join(ok("profile", "show", "look").stdout.split())
+
+
+def test_subtree_help_names_character_folders_created_since() -> None:
+    text = " ".join(_plain(ok("profile", "save", "--help").stdout).split())
+    assert "including in character folders created since, are deleted by an apply" in text
 
 
 def test_apply_lists_every_cache_file_with_the_note_constructed(root: Path, flavor: Path) -> None:
@@ -460,6 +486,45 @@ def test_explicit_subtree_leaves_a_new_characters_lab_addon_file_constructed(
     assert report.added == [f"{ACCT}/1/Newchar-Labsecondc/SavedVariables/Other.lua"]
     assert {lp.path: lp.reason for lp in report.left} == {lab: profiles.LAB_ADDON_REASON}
     assert (sv / "WowLab.lua").exists() and not (sv / "Other.lua").exists()
+
+
+def test_an_entry_behind_a_symlinked_folder_is_never_read_constructed(
+    root: Path, flavor: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the gate refuses the whole restore (a changed executable), the
+    entries are compared with the disk by `profiles` itself. An addon folder
+    replaced by a symlink to a folder outside the install must not be read
+    through: its entry is left alone, and nothing outside is opened."""
+    addons = flavor / "Interface/AddOns"
+    for folder, name in (("Tool", "helper.sh"), ("Linked", "a.lua")):
+        (addons / folder).mkdir()
+        (addons / folder / name).write_bytes(b"-- saved\n")
+    ok("profile", "save", "mods", "--preset", "addons")
+    (addons / "Tool" / "helper.sh").write_bytes(b"-- changed\n")  # forces the fallback
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "a.lua").write_bytes(b"-- outside the install\n")
+    (addons / "Linked" / "a.lua").unlink()
+    (addons / "Linked").rmdir()
+    try:
+        (addons / "Linked").symlink_to(outside, target_is_directory=True)
+    except OSError:  # Windows without the symlink privilege
+        pytest.skip("cannot create a symlink here")
+    opened: list[str] = []
+    real_open = profiles.os.open
+
+    def spy(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        opened.append(str(path))
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(profiles.os, "open", spy)
+    report = _json_of(cli.ProfileApplyReport, "profile", "apply", "mods", "--dry-run")
+    left = {lp.path: lp.reason for lp in report.left}
+    assert left["Interface/AddOns/Linked/a.lua"] == profiles.BEHIND_LINK_REASON
+    assert "is an executable" in left["Interface/AddOns/Tool/helper.sh"]
+    assert not [p for p in opened if str(outside) in p or "Linked" in p], opened
+    assert all("Linked" not in i.path for i in report.plan)
+    assert (outside / "a.lua").read_bytes() == b"-- outside the install\n"
 
 
 def test_an_executable_the_gate_refuses_is_left_and_the_rest_applied_constructed(
