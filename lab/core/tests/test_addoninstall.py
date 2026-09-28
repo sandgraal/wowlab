@@ -345,9 +345,77 @@ def test_remove_refused_by_the_gate_exits_3_with_its_reason_constructed(root: Pa
     assert f"'{LAB}/helper.dll' is an executable" in err  # every refused path is named
     assert f"'{LAB}/tool.exe' is an executable" in err
     assert " ".join(addoninstall.REMOVE_REFUSED_NOTE.split()) in err
+    assert "the path(s) named above are not ones wowlab will delete" in err
+    assert "this path is not one" not in err
+    # WowLab.toc is among the files found: the addon still loads.
+    assert " ".join(addoninstall.STILL_INSTALLED_NOTE.split()) in err
     assert "Nothing to remove" not in result.stdout
     assert _tree(root) == before
     assert len(guard.history()) == 1
+
+
+@pytest.mark.parametrize(
+    ("names", "still_installed"),
+    [
+        (("helper.dll",), False),
+        (("helper.dll", "Notes.txt"), False),
+        (("helper.dll", "wowlab.TOC"), True),
+    ],
+    ids=["no-toc-constructed", "other-files-constructed", "case-variant-toc-constructed"],
+)
+def test_a_refused_remove_says_still_installed_only_with_a_toc_constructed(
+    root: Path, names: tuple[str, ...], still_installed: bool
+) -> None:
+    """M11-17: without a WowLab.toc among the files found, nothing claims the
+    lab-addon is installed. A case variant of the name counts, as a
+    case-insensitive volume would load it."""
+    folder = root / FLAVOR / LAB
+    folder.mkdir(parents=True)
+    for name in names:
+        (folder / name).write_bytes(b"constructed, not an executable")
+    before = _tree(root)
+    result = run("addon", "remove", "lab", "--yes")
+    assert result.exit_code == 3, (result.stdout, result.stderr)
+    err = " ".join(result.stderr.split())
+    assert f"'{LAB}/helper.dll' is an executable" in err
+    assert " ".join(addoninstall.REMOVE_REFUSED_NOTE.split()) in err
+    assert ("The lab-addon is still installed" in err) is still_installed
+    assert (" ".join(addoninstall.STILL_INSTALLED_NOTE.split()) in err) is still_installed
+    assert _tree(root) == before
+    assert len(guard.history()) == 0
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="file symlinks need a privilege on Windows")
+def test_a_refused_remove_says_still_installed_with_a_linked_toc_constructed(
+    root: Path, tmp_path: Path
+) -> None:
+    """A `WowLab.toc` found as a link is left alone, never followed, but the
+    client opens it through the link, so the addon still loads."""
+    folder = root / FLAVOR / LAB
+    folder.mkdir(parents=True)
+    real = tmp_path / "linked-toc-target"
+    real.write_bytes(b"## Interface: 16001\n")
+    (folder / "WowLab.toc").symlink_to(real)
+    (folder / "helper.dll").write_bytes(b"constructed, not an executable")
+    result = run("addon", "remove", "lab", "--yes")
+    assert result.exit_code == 3, (result.stdout, result.stderr)
+    err = " ".join(result.stderr.split())
+    assert " ".join(addoninstall.STILL_INSTALLED_NOTE.split()) in err
+    assert (folder / "WowLab.toc").is_symlink() and real.read_bytes() == b"## Interface: 16001\n"
+
+
+def test_the_note_texts_are_pinned() -> None:
+    """M11-17: the exact wording the #105 review asked for."""
+    assert addoninstall.TOC_LEFT_NOTE == (
+        "The folder Interface/AddOns/WowLab/ stays and still holds a .toc listed above as left "
+        "alone, so the client may still find an addon there."
+    )
+    assert addoninstall.REMOVE_REFUSED_NOTE == (
+        "Nothing was deleted: `wowlab addon remove lab` removes the folder's files all together "
+        "or not at all, and the path(s) named above are not ones wowlab will delete."
+    )
+    assert addoninstall.STILL_INSTALLED_NOTE.startswith("The lab-addon is still installed")
+    assert "still installed" not in addoninstall.REMOVE_REFUSED_NOTE
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="symlinks need a privilege on Windows")
@@ -635,20 +703,36 @@ PATCH_TEXT = (
 
 
 def test_install_notes_are_the_same_in_text_and_json_on_every_path(root: Path) -> None:
-    expected = [PATCH_TEXT, addoninstall.LOAD_NOTE]
+    """M11-17: the load note, in the text and in `--json` alike, only after an
+    install that was applied."""
     assert "If it is marked out of date now," in addoninstall.LOAD_NOTE
     dry = ok("addon", "install", "lab", "--dry-run").stdout
     assert PATCH_TEXT in dry and addoninstall.LOAD_NOTE not in dry
-    assert _json_of(cli.AddonInstallReport, "addon", "install", "lab", "--dry-run").notes == (
-        expected
-    )
+    assert _json_of(cli.AddonInstallReport, "addon", "install", "lab", "--dry-run").notes == [
+        PATCH_TEXT
+    ]
+    declined = run("addon", "install", "lab", "--json", input="n\n")
+    assert declined.exit_code == 1
+    # The test runner echoes typed input onto stdout; a terminal does not.
+    body = declined.stdout[declined.stdout.index("{") :]
+    assert cli.AddonInstallReport.model_validate_json(body).notes == [PATCH_TEXT]
     done = ok("addon", "install", "lab", "--yes").stdout
     installed = done.index("Installed the lab-addon")
     assert done.index(PATCH_TEXT) < installed < done.index(addoninstall.LOAD_NOTE)
     again = ok("addon", "install", "lab", "--yes").stdout
     assert "Nothing to install" in again and PATCH_TEXT in again
     assert addoninstall.LOAD_NOTE not in again
-    assert _json_of(cli.AddonInstallReport, "addon", "install", "lab").notes == expected
+    assert _json_of(cli.AddonInstallReport, "addon", "install", "lab").notes == [PATCH_TEXT]
+
+
+def test_install_json_carries_the_load_note_only_when_applied(root: Path) -> None:
+    assert not (root / FLAVOR / LAB).exists()
+    applied = _json_of(cli.AddonInstallReport, "addon", "install", "lab", "--yes")
+    assert applied.applied
+    assert applied.notes == [PATCH_TEXT, addoninstall.LOAD_NOTE]
+    (root / FLAVOR / LAB / "Old.lua").write_bytes(b"-- constructed leftover\n")
+    dry = _json_of(cli.AddonInstallReport, "addon", "install", "lab", "--yes", "--dry-run")
+    assert dry.plan and not dry.applied and dry.notes == [PATCH_TEXT]
 
 
 def test_remove_notes_are_printed_on_every_path(root: Path) -> None:
