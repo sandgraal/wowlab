@@ -886,6 +886,13 @@ no record) raises `GuardError` naming an id, with nothing in the store or the
 install changed. Without it, `undo` behaves as before. The CLI passes both
 (M10-17): the first `snap create` holds the store lock like every later one,
 and `undo` passes the id of the record it showed the owner.
+Out of scope (conductor, 2026-09-28, from the M10-17T security review): a
+process running as the owner that swaps a link or plants a marker inside the
+owner's user data directory between the check and the mkdir. It already has
+the owner's rights, and some window always remains after the last check. The
+check-before-create order stops every mistake short of that; an
+implementation may re-check after creating, or create relative to directory
+handles, as defence in depth.
 
 ### 6.11 CLI — `wowlab` (M10-14)
 
