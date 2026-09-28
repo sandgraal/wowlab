@@ -361,6 +361,18 @@ def test_options_usage_errors(args: tuple[str, ...], words: str) -> None:
     assert words in result.stderr
 
 
+@pytest.mark.parametrize(
+    ("typed", "words"),
+    [("  999999\t", "no race 999999 in build"), ("  no-such-race  ", "no race 'no-such-race' in")],
+)
+def test_no_race_names_the_trimmed_argument(typed: str, words: str) -> None:
+    """M11-14: the message quotes what was typed less surrounding spaces."""
+    result = run("looks", "options", typed, "--build", BUILD)
+    assert result.exit_code == 2, (result.stdout, result.stderr)
+    assert words in result.stderr
+    assert typed not in result.stderr
+
+
 def test_options_say_when_the_playable_flag_chose_the_race() -> None:
     """ChrRaces has two rows named Human; only race 1 is flagged playable."""
     report = _json(
@@ -469,6 +481,22 @@ def test_save_keeps_an_unknown_choice_as_a_note_constructed() -> None:
     assert [f.message for f in cli.LookReport.model_validate_json(option.stdout).notes] == [
         f"option 77777 {HOTFIX_HINT}"
     ]
+
+
+def test_a_choice_of_another_option_has_no_name_under_this_one(model: Customizations) -> None:
+    """M11-14: choice 1 is a Skin Color (9) choice; set under Face (10) it is
+    refused, and the reference names no choice rather than Skin Color's."""
+    assert model.choices[PLAIN_SKIN].option_id == HUMAN_BODY_0_SKIN
+    result = _save("wrong", f"{HUMAN_BODY_0_FACE}={PLAIN_SKIN}", extra=("--json",))
+    assert result.exit_code == 1
+    report = cli.LookReport.model_validate_json(result.stdout)
+    assert report.refused
+    assert [(c.option_id, c.option_name, c.choice_id, c.choice_name) for c in report.choices] == [
+        (HUMAN_BODY_0_FACE, "Face", PLAIN_SKIN, None)
+    ]
+    assert any(f"belongs to option {HUMAN_BODY_0_SKIN}" in f.message for f in report.refusals)
+    right = cli._choice_ref(model, HUMAN_BODY_0_SKIN, PLAIN_SKIN)
+    assert right.choice_name == model.choices[PLAIN_SKIN].name is not None
 
 
 def test_save_needs_unlock_is_a_note_constructed(source: _Source) -> None:
@@ -630,6 +658,31 @@ def test_compare_two_looks() -> None:
     assert report.remarks.count(EXPORTED_ONLY) == 1
     assert text.count(EXPORTED_ONLY) == 1
     assert "same choice on 1 option(s)" in text
+
+
+def test_compare_json_states_shared_remarks_once_constructed(user_data: Path) -> None:
+    """M11-14: the tables-only remark, and how the build was chosen, are stated
+    once at the top level, not again in `a` and `b`; a remark about one look
+    (saved against another build; constructed by editing the file) stays with
+    that look."""
+    assert _save("a", f"9={PLAIN_SKIN}").exit_code == 0
+    assert _save("b", f"9={OTHER_SKIN}").exit_code == 0
+    report = _json(cli.LooksCompareReport, "looks", "compare", "a", "b")
+    chosen = [r for r in report.remarks if r.startswith("No install found")]
+    assert len(chosen) == 1
+    assert report.remarks.count(EXPORTED_ONLY) == 1
+    assert report.a.remarks == [] and report.b.remarks == []
+
+    path = user_data / "looks" / "b.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["saved_build"] = "1.60.1.1"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    edited = _json(cli.LooksCompareReport, "looks", "compare", "a", "b", "--build", BUILD)
+    moved = f"Saved against build 1.60.1.1; checked here against build {BUILD}."
+    assert (edited.a.remarks, edited.b.remarks) == ([], [moved])
+    assert edited.remarks == [EXPORTED_ONLY]
+    text = ok("looks", "compare", "a", "b", "--build", BUILD).stdout
+    assert text.count(EXPORTED_ONLY) == 1 and text.count(moved) == 1
 
 
 def test_compare_a_missing_look() -> None:

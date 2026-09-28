@@ -2200,6 +2200,15 @@ def _build_for(build: str | None, root: Path | None, flavor: str | None) -> str:
     return chosen.version
 
 
+def _check_table_key(data: gamedata.GameData, table: str, build: str) -> None:
+    """A malformed table name or build string is a usage error (exit 2), not a
+    traceback: `GameData` refuses them before any I/O."""
+    try:
+        data.table_path(table, build)
+    except ValueError as exc:
+        raise CliError(str(exc), EXIT_USAGE) from exc
+
+
 @db2_app.command("builds")
 @_handled
 def db2_builds(
@@ -2241,6 +2250,7 @@ def db2_fetch(
     there). JSON: FetchReport."""
     version = _build_for(build, root, flavor)
     with _open_gamedata() as data:
+        _check_table_key(data, table, version)
         path = data.table(table, version)
         sidecar = data.sidecar(table, version)
     report = FetchReport(table=table, build=version, path=str(path), sidecar=sidecar)
@@ -2268,6 +2278,7 @@ def db2_head(
     version = _build_for(build, root, flavor)
     got: list[dict[str, str]] = []
     with _open_gamedata() as data:
+        _check_table_key(data, table, version)
         for row in data.rows(table, version):
             if len(got) >= rows:
                 break
@@ -3559,10 +3570,7 @@ def _looks_build(
 
 
 def _load_model(data: gamedata.GameData, build: str) -> looks.Customizations:
-    try:
-        data.table_path(looks.REQUIRED_TABLES[0], build)
-    except ValueError as exc:
-        raise CliError(str(exc), EXIT_USAGE) from exc
+    _check_table_key(data, looks.REQUIRED_TABLES[0], build)
     try:
         return looks.Customizations.from_gamedata(data, build)
     except looks.LooksDataError as exc:
@@ -3597,16 +3605,16 @@ def _faction(alliance: int) -> str:
 def _resolve_race(model: looks.Customizations, text: str) -> tuple[looks.Race, list[str]]:
     """The race `text` names, and a remark when the playable flag chose between rows."""
     playable = ", ".join(_race_label(r) for r in model.playable_races())
-    race_id = _as_id(text)
+    typed = text.strip()
+    race_id = _as_id(typed)
     if race_id is not None:
         race = model.races.get(race_id)
         if race is None:
             raise CliError(
-                f"no race {text} in build {model.build}'s ChrRaces (flagged playable: {playable})",
+                f"no race {typed} in build {model.build}'s ChrRaces (flagged playable: {playable})",
                 EXIT_USAGE,
             )
         return race, []
-    typed = text.strip()
     folded = typed.casefold()
     matches = [r for _, r in sorted(model.races.items()) if r.name.casefold() == folded] or [
         r for _, r in sorted(model.races.items()) if r.client_file_string.casefold() == folded
@@ -3626,7 +3634,7 @@ def _resolve_race(model: looks.Customizations, text: str) -> tuple[looks.Race, l
         return matches[0], remarks
     if not matches:
         raise CliError(
-            f"no race {text!r} in build {model.build}'s ChrRaces (flagged playable: {playable})",
+            f"no race {typed!r} in build {model.build}'s ChrRaces (flagged playable: {playable})",
             EXIT_USAGE,
         )
     listed = ", ".join(f"{r.name} ({r.id}, {_faction(r.alliance)})" for r in matches)
@@ -3699,7 +3707,9 @@ def _choice_ref(model: looks.Customizations, option_id: int, choice_id: int) -> 
         option_id=option_id,
         option_name=option.name if option else None,
         choice_id=choice_id,
-        choice_name=choice.name if choice else None,
+        # A choice of another option is not this option's choice: no name here
+        # (the check reports the mismatch as a refusal).
+        choice_name=choice.name if choice is not None and choice.option_id == option_id else None,
     )
 
 
@@ -3708,7 +3718,11 @@ def _look_report(
     saved: lookstore.SavedLook,
     path: Path | None,
     remarks: Sequence[str] = (),
+    *,
+    exported_only: bool = True,
 ) -> LookReport:
+    """`exported_only=False` leaves the tables-only remark to the caller
+    (`compare` states it once, at its top level)."""
     look = saved.look
     verdict = model.check(look)
     race = model.races.get(look.race_id)
@@ -3717,7 +3731,8 @@ def _look_report(
         notes.append(
             f"Saved against build {saved.saved_build}; checked here against build {model.build}."
         )
-    notes.append(_EXPORTED_ONLY.format(version=model.build))
+    if exported_only:
+        notes.append(_EXPORTED_ONLY.format(version=model.build))
     return LookReport(
         name=look.name,
         path=str(path) if path is not None else None,
@@ -4199,8 +4214,11 @@ def looks_compare(
             data, build, root, flavor, [first.saved_build, second.saved_build]
         )
         model = _load_model(data, version)
-    ra = _look_report(model, first, path_a, remarks)
-    rb = _look_report(model, second, path_b, remarks)
+    # What holds for both looks (how the build was chosen, the tables-only
+    # remark) is stated once, in the top-level remarks; each side keeps only
+    # what is its own (saved against another build).
+    ra = _look_report(model, first, path_a, exported_only=False)
+    rb = _look_report(model, second, path_b, exported_only=False)
     la, lb = first.look, second.look
     same: list[LooksChoiceRef] = []
     different: list[LooksDifference] = []
@@ -4227,7 +4245,7 @@ def looks_compare(
         same_class=la.class_id == lb.class_id,
         same=same,
         different=different,
-        remarks=list(dict.fromkeys([*ra.remarks, *rb.remarks])),
+        remarks=[*remarks, _EXPORTED_ONLY.format(version=model.build)],
     )
     if json_out:
         _emit(report)
@@ -4262,7 +4280,7 @@ def looks_compare(
         verdict = f"refused ({len(r.refusals)} reason(s))" if r.refused else "not refused"
         _say(f"  {r.name}: {verdict}, {len(r.notes)} note(s)")
         _print_findings(r.refusals, r.notes, "    ")
-    for remark in report.remarks:
+    for remark in dict.fromkeys([*remarks, *ra.remarks, *rb.remarks, *report.remarks]):
         _say(remark)
 
 

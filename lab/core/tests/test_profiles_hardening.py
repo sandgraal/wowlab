@@ -420,3 +420,54 @@ def test_a_close_failure_mid_walk_is_differs_and_leaks_nothing_constructed(
     monkeypatch.undo()
     assert failed
     assert _open_fds() == before
+
+
+# ─── a real POSIX name holding `:` or `\` (M11-14) ───────────────────────────
+
+
+@posix_only
+@pytest.mark.parametrize("name", ["odd:name.lua", "odd\\name.lua"])
+def test_a_real_file_named_with_colon_or_backslash_always_differs_constructed(
+    walk: str, tree: _Tree, name: str
+) -> None:
+    """Constructed: a regular file whose POSIX name holds `:` or `\\`, with
+    exactly the saved bytes. `_entry_parts` refuses the part on every
+    platform, so the fallback comparison counts it as changed without reading
+    it (docs/LAB_PLAN.md §13.3, 2026-09-28)."""
+    (tree.parent / name).write_bytes(tree.saved)
+    entry = tree.entry.model_copy(update={"path": f"{tree.flavor}/Interface/AddOns/Linked/{name}"})
+    assert profiles._entry_parts(tree.flavor, entry) is None
+    assert profiles._differs(tree.root, tree.flavor, entry) == "differs"
+
+
+@posix_only
+@pytest.mark.parametrize("name", ["odd:name.lua", "odd\\name.lua"])
+@pytest.mark.parametrize("changed", [False, True])
+def test_apply_leaves_a_colon_or_backslash_named_file_untouched_constructed(
+    root: Path, flavor: Path, name: str, changed: bool
+) -> None:
+    """Constructed: an addon file whose POSIX name holds `:` or `\\`. The gate
+    never writes such a name, so it refuses the whole restore and `profiles`
+    compares entries itself; the file counts as changed whether or not it is,
+    the gate refuses it again, and it is left alone and listed with the
+    gate's reason. Harmless: nothing is written to it, and the rest of the
+    profile is applied (docs/LAB_PLAN.md §13.3, 2026-09-28)."""
+    tool = flavor / "Interface/AddOns/Tool"
+    tool.mkdir()
+    (tool / "Tool.toc").write_bytes(b"## Title: constructed\n")
+    odd = tool / name
+    odd.write_bytes(b"-- constructed\n")
+    ok("profile", "save", "mods", "--preset", "addons")
+    lua = flavor / SV / "RareScanner.lua"
+    saved_lua = lua.read_bytes()
+    lua.write_bytes(saved_lua + b"\n-- constructed\n")
+    now = b"-- changed since the save\n" if changed else b"-- constructed\n"
+    odd.write_bytes(now)
+    result = ok("profile", "apply", "mods", "--yes", "--json")
+    report = cli.ProfileApplyReport.model_validate_json(result.stdout)
+    assert report.applied
+    left = {lp.path: lp.reason for lp in report.left}
+    assert "not a plain name" in left[f"Interface/AddOns/Tool/{name}"]
+    assert all(not i.path.endswith(name) for i in report.plan)
+    assert odd.read_bytes() == now
+    assert lua.read_bytes() == saved_lua, "the rest of the profile is applied"
