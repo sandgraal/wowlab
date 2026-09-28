@@ -158,7 +158,7 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 ## ADR-0026 — The lab-addon is Lua that runs in the game client, never in the Lab
 
-**Status:** Proposed (2026-09-28)
+**Status:** Accepted (2026-09-28; proposed 2026-09-28) — owner decision; the status edit was made by the conductor on the owner's explicit instruction
 
 **Context:** The owner picked the lab-addon for Wave 2 (M11, 2026-09-28): the Lab's own data-broker addon, which records gear, talents, customization choices, collections, currencies and professions into SavedVariables at logout, so the offline tools have a feed. An addon is Lua by necessity: it is loaded by the client's own Lua 5.1 environment. ADR-0020 admits a second language only with measurements showing Python missing a target, which is a rule for the core library and does not describe this case. L3 forbids executing Lua in the Lab.
 
@@ -170,7 +170,7 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 ## ADR-0027 — Generated local pages are self-contained static HTML
 
-**Status:** Proposed (2026-09-28)
+**Status:** Accepted (2026-09-28; proposed 2026-09-28) — owner decision; the status edit was made by the conductor on the owner's explicit instruction
 
 **Context:** The owner asked for customization-sandbox (Wave 2) to have a local web page besides the CLI (2026-09-28). ADR-0020 keeps the repository Python-only and ADR-0019 keeps the Lab local, with no server and no upload. `docs/LAB_IDEAS.md` has more page-shaped ideas (explorer, alt-dashboard) that would repeat this choice.
 

@@ -306,7 +306,7 @@ A ticket is done when: CI is green on every required check; each acceptance crit
 
 # M11 — lab-addon, customization-sandbox, profiles, sv-merge (Wave 2)
 
-Spec: `docs/LAB_PLAN.md` §13. Decisions: ADR-0026, ADR-0027 (Proposed). Owner pick 2026-09-28. L1–L8 apply to every ticket.
+Spec: `docs/LAB_PLAN.md` §13. Decisions: ADR-0026, ADR-0027 (accepted 2026-09-28). Owner pick 2026-09-28. L1–L8 apply to every ticket.
 
 The wave is 10 tickets, four of them M-sized (M11-01, M11-05, M11-08, M11-09), not the four S-sized ideas listed in `docs/LAB_IDEAS.md`; the M11-10 review compares actual effort against that. Wave 1 closes before M11 dispatch (§13.5); the critical path M11-01 → M11-02 → M11-03 goes first.
 

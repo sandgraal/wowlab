@@ -1233,7 +1233,7 @@ game installed. M10-08, M10-09 and M10-10 do not wait on it.
 
 Owner pick, 2026-09-28 (ADR-0024). Decisions: ADR-0026 (the addon is Lua
 for the client only) and ADR-0027 (generated pages are self-contained static
-HTML), both Proposed. Owner choices of the same date: the addon is installed
+HTML), both accepted by the owner on 2026-09-28. Owner choices of the same date: the addon is installed
 by `wowlab` through `guard`; it records everything the idea lists; the
 sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
 
@@ -1457,5 +1457,4 @@ merged, they can start while any remaining Wave 1 fix finishes. It is safe
 because they add new files only (`lab/addon/WowLab/`, and recorded wago
 tables plus a new `wowlab_core.looks` module) and touch no CLI command,
 `luadata`, `guard` or other Wave 1 module, so they cannot collide with a
-Wave 1 fix. M11-01 also waits for ADR-0026 to be accepted, since it brings
-the Lua sources in.
+Wave 1 fix.
