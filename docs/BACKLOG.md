@@ -308,17 +308,21 @@ A ticket is done when: CI is green on every required check; each acceptance crit
 
 Spec: `docs/LAB_PLAN.md` §13. Decisions: ADR-0026, ADR-0027 (Proposed). Owner pick 2026-09-28. L1–L8 apply to every ticket.
 
+The wave is 10 tickets, four of them M-sized (M11-01, M11-05, M11-08, M11-09), not the four S-sized ideas listed in `docs/LAB_IDEAS.md`; the M11-10 review compares actual effort against that. Wave 1 closes before M11 dispatch (§13.5); the critical path M11-01 → M11-02 → M11-03 goes first.
+
 ## [ ] M11-01 — lab-addon sources and Lua lint
 **Size:** M · **Depends on:** —
 
 `lab/addon/WowLab/` per §13.1 and ADR-0026: a TOC template (no interface number; filled at install), Lua 5.1 sources writing the versioned tables at `PLAYER_LOGOUT` and on `/wowlab save`; no names, realms, GUIDs, guild or chat. A static Lua linter on `lab/addon/` only, pinned, no network at test time (the CI workflow change is harness work: the implementer reports the exact step and the conductor lands it). No Lua is executed anywhere in the Lab.
+
+Before writing the talents section, the implementer reads the trait walker of https://github.com/Thunderz96/forever-addon-kit as a reference only: copy no code (check its license first if anything is adapted). Each API it confirms is marked "confirmed by forever-addon-kit on 69893, re-verify in M11-03". `talents.class` and `talents.legacy` are separate sections, each absent with a reason when its API is missing; the spec field is optional and found by testing for the API, never by calling `GetSpecialization` unguarded. `WowLabCharDB.probe` per §13.1.
 
 **Acceptance:** the linter passes; a test asserts the template has no interface number and that the sources call none of `UnitName`, `UnitFullName`, `GetUnitName`, `GetRealmName`, `GetNormalizedRealmName`, `UnitGUID`, `GetGuildInfo`, `BNGetInfo`, `C_BattleNet`, `C_ChatInfo`, `GetPlayerInfoByGUID`, and that every unit-token argument is the literal `"player"`; a reviewer checks every API used against community documentation, marking each **[verify]** for the owner capture.
 
 ---
 
 ## [ ] M11-02 — `wowlab addon install/remove lab`
-**Size:** S · **Depends on:** M11-01
+**Size:** S · **Depends on:** M11-01, M10-14
 
 Copies `lab/addon/WowLab/` into `Interface/AddOns/WowLab/` through one `guard` transaction, filling `## Interface:` from discovery (L6); `remove` deletes it through `guard`. Plan, prompt, `--yes`, `--json`, exit 3 on refusal, as §6.11.
 
@@ -329,16 +333,16 @@ Copies `lab/addon/WowLab/` into `Interface/AddOns/WowLab/` through one `guard` t
 ## [ ] M11-03 — Capture the lab-addon's output
 **Size:** S · **Depends on:** M11-02 · **owner**
 
-Install with `wowlab addon install lab`; on each character log in, then log out or `/reload` (a crash writes nothing); on at least one character open the barber shop and close it without changing anything, then log out. Capture `WowLab.lua` (account and per-character) and, for sv-merge, a `## SavedVariablesPerCharacter` file from two characters that holds no other player's names (or `WowLab.lua` itself), with `scripts/lab_capture.py` (extended with `--sv` patterns if needed, as a scrub-tool follow-up with `security-reviewer`). Index rows; `docs/LAB_FORMATS.md` amendment for what each API section actually returned on Forever.
+Install with `wowlab addon install lab`; on each character log in, then log out or `/reload` (a crash writes nothing); log in twice on one character, so the `probe.loads` counter is proven to increment; on at least one character open the barber shop and close it without changing anything, then log out. Capture `WowLab.lua` (account and per-character) and, for sv-merge, a `## SavedVariablesPerCharacter` file from two characters that holds no other player's names (or `WowLab.lua` itself), with `scripts/lab_capture.py` (extended with `--sv` patterns if needed, as a scrub-tool follow-up with `security-reviewer`). Index rows; `docs/LAB_FORMATS.md` amendment for what each API section actually returned on Forever.
 
-**Acceptance:** fixtures committed with rows; security and domain reviews clean; every **[verify]** from M11-01 resolved or recorded open.
+**Acceptance:** fixtures committed with rows; security and domain reviews clean; `probe.loads` shown to increment across the two logins; a table in `docs/LAB_FORMATS.md` listing every **[verify]** from §13.1 as confirmed, contradicted (with what Forever actually returned) or still open.
 
 ---
 
 ## [ ] M11-04 — `wowlab_core.labaddon` reader and `wowlab char show`
-**Size:** S · **Depends on:** M11-03
+**Size:** S · **Depends on:** M11-03, M10-14
 
-Pydantic models per section and schema version; unknown keys kept; absent sections reported with the addon's reason. `wowlab char show [--json]`.
+Pydantic models per section and schema version; unknown keys kept; absent sections reported with the addon's reason. `wowlab char show [--json]`. The reader and `char show` handle `talents.legacy` present, absent (with its reason) and empty (below level 25), and an optional spec.
 
 **Acceptance:** every M11-03 fixture reads; `--json` validates; a constructed schema-2 document (labelled) is refused with a clear message.
 
@@ -354,7 +358,7 @@ Record the `ChrCustomization*`, `ChrRaces` and model tables for the Forever buil
 ---
 
 ## [ ] M11-06 — `wowlab looks` CLI
-**Size:** S · **Depends on:** M11-05 (and M11-04 for `import-char`)
+**Size:** S · **Depends on:** M11-05, M10-14 (and M11-04 for `import-char`)
 
 `races`, `options`, `save`, `show`, `compare`, `import-char`; looks as JSON under the user data directory; `--json` on every data command.
 
@@ -372,7 +376,7 @@ One self-contained HTML file per ADR-0027 (inline CSS/JS, embedded JSON, CSP for
 ---
 
 ## [ ] M11-08 — profiles
-**Size:** M · **Depends on:** —
+**Size:** M · **Depends on:** M10-14
 
 `wowlab profile save | apply | list | show | delete` per §13.3 on `snapshot` and `guard`; presets as data; the add-since-save behaviour decided and written into §13.3.
 
@@ -383,7 +387,7 @@ One self-contained HTML file per ADR-0027 (inline CSS/JS, embedded JSON, CSP for
 ## [ ] M11-09T — sv-merge graders [TEST]
 **Size:** S · **Depends on:** M11-03
 
-Graders for §13.4 on the M11-03 two-character captures and constructed documents (labelled): with a common snapshot base, one-sided changes taken and the same change taken once; without one (two characters), a two-way merge where every differing key is a conflict and one-sided keys are listed; conflicts listed and nothing written; an account-wide file refused for character-to-character with the reason; `--key` copies within one file; a missing key reported as "absent"; output in the target document's style, written through `guard`. `xfail(strict=True)` one marker line each.
+Graders for §13.4 on the M11-03 two-character captures and constructed documents (labelled): with a common snapshot base, one-sided changes taken and the same change taken once; without one (two characters), a two-way merge where every differing key is a conflict and one-sided keys are listed; conflicts listed and nothing written; an account-wide file refused for character-to-character with the reason; `--key` copies within one file; a missing key reported as "absent"; output in the target document's style, written through `guard`; the loader check: refuse with exit 3 when `probe.lost` is true, refuse when two snapshots of `WowLab.lua` show `loads` not going up, warn and continue with no capture, and `--force-loader-check` overriding the refusal. `xfail(strict=True)` one marker line each.
 
 **Acceptance:** fail today for the missing behaviour only; satisfiable by a scratch patch; `make ci` green.
 

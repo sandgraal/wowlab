@@ -1250,11 +1250,27 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
     reports them; slots come from the client's own first/last
     equipped-slot constants, not a fixed list (a ranged slot on Forever is
     **[verify]**);
-  - talents active at logout (`C_ClassTalents.GetActiveConfigID()` then
-    `C_Traits` for config, tree, node and entry ids and ranks **[verify]**),
-    the spec id, the id of the last selected saved loadout if there is one,
-    and the loadout export string; no loadout names. The number and kind of
-    trees on Forever are **[verify]**;
+  - talents, as two sections, each a `C_Traits` config dump (config, tree,
+    node and entry ids and ranks) and each "absent with reason" when its API
+    is missing:
+    - `talents.class`: the class talents active at logout
+      (`C_ClassTalents.GetActiveConfigID()` then `C_Traits` **[verify]**),
+      the id of the last selected saved loadout if there is one, and the
+      loadout export string; no loadout names;
+    - `talents.legacy`: the Legacy trees, also on `C_Traits` (panel
+      `ToggleLegacySystemUI`, unlocked at level 25, with a seasonal point
+      cap), and the Legacy points spent and the cap if the client gives them
+      **[verify]**; empty below level 25.
+
+    Class talents and the Legacy trees both running on `C_Traits`, the
+    Legacy panel and its level-25 unlock and point cap, the absence of
+    `GetSpecialization` and related calls, and new spec IDs (paladin =
+    1486) were measured on the live Forever client, build 1.60.1.69893, by
+    https://github.com/Thunderz96/forever-addon-kit (README "Findings");
+    each is re-verified in M11-03;
+  - spec: whatever spec identifier Forever exposes, found by testing for the
+    API function; `GetSpecialization` is never called unguarded. The field is
+    optional in the schema-1 model;
   - customization choices (option id to choice id, mapped from the barber
     shop's choice index to the choice's `id`), recorded only at
     `BARBER_SHOP_OPEN` and after an applied change
@@ -1276,7 +1292,14 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   `GetBuildInfo()` and the active spec, since spec and loadout describe a
   moment (GLOSSARY). It records no wall-clock time; the reader uses the
   file's modification time (if a time is ever added, the scrub tool must
-  shift it like combat-log times). All sections go in
+  shift it like combat-log times). `WowLabCharDB` also holds
+  `probe = { loads = <n> }`: at `ADDON_LOADED` the addon reads the value the
+  file held, adds 1 and keeps it; if the value was nil on a character that
+  already has a capture file, it sets `probe.lost = true`. This is the only
+  state the addon carries from one session to the next. It exists for
+  §13.4's loader check (the sv-health idea in `docs/LAB_IDEAS.md`, cut down
+  to what sv-merge needs; the full `doctor` check stays an idea). All
+  sections go in
   `SavedVariablesPerCharacter` (`WowLabCharDB`) until the M11-03 capture
   shows which collections are account-wide on Forever; `WowLabDB` then holds
   only data that reads the same from every character, and the reader says
@@ -1289,6 +1312,9 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   identity (`BNGetInfo`, `C_BattleNet`). The name fields that
   `C_BarberShop.GetCurrentCharacterData()` returns are never stored
   **[verify]**.
+
+  Schema 1 may change after M11-03. Edits from the capture land before
+  M11-04 starts; after M11-04 merges, any change is schema 2.
 - **Install** `wowlab addon install lab` / `wowlab addon remove lab`: copies
   the addon into `Interface/AddOns/WowLab/` through a `guard` transaction
   (client closed, snapshot first, undoable), filling the TOC's
@@ -1393,15 +1419,43 @@ subtrees (copy one addon profile). Output goes through the serializer (the
 document's own style) and is written by `guard`. The addon reads the
 merged file at next login, may migrate it, and rewrites it at logout: the
 merge is proven only after one login and logout, and a subtree taken from an
-older addon version may be reset by the addon. Graders come first
-(`M11-09T`), since it rewrites user data.
+older addon version may be reset by the addon.
+
+Before writing, `sv merge` checks the SavedVariables loader. The Forever beta
+had a bug where SavedVariables were written but not loaded back
+(https://github.com/nobewayo/ForeverSVFix, now reported fixed); if it
+returns, the target addon loads defaults at the next login and saves them at
+logout, overwriting the merge, which would look like an sv-merge bug.
+`sv merge` reads the target character's `WowLab.lua` first and refuses with
+exit 3 and a clear reason when `probe.lost` is true, or when two snapshots
+of that file show `loads` not going up. `--force-loader-check` overrides the
+refusal. With no capture of `WowLab.lua`, it warns and continues.
+
+Graders come first (`M11-09T`), since it rewrites user data.
 
 ### 13.5 Order
 
 ```
+M10-13, M10-14, M10-18 ── M10-15 Wave 1 review ── M11
 M11-01 addon + lint ── M11-02 addon install ── M11-03 owner capture ─┬─ M11-04 labaddon reader + char show
-                                                                     └─ M11-09T → M11-09 sv-merge
+   (critical path)                                                   └─ M11-09T → M11-09 sv-merge
 M11-05 customization tables + looks model ── M11-06 looks CLI ── M11-07 looks page
 M11-08 profiles
                                                                         all ── M11-10 wave review
 ```
+
+Wave 1 closes first (§11). M11-01 → M11-02 → M11-03 is the critical path:
+it is dispatched first once Wave 1 closes, because the owner's capture
+(M11-03) resolves most of §13.1's **[verify]** items and M11-04, M11-06's
+`import-char` and M11-09T/M11-09 wait on it. M11-05 and M11-08 run
+alongside it. M11-02, M11-04, M11-06 and M11-08 add CLI commands, so they
+depend on M10-14.
+
+M11-01 and M11-05 are the only M11 tickets that may run in parallel with
+the end of Wave 1: once M10-15's handoff is written and this plan has
+merged, they can start while any remaining Wave 1 fix finishes. It is safe
+because they add new files only (`lab/addon/WowLab/`, and recorded wago
+tables plus a new `wowlab_core.looks` module) and touch no CLI command,
+`luadata`, `guard` or other Wave 1 module, so they cannot collide with a
+Wave 1 fix. M11-01 also waits for ADR-0026 to be accepted, since it brings
+the Lua sources in.
