@@ -535,6 +535,44 @@ def test_dependency_on_a_choice_the_build_lacks_is_undecided_constructed() -> No
     assert _kinds(check) == ([], [FindingKind.UNDECIDED_DEPENDENCY])
 
 
+def test_placeholder_tie_marks_neither_side_constructed() -> None:
+    """Boundary: with an even number of build classes (warlock's ChrClasses
+    row dropped, leaving 8), Flight Form cut to two choices whose class masks
+    split the classes 4 and 4. Each is the other's complement and neither is
+    wider, so neither is a placeholder and both halves are offered the form."""
+    tables = _tables()
+    tables["ChrClasses"] = [r for r in tables["ChrClasses"] if r["ID"] != str(WARLOCK)]
+    halves = {"7243": ("90000002", "15"), str(FLIGHT_SIGN_EXTENDED): ("90000003", "1232")}
+    # 15 = classes 1-4; 1232 = classes 5, 7, 8, 11
+    for req_id, mask in halves.values():
+        row = dict.fromkeys(tables["ChrCustomizationReq"][0], "0")
+        row.update(
+            ID=req_id,
+            ReqSource_lang="",
+            ReqType="3",
+            ClassMask=mask,
+            OverrideArchive="-1",
+            RaceMasks_0="-1",
+            RaceMasks_1="-1",
+        )
+        tables["ChrCustomizationReq"].append(row)
+    choices = []
+    for row in tables["ChrCustomizationChoice"]:
+        if row["ChrCustomizationOptionID"] == str(FLIGHT_FORM):
+            if row["ID"] not in halves:
+                continue
+            row["ChrCustomizationReqID"] = halves[row["ID"]][0]
+        choices.append(row)
+    tables["ChrCustomizationChoice"] = choices
+    model = Customizations.from_tables(BUILD, tables)
+
+    flight = model.options[FLIGHT_FORM]
+    assert len(model.classes) == 8 and len(flight.choices) == 2
+    assert not any(model._is_placeholder(flight, c) for c in flight.choices)
+    for cls in (WARRIOR, DRUID):
+        assert FLIGHT_FORM in {o.id for o in model.options_for(NIGHT_ELF, 0, cls)}
+
+
 # ─── bad tables ────────────────────────────────────────────────────────────
 
 

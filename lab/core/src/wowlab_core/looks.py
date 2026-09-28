@@ -544,9 +544,11 @@ class Customizations(_Frozen):
         class, class-restricted choices count as admitted.
 
         A class-restricted choice whose classes are exactly those the
-        option's other restricted choices exclude is the option's placeholder
-        for classes it does not apply to (Flight Form's 'None': every class
-        but druid); it does not list the option **[verify]**.
+        option's other restricted choices exclude, and strictly more of them
+        than those choices admit, is the option's placeholder for classes it
+        does not apply to (Flight Form's 'None': every class but druid); it
+        does not list the option. When the two sides admit equally many
+        classes, neither is the placeholder **[verify]**.
 
         Masks are read literally. On 70009 a Human druid is offered the
         Moonkin "Decoration Color" and "Effects Color" options but not the
@@ -598,7 +600,11 @@ class Customizations(_Frozen):
 
     def _is_placeholder(self, option: Option, choice: Choice) -> bool:
         """``choice`` admits exactly the build classes the option's other
-        active class-restricted choices exclude (see ``options_for``)."""
+        active class-restricted choices exclude, and more of them than those
+        choices admit (see ``options_for``). The size test breaks the
+        symmetry of a two-choice pair, where each side is the other's
+        complement: only the wider side is the placeholder, and on a tie
+        neither is."""
         req = self.requirements.get(choice.requirement_id)
         if req is None or not req.active or not req.class_restricted:
             return False
@@ -611,7 +617,7 @@ class Customizations(_Frozen):
             other_req = self.requirements.get(other.requirement_id)
             if other_req is not None and other_req.active and other_req.class_restricted:
                 others |= set(other_req.classes(known))
-        return bool(others) and own == known - others
+        return bool(others) and own == known - others and len(own) > len(others)
 
     # checking ---------------------------------------------------------------
 
