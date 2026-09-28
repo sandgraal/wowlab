@@ -603,11 +603,38 @@ def _refuse_inside_any_install(path: Path, what: str) -> Path:
     install, and so is one that cannot be examined. Runs before anything at
     `path` is created. Returns the resolved path it examined.
 
+    A `..` after a link or junction has two readings: POSIX applies it to
+    the link's target, Windows removes it with the component before it, as
+    text, before the file system sees the path. Where `path` has a `..`,
+    both readings are examined, and either one inside an install refuses it;
+    the one returned is `resolve()`'s, the place this platform would create.
+
     The one copy of the rule: `snapshot` calls it for its store too."""
     try:
         resolved = path.resolve()
+        readings = [resolved]
+        if ".." in path.parts:
+            readings.append(_resolved_link_first(path))
     except (OSError, RuntimeError, ValueError) as exc:
         raise GuardError(f"cannot resolve {what} {path}: {exc}; refusing it") from exc
+    for reading in readings:
+        _refuse_marked_chain(reading, path, what)
+    return resolved
+
+
+def _resolved_link_first(path: Path) -> Path:
+    """`path` resolved one component at a time, following each link or
+    junction before the next component is applied, so a `..` goes up from
+    the link's target (the POSIX reading, on every platform)."""
+    current = Path(path.absolute().anchor)
+    for part in path.absolute().parts[1:]:
+        current = current.parent if part == ".." else (current / part).resolve()
+    return current
+
+
+def _refuse_marked_chain(resolved: Path, path: Path, what: str) -> None:
+    """Refuse when `resolved` or an existing ancestor holds an install marker
+    or cannot be examined."""
     for candidate in (resolved, *resolved.parents):
         try:
             st = candidate.lstat()
@@ -632,7 +659,6 @@ def _refuse_inside_any_install(path: Path, what: str) -> Path:
                 f"{what} {path} is inside an install ({candidate} holds {marker}); "
                 "guard creates nothing there"
             )
-    return resolved
 
 
 @dataclass(frozen=True)
