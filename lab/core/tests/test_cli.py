@@ -1239,18 +1239,25 @@ def test_doctor_cannot_check_the_client_when_a_flavor_folder_cannot_be_listed(
     assert report.error is not None
 
 
-def test_control_characters_never_reach_the_terminal_constructed(
-    root: Path, flavor: Path, tmp_path: Path
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="Windows forbids control characters 0-31 in file names"
+)
+def test_control_characters_in_a_file_name_never_reach_the_terminal_constructed(
+    root: Path, flavor: Path
 ) -> None:
-    """Security review 4: ESC and OSC in file names and values are shown
-    escaped; C1 CSI in a path the gate accepts is escaped in the plans."""
+    """Security review 4: ESC and OSC in a file name are shown escaped."""
     esc_name = "evil\x1b]0;pwned\x07\x1b[31m.txt"
     (flavor / "WTF" / esc_name).write_bytes(b"")
     tree = ok("tree")
     assert "\x1b" not in tree.stdout and "\x07" not in tree.stdout
     assert "evil\\x1b]0;pwned\\x07\\x1b[31m.txt" in tree.stdout
-    (flavor / "WTF" / esc_name).unlink()
 
+
+def test_control_characters_never_reach_the_terminal_constructed(
+    root: Path, flavor: Path, tmp_path: Path
+) -> None:
+    """Security review 4: ESC and OSC in a value are shown escaped; C1 CSI in
+    a path the gate accepts is escaped in the plans."""
     lua = tmp_path / "Esc.lua"
     lua.write_bytes(b'X = "a\x1b]0;t\x07b"\n')
     dumped = ok("sv", "dump", str(lua))
