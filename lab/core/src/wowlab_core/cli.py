@@ -99,8 +99,10 @@ snap_app = typer.Typer(help="The snapshot store.", no_args_is_help=True)
 log_app = typer.Typer(help="The combat log (read only).", no_args_is_help=True)
 profile_app = typer.Typer(
     help="Named sets of the client's local UI files, saved into the snapshot store and "
-    "applied through the write gate (`wowlab undo` reverses an apply). "
-    + profiles.SERVER_SIDE_NOTE,
+    "applied through the write gate (`wowlab undo` reverses an apply). A profile covers "
+    "every account and every character folder that existed when it was saved, not only "
+    "the character you play; applying it deletes files created in those places since. "
+    "The lab-addon is never in a profile. " + profiles.SERVER_SIDE_NOTE,
     no_args_is_help=True,
 )
 app.add_typer(install_app, name="install")
@@ -2338,7 +2340,14 @@ def snap_create(
     json_out: JsonOpt = False,
 ) -> None:
     """Snapshot a flavor's WTF/, Interface/ and Fonts/ into the store (reads the
-    install only). JSON: the manifest (snapshot.Manifest)."""
+    install only). Labels starting with `profile:` or `deleted-profile:` are
+    `wowlab profile`'s and are refused. JSON: the manifest (snapshot.Manifest)."""
+    if message.startswith(profiles.RESERVED_LABEL_PREFIXES):
+        raise CliError(
+            f"labels starting with {' or '.join(profiles.RESERVED_LABEL_PREFIXES)} belong to "
+            "`wowlab profile`; use `wowlab profile save` or choose another label",
+            EXIT_USAGE,
+        )
     inst, chosen, lay = _open(root, flavor)
     subtrees = [f"{chosen.folder}/{s}" for s in lay.snapshot_subtrees(screenshots=screenshots)]
     running = _client_running(inst, chosen)
@@ -3055,7 +3064,9 @@ SubtreeOpt = Annotated[
     typer.Option(
         "--subtree",
         help="A file or folder relative to the flavor folder, under WTF/, Interface/ or "
-        "Fonts/; repeat for more.",
+        "Fonts/ and narrower than WTF/Account/ (for a whole area use snap create and snap "
+        "restore); files added anywhere under it since the save are deleted by an apply. "
+        "Repeat for more.",
     ),
 ]
 NameArg = Annotated[str, typer.Argument(metavar="NAME", help="The profile's name.")]
@@ -3072,8 +3083,16 @@ def profile_save(
     json_out: JsonOpt = False,
 ) -> None:
     """Save a profile: a snapshot of the preset's (or the subtrees') files, labelled
-    with NAME (reads the install only). Action-bar contents and talents are kept on
-    the server and are never in a profile. JSON: ProfileReport."""
+    with NAME (reads the install only).
+
+    A preset covers every account and every character folder that exists now,
+    not only the character you play, and applying the profile later deletes
+    files created in those places since the save. An explicit --subtree is a
+    whole file or folder: files added anywhere under it since are deleted by
+    an apply. The lab-addon (Interface/AddOns/WowLab/ and WowLab.lua) is never
+    in a profile. Action-bar contents and talents are not in these files (the
+    server keeps them; not yet verified on this client), so no profile saves or
+    restores them. JSON: ProfileReport."""
     if bool(preset) == bool(subtree):
         raise CliError("give --preset or --subtree (not both)", EXIT_USAGE)
     try:
@@ -3174,13 +3193,15 @@ def _print_apply_plan(show: Callable[[str], None], plan: profiles.ApplyPlan) -> 
         for sk in plan.skipped:
             show(f"    {sk.path}  [{sk.entry_id}]")
     if plan.left:
-        show(f"  Left {len(plan.left)} path(s) added since the save that wowlab does not delete:")
+        show(f"  Left alone ({len(plan.left)} path(s)):")
         for lp in plan.left:
             show(f"    {lp.path}  ({lp.reason})")
     if plan.cache_files:
         show("  *-cache files in this change:")
         for c in plan.cache_files:
             show(f"    {c.path}: {c.note}")
+    for n in plan.notes:
+        show(n)
 
 
 @profile_app.command("apply")
@@ -3198,13 +3219,22 @@ def profile_apply(
     client must be closed, a pre-write snapshot is taken first, and `wowlab undo`
     reverses it.
 
-    Files the profile holds are written back; files added under its subtrees
-    since it was saved are deleted. Files whose file-map Edit is `no`
-    (client-written backups, Blizzard_* folders, file-browser metadata) are
-    left alone. Every *-cache* file is listed: the server may replace it at
-    your next login, so the result is proven only by logging in. Action-bar
-    contents and talents are kept on the server and are never in a profile.
-    JSON: ProfileApplyReport."""
+    A profile covers every account and every character folder that existed when
+    it was saved, not only the character you play. Its files are written back,
+    and files created in those places since the save are deleted: for example
+    macros or character-specific key bindings made since on any of those
+    characters, and with the addons preset, addons installed since (code and
+    settings). Addon updates made since are undone. `--dry-run` shows the plan
+    without asking. Files whose file-map Edit is `no` (client-written backups,
+    Blizzard_* folders, file-browser metadata) are left alone. Every *-cache*
+    file is listed: the server may replace it at your next login, so the result
+    is proven only by logging in.
+
+    The lab-addon (Interface/AddOns/WowLab/ and WowLab.lua) is always left
+    alone, and so is anything the write gate will not write or delete (an
+    executable); both are listed. Action-bar contents and talents are not in
+    these files (the server keeps them; not yet verified on this client), so no
+    profile saves or restores them. JSON: ProfileApplyReport."""
     store = snapshot.SnapshotStore()
     profile = profiles.find(store, name)
     manifest = profile.manifest
@@ -3223,7 +3253,7 @@ def profile_apply(
     show = _say if not json_out else _note
 
     def report(*, applied: bool, transaction: str | None = None) -> ProfileApplyReport:
-        notes = [profiles.SERVER_SIDE_NOTE]
+        notes = [profiles.SERVER_SIDE_NOTE, *plan.notes]
         if plan.plan:
             notes.append(profiles.LOGIN_NOTE)
         return ProfileApplyReport(
@@ -3285,6 +3315,8 @@ def profile_apply(
         f"Applied profile {name}: {len(plan.plan)} change(s). `wowlab undo` puts back what "
         "was there before."
     )
+    if profiles.MACROS_NOTE in plan.notes:
+        _say(profiles.MACROS_NOTE)
     _say(profiles.LOGIN_NOTE)
 
 

@@ -740,7 +740,11 @@ exit 3.
 exclude=())` returns every path `create` would walk, sorted, with its kind
 (`file`, `symlink`, `other`) by `lstat`. It reads listings and `lstat` only,
 opens no file and creates nothing. `profiles` uses it to find the files added
-under a profile's subtrees since the save (§13.3).
+under a profile's subtrees since the save (§13.3). A manifest gains an
+optional `purpose` field (`"profile"`, set through `create(...,
+purpose=...)` by `profiles.save`); when it is `None` it is left out of the
+manifest file, so every manifest without one is byte-for-byte as before.
+Like the label, it is not in the fingerprint.
 
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 
@@ -1395,27 +1399,60 @@ says the result is proven only by logging in.
 Whether `apply` also removes files added since the profile was saved is
 decided in the ticket and stated in the plan.
 
-*Decided 2026-09-28 (M11-08):* **`apply` removes files added since the
-profile was saved**, within the profile's own recorded subtrees only. A
-profile records every subtree it considered, present or not: each preset
-name joined to every account and character folder `layout` found at save
-time (both Forever shapes). A regular file now under one of those subtrees
-that the profile does not hold is deleted through the same `guard`
-transaction that writes the saved bytes back, so `apply` returns each
-subtree to what was saved (a character `bindings-cache.wtf` created after a
-`bindings` save would otherwise keep overriding the account binds), and
-`wowlab undo` puts the deleted files back. A character folder created after
-the save is not a recorded subtree and is never touched. Left alone, and
-listed: file-map Edit `no` files (never written or deleted, as in a whole
-`snap restore`), anything added that is not a regular file, and anything
-added the gate refuses to delete (an executable). Folders emptied by a
-deletion stay, since the gate deletes files only. The `addons` preset also
-excludes `WowLab.lua.bak`. Presets live in
-`wowlab_core/profile_presets.toml`. A profile is the snapshot labelled
-`profile:<name>` (optionally ` presets=<p>,…`); names are unique in the
-store; `profile delete` relabels its snapshot `deleted-profile:<name>`, and
-the snapshot stays (snapshots are immutable). `profile apply` also takes
-`--dry-run`.
+*Decided 2026-09-28 (M11-08), confirmed as owner decisions of 2026-09-28
+after the PR #96 reviews:*
+
+- **A profile covers every character folder it recorded** (owner decision
+  a). A preset profile records every subtree it considered, present or not:
+  each preset name joined to every account and character folder `layout`
+  found at save time (both Forever shapes). Applying a profile therefore
+  affects every character it recorded, not only the one being played; the
+  help and the plan say so (owner decision 2026-09-28). A character folder
+  created after a preset save is not a recorded subtree and is not touched.
+  An explicit `--subtree` is a whole file or folder: files added anywhere
+  under it since the save are deleted, and the plan says so. A `--subtree`
+  broader than one account folder (`WTF`, `WTF/Account`, `Interface`,
+  `Fonts`) is refused with a pointer to `snap create` and `snap restore`.
+- **`apply` removes files added since the profile was saved, and rolls back
+  addon updates** (owner decision b). A regular file now under a recorded
+  subtree that the profile does not hold is deleted through the same `guard`
+  transaction that writes the saved bytes back, so `apply` returns each
+  subtree to what was saved (a character `bindings-cache.wtf` created after a
+  `bindings` save is believed to mean that character switched to
+  character-specific key bindings **[verify]**; deleting it is meant to
+  switch it back, and with `synchronizeBindings` on the server may write it
+  again at login), and `wowlab undo` puts the deleted files back. With
+  `addons`, apply returns `Interface/AddOns/` to the saved code: addons
+  installed since are removed with their SavedVariables, and addons updated
+  since go back to the saved version, which an addon manager will not know
+  about. One apply deletes at most 2,000 files; above that it is refused
+  with the count and a pointer to `snap restore` or a narrower profile (the
+  gate re-walks the install per delete; a gate-side listing cache is a
+  follow-up).
+- **The lab-addon is always left alone** (owner decision c). The lab-addon's
+  code (`Interface/AddOns/WowLab/`) and its SavedVariables (`WowLab.lua`) are
+  never saved, restored or deleted by a profile; only `wowlab addon
+  install|remove lab` changes them. This holds for presets and `--subtree`
+  alike (the `[exclude]` table of the presets file; `WowLab.lua.bak` too).
+
+Also left alone, and listed: file-map Edit `no` files (never written or
+deleted, as in a whole `snap restore`), anything added that is not a regular
+file, and any path the gate will not write or delete (an executable, changed,
+removed or added): the rest of the apply goes ahead. Folders emptied by a
+deletion stay, since the gate deletes files only. Every `*-cache*` file in
+the plan is listed, a write with "the server may replace this at your next
+login (synchronize* CVars; see `wowlab doctor`)" and a delete with "the
+server may write this file again at your next login (…)"; a plan that
+touches `macros-cache.txt` also warns that action buttons may point at a
+macro by its place in the list **[verify]**.
+
+Presets live in `wowlab_core/profile_presets.toml`. A profile is a snapshot
+whose manifest carries `purpose: "profile"` (§6.9, amended 2026-09-28) and whose
+label is `profile:<name>` (optionally ` presets=<p>,…`); names are unique in
+the store. `wowlab snap create -m` refuses labels starting with `profile:` or
+`deleted-profile:` (exit 2). `profile delete` relabels the snapshot
+`deleted-profile:<name>`, and the snapshot stays (snapshots are immutable).
+`profile apply` also takes `--dry-run`.
 
 ### 13.4 sv-merge
 

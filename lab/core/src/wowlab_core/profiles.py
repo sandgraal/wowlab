@@ -8,55 +8,69 @@ snapshot, `delete` asks it to relabel one, and `apply` hands every change to
 
 Which files a preset holds is data, in `profile_presets.toml` next to this
 module; which accounts and characters exist is found by `layout` when the
-profile is saved (L6). Action-bar contents and talents are kept on the
-server and are in no profile.
+profile is saved (L6). Action-bar contents and talents are not in these
+files, so no profile holds them.
 
-Identity: a profile is the snapshot whose label is `profile:<name>`,
-optionally followed by ` presets=<p>,<p>` (informational). Names are unique
-in the store. `delete` relabels the snapshot `deleted-profile:<name>`:
-snapshots are immutable and the relabel is the one change `snapshot`
-allows, so the snapshot stays in the store (`wowlab snap list` shows it).
+Identity: a profile is a snapshot taken with `purpose="profile"` whose label
+is `profile:<name>`, optionally followed by ` presets=<p>,<p>`. Names are
+unique in the store. `delete` relabels the snapshot `deleted-profile:<name>`:
+snapshots are immutable and the relabel is the one change `snapshot` allows,
+so the snapshot stays in the store (`wowlab snap list` shows it).
 
-`apply` (decided 2026-09-28, §13.3): it returns each of the profile's
-subtrees to the saved bytes. A file the profile holds is written back when
-it differs, and a regular file found under one of the profile's subtrees
-that the profile does not hold (a file added since the profile was saved)
-is deleted. A subtree is one the profile recorded, so a character folder
-created after the save is never touched. Files whose file-map Edit is `no`
-are left alone either way, as a whole `snap restore` leaves them, and so is
-anything that is not a regular file and anything the gate would not delete
-(an executable); both are reported. Every deletion is in the plan, and
-`wowlab undo` reverses the whole apply from the gate's pre-write snapshot.
-Folders left empty by a deletion stay (the gate deletes files only).
+`apply` (owner decisions 2026-09-28, §13.3): it returns each of the
+profile's subtrees to the saved bytes. A file the profile holds is written
+back when it differs, and a regular file found under one of its subtrees
+that it does not hold (added since the save) is deleted. A preset profile's
+subtrees are the files and folders it joined to every account and character
+folder found at save time, so a character folder created later is not
+touched; an explicit `--subtree` is a whole folder, and files added anywhere
+under it are deleted. Left alone, and reported: file-map Edit `no` files (as
+a whole `snap restore` leaves them), the lab-addon (`[exclude]` in the data
+file: never saved, restored or deleted by a profile), anything that is not a
+regular file, and anything the gate will not write or delete (an
+executable). Every change is in the plan and `wowlab undo` reverses the
+whole apply from the gate's pre-write snapshot. Folders emptied by a
+deletion stay (the gate deletes files only).
 """
 
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import re
+import stat
 import tomllib
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from functools import cache
 from importlib import resources
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from wowlab_core import guard, layout
-from wowlab_core.snapshot import InvalidManifest, Manifest, SnapshotStore
+from wowlab_core.snapshot import Entry, InvalidManifest, Manifest, SnapshotStore
 
 __all__ = [
     "DELETED_PREFIX",
     "LABEL_PREFIX",
+    "LAB_ADDON_REASON",
     "LOGIN_NOTE",
+    "MACROS_NOTE",
+    "MAX_DELETES",
     "PRESETS_FILE",
+    "PRESET_SCOPE_NOTE",
+    "RESERVED_LABEL_PREFIXES",
+    "SERVER_DELETE_NOTE",
     "SERVER_NOTE",
     "SERVER_SIDE_NOTE",
+    "SUBTREE_SCOPE_NOTE",
     "ApplyPlan",
     "CacheFile",
+    "Exclude",
     "LeftPath",
     "Preset",
+    "PresetData",
     "Profile",
     "ProfileChangedError",
     "ProfileError",
@@ -65,10 +79,12 @@ __all__ = [
     "ProfileNotFoundError",
     "Selection",
     "SkippedPath",
+    "always_excluded",
     "apply",
     "check_name",
     "delete",
     "find",
+    "is_always_excluded",
     "label_for",
     "listing",
     "parse_label",
@@ -82,19 +98,50 @@ __all__ = [
 PRESETS_FILE = "profile_presets.toml"
 LABEL_PREFIX = "profile:"
 DELETED_PREFIX = "deleted-profile:"
+RESERVED_LABEL_PREFIXES = (LABEL_PREFIX, DELETED_PREFIX)
+"""Labels only `profiles` writes; `wowlab snap create -m` refuses them."""
 _PRESETS_TAG = " presets="
 _NAME_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 _CACHE_GLOB = "*-cache*"
+_MACROS_FILE = "macros-cache.txt"
+_TOO_BROAD = frozenset({"wtf", "wtf/account", "interface", "fonts"})
+
+MAX_DELETES = 2000
+"""The most files one apply may delete. The gate re-walks the install for
+each delete, so a plan far beyond this costs minutes; above it the apply is
+refused with the count (a guard listing cache is the follow-up)."""
 
 SERVER_NOTE = (
     "the server may replace this at your next login (synchronize* CVars; see `wowlab doctor`)"
 )
+SERVER_DELETE_NOTE = (
+    "the server may write this file again at your next login (synchronize* CVars; "
+    "see `wowlab doctor`)"
+)
 LOGIN_NOTE = (
-    "The result is proven only by logging in: the client reads these files at login, "
-    "and the server may replace *-cache files then."
+    "The result is proven only by starting the client and logging in: it reads Config.wtf "
+    "at start and the other files at login, and the server may replace *-cache files at login."
 )
 SERVER_SIDE_NOTE = (
-    "Action-bar contents and talents are kept on the server and are never in a profile."
+    "Action-bar contents and talents are not in these files (the server keeps them; not yet "
+    "verified on this client), so no profile saves or restores them."
+)
+MACROS_NOTE = (
+    "Action buttons are kept on the server and may point at a macro by its place in the list, "
+    "so restoring macros can change what a button runs or leave it empty (not verified on this "
+    "client); check your action bars after logging in."
+)
+PRESET_SCOPE_NOTE = (
+    "A profile covers every account and every character folder that existed when it was "
+    "saved, not only the character you play: files created in those places since the save "
+    "are deleted. Character folders created since are not touched."
+)
+SUBTREE_SCOPE_NOTE = (
+    "An explicit subtree: files added anywhere under it since the save are deleted."
+)
+LAB_ADDON_REASON = (
+    "the lab-addon; a profile never saves, restores or deletes it (only `wowlab addon "
+    "install|remove lab` changes it)"
 )
 
 
@@ -121,7 +168,11 @@ class _Frozen(BaseModel):
 # ─── presets ─────────────────────────────────────────────────────────────────
 
 
-class _Exclude(_Frozen):
+class Exclude(_Frozen):
+    """Paths never captured: relative to the flavor folder, to each account
+    folder, and to each character folder."""
+
+    flavor: tuple[str, ...] = ()
     account: tuple[str, ...] = ()
     character: tuple[str, ...] = ()
 
@@ -137,23 +188,32 @@ class Preset(_Frozen):
     """Names inside each `WTF/Account/<ACCOUNT>/`."""
     character: tuple[str, ...] = ()
     """Names inside each character folder, of either shape."""
-    exclude: _Exclude = Field(default_factory=_Exclude)
+    exclude: Exclude = Field(default_factory=Exclude)
+
+
+class PresetData(_Frozen):
+    presets: dict[str, Preset]
+    exclude: Exclude
+    """Left out of every profile, presets and `--subtree` alike."""
 
 
 def _check_relative(value: str, where: str) -> None:
-    parts = PurePosixPath(value).parts
     if (
         not value
         or value.startswith("/")
         or "\\" in value
         or any(p in ("", ".", "..") for p in value.split("/"))
-        or not parts
     ):
         raise ValueError(f"{where}: {value!r} is not a plain relative path")
 
 
-def parse_presets(text: str) -> dict[str, Preset]:
-    """Presets from TOML text; every path is held to a plain relative path."""
+def _exclude_paths(exclude: Exclude) -> tuple[str, ...]:
+    return (*exclude.flavor, *exclude.account, *exclude.character)
+
+
+def parse_presets(text: str) -> PresetData:
+    """Presets and the global exclusions from TOML text; every path is held
+    to a plain relative path."""
     data = tomllib.loads(text)
     table = data.get("presets")
     if not isinstance(table, dict) or not table:
@@ -170,19 +230,51 @@ def parse_presets(text: str) -> dict[str, Preset]:
             *preset.flavor,
             *preset.account,
             *preset.character,
-            *preset.exclude.account,
-            *preset.exclude.character,
+            *_exclude_paths(preset.exclude),
         ):
             _check_relative(value, f"preset {name!r}")
         found[name] = preset
-    return found
+    try:
+        exclude = Exclude(**data.get("exclude", {}))
+    except (TypeError, ValidationError) as exc:
+        raise ValueError(f"[exclude]: {exc}") from exc
+    for value in _exclude_paths(exclude):
+        _check_relative(value, "[exclude]")
+    return PresetData(presets=found, exclude=exclude)
 
 
 @cache
-def presets() -> Mapping[str, Preset]:
-    """The packaged presets (`profile_presets.toml`), parsed once per process."""
+def _data() -> PresetData:
     text = resources.files("wowlab_core").joinpath(PRESETS_FILE).read_text(encoding="utf-8")
     return parse_presets(text)
+
+
+def presets() -> Mapping[str, Preset]:
+    """The packaged presets (`profile_presets.toml`), parsed once per process."""
+    return _data().presets
+
+
+def always_excluded() -> Exclude:
+    """What every profile leaves out: the lab-addon's code and its SavedVariables."""
+    return _data().exclude
+
+
+def _is_under(rel: str, ancestor: str) -> bool:
+    return rel == ancestor or rel.startswith(ancestor + "/")
+
+
+def is_always_excluded(rel: str) -> bool:
+    """True when a flavor-relative path is one no profile ever touches: under
+    an `[exclude].flavor` path, or under `WTF/Account/…` and ending in an
+    `[exclude].account` or `.character` path (compared with case folded)."""
+    folded = rel.casefold()
+    exclude = always_excluded()
+    if any(_is_under(folded, p.casefold()) for p in exclude.flavor):
+        return True
+    parts = folded.split("/")
+    if len(parts) < 4 or parts[0] != "wtf" or parts[1] != "account":
+        return False
+    return any(folded.endswith("/" + p.casefold()) for p in (*exclude.account, *exclude.character))
 
 
 # ─── selection ───────────────────────────────────────────────────────────────
@@ -230,6 +322,18 @@ class _Speller:
         return "/".join(out)
 
 
+def _excluded_paths(
+    spell: _Speller, accounts: Sequence[layout.Account], exclude: Exclude
+) -> set[str]:
+    found = {spell(p) for p in exclude.flavor}
+    for acct in accounts:
+        found.update(spell(f"{acct.path}/{n}") for n in exclude.account)
+        for realm in acct.realms:
+            for char in realm.characters:
+                found.update(spell(f"{char.path}/{n}") for n in exclude.character)
+    return found
+
+
 def select(
     lay: layout.Layout, *, preset_names: Sequence[str] = (), subtrees: Sequence[str] = ()
 ) -> Selection:
@@ -238,8 +342,10 @@ def select(
     A preset's account and character names are joined to every account and
     character folder `layout` finds now, present or not, so a file created
     there later is one added since the save. An explicit subtree is relative
-    to the flavor folder and must lie under one of the snapshot subtrees
-    (`WTF/`, `Interface/`, `Fonts/`). Reads directory listings only.
+    to the flavor folder, must lie under one of the snapshot subtrees
+    (`WTF/`, `Interface/`, `Fonts/`) and be narrower than `WTF/Account/`
+    (whole areas are `snap restore`'s job). The lab-addon is excluded from
+    every selection. Reads directory listings only.
     """
     known = presets()
     unknown = [p for p in preset_names if p not in known]
@@ -247,18 +353,17 @@ def select(
         raise ProfileError(f"no preset {unknown[0]!r} (presets: {', '.join(sorted(known))})")
     spell = _Speller(lay.flavor_path)
     wanted: set[str] = set()
-    excluded: set[str] = set()
-    accounts = lay.accounts() if preset_names else ()
+    accounts = lay.accounts()
+    excluded = _excluded_paths(spell, accounts, always_excluded())
     for name in dict.fromkeys(preset_names):
         preset = known[name]
         wanted.update(spell(p) for p in preset.flavor)
+        excluded.update(_excluded_paths(spell, accounts, preset.exclude))
         for acct in accounts:
             wanted.update(spell(f"{acct.path}/{n}") for n in preset.account)
-            excluded.update(spell(f"{acct.path}/{n}") for n in preset.exclude.account)
             for realm in acct.realms:
                 for char in realm.characters:
                     wanted.update(spell(f"{char.path}/{n}") for n in preset.character)
-                    excluded.update(spell(f"{char.path}/{n}") for n in preset.exclude.character)
     roots = {r.casefold() for r in lay.snapshot_subtrees()}
     for raw in subtrees:
         text = raw.replace("\\", "/").strip("/")
@@ -270,6 +375,14 @@ def select(
             raise ProfileError(
                 f"--subtree {raw!r} is outside {', '.join(sorted(lay.snapshot_subtrees()))}"
             )
+        if text.casefold() in _TOO_BROAD:
+            raise ProfileError(
+                f"--subtree {raw!r} is broader than one account folder; a profile is for "
+                "named sets of files. For a whole area use `wowlab snap create` and "
+                "`wowlab snap restore`"
+            )
+        if is_always_excluded(text):
+            raise ProfileError(f"--subtree {raw!r} is {LAB_ADDON_REASON}")
         wanted.add(spell(text))
     if not wanted:
         raise ProfileError("a profile needs at least one preset or subtree")
@@ -316,6 +429,7 @@ def parse_label(label: str) -> tuple[str, tuple[str, ...]] | None:
 class Profile(_Frozen):
     name: str
     presets: tuple[str, ...]
+    """Empty for a profile saved with `--subtree`."""
     manifest: Manifest
 
 
@@ -327,14 +441,23 @@ class ProfileListing(_Frozen):
 
 
 def listing(store: SnapshotStore) -> ProfileListing:
-    """Reads only; a store that does not exist has no profiles."""
+    """Reads only; a store that does not exist has no profiles. A snapshot is
+    a profile only when `save` made it: its manifest carries
+    `purpose="profile"` and a profile label."""
     found = store.list_lenient()
     profiles: list[Profile] = []
     for m in found.manifests:
         parsed = parse_label(m.label)
-        if parsed is not None:
+        if parsed is not None and m.purpose == "profile":
             profiles.append(Profile(name=parsed[0], presets=parsed[1], manifest=m))
     return ProfileListing(profiles=tuple(profiles), invalid=found.invalid)
+
+
+def _named(store: SnapshotStore, name: str) -> list[Profile]:
+    matches = [p for p in listing(store).profiles if p.name == name]
+    if not matches:
+        raise ProfileNotFoundError(f"no profile named {name!r}")
+    return matches
 
 
 def find(store: SnapshotStore, name: str) -> Profile:
@@ -368,7 +491,8 @@ def save(
     preset_names: Sequence[str] = (),
     client_running: bool | None = None,
 ) -> Profile:
-    """Snapshot the selection under the label `profile:<name>`.
+    """Snapshot the selection with `purpose="profile"` under the label
+    `profile:<name>`.
 
     Refused when a profile of that name exists. Holds the store lock for
     the check and the create, as `wowlab snap create` does; reads the
@@ -391,22 +515,16 @@ def save(
             flavor_folder=flavor.folder,
             flavor_version=flavor.version,
             client_running=client_running,
+            purpose="profile",
         )
     return Profile(name=name, presets=tuple(dict.fromkeys(preset_names)), manifest=manifest)
-
-
-def _named(store: SnapshotStore, name: str) -> list[Profile]:
-    matches = [p for p in listing(store).profiles if p.name == name]
-    if not matches:
-        raise ProfileNotFoundError(f"no profile named {name!r}")
-    return matches
 
 
 def delete(store: SnapshotStore, name: str) -> tuple[Manifest, ...]:
     """Relabel the profile's snapshot `deleted-profile:<name>`; the snapshot stays.
 
-    Every snapshot labelled as profile `name` is relabelled: `save` never
-    makes a second one, but a `wowlab snap create -m "profile:<name>"` can."""
+    Every profile snapshot named `name` is relabelled: `save` never makes a
+    second one, but a library caller could."""
     _named(store, name)  # a missing store or name is "not found", never a lock error
     with guard.store_lock(store.path):
         return tuple(
@@ -430,14 +548,15 @@ class SkippedPath(_Frozen):
 
 
 class LeftPath(_Frozen):
-    """Something added since the save that the apply cannot delete."""
+    """A path the apply leaves alone for another reason, and the reason: the
+    lab-addon, not a regular file, or refused by the gate (an executable)."""
 
     path: str  # relative to the flavor folder
     reason: str
 
 
 class CacheFile(_Frozen):
-    """A `*-cache*` file the apply writes or deletes, with the §13.3 note."""
+    """A `*-cache*` file the apply writes or deletes, with its §13.3 note."""
 
     path: str
     action: Literal["write", "delete"]
@@ -455,68 +574,155 @@ class ApplyPlan(_Frozen):
     skipped: tuple[SkippedPath, ...]
     left: tuple[LeftPath, ...]
     cache_files: tuple[CacheFile, ...]
+    notes: tuple[str, ...]
+    """The scope of the profile, and the macros caveat when macros change."""
 
 
 def _plain(markdown: str) -> str:
     return markdown.replace("`", "").replace("**", "")
 
 
-def _is_cache_file(path: str) -> bool:
-    return fnmatch.fnmatchcase(path.rsplit("/", 1)[-1].casefold(), _CACHE_GLOB)
+def _base_name(path: str) -> str:
+    return path.rsplit("/", 1)[-1].casefold()
+
+
+def _edit_no(lay: layout.Layout, rel: str) -> layout.Classified | None:
+    found = lay.classify(rel, is_dir=False)
+    if isinstance(found, layout.Classified) and found.entry.edit == "no":
+        return found
+    return None
+
+
+def _differs(root: Path, entry: Entry) -> bool:
+    """Whether the disk no longer holds `entry` (read only, links not followed)."""
+    path = root / entry.path
+    try:
+        st = path.lstat()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return True
+    if entry.kind == "symlink":
+        try:
+            return not (stat.S_ISLNK(st.st_mode) and str(path.readlink()) == entry.target)
+        except OSError:
+            return True
+    if not stat.S_ISREG(st.st_mode):
+        return True
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+    except OSError:
+        return True
+    return digest.hexdigest() != entry.sha256
+
+
+class _Restorer(Protocol):
+    def restore(self, snapshot_id: str, paths: Iterable[str] | None = None) -> None: ...
+
+
+def _restore_split(tx: _Restorer, snapshot_id: str, paths: list[str], left: list[LeftPath]) -> None:
+    """Restore `paths` in a dry run, setting aside each one the gate refuses.
+
+    A refused restore changes nothing (the gate checks every entry before it
+    plans any), so the batch is halved until each refusal names one path."""
+    if not paths:
+        return
+    try:
+        tx.restore(snapshot_id, paths)
+    except guard.PathNotAllowedError as exc:
+        if len(paths) == 1:
+            left.append(LeftPath(path=paths[0], reason=str(exc)))
+            return
+        mid = len(paths) // 2
+        _restore_split(tx, snapshot_id, paths[:mid], left)
+        _restore_split(tx, snapshot_id, paths[mid:], left)
 
 
 def plan_apply(
     profile: Profile, flavor: _FlavorLike, install_root: Path, *, store: SnapshotStore
 ) -> ApplyPlan:
     """What `apply` would change, from a dry run of the gate (same checks,
-    same locks, nothing written in the install). Raises `guard.GuardError`
-    when the gate refuses: the client running or unknown, a snapshot of
-    another install, a path outside the allowlist."""
+    same locks, nothing written in the install).
+
+    Raises `guard.GuardError` when the gate refuses the apply as a whole
+    (the client running or unknown, a snapshot of another install), and
+    `ProfileError` when more than `MAX_DELETES` files would be deleted. A
+    single path the gate will not write or delete (an executable) does not
+    stop the apply: it is left alone and listed in `left`."""
     manifest = profile.manifest
     prefix = flavor.folder + "/"
     root = Path(install_root)
+    lay = layout.Layout(flavor.path, install_root=root)
     saved = {e.path for e in manifest.entries}
-    extra = [
-        (rel, kind)
-        for rel, kind in store.list_tree(root, manifest.subtrees, exclude=manifest.excluded)
-        if rel not in saved and rel.startswith(prefix)
-    ]
-    left: list[LeftPath] = [
-        LeftPath(
-            path=rel.removeprefix(prefix), reason="not a regular file; wowlab never removes it"
+    left: list[LeftPath] = []
+    skipped: list[SkippedPath] = []
+    to_delete: list[str] = []
+    for rel, kind in store.list_tree(root, manifest.subtrees, exclude=manifest.excluded):
+        if rel in saved or not rel.startswith(prefix):
+            continue
+        frel = rel.removeprefix(prefix)
+        if is_always_excluded(frel):
+            left.append(LeftPath(path=frel, reason=LAB_ADDON_REASON))
+        elif kind != "file":
+            left.append(LeftPath(path=frel, reason="not a regular file; wowlab never removes it"))
+        elif (found := _edit_no(lay, frel)) is not None:
+            skipped.append(
+                SkippedPath(
+                    path=frel,
+                    action="delete",
+                    entry_id=found.entry.id,
+                    what=_plain(found.entry.what),
+                )
+            )
+        else:
+            to_delete.append(frel)
+    if len(to_delete) > MAX_DELETES:
+        raise ProfileError(
+            f"applying profile {profile.name} would delete {len(to_delete)} files added since "
+            f"it was saved, more than {MAX_DELETES}; nothing was changed. For a whole area use "
+            "`wowlab snap restore`, or save a narrower profile"
         )
-        for rel, kind in extra
-        if kind != "file"
-    ]
     with guard.transaction(
         flavor, label=f"profile apply {profile.name}", store=store.path, dry_run=True
     ) as tx:
-        tx.restore(manifest.id)
-        for rel, kind in extra:
-            if kind != "file":
-                continue
+        try:
+            tx.restore(manifest.id)
+        except guard.PathNotAllowedError:
+            # One entry the gate will not write (a changed executable or link):
+            # restore the rest by name and set that one aside.
+            changed = [
+                e.path.removeprefix(prefix)
+                for e in manifest.entries
+                if e.path.startswith(prefix) and _differs(root, e)
+            ]
+            _restore_split(tx, manifest.id, changed, left)
+        for frel in to_delete:
             try:
-                tx.delete(rel.removeprefix(prefix))
+                tx.delete(frel)
             except guard.PathNotAllowedError as exc:
-                left.append(LeftPath(path=rel.removeprefix(prefix), reason=str(exc)))
+                left.append(LeftPath(path=frel, reason=str(exc)))
         whole = tx.plan
-    lay = layout.Layout(flavor.path, install_root=root)
     kept: list[guard.PlanItem] = []
-    skipped: list[SkippedPath] = []
     for item in whole:
-        action: Literal["write", "delete"] = "delete" if item.after is None else "write"
-        found = lay.classify(item.path, is_dir=False)
-        if isinstance(found, layout.Classified) and found.entry.edit == "no":
+        if is_always_excluded(item.path):
+            left.append(LeftPath(path=item.path, reason=LAB_ADDON_REASON))
+        elif item.after is not None and (found := _edit_no(lay, item.path)) is not None:
             skipped.append(
                 SkippedPath(
                     path=item.path,
-                    action=action,
+                    action="write",
                     entry_id=found.entry.id,
                     what=_plain(found.entry.what),
                 )
             )
         else:
             kept.append(item)
+    notes = [SUBTREE_SCOPE_NOTE if not profile.presets else PRESET_SCOPE_NOTE]
+    if any(_base_name(i.path) == _MACROS_FILE for i in kept):
+        notes.append(MACROS_NOTE)
     return ApplyPlan(
         profile=profile.name,
         snapshot_id=manifest.id,
@@ -527,11 +733,14 @@ def plan_apply(
         left=tuple(left),
         cache_files=tuple(
             CacheFile(
-                path=i.path, action="delete" if i.after is None else "write", note=SERVER_NOTE
+                path=i.path,
+                action="delete" if i.after is None else "write",
+                note=SERVER_DELETE_NOTE if i.after is None else SERVER_NOTE,
             )
             for i in kept
-            if _is_cache_file(i.path)
+            if fnmatch.fnmatchcase(_base_name(i.path), _CACHE_GLOB)
         ),
+        notes=tuple(notes),
     )
 
 

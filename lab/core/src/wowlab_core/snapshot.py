@@ -193,6 +193,11 @@ class Manifest(_Frozen):
     client_running: bool | None = None
     """`True` means SavedVariables on disk were stale relative to the live
     session when this was taken; `None` means the caller did not probe."""
+    purpose: Literal["profile"] | None = None
+    """What the snapshot was taken for, when a caller says so: `"profile"`
+    for `profiles.save` (M11-08, §13.3). `None` is left out of the manifest
+    file, so a manifest without a purpose is byte-for-byte what it was
+    before the field existed. Like the label, it is not in the fingerprint."""
     entries: tuple[Entry, ...]
 
     @model_validator(mode="before")
@@ -296,8 +301,11 @@ def manifest_bytes(manifest: Manifest) -> bytes:
     `Manifest.model_validate_json` is the inverse, for every string Python can
     hold (lone surrogates included; see the module docstring).
     """
+    data = manifest.model_dump()
+    if data.get("purpose") is None:
+        data.pop("purpose", None)  # absent, as in every manifest written before M11-08
     text = json.dumps(
-        _map_strings(manifest.model_dump(), _escape_text),
+        _map_strings(data, _escape_text),
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=True,
@@ -451,6 +459,7 @@ class SnapshotStore:
         flavor_folder: str | None = None,
         flavor_version: str | None = None,
         client_running: bool | None = None,
+        purpose: Literal["profile"] | None = None,
         now: datetime | None = None,
     ) -> Manifest:
         """Capture `subtrees` of `root` and return the new manifest.
@@ -484,6 +493,9 @@ class SnapshotStore:
         rewritten if it is damaged, so a new snapshot never depends on a bad
         object.
 
+        `purpose` is recorded in the manifest (`"profile"` from
+        `profiles.save`, M11-08); a manifest with none omits the field.
+
         `now` fixes the clock (timezone-aware); it exists for tests and for
         callers that want one timestamp across several records.
         """
@@ -513,6 +525,7 @@ class SnapshotStore:
             "subtrees": tuple(wanted),
             "excluded": tuple(excluded),
             "client_running": client_running,
+            "purpose": purpose,
         }
         # Hold the caller's values to the model before anything is stored, so
         # a bad argument fails with a typed error and an untouched store.
