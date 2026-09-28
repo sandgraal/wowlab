@@ -29,6 +29,7 @@ import os
 import stat
 import sys
 import threading
+import types
 import zlib
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -309,6 +310,27 @@ def test_constructed_without_o_nofollow_read_object_refuses_a_linked_object(
     with pytest.raises(ObjectCorruptError, match="cannot be read"):
         store.read_object(digest)
     assert spy.calls == []
+
+
+@pytest.mark.parametrize(
+    ("mode", "attributes", "tag", "is_link"),
+    [
+        pytest.param(stat.S_IFREG, 0, 0, False, id="constructed-plain-file"),
+        pytest.param(stat.S_IFLNK, 0, 0, True, id="constructed-symlink"),
+        pytest.param(stat.S_IFREG, 0x400, 0xA000000C, True, id="constructed-symlink-tag"),
+        pytest.param(stat.S_IFDIR, 0x400, 0xA0000003, True, id="constructed-junction-tag"),
+        pytest.param(stat.S_IFREG, 0x400, 0x9000701A, False, id="constructed-cloud-placeholder"),
+        pytest.param(stat.S_IFREG, 0x400, 0x80000013, False, id="constructed-dedup-file"),
+    ],
+)
+def test_constructed_windows_link_test_matches_the_walks_name_surrogate_rule(
+    mode: int, attributes: int, tag: int, is_link: bool
+) -> None:
+    """Where there is no `O_NOFOLLOW`, what counts as a link before the open:
+    a symlink or a name-surrogate reparse point, as `create`'s walk decides;
+    a placeholder or deduplicated file holds real content and is read."""
+    fake = types.SimpleNamespace(st_mode=mode, st_file_attributes=attributes, st_reparse_tag=tag)
+    assert snapshot._is_link_stat(fake) is is_link  # type: ignore[arg-type]
 
 
 # ─── store: read_object ──────────────────────────────────────────────────────

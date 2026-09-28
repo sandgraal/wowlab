@@ -137,9 +137,17 @@ def _file_identity(st: os.stat_result) -> tuple[int, int]:
 
 
 def _is_link_stat(st: os.stat_result) -> bool:
-    """A symbolic link, or on Windows any reparse point (junctions included)."""
+    """A symbolic link, or on Windows a reparse point that names another path
+    (the name-surrogate bit: junctions, WCI links). Other reparse points
+    (cloud-file placeholders, deduplicated files) hold real content and are
+    read, as `create` walks them (`_is_link_like_dir`)."""
+    if stat.S_ISLNK(st.st_mode):
+        return True
     attributes = int(getattr(st, "st_file_attributes", 0))
-    return stat.S_ISLNK(st.st_mode) or bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+    tag = int(getattr(st, "st_reparse_tag", 0))
+    return bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT) and bool(
+        tag & _REPARSE_NAME_SURROGATE
+    )
 
 
 def open_regular_file(
