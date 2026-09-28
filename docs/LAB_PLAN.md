@@ -701,7 +701,9 @@ an ancestor of `root` (`StoreLocationError`, the message `create` uses).
 That is the one overlap a store outside every install can have, so
 `wowlab snap create` runs it before `guard.store_lock(create=True)`. That
 case is refused with exit 1 and nothing created, not even `<store>/lock`.
-A store inside the install is still refused by the gate, with exit 3.
+A store inside any install, including one that also holds the captured
+install, is not `refuse_holding`'s case: the gate still refuses it, with
+exit 3.
 
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 

@@ -593,7 +593,16 @@ class SnapshotStore:
         (`guard.store_lock(create=True)`) before creating anything. Added
         2026-09-28 (M10-19) so `wowlab snap create` can refuse the ancestor
         case before it takes the store lock, which creates `<store>/lock`.
+
+        A store inside any install is not this method's case either, even
+        when it also holds `root`: that refusal is L1's and the gate's
+        (`guard.store_lock(create=True)`, exit 3 in the CLI), so this method
+        steps aside and leaves it to them rather than masking it as an overlap.
         """
+        try:
+            self._refuse_inside_any_install()
+        except StoreLocationError:
+            return
         store = self.path.resolve()
         source = Path(root).absolute().resolve()
         if _strictly_holds(store, source):

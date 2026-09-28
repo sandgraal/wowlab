@@ -705,6 +705,23 @@ def test_refuse_holding_is_the_ancestor_case_alone(source: Path, where: str, ref
     assert not (store.path / "lock").exists()
 
 
+def test_refuse_holding_leaves_a_store_inside_an_install_to_the_gate_constructed(
+    tmp_path: Path,
+) -> None:
+    """M10-19 review round 1: a store inside an install that also holds the
+    root is L1's refusal (the gate's), not an overlap; `refuse_holding` steps
+    aside and `create` still refuses it as inside an install."""
+    other = tmp_path / "A"
+    other.mkdir()
+    (other / ".build.info").write_bytes(b"")
+    store = SnapshotStore(other / "wowlab" / "store")
+    held = build_tree(store.path / "World of Warcraft")
+    store.refuse_holding(held)
+    with pytest.raises(StoreLocationError):
+        store.create(held, SUBTREES, now=T0)
+    assert not (store.path / "lock").exists()
+
+
 @pytest.mark.parametrize("marker", [".build.info", ".flavor.info"])
 def test_a_store_inside_any_install_is_refused_before_anything_is_created_constructed(
     source: Path, tmp_path: Path, marker: str

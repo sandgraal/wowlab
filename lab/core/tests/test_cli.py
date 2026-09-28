@@ -1315,6 +1315,30 @@ def test_a_store_that_holds_the_install_through_a_link_is_refused_constructed(
     _refused_as_overlap_with_nothing_created(tmp_path, store)
 
 
+def _folds_case(where: Path) -> bool:
+    probe = where / "case-probe"
+    probe.mkdir()
+    try:
+        return (where / "CASE-PROBE").exists()
+    finally:
+        probe.rmdir()
+
+
+def test_a_store_that_holds_the_install_in_another_case_is_refused_constructed(
+    root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M10-19 (review round 1): on a case-insensitive volume the user data
+    directory spelled in another case is the same directory, so the store
+    still holds the install. Spelling does not match; identity does."""
+    if not _folds_case(tmp_path):
+        pytest.skip("the temporary directory's volume is case-sensitive")
+    store = _install_under_the_store(root, tmp_path, monkeypatch)
+    respelled = tmp_path / "UD" / "WOWLAB"
+    assert str(respelled / "store") != str(store)
+    monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: respelled)
+    _refused_as_overlap_with_nothing_created(tmp_path, store)
+
+
 def test_snap_gc_keeps_young_unreferenced_objects(root: Path, user_data: Path) -> None:
     _create("keep")
     store = SnapshotStore(user_data / "store")
