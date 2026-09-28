@@ -2539,8 +2539,8 @@ def _lua_diff(
         return None, "one side is a link"
     try:
         # By content hash: the store checks the bytes against the name.
-        before = _leaves(store.read_object(change.before.sha256))
-        after = _leaves(store.read_object(change.after.sha256))
+        before = _leaves(store.read_object(change.before.sha256, size=change.before.size))
+        after = _leaves(store.read_object(change.after.sha256, size=change.after.size))
     except luadata.LuaDataError as exc:
         return None, f"not compared as data: one side does not parse ({exc})"
     except snapshot.SnapshotError as exc:
@@ -2671,6 +2671,13 @@ def snap_gc(
     if json_out:
         _emit(report)
         return
+    if report.skipped:
+        _say(
+            f"Left alone {len(report.skipped)} entr{'y' if len(report.skipped) == 1 else 'ies'} "
+            "in the store that are links or not regular files, or changed before they "
+            "could be removed (a link is never followed or deleted through): "
+            + ", ".join(report.skipped)
+        )
     if not report.unreferenced:
         _say(
             "Nothing to collect: every stored object is referred to by a snapshot, or is "

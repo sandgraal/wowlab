@@ -754,6 +754,24 @@ file, and reads a bounded length; a linked or non-regular store file is
 refused (a linked object is never reused), and a FIFO swapped in during a
 read can no longer block. Capping how far an object inflates is M11-15.
 
+*Amended 2026-09-28 (M11-15, from the #107 security review):* (a) `gc` lists
+`objects/` by `lstat` and follows nothing: a shard or item that is a link
+(on Windows also a junction or other name-surrogate reparse point) or not a
+regular file is never a candidate and never listed into, and is named in a
+new `GcReport.skipped`; a delete goes through descriptors on `objects/` and
+the shard opened without following a link and checked against the listing
+(on Windows, each is checked by `lstat` just before the delete), so nothing
+is ever deleted through a link, and an object whose path changed since the
+listing is skipped, not deleted. (b) `read_object(sha256, *, size=None)`
+takes the manifest entry's recorded size and inflates at most `size + 1`
+bytes, refusing an object that would inflate past it; `read_file`, guard's
+restore, undo and rollback, and `snap diff` pass it, and `None` (unbounded)
+is left for a caller holding a bare digest. (c) `create`'s reuse check
+freshens an object's mtime with `os.utime` on the descriptor it re-hashed
+where the platform takes one; on Windows it `utime`s the path only after
+`lstat` shows it is still that file and not a link, and a path that no
+longer names the checked file is rewritten, never reused.
+
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 
 The only module that writes into an install (L2, ADR-0021).
