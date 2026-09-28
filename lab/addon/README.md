@@ -49,7 +49,7 @@ WowLabCharDB = {
     mounts = { collected, filtered = false },
     toys = { collected, filtered = true, filter = { collected_shown, uncollected_shown, unusable_shown } },
     pets = { species = { { species, count } }, filtered = true, default_filters },
-    appearances = { sources, filtered = true, default_filters },
+    appearances = { absent = "not gathered: …" },  -- always absent (M11-20)
   },
   currencies = { list = { { id, quantity, max_quantity, max_weekly_quantity, earned_this_week, can_earn_per_week, total_earned, use_total_earned_for_max, account_wide } }, filtered = true, headers_collapsed, filter },
   professions = { list = { { position, skill_line, rank, max_rank, modifier } } },
@@ -83,6 +83,15 @@ Notes on the fields:
   matches the character (race only: a paid change that keeps the race is
   invisible to the addon). Without any record the section is
   `absent = "no barber-shop visit recorded with the addon enabled"`.
+- `collections.appearances` is always
+  `{ absent = "not gathered: asking the client for the appearance collection crashed the Forever client once (M11-03); the addon no longer asks" }`.
+  On the first M11-03 login (build 1.60.1.70009), one call,
+  `GetCategoryAppearances(9)` (9 is Waist on Retail), made about 4 s after
+  entering the world, hit the client assertion `BC_ASSERT(this->m_has_value)`
+  and crashed the client. Whether other categories were called before it is
+  not known (the loop walked the enum with `pairs`). `pcall` cannot catch a
+  C++ assertion. The addon now calls nothing in `C_TransmogCollection` on
+  any client and registers no transmog events (2026-09-28, M11-20).
 - `professions`: whether `GetProfessionInfo`'s rank and maximum are per
   expansion tier or overall on Forever is **[verify]**.
 - `probe.lost` is set when `WowLabCharDB` loaded as a table without a probe,
@@ -169,11 +178,6 @@ exists, not of what it returns.
 | `C_PetJournal.GetPetInfoByIndex` | pets: species id and owned (returns 2 and 3; the GUID is never bound) | [verify] | yes |
 | `C_PetJournal.GetNumCollectedInfo` | pets: count per species | [verify] | yes |
 | `C_PetJournal.IsUsingDefaultFilters` | pets: filter state, recorded | [verify] | yes |
-| `Enum.TransmogCollectionType` | appearances: categories | [verify] | n/a (table) |
-| `C_TransmogCollection.GetCategoryAppearances` | appearances: collected visuals (filter behaviour: [verify]) | [verify] | yes |
-| `C_TransmogCollection.GetAllAppearanceSources` | appearances: sources per visual | [verify] | yes |
-| `C_TransmogCollection.PlayerHasTransmogItemModifiedAppearance` | appearances: source collected | [verify] | yes |
-| `C_TransmogCollection.IsUsingDefaultFilters` | appearances: filter state, recorded | [verify] | yes |
 | `C_CurrencyInfo.GetCurrencyListSize` | currencies: panel rows | [verify] | yes |
 | `C_CurrencyInfo.GetCurrencyListInfo` | currencies: header or currency per row | [verify] | yes |
 | `C_CurrencyInfo.GetCurrencyListLink` | currencies: id fallback via link | [verify] | yes |
@@ -196,8 +200,7 @@ they are **[verify]** like every other event: `ACTIVE_COMBAT_CONFIG_CHANGED`, `P
 `ACTIVE_PLAYER_SPECIALIZATION_CHANGED`, `PLAYER_SPECIALIZATION_CHANGED`,
 `BARBER_SHOP_OPEN`, `BARBER_SHOP_APPEARANCE_APPLIED`, `NEW_MOUNT_ADDED`,
 `COMPANION_LEARNED`, `NEW_TOY_ADDED`, `TOYS_UPDATED`, `NEW_PET_ADDED`,
-`PET_JOURNAL_LIST_UPDATE`, `TRANSMOG_COLLECTION_UPDATED`,
-`TRANSMOG_COLLECTION_SOURCE_ADDED`, `CURRENCY_DISPLAY_UPDATE`,
+`PET_JOURNAL_LIST_UPDATE`, `CURRENCY_DISPLAY_UPDATE`,
 `SKILL_LINES_CHANGED`. An event the client does not know is skipped and
 listed in the section's `events_unregistered`.
 
@@ -222,7 +225,7 @@ Capture steps beyond §13.1's:
 - optional, costs gold: apply one barber-shop change, then log out (needed
   for item 12; without it item 12 stays open);
 - open the character sheet before logging out, for item 13;
-- watch for hitches after logging in or `/reload`: the pet and transmog
+- watch for hitches after logging in or `/reload`: the mount, toy and pet
   rescans (collections) run once per session and on their events.
 
 Items:
@@ -240,7 +243,7 @@ Items:
 5. `events_unregistered` on every section: which events Forever does not
    know. `events_unregistered` shows only events the client refused; it does
    not prove that an accepted event ever fires.
-6. Empty lists from the pet journal, toy box or transmog collection (journal
+6. Empty lists from the pet journal or toy box (journal
    not initialized, or filters hiding rows) versus real contents.
 7. Currencies: whether `GetCurrencyInfo` has `isAccountWide`, or the
    `IsAccountWideCurrency` fallback was used; `headers_collapsed`.

@@ -1340,7 +1340,22 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
     battle-pet ids, they are GUIDs), and appearances as collected source
     (item-modified-appearance) ids. Lists read through a filtered journal
     say so, and the addon never changes the owner's filters or collapsed
-    headers;
+    headers. Amended 2026-09-28 (M11-20): appearances are not recorded on
+    any client. On the first M11-03 login (Forever, build 1.60.1.70009),
+    one call, `C_TransmogCollection.GetCategoryAppearances(9)` (9 is Waist
+    on Retail), made about 4 s after entering the world, hit the client
+    assertion `BC_ASSERT(this->m_has_value)` and crashed the client;
+    `pcall` cannot catch a C++ assertion. That is one observation. Whether
+    other categories were called before it is not known (the loop walked
+    `Enum.TransmogCollectionType` with `pairs`), and the cause is not
+    established: the wardrobe data may not have been loaded 4 s after
+    login, the data for that slot may be missing, or transmog may be only
+    partly built on Forever. The crash was seen on Forever, but the addon
+    does not branch on flavor (L6): it calls nothing in
+    `C_TransmogCollection` on any client, registers no transmog events,
+    and always writes `collections.appearances` as absent with a reason.
+    Any later appearance gathering, including the same call at another
+    time, needs its own ticket and a live check first;
   - currencies: id and quantity, and the total cap, weekly cap, weekly
     earned and account-wide flag raw where the client gives them
     **[verify]**; weekly values follow the region's reset (GLOSSARY);

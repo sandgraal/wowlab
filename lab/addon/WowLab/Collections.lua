@@ -1,11 +1,14 @@
 -- Collections (docs/LAB_PLAN.md §13.1): mounts, toys and pets (by species id
--- and count; no battle-pet ids, they are GUIDs), and appearances as collected
--- source (item-modified-appearance) ids. A list read through a filtered
--- journal says so (`filtered = true`); the addon never changes the owner's
--- filters, search text or collapsed headers. Every API here is [verify] for
--- M11-03 (all are present on 69893 per forever-addon-kit's API baseline, but
--- nothing exercised them there). Collections stay per-character until M11-03
--- shows which are account-wide on Forever.
+-- and count; no battle-pet ids, they are GUIDs). Appearances are never
+-- gathered and always written as absent: on the first M11-03 login one call
+-- asking the client for the appearance collection hit a C++ assertion and
+-- crashed the Forever client, which pcall cannot catch (M11-20). A list read
+-- through a filtered journal says so (`filtered = true`); the addon never
+-- changes the owner's filters, search text or collapsed headers. Every API
+-- here is [verify] for M11-03 (all are present on 69893 per
+-- forever-addon-kit's API baseline, but nothing exercised them there).
+-- Collections stay per-character until M11-03 shows which are account-wide
+-- on Forever.
 
 local _, ns = ...
 
@@ -95,45 +98,6 @@ local function pets()
     return record
 end
 
--- Appearances: every Enum.TransmogCollectionType category, its collected
--- visuals, and each visual's sources the player has. Whether
--- GetCategoryAppearances honours the wardrobe's filters is [verify], so the
--- list is marked filtered.
-local function appearances()
-    local categories = type(Enum) == "table" and Enum.TransmogCollectionType or nil
-    local byCategory = ns.Fn(C_TransmogCollection, "GetCategoryAppearances")
-    local sourcesOf = ns.Fn(C_TransmogCollection, "GetAllAppearanceSources")
-    local has = ns.Fn(C_TransmogCollection, "PlayerHasTransmogItemModifiedAppearance")
-    if not (type(categories) == "table" and byCategory and sourcesOf and has) then
-        return ns.Absent("Enum.TransmogCollectionType or a C_TransmogCollection function missing")
-    end
-    local collected, seen = {}, {}
-    for _, category in pairs(categories) do
-        local visuals = type(category) == "number" and ns.Call(byCategory, category) or nil
-        if type(visuals) == "table" then
-            for _, visual in ipairs(visuals) do
-                if type(visual) == "table" and visual.isCollected and type(visual.visualID) == "number" then
-                    for _, sourceID in ipairs(ns.Numbers(ns.Call(sourcesOf, visual.visualID))) do
-                        if not seen[sourceID] then
-                            seen[sourceID] = true
-                            if ns.Call(has, sourceID) then
-                                collected[#collected + 1] = sourceID
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-    table.sort(collected)
-    local record = { sources = collected, filtered = true }
-    local default = ns.Fn(C_TransmogCollection, "IsUsingDefaultFilters")
-    if default then
-        record.default_filters = ns.Bool(ns.Call(default))
-    end
-    return record
-end
-
 ns.Section({
     key = "collections.mounts",
     path = { "collections", "mounts" },
@@ -161,11 +125,13 @@ ns.Section({
     gather = pets,
 })
 
+-- Appearances: not on entering the world, not on an event, not on
+-- `/wowlab save`. The section has no events, no on_world and no gather, so
+-- nothing ever marks it for gathering; it calls nothing in the client and is
+-- always written as absent with this reason. A replacement needs its own
+-- ticket and a live check first.
 ns.Section({
     key = "collections.appearances",
     path = { "collections", "appearances" },
-    events = { "TRANSMOG_COLLECTION_UPDATED", "TRANSMOG_COLLECTION_SOURCE_ADDED" },
-    on_world = true,
-    heavy = true,
-    gather = appearances,
+    not_gathered = "not gathered: asking the client for the appearance collection crashed the Forever client once (M11-03); the addon no longer asks",
 })

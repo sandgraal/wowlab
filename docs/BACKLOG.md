@@ -14,7 +14,7 @@ The backlog holds the current wave only (ADR-0024). Milestone numbers start at `
 
 Spec: `docs/LAB_PLAN.md` §13. Decisions: ADR-0026, ADR-0027 (accepted 2026-09-28). Owner pick 2026-09-28. L1–L8 apply to every ticket.
 
-The wave is 21 tickets (10 planned plus the follow-ups M11-11T, M11-11, M11-12, M11-13, M11-14, M11-15, M11-16T, M11-17, M11-18 and M11-19 added 2026-09-28), four of them M-sized (M11-01, M11-05, M11-08, M11-09), not the four S-sized ideas listed in `docs/LAB_IDEAS.md`; the M11-10 review compares actual effort against that. Wave 1 closes before M11 dispatch (§13.5); the critical path M11-01 → M11-02 → M11-03 goes first.
+The wave is 23 tickets (10 planned plus the follow-ups M11-11T, M11-11, M11-12, M11-13, M11-14, M11-15, M11-16T, M11-17, M11-18, M11-19, M11-20 and M11-21 added 2026-09-28), four of them M-sized (M11-01, M11-05, M11-08, M11-09), not the four S-sized ideas listed in `docs/LAB_IDEAS.md`; the M11-10 review compares actual effort against that. Wave 1 closes before M11 dispatch (§13.5); the critical path M11-01 → M11-02 → M11-03 goes first.
 
 ## [x] M11-01 — lab-addon sources and Lua lint
 **Size:** M · **Depends on:** —
@@ -195,6 +195,24 @@ From the #112 security review (pre-existing). `SnapshotStore.create` writes obje
 From the #110 review. Under heavy load `tests/scripts/test_lab_capture_followup6.py` (the long-separator scan, 10 s budget) fails, and the other `tests/scripts/test_lab_capture_*` timing sites (`followup.py`, `round2.py`, `followup3.py`) use wall clock too; `lab/core/tests/test_layout.py`'s 400-folder inventory test (2 s) flaked on the Windows runner. For CPU-bound checks measure CPU time as M11-16T did; for the filesystem-bound layout test use a relative control or a wider budget, not CPU time. Keep what each test asserts.
 
 **Acceptance:** each changed test passes under a CPU-saturating background load you start and stop yourself (no `pkill`) and still fails against a constructed slow path (scratch patch, reverted); `make ci` green.
+
+---
+
+## [x] M11-20 — the lab-addon must not crash the client (appearances)
+**Size:** S · **Depends on:** M11-01
+
+Found in the owner's M11-03 first start: one call to `C_TransmogCollection.GetCategoryAppearances(9)`, about 4 s after entering the world, hit the client assertion `BC_ASSERT(this->m_has_value)` and crashed the Forever client; `pcall` cannot catch a C++ assertion. The addon stops calling anything in `C_TransmogCollection` on any client (L6), records `collections.appearances` as absent with a reason the owner can read in `char show`, and a source scan plus the selene std keep the API out. §13.1 amendment, README, the M11-03 runbook (crash-loop step) and a breakage-log row say what is and is not known.
+
+**Acceptance:** the addon source never names the API (source-scan test, fails on the old `Collections.lua`); selene rejects any `C_TransmogCollection` use; no path gathers the section; `make ci` green; reviewed by `code-reviewer` and `domain-reviewer`.
+
+---
+
+## [ ] M11-21 — lab-addon per-section off switch
+**Size:** S · **Depends on:** M11-20
+
+From the M11-20 review. A client assertion in any section crashes the client at every login while the addon is enabled, and a crash writes no SavedVariables, so the addon cannot mark the culprit itself. Add `/wowlab skip <section>` and `/wowlab unskip <section>` (and `/wowlab skip` with no argument lists the switched-off sections), stored in `WowLabCharDB`, read at `ADDON_LOADED` before any section is gathered; a skipped section is written as absent with the reason "switched off by the owner". Section keys as in §13.1. No change to what the other sections record.
+
+**Acceptance:** the static addon tests cover the command names and that a skipped section is never gathered (source-level, labelled); README and §13.1 document it; the M11-03 runbook's crash step mentions it; `make ci` green; reviewed by `code-reviewer` and `domain-reviewer`.
 
 ---
 
