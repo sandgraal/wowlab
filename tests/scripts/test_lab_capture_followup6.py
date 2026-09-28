@@ -57,8 +57,8 @@ def _emote(text: str) -> bytes:
     return _line(b"EMOTE," + BOAR + b',"Boar",0000000000000000,nil,"' + text.encode() + b'"')
 
 
-def _one_player(text: str) -> bytes:
-    unit = b'Player-1-00C0FFEE,"Zorvinth-KestrelHollow-",0x512,0x0'
+def _one_player(text: str, unit_name: str = "Zorvinth-KestrelHollow-") -> bytes:
+    unit = b'Player-1-00C0FFEE,"' + unit_name.encode() + b'",0x512,0x0'
     return (
         HEADER
         + _line(b"SWING_DAMAGE," + unit + b"," + BOAR + b',"Boar",0xa48,0x0,1,-1')
@@ -159,6 +159,79 @@ def test_constructed_loose_second_name_control_is_still_rewritten() -> None:
     result = identity.scrub(text.encode())
     assert not result.problems, result.problems
     assert result.data == text.replace("QuelThalas", "Labrealma").encode()
+
+
+# ─── security review of #85: ASCII separators in a short loose name ──────────
+
+
+@pytest.mark.parametrize(
+    "sep",
+    [b"_", b"\n", b"\r", b"\x0b", b"\x0c"],
+    ids=["underscore", "lf", "cr", "vt", "ff"],
+)
+def test_constructed_short_loose_second_name_with_an_ascii_separator_refuses(sep: bytes) -> None:
+    """A pure-ASCII file: only the byte-level loose check sees a short name."""
+    identity = Identity(characters=["Moon"], realms=["Qorv"], loose=["Qorv"])
+    text = b'"Qo' + sep + b'rv"'
+    result = identity.scrub(text)
+    assert any(p.startswith(LOOSE) for p in result.problems), result.problems
+    assert result.data == text  # detect only
+
+
+def test_constructed_short_loose_ascii_separator_control_passes() -> None:
+    identity = Identity(characters=["Moon"], realms=["Qorv"], loose=["Qorv"])
+    text = b'"Qo_bows" "rv\nx" "Qo\x0b\x0cx"'
+    result = identity.scrub(text)
+    assert not result.problems, result.problems
+    assert result.data == text
+
+
+# ─── security review of #85: U+30FC next to a short name ─────────────────────
+
+PROLONGED = chr(0x30FC)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [PROLONGED + "ash " + chr(0xE9), "ash" + PROLONGED + " waves", "The " + PROLONGED + "ASH"],
+    ids=["before", "after", "before-upper-case"],
+)
+def test_constructed_prolonged_mark_beside_a_short_owner_name_refuses(text: str) -> None:
+    """The exact spelling `Ash` is rewritten wherever it occurs; a case variant
+    is a whole word only, which U+30FC used to hide."""
+    result = _owner().scrub(_saved(text))
+    assert f"{FOLDED} x1" in result.problems, result.problems
+    assert result.data == _saved(text)
+
+
+def test_constructed_prolonged_mark_beside_a_longer_word_passes() -> None:
+    """Control: `ash` inside a longer word is still no hit, with U+30FC beside it."""
+    text = PROLONGED + "ashen " + chr(0xE9) + " lash" + PROLONGED
+    result = _owner().scrub(_saved(text))
+    assert not [p for p in result.problems if p.startswith(FOLDED)], result.problems
+    assert result.data == _saved(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [PROLONGED + "Zor waves.", "Zor" + PROLONGED + " waves."],
+    ids=["before", "after"],
+)
+def test_constructed_prolonged_mark_beside_a_short_other_player_name_refuses(
+    text: str, tmp_path: Path
+) -> None:
+    problems, data = _process(_one_player(text, "Zor-KestrelHollow-"), tmp_path)
+    assert problems == [f"{OTHER_NAME} x1"]
+    assert b'nil,"' + text.encode() + b'"\n' in data
+
+
+def test_constructed_prolonged_mark_beside_a_longer_word_other_player_control(
+    tmp_path: Path,
+) -> None:
+    text = PROLONGED + "Zorro waves" + PROLONGED + " at Azor" + PROLONGED + "."
+    problems, data = _process(_one_player(text, "Zor-KestrelHollow-"), tmp_path)
+    assert problems == []
+    assert b'nil,"' + text.encode() + b'"\n' in data
 
 
 # ─── performance: long separator runs ────────────────────────────────────────

@@ -784,7 +784,7 @@ class Identity:
                 body = _HUNT_SEPARATOR.join(re.escape(c) for c in letters)
             else:
                 body = re.escape(folded)
-            short.append(rf"(?<!\w)(?:{body})(?!\w)")
+            short.append(rf"{_SHORT_BEFORE}(?:{body}){_SHORT_AFTER}")
         pattern = re.compile("|".join(sorted(set(short), key=lambda b: (-len(b), b))))
         return tuple(sorted(long_forms)), pattern if short else None
 
@@ -1402,14 +1402,14 @@ class Identity:
 
 _BOM = b"\xef\xbb\xbf"
 # What a second name may carry between two letters: space, apostrophe, hyphen,
-# tab, backtick, NBSP, zero-width space (U+00A0 and U+200B in UTF-8), `\\'`,
-# and the lookalikes the client does not write (U+2212 minus, U+2043 hyphen
+# tab, backtick, underscore, line breaks (LF, CR), VT, FF, NBSP, zero-width
+# space (U+00A0 and U+200B in UTF-8), `\\'`, and the lookalikes the client does not write (U+2212 minus, U+2043 hyphen
 # bullet, U+30FC katakana prolonged sound mark, U+2032 prime: defence in
 # depth, M10-02 follow-up 6). Detection only: a hit refuses the file, nothing
 # is rewritten.
 _LOOSE_MULTIBYTE = rb"\xc2\xa0|\xe2\x80[\x8b\xb2]|\xe2\x88\x92|\xe2\x81\x83|\xe3\x83\xbc"
-_LOOSE_SEPARATOR = re.compile(rb"[ '\-\\\t`]|" + _LOOSE_MULTIBYTE)
-_LOOSE_BETWEEN = rb"(?:[ '\-\t`]|\\'|" + _LOOSE_MULTIBYTE + rb")*"
+_LOOSE_SEPARATOR = re.compile(rb"[ '\-\\\t`_\n\r\x0b\x0c]|" + _LOOSE_MULTIBYTE)
+_LOOSE_BETWEEN = rb"(?:[ '\-\t`_\n\r\x0b\x0c]|\\'|" + _LOOSE_MULTIBYTE + rb")*"
 
 
 def _loose_pattern(part: str) -> bytes | None:
@@ -1512,7 +1512,7 @@ class OtherUnits:
             letters = _LOOSE_DROPPED.sub("", term)
             if len(letters) >= EMBEDDED_MIN_CHARS:
                 return _HUNT_SEPARATOR.join(re.escape(c) for c in letters)
-            return rf"(?<!\w){re.escape(term)}(?!\w)"
+            return rf"{_SHORT_BEFORE}{re.escape(term)}{_SHORT_AFTER}"
 
         pattern = re.compile(
             "|".join(spelled(t) for t in sorted(terms, key=lambda t: (-len(t), t)))
@@ -1723,6 +1723,11 @@ _HUNT_SEPARATOR_CHARS = (
 _HUNT_SEPARATOR = r"(?:[" + _HUNT_SEPARATOR_CHARS + r"]|\\')*"
 _LOOSE_DROPPED = re.compile(r"\\'|[" + _HUNT_SEPARATOR_CHARS + r"\\]")  # dropped before joining
 _HUNT_SPLIT = re.compile(r"[\s\-\u2010-\u2015]+")  # what splits a hunted name into parts
+# Whole-word boundaries for a short hunted name, in the folded form: no word
+# character on either side, except U+30FC, which is `\w` (a letter modifier)
+# but read as a separator here, so `\u30fcash` still holds the word `ash`.
+_SHORT_BEFORE = r"(?<![^\W\u30fc])"
+_SHORT_AFTER = r"(?![^\W\u30fc])"
 
 
 class _DropMarks(dict[int, int | None]):
