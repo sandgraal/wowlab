@@ -442,32 +442,42 @@ def test_a_real_file_named_with_colon_or_backslash_always_differs_constructed(
 
 @posix_only
 @pytest.mark.parametrize("name", ["odd:name.lua", "odd\\name.lua"])
-@pytest.mark.parametrize("changed", [False, True])
+@pytest.mark.parametrize("state", ["unchanged", "changed", "removed"])
 def test_apply_leaves_a_colon_or_backslash_named_file_untouched_constructed(
-    root: Path, flavor: Path, name: str, changed: bool
+    root: Path, flavor: Path, name: str, state: str
 ) -> None:
     """Constructed: an addon file whose POSIX name holds `:` or `\\`. The gate
     never writes such a name, so it refuses the whole restore and `profiles`
     compares entries itself; the file counts as changed whether or not it is,
     the gate refuses it again, and it is left alone and listed with the
-    gate's reason. Harmless: nothing is written to it, and the rest of the
-    profile is applied (docs/LAB_PLAN.md §13.3, 2026-09-28)."""
+    gate's reason: a changed or removed one is not put back. The rest of the
+    profile is applied. A whole `snap restore` of the same snapshot is refused
+    outright (docs/LAB_PLAN.md §13.3, 2026-09-28)."""
     tool = flavor / "Interface/AddOns/Tool"
     tool.mkdir()
     (tool / "Tool.toc").write_bytes(b"## Title: constructed\n")
     odd = tool / name
     odd.write_bytes(b"-- constructed\n")
-    ok("profile", "save", "mods", "--preset", "addons")
+    saved = _json_of(cli.ProfileReport, "profile", "save", "mods", "--preset", "addons")
     lua = flavor / SV / "RareScanner.lua"
     saved_lua = lua.read_bytes()
     lua.write_bytes(saved_lua + b"\n-- constructed\n")
-    now = b"-- changed since the save\n" if changed else b"-- constructed\n"
-    odd.write_bytes(now)
+    if state == "changed":
+        odd.write_bytes(b"-- changed since the save\n")
+    elif state == "removed":
+        odd.unlink()
+    now = odd.read_bytes() if odd.exists() else None
+
+    refused = run("snap", "restore", saved.profile.snapshot_id, "--yes")
+    assert refused.exit_code == 3, (refused.stdout, refused.stderr)
+    assert "not a plain name" in refused.stderr
+    assert lua.read_bytes() == saved_lua + b"\n-- constructed\n", "nothing restored"
+
     result = ok("profile", "apply", "mods", "--yes", "--json")
     report = cli.ProfileApplyReport.model_validate_json(result.stdout)
     assert report.applied
     left = {lp.path: lp.reason for lp in report.left}
     assert "not a plain name" in left[f"Interface/AddOns/Tool/{name}"]
     assert all(not i.path.endswith(name) for i in report.plan)
-    assert odd.read_bytes() == now
+    assert (odd.read_bytes() if odd.exists() else None) == now
     assert lua.read_bytes() == saved_lua, "the rest of the profile is applied"

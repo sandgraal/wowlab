@@ -483,20 +483,62 @@ def test_save_keeps_an_unknown_choice_as_a_note_constructed() -> None:
     ]
 
 
+MISFILED = f"Face ({HUMAN_BODY_0_FACE}) = {PLAIN_SKIN} (a choice of option {HUMAN_BODY_0_SKIN})"
+
+
+def _refs(refs: list[cli.LooksChoiceRef]) -> list[tuple[int, int, str | None, int | None]]:
+    return [(c.option_id, c.choice_id, c.choice_name, c.choice_of_option) for c in refs]
+
+
 def test_a_choice_of_another_option_has_no_name_under_this_one(model: Customizations) -> None:
     """M11-14: choice 1 is a Skin Color (9) choice; set under Face (10) it is
-    refused, and the reference names no choice rather than Skin Color's."""
+    refused, and the reference names no choice rather than Skin Color's and
+    says whose choice it is, not that the build lacks it (save, text and JSON)."""
     assert model.choices[PLAIN_SKIN].option_id == HUMAN_BODY_0_SKIN
     result = _save("wrong", f"{HUMAN_BODY_0_FACE}={PLAIN_SKIN}", extra=("--json",))
     assert result.exit_code == 1
     report = cli.LookReport.model_validate_json(result.stdout)
     assert report.refused
-    assert [(c.option_id, c.option_name, c.choice_id, c.choice_name) for c in report.choices] == [
-        (HUMAN_BODY_0_FACE, "Face", PLAIN_SKIN, None)
-    ]
+    assert [c.option_name for c in report.choices] == ["Face"]
+    assert _refs(report.choices) == [(HUMAN_BODY_0_FACE, PLAIN_SKIN, None, HUMAN_BODY_0_SKIN)]
     assert any(f"belongs to option {HUMAN_BODY_0_SKIN}" in f.message for f in report.refusals)
+    text = _save("wrong", f"{HUMAN_BODY_0_FACE}={PLAIN_SKIN}").stdout
+    assert MISFILED in text and "unknown to this build" not in text
+
     right = cli._choice_ref(model, HUMAN_BODY_0_SKIN, PLAIN_SKIN)
     assert right.choice_name == model.choices[PLAIN_SKIN].name is not None
+    assert right.choice_of_option is None
+    unknown = cli._choice_ref(model, HUMAN_BODY_0_FACE, 999999)
+    assert (unknown.choice_name, unknown.choice_of_option) == (None, None)
+    assert cli._ref_choice_text(unknown) == "999999 (unknown to this build)"
+
+
+def test_show_and_compare_word_a_choice_of_another_option_constructed(user_data: Path) -> None:
+    """Constructed: look b's Skin Color choice moved under Face in its file."""
+    assert _save("a", f"9={PLAIN_SKIN}").exit_code == 0
+    assert _save("b", f"9={PLAIN_SKIN}").exit_code == 0
+    path = user_data / "looks" / "b.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["look"]["choices"] = {str(HUMAN_BODY_0_FACE): PLAIN_SKIN}
+    path.write_text(json.dumps(data), encoding="utf-8")
+    expected = [(HUMAN_BODY_0_FACE, PLAIN_SKIN, None, HUMAN_BODY_0_SKIN)]
+
+    shown = _json(cli.LookReport, "looks", "show", "b", "--build", BUILD)
+    assert _refs(shown.choices) == expected
+    text = ok("looks", "show", "b", "--build", BUILD).stdout
+    assert MISFILED in text and "unknown to this build" not in text
+
+    report = _json(cli.LooksCompareReport, "looks", "compare", "a", "b", "--build", BUILD)
+    diff = {d.option_id: d for d in report.different}
+    face = diff[HUMAN_BODY_0_FACE]
+    assert face.a is None and face.b is not None
+    assert _refs([face.b]) == expected and _refs(report.b.choices) == expected
+    text = ok("looks", "compare", "a", "b", "--build", BUILD).stdout
+    assert (
+        f"Face ({HUMAN_BODY_0_FACE}): (not set in this look) | {PLAIN_SKIN} "
+        f"(a choice of option {HUMAN_BODY_0_SKIN})"
+    ) in text
+    assert "unknown to this build" not in text
 
 
 def test_save_needs_unlock_is_a_note_constructed(source: _Source) -> None:

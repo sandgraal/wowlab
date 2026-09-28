@@ -3431,7 +3431,12 @@ class LooksChoiceRef(_Out):
     option_id: int
     option_name: str | None  # None: the option is unknown to the build
     choice_id: int
-    choice_name: str | None  # None: unknown to the build; "" when the table names none
+    # None: unknown to the build, or not a choice of this option (then
+    # `choice_of_option` says whose it is); "" when the table names none.
+    choice_name: str | None
+    # The option the build files this choice under, when that is not
+    # `option_id`; None when the choice is this option's or unknown to the build.
+    choice_of_option: int | None = None
 
 
 class LookReport(_Out):
@@ -3707,10 +3712,22 @@ def _choice_ref(model: looks.Customizations, option_id: int, choice_id: int) -> 
         option_id=option_id,
         option_name=option.name if option else None,
         choice_id=choice_id,
-        # A choice of another option is not this option's choice: no name here
-        # (the check reports the mismatch as a refusal).
+        # A choice of another option is not this option's choice: no name here,
+        # and whose it is (the check reports the mismatch as a refusal).
         choice_name=choice.name if choice is not None and choice.option_id == option_id else None,
+        choice_of_option=(
+            choice.option_id if choice is not None and choice.option_id != option_id else None
+        ),
     )
+
+
+def _ref_choice_text(ref: LooksChoiceRef) -> str:
+    """The choice half of a reference, as `save`, `show` and `compare` print it."""
+    if ref.choice_of_option is not None:
+        return f"{ref.choice_id} (a choice of option {ref.choice_of_option})"
+    if ref.choice_name is None:
+        return f"{ref.choice_id} (unknown to this build)"
+    return f"{ref.choice_id} {ref.choice_name!r}" if ref.choice_name else str(ref.choice_id)
 
 
 def _look_report(
@@ -3784,13 +3801,7 @@ def _ref_text(ref: LooksChoiceRef) -> str:
         if ref.option_name is not None
         else f"option {ref.option_id} (unknown to this build)"
     )
-    if ref.choice_name is None:
-        choice = f"{ref.choice_id} (unknown to this build)"
-    elif ref.choice_name:
-        choice = f"{ref.choice_id} {ref.choice_name!r}"
-    else:
-        choice = str(ref.choice_id)
-    return f"{option} = {choice}"
+    return f"{option} = {_ref_choice_text(ref)}"
 
 
 def _print_findings(
@@ -4262,9 +4273,7 @@ def looks_compare(
     def side(ref: LooksChoiceRef | None) -> str:
         if ref is None:
             return "(not set in this look)"
-        if ref.choice_name is None:
-            return f"{ref.choice_id} (unknown to this build)"
-        return f"{ref.choice_id} {ref.choice_name!r}" if ref.choice_name else str(ref.choice_id)
+        return _ref_choice_text(ref)
 
     _say(f"Looks {ra.name} | {rb.name}, checked against build {version}")
     _say(f"  race:      {race(ra)} | {race(rb)}")

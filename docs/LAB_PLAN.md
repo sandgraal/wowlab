@@ -1506,10 +1506,12 @@ link; this profile holds the link, not what is behind it"), in human and
 `--json` output; a root reached through a linked folder (`WTF` itself a
 link) is refused by the snapshot, so nothing is saved (M11-12, 2026-09-28).
 On POSIX a real file whose name holds `:` or `\` always counts as changed in
-that fallback comparison, which does not read it; this is harmless, because
-the gate never writes such a name either: it is left alone and listed with
-the gate's reason, and the rest of the profile is applied (M11-14,
-2026-09-28).
+that fallback comparison, which does not read it. This is harmless, because
+the gate never writes or deletes such a name either: `profile apply` leaves
+the file alone and lists it with the gate's reason, and applies the rest of
+the profile. The cost is that a changed or removed file with such a name is
+not put back by `profile apply`, and a whole `snap restore` of a snapshot
+holding one is refused outright, as before (M11-14, 2026-09-28).
 Folders emptied by a
 deletion stay, since the gate deletes files only. Every `*-cache*` file in
 the plan is listed, a write with "the server may replace this at your next
