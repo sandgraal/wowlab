@@ -389,9 +389,19 @@ platform and locale.
    holds paths compared after `Path.resolve()`. With nothing to read, a
    `[number]` key is written `[n] = ` (§4.1, §4.2). A document whose only
    positional entry shares the `{` line shows array comments but not
-   indentation, and by item 5 that decides both. A `nil` value inside a table
-   is written as given; the client omits such entries when it writes, which
-   is the client's business, not a refusal.
+   indentation, and by item 5 that decides both (tab indentation and
+   comments). A `nil` value inside a table is refused under item 2, because
+   the parser refuses it (§4.1: `nil` only as a top-level value) and the
+   client never writes one; this corrects an earlier wording of this item.
+9. **Data only, precisely (conductor, 2026-09-27, from the M10-12T
+   re-review).** Item 2 covers every slot: a `--` comment in any slot but
+   the document's `tail` ends with a line break inside that slot; `sep` is
+   only `,`, `;` or empty; `Entry.comment` is one line comment with no line
+   break; `sep_lead` and `key_close_lead` follow the trivia rule. A slot
+   whose text, placed in the output, would comment out or swallow a
+   following entry is refused. On refusal, `LuaDataError.line` and
+   `.column` give where the refused bytes would start in the output built so
+   far, and `.token` holds at most the first 40 bytes of the refused slot.
 
 Performance: a 50 MB SavedVariables file (auction or collection addons get
 there) parses in under 10 s and under 1.5 GB RSS on the owner's laptop
