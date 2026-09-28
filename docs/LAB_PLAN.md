@@ -1541,8 +1541,9 @@ M11-08 profiles
 
 Wave 1 closes first (§11). M11-01 → M11-02 → M11-03 is the critical path:
 it is dispatched first once Wave 1 closes, because the owner's capture
-(M11-03) resolves most of §13.1's **[verify]** items and M11-04, M11-06's
-`import-char` and M11-09T/M11-09 wait on it. M11-05 and M11-08 run
+(M11-03) resolves most of §13.1's **[verify]** items and M11-04 (which
+also carries `looks import-char`, moved from M11-06 on 2026-09-28) and
+M11-09T/M11-09 wait on it. M11-05 and M11-08 run
 alongside it. M11-02, M11-04, M11-06 and M11-08 add CLI commands, so they
 depend on M10-14.
 
