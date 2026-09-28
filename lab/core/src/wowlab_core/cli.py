@@ -23,7 +23,15 @@ in its help (the models are defined below, or are the library's own). Text
 that came from file names or file bytes and is not valid UTF-8 is written in
 JSON with the scheme `layout` and `snapshot` use (a lone surrogate becomes
 NUL followed by four hex digits); snapshot manifests are written with
-`snapshot.manifest_bytes`, the one canonical encoding.
+`snapshot.manifest_bytes`, the one canonical encoding. `sv dump --json` is
+flat (each value one row naming its parent) and written compact, row by
+row, so its size grows with the number of values and never with depth.
+Text output escapes every control character but tab (`\\x1b` for ESC), so
+nothing read from an install reaches the terminal as a control sequence.
+
+A whole-snapshot `snap restore` leaves alone the files the client manages
+(file-map Edit `no`) unless they are named with `--paths` (owner decision
+2026-09-27, §6.11 amendment).
 
 `log tail` (§6.11) is not here: it needs `combatlog` (M10-13), which is not
 part of this ticket's dependencies.
@@ -135,13 +143,22 @@ class CliError(Exception):
         self.code = code
 
 
+_CONTROL = re.compile("[\x00-\x08\x0a-\x1f\x7f-\x9f]")
+
+
 def _safe(text: str) -> str:
-    """Printable text: bytes that are not UTF-8 (carried as lone surrogates)
-    are shown as `\\xNN` escapes instead of failing the write to the terminal."""
+    """Printable text for a terminal.
+
+    Bytes that are not UTF-8 (carried as lone surrogates) are shown as `\\xNN`
+    escapes instead of failing the write, and so is every C0 and C1 control
+    character but tab, line feed included: a file name or value from the
+    install can carry ESC or OSC sequences, which must never reach the
+    terminal as control codes."""
     try:
-        return text.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
+        text = text.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
     except UnicodeEncodeError:
-        return text.encode("utf-8", "backslashreplace").decode("utf-8")
+        text = text.encode("utf-8", "backslashreplace").decode("utf-8")
+    return _CONTROL.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
 
 
 def _say(text: str = "") -> None:
@@ -149,7 +166,9 @@ def _say(text: str = "") -> None:
 
 
 def _note(text: str) -> None:
-    typer.echo(_safe(text), err=True)
+    """A message on stderr. Its own line breaks (a multi-line error from the
+    library) are kept; every other control character is escaped."""
+    typer.echo("\n".join(_safe(line) for line in text.split("\n")), err=True)
 
 
 def _fail(message: str, code: int) -> NoReturn:
@@ -389,14 +408,13 @@ def _client_names(flavor_dir: Path) -> list[str]:
     """Executable names in a flavor folder, for `process` (`extra_names`).
 
     Lists the folder (and a macOS bundle's `Contents/MacOS/`); opens nothing.
-    The same rule `guard` applies before a write.
+    The same rule as `guard`'s own (private) helper, which it applies before
+    a write; a test pins the two together. A flavor folder that cannot be
+    listed raises `OSError`, so a caller reports "could not check" rather
+    than checking with no names.
     """
     names: list[str] = []
-    try:
-        children = sorted(flavor_dir.iterdir())
-    except OSError:
-        return names
-    for child in children:
+    for child in sorted(flavor_dir.iterdir()):
         folded = child.name.casefold()
         if folded.endswith(".exe"):
             names.append(child.name)
@@ -577,8 +595,8 @@ def _game_data(flavors: Sequence[install.Flavor], offline: bool) -> dict[str, Ga
 
 
 def _client_report(inst: install.Install) -> ClientReport:
-    names = sorted({n for f in inst.flavors for n in _client_names(f.path)})
     try:
+        names = sorted({n for f in inst.flavors for n in _client_names(f.path)})
         clients = process.running_clients(
             _roots(inst),
             flavor_folders=[f.folder for f in inst.flavors],
@@ -633,7 +651,11 @@ def _doctor(root: Path | None, offline: bool) -> DoctorReport:
     try:
         inst, found_by = _discover(root)
     except install.InstallNotFoundError as exc:
-        install_error = "no install found at the default locations"
+        install_error = (
+            "no install found at the default locations that could be checked"
+            if exc.unchecked
+            else "no install found at the default locations"
+        )
         locations = Locations(
             searched=[str(p) for p in exc.searched],
             could_not_check=[
@@ -694,7 +716,9 @@ def _print_game_data(g: GameDataReport) -> str:
     if g.status == "published":
         return f"wago.tools lists version {g.version}"
     if g.status == "not_published":
-        return f"wago.tools does not list version {g.version} yet; no game data for it"
+        return (
+            f"wago.tools does not list version {g.version}; wowlab db2 cannot fetch tables for it"
+        )
     if g.status == "no_version":
         return f"no version to look up ({g.detail})"
     if g.status == "not_checked":
@@ -723,10 +747,16 @@ def _print_doctor(report: DoctorReport) -> None:
             )
         _say(f"  Game data: {_print_game_data(f.game_data)}")
         if f.sync_cvars:
-            _say("  Server sync (when on, the server can replace local binds, macros or")
-            _say("  settings at login):")
+            _say(
+                "  Server sync (when on, the server can replace local binds, macros or settings "
+                "at login; which other *-cache files it replaces is not known):"
+            )
             for sync in f.sync_cvars:
-                value = f'"{sync.value}"' if sync.value is not None else "not set (client default)"
+                value = (
+                    f'"{sync.value}"'
+                    if sync.value is not None
+                    else "not set (client default; wowlab does not know whether that default is on)"
+                )
                 _say(f"    {sync.file}: {sync.name} {value}")
     if report.other_dirs:
         _say("Folders named _..._ that are not flavors: " + ", ".join(report.other_dirs))
@@ -898,7 +928,7 @@ def _tree_items(lay: layout.Layout, inv: layout.Inventory) -> dict[str, TreeItem
         what = "previous write of " if sv.backup else ""
         add(sv.path, "file", sv.size, f"{what}{sv.scope} SavedVariables of {who}")
     for addon in inv.addons:
-        add(addon.path, "folder", None, f"addon; TOC choice: {addon.selection}")
+        add(addon.path, "folder", None, f"addon; {_SELECTION_WORDS[addon.selection]}")
         for toc in addon.tocs:
             add(f"{addon.path}/{toc.file}", "file", toc.size, toc.error)
     for o in inv.other.overrides:
@@ -922,6 +952,13 @@ def _tree_items(lay: layout.Layout, inv: layout.Inventory) -> dict[str, TreeItem
     for meta in inv.os_metadata:
         add(meta, "file", None, "operating-system folder metadata")
     return items
+
+
+_SELECTION_WORDS = {
+    "single": "one TOC",
+    "depends_on_game_type": "several TOCs; which one loads depends on the game type",
+    "no_toc": "no TOC named after the folder",
+}
 
 
 def _in_scope(path: str, prefix: str) -> bool:
@@ -988,8 +1025,10 @@ def tree(
                 _say("      no file-map row")
             else:
                 e = item.explained
+                edit = _edit_words(e.edit, e.tier, restorable=_restorable("flavor", item.path))
                 _say(f"      [{e.entry_id}] {_plain(e.what)}")
-                _say(f"      edit: {_edit_words(e.edit)}")
+                _say(f"      written by: {_plain(e.written_by)}")
+                _say(f"      edit: {edit}")
     if inv.truncated:
         _note("The walk hit a bound; the listing is incomplete.")
     for err in errors:
@@ -1001,16 +1040,57 @@ def _plain(markdown: str) -> str:
     return markdown.replace("**", "")
 
 
-def _edit_words(edit: str) -> str:
+_GATE_WORDS = "yes, through wowlab's write gate only, with the client closed"
+_SERVER_MAY_REPLACE = "(server may replace)"
+_TIER_WORDS = {
+    "A": "A: ordinary addon-user behaviour",
+    "A (read)": "A (read): reading it is ordinary addon-user behaviour",
+    "A (read, later wave)": "A (read, later wave): reading it is ordinary; wowlab does not read it yet",
+    "B": "B: works, but Blizzard does not support it and a patch can reset it",
+    "—": "—: nothing wowlab does with it",
+}
+# The subtrees the write gate may write, spelled as the client spells them.
+_GATE_AREAS = frozenset({"wtf", "interface", "fonts"})
+
+
+def _restorable(base: str | None, path: str) -> bool:
+    """Whether a flavor path lies where the write gate could put it back when
+    named (`WTF/`, `Interface/`, `Fonts/`)."""
+    return base == "flavor" and path.split("/", 1)[0].casefold() in _GATE_AREAS
+
+
+def _edit_words(edit: str, tier: str = "", *, restorable: bool = False) -> str:
+    """The file map's Edit cell in words. `restorable`: the path is inside the
+    subtrees the gate writes, so a `no` file is one a restore leaves alone
+    unless it is named (owner decision 2026-09-27)."""
     if edit.startswith("gate"):
         rest = edit[len("gate") :].strip()
-        extra = f" {rest}" if rest else ""
-        return f"yes, through wowlab's write gate only, with the client closed{extra}"
-    if edit == "no":
-        return "no; wowlab never writes it"
-    if edit == "n/a":
-        return "n/a; not a file wowlab touches"
-    return edit
+        if rest == _SERVER_MAY_REPLACE:
+            words = (
+                f"{_GATE_WORDS}; the server may replace it at login (sync settings: wowlab doctor)"
+            )
+        else:
+            words = _GATE_WORDS + (f" {rest}" if rest else "")
+    elif edit == "no":
+        words = (
+            "no; the client manages it, so wowlab leaves it alone (a restore writes it only if "
+            "you name it with --paths)"
+            if restorable
+            else "no; wowlab never writes it"
+        )
+    elif edit == "n/a":
+        words = "n/a; not a file wowlab touches"
+    elif edit == "—":
+        words = "—; a folder, see the files in it"
+    else:
+        words = edit
+    if tier == "B":
+        words += "; unsupported by Blizzard, a patch can reset it"
+    return words
+
+
+def _tier_words(tier: str) -> str:
+    return _TIER_WORDS.get(tier, tier)
 
 
 class ExplainReport(_Out):
@@ -1067,16 +1147,24 @@ def explain(
         return
     e = result.entry
     base = f"in flavor folder {result.flavor_folder}" if result.base == "flavor" else "install root"
+    edit = _edit_words(e.edit, e.tier, restorable=_restorable(result.base, result.path))
     _say(f"{result.path or '.'} ({base})")
-    _say(f"  file-map row: {e.id} ({e.doc_path})")
     _say(f"  what:         {_plain(e.what)}")
     _say(f"  written by:   {_plain(e.written_by)}")
-    _say(f"  edit:         {_edit_words(e.edit)}")
-    _say(f"  tier:         {e.tier}")
+    _say(f"  edit:         {edit}")
+    _say(f"  tier:         {_tier_words(e.tier)}")
     _say(f"  read by:      {e.module}")
+    _say(f"  file-map row: {e.id} ({e.doc_path})")
 
 
 # ─── sv ──────────────────────────────────────────────────────────────────────
+
+
+_SV_TIMING = (
+    "SavedVariables are written at logout, /reload or a clean exit: these files are from the "
+    "last save, not the session in progress, and a running client overwrites them at its "
+    "next save."
+)
 
 
 class SvListReport(_Out):
@@ -1084,6 +1172,7 @@ class SvListReport(_Out):
 
     flavor_folder: str
     files: list[layout.SavedVariablesFile]
+    notes: list[str]  # the caveats the text output prints
 
 
 @sv_app.command("list")
@@ -1108,7 +1197,7 @@ def sv_list(
                 for f in files
                 if f.realm_folder == char.realm_folder and f.character_folder == char.folder
             ]
-    report = SvListReport(flavor_folder=chosen.folder, files=files)
+    report = SvListReport(flavor_folder=chosen.folder, files=files, notes=[_SV_TIMING])
     if json_out:
         _emit(report)
         return
@@ -1119,10 +1208,13 @@ def sv_list(
         flags = " (previous write, .bak)" if f.backup else ""
         _say(f"{f.scope:<9}  {who:<32}  {_bytes(f.size):>14}  {f.path}{flags}")
     if files:
-        _say("SavedVariables are written at logout or /reload: they hold the last session.")
+        _say(_SV_TIMING)
 
 
-# The JSON shape of a Lua value (`sv dump --json`).
+# The JSON shape of `sv dump --json`. Flat: every value is one row naming its
+# parent row, so the JSON nests to a fixed depth however deep the Lua tables
+# go (a nested shape stops validating near depth 60, below the parser's
+# MAX_DEPTH of 200), and rows can be written one at a time.
 
 
 class LuaStringNode(_Out):
@@ -1146,41 +1238,40 @@ class LuaNilNode(_Out):
     type: Literal["nil"]
 
 
-class LuaEntryNode(_Out):
-    style: Literal["positional", "string", "number", "name", "boolean"]
-    position: int | None  # 1-based, positional entries only
-    name: str | None  # a bare-name key
-    key: LuaStringNode | LuaNumberNode | LuaBoolNode | None  # a bracketed key
-    value: "LuaNode"
-    duplicate: bool  # a later entry with a key an earlier one already has
-    comment: str | None  # the line comment after the entry, e.g. "-- [1]"
-
-
 class LuaTableNode(_Out):
     type: Literal["table"]
-    entries: list[LuaEntryNode]
+    entries: int  # how many entries it holds; they are the rows whose parent is this row
 
 
 LuaNode = Annotated[
     LuaTableNode | LuaStringNode | LuaNumberNode | LuaBoolNode | LuaNilNode,
     Field(discriminator="type"),
 ]
-LuaEntryNode.model_rebuild()
 
 
-class SvAssignment(_Out):
-    name: str
+class SvValue(_Out):
+    """One value: a top-level variable, the `--path` value, or a table entry."""
+
+    id: int  # the row's index in `values`
+    parent: int | None  # the table row holding it; None for a variable or the --path value
+    # `variable`: a top-level `name = value`; `path`: the value --path named;
+    # otherwise how the entry's key is written.
+    style: Literal["variable", "path", "positional", "string", "number", "name", "boolean"]
+    name: str | None  # the variable name, a bare-name key, or the --path text
+    position: int | None  # 1-based, positional entries only
+    key: LuaStringNode | LuaNumberNode | LuaBoolNode | None  # a bracketed key
     value: LuaNode
+    duplicate: bool  # a later entry with a key an earlier one already has
+    comment: str | None  # the line comment after the entry, e.g. "-- [1]"
 
 
 class SvDumpReport(_Out):
-    """`wowlab sv dump --json`: every top-level assignment in file order, or
-    with `--path` the one value it names."""
+    """`wowlab sv dump --json`: every value, depth first in file order (a
+    table's entries follow its row). Written compact, one row at a time."""
 
     file: str
     path: str | None
-    assignments: list[SvAssignment] | None
-    value: LuaNode | None
+    values: list[SvValue]
 
 
 def _lua_text(raw: bytes) -> str:
@@ -1200,39 +1291,9 @@ def _string_node(value: luadata.LuaString) -> dict[str, Any]:
         }
 
 
-def _lua_node(value: luadata.LuaValue) -> dict[str, Any]:
-    """Plain JSON data in the `LuaNode` shape (built as dicts: a large file
-    holds millions of entries)."""
+def _value_node(value: luadata.LuaValue) -> dict[str, Any]:
     if isinstance(value, luadata.LuaTable):
-        entries: list[dict[str, Any]] = []
-        position = 0
-        for e in value.entries:
-            key: dict[str, Any] | None = None
-            name: str | None = None
-            pos: int | None = None
-            if e.style is luadata.KeyStyle.POSITIONAL:
-                position += 1
-                pos = position
-            elif isinstance(e.key, str):
-                name = e.key
-            elif isinstance(e.key, luadata.LuaString):
-                key = _string_node(e.key)
-            elif isinstance(e.key, luadata.LuaNumber):
-                key = {"type": "number", "raw": e.key.raw}
-            elif isinstance(e.key, luadata.LuaBool):
-                key = {"type": "boolean", "value": e.key.value}
-            entries.append(
-                {
-                    "style": e.style.value,
-                    "position": pos,
-                    "name": name,
-                    "key": key,
-                    "value": _lua_node(e.value),
-                    "duplicate": e.duplicate,
-                    "comment": _lua_text(e.comment) if e.comment is not None else None,
-                }
-            )
-        return {"type": "table", "entries": entries}
+        return {"type": "table", "entries": len(value.entries)}
     if isinstance(value, luadata.LuaString):
         return _string_node(value)
     if isinstance(value, luadata.LuaNumber):
@@ -1240,6 +1301,84 @@ def _lua_node(value: luadata.LuaValue) -> dict[str, Any]:
     if isinstance(value, luadata.LuaBool):
         return {"type": "boolean", "value": value.value}
     return {"type": "nil"}
+
+
+def _key_node(entry: luadata.Entry) -> dict[str, Any] | None:
+    key = entry.key
+    if isinstance(key, luadata.LuaString):
+        return _string_node(key)
+    if isinstance(key, luadata.LuaNumber):
+        return {"type": "number", "raw": key.raw}
+    if isinstance(key, luadata.LuaBool):
+        return {"type": "boolean", "value": key.value}
+    return None
+
+
+def _rows(tops: Sequence[tuple[str, str, luadata.LuaValue]]) -> Iterator[dict[str, Any]]:
+    """`SvValue` rows as plain dicts, one at a time, depth first; iterative,
+    so the parser's depth bound is never a Python recursion problem."""
+    next_id = 0
+    for style, name, value in tops:
+        top = next_id
+        next_id += 1
+        yield {
+            "id": top,
+            "parent": None,
+            "style": style,
+            "name": name,
+            "position": None,
+            "key": None,
+            "value": _value_node(value),
+            "duplicate": False,
+            "comment": None,
+        }
+        if not isinstance(value, luadata.LuaTable):
+            continue
+        stack: list[tuple[int, Iterator[luadata.Entry], list[int]]] = [
+            (top, iter(value.entries), [0])
+        ]
+        while stack:
+            parent, entries, counter = stack[-1]
+            entry = next(entries, None)
+            if entry is None:
+                stack.pop()
+                continue
+            position: int | None = None
+            if entry.style is luadata.KeyStyle.POSITIONAL:
+                counter[0] += 1
+                position = counter[0]
+            row = next_id
+            next_id += 1
+            yield {
+                "id": row,
+                "parent": parent,
+                "style": entry.style.value,
+                "name": entry.key if isinstance(entry.key, str) else None,
+                "position": position,
+                "key": _key_node(entry),
+                "value": _value_node(entry.value),
+                "duplicate": entry.duplicate,
+                "comment": _lua_text(entry.comment) if entry.comment is not None else None,
+            }
+            if isinstance(entry.value, luadata.LuaTable):
+                stack.append((row, iter(entry.value.entries), [0]))
+
+
+def _stream_dump(file: str, path: str | None, rows: Iterator[dict[str, Any]]) -> None:
+    """Write `SvDumpReport` JSON to stdout row by row: only one row is held
+    at a time, and nothing is indented (a deep file would otherwise print a
+    wall of spaces on every line)."""
+    encoder = json.JSONEncoder(ensure_ascii=True, separators=(",", ":"))
+    out = typer.get_text_stream("stdout")
+    head = {"file": _json_text(file), "path": None if path is None else _json_text(path)}
+    out.write(encoder.encode(head)[:-1] + ',"values":[')
+    for n, row in enumerate(rows):
+        if n:
+            out.write(",")
+        for chunk in encoder.iterencode(_map_strings(row, _json_text)):
+            out.write(chunk)
+    out.write("]}\n")
+    out.flush()
 
 
 def _key_segment(entry: luadata.Entry) -> str:
@@ -1425,29 +1564,18 @@ def sv_dump(
     if path is not None:
         value = _resolve_path(doc, path)
         if json_out:
-            typer.echo(
-                _dumps(
-                    {
-                        "file": str(target),
-                        "path": path,
-                        "assignments": None,
-                        "value": _lua_node(value),
-                    }
-                )
-            )
-            return
-        for p, v in _flatten(path, value):
-            _say(f"{p} = {v}")
-        return
-    if json_out:
-        assignments = [{"name": a.name, "value": _lua_node(a.value)} for a in doc.assignments]
-        typer.echo(
-            _dumps({"file": str(target), "path": None, "assignments": assignments, "value": None})
-        )
-        return
-    for a in doc.assignments:
-        for p, v in _flatten(a.name, a.value):
-            _say(f"{p} = {v}")
+            _stream_dump(str(target), path, _rows([("path", path, value)]))
+        else:
+            for p, v in _flatten(path, value):
+                _say(f"{p} = {v}")
+    elif json_out:
+        tops = [("variable", a.name, a.value) for a in doc.assignments]
+        _stream_dump(str(target), None, _rows(tops))
+    else:
+        for a in doc.assignments:
+            for p, v in _flatten(a.name, a.value):
+                _say(f"{p} = {v}")
+    _note(_SV_TIMING)
 
 
 # ─── cvar, binds, macros ─────────────────────────────────────────────────────
@@ -1463,9 +1591,20 @@ ScopeOpt = Annotated[
 ]
 
 _WHAT_THE_FILE_SAYS = (
-    "(what this file says; the client may use a value from another scope, its default "
-    "or the server, and it rewrites the file when it exits)"
+    "(what this file said at the client's last write; the value in effect may come from "
+    "another scope, the client's default, or the server at login; a running client rewrites "
+    "this file, so an edit made while it runs is lost)"
 )
+_ACCOUNT_BINDINGS = (
+    "(account bindings; a character with character-specific key bindings on uses its own "
+    "file instead [verify]. The server can replace this file at login when binding sync is "
+    "on; see wowlab doctor)"
+)
+_NO_CHARACTER_BINDINGS = (
+    "(a character has its own bindings-cache.wtf only when character-specific key bindings "
+    "are on [verify]; without one it uses the account bindings)"
+)
+_MACRO_SYNC = "(the server can replace this file at login when macro sync is on; see wowlab doctor)"
 
 
 class CVarItem(_Out):
@@ -1484,6 +1623,7 @@ class CVarListReport(_Out):
     cvars: list[CVarItem]  # every SET line, in file order, duplicates included
     duplicates: list[str]  # names set more than once (the last line is the file's value)
     unknown_lines: list[int]  # lines that are not SET lines, not shown
+    notes: list[str]  # the caveats the text output prints
 
 
 class CVarGetReport(_Out):
@@ -1498,6 +1638,7 @@ class CVarGetReport(_Out):
     line: int | None
     times_set: int
     unknown_lines: int
+    notes: list[str]  # the caveats the text output prints
 
 
 def _read_config(
@@ -1543,6 +1684,7 @@ def cvar_list(
         cvars=cvars,
         duplicates=[d.entries[0].name for d in doc.duplicates()] if doc else [],
         unknown_lines=[i + 1 for i, _ in doc.unknown_lines()] if doc else [],
+        notes=[_WHAT_THE_FILE_SAYS],
     )
     if json_out:
         _emit(report)
@@ -1590,6 +1732,7 @@ def cvar_get(
         line=found.index + 1 if found else None,
         times_set=times,
         unknown_lines=len(doc.unknown_lines()) if doc else 0,
+        notes=[_WHAT_THE_FILE_SAYS],
     )
     if json_out:
         _emit(report)
@@ -1605,8 +1748,16 @@ def cvar_get(
         more = f"; set {times} times, this is the last" if times > 1 else ""
         _say(f'{found.name} = "{found.value}"  ({rel}, line {found.index + 1}{more})')
     if report.unknown_lines:
-        _say(f"{report.unknown_lines} line(s) of the file are not SET lines and were not read")
+        _say(f"{report.unknown_lines} line(s) of the file are not SET lines; kept, not interpreted")
     _say(_WHAT_THE_FILE_SAYS)
+
+
+def _bindings_note(scope: Scope, found: bool) -> str:
+    if scope == "character" and not found:
+        return _NO_CHARACTER_BINDINGS
+    if scope == "account":
+        return _ACCOUNT_BINDINGS
+    return "(the server can replace this file at login when binding sync is on; see wowlab doctor)"
 
 
 class BindItem(_Out):
@@ -1624,6 +1775,7 @@ class BindsReport(_Out):
     character: str | None
     bindings: list[BindItem]
     unknown_lines: int
+    notes: list[str]  # the caveats the text output prints
 
 
 @binds_app.command("list")
@@ -1650,6 +1802,7 @@ def binds_list(
         if doc
         else [],
         unknown_lines=len(doc.unknown_lines()) if doc else 0,
+        notes=[_bindings_note(scope, doc is not None)],
     )
     if json_out:
         _emit(report)
@@ -1657,14 +1810,14 @@ def binds_list(
     if doc is None:
         _say(_no_file("bindings-cache.wtf", target))
         if scope == "character":
-            _say("(the client writes one only when character-specific key bindings are on)")
+            _say(_NO_CHARACTER_BINDINGS)
         return
     _say(f"{report.file}:")
     for b in report.bindings:
         _say(f"  {b.key:<24} {b.action}")
     if report.unknown_lines:
         _say(f"  {report.unknown_lines} other line(s) are not bind lines and are not shown")
-    _say("(the server can replace this file at login when binding sync is on)")
+    _say(report.notes[0])
 
 
 class MacroItem(_Out):
@@ -1684,6 +1837,7 @@ class MacrosReport(_Out):
     character: str | None
     macros: list[MacroItem]
     unknown_lines: int
+    notes: list[str]  # the caveats the text output prints
 
 
 @macros_app.command("list")
@@ -1718,6 +1872,7 @@ def macros_list(
         if doc
         else [],
         unknown_lines=len(doc.unknown_lines()) if doc else 0,
+        notes=[_MACRO_SYNC],
     )
     if json_out:
         _emit(report)
@@ -1735,7 +1890,7 @@ def macros_list(
             _say(f"    {line}")
     if report.unknown_lines:
         _say(f"  {report.unknown_lines} line(s) outside any macro are not shown")
-    _say("(the server can replace this file at login when macro sync is on)")
+    _say(_MACRO_SYNC)
 
 
 # ─── addons ──────────────────────────────────────────────────────────────────
@@ -1964,16 +2119,11 @@ def _client_running(inst: install.Install, chosen: install.Flavor) -> bool | Non
     return None
 
 
-@contextmanager
-def _store_lock_if_present(store: snapshot.SnapshotStore) -> Iterator[None]:
-    """The write gate's store lock, so no transaction or `snap gc` runs on the
-    store meanwhile. A store that does not exist yet has nothing to collect
-    or undo; the first `create` makes it, unlocked."""
-    if not store.path.is_dir():
-        yield
-        return
-    with guard.store_lock(store.path):
-        yield
+# `snap gc` leaves objects younger than this, even when no manifest refers to
+# them: defence in depth for a writer that does not take the store lock (a
+# library caller of `SnapshotStore.create`). Every command here that writes
+# the store holds `guard.store_lock`, so this is not what keeps them apart.
+GC_GRACE_SECONDS = 3600.0
 
 
 @snap_app.command("create")
@@ -1993,7 +2143,10 @@ def snap_create(
     subtrees = [f"{chosen.folder}/{s}" for s in lay.snapshot_subtrees(screenshots=screenshots)]
     running = _client_running(inst, chosen)
     store = snapshot.SnapshotStore()
-    with _store_lock_if_present(store):
+    # Always under the store lock, so `snap gc` never sees this create's
+    # objects before its manifest exists; `store_lock` needs the directory.
+    store.ensure_exists()
+    with guard.store_lock(store.path):
         manifest = store.create(
             Path(inst.root),
             subtrees,
@@ -2004,8 +2157,9 @@ def snap_create(
         )
     if running is not False:
         _note(
-            "The client is running, or it could not be told: SavedVariables on disk hold the "
-            "previous session, and the client rewrites them when it exits."
+            "wowlab could not confirm the client was closed: SavedVariables on disk are as of "
+            "its last logout or /reload, and the client overwrites them at its next logout, "
+            "/reload or exit."
         )
     if json_out:
         _emit_manifest(manifest)
@@ -2034,7 +2188,13 @@ def snap_list(json_out: JsonOpt = False) -> None:
         if not report.snapshots:
             _say("No snapshots.")
         for s in report.snapshots:
-            running = "  (client was running)" if s.client_running else ""
+            running = (
+                "  (client was running)"
+                if s.client_running
+                else "  (client state not known)"
+                if s.client_running is None
+                else ""
+            )
             label = f'  "{s.label}"' if s.label else ""
             version = s.flavor_version or "no version"
             _say(f"{s.id}  {s.flavor_folder}  {version}  {s.files} files{label}{running}")
@@ -2064,8 +2224,8 @@ def snap_show(
     _say(f"  captured: {', '.join(manifest.subtrees)}")
     if manifest.client_running:
         _say(
-            "  The client was running when this was taken: its SavedVariables are from the "
-            "session before, not the one that was running."
+            "  The client was running when this was taken: its SavedVariables are as of its "
+            "last logout or /reload, not the moment of the snapshot."
         )
     elif manifest.client_running is None:
         _say("  Whether the client was running was not known when this was taken.")
@@ -2095,6 +2255,8 @@ class DiffReport(_Out):
 
     a: str
     b: str
+    a_version: str | None  # the flavor version each snapshot was taken on
+    b_version: str | None
     added: list[snapshot.Entry]
     removed: list[snapshot.Entry]
     changed: list[ChangedFile]
@@ -2130,6 +2292,10 @@ def _lua_diff(
         after = _leaves(store.read_object(change.after.sha256))
     except luadata.LuaDataError as exc:
         return None, f"not compared as data: one side does not parse ({exc})"
+    except snapshot.SnapshotError as exc:
+        # A side the store cannot supply has not parsed either: keep the
+        # plain changed-path entry, and say why there is no more.
+        return None, f"contents unreadable: {exc}"
     changes = [
         LuaChange(path=p, before=before.get(p), after=v)
         for p, v in after.items()
@@ -2152,6 +2318,8 @@ def snap_diff(
     parse, which values changed. JSON: DiffReport."""
     store = snapshot.SnapshotStore()
     diff = store.diff(a, b)
+    a_version = store.show(diff.a).flavor_version
+    b_version = store.show(diff.b).flavor_version
     changed = []
     for c in diff.changed:
         lua, note = _lua_diff(store, c)
@@ -2161,6 +2329,8 @@ def snap_diff(
     report = DiffReport(
         a=diff.a,
         b=diff.b,
+        a_version=a_version,
+        b_version=b_version,
         added=list(diff.added),
         removed=list(diff.removed),
         changed=changed,
@@ -2170,6 +2340,8 @@ def snap_diff(
         _emit(report)
         return
     _say(f"From {diff.a} to {diff.b}:")
+    if a_version != b_version:
+        _say(f"  ({diff.a} was taken on {a_version}; {diff.b} on {b_version})")
     if diff.is_empty:
         _say("  no differences")
     for e in report.added:
@@ -2224,8 +2396,9 @@ def snap_gc(
     yes: YesOpt = False,
     json_out: JsonOpt = False,
 ) -> None:
-    """Remove stored objects no snapshot refers to. Holds the store lock for the
-    whole run, so no transaction starts meanwhile. JSON: snapshot.GcReport."""
+    """Remove stored objects no snapshot refers to and older than an hour
+    (GC_GRACE_SECONDS). Holds the store lock for the whole run, so no
+    transaction or `snap create` runs meanwhile. JSON: snapshot.GcReport."""
     store = snapshot.SnapshotStore()
     if not store.path.is_dir():
         report = snapshot.GcReport(dry_run=True, unreferenced=(), unreferenced_bytes=0, removed=())
@@ -2235,7 +2408,7 @@ def snap_gc(
             _say(f"No snapshot store at {store.path} yet; nothing to collect.")
         return
     with guard.store_lock(store.path):
-        report = store.gc(dry_run=True)
+        report = store.gc(dry_run=True, grace_seconds=GC_GRACE_SECONDS)
         if report.unreferenced and not dry_run:
             if not json_out:
                 _say(
@@ -2243,12 +2416,15 @@ def snap_gc(
                     f"{_bytes(report.unreferenced_bytes)} on disk."
                 )
             _confirm("Remove them?", yes)
-            report = store.gc(dry_run=False)
+            report = store.gc(dry_run=False, grace_seconds=GC_GRACE_SECONDS)
     if json_out:
         _emit(report)
         return
     if not report.unreferenced:
-        _say("Nothing to collect: every stored object is referred to by a snapshot.")
+        _say(
+            "Nothing to collect: every stored object is referred to by a snapshot, or is "
+            "younger than an hour (kept in case a snapshot is being written)."
+        )
     elif report.dry_run:
         _say(
             f"Would remove {len(report.unreferenced)} object(s), "
@@ -2258,12 +2434,87 @@ def snap_gc(
         _say(f"Removed {len(report.removed)} object(s), {_bytes(report.unreferenced_bytes)}.")
 
 
+_RELOGIN = (
+    "The client reads these files at its next login; with server sync on (see wowlab "
+    "doctor), the server may replace binds, macros, settings and other *-cache files then."
+)
+
+
+def _relogin_notes(paths: Sequence[str]) -> list[str]:
+    """The login caveat, when a change touches Config.wtf or a *-cache file."""
+    for path in paths:
+        name = path.rsplit("/", 1)[-1].casefold()
+        if name == "config.wtf" or "-cache" in name:
+            return [_RELOGIN]
+    return []
+
+
 def _plan_line(item: guard.PlanItem) -> str:
     if item.before is None:
         return f"  create   {item.path}  ({_bytes(item.size or 0)})"
     if item.after is None:
         return f"  delete   {item.path}"
     return f"  replace  {item.path}  ({_bytes(item.size or 0)})"
+
+
+class SkippedPath(_Out):
+    """A file a whole-snapshot restore left alone (owner decision 2026-09-27)."""
+
+    path: str  # relative to the flavor folder
+    entry_id: str  # its file-map row, whose Edit cell is `no`
+    what: str
+
+
+class RestoreReport(_Out):
+    """`wowlab snap restore --json`: the plan, and with `--yes` what was done."""
+
+    snapshot_id: str
+    flavor_path: str
+    snapshot_version: str | None  # the flavor version the snapshot was taken on
+    flavor_version: str | None  # the flavor's version now
+    paths: list[str] | None  # --paths as given; None restores the whole snapshot
+    plan: list[guard.PlanItem]  # path, before/after SHA-256 (None: absent), bytes written
+    skipped: list[SkippedPath]  # client-managed files a whole restore does not write
+    dry_run: bool
+    applied: bool
+    transaction: str | None  # the journal record of the applied restore
+    notes: list[str]
+
+
+class UndoReport(_Out):
+    """`wowlab undo --json`: the transaction to undo, and whether it was."""
+
+    undone: str  # the journal record undone (or to be)
+    label: str
+    state: str
+    created_at: str
+    flavor_path: str
+    # As that transaction journaled them: `before` is what the undo puts back
+    # (None: the file is deleted), `after` is what is there now.
+    plan: list[guard.PathChange]
+    created_dirs: list[str]
+    applied: bool
+    transaction: str | None  # the journal record of the undo itself
+    notes: list[str]
+
+
+def _client_managed(
+    lay: layout.Layout, plan: Sequence[guard.PlanItem]
+) -> tuple[list[guard.PlanItem], list[SkippedPath]]:
+    """Split a whole-snapshot plan: files whose file-map row says `no` (the
+    client or Blizzard manages them: `.lua.bak`, `.old`, `Blizzard_*`
+    folders, OS metadata) are skipped unless named with --paths."""
+    kept: list[guard.PlanItem] = []
+    skipped: list[SkippedPath] = []
+    for item in plan:
+        found = lay.classify(item.path, is_dir=False)
+        if isinstance(found, layout.Classified) and found.entry.edit == "no":
+            skipped.append(
+                SkippedPath(path=item.path, entry_id=found.entry.id, what=_plain(found.entry.what))
+            )
+        else:
+            kept.append(item)
+    return kept, skipped
 
 
 @snap_app.command("restore")
@@ -2275,7 +2526,8 @@ def snap_restore(
         typer.Option(
             "--paths",
             help="Only this path, relative to the flavor folder; repeat for more. "
-            "A path the snapshot covers but does not hold is deleted.",
+            "A path the snapshot covers but does not hold is deleted. A named path is "
+            "restored even when the client manages it.",
         ),
     ] = None,
     dry_run: Annotated[
@@ -2283,9 +2535,14 @@ def snap_restore(
     ] = False,
     yes: YesOpt = False,
     root: RootOpt = None,
+    json_out: JsonOpt = False,
 ) -> None:
     """Put back files from a snapshot, through the write gate: the client must be
-    closed, a pre-write snapshot is taken first, and `wowlab undo` reverses it."""
+    closed, a pre-write snapshot is taken first, and `wowlab undo` reverses it.
+
+    Without --paths, files the client manages (file-map Edit `no`: `.lua.bak`,
+    `.old`, `Interface/AddOns/Blizzard_*`, OS metadata) are left alone and
+    counted in the plan; name one with --paths to restore it. JSON: RestoreReport."""
     store = snapshot.SnapshotStore()
     manifest = store.show(snapshot_id)
     inst, _ = _discover(root)
@@ -2294,63 +2551,153 @@ def snap_restore(
     match = [f for f in inst.flavors if f.folder == manifest.flavor_folder]
     if not match:
         raise CliError(
-            f"snapshot {manifest.id} is of {manifest.flavor_folder!r} in {manifest.install_root}; "
-            f"{inst.root} has no such flavor (flavors: {_flavor_list(inst)})"
+            f"snapshot {manifest.id} is of flavor folder {manifest.flavor_folder!r}, which "
+            f"{inst.root} does not have (flavors: {_flavor_list(inst)}). Flavor folders are "
+            "renamed between beta and launch; wowlab restores only into the folder a snapshot "
+            "was taken from."
         )
     chosen = match[0]
+    say = _note if json_out else _say
     label = f"restore {manifest.id}"
     if paths:
         label += " (" + ", ".join(paths) + ")"
-    wanted = list(paths) if paths else None  # no --paths: everything the snapshot holds
+    named = list(paths) if paths else None  # no --paths: everything the snapshot holds
     with guard.transaction(chosen, label=label, dry_run=True) as tx:
-        tx.restore(manifest.id, wanted)
-        plan = tx.plan
+        tx.restore(manifest.id, named)
+        whole_plan = tx.plan
+    skipped: list[SkippedPath] = []
+    plan = list(whole_plan)
+    if named is None:
+        plan, skipped = _client_managed(layout.Layout.for_flavor(chosen, inst.root), whole_plan)
+    # With something skipped, the rest is restored by name: the gate then
+    # writes exactly the kept paths.
+    wanted = named if named is not None or not skipped else [i.path for i in plan]
+
+    def report(*, applied: bool, transaction: str | None = None) -> RestoreReport:
+        notes = _relogin_notes([i.path for i in plan]) if applied else []
+        return RestoreReport(
+            snapshot_id=manifest.id,
+            flavor_path=str(chosen.path),
+            snapshot_version=manifest.flavor_version,
+            flavor_version=chosen.version,
+            paths=named,
+            plan=plan,
+            skipped=skipped,
+            dry_run=dry_run,
+            applied=applied,
+            transaction=transaction,
+            notes=notes,
+        )
+
+    if not json_out and (plan or skipped):
+        _say(f"Restore from snapshot {manifest.id} into {chosen.path}: {len(plan)} change(s)")
+        if manifest.flavor_version != chosen.version:
+            _say(
+                f"  Taken on version {manifest.flavor_version}; {chosen.folder} is now on "
+                f"{chosen.version}."
+            )
+        for item in plan:
+            _say(_plan_line(item))
+        if skipped:
+            _say(
+                f"  Skipped {len(skipped)} file(s) the client manages (wowlab leaves them "
+                "alone; name one with --paths to restore it):"
+            )
+            for sk in skipped:
+                _say(f"    {sk.path}  [{sk.entry_id}]")
     if not plan:
-        _say(f"Nothing to restore: {chosen.folder} already matches snapshot {manifest.id}.")
+        if json_out:
+            _emit(report(applied=False))
+        elif skipped:
+            _say("Nothing to restore but the skipped files; nothing was changed.")
+        else:
+            _say(f"Nothing to restore: {chosen.folder} already matches snapshot {manifest.id}.")
         return
-    _say(f"Restore from snapshot {manifest.id} into {chosen.path}: {len(plan)} change(s)")
-    for item in plan:
-        _say(_plan_line(item))
     if dry_run:
-        _say("Dry run: nothing was changed.")
+        if json_out:
+            _emit(report(applied=False))
+        else:
+            _say("Dry run: nothing was changed.")
         return
-    _confirm("Apply these changes?", yes)
+    try:
+        _confirm("Apply these changes?", yes)
+    except typer.Exit:
+        if json_out:
+            _emit(report(applied=False))
+        raise
     with guard.transaction(chosen, label=label) as tx:
         tx.restore(manifest.id, wanted)
-        done = tx.plan
-        if done != plan:
+        if tx.plan != tuple(plan):
             # Raising inside the transaction makes the gate roll it back.
             raise CliError(
                 "the files changed after the plan was shown, so the restore was rolled "
                 "back; run the command again to see the new plan"
             )
-    _say(f"Restored {len(done)} file(s). `wowlab undo` puts back what was there before.")
+    record = guard.history()[-1].id
+    done = report(applied=True, transaction=record)
+    if json_out:
+        _emit(done)
+        return
+    say(f"Restored {len(plan)} file(s). `wowlab undo` puts back what was there before.")
+    for n in done.notes:
+        say(n)
 
 
 @app.command()
 @_handled
-def undo(yes: YesOpt = False) -> None:
+def undo(yes: YesOpt = False, json_out: JsonOpt = False) -> None:
     """Undo the most recent change made through the write gate (a restore, or an
-    earlier undo), from the snapshot taken before it."""
+    earlier undo), from the snapshot taken before it. JSON: UndoReport.
+
+    The journal is read again after you answer, and the undo is refused if
+    its most recent record changed meanwhile. A window remains between that
+    re-read and the gate taking its store lock inside `guard.undo()`; closing
+    it needs `guard.undo(expected_id=...)`, a change to the gate with its
+    own graders first."""
     records = guard.history()
     if not records:
         raise CliError("nothing to undo: the write gate's journal is empty")
     last = records[-1]
+
+    def report(*, applied: bool, transaction: str | None = None) -> UndoReport:
+        touched = [p.path for p in last.paths]
+        return UndoReport(
+            undone=last.id,
+            label=last.label,
+            state=last.state,
+            created_at=last.created_at,
+            flavor_path=last.flavor_path,
+            plan=list(last.paths),
+            created_dirs=list(last.created_dirs),
+            applied=applied,
+            transaction=transaction,
+            notes=_relogin_notes(touched) if applied else [],
+        )
+
     if not last.paths and not last.created_dirs:
-        _say(f'The most recent transaction, {last.id} ("{last.label}"), changed no files.')
-        return
-    _say(f'Undo {last.id} ("{last.label}", {last.state}, {last.created_at})')
-    _say(f"  in {last.flavor_path}:")
-    for p in last.paths:
-        if p.before is None:
-            _say(f"  delete     {p.path}  (created by that transaction)")
-        elif p.after is None:
-            _say(f"  recreate   {p.path}  (deleted by that transaction)")
+        if json_out:
+            _emit(report(applied=False))
         else:
-            _say(f"  put back   {p.path}  (as it was before that transaction)")
-    for d in last.created_dirs:
-        _say(f"  remove folder {d}  (created by that transaction, if empty)")
-    _confirm("Undo it?", yes)
+            _say(f'The most recent transaction, {last.id} ("{last.label}"), changed no files.')
+        return
+    if not json_out:
+        _say(f'Undo {last.id} ("{last.label}", {last.state}, {last.created_at})')
+        _say(f"  in {last.flavor_path}:")
+        for p in last.paths:
+            if p.before is None:
+                _say(f"  delete     {p.path}  (created by that transaction)")
+            elif p.after is None:
+                _say(f"  recreate   {p.path}  (deleted by that transaction)")
+            else:
+                _say(f"  put back   {p.path}  (as it was before that transaction)")
+        for d in last.created_dirs:
+            _say(f"  remove folder {d}  (created by that transaction, if empty)")
+    try:
+        _confirm("Undo it?", yes)
+    except typer.Exit:
+        if json_out:
+            _emit(report(applied=False))
+        raise
     now = guard.history()
     if not now or now[-1].id != last.id:
         raise CliError(
@@ -2358,7 +2705,13 @@ def undo(yes: YesOpt = False) -> None:
             "command again to see the new plan"
         )
     guard.undo()
+    done = report(applied=True, transaction=guard.history()[-1].id)
+    if json_out:
+        _emit(done)
+        return
     _say("Undone. This undo is journaled too: `wowlab undo` again reverses it.")
+    for n in done.notes:
+        _say(n)
 
 
 # ─── version ─────────────────────────────────────────────────────────────────

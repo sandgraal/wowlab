@@ -56,12 +56,12 @@ scope permanently (LAB_PLAN L7).
 | `WTF/Account/<ACCOUNT>/SavedVariables/`, `…/<Character>/SavedVariables/` | One file per addon that saves data, plus its `.lua.bak`; account-wide (`## SavedVariables:`) or per character (`## SavedVariablesPerCharacter:`) depending on where the folder sits | Client | — | — | `layout` |
 | `WTF/Account/<ACCOUNT>/SavedVariables/<Addon>.lua` | Account-wide addon data (`## SavedVariables:`) | Client on logout / `/reload` | gate | A | `luadata` |
 | `…/SavedVariables/<Addon>.lua.bak`, `WTF/Account/<ACCOUNT>/SavedVariables.lua.bak` | Previous write of the same file (the Blizzard file's `.bak` **[verify]**) | Client | no | A (read) | `luadata` |
-| `WTF/Account/<ACCOUNT>/config-cache.wtf` | Account-scoped CVars | Client | gate | A | `wtfconfig` |
-| `WTF/Account/<ACCOUNT>/bindings-cache.wtf` | Account keybinds | Client | gate | A | `wtfconfig` |
-| `WTF/Account/<ACCOUNT>/macros-cache.txt` | Account macros | Client | gate | A | `wtfconfig` |
-| `WTF/Account/<ACCOUNT>/edit-mode-cache-account.txt` | Edit Mode HUD layouts: one line of space-separated tokens ending in a NUL byte; layout names are typed by the owner and length-prefixed; server may replace (see below) | Client | gate | A | none in Wave 1 (kept by `snapshot`) |
-| `WTF/Account/<ACCOUNT>/chat-frontend-cache.txt` | Unknown; 0 bytes on the Forever beta (2026-09-22) **[verify]** | Client | gate | A | none (kept by `snapshot`; empty kept as empty) |
-| `WTF/Account/<ACCOUNT>/flagged-cache-account.txt`, `…/<Character>/flagged-cache-character.txt` | Unknown; on the Forever beta exactly `2` then a NUL **[verify purpose]** | Client | gate | A | none (kept by `snapshot`) |
+| `WTF/Account/<ACCOUNT>/config-cache.wtf` | Account-scoped CVars | Client | gate (server may replace) | A | `wtfconfig` |
+| `WTF/Account/<ACCOUNT>/bindings-cache.wtf` | Account keybinds | Client | gate (server may replace) | A | `wtfconfig` |
+| `WTF/Account/<ACCOUNT>/macros-cache.txt` | Account macros | Client | gate (server may replace) | A | `wtfconfig` |
+| `WTF/Account/<ACCOUNT>/edit-mode-cache-account.txt` | Edit Mode HUD layouts: one line of space-separated tokens ending in a NUL byte; layout names are typed by the owner and length-prefixed; server may replace (see below) | Client | gate (server may replace) | A | none in Wave 1 (kept by `snapshot`) |
+| `WTF/Account/<ACCOUNT>/chat-frontend-cache.txt` | Unknown; 0 bytes on the Forever beta (2026-09-22) **[verify]** | Client | gate (server may replace) | A | none (kept by `snapshot`; empty kept as empty) |
+| `WTF/Account/<ACCOUNT>/flagged-cache-account.txt`, `…/<Character>/flagged-cache-character.txt` | Unknown; on the Forever beta exactly `2` then a NUL **[verify purpose]** | Client | gate (server may replace) | A | none (kept by `snapshot`) |
 | `WTF/Account/<ACCOUNT>/tts-cache-account.txt`, `…/<Character>/tts-cache-character.txt` | Text-to-speech settings **[verify]**; mixed LF and CRLF within the file | Client | gate (server may replace) | A | none (kept by `snapshot`) |
 | `WTF/Account/<ACCOUNT>/character-list-order.txt` | Character-select order **[verify]**; not captured (its lines refused by the scrub tool) | Client | gate | A | none (kept by `snapshot`) |
 | `…/<Character>/edit-mode-cache-character.txt` | Character Edit Mode layouts, same encoding as the account file | Client | gate (server may replace) | A | none (kept by `snapshot`) |
@@ -72,10 +72,10 @@ scope permanently (LAB_PLAN L7).
 | `WTF/Account/<ACCOUNT>/<Realm>/<Character>/` | One character's folder, created at its first login on this machine **[verify]** and left behind by a rename or transfer (and by deletion **[verify]**). On the Forever beta a `<Realm>/<First>/` twin of a `<digits>/<First>-<Second>/` folder, holding only `AddOns.txt`; which realm name pairs with which digits folder is **[verify]**; one such folder can stand for several `<First>-<Second>` characters **[verify]** | Client | — | — | `layout` |
 | `WTF/Account/<ACCOUNT>/<digits>/<First>-<Second>/` | One Forever character's folder (2026-09-22): first and second name joined by a hyphen, the second name not a realm. Holds everything per character except `AddOns.txt` | Client | — | — | `layout` |
 | `WTF/Account/<ACCOUNT>/<Realm>/<Character>/SavedVariables/<Addon>.lua` | Per-character addon data (`## SavedVariablesPerCharacter:`) | Client on logout / `/reload` | gate | A | `luadata` |
-| `…/<Character>/config-cache.wtf`, `bindings-cache.wtf`, `macros-cache.txt` | Character-scoped CVars, binds, macros. `bindings-cache.wtf` exists only with character-specific key bindings on **[verify]**; the Forever capture had none | Client | gate | A | `wtfconfig` |
+| `…/<Character>/config-cache.wtf`, `bindings-cache.wtf`, `macros-cache.txt` | Character-scoped CVars, binds, macros. `bindings-cache.wtf` exists only with character-specific key bindings on **[verify]**; the Forever capture had none | Client | gate (server may replace) | A | `wtfconfig` |
 | `…/<Character>/AddOns.txt` | Which addons are enabled for this character. On the Forever beta it sits in the `<Realm>/<First>/` folder, which is named by first name only, so characters that share a first name may share one list **[verify]** | Client | gate | A | `layout` (lines) |
 | `…/<Character>/layout-local.txt` | Legacy UI panel positions; on the Forever beta (2026-09-22) a stub, `Version: 1` and nothing else | Client | gate | A | none (kept by `snapshot`) |
-| `…/<Character>/chat-cache.txt` | Chat window and channel configuration | Client | gate | A | none (kept by `snapshot`) |
+| `…/<Character>/chat-cache.txt` | Chat window and channel configuration | Client | gate (server may replace) | A | none (kept by `snapshot`) |
 | `Interface/` | Addons and loose-file overrides (the rows below) | You, or an addon manager | — | — | `layout` |
 | `Interface/AddOns/` | One folder per installed addon | You, or an addon manager | — | — | `layout` |
 | `Interface/AddOns/<Addon>/` | Third-party addon: `.toc`, `.lua`, `.xml`, media | You, or an addon manager | gate | A | `layout`, `toc` |

@@ -427,6 +427,19 @@ class SnapshotStore:
             raise SnapshotError(f"not a snapshot id: {snapshot_id!r}")
         return self.manifests_dir / (snapshot_id + _MANIFEST_SUFFIX)
 
+    def ensure_exists(self) -> None:
+        """Create the store directory (and its parents) if it is missing.
+
+        The store is under the user data directory (L1). A caller that must
+        hold `guard.store_lock` around its first `create` makes the directory
+        with this first, since `store_lock` never creates a store. Nothing
+        else is created; an existing store is left as it is.
+        """
+        try:
+            self.path.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise SnapshotError(f"cannot create the store {self.path}: {exc}") from exc
+
     # -- create ------------------------------------------------------------
 
     def create(

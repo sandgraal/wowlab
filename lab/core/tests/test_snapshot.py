@@ -530,6 +530,7 @@ def test_no_operation_but_set_label_changes_a_manifest_file(
     m2 = store.create(source, SUBTREES, now=T1)
     store.list()
     store.list_lenient()
+    store.ensure_exists()
     store.show(m1.id)
     store.diff(m1.id, m2.id)
     store.verify()
@@ -546,6 +547,7 @@ def test_no_operation_but_set_label_changes_a_manifest_file(
         "create",
         "list",
         "list_lenient",
+        "ensure_exists",
         "show",
         "diff",
         "verify",
