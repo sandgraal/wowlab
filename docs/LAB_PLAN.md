@@ -1474,14 +1474,19 @@ refused before any work, and again before and after creating its folder, when
 it or a folder above it holds `.build.info` or `.flavor.info`
 (`lookstore.refuse_install`, which also refuses a path that cannot be
 resolved), when it is inside the user data directory but outside `pages/`
-(compared by file identity of its existing folders and by NFC-normalized,
-case-folded text, so a case, firmlink or Unicode spelling does not get in),
-when it would go into a `pages/` folder that is itself a link (a symlink or
-junction), when it is within the `store`, `gamedata` or `looks` folder by the
-same identity and text tests, even when that folder is a link out of the user
-data directory (M11-17, 2026-09-28), when it is a directory or not a regular file, and when it is an existing file that
+(compared by NFC-normalized, case-folded text, and by file identity: the
+folder's deepest existing folder against the path's existing folders, with
+the folder's components that do not exist yet compared as folded text, so a
+case, firmlink or Unicode spelling does not get in even before the folder
+exists), when it would go into a `pages/` folder that is itself a link (a
+symlink or junction), when it is within the `store`, `gamedata` or `looks`
+folder by the same identity and text tests, even when that folder is a link
+out of the user data directory or a dangling one (M11-17, 2026-09-28), when it
+is a directory or not a regular file, and when it is an existing file that
 does not begin with the page's own header (the doctype and the CSP meta tag):
-exit 1, nothing written. An existing page there is replaced whole. Damaged
+exit 1, nothing written. While `pages/` is a link, a path inside the link's
+target is refused too, however it is spelled, not only a path through the
+link. An existing page there is replaced whole. Damaged
 look files are listed on the page and named on stderr, and the command then
 exits 1, as `show` does.
 

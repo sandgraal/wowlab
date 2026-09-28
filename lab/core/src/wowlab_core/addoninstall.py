@@ -653,11 +653,12 @@ def _remove_notes(left: Sequence[LeftPath], exists: bool) -> tuple[str, ...]:
     return tuple(notes)
 
 
-def _toc_found(present: Sequence[str]) -> bool:
-    """Whether the files found include the addon's `WowLab.toc` (compared
-    case-folded, as a case-insensitive volume would find it)."""
+def _toc_found(present: Sequence[str], left: Sequence[LeftPath]) -> bool:
+    """Whether the listing found the addon's `WowLab.toc`, as a regular file
+    or as an entry left alone (a link to a TOC still loads the addon),
+    compared case-folded, as a case-insensitive volume would find it."""
     toc = f"{ADDON_FOLDER}/{TOC_NAME}".casefold()
-    return any(rel.casefold() == toc for rel in present)
+    return any(rel.casefold() == toc for rel in (*present, *(lp.path for lp in left)))
 
 
 def plan_remove(flavor: _FlavorLike, *, store: Path | None = None) -> RemovePlan:
@@ -666,7 +667,8 @@ def plan_remove(flavor: _FlavorLike, *, store: Path | None = None) -> RemovePlan
     the gate refuses any delete, the removal is refused as a whole: a
     `guard.GuardError` (the CLI's exit 3) names every refused path with the
     gate's reason, followed by `REMOVE_REFUSED_NOTE` and, when a `WowLab.toc`
-    was among the files found, `STILL_INSTALLED_NOTE`."""
+    was among the entries found (a regular file or one left alone, such as a
+    link), `STILL_INSTALLED_NOTE`."""
     present, left, exists = _installed(flavor.path)
     refused: list[str] = []
     with guard.transaction(flavor, label=_REMOVE_LABEL, store=store, dry_run=True) as tx:
@@ -679,7 +681,7 @@ def plan_remove(flavor: _FlavorLike, *, store: Path | None = None) -> RemovePlan
         whole = tx.plan
     if refused:
         notes = [REMOVE_REFUSED_NOTE]
-        if _toc_found(present):
+        if _toc_found(present, left):
             notes.append(STILL_INSTALLED_NOTE)
         raise guard.GuardError("\n".join([*refused, " ".join(notes)]))
     return RemovePlan(

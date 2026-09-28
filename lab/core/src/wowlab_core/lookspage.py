@@ -532,22 +532,38 @@ def _folded(path: Path) -> str:
 def _within(path: Path, folder: Path) -> bool:
     """``path`` is ``folder`` or inside it, however either is spelled.
 
-    By identity: some existing ancestor of ``path`` (or ``path`` itself) is
-    the same file as ``folder``, which catches a case variant, a macOS
-    firmlink spelling (``/System/Volumes/Data/...``) and a Unicode
-    normalization variant on volumes that treat them as one name. And by
-    text, NFC-normalized and case-folded, which also covers a ``folder`` that
-    does not exist yet. The text test can only err towards "inside"."""
+    By identity: take ``folder``'s deepest existing folder (``folder`` itself
+    when it exists) and the components of ``folder`` below it that do not
+    exist yet; ``path`` is inside when some existing ancestor of ``path`` (or
+    ``path`` itself) is the same file as that folder and the rest of
+    ``path`` begins with those missing components (NFC-normalized and
+    case-folded). That catches a case variant, a macOS firmlink spelling
+    (``/System/Volumes/Data/...``) and a Unicode normalization variant on
+    volumes that treat them as one name, whether or not ``folder`` exists
+    yet or is a dangling link. And by the whole text, NFC-normalized and
+    case-folded. The text tests can only err towards "inside"."""
     folded, base = _folded(path), _folded(folder).rstrip(os.sep)
     if folded == base or folded.startswith(base + os.sep):
         return True
-    wanted = _stat(folder)
-    if wanted is None:
+    for anchor in (folder, *folder.parents):
+        wanted = _stat(anchor)
+        if wanted is not None:
+            break
+    else:
         return False
-    return any(
-        (found := _stat(candidate)) is not None and os.path.samestat(found, wanted)
-        for candidate in (path, *path.parents)
-    )
+    missing = [_folded_part(p) for p in folder.parts[len(anchor.parts) :]]
+    for candidate in (path, *path.parents):
+        found = _stat(candidate)
+        if found is None or not os.path.samestat(found, wanted):
+            continue
+        rest = [_folded_part(p) for p in path.parts[len(candidate.parts) :]]
+        if rest[: len(missing)] == missing:
+            return True
+    return False
+
+
+def _folded_part(part: str) -> str:
+    return unicodedata.normalize("NFC", part).casefold()
 
 
 def _is_link(path: Path) -> bool:

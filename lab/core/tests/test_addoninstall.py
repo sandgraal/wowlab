@@ -385,6 +385,25 @@ def test_a_refused_remove_says_still_installed_only_with_a_toc_constructed(
     assert len(guard.history()) == 0
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="file symlinks need a privilege on Windows")
+def test_a_refused_remove_says_still_installed_with_a_linked_toc_constructed(
+    root: Path, tmp_path: Path
+) -> None:
+    """A `WowLab.toc` found as a link is left alone, never followed, but the
+    client opens it through the link, so the addon still loads."""
+    folder = root / FLAVOR / LAB
+    folder.mkdir(parents=True)
+    real = tmp_path / "linked-toc-target"
+    real.write_bytes(b"## Interface: 16001\n")
+    (folder / "WowLab.toc").symlink_to(real)
+    (folder / "helper.dll").write_bytes(b"constructed, not an executable")
+    result = run("addon", "remove", "lab", "--yes")
+    assert result.exit_code == 3, (result.stdout, result.stderr)
+    err = " ".join(result.stderr.split())
+    assert " ".join(addoninstall.STILL_INSTALLED_NOTE.split()) in err
+    assert (folder / "WowLab.toc").is_symlink() and real.read_bytes() == b"## Interface: 16001\n"
+
+
 def test_the_note_texts_are_pinned() -> None:
     """M11-17: the exact wording the #105 review asked for."""
     assert addoninstall.TOC_LEFT_NOTE == (
