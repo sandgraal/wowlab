@@ -1694,11 +1694,14 @@ def serialize(
     only a place to look from. The flavor folder is the one above the
     nearest `WTF/Account` in `target`, matched with case folded as `layout`
     does (macOS and Windows installs are case-insensitive), found from the
-    absolute path without following links. The siblings are the
-    client-written `WTF/Account/*/SavedVariables.lua`,
+    absolute path as written, so a `WTF` or `WTF/Account` that is a link (to
+    a sync folder, say) still counts as this flavor's and is listed through;
+    below `WTF/Account`, a folder or file that is a link is not read, so a
+    linked `SavedVariables` folder contributes no siblings. The siblings are
+    the client-written `WTF/Account/*/SavedVariables.lua`,
     `WTF/Account/*/SavedVariables/*.lua` and
     `WTF/Account/*/*/*/SavedVariables/*.lua` of that folder, names matched
-    with case folded (links are not followed); never the target, a
+    with case folded; never the target, a
     `*.lua.bak`, a file in another flavor folder or outside `WTF/Account`,
     and never a file in `lab_written` (the files the guard journal records
     as last written by the Lab). A file is the target or in `lab_written`
@@ -1709,8 +1712,11 @@ def serialize(
     Siblings are only read, at most `SIBLING_PREFIX_BYTES` of each and at
     most the `SIBLING_READ_LIMIT` (64) newest, and only when a slot needs
     them; one that cannot be read or parsed is skipped, so a flavor folder
-    with no readable sibling falls back silently. Listing stops after 16384
-    directory entries.
+    with no readable sibling falls back silently. Listing takes every
+    account's `SavedVariables.lua` and `SavedVariables/*.lua` first, then the
+    character folders, each folder in byte-wise name order, and stops after
+    16384 directory entries; past that bound an older character file may
+    decide where a newer, unlisted one would have.
 
     Positions: a new entry goes on its own line (the line ending plus one
     indentation unit per level); after a new positional entry that ends its
@@ -2111,7 +2117,7 @@ class _Style:
         self._own = _Shown(document)
         self._target = target
         self._lab_written = lab_written
-        self._paths: list[Path] | None = None
+        self._paths: list[tuple[Path, str]] | None = None
         self._siblings: list[_Shown] = []
         self._cache: dict[object, object] = {}
         self._lines: dict[int, bytes] = {}
@@ -2144,7 +2150,7 @@ class _Style:
                 yield self._siblings[index]
                 index += 1
             elif self._paths:
-                document = _read_sibling(self._paths.pop())
+                document = _read_sibling(*self._paths.pop())
                 if document is not None:
                     self._siblings.append(_Shown(document))
             else:
@@ -2393,8 +2399,9 @@ def _file_id(path: str | os.PathLike[str]) -> tuple[int, int] | None:
 
 def _sibling_paths(
     target: str | os.PathLike[str], lab_written: Iterable[str | os.PathLike[str]]
-) -> list[Path]:
-    """The sibling files of `target`, newest first (equal times in byte-wise
+) -> list[tuple[Path, str]]:
+    """The sibling files of `target`, each with the real path of the
+    `WTF/Account` folder it must stay under when it is read, newest first (equal times in byte-wise
     order of the path relative to the flavor folder), at most
     `SIBLING_READ_LIMIT` of them.
 
@@ -2412,14 +2419,14 @@ def _sibling_paths(
         return []
     flavor, account = folders
     skip_ids: set[tuple[int, int]] = set()
-    skip_paths: set[Path] = set()
+    skip_paths: set[str] = set()
     for path in (target_path, *lab_written):
         identity = _file_id(path)
         if identity is not None:
             skip_ids.add(identity)
             continue
         try:
-            skip_paths.add(Path(path).resolve())
+            skip_paths.add(_path_key(Path(path).resolve()))
         except (OSError, RuntimeError, TypeError, ValueError):
             continue
     ranked: list[tuple[int, bytes, Path]] = []
@@ -2434,50 +2441,64 @@ def _sibling_paths(
             continue
         if skip_paths:
             try:
-                if path.resolve() in skip_paths:
+                if _path_key(path.resolve()) in skip_paths:
                     continue
             except (OSError, RuntimeError, ValueError):
                 continue
         order = os.fsencode(path.relative_to(flavor).as_posix())
         ranked.append((-info.st_mtime_ns, order, path))
     ranked.sort(key=lambda item: (item[0], item[1]))
-    return [path for _time, _order, path in ranked[:SIBLING_READ_LIMIT]]
+    root = os.path.realpath(account)
+    return [(path, root) for _time, _order, path in ranked[:SIBLING_READ_LIMIT]]
+
+
+def _path_key(path: Path) -> str:
+    """A resolved path compared as the file system compares names where no
+    file identity is available (case-insensitive on macOS and Windows)."""
+    return os.path.normcase(path).casefold()
 
 
 def _list_siblings(account: Path) -> list[Path]:
-    """Candidate sibling files under `account` (`<flavor>/WTF/Account`):
-    `*/SavedVariables.lua`, `*/SavedVariables/*.lua` and
-    `*/*/*/SavedVariables/*.lua`, names matched with case folded. Directory
-    and file links are not followed. At most `_SIBLING_SCAN_LIMIT` directory
-    entries are examined in all; past that, the rest is not listed."""
+    """Candidate sibling files under `account` (`<flavor>/WTF/Account`),
+    names matched with case folded: first every account's
+    `SavedVariables.lua` and `SavedVariables/*.lua` (rewritten at every
+    logout or `/reload` of any character), then `*/*/*/SavedVariables/*.lua`
+    in the character folders. Each directory's entries are taken in
+    byte-wise name order, so what is listed never depends on the order the
+    file system returns them. Links and junctions below `account` are not
+    followed. At most `_SIBLING_SCAN_LIMIT` directory entries are taken in
+    all; past that, the rest is not listed."""
     found: list[Path] = []
     left = _SIBLING_SCAN_LIMIT
 
     def entries(folder: str | Path) -> list[os.DirEntry[str]]:
         nonlocal left
-        listed: list[os.DirEntry[str]] = []
         if left <= 0:
-            return listed
+            return []
         try:
             with os.scandir(folder) as it:
-                for entry in it:
-                    left -= 1
-                    if left < 0:
-                        break
-                    listed.append(entry)
+                listed = sorted(it, key=lambda entry: os.fsencode(entry.name))
         except OSError:
-            pass
-        return listed
+            return []
+        taken = listed[: max(left, 0)]
+        left -= len(taken)
+        return taken
+
+    def linked(entry: os.DirEntry[str]) -> bool:
+        try:
+            return entry.is_symlink() or entry.is_junction()
+        except OSError:
+            return True
 
     def is_dir(entry: os.DirEntry[str]) -> bool:
         try:
-            return entry.is_dir(follow_symlinks=False)
+            return not linked(entry) and entry.is_dir(follow_symlinks=False)
         except OSError:
             return False
 
     def is_file(entry: os.DirEntry[str]) -> bool:
         try:
-            return entry.is_file(follow_symlinks=False)
+            return not linked(entry) and entry.is_file(follow_symlinks=False)
         except OSError:
             return False
 
@@ -2486,6 +2507,7 @@ def _list_siblings(account: Path) -> list[Path]:
             if entry.name.casefold().endswith(".lua") and is_file(entry):
                 found.append(Path(entry.path))
 
+    others: list[os.DirEntry[str]] = []  # realm or `<digits>` folders, for the second pass
     for per_account in entries(account):
         if not is_dir(per_account):
             continue
@@ -2497,21 +2519,31 @@ def _list_siblings(account: Path) -> list[Path]:
             elif name == "savedvariables":
                 if is_dir(child):
                     lua_files(child.path)
-            elif is_dir(child):  # a realm, or the Forever `<digits>` folder
-                for character in entries(child.path):
-                    if not is_dir(character):
-                        continue
-                    for folder in entries(character.path):
-                        if folder.name.casefold() == "savedvariables" and is_dir(folder):
-                            lua_files(folder.path)
+            elif is_dir(child):
+                others.append(child)
+    for realm in others:
+        for character in entries(realm.path):
+            if not is_dir(character):
+                continue
+            for folder in entries(character.path):
+                if folder.name.casefold() == "savedvariables" and is_dir(folder):
+                    lua_files(folder.path)
     return found
 
 
-def _read_sibling(path: Path) -> LuaDocument | None:
+def _read_sibling(path: Path, root: str) -> LuaDocument | None:
     """A sibling's document, from at most `SIBLING_PREFIX_BYTES` of it, or
-    `None` when it cannot be read, is not a regular file or does not parse.
+    `None` when it cannot be read, is not a regular file, does not parse, or
+    no longer lies under `root` (the real path of `WTF/Account`: a folder
+    swapped for a link or junction after listing is caught here on every
+    system, `O_NOFOLLOW` covering only the last name and only on POSIX).
     Opened read-only, without following a link and without blocking (a FIFO
     is refused, not waited on), then checked on the open descriptor (L1)."""
+    try:
+        if not Path(os.path.realpath(path)).is_relative_to(root):
+            return None
+    except (OSError, ValueError):
+        return None
     try:
         fd = os.open(
             path,
