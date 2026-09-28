@@ -1342,19 +1342,43 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
 ### 13.2 customization-sandbox (data-only)
 
 - **Data** from `gamedata` for the flavor's full version string (ADR-0022):
-  `ChrRaces`, `ChrModel`, `ChrRaceXChrModel`, `ChrCustomizationOption`,
-  `ChrCustomizationChoice`, `ChrCustomizationReq`,
+  `ChrRaces`, `ChrModel`, `ChrRaceXChrModel` (race and body type to model;
+  its `Sex` column is the body type, and one model can serve both),
+  `ChrCustomizationOption`, `ChrCustomizationChoice`, `ChrCustomizationReq`,
   `ChrCustomizationReqChoice` (choice depends on choice),
-  `ChrCustomizationElement`, `ChrCustomizationCategory` (UI grouping), and
-  possibly `ChrCustomizationConversion` (alternate forms); the set is
-  **[verify]** against the version's wago listing. Recorded as fixtures
-  (ADR-0012). wago may not publish every Forever build (69977 was missing,
-  breakage log); `BuildNotPublished` is reported, never worked around.
+  `ChrCustomizationElement` (how a choice is drawn),
+  `ChrCustomizationCategory` (UI grouping; some druid-form categories carry
+  a `SpellShapeshiftFormID`, but form options are not found by category: on
+  1.60.1.70009 the Bear Form option sits in "Face", and the Bear Form,
+  Aquatic Form and Moonkin Form categories hold no option), `ChrClasses`
+  (which class ids the build has), and
+  `ChrCustomizationConversion`, which maps the old appearance bytes (race,
+  sex, legacy slot 1–5 for skin, face, hair style, hair colour and features,
+  and the byte value, optionally keyed on the legacy skin byte) to a choice
+  id. It is a conversion for characters stored in the old byte format, not
+  alternate forms **[verify: when the client or server applies it]**.
+  Alternate forms (the Worgen human form, the Dracthyr visage) are linked by
+  `ChrRaces.UnalteredVisualCustomizationRaceID` and take their options from
+  another race's model. Some options sit on models that no
+  `ChrRaceXChrModel` row names. Those with `ChrModel.Sex` 3 are druid forms,
+  warlock demons, a pet and dragonriding bodies, gated only by class and
+  race masks **[verify]**. The others (Sex 0 or 1; on 70009 models 257–278,
+  texture layout 203, most with the original races' display ids) look like
+  the original pre-HD character models; what links them to a race is not in
+  the recorded tables **[verify]**. The set is **[verify]** against the version's wago listing.
+  Recorded as fixtures (ADR-0012). wago may not publish every Forever build
+  (69977 was missing, breakage log); `BuildNotPublished` is reported, never
+  worked around.
 - **Model** `wowlab_core.looks`: per race and body type, the options, their
   choices and the requirements that gate them; a look is a named mapping of
   option to choice. A look is refused only for what the data decides: wrong
-  race or body type for the option, a class mask that excludes the class,
-  or a missing choice it depends on. An unlock requirement (achievement,
+  race or body type for the option, a choice mapped to an option it does not
+  belong to, a class mask that excludes the class, or a choice it depends on
+  that the look sets to something else (a dependency on an option the look
+  leaves unset is shown as undecided, since the client always holds some
+  choice there; a dependency on an option's own requirement only decides
+  whether the barber shop shows that option, and is shown as a condition
+  **[verify]**). An unlock requirement (achievement,
   quest, item) is shown as "needs <unlock>", never refused. An imported look
   with a choice id the recorded build does not have is shown as "unknown to
   build <version> (possibly a hotfix)", not refused.
