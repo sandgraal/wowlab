@@ -313,7 +313,7 @@ Spec: `docs/LAB_PLAN.md` §13. Decisions: ADR-0026, ADR-0027 (Proposed). Owner p
 
 `lab/addon/WowLab/` per §13.1 and ADR-0026: a TOC template (no interface number; filled at install), Lua 5.1 sources writing the versioned tables at `PLAYER_LOGOUT` and on `/wowlab save`; no names, realms, GUIDs, guild or chat. A static Lua linter on `lab/addon/` only, pinned, no network at test time (the CI workflow change is harness work: the implementer reports the exact step and the conductor lands it). No Lua is executed anywhere in the Lab.
 
-**Acceptance:** the linter passes; a test asserts the template has no interface number and the sources mention no name/realm/GUID/guild/chat API; a reviewer checks every API used against community documentation, marking each **[verify]** for the owner capture.
+**Acceptance:** the linter passes; a test asserts the template has no interface number and that the sources call none of `UnitName`, `UnitFullName`, `GetUnitName`, `GetRealmName`, `GetNormalizedRealmName`, `UnitGUID`, `GetGuildInfo`, `BNGetInfo`, `C_BattleNet`, `C_ChatInfo`, `GetPlayerInfoByGUID`, and that every unit-token argument is the literal `"player"`; a reviewer checks every API used against community documentation, marking each **[verify]** for the owner capture.
 
 ---
 
@@ -329,7 +329,7 @@ Copies `lab/addon/WowLab/` into `Interface/AddOns/WowLab/` through one `guard` t
 ## [ ] M11-03 — Capture the lab-addon's output
 **Size:** S · **Depends on:** M11-02 · **owner**
 
-Install with `wowlab addon install lab`, log in and out on each character, then capture `WowLab*.lua` (account and per-character) and one addon's SavedVariables from two characters, with `scripts/lab_capture.py` (extended with `--sv` patterns if needed, as a scrub-tool follow-up with `security-reviewer`). Index rows; `docs/LAB_FORMATS.md` amendment for what each API section actually returned on Forever.
+Install with `wowlab addon install lab`; on each character log in, then log out or `/reload` (a crash writes nothing); on at least one character open the barber shop and close it without changing anything, then log out. Capture `WowLab.lua` (account and per-character) and, for sv-merge, a `## SavedVariablesPerCharacter` file from two characters that holds no other player's names (or `WowLab.lua` itself), with `scripts/lab_capture.py` (extended with `--sv` patterns if needed, as a scrub-tool follow-up with `security-reviewer`). Index rows; `docs/LAB_FORMATS.md` amendment for what each API section actually returned on Forever.
 
 **Acceptance:** fixtures committed with rows; security and domain reviews clean; every **[verify]** from M11-01 resolved or recorded open.
 
@@ -349,7 +349,7 @@ Pydantic models per section and schema version; unknown keys kept; absent sectio
 
 Record the `ChrCustomization*`, `ChrRaces` and model tables for the Forever build from wago.tools as fixtures (ADR-0012; table set checked against the build listing). `wowlab_core.looks`: races, body types, options, choices, requirements; a look validated against it.
 
-**Acceptance:** the model loads from the recorded tables; every race in `ChrRaces` playable on the build has options; a look with an unknown choice or an unmet requirement is refused.
+**Acceptance:** the model loads from the recorded tables; every race the build's tables flag as playable has options (table flags, not a claim about what the Forever server allows); a look is refused only for what the data decides (wrong race or body type, a class mask that excludes the class, a missing choice it depends on); an unlock requirement is shown as "needs <unlock>", and an imported choice id the build lacks as "unknown to build <version> (possibly a hotfix)", never refused.
 
 ---
 
@@ -376,14 +376,14 @@ One self-contained HTML file per ADR-0027 (inline CSS/JS, embedded JSON, CSP for
 
 `wowlab profile save | apply | list | show | delete` per §13.3 on `snapshot` and `guard`; presets as data; the add-since-save behaviour decided and written into §13.3.
 
-**Acceptance:** tests on a synthetic install: save then change then apply returns the chosen subtrees to the saved bytes and leaves others alone; Edit `no` files skipped; undo reverses an apply; exit 3 on refusal.
+**Acceptance:** tests on a synthetic install: save then change then apply returns the chosen subtrees to the saved bytes and leaves others alone; Edit `no` files skipped; every `*-cache*` file written is listed with the server-may-replace note; undo reverses an apply; exit 3 on refusal.
 
 ---
 
 ## [ ] M11-09T — sv-merge graders [TEST]
 **Size:** S · **Depends on:** M11-03
 
-Graders for §13.4 on the M11-03 two-character captures and constructed documents (labelled): one-sided changes taken, same change taken once, conflicts listed and nothing written, `--key` limits, output in the target document's style, written through `guard`. `xfail(strict=True)` one marker line each.
+Graders for §13.4 on the M11-03 two-character captures and constructed documents (labelled): with a common snapshot base, one-sided changes taken and the same change taken once; without one (two characters), a two-way merge where every differing key is a conflict and one-sided keys are listed; conflicts listed and nothing written; an account-wide file refused for character-to-character with the reason; `--key` copies within one file; a missing key reported as "absent"; output in the target document's style, written through `guard`. `xfail(strict=True)` one marker line each.
 
 **Acceptance:** fail today for the missing behaviour only; satisfiable by a scratch patch; `make ci` green.
 

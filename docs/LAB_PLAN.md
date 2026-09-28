@@ -1239,59 +1239,127 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
 
 ### 13.1 lab-addon
 
-- **Addon** `lab/addon/WowLab/`: a TOC template and Lua sources. On
-  `PLAYER_LOGOUT` (and on `/wowlab save`) it fills its SavedVariables with a
-  versioned table (`schema = 1`): equipped gear (item links as strings, so
-  bonus IDs and enchants survive), talents (the active loadout through
-  `C_Traits`: config, tree, node and entry ids and ranks), customization
-  choices (option id to choice id), collections (mount, pet, toy and
-  appearance ids known), currencies (id, quantity, maximum) and professions
-  (skill line, rank, maximum). Per-character data goes in
-  `SavedVariablesPerCharacter` (`WowLabCharDB`), account-wide collections in
-  `SavedVariables` (`WowLabDB`). No names, realms, GUIDs, guild or chat of
-  anyone (ADR-0026). Which of these APIs the Forever client exposes, and how
-  the player's own customization choices can be read outside the barber
-  shop, are **[verify]**; a section the client cannot provide is written as
-  absent with a reason, never guessed.
+- **Addon** `lab/addon/WowLab/`: a TOC template and Lua sources. It gathers
+  each section during the session (at entering the world and on that
+  section's change events) and writes the tables at `PLAYER_LOGOUT`
+  (`/wowlab save` refreshes the tables in memory; the file on disk changes
+  only at the next `/reload`, logout or clean exit, and a crash writes
+  nothing), as a versioned table (`schema = 1`):
+  - equipped gear: item links as strings, so bonus IDs and enchants survive;
+    each slot's current item level and the equipped average as the client
+    reports them; slots come from the client's own first/last
+    equipped-slot constants, not a fixed list (a ranged slot on Forever is
+    **[verify]**);
+  - talents active at logout (`C_ClassTalents.GetActiveConfigID()` then
+    `C_Traits` for config, tree, node and entry ids and ranks **[verify]**),
+    the spec id, the id of the last selected saved loadout if there is one,
+    and the loadout export string; no loadout names. The number and kind of
+    trees on Forever are **[verify]**;
+  - customization choices (option id to choice id, mapped from the barber
+    shop's choice index to the choice's `id`), recorded only at
+    `BARBER_SHOP_OPEN` and after an applied change
+    (`BARBER_SHOP_APPEARANCE_APPLIED` **[verify]**), never at close after a
+    cancelled preview. The record says it is "as of the last barber-shop
+    visit with the addon enabled";
+  - collections: mounts, toys and pets (by species id and count; no
+    battle-pet ids, they are GUIDs), and appearances as collected source
+    (item-modified-appearance) ids. Lists read through a filtered journal
+    say so, and the addon never changes the owner's filters or collapsed
+    headers;
+  - currencies: id and quantity, and the total cap, weekly cap, weekly
+    earned and account-wide flag raw where the client gives them
+    **[verify]**; weekly values follow the region's reset (GLOSSARY);
+  - professions: skill-line id, rank, maximum and modifier as the client
+    gives them (Forever's profession model is **[verify]**).
+
+  Each capture records the client's version and build from
+  `GetBuildInfo()` and the active spec, since spec and loadout describe a
+  moment (GLOSSARY). It records no wall-clock time; the reader uses the
+  file's modification time (if a time is ever added, the scrub tool must
+  shift it like combat-log times). All sections go in
+  `SavedVariablesPerCharacter` (`WowLabCharDB`) until the M11-03 capture
+  shows which collections are account-wide on Forever; `WowLabDB` then holds
+  only data that reads the same from every character, and the reader says
+  it reflects whichever character logged out last. Whether a section is
+  available is decided by testing for the API function itself, never by
+  `WOW_PROJECT_ID`, the interface number or the flavor; a section the
+  client cannot provide is written as absent with a reason, never guessed.
+  No names, realms, GUIDs, guild or chat of anyone (ADR-0026). No text the
+  owner typed (loadout, equipment-set or battle-pet names). No Battle.net
+  identity (`BNGetInfo`, `C_BattleNet`). The name fields that
+  `C_BarberShop.GetCurrentCharacterData()` returns are never stored
+  **[verify]**.
 - **Install** `wowlab addon install lab` / `wowlab addon remove lab`: copies
   the addon into `Interface/AddOns/WowLab/` through a `guard` transaction
   (client closed, snapshot first, undoable), filling the TOC's
-  `## Interface:` from the discovered flavor (L6).
-- **Reader** `wowlab_core.labaddon`: reads `WowLab*.lua` through `luadata`
+  `## Interface:` from the discovered version by the patch-number rule
+  (GLOSSARY, "Interface version"; L6). A later patch makes the installed TOC
+  out of date and the client may stop loading it **[verify]**, so `wowlab
+  doctor` reports the mismatch and re-running install fixes it. The addon
+  ships one unsuffixed `WowLab.toc`, because Forever's preferred suffix is
+  **[verify]** (`LAB_FORMATS.md` §3). `remove` deletes the code only;
+  `WowLab.lua` SavedVariables stay (they are the captures), and the client
+  does not delete them either **[verify]**.
+- **Reader** `wowlab_core.labaddon`: reads `WowLab.lua` through `luadata`
   into Pydantic models, one per section, keyed by schema version; unknown
   keys are kept, not dropped (L4 spirit). CLI `wowlab char show [--json]`
   over the latest capture.
-- **Capture** (owner): install, log in and out on each character, capture
-  the addon's files with `scripts/lab_capture.py` (it gains `--sv WowLab*`
-  if needed), plus the same addon's SavedVariables from two characters for
-  sv-merge.
+- **Capture** (owner): install; on each character log in, then log out or
+  `/reload` (a crash writes nothing); on at least one character open the
+  barber shop and close it without changing anything, then log out. Capture
+  `WowLab.lua` in the account's `SavedVariables/` (holds `WowLabDB`) and in
+  each character's `SavedVariables/` (holds `WowLabCharDB`) with
+  `scripts/lab_capture.py`, plus, for sv-merge, a
+  `## SavedVariablesPerCharacter` file from two characters that holds no
+  other player's names (or `WowLab.lua` itself).
 
 ### 13.2 customization-sandbox (data-only)
 
-- **Data** from `gamedata` for the flavor's build: `ChrRaces`,
-  `ChrModel`, `ChrRaceXChrModel`, `ChrCustomizationOption`,
+- **Data** from `gamedata` for the flavor's full version string (ADR-0022):
+  `ChrRaces`, `ChrModel`, `ChrRaceXChrModel`, `ChrCustomizationOption`,
   `ChrCustomizationChoice`, `ChrCustomizationReq`,
-  `ChrCustomizationElement` (table set **[verify]** against the build's
-  wago listing), recorded as fixtures (ADR-0012).
+  `ChrCustomizationReqChoice` (choice depends on choice),
+  `ChrCustomizationElement`, `ChrCustomizationCategory` (UI grouping), and
+  possibly `ChrCustomizationConversion` (alternate forms); the set is
+  **[verify]** against the version's wago listing. Recorded as fixtures
+  (ADR-0012). wago may not publish every Forever build (69977 was missing,
+  breakage log); `BuildNotPublished` is reported, never worked around.
 - **Model** `wowlab_core.looks`: per race and body type, the options, their
   choices and the requirements that gate them; a look is a named mapping of
-  option to choice, validated against the model.
+  option to choice. A look is refused only for what the data decides: wrong
+  race or body type for the option, a class mask that excludes the class,
+  or a missing choice it depends on. An unlock requirement (achievement,
+  quest, item) is shown as "needs <unlock>", never refused. An imported look
+  with a choice id the recorded build does not have is shown as "unknown to
+  build <version> (possibly a hotfix)", not refused.
 - **CLI** `wowlab looks races | options <race> | save <name> … | show | compare
-  <a> <b> | import-char` (the current character's choices from a lab-addon
-  capture). Looks are JSON under the user data directory.
+  <a> <b> | import-char` (the character's choices as of its last recorded
+  barber-shop visit, which is stale if it changed since then). Looks are JSON under the user data directory.
 - **Page** `wowlab looks page [--out PATH]`: one self-contained HTML file
   (ADR-0027) to browse races and options and view saved looks.
 
 ### 13.3 profiles
 
-Named whole-UI states on top of `snapshot` and `guard`. `wowlab profile save
+Named sets of the client's local UI files (not the whole UI: action-bar
+contents and talents live on the server **[verify]** and are not in any
+profile), on top of `snapshot` and `guard`. `wowlab profile save
 <name> [--preset P | --subtree S…]` takes a snapshot restricted to the chosen
 subtrees and labels it; `profile apply <name>` restores those subtrees
 through `guard` (plan, prompt, undo), skipping file-map Edit `no` files as a
 whole restore does (owner decision 2026-09-27); `profile list | show |
-delete`. Presets are data, not flavor constants: `ui` (Config.wtf, the
-`config-cache.wtf`, `layout-local.txt` and edit-mode caches), `bindings`,
-`macros`, `addons` (`Interface/AddOns/`, `AddOns.txt` and the SavedVariables).
+delete`. Presets are data, not flavor constants: `ui`: `Config.wtf`
+(machine scope: it also holds graphics, sound, locale and the last account),
+account and character `config-cache.wtf`, the account and character
+edit-mode caches, `layout-local.txt`, `chat-cache.txt`. `bindings`: account
+and character `bindings-cache.wtf` (a character file overrides the account
+one) and `click-bindings-cache.txt`. `macros`: account and character
+`macros-cache.txt` (action buttons may refer to macros by slot, so a restore
+can change what a button runs **[verify]**). `addons`: `Interface/AddOns/`,
+`AddOns.txt` (on Forever in the `<Realm>/<First>/` twin), and addon
+SavedVariables except the lab-addon's own `WowLab.lua`. `profile apply`
+lists every `*-cache*` file it writes as "the server may replace this at
+your next login (synchronize* CVars; see `wowlab doctor`) **[verify]**", and
+says the result is proven only by logging in.
 Whether `apply` also removes files added since the profile was saved is
 decided in the ticket and stated in the plan.
 
@@ -1299,13 +1367,33 @@ decided in the ticket and stated in the plan.
 
 `wowlab sv merge <file> --from <character|snapshot> --into <character>
 [--key PATH…]`: a three-way structural merge of one SavedVariables document
-with `luadata` (base: the latest snapshot copy of the target, else empty;
-ours: the target; theirs: the source), by key path. A key changed on one
+with `luadata` (base: the same file in a snapshot that holds it for both
+sides, i.e. `--from snapshot`; for two different characters there is no
+common ancestor, so the merge is two-way: any key whose values differ is a
+conflict, keys present on only one side are listed, and `--key` subtrees are
+copied as a whole; ours: the target; theirs: the source), by key path. The
+file's scope comes from `layout` (account or character,
+`docs/LAB_FILE_MAP.md`). `--from/--into <character>` applies only to
+per-character files (`## SavedVariablesPerCharacter`), and on Forever it
+resolves to `<digits>/<First>-<Second>/SavedVariables/`, never to the
+`<Realm>/<First>/` twin. For an account-wide file both characters share one
+file, so a character-to-character merge is refused with that reason; the
+account-wide case is `--from <snapshot>` (another machine or an earlier
+state). Many addons keep per-character settings inside the account file,
+keyed by a character string whose Forever spelling varies by addon
+(GLOSSARY, "Second name"); copying between those keys is a `--key` copy
+within one file, not a merge between files. A key missing from one side is
+reported as "absent", not "deleted": many addons leave out values equal to
+their defaults when the file is written **[verify]**, and the Lab cannot see
+those defaults. A key changed on one
 side is taken; changed on both sides the same way is taken once; changed
 differently is a conflict, listed, never guessed, and nothing is written
 unless `--take ours|theirs` resolves it. `--key` limits the merge to named
 subtrees (copy one addon profile). Output goes through the serializer (the
-document's own style) and is written by `guard`. Graders come first
+document's own style) and is written by `guard`. The addon reads the
+merged file at next login, may migrate it, and rewrites it at logout: the
+merge is proven only after one login and logout, and a subtree taken from an
+older addon version may be reset by the addon. Graders come first
 (`M11-09T`), since it rewrites user data.
 
 ### 13.5 Order
