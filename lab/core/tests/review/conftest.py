@@ -1,14 +1,16 @@
 """Review-probe collection rules.
 
-Wall-clock timing probes are skipped on Windows. `docs/LAB_PLAN.md` §6.4
+Timing probes are skipped on Windows. `docs/LAB_PLAN.md` §6.4
 states its performance target (50 MB in under 10 s) as measured on the
 owner's M1, and the `MAX_COST` budget is calibrated there; a probe that
 compares a parse at the budget with that target is a measurement of the
 owner's machine. GitHub's shared Windows runner is slower (the `0,` positive
-control alone takes about 11 s there), so on win32 those probes report the
-runner, not the parser.
+control alone took about 11 s wall clock there), so on win32 those probes
+report the runner, not the parser. Measuring CPU time instead of wall clock
+(M11-16T) removes the effect of load, not of a slower processor, so the
+skip stays.
 
-A probe is a wall-clock timing probe when its file name ends in
+A probe is a timing probe when its file name ends in
 `_time_target.py` (for example
 `test_m10_04_semicolon_list_at_budget_misses_time_target.py`). Name a new
 one that way and it is skipped on Windows with no change here. Only timing
@@ -29,7 +31,7 @@ TIMING_PROBE_SUFFIX = "_time_target.py"
 
 SKIP_ON_WINDOWS = pytest.mark.skip(
     reason=(
-        "wall-clock timing probe: the docs/LAB_PLAN.md §6.4 target (and MAX_COST) is "
+        "timing probe: the docs/LAB_PLAN.md §6.4 target (and MAX_COST) is "
         "calibrated on the owner's M1; a shared Windows runner is slower and would "
         "measure the machine, not the parser"
     )
