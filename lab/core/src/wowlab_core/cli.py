@@ -46,6 +46,9 @@ the client wrote, and in the committed fixtures shifted, never parsed here.
 files `lookstore` writes under the user data directory, never in an install.
 The build is `--build` or the flavor's version; only when no install is found
 does it fall back to a saved look's build or the one fully cached build.
+`looks page` (M11-07, ADR-0027) writes all of that into one self-contained
+HTML file (`lookspage`), under the user data directory or at `--out`, never in
+an install: every verdict on the page is computed here and only shown there.
 """
 
 import base64
@@ -73,6 +76,7 @@ from wowlab_core import (
     install,
     layout,
     looks,
+    lookspage,
     lookstore,
     luadata,
     process,
@@ -4264,6 +4268,301 @@ def looks_compare(
         _print_findings(r.refusals, r.notes, "    ")
     for remark in report.remarks:
         _say(remark)
+
+
+# ─── looks page ──────────────────────────────────────────────────────────────
+
+LOOKS_PAGE_FORMAT: Literal[1] = 1
+_PAGE_LEGEND = (
+    "Each choice is checked as a look that holds only that choice, as `wowlab looks "
+    "options` does, so a dependency on another option shows as undecided.",
+    "refused: the tables decide against it, and `wowlab looks save` would not save a look "
+    "holding it (an option or choice for another race or body type, a choice outside its "
+    "option, a class the ClassMask excludes, or a choice it depends on set to something "
+    "else).",
+    'note: shown, never a refusal: "needs <unlock>" (an achievement, quest or item '
+    'appearance to earn), "unknown to build <version> (possibly a hotfix)", a dependency on '
+    "an option the look leaves unset, a class-restricted choice when no class is chosen, "
+    "and conditions.",
+)
+_PAGE_CLASSES_NOTE = (
+    "Classes are the rows of build {version}'s ChrClasses ({classes}); class masks are "
+    "checked against these ids only."
+)
+_PAGE_NO_CLASS_NOTE = "No class chosen: class-restricted choices are listed with a note."
+_PAGE_NO_CLASS_LABEL = "not given (class-restricted choices are noted, not refused)"
+
+
+class LooksPageClass(_Out):
+    id: int
+    name: str
+
+
+class LooksPageRace(_Out):
+    race: LooksRace
+    label: str  # faction, id and body types, as `looks races` words them
+
+
+class LooksPageOption(_Out):
+    """`LooksOption` with its option-level findings split as the CLI prints them."""
+
+    id: int
+    name: str
+    chr_model_id: int
+    category: str | None
+    form_or_pet: bool
+    refusals: list[looks.Finding]
+    notes: list[looks.Finding]
+    choices: list[LooksChoice]
+
+
+class LooksPageView(_Out):
+    """`looks options <race> --sex <body_type> [--class <class_id>]`, precomputed.
+    `options` are indices into `LooksPageData.options`, in the command's order."""
+
+    race_id: int
+    body_type: int
+    class_id: int | None
+    chr_model_id: int
+    heading: str
+    notes: list[str]
+    options: list[int]
+
+
+class LooksPageLook(_Out):
+    """`looks show NAME`, precomputed: the report and the lines the CLI prints."""
+
+    report: LookReport
+    verdict: str
+    facts: list[tuple[str, str]]
+    choice_lines: list[str]
+
+
+class LooksPageData(_Out):
+    """The JSON block embedded in the looks page (ADR-0027). The page's script
+    only displays it; everything in it is computed here."""
+
+    format: Literal[1] = LOOKS_PAGE_FORMAT
+    build: str
+    remarks: list[str]  # how the build was chosen, when not by --build or the install
+    notes: list[str]  # the caveats `looks races`, `looks options` and `looks show` print
+    legend: list[str]
+    races_heading: str
+    races: list[LooksPageRace]
+    classes: list[LooksPageClass]
+    options: list[LooksPageOption]
+    views: list[LooksPageView]
+    looks_directory: str
+    looks: list[LooksPageLook]
+    damaged: list[lookstore.DamagedLook]
+    damaged_heading: str
+    no_class_label: str
+    no_findings_label: str
+    no_race_label: str
+    no_options_label: str
+    no_looks_label: str
+
+
+class LooksPageReport(_Out):
+    """`wowlab looks page --json`: what was written. The command exits 1 after
+    writing when `damaged` is not empty, as `looks show` does."""
+
+    path: str
+    build: str
+    bytes: int
+    races: int
+    views: int
+    looks: int
+    damaged: list[lookstore.DamagedLook]
+    remarks: list[str]
+
+
+def _page_option(option: LooksOption) -> LooksPageOption:
+    return LooksPageOption(
+        id=option.id,
+        name=option.name,
+        chr_model_id=option.chr_model_id,
+        category=option.category,
+        form_or_pet=option.form_or_pet,
+        refusals=[f for f in option.notes if f.refuses],
+        notes=[f for f in option.notes if not f.refuses],
+        choices=option.choices,
+    )
+
+
+def _page_look(report: LookReport) -> LooksPageLook:
+    race = f"{report.race_name} ({report.race_id})" if report.race_name else f"{report.race_id}"
+    if report.class_id is None:
+        player_class = _PAGE_NO_CLASS_LABEL
+    else:
+        player_class = f"{report.class_name or 'not in this build'} ({report.class_id})"
+    facts = [
+        ("file", report.path or ""),
+        ("saved against build", report.saved_build or ""),
+        ("checked against build", report.build),
+        ("race", f"{race}, body type {report.body_type}"),
+        ("class", player_class),
+        ("choices", str(len(report.choices))),
+    ]
+    if report.refused:
+        verdict = f"refused ({len(report.refusals)} reason(s)), {len(report.notes)} note(s)"
+    else:
+        verdict = f"not refused, {len(report.notes)} note(s)"
+    return LooksPageLook(
+        report=report,
+        verdict=verdict,
+        facts=facts,
+        choice_lines=[_ref_text(ref) for ref in report.choices],
+    )
+
+
+def _looks_page_data(
+    model: looks.Customizations,
+    remarks: Sequence[str],
+    store: lookstore.LookStore,
+    found: Sequence[tuple[Path, lookstore.SavedLook]],
+    damaged: Sequence[lookstore.DamagedLook],
+) -> LooksPageData:
+    """Everything the page shows, from the same functions `looks races`,
+    `looks options` and `looks show` use: every playable race, each body
+    type, without a class and with each class of the build's ChrClasses."""
+    version = model.build
+    classes = [LooksPageClass(id=i, name=c.name) for i, c in sorted(model.classes.items())]
+    class_ids: list[int | None] = [None, *(c.id for c in classes)]
+    table: list[LooksPageOption] = []
+    index: dict[str, int] = {}
+    races: list[LooksPageRace] = []
+    views: list[LooksPageView] = []
+    for race in model.playable_races():
+        bodies = ", ".join(f"{b.body_type} (model {b.chr_model_id})" for b in race.body_types)
+        races.append(
+            LooksPageRace(
+                race=_race_out(race),
+                label=f"{race.id} · {_faction(race.alliance)} · body types {bodies or 'none'}",
+            )
+        )
+        for body in race.body_types:
+            for class_id in class_ids:
+                refs: list[int] = []
+                for option in _options_for_body(model, race, body, class_id).options:
+                    entry = _page_option(option)
+                    key = entry.model_dump_json()
+                    if key not in index:
+                        index[key] = len(table)
+                        table.append(entry)
+                    refs.append(index[key])
+                who = _race_label(race)
+                if class_id is not None:
+                    who += f", {_class_name(model, class_id) or 'class'} ({class_id})"
+                views.append(
+                    LooksPageView(
+                        race_id=race.id,
+                        body_type=body.body_type,
+                        class_id=class_id,
+                        chr_model_id=body.chr_model_id,
+                        heading=(
+                            f"{who}, body type {body.body_type} (model {body.chr_model_id}), "
+                            f"build {version}"
+                        ),
+                        notes=[_PAGE_NO_CLASS_NOTE] if class_id is None else [],
+                        options=refs,
+                    )
+                )
+    class_list = ", ".join(f"{c.name} ({c.id})" for c in classes) or "none"
+    return LooksPageData(
+        build=version,
+        remarks=list(remarks),
+        notes=[
+            _PLAYABLE_NOTE,
+            _EXPORTED_ONLY.format(version=version),
+            _PAGE_CLASSES_NOTE.format(version=version, classes=class_list),
+        ],
+        legend=list(_PAGE_LEGEND),
+        races_heading=f"Races flagged playable in build {version}'s ChrRaces",
+        races=races,
+        classes=classes,
+        options=table,
+        views=views,
+        looks_directory=str(store.root),
+        looks=[_page_look(_look_report(model, saved, path)) for path, saved in found],
+        damaged=list(damaged),
+        damaged_heading="Damaged look files (not saved looks; `wowlab looks show` names them too)",
+        no_class_label=_PAGE_NO_CLASS_LABEL,
+        no_findings_label="nothing noted",
+        no_race_label="Pick a race.",
+        no_options_label="The tables give this race, body type and class no options.",
+        no_looks_label=f"No saved looks (in {store.root}).",
+    )
+
+
+@looks_app.command("page")
+@_handled
+def looks_page(
+    out: Annotated[
+        Path | None,
+        typer.Option(
+            "--out",
+            help="The HTML file to write. Default: pages/looks.html under the user data "
+            "directory. Refused when it is in an install.",
+        ),
+    ] = None,
+    build: LooksBuildOpt = None,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+) -> None:
+    """Write one self-contained HTML page (no network requests) to browse the
+    races, body types, classes, options and choices of the build's tables, with
+    what the tables say about each choice, and to view the saved looks checked
+    against that build. Never written into an install; names each damaged look
+    file and then exits 1, as `looks show` does. JSON: LooksPageReport."""
+    target = out if out is not None else lookspage.default_page_path()
+    try:
+        # Before any work: a refused --out costs nothing and writes nothing.
+        lookstore.refuse_install(target.absolute(), "generated pages")
+    except lookstore.LookLocationError as exc:
+        raise CliError(f"refused: {exc}; nothing was written") from exc
+    store = lookstore.LookStore()
+    found, damaged = store.entries()
+    with _open_gamedata() as data:
+        version, remarks = _looks_build(
+            data, build, root, flavor, [saved.saved_build for _, saved in found]
+        )
+        model = _load_model(data, version)
+    payload = _looks_page_data(model, remarks, store, found, damaged)
+    page = lookspage.render(payload.model_dump_json())
+    try:
+        written = lookspage.write_page(page, target)
+    except (lookspage.PageError, lookstore.LookLocationError) as exc:
+        raise CliError(f"refused: {exc}; nothing was written") from exc
+    report = LooksPageReport(
+        path=str(written),
+        build=version,
+        bytes=len(page.encode("utf-8")),
+        races=len(payload.races),
+        views=len(payload.views),
+        looks=len(payload.looks),
+        damaged=list(damaged),
+        remarks=list(remarks),
+    )
+    if json_out:
+        _emit(report)
+    else:
+        _say(f"Wrote the looks page for build {version}: {written}")
+        _say(
+            f"  {report.races} race(s) flagged playable, {report.views} race/body type/class "
+            f"view(s), {report.looks} saved look(s), {_bytes(report.bytes)}"
+        )
+        _say(
+            "Open it in a browser. It is one self-contained file and makes no network "
+            "requests (its Content-Security-Policy forbids them)."
+        )
+        for remark in remarks:
+            _say(remark)
+    for bad in damaged:
+        _note(f"wowlab: damaged look file {bad.file}: {bad.error}")
+    if damaged:
+        raise typer.Exit(EXIT_ERROR)
 
 
 # ─── version ─────────────────────────────────────────────────────────────────

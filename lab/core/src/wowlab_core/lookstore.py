@@ -52,6 +52,7 @@ __all__ = [
     "SavedLook",
     "check_name",
     "default_looks_dir",
+    "refuse_install",
 ]
 
 LOOKS_FORMAT: Literal[1] = 1
@@ -123,14 +124,18 @@ def check_name(name: str) -> str:
     return name
 
 
-def _refuse_install(path: Path) -> None:
+def refuse_install(path: Path, what: str = "saved looks") -> None:
+    """Raise ``LookLocationError`` if ``path``, with every symlink resolved, is
+    an install or inside one: it or a folder above it holds ``.build.info`` or
+    ``.flavor.info``. ``what`` names what never lives there, for the message.
+    Reads only; ``looks page`` runs it on its output file too (M11-07)."""
     resolved = path.resolve()
     for candidate in (resolved, *resolved.parents):
         for marker in (BUILD_INFO, FLAVOR_INFO):
             if (candidate / marker).exists():
                 raise LookLocationError(
                     f"{path} is inside a game install ({candidate} holds {marker}); "
-                    "saved looks never live in an install (L1)"
+                    f"{what} never live in an install (L1)"
                 )
 
 
@@ -151,7 +156,7 @@ class LookStore:
         """Every ``*.json`` directly in the directory, by name. No directory: none."""
         if not self._root.exists():
             return []
-        _refuse_install(self._root)
+        refuse_install(self._root)
         if not self._root.is_dir():
             raise LookLocationError(f"{self._root} is not a directory")
         return sorted(p for p in self._root.iterdir() if p.name.endswith(_SUFFIX))
@@ -223,21 +228,26 @@ class LookStore:
 
     def listing(self) -> tuple[list[SavedLook], list[DamagedLook]]:
         """Every saved look by name, and every ``*.json`` that is not one."""
-        looks: list[SavedLook] = []
+        found, damaged = self.entries()
+        return [saved for _, saved in found], damaged
+
+    def entries(self) -> tuple[list[tuple[Path, SavedLook]], list[DamagedLook]]:
+        """``listing`` with each saved look's file."""
+        found: list[tuple[Path, SavedLook]] = []
         damaged: list[DamagedLook] = []
         for path in self._files():
             try:
-                looks.append(self.read(path))
+                found.append((path, self.read(path)))
             except LookStoreError as exc:
                 damaged.append(DamagedLook(file=path.name, error=str(exc)))
-        return looks, damaged
+        return found, damaged
 
     def save(self, saved: SavedLook, *, replace: bool = False) -> Path:
         """Write ``saved`` as ``<name>.json``; refuse a taken name unless ``replace``."""
         name = check_name(saved.look.name)
-        _refuse_install(self._root)
+        refuse_install(self._root)
         self._root.mkdir(parents=True, exist_ok=True)
-        _refuse_install(self._root)
+        refuse_install(self._root)
         existing = self._existing(name)
         if existing is not None and not replace:
             raise LookExistsError(

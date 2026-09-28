@@ -1425,6 +1425,25 @@ refuse it.
 build and lists the options set to the same choice and those that differ.
 Every data command takes `--json`.
 
+*Amended 2026-09-28 (M11-07):* the page as built. `wowlab looks page [--out
+PATH] [--build V]` picks the build as `show` does and writes one file,
+`<user data>/wowlab/pages/looks.html` by default (`wowlab_core.lookspage`,
+ADR-0027). Its JSON block (`LooksPageData` in `cli`) holds what the commands
+print, computed by the same functions: the `races` list, one view per flagged
+playable race, body type and class (none, then each `ChrClasses` id) with the
+options and findings `options` gives (options stored once and referenced by
+index), every saved look as `show NAME` reports it, the damaged files, and
+the same caveats (the playable note, the exported-tables-only remark, where
+class ids come from, what is refused and what is a note). The script only
+displays that data, with `textContent`; the CSP is `default-src 'none'` with
+the one inline script and the one style allowed by SHA-256, so the page
+fetches nothing. `--out` (or the default folder) is refused before any work,
+and again before and after creating its folder, when it or a folder above it
+holds `.build.info` or `.flavor.info` (`lookstore.refuse_install`), exit 1,
+nothing written. An existing file there is replaced whole; a directory or a
+non-regular file is refused. Damaged look files are listed on the page and
+named on stderr, and the command then exits 1, as `show` does.
+
 ### 13.3 profiles
 
 Named sets of the client's local UI files (not the whole UI: action-bar

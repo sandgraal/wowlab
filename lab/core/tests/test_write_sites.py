@@ -67,12 +67,25 @@ _LOOKS_DIR = (
     "looks/ folder, which save() refuses before and after creating it when it or any "
     "folder above it holds .build.info or .flavor.info"
 )
+_LOOKSPAGE = "lab/core/src/wowlab_core/lookspage.py"
+_PAGE_FILE = (
+    "the looks page (§13.2, ADR-0027, M11-07): only at the file `wowlab looks page` "
+    "was given with --out, or pages/looks.html under the user data directory; "
+    "write_page runs lookstore.refuse_install on the file and on its folder before and "
+    "after creating it, refusing when it or any folder above it holds .build.info or "
+    ".flavor.info, and the command runs it before doing any work"
+)
 ALLOWED: dict[tuple[str, str], str] = {
     (_LOOKSTORE, "self._root.mkdir(parents=True, exist_ok=True)"): _LOOKS_DIR,
     (_LOOKSTORE, 'with tmp.open("xb") as handle:'): _LOOKS_DIR + "; a new temp name (x mode)",
     (_LOOKSTORE, "tmp.replace(final)"): _LOOKS_DIR + "; the temp file onto <name>.json",
     (_LOOKSTORE, "tmp.unlink(missing_ok=True)"): _LOOKS_DIR + "; its own temp file",
     (_LOOKSTORE, "final.hardlink_to(tmp)"): _LOOKS_DIR + "; publishes without replacing",
+    (_LOOKSPAGE, "folder.mkdir(parents=True, exist_ok=True)"): _PAGE_FILE,
+    (_LOOKSPAGE, 'with tmp.open("xb") as handle:'): _PAGE_FILE
+    + "; a new temp name beside the page (x mode)",
+    (_LOOKSPAGE, "tmp.replace(final)"): _PAGE_FILE + "; the temp file onto the page, whole",
+    (_LOOKSPAGE, "tmp.unlink(missing_ok=True)"): _PAGE_FILE + "; its own temp file",
 }
 
 REFERENCED_NAMES = frozenset({"write_text", "write_bytes", "unlink", "rmtree"})
