@@ -215,7 +215,7 @@ Graders for the 2026-09-22 amendment to `docs/LAB_PLAN.md` §6.10 (owner decisio
 
 ---
 
-## [ ] M10-17T — Guard store creation and undo-by-id graders [TEST]
+## [x] M10-17T — Guard store creation and undo-by-id graders [TEST]
 **Size:** S · **Depends on:** M10-16, M10-14
 
 Graders from the M10-14 reviews (2026-09-27/28), for `lab/core/src/wowlab_core/guard.py`'s public API: (1) `guard.store_lock(store, create=True)` refuses a store inside any install (a `.build.info`/`.flavor.info` marker on the place or an ancestor, through links and junctions) before anything at the path is created, then creates the store and takes the lock, so a first `snap create` holds the store lock like every later one; (2) `guard.undo(..., expected_id=...)` checks the journal's last record id under the store lock and refuses with nothing written when it differs, so an undo never acts on a record the user did not approve. Each grader `xfail(strict=True)` with one marker line, activated by marker deletion. The session that writes these never writes M10-17.
@@ -224,13 +224,15 @@ Graders from the M10-14 reviews (2026-09-27/28), for `lab/core/src/wowlab_core/g
 
 ---
 
-## [ ] M10-17 — Guard store creation and undo-by-id [IMPL]
+## [x] M10-17 — Guard store creation and undo-by-id [IMPL]
 **Size:** S · **Depends on:** M10-17T
 
 `guard.store_lock(create=True)` and `guard.undo(expected_id=...)` per M10-17T; then the CLI takes the store lock for the first `snap create` (dropping the one-hour gc grace as the only protection, or keeping it as defence in depth; say which) and passes `expected_id` from `undo`, and `snapshot.py`'s copy of the inside-any-install rule is replaced by guard's. Activate graders by marker deletion only.
 
 **Acceptance:** all M10-17T graders and every existing guard grader green; the write-site test green; `lab (windows)` green on the final head; reviewed by `security-reviewer`.
 
+
+*Merged 2026-09-28 (#73 graders, #77 implementation). Follow-ups, not scheduled: a test-writer comment on the `dotdot-after-a-symlink` grader saying it intentionally requires refusing both readings (Windows collapses `..` as text before following links); optionally run the store/source overlap check before `store_lock` in `snap create`, so a store that is an ancestor of the install gets no stray empty lock file (outside the install).*
 ---
 
 ## [ ] M10-15 — Wave 1 review
