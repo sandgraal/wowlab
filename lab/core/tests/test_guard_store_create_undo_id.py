@@ -7,7 +7,10 @@ its amendments: item 1 (locks, order, the inside-any-install rule added
 (`create`, `expected_id`). Fix round 1 (PR #73 reviews) added the
 creating-call check, the exact-id, hostile-lock, marker-lookup and
 symlinked-user-data cases. Every grader carries one marker line that M10-17
-deletes; nothing else in this file is the implementer's to change.
+deletes; nothing else in this file is the implementer's to change. M10-19T
+(from the M10-17 reviews, owner-approved 2026-09-28) widened the
+creating-call recorder and explained the `dotdot-after-a-symlink` case; no
+assertion was removed or weakened.
 
 The seam these graders hold `guard` to
 --------------------------------------
@@ -15,7 +18,8 @@ The seam these graders hold `guard` to
   With `create=True` the store (and any missing parent) is created and its
   lock taken, so a first `snap create` holds the store lock like every later
   one. Before anything is created (no `mkdir`, no `open` with `O_CREAT`,
-  not even briefly), the store is refused with a plain
+  no file opened to write, no link, fifo, node or rename, not even
+  briefly), the store is refused with a plain
   `GuardError` if it is inside any install: resolved (following links,
   junctions and `..`), it and every existing ancestor are examined, and a
   directory holding an entry named `.build.info` or `.flavor.info` (of any
@@ -47,10 +51,12 @@ needs or touches a real install.
 
 from __future__ import annotations
 
+import builtins
 import contextlib
 import errno
 import importlib.util
 import inspect
+import io
 import os
 import sys
 import types
@@ -370,27 +376,120 @@ def _unexaminable(directory: Path, error: int, *, directory_itself: bool) -> Ite
         yield
 
 
+_NOT_THE_CODE_UNDER_TEST = ("_pytest", "pytest", "pluggy", "importlib", "_frozen_importlib")
+_WRITE_MODE_LETTERS = frozenset("wax+")
+
+
+def _from_the_code_under_test(target: Any) -> bool:
+    """False only for a bytecode cache write that is not the call's own:
+    `target` has a `__pycache__` component and, walking up from the call, a
+    frame of pytest, pluggy or the import system comes before a frame of this
+    file (pytest writing a rewritten module's `.pyc`, or the import system
+    caching one). Everything else counts, including a file that a lazily
+    imported module's top-level code creates while the call runs, and a
+    call whose stack never reaches this file."""
+    if "__pycache__" not in Path(_named(target)).parts:
+        return True
+    frame = sys._getframe(2)
+    while frame is not None:
+        if frame.f_globals is globals():  # a frame running this file's code
+            return True
+        module = str(frame.f_globals.get("__name__", ""))
+        if module.split(".")[0] in _NOT_THE_CODE_UNDER_TEST or frame.f_code.co_filename.startswith(
+            "<frozen importlib"
+        ):
+            return False
+        frame = frame.f_back
+    return True
+
+
+def _named(path: Any) -> str:
+    return os.fsdecode(os.fspath(path))
+
+
 @contextlib.contextmanager
 def _creating_calls() -> Iterator[list[str]]:
     """Records every call that creates something: `os.mkdir` (which
-    `Path.mkdir` and `os.makedirs` go through) and `os.open` with
-    `O_CREAT`. The calls still run, so a create-then-check-then-remove
-    implementation is caught here even though it leaves nothing behind."""
+    `Path.mkdir` and `os.makedirs` go through) and `os.open` with `O_CREAT`
+    (which `Path.touch` and `tempfile` go through), as before M10-19T, and,
+    since then, builtin `open` and `io.open` on a path in a create or write
+    mode (`w`, `a`, `x`, `+`, which `Path.open`, `Path.write_bytes` and
+    `shutil.copyfile` go through), `os.link`, `os.symlink`, `os.mkfifo` and
+    `os.mknod` where the platform has them (`Path.hardlink_to`,
+    `Path.symlink_to`), and the destination of `os.rename` and `os.replace`
+    (`Path.rename`, `Path.replace`, `shutil.move`). The calls still run, so a
+    create-then-check-then-remove implementation is caught here even though
+    it leaves nothing behind, and even on a volume whose coarse timestamps
+    would hide it from `strict_state`.
+
+    The two original hooks record every call, as they always have. The
+    hooks added since skip only a write into a `__pycache__` directory made
+    through pytest or the import system (see `_from_the_code_under_test`),
+    which is how pytest's own `.pyc` writing goes. An `open` of a file
+    descriptor rather than a path creates nothing and is not recorded (the
+    `os.open` that made the descriptor is). Not recorded either: a create
+    that bypasses these names, such as `io.FileIO` or `_io.open` called
+    directly, a Unix socket bound to a path, or a `sqlite3` database file.
+    `strict_state` still sees those, on a volume whose timestamps show it."""
     made: list[str] = []
     real_mkdir, real_open = os.mkdir, os.open
+    real_builtin_open, real_io_open = builtins.open, io.open
 
     def mkdir(path: Any, *args: Any, **kwargs: Any) -> None:
-        made.append(f"mkdir {os.fsdecode(os.fspath(path))}")
+        made.append(f"mkdir {_named(path)}")
         real_mkdir(path, *args, **kwargs)
 
     def open_(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
         if flags & os.O_CREAT:
-            made.append(f"open(O_CREAT) {os.fsdecode(os.fspath(path))}")
+            made.append(f"open(O_CREAT) {_named(path)}")
         return real_open(path, flags, *args, **kwargs)
+
+    def file_opener(real: Callable[..., Any], name: str) -> Callable[..., Any]:
+        def call(file: Any, *args: Any, **kwargs: Any) -> Any:
+            mode = args[0] if args else kwargs.get("mode", "r")
+            if (
+                not isinstance(file, int)
+                and isinstance(mode, str)
+                and _WRITE_MODE_LETTERS.intersection(mode)
+                and _from_the_code_under_test(file)
+            ):
+                made.append(f"{name}({mode!r}) {_named(file)}")
+            return real(file, *args, **kwargs)
+
+        return call
+
+    def maker(name: str, where: int) -> Callable[..., Any]:
+        """`os.<name>`, recording its positional argument `where` (the new
+        entry: `dst` of a link or rename, `path` of a fifo or node)."""
+        real = getattr(os, name)
+        keyword = "dst" if where == 1 else "path"
+
+        def call(*args: Any, **kwargs: Any) -> Any:
+            target = args[where] if len(args) > where else kwargs.get(keyword)
+            if target is not None and _from_the_code_under_test(target):
+                made.append(f"{name} {_named(target)}")
+            return real(*args, **kwargs)
+
+        return call
 
     with pytest.MonkeyPatch.context() as patched:
         patched.setattr(os, "mkdir", mkdir)
         patched.setattr(os, "open", open_)
+        # `io.open is builtins.open`, but each name is looked up on its own
+        # (`Path.open` calls `io.open`, `shutil` calls `open`), so both are
+        # patched.
+        patched.setattr(builtins, "open", file_opener(real_builtin_open, "open"))
+        patched.setattr(io, "open", file_opener(real_io_open, "io.open"))
+        for name, where in (
+            ("link", 1),
+            ("symlink", 1),
+            ("rename", 1),
+            ("replace", 1),
+            ("mkfifo", 0),
+            ("mknod", 0),
+        ):
+            if hasattr(os, name):
+                patched.setattr(os, name, maker(name, where))
         yield made
 
 
@@ -459,6 +558,15 @@ def test_constructed_store_lock_create_refuses_a_store_inside_any_install_creati
         store_arg = tmp_path / "elsewhere" / ".." / "world" / root.name / "Data" / "store"
     elif where == "dotdot-after-a-symlink":
         # Lexically `tmp_path / "store"`; on disk, `Data/store` in the install.
+        # This case intentionally requires refusing both readings of the path,
+        # on every platform. POSIX follows `hop` first and applies `..` to its
+        # target, which puts the store in `Data/` of the install. Windows
+        # collapses `..` as text, together with the component before it,
+        # before it follows any link, which puts the store at
+        # `tmp_path / "store"`, outside every install. A store that is inside
+        # an install under either reading is refused. Since M10-17 guard
+        # examines both readings. Do not relax this case to a single reading
+        # per platform.
         (data / "deep").mkdir()
         symlink_or_skip(tmp_path / "hop", data / "deep", is_dir=True)
         store_arg = tmp_path / "hop" / ".." / "store"
