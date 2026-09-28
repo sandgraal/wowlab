@@ -50,6 +50,9 @@ from wowlab_core.snapshot import (
 )
 
 T0 = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+O_ACCMODE: int = getattr(os, "O_ACCMODE", 3)
+"""The access-mode bits of open flags; Windows has no `os.O_ACCMODE`, and its
+O_RDONLY, O_WRONLY and O_RDWR are 0, 1 and 2."""
 BOUND = 5.0
 """Seconds a read may take before it counts as blocked."""
 
@@ -142,7 +145,7 @@ def test_constructed_regular_file_is_read_whole_with_the_nonblocking_flags(
     for name in ("O_NONBLOCK", "O_NOCTTY", "O_NOFOLLOW", "O_BINARY"):
         wanted = getattr(os, name, 0)
         assert flags & wanted == wanted, f"{name} is in the open flags"
-    assert flags & os.O_ACCMODE == os.O_RDONLY
+    assert flags & O_ACCMODE == os.O_RDONLY
     assert not flags & (os.O_CREAT | os.O_TRUNC | os.O_APPEND)
     assert_closed(spy.fds_for(path))
 
@@ -274,10 +277,17 @@ def test_constructed_without_o_nofollow_a_link_is_refused_before_any_open(
     assert spy.calls == [], "nothing was opened through the link"
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Windows refuses to rename a file while a descriptor is open on it "
+    "(WinError 32), so the swap cannot be made there; the faked-lstat case "
+    "below covers the same check on every platform",
+)
 def test_constructed_without_o_nofollow_a_swap_during_the_open_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The path is checked after the open to still name the opened file."""
+    """The path is checked after the open to still name the opened file: a
+    real rename and a new file at the path, made just after the open."""
     monkeypatch.setattr(snapshot, "_O_NOFOLLOW", 0)
     path = tmp_path / "file"
     path.write_bytes(b"constructed")
@@ -293,6 +303,86 @@ def test_constructed_without_o_nofollow_a_swap_during_the_open_is_refused(
     with pytest.raises(UnsafeReadError, match="changed as it was opened"):
         read_regular_file(path)
     assert_closed(spy.fds_for(path))
+
+
+def _with_ino(st: os.stat_result, ino: int) -> os.stat_result:
+    fields = list(st)
+    fields[stat.ST_INO] = ino
+    return os.stat_result(fields)
+
+
+def _as_link(st: os.stat_result) -> os.stat_result:
+    fields = list(st)
+    fields[stat.ST_MODE] = stat.S_IFLNK | 0o777
+    return os.stat_result(fields)
+
+
+@pytest.mark.parametrize(
+    "after_open",
+    [
+        pytest.param(lambda st: _with_ino(st, st.st_ino + 1), id="constructed-another-file"),
+        pytest.param(_as_link, id="constructed-a-link"),
+    ],
+)
+def test_constructed_without_o_nofollow_the_path_seen_after_the_open_must_be_the_opened_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, after_open: Callable[[Any], Any]
+) -> None:
+    """Valid on every platform, Windows included: the `lstat` after the open
+    is made to report another file, or a link, at the path (what a swap made
+    between the open and that check would show). The read is refused and the
+    descriptor closed."""
+    monkeypatch.setattr(snapshot, "_O_NOFOLLOW", 0)
+    path = tmp_path / "file"
+    path.write_bytes(b"constructed")
+    real_lstat = os.lstat
+    calls: list[int] = []
+
+    def lstat_changed_after_the_open(target: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+        st = real_lstat(target, *args, **kwargs)
+        if os.fspath(target) != os.fspath(path):
+            return st
+        calls.append(1)
+        return st if len(calls) == 1 else after_open(st)  # the first is before the open
+
+    monkeypatch.setattr(os, "lstat", lstat_changed_after_the_open)
+    spy = OpenSpy(monkeypatch)
+    with pytest.raises(UnsafeReadError, match="changed as it was opened"):
+        read_regular_file(path)
+    assert len(calls) == 2, "one lstat before the open and one after it"
+    assert_closed(spy.fds_for(path))
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        pytest.param("directory", id="constructed-directory"),
+        pytest.param("link", id="constructed-lstat-says-link"),
+    ],
+)
+def test_constructed_without_o_nofollow_a_non_regular_path_is_refused_before_any_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """Valid on every platform, Windows included: the `lstat` before the open
+    refuses a directory, and a path it reports as a link, and nothing is
+    opened."""
+    monkeypatch.setattr(snapshot, "_O_NOFOLLOW", 0)
+    if kind == "directory":
+        path = tmp_path / "dir"
+        path.mkdir()
+    else:
+        path = tmp_path / "file"
+        path.write_bytes(b"constructed")
+        real_lstat = os.lstat
+
+        def lstat_says_link(target: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+            st = real_lstat(target, *args, **kwargs)
+            return _as_link(st) if os.fspath(target) == os.fspath(path) else st
+
+        monkeypatch.setattr(os, "lstat", lstat_says_link)
+    spy = OpenSpy(monkeypatch)
+    with pytest.raises(UnsafeReadError, match="not a regular file"):
+        read_regular_file(path)
+    assert spy.calls == [], "nothing was opened"
 
 
 @needs_symlink
@@ -479,7 +569,7 @@ def test_constructed_object_swapped_for_a_fifo_at_the_reuse_check_open_does_not_
     def hooked_os_open(
         path: Any, flags: int, mode: int = 0o777, *, dir_fd: int | None = None
     ) -> int:
-        if flags & os.O_ACCMODE == os.O_RDONLY and not flags & os.O_CREAT:
+        if flags & O_ACCMODE == os.O_RDONLY and not flags & os.O_CREAT:
             swap_if_object(path)
         return real_os_open(path, flags, mode, dir_fd=dir_fd)
 
