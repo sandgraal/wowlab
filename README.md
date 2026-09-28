@@ -1,72 +1,208 @@
-# wowlab
+<p align="center">
+  <img src="docs/assets/wowlab-hero.svg" alt="wowlab: your Warcraft install, understood. Explain, snapshot, undo, local only." width="100%">
+</p>
 
-A local-only toolchain over your own World of Warcraft install. It reads the
-install directly, explains what every file in it is, snapshots it, and lets
-you change the client's configurable state and change it back. It runs on
-one machine, for one player; it is never distributed or deployed, and it
-uploads nothing.
+<p align="center">
+  <a href="https://github.com/sandgraal/wowlab/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/sandgraal/wowlab/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Python 3.12" src="https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white">
+  <img alt="Local only, uploads nothing" src="https://img.shields.io/badge/local--only-uploads%20nothing-2ea44f">
+  <img alt="Wave 1 closing, Wave 2 next" src="https://img.shields.io/badge/status-Wave%201%20closing%20%C2%B7%20Wave%202%20next-f3c969">
+  <a href="LICENSE"><img alt="License Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
+</p>
 
-Works against any modern (CASC-era) product Battle.net installs, and is
-developed against retail and *World of Warcraft: Forever*. Flavor folder,
-product and build are discovered at run time, never hard-coded.
+<p align="center">
+  <b>Ever wondered what all those files in your WoW folder actually are?</b><br>
+  wowlab reads your World of Warcraft install, tells you what every file is and whether it is safe to touch,<br>
+  snapshots your whole setup, and lets you change things and change them back.<br>
+  It runs on your own machine, never touches the game while it runs, and never uploads anything.
+</p>
 
-## Status
+---
 
-**Wave 1 in progress.** Wave 1 is the core library and CLI (`wowlab_core`,
-`wowlab`). Today the package scaffold exists and `wowlab --version` is the
-only behaviour; the modules below are specified in
-[`docs/LAB_PLAN.md`](docs/LAB_PLAN.md) and ticketed in
-[`docs/BACKLOG.md`](docs/BACKLOG.md). Later waves (character customization,
-offline character tools, addon tooling) are chosen by the owner one at a
-time from [`docs/LAB_IDEAS.md`](docs/LAB_IDEAS.md).
+## Why you might want it
 
-## CLI surface (planned)
+- **"I broke my UI and I don't know how."** Take a snapshot before you experiment. If something goes wrong, `wowlab undo` puts every file back exactly as it was.
+- **"What is `config-cache.wtf` and can I delete it?"** `wowlab explain` answers that for any file in your install: what it is, who writes it, when, and whether editing it is safe.
+- **"My addon settings are a mess."** Read any addon's saved settings as plain text, with nothing executed and nothing changed.
+- **"I play on the Forever beta and nothing is documented."** wowlab was built against a real Forever install: its folder layout, file formats and combat log are written up in plain words.
+- **"Someday I want to plan my character offline."** That is exactly where this is going. See [the full vision](#-the-full-vision).
 
-Everything here except `--version` is **planned**, not built
-(`docs/LAB_PLAN.md` §6.11):
+## ✨ What it does today
 
+| | Feature | Command |
+|---|---|---|
+| 🔍 | **Explain any file.** Every path in your install mapped: what it is, who writes it, when, and whether wowlab may edit it. | `wowlab explain PATH` · `wowlab tree --explain` |
+| 🩺 | **Health check.** Finds your install, its flavors and versions, whether the game is running, and your server-sync settings. | `wowlab doctor` |
+| 📸 | **Snapshots.** Save your whole setup (settings, keybinds, macros, addons and their saved data) and compare any two snapshots, down to the individual addon setting. | `wowlab snap create` · `snap diff A B` |
+| ↩️ | **Undo, for real.** Put a snapshot back, or undo the last change. You see the plan first, and it refuses while the game is running. | `wowlab snap restore` · `wowlab undo` |
+| 📜 | **Read your saved data.** Addon SavedVariables, CVars, keybinds, macros and your addon list, as readable text or JSON. | `wowlab sv dump` · `cvar` · `binds` · `macros` · `addons` |
+| 📚 | **Game data.** Any game table for your exact build, from [wago.tools](https://wago.tools), cached forever and keyed by build. | `wowlab db2 fetch TABLE` |
+| ⚔️ | **Combat log** *(landing now)*. A streaming combat-log reader and a live `tail`. | `wowlab log tail --follow` |
+
+<details>
+<summary><b>See it in action</b> (output from a test copy of a Forever install)</summary>
+
+```text
+$ wowlab explain WTF/Account/<ACCOUNT>/SavedVariables/DBM-Party-Vanilla.lua
+WTF/Account/<ACCOUNT>/SavedVariables/DBM-Party-Vanilla.lua (in flavor folder _classic_beta_)
+  what:         Account-wide addon data (`## SavedVariables:`)
+  written by:   Client on logout / `/reload`
+  edit:         yes, through wowlab's write gate only, with the client closed
+  tier:         A: ordinary addon-user behaviour
+  read by:      `luadata`
+
+$ wowlab sv dump SavedVariables/DBM-StatusBarTimers.lua
+DBT_AllPersistentOptions["Default"]["DBM"]["TimerY"] = -260
+DBT_AllPersistentOptions["Default"]["DBM"]["TimerPoint"] = "TOPRIGHT"
+DBT_AllPersistentOptions["Default"]["DBM"]["HugeBarsEnabled"] = true
+…
+
+$ wowlab doctor --offline
+Flavor _classic_beta_: product wow_classic_beta, version 1.60.1.69913
+Client: not running
+Snapshot store: ~/.local/share/wowlab/store (not created yet)
 ```
-wowlab doctor                       # install(s), flavors, builds, client running?, store health
-wowlab install show [--json]
-wowlab tree [PATH] [--explain]      # inventory; --explain adds the file-map entry per path
-wowlab explain PATH                 # what is this file, who writes it, is it safe to edit
-wowlab sv list [--account A] [--character C]
-wowlab sv dump FILE [--json] [--path 'Var.key[3].name']
-wowlab cvar list|get NAME [--scope global|account|character]
-wowlab binds list / wowlab macros list
-wowlab addons list [--json]
-wowlab db2 builds | wowlab db2 fetch TABLE [--build B] | wowlab db2 head TABLE
-wowlab log tail [--follow]
-wowlab snap create [-m LABEL] | list | show ID | diff A B | verify | gc
-wowlab snap restore ID [--paths …] [--dry-run] [--yes]
-wowlab undo
+
+</details>
+
+## 🛡️ The safety promises
+
+> [!IMPORTANT]
+> These are hard rules in the code, checked by tests on every change, not intentions.
+
+- **Reading never writes.** Looking at your install changes nothing: no temp files, caches or lock files inside it.
+- **One door for every change.** Anything wowlab writes goes through a single *write gate*. The gate refuses while the game is running, takes a snapshot first, records what it did, and replaces files atomically. There is no "force" switch that skips any of that.
+- **No Lua is ever run.** Addon data is read as data by a strict parser. Functions or code in a saved file are refused, never executed.
+- **Nothing is lost.** The parsers keep every byte they don't understand. An unedited file comes back byte for byte.
+- **Stays on your machine.** No accounts, no server, no uploads. The only network access is downloading public game tables from wago.tools, and you can skip it with `--offline`.
+- **Clearly out of bounds, permanently.** No memory reading, no injection, no packet tampering, no input automation, no touching game `Data/` or executables, no bypassing integrity checks ([ADR-0023](docs/DECISIONS.md)). wowlab only changes what the game itself treats as your settings.
+
+## ⚙️ How it works
+
+```mermaid
+flowchart LR
+    I[("Your WoW install<br/>WTF · Interface · Logs")]
+    subgraph core["wowlab_core"]
+      D[install discovery] --> L[layout + file map]
+      L --> P["parsers<br/>SavedVariables · WTF · TOC · combat log"]
+      G[game data<br/>wago.tools, by build]
+      S[(snapshot store)]
+      W{{write gate}}
+    end
+    I -- "read only" --> D
+    P --> CLI[wowlab CLI]
+    G --> CLI
+    CLI -- "restore / undo" --> W
+    W -- "1. game closed?<br/>2. snapshot first<br/>3. atomic write" --> I
+    W --> S
 ```
 
-## Scope boundary
+Flavor folders, product codes and build numbers are **discovered from your install**, never hard-coded, so wowlab works the same on retail and on *World of Warcraft: Forever*. The details: [`docs/LAB_PLAN.md`](docs/LAB_PLAN.md) (the spec), [`docs/LAB_FILE_MAP.md`](docs/LAB_FILE_MAP.md) (every path) and [`docs/LAB_FORMATS.md`](docs/LAB_FORMATS.md) (every file format).
 
-wowlab reads anything in the install and writes only what the client treats
-as user configuration: `WTF/`, `Interface/AddOns/`, `Fonts/` and loose
-`Interface/` overrides. Every write goes through one gate that refuses while
-the client runs, snapshots first, and can undo.
+## 🧭 Coming next: Wave 2
 
-Permanently out of scope in this repository
-([ADR-0023](docs/DECISIONS.md)): reading or writing client process memory,
-library injection, packet capture or modification, input automation,
-modifying `Data/` or executables, and defeating integrity checks. SavedVariables
-and every other Lua-syntax file are parsed as data; Lua is never executed.
+wowlab grows in **waves**: the owner picks each one after reviewing the last. Wave 2 is planned and about to start:
 
-## Getting started
+| | Feature | What you'll be able to do |
+|---|---|---|
+| 🧩 | **lab-addon** | Install wowlab's own small in-game addon with one command. At logout it records your gear, talents (class and Legacy trees), customization, collections, currencies and professions, and never anyone's name, including yours. |
+| 🧙 | **`wowlab char show`** | See your character's full state offline, straight from what the addon recorded. |
+| 🎨 | **customization sandbox** | Browse every race's customization options from the game's own tables, save and compare looks, and open it all as a local web page. |
+| 🎛️ | **profiles** | Save named UI setups (`raid`, `clean`, `gamepad`) and switch with one command, with undo. |
+| 🔀 | **sv-merge** | Copy one addon's settings between characters or machines without clobbering the rest. It checks first that the game will actually load the result. |
 
-Requires [uv](https://docs.astral.sh/uv/) (it provisions Python 3.12).
-Pinned versions and package-manager-free install steps:
-[`docs/SETUP.md`](docs/SETUP.md). A game install is not needed to develop or
-run the tests.
+The plan and its tickets: [`docs/LAB_PLAN.md`](docs/LAB_PLAN.md) §13 and [`docs/BACKLOG.md`](docs/BACKLOG.md).
+
+## 🌌 The full vision
+
+Here is what wowlab becomes as the ideas on [the menu](docs/LAB_IDEAS.md) are built. It is a menu, not a promise: each wave is picked one at a time.
+
+<details open>
+<summary><b>🧙 Your character, offline</b></summary>
+
+- **Plan builds without logging in.** Capture a character and plan talents and gear offline, including Forever's own talent systems (`char-planner`). Export to SimulationCraft and run sims locally (`simc-bridge`).
+- **See your character in 3D.** Render it in the browser from your own game files, with gear and transmog; design outfits; pose it, light it, turn it around, and export it to 3D formats or a printable model (`character-studio`, `photo-studio`, `char-export`).
+- **Every alt at a glance.** A dashboard over every character; a timeline of how each one grew; scheduled archives of your full state (`alt-dashboard`, `digital-twin`, `time-capsule`).
+- **Collect smarter.** What's left to collect and the cheapest order to get it; what in your bags is dead weight across every alt, and where to send it (`collection-router`, `bag-triage`).
+- **Learn your class faster.** Nightly flashcards built from your spellbook, your talents, boss abilities and what actually killed you (`drill-cards`).
+- **Tell your character's story.** A printable book and roleplay profile with your gear, portrait, firsts, zones and notable fights (`codex`). Also a D&D-style sheet, and a roguelike seeded by your real gear (`tabletop-sheet`, `roguelike-me`).
+- **Customize from inspiration.** Match a concept image to the customization choices and appearances you own (`look-from-image`).
+
+</details>
+
+<details>
+<summary><b>🎛️ Your UI, keybinds and settings</b></summary>
+
+- **Your whole setup as a file.** Describe CVars, binds, macros and addon settings in one file, then plan, apply and roll back, with drift detection (`wow-as-code`).
+- **Keybinds that fit how you play.** Spells you cast most on your easiest keys, spells you click that have no bind, and binds you never use, applied with undo (`keybind-coach`).
+- **Macros that don't silently break.** A linter that checks spell names and ranks, conditionals, length, unused and duplicate macros, with fixes through the write gate (`macro-doctor`).
+- **Look and feel.** Reversible font and texture packs, and nameplates designed outside the game with a live preview (`skin-packs`, `nameplate-designer`).
+- **A map of your install.** A local website of your install, every file annotated, with viewers for saved data, settings and your snapshot timeline (`explorer`).
+
+</details>
+
+<details>
+<summary><b>🧰 Addons</b></summary>
+
+- **Install and update addons safely.** From GitHub, CurseForge or Wago, pinned and undoable, including the addon's saved data (`addon-manager`).
+- **Know where your addons came from.** Compare every file to its upstream release and flag repacks or local edits (`addon-provenance`).
+- **Will it break on Forever?** A static scan for the TOC version, removed APIs, the build-number trap and calls that go secret in combat (`addon-audit`).
+- **Is the game really loading your saved data?** A doctor check that catches the SavedVariables loader bug if it ever returns (`sv-health`).
+- **For addon authors.** Scaffolding, type stubs from the game's own API docs, a headless test harness, an in-game REPL, and an agent-friendly server over your install (`addon-kit`, `api-types`, `addon-harness`, `dev-console`, `api-rag`, `lab-mcp`).
+
+</details>
+
+<details>
+<summary><b>📚 Game data and the world</b></summary>
+
+- **Query the game like a database.** SQL over every game table, across builds; relationship graphs of items, spells, quests, NPCs and zones (`db2lake`, `azeroth-graph`).
+- **See what changed in each beta build.** Automatic changelogs of the tables you care about, and hotfixes overlaid (`build-diff`, `hotfix-reader`).
+- **Fill in Forever's missing quests.** Record givers, turn-ins and objectives as you play, exported as corrections Questie can use (`quest-recorder`).
+- **Auction-house memory.** Your own price history, linked to patch changes that move prices (`market-memory`).
+- **Lore answers with sources.** Questions answered only from quest, NPC and gossip text in the game's tables, with citations (`lore-companion`).
+- **Straight from the game files.** Read models and textures from your own install, which unlocks everything 3D (`casc-source`).
+
+</details>
+
+<details>
+<summary><b>📡 Live, fun and forensic</b></summary>
+
+- **Stream overlays and smart-home triggers.** A local event feed from your saved data and combat log, driving OBS, Stream Deck, Home Assistant or Discord (`event-bus`, `overlay-sinks`).
+- **Your play, visualized.** Fight replays and generative art from combat logs, heatmaps of where you've been, dashboards over your sessions (`log2art`, `zone-heatmap`, `play-lake`).
+- **Tidy screenshots.** Tagged by character, zone and date, and searchable (`screenshot-organizer`).
+- **Why did it crash?** Crash reports linked to the addons, settings and zone at the time (`crash-forensics`).
+- **Play between sessions.** Offline mini-games or planners whose results your addon picks up at next login (`companion-loop`).
+
+</details>
+
+<details>
+<summary><b>👥 Social (waiting on a privacy decision)</b></summary>
+
+- **Remember good groups.** Who you grouped with, their role and your notes (`crew-book`), and which dungeon groups your online guild could form right now (`comp-builder`). These store other players' names, so they wait for their own privacy decision: opt-in, local only, never exported.
+
+</details>
+
+## 🚀 Try it
+
+> [!NOTE]
+> wowlab is a personal project that runs from source on your own machine. There is no installer, no app store and no hosted version, by design ([ADR-0019](docs/DECISIONS.md)). If you try it, it runs against your install, on your machine, under your control.
+
+You need [uv](https://docs.astral.sh/uv/) (it brings Python 3.12). A game install is not needed to run the tests.
 
 ```bash
+git clone https://github.com/sandgraal/wowlab && cd wowlab
 make setup
-make ci
-uv run wowlab --version
+uv run wowlab doctor        # finds your install and checks everything
+uv run wowlab --help        # every command
 ```
+
+Set `WOWLAB_WOW_ROOT` if your install is not in a default location ([`.env.example`](.env.example)). Machine setup without a package manager: [`docs/SETUP.md`](docs/SETUP.md).
+
+> [!TIP]
+> Exit codes: `0` ok, `1` error, `2` usage, `3` refused by the write gate. Only `snap restore` and `undo` change your install, and both show the plan and ask first unless you pass `--yes`.
+
+<details>
+<summary><b>Developer commands</b></summary>
 
 | Target | What it does |
 |---|---|
@@ -76,52 +212,36 @@ uv run wowlab --version
 | `make hooks-test` | The agent hook scripts under Python 3.12 and 3.9. |
 | `make ci` | Everything CI runs. |
 
-Set `WOWLAB_WOW_ROOT` if your install is not in a default location
-(`.env.example`).
+</details>
 
-## How work happens
+## 🏗️ How it's built
 
-The code is written by Claude Code agents coordinated by a conductor
-session; the owner makes the decisions and supplies real fixtures from the
-install. Tickets are agent-sized with verifiable acceptance criteria, every
-branch gets an independent review, and the two load-bearing files
-(`luadata.py`, `guard.py`) get their tests written first by a different
-agent. Work proceeds in **waves**: one milestone at a time, with the owner
-picking the next after reviewing the last.
+wowlab is written by Claude Code agents coordinated by a *conductor* session, while the owner makes every decision and captures the real test files from the game. Each change is a small ticket with checkable acceptance criteria. Every branch gets an independent code review, plus security and WoW-accuracy reviews wherever they apply. The two most critical files, the SavedVariables parser and the write gate, get their tests written first by a different agent than the one that writes the code. Test files are real captures from the game, scrubbed of names and identifiers before they are committed. Details: [`docs/AGENT_WORKFLOW.md`](docs/AGENT_WORKFLOW.md) and [`AGENTS.md`](AGENTS.md).
 
 ```
 lab/core/   wowlab-core: the library and the wowlab CLI (later apps: lab/<app>/)
-scripts/    repository tooling; the fixture capture and scrub tool lands here
+scripts/    repository tooling, including the fixture capture and scrub tool
 tests/      tests for the agent harness hooks
 docs/       spec, formats, file map, ideas, decisions, backlog, glossary, workflow
 .claude/    agent definitions, skills, path rules, guard hooks
 ```
 
-## Documents
+## 📖 Documents
 
 | Document | What it holds |
 |---|---|
-| [`AGENTS.md`](AGENTS.md) | The constitution: hard invariants L1–L8, conventions, anti-patterns, when to stop and ask. `CLAUDE.md` imports it. |
-| [`docs/LAB_PLAN.md`](docs/LAB_PLAN.md) | The spec: purpose, architecture, per-module specifications, testing, how waves work. |
-| [`docs/LAB_FORMATS.md`](docs/LAB_FORMATS.md) | Grammar reference for the client file formats. |
+| [`docs/LAB_PLAN.md`](docs/LAB_PLAN.md) | The spec: purpose, architecture, every module, testing, how waves work, the Wave 2 plan. |
 | [`docs/LAB_FILE_MAP.md`](docs/LAB_FILE_MAP.md) | Every path in an install: what it is, who writes it, whether it is safe to edit. |
-| [`docs/LAB_IDEAS.md`](docs/LAB_IDEAS.md) | The menu for later waves. Not tickets. |
-| [`docs/DECISIONS.md`](docs/DECISIONS.md) | Architecture Decision Records. |
+| [`docs/LAB_FORMATS.md`](docs/LAB_FORMATS.md) | The client file formats, with what real Forever captures showed. |
+| [`docs/LAB_IDEAS.md`](docs/LAB_IDEAS.md) | The menu for later waves. |
+| [`docs/GLOSSARY.md`](docs/GLOSSARY.md) | WoW and client terms, several of them misleading. |
+| [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md) | The install, wago.tools, and a log of every surprise. |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md) | Architecture decisions (ADRs). |
 | [`docs/BACKLOG.md`](docs/BACKLOG.md) | The current wave's tickets. |
-| [`docs/GLOSSARY.md`](docs/GLOSSARY.md) | WoW and client-filesystem terms, several of them misleading. |
-| [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md) | The local install, wago.tools, format references, breakage log. |
-| [`docs/AGENT_WORKFLOW.md`](docs/AGENT_WORKFLOW.md) | Roles, ticket lifecycle, guardrails, reusing the harness. |
-| [`docs/SETUP.md`](docs/SETUP.md) | Machine setup. |
-
-## History
-
-This repository previously held a different project. It was retired on
-2026-09-21 (ADR-0025); its last state is the git tag `bronze-final`.
+| [`docs/handoffs/`](docs/handoffs/) | Capture runbooks and wave reviews. |
+| [`AGENTS.md`](AGENTS.md) | The constitution: the hard rules above, in full. |
+| [`docs/AGENT_WORKFLOW.md`](docs/AGENT_WORKFLOW.md) · [`docs/SETUP.md`](docs/SETUP.md) | How work moves; machine setup. |
 
 ## License and affiliation
 
-[Apache-2.0](LICENSE). World of Warcraft and Blizzard Entertainment are
-trademarks of Blizzard Entertainment, Inc. wowlab is an independent personal
-project, not affiliated with or endorsed by Blizzard. No game assets or
-Blizzard code are committed here. Security and privacy reports:
-[`SECURITY.md`](SECURITY.md).
+[Apache-2.0](LICENSE). World of Warcraft and Blizzard Entertainment are trademarks of Blizzard Entertainment, Inc. wowlab is an independent personal project, not affiliated with or endorsed by Blizzard. No game assets or Blizzard code are committed here. Security and privacy reports: [`SECURITY.md`](SECURITY.md). This repository previously held a different project, retired on 2026-09-21 (ADR-0025, git tag `bronze-final`).
