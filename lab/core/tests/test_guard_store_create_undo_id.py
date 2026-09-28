@@ -380,12 +380,16 @@ _NOT_THE_CODE_UNDER_TEST = ("_pytest", "pytest", "pluggy", "importlib", "_frozen
 _WRITE_MODE_LETTERS = frozenset("wax+")
 
 
-def _from_the_code_under_test() -> bool:
-    """False when, walking up from the call, a frame of pytest, pluggy or the
-    import system comes before a frame of this file: a lazy import or pytest's
-    own bookkeeping (writing a rewritten test module's `.pyc`, for one), not
-    something the call under test did itself. Every other call counts,
-    including one whose stack never reaches this file."""
+def _from_the_code_under_test(target: Any) -> bool:
+    """False only for a bytecode cache write that is not the call's own:
+    `target` has a `__pycache__` component and, walking up from the call, a
+    frame of pytest, pluggy or the import system comes before a frame of this
+    file (pytest writing a rewritten module's `.pyc`, or the import system
+    caching one). Everything else counts, including a file that a lazily
+    imported module's top-level code creates while the call runs, and a
+    call whose stack never reaches this file."""
+    if "__pycache__" not in Path(_named(target)).parts:
+        return True
     frame = sys._getframe(2)
     while frame is not None:
         if frame.f_globals is globals():  # a frame running this file's code
@@ -419,11 +423,14 @@ def _creating_calls() -> Iterator[list[str]]:
     would hide it from `strict_state`.
 
     The two original hooks record every call, as they always have. The
-    hooks added since skip a call made by pytest or the import system on
-    the way (see `_from_the_code_under_test`), since those are the ones
-    pytest's own `.pyc` writing goes through. An `open` of a file
+    hooks added since skip only a write into a `__pycache__` directory made
+    through pytest or the import system (see `_from_the_code_under_test`),
+    which is how pytest's own `.pyc` writing goes. An `open` of a file
     descriptor rather than a path creates nothing and is not recorded (the
-    `os.open` that made the descriptor is)."""
+    `os.open` that made the descriptor is). Not recorded either: a create
+    that bypasses these names, such as `io.FileIO` or `_io.open` called
+    directly, a Unix socket bound to a path, or a `sqlite3` database file.
+    `strict_state` still sees those, on a volume whose timestamps show it."""
     made: list[str] = []
     real_mkdir, real_open = os.mkdir, os.open
     real_builtin_open, real_io_open = builtins.open, io.open
@@ -444,7 +451,7 @@ def _creating_calls() -> Iterator[list[str]]:
                 not isinstance(file, int)
                 and isinstance(mode, str)
                 and _WRITE_MODE_LETTERS.intersection(mode)
-                and _from_the_code_under_test()
+                and _from_the_code_under_test(file)
             ):
                 made.append(f"{name}({mode!r}) {_named(file)}")
             return real(file, *args, **kwargs)
@@ -459,7 +466,7 @@ def _creating_calls() -> Iterator[list[str]]:
 
         def call(*args: Any, **kwargs: Any) -> Any:
             target = args[where] if len(args) > where else kwargs.get(keyword)
-            if target is not None and _from_the_code_under_test():
+            if target is not None and _from_the_code_under_test(target):
                 made.append(f"{name} {_named(target)}")
             return real(*args, **kwargs)
 
