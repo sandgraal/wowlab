@@ -113,6 +113,7 @@ __all__ = [
     "MAX_NUMBER_CHARS",
     "MAX_STRING_BYTES",
     "SIBLING_PREFIX_BYTES",
+    "SIBLING_READ_LIMIT",
     "Assignment",
     "Entry",
     "KeyStyle",
@@ -683,7 +684,7 @@ _BODY_SQ = re.compile(_SQ_BODY).match
 _BAD_RUN = re.compile(rb"[^ \t\r\n\f\v,;{}\[\]=]+")
 
 
-def _position(data: bytes, offset: int) -> tuple[int, int]:
+def _position(data: bytes | bytearray, offset: int) -> tuple[int, int]:
     """1-based line and byte column of `offset`; CRLF, LFCR, LF and CR each
     end one line (Lua 5.1's `inclinenumber`).
 
@@ -711,7 +712,7 @@ _CR_MASK = bytes(0xFF if b == 0x0D else 0 for b in range(256))
 _LF_MASK = bytes(0xFF if b == 0x0A else 0 for b in range(256))
 
 
-def _mixed_pairs(data: bytes, end: int) -> int:
+def _mixed_pairs(data: bytes | bytearray, end: int) -> int:
     """The number of leftmost-first `\\r\\n|\\n\\r` matches in `data[:end]`.
 
     The pure-CRLF prefix, up to the slice holding the first stray CR or LF,
@@ -737,7 +738,7 @@ def _mixed_pairs(data: bytes, end: int) -> int:
     return pairs
 
 
-def _crlf_prefix(data: bytes, end: int) -> tuple[int, int]:
+def _crlf_prefix(data: bytes | bytearray, end: int) -> tuple[int, int]:
     """Where the pure-CRLF prefix of `data[:end]` ends, as a slice start, and
     the pairs before it.
 
@@ -758,7 +759,7 @@ def _crlf_prefix(data: bytes, end: int) -> tuple[int, int]:
     return begin, pairs
 
 
-def _pairs(data: bytes, begin: int, end: int, even: int) -> tuple[int, bool]:
+def _pairs(data: bytes | bytearray, begin: int, end: int, even: int) -> tuple[int, bool]:
     """Leftmost-first `\\r\\n|\\n\\r` matches in `data[begin:end]`, counted
     from `begin` at C speed, and whether the last byte is the second byte of
     one. `even` has a 1 in the low bit of every even-numbered byte, at least
@@ -793,7 +794,7 @@ _TOKEN_KEEP = 40
 
 
 def _error(
-    data: bytes,
+    data: bytes | bytearray,
     offset: int,
     token: bytes,
     message: str,
@@ -1622,6 +1623,10 @@ _NODE_TYPES = frozenset(_NODES)
 
 # Style detection reads a key or `=` spacing only when it is spaces and tabs,
 # and an indentation only when it is a whole number of one unit per level.
+# A spacing, an indentation unit or an inline empty-table form longer than
+# `_STYLE_TEXT_MAX` bytes counts as not shown, so a hostile document or
+# sibling cannot make every generated line huge.
+_STYLE_TEXT_MAX = 16
 _SPACING_OK = re.compile(rb"[ \t]*+").fullmatch
 _INDENT_OK = re.compile(rb"[ \t]++").fullmatch
 _LINE_BREAK = re.compile(rb"\r\n|\n\r|\r|\n")
@@ -1632,10 +1637,10 @@ _ARRAY_COMMENT = re.compile(rb"--[ \t]*+\[[0-9]++\][ \t]*+").fullmatch
 #: parsed as a prefix (tables still open there are left unclosed); a prefix
 #: the grammar refuses skips the sibling like any unparsable one.
 SIBLING_PREFIX_BYTES = 1 << 16
-# Client-written SavedVariables under `<flavor>/WTF/Account/` (§6.4 amendment
-# 2026-09-27 item 3): account-wide, per account, and per character in either
-# `<Realm>/<Character>` or `<digits>/<First>-<Second>` shape.
-_SIBLING_GLOBS = ("*/SavedVariables.lua", "*/SavedVariables/*.lua", "*/*/*/SavedVariables/*.lua")
+#: At most this many siblings, the newest, are read for style.
+SIBLING_READ_LIMIT = 64
+# At most this many directory entries are examined while listing siblings.
+_SIBLING_SCAN_LIMIT = 1 << 14
 
 # With nothing to read (item 6): the layout every captured file shows. A
 # `[number]` key is written `[n] = ` (item 8).
@@ -1675,35 +1680,59 @@ def serialize(
     edited document keeps the bytes of every node it did not change. A slot
     holding `None` is filled from the detected style (§6.4, amendment
     2026-09-27), property by property: what the document itself shows, else
-    what its sibling SavedVariables show, else the Forever layout (no
-    indentation, no `-- [n]`, CRLF, a leading empty line, `,` after every
-    entry, an empty table as `{` and `}` on two lines, `[n] = `).
-    Indentation and `-- [n]` array comments are decided together: whoever
-    shows either decides both (tab indentation if it shows only comments;
-    comments if it shows an indentation, none if it shows column 0).
+    what its sibling SavedVariables show, else the layout every captured
+    file shows (Forever beta 1.60.1, macOS, 105 of 105 files; the fallback
+    on every flavor, L6: no indentation, no `-- [n]`, CRLF, a leading empty
+    line, `,` after every entry, an empty table as `{` and `}` on two lines,
+    `[n] = `). Indentation and `-- [n]` array comments are decided together:
+    whoever shows either decides both (tab indentation if it shows only
+    comments; comments if it shows an indentation, none if it shows column
+    0). A spacing, indentation unit or inline empty-table form longer than
+    16 bytes counts as not shown.
 
     `target` is the path the bytes are meant for (it need not exist); it is
-    only a place to look from. The siblings are the client-written
-    `WTF/Account/*/SavedVariables.lua`, `WTF/Account/*/SavedVariables/*.lua`
-    and `WTF/Account/*/*/*/SavedVariables/*.lua` of the flavor folder whose
-    `WTF/Account` holds `target`; never the target, a `*.lua.bak`, a file in
-    another flavor folder or outside `WTF/Account`, and never a path in
-    `lab_written` (the files the guard journal records as last written by
-    the Lab), compared after `Path.resolve()`. For each property the most
-    recently modified sibling that shows it decides, ties going to the
-    lowest byte-wise path relative to the flavor folder. Siblings are only
-    read, at most `SIBLING_PREFIX_BYTES` of each, and only when a slot
-    needs them; one that cannot be read or parsed is skipped.
+    only a place to look from. The flavor folder is the one above the
+    nearest `WTF/Account` in `target`, matched with case folded as `layout`
+    does (macOS and Windows installs are case-insensitive), found from the
+    absolute path without following links. The siblings are the
+    client-written `WTF/Account/*/SavedVariables.lua`,
+    `WTF/Account/*/SavedVariables/*.lua` and
+    `WTF/Account/*/*/*/SavedVariables/*.lua` of that folder, names matched
+    with case folded (links are not followed); never the target, a
+    `*.lua.bak`, a file in another flavor folder or outside `WTF/Account`,
+    and never a file in `lab_written` (the files the guard journal records
+    as last written by the Lab). A file is the target or in `lab_written`
+    when it is the same file (`st_dev`, `st_ino`), whatever its spelling; a
+    path that does not exist is compared after `Path.resolve()`. For each
+    property the most recently modified sibling that shows it decides, ties
+    going to the lowest byte-wise path relative to the flavor folder.
+    Siblings are only read, at most `SIBLING_PREFIX_BYTES` of each and at
+    most the `SIBLING_READ_LIMIT` (64) newest, and only when a slot needs
+    them; one that cannot be read or parsed is skipped, so a flavor folder
+    with no readable sibling falls back silently. Listing stops after 16384
+    directory entries.
 
     Positions: a new entry goes on its own line (the line ending plus one
     indentation unit per level); after a new positional entry that ends its
-    line, `-- [n]` when the layout has array comments. To append to a parsed
-    table set its `close_lead` to `None`: the old last entry's
-    `Entry.comment`, whose bytes were in that `close_lead`, is written after
-    its separator with one space, and own-line comments that stood before
-    the old `}` go with it. A comment is written after an entry only when
-    the slot after the entry is generated too. Nodes are laid out by where
+    line, `-- [n]` when the layout has array comments, `n` counting the
+    positional entries up to it. To append to a parsed table, set its
+    `close_lead` to `None`: the old last entry's `Entry.comment`, whose
+    bytes were in that `close_lead`, is written after its separator with one
+    space, and own-line comments that stood before the old `}` are dropped
+    with that `close_lead`. To insert before a parsed entry, or to delete the
+    entry before it, set that following entry's `lead` to `None` as well:
+    its `lead` holds the previous entry's trailing comment, which is then
+    written after the previous entry instead. An `Entry.comment` is written
+    only when the slot after its entry is generated; a given slot already
+    holds those bytes. The `-- [n]` of untouched entries is not renumbered;
+    the client rewrites it at its next write. Nodes are laid out by where
     they are placed, never by object identity.
+
+    Number text is written as given; the client loads it as a Lua 5.1
+    double, so an integer beyond 2^53 or a text with more than 17
+    significant digits loads as a different value. The client has been seen
+    writing only decimal integers and floats with at most 16 significant
+    digits (LAB_FORMATS §4 amendments).
 
     Data only (L3 for writes): `LuaDataError` (`LuaLimitError` for a bound)
     when a given trivia slot holds anything but whitespace and `--` line
@@ -1712,13 +1741,15 @@ def serialize(
     before another entry), `Entry.comment` is not one line comment, a
     `raw`, key or name is not a literal the parser accepts, a `nil` is
     inside a table, an empty lead would join a name to the value before it,
-    a node is not of the model's types, tables nest deeper than `MAX_DEPTH`,
-    or the output would be over `MAX_FILE_BYTES`. `line` and `column` give
-    where the refused bytes would start in the output built so far (a
-    refused `Entry.comment` at its `--`, a refused `nil` at `nil`), and
-    `token` holds at most the first 40 bytes of the refused slot. The
-    `MAX_COST` parse budget is not re-checked: a document edited far past a
-    parsed one's size may serialize to bytes `parse` refuses as over budget.
+    a node or slot is not exactly of the model's types (no subclasses of
+    `bytes` or `str`), tables nest deeper than `MAX_DEPTH`, or the output
+    grows over `MAX_FILE_BYTES` or certainly over the `MAX_COST` parse
+    budget (both checked as it is built). `line` and `column` give where the
+    refused bytes would start in the output built so far (a refused
+    `Entry.comment` at its `--`, a refused `nil` at `nil`), and `token`
+    holds at most the first 40 bytes of the refused slot. Finally the output
+    is parsed; anything `parse` refuses (the `MAX_COST` budget among it) is
+    refused with the parser's error, positioned in the output.
     """
     return _Writer(_Style(document, target, lab_written)).document(document)
 
@@ -1731,11 +1762,19 @@ def _token(value: object) -> bytes:
 class _Writer:
     """Lays out one document into `buf`, checking every slot it writes."""
 
-    __slots__ = ("buf", "known", "numbers", "strings", "style")
+    __slots__ = ("budget", "buf", "entries", "known", "limit", "numbers", "strings", "style")
 
     def __init__(self, style: _Style) -> None:
         self.buf = bytearray()
         self.style = style
+        # The output bound and the parse budget, read when the call starts.
+        # Every table entry costs the parser at least `_C_SHARED` on top of
+        # the input buffer, so `len(buf) + entries * _C_SHARED` over
+        # `MAX_COST` means `parse` would refuse the output: refuse it here,
+        # before building the rest.
+        self.limit = MAX_FILE_BYTES
+        self.budget = MAX_COST
+        self.entries = 0
         # Short given trivia slots, string literals and number texts already
         # checked (the parser shares them, so a big document checks each
         # distinct one once), each bounded to `_SHARE_LIMIT` items.
@@ -1746,11 +1785,22 @@ class _Writer:
     def refuse(
         self, token: bytes, message: str, cls: type[LuaDataError] = LuaDataError
     ) -> NoReturn:
-        data = bytes(self.buf)
-        raise _error(data, len(data), token, message, cls)
+        buf = self.buf  # positioned in place: the output is never copied to refuse it
+        raise _error(buf, len(buf), token, message, cls)
+
+    def check_size(self) -> None:
+        """Refuse as soon as the output built so far is over `MAX_FILE_BYTES`,
+        or certain to be over the parse budget."""
+        size = len(self.buf)
+        if size > self.limit:
+            self.refuse(b"", f"output over the {self.limit}-byte bound", LuaLimitError)
+        if size + self.entries * _C_SHARED > self.budget:
+            self.refuse(
+                b"", f"output over the parse budget of {self.budget} (MAX_COST)", LuaLimitError
+            )
 
     def trivia(self, slot: object, what: str) -> None:
-        if not isinstance(slot, bytes):
+        if type(slot) is not bytes:  # exactly bytes: a subclass could fake the membership test
             self.refuse(_token(slot), f"{what} is {type(slot).__name__}, not bytes or None")
         if slot not in self.known:
             if _SLOT_OK(slot) is None:
@@ -1764,7 +1814,7 @@ class _Writer:
         self.buf += slot
 
     def name(self, name: object, what: str) -> bytes:
-        if isinstance(name, str):
+        if type(name) is str:
             text = name.encode("utf-8", "backslashreplace")
             if name.isascii() and _NAME_OK(text) is not None:
                 return text
@@ -1776,7 +1826,7 @@ class _Writer:
         buf = self.buf
         if isinstance(value, LuaString):
             raw = value.raw
-            if not isinstance(raw, bytes):
+            if type(raw) is not bytes:
                 self.refuse(_token(raw), "a LuaString's raw is bytes")
             if len(raw) - 2 > MAX_STRING_BYTES:
                 self.refuse(
@@ -1791,7 +1841,7 @@ class _Writer:
             buf += raw
         elif isinstance(value, LuaNumber):
             number = value.raw
-            if not isinstance(number, str):
+            if type(number) is not str:
                 self.refuse(_token(number), "a LuaNumber's raw is str")
             text = number.encode("utf-8", "backslashreplace")
             if len(text) > MAX_NUMBER_CHARS:
@@ -1859,20 +1909,34 @@ class _Writer:
                 self.table(value, 1)
             else:
                 self.scalar(value, allow_nil=True)
+            self.check_size()
         tail = document.tail
         if tail is None:
             buf += style.eol()
-        elif not isinstance(tail, bytes) or _TAIL_OK(tail) is None:
+        elif type(tail) is not bytes or _TAIL_OK(tail) is None:
             self.refuse(
-                tail if isinstance(tail, bytes) else _token(tail),
+                tail if type(tail) is bytes else _token(tail),
                 "the document's tail holds something other than whitespace and `--` line "
                 "comments (L3)",
             )
         else:
             buf += tail
-        if len(buf) > MAX_FILE_BYTES:
-            self.refuse(b"", f"output over the {MAX_FILE_BYTES}-byte bound", LuaLimitError)
-        return bytes(buf)
+        self.check_size()
+        out = bytes(buf)
+        buf.clear()
+        # Item 2: the output is parsed, so what `parse` refuses (the `MAX_COST`
+        # budget among it, one cost model) is refused here too.
+        try:
+            parse(out)
+        except LuaDataError as exc:
+            raise type(exc)(
+                f"the serialized output does not parse: {exc.message}",
+                line=exc.line,
+                column=exc.column,
+                token=exc.token,
+                offset=exc.offset,
+            ) from exc
+        return out
 
     def table(self, table: LuaTable, depth: int) -> None:
         """`{`, the entries, the closing bytes and `}` of a table at `depth`
@@ -1985,12 +2049,15 @@ class _Writer:
                 sep = style.sep()
             elif type(sep) is not bytes or sep not in _SEPARATORS:
                 self.refuse(
-                    sep if isinstance(sep, bytes) and sep else _token(sep),
+                    sep if type(sep) is bytes and sep else _token(sep),
                     "a separator is `,`, `;` or empty",
                 )
             elif not sep and index < last:
                 self.refuse(b"", "an entry followed by another needs a separator")
             buf += sep
+            self.entries += 1
+            if len(buf) > self.limit or len(buf) + self.entries * _C_SHARED > self.budget:
+                self.check_size()
             comment = entry.comment
             if comment is None and (lead is not None or kind is not _P):
                 continue
@@ -2003,9 +2070,9 @@ class _Writer:
                 after = close_lead
             if comment is not None:
                 buf += b" "  # where the comment goes, so a refusal points at its `--`
-                if not isinstance(comment, bytes) or _COMMENT_OK(comment) is None:
+                if type(comment) is not bytes or _COMMENT_OK(comment) is None:
                     self.refuse(
-                        comment if isinstance(comment, bytes) else _token(comment),
+                        comment if type(comment) is bytes else _token(comment),
                         "an Entry.comment is one `--` line comment with no line break",
                     )
                 if after is None:
@@ -2160,7 +2227,7 @@ def _walk(document: object, shown: _Shown) -> Iterator[None]:
 
     def eol(slot: object) -> None:
         nonlocal progress
-        if "eol" not in found and isinstance(slot, bytes):
+        if "eol" not in found and type(slot) is bytes:
             m = _LINE_BREAK.search(slot)
             if m is not None:
                 found["eol"] = m.group()
@@ -2168,7 +2235,12 @@ def _walk(document: object, shown: _Shown) -> Iterator[None]:
 
     def spacing(key: object, slot: object) -> None:
         nonlocal progress
-        if key not in found and isinstance(slot, bytes) and _SPACING_OK(slot) is not None:
+        if (
+            key not in found
+            and type(slot) is bytes
+            and len(slot) <= _STYLE_TEXT_MAX
+            and _SPACING_OK(slot) is not None
+        ):
             found[key] = slot
             progress += 1
 
@@ -2176,9 +2248,14 @@ def _walk(document: object, shown: _Shown) -> Iterator[None]:
         return
     assignments: tuple[object, ...] | list[object] = document.assignments
     first = assignments[0] if assignments else None
-    if isinstance(first, Assignment) and isinstance(first.lead, bytes):
+    if isinstance(first, Assignment) and type(first.lead) is bytes:
         found["blank"] = first.lead[:1] in (b"\r", b"\n")
     seen = -1
+    # Tables already walked, by identity: only style detection uses this, so
+    # a document that places one table many times (the parser never shares
+    # tables; a caller may) is walked once per distinct table, not once per
+    # place (which doubles per level of nesting).
+    walked: set[int] = set()
     for assignment in assignments:
         if not isinstance(assignment, Assignment):
             continue
@@ -2192,8 +2269,9 @@ def _walk(document: object, shown: _Shown) -> Iterator[None]:
         if progress != seen:
             seen = progress
             yield
-        if not isinstance(value, LuaTable):
+        if not isinstance(value, LuaTable) or id(value) in walked:
             continue
+        walked.add(id(value))
         work: list[tuple[LuaTable, int, int]] = [(value, 1, 0)]
         while work:
             table, depth, index = work.pop()
@@ -2223,7 +2301,7 @@ def _walk(document: object, shown: _Shown) -> Iterator[None]:
                         eol(entry.eq_lead)
                     eol(child_lead)
                     eol(entry.sep_lead)
-                if isinstance(lead, bytes):
+                if type(lead) is bytes:
                     if shown.indent is None:
                         cut = max(lead.rfind(b"\n"), lead.rfind(b"\r"))
                         run = lead[cut + 1 :]
@@ -2233,7 +2311,7 @@ def _walk(document: object, shown: _Shown) -> Iterator[None]:
                             shown.indent = b""
                         elif _INDENT_OK(run) is not None and len(run) % depth == 0:
                             unit = run[: len(run) // depth]
-                            if unit * depth == run:
+                            if len(unit) <= _STYLE_TEXT_MAX and unit * depth == run:
                                 shown.indent = unit
                         if shown.indent is not None:
                             progress += 1
@@ -2241,7 +2319,7 @@ def _walk(document: object, shown: _Shown) -> Iterator[None]:
                         comment = entry.comment
                         if comment is None:
                             shown.comments = False
-                        elif isinstance(comment, bytes) and _ARRAY_COMMENT(comment) is not None:
+                        elif type(comment) is bytes and _ARRAY_COMMENT(comment) is not None:
                             shown.comments = True
                         if shown.comments is not None:
                             progress += 1
@@ -2270,7 +2348,8 @@ def _walk(document: object, shown: _Shown) -> Iterator[None]:
                         and shown.comments is not None
                     ):
                         return
-                if isinstance(child, LuaTable) and depth < MAX_DEPTH:
+                if isinstance(child, LuaTable) and depth < MAX_DEPTH and id(child) not in walked:
+                    walked.add(id(child))
                     work.append((table, depth, index))
                     work.append((child, depth + 1, 0))
                     descended = True
@@ -2279,11 +2358,11 @@ def _walk(document: object, shown: _Shown) -> Iterator[None]:
                 continue
             close = table.close_lead
             eol(close)
-            if not entries and "empty" not in found and isinstance(close, bytes):
+            if not entries and "empty" not in found and type(close) is bytes:
                 if _LINE_BREAK.search(close) is not None:
                     found["empty"] = None
                     progress += 1
-                elif _SPACING_OK(close) is not None:
+                elif len(close) <= _STYLE_TEXT_MAX and _SPACING_OK(close) is not None:
                     found["empty"] = close
                     progress += 1
             if progress != seen:
@@ -2292,64 +2371,173 @@ def _walk(document: object, shown: _Shown) -> Iterator[None]:
     eol(document.tail)
 
 
-def _flavor_folder(target: Path) -> Path | None:
-    """The folder holding the nearest `WTF/Account` above `target`."""
+def _account_folder(target: Path) -> tuple[Path, Path] | None:
+    """(the flavor folder, its `WTF/Account` folder) for the nearest
+    `WTF/Account` above `target`, names compared with case folded (macOS and
+    Windows installs are case-insensitive), both spelled as in `target`."""
     parts = target.parts
     for i in range(len(parts) - 2, 0, -1):
-        if parts[i] == "WTF" and parts[i + 1] == "Account":
-            return Path(*parts[:i])
+        if parts[i].casefold() == "wtf" and parts[i + 1].casefold() == "account":
+            return Path(*parts[:i]), Path(*parts[: i + 2])
     return None
+
+
+def _file_id(path: str | os.PathLike[str]) -> tuple[int, int] | None:
+    """(`st_dev`, `st_ino`) of an existing file, or `None`."""
+    try:
+        info = Path(path).stat()
+    except (OSError, ValueError):
+        return None
+    return (info.st_dev, info.st_ino) if info.st_ino else None
 
 
 def _sibling_paths(
     target: str | os.PathLike[str], lab_written: Iterable[str | os.PathLike[str]]
 ) -> list[Path]:
-    """The sibling files of `target`, resolved, newest first; equal times in
-    byte-wise order of the path relative to the flavor folder."""
+    """The sibling files of `target`, newest first (equal times in byte-wise
+    order of the path relative to the flavor folder), at most
+    `SIBLING_READ_LIMIT` of them.
+
+    The flavor folder is found from the absolute path of `target` without
+    following links, so a `WTF` that is a link (to a sync folder, say) still
+    counts as this flavor's. A file is the target or in `lab_written` when
+    it is the same file (`st_dev`, `st_ino`), whatever its spelling; a path
+    that does not exist is compared after `Path.resolve()`."""
     try:
-        target_path = Path(target).resolve()
-    except (OSError, RuntimeError, ValueError):
+        target_path = Path(os.path.normpath(Path(target).absolute()))
+    except (TypeError, ValueError):
         return []
-    flavor = _flavor_folder(target_path)
-    if flavor is None:
+    folders = _account_folder(target_path)
+    if folders is None:
         return []
-    account = flavor / "WTF" / "Account"
-    skip = {target_path}
-    for written in lab_written:
+    flavor, account = folders
+    skip_ids: set[tuple[int, int]] = set()
+    skip_paths: set[Path] = set()
+    for path in (target_path, *lab_written):
+        identity = _file_id(path)
+        if identity is not None:
+            skip_ids.add(identity)
+            continue
         try:
-            skip.add(Path(written).resolve())
+            skip_paths.add(Path(path).resolve())
         except (OSError, RuntimeError, TypeError, ValueError):
             continue
     ranked: list[tuple[int, bytes, Path]] = []
-    for pattern in _SIBLING_GLOBS:
+    for path in _list_siblings(account):
         try:
-            matches = list(account.glob(pattern))
-        except OSError:
+            info = path.stat(follow_symlinks=False)
+        except (OSError, ValueError):
             continue
-        for path in matches:
+        if not stat.S_ISREG(info.st_mode):
+            continue
+        if info.st_ino and (info.st_dev, info.st_ino) in skip_ids:
+            continue
+        if skip_paths:
             try:
-                real = path.resolve()
-                if real in skip or not real.is_relative_to(account):
+                if path.resolve() in skip_paths:
                     continue
-                info = real.stat()
             except (OSError, RuntimeError, ValueError):
                 continue
-            if not stat.S_ISREG(info.st_mode):
-                continue
-            order = os.fsencode(path.relative_to(flavor).as_posix())
-            ranked.append((-info.st_mtime_ns, order, real))
+        order = os.fsencode(path.relative_to(flavor).as_posix())
+        ranked.append((-info.st_mtime_ns, order, path))
     ranked.sort(key=lambda item: (item[0], item[1]))
-    return [real for _time, _order, real in ranked]
+    return [path for _time, _order, path in ranked[:SIBLING_READ_LIMIT]]
+
+
+def _list_siblings(account: Path) -> list[Path]:
+    """Candidate sibling files under `account` (`<flavor>/WTF/Account`):
+    `*/SavedVariables.lua`, `*/SavedVariables/*.lua` and
+    `*/*/*/SavedVariables/*.lua`, names matched with case folded. Directory
+    and file links are not followed. At most `_SIBLING_SCAN_LIMIT` directory
+    entries are examined in all; past that, the rest is not listed."""
+    found: list[Path] = []
+    left = _SIBLING_SCAN_LIMIT
+
+    def entries(folder: str | Path) -> list[os.DirEntry[str]]:
+        nonlocal left
+        listed: list[os.DirEntry[str]] = []
+        if left <= 0:
+            return listed
+        try:
+            with os.scandir(folder) as it:
+                for entry in it:
+                    left -= 1
+                    if left < 0:
+                        break
+                    listed.append(entry)
+        except OSError:
+            pass
+        return listed
+
+    def is_dir(entry: os.DirEntry[str]) -> bool:
+        try:
+            return entry.is_dir(follow_symlinks=False)
+        except OSError:
+            return False
+
+    def is_file(entry: os.DirEntry[str]) -> bool:
+        try:
+            return entry.is_file(follow_symlinks=False)
+        except OSError:
+            return False
+
+    def lua_files(folder: str) -> None:
+        for entry in entries(folder):
+            if entry.name.casefold().endswith(".lua") and is_file(entry):
+                found.append(Path(entry.path))
+
+    for per_account in entries(account):
+        if not is_dir(per_account):
+            continue
+        for child in entries(per_account.path):
+            name = child.name.casefold()
+            if name == "savedvariables.lua":
+                if is_file(child):
+                    found.append(Path(child.path))
+            elif name == "savedvariables":
+                if is_dir(child):
+                    lua_files(child.path)
+            elif is_dir(child):  # a realm, or the Forever `<digits>` folder
+                for character in entries(child.path):
+                    if not is_dir(character):
+                        continue
+                    for folder in entries(character.path):
+                        if folder.name.casefold() == "savedvariables" and is_dir(folder):
+                            lua_files(folder.path)
+    return found
 
 
 def _read_sibling(path: Path) -> LuaDocument | None:
     """A sibling's document, from at most `SIBLING_PREFIX_BYTES` of it, or
-    `None` when it cannot be read or does not parse. Read-only (L1)."""
+    `None` when it cannot be read, is not a regular file or does not parse.
+    Opened read-only, without following a link and without blocking (a FIFO
+    is refused, not waited on), then checked on the open descriptor (L1)."""
     try:
-        with path.open("rb") as handle:
-            data = handle.read(SIBLING_PREFIX_BYTES + 1)
+        fd = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_BINARY", 0),
+        )
+    except (OSError, ValueError):
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        chunks: list[bytes] = []
+        left = SIBLING_PREFIX_BYTES + 1
+        while left > 0:
+            chunk = os.read(fd, left)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            left -= len(chunk)
     except OSError:
         return None
+    finally:
+        os.close(fd)
+    data = b"".join(chunks)
     try:
         if len(data) <= SIBLING_PREFIX_BYTES:
             return parse(data)
