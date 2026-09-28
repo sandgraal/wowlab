@@ -693,6 +693,30 @@ def test_a_store_inside_any_install_is_refused_before_anything_is_created_constr
     assert sorted(p.name for p in other.iterdir()) == [marker]
 
 
+def test_the_inside_any_install_rule_is_guards_own_constructed(
+    source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M10-17: `snapshot` keeps no copy of the rule; its store check is
+    `guard`'s, so the two cannot drift apart. A refusal from guard's rule is a
+    `StoreLocationError` here, raised before anything is created."""
+    from wowlab_core import guard
+
+    calls: list[tuple[Path, str]] = []
+
+    def refuse(path: Path, what: str) -> Path:
+        calls.append((path, what))
+        raise guard.GuardError(f"{what} {path} is inside an install (constructed)")
+
+    monkeypatch.setattr(guard, "_refuse_inside_any_install", refuse)
+    store = SnapshotStore(tmp_path / "ud" / "store")
+    with pytest.raises(StoreLocationError, match="inside an install") as caught:
+        store.create(source, SUBTREES, now=T0)
+    assert isinstance(caught.value.__cause__, guard.GuardError)
+    assert calls == [(store.path, "the store")]
+    assert not (tmp_path / "ud").exists()
+    assert not hasattr(snapshot, "_INSTALL_MARKERS"), "no second copy of the markers"
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
 def test_a_symlinked_store_inside_the_source_is_still_refused(source: Path, tmp_path: Path) -> None:
     alias = tmp_path / "alias"

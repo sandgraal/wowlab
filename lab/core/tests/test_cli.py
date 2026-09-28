@@ -867,6 +867,52 @@ def test_undo_refuses_when_the_journal_changed_after_the_plan_was_shown(
     assert (flavor / "WTF" / "constructed.txt").read_bytes() == b"x"
 
 
+def test_undo_passes_the_shown_id_so_a_change_after_the_re_read_is_refused(
+    root: Path, flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M10-17: `undo` hands the gate the id of the record it showed, so a
+    transaction journaled after the CLI's own re-read (in the window before
+    the gate holds its store lock) is refused by the gate, exit 3, with
+    nothing undone."""
+    a = _create("a")
+    _edit_syndicator(
+        flavor, b'"show_tooltips_on_shift"] = false', b'"show_tooltips_on_shift"] = true'
+    )
+    ok("snap", "restore", a.id, "--yes")
+    (shown,) = guard.history()
+    (discovered,) = install.read_install(root).flavors
+    real_history = guard.history
+    calls: list[int] = []
+
+    def history_then_commit(*args: Any, **kwargs: Any) -> tuple[guard.HistoryRecord, ...]:
+        records = real_history(*args, **kwargs)
+        calls.append(len(records))
+        if len(calls) == 2:  # the CLI's re-read after the prompt: commit behind it
+            with guard.transaction(discovered, label="constructed") as tx:
+                tx.write("WTF/constructed.txt", b"x")
+        return records
+
+    expected: list[str | None] = []
+    real_undo = guard.undo
+
+    def undo_spy(**kwargs: Any) -> None:
+        expected.append(kwargs.get("expected_id"))
+        real_undo(**kwargs)
+
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(guard, "history", history_then_commit)
+        patched.setattr(guard, "undo", undo_spy)
+        result = run("undo", "--yes")
+    assert expected == [shown.id]
+    assert result.exit_code == 3
+    assert "refused by the write gate" in result.stderr
+    assert shown.id in result.stderr
+    records = guard.history()
+    assert [r.label for r in records][-1] == "constructed", "no undo was journaled"
+    assert (flavor / "WTF" / "constructed.txt").read_bytes() == b"x"
+    assert b'"show_tooltips_on_shift"] = false' in (flavor / SYNDICATOR).read_bytes()
+
+
 def test_restore_named_paths(root: Path, flavor: Path) -> None:
     a = _create("a")
     _edit_syndicator(
@@ -1119,19 +1165,40 @@ def _gc_during_create(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     return during
 
 
-def test_the_first_snap_create_runs_unlocked_and_gc_keeps_its_young_objects(
+def test_the_first_snap_create_holds_the_store_lock(
     root: Path, user_data: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Security review 1, as fix round 2 leaves it: with no store yet, `snap
-    create` cannot take `guard.store_lock` (it never creates a store), so a gc
-    can run in the middle of it; the gc grace period keeps the new objects."""
+    """M10-17 (security review 1 of M10-14): with no store yet, `snap create`
+    makes it through `guard.store_lock(create=True)` and holds its lock, so a
+    gc in the middle of it is refused like one during any later create."""
     assert not (user_data / "store").exists()
-    during = _gc_during_create(monkeypatch)
-    ok("snap", "create")
-    monkeypatch.undo()
+    # A context, not `monkeypatch.undo()`, which would also drop the user
+    # data redirection and send the checks below to the real store.
+    with pytest.MonkeyPatch.context() as patched:
+        during = _gc_during_create(patched)
+        ok("snap", "create")
+    (gc,) = during
+    assert gc.exit_code == 3, "the gc was refused by the store lock"
+    assert (user_data / "store" / "lock").is_file()
+    assert _json(VerifyReport, "snap", "verify").ok
+
+
+def test_gc_grace_keeps_the_young_objects_of_an_unlocked_library_create(
+    root: Path, user_data: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Defence in depth kept by M10-17: a library caller of
+    `SnapshotStore.create` holds no store lock, so a gc can run in the middle
+    of it; `GC_GRACE_SECONDS` keeps the objects it has stored so far."""
+    (discovered,) = install.read_install(root).flavors
+    with pytest.MonkeyPatch.context() as patched:
+        during = _gc_during_create(patched)
+        made = SnapshotStore(user_data / "store").create(
+            root, [f"{discovered.folder}/WTF"], label="library, unlocked"
+        )
     (gc,) = during
     assert gc.exit_code == 0, "unlocked: the gc ran"
     assert GcReport.model_validate_json(gc.stdout).removed == ()
+    assert [m.id for m in SnapshotStore(user_data / "store").list()] == [made.id]
     assert _json(VerifyReport, "snap", "verify").ok
 
 
@@ -1139,9 +1206,9 @@ def test_a_later_snap_create_holds_the_store_lock(
     root: Path, user_data: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _create("first")
-    during = _gc_during_create(monkeypatch)
-    ok("snap", "create")
-    monkeypatch.undo()
+    with pytest.MonkeyPatch.context() as patched:
+        during = _gc_during_create(patched)
+        ok("snap", "create")
     (gc,) = during
     assert gc.exit_code == 3, "the gc was refused by the store lock"
     assert _json(VerifyReport, "snap", "verify").ok
@@ -1164,8 +1231,10 @@ def test_a_user_data_dir_linked_into_an_install_creates_nothing_there_constructe
     monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: link / "wowlab")
     before = _tree_names(root)
     result = run("snap", "create")
-    assert result.exit_code == 1
-    assert "must not contain each other" in result.stderr
+    # M10-17: the first create goes through `guard.store_lock(create=True)`,
+    # so the refusal is the gate's (exit 3), before anything is created.
+    assert result.exit_code == 3
+    assert "is inside an install" in result.stderr
     assert run("snap", "gc", "--yes").exit_code == 0  # no store: nothing to collect
     assert _tree_names(root) == before
 
@@ -1183,7 +1252,7 @@ def test_home_inside_an_install_creates_nothing_there_constructed(
     assert root in platformdirs.user_data_path("wowlab").parents
     before = _tree_names(root)
     result = run("snap", "create")
-    assert result.exit_code == 1
+    assert result.exit_code == 3  # refused by the gate's store_lock(create=True) (M10-17)
     assert _tree_names(root) == before
 
 
@@ -1197,7 +1266,7 @@ def test_a_user_data_dir_inside_another_install_creates_nothing_there_constructe
     monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: inside)
     before = _tree_names(other)
     result = run("snap", "create")
-    assert result.exit_code == 1
+    assert result.exit_code == 3  # refused by the gate's store_lock(create=True) (M10-17)
     assert "is inside an install" in result.stderr
     assert _tree_names(other) == before
 
