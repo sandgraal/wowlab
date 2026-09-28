@@ -746,6 +746,14 @@ purpose=...)` by `profiles.save`); when it is `None` it is left out of the
 manifest file, so every manifest without one is byte-for-byte as before.
 Like the label, it is not in the fingerprint.
 
+*Amended 2026-09-28 (M11-11, #107):* every read of a store file (objects,
+manifests, the manifest already at an id) and every file `create` captures
+goes through one helper that opens with `O_NOFOLLOW`, `O_NONBLOCK` and
+`O_NOCTTY` where the platform has them, requires `fstat` to show a regular
+file, and reads a bounded length; a linked or non-regular store file is
+refused (a linked object is never reused), and a FIFO swapped in during a
+read can no longer block. Capping how far an object inflates is M11-15.
+
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 
 The only module that writes into an install (L2, ADR-0021).
@@ -971,7 +979,13 @@ wowlab log tail [--follow]
 wowlab snap create [-m LABEL] | list | show ID | diff A B | verify | gc
 wowlab snap restore ID [--paths …] [--dry-run] [--yes]
 wowlab undo
+wowlab profile save|apply|list|show|delete …         # §13.3 (M11-08)
+wowlab addon install|remove lab [--dry-run] [--yes]  # §13.1 (M11-02)
+wowlab looks races|options|save|show|compare|page …  # §13.2 (M11-06, M11-07)
 ```
+
+*Amended 2026-09-28:* the Wave 2 commands above are listed for
+completeness; their behaviour is specified in §13.
 
 `--flavor` selects a flavor when more than one is installed; with exactly one
 it is implied. Every command that prints data has `--json`. Exit codes:
