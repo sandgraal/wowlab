@@ -211,7 +211,6 @@ def _run(
         assert _tree(flavor.path) == expected, "nothing is written into the install"
 
 
-@pytest.mark.xfail(strict=True, reason="pre-write snapshot read blocks on a FIFO (M11-11 scope)")
 @pytest.mark.parametrize("op", ["constructed-transaction", "constructed-undo"])
 def test_fifo_swapped_in_at_the_pre_write_snapshot_read_does_not_block(
     op: str, guard: Any, flavor: Any, store: Any, idle: None, monkeypatch: pytest.MonkeyPatch

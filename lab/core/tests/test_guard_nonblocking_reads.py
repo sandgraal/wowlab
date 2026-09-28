@@ -539,7 +539,6 @@ def _case_params(cases: Iterable[str]) -> list[Any]:
     return [pytest.param(c, id=f"constructed-{c}") for c in cases]
 
 
-@pytest.mark.xfail(strict=True, reason="M11-11 not implemented")
 @pytest.mark.parametrize("case_id", _case_params(CASES))
 def test_constructed_fifo_swapped_in_between_the_walk_and_the_open_is_refused_without_blocking(
     case_id: str,
@@ -623,7 +622,6 @@ def test_constructed_fifo_in_place_before_the_operation_is_refused_as_not_a_regu
 # ─── capture reads: SnapshotStore.create ─────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M11-11 not implemented")
 @pytest.mark.parametrize(
     "purpose",
     [
@@ -692,7 +690,6 @@ def _plant_object(store: SnapshotStore, digest: str, kind: str, elsewhere: Path)
     return obj
 
 
-@pytest.mark.xfail(strict=True, reason="M11-11 not implemented")
 @pytest.mark.parametrize("op", [pytest.param(k, id=f"constructed-{k}") for k in STORE_OPS])
 def test_constructed_object_that_is_a_fifo_is_refused_without_blocking(
     op: str, guard: Any, flavor: Flavor, store: SnapshotStore, idle: None, tmp_path: Path
@@ -711,7 +708,6 @@ def test_constructed_object_that_is_a_fifo_is_refused_without_blocking(
         assert record_for(guard, store, LABEL).state != "committed"
 
 
-@pytest.mark.xfail(strict=True, reason="M11-11 not implemented")
 @pytest.mark.parametrize("op", [pytest.param(k, id=f"constructed-{k}") for k in STORE_OPS])
 def test_constructed_object_that_is_a_symlink_is_not_followed(
     op: str, guard: Any, flavor: Flavor, store: SnapshotStore, idle: None, tmp_path: Path
@@ -782,7 +778,6 @@ JOURNAL_SWAPS = [
 ]
 
 
-@pytest.mark.xfail(strict=True, reason="M11-11 not implemented")
 @pytest.mark.parametrize(("kind", "op"), JOURNAL_SWAPS)
 def test_constructed_journal_record_swapped_before_its_open_is_refused(
     kind: str,
