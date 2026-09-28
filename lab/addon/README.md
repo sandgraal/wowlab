@@ -23,6 +23,9 @@ capture shows which data is account-wide.
   holds a number.
 - No names, realms, GUIDs, guild or chat of anyone, no text the owner typed,
   no Battle.net identity, no wall-clock time. Every unit token is `"player"`.
+  A crafted item's link can carry the crafter's player GUID
+  (`Player-<id>-<hex>`); every such run is blanked before the link is stored
+  and the slot records `crafter_removed = true`.
 - Availability is tested per API function, never by `WOW_PROJECT_ID`, the
   interface number or the flavor. A section the client cannot provide is
   `{ absent = "<reason>" }`.
@@ -32,15 +35,16 @@ capture shows which data is account-wide.
 ```
 WowLabCharDB = {
   schema = 1,
-  probe = { loads = <n>, lost = true? },      -- the only state kept across sessions
+  probe = { loads = <n>, lost = true? },      -- carried across sessions, with customization; lost: this load only
   client = { version, build, interface },     -- GetBuildInfo(); its date is not kept
   spec = { index, id?, api } | { absent },
-  gear = { first_slot, last_slot, slots = { { slot, link, item_level, item_level_api } }, average = { overall, equipped, pvp } },
+  gear = { first_slot, last_slot, slots = { { slot, link, crafter_removed, item_level, item_level_api } },
+          average = { overall (best items owned, bags included), equipped (the character-sheet figure), pvp } },
   talents = {
     class = { config = <config>, export, last_selected_config | last_selected_config_absent },
     legacy = { legacy_ui, player_level, skipped_types, configs = { <config + found_by> } },
   },
-  customization = { as_of, recorded_at = "open"|"applied", choices = { { option, choice_index, choice } }, race_id, sex, chr_model_id },
+  customization = { as_of, recorded_at = "open"|"applied", recorded_load, carried = true?, choices = {…}, race_id, sex, chr_model_id }, -- kept across sessions until the next visit
   collections = {
     mounts = { collected, filtered = false },
     toys = { collected, filtered = true, filter = { collected_shown, uncollected_shown, unusable_shown } },
@@ -50,8 +54,40 @@ WowLabCharDB = {
   currencies = { list = { { id, quantity, max_quantity, max_weekly_quantity, earned_this_week, can_earn_per_week, total_earned, use_total_earned_for_max, account_wide } }, filtered = true, headers_collapsed, filter },
   professions = { list = { { position, skill_line, rank, max_rank, modifier } } },
 }
-<config> = { id, type, trees = { { id, system_id, currencies = { { id, quantity, max_quantity, spent } }, nodes = { { id, ranks_purchased, active_rank, current_rank, max_ranks, entries, sub_tree, active_entry, active_entry_rank } } } } }
+<config> = { id, type, trees = { { id, system_id, currencies = { { id, quantity, max_quantity, spent } }, nodes = { { id, ranks_purchased, active_rank, current_rank, max_ranks, is_visible, entries, sub_tree, active_entry, active_entry_rank } } } } }
+choices = { { option, choice_index, choice } }
 ```
+
+Notes on the fields:
+
+- `gear`: `first_slot`..`last_slot` is every slot number from the client's
+  `INVSLOT_FIRST_EQUIPPED` to `INVSLOT_LAST_EQUIPPED`, so it covers whatever
+  the client defines; empty slots are left out. The equipped average is
+  `average.equipped`.
+- `talents`: `active_rank` is the committed rank; `ranks_purchased` and
+  `current_rank` may include changes staged in the talent UI but not applied
+  **[verify]**. Tree currencies exclude staged changes
+  (`GetTreeCurrencyInfo(config, tree, true)`). `last_selected_config` is kept
+  raw and may be a negative sentinel (for example a starter build) rather
+  than a config id.
+- `talents.legacy` holds every trait config the client lists that is neither
+  the active class config nor of type Combat or Profession, each with
+  `found_by`; which of them is the Legacy system is decided from the M11-03
+  capture. `skipped_types` names the types left out (Invalid, Combat,
+  Profession).
+- `customization`: the choices cover only the model being viewed
+  (`chr_model_id`). `sex` is `Enum.UnitSex` 0/1, not `UnitSex()`'s 2/3
+  **[verify]**. A record from an earlier session is carried with
+  `carried = true` and its `recorded_load` (the `probe.loads` of the session
+  that recorded it); it is dropped with a reason when `race_id` no longer
+  matches the character (race only: a paid change that keeps the race is
+  invisible to the addon). Without any record the section is
+  `absent = "no barber-shop visit recorded with the addon enabled"`.
+- `professions`: whether `GetProfessionInfo`'s rank and maximum are per
+  expansion tier or overall on Forever is **[verify]**.
+- `probe.lost` is set when `WowLabCharDB` loaded as a table without a probe,
+  for that load only; a later load that finds the probe clears it. A first
+  load and a file that failed to load both show `loads = 1`.
 
 Any section may instead be `{ absent = "<reason>" }`, and carry
 `events_unregistered = { ... }` when the client did not know one of its
@@ -90,12 +126,12 @@ exists, not of what it returns.
 | `C_Traits.GetConfigInfo` | talents: config type and tree ids (the `name` field is never read) | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
 | `C_Traits.GetTreeNodes` | talents: node ids per tree | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
 | `C_Traits.GetNodeInfo` | talents: node ranks and entries (`ID`, `ranksPurchased`, `maxRanks`, `entryIDs` exercised by the kit; `activeRank`, `currentRank`, `activeEntry`, `subTreeID` are [verify]) | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
-| `C_Traits.GetTreeCurrencyInfo` | talents: points per tree (Legacy points spent and cap: [verify]) | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
+| `C_Traits.GetTreeCurrencyInfo` | talents: points per tree, staged changes excluded (Legacy points spent and cap: [verify]) | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
 | `C_Traits.GetSystemIDByTreeID` | talents: which system a tree belongs to | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
-| `C_Traits.GetConfigsByType` | talents.legacy: configs per type | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
-| `C_Traits.GetConfigIDBySystemID` | talents.legacy: configs per discovered system id (the `Constants` scan is [verify]) | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
+| `C_Traits.GetConfigsByType` | talents.legacy: configs per type | called by forever-addon-kit's walker on 69893; which call found the Legacy config is not recorded: [verify] in M11-03 | yes |
+| `C_Traits.GetConfigIDBySystemID` | talents.legacy: configs per discovered system id (the `Constants` scan is [verify]) | called by forever-addon-kit's walker on 69893; which call found the Legacy config is not recorded: [verify] in M11-03 | yes |
 | `C_ClassTalents.GetActiveConfigID` | talents.class: the active config | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
-| `Enum.TraitConfigType` | talents.legacy: config types to ask for | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | n/a (table) |
+| `Enum.TraitConfigType` | talents.legacy: config types to ask for | called by forever-addon-kit's walker on 69893; which call found the Legacy config is not recorded: [verify] in M11-03 | n/a (table) |
 | `ToggleLegacySystemUI` | talents.legacy: marker that the Legacy panel exists (never called) | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
 | `UnitLevel` | talents.legacy: `player_level` (explains an empty list) | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
 | `C_Timer.After` | debounce gathering after change events | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
@@ -112,8 +148,8 @@ exists, not of what it returns.
 | `SlashCmdList` | `/wowlab` | [verify] | n/a (table) |
 | `INVSLOT_FIRST_EQUIPPED` | gear: first slot (client constant) | [verify] | n/a (constant) |
 | `INVSLOT_LAST_EQUIPPED` | gear: last slot (ranged slot on Forever: [verify]) | [verify] | n/a (constant) |
-| `GetInventoryItemLink` | gear: item link per slot | [verify] | yes |
-| `GetAverageItemLevel` | gear: overall, equipped, PvP average | [verify] | yes |
+| `GetInventoryItemLink` | gear: item link per slot, crafter GUID blanked before storing (whether Forever fills it: [verify]) | [verify] | yes |
+| `GetAverageItemLevel` | gear: overall (best items owned, bags included), equipped (character sheet), PvP | [verify] | yes |
 | `ItemLocation.CreateFromEquipmentSlot` | gear: slot location for item level | [verify] | n/a (FrameXML mixin) |
 | `C_Item.GetCurrentItemLevel` | gear: slot item level | [verify] | yes |
 | `C_Item.GetDetailedItemLevelInfo` | gear: item level fallback from the link | [verify] | yes |
@@ -153,7 +189,8 @@ Addon-defined globals: `WowLabCharDB`, `WowLabDB`, `SLASH_WOWLAB1`.
 Events. `TRAIT_CONFIG_UPDATED`, `TRAIT_CONFIG_LIST_UPDATED`,
 `TRAIT_TREE_CURRENCY_INFO_UPDATED` and `PLAYER_TALENT_UPDATE`: the kit's
 walker registers them, so confirmed by forever-addon-kit on 69893, re-verify
-in M11-03. All others **[verify]**: `ADDON_LOADED`, `PLAYER_ENTERING_WORLD`,
+in M11-03; so is `TRAIT_SYSTEM_INTERACTION_STARTED`. All others
+**[verify]**: `ACTIVE_COMBAT_CONFIG_CHANGED`, `PLAYER_LEVEL_UP`, `ADDON_LOADED`, `PLAYER_ENTERING_WORLD`,
 `PLAYER_LOGOUT`, `PLAYER_EQUIPMENT_CHANGED`, `PLAYER_AVG_ITEM_LEVEL_UPDATE`,
 `ACTIVE_PLAYER_SPECIALIZATION_CHANGED`, `PLAYER_SPECIALIZATION_CHANGED`,
 `BARBER_SHOP_OPEN`, `BARBER_SHOP_APPEARANCE_APPLIED`, `NEW_MOUNT_ADDED`,
@@ -162,3 +199,49 @@ in M11-03. All others **[verify]**: `ADDON_LOADED`, `PLAYER_ENTERING_WORLD`,
 `TRANSMOG_COLLECTION_SOURCE_ADDED`, `CURRENCY_DISPLAY_UPDATE`,
 `SKILL_LINES_CHANGED`. An event the client does not know is skipped and
 listed in the section's `events_unregistered`.
+
+## M11-03 [verify] checklist
+
+What the owner's capture must settle, from the M11-01 reviews. Each item ends
+up confirmed, contradicted (with what Forever returned) or still open in the
+`docs/LAB_FORMATS.md` table M11-03 adds.
+
+Capture steps beyond §13.1's:
+
+- log in twice on one character, so `probe.loads` is seen rising;
+- after the barber-shop logout, log in and out once more **without** a
+  visit, so the carried customization record (`carried = true`,
+  `recorded_load`) is captured;
+- stage a talent change without applying it, run `/wowlab save`, `/reload`,
+  and compare `ranks_purchased` / `current_rank` / `active_rank` and the
+  tree currencies;
+- watch for hitches after logging in or `/reload`: the pet and transmog
+  rescans (collections) run once per session and on their events.
+
+Items:
+
+1. `C_SpecializationInfo.GetSpecialization` / `.GetSpecializationInfo`: what
+   they return on Forever (index, id; paladin = 1486 per the kit).
+2. Loadouts: `last_selected_config` (a config id, a negative sentinel or
+   absent), `C_Traits.GenerateImportString` output, and whether any node has
+   a `sub_tree`.
+3. Which `found_by` entry finds the Legacy config in `talents.legacy`. If
+   `configs` is empty at level 25 or above with `legacy_ui = true`, add the
+   kit's numeric system-ID probe (`GetConfigIDBySystemID` over 1–120).
+4. Whether `GetTreeCurrencyInfo` carries the Legacy points spent and the
+   seasonal cap.
+5. `events_unregistered` on every section: which events Forever does not
+   know.
+6. Empty lists from the pet journal, toy box or transmog collection (journal
+   not initialized, or filters hiding rows) versus real contents.
+7. Currencies: whether `GetCurrencyInfo` has `isAccountWide`, or the
+   `IsAccountWideCurrency` fallback was used; `headers_collapsed`.
+8. `GetProfessionInfo` on Forever's 1–300 skill model: rank and maximum per
+   tier or overall.
+9. `probe.loads` rising across the two logins, and `probe.lost` absent.
+10. Crafter GUIDs in item links: any `crafter_removed = true`, and no
+    `Player-` left in any stored link.
+11. `currentChoiceIndex` base: `choice` matches `choices[choice_index]`
+    1-based (compare with the barber shop on screen).
+12. `BARBER_SHOP_APPEARANCE_APPLIED` firing: an applied change gives
+    `recorded_at = "applied"`.

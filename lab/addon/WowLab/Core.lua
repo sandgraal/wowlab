@@ -5,7 +5,9 @@
 -- section's change events) and writes the versioned tables (schema 1) into
 -- its SavedVariables at PLAYER_LOGOUT. `/wowlab save` refreshes the tables in
 -- memory; the client writes the file at the next /reload, logout or clean
--- exit, and a crash writes nothing.
+-- exit, and a crash writes nothing. Only two things are carried from one
+-- session to the next: the probe count, and the last barber-shop record
+-- (Customization.lua), both read back from the file at ADDON_LOADED.
 --
 -- Privacy (ADR-0026): no names, realms, GUIDs, guild or chat of anyone, the
 -- owner included; no text the owner typed (loadout, equipment-set or pet
@@ -27,7 +29,7 @@ ns.SCHEMA = 1
 ns.sections = {}
 -- Last gathered record per section key.
 ns.state = {}
--- probe = { loads = <n>, lost = true? }: the only state carried between sessions.
+-- probe = { loads = <n>, lost = true? }: carried across sessions, with customization.
 ns.probe = nil
 
 -- C_Timer.After: confirmed by forever-addon-kit on 69893, re-verify in M11-03
@@ -127,6 +129,8 @@ end)
 --   heavy = true,                  -- on entering the world, only the first time
 --   immediate = true,              -- gather on the event itself, not debounced
 --   not_gathered = "reason",       -- absent reason if never gathered this session
+--   carry = function(saved) ... end,   -- at ADDON_LOADED: a record to keep from
+--                                      -- the loaded WowLabCharDB, or nil
 -- }
 local pending = false
 
@@ -233,19 +237,17 @@ end
 
 -- Probe -----------------------------------------------------------------------
 
--- At ADDON_LOADED: the value the file held, plus one. A capture file that
--- loaded without a probe count means the SavedVariables loader lost it
--- (docs/LAB_PLAN.md §13.4); a file that did not load at all looks like a
--- first run, and the Lab catches that from `loads` not going up.
+-- At ADDON_LOADED: the value the file held, plus one. A WowLabCharDB that
+-- loaded as a table without a probe count sets `lost` for this load only; a
+-- later load that finds the probe clears it (docs/LAB_PLAN.md §13.1). A file
+-- that did not load at all looks like a first run (loads = 1); §13.4's
+-- two-snapshot check catches that from `loads` not going up.
 local function loadProbe(saved)
     local probe = { loads = 1 }
     if type(saved) == "table" then
         local prior = saved.probe
         if type(prior) == "table" and type(prior.loads) == "number" then
             probe.loads = prior.loads + 1
-            if prior.lost == true then
-                probe.lost = true
-            end
         else
             probe.lost = true
         end
@@ -258,6 +260,14 @@ ns.On("ADDON_LOADED", function(_, name)
         return
     end
     ns.probe = loadProbe(WowLabCharDB)
+    for _, section in ipairs(ns.sections) do
+        if section.carry then
+            local ok, record = pcall(section.carry, WowLabCharDB)
+            if ok and type(record) == "table" then
+                ns.state[section.key] = record
+            end
+        end
+    end
     -- Keep the count in the live table at once, so it is saved even if a
     -- later step fails before PLAYER_LOGOUT.
     if type(WowLabCharDB) ~= "table" then

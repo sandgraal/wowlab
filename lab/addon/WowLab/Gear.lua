@@ -1,8 +1,16 @@
 -- Equipped gear (docs/LAB_PLAN.md §13.1): item links as strings, so bonus IDs
 -- and enchants survive; each slot's current item level and the equipped
--- average as the client reports them. Slots come from the client's own
--- first/last equipped-slot constants, not a fixed list (whether Forever has a
--- ranged slot between them is [verify]).
+-- average as the client reports them. Slots are every slot number from the
+-- client's own INVSLOT_FIRST_EQUIPPED to INVSLOT_LAST_EQUIPPED, so the range
+-- covers whatever the client defines, not a fixed list (whether Forever has a
+-- ranged slot in it is [verify]).
+--
+-- A crafted item's link can carry the crafter's player GUID
+-- ("Player-<realm id>-<hex>"). ADR-0026 forbids storing any GUID, so every
+-- such run is blanked before the link is stored, and the slot records
+-- `crafter_removed = true` when one was found (whether Forever fills the
+-- field is [verify]). tests/addon/test_lab_addon.py checks that the stored
+-- link only ever comes from that step.
 
 local _, ns = ...
 
@@ -42,18 +50,22 @@ ns.Section({
         end
         local record = { first_slot = first, last_slot = last, slots = {} }
         for slot = first, last do
-            local link = GetInventoryItemLink("player", slot)
-            if type(link) == "string" then
-                local level, source = itemLevel(slot, link)
+            local raw = GetInventoryItemLink("player", slot)
+            if type(raw) == "string" then
+                local level, source = itemLevel(slot, raw)
+                local clean, removed = string.gsub(raw, "Player%-%d+%-%x+", "")
                 record.slots[#record.slots + 1] = {
                     slot = slot,
-                    link = link,
+                    link = clean,
+                    crafter_removed = removed > 0,
                     item_level = level,
                     item_level_api = source,
                 }
             end
         end
         if type(GetAverageItemLevel) == "function" then
+            -- overall: best items owned, bags included; equipped: the
+            -- character-sheet figure.
             local overall, equipped, pvp = GetAverageItemLevel()
             record.average = { overall = overall, equipped = equipped, pvp = pvp }
         else

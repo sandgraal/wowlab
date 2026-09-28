@@ -19,8 +19,10 @@ setup: ## One-time per checkout: sync deps, wire git hooks, create .env
 	$(UV) sync --frozen
 	git config core.hooksPath .githooks   # tracked hooks resolve per worktree; never `pre-commit install`
 	$(UV) run --frozen pre-commit install-hooks
-	$(UV) run --frozen python scripts/fetch_selene.py   # pinned Lua linter into .tools/ (network here only)
 	@[ -f .env ] || { cp .env.example .env && echo "created .env from .env.example"; }
+	@# Pinned Lua linter into .tools/ (network here only). Warn-only so setup
+	@# finishes offline; `make selene` is the strict fetch, `make lint-lua` needs it.
+	@$(UV) run --frozen python scripts/fetch_selene.py || echo "warning: selene not fetched; run 'make selene' before 'make lint-lua'"
 
 lint: ## ruff check + format check + mypy --strict (the commit gate)
 	$(UV) run --frozen ruff check .

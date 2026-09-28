@@ -38,6 +38,14 @@ FORBIDDEN_APIS = (
     "C_BattleNet",
     "C_ChatInfo",
     "GetPlayerInfoByGUID",
+    # Added in review (M11-01 fix round 1): more identity, roster and typed text.
+    "UnitNameUnmodified",
+    "UnitPVPName",
+    "GetGuildRosterInfo",
+    "BNGetFriendInfo",
+    "GetMacroBody",
+    "C_Club",
+    "C_FriendList",
 )
 # Dynamic global lookup would let a forbidden name hide in a string.
 DYNAMIC_LOOKUP = (
@@ -54,7 +62,29 @@ DYNAMIC_LOOKUP = (
     "require",
 )
 # §13.1: the capture records no wall-clock time.
-CLOCK = ("time", "date", "GetTime", "GetServerTime", "GetGameTime", "C_DateAndTime")
+# `os` covers os.time() and os.date(); `C_Calendar` covers the in-game calendar.
+CLOCK = (
+    "time",
+    "date",
+    "os",
+    "GetTime",
+    "GetServerTime",
+    "GetGameTime",
+    "C_DateAndTime",
+    "C_Calendar",
+)
+# No std-declared client global may look like an identity, chat, roster,
+# CVar, macro or equipment-set API (security review, M11-01).
+STD_PRIVACY = re.compile(
+    r"Name|Realm|GUID|Guild|^BN|C_BattleNet|C_Club|C_FriendList|C_ChatInfo|CVar|Macro|C_EquipmentSet"
+)
+# Names that match STD_PRIVACY but are not identity APIs, each with its reason.
+STD_PRIVACY_ALLOW: dict[str, str] = {}
+# Events that would deliver chat, guild, community, Battle.net or friends data.
+PRIVATE_EVENT = re.compile(r"^(CHAT_MSG_|GUILD_|CLUB_|BN_|FRIENDLIST_)")
+# The one place a stored item link may come from (Gear.lua).
+CRAFTER_BLANKING = 'local clean , removed = string . gsub ( raw , "Player%-%d+%-%x+" , "" )'
+TOC_INTERFACE_LINE = "## Interface: @WOWLAB_INTERFACE@"
 # ADR-0026 / §13.1: no names of anyone, no text the owner typed.
 NAME_FIELDS = (
     "name",
@@ -264,6 +294,15 @@ def test_toc_template_has_no_interface_number() -> None:
     assert doc.interface.versions == ()
 
 
+def test_toc_interface_line_is_the_placeholder() -> None:
+    """M11-02 replaces this exact line; pin it."""
+    lines = TOC.read_text(encoding="utf-8").splitlines()
+    assert lines.count(TOC_INTERFACE_LINE) == 1
+    assert [line for line in lines if line.lower().startswith("## interface")] == [
+        TOC_INTERFACE_LINE
+    ]
+
+
 def test_toc_saved_variables() -> None:
     doc = parse_toc(TOC.read_bytes())
     assert doc.saved_variables_per_character == ("WowLabCharDB",)
@@ -388,6 +427,124 @@ def test_every_unit_token_argument_is_player(path: Path) -> None:
     assert not bad, bad
 
 
+def _render(tokens: list[Token]) -> str:
+    return " ".join(f'"{t.text}"' if t.kind == "string" else t.text for t in tokens)
+
+
+def _statement_at(tokens: list[Token], start: int, length: int) -> str:
+    return _render(tokens[start : start + length])
+
+
+@pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
+def test_sources_register_no_private_events(path: Path) -> None:
+    bad = [
+        f"{_where(path, t)} {t.text}"
+        for t in _tokens(path)
+        if t.kind == "string" and PRIVATE_EVENT.match(t.text)
+    ]
+    assert not bad, bad
+
+
+@pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
+def test_sources_build_no_index_by_concatenation(path: Path) -> None:
+    """`t["Unit" .. "Name"]` would assemble a forbidden name at run time."""
+    tokens = _tokens(path)
+    bad = []
+    depth: list[int] = []
+    for i, t in enumerate(tokens):
+        if t.kind != "op":
+            continue
+        if t.text == "[":
+            depth.append(i)
+        elif t.text == "]" and depth:
+            depth.pop()
+        elif t.text == ".." and depth:
+            bad.append(f"{_where(path, t)} '..' inside [...]")
+    assert not bad, bad
+
+
+def test_stored_item_links_only_come_from_crafter_blanking() -> None:
+    """ADR-0026: a crafted item's link can hold the crafter's player GUID.
+
+    Every `link =` field in the sources is `link = clean`, and `clean` is bound
+    only by the one gsub that blanks `Player-<id>-<hex>` runs, in Gear.lua.
+    """
+    problems = []
+    blanking_sites = []
+    for path in SOURCES:
+        tokens = _tokens(path)
+        for i, t in enumerate(tokens):
+            if t.kind != "name":
+                continue
+            if (
+                t.text == "link"
+                and tokens[i + 1].text == "="
+                and tokens[i - 1].text in {"{", ",", "."}
+            ):
+                value = tokens[i + 2]
+                end = tokens[i + 3].text
+                if not (value.kind == "name" and value.text == "clean" and end in {",", "}"}):
+                    problems.append(
+                        f"{_where(path, t)} link = {value.text} (not the blanked value)"
+                    )
+            if t.text == "clean" and not _is_field(tokens, i):
+                if i > 0 and tokens[i - 1].text == "local":
+                    if (
+                        _statement_at(tokens, i - 1, len(CRAFTER_BLANKING.split(" ")))
+                        == CRAFTER_BLANKING
+                    ):
+                        blanking_sites.append(_where(path, t))
+                    else:
+                        problems.append(f"{_where(path, t)} `clean` bound by something else")
+                elif tokens[i + 1].text == "=" and tokens[i + 2].text != "=":
+                    problems.append(f"{_where(path, t)} `clean` reassigned")
+    assert not problems, problems
+    assert len(blanking_sites) == 1, blanking_sites
+    assert blanking_sites[0].startswith(str(Path("lab/addon/WowLab/Gear.lua")))
+
+
+def test_pet_rows_bind_only_species_and_owned() -> None:
+    """GetPetInfoByIndex's first return is a battle-pet GUID: it is only ever
+    reached as `local a, b = select(2, ns.Call(byIndex, ...))`."""
+    problems = []
+    lookups = 0
+    for path in SOURCES:
+        tokens = _tokens(path)
+        handles: set[str] = set()
+        for i, t in enumerate(tokens):
+            if t.kind == "string" and t.text == "GetPetInfoByIndex":
+                lookups += 1
+                # local <handle> = ns.Fn(C_PetJournal, "GetPetInfoByIndex")
+                head = _render(tokens[i - 9 : i])
+                if not re.fullmatch(r"local \w+ = ns \. Fn \( C_PetJournal ,", head):
+                    problems.append(f"{_where(path, t)} looked up other than into a local handle")
+                else:
+                    handles.add(tokens[i - 8].text)
+            elif t.kind == "name" and t.text == "GetPetInfoByIndex":
+                problems.append(f"{_where(path, t)} named directly")
+        for i, t in enumerate(tokens):
+            if t.kind != "name" or t.text not in handles or tokens[i - 1].text == "local":
+                continue
+            before, after = tokens[i - 1].text, tokens[i + 1].text
+            if before in {"and", "not", "("} and after in {"and", ")"}:
+                continue  # an existence test: not (a and handle and b)
+            # Exactly two names bound, from return 2 on.
+            call = _render(tokens[i - 13 : i + 2])
+            if not re.fullmatch(r"local \w+ , \w+ = select \( 2 , ns \. Call \( \w+ ,", call):
+                problems.append(f"{_where(path, t)} {call!r}")
+    assert lookups == 1
+    assert not problems, problems
+
+
+def test_std_declares_no_identity_like_api() -> None:
+    hits = sorted(
+        n
+        for n in _std_globals() - OWN_GLOBALS
+        if STD_PRIVACY.search(n) and n not in STD_PRIVACY_ALLOW
+    )
+    assert not hits, hits
+
+
 # --- API inventory: std file, sources, README -----------------------------------
 
 
@@ -462,4 +619,7 @@ def test_readme_lists_every_api_with_a_status() -> None:
             problems.append(f"{name}: not in the README API table")
         elif KIT_STATUS not in row and VERIFY_STATUS not in row:
             problems.append(f"{name}: no status ({KIT_STATUS!r} or {VERIFY_STATUS!r})")
+    # And the other way: the README lists nothing the std file does not declare.
+    for name in sorted(set(rows) - _std_globals()):
+        problems.append(f"{name}: in the README API table but not declared in {STD.name}")
     assert not problems, problems

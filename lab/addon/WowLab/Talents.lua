@@ -87,14 +87,15 @@ end
 
 -- C_Traits.GetTreeCurrencyInfo: confirmed by forever-addon-kit on 69893,
 -- re-verify in M11-03. Whether it carries the Legacy points spent and the
--- seasonal cap is [verify].
+-- seasonal cap is [verify]. The third argument, excludeStagedChanges, is
+-- true: points staged in the talent UI but not applied are left out.
 local function treeCurrencies(configID, treeID)
     local fn = ns.Fn(C_Traits, "GetTreeCurrencyInfo")
     if not fn then
         return ns.Absent("C_Traits.GetTreeCurrencyInfo missing")
     end
     local out = {}
-    local list = ns.Call(fn, configID, treeID, false)
+    local list = ns.Call(fn, configID, treeID, true)
     if type(list) == "table" then
         for _, currency in ipairs(list) do
             if type(currency) == "table" then
@@ -110,6 +111,8 @@ local function treeCurrencies(configID, treeID)
     return out
 end
 
+-- active_rank is the committed rank; ranks_purchased and current_rank may
+-- include changes staged in the talent UI but not applied [verify].
 local function dumpNode(configID, nodeID)
     local node = ns.Call(C_Traits.GetNodeInfo, configID, nodeID)
     -- A node the config cannot reach comes back with ID 0.
@@ -122,6 +125,7 @@ local function dumpNode(configID, nodeID)
         active_rank = node.activeRank,
         current_rank = node.currentRank,
         max_ranks = node.maxRanks,
+        is_visible = node.isVisible,
         entries = ns.Numbers(node.entryIDs),
         sub_tree = node.subTreeID,
     }
@@ -177,13 +181,21 @@ end
 -- talents.class ---------------------------------------------------------------
 
 -- Events TRAIT_CONFIG_UPDATED, TRAIT_CONFIG_LIST_UPDATED,
--- TRAIT_TREE_CURRENCY_INFO_UPDATED and PLAYER_TALENT_UPDATE: confirmed by
--- forever-addon-kit on 69893, re-verify in M11-03 (the walker registers them).
+-- TRAIT_TREE_CURRENCY_INFO_UPDATED, PLAYER_TALENT_UPDATE and
+-- TRAIT_SYSTEM_INTERACTION_STARTED: confirmed by forever-addon-kit on 69893,
+-- re-verify in M11-03 (the walker registers them). ACTIVE_COMBAT_CONFIG_CHANGED
+-- and PLAYER_LEVEL_UP: [verify]. Unknown events are skipped (Core.lua).
 
 ns.Section({
     key = "talents.class",
     path = { "talents", "class" },
-    events = { "TRAIT_CONFIG_UPDATED", "TRAIT_CONFIG_LIST_UPDATED", "PLAYER_TALENT_UPDATE" },
+    events = {
+        "TRAIT_CONFIG_UPDATED",
+        "TRAIT_CONFIG_LIST_UPDATED",
+        "PLAYER_TALENT_UPDATE",
+        "ACTIVE_COMBAT_CONFIG_CHANGED",
+        "PLAYER_LEVEL_UP",
+    },
     on_world = true,
     gather = function()
         local reason = traitsReason()
@@ -209,7 +221,9 @@ ns.Section({
         end
 
         -- C_ClassTalents.GetLastSelectedSavedConfigID(specID): [verify]. It
-        -- needs a spec id, which Forever may not expose the Retail way.
+        -- needs a spec id, which Forever may not expose the Retail way. The
+        -- value is kept raw: it may be a negative sentinel (e.g. a starter
+        -- build) rather than a config id.
         local lastSaved = ns.Fn(C_ClassTalents, "GetLastSelectedSavedConfigID")
         local spec = ns.Spec()
         if not lastSaved then
@@ -227,14 +241,17 @@ ns.Section({
 
 -- Which trait config holds the Legacy trees is [verify]. Two discoveries,
 -- neither keyed on a constant of ours:
---   * every Enum.TraitConfigType value except Combat (class loadouts) and
---     Profession, through C_Traits.GetConfigsByType (both confirmed by
---     forever-addon-kit on 69893, re-verify in M11-03);
+--   * every Enum.TraitConfigType value except Invalid, Combat (class
+--     loadouts) and Profession, through C_Traits.GetConfigsByType;
 --   * every numeric `*SYSTEM_ID*` field in the client's Constants tables,
---     through C_Traits.GetConfigIDBySystemID (the function is confirmed by
---     forever-addon-kit on 69893, re-verify in M11-03; the Constants scan is
---     [verify]).
--- Each config records how it was found, so M11-03 can narrow the schema.
+--     through C_Traits.GetConfigIDBySystemID (the Constants scan is [verify]).
+-- C_Traits.GetConfigsByType, C_Traits.GetConfigIDBySystemID and
+-- Enum.TraitConfigType: called by forever-addon-kit's walker on 69893; which
+-- call found the Legacy config is not recorded: [verify] in M11-03.
+-- talents.legacy holds every trait config the client lists that is neither
+-- the active class config nor of type Combat or Profession, each with
+-- `found_by`; which of them is the Legacy system is decided from the M11-03
+-- capture.
 local function legacyConfigs(classConfig)
     local foundBy, order = {}, {}
     local function add(configID, how)
@@ -255,7 +272,7 @@ local function legacyConfigs(classConfig)
     local haveTypes = byType and type(types) == "table"
     if haveTypes then
         local skip = {}
-        for _, name in ipairs({ "Combat", "Profession" }) do
+        for _, name in ipairs({ "Invalid", "Combat", "Profession" }) do
             if types[name] ~= nil then
                 skip[types[name]] = true
                 skipped[#skipped + 1] = name
@@ -299,7 +316,13 @@ end
 ns.Section({
     key = "talents.legacy",
     path = { "talents", "legacy" },
-    events = { "TRAIT_CONFIG_UPDATED", "TRAIT_CONFIG_LIST_UPDATED", "TRAIT_TREE_CURRENCY_INFO_UPDATED" },
+    events = {
+        "TRAIT_CONFIG_UPDATED",
+        "TRAIT_CONFIG_LIST_UPDATED",
+        "TRAIT_TREE_CURRENCY_INFO_UPDATED",
+        "TRAIT_SYSTEM_INTERACTION_STARTED",
+        "PLAYER_LEVEL_UP",
+    },
     on_world = true,
     gather = function()
         local reason = traitsReason()
