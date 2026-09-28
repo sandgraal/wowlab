@@ -792,8 +792,9 @@ class Identity:
         """Real identity strings left in `scrubbed` in a spelling the byte-level
         checks do not see: full-width or other compatibility letters, accents
         added or dropped, format characters (zero-width space, soft hyphen)
-        inside, tabs, NBSPs, lookalike dashes or apostrophes, or doubled
-        separators. Detect and refuse only: nothing is rewritten from this.
+        inside, tabs, NBSPs, lookalike dashes or apostrophes, the other
+        separators listed at `_HUNT_SEPARATOR_CHARS`, or doubled separators.
+        Detect and refuse only: nothing is rewritten from this.
 
         `masked_spans` (pseudonyms this scrub wrote, client TOC keys) are
         blanked first. A pure-ASCII text is only lower-cased (its fold); the
@@ -1401,10 +1402,14 @@ class Identity:
 
 _BOM = b"\xef\xbb\xbf"
 # What a second name may carry between two letters: space, apostrophe, hyphen,
-# tab, NBSP, zero-width space (U+00A0 and U+200B in UTF-8), or `\\'`. Detection
-# only: a hit refuses the file, nothing is rewritten.
-_LOOSE_SEPARATOR = re.compile(rb"[ '\-\\\t]|\xc2\xa0|\xe2\x80\x8b")
-_LOOSE_BETWEEN = rb"(?:[ '\-\t]|\\'|\xc2\xa0|\xe2\x80\x8b)*"
+# tab, backtick, NBSP, zero-width space (U+00A0 and U+200B in UTF-8), `\\'`,
+# and the lookalikes the client does not write (U+2212 minus, U+2043 hyphen
+# bullet, U+30FC katakana prolonged sound mark, U+2032 prime: defence in
+# depth, M10-02 follow-up 6). Detection only: a hit refuses the file, nothing
+# is rewritten.
+_LOOSE_MULTIBYTE = rb"\xc2\xa0|\xe2\x80[\x8b\xb2]|\xe2\x88\x92|\xe2\x81\x83|\xe3\x83\xbc"
+_LOOSE_SEPARATOR = re.compile(rb"[ '\-\\\t`]|" + _LOOSE_MULTIBYTE)
+_LOOSE_BETWEEN = rb"(?:[ '\-\t`]|\\'|" + _LOOSE_MULTIBYTE + rb")*"
 
 
 def _loose_pattern(part: str) -> bytes | None:
@@ -1481,7 +1486,8 @@ class OtherUnits:
         a full-width spelling is found too. A part of EMBEDDED_MIN_CHARS or
         more letters counts anywhere, even inside a longer word, with any run
         of spaces, apostrophes, hyphens, underscores, tabs, NBSPs, zero-width
-        spaces or `\\'` between any two of its letters (`_HUNT_SEPARATOR`: a
+        spaces, `\\'` or the other lookalikes listed at `_HUNT_SEPARATOR_CHARS`
+        between any two of its letters (`_HUNT_SEPARATOR`: a
         doubled separator counts as one); one written inside the real part is
         optional too (the spaced and split spellings the tool derives for the
         owner's realms: `GloamSpire` is also found as `Gloam Spire`,
@@ -1706,10 +1712,14 @@ class UnitGuids:
 # Separators the hunts read past between two letters, in the folded form: any
 # blank (`\s`: space, tab, NBSP, line breaks), apostrophe and its lookalikes
 # (U+2018, U+2019, U+02BC), hyphen and its lookalikes (U+2010 to U+2015),
-# underscore, `\'`, and the invisible ones (soft hyphen U+00AD, zero-width
-# space U+200B; `_hunt_fold` already drops them as format characters). A run
-# of them counts as one (`Zor  vinth`).
-_HUNT_SEPARATOR_CHARS = r"\s'\-_\u2018\u2019\u02bc\u2010-\u2015\u00ad\u200b"
+# underscore, `\'`, the invisible ones (soft hyphen U+00AD, zero-width
+# space U+200B; `_hunt_fold` already drops them as format characters), and,
+# as defence in depth since the client does not write them, backtick, U+2212
+# minus, U+2043 hyphen bullet, U+30FC katakana prolonged sound mark and U+2032
+# prime (M10-02 follow-up 6). A run of them counts as one (`Zor  vinth`).
+_HUNT_SEPARATOR_CHARS = (
+    r"\s'\-_`\u2018\u2019\u02bc\u2010-\u2015\u00ad\u200b\u2212\u2043\u30fc\u2032"
+)
 _HUNT_SEPARATOR = r"(?:[" + _HUNT_SEPARATOR_CHARS + r"]|\\')*"
 _LOOSE_DROPPED = re.compile(r"\\'|[" + _HUNT_SEPARATOR_CHARS + r"\\]")  # dropped before joining
 _HUNT_SPLIT = re.compile(r"[\s\-\u2010-\u2015]+")  # what splits a hunted name into parts
