@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
 import stat
 import uuid
 from pathlib import Path
@@ -34,7 +35,9 @@ from wowlab_core.lookstore import refuse_install
 
 __all__ = [
     "DATA_ELEMENT_ID",
+    "PAGE_HEADER",
     "PageError",
+    "check_target",
     "content_security_policy",
     "default_page_path",
     "embedded_json",
@@ -46,6 +49,12 @@ DATA_ELEMENT_ID = "wowlab-data"
 _DATA_OPEN = f'<script type="application/json" id="{DATA_ELEMENT_ID}">'
 _DATA_CLOSE = "</script>"
 _WHAT = "generated pages"
+# How every page `render` makes begins: the doctype, then the CSP meta tag
+# (its fixed start). An existing file is replaced only when it begins so.
+PAGE_HEADER = (
+    b'<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
+    b'<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; '
+)
 
 
 class PageError(Exception):
@@ -153,6 +162,7 @@ dl.facts dt { color: var(--muted); }
 dl.facts dd { margin: 0; overflow-wrap: anywhere; }
 ul.choices { margin: 4px 0 8px; padding-left: 18px; }
 .damaged li { color: var(--refused); }
+code { font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--gold-soft); }
 footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--edge); }
 [hidden] { display: none !important; }
 @media (max-width: 800px) { .browse { grid-template-columns: 1fr; } }
@@ -267,9 +277,9 @@ _SCRIPT = """
     summary.appendChild(el("span", "oname", option.name));
     summary.appendChild(el("span", "oid", " option " + option.id));
     if (option.category !== null) { summary.appendChild(el("span", "tag", option.category)); }
-    if (option.form_or_pet) { summary.appendChild(el("span", "tag form", "form or pet option")); }
+    if (option.form_or_pet) { summary.appendChild(el("span", "tag form", "form, pet or mount option [verify]")); }
     summary.appendChild(el("span", "tag", plural(option.choices.length, "choice")));
-    if (refusals) { summary.appendChild(el("span", "tag count-refused", refusals + " refused")); }
+    if (refusals) { summary.appendChild(el("span", "tag count-refused", plural(refusals, "refusal"))); }
     if (notes) { summary.appendChild(el("span", "tag count-note", plural(notes, "note"))); }
     card.appendChild(summary);
     var body = el("div", "obody");
@@ -392,8 +402,8 @@ The data is the JSON block in this file.</div></noscript>
 <div>
 <div class="panel">
 <div class="controls">
-<label>Body type <select id="body"></select></label>
-<label>Class <select id="class"></select></label>
+<label>Body type (numbered as the tables number it [verify]) <select id="body"></select></label>
+<label>Class (not checked against the race) <select id="class"></select></label>
 <label>Filter options <input id="filter" type="search" placeholder="name, category or id"></label>
 </div>
 <h2 id="view-heading" class="serif"></h2>
@@ -404,7 +414,7 @@ The data is the JSON block in this file.</div></noscript>
 </div>
 </section>
 <section id="looks" hidden>
-<div class="panel"><h2>Saved looks</h2><div class="sub">In <span id="looks-directory"></span></div></div>
+<div class="panel"><h2>Saved looks</h2><div class="sub">In <span id="looks-directory"></span>, as they were when this page was written; run <code>wowlab looks page</code> again to include looks saved since.</div></div>
 <div id="looks-list"></div>
 </section>
 </main>
@@ -474,22 +484,61 @@ def embedded_json(page: str) -> str:
     return page[start : page.index(_DATA_CLOSE, start)]
 
 
-def write_page(page: str, out: Path) -> Path:
-    """Write ``page`` to ``out`` (resolved, so a link is followed to its file)
-    and return where it went. Refused, with nothing written, when ``out`` is
-    an install or inside one, is a directory, or is something other than a
-    regular file. An existing page there is replaced whole."""
+def _resolved(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except (RuntimeError, OSError) as exc:
+        raise PageError(f"{path} cannot be resolved ({exc})") from None
+
+
+def _existing_header(path: Path) -> bytes:
+    """The first bytes of the regular file at ``path``, read without blocking."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise PageError(f"{path} exists and is not a regular file")
+            return os.read(fd, len(PAGE_HEADER))
+        finally:
+            os.close(fd)
+    except OSError as exc:
+        raise PageError(f"{path} cannot be read ({exc.strerror or exc})") from None
+
+
+def check_target(out: Path) -> Path:
+    """Where ``write_page`` would write ``out``, or ``PageError`` /
+    ``LookLocationError`` for why it will not, reading only. Refused: a path
+    that is, or is inside, an install; one inside the user data directory
+    but outside its ``pages/`` folder (the snapshot store, the game data
+    cache and the saved looks live there); a directory; anything that is not
+    a regular file; and an existing file that is not a page this module
+    wrote (it does not start with ``PAGE_HEADER``)."""
     target = Path(out).absolute()
     refuse_install(target, _WHAT)
-    final = target.resolve()
+    final = _resolved(target)
+    data = _resolved(platformdirs.user_data_path("wowlab"))
+    pages = _resolved(default_page_path().parent)
+    if final.is_relative_to(data) and not final.is_relative_to(pages):
+        raise PageError(
+            f"{target} is inside wowlab's user data directory ({data}) but not in its "
+            f"pages folder ({pages}); a page never goes beside the store, the cache or "
+            "the saved looks"
+        )
     if final.is_dir():
         raise PageError(f"{target} is a directory; --out names the page file to write")
-    try:
-        mode = final.stat().st_mode
-    except FileNotFoundError:
-        mode = None
-    if mode is not None and not stat.S_ISREG(mode):
-        raise PageError(f"{target} exists and is not a regular file")
+    if final.exists() and not _existing_header(final).startswith(PAGE_HEADER):
+        raise PageError(
+            f"{target} exists and is not a page wowlab wrote (it does not start with "
+            "the page's own header); choose another --out or remove it yourself"
+        )
+    return final
+
+
+def write_page(page: str, out: Path) -> Path:
+    """Write ``page`` to ``out`` (resolved, so a link is followed to its file)
+    and return where it went. Refused, with nothing written, for every reason
+    ``check_target`` gives. An existing page there is replaced whole."""
+    final = check_target(out)
     folder = final.parent
     refuse_install(folder, _WHAT)
     folder.mkdir(parents=True, exist_ok=True)

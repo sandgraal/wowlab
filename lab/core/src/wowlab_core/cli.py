@@ -4275,7 +4275,7 @@ def looks_compare(
 LOOKS_PAGE_FORMAT: Literal[1] = 1
 _PAGE_LEGEND = (
     "Each choice is checked as a look that holds only that choice, as `wowlab looks "
-    "options` does, so a dependency on another option shows as undecided.",
+    "options` does, so a dependency on another option shows as a note, never a refusal.",
     "refused: the tables decide against it, and `wowlab looks save` would not save a look "
     "holding it (an option or choice for another race or body type, a choice outside its "
     "option, a class the ClassMask excludes, or a choice it depends on set to something "
@@ -4283,11 +4283,18 @@ _PAGE_LEGEND = (
     'note: shown, never a refusal: "needs <unlock>" (an achievement, quest or item '
     'appearance to earn), "unknown to build <version> (possibly a hotfix)", a dependency on '
     "an option the look leaves unset, a class-restricted choice when no class is chosen, "
-    "and conditions.",
+    "conditions, and options on a model no race uses (a form, pet or mount), checked by "
+    "their requirements only [verify].",
 )
 _PAGE_CLASSES_NOTE = (
     "Classes are the rows of build {version}'s ChrClasses ({classes}); class masks are "
-    "checked against these ids only."
+    "checked against these ids only. Every class is offered with every race: which races "
+    "can be which class is not read from the tables [verify], so a pairing here (a Human "
+    "Druid, say) may be one the game does not offer."
+)
+_PAGE_PAIR_NOTE = (
+    "Race and class are not checked as a pair: this view lists what the customization "
+    "tables give this race and class, not proof that the game lets anyone create it."
 )
 _PAGE_NO_CLASS_NOTE = "No class chosen: class-restricted choices are listed with a note."
 _PAGE_NO_CLASS_LABEL = "not given (class-restricted choices are noted, not refused)"
@@ -4377,6 +4384,27 @@ class LooksPageReport(_Out):
     remarks: list[str]
 
 
+def _home_short(text: str) -> str:
+    """``text`` with the home directory written as ``~``, so a page passed on
+    does not carry the account's user name in its paths."""
+    try:
+        home = str(Path.home())
+    except (RuntimeError, OSError):
+        return text
+    if home in ("", os.sep):
+        return text
+    if text == home:
+        return "~"
+    return text.replace(home + os.sep, "~" + os.sep)
+
+
+def _page_report(report: LookReport) -> LookReport:
+    """A `looks show NAME` report as the page embeds it: its path with `~`."""
+    if report.path is None:
+        return report
+    return report.model_copy(update={"path": _home_short(report.path)})
+
+
 def _page_option(option: LooksOption) -> LooksPageOption:
     return LooksPageOption(
         id=option.id,
@@ -4464,7 +4492,7 @@ def _looks_page_data(
                             f"{who}, body type {body.body_type} (model {body.chr_model_id}), "
                             f"build {version}"
                         ),
-                        notes=[_PAGE_NO_CLASS_NOTE] if class_id is None else [],
+                        notes=[_PAGE_NO_CLASS_NOTE] if class_id is None else [_PAGE_PAIR_NOTE],
                         options=refs,
                     )
                 )
@@ -4483,15 +4511,15 @@ def _looks_page_data(
         classes=classes,
         options=table,
         views=views,
-        looks_directory=str(store.root),
-        looks=[_page_look(_look_report(model, saved, path)) for path, saved in found],
-        damaged=list(damaged),
+        looks_directory=_home_short(str(store.root)),
+        looks=[_page_look(_page_report(_look_report(model, saved, path))) for path, saved in found],
+        damaged=[d.model_copy(update={"error": _home_short(d.error)}) for d in damaged],
         damaged_heading="Damaged look files (not saved looks; `wowlab looks show` names them too)",
         no_class_label=_PAGE_NO_CLASS_LABEL,
         no_findings_label="nothing noted",
         no_race_label="Pick a race.",
         no_options_label="The tables give this race, body type and class no options.",
-        no_looks_label=f"No saved looks (in {store.root}).",
+        no_looks_label=f"No saved looks (in {_home_short(str(store.root))}).",
     )
 
 
@@ -4519,8 +4547,8 @@ def looks_page(
     target = out if out is not None else lookspage.default_page_path()
     try:
         # Before any work: a refused --out costs nothing and writes nothing.
-        lookstore.refuse_install(target.absolute(), "generated pages")
-    except lookstore.LookLocationError as exc:
+        lookspage.check_target(target)
+    except (lookspage.PageError, lookstore.LookLocationError) as exc:
         raise CliError(f"refused: {exc}; nothing was written") from exc
     store = lookstore.LookStore()
     found, damaged = store.entries()

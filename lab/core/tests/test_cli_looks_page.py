@@ -143,6 +143,12 @@ def test_races_and_classes_are_the_tables(model: Customizations) -> None:
         (i, c.name) for i, c in sorted(model.classes.items())
     ]
     assert "Warrior (1)" in data.notes[2] and f"build {BUILD}'s ChrClasses" in data.notes[2]
+    # Race and class are not checked as a pair, and the page says so.
+    assert data.notes[2].endswith(
+        "Every class is offered with every race: which races can be which class is not read "
+        "from the tables [verify], so a pairing here (a Human Druid, say) may be one the game "
+        "does not offer."
+    )
 
 
 def test_every_view_is_options_for(model: Customizations) -> None:
@@ -162,8 +168,14 @@ def test_every_view_is_options_for(model: Customizations) -> None:
             o.id for o in model.options_for(view.race_id, view.body_type, view.class_id)
         ]
         assert view.chr_model_id == model.races[view.race_id].model_for(view.body_type)
-        no_class = [cli._PAGE_NO_CLASS_NOTE] if view.class_id is None else []
-        assert view.notes == no_class
+        if view.class_id is None:
+            assert view.notes == [cli._PAGE_NO_CLASS_NOTE]
+        else:
+            assert view.notes == [
+                "Race and class are not checked as a pair: this view lists what the "
+                "customization tables give this race and class, not proof that the game lets "
+                "anyone create it."
+            ]
     assert len(data.options) == len({o.model_dump_json() for o in data.options})  # deduplicated
 
 
@@ -217,6 +229,26 @@ def test_page_carries_the_clis_caveats() -> None:
     assert any(line.startswith("refused: ") for line in data.legend)
     assert any(line.startswith("note: shown, never a refusal") for line in data.legend)
     assert data.no_class_label == "not given (class-restricted choices are noted, not refused)"
+    assert data.legend[0] == (
+        "Each choice is checked as a look that holds only that choice, as `wowlab looks "
+        "options` does, so a dependency on another option shows as a note, never a refusal."
+    )
+    assert data.legend[2].endswith(
+        ", a class-restricted choice when no class is chosen, conditions, and options on a "
+        "model no race uses (a form, pet or mount), checked by their requirements only "
+        "[verify]."
+    )
+    for label in (
+        '<label>Class (not checked against the race) <select id="class"></select></label>',
+        "<label>Body type (numbered as the tables number it [verify]) "
+        '<select id="body"></select></label>',
+        '<div class="sub">In <span id="looks-directory"></span>, as they were when this page '
+        "was written; run <code>wowlab looks page</code> again to include looks saved "
+        "since.</div>",
+        '"form, pet or mount option [verify]"',
+        'plural(refusals, "refusal")',
+    ):
+        assert label in page, label
 
 
 def test_saved_looks_are_what_looks_show_prints() -> None:
@@ -227,7 +259,9 @@ def test_saved_looks_are_what_looks_show_prints() -> None:
     assert [entry.report.name for entry in data.looks] == ["fine", "hotfix"]
     for entry in data.looks:
         printed = _json(cli.LookReport, "looks", "show", entry.report.name, "--build", BUILD)
-        assert entry.report == printed
+        # The page writes the home directory as ~ (the tests' user data is not
+        # under it, so the path is unchanged here; see the ~ test).
+        assert entry.report == cli._page_report(printed)
         assert entry.choice_lines == [cli._ref_text(ref) for ref in printed.choices]
         assert entry.verdict == f"not refused, {len(printed.notes)} note(s)"
     hotfix = data.looks[1].report
@@ -474,3 +508,122 @@ def test_the_default_page_folder_inside_an_install_is_refused_constructed(
     result = run("looks", "page", "--build", BUILD)
     assert result.exit_code == 1 and "inside a game install" in result.stderr
     assert sorted(p.name for p in root.iterdir()) == [".build.info"]
+
+
+# ─── round 1 (#104 security review): the user data directory, other files ────
+
+
+@pytest.mark.parametrize(
+    "where",
+    ["page.html", "looks/page.html", "looks/mine.json", "store/objects/page.html", "gamedata/x"],
+)
+def test_out_in_the_user_data_directory_outside_pages_is_refused(
+    user_data: Path, source: _Source, where: str
+) -> None:
+    before = _tree(user_data) if user_data.exists() else {}
+    result = run("looks", "page", "--build", BUILD, "--out", str(user_data / where))
+    assert result.exit_code == 1
+    assert "inside wowlab's user data directory" in result.stderr
+    assert "not in its pages folder" in result.stderr
+    assert "nothing was written" in result.stderr
+    assert (_tree(user_data) if user_data.exists() else {}) == before
+    assert source.asked == []
+
+
+def test_out_in_a_subfolder_of_pages_is_allowed(user_data: Path) -> None:
+    out = user_data / "pages" / "old" / "looks.html"
+    ok("looks", "page", "--build", BUILD, "--out", str(out))
+    assert out.read_bytes().startswith(lookspage.PAGE_HEADER)
+
+
+def test_every_page_starts_with_the_header() -> None:
+    assert lookspage.render("{}").encode("utf-8").startswith(lookspage.PAGE_HEADER)
+    _, page = _page()
+    assert page.encode("utf-8").startswith(lookspage.PAGE_HEADER)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"my notes, not a page",
+        b"",
+        b"<!DOCTYPE html>\n<html><head><title>someone else's page</title>",
+        lookspage.PAGE_HEADER[:-1],
+    ],
+)
+def test_an_existing_file_that_is_not_a_page_is_not_replaced_constructed(
+    tmp_path: Path, source: _Source, body: bytes
+) -> None:
+    folder = tmp_path / "out"
+    folder.mkdir()
+    out = folder / "notes.html"
+    out.write_bytes(body)
+    result = run("looks", "page", "--build", BUILD, "--out", str(out))
+    assert result.exit_code == 1
+    assert "exists and is not a page wowlab wrote" in result.stderr
+    assert "nothing was written" in result.stderr
+    assert out.read_bytes() == body
+    assert sorted(p.name for p in folder.iterdir()) == ["notes.html"]
+    assert source.asked == []
+
+
+def test_an_existing_page_is_replaced_constructed(tmp_path: Path) -> None:
+    """Constructed: a file that begins with the header (an older page) is ours."""
+    out = tmp_path / "looks.html"
+    out.write_bytes(lookspage.PAGE_HEADER + b"an older page")
+    ok("looks", "page", "--build", BUILD, "--out", str(out))
+    assert _data(out.read_text(encoding="utf-8")).build == BUILD
+
+
+def _loop(tmp_path: Path) -> Path:
+    """Constructed: two links that point at each other, in `<tmp>/loop/`."""
+    folder = tmp_path / "loop"
+    folder.mkdir()
+    (folder / "a").symlink_to(folder / "b")
+    (folder / "b").symlink_to(folder / "a")
+    return folder / "a"
+
+
+def test_a_symlink_loop_is_a_clean_refusal_constructed(tmp_path: Path) -> None:
+    loop = _loop(tmp_path)
+    result = run("looks", "page", "--build", BUILD, "--out", str(loop / "looks.html"))
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)  # not a traceback
+    assert "cannot be resolved" in result.stderr and "nothing was written" in result.stderr
+    assert sorted(p.name for p in loop.parent.iterdir()) == ["a", "b"]
+
+
+def test_refuse_install_refuses_a_symlink_loop_constructed(tmp_path: Path) -> None:
+    loop = _loop(tmp_path)
+    with pytest.raises(lookstore.LookLocationError, match="cannot be resolved"):
+        lookstore.refuse_install(loop / "x")
+    with pytest.raises(lookstore.LookLocationError, match="cannot be resolved"):
+        lookstore.LookStore(loop / "looks").save(
+            lookstore.SavedLook(
+                saved_build=BUILD,
+                look=cli.looks.Look(name="mine", race_id=HUMAN, body_type=0),
+            )
+        )
+
+
+def test_the_page_shows_home_as_a_tilde(
+    tmp_path: Path, user_data: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A page passed on does not carry the account's user name in its paths."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    assert _save("fine", f"9={PLAIN_SKIN}").exit_code == 0
+    (user_data / "looks" / "broken.json").write_text("{not json", encoding="utf-8")
+    result = run("looks", "page", "--build", BUILD, "--json")
+    assert result.exit_code == 1  # the damaged file
+    report = cli.LooksPageReport.model_validate_json(result.stdout)
+    page = Path(report.path).read_text(encoding="utf-8")
+    data = _data(page)
+    looks_dir = "~/" + (user_data / "looks").relative_to(tmp_path).as_posix()
+    assert data.looks_directory == looks_dir
+    assert data.looks[0].report.path == f"{looks_dir}/fine.json"
+    assert dict(data.looks[0].facts)["file"] == f"{looks_dir}/fine.json"
+    assert data.damaged[0].error.startswith(f"{looks_dir}/broken.json ")
+    assert str(tmp_path) not in page
+    printed = _json(cli.LookReport, "looks", "show", "fine", "--build", BUILD)
+    assert printed.path == str(user_data / "looks" / "fine.json")  # the CLI keeps it whole
+    assert data.looks[0].report == printed.model_copy(update={"path": f"{looks_dir}/fine.json"})

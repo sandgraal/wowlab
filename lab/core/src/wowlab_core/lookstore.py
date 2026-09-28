@@ -128,8 +128,12 @@ def refuse_install(path: Path, what: str = "saved looks") -> None:
     """Raise ``LookLocationError`` if ``path``, with every symlink resolved, is
     an install or inside one: it or a folder above it holds ``.build.info`` or
     ``.flavor.info``. ``what`` names what never lives there, for the message.
-    Reads only; ``looks page`` runs it on its output file too (M11-07)."""
-    resolved = path.resolve()
+    Reads only; ``looks page`` runs it on its output file too (M11-07). A path
+    that cannot be resolved (a symlink loop) is refused too."""
+    try:
+        resolved = path.resolve()
+    except (RuntimeError, OSError) as exc:
+        raise LookLocationError(f"{path} cannot be resolved ({exc})") from None
     for candidate in (resolved, *resolved.parents):
         for marker in (BUILD_INFO, FLAVOR_INFO):
             if (candidate / marker).exists():
