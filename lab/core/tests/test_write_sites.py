@@ -60,8 +60,20 @@ EXEMPT_FILES: dict[str, str] = {
 }
 
 # (repo-relative file, the offending source line stripped) -> why it is safe.
-# Empty today; an entry that no longer matches a hit fails the test too.
-ALLOWED: dict[tuple[str, str], str] = {}
+# An entry that no longer matches a hit fails the test too.
+_LOOKSTORE = "lab/core/src/wowlab_core/lookstore.py"
+_LOOKS_DIR = (
+    "saved looks (§13.2, M11-06): only inside LookStore.root, the user data directory's "
+    "looks/ folder, which save() refuses before and after creating it when it or any "
+    "folder above it holds .build.info or .flavor.info"
+)
+ALLOWED: dict[tuple[str, str], str] = {
+    (_LOOKSTORE, "self._root.mkdir(parents=True, exist_ok=True)"): _LOOKS_DIR,
+    (_LOOKSTORE, 'with tmp.open("xb") as handle:'): _LOOKS_DIR + "; a new temp name (x mode)",
+    (_LOOKSTORE, "tmp.replace(final)"): _LOOKS_DIR + "; the temp file onto <name>.json",
+    (_LOOKSTORE, "tmp.unlink(missing_ok=True)"): _LOOKS_DIR + "; its own temp file",
+    (_LOOKSTORE, "final.hardlink_to(tmp)"): _LOOKS_DIR + "; publishes without replacing",
+}
 
 REFERENCED_NAMES = frozenset({"write_text", "write_bytes", "unlink", "rmtree"})
 OS_WRITERS = frozenset(
