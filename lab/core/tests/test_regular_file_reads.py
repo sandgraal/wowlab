@@ -24,6 +24,7 @@ from __future__ import annotations
 import contextlib
 import errno
 import hashlib
+import io
 import os
 import stat
 import sys
@@ -423,21 +424,56 @@ def test_constructed_linked_object_is_replaced_by_a_real_one_on_the_next_create(
 
 
 @needs_fifo
-def test_constructed_object_swapped_for_a_fifo_during_the_reuse_check_does_not_block(
+def test_constructed_object_swapped_for_a_fifo_at_the_reuse_check_open_does_not_block(
     source: Path, store: SnapshotStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The reuse check used to test `is_file` and then open with a plain
-    `open`; now the re-hash is the only check, and a FIFO there never blocks
-    it: the object is rewritten as a regular file."""
+    """`create`'s reuse check re-hashes an object already in the store. A FIFO
+    swapped in for the object just as the re-hash opens it (hooked at
+    `os.open` and `io.open`, recognised by the object's inode) never blocks
+    it: the object is not reused, and a regular one is written in its place."""
     store.create(source, ["WTF"], now=T0)
     obj = _config_object(store, source)
-    obj.unlink()
-    os.mkfifo(obj)
-    raised = bounded(
-        lambda: store.create(source, ["WTF"], now=datetime(2026, 1, 2, 3, 4, 6, tzinfo=UTC)), obj
-    )
+    identity = (obj.lstat().st_dev, obj.lstat().st_ino)
+    swapped: list[bool] = []
+    real_os_open = os.open
+    real_io_open = io.open
+
+    def swap_if_object(path: Any) -> None:
+        if swapped or isinstance(path, int):
+            return
+        try:
+            st = os.lstat(path)
+        except OSError:
+            return
+        if (st.st_dev, st.st_ino) == identity:
+            swapped.append(True)
+            held = real_os_open(obj, os.O_RDONLY)  # no inode reuse while we swap
+            try:
+                obj.unlink()
+                os.mkfifo(obj)
+            finally:
+                os.close(held)
+
+    def hooked_os_open(
+        path: Any, flags: int, mode: int = 0o777, *, dir_fd: int | None = None
+    ) -> int:
+        if flags & os.O_ACCMODE == os.O_RDONLY and not flags & os.O_CREAT:
+            swap_if_object(path)
+        return real_os_open(path, flags, mode, dir_fd=dir_fd)
+
+    def hooked_io_open(file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        if "r" in mode and "+" not in mode:
+            swap_if_object(file)
+        return real_io_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", hooked_os_open)
+    monkeypatch.setattr(io, "open", hooked_io_open)
+    later = datetime(2026, 1, 2, 3, 4, 6, tzinfo=UTC)
+    raised = bounded(lambda: store.create(source, ["WTF"], now=later), obj)
+    assert swapped, "the reuse check never opened the object"
     assert raised is None, repr(raised)
-    assert stat.S_ISREG(obj.lstat().st_mode)
+    assert stat.S_ISREG(obj.lstat().st_mode), "a regular object took the FIFO's place"
+    assert zlib.decompress(obj.read_bytes()) == (source / "WTF" / "Config.wtf").read_bytes()
 
 
 # ─── store: create's read of a manifest already at its id ────────────────────
