@@ -21,7 +21,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import re
+import sys
+import unicodedata
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -627,3 +630,103 @@ def test_the_page_shows_home_as_a_tilde(
     printed = _json(cli.LookReport, "looks", "show", "fine", "--build", BUILD)
     assert printed.path == str(user_data / "looks" / "fine.json")  # the CLI keeps it whole
     assert data.looks[0].report == printed.model_copy(update={"path": f"{looks_dir}/fine.json"})
+
+
+# ─── round 2 (#104 security review): other spellings of the user data path ───
+
+_FIRMLINK = Path("/System/Volumes/Data")
+
+
+def _refused_inside_user_data(out: Path, source: _Source) -> None:
+    result = run("looks", "page", "--build", BUILD, "--out", str(out))
+    assert result.exit_code == 1, result.stdout
+    assert "inside wowlab's user data directory" in result.stderr
+    assert "nothing was written" in result.stderr
+    assert source.asked == []
+    assert not out.exists()
+
+
+def _store_dirs(user_data: Path) -> None:
+    for sub in ("store/objects", "gamedata/tables", "looks"):
+        (user_data / sub).mkdir(parents=True, exist_ok=True)
+
+
+@pytest.mark.parametrize("sub", ["store/objects", "gamedata/tables", "looks"])
+def test_a_case_variant_of_the_user_data_path_is_refused_constructed(
+    user_data: Path, source: _Source, sub: str
+) -> None:
+    """Constructed: `WOWLAB` for `wowlab`, on a volume that ignores case."""
+    _store_dirs(user_data)
+    variant = user_data.with_name(user_data.name.upper())
+    if not variant.exists():
+        pytest.skip("this volume is case-sensitive")
+    _refused_inside_user_data(variant / sub / "page.html", source)
+    assert "page.html" not in {p.name for p in user_data.rglob("*")}
+
+
+def test_a_case_variant_is_refused_before_the_folder_exists_constructed(
+    user_data: Path, source: _Source
+) -> None:
+    """By the folded text, on any volume: nothing to compare identity with yet."""
+    assert not user_data.exists()
+    variant = user_data.with_name(user_data.name.upper())
+    _refused_inside_user_data(variant / "store" / "page.html", source)
+
+
+def test_a_case_variant_of_pages_is_still_pages_constructed(user_data: Path) -> None:
+    (user_data / "pages").mkdir(parents=True)
+    out = user_data.with_name(user_data.name.upper()) / "PAGES" / "looks.html"
+    ok("looks", "page", "--build", BUILD, "--out", str(out))
+    assert (user_data / "pages" / "looks.html").read_bytes().startswith(lookspage.PAGE_HEADER)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS firmlinks")
+def test_a_firmlink_spelling_of_the_user_data_path_is_refused_constructed(
+    user_data: Path, source: _Source
+) -> None:
+    """Constructed: `/System/Volumes/Data/private/var/...` for `/private/var/...`."""
+    _store_dirs(user_data)
+    real = user_data.resolve()
+    variant = Path(str(_FIRMLINK) + str(real))
+    if not variant.exists() or not os.path.samestat(variant.stat(), real.stat()):
+        pytest.skip("the user data folder has no firmlink spelling here")
+    _refused_inside_user_data(variant / "gamedata" / "tables" / "page.html", source)
+
+
+def _accented(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Constructed: a user data directory whose name has an accent (NFC)."""
+    data = tmp_path / unicodedata.normalize("NFC", "donn\u00e9es") / "wowlab"
+    monkeypatch.setattr(lookspage.platformdirs, "user_data_path", lambda *a, **k: data)
+    return data
+
+
+def _nfd(path: Path) -> Path:
+    return Path(unicodedata.normalize("NFD", str(path)))
+
+
+def test_an_nfd_spelling_of_the_user_data_path_is_refused_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: _Source
+) -> None:
+    data = _accented(tmp_path, monkeypatch)
+    _store_dirs(data)
+    variant = _nfd(data)
+    assert str(variant) != str(data)
+    if not variant.exists():
+        pytest.skip("this volume keeps NFC and NFD names apart")
+    _refused_inside_user_data(variant / "store" / "objects" / "page.html", source)
+
+
+def test_an_nfd_spelling_is_refused_before_the_folder_exists_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: _Source
+) -> None:
+    data = _accented(tmp_path, monkeypatch)
+    _refused_inside_user_data(_nfd(data) / "looks" / "page.html", source)
+    assert not data.parent.exists()
+
+
+def test_the_user_data_folder_itself_and_a_dotdot_route_are_inside_constructed(
+    user_data: Path, source: _Source
+) -> None:
+    _store_dirs(user_data)
+    _refused_inside_user_data(user_data / "looks" / ".." / "store" / "page.html", source)
+    _refused_inside_user_data(user_data / "page.html", source)

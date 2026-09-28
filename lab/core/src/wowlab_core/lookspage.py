@@ -26,6 +26,7 @@ import base64
 import hashlib
 import os
 import stat
+import unicodedata
 import uuid
 from pathlib import Path
 
@@ -492,9 +493,19 @@ def _resolved(path: Path) -> Path:
 
 
 def _existing_header(path: Path) -> bytes:
-    """The first bytes of the regular file at ``path``, read without blocking."""
+    """The first bytes of the regular file at ``path``, read without blocking:
+    checked to be a regular file before it is opened and again on the open
+    descriptor, so a FIFO or a device is never opened for long."""
     try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
+        if not stat.S_ISREG(path.stat().st_mode):
+            raise PageError(f"{path} exists and is not a regular file")
+        fd = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_NOCTTY", 0)
+            | getattr(os, "O_BINARY", 0),
+        )
         try:
             if not stat.S_ISREG(os.fstat(fd).st_mode):
                 raise PageError(f"{path} exists and is not a regular file")
@@ -503,6 +514,38 @@ def _existing_header(path: Path) -> bytes:
             os.close(fd)
     except OSError as exc:
         raise PageError(f"{path} cannot be read ({exc.strerror or exc})") from None
+
+
+def _stat(path: Path) -> os.stat_result | None:
+    try:
+        return path.stat()
+    except (OSError, ValueError):
+        return None
+
+
+def _folded(path: Path) -> str:
+    return unicodedata.normalize("NFC", str(path)).casefold()
+
+
+def _within(path: Path, folder: Path) -> bool:
+    """``path`` is ``folder`` or inside it, however either is spelled.
+
+    By identity: some existing ancestor of ``path`` (or ``path`` itself) is
+    the same file as ``folder``, which catches a case variant, a macOS
+    firmlink spelling (``/System/Volumes/Data/...``) and a Unicode
+    normalization variant on volumes that treat them as one name. And by
+    text, NFC-normalized and case-folded, which also covers a ``folder`` that
+    does not exist yet. The text test can only err towards "inside"."""
+    folded, base = _folded(path), _folded(folder).rstrip(os.sep)
+    if folded == base or folded.startswith(base + os.sep):
+        return True
+    wanted = _stat(folder)
+    if wanted is None:
+        return False
+    return any(
+        (found := _stat(candidate)) is not None and os.path.samestat(found, wanted)
+        for candidate in (path, *path.parents)
+    )
 
 
 def check_target(out: Path) -> Path:
@@ -518,7 +561,7 @@ def check_target(out: Path) -> Path:
     final = _resolved(target)
     data = _resolved(platformdirs.user_data_path("wowlab"))
     pages = _resolved(default_page_path().parent)
-    if final.is_relative_to(data) and not final.is_relative_to(pages):
+    if _within(final, data) and not _within(final, pages):
         raise PageError(
             f"{target} is inside wowlab's user data directory ({data}) but not in its "
             f"pages folder ({pages}); a page never goes beside the store, the cache or "

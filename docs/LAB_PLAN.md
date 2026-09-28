@@ -1444,7 +1444,9 @@ SHA-256, so the page fetches nothing. `--out` (or the default folder) is
 refused before any work, and again before and after creating its folder, when
 it or a folder above it holds `.build.info` or `.flavor.info`
 (`lookstore.refuse_install`, which also refuses a path that cannot be
-resolved), when it is inside the user data directory but outside `pages/`, when
+resolved), when it is inside the user data directory but outside `pages/`
+(compared by file identity of its existing folders and by NFC-normalized,
+case-folded text, so a case, firmlink or Unicode spelling does not get in), when
 it is a directory or not a regular file, and when it is an existing file that
 does not begin with the page's own header (the doctype and the CSP meta tag):
 exit 1, nothing written. An existing page there is replaced whole. Damaged
