@@ -171,7 +171,7 @@ Graders from `docs/LAB_PLAN.md` §6.4 (serializer half) and `docs/LAB_FORMATS.md
 *Merged 2026-09-28 (#74). Follow-ups recorded at merge, not scheduled: skip a sibling folder with over 65,536 entries so a hostile folder is never read in full (today about 2.5 s and 450 MB per million entries; the owner's machine only); a Windows junction test via `_winapi.CreateJunction`; `_path_key` casefolds on case-sensitive Linux too (can only lose a style source); serialize at 50 MiB takes about 8.5 s since the output is re-parsed before return (§6.4 sets no serializer target).*
 ---
 
-## [ ] M10-13 — Combat log tokenizer
+## [x] M10-13 — Combat log tokenizer
 **Size:** M · **Depends on:** M10-03
 
 `wowlab_core.combatlog` per `docs/LAB_PLAN.md` §6.8 and `docs/LAB_FORMATS.md` §8. If M10-03 found that the Forever client writes no usable combat log, ship against retail fixtures and say so in the module docstring and the PR.
@@ -239,7 +239,7 @@ Graders from the M10-14 reviews (2026-09-27/28), for `lab/core/src/wowlab_core/g
 *Merged 2026-09-28 (#73 graders, #77 implementation). Follow-ups, not scheduled: a test-writer comment on the `dotdot-after-a-symlink` grader saying it intentionally requires refusing both readings (Windows collapses `..` as text before following links); optionally run the store/source overlap check before `store_lock` in `snap create`, so a store that is an ancestor of the install gets no stray empty lock file (outside the install).*
 ---
 
-## [ ] M10-18T — luadata sibling-listing follow-up graders [TEST]
+## [x] M10-18T — luadata sibling-listing follow-up graders [TEST]
 **Size:** S · **Depends on:** M10-12
 
 Owner-approved follow-ups (2026-09-28) from the M10-12 reviews, graded on `luadata.serialize`'s public behaviour: (1) a sibling folder holding more than 65,536 entries is skipped whole during style detection (never read or sorted in full), and whether a folder is skipped depends only on its entry count, never on listing order; (2) on Windows, a directory junction under `WTF/Account` (made with `_winapi.CreateJunction`, no privilege needed) is never walked into or read; (3) a missing target or `lab_written` path is compared case-insensitively only where the filesystem is case-insensitive, so on a case-sensitive volume a separate sibling `A.lua` still counts when the target is `a.lua`. Constructed trees, labelled per L8; `xfail(strict=True)` with one marker line each. The session that writes these never writes M10-18.
@@ -248,7 +248,7 @@ Owner-approved follow-ups (2026-09-28) from the M10-12 reviews, graded on `luada
 
 ---
 
-## [ ] M10-18 — luadata sibling-listing follow-ups [IMPL]
+## [x] M10-18 — luadata sibling-listing follow-ups [IMPL]
 **Size:** S · **Depends on:** M10-18T
 
 `luadata.py` per M10-18T, with a dated line in `docs/LAB_PLAN.md` §6.4 for the per-folder cap. Activate graders by marker deletion only.
@@ -275,13 +275,15 @@ From the M10-17 security review (owner-approved 2026-09-28): `wowlab snap create
 
 ---
 
-## [ ] M10-15 — Wave 1 review
+## [x] M10-15 — Wave 1 review
 **Size:** S · **Depends on:** M10-12, M10-13, M10-14, M10-16 · **owner**
 
 The conductor writes `docs/handoffs/M10-review.md` per `docs/LAB_PLAN.md` §11 and stops dispatch. The owner runs the CLI against the real install (`wowlab doctor`, `wowlab snap create -m baseline`, one guarded change and `wowlab undo`), notes what was wrong or missing, and picks Wave 2.
 
 **Acceptance:** the review file exists; the owner's pick is recorded in it; the next wave's plan, ADRs and tickets land in one docs PR.
 
+
+*Written 2026-09-28: `docs/handoffs/M10-review.md`. The owner picked Wave 2 the same day (lab-addon, customization-sandbox, profiles, sv-merge).*
 ---
 
 # Parallelization

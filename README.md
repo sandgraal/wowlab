@@ -6,7 +6,7 @@
   <a href="https://github.com/sandgraal/wowlab/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/sandgraal/wowlab/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python 3.12" src="https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white">
   <img alt="Local only, uploads nothing" src="https://img.shields.io/badge/local--only-uploads%20nothing-2ea44f">
-  <img alt="Wave 1 closing, Wave 2 next" src="https://img.shields.io/badge/status-Wave%201%20closing%20%C2%B7%20Wave%202%20next-f3c969">
+  <img alt="Wave 1 done, Wave 2 next" src="https://img.shields.io/badge/status-Wave%201%20done%20%C2%B7%20Wave%202%20next-f3c969">
   <a href="LICENSE"><img alt="License Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
 </p>
 
@@ -37,7 +37,7 @@
 | ↩️ | **Undo, for real.** Put a snapshot back, or undo the last change. You see the plan first, and it refuses while the game is running. | `wowlab snap restore` · `wowlab undo` |
 | 📜 | **Read your saved data.** Addon SavedVariables, CVars, keybinds, macros and your addon list, as readable text or JSON. | `wowlab sv dump` · `cvar` · `binds` · `macros` · `addons` |
 | 📚 | **Game data.** Any game table for your exact build, from [wago.tools](https://wago.tools), cached forever and keyed by build. | `wowlab db2 fetch TABLE` |
-| ⚔️ | **Combat log** *(landing now)*. A streaming combat-log reader and a live `tail`. | `wowlab log tail --follow` |
+| ⚔️ | **Combat log.** A streaming combat-log reader and a live `tail` that follows the game as it writes, even across new log files. | `wowlab log tail --follow` |
 
 <details>
 <summary><b>See it in action</b> (output from a test copy of a Forever install)</summary>
