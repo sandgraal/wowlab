@@ -305,16 +305,25 @@ def test_constructed_without_o_nofollow_a_swap_during_the_open_is_refused(
     assert_closed(spy.fds_for(path))
 
 
-def _with_ino(st: os.stat_result, ino: int) -> os.stat_result:
-    fields = list(st)
-    fields[stat.ST_INO] = ino
-    return os.stat_result(fields)
+def _fake_stat(st: os.stat_result, **changes: int) -> Any:
+    """The fields the read helper looks at, copied from a real `lstat` with
+    `changes` applied. A namespace, not an `os.stat_result` built from a
+    sequence: on Windows that leaves `st_file_attributes` and
+    `st_reparse_tag` as None, which no real `lstat` returns."""
+    fields = {
+        name: getattr(st, name, 0)
+        for name in ("st_mode", "st_dev", "st_ino", "st_file_attributes", "st_reparse_tag")
+    }
+    fields.update(changes)
+    return types.SimpleNamespace(**fields)
 
 
-def _as_link(st: os.stat_result) -> os.stat_result:
-    fields = list(st)
-    fields[stat.ST_MODE] = stat.S_IFLNK | 0o777
-    return os.stat_result(fields)
+def _with_ino(st: os.stat_result, ino: int) -> Any:
+    return _fake_stat(st, st_ino=ino)
+
+
+def _as_link(st: os.stat_result) -> Any:
+    return _fake_stat(st, st_mode=stat.S_IFLNK | 0o777)
 
 
 @pytest.mark.parametrize(
@@ -337,7 +346,7 @@ def test_constructed_without_o_nofollow_the_path_seen_after_the_open_must_be_the
     real_lstat = os.lstat
     calls: list[int] = []
 
-    def lstat_changed_after_the_open(target: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+    def lstat_changed_after_the_open(target: Any, *args: Any, **kwargs: Any) -> Any:
         st = real_lstat(target, *args, **kwargs)
         if os.fspath(target) != os.fspath(path):
             return st
@@ -374,7 +383,7 @@ def test_constructed_without_o_nofollow_a_non_regular_path_is_refused_before_any
         path.write_bytes(b"constructed")
         real_lstat = os.lstat
 
-        def lstat_says_link(target: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+        def lstat_says_link(target: Any, *args: Any, **kwargs: Any) -> Any:
             st = real_lstat(target, *args, **kwargs)
             return _as_link(st) if os.fspath(target) == os.fspath(path) else st
 
