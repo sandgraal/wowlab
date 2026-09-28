@@ -736,6 +736,12 @@ A store inside any install, including one that also holds the captured
 install, is not `refuse_holding`'s case: the gate still refuses it, with
 exit 3.
 
+*Amended 2026-09-28 (M11-08):* `SnapshotStore.list_tree(root, subtrees, *,
+exclude=())` returns every path `create` would walk, sorted, with its kind
+(`file`, `symlink`, `other`) by `lstat`. It reads listings and `lstat` only,
+opens no file and creates nothing. `profiles` uses it to find the files added
+under a profile's subtrees since the save (§13.3).
+
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 
 The only module that writes into an install (L2, ADR-0021).
@@ -1388,6 +1394,28 @@ your next login (synchronize* CVars; see `wowlab doctor`) **[verify]**", and
 says the result is proven only by logging in.
 Whether `apply` also removes files added since the profile was saved is
 decided in the ticket and stated in the plan.
+
+*Decided 2026-09-28 (M11-08):* **`apply` removes files added since the
+profile was saved**, within the profile's own recorded subtrees only. A
+profile records every subtree it considered, present or not: each preset
+name joined to every account and character folder `layout` found at save
+time (both Forever shapes). A regular file now under one of those subtrees
+that the profile does not hold is deleted through the same `guard`
+transaction that writes the saved bytes back, so `apply` returns each
+subtree to what was saved (a character `bindings-cache.wtf` created after a
+`bindings` save would otherwise keep overriding the account binds), and
+`wowlab undo` puts the deleted files back. A character folder created after
+the save is not a recorded subtree and is never touched. Left alone, and
+listed: file-map Edit `no` files (never written or deleted, as in a whole
+`snap restore`), anything added that is not a regular file, and anything
+added the gate refuses to delete (an executable). Folders emptied by a
+deletion stay, since the gate deletes files only. The `addons` preset also
+excludes `WowLab.lua.bak`. Presets live in
+`wowlab_core/profile_presets.toml`. A profile is the snapshot labelled
+`profile:<name>` (optionally ` presets=<p>,…`); names are unique in the
+store; `profile delete` relabels its snapshot `deleted-profile:<name>`, and
+the snapshot stays (snapshots are immutable). `profile apply` also takes
+`--dry-run`.
 
 ### 13.4 sv-merge
 

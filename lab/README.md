@@ -19,8 +19,9 @@ uv run wowlab --help     # every command (docs/LAB_PLAN.md §6.11)
 ```
 
 Exit codes: 0 ok, 1 error, 2 usage, 3 refused by the write gate. Only
-`wowlab snap restore` and `wowlab undo` change an install, both through the
-gate, and both print the plan and ask first unless given `--yes`.
+`wowlab snap restore`, `wowlab profile apply` and `wowlab undo` change an
+install, all through the gate, and all print the plan and ask first unless
+given `--yes`.
 
 `WOWLAB_WOW_ROOT` points the tools at an install when it is not in a default
 location (`.env.example`).

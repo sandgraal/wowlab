@@ -1,0 +1,57 @@
+# Profile presets: which of the client's local files a `wowlab profile save
+# --preset P` captures (docs/LAB_PLAN.md §13.3, M11-08).
+#
+# Data, not flavor constants (L6): every name below is a file or folder the
+# client writes in every flavor (docs/LAB_FILE_MAP.md). Which accounts and
+# characters exist is found by `layout` when the profile is saved; nothing
+# here names a flavor folder, product, interface or build.
+#
+# Keys of a preset:
+#   summary    one line for `--help` and `profile show`
+#   flavor     paths relative to the flavor folder
+#   account    names inside each `WTF/Account/<ACCOUNT>/`
+#   character  names inside each character folder `layout` finds, of either
+#              shape (`<Realm>/<Character>/`, and on Forever both the
+#              `<digits>/<First>-<Second>/` folder and its `<Realm>/<First>/`
+#              twin, which holds `AddOns.txt`)
+#   exclude.account, exclude.character
+#              paths inside those folders that are never captured
+#
+# A name is a file or a folder. A name that is absent when the profile is
+# saved is still recorded as one of its subtrees, so a file created there
+# later is one "added since the profile was saved" (§13.3, 2026-09-28).
+#
+# Action-bar contents and talents live on the server and are in no preset.
+
+[presets.ui]
+summary = "Config.wtf, account and character config-cache.wtf, the edit-mode caches, layout-local.txt, chat-cache.txt"
+flavor = ["WTF/Config.wtf"]
+account = ["config-cache.wtf", "edit-mode-cache-account.txt"]
+character = [
+  "config-cache.wtf",
+  "edit-mode-cache-character.txt",
+  "layout-local.txt",
+  "chat-cache.txt",
+]
+
+[presets.bindings]
+summary = "account and character bindings-cache.wtf, click-bindings-cache.txt"
+account = ["bindings-cache.wtf"]
+character = ["bindings-cache.wtf", "click-bindings-cache.txt"]
+
+[presets.macros]
+summary = "account and character macros-cache.txt"
+account = ["macros-cache.txt"]
+character = ["macros-cache.txt"]
+
+[presets.addons]
+summary = "Interface/AddOns/, AddOns.txt, addon SavedVariables except the lab-addon's own WowLab.lua"
+flavor = ["Interface/AddOns"]
+account = ["SavedVariables"]
+character = ["AddOns.txt", "SavedVariables"]
+
+[presets.addons.exclude]
+# The lab-addon's own records (§13.1): restoring an older copy would make its
+# `probe.loads` counter go down, which sv-merge's loader check reads (§13.4).
+account = ["SavedVariables/WowLab.lua", "SavedVariables/WowLab.lua.bak"]
+character = ["SavedVariables/WowLab.lua", "SavedVariables/WowLab.lua.bak"]

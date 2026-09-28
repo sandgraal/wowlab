@@ -965,6 +965,49 @@ class SnapshotStore:
             mode_changed=tuple(mode_changed),
         )
 
+    def list_tree(
+        self,
+        root: Path,
+        subtrees: Iterable[str | PurePath],
+        *,
+        exclude: Iterable[str | PurePath] = (),
+    ) -> tuple[tuple[str, Literal["file", "symlink", "other"]], ...]:
+        """Every path `create` would walk under `subtrees` of `root`, less
+        `exclude`, sorted, each with its kind by `lstat`: a regular `file`, a
+        `symlink` (on Windows also a junction or other directory link, never
+        followed), or `other` (what `create` ignores: a FIFO, a socket).
+
+        Reads directory listings and `lstat` only: it opens no file, stores
+        nothing and touches neither the store nor `root` (L1). Subtrees and
+        excludes are held to `create`'s rules, and a subtree reached through
+        a link below the root is refused as `create` refuses it. Added
+        2026-09-28 (M11-08) so `profiles` can find the files added under a
+        profile's subtrees since it was saved without taking a snapshot.
+        """
+        root = Path(root).absolute()
+        wanted = sorted({_normalize_rel(s, "subtree") for s in subtrees})
+        excluded = sorted({_normalize_rel(x, "exclude") for x in exclude})
+        found: dict[str, Literal["file", "symlink", "other"]] = {}
+        for subtree in wanted:
+            for rel, abs_path in self._walk(root, subtree, excluded):
+                if rel in found:
+                    continue
+                try:
+                    st = abs_path.lstat()
+                except FileNotFoundError:
+                    continue  # removed while we walked
+                except OSError as exc:
+                    raise SnapshotError(f"cannot inspect {abs_path}: {exc}") from exc
+                if stat.S_ISLNK(st.st_mode) or (
+                    stat.S_ISDIR(st.st_mode) and _is_link_like_dir(abs_path)
+                ):
+                    found[rel] = "symlink"
+                elif stat.S_ISREG(st.st_mode):
+                    found[rel] = "file"
+                else:
+                    found[rel] = "other"
+        return tuple(sorted(found.items()))
+
     # -- the one mutation --------------------------------------------------
 
     def set_label(self, snapshot_id: str, label: str) -> Manifest:
