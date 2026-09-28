@@ -188,6 +188,65 @@ Written only while combat logging is on (`/combatlog`), flushed in batches.
 - Restricted environments in 12.x change what is logged in instances. What
   the Forever client logs is an M10-03 finding.
 
+*Amended 2026-09-28 (M10-03 part 3; fixture
+`macos/forever/Logs/WoWCombatLog-040126_021630.txt`, Forever 1.60.1, macOS,
+one solo open-world fight against one NPC, 79 lines, no instance, no group;
+file name and timestamps shifted by the capture tool, so neither is real):*
+the Forever client writes a combat log. What follows is what this one file
+shows; anything wider is **[verify]**.
+
+- File name `WoWCombatLog-MMDDYY_HHMMSS.txt`, matching the first line's
+  local time. Whether the client starts a new file each time logging is
+  turned on, and whether the header repeats inside a file, are **[verify]**.
+- Header `COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,1.60.1,PROJECT_ID,18`.
+  `BUILD_VERSION` is the patch only, as in the retail example above, so a
+  log does not identify its four-part version (1.60.1 has been 69913, 69977
+  and 70009); take the version from the install. `PROJECT_ID` is 18, not 1,
+  although Forever is reported to use the modern API; whether it equals
+  `WOW_PROJECT_ID` is **[verify]**, and nothing infers an API or flavor from
+  it.
+- Timestamp shape `M/D/YYYY HH:MM:SS.mmm-4`: month not zero-padded, four-digit
+  year, the hour always two digits, three fractional digits, local time with
+  the UTC offset written as whole hours (verified 2026-09-24 on the owner's
+  real logs by a count-only check; day padding unverified, no real log had a
+  day below 10). A positive or half-hour offset and UTC itself are
+  **[verify]**.
+- Unit names are `"<Name>-<Realm>-"` (all 77 player unit names). The third
+  component is the region on retail per community documentation
+  **[verify]**; it is empty on every name here, for reasons unknown. The
+  realm component is the retail-style `<ACCOUNT>/<Realm>/` folder name
+  without its spaces; whether hyphens and apostrophes are also dropped is
+  **[verify]**. The owner's character appears as `<First>-<Realm>-`, with no
+  second name. A unit name's second component is a realm; a
+  `<First>-<Second>` folder's is not (`docs/GLOSSARY.md`, Second name).
+  Whether first names are unique on a realm is **[verify]**; key units by
+  GUID.
+- An absent unit is `0000000000000000,nil,0x80000000,0x80000000`;
+  `0000000000000000` also fills the advanced block's owner slot. Raid flags
+  are `0x80000000` on every unit, present or absent, where the example above
+  shows `0x0`; the meaning is **[verify]**. Unit flags: owner `0x511`, the
+  NPC `0x10a48`.
+- Records seen: `SPELL_CAST_START`, `SPELL_CAST_SUCCESS`,
+  `SPELL_CAST_FAILED`, `SPELL_AURA_APPLIED`, `SPELL_AURA_REFRESH`,
+  `SPELL_AURA_REMOVED`, `SPELL_DAMAGE`, `SPELL_PERIODIC_DAMAGE`,
+  `SPELL_HEAL`, `SWING_DAMAGE`, `SWING_DAMAGE_LANDED`, `SWING_MISSED`,
+  `UNIT_DIED`, `PARTY_KILL`, `ZONE_CHANGE`, `MAP_CHANGE`.
+- Advanced parameters on `SPELL_CAST_SUCCESS`, `SPELL_DAMAGE`,
+  `SPELL_PERIODIC_DAMAGE`, `SPELL_HEAL`, `SWING_DAMAGE` and
+  `SWING_DAMAGE_LANDED`; none on cast starts, cast failures, auras, misses,
+  deaths or kills. Field names are not established **[verify]**.
+- `SWING_DAMAGE_LANDED` repeats every `SWING_DAMAGE` in this solo fight (same
+  source, target and damage). Neither record alone, nor both, counts melee
+  damage; the rule is **[verify]**.
+- Tokens: `1`/`nil` flags; a bare `ST` after spell damage fields, none after
+  swing fields; bare `BUFF`/`DEBUFF`; `SPELL_CAST_FAILED` ends in a quoted
+  reason, client-localized per community documentation **[verify]**;
+  `UNIT_DIED` and `PARTY_KILL` end in one extra field. CRLF on every line,
+  the last included.
+- Still open: `COMBATANT_INFO` and every `[...]`/`(...)` group (none here;
+  M10-13 grades them on constructed lines until a boss-pull log is
+  captured), instance logging, group logs, and Windows.
+
 ## 9. wago.tools responses
 
 Recorded, not specified. The fixture for the builds endpoint and for one
