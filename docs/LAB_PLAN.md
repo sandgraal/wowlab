@@ -754,6 +754,31 @@ file, and reads a bounded length; a linked or non-regular store file is
 refused (a linked object is never reused), and a FIFO swapped in during a
 read can no longer block. Capping how far an object inflates is M11-15.
 
+*Amended 2026-09-28 (M11-15, from the #107 security review):* (a) `gc` lists
+`objects/` by `lstat` and follows nothing: a shard or item that is a link
+(on Windows also a junction or other name-surrogate reparse point) or not a
+regular file is never a candidate and never listed into, and is named in a
+new `GcReport.skipped`; a delete goes through descriptors on `objects/` and
+the shard opened without following a link and checked against the listing
+(on Windows, which has no such descriptors, the item is renamed into the
+store's `tmp/`, deleted there only if it has the listing's device and inode
+and is not a link, and renamed back otherwise; an empty shard is removed the
+same way), so nothing is ever deleted through a link, and an object whose
+path changed since the listing is skipped, not deleted. `gc` also refuses
+outright, as for a manifest that does not load, when `manifests/` is a link
+(or junction) or not a directory, or is missing while `objects/` holds
+anything: a dangling link or an unmounted volume would otherwise make every
+object look unreferenced. `create` makes `manifests/` before it stores its
+first object, so a store it wrote always has one. (b) `read_object(sha256, *, size=None)`
+takes the manifest entry's recorded size and inflates at most `size + 1`
+bytes, refusing an object that would inflate past it; `read_file`, guard's
+restore, undo and rollback, and `snap diff` pass it, and `None` (unbounded)
+is left for a caller holding a bare digest. (c) `create`'s reuse check
+freshens an object's mtime with `os.utime` on the descriptor it re-hashed
+where the platform takes one; on Windows it `utime`s the path only after
+`lstat` shows it is still that file and not a link, and a path that no
+longer names the checked file is rewritten, never reused.
+
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 
 The only module that writes into an install (L2, ADR-0021).

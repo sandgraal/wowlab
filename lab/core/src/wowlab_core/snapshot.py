@@ -36,7 +36,7 @@ import zlib
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path, PurePath, PurePosixPath
-from typing import Any, BinaryIO, Literal
+from typing import Any, BinaryIO, Literal, NamedTuple
 
 import platformdirs
 from pydantic import (
@@ -227,6 +227,69 @@ def read_regular_file(
     return b"".join(chunks)
 
 
+class _InflatesTooFarError(Exception):
+    """An object produced one byte more than the size its entry records."""
+
+
+def _inflate_fd(fd: int, limit: int | None) -> tuple[bytes, bool]:
+    """Inflate the zlib stream read from `fd`.
+
+    Returns the bytes and whether they were one complete stream with nothing
+    after it. With a `limit` (M11-15) no call ever produces more than the
+    room left under `limit + 1` bytes, and reaching `limit + 1` raises
+    `_InflatesTooFarError`, so a small object that would inflate without end
+    costs at most `limit + 1` bytes of output plus one compressed chunk.
+    `zlib.error` and `OSError` propagate.
+    """
+    inflater = zlib.decompressobj()
+    cap = None if limit is None else limit + 1
+    parts: list[bytes] = []
+    produced = 0
+    while not inflater.eof:
+        data = os.read(fd, _CHUNK)
+        if not data:
+            return b"".join(parts), False  # truncated
+        while data and not inflater.eof:
+            room = 0 if cap is None else cap - produced  # 0: no bound
+            out = inflater.decompress(data, room)
+            produced += len(out)
+            if cap is not None and produced >= cap:
+                raise _InflatesTooFarError
+            parts.append(out)
+            data = inflater.unconsumed_tail
+    trailing = bool(inflater.unused_data) or bool(os.read(fd, 1))
+    return b"".join(parts), not trailing
+
+
+def _hash_object_fd(fd: int) -> str | None:
+    """The SHA-256 of the object stream on `fd`, inflated a chunk at a time
+    and never held whole; None when it does not decompress cleanly."""
+    hasher = hashlib.sha256()
+    inflater = zlib.decompressobj()
+    try:
+        while chunk := os.read(fd, _CHUNK):
+            data: bytes = chunk
+            while data:
+                hasher.update(inflater.decompress(data, _CHUNK))
+                data = inflater.unconsumed_tail
+        hasher.update(inflater.flush())
+    except (OSError, zlib.error):
+        return None
+    if not inflater.eof or inflater.unused_data:
+        return None
+    return hasher.hexdigest()
+
+
+_UNLINK_BY_DIR_FD = (
+    bool(_O_NOFOLLOW)
+    and hasattr(os, "O_DIRECTORY")
+    and {os.open, os.stat, os.unlink, os.rmdir} <= os.supports_dir_fd
+)
+"""True where `gc` can delete an object through descriptors on `objects/` and
+its shard, opened without following a link (POSIX). Elsewhere (Windows) each
+component is checked by `lstat` just before the delete."""
+
+
 def _checked_stream(fd: int) -> BinaryIO:
     """A buffered reader on a descriptor `open_regular_file` returned (and so
     checked); the descriptor is closed if the wrapping fails."""
@@ -235,6 +298,22 @@ def _checked_stream(fd: int) -> BinaryIO:
     except BaseException:
         os.close(fd)
         raise
+
+
+class _ObjectFile(NamedTuple):
+    """One entry under `objects/` as `SnapshotStore._object_files` lists it
+    (M11-15): every stat is an `lstat`, so nothing here was followed."""
+
+    name: str | None
+    """SHA-256 name for a well-named item that is a regular file or a link;
+    None for anything stray."""
+    path: Path
+    st: os.stat_result
+    top_st: os.stat_result | None
+    """`objects/` as listed; None for `objects/` itself."""
+    shard_st: os.stat_result | None
+    """The shard directory as listed; None for an entry directly in (or
+    being) `objects/`."""
 
 
 _NEEDS_ESCAPE_RE = re.compile("[\x00\ud800-\udfff]")
@@ -416,7 +495,14 @@ class GcReport(_Frozen):
     unreferenced_bytes: int
     """Their compressed size on disk."""
     removed: tuple[str, ...]
-    """Empty on a dry run; equal to `unreferenced` after a real run."""
+    """Empty on a dry run; after a real run, `unreferenced` less any object
+    whose path changed between the listing and the delete (then in `skipped`)."""
+    skipped: tuple[str, ...] = ()
+    """Entries under `objects/` that gc left alone because they are links
+    (symlinks, and on Windows junctions and other name-surrogate reparse
+    points) or not regular files, plus any object whose path changed before
+    its delete, as store-relative POSIX paths, sorted (M11-15). Nothing is
+    ever deleted through a link."""
 
 
 def default_store_path() -> Path:
@@ -910,6 +996,9 @@ class SnapshotStore:
             return digest, size
 
         stream.seek(0)
+        # `manifests/` exists before any object does, so a store holding
+        # objects without it is broken, and `gc` refuses it (M11-15).
+        self.manifests_dir.mkdir(parents=True, exist_ok=True)
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
         tmp = self.tmp_dir / f"obj-{uuid.uuid4().hex}"
         hasher = hashlib.sha256()
@@ -936,15 +1025,52 @@ class SnapshotStore:
         return digest, size
 
     def _reusable(self, digest: str, verified: set[str]) -> bool:
-        """True when a sound object for `digest` is already in the store."""
+        """True when a sound object for `digest` is already in the store.
+
+        The object is re-hashed through one descriptor (never through a
+        link, never blocking: M11-11) and its mtime freshened, so a
+        concurrent gc grace period sees it, on that same descriptor where the
+        platform can (`os.utime(fd)`, M11-15): a link swapped in at the path
+        after the re-hash is never followed. Where it cannot (Windows, where
+        `os.utime` takes no descriptor), the path is `utime`d only after
+        `lstat` shows it is still the opened file and not a link, while the
+        descriptor is still open; `os.open` there grants no delete sharing,
+        so the file should not be renamed or removed in between, but that
+        rests on the platform, not on this check. Either way, a
+        path that no longer names the checked file is not reused, and the
+        caller rewrites it (a rename replaces a link, never follows it).
+        """
         if digest in verified:
             return True
         existing = self.object_path(digest)
-        if self._rehash(existing) != digest:  # None when missing or not a regular file
-            return False
-        os.utime(existing)  # freshen, so a concurrent gc grace period sees it
+        try:
+            fd, st = open_regular_file(existing)
+        except OSError:
+            return False  # missing, a link, or not a regular file
+        try:
+            if _hash_object_fd(fd) != digest:
+                return False
+            if os.utime in os.supports_fd:
+                os.utime(fd)
+            elif not self._still_names(existing, st):
+                return False
+            else:
+                os.utime(existing)
+            if not self._still_names(existing, st):
+                return False
+        finally:
+            os.close(fd)
         verified.add(digest)
         return True
+
+    @staticmethod
+    def _still_names(path: Path, st: os.stat_result) -> bool:
+        """`path` is, by `lstat`, not a link and the file `st` describes."""
+        try:
+            now = os.lstat(path)
+        except OSError:
+            return False
+        return not _is_link_stat(now) and _file_identity(now) == _file_identity(st)
 
     def _check_publishable(self, manifest: Manifest, data: bytes) -> None:
         """Hold the bytes about to be written to everything `_load` demands."""
@@ -971,15 +1097,25 @@ class SnapshotStore:
     # -- read --------------------------------------------------------------
 
     def _manifest_files(self) -> tuple[Path, ...]:
+        """Every `*.json` under `manifests/` that is a regular file or a link,
+        judged by `lstat` (M11-15): a link is listed but never followed, so
+        `_load` refuses it and it is reported as a manifest that does not
+        load (and `gc` refuses to run) rather than silently dropped. Other
+        non-regular entries are skipped, as before."""
         if not self.manifests_dir.is_dir():
             return ()
-        return tuple(
-            sorted(
-                p
-                for p in self.manifests_dir.iterdir()
-                if p.name.endswith(_MANIFEST_SUFFIX) and p.is_file()
-            )
-        )
+        found: list[Path] = []
+        with os.scandir(self.manifests_dir) as it:
+            for item in it:
+                if not item.name.endswith(_MANIFEST_SUFFIX):
+                    continue
+                try:
+                    st = os.lstat(item.path)
+                except FileNotFoundError:
+                    continue  # removed while we listed
+                if stat.S_ISREG(st.st_mode) or _is_link_stat(st):
+                    found.append(Path(item.path))
+        return tuple(sorted(found))
 
     def _load(self, path: Path) -> Manifest:
         """Read a manifest file and hold it to its own id. A link, a FIFO or
@@ -1069,21 +1205,42 @@ class SnapshotStore:
                 invalid.append(InvalidManifest(name=path.name, reason=str(exc)))
         return SnapshotListing(manifests=tuple(manifests), invalid=tuple(invalid))
 
-    def read_object(self, sha256: str) -> bytes:
-        """Decompressed content of one object, checked against its name."""
+    def read_object(self, sha256: str, *, size: int | None = None) -> bytes:
+        """Decompressed content of one object, checked against its name.
+
+        `size` is the size the manifest entry naming this object records
+        (M11-15). Inflation then stops at `size + 1` bytes: an object that
+        would inflate past `size` is refused (`ObjectCorruptError`) before
+        more than that is ever held, so a small object crafted to inflate
+        without end cannot exhaust memory ahead of the hash check. Every
+        caller in this package passes it; `None` leaves inflation unbounded,
+        as it was before M11-15, and is for a caller holding a bare digest.
+        The compressed file is read a chunk at a time, never whole.
+        """
         path = self.object_path(sha256)
-        inflater = zlib.decompressobj()
+        if size is not None and size < 0:
+            raise ObjectCorruptError(f"object {sha256}: the recorded size {size} is negative")
         try:
             # Never blocking and never through a link (M11-11): an object path
             # is predictable, so a FIFO or link planted there is refused.
-            data = inflater.decompress(read_regular_file(path)) + inflater.flush()
+            fd, _ = open_regular_file(path)
         except FileNotFoundError as exc:
             raise ObjectCorruptError(f"object {sha256} is missing") from exc
         except OSError as exc:
             raise ObjectCorruptError(f"object {sha256} cannot be read: {exc}") from exc
+        try:
+            data, clean = _inflate_fd(fd, size)
+        except _InflatesTooFarError as exc:
+            raise ObjectCorruptError(
+                f"object {sha256} inflates past its recorded size of {size} bytes"
+            ) from exc
+        except OSError as exc:
+            raise ObjectCorruptError(f"object {sha256} cannot be read: {exc}") from exc
         except zlib.error as exc:
             raise ObjectCorruptError(f"object {sha256} does not decompress: {exc}") from exc
-        if not inflater.eof or inflater.unused_data:
+        finally:
+            os.close(fd)
+        if not clean:
             raise ObjectCorruptError(f"object {sha256} is truncated or has trailing bytes")
         if hashlib.sha256(data).hexdigest() != sha256:
             raise ObjectCorruptError(f"object {sha256} does not hash to its name")
@@ -1097,7 +1254,7 @@ class SnapshotStore:
             raise SnapshotError(f"{path!r} is not in snapshot {manifest.id}")
         if entry.sha256 is None:
             raise SnapshotError(f"{path!r} is a symlink in snapshot {manifest.id}")
-        return self.read_object(entry.sha256)
+        return self.read_object(entry.sha256, size=entry.size)
 
     # -- compare -----------------------------------------------------------
 
@@ -1190,54 +1347,81 @@ class SnapshotStore:
 
     # -- health ------------------------------------------------------------
 
-    def _object_files(self) -> Iterator[tuple[str | None, Path]]:
-        """Every file under `objects/` with its SHA-256 name, or `None` if stray."""
-        if not self.objects_dir.is_dir():
+    def _object_files(self) -> Iterator[_ObjectFile]:
+        """Every entry under `objects/`, judged by `lstat`: nothing is
+        followed (M11-15). A shard that is a link (a symlink, or on Windows a
+        junction or other name-surrogate reparse point) or not a directory is
+        one stray entry and is never listed into. An item gets its SHA-256
+        name when it is well named and a regular file or a link (so `verify`
+        reports a linked object by name; its re-hash refuses the link).
+        `objects/` itself as a link yields one stray entry and nothing under
+        it."""
+        try:
+            top = os.lstat(self.objects_dir)
+        except FileNotFoundError:
             return
-        for shard in sorted(self.objects_dir.iterdir()):
-            if not shard.is_dir():
-                yield None, shard
+        if _is_link_stat(top):
+            yield _ObjectFile(None, self.objects_dir, top, None, None)
+            return
+        if not stat.S_ISDIR(top.st_mode):
+            return
+        with os.scandir(self.objects_dir) as it:
+            shards = sorted(it, key=lambda d: d.name)
+        for shard in shards:
+            shard_path = Path(shard.path)
+            try:
+                shard_st = os.lstat(shard_path)
+            except FileNotFoundError:
+                continue  # removed while we listed
+            if _is_link_stat(shard_st) or not stat.S_ISDIR(shard_st.st_mode):
+                yield _ObjectFile(None, shard_path, shard_st, top, None)
                 continue
-            for item in sorted(shard.iterdir()):
+            try:
+                with os.scandir(shard_path) as it:
+                    items = sorted(it, key=lambda d: d.name)
+            except FileNotFoundError:
+                continue
+            for item in items:
+                item_path = Path(item.path)
+                try:
+                    st = os.lstat(item_path)
+                except FileNotFoundError:
+                    continue
                 name = shard.name + item.name
-                ok = item.is_file() and len(shard.name) == 2 and _SHA_RE.match(name)
-                yield (name if ok else None), item
+                ok = (
+                    (stat.S_ISREG(st.st_mode) or _is_link_stat(st))
+                    and len(shard.name) == 2
+                    and _SHA_RE.match(name)
+                )
+                yield _ObjectFile(name if ok else None, item_path, st, top, shard_st)
 
     @staticmethod
     def _rehash(path: Path) -> str | None:
         """The SHA-256 of an object's decompressed bytes; None when it is
         missing, is not a regular file (a link is not followed, a FIFO never
         blocks: M11-11), or does not decompress cleanly."""
-        hasher = hashlib.sha256()
-        inflater = zlib.decompressobj()
         try:
             fd, _ = open_regular_file(path)
-            with _checked_stream(fd) as handle:
-                while chunk := handle.read(_CHUNK):
-                    data: bytes = chunk
-                    while data:
-                        hasher.update(inflater.decompress(data, _CHUNK))
-                        data = inflater.unconsumed_tail
-                hasher.update(inflater.flush())
-        except (OSError, zlib.error):
+        except OSError:
             return None
-        if not inflater.eof or inflater.unused_data:
-            return None
-        return hasher.hexdigest()
+        try:
+            return _hash_object_fd(fd)
+        finally:
+            os.close(fd)
 
     def verify(self) -> VerifyReport:
         """Re-hash every object and hold every manifest to its id and objects."""
         corrupt: list[str] = []
         present: set[str] = set()
         checked = 0
-        for name, path in self._object_files():
+        for obj in self._object_files():
             checked += 1
-            if name is None:
-                corrupt.append(path.relative_to(self.objects_dir).as_posix())
+            if obj.name is None:
+                corrupt.append(obj.path.relative_to(self.objects_dir).as_posix())
                 continue
-            present.add(name)
-            if self._rehash(path) != name:
-                corrupt.append(name)
+            present.add(obj.name)
+            if self._rehash(obj.path) != obj.name:
+                corrupt.append(obj.name)
 
         invalid: list[InvalidManifest] = []
         missing: list[MissingObject] = []
@@ -1268,32 +1452,228 @@ class SnapshotStore:
         load, because that manifest's objects would look unreferenced.
         Objects modified within the last `grace_seconds` are left alone and
         not reported. Only well-formed object files are ever candidates.
+
+        Nothing is followed and nothing is deleted through a link (M11-15).
+        The listing is by `lstat`: a link, or anything that is not a regular
+        file, anywhere under `objects/` (a shard, an item, `objects/`
+        itself) is never a candidate, never listed into, and is named in
+        `skipped`. A delete goes through descriptors on `objects/` and the
+        shard opened without following a link, each checked to be the
+        directory the listing saw, and removes the item only if it is still
+        the regular file listed (POSIX); where the platform has no such
+        descriptors (Windows), the item is first renamed into the store's
+        `tmp/` and deleted there only if it is the file listed, else renamed
+        back (`_remove_object_by_rename`). An object whose path changed since
+        the listing is not deleted and is named in `skipped`.
+
+        Refuses outright (`ManifestIntegrityError`) when `manifests/` is a
+        link (on Windows also a junction) or not a directory, or is missing
+        while `objects/` holds anything: a dangling link or an unmounted
+        volume would otherwise make every object look unreferenced.
         """
+        self._refuse_gc_without_manifests()
         referenced: set[str] = set()
         for manifest in self.list():  # raises ManifestIntegrityError
             referenced.update(e.sha256 for e in manifest.entries if e.sha256 is not None)
 
         cutoff = datetime.now(UTC).timestamp() - grace_seconds if grace_seconds > 0 else None
-        candidates: list[tuple[str, Path, int]] = []
-        for name, path in self._object_files():
-            if name is None or name in referenced:
+        candidates: list[tuple[str, _ObjectFile]] = []
+        skipped: list[str] = []
+        for obj in self._object_files():
+            if _is_link_stat(obj.st) or not stat.S_ISREG(obj.st.st_mode):
+                skipped.append(obj.path.relative_to(self.path).as_posix())
                 continue
-            st = path.stat()
-            if cutoff is not None and st.st_mtime > cutoff:
+            if obj.name is None or obj.name in referenced or obj.shard_st is None:
                 continue
-            candidates.append((name, path, st.st_size))
-        candidates.sort()
+            if cutoff is not None and obj.st.st_mtime > cutoff:
+                continue
+            candidates.append((obj.name, obj))
+        candidates.sort(key=lambda c: c[0])
 
         removed: list[str] = []
         if not dry_run:
-            for name, path, _ in candidates:
-                path.unlink()
-                removed.append(name)
-                with contextlib.suppress(OSError):
-                    path.parent.rmdir()  # only succeeds when the shard is empty
+            for name, obj in candidates:
+                if self._remove_object(obj):
+                    removed.append(name)
+                else:
+                    skipped.append(obj.path.relative_to(self.path).as_posix())
         return GcReport(
             dry_run=dry_run,
-            unreferenced=tuple(name for name, _, _ in candidates),
-            unreferenced_bytes=sum(size for _, _, size in candidates),
+            unreferenced=tuple(name for name, _ in candidates),
+            unreferenced_bytes=sum(obj.st.st_size for _, obj in candidates),
             removed=tuple(removed),
+            skipped=tuple(sorted(skipped)),
+        )
+
+    def _remove_object(self, obj: _ObjectFile) -> bool:
+        """Delete one listed object without following any link on the way;
+        False, with nothing deleted, when `objects/`, its shard or the item
+        is no longer what the listing saw. Only an error from the delete
+        itself propagates."""
+        assert obj.top_st is not None and obj.shard_st is not None
+        shard = obj.path.parent
+        if not _UNLINK_BY_DIR_FD:
+            return self._remove_object_by_rename(obj)
+        flags = os.O_RDONLY | os.O_DIRECTORY | _O_NOFOLLOW
+        try:
+            top_fd = os.open(self.objects_dir, flags)
+        except OSError:
+            return False
+        try:
+            if _file_identity(os.fstat(top_fd)) != _file_identity(obj.top_st):
+                return False
+            try:
+                shard_fd = os.open(shard.name, flags, dir_fd=top_fd)
+            except OSError:
+                return False
+            try:
+                if _file_identity(os.fstat(shard_fd)) != _file_identity(obj.shard_st):
+                    return False
+                try:
+                    now = os.stat(obj.path.name, dir_fd=shard_fd, follow_symlinks=False)
+                except OSError:
+                    return False
+                if not stat.S_ISREG(now.st_mode) or _file_identity(now) != _file_identity(obj.st):
+                    return False
+                # `unlink` never follows the last component, and the shard is
+                # held by descriptor, so this removes an entry of the shard.
+                os.unlink(obj.path.name, dir_fd=shard_fd)
+            finally:
+                os.close(shard_fd)
+            with contextlib.suppress(OSError):
+                os.rmdir(shard.name, dir_fd=top_fd)  # only succeeds when empty
+        finally:
+            os.close(top_fd)
+        return True
+
+    def _remove_object_by_rename(self, obj: _ObjectFile) -> bool:
+        """`_remove_object` where there are no directory descriptors (Windows).
+
+        A path is only ever deleted once it is inside the store's own `tmp/`
+        and proven to be the file the listing saw: the item is renamed into
+        `tmp/` (a rename never follows its last component), the moved entry
+        must then have the listing's device and inode and not be a link, and
+        only then is it deleted there. Had a shard or `objects/` been swapped
+        for a link after the checks, the rename moved whatever was behind it;
+        that fails the identity check and is renamed straight back. The
+        empty shard is removed the same way. False, with nothing deleted,
+        when anything is not what the listing saw; `SnapshotError` if
+        something moved into `tmp/` cannot be moved back (it is then named,
+        still whole, in `tmp/`).
+        """
+        assert obj.top_st is not None and obj.shard_st is not None
+        shard = obj.path.parent
+        if not (
+            self._same_dir_entry(self.objects_dir, obj.top_st)
+            and self._same_dir_entry(shard, obj.shard_st)
+            and self._still_names(obj.path, obj.st)
+        ):
+            return False
+        parking = self._parking_dir()
+        if parking is None:
+            return False
+        parked = parking / f"gc-{uuid.uuid4().hex}"
+        try:
+            obj.path.rename(parked)
+        except OSError:
+            return False
+        if not self._still_names(parked, obj.st):
+            self._unpark(parked, obj.path)
+            return False
+        parked.unlink()
+        self._remove_empty_shard(shard, obj.shard_st, parking)
+        return True
+
+    def _remove_empty_shard(self, shard: Path, expect: os.stat_result, parking: Path) -> None:
+        """Remove `shard` if it is empty and still the listed directory, by
+        the same rename into `tmp/`, identity check and rename back."""
+        try:
+            with os.scandir(shard) as it:
+                if any(True for _ in it):
+                    return
+        except OSError:
+            return
+        if not self._same_dir_entry(shard, expect):
+            return
+        parked = parking / f"gc-{uuid.uuid4().hex}"
+        try:
+            shard.rename(parked)
+        except OSError:
+            return
+        if self._same_dir_entry(parked, expect):
+            try:
+                parked.rmdir()
+                return
+            except OSError:
+                pass  # something arrived in it meanwhile: it goes back
+        self._unpark(parked, shard)
+
+    def _parking_dir(self) -> Path | None:
+        """The store's `tmp/`, created if needed, when it is a directory and
+        not a link; else None."""
+        try:
+            self.tmp_dir.mkdir(parents=True, exist_ok=True)
+            st = os.lstat(self.tmp_dir)
+        except OSError:
+            return None
+        if _is_link_stat(st) or not stat.S_ISDIR(st.st_mode):
+            return None
+        return self.tmp_dir
+
+    @staticmethod
+    def _unpark(parked: Path, original: Path) -> None:
+        try:
+            parked.rename(original)
+        except OSError as exc:
+            raise SnapshotError(
+                f"gc moved {original} to {parked} to check it before a delete and could "
+                f"not move it back ({exc}); nothing was deleted, and it is still at {parked}"
+            ) from exc
+
+    def _refuse_gc_without_manifests(self) -> None:
+        """`gc` decides what is unreferenced from `manifests/`; refuse when
+        that directory cannot be trusted to hold every manifest (M11-15)."""
+        where = self.manifests_dir
+        try:
+            st = os.lstat(where)
+        except FileNotFoundError:
+            if self._objects_present():
+                raise ManifestIntegrityError(
+                    f"{where} is missing but the store holds objects; gc refuses rather than "
+                    "treat every object as unreferenced. If this store really has no "
+                    f"snapshots, create an empty {where} and run gc again"
+                ) from None
+            return
+        except OSError as exc:
+            raise ManifestIntegrityError(f"cannot inspect {where}: {exc}; gc refuses") from exc
+        if _is_link_stat(st) or not stat.S_ISDIR(st.st_mode):
+            raise ManifestIntegrityError(
+                f"{where} is a link or not a directory; gc never decides what is "
+                "unreferenced from a manifests directory it would have to follow, since a "
+                "dangling link or an unmounted volume would make every object look unused"
+            )
+
+    def _objects_present(self) -> bool:
+        """`objects/` exists and holds anything (or is not a plain directory)."""
+        try:
+            st = os.lstat(self.objects_dir)
+        except FileNotFoundError:
+            return False
+        if _is_link_stat(st) or not stat.S_ISDIR(st.st_mode):
+            return True
+        with os.scandir(self.objects_dir) as it:
+            return any(True for _ in it)
+
+    @staticmethod
+    def _same_dir_entry(path: Path, expect: os.stat_result) -> bool:
+        """`path` is, by `lstat`, a directory that is not a link and is the
+        one `expect` describes."""
+        try:
+            now = os.lstat(path)
+        except OSError:
+            return False
+        return (
+            stat.S_ISDIR(now.st_mode)
+            and not _is_link_stat(now)
+            and _file_identity(now) == _file_identity(expect)
         )

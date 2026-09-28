@@ -288,8 +288,10 @@ _State = Literal["open", "committed", "rolled_back", "rollback_incomplete"]
 _ModeRule = tuple[Literal["keep", "exact", "clamp"], int]
 _Identity = tuple[int, int]
 # A change restore or undo makes: path, its parts, the content hash to put
-# there (None deletes), and the recorded mode the result is clamped to.
-_Op = tuple[str, tuple[str, ...], str | None, int]
+# there (None deletes), the recorded mode the result is clamped to, and the
+# recorded size of that content (0 for a delete), which caps how far the
+# store inflates the object (M11-15).
+_Op = tuple[str, tuple[str, ...], str | None, int, int]
 
 
 # ─── errors ──────────────────────────────────────────────────────────────────
@@ -1488,9 +1490,10 @@ class _Transaction:
         self._record: _JournalRecord | None = None
         self._order: list[str] = []
         self._journal: dict[str, tuple[str | None, str | None]] = {}
-        # First-touch state of each journaled path: its hash (None: absent)
-        # and its mode.
-        self._before: dict[str, tuple[str | None, int]] = {}
+        # First-touch state of each journaled path: its hash (None: absent),
+        # its mode, and its size (0 when absent; caps the store's inflation
+        # of that object on rollback, M11-15).
+        self._before: dict[str, tuple[str | None, int, int]] = {}
         # Guard's own record of each journaled path (item 3 as clarified): the
         # hash of its last write there that landed, else the hash read at its
         # first touch. Two hashes when a mutation's outcome is unknown.
@@ -1882,7 +1885,7 @@ class _Transaction:
             raise GuardError(f"{rel} does not exist")
         if previous is None:
             self._order.append(rel)
-            self._before[rel] = (before, mode)
+            self._before[rel] = (before, mode, 0 if current is None else len(current))
             self._journal[rel] = (before, after)
             self._last[rel] = (before,)
         else:
@@ -1964,7 +1967,15 @@ class _Transaction:
                 continue
             if entry is not None:
                 _object(store, manifest, entry)
-            ops.append((rel, parts, wanted_hash, 0 if entry is None else entry.mode))
+            ops.append(
+                (
+                    rel,
+                    parts,
+                    wanted_hash,
+                    0 if entry is None else entry.mode,
+                    0 if entry is None else entry.size,
+                )
+            )
         return ops
 
     def _unchanged_executable(self, rel: str, entry: Entry) -> bool:
@@ -2007,8 +2018,8 @@ class _Transaction:
         even if the caller catches the error."""
         applied = 0
         try:
-            for rel, parts, digest, mode in ops:
-                data = None if digest is None else _fetch(store, digest, rel)
+            for rel, parts, digest, mode, size in ops:
+                data = None if digest is None else _fetch(store, digest, size, rel)
                 self._apply(rel, parts, data, ("clamp", mode))
                 applied += 1
         except Exception as exc:
@@ -2025,7 +2036,7 @@ class _Transaction:
         problems: list[str] = []
         store = SnapshotStore(self._store_path)
         for rel in reversed(self._order):
-            before, mode = self._before[rel]
+            before, mode, size = self._before[rel]
             parts = tuple(rel.split("/"))
             try:
                 found = _look(self._place, parts)
@@ -2039,7 +2050,7 @@ class _Transaction:
                         "it; left as it is"
                     )
                     continue
-                data = None if before is None else _fetch(store, before, rel)
+                data = None if before is None else _fetch(store, before, size, rel)
                 tmp_name = None
                 if data is not None:
                     tmp_name = self._new_temp(parts)
@@ -2077,10 +2088,10 @@ class _Transaction:
 
     def _undo(self, ops: Sequence[_Op], created_dirs: Sequence[str]) -> None:
         store = SnapshotStore(self._store_path)
-        for rel, parts, digest, mode in ops:
+        for rel, parts, digest, mode, size in ops:
             current = self._current(rel, parts)
             if (None if current is None else _sha(current)) != digest:
-                data = None if digest is None else _fetch(store, digest, rel)
+                data = None if digest is None else _fetch(store, digest, size, rel)
                 self._apply(rel, parts, data, ("clamp", mode))
         assert self._place is not None
         for rel_dir in reversed(created_dirs):
@@ -2123,10 +2134,11 @@ def _covers(manifest: Manifest, entry_path: str) -> bool:
     return any(entry_path.startswith(subtree + "/") for subtree in manifest.subtrees)
 
 
-def _fetch(store: SnapshotStore, digest: str, rel: str) -> bytes:
-    """An object by its hash; the store checks the bytes hash to the name."""
+def _fetch(store: SnapshotStore, digest: str, size: int, rel: str) -> bytes:
+    """An object by its hash; the store checks the bytes hash to the name
+    and inflates no further than the recorded `size` plus one byte (M11-15)."""
     try:
-        return store.read_object(digest)
+        return store.read_object(digest, size=size)
     except SnapshotError as exc:
         raise GuardError(f"the store cannot supply the bytes of {rel}: {exc}") from exc
 
@@ -2135,7 +2147,7 @@ def _object(store: SnapshotStore, manifest: Manifest, entry: Entry) -> bytes:
     if entry.sha256 is None:
         raise GuardError(f"{entry.path!r} in snapshot {manifest.id} has no content")
     try:
-        return store.read_object(entry.sha256)
+        return store.read_object(entry.sha256, size=entry.size)
     except SnapshotError as exc:
         raise GuardError(f"snapshot {manifest.id} cannot supply {entry.path!r}: {exc}") from exc
 
@@ -2276,14 +2288,14 @@ def _undo_record(store_path: Path, last: _JournalRecord, place: _Place, locks: _
                     f"{item.path!r} was created by the transaction, "
                     f"but snapshot {manifest.id} holds it"
                 )
-            ops.append((item.path, parts, None, 0))
+            ops.append((item.path, parts, None, 0, 0))
             continue
         if entry is None or entry.kind != "file" or entry.sha256 != item.before:
             raise GuardError(
                 f"snapshot {manifest.id} does not hold the bytes the journal names for {item.path!r}"
             )
         _object(snapshots, manifest, entry)  # sound before anything is written
-        ops.append((item.path, parts, item.before, entry.mode))
+        ops.append((item.path, parts, item.before, entry.mode, entry.size))
     created_dirs = list(last.created_dirs)
     for rel_dir in created_dirs:
         _check_rel(rel_dir, directory=True)
