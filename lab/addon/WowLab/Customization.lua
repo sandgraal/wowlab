@@ -37,8 +37,8 @@ local function choices(categories)
                         and option.choices[index] or nil
                     out[#out + 1] = {
                         option = option.id,
-                        choice_index = index,
-                        choice = type(choice) == "table" and choice.id or nil,
+                        choice_index = ns.Number(index),
+                        choice = type(choice) == "table" and ns.Number(choice.id) or nil,
                     }
                 end
             end
@@ -63,19 +63,22 @@ ns.Section({
     immediate = true,
     not_gathered = "no barber-shop visit recorded with the addon enabled",
     -- Keeps the last saved record, unless it was itself an absent marker.
-    -- The record is rebuilt field by field into a new table: only numbers,
-    -- the two known `recorded_at` values and the addon's own constants are
-    -- copied, so nothing else in the saved file (not the saved table itself,
-    -- nor its old events_unregistered) is carried forward.
-    -- tests/addon/test_lab_addon.py checks this shape.
+    -- The record is rebuilt field by field into a new table: only numbers
+    -- (each type-checked where it is copied), the two known `recorded_at`
+    -- values (written as the addon's own literals) and the addon's own
+    -- constants are copied, so nothing else in the saved file (not the saved
+    -- table itself, nor its old events_unregistered) is carried forward.
+    -- tests/addon/test_lab_addon.py checks this shape on tokens.
     carry = function(saved)
         local r = type(saved) == "table" and saved.customization or nil
-        if type(r) ~= "table" or r.absent ~= nil or type(r.choices) ~= "table" then
+        if type(r) ~= "table" or type(r.absent) ~= "nil" or type(r.choices) ~= "table" then
             return nil
         end
         local out = { as_of = "last barber-shop visit with the addon enabled", carried = true, choices = {} }
-        if r.recorded_at == "open" or r.recorded_at == "applied" then
-            out.recorded_at = r.recorded_at
+        if r.recorded_at == "open" then
+            out.recorded_at = "open"
+        elseif r.recorded_at == "applied" then
+            out.recorded_at = "applied"
         end
         for _, k in ipairs({ "recorded_load", "race_id", "sex", "chr_model_id" }) do
             if type(r[k]) == "number" then
@@ -83,12 +86,15 @@ ns.Section({
             end
         end
         for _, c in ipairs(r.choices) do
-            if type(c) == "table" and type(c.option) == "number" then
-                out.choices[#out.choices + 1] = {
-                    option = c.option,
+            if type(c) == "table" then
+                local entry = {
                     choice_index = type(c.choice_index) == "number" and c.choice_index or nil,
                     choice = type(c.choice) == "number" and c.choice or nil,
                 }
+                if type(c.option) == "number" then
+                    entry.option = c.option
+                    out.choices[#out.choices + 1] = entry
+                end
             end
         end
         return out
@@ -107,7 +113,7 @@ ns.Section({
             recorded_at = event == "BARBER_SHOP_OPEN" and "open" or "applied",
             recorded_load = ns.probe and ns.probe.loads or nil,
             choices = choices(categories),
-            race_id = raceID(),
+            race_id = ns.Number(raceID()),
         }
         local current = ns.Fn(C_BarberShop, "GetCurrentCharacterData")
         local data = current and ns.Call(current)
@@ -116,7 +122,7 @@ ns.Section({
         end
         local model = ns.Fn(C_BarberShop, "GetViewingChrModel")
         if model then
-            record.chr_model_id = ns.Call(model)
+            record.chr_model_id = ns.Number(ns.Call(model))
         end
         return record
     end,

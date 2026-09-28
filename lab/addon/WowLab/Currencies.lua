@@ -27,21 +27,21 @@ end
 local function describe(id, getInfo, accountWide)
     local info = ns.Call(getInfo, id)
     if type(info) ~= "table" then
-        return { id = id, absent = "C_CurrencyInfo.GetCurrencyInfo returned nothing" }
+        return { id = ns.Number(id), absent = "C_CurrencyInfo.GetCurrencyInfo returned nothing" }
     end
     local entry = {
-        id = id,
-        quantity = info.quantity,
-        max_quantity = info.maxQuantity,
-        max_weekly_quantity = info.maxWeeklyQuantity,
-        earned_this_week = info.quantityEarnedThisWeek,
-        can_earn_per_week = info.canEarnPerWeek,
-        total_earned = info.totalEarned,
-        use_total_earned_for_max = info.useTotalEarnedForMaxQty,
-        account_wide = info.isAccountWide,
+        id = ns.Number(id),
+        quantity = ns.Number(info.quantity),
+        max_quantity = ns.Number(info.maxQuantity),
+        max_weekly_quantity = ns.Number(info.maxWeeklyQuantity),
+        earned_this_week = ns.Number(info.quantityEarnedThisWeek),
+        can_earn_per_week = ns.Bool(info.canEarnPerWeek),
+        total_earned = ns.Number(info.totalEarned),
+        use_total_earned_for_max = ns.Bool(info.useTotalEarnedForMaxQty),
+        account_wide = ns.Bool(info.isAccountWide),
     }
     if entry.account_wide == nil and accountWide then
-        entry.account_wide = ns.Call(accountWide, id)
+        entry.account_wide = ns.Bool(ns.Call(accountWide, id))
     end
     return entry
 end
@@ -85,7 +85,7 @@ ns.Section({
         local record = { list = list, filtered = true, headers_collapsed = collapsed }
         local filter = ns.Fn(C_CurrencyInfo, "GetCurrencyFilter")
         if filter then
-            record.filter = ns.Call(filter)
+            record.filter = ns.Number(ns.Call(filter))
         end
         return record
     end,

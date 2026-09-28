@@ -5,11 +5,28 @@ this file and the checks read the tokens. The TOC template is read with
 `wowlab_core.toc`. The selene lint (`make lint-lua`) is the other half: it
 fails on any global the addon uses that `lab/addon/wow_client.yml` does not
 declare.
+
+These checks catch ordinary mistakes and ordinary edits, not an author set on
+getting around them. Deliberate obfuscation is caught by review only:
+
+- aliasing a client table or `ns` (`local t = C_Traits`, `local n = ns`) and
+  reaching a function or field through the alias;
+- building a key or a name at run time with `string.format`, `string.lower` or
+  similar and indexing with it;
+- changing a guarded key or field inside its `if type(X) == ... then` block
+  through an alias of the table (`local d = c` ... `d.option = api`) or through
+  a call that writes to it;
+- changing an index key inside its guard (`k = ...` inside
+  `if type(r[k]) == "number" then`).
+
+The stored-value check (M11-13) also does not check table keys, and it trusts
+the Core.lua plumbing listed in `PLUMBING_STORES`.
 """
 
 from __future__ import annotations
 
 import re
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -857,63 +874,1175 @@ def test_no_concatenated_value_is_used_as_an_index(path: Path) -> None:
     assert not bad, bad
 
 
-def _carry_lines() -> list[str]:
-    """The `carry = function(saved) ... end,` lines of Customization.lua, comments removed."""
-    lines = (ADDON / "Customization.lua").read_text(encoding="utf-8").splitlines()
-    start = next(
-        i for i, line in enumerate(lines) if re.match(r"^\s*carry = function\(saved\)\s*$", line)
-    )
-    indent = len(lines[start]) - len(lines[start].lstrip())
-    end = next(i for i in range(start + 1, len(lines)) if lines[i] == " " * indent + "end,")
-    return [re.sub(r"--.*$", "", line).rstrip() for line in lines[start + 1 : end]]
+# --- Stored values: every value from outside the addon is type-checked (M11-13) -
+#
+# A small data-flow pass over the tokens of every source. Nothing is evaluated.
+# A value is *tainted* when it can hold something the addon did not build: a
+# client global or anything read from one, a call to a client or unknown
+# function, `...`, a function parameter, `WowLabCharDB`/`WowLabDB` as loaded, a
+# call to an addon function that can return a tainted value, or a local that is
+# bound or assigned any of those anywhere in its scope. Every *store* (a table
+# constructor entry, an assignment to a field or a global) must hold an
+# untainted value, or exactly a name or field chain X directly inside an
+# `if`/`elseif` whose condition has a top-level `and`-conjunct
+# `type(X) == "number"` ("string", "boolean") with X's root not reassigned in
+# that block. Untainted: literals, constructors (each entry is itself a store),
+# function literals, comparisons, `not`, `#`, `type(...)`, the inline form
+# `type(X) == "number" and X or nil`, calls into Lua's string (except gmatch)
+# and math libraries, the addon namespace `ns` and its fields, and calls to
+# addon functions whose every `return` passes the same test (so `ns.Number`,
+# `ns.String`, `ns.Bool`, `ns.Numbers` and `ns.Absent` are untainted, and
+# `ns.Call`/`ns.Fn` are not). Always tainted: a `pcall(...)` result, a call
+# through an index or parentheses (`fns[1]()`, `(h)()`), a method call, and a
+# Lua library read as a value (`string`). Table keys are not checked. Rules that
+# keep this sound: no `table.insert`/`tinsert` (a store through a call), every
+# `ns.Section` takes a literal `{ ... }`, each `ns` function is defined once,
+# and no source rebinds `type`, `pcall`, the other builtins it trusts, or `ns`.
+
+_KEYWORDS = frozenset(
+    {
+        "and",
+        "break",
+        "do",
+        "else",
+        "elseif",
+        "end",
+        "false",
+        "for",
+        "function",
+        "goto",
+        "if",
+        "in",
+        "local",
+        "nil",
+        "not",
+        "or",
+        "repeat",
+        "return",
+        "then",
+        "true",
+        "until",
+        "while",
+    }
+)
+_COMPARISON = frozenset({"==", "~=", "<", ">", "<=", ">="})
+# Operators that bind at least as tightly as `==`: a chain next to one is not a
+# side of `==` (`x .. r.a == "open"` compares the concatenation).
+_TIGHTER = frozenset({"..", "+", "-", "*", "/", "%", "^", "#", "not", *_COMPARISON})
+_SCALAR_TYPES = frozenset({"number", "string", "boolean"})
+# Lua 5.1 globals the addon calls. A call's result is as tainted as its
+# arguments, except `type`, and string (not gmatch) and math, which return
+# strings and numbers.
+_LUA_BUILTINS = frozenset(
+    {
+        "type",
+        "ipairs",
+        "pairs",
+        "next",
+        "select",
+        "tostring",
+        "tonumber",
+        "unpack",
+        "pcall",
+        "print",
+        "error",
+        "string",
+        "table",
+        "math",
+    }
+)
+_OPEN = {"(": ")", "[": "]", "{": "}"}
+_TOP = "<top level>"
+
+# Core.lua plumbing that moves the addon's own tables around (the section and
+# handler registries, gathered records into ns.state and WowLabCharDB). These
+# stores are not checked; a function holding one is treated as returning a
+# tainted value. Keyed (file, function, store as rendered tokens); each must
+# match exactly once, so an edited plumbing line fails until reviewed here.
+PLUMBING_STORES: dict[tuple[str, str, str], str] = {
+    ("Core.lua", "ns.Pack", "{} = ..."): "ns.Pack's vararg container; its result is tainted",
+    ("Core.lua", "ns.Pack", 'packed . n = select ( "#" , ... )'): "the vararg count",
+    ("Core.lua", "ns.On", "list [ # list + 1 ] = fn"): "the event-handler registry; never saved",
+    (
+        "Core.lua",
+        "ns.Section",
+        "ns . sections [ # ns . sections + 1 ] = section",
+    ): "the section registry; never saved",
+    (
+        "Core.lua",
+        "ns.Section",
+        "section . events_unregistered = section . events_unregistered or { }",
+    ): "the section's list of events the client refused",
+    (
+        "Core.lua",
+        "ns.Section",
+        "missing [ # missing + 1 ] = event",
+    ): "an event name from the section's own `events` literal",
+    (
+        "Core.lua",
+        "gather",
+        "record . events_unregistered = section . events_unregistered",
+    ): "the list of refused event names built in ns.Section",
+    (
+        "Core.lua",
+        "gather",
+        "ns . state [ section . key ] = record",
+    ): "a gather result, checked as a table (test_every_gather_and_carry_returns_checked_values)",
+    (
+        "Core.lua",
+        "place",
+        "node [ path [ # path ] ] = record",
+    ): "a record from ns.state or ns.Absent, placed into WowLabCharDB",
+    (
+        "Core.lua",
+        'ns.On("ADDON_LOADED")',
+        "ns . state [ section . key ] = record",
+    ): "a carry result, checked as a table (test_every_gather_and_carry_returns_checked_values)",
+}
 
 
-_ASSIGN = re.compile(r"^(\s*)(local\s+)?([\w.\[\]#+ ]+?)\s*=(?!=)\s*(.*?),?$")
-_SAVED_ACCESS = re.compile(r"\b(?:r|c)(?:\.\w+|\[\w+\])")
+@dataclass
+class _Decl:
+    """A local, parameter or loop variable, visible from `start` to `stop`."""
+
+    name: str
+    start: int
+    stop: int
+    fixed: bool | None  # a fixed taint, or None: computed from `sources`
+    sources: list[tuple[int, int]]
+    function: int | None = None  # for `local function f`: the head of f
+
+
+@dataclass(frozen=True)
+class _Block:
+    kind: str  # "function", "loop", "do", "repeat", "if", "elseif", "else"
+    head: int  # the keyword that opens it
+    start: int  # the first token inside it
+    stop: int  # the token that closes it (end, until, elseif, else)
+    cond: tuple[int, int] | None  # for "if"/"elseif": the condition's token range
+
+
+@dataclass(frozen=True)
+class _Store:
+    text: str  # rendered: "<target> = <value>"
+    at: int
+    value: tuple[int, int]
+
+
+class _Flow:
+    """Scopes, blocks, bindings and stores of one source file, on tokens."""
+
+    def __init__(self, path: Path, tokens: list[Token]) -> None:
+        self.path = path
+        self.tokens = tokens
+        self.pair: dict[int, int] = {}
+        self.opener: list[int | None] = []
+        self._brackets()
+        self.blocks = self._blocks()
+        self.functions = {b.head: b for b in self.blocks if b.kind == "function"}
+        self.labels = {head: self._label(head) for head in self.functions}
+        self.decls: dict[str, list[_Decl]] = {}
+        self.namespace: _Decl | None = None
+        self.stores: list[_Store] = []
+        self.assigned: list[tuple[str, int]] = []  # (root name, token) of every binding
+        self.rebound: list[tuple[str, int]] = []  # `name = ...` and `name.x = ...` targets
+        self.skip: set[int] = set()
+        self._scan()
+
+    # structure
+
+    def _brackets(self) -> None:
+        stack: list[int] = []
+        for k, t in enumerate(self.tokens):
+            self.opener.append(stack[-1] if stack else None)
+            if t.kind != "op":
+                continue
+            if t.text in _OPEN:
+                stack.append(k)
+            elif t.text in {")", "]", "}"}:
+                o = stack.pop()
+                self.pair[o], self.pair[k] = k, o
+        if stack:
+            raise ValueError(f"unbalanced bracket in {self.path.name}")
+
+    def block_end(self, i: int) -> int:
+        depth = 0
+        for k in range(i, len(self.tokens)):
+            t = self.tokens[k]
+            if t.kind != "name":
+                continue
+            if t.text in {"function", "if", "do", "repeat"}:
+                depth += 1
+            elif t.text in {"end", "until"}:
+                depth -= 1
+                if depth == 0:
+                    return k
+        raise ValueError(f"no matching end for line {self.tokens[i].line}")
+
+    def _blocks(self) -> list[_Block]:
+        blocks: list[_Block] = []
+        stack: list[list] = []  # [kind, head, start, cond_start, cond]
+
+        def close(entry: list, k: int) -> None:
+            blocks.append(_Block(entry[0], entry[1], entry[2], k, entry[4]))
+
+        for k, t in enumerate(self.tokens):
+            if t.kind != "name":
+                continue
+            x = t.text
+            if x == "function":
+                paren = k + 1
+                while self.tokens[paren].text != "(":
+                    paren += 1
+                stack.append(["function", k, self.pair[paren] + 1, None, None])
+            elif x in {"for", "while"}:
+                stack.append(["loop", k, None, None, None])
+            elif x == "do":
+                if stack and stack[-1][0] == "loop" and stack[-1][2] is None:
+                    stack[-1][2] = k + 1
+                else:
+                    stack.append(["do", k, k + 1, None, None])
+            elif x == "repeat":
+                stack.append(["repeat", k, k + 1, None, None])
+            elif x in {"if", "elseif"}:
+                if x == "elseif":
+                    close(stack.pop(), k)
+                stack.append([x, k, None, k + 1, None])
+            elif x == "then":
+                stack[-1][2] = k + 1
+                stack[-1][4] = (stack[-1][3], k)
+            elif x == "else":
+                close(stack.pop(), k)
+                stack.append(["else", k, k + 1, None, None])
+            elif x in {"end", "until"}:
+                close(stack.pop(), k)
+        if stack:
+            raise ValueError(f"unclosed block in {self.path.name}")
+        return blocks
+
+    def _label(self, head: int) -> str:
+        t = self.tokens
+        if t[head + 1].text != "(":
+            k = head + 1
+            while t[k].text != "(":
+                k += 1
+            return "".join(x.text for x in t[head + 1 : k])
+        if head >= 2 and t[head - 1].text == "=" and t[head - 2].kind == "name":
+            return t[head - 2].text
+        if (
+            head >= 6
+            and t[head - 1].text == ","
+            and t[head - 2].kind == "string"
+            and [x.text for x in t[head - 6 : head - 2]] == ["ns", ".", "On", "("]
+        ):
+            return f'ns.On("{t[head - 2].text}")'
+        return f"function@{t[head].line}"
+
+    def function_at(self, i: int) -> _Block | None:
+        inside = [b for b in self.functions.values() if b.head <= i <= b.stop]
+        return max(inside, key=lambda b: b.head) if inside else None
+
+    def label_at(self, i: int) -> str:
+        fn = self.function_at(i)
+        return self.labels[fn.head] if fn else _TOP
+
+    def block_at(self, i: int) -> _Block | None:
+        inside = [b for b in self.blocks if b.start <= i < b.stop]
+        return max(inside, key=lambda b: b.start) if inside else None
+
+    def statement_level(self, k: int) -> bool:
+        """Is token k outside every bracket opened in its own function body?"""
+        o = self.opener[k]
+        fn = self.function_at(k)
+        return o is None or (fn is not None and o < fn.start)
+
+    def chain_end(self, s: int) -> int | None:
+        """End of the name/field chain `a.b[c].d` starting at s (no calls)."""
+        t = self.tokens
+        if s >= len(t) or t[s].kind != "name" or t[s].text in _KEYWORDS or _is_field(t, s):
+            return None
+        k = s + 1
+        while k < len(t):
+            if (
+                t[k].text == "."
+                and t[k].kind == "op"
+                and k + 1 < len(t)
+                and t[k + 1].kind == "name"
+            ):
+                k += 2
+            elif t[k].text == "[" and t[k].kind == "op":
+                k = self.pair[k] + 1
+            else:
+                break
+        return k
+
+    def expr_end(self, j: int) -> int:
+        t = self.tokens
+        k, operand = j, False
+        while k < len(t):
+            x = t[k]
+            if x.kind == "op":
+                if x.text in _OPEN:
+                    k, operand = self.pair[k] + 1, True
+                    continue
+                if x.text in {")", "]", "}", ",", ";", "="}:
+                    return k
+                if x.text == "...":
+                    if operand:
+                        return k
+                    k, operand = k + 1, True
+                    continue
+                k, operand = k + 1, False
+                continue
+            if x.kind == "string" or x.kind == "number":
+                if operand and x.kind != "string":
+                    return k
+                k, operand = k + 1, True
+                continue
+            if x.text == "function":
+                if operand:
+                    return k
+                k, operand = self.block_end(k) + 1, True
+                continue
+            if x.text in {"and", "or", "not"}:
+                k, operand = k + 1, False
+                continue
+            if x.text in {"nil", "true", "false"}:
+                if operand:
+                    return k
+                k, operand = k + 1, True
+                continue
+            if x.text in _KEYWORDS:
+                return k
+            if operand and t[k - 1].text not in {".", ":"}:
+                return k
+            k, operand = k + 1, True
+        return len(t)
+
+    def exprlist(self, j: int) -> list[tuple[int, int]]:
+        out = []
+        while True:
+            e = self.expr_end(j)
+            if e > j:
+                out.append((j, e))
+            if e < len(self.tokens) and self.tokens[e].text == "," and self.tokens[e].kind == "op":
+                j = e + 1
+                continue
+            return out
+
+    def targets(self, eq: int) -> int:
+        """Start of the target list of the assignment whose `=` is at eq."""
+        t = self.tokens
+        k, start = eq - 1, eq
+        while k >= 0:
+            x = t[k]
+            if x.kind == "op" and x.text == "]":
+                if k + 1 < eq and t[k + 1].kind == "name":
+                    break
+                k = self.pair[k]
+                start = k
+                k -= 1
+                continue
+            if x.kind == "op" and x.text in {".", ","}:
+                start, k = k, k - 1
+                continue
+            if x.kind == "name" and x.text not in _KEYWORDS:
+                if k + 1 < eq and t[k + 1].kind == "name":
+                    break
+                start, k = k, k - 1
+                continue
+            break
+        return start
+
+    def entries(self, open_: int) -> list[tuple[str, int, int]]:
+        """(key, value start, value end) for each entry of the constructor at open_."""
+        t = self.tokens
+        close = self.pair[open_]
+        out, k = [], open_ + 1
+        while k < close:
+            a = j = k
+            while j < close:
+                x = t[j]
+                if x.kind == "op" and x.text in _OPEN:
+                    j = self.pair[j] + 1
+                elif x.kind == "name" and x.text == "function":
+                    j = self.block_end(j) + 1
+                elif x.kind == "op" and x.text in {",", ";"}:
+                    break
+                else:
+                    j += 1
+            if j > a:
+                if t[a].kind == "name" and a + 1 < j and t[a + 1].text == "=":
+                    out.append((f"{{{t[a].text}}}", a + 2, j))
+                elif t[a].text == "[" and t[a].kind == "op" and t[self.pair[a] + 1].text == "=":
+                    key = _render(t[a + 1 : self.pair[a]])
+                    out.append((f"{{[{key}]}}", self.pair[a] + 2, j))
+                else:
+                    out.append(("{}", a, j))
+            k = j + 1
+        return out
+
+    def scope_stop(self, k: int) -> int:
+        block = self.block_at(k)
+        return block.stop if block else len(self.tokens)
+
+    def resolve(self, name: str, i: int) -> _Decl | None:
+        visible = [d for d in self.decls.get(name, []) if d.start <= i <= d.stop]
+        return max(visible, key=lambda d: d.start) if visible else None
+
+    def _declare(self, decl: _Decl, at: int) -> None:
+        self.decls.setdefault(decl.name, []).append(decl)
+        self.assigned.append((decl.name, at))
+
+    # bindings and stores
+
+    def _scan(self) -> None:
+        t = self.tokens
+        for fn in self.functions.values():
+            paren = fn.head + 1
+            while t[paren].text != "(":
+                paren += 1
+            for k in range(paren + 1, self.pair[paren]):
+                if t[k].kind == "name":
+                    self._declare(_Decl(t[k].text, fn.head, fn.stop, True, []), k)
+        for k, x in enumerate(t):
+            if x.kind == "name" and x.text == "local":
+                self._local(k)
+            elif x.kind == "name" and x.text == "for":
+                self._for(k)
+        for k, x in enumerate(t):
+            if x.kind == "op" and x.text == "=" and self.statement_level(k):
+                self._assignment(k)
+            elif x.kind == "op" and x.text == "{":
+                for key, s, e in self.entries(k):
+                    self.stores.append(_Store(f"{key} = {_render(t[s:e])}", s, (s, e)))
+        for k, x in enumerate(t):
+            if x.kind == "op" and x.text in _COMPARISON:
+                self.skip.update(range(self._left(k), k))
+                self.skip.update(range(k + 1, self._right(k + 1)))
+            elif (x.kind == "op" and x.text == "#") or (x.kind == "name" and x.text == "not"):
+                self.skip.update(range(k + 1, self._right(k + 1)))
+
+    def _local(self, k: int) -> None:
+        t = self.tokens
+        if t[k + 1].text == "function":
+            name = k + 2
+            decl = _Decl(t[name].text, name, self.scope_stop(k), False, [], function=k + 1)
+            self._declare(decl, name)
+            return
+        names = [k + 1]
+        while t[names[-1] + 1].text == ",":
+            names.append(names[-1] + 2)
+        after = names[-1] + 1
+        exprs = self.exprlist(after + 1) if after < len(t) and t[after].text == "=" else []
+        start = exprs[-1][1] if exprs else after
+        for n, at in enumerate(names):
+            source = exprs[min(n, len(exprs) - 1)] if exprs else None
+            decl = _Decl(t[at].text, start, self.scope_stop(k), None, [source] if source else [])
+            if source is None:
+                decl.fixed = False
+            elif (
+                t[at].text == "ns"
+                and self.function_at(k) is None
+                and _render(t[source[0] : source[1]]) == "..."
+            ):
+                decl.fixed = False  # `local _, ns = ...`: the addon's own namespace
+                self.namespace = decl
+            self._declare(decl, at)
+
+    def _for(self, k: int) -> None:
+        t = self.tokens
+        loop = next(b for b in self.blocks if b.head == k)
+        names = [k + 1]
+        while t[names[-1] + 1].text == ",":
+            names.append(names[-1] + 2)
+        after = names[-1] + 1
+        if t[after].text == "=":
+            for at in names:
+                self._declare(_Decl(t[at].text, loop.start, loop.stop, False, []), at)
+            return
+        s, e = after + 1, loop.start - 1  # the iterator expression, `in` .. `do`
+        inner = None
+        if t[s].text in {"ipairs", "pairs"} and t[s + 1].text == "(" and self.pair[s + 1] == e - 1:
+            inner = (s + 2, e - 1)
+        for n, at in enumerate(names):
+            if inner is not None and t[s].text == "ipairs" and n == 0:
+                decl = _Decl(t[at].text, loop.start, loop.stop, False, [])
+            else:
+                decl = _Decl(t[at].text, loop.start, loop.stop, None, [inner or (s, e)])
+            self._declare(decl, at)
+
+    def _assignment(self, eq: int) -> None:
+        t = self.tokens
+        start = self.targets(eq)
+        if start == eq or (start > 0 and t[start - 1].text in {"local", "for"}):
+            return
+        targets: list[tuple[int, int]] = []
+        a = k = start
+        while k < eq:
+            if t[k].kind == "op" and t[k].text == "[":
+                k = self.pair[k] + 1
+                continue
+            if t[k].kind == "op" and t[k].text == ",":
+                targets.append((a, k))
+                a = k + 1
+            k += 1
+        targets.append((a, eq))
+        exprs = self.exprlist(eq + 1)
+        for n, (ts, te) in enumerate(targets):
+            value = exprs[min(n, len(exprs) - 1)] if exprs else (eq + 1, eq + 1)
+            root = t[ts].text
+            self.assigned.append((root, eq))
+            self.rebound.append((root if te == ts + 1 else root + ".", ts))
+            if te == ts + 1:
+                decl = self.resolve(root, eq)
+                if decl is not None:
+                    if decl.fixed is False:
+                        decl.fixed = None
+                    decl.sources.append(value)
+                    continue
+            text = f"{_render(t[ts:te])} = {_render(t[value[0] : value[1]])}"
+            self.stores.append(_Store(text, ts, value))
+
+    def _left(self, k: int) -> int:
+        t = self.tokens
+        j = k - 1
+        while j >= 0:
+            y = t[j]
+            if y.kind == "op" and y.text in {")", "]", "}"}:
+                o = self.pair[j]
+                before = t[o - 1] if o > 0 else None
+                if (
+                    y.text != "}"
+                    and before is not None
+                    and (
+                        (before.kind == "name" and before.text not in _KEYWORDS)
+                        or (before.kind == "op" and before.text in {")", "]"})
+                    )
+                ):
+                    j = o - 1
+                    continue
+                return o
+            if y.kind == "name" and y.text not in _KEYWORDS:
+                if j >= 2 and t[j - 1].kind == "op" and t[j - 1].text in {".", ":"}:
+                    j -= 2
+                    continue
+                return j
+            if y.kind in {"string", "number"} or y.text in {"nil", "true", "false", "..."}:
+                return j
+            return k
+        return 0
+
+    def _right(self, j: int) -> int:
+        t = self.tokens
+        n = len(t)
+        while j < n and (
+            (t[j].kind == "op" and t[j].text in {"-", "#"})
+            or (t[j].kind == "name" and t[j].text == "not")
+        ):
+            j += 1
+        if j >= n:
+            return j
+        x = t[j]
+        if x.kind == "op" and x.text in {"(", "{"}:
+            k = self.pair[j] + 1
+        elif x.kind == "name" and x.text == "function":
+            k = self.block_end(j) + 1
+        elif (
+            x.kind in {"string", "number"}
+            or (
+                x.kind == "name" and (x.text not in _KEYWORDS or x.text in {"nil", "true", "false"})
+            )
+            or x.text == "..."
+        ):
+            k = j + 1
+        else:
+            return j
+        while k < n:
+            y = t[k]
+            if y.kind == "op" and y.text in {".", ":"} and k + 1 < n and t[k + 1].kind == "name":
+                k += 2
+            elif y.kind == "op" and y.text in {"[", "("}:
+                k = self.pair[k] + 1
+            else:
+                break
+        return k
+
+    # the checks
+
+    def inline(self, i: int, kinds: frozenset[str] = _SCALAR_TYPES) -> int | None:
+        """If `type(X) == "<kind>" and X or nil` starts at i, the index of its `nil`."""
+        t = self.tokens
+        try:
+            if t[i].text != "type" or t[i + 1].text != "(":
+                return None
+            xe = self.chain_end(i + 2)
+            if xe is None or t[xe].text != ")":
+                return None
+            x = [(a.kind, a.text) for a in t[i + 2 : xe]]
+            k = xe + 1
+            if not (
+                t[k].text == "=="
+                and t[k + 1].kind == "string"
+                and t[k + 1].text in kinds
+                and t[k + 2].text == "and"
+            ):
+                return None
+            m = k + 3 + len(x)
+            if [(a.kind, a.text) for a in t[k + 3 : m]] != x:
+                return None
+            if not (t[m].text == "or" and t[m + 1].text == "nil"):
+                return None
+        except IndexError:
+            return None
+        if not _ends_expression(t, m + 2):
+            return None
+        if i > 0 and t[i - 1].text in _TIGHTER | {".", ":"}:
+            return None
+        return m + 1
+
+    def has_type_conjunct(self, cond: tuple[int, int], x: list[tuple[str, str]]) -> bool:
+        t = self.tokens
+        conjuncts: list[list[tuple[str, str]]] = [[]]
+        depth = 0
+        for k in range(*cond):
+            y = t[k]
+            if y.kind == "op" and y.text in _OPEN:
+                depth += 1
+            elif y.kind == "op" and y.text in {")", "]", "}"}:
+                depth -= 1
+            if depth == 0 and y.kind == "name" and y.text == "or":
+                return False
+            if depth == 0 and y.kind == "name" and y.text == "and":
+                conjuncts.append([])
+            else:
+                conjuncts[-1].append((y.kind, y.text))
+        head = [("name", "type"), ("op", "("), *x, ("op", ")"), ("op", "==")]
+        return any(
+            c[:-1] == head and c[-1] in {("string", k) for k in _SCALAR_TYPES} for c in conjuncts
+        )
+
+    def guarded(self, s: int, e: int) -> bool:
+        """Is tokens[s:e] a chain X stored inside `if type(X) == "<scalar>" and ... then`?"""
+        if self.chain_end(s) != e:
+            return False
+        x = [(a.kind, a.text) for a in self.tokens[s:e]]
+        root = self.tokens[s].text
+        fn = self.function_at(s)
+        floor = fn.head if fn else -1
+        for b in self.blocks:
+            if b.kind not in {"if", "elseif"} or b.cond is None or b.head < floor:
+                continue
+            if not (b.start <= s < b.stop):
+                continue
+            rebound = any(name == root and b.start <= at < b.stop for name, at in self.assigned)
+            if not rebound and self.has_type_conjunct(b.cond, x):
+                return True
+        return False
+
+    def tainted(self, s: int, e: int, program: _Program) -> bool:
+        t = self.tokens
+        i = s
+        while i < e:
+            x = t[i]
+            if (
+                x.kind == "name"
+                and x.text == "type"
+                and not _is_field(t, i)
+                and i + 1 < e
+                and t[i + 1].text == "("
+            ):
+                end = self.inline(i)
+                i = (end if end is not None and end < e else self.pair[i + 1]) + 1
+                continue
+            if i in self.skip or x.kind in {"string", "number"}:
+                i += 1
+                continue
+            if x.kind == "op":
+                if x.text == "...":
+                    return True
+                if x.text in {"[", ")"}:
+                    after = self.pair[i] + 1 if x.text == "[" else i + 1
+                    k = after
+                    while k < e:
+                        if (
+                            t[k].kind == "op"
+                            and t[k].text == "."
+                            and k + 1 < e
+                            and t[k + 1].kind == "name"
+                        ):
+                            k += 2
+                        elif t[k].kind == "op" and t[k].text == "[":
+                            k = self.pair[k] + 1
+                        else:
+                            break
+                    if k < e and (self.call_start(k) or (t[k].kind == "op" and t[k].text == ":")):
+                        return (
+                            True  # a call through an index or parentheses (`a[1].f()`, `a[1]:f()`)
+                        )
+                    i = after
+                    continue
+                i = self.pair[i] + 1 if x.text == "{" else i + 1
+                continue
+            if x.text == "function":
+                i = self.block_end(i) + 1
+                continue
+            if x.text in _KEYWORDS or _is_field(t, i):
+                i += 1
+                continue
+            j = i + 1
+            while j + 1 < e and t[j].text == "." and t[j].kind == "op" and t[j + 1].kind == "name":
+                j += 2
+            if j < e and t[j].kind == "op" and t[j].text == ":":
+                return True  # a method call on some object: unknown function
+            is_call = j < e and (
+                (t[j].kind == "op" and t[j].text in {"(", "{"}) or t[j].kind == "string"
+            )
+            if not is_call:
+                if program.name_tainted(self, x.text, i):
+                    return True
+                i = j
+                continue
+            verdict = program.call(self, i, j)
+            args_end = self.pair[j] + 1 if t[j].kind == "op" else j + 1
+            if verdict is True:
+                return True
+            if verdict is None and t[j].text == "(" and self.tainted(j + 1, args_end - 1, program):
+                return True
+            i = args_end
+            while i < e and t[i].kind == "op" and t[i].text in {".", "[", ":", "("}:
+                if t[i].text in {":", "("}:
+                    return True  # a call on a call's result
+                i = i + 2 if t[i].text == "." else self.pair[i] + 1
+        return False
+
+    def call_start(self, k: int) -> bool:
+        t = self.tokens
+        return k < len(t) and (
+            (t[k].kind == "op" and t[k].text in {"(", "{"}) or t[k].kind == "string"
+        )
+
+    def returns(self, head: int) -> list[tuple[int, int]]:
+        t = self.tokens
+        out = []
+        for k in range(head, self.functions[head].stop):
+            if t[k].kind == "name" and t[k].text == "return":
+                fn = self.function_at(k)
+                if fn is not None and fn.head == head:
+                    out += self.exprlist(k + 1)
+        return out
+
+
+class _Program:
+    """Every source's flow, with taint and function safety solved together."""
+
+    def __init__(self, sources: list[Path]) -> None:
+        self.flows = {p.name: _Flow(p, _tokens(p)) for p in sources}
+        self.ns_functions: dict[str, tuple[str, int]] = {}
+        for name, flow in self.flows.items():
+            for head, label in flow.labels.items():
+                if label.startswith("ns.") and flow.tokens[head + 1].text == "ns":
+                    self.ns_functions[label[3:]] = (name, head)
+        self.hits: list[tuple[str, str, str]] = []
+        self.unsafe: set[tuple[str, int]] = set()
+        for name, flow in self.flows.items():
+            for store in flow.stores:
+                key = (name, flow.label_at(store.at), store.text)
+                if key in PLUMBING_STORES:
+                    self.hits.append(key)
+                    fn = flow.function_at(store.at)
+                    if fn is not None:
+                        self.unsafe.add((name, fn.head))
+        self.tainted: set[int] = set()
+        changed = True
+        while changed:
+            changed = False
+            for name, flow in self.flows.items():
+                for decls in flow.decls.values():
+                    for d in decls:
+                        if (
+                            d.fixed is None
+                            and id(d) not in self.tainted
+                            and any(flow.tainted(s, e, self) for s, e in d.sources)
+                        ):
+                            self.tainted.add(id(d))
+                            changed = True
+                for head in flow.functions:
+                    if (name, head) not in self.unsafe and not all(
+                        self.value_ok(flow, s, e) for s, e in flow.returns(head)
+                    ):
+                        self.unsafe.add((name, head))
+                        changed = True
+
+    def value_ok(self, flow: _Flow, s: int, e: int) -> bool:
+        return not flow.tainted(s, e, self) or flow.guarded(s, e)
+
+    def store_ok(self, flow: _Flow, store: _Store) -> bool:
+        key = (flow.path.name, flow.label_at(store.at), store.text)
+        return key in PLUMBING_STORES or self.value_ok(flow, *store.value)
+
+    def name_tainted(self, flow: _Flow, name: str, i: int) -> bool:
+        decl = flow.resolve(name, i)
+        if decl is None:
+            return True  # client, saved, unknown globals, and Lua libraries read as values
+        return decl.fixed is True or (decl.fixed is None and id(decl) in self.tainted)
+
+    def call(self, flow: _Flow, i: int, j: int) -> bool | None:
+        """True: the call's result is tainted; False: it is not; None: as tainted
+        as its arguments."""
+        names = [flow.tokens[k].text for k in range(i, j, 2)]
+        decl = flow.resolve(names[0], i)
+        if decl is not None:
+            if decl is flow.namespace and len(names) == 2 and names[1] in self.ns_functions:
+                return self.ns_functions[names[1]] in self.unsafe
+            if decl.function is not None and decl.fixed is False and len(names) == 1:
+                return (flow.path.name, decl.function) in self.unsafe
+            return True
+        if names[0] == "type" and len(names) == 1:
+            return False
+        if names[0] == "pcall":
+            return True  # it calls its first argument, whatever that is
+        if names[0] == "math" or (names[0] == "string" and names[1:] != ["gmatch"]):
+            return len(names) == 1
+        return None if names[0] in _LUA_BUILTINS else True
+
+
+def _program() -> _Program:
+    try:
+        return _Program(SOURCES)
+    except (ValueError, IndexError, KeyError, StopIteration) as err:  # fail closed
+        raise AssertionError(f"the sources could not be analysed: {err!r}") from err
+
+
+@pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
+def test_every_stored_value_is_type_checked(path: Path) -> None:
+    """Security review of M11-01 (deferred to M11-13): no value the addon did
+    not build (an API return, a client constant, a field of an API table, a
+    parameter, the loaded file) is stored unless it is type-checked as a
+    scalar where it is stored: `ns.Number(...)`, `ns.String(...)`,
+    `ns.Bool(...)`, the inline form, or a direct store inside
+    `if type(X) == "<scalar>" ... then`. So a whole API table is never written.
+    See the comment above `_KEYWORDS` for the rules."""
+    program = _program()
+    flow = program.flows[path.name]
+    problems = [
+        f"{_where(path, flow.tokens[store.at])} in {flow.label_at(store.at)}: "
+        f"`{store.text}` stores a value that is not type-checked"
+        for store in flow.stores
+        if not program.store_ok(flow, store)
+    ]
+    assert not problems, problems
+
+
+def test_plumbing_exemptions_match_exactly_once() -> None:
+    program = _program()
+    counts = {key: program.hits.count(key) for key in PLUMBING_STORES}
+    assert all(n == 1 for n in counts.values()), counts
+
+
+def test_every_gather_and_carry_returns_checked_values() -> None:
+    """ns.state holds only what a section's `gather` or `carry` returns (the
+    plumbing above moves it into WowLabCharDB). Each of them is a function
+    literal or a local function whose every return value passes the stored-value
+    rules, so neither can hand back a table from the client or the file."""
+    program = _program()
+    problems = []
+    sections = 0
+    for name, flow in program.flows.items():
+        t = flow.tokens
+        for k in range(len(t) - 4):
+            if [x.text for x in t[k : k + 5]] != ["ns", ".", "Section", "(", "{"]:
+                continue
+            sections += 1
+            for key, s, e in flow.entries(k + 4):
+                if key not in {"{gather}", "{carry}"}:
+                    continue
+                head = None
+                if t[s].text == "function" and flow.block_end(s) == e - 1:
+                    head = s
+                elif e == s + 1 and t[s].kind == "name":
+                    decl = flow.resolve(t[s].text, s)
+                    head = decl.function if decl is not None else None
+                if head is None:
+                    problems.append(
+                        f"{_where(flow.path, t[s])} {key[1:-1]} is not an addon function"
+                    )
+                elif (name, head) in program.unsafe:
+                    problems.append(
+                        f"{_where(flow.path, t[s])} {key[1:-1]} can return an unchecked value"
+                    )
+    assert sections, "expected ns.Section calls"
+    assert not problems, problems
+
+
+# Names the stored-value check trusts; no source may rebind them.
+_TRUSTED_NAMES = _LUA_BUILTINS | {"ns"}
+
+
+@pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
+def test_sources_store_nothing_through_table_library(path: Path) -> None:
+    """Review of M11-13: `table.insert(out, api_table)` stores through a call,
+    which the stored-value check does not read. The addon appends with
+    `t[#t + 1] = v`; `table` is used only as `table.sort`, and `tinsert` (and a
+    string naming either) never appears."""
+    tokens = _tokens(path)
+    bad = []
+    for i, t in enumerate(tokens):
+        if t.kind == "string" and t.text in {"insert", "tinsert"}:
+            bad.append(f"{_where(path, t)} string {t.text!r}")
+        if t.kind != "name" or _is_field(tokens, i):
+            continue
+        if t.text == "tinsert":
+            bad.append(f"{_where(path, t)} tinsert")
+        if t.text == "table" and [x.text for x in tokens[i + 1 : i + 3]] != [".", "sort"]:
+            bad.append(f"{_where(path, t)} {_render(tokens[i : i + 3])!r}")
+    assert not bad, bad
+
+
+def test_every_section_call_takes_a_literal_spec() -> None:
+    """Review of M11-13: the gather/carry check reads the spec at the call site,
+    so every `ns.Section` is exactly `ns.Section({ ... })`: not
+    `ns.Section(spec)`, `ns.Section{ ... }` or `ns.Section(factory())`. The
+    namespace is never indexed by brackets, and no string literal is
+    "Section", so the function is not reached another way."""
+    program = _program()
+    bad = []
+    for flow in program.flows.values():
+        t = flow.tokens
+        for i, tok in enumerate(t):
+            if tok.kind == "string" and tok.text == "Section":
+                bad.append(f"{_where(flow.path, tok)} string 'Section'")
+            if tok.kind != "name" or tok.text != "ns" or _is_field(t, i):
+                continue
+            if i + 1 < len(t) and t[i + 1].text == "[":
+                bad.append(f"{_where(flow.path, tok)} ns[...]")
+            if [x.text for x in t[i + 1 : i + 3]] != [".", "Section"]:
+                continue
+            if i > 0 and t[i - 1].text == "function":
+                continue  # the definition in Core.lua
+            ok = (
+                i + 4 < len(t)
+                and t[i + 3].kind == "op"
+                and t[i + 3].text == "("
+                and t[i + 4].kind == "op"
+                and t[i + 4].text == "{"
+                and flow.pair[i + 4] + 1 == flow.pair[i + 3]
+            )
+            if not ok:
+                bad.append(f"{_where(flow.path, tok)} {_render(t[i : i + 6])!r}")
+    assert not bad, bad
+
+
+def test_every_ns_function_is_defined_once() -> None:
+    """Security review of M11-13: a second `function ns.Numbers(list) return
+    list end` (in a file loaded later) would replace the checked helper at run
+    time. Each `ns.X` is defined by exactly one `function ns.X(` in all the
+    sources, and never assigned as `ns.X = ...`."""
+    program = _program()
+    defined: dict[str, list[str]] = {}
+    for flow in program.flows.values():
+        for head, label in flow.labels.items():
+            if label.startswith("ns.") and flow.tokens[head + 1].text == "ns":
+                defined.setdefault(label, []).append(_where(flow.path, flow.tokens[head]))
+    problems = [
+        f"{name} defined {len(at)} times: {at}" for name, at in defined.items() if len(at) > 1
+    ]
+    for flow in program.flows.values():
+        for store in flow.stores:
+            head = store.text.split(" = ", 1)[0]
+            if head.startswith("ns . ") and "ns." + head[5:].split(" ")[0] in defined:
+                problems.append(f"{_where(flow.path, flow.tokens[store.at])} `{store.text}`")
+    assert not problems, problems
+
+
+@pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
+def test_trusted_names_are_never_rebound(path: Path) -> None:
+    """Review of M11-13: `local type = function() return "number" end` would
+    make every `type(X) == "number"` guard pass. No local, parameter, loop
+    variable, local or global function, or assignment binds a name in
+    `_LUA_BUILTINS` (`type`, `pcall`, `ipairs`, `pairs`, `next`, `select`,
+    `tostring`, `tonumber`, `unpack`, `print`, `error`, `string`, `table`,
+    `math`) or `ns`, and no field of `string`, `math` or `table` is assigned or
+    defined (`function string.sub()`); the one `local _, ns = ...` at the top
+    of each file is the exception."""
+    program = _program()
+    flow = program.flows[path.name]
+    t = flow.tokens
+    bad = []
+    for name in _TRUSTED_NAMES:
+        for decl in flow.decls.get(name, []):
+            if decl is not flow.namespace:
+                bad.append(f"{_where(path, t[min(decl.start, len(t) - 1)])} binds {name}")
+    for name, at in flow.rebound:
+        if name in _TRUSTED_NAMES or name in {"string.", "math.", "table."}:
+            bad.append(f"{_where(path, t[at])} assigns {_render(t[at : at + 3])!r}")
+    for head, label in flow.labels.items():
+        root = t[head + 1]
+        if root.kind == "name" and root.text in _TRUSTED_NAMES - {"ns"} and root.text != "(":
+            bad.append(f"{_where(path, t[head])} function {label}")
+    assert not bad, bad
+
+
+_INDEXED_CALL_HEAD = """local _, ns = ...
+
+local function characterData()
+    return ns.Call(ns.Fn(C_BarberShop, "GetCurrentCharacterData"))
+end
+
+ns.Section({
+    key = "zz",
+    path = { "zz" },
+    on_world = true,
+    gather = function()
+"""
+_INDEXED_CALL_TAIL = """    end,
+})
+"""
+# Constructed inputs (boundary cases for this grader, from the #106 security
+# review), not addon sources: a call reached through an index and a field or
+# method. Each must fail the stored-value or gather/carry check.
+_INDEXED_CALLS = {
+    "constructed-index-then-field-call": """        local readers = { { read = characterData } }
+        local record = {}
+        for i = 1, #readers do
+            record[i] = readers[i].read()
+        end
+        return record
+""",
+    "constructed-index-then-method-call": """        local readers = { { read = characterData } }
+        return { cd = readers[1]:read() }
+""",
+    "constructed-index-then-field-call-with-argument": """        local readers = { { read = characterData } }
+        return { cd = readers[1].read(1) }
+""",
+}
+
+
+def test_stored_value_check_taints_calls_through_an_index() -> None:
+    """Constructed inputs (boundary tests of the stored-value check itself; no
+    fixture argument, so the review probes can call it bare)."""
+    missed = []
+    for tag, body in sorted(_INDEXED_CALLS.items()):
+        with tempfile.TemporaryDirectory(prefix="wowlab-addon-") as tmp:
+            source = Path(tmp) / "Constructed.lua"
+            source.write_text(_INDEXED_CALL_HEAD + body + _INDEXED_CALL_TAIL, encoding="utf-8")
+            program = _Program([source])
+        flow = program.flows[source.name]
+        unchecked = [store.text for store in flow.stores if not program.store_ok(flow, store)]
+        gather = next(head for head, label in flow.labels.items() if label == "gather")
+        if not unchecked and (source.name, gather) not in program.unsafe:
+            missed.append(tag)
+    assert not missed, missed
+
+
+# --- carry: the saved record is copied only through checked values ------------
+
+
+def _carry_chain_ok(flow: _Flow, i: int, end: int) -> bool:
+    """Is the chain tokens[i:end] (starting `r.`, `r[`, `c.` or `c[`) used in one
+    of the four allowed forms, entirely on one line?"""
+    t = flow.tokens
+
+    def one_line(a: int, b: int) -> bool:
+        return len({x.line for x in t[a : b + 1]}) == 1
+
+    def after_ok(k: int) -> bool:
+        return k >= len(t) or not (
+            t[k].text in _TIGHTER | {".", ":", "[", "("} or t[k].kind in {"string", "number"}
+        )
+
+    # 1. The argument of type(...) or ipairs(...).
+    if (
+        t[i - 1].text == "("
+        and t[i - 2].kind == "name"
+        and t[i - 2].text in {"type", "ipairs"}
+        and not _is_field(t, i - 2)
+        and t[end].text == ")"
+        and one_line(i - 2, end)
+    ):
+        return True
+    # 2. One side of == "<literal>".
+    if (
+        t[end].text == "=="
+        and t[end + 1].kind == "string"
+        and t[i - 1].text not in _TIGHTER
+        and after_ok(end + 2)
+        and one_line(i, end + 1)
+    ):
+        return True
+    if (
+        t[i - 1].text == "=="
+        and t[i - 2].kind == "string"
+        and t[i - 3].text not in _TIGHTER
+        and after_ok(end)
+        and one_line(i - 2, end - 1)
+    ):
+        return True
+    # 3. The second X of `type(X) == "number" and X or nil` (the first is form 1).
+    start = i - 6 - (end - i)
+    nil = flow.inline(start, frozenset({"number"})) if start >= 0 else None
+    if nil is not None and nil == end + 1 and one_line(start, nil):
+        return True
+    # 4. The whole right-hand side of an assignment directly inside
+    #    `if type(X) == "number" then`.
+    block = flow.block_at(i)
+    if (
+        t[i - 1].kind == "op"
+        and t[i - 1].text == "="
+        and flow.statement_level(i - 1)
+        and _ends_expression(t, end)
+        and not (end < len(t) and t[end].text == ",")
+        and block is not None
+        and block.kind == "if"
+        and block.cond is not None
+    ):
+        x = [(a.kind, a.text) for a in t[i:end]]
+        cond = [(a.kind, a.text) for a in t[block.cond[0] : block.cond[1]]]
+        head = [("name", "type"), ("op", "("), *x, ("op", ")"), ("op", "=="), ("string", "number")]
+        target = flow.targets(i - 1)
+        if cond == head and one_line(block.head, block.start - 1) and one_line(target, end - 1):
+            return True
+    return False
 
 
 def test_carried_customization_is_rebuilt_from_checked_values() -> None:
-    """Security review, M11-01: `carry` returns a NEW table (`out`), never its
-    input or any table from the saved file, and copies only values that are
-    type-checked as numbers, or checked against the two `recorded_at` values,
-    at the store or in the enclosing `if`."""
-    lines = _carry_lines()
-    body = "\n".join(lines)
+    """Security review, M11-01 (moved onto tokens in M11-13): `carry` returns a
+    NEW table (`out`, bound once to a constructor, never reassigned) or nil, and
+    every chain starting `r.`, `r[`, `c.` or `c[` inside it appears only as the
+    argument of `type(...)`/`ipairs(...)`, one side of `== "<literal>"`, the X
+    in `type(X) == "number" and X or nil`, or the whole right-hand side of an
+    assignment directly inside `if type(X) == "number" then`, each on one line.
+    Anything else fails: a call argument (`table.insert(t, r.choices[i])`), a
+    table-constructor entry, `#r.choices`, `~=`, or any form split across lines."""
+    path = ADDON / "Customization.lua"
+    tokens = _tokens(path)
+    flow = _Flow(path, tokens)
+    body_start, body_end = _carry_body(tokens)
     problems = []
-    returns = re.findall(r"\breturn\s+(\w+)", body)
-    if not returns or any(value not in {"nil", "out"} for value in returns):
-        problems.append(f"carry returns {returns}, not only nil / out")
-    out_bindings = [line for line in lines if re.match(r"^\s*local\s+out\s*=", line)]
-    if len(out_bindings) != 1 or not re.match(r"^\s*local\s+out\s*=\s*\{", out_bindings[0]):
-        problems.append(f"`out` must be bound once, to a new table: {out_bindings}")
-    if re.search(r"^\s*out\s*=", body, re.MULTILINE):
-        problems.append("`out` reassigned")
-    for n, line in enumerate(lines):
-        match = _ASSIGN.match(line)
-        if not match or line.lstrip().startswith(("if ", "for ", "elseif ")):
+    outs = 0
+    for i in range(body_start, body_end):
+        t = tokens[i]
+        if t.kind != "name" or _is_field(tokens, i):
             continue
-        indent, is_local, target, value = match.groups()
-        if is_local and target == "r":
-            continue  # the guarded read of saved.customization
-        constants_blanked = re.sub(r'"[^"]*"', '""', value)  # string literals are constants
-        if re.search(r"\b(saved|r|c)\b(?![.\[])", constants_blanked):
-            problems.append(f"line {n}: stores a saved table itself: {line.strip()!r}")
-        guard = ""
-        for back in range(n - 1, -1, -1):
-            prev = lines[back]
-            if prev.strip().startswith("if ") and len(prev) - len(prev.lstrip()) < len(indent):
-                guard = prev
-                break
-        for access in _SAVED_ACCESS.findall(value):
-            inline = re.search(
-                rf"type\({re.escape(access)}\) == \"number\" and {re.escape(access)} or nil", value
-            )
-            numeric = f'type({access}) == "number"' in guard
-            enum = re.search(
-                rf'{re.escape(access)} == "open" or {re.escape(access)} == "applied"', guard
-            )
-            if not (inline or numeric or enum):
-                problems.append(f"line {n}: unchecked copy of {access}: {line.strip()!r}")
+        if t.text == "return":
+            value = [x.text for x in tokens[i + 1 : i + 2]]
+            if value not in (["nil"], ["out"]) or not _ends_expression(tokens, i + 2):
+                problems.append(
+                    f"{_where(path, t)} carry returns {_render(tokens[i + 1 : i + 4])!r}"
+                )
+        if t.text == "out" and tokens[i + 1].text == "=":
+            if tokens[i - 1].text == "local" and tokens[i + 2].text == "{":
+                outs += 1
+            else:
+                problems.append(
+                    f"{_where(path, t)} `out` bound to something other than a new table"
+                )
+        if t.text in {"r", "c"} and tokens[i + 1].text in {".", "["}:
+            end = flow.chain_end(i)
+            if end is None or not _carry_chain_ok(flow, i, end):
+                problems.append(f"{_where(path, t)} {_render(tokens[i - 3 : (end or i) + 3])!r}")
+    if outs != 1:
+        problems.append(f"`out` must be bound once, to a new table ({outs} bindings)")
     assert not problems, problems
 
 

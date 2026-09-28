@@ -30,11 +30,14 @@ import pytest
 REPO = Path(__file__).resolve().parents[4]
 GRADER = REPO / "tests" / "addon" / "test_lab_addon.py"
 
-CHOICE_BODY = """                out.choices[#out.choices + 1] = {
-                    option = c.option,
+CHOICE_BODY = """                local entry = {
                     choice_index = type(c.choice_index) == "number" and c.choice_index or nil,
                     choice = type(c.choice) == "number" and c.choice or nil,
                 }
+                if type(c.option) == "number" then
+                    entry.option = c.option
+                    out.choices[#out.choices + 1] = entry
+                end
 """
 CARRY_RETURN = "        return out\n    end,\n    gather"
 CHARACTER_DATA = 'ns.Call(ns.Fn(C_BarberShop, "GetCurrentCharacterData"))'
