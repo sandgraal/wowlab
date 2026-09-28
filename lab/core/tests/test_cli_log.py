@@ -111,7 +111,7 @@ def test_log_tail_json_validates_and_carries_the_tokens(root: Path) -> None:
     result = ok("log", "tail", "--json", "-n", "79")
     report = LogTailReport.model_validate_json(result.stdout)
     assert report.file == LOG
-    assert report.notes == []
+    assert report.notes == [cli._BATCHES]
     assert report.entries == combatlog.tail(REAL, 79)[0]
     first = report.entries[0]
     assert isinstance(first, combatlog.Record)
@@ -190,7 +190,7 @@ def test_log_tail_follow_survives_truncation(flavor: Path, monkeypatch: pytest.M
     assert out == [
         f"==> {LOG} <==",
         TEXT[-1],
-        f"==> {LOG} (the file was truncated; reading it from the start) <==",
+        f"==> {LOG} (the file shrank or its earlier bytes changed; reading it from the start) <==",
         TEXT[10],
     ]
 
@@ -225,15 +225,67 @@ def test_log_tail_follow_waits_for_a_first_log_constructed(
     _script(monkeypatch, [lambda: None, lambda: (flavor / LATER).write_bytes(LINES[0])])
     result = ok("log", "tail", "--follow")
     assert "waiting for one" in result.stderr
-    assert result.stdout.splitlines() == [f"==> {LATER} (a new log file) <==", TEXT[0]]
+    assert result.stdout.splitlines() == [f"==> {LATER} <==", TEXT[0]]
 
 
-def test_log_tail_follow_without_a_logs_folder_is_an_error_constructed(flavor: Path) -> None:
+def test_log_tail_follow_waits_for_a_missing_logs_folder_constructed(
+    flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     shutil.rmtree(flavor / "Logs")
-    result = run("log", "tail", "--follow")
-    assert result.exit_code == 1
-    assert "no Logs/ folder" in result.stderr
     assert ok("log", "tail").stdout.startswith("no combat log under Logs/")
+
+    def logging_turned_on() -> None:
+        (flavor / "Logs").mkdir()
+        (flavor / LATER).write_bytes(LINES[0])
+
+    _script(monkeypatch, [lambda: None, logging_turned_on])
+    result = ok("log", "tail", "--follow")
+    assert "waiting for one" in result.stderr
+    assert result.stdout.splitlines() == [f"==> {LATER} <==", TEXT[0]]
+
+
+# ─── notes and limits ────────────────────────────────────────────────────────
+
+
+def test_log_tail_notes_go_to_stderr_and_into_the_json(flavor: Path) -> None:
+    result = ok("log", "tail", "-n", "1")
+    assert result.stdout.splitlines() == [f"==> {LOG} <==", TEXT[-1]]
+    assert cli._BATCHES in result.stderr
+    assert cli._STILL_WRITING not in result.stderr
+    with (flavor / LOG).open("ab") as f:
+        f.write(LINES[3][:20])  # the client mid-flush
+    result = ok("log", "tail", "-n", "1")
+    assert result.stdout.splitlines() == [f"==> {LOG} <==", TEXT[-1]]
+    assert cli._STILL_WRITING in result.stderr
+    report = LogTailReport.model_validate_json(ok("log", "tail", "--json").stdout)
+    assert report.notes == [cli._BATCHES, cli._STILL_WRITING]
+
+
+def test_log_tail_follow_prints_the_batches_note_once(
+    flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _script(monkeypatch, [lambda: (flavor / LATER).write_bytes(LINES[0])])
+    result = ok("log", "tail", "--follow", "-n", "0")
+    assert result.stderr.count(cli._BATCHES) == 1
+
+
+@pytest.mark.parametrize(("n", "code"), [("100000", 0), ("100001", 2)])
+def test_log_tail_lines_are_capped(root: Path, n: str, code: int) -> None:
+    assert run("log", "tail", "-n", n).exit_code == code
+
+
+def test_log_tail_marks_a_cut_line_constructed(flavor: Path) -> None:
+    long = b"x" * (combatlog.MAX_LINE_BYTES + 5)
+    (flavor / LATER).write_bytes(long + b"\r\n")
+    out = ok("log", "tail").stdout.splitlines()
+    assert out[1].startswith(
+        f"(not tokenized: a line longer than {combatlog.MAX_LINE_BYTES} bytes; only its start "
+        f"is kept) (cut to its first {combatlog.MAX_LINE_BYTES} of {len(long)} bytes) xxx"
+    )
+    report = LogTailReport.model_validate_json(ok("log", "tail", "--json").stdout)
+    (cut,) = report.entries
+    assert isinstance(cut, combatlog.Unparsed)
+    assert (cut.truncated, cut.length, cut.ending) == (True, len(long), "\r\n")
 
 
 # ─── L1 ──────────────────────────────────────────────────────────────────────

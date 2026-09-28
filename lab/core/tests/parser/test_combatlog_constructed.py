@@ -13,6 +13,8 @@ and the distinct shapes that are yielded as `Unparsed`.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from wowlab_core import combatlog
@@ -44,10 +46,23 @@ def _unparsed(text: str) -> Unparsed:
 
 # ─── COMBATANT_INFO and groups [verify] ──────────────────────────────────────
 
-# Constructed from the community documentation of the retail COMBATANT_INFO
-# layout (player GUID, faction, primary and secondary stats, armor, spec,
-# [talents], (PvP talents), [equipped items], [auras], honor level, season,
-# rating, tier). Values are invented. [verify] against a boss-pull capture.
+# Constructed [verify]: based on community documentation of the *retail*
+# COMBATANT_INFO layout (reviewer memory, not a fixture). Forever's layout
+# is unknown; it is reported to use the modern talent API (C_Traits),
+# which is why the retail shape is the guess.
+#   1 player GUID, 2 faction, 3-6 strength/agility/stamina/intellect,
+#   7-9 dodge/parry/block, 10-12 crit melee/ranged/spell, 13 speed,
+#   14 leech, 15-17 haste melee/ranged/spell, 18 avoidance, 19 mastery,
+#   20-22 versatility (damage done, healing done, damage taken),
+#   23 armor, 24 spec id                                        [verify]
+#   25 [talents]: (node id, entry id, rank) per talent          [verify]
+#   26 (PvP talents): four ids                                  [verify]
+#   27 [items]: (item id, item level, (enchants), (bonus ids), (gems));
+#      an empty slot is (0,0,(),(),()); the enchant and gem tuple
+#      widths are not established                               [verify]
+#   28 [auras]: flat pairs of source GUID, spell id              [verify]
+#   29-32 honor level, season, rating, tier                      [verify]
+# Values are invented.
 COMBATANT_INFO = (
     f"{TS}  COMBATANT_INFO,Player-1234-0ABCDEF0,1,1023,432,17640,1412,0,0,0,"
     "1098,1098,1098,280,0,2400,2400,2400,1000,1250,1250,1250,1250,5021,62,"
@@ -231,7 +246,7 @@ def test_empty_fields_constructed() -> None:
     "stamp",
     [
         "4/1/2026 02:16:30.666-4",  # the real fixture's shape (shifted)
-        "4/01/2026 02:16:30.666-4",  # a padded day: the owner reports one [verify]
+        "4/01/2026 02:16:30.666-4",  # a padded day: unverified (§8: no real log had a day below 10)
         "04/1/2026 02:16:30.666-4",
         "12/25/2026 23:59:59.999-5",
         "9/20/2026 1:02:03.456-4",  # a one-digit hour
@@ -351,20 +366,69 @@ def test_a_line_at_the_limit_tokenizes_and_one_over_it_is_cut_constructed() -> N
     assert isinstance(first, Record) and len(first.raw) == MAX_LINE_BYTES
     assert isinstance(second, Unparsed)
     assert second.reason.startswith(f"a line longer than {MAX_LINE_BYTES} bytes")
+    assert second.truncated and second.length == len(over) and second.ending == "\r\n"
     assert len(second.raw) == MAX_LINE_BYTES and second.offset == len(at_limit) + 1
     assert isinstance(third, Record) and third.event == "NEXT"
     assert third.offset == len(at_limit) + 1 + len(over) + 2
 
 
 @pytest.mark.parser
-def test_a_line_with_no_break_is_bounded_while_it_streams_constructed() -> None:
+def test_unparsed_lines_carry_their_byte_length_constructed() -> None:
+    (entry,) = tokenize("é junk\r\n".encode())
+    assert isinstance(entry, Unparsed)
+    assert (entry.length, entry.truncated, entry.ending) == (7, False, "\r\n")
+
+
+def _long_line_in_pieces(pieces: list[bytes]) -> list[Record | Unparsed]:
     splitter = combatlog._Splitter()
-    step = b"z" * 65536
     out: list[Record | Unparsed] = []
-    for _ in range(MAX_LINE_BYTES // len(step) + 2):
-        out.extend(splitter.feed(step))
+    for piece in pieces:
+        out.extend(splitter.feed(piece))
         assert len(splitter.pending) <= MAX_LINE_BYTES
-    assert len(out) == 1 and isinstance(out[0], Unparsed) and out[0].offset == 0
-    rest = splitter.feed(b"zz\n" + f"{TS}  NEXT,1\n".encode())
-    assert len(rest) == 1 and isinstance(rest[0], Record) and rest[0].event == "NEXT"
-    assert rest[0].offset == (MAX_LINE_BYTES // len(step) + 2) * len(step) + 3
+    return out + splitter.end()
+
+
+@pytest.mark.parser
+@pytest.mark.parametrize(
+    "cut",
+    [65536, MAX_LINE_BYTES + 7, 3 * MAX_LINE_BYTES],
+    ids=["constructed-64KiB", "constructed-just-over", "constructed-at-the-CR"],
+)
+def test_an_overlong_line_is_the_same_however_it_is_chunked_constructed(cut: int) -> None:
+    # A 3 MiB line ending in CRLF, then a normal line. The CR may arrive in
+    # one piece and its LF in the next ("at-the-CR").
+    line = b"z" * (3 * MAX_LINE_BYTES)
+    data = line + b"\r\n" + f"{TS}  NEXT,1\n".encode()
+    whole = list(tokenize(data))
+    pieces = [data[i : i + cut] for i in range(0, len(data), cut)]
+    if cut == 3 * MAX_LINE_BYTES:
+        pieces = [data[: cut + 1], data[cut + 1 :]]  # ... b"\r" | b"\n..."
+    streamed = _long_line_in_pieces(pieces)
+    assert streamed == whole
+    first, second = whole
+    assert isinstance(first, Unparsed) and first.truncated
+    assert (first.offset, first.length, first.ending) == (0, len(line), "\r\n")
+    assert isinstance(second, Record) and second.offset == len(line) + 2
+
+
+@pytest.mark.parser
+def test_an_overlong_line_with_no_break_at_the_end_constructed() -> None:
+    step = b"z" * 65536
+    n = MAX_LINE_BYTES // len(step) + 2
+    out = _long_line_in_pieces([step] * n)
+    (only,) = out
+    assert isinstance(only, Unparsed) and only.truncated
+    assert (only.offset, only.length, only.ending) == (0, n * len(step), "")
+
+
+@pytest.mark.parser
+def test_an_unclosed_quote_over_a_megabyte_is_refused_in_linear_time_constructed() -> None:
+    head = f'{TS}  EVENT,"'
+    line = head + ",a" * ((MAX_LINE_BYTES - len(head)) // 2)
+    started = time.perf_counter()
+    entry = tokenize_line(line)
+    elapsed = time.perf_counter() - started
+    assert isinstance(entry, Unparsed) and entry.reason == "a quoted string is not closed"
+    assert elapsed < 1.0, f"{elapsed:.2f}s for a {len(line)}-byte line"
+    closed = tokenize_line(head + 'x"' + ",a" * ((MAX_LINE_BYTES - len(head)) // 2))
+    assert isinstance(closed, Record)

@@ -16,6 +16,7 @@ fixture's, not a real date).
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -24,6 +25,7 @@ import pytest
 from wowlab_core import combatlog
 from wowlab_core.combatlog import (
     Following,
+    NotARegularFileError,
     Record,
     Unparsed,
     find_logs,
@@ -301,12 +303,77 @@ def test_following_an_empty_folder_waits_for_the_first_log(logs: Path) -> None:
     log = logs / LATER
     out, seen = _follow(logs, [lambda: None, lambda: log.write_bytes(LINES[0] + LINES[1])])
     assert seen[:2] == [0, 0]
-    assert out == [Following(path=log, reason="rotated"), *list(read_log(log))]
+    assert out == [Following(path=log, reason="start"), *list(read_log(log))]
+
+
+def test_several_new_logs_are_read_in_turn_oldest_first(logs: Path) -> None:
+    old = logs / NAME
+    old.write_bytes(LINES[0])
+    second, third = logs / LATER, logs / "WoWCombatLog-040126_041500.txt"  # constructed names
+
+    def two_at_once() -> None:
+        third.write_bytes(LINES[3])
+        second.write_bytes(LINES[2])
+        os.utime(second, ns=(1_000_000_000, 1_000_000_000))
+        os.utime(third, ns=(2_000_000_000, 2_000_000_000))
+
+    out, _ = _follow(old, [two_at_once])
+    assert out == [
+        Following(path=old, reason="start"),
+        Following(path=second, reason="rotated"),
+        *list(read_log(second)),
+        Following(path=third, reason="rotated"),
+        *list(read_log(third)),
+    ]
 
 
 def test_follow_of_a_missing_path_raises(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         next(follow(tmp_path / "nowhere"))
+
+
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="FIFOs and symlinks: POSIX")
+
+
+@posix_only
+def test_a_fifo_under_a_log_name_does_not_hang_constructed(logs: Path) -> None:
+    fifo = logs / LATER
+    os.mkfifo(fifo)
+    with pytest.raises(NotARegularFileError):
+        next(follow(fifo))
+    with pytest.raises(NotARegularFileError):
+        list(read_log(fifo))
+    with pytest.raises(NotARegularFileError):
+        tail(fifo, 1)
+    assert find_logs(logs) == []
+
+
+@posix_only
+def test_a_log_replaced_by_a_fifo_is_no_longer_followed_constructed(logs: Path) -> None:
+    log = logs / NAME
+    log.write_bytes(LINES[0])
+
+    def to_fifo() -> None:
+        log.unlink()
+        os.mkfifo(log)
+
+    out, seen = _follow(log, [_append(log, LINES[1][:10]), to_fifo, lambda: None])
+    assert len(out) == 2
+    cut = out[1]
+    assert isinstance(cut, Unparsed)
+    assert cut.reason == "the file was replaced before this line's break was written"
+    assert seen == [1, 1, 2, 2], "it waits without spinning or blocking"
+
+
+@posix_only
+def test_a_symlinked_log_is_not_listed_or_followed_constructed(logs: Path, tmp_path: Path) -> None:
+    elsewhere = tmp_path / "elsewhere.txt"
+    elsewhere.write_bytes(LINES[0])
+    log = logs / NAME
+    log.write_bytes(LINES[0])
+    out, _ = _follow(log, [lambda: (logs / LATER).symlink_to(elsewhere)])
+    assert find_logs(logs) == [log]
+    assert out == [Following(path=log, reason="start")]
 
 
 # ─── tail ────────────────────────────────────────────────────────────────────

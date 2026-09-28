@@ -1954,7 +1954,17 @@ def addons_list(root: RootOpt = None, flavor: FlavorOpt = None, json_out: JsonOp
 
 _LOG_POLL = 0.5  # seconds between looks at the log while following
 _follow_sleep: Callable[[float], None] = time.sleep  # a test replaces it
-_NO_LOG = "no combat log under Logs/ (the client writes one while /combatlog is on)"
+MAX_TAIL_LINES = 100_000
+_NO_LOG = (
+    "no combat log under Logs/ (the client creates one when combat logging is turned on, "
+    "by /combatlog or by an addon)"
+)
+_BATCHES = (
+    "the client adds to this file in batches, and only while combat logging is on: the "
+    "latest events may not be on disk yet, and if logging is off, this file ends where "
+    "logging was turned off or the client closed"
+)
+_STILL_WRITING = "the last line is still being written and is not shown"
 
 
 class LogFollowing(_Out):
@@ -1979,7 +1989,7 @@ class LogTailReport(_Out):
 
     file: str | None  # relative to the flavor folder; None when there is no combat log
     entries: list[combatlog.Entry]
-    notes: list[str]
+    notes: list[str]  # the caveats the text output prints on stderr
 
 
 def _logs_dir(lay: layout.Layout) -> Path | None:
@@ -2000,7 +2010,7 @@ def _rel(lay: layout.Layout, path: Path) -> str:
 _FOLLOWING_WORDS = {
     "start": "",
     "rotated": " (a new log file)",
-    "truncated": " (the file was truncated; reading it from the start)",
+    "truncated": " (the file shrank or its earlier bytes changed; reading it from the start)",
     "replaced": " (a different file under this name; reading it from the start)",
 }
 
@@ -2012,9 +2022,55 @@ def _print_log_entry(entry: combatlog.Entry | LogFollowing, json_out: bool) -> N
     elif isinstance(entry, LogFollowing):
         _say(f"==> {entry.file}{_FOLLOWING_WORDS[entry.reason]} <==")
     elif isinstance(entry, combatlog.Unparsed):
-        _say(f"(not tokenized: {entry.reason}) {entry.raw}")
+        cut = (
+            f" (cut to its first {len(entry.raw)} of {entry.length} bytes)"
+            if entry.truncated
+            else ""
+        )
+        _say(f"(not tokenized: {entry.reason}){cut} {entry.raw}")
     else:
         _say(entry.raw)
+
+
+def _follow_log(
+    lay: layout.Layout,
+    newest: Path | None,
+    end: int | None,
+    entries: list[combatlog.Entry],
+    json_out: bool,
+) -> None:
+    """`log tail --follow`: print as the client appends, until Ctrl-C."""
+    logs = _logs_dir(lay)
+    if newest is None:
+        _note(f"{_NO_LOG}; waiting for one")
+    while logs is None:
+        _follow_sleep(_LOG_POLL)
+        logs = _logs_dir(lay)
+    # With no log when the command started, the first one found is read whole.
+    stream = combatlog.follow(
+        newest or logs,
+        offset=end if newest is not None else 0,
+        poll_interval=_LOG_POLL,
+        sleep=_follow_sleep,
+    )
+    noted = False
+    try:
+        for item in stream:
+            if isinstance(item, combatlog.Following):
+                _print_log_entry(
+                    LogFollowing(file=_rel(lay, item.path), reason=item.reason), json_out
+                )
+                if not json_out and not noted:
+                    _note(_BATCHES)
+                    noted = True
+                if item.reason == "start":
+                    for entry in entries:
+                        _print_log_entry(entry, json_out)
+                    entries = []
+            else:
+                _print_log_entry(item, json_out)
+    finally:
+        stream.close()
 
 
 @log_app.command("tail")
@@ -2026,11 +2082,18 @@ def log_tail(
             "--follow",
             "-f",
             help="Keep printing lines as the client appends them, including in a "
-            "new log file, until interrupted.",
+            "new log file, until interrupted. Waits for a log if there is none yet.",
         ),
     ] = False,
     lines: Annotated[
-        int, typer.Option("--lines", "-n", min=0, help="How many of the last lines to print.")
+        int,
+        typer.Option(
+            "--lines",
+            "-n",
+            min=0,
+            max=MAX_TAIL_LINES,
+            help=f"How many of the last lines to print (at most {MAX_TAIL_LINES:,}).",
+        ),
     ] = 10,
     root: RootOpt = None,
     flavor: FlavorOpt = None,
@@ -2043,46 +2106,29 @@ def log_tail(
     newest = combatlog.newest_log(logs) if logs is not None else None
     entries: list[combatlog.Entry] = []
     end: int | None = None
+    notes = [_NO_LOG]
     if newest is not None:
+        size = newest.stat().st_size  # before the read: a line finished since is not "partial"
         entries, end = combatlog.tail(newest, lines)
-    if not follow:
-        report = LogTailReport(
-            file=_rel(lay, newest) if newest else None,
-            entries=entries,
-            notes=[] if newest else [_NO_LOG],
-        )
-        if json_out:
-            _emit(report)
-            return
-        if newest is None:
-            _say(_NO_LOG)
-            return
-        _print_log_entry(LogFollowing(file=_rel(lay, newest), reason="start"), json_out)
-        for entry in entries:
-            _print_log_entry(entry, json_out)
+        notes = [_BATCHES] + ([_STILL_WRITING] if end < size else [])
+    if follow:
+        try:
+            _follow_log(lay, newest, end, entries, json_out)
+        except KeyboardInterrupt:
+            raise typer.Exit(EXIT_OK) from None
         return
-    if logs is None:
-        raise CliError(f"no Logs/ folder in {lay.flavor_path}; nothing to follow")
+    report = LogTailReport(file=_rel(lay, newest) if newest else None, entries=entries, notes=notes)
+    if json_out:
+        _emit(report)
+        return
     if newest is None:
-        _note(f"{_NO_LOG}; waiting for one")
-    stream = combatlog.follow(
-        newest or logs, offset=end, poll_interval=_LOG_POLL, sleep=_follow_sleep
-    )
-    try:
-        for item in stream:
-            if isinstance(item, combatlog.Following):
-                _print_log_entry(
-                    LogFollowing(file=_rel(lay, item.path), reason=item.reason), json_out
-                )
-                if item.reason == "start":
-                    for entry in entries:
-                        _print_log_entry(entry, json_out)
-            else:
-                _print_log_entry(item, json_out)
-    except KeyboardInterrupt:
-        raise typer.Exit(EXIT_OK) from None
-    finally:
-        stream.close()
+        _say(_NO_LOG)
+        return
+    _print_log_entry(LogFollowing(file=_rel(lay, newest), reason="start"), json_out)
+    for entry in entries:
+        _print_log_entry(entry, json_out)
+    for note in notes:
+        _note(note)
 
 
 # ─── db2 ─────────────────────────────────────────────────────────────────────

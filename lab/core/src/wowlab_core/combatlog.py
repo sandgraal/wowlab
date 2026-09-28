@@ -7,8 +7,10 @@ constructed lines for what it lacks. There are no event semantics in Wave 1:
 a line becomes a timestamp, an event name and a list of fields, and nothing
 here knows what any field means.
 
-Read-only (L1): files are opened ``"rb"``, one read at a time, and closed
-between polls. Nothing is written anywhere.
+Read-only (L1): files are opened read-only (on POSIX also non-blocking, so a
+FIFO under a log's name cannot hang a read), must be regular files, are read
+one chunk at a time, and are closed between polls. Nothing is written
+anywhere.
 
 Lines. A line ends at LF. Its ending is ``"\\r\\n"`` when a CR precedes the
 LF, ``"\\n"`` otherwise, and ``""`` for a last line with no break. A lone CR
@@ -19,24 +21,33 @@ and encodes back to the same byte. Every line is yielded, in order, as a
 ending and its byte offset in the file, so for a file with no line over
 :data:`MAX_LINE_BYTES` the lines rebuild it byte for byte.
 
-A line over :data:`MAX_LINE_BYTES` (hostile input; no real line is near it)
-is yielded as :class:`Unparsed` holding its first ``MAX_LINE_BYTES`` bytes,
-and the rest of it is skipped, so memory stays bounded.
+The one exception to that (docs/LAB_PLAN.md §6.8, amendment 2026-09-28): a
+line over :data:`MAX_LINE_BYTES` (hostile input; no real line is near it) is
+yielded as :class:`Unparsed` holding only its first ``MAX_LINE_BYTES`` bytes,
+with ``truncated`` set, its full byte ``length`` and its real ending, and the
+rest of it is skipped, so memory stays bounded. The same line gives the same
+entry however the file is chunked.
 
 Record grammar (anything else is :class:`Unparsed`, with a reason and, where
 there is one, the column):
 
 - ``<timestamp>`` two spaces ``<event>`` ``,`` ``<field>`` ``,`` ...
-- The timestamp is kept as written. It is checked for shape only, never as a
-  date or a time: the committed fixtures carry timestamps shifted by the
-  capture tool (docs/LAB_PLAN.md §8, amendment 2026-09-24), and a record's
-  timestamp is not a real time. Accepted: ``M/D[/YYYY] H:MM:SS[.f][offset]``
-  with a one- or two-digit month, day and hour, padded or not, an optional
-  four-digit year (older retail logs omit it **[verify]**), any number of
-  fraction digits, and an optional UTC-offset suffix ``+h``/``-h``, with or
-  without minutes (``-4``, ``+5:30``, ``+0530``). The real log shows
-  ``M/D/YYYY HH:MM:SS.mmm-4``; a positive, half-hour or UTC offset is
-  **[verify]**.
+- The timestamp is kept as written: the client's local clock time for the
+  event, followed by the UTC offset where the client writes one. It is
+  checked for shape only, never parsed as a date or a time. In a live log it
+  is the real local time. In the committed fixtures the capture tool shifts
+  it (docs/LAB_PLAN.md §8, amendment 2026-09-24), so nothing here or in the
+  tests treats it as real. Accepted: ``M/D[/YYYY] H:MM:SS[.f][offset]`` with
+  a one- or two-digit month, day and hour, padded or not, an optional
+  four-digit year (older retail logs have neither the year nor the offset,
+  ``M/D H:MM:SS.mmm``, per community documentation **[verify]**; whether
+  month comes before day on non-US clients is **[verify]**, and nothing here
+  depends on it), any number of fraction digits, and an optional UTC-offset
+  suffix ``+h``/``-h``, with or without minutes (``-4``, ``+5:30``,
+  ``+0530``). The real log shows ``M/D/YYYY HH:MM:SS.mmm-4``. The half-hour
+  shapes accepted are guesses; how the client writes a half-hour or zero
+  offset is unknown **[verify]**, and a shape not accepted makes every line
+  Unparsed, which is reported, not hidden.
 - The event name is the first field; it must be a bare run of ASCII letters,
   digits and ``_``.
 - A field is a bare token, a quoted string or a group. A bare token is kept
@@ -54,24 +65,29 @@ there is one, the column):
   known to carry them (community documentation; no real fixture yet
   **[verify]**).
 
+Tokenizing is linear in the line's length on every path, hostile ones
+included.
+
 Following. :func:`follow` yields lines as the client appends them. The
 client flushes in batches, so a partial last line is buffered until its line
 break arrives. It survives truncation (the file shrinks, or the bytes before
 the read position change), replacement (a different file under the same
-name) and rotation (a new ``WoWCombatLog*.txt`` in the same folder), and
-yields a :class:`Following` whenever it starts on a file. A partial line left
-behind by any of those three is yielded as :class:`Unparsed`, never as a
-record, since its end never came.
+name) and rotation (new ``WoWCombatLog*.txt`` files in the same folder, each
+read in turn, oldest first), and yields a :class:`Following` whenever it
+starts on a file. A partial line left behind by any of those three is
+yielded as :class:`Unparsed`, never as a record, since its end never came.
 """
 
 from __future__ import annotations
 
 import os
 import re
+import stat
+import sys
 import time
 from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
-from typing import Annotated, BinaryIO, Literal
+from typing import Annotated, BinaryIO, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Discriminator
 
@@ -84,6 +100,7 @@ __all__ = [
     "FieldValue",
     "Following",
     "Group",
+    "NotARegularFileError",
     "Quoted",
     "Record",
     "Unparsed",
@@ -105,6 +122,7 @@ MAX_DEPTH = 32
 
 _CHUNK = 1 << 20  # bytes read per open of a file
 _FINGERPRINT = 64  # bytes before the read position checked for a rewrite
+_CR = 0x0D
 
 Ending = Literal["\r\n", "\n", ""]
 Bracket = Literal["[", "("]
@@ -138,7 +156,9 @@ class Record(_Model):
 
     kind: Literal["record"] = "record"
     offset: int  # byte offset of the line in its file
-    timestamp: str  # as written; shifted in the committed fixtures, never a real time
+    timestamp: (
+        str  # as written: the client's local time (shifted in the committed fixtures); never parsed
+    )
     event: str
     fields: tuple[FieldValue, ...]  # after the event name
     raw: str  # the line's text without its ending
@@ -146,14 +166,16 @@ class Record(_Model):
 
 
 class Unparsed(_Model):
-    """A line the grammar does not cover, kept whole (L4)."""
+    """A line the grammar does not cover, kept whole (L4) unless ``truncated``."""
 
     kind: Literal["unparsed"] = "unparsed"
     offset: int
-    raw: str
+    raw: str  # the line's text without its ending; its first MAX_LINE_BYTES when truncated
     ending: Ending
     reason: str
     column: int | None = None  # 0-based position in ``raw`` where tokenizing stopped
+    length: int  # bytes in the whole line, without its ending
+    truncated: bool = False  # ``raw`` holds only the line's first MAX_LINE_BYTES bytes
 
 
 type Entry = Annotated[Record | Unparsed, Discriminator("kind")]
@@ -162,15 +184,20 @@ type Entry = Annotated[Record | Unparsed, Discriminator("kind")]
 class Following(_Model):
     """Yielded by :func:`follow` when it starts reading a file.
 
-    ``start``: the first file. ``rotated``: a combat log that was not in the
-    folder before. ``truncated``: the same file became shorter, or its bytes
-    before the read position changed; read again from the start.
-    ``replaced``: a different file now has the same name; read from the start.
+    ``start``: the first file (from the folder, the first log to appear in
+    it if it had none). ``rotated``: a combat log that was not in the folder
+    before. ``truncated``: the same file became shorter, or its bytes before
+    the read position changed; read again from the start. ``replaced``: a
+    different file now has the same name; read from the start.
     """
 
     kind: Literal["following"] = "following"
     path: Path
     reason: Literal["start", "rotated", "truncated", "replaced"]
+
+
+class NotARegularFileError(OSError):
+    """A log's name that is not a regular file (a FIFO, a device, a folder)."""
 
 
 # ─── one line ────────────────────────────────────────────────────────────────
@@ -209,7 +236,8 @@ def _quoted_fields(body: str) -> list[FieldValue] | None:
     """Fields of a line with quotes and no groups, or None to let :func:`_scan`
     find the error. The same rule as the scanner: with no ``]`` or ``)`` in
     the line, a quoted string closes at the first later ``"`` that ends a
-    comma-separated piece."""
+    comma-separated piece. Linear: each piece is looked at once, and a quoted
+    string's pieces are joined once."""
     pieces = body.split(",")
     n = len(pieces)
     out: list[FieldValue] = []
@@ -217,14 +245,16 @@ def _quoted_fields(body: str) -> list[FieldValue] | None:
     while i < n:
         piece = pieces[i]
         if piece.startswith('"'):
-            j = i
-            text = piece
-            while len(text) < 2 or not text.endswith('"'):
+            if len(piece) >= 2 and piece.endswith('"'):
+                out.append(Quoted(text=piece[1:-1]))
+                i += 1
+                continue
+            j = i + 1
+            while j < n and not pieces[j].endswith('"'):
                 j += 1
-                if j == n:
-                    return None
-                text = text + "," + pieces[j]
-            out.append(Quoted(text=text[1:-1]))
+            if j == n:
+                return None
+            out.append(Quoted(text=",".join(pieces[i : j + 1])[1:-1]))
             i = j + 1
         elif '"' in piece:
             return None
@@ -297,37 +327,45 @@ def _scan(body: str, base: int) -> list[FieldValue]:
         i += 1
 
 
-def tokenize_line(text: str, *, offset: int = 0, ending: Ending = "") -> Record | Unparsed:
-    """One line's text (without its ending) as a :class:`Record`, or :class:`Unparsed`."""
-    sep = text.find("  ")
-    if sep == -1:
-        return Unparsed(
-            offset=offset, raw=text, ending=ending, reason="no two spaces after a timestamp"
-        )
-    timestamp = text[:sep]
-    if not _TIMESTAMP.fullmatch(timestamp):
+def _byte_length(text: str) -> int:
+    try:
+        return len(text.encode("utf-8", "surrogateescape"))
+    except UnicodeEncodeError:  # a surrogate that did not come from a byte
+        return len(text.encode("utf-8", "surrogatepass"))
+
+
+def tokenize_line(
+    text: str, *, offset: int = 0, ending: Ending = "", length: int | None = None
+) -> Record | Unparsed:
+    """One line's text (without its ending) as a :class:`Record`, or :class:`Unparsed`.
+
+    ``length`` is the line's size in bytes, if the caller knows it; it is
+    only used for an :class:`Unparsed`, and computed from ``text`` if not given.
+    """
+
+    def unparsed(reason: str, column: int | None = None) -> Unparsed:
         return Unparsed(
             offset=offset,
             raw=text,
             ending=ending,
-            reason="the text before the two spaces is not a timestamp",
-            column=0,
+            reason=reason,
+            column=column,
+            length=_byte_length(text) if length is None else length,
         )
+
+    sep = text.find("  ")
+    if sep == -1:
+        return unparsed("no two spaces after a timestamp")
+    timestamp = text[:sep]
+    if not _TIMESTAMP.fullmatch(timestamp):
+        return unparsed("the text before the two spaces is not a timestamp", 0)
     try:
         fields = _fields(text[sep + 2 :], sep + 2)
     except _TokenError as stop:
-        return Unparsed(
-            offset=offset, raw=text, ending=ending, reason=stop.reason, column=stop.column
-        )
+        return unparsed(stop.reason, stop.column)
     event = fields[0]
     if not isinstance(event, str) or not _EVENT.fullmatch(event):
-        return Unparsed(
-            offset=offset,
-            raw=text,
-            ending=ending,
-            reason="the first field is not an event name",
-            column=sep + 2,
-        )
+        return unparsed("the first field is not an event name", sep + 2)
     return Record(
         offset=offset,
         timestamp=timestamp,
@@ -340,55 +378,83 @@ def tokenize_line(text: str, *, offset: int = 0, ending: Ending = "") -> Record 
 
 # ─── lines from bytes ────────────────────────────────────────────────────────
 
+_TOO_LONG = f"a line longer than {MAX_LINE_BYTES} bytes; only its start is kept"
 
-def _too_long(data: bytes, offset: int, ending: Ending) -> Unparsed:
+
+def _too_long(head: bytes, offset: int, ending: Ending, length: int) -> Unparsed:
     return Unparsed(
         offset=offset,
-        raw=data[:MAX_LINE_BYTES].decode("utf-8", "surrogateescape"),
+        raw=head[:MAX_LINE_BYTES].decode("utf-8", "surrogateescape"),
         ending=ending,
-        reason=f"a line longer than {MAX_LINE_BYTES} bytes; only its start is kept",
+        reason=_TOO_LONG,
+        length=length,
+        truncated=True,
     )
 
 
 def _line(data: bytes, offset: int, ending: Ending) -> Record | Unparsed:
     if len(data) > MAX_LINE_BYTES:
-        return _too_long(data, offset, ending)
-    return tokenize_line(data.decode("utf-8", "surrogateescape"), offset=offset, ending=ending)
+        return _too_long(data, offset, ending, len(data))
+    return tokenize_line(
+        data.decode("utf-8", "surrogateescape"), offset=offset, ending=ending, length=len(data)
+    )
+
+
+class _Long:
+    """A line over MAX_LINE_BYTES whose break has not been seen yet."""
+
+    def __init__(self, head: bytes, offset: int, length: int) -> None:
+        self.head = head[:MAX_LINE_BYTES]
+        self.offset = offset
+        self.length = length  # bytes so far, a trailing CR included
+        self.last_cr = head.endswith(b"\r")
 
 
 class _Splitter:
-    """Bytes in, lines out; a partial last line waits for its line break."""
+    """Bytes in, lines out; a partial last line waits for its line break.
+
+    Memory is bounded: a pending line over MAX_LINE_BYTES keeps only its head
+    and a count, and is yielded when its break arrives, with its real ending,
+    exactly as if the whole line had been read at once.
+    """
 
     def __init__(self, offset: int = 0) -> None:
         self.pending = b""
-        self.start = offset  # file offset of pending[0]
-        self.skipping = False  # inside a too-long line, dropping bytes to its LF
+        self.start = offset  # file offset of pending[0], or of the next byte fed
+        self.long: _Long | None = None
 
     def feed(self, chunk: bytes) -> list[Entry]:
         out: list[Entry] = []
-        data = self.pending + chunk if self.pending else chunk
         pos = 0
-        if self.skipping:
-            nl = data.find(b"\n")
+        if self.long is not None:
+            long = self.long
+            nl = chunk.find(b"\n")
             if nl == -1:
-                self.start += len(data)
-                self.pending = b""
+                long.length += len(chunk)
+                if chunk:
+                    long.last_cr = chunk[-1] == _CR
+                self.start += len(chunk)
                 return out
+            cr = chunk[nl - 1] == _CR if nl else long.last_cr
+            length = long.length + nl - (1 if cr else 0)
+            out.append(_too_long(long.head, long.offset, "\r\n" if cr else "\n", length))
+            self.long = None
+            self.start += nl + 1
             pos = nl + 1
-            self.skipping = False
+        data = self.pending + chunk[pos:] if self.pending else chunk[pos:]
+        pos = 0
         while True:
             nl = data.find(b"\n", pos)
             if nl == -1:
                 break
-            if nl > pos and data[nl - 1] == 0x0D:
+            if nl > pos and data[nl - 1] == _CR:
                 out.append(_line(data[pos : nl - 1], self.start + pos, "\r\n"))
             else:
                 out.append(_line(data[pos:nl], self.start + pos, "\n"))
             pos = nl + 1
         rest = data[pos:]
         if len(rest) > MAX_LINE_BYTES:
-            out.append(_too_long(rest, self.start + pos, ""))
-            self.skipping = True
+            self.long = _Long(rest, self.start + pos, len(rest))
             self.start += len(data)
             self.pending = b""
         else:
@@ -396,26 +462,66 @@ class _Splitter:
             self.pending = rest
         return out
 
-    def end(self) -> list[Entry]:
-        """At the end of a file: the unterminated last line, tokenized."""
+    def _take(self) -> tuple[bytes, int, int, bool] | None:
+        """The unterminated line held, as (head, offset, length, truncated)."""
+        if self.long is not None:
+            long, self.long = self.long, None
+            return long.head, long.offset, long.length, True
+        if not self.pending:
+            return None
         rest, self.pending = self.pending, b""
         start, self.start = self.start, self.start + len(rest)
-        return [_line(rest, start, "")] if rest else []
+        return rest, start, len(rest), False
+
+    def end(self) -> list[Entry]:
+        """At the end of a file: the unterminated last line, tokenized (``ending=""``)."""
+        held = self._take()
+        if held is None:
+            return []
+        head, offset, length, truncated = held
+        if truncated:
+            return [_too_long(head, offset, "", length)]
+        return [_line(head, offset, "")]
 
     def abandon(self, why: str) -> list[Entry]:
         """The file went away under a partial line: yield it, never as a record."""
-        rest, self.pending = self.pending, b""
-        self.skipping = False
-        if not rest:
+        held = self._take()
+        if held is None:
             return []
+        head, offset, length, truncated = held
         return [
             Unparsed(
-                offset=self.start,
-                raw=rest.decode("utf-8", "surrogateescape"),
+                offset=offset,
+                raw=head[:MAX_LINE_BYTES].decode("utf-8", "surrogateescape"),
                 ending="",
                 reason=f"the file was {why} before this line's break was written",
+                length=length,
+                truncated=truncated,
             )
         ]
+
+
+def _open_log(path: Path) -> BinaryIO:
+    """``path`` opened read-only; on POSIX also non-blocking, so opening a FIFO
+    returns at once. Raises :class:`NotARegularFileError` for anything but a
+    regular file."""
+    if sys.platform == "win32":
+        f = cast(BinaryIO, path.open("rb"))
+    else:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        try:
+            f = os.fdopen(fd, "rb")
+        except BaseException:
+            os.close(fd)
+            raise
+    try:
+        mode = os.fstat(f.fileno()).st_mode
+        if not stat.S_ISREG(mode):
+            raise NotARegularFileError(f"not a regular file: {path}")
+    except BaseException:
+        f.close()
+        raise
+    return f
 
 
 def tokenize(data: bytes, *, offset: int = 0) -> Iterator[Entry]:
@@ -428,48 +534,65 @@ def tokenize(data: bytes, *, offset: int = 0) -> Iterator[Entry]:
 def read_log(path: Path | str) -> Iterator[Entry]:
     """Every line of a combat log file, read in chunks (a log can be large)."""
     splitter = _Splitter()
-    with Path(path).open("rb") as f:
+    with _open_log(Path(path)) as f:
         while chunk := f.read(_CHUNK):
             yield from splitter.feed(chunk)
     yield from splitter.end()
+
+
+def _newlines_before(f: BinaryIO, end: int, want: int) -> tuple[list[int], int]:
+    """Up to ``want`` offsets of LF bytes before ``end``, the nearest first,
+    reading backwards in blocks; and how far back the search went (0 when it
+    reached the start of the file). Memory: one block and the offsets."""
+    found: list[int] = []
+    pos = end
+    while pos > 0 and len(found) < want:
+        step = min(_CHUNK, pos)
+        pos -= step
+        f.seek(pos)
+        block = f.read(step)
+        k = len(block)
+        while len(found) < want:
+            k = block.rfind(b"\n", 0, k)
+            if k == -1:
+                break
+            found.append(pos + k)
+    return found, pos
 
 
 def tail(path: Path | str, n: int) -> tuple[list[Entry], int]:
     """The last ``n`` complete lines of a file, and the offset just after them.
 
     A partial last line (the client mid-flush) is not among them; the offset
-    is where it starts, so ``follow(path, offset=...)`` picks it up once its
-    line break arrives. Reads backwards from the end, not the whole file.
+    is where it starts, however long it is, so ``follow(path, offset=...)``
+    picks it up once its line break arrives. Reads backwards from the end to
+    find where those lines start, then reads just those lines forwards, a
+    block at a time, never the whole file into memory.
     """
     if n < 0:
         raise ValueError("n must be zero or more")
-    with Path(path).open("rb") as f:
+    with _open_log(Path(path)) as f:
         size = os.fstat(f.fileno()).st_size
-        start = size
-        buf = b""
-        cap = (n + 1) * (MAX_LINE_BYTES + 2) + _CHUNK
-        while start > 0:
-            step = min(_CHUNK, start)
-            start -= step
-            f.seek(start)
-            buf = f.read(step) + buf
-            if buf.count(b"\n") > n or len(buf) >= cap:
-                break
-    last = buf.rfind(b"\n")
-    if last == -1:  # no line break at all: the only line is still being written
-        return [], 0 if start == 0 else size
-    end = start + last + 1
-    body = buf[: last + 1]
-    if start > 0:  # the window starts inside a line: drop that line
-        first = body.find(b"\n")
-        if first == len(body) - 1:
+        found, _ = _newlines_before(f, size, 1)
+        if not found:  # no line break at all: the only line is still being written
+            return [], 0
+        last = found[0]
+        end = last + 1
+        if n == 0:
             return [], end
-        body = body[first + 1 :]
-        start += first + 1
-    if n == 0:
-        return [], end
-    lines = _Splitter(start).feed(body)
-    return lines[-n:], end
+        before, _ = _newlines_before(f, last, n)
+        start = before[n - 1] + 1 if len(before) == n else 0
+        splitter = _Splitter(start)
+        entries: list[Entry] = []
+        f.seek(start)
+        remaining = end - start
+        while remaining > 0:
+            chunk = f.read(min(_CHUNK, remaining))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+            entries.extend(splitter.feed(chunk))
+    return entries[-n:], end
 
 
 # ─── files in a Logs folder ──────────────────────────────────────────────────
@@ -483,16 +606,17 @@ def is_log_name(name: str) -> bool:
 
 def find_logs(directory: Path | str) -> list[Path]:
     """The combat logs directly in ``directory``, oldest first by modification
-    time, then by name. Lists the folder and stats its entries; opens nothing."""
+    time, then by name. Only regular files count; a symbolic link does not.
+    Lists the folder and stats its entries; opens nothing."""
     found: list[tuple[int, str, Path]] = []
     with os.scandir(directory) as it:
         for entry in it:
             if not is_log_name(entry.name):
                 continue
             try:
-                if not entry.is_file():
+                if not entry.is_file(follow_symlinks=False):
                     continue
-                mtime = entry.stat().st_mtime_ns
+                mtime = entry.stat(follow_symlinks=False).st_mtime_ns
             except OSError:
                 continue
             found.append((mtime, entry.name, Path(entry.path)))
@@ -514,7 +638,9 @@ class _Follower:
     def __init__(self, directory: Path, current: Path | None, offset: int | None) -> None:
         self.directory = directory
         self.current = current
+        self.started = current is not None
         self.seen = {p.name for p in find_logs(directory)}
+        self.queue: list[Path] = []  # new logs not read yet, oldest first
         self.identity: tuple[int, int] | None = None
         self.pos = 0
         self.tail = b""  # the last bytes before pos, to notice a rewrite
@@ -532,7 +658,7 @@ class _Follower:
         """Position on the first file: ``offset``, or its end when None."""
         assert self.current is not None
         path = self.current
-        with path.open("rb") as f:
+        with _open_log(path) as f:
             st = os.fstat(f.fileno())
             offset = st.st_size if self.start_offset is None else self.start_offset
             offset = min(offset, st.st_size)
@@ -550,9 +676,14 @@ class _Follower:
         if self.current is None:
             return self._rotate(out)
         try:
-            with self.current.open("rb") as f:
+            with _open_log(self.current) as f:
                 chunk = self._read(f, out)
         except FileNotFoundError:
+            return self._rotate(out)
+        except NotARegularFileError:
+            # Something else now has the log's name: stop following it.
+            out.extend(self.splitter.abandon("replaced"))
+            self.current = None
             return self._rotate(out)
         if chunk:
             self.pos += len(chunk)
@@ -591,20 +722,21 @@ class _Follower:
         return f.read(len(self.tail)) == self.tail
 
     def _rotate(self, out: list[Entry | Following]) -> tuple[list[Entry | Following], bool]:
-        """At the end of the current file: switch to a log that is new in the folder."""
+        """At the end of the current file: switch to the oldest log not read yet."""
         try:
             logs = find_logs(self.directory)
         except FileNotFoundError:
-            return out, False
-        names = {p.name for p in logs}
-        new = [p for p in logs if p.name not in self.seen]
-        self.seen = names
-        if not new:
+            logs = None
+        if logs is not None:
+            self.queue.extend(p for p in logs if p.name not in self.seen)
+            self.seen = {p.name for p in logs}
+        if not self.queue:
             return out, bool(out)
-        target = new[-1]
+        target = self.queue.pop(0)
         out.extend(self.splitter.abandon("rotated"))
         self._switch(target, 0)
-        out.append(Following(path=target, reason="rotated"))
+        out.append(Following(path=target, reason="rotated" if self.started else "start"))
+        self.started = True
         return out, True
 
 
@@ -619,14 +751,20 @@ def follow(
 
     ``path`` is a combat log file, or a ``Logs`` folder, in which case the
     newest combat log in it is followed (and, if there is none yet, the first
-    one that appears). The first file is read from ``offset`` (a line
-    start, such as the offset :func:`tail` returns), or from its end when
-    ``offset`` is None. Files that appear later are read from the start.
+    one that appears, reported as ``start``). The first file is read from
+    ``offset`` (a line start, such as the offset :func:`tail` returns), or
+    from its end when ``offset`` is None. Files that appear later are read
+    from the start.
 
     A :class:`Following` is yielded when a file is started: ``start`` for the
     first, then ``rotated``, ``truncated`` or ``replaced`` as described on
     that class. Rotation is noticed only at the end of the current file, so a
-    file's lines are all yielded before the next file's. When nothing new was
+    file's lines are all yielded before the next file's, and when several new
+    logs have appeared they are read in turn, oldest first. Any new regular
+    file named ``WoWCombatLog*.txt`` counts, including one another tool
+    writes there, such as a log uploader's split or archived copies
+    **[verify]**. If the current file's name comes to hold something other
+    than a regular file, it is no longer followed. When nothing new was
     found, ``sleep(poll_interval)`` is called before the next look.
     """
     path = Path(path)
@@ -634,6 +772,8 @@ def follow(
         directory, current = path, newest_log(path)
     elif path.is_file():
         directory, current = path.parent, path
+    elif path.exists():
+        raise NotARegularFileError(f"not a regular file or a folder: {path}")
     else:
         raise FileNotFoundError(f"no such file or folder: {path}")
     follower = _Follower(directory, current, offset)
