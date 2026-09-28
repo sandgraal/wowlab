@@ -760,9 +760,16 @@ read can no longer block. Capping how far an object inflates is M11-15.
 regular file is never a candidate and never listed into, and is named in a
 new `GcReport.skipped`; a delete goes through descriptors on `objects/` and
 the shard opened without following a link and checked against the listing
-(on Windows, each is checked by `lstat` just before the delete), so nothing
-is ever deleted through a link, and an object whose path changed since the
-listing is skipped, not deleted. (b) `read_object(sha256, *, size=None)`
+(on Windows, which has no such descriptors, the item is renamed into the
+store's `tmp/`, deleted there only if it has the listing's device and inode
+and is not a link, and renamed back otherwise; an empty shard is removed the
+same way), so nothing is ever deleted through a link, and an object whose
+path changed since the listing is skipped, not deleted. `gc` also refuses
+outright, as for a manifest that does not load, when `manifests/` is a link
+(or junction) or not a directory, or is missing while `objects/` holds
+anything: a dangling link or an unmounted volume would otherwise make every
+object look unreferenced. `create` makes `manifests/` before it stores its
+first object, so a store it wrote always has one. (b) `read_object(sha256, *, size=None)`
 takes the manifest entry's recorded size and inflates at most `size + 1`
 bytes, refusing an object that would inflate past it; `read_file`, guard's
 restore, undo and rollback, and `snap diff` pass it, and `None` (unbounded)

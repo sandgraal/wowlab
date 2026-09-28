@@ -996,6 +996,9 @@ class SnapshotStore:
             return digest, size
 
         stream.seek(0)
+        # `manifests/` exists before any object does, so a store holding
+        # objects without it is broken, and `gc` refuses it (M11-15).
+        self.manifests_dir.mkdir(parents=True, exist_ok=True)
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
         tmp = self.tmp_dir / f"obj-{uuid.uuid4().hex}"
         hasher = hashlib.sha256()
@@ -1458,10 +1461,17 @@ class SnapshotStore:
         shard opened without following a link, each checked to be the
         directory the listing saw, and removes the item only if it is still
         the regular file listed (POSIX); where the platform has no such
-        descriptors (Windows), `objects/`, the shard and the item are each
-        checked by `lstat` just before the delete. An object whose path
-        changed since the listing is not deleted and is named in `skipped`.
+        descriptors (Windows), the item is first renamed into the store's
+        `tmp/` and deleted there only if it is the file listed, else renamed
+        back (`_remove_object_by_rename`). An object whose path changed since
+        the listing is not deleted and is named in `skipped`.
+
+        Refuses outright (`ManifestIntegrityError`) when `manifests/` is a
+        link (on Windows also a junction) or not a directory, or is missing
+        while `objects/` holds anything: a dangling link or an unmounted
+        volume would otherwise make every object look unreferenced.
         """
+        self._refuse_gc_without_manifests()
         referenced: set[str] = set()
         for manifest in self.list():  # raises ManifestIntegrityError
             referenced.update(e.sha256 for e in manifest.entries if e.sha256 is not None)
@@ -1503,15 +1513,7 @@ class SnapshotStore:
         assert obj.top_st is not None and obj.shard_st is not None
         shard = obj.path.parent
         if not _UNLINK_BY_DIR_FD:
-            for path, expect in ((self.objects_dir, obj.top_st), (shard, obj.shard_st)):
-                if not self._same_dir_entry(path, expect):
-                    return False
-            if not self._still_names(obj.path, obj.st):
-                return False
-            obj.path.unlink()
-            with contextlib.suppress(OSError):
-                shard.rmdir()  # only succeeds when the shard is empty
-            return True
+            return self._remove_object_by_rename(obj)
         flags = os.O_RDONLY | os.O_DIRECTORY | _O_NOFOLLOW
         try:
             top_fd = os.open(self.objects_dir, flags)
@@ -1543,6 +1545,124 @@ class SnapshotStore:
         finally:
             os.close(top_fd)
         return True
+
+    def _remove_object_by_rename(self, obj: _ObjectFile) -> bool:
+        """`_remove_object` where there are no directory descriptors (Windows).
+
+        A path is only ever deleted once it is inside the store's own `tmp/`
+        and proven to be the file the listing saw: the item is renamed into
+        `tmp/` (a rename never follows its last component), the moved entry
+        must then have the listing's device and inode and not be a link, and
+        only then is it deleted there. Had a shard or `objects/` been swapped
+        for a link after the checks, the rename moved whatever was behind it;
+        that fails the identity check and is renamed straight back. The
+        empty shard is removed the same way. False, with nothing deleted,
+        when anything is not what the listing saw; `SnapshotError` if
+        something moved into `tmp/` cannot be moved back (it is then named,
+        still whole, in `tmp/`).
+        """
+        assert obj.top_st is not None and obj.shard_st is not None
+        shard = obj.path.parent
+        if not (
+            self._same_dir_entry(self.objects_dir, obj.top_st)
+            and self._same_dir_entry(shard, obj.shard_st)
+            and self._still_names(obj.path, obj.st)
+        ):
+            return False
+        parking = self._parking_dir()
+        if parking is None:
+            return False
+        parked = parking / f"gc-{uuid.uuid4().hex}"
+        try:
+            obj.path.rename(parked)
+        except OSError:
+            return False
+        if not self._still_names(parked, obj.st):
+            self._unpark(parked, obj.path)
+            return False
+        parked.unlink()
+        self._remove_empty_shard(shard, obj.shard_st, parking)
+        return True
+
+    def _remove_empty_shard(self, shard: Path, expect: os.stat_result, parking: Path) -> None:
+        """Remove `shard` if it is empty and still the listed directory, by
+        the same rename into `tmp/`, identity check and rename back."""
+        try:
+            with os.scandir(shard) as it:
+                if any(True for _ in it):
+                    return
+        except OSError:
+            return
+        if not self._same_dir_entry(shard, expect):
+            return
+        parked = parking / f"gc-{uuid.uuid4().hex}"
+        try:
+            shard.rename(parked)
+        except OSError:
+            return
+        if self._same_dir_entry(parked, expect):
+            try:
+                parked.rmdir()
+                return
+            except OSError:
+                pass  # something arrived in it meanwhile: it goes back
+        self._unpark(parked, shard)
+
+    def _parking_dir(self) -> Path | None:
+        """The store's `tmp/`, created if needed, when it is a directory and
+        not a link; else None."""
+        try:
+            self.tmp_dir.mkdir(parents=True, exist_ok=True)
+            st = os.lstat(self.tmp_dir)
+        except OSError:
+            return None
+        if _is_link_stat(st) or not stat.S_ISDIR(st.st_mode):
+            return None
+        return self.tmp_dir
+
+    @staticmethod
+    def _unpark(parked: Path, original: Path) -> None:
+        try:
+            parked.rename(original)
+        except OSError as exc:
+            raise SnapshotError(
+                f"gc moved {original} to {parked} to check it before a delete and could "
+                f"not move it back ({exc}); nothing was deleted, and it is still at {parked}"
+            ) from exc
+
+    def _refuse_gc_without_manifests(self) -> None:
+        """`gc` decides what is unreferenced from `manifests/`; refuse when
+        that directory cannot be trusted to hold every manifest (M11-15)."""
+        where = self.manifests_dir
+        try:
+            st = os.lstat(where)
+        except FileNotFoundError:
+            if self._objects_present():
+                raise ManifestIntegrityError(
+                    f"{where} is missing but the store holds objects; gc refuses rather than "
+                    "treat every object as unreferenced. If this store really has no "
+                    f"snapshots, create an empty {where} and run gc again"
+                ) from None
+            return
+        except OSError as exc:
+            raise ManifestIntegrityError(f"cannot inspect {where}: {exc}; gc refuses") from exc
+        if _is_link_stat(st) or not stat.S_ISDIR(st.st_mode):
+            raise ManifestIntegrityError(
+                f"{where} is a link or not a directory; gc never decides what is "
+                "unreferenced from a manifests directory it would have to follow, since a "
+                "dangling link or an unmounted volume would make every object look unused"
+            )
+
+    def _objects_present(self) -> bool:
+        """`objects/` exists and holds anything (or is not a plain directory)."""
+        try:
+            st = os.lstat(self.objects_dir)
+        except FileNotFoundError:
+            return False
+        if _is_link_stat(st) or not stat.S_ISDIR(st.st_mode):
+            return True
+        with os.scandir(self.objects_dir) as it:
+            return any(True for _ in it)
 
     @staticmethod
     def _same_dir_entry(path: Path, expect: os.stat_result) -> bool:

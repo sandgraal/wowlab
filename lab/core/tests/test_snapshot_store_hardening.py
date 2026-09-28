@@ -189,6 +189,194 @@ def test_constructed_gc_still_removes_an_unreferenced_regular_object(
     assert not orphan.exists() and not (store.objects_dir / shard).exists()
 
 
+# ─── (a, fix round 1) gc refuses a manifests/ it cannot trust ────────────────
+
+
+def _object_listing(store: SnapshotStore) -> list[str]:
+    return sorted(p.relative_to(store.objects_dir).as_posix() for p in store.objects_dir.rglob("*"))
+
+
+def _break_manifests(store: SnapshotStore, how: str, tmp_path: Path) -> None:
+    elsewhere = tmp_path / "manifests-elsewhere"
+    if how == "missing":
+        store.manifests_dir.rename(elsewhere)
+    elif how == "not-a-directory":
+        store.manifests_dir.rename(elsewhere)
+        store.manifests_dir.write_bytes(b"")
+    elif how == "dangling-link":  # an unmounted volume, say
+        store.manifests_dir.rename(elsewhere)
+        store.manifests_dir.symlink_to(tmp_path / "unmounted", target_is_directory=True)
+    elif how == "linked-directory":  # a link to a real, sound manifests directory
+        store.manifests_dir.rename(elsewhere)
+        store.manifests_dir.symlink_to(elsewhere, target_is_directory=True)
+    elif how == "junction":
+        import _winapi  # Windows only; skipped elsewhere
+
+        store.manifests_dir.rename(elsewhere)
+        _winapi.CreateJunction(str(elsewhere), str(store.manifests_dir))
+    else:
+        raise AssertionError(how)
+
+
+BROKEN_MANIFESTS = [
+    pytest.param("missing", id="constructed-missing"),
+    pytest.param("not-a-directory", id="constructed-not-a-directory"),
+    pytest.param("dangling-link", id="constructed-dangling-link", marks=posix_symlinks),
+    pytest.param("linked-directory", id="constructed-linked-directory", marks=posix_symlinks),
+    pytest.param("junction", id="constructed-junction", marks=windows_only),
+]
+
+
+@pytest.mark.parametrize("how", BROKEN_MANIFESTS)
+def test_constructed_gc_refuses_when_manifests_cannot_be_trusted(
+    how: str, source: Path, store: SnapshotStore, tmp_path: Path
+) -> None:
+    """With `manifests/` gone, a link, or not a directory, every object would
+    look unreferenced (guard's pre-write snapshot objects included): gc
+    refuses, as it does for a manifest that does not load, and deletes
+    nothing, dry run or not."""
+    store.create(source, ["WTF"], now=T0)
+    before = _object_listing(store)
+    assert before
+    _break_manifests(store, how, tmp_path)
+    for dry_run in (True, False):
+        with pytest.raises(snapshot.ManifestIntegrityError, match="gc"):
+            store.gc(dry_run=dry_run)
+    assert _object_listing(store) == before, "nothing was deleted"
+
+
+def test_constructed_gc_on_a_store_without_manifests_or_objects_is_a_no_op(
+    store: SnapshotStore,
+) -> None:
+    store.path.mkdir(parents=True)
+    report = store.gc(dry_run=False)
+    assert report.unreferenced == () and report.removed == ()
+
+
+def test_constructed_snap_gc_exits_non_zero_when_manifests_is_missing(
+    source: Path, tmp_path: Path
+) -> None:
+    from typer.testing import CliRunner
+
+    from wowlab_core import cli
+
+    default = SnapshotStore(snapshot.default_store_path())
+    assert tmp_path in default.path.parents, "the user data directory is redirected"
+    default.create(source, ["WTF"], now=T0)
+    before = _object_listing(default)
+    default.manifests_dir.rename(tmp_path / "manifests-elsewhere")
+    result = CliRunner().invoke(cli.app, ["snap", "gc", "--yes"])
+    assert result.exit_code == 1, (result.stdout, result.stderr)
+    assert "missing but the store holds objects" in result.stderr
+    assert _object_listing(default) == before
+
+
+# ─── (a, fix round 1) the delete without directory descriptors ───────────────
+
+
+@pytest.fixture
+def without_dir_fds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Take the path Windows takes (no `dir_fd`) on any platform."""
+    monkeypatch.setattr(snapshot, "_UNLINK_BY_DIR_FD", False)
+
+
+def _parked(store: SnapshotStore) -> list[str]:
+    return sorted(p.name for p in store.tmp_dir.glob("gc-*")) if store.tmp_dir.is_dir() else []
+
+
+def test_constructed_rename_delete_still_removes_an_object_and_its_empty_shard(
+    source: Path, store: SnapshotStore, without_dir_fds: None
+) -> None:
+    store.create(source, ["WTF"], now=T0)
+    shard = _unused_shard(store)
+    (store.objects_dir / shard).mkdir()
+    orphan = store.objects_dir / shard / ("1" * 62)
+    orphan.write_bytes(zlib.compress(b"unreferenced\n"))
+    report = store.gc(dry_run=False)
+    assert report.removed == (shard + "1" * 62,) and report.skipped == ()
+    assert not orphan.exists() and not (store.objects_dir / shard).exists()
+    assert _parked(store) == [], "nothing is left in tmp/"
+    assert store.verify().ok
+
+
+@posix_symlinks
+def test_constructed_rename_delete_shard_swapped_after_the_checks_is_not_deleted_through(
+    source: Path,
+    store: SnapshotStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    without_dir_fds: None,
+) -> None:
+    """The Windows window: every `lstat` check passes, and only then is the
+    shard swapped for a link to a directory holding a file of the object's
+    name. The rename into `tmp/` moves that file; it fails the identity check
+    and goes straight back. Nothing is deleted."""
+    store.create(source, ["WTF"], now=T0)
+    outside, victim = _victim_dir(tmp_path)
+    shard = _unused_shard(store)
+    (store.objects_dir / shard).mkdir()
+    orphan = store.objects_dir / shard / victim.name
+    orphan.write_bytes(zlib.compress(b"unreferenced\n"))
+    moved = tmp_path / "moved-shard"
+    real_still_names = SnapshotStore._still_names
+    swapped: list[Path] = []
+
+    def check_then_swap(path: Path, st: os.stat_result) -> bool:
+        answer = real_still_names(path, st)
+        if answer and path == orphan and not swapped:
+            swapped.append(path)
+            (store.objects_dir / shard).rename(moved)
+            (store.objects_dir / shard).symlink_to(outside, target_is_directory=True)
+        return answer
+
+    monkeypatch.setattr(SnapshotStore, "_still_names", staticmethod(check_then_swap))
+    report = store.gc(dry_run=False)
+    assert swapped, "the swap happened after the checks"
+    assert report.removed == ()
+    assert f"objects/{shard}/{victim.name}" in report.skipped
+    assert victim.read_bytes() == zlib.compress(VICTIM), "the file behind the link is back"
+    assert (moved / victim.name).exists(), "the listed object was not deleted either"
+    assert _parked(store) == [], "nothing is left in tmp/"
+
+
+@posix_symlinks
+def test_constructed_rename_delete_shard_swapped_before_its_rmdir_is_put_back(
+    source: Path,
+    store: SnapshotStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    without_dir_fds: None,
+) -> None:
+    """The empty-shard removal takes the same care: a shard swapped for a link
+    to an empty directory outside the store after its check is renamed into
+    `tmp/`, found to be a link, and renamed back; the directory survives."""
+    store.create(source, ["WTF"], now=T0)
+    shard = _unused_shard(store)
+    shard_path = store.objects_dir / shard
+    shard_path.mkdir()
+    (shard_path / ("1" * 62)).write_bytes(zlib.compress(b"unreferenced\n"))
+    outside = tmp_path / "outside-empty"
+    outside.mkdir()
+    real_same = SnapshotStore._same_dir_entry
+    shard_checks: list[int] = []
+
+    def check_then_swap(path: Path, expect: os.stat_result) -> bool:
+        answer = real_same(path, expect)
+        if path == shard_path:
+            shard_checks.append(1)
+            if len(shard_checks) == 2 and answer:  # the check before the rmdir
+                shard_path.rmdir()
+                shard_path.symlink_to(outside, target_is_directory=True)
+        return answer
+
+    monkeypatch.setattr(SnapshotStore, "_same_dir_entry", staticmethod(check_then_swap))
+    report = store.gc(dry_run=False)
+    assert report.removed == (shard + "1" * 62,)
+    assert len(shard_checks) == 2
+    assert outside.is_dir() and shard_path.is_symlink(), "the link was put back, not removed"
+    assert _parked(store) == [], "nothing is left in tmp/"
+
+
 # ─── (b) read_object inflates no further than size + 1 ───────────────────────
 
 
