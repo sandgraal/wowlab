@@ -172,6 +172,11 @@ def test_guard_bash_allows_ordinary_git_and_gh(command: str) -> None:
         ("rm -rf lab/src/coverage_models", "recursive+force"),
         ("rm -rf node_modules", "recursive+force"),  # not a scratch dir in a Python-only repo
         ("find lab -name '*.py' -delete", "find -delete"),
+        ("pkill -f pytest", "machine"),
+        ("sudo pkill python", "machine"),
+        ("killall pytest", "machine"),
+        ("make ci; pkill -f 'uv run'", "machine"),
+        ("bash -c 'killall python3'", "machine"),
         ("echo x > .claude/settings.json", "shell write"),
         ("echo x >| AGENTS.md", "shell write"),
         ("echo x > agents.md", "shell write"),
@@ -228,6 +233,9 @@ def test_guard_bash_blocks_destructive_and_shell_writes(command: str, needle: st
         "cd lab && echo x > new.py",
         "cat > lab/notes.md <<'EOF'\nIt's a file with an apostrophe\nEOF",
         'echo "it\'s fine" > lab/notes.md',
+        "kill 12345",
+        "kill -TERM 12345",
+        "grep pkill .claude/hooks/guard_bash.py",
     ],
 )
 def test_guard_bash_allows_ordinary_writes(command: str) -> None:

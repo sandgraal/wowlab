@@ -11,6 +11,8 @@ Blocks, with an explanation the agent can act on:
   * `gh pr merge --admin`; `gh api` with a mutating method (`-X PUT`, `-XPUT`,
     `--method=DELETE`) or a GraphQL mutation other than the two review-thread ones
   * recursive+force `rm`, `find -delete`, `git clean -x` outside scratch dirs
+  * `pkill` and `killall`, which match by name machine-wide and kill other
+    worktrees' processes (added 2026-09-28 after one did); `kill <pid>` is fine
   * shell writes, deletes and moves touching harness files, ADRs, the backlog
     or LICENSE: redirects (`>`, `>>`, `>|`), `tee`,
     `sed -i`/`--in-place`, `cp`/`mv`/`install`/`ln`/`rsync` (including directory
@@ -163,6 +165,13 @@ def _check_destructive(seg: list[str], cwd: str) -> str | None:
             expanded, ok = expand_vars(r, cwd)
             if not ok or not is_scratch_path(expanded, cwd):
                 return "find -delete outside scratch dirs; delete by explicit path instead."
+    for tool in ("pkill", "killall"):
+        if command_position(seg, tool) is not None:
+            return (
+                f"{tool} matches processes by name across the whole machine, so it kills "
+                "other worktrees' test runs too; stop your own process with `kill <pid>` "
+                "(from the pid you started) or let it finish."
+            )
     return None
 
 
