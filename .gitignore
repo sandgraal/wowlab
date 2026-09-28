@@ -32,3 +32,6 @@ htmlcov/
 # Lab scratch — raw captures never get committed unscrubbed
 lab/core/tests/fixtures/incoming/
 lab/**/.cache/
+
+# Pinned tools fetched by scripts (make selene)
+.tools/

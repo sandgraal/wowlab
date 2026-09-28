@@ -6,8 +6,11 @@ SHELL := /bin/bash
 # User-installed tools live here on contributor machines without Homebrew.
 export PATH := $(HOME)/.local/bin:$(PATH)
 UV ?= uv
+# Pinned selene for the lab-addon Lua lint (scripts/fetch_selene.py holds the
+# version and checksums). Override with SELENE=<path> to use another binary.
+SELENE ?= $(shell $(UV) run --frozen python scripts/fetch_selene.py --print)
 
-.PHONY: help setup lint format typecheck test test-parser hooks-test ci
+.PHONY: help setup lint lint-lua selene format typecheck test test-parser hooks-test ci
 
 help: ## Show targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -16,6 +19,7 @@ setup: ## One-time per checkout: sync deps, wire git hooks, create .env
 	$(UV) sync --frozen
 	git config core.hooksPath .githooks   # tracked hooks resolve per worktree; never `pre-commit install`
 	$(UV) run --frozen pre-commit install-hooks
+	$(UV) run --frozen python scripts/fetch_selene.py   # pinned Lua linter into .tools/ (network here only)
 	@[ -f .env ] || { cp .env.example .env && echo "created .env from .env.example"; }
 
 lint: ## ruff check + format check + mypy --strict (the commit gate)
@@ -23,6 +27,13 @@ lint: ## ruff check + format check + mypy --strict (the commit gate)
 	$(UV) run --frozen ruff format --check .
 	$(UV) run --frozen mypy
 	$(UV) run --frozen mypy --python-version 3.10 --strict .claude/hooks
+
+selene: ## Fetch the pinned selene binary into .tools/ (checksum-verified)
+	$(UV) run --frozen python scripts/fetch_selene.py
+
+lint-lua: ## Static Lua lint of lab/addon with pinned selene (offline; never runs Lua)
+	@[ -x "$(SELENE)" ] || { echo "selene not found at $(SELENE); run 'make selene' first"; exit 1; }
+	cd lab/addon && "$(SELENE)" WowLab
 
 format: ## Apply ruff fixes and formatting
 	$(UV) run --frozen ruff check --fix .
@@ -41,4 +52,4 @@ hooks-test: ## Claude Code hook scripts under 3.12 and 3.9 (hooks run on the sys
 	$(UV) run --frozen pytest tests/harness
 	$(UV) run --python 3.9 --isolated --no-project --with pytest -- pytest tests/harness
 
-ci: lint test test-parser hooks-test ## Everything CI runs
+ci: lint lint-lua test test-parser hooks-test ## Everything CI runs

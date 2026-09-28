@@ -1,0 +1,4 @@
+# selene configuration for the lab-addon sources (ADR-0026). Run from this
+# directory: `make lint-lua`, which uses the pinned binary fetched by
+# `scripts/fetch_selene.py`. Lints only; nothing here runs Lua.
+std = "wow_client"
