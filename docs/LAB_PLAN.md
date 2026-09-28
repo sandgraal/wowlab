@@ -1454,6 +1454,34 @@ refuse it.
 build and lists the options set to the same choice and those that differ.
 Every data command takes `--json`.
 
+*Amended 2026-09-28 (M11-07):* the page as built. `wowlab looks page [--out
+PATH] [--build V]` picks the build as `show` with no name does (every saved
+look's build counts) and writes one file, `<user data>/wowlab/pages/looks.html`
+by default (`wowlab_core.lookspage`, ADR-0027). Its JSON block
+(`LooksPageData` in `cli`) holds what the commands print, computed by the same
+functions: the `races` list, one view per flagged playable race, body type and
+class (none, then each `ChrClasses` id) with the options and findings
+`options` gives (options stored once and referenced by index), every saved
+look as `show NAME --build <that build>` reports it, the damaged files, and
+the same caveats (the playable note, the exported-tables-only remark, where
+class ids come from, what is refused and what is a note). Race and class are
+not checked as a pair: every class is offered with every race, and each class
+view says so **[verify]**. Paths on the page show the home directory as `~`.
+The script only displays that data, with `textContent`; the CSP is
+`default-src 'none'` with the one inline script and the one style allowed by
+SHA-256, so the page fetches nothing. `--out` (or the default folder) is
+refused before any work, and again before and after creating its folder, when
+it or a folder above it holds `.build.info` or `.flavor.info`
+(`lookstore.refuse_install`, which also refuses a path that cannot be
+resolved), when it is inside the user data directory but outside `pages/`
+(compared by file identity of its existing folders and by NFC-normalized,
+case-folded text, so a case, firmlink or Unicode spelling does not get in), when
+it is a directory or not a regular file, and when it is an existing file that
+does not begin with the page's own header (the doctype and the CSP meta tag):
+exit 1, nothing written. An existing page there is replaced whole. Damaged
+look files are listed on the page and named on stderr, and the command then
+exits 1, as `show` does.
+
 ### 13.3 profiles
 
 Named sets of the client's local UI files (not the whole UI: action-bar

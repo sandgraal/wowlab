@@ -52,11 +52,14 @@ __all__ = [
     "SavedLook",
     "check_name",
     "default_looks_dir",
+    "refuse_install",
 ]
 
 LOOKS_FORMAT: Literal[1] = 1
 MAX_LOOK_BYTES = 1 << 20
 _SUFFIX = ".json"
+# ERROR_CANT_RESOLVE_FILENAME: Windows' word for a symlink loop (pathlib reads it too)
+_CANT_RESOLVE_FILENAME = 1921
 _NAME_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 # errno values meaning "this filesystem cannot make a hard link"
 _NO_HARD_LINKS = frozenset(
@@ -123,14 +126,31 @@ def check_name(name: str) -> str:
     return name
 
 
-def _refuse_install(path: Path) -> None:
-    resolved = path.resolve()
+def refuse_install(path: Path, what: str = "saved looks") -> None:
+    """Raise ``LookLocationError`` if ``path``, with every symlink resolved, is
+    an install or inside one: it or a folder above it holds ``.build.info`` or
+    ``.flavor.info``. ``what`` names what never lives there, for the message.
+    Reads only; ``looks page`` runs it on its output file too (M11-07). A path
+    that cannot be resolved (a symlink loop) is refused too."""
+    try:
+        resolved = path.resolve()
+    except (RuntimeError, OSError) as exc:
+        raise LookLocationError(f"{path} cannot be resolved ({exc})") from None
+    try:
+        # Non-strict resolve() does not see every loop: on Windows a path
+        # through two links that name each other resolves without an error.
+        # A strict walk does; only a loop is refused here, a missing tail is
+        # the usual case for a file about to be written.
+        os.path.realpath(path, strict=True)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP or getattr(exc, "winerror", 0) == _CANT_RESOLVE_FILENAME:
+            raise LookLocationError(f"{path} cannot be resolved ({exc})") from None
     for candidate in (resolved, *resolved.parents):
         for marker in (BUILD_INFO, FLAVOR_INFO):
             if (candidate / marker).exists():
                 raise LookLocationError(
                     f"{path} is inside a game install ({candidate} holds {marker}); "
-                    "saved looks never live in an install (L1)"
+                    f"{what} never live in an install (L1)"
                 )
 
 
@@ -151,7 +171,7 @@ class LookStore:
         """Every ``*.json`` directly in the directory, by name. No directory: none."""
         if not self._root.exists():
             return []
-        _refuse_install(self._root)
+        refuse_install(self._root)
         if not self._root.is_dir():
             raise LookLocationError(f"{self._root} is not a directory")
         return sorted(p for p in self._root.iterdir() if p.name.endswith(_SUFFIX))
@@ -223,21 +243,26 @@ class LookStore:
 
     def listing(self) -> tuple[list[SavedLook], list[DamagedLook]]:
         """Every saved look by name, and every ``*.json`` that is not one."""
-        looks: list[SavedLook] = []
+        found, damaged = self.entries()
+        return [saved for _, saved in found], damaged
+
+    def entries(self) -> tuple[list[tuple[Path, SavedLook]], list[DamagedLook]]:
+        """``listing`` with each saved look's file."""
+        found: list[tuple[Path, SavedLook]] = []
         damaged: list[DamagedLook] = []
         for path in self._files():
             try:
-                looks.append(self.read(path))
+                found.append((path, self.read(path)))
             except LookStoreError as exc:
                 damaged.append(DamagedLook(file=path.name, error=str(exc)))
-        return looks, damaged
+        return found, damaged
 
     def save(self, saved: SavedLook, *, replace: bool = False) -> Path:
         """Write ``saved`` as ``<name>.json``; refuse a taken name unless ``replace``."""
         name = check_name(saved.look.name)
-        _refuse_install(self._root)
+        refuse_install(self._root)
         self._root.mkdir(parents=True, exist_ok=True)
-        _refuse_install(self._root)
+        refuse_install(self._root)
         existing = self._existing(name)
         if existing is not None and not replace:
             raise LookExistsError(
