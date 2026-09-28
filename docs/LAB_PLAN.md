@@ -1347,8 +1347,11 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   `ChrCustomizationOption`, `ChrCustomizationChoice`, `ChrCustomizationReq`,
   `ChrCustomizationReqChoice` (choice depends on choice),
   `ChrCustomizationElement` (how a choice is drawn),
-  `ChrCustomizationCategory` (UI grouping; `SpellShapeshiftFormID` marks the
-  druid-form categories), `ChrClasses` (which class ids the build has), and
+  `ChrCustomizationCategory` (UI grouping; some druid-form categories carry
+  a `SpellShapeshiftFormID`, but form options are not found by category: on
+  1.60.1.70009 the Bear Form option sits in "Face", and the Bear Form,
+  Aquatic Form and Moonkin Form categories hold no option), `ChrClasses`
+  (which class ids the build has), and
   `ChrCustomizationConversion`, which maps the old appearance bytes (race,
   sex, legacy slot 1–5 for skin, face, hair style, hair colour and features,
   and the byte value, optionally keyed on the legacy skin byte) to a choice
@@ -1356,9 +1359,13 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   alternate forms **[verify: when the client or server applies it]**.
   Alternate forms (the Worgen human form, the Dracthyr visage) are linked by
   `ChrRaces.UnalteredVisualCustomizationRaceID` and take their options from
-  another race's model. Druid forms and warlock demons have options on
-  models that no `ChrRaceXChrModel` row names, gated by class and race masks
-  **[verify]**. The set is **[verify]** against the version's wago listing.
+  another race's model. Some options sit on models that no
+  `ChrRaceXChrModel` row names. Those with `ChrModel.Sex` 3 are druid forms,
+  warlock demons, a pet and dragonriding bodies, gated only by class and
+  race masks **[verify]**. The others (Sex 0 or 1; on 70009 models 257–278,
+  texture layout 203, most with the original races' display ids) look like
+  the original pre-HD character models; what links them to a race is not in
+  the recorded tables **[verify]**. The set is **[verify]** against the version's wago listing.
   Recorded as fixtures (ADR-0012). wago may not publish every Forever build
   (69977 was missing, breakage log); `BuildNotPublished` is reported, never
   worked around.

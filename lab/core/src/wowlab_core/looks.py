@@ -17,10 +17,16 @@ client):
   dragonriding bodies (on 1.60.1.70009: models 148, 176, 180-184, 189-194,
   197, 198, 212, 216, 217): race-independent, gated only by their
   requirements' class and race masks. The others (257-278 on 70009, Sex 0 or
-  1, with the original models' display ids) are probably reached through
-  ``ChrModelAltVariant``, which is not recorded **[verify]**. Neither kind
-  is refused on its model: its requirements are applied and a note says what
-  it is.
+  1) look like the original pre-HD character models: all of them share
+  texture layout 203, which no linked model uses (the linked Sex 0/1 models
+  mostly have one layout each, 103-202, e.g. 103 and 104 for the Human
+  pair, and 1 or 2 on some NPC races), and display ids 49-60,
+  1478/1479 and 1563/1564, which match the original eight races' models
+  **[memory, verify]**; 277/278 are unexplained. What links them to a race
+  is not in the recorded tables; ``ChrModelAltVariant`` is a candidate
+  **[memory, verify]**. Neither kind is refused on its model: its
+  requirements are applied and a note says what it is, so a Human look
+  holding an option of model 259 is noted, not refused.
 - Options a race takes from ``ChrRaces.UnalteredVisualCustomizationRaceID``
   (the Worgen human form, the Dracthyr visage) are not modelled; no race
   flagged playable in 70009 has one.
@@ -115,7 +121,8 @@ REQUIRED_TABLES: tuple[str, ...] = (
 
 _RACE_NPC_ONLY = 0x1  # ChrRaces.Flags [verify]
 _REQ_HAS_REQUIREMENTS = 0x1  # ChrCustomizationReq.ReqType [verify]
-_MODEL_SEX_NONE = 3  # ChrModel.Sex of forms, pets, mounts [verify]
+# 3: not specific to one body type (shared models, forms, pets, mounts) [verify]
+_MODEL_SEX_SHARED = 3
 _ALL_32 = 0xFFFFFFFF
 _ALL_64 = 0xFFFFFFFFFFFFFFFF
 
@@ -188,7 +195,10 @@ class CharacterModel(_Frozen):
 
 class Category(_Frozen):
     """UI grouping of options (``ChrCustomizationCategory``).
-    ``spell_shapeshift_form_id`` is non-zero on the druid-form categories."""
+
+    ``spell_shapeshift_form_id`` is non-zero on some druid-form categories;
+    form options are found by their model (``is_form_or_pet``), not by
+    category (Bear Form option 901 is in "Face")."""
 
     id: int
     name: str
@@ -517,7 +527,7 @@ class Customizations(_Frozen):
         return (
             option.chr_model_id not in self.linked_model_ids
             and model is not None
-            and model.sex == _MODEL_SEX_NONE
+            and model.sex == _MODEL_SEX_SHARED
         )
 
     def options_for(
@@ -532,6 +542,19 @@ class Customizations(_Frozen):
         race and admits both: a warlock's demons for a warlock of any race, a
         druid form for a druid of a race that has choices for it. Without a
         class, class-restricted choices count as admitted.
+
+        A class-restricted choice whose classes are exactly those the
+        option's other restricted choices exclude is the option's placeholder
+        for classes it does not apply to (Flight Form's 'None': every class
+        but druid); it does not list the option **[verify]**.
+
+        Masks are read literally. On 70009 a Human druid is offered the
+        Moonkin "Decoration Color" and "Effects Color" options but not the
+        Moonkin body ("Full Transformation"): the colour choices carry
+        ClassMask 0xffffe400 (-7168; within the build, druid only) and no
+        race mask, while every druid choice of the body is also race-masked
+        (Night Elf, Tauren, the Skyborne) and its other choices point at a
+        requirement without bit 0x1, which restricts nothing **[verify]**.
         """
         race = self.races.get(race_id)
         if race is None:
@@ -554,6 +577,12 @@ class Customizations(_Frozen):
                 return False
             return (req.class_restricted or req.race_restricted) and admits(req_id)
 
+        def lists_option(option: Option) -> bool:
+            return any(
+                restricted_and_admits(c.requirement_id) and not self._is_placeholder(option, c)
+                for c in option.choices
+            )
+
         found: list[Option] = []
         forms: list[Option] = []
         for option in self.options.values():
@@ -561,13 +590,28 @@ class Customizations(_Frozen):
                 continue
             if option.chr_model_id == model:
                 found.append(option)
-            elif self.is_form_or_pet(option) and any(
-                restricted_and_admits(c.requirement_id) for c in option.choices
-            ):
+            elif self.is_form_or_pet(option) and lists_option(option):
                 forms.append(option)
         found.sort(key=lambda o: (o.order_index, o.id))
         forms.sort(key=lambda o: (o.chr_model_id, o.order_index, o.id))
         return found + forms
+
+    def _is_placeholder(self, option: Option, choice: Choice) -> bool:
+        """``choice`` admits exactly the build classes the option's other
+        active class-restricted choices exclude (see ``options_for``)."""
+        req = self.requirements.get(choice.requirement_id)
+        if req is None or not req.active or not req.class_restricted:
+            return False
+        known = set(self.classes)
+        own = set(req.classes(known))
+        others: set[int] = set()
+        for other in option.choices:
+            if other.id == choice.id:
+                continue
+            other_req = self.requirements.get(other.requirement_id)
+            if other_req is not None and other_req.active and other_req.class_restricted:
+                others |= set(other_req.classes(known))
+        return bool(others) and own == known - others
 
     # checking ---------------------------------------------------------------
 
@@ -684,7 +728,7 @@ class Customizations(_Frozen):
                 kind=FindingKind.FORM_OR_PET_OPTION,
                 message=(
                     f"{subject}{where} is on model {option.chr_model_id}, which no race and "
-                    "body type uses: a form or pet option, checked by its requirements "
+                    "body type uses: a form, pet or mount option, checked by its requirements "
                     "only [verify]"
                 ),
                 option_id=option.id,

@@ -197,6 +197,29 @@ def test_form_and_pet_options_follow_class_and_race(model: Customizations) -> No
     assert model.is_form_or_pet(model.options[BEAR_FORM])
 
 
+def test_placeholder_choice_does_not_list_its_option(model: Customizations) -> None:
+    """Flight Form's 'None' (7243, ClassMask 15359: every class but druid)
+    admits exactly the classes its druid choices exclude: a placeholder."""
+    flight = model.options[FLIGHT_FORM]
+    none = model.choices[7243]
+    assert none.option_id == FLIGHT_FORM and none.name == "None"
+    assert model._is_placeholder(flight, none)
+    assert not any(model._is_placeholder(flight, c) for c in flight.choices if c.id != none.id)
+    assert FLIGHT_FORM not in {o.id for o in model.options_for(NIGHT_ELF, 0, WARRIOR)}
+    assert FLIGHT_FORM in {o.id for o in model.options_for(NIGHT_ELF, 0, DRUID)}
+    # the warlock demons have no placeholder and stay listed for a warlock
+    assert IMP_STYLE in {o.id for o in model.options_for(NIGHT_ELF, 0, WARLOCK)}
+
+
+def test_moonkin_masks_are_read_literally(model: Customizations) -> None:
+    """A Human druid gets the Moonkin colours (druid-only, no race mask) but
+    not the Moonkin body (every druid choice race-masked to other races)."""
+    listed = {o.id for o in model.options_for(HUMAN, 0, DRUID)}
+    assert {8656, 8657} <= listed
+    assert 922 not in listed
+    assert 922 in {o.id for o in model.options_for(NIGHT_ELF, 0, DRUID)}
+
+
 def test_requirement_dependencies_are_grouped_by_option(model: Customizations) -> None:
     req = model.requirements[model.choices[DK_SKIN].requirement_id]
     assert req.class_restricted and req.class_mask == 1 << (DEATH_KNIGHT - 1)
