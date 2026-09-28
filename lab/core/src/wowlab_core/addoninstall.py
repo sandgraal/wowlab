@@ -72,6 +72,7 @@ __all__ = [
     "REMOVE_REFUSED_NOTE",
     "SAVED_VARIABLES_NOTE",
     "SOURCE_PARTS",
+    "STILL_INSTALLED_NOTE",
     "TOC_LEFT_NOTE",
     "TOC_NAME",
     "AddonChangedError",
@@ -124,16 +125,20 @@ FOLDER_STAYS_NOTE = (
 FOLDER_LEFT_NOTE = "It still holds the path(s) listed above as left alone."
 """Added to `FOLDER_STAYS_NOTE` when a removal leaves paths alone."""
 TOC_LEFT_NOTE = (
-    "It still holds a .toc listed above as left alone, so the client may still find an addon there."
+    f"The folder {ADDON_FOLDER}/ stays and still holds a .toc listed above as left alone, so "
+    "the client may still find an addon there."
 )
 """Replaces `FOLDER_STAYS_NOTE` when a removal leaves a `.toc` alone."""
 REMOVE_REFUSED_NOTE = (
     "Nothing was deleted: `wowlab addon remove lab` removes the folder's files all together or "
-    "not at all, and this path is not one wowlab will delete. The lab-addon is still installed, "
-    "so the client will load it at its next start; to stop it loading, untick WowLab in the "
-    "AddOns list at character select."
+    "not at all, and the path(s) named above are not ones wowlab will delete."
 )
 """Follows the gate's reason(s) when `remove` is refused."""
+STILL_INSTALLED_NOTE = (
+    "The lab-addon is still installed, so the client will load it at its next start; to stop "
+    f"it loading, untick {ADDON_NAME} in the AddOns list at character select."
+)
+"""Follows `REMOVE_REFUSED_NOTE` when the refused removal found a `WowLab.toc`."""
 LOAD_NOTE = (
     "Start the client. At character select, open AddOns, choose each character you will play "
     "(or all characters) in the drop-down, and check that WowLab is listed and ticked. If it "
@@ -648,12 +653,20 @@ def _remove_notes(left: Sequence[LeftPath], exists: bool) -> tuple[str, ...]:
     return tuple(notes)
 
 
+def _toc_found(present: Sequence[str]) -> bool:
+    """Whether the files found include the addon's `WowLab.toc` (compared
+    case-folded, as a case-insensitive volume would find it)."""
+    toc = f"{ADDON_FOLDER}/{TOC_NAME}".casefold()
+    return any(rel.casefold() == toc for rel in present)
+
+
 def plan_remove(flavor: _FlavorLike, *, store: Path | None = None) -> RemovePlan:
     """What `remove` would delete: every regular file under the addon folder,
     from a dry run of the gate. SavedVariables are never part of it. When
     the gate refuses any delete, the removal is refused as a whole: a
     `guard.GuardError` (the CLI's exit 3) names every refused path with the
-    gate's reason, followed by `REMOVE_REFUSED_NOTE`."""
+    gate's reason, followed by `REMOVE_REFUSED_NOTE` and, when a `WowLab.toc`
+    was among the files found, `STILL_INSTALLED_NOTE`."""
     present, left, exists = _installed(flavor.path)
     refused: list[str] = []
     with guard.transaction(flavor, label=_REMOVE_LABEL, store=store, dry_run=True) as tx:
@@ -665,7 +678,10 @@ def plan_remove(flavor: _FlavorLike, *, store: Path | None = None) -> RemovePlan
                 refused.append(str(exc))
         whole = tx.plan
     if refused:
-        raise guard.GuardError("\n".join([*refused, REMOVE_REFUSED_NOTE]))
+        notes = [REMOVE_REFUSED_NOTE]
+        if _toc_found(present):
+            notes.append(STILL_INSTALLED_NOTE)
+        raise guard.GuardError("\n".join([*refused, " ".join(notes)]))
     return RemovePlan(
         flavor_path=str(flavor.path),
         plan=whole,

@@ -1475,8 +1475,11 @@ it or a folder above it holds `.build.info` or `.flavor.info`
 (`lookstore.refuse_install`, which also refuses a path that cannot be
 resolved), when it is inside the user data directory but outside `pages/`
 (compared by file identity of its existing folders and by NFC-normalized,
-case-folded text, so a case, firmlink or Unicode spelling does not get in), when
-it is a directory or not a regular file, and when it is an existing file that
+case-folded text, so a case, firmlink or Unicode spelling does not get in),
+when it would go into a `pages/` folder that is itself a link (a symlink or
+junction), when it is within the `store`, `gamedata` or `looks` folder by the
+same identity and text tests, even when that folder is a link out of the user
+data directory (M11-17, 2026-09-28), when it is a directory or not a regular file, and when it is an existing file that
 does not begin with the page's own header (the doctype and the CSP meta tag):
 exit 1, nothing written. An existing page there is replaced whole. Damaged
 look files are listed on the page and named on stderr, and the command then

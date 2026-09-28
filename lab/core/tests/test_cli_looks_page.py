@@ -735,3 +735,93 @@ def test_the_user_data_folder_itself_and_a_dotdot_route_are_inside_constructed(
     _store_dirs(user_data)
     _refused_inside_user_data(user_data / "looks" / ".." / "store" / "page.html", source)
     _refused_inside_user_data(user_data / "page.html", source)
+
+
+# ─── M11-17 (#104 review): a linked pages folder; the kept folders by name ───
+
+
+def _dir_link(link: Path, target: Path) -> None:
+    """Constructed: a link to a folder. A junction on Windows, where a symlink
+    needs a privilege and a junction does not; a symlink elsewhere."""
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        import _winapi  # Windows only
+
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        link.symlink_to(target, target_is_directory=True)
+
+
+def _refused(out: Path | None, source: _Source, *expected: str) -> None:
+    args = ("--out", str(out)) if out is not None else ()
+    result = run("looks", "page", "--build", BUILD, *args)
+    assert result.exit_code == 1, result.stdout
+    err = " ".join(result.stderr.split())
+    for text in expected:
+        assert text in err, err
+    assert "nothing was written" in err
+    assert source.asked == []  # refused before any work
+
+
+@pytest.mark.parametrize(
+    "points_to", ["outside", "store"], ids=["outside-constructed", "store-constructed"]
+)
+def test_a_pages_folder_that_is_a_link_is_refused_constructed(
+    tmp_path: Path, user_data: Path, source: _Source, points_to: str
+) -> None:
+    dest = tmp_path / "elsewhere" if points_to == "outside" else user_data / "store"
+    dest.mkdir(parents=True)
+    _dir_link(user_data / "pages", dest)
+    for out in (
+        None,  # the default path, lookspage.default_page_path()
+        user_data / "pages" / "looks.html",
+        user_data / "pages" / "old" / "looks.html",
+        dest / "looks.html",  # the link's target, by identity
+    ):
+        _refused(out, source, "pages folder", "is a link (a symlink or junction)")
+    assert list(dest.iterdir()) == []
+
+
+@pytest.mark.parametrize("name", ["store", "gamedata", "looks"])
+def test_a_kept_folder_linked_out_of_user_data_is_refused_constructed(
+    tmp_path: Path, user_data: Path, source: _Source, name: str
+) -> None:
+    """The folder a user moved to another disk and linked back: refused as
+    spelled under the user data directory (by name) and as spelled at the
+    link's target (by identity)."""
+    moved = tmp_path / "other-disk" / name
+    moved.mkdir(parents=True)
+    _dir_link(user_data / name, moved)
+    for out in (
+        user_data / name / "page.html",
+        user_data / name / "sub" / "page.html",
+        moved / "page.html",
+        moved / "sub" / "page.html",
+    ):
+        _refused(out, source, f"within wowlab's {name} folder")
+    assert list(moved.iterdir()) == []
+
+
+_KEPT_SEAMS = {
+    "store": "default_store_path",
+    "gamedata": "default_cache_dir",
+    "looks": "default_looks_dir",
+}
+
+
+@pytest.mark.parametrize("name", sorted(_KEPT_SEAMS))
+def test_a_kept_folder_is_refused_by_folded_name_before_it_exists_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """By the NFC, case-folded text alone: the folder (placed outside the user
+    data directory here) does not exist, so there is no identity to compare."""
+    folder = tmp_path / unicodedata.normalize("NFC", "disque-é") / name
+    monkeypatch.setattr(lookspage, _KEPT_SEAMS[name], lambda: folder)
+    upper = folder.parent.parent / folder.parent.name.upper() / name.upper()
+    for out in (folder / "page.html", upper / "x" / "page.html", _nfd(folder) / "page.html"):
+        with pytest.raises(lookspage.PageError, match=f"within wowlab's {name} folder"):
+            lookspage.check_target(out)
+    assert not folder.parent.exists()
+    # A folder that merely shares the name is not the kept one.
+    other = tmp_path / name / "page.html"
+    assert lookspage.check_target(other) == other.resolve()

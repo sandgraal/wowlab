@@ -32,7 +32,9 @@ from pathlib import Path
 
 import platformdirs
 
-from wowlab_core.lookstore import refuse_install
+from wowlab_core.gamedata import default_cache_dir
+from wowlab_core.lookstore import default_looks_dir, refuse_install
+from wowlab_core.snapshot import default_store_path
 
 __all__ = [
     "DATA_ELEMENT_ID",
@@ -548,25 +550,63 @@ def _within(path: Path, folder: Path) -> bool:
     )
 
 
+def _is_link(path: Path) -> bool:
+    """``path`` itself is a symlink, or on Windows a junction (not followed)."""
+    try:
+        st = path.lstat()
+    except (OSError, ValueError):
+        return False
+    if stat.S_ISLNK(st.st_mode):
+        return True
+    try:
+        return path.is_junction()
+    except OSError:
+        return True
+
+
+def _kept_folders() -> tuple[Path, ...]:
+    """The snapshot store, the game data cache and the saved looks, as named."""
+    return (default_store_path(), default_cache_dir(), default_looks_dir())
+
+
 def check_target(out: Path) -> Path:
     """Where ``write_page`` would write ``out``, or ``PageError`` /
     ``LookLocationError`` for why it will not, reading only. Refused: a path
     that is, or is inside, an install; one inside the user data directory
     but outside its ``pages/`` folder (the snapshot store, the game data
-    cache and the saved looks live there); a directory; anything that is not
-    a regular file; and an existing file that is not a page this module
-    wrote (it does not start with ``PAGE_HEADER``)."""
+    cache and the saved looks live there); one into the ``pages/`` folder
+    when that folder is itself a link (a symlink or junction); one within
+    the store, the cache or the looks folder, by name (``out`` or its
+    resolved path spelled under the folder, NFC and case-folded) as well as
+    by identity, even when that folder is a link out of the user data
+    directory; a directory; anything that is not a regular file; and an
+    existing file that is not a page this module wrote (it does not start
+    with ``PAGE_HEADER``)."""
     target = Path(out).absolute()
     refuse_install(target, _WHAT)
     final = _resolved(target)
     data = _resolved(platformdirs.user_data_path("wowlab"))
-    pages = _resolved(default_page_path().parent)
+    named_pages = default_page_path().parent
+    pages = _resolved(named_pages)
     if _within(final, data) and not _within(final, pages):
         raise PageError(
             f"{target} is inside wowlab's user data directory ({data}) but not in its "
             f"pages folder ({pages}); a page never goes beside the store, the cache or "
             "the saved looks"
         )
+    if _is_link(named_pages) and (_within(target, named_pages) or _within(final, pages)):
+        raise PageError(
+            f"wowlab's pages folder {named_pages} is a link (a symlink or junction) to "
+            f"{pages}; a page is written only into a real pages folder, so remove the link "
+            "yourself or choose another --out"
+        )
+    for folder in _kept_folders():
+        spellings = (folder, _resolved(folder))
+        if any(_within(path, kept) for path in (target, final) for kept in spellings):
+            raise PageError(
+                f"{target} is within wowlab's {folder.name} folder ({folder}); a page never "
+                "goes into the store, the cache or the saved looks"
+            )
     if final.is_dir():
         raise PageError(f"{target} is a directory; --out names the page file to write")
     if final.exists() and not _existing_header(final).startswith(PAGE_HEADER):

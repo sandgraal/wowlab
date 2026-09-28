@@ -3383,7 +3383,7 @@ class AddonInstallReport(_Out):
     dry_run: bool
     applied: bool
     transaction: str | None  # the journal record of the install
-    notes: list[str]
+    notes: list[str]  # LOAD_NOTE only when applied
 
 
 class AddonRemoveReport(_Out):
@@ -3463,7 +3463,8 @@ def addon_install(
             dry_run=dry_run,
             applied=applied,
             transaction=transaction,
-            notes=list(plan.notes),
+            # The load note is for after an install that happened, as in the text.
+            notes=[n for n in plan.notes if applied or n != addoninstall.LOAD_NOTE],
         )
 
     if not json_out or (prompting and plan.plan):
@@ -3480,7 +3481,7 @@ def addon_install(
         if plan.unchanged and plan.plan:
             show(f"  {len(plan.unchanged)} file(s) already up to date.")
         _print_left(show, plan.left)
-        # The load note is for after an install that happened (text); JSON keeps it.
+        # The load note is for after an install that happened.
         for n in plan.notes:
             if n != addoninstall.LOAD_NOTE:
                 show(n)
