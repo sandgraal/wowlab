@@ -22,7 +22,7 @@ import os
 import shutil
 import sys
 from collections.abc import Callable, Iterator
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import pytest
@@ -348,3 +348,75 @@ def test_save_notes_a_junctioned_addons_folder_constructed(
     _link_out(flavor / "Interface/AddOns", tmp_path / "outside", _junction)
     report = _json_of(cli.ProfileReport, "profile", "save", "mods", "--preset", "addons")
     assert _note(f"{FLAVOR}/Interface/AddOns") in report.notes
+
+
+# ─── crafted manifest paths (M11-12 fix round 1) ─────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "D:/Windows/win.ini",  # a drive part
+        "Interface/D:a.lua",  # drive-relative on Windows
+        "Interface/a.lua:stream",  # an NTFS alternate data stream
+        "\\\\server\\share\\a.lua",  # a UNC path in one part
+        "Interface/..\\..\\outside\\a.lua",  # backslash traversal
+        "\\Windows\\win.ini",  # rooted on the current drive
+    ],
+)
+def test_a_crafted_part_is_never_opened_on_any_platform_constructed(
+    walk: str, tree: _Tree, tail: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Constructed hostile manifest: a part holding `\\` or `:` is valid in an
+    `Entry` (both are ordinary POSIX name characters) but on Windows would make
+    the joined path a drive, UNC, rooted or `..` path. `_differs` refuses it on
+    every platform before touching the disk."""
+    parts = [tree.flavor, *tail.split("/")]
+    joined = PureWindowsPath("C:\\install").joinpath(*parts)
+    assert (
+        joined.drive != "C:"
+        or not joined.as_posix().startswith("C:/install/")
+        or ".." in joined.parts
+        or ":" in "".join(joined.parts[1:])
+    ), "the case would be harmless on Windows"
+    entry = Entry(path=f"{tree.flavor}/{tail}", kind="file", sha256="0" * 64)
+    touched: list[str] = []
+
+    def spy(name: str) -> Callable[..., Any]:
+        real = getattr(os, name)
+
+        def inner(*args: Any, **kwargs: Any) -> Any:
+            touched.append(name)
+            return real(*args, **kwargs)
+
+        return inner
+
+    assert profiles._entry_parts(tree.flavor, entry) is None
+    for name in ("open", "stat", "lstat"):
+        monkeypatch.setattr(profiles.os, name, spy(name))
+    assert profiles._differs(tree.root, tree.flavor, entry) == "differs"
+    monkeypatch.undo()
+    assert touched == []
+
+
+@posix_only
+def test_a_close_failure_mid_walk_is_differs_and_leaks_nothing_constructed(
+    tree: _Tree, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Constructed: `os.close` of a parent descriptor fails once; `_differs`
+    answers `differs` instead of raising, and the child is still closed."""
+    real_close = os.close
+    failed: list[int] = []
+
+    def close_fails_once(fd: int) -> None:
+        real_close(fd)
+        if not failed:
+            failed.append(fd)
+            raise OSError("constructed close failure")
+
+    before = _open_fds()
+    monkeypatch.setattr(profiles.os, "close", close_fails_once)
+    assert tree.differs() == "differs"
+    monkeypatch.undo()
+    assert failed
+    assert _open_fds() == before

@@ -36,6 +36,7 @@ deletion stay (the gate deletes files only).
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import hashlib
 import os
@@ -650,27 +651,38 @@ def _is_link(path: Path, st: os.stat_result) -> bool:
         return True
 
 
+_UNSAFE_IN_PART = frozenset("/\\:\x00")
+"""Characters no path part may hold, on every platform: a separator (`/`, and
+`\\` which Windows also reads as one), `:` (a drive or stream on Windows), NUL.
+A crafted manifest must not turn a part into a UNC, drive or rooted path."""
+
+
 def _entry_parts(flavor_folder: str, entry: Entry) -> list[str] | None:
     """The folders from the install root to `entry` (the flavor folder first)
-    and its name last; None for a path that could leave the folder it names."""
+    and its name last; None (the entry is then `differs`, and nothing is read)
+    for an empty, `.` or `..` part or a part holding `/`, `\\`, `:` or NUL, on
+    every platform, so no part can leave the folder it is opened from or
+    become a UNC, drive or rooted path on Windows."""
     parts = [flavor_folder, *entry.path.removeprefix(flavor_folder + "/").split("/")]
-    if any(p in ("", ".", "..") or "/" in p or "\x00" in p for p in parts):
+    if any(p in ("", ".", "..") or not _UNSAFE_IN_PART.isdisjoint(p) for p in parts):
         return None
     return parts
 
 
 def _hash_fd(fd: int, entry: Entry) -> _Disk:
-    """Close `fd` after hashing it; `differs` unless it is a regular file with
-    the entry's content."""
-    digest = hashlib.sha256()
+    """`differs` unless `fd` is a regular file (by `fstat`, before any read)
+    with the entry's content. Always closes `fd`, whatever happens."""
     try:
-        with os.fdopen(fd, "rb") as handle:
-            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
-                return "differs"
-            for chunk in iter(lambda: handle.read(1 << 20), b""):
-                digest.update(chunk)
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return "differs"  # swapped for a folder or a FIFO since its lstat
+        digest = hashlib.sha256()
+        while chunk := os.read(fd, 1 << 20):
+            digest.update(chunk)
     except OSError:
         return "differs"
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(fd)
     return "same" if digest.hexdigest() == entry.sha256 else "differs"
 
 
@@ -694,7 +706,11 @@ def _differs(root: Path, flavor_folder: str, entry: Entry) -> _Disk:
     then the file is opened by its full path with `O_NOFOLLOW` where the
     platform has it; a folder swapped for a junction between that check and
     the open is not caught there. Either way a file must be a regular file by
-    `fstat`, and a symlink entry is compared by its link text."""
+    `fstat` before any byte is read, every descriptor is closed on every
+    path, and a symlink entry is compared by its link text. An entry whose
+    path has a part holding `\\`, `:` or NUL (valid in a manifest, but a
+    drive, UNC or rooted path on Windows) is `differs` on every platform, and
+    nothing is touched for it (`_entry_parts`)."""
     parts = _entry_parts(flavor_folder, entry)
     if parts is None:
         return "differs"
@@ -739,7 +755,10 @@ def _differs_at(root: Path, parts: list[str], entry: Entry) -> _Disk:
                     return "differs"
                 return "behind_link" if stat.S_ISLNK(st.st_mode) else "differs"
             parent, fd = fd, child
-            os.close(parent)
+            try:
+                os.close(parent)
+            except OSError:
+                return "differs"
         name = parts[-1]
         try:
             st = os.stat(name, dir_fd=fd, follow_symlinks=False)
@@ -767,7 +786,8 @@ def _differs_at(root: Path, parts: list[str], entry: Entry) -> _Disk:
             return "differs"
         return _hash_fd(file_fd, entry)
     finally:
-        os.close(fd)
+        with contextlib.suppress(OSError):
+            os.close(fd)
 
 
 def _differs_lstat(root: Path, parts: list[str], entry: Entry) -> _Disk:
