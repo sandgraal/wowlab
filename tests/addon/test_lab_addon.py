@@ -7,12 +7,18 @@ fails on any global the addon uses that `lab/addon/wow_client.yml` does not
 declare.
 
 These checks catch ordinary mistakes and ordinary edits, not an author set on
-getting around them. Deliberate obfuscation is caught by review only: aliasing
-a client table or `ns` (`local t = C_Traits`, `local n = ns`, then reaching a
-function or field through the alias), or building a key or a name at run time
-with `string.format`, `string.lower` or similar and indexing with it. The
-stored-value check (M11-13) also does not check table keys, and it trusts the
-Core.lua plumbing listed in `PLUMBING_STORES`.
+getting around them. Deliberate obfuscation is caught by review only:
+
+- aliasing a client table or `ns` (`local t = C_Traits`, `local n = ns`) and
+  reaching a function or field through the alias;
+- building a key or a name at run time with `string.format`, `string.lower` or
+  similar and indexing with it;
+- changing a guarded key or field inside its `if type(X) == ... then` block
+  through an alias of the table (`local d = c` ... `d.option = api`) or through
+  a call that writes to it.
+
+The stored-value check (M11-13) also does not check table keys, and it trusts
+the Core.lua plumbing listed in `PLUMBING_STORES`.
 """
 
 from __future__ import annotations
@@ -883,7 +889,12 @@ def test_no_concatenated_value_is_used_as_an_index(path: Path) -> None:
 # and math libraries, the addon namespace `ns` and its fields, and calls to
 # addon functions whose every `return` passes the same test (so `ns.Number`,
 # `ns.String`, `ns.Bool`, `ns.Numbers` and `ns.Absent` are untainted, and
-# `ns.Call`/`ns.Fn` are not). Table keys are not checked.
+# `ns.Call`/`ns.Fn` are not). Always tainted: a `pcall(...)` result, a call
+# through an index or parentheses (`fns[1]()`, `(h)()`), a method call, and a
+# Lua library read as a value (`string`). Table keys are not checked. Rules that
+# keep this sound: no `table.insert`/`tinsert` (a store through a call), every
+# `ns.Section` takes a literal `{ ... }`, each `ns` function is defined once,
+# and no source rebinds `type`, `pcall`, the other builtins it trusts, or `ns`.
 
 _KEYWORDS = frozenset(
     {
@@ -1031,6 +1042,7 @@ class _Flow:
         self.namespace: _Decl | None = None
         self.stores: list[_Store] = []
         self.assigned: list[tuple[str, int]] = []  # (root name, token) of every binding
+        self.rebound: list[tuple[str, int]] = []  # `name = ...` and `name.x = ...` targets
         self.skip: set[int] = set()
         self._scan()
 
@@ -1378,6 +1390,7 @@ class _Flow:
             value = exprs[min(n, len(exprs) - 1)] if exprs else (eq + 1, eq + 1)
             root = t[ts].text
             self.assigned.append((root, eq))
+            self.rebound.append((root if te == ts + 1 else root + ".", ts))
             if te == ts + 1:
                 decl = self.resolve(root, eq)
                 if decl is not None:
@@ -1545,7 +1558,13 @@ class _Flow:
             if x.kind == "op":
                 if x.text == "...":
                     return True
-                i = self.pair[i] + 1 if x.text in {"{", "["} else i + 1
+                if x.text in {"[", ")"}:
+                    after = self.pair[i] + 1 if x.text == "[" else i + 1
+                    if after < e and self.call_start(after):
+                        return True  # a call through an index or parentheses
+                    i = after
+                    continue
+                i = self.pair[i] + 1 if x.text == "{" else i + 1
                 continue
             if x.text == "function":
                 i = self.block_end(i) + 1
@@ -1578,6 +1597,12 @@ class _Flow:
                     return True  # a call on a call's result
                 i = i + 2 if t[i].text == "." else self.pair[i] + 1
         return False
+
+    def call_start(self, k: int) -> bool:
+        t = self.tokens
+        return k < len(t) and (
+            (t[k].kind == "op" and t[k].text in {"(", "{"}) or t[k].kind == "string"
+        )
 
     def returns(self, head: int) -> list[tuple[int, int]]:
         t = self.tokens
@@ -1641,7 +1666,7 @@ class _Program:
     def name_tainted(self, flow: _Flow, name: str, i: int) -> bool:
         decl = flow.resolve(name, i)
         if decl is None:
-            return name not in _LUA_BUILTINS  # client, saved or unknown globals
+            return True  # client, saved, unknown globals, and Lua libraries read as values
         return decl.fixed is True or (decl.fixed is None and id(decl) in self.tainted)
 
     def call(self, flow: _Flow, i: int, j: int) -> bool | None:
@@ -1657,6 +1682,8 @@ class _Program:
             return True
         if names[0] == "type" and len(names) == 1:
             return False
+        if names[0] == "pcall":
+            return True  # it calls its first argument, whatever that is
         if names[0] == "math" or (names[0] == "string" and names[1:] != ["gmatch"]):
             return len(names) == 1
         return None if names[0] in _LUA_BUILTINS else True
@@ -1728,6 +1755,125 @@ def test_every_gather_and_carry_returns_checked_values() -> None:
                     )
     assert sections, "expected ns.Section calls"
     assert not problems, problems
+
+
+# Names the stored-value check trusts; no source may rebind them.
+_TRUSTED_NAMES = frozenset(
+    {
+        "type",
+        "pcall",
+        "ipairs",
+        "pairs",
+        "select",
+        "tostring",
+        "tonumber",
+        "string",
+        "math",
+        "table",
+        "ns",
+    }
+)
+
+
+@pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
+def test_sources_store_nothing_through_table_library(path: Path) -> None:
+    """Review of M11-13: `table.insert(out, api_table)` stores through a call,
+    which the stored-value check does not read. The addon appends with
+    `t[#t + 1] = v`; `table` is used only as `table.sort`, and `tinsert` (and a
+    string naming either) never appears."""
+    tokens = _tokens(path)
+    bad = []
+    for i, t in enumerate(tokens):
+        if t.kind == "string" and t.text in {"insert", "tinsert"}:
+            bad.append(f"{_where(path, t)} string {t.text!r}")
+        if t.kind != "name" or _is_field(tokens, i):
+            continue
+        if t.text == "tinsert":
+            bad.append(f"{_where(path, t)} tinsert")
+        if t.text == "table" and [x.text for x in tokens[i + 1 : i + 3]] != [".", "sort"]:
+            bad.append(f"{_where(path, t)} {_render(tokens[i : i + 3])!r}")
+    assert not bad, bad
+
+
+def test_every_section_call_takes_a_literal_spec() -> None:
+    """Review of M11-13: the gather/carry check reads the spec at the call site,
+    so every `ns.Section` is exactly `ns.Section({ ... })`: not
+    `ns.Section(spec)`, `ns.Section{ ... }` or `ns.Section(factory())`. The
+    namespace is never indexed by brackets, and no string literal is
+    "Section", so the function is not reached another way."""
+    program = _program()
+    bad = []
+    for flow in program.flows.values():
+        t = flow.tokens
+        for i, tok in enumerate(t):
+            if tok.kind == "string" and tok.text == "Section":
+                bad.append(f"{_where(flow.path, tok)} string 'Section'")
+            if tok.kind != "name" or tok.text != "ns" or _is_field(t, i):
+                continue
+            if i + 1 < len(t) and t[i + 1].text == "[":
+                bad.append(f"{_where(flow.path, tok)} ns[...]")
+            if [x.text for x in t[i + 1 : i + 3]] != [".", "Section"]:
+                continue
+            if i > 0 and t[i - 1].text == "function":
+                continue  # the definition in Core.lua
+            ok = (
+                i + 4 < len(t)
+                and t[i + 3].kind == "op"
+                and t[i + 3].text == "("
+                and t[i + 4].kind == "op"
+                and t[i + 4].text == "{"
+                and flow.pair[i + 4] + 1 == flow.pair[i + 3]
+            )
+            if not ok:
+                bad.append(f"{_where(flow.path, tok)} {_render(t[i : i + 6])!r}")
+    assert not bad, bad
+
+
+def test_every_ns_function_is_defined_once() -> None:
+    """Security review of M11-13: a second `function ns.Numbers(list) return
+    list end` (in a file loaded later) would replace the checked helper at run
+    time. Each `ns.X` is defined by exactly one `function ns.X(` in all the
+    sources, and never assigned as `ns.X = ...`."""
+    program = _program()
+    defined: dict[str, list[str]] = {}
+    for flow in program.flows.values():
+        for head, label in flow.labels.items():
+            if label.startswith("ns.") and flow.tokens[head + 1].text == "ns":
+                defined.setdefault(label, []).append(_where(flow.path, flow.tokens[head]))
+    problems = [
+        f"{name} defined {len(at)} times: {at}" for name, at in defined.items() if len(at) > 1
+    ]
+    for flow in program.flows.values():
+        for store in flow.stores:
+            head = store.text.split(" = ", 1)[0]
+            if head.startswith("ns . ") and "ns." + head[5:].split(" ")[0] in defined:
+                problems.append(f"{_where(flow.path, flow.tokens[store.at])} `{store.text}`")
+    assert not problems, problems
+
+
+@pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
+def test_trusted_names_are_never_rebound(path: Path) -> None:
+    """Review of M11-13: `local type = function() return "number" end` would
+    make every `type(X) == "number"` guard pass. No local, parameter, loop
+    variable, local or global function, or assignment binds `type`, `pcall`,
+    `ipairs`, `pairs`, `select`, `tostring`, `tonumber`, `string`, `math`,
+    `table` or `ns`, and no field of `string`, `math` or `table` is assigned;
+    the one `local _, ns = ...` at the top of each file is the exception."""
+    program = _program()
+    flow = program.flows[path.name]
+    t = flow.tokens
+    bad = []
+    for name in _TRUSTED_NAMES:
+        for decl in flow.decls.get(name, []):
+            if decl is not flow.namespace:
+                bad.append(f"{_where(path, t[min(decl.start, len(t) - 1)])} binds {name}")
+    for name, at in flow.rebound:
+        if name in _TRUSTED_NAMES or name in {"string.", "math.", "table."}:
+            bad.append(f"{_where(path, t[at])} assigns {_render(t[at : at + 3])!r}")
+    for head, label in flow.labels.items():
+        if label in _TRUSTED_NAMES and t[head + 1].text == label:
+            bad.append(f"{_where(path, t[head])} function {label}")
+    assert not bad, bad
 
 
 # --- carry: the saved record is copied only through checked values ------------
