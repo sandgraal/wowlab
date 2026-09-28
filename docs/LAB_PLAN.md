@@ -384,6 +384,14 @@ platform and locale.
    the client's next write of that file, which re-emits it in the client's
    own layout, key order and number format; the placement of new entries is
    the Lab's own, not the client's.
+8. **Clarifications (conductor, 2026-09-27, from the M10-12T fix round).**
+   A tie in item 4 goes to the lowest byte-wise relative path. `lab_written`
+   holds paths compared after `Path.resolve()`. With nothing to read, a
+   `[number]` key is written `[n] = ` (§4.1, §4.2). A document whose only
+   positional entry shares the `{` line shows array comments but not
+   indentation, and by item 5 that decides both. A `nil` value inside a table
+   is written as given; the client omits such entries when it writes, which
+   is the client's business, not a refusal.
 
 Performance: a 50 MB SavedVariables file (auction or collection addons get
 there) parses in under 10 s and under 1.5 GB RSS on the owner's laptop
