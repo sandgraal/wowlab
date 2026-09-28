@@ -193,6 +193,11 @@ class Manifest(_Frozen):
     client_running: bool | None = None
     """`True` means SavedVariables on disk were stale relative to the live
     session when this was taken; `None` means the caller did not probe."""
+    purpose: Literal["profile"] | None = None
+    """What the snapshot was taken for, when a caller says so: `"profile"`
+    for `profiles.save` (M11-08, §13.3). `None` is left out of the manifest
+    file, so a manifest without a purpose is byte-for-byte what it was
+    before the field existed. Like the label, it is not in the fingerprint."""
     entries: tuple[Entry, ...]
 
     @model_validator(mode="before")
@@ -296,8 +301,11 @@ def manifest_bytes(manifest: Manifest) -> bytes:
     `Manifest.model_validate_json` is the inverse, for every string Python can
     hold (lone surrogates included; see the module docstring).
     """
+    data = manifest.model_dump()
+    if data.get("purpose") is None:
+        data.pop("purpose", None)  # absent, as in every manifest written before M11-08
     text = json.dumps(
-        _map_strings(manifest.model_dump(), _escape_text),
+        _map_strings(data, _escape_text),
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=True,
@@ -451,6 +459,7 @@ class SnapshotStore:
         flavor_folder: str | None = None,
         flavor_version: str | None = None,
         client_running: bool | None = None,
+        purpose: Literal["profile"] | None = None,
         now: datetime | None = None,
     ) -> Manifest:
         """Capture `subtrees` of `root` and return the new manifest.
@@ -484,6 +493,9 @@ class SnapshotStore:
         rewritten if it is damaged, so a new snapshot never depends on a bad
         object.
 
+        `purpose` is recorded in the manifest (`"profile"` from
+        `profiles.save`, M11-08); a manifest with none omits the field.
+
         `now` fixes the clock (timezone-aware); it exists for tests and for
         callers that want one timestamp across several records.
         """
@@ -513,6 +525,7 @@ class SnapshotStore:
             "subtrees": tuple(wanted),
             "excluded": tuple(excluded),
             "client_running": client_running,
+            "purpose": purpose,
         }
         # Hold the caller's values to the model before anything is stored, so
         # a bad argument fails with a typed error and an untouched store.
@@ -964,6 +977,49 @@ class SnapshotStore:
             changed=tuple(changed),
             mode_changed=tuple(mode_changed),
         )
+
+    def list_tree(
+        self,
+        root: Path,
+        subtrees: Iterable[str | PurePath],
+        *,
+        exclude: Iterable[str | PurePath] = (),
+    ) -> tuple[tuple[str, Literal["file", "symlink", "other"]], ...]:
+        """Every path `create` would walk under `subtrees` of `root`, less
+        `exclude`, sorted, each with its kind by `lstat`: a regular `file`, a
+        `symlink` (on Windows also a junction or other directory link, never
+        followed), or `other` (what `create` ignores: a FIFO, a socket).
+
+        Reads directory listings and `lstat` only: it opens no file, stores
+        nothing and touches neither the store nor `root` (L1). Subtrees and
+        excludes are held to `create`'s rules, and a subtree reached through
+        a link below the root is refused as `create` refuses it. Added
+        2026-09-28 (M11-08) so `profiles` can find the files added under a
+        profile's subtrees since it was saved without taking a snapshot.
+        """
+        root = Path(root).absolute()
+        wanted = sorted({_normalize_rel(s, "subtree") for s in subtrees})
+        excluded = sorted({_normalize_rel(x, "exclude") for x in exclude})
+        found: dict[str, Literal["file", "symlink", "other"]] = {}
+        for subtree in wanted:
+            for rel, abs_path in self._walk(root, subtree, excluded):
+                if rel in found:
+                    continue
+                try:
+                    st = abs_path.lstat()
+                except FileNotFoundError:
+                    continue  # removed while we walked
+                except OSError as exc:
+                    raise SnapshotError(f"cannot inspect {abs_path}: {exc}") from exc
+                if stat.S_ISLNK(st.st_mode) or (
+                    stat.S_ISDIR(st.st_mode) and _is_link_like_dir(abs_path)
+                ):
+                    found[rel] = "symlink"
+                elif stat.S_ISREG(st.st_mode):
+                    found[rel] = "file"
+                else:
+                    found[rel] = "other"
+        return tuple(sorted(found.items()))
 
     # -- the one mutation --------------------------------------------------
 

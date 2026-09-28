@@ -536,6 +536,7 @@ def test_no_operation_but_set_label_changes_a_manifest_file(
     store.gc(dry_run=False)
     store.read_file(m1.id, "WTF/Config.wtf")
     store.refuse_holding(source)  # M10-19
+    store.list_tree(source, SUBTREES)  # M11-08
     assert path.read_bytes() == original
 
     mutators = {
@@ -557,6 +558,7 @@ def test_no_operation_but_set_label_changes_a_manifest_file(
         "resolve_id",
         "object_path",
         "refuse_holding",  # M10-19: reads only
+        "list_tree",  # M11-08: reads listings and lstat only
     }
 
 
