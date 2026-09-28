@@ -573,7 +573,7 @@ def test_new_empty_table_without_source_or_siblings_is_two_lines(luadata: Any) -
     assert luadata.serialize(doc) == b'\r\nLabEmptyDB = {\r\n["e"] = {\r\n},\r\n}\r\n'
 
 
-# ── data only: serialize refuses what would not parse (item 2) ──────────────
+# ── data only: serialize refuses what is not data (items 2, 8, 9) ───────────
 
 DATA_SOURCE = _lines(
     b"\r\n",
@@ -592,89 +592,229 @@ def _with_first_assignment(doc: Any, **changes: Any) -> Any:
     return doc._replace(assignments=(first, *doc.assignments[1:]))
 
 
-def _with_entry_a(lua: Any, doc: Any, **changes: Any) -> Any:
-    """`doc` with the `["a"]` entry (the first of `LabDataDB`) changed."""
+def _with_entry(doc: Any, index: int, **changes: Any) -> Any:
+    """`doc` with entry `index` of `LabDataDB` changed (0 is `["a"]`, 1 is
+    `["list"]`, the last)."""
     table_value = doc.assignments[0].value
-    entries = (table_value.entries[0]._replace(**changes), *table_value.entries[1:])
-    return _with_first_assignment(doc, value=table_value._replace(entries=entries))
+    entries = list(table_value.entries)
+    entries[index] = entries[index]._replace(**changes)
+    return _with_first_assignment(doc, value=table_value._replace(entries=tuple(entries)))
 
 
-def _with_close_lead(doc: Any, close_lead: bytes) -> Any:
+def _with_close_lead(doc: Any, close_lead: bytes | None) -> Any:
     return _with_first_assignment(
         doc, value=doc.assignments[0].value._replace(close_lead=close_lead)
     )
 
 
-HOSTILE = {
-    "lead-holds-a-call": lambda lua, d: _with_first_assignment(d, lead=b"\r\nos.exit()\r\n"),
-    "lead-holds-a-long-comment": lambda lua, d: _with_entry_a(lua, d, lead=b"\r\n--[[ hidden ]]\t"),
-    "lead-holds-a-level-long-comment": lambda lua, d: _with_entry_a(
-        lua, d, lead=b"\r\n--[==[ x ]==]\t"
+LONG_CODE = b"os.exit() " * 10
+
+# id: (edit, the refused slot's bytes (any one of them), (line, column) where
+# they would start in the output, or None where item 9 leaves it open).
+# Positions: DATA_SOURCE line 2 is `LabDataDB = {` (13 bytes), line 3
+# `\t["a"] = 1,`, line 6 `\t},`, line 7 `}`.
+HOSTILE: dict[str, tuple[Any, tuple[bytes, ...], tuple[int, int] | None]] = {
+    "lead-holds-a-call": (
+        lambda lua, d: _with_first_assignment(d, lead=b"\r\nos.exit()\r\n"),
+        (b"\r\nos.exit()\r\n",),
+        (1, 1),
     ),
-    "tail-holds-a-nul": lambda lua, d: d._replace(tail=b"\r\n\x00"),
-    "comment-holds-a-nul": lambda lua, d: _with_entry_a(lua, d, lead=b"\r\n-- a\x00b\r\n\t"),
-    "eq-lead-holds-an-operator": lambda lua, d: _with_entry_a(lua, d, eq_lead=b" + 1 "),
-    "close-lead-holds-setmetatable": lambda lua, d: _with_close_lead(
-        d, b"\r\nsetmetatable({}, {})\r\n"
+    "lead-holds-a-long-call-token-cut-at-40": (
+        lambda lua, d: _with_entry(d, 0, lead=b"\r\n" + LONG_CODE),
+        (b"\r\n" + LONG_CODE,),
+        (2, 14),
     ),
-    "string-raw-is-a-function": lambda lua, d: _with_entry_a(
-        lua, d, value=lua.LuaString(lead=b" ", raw=b"function() end")
+    "lead-holds-a-long-comment": (
+        lambda lua, d: _with_entry(d, 0, lead=b"\r\n--[[ hidden ]]\t"),
+        (b"\r\n--[[ hidden ]]\t",),
+        (2, 14),
     ),
-    "number-raw-is-a-function": lambda lua, d: _with_entry_a(
-        lua, d, value=lua.LuaNumber(lead=b" ", raw="function() end")
+    "lead-holds-a-level-long-comment": (
+        lambda lua, d: _with_entry(d, 0, lead=b"\r\n--[==[ x ]==]\t"),
+        (b"\r\n--[==[ x ]==]\t",),
+        (2, 14),
     ),
-    "number-raw-is-arithmetic": lambda lua, d: _with_entry_a(
-        lua, d, value=lua.LuaNumber(lead=b" ", raw="1+1")
+    "lead-ends-in-an-open-comment-swallowing-the-entry": (
+        lambda lua, d: _with_entry(d, 0, lead=b"\r\n-- "),
+        (b"\r\n-- ",),
+        (2, 14),
     ),
-    "string-raw-is-a-concatenation": lambda lua, d: _with_entry_a(
-        lua, d, value=lua.LuaString(lead=b" ", raw=b'"a" .. "b"')
+    "tail-holds-a-nul": (
+        lambda lua, d: d._replace(tail=b"\r\n\x00"),
+        (b"\r\n\x00",),
+        (7, 2),
     ),
-    "string-raw-holds-a-raw-line-break": lambda lua, d: _with_entry_a(
-        lua, d, value=lua.LuaString(lead=b" ", raw=b'"a\r\nb"')
+    "comment-in-a-lead-holds-a-nul": (
+        lambda lua, d: _with_entry(d, 0, lead=b"\r\n-- a\x00b\r\n\t"),
+        (b"\r\n-- a\x00b\r\n\t",),
+        (2, 14),
     ),
-    "string-key-is-a-call": lambda lua, d: _with_entry_a(
-        lua, d, key=lua.LuaString(lead=b"", raw=b"f()")
+    "key-close-lead-holds-a-call": (
+        lambda lua, d: _with_entry(d, 0, key_close_lead=b" f() "),
+        (b" f() ",),
+        (3, 6),
     ),
-    "number-key-is-a-name": lambda lua, d: _with_entry_a(
-        lua, d, style=lua.KeyStyle.NUMBER, key=lua.LuaNumber(lead=b"", raw="math.huge")
+    "eq-lead-holds-an-operator": (
+        lambda lua, d: _with_entry(d, 0, eq_lead=b" + 1 "),
+        (b" + 1 ",),
+        (3, 7),
     ),
-    "name-key-is-a-path": lambda lua, d: _with_entry_a(
-        lua, d, style=lua.KeyStyle.NAME, key="os.exit"
+    "eq-lead-ends-in-an-open-comment": (
+        lambda lua, d: _with_entry(d, 0, eq_lead=b" --"),
+        (b" --",),
+        (3, 7),
     ),
-    "name-key-is-a-keyword": lambda lua, d: _with_entry_a(
-        lua, d, style=lua.KeyStyle.NAME, key="function"
+    "sep-lead-holds-a-call": (
+        lambda lua, d: _with_entry(d, 0, sep_lead=b" f() "),
+        (b" f() ",),
+        (3, 11),
     ),
-    "assignment-name-is-a-path": lambda lua, d: _with_first_assignment(d, name="a.b"),
-    "assignment-name-is-a-keyword": lambda lua, d: _with_first_assignment(d, name="end"),
+    "sep-holds-code": (
+        lambda lua, d: _with_entry(d, 0, sep=b",os.exit(),"),
+        (b",os.exit(),",),
+        (3, 11),
+    ),
+    "comment-holds-a-line-break-and-code": (
+        lambda lua, d: _with_close_lead(_with_entry(d, 1, comment=b"-- x\r\nos.exit()"), None),
+        (b"-- x\r\nos.exit()", b" -- x\r\nos.exit()"),
+        None,
+    ),
+    "close-lead-holds-setmetatable": (
+        lambda lua, d: _with_close_lead(d, b"\r\nsetmetatable({}, {})\r\n"),
+        (b"\r\nsetmetatable({}, {})\r\n",),
+        (6, 4),
+    ),
+    "string-raw-is-a-function": (
+        lambda lua, d: _with_entry(d, 0, value=lua.LuaString(lead=b" ", raw=b"function() end")),
+        (b"function() end",),
+        (3, 10),
+    ),
+    "number-raw-is-a-function": (
+        lambda lua, d: _with_entry(d, 0, value=lua.LuaNumber(lead=b" ", raw="function() end")),
+        (b"function() end",),
+        (3, 10),
+    ),
+    "number-raw-is-arithmetic": (
+        lambda lua, d: _with_entry(d, 0, value=lua.LuaNumber(lead=b" ", raw="1+1")),
+        (b"1+1",),
+        (3, 10),
+    ),
+    "string-raw-is-a-concatenation": (
+        lambda lua, d: _with_entry(d, 0, value=lua.LuaString(lead=b" ", raw=b'"a" .. "b"')),
+        (b'"a" .. "b"',),
+        (3, 10),
+    ),
+    "string-raw-holds-a-raw-line-break": (
+        lambda lua, d: _with_entry(d, 0, value=lua.LuaString(lead=b" ", raw=b'"a\r\nb"')),
+        (b'"a\r\nb"',),
+        (3, 10),
+    ),
+    "nil-inside-a-table": (
+        lambda lua, d: _with_entry(d, 0, value=lua.LuaNil(lead=b" ")),
+        (b"nil", b" nil"),
+        None,
+    ),
+    "string-key-is-a-call": (
+        lambda lua, d: _with_entry(d, 0, key=lua.LuaString(lead=b"", raw=b"f()")),
+        (b"f()",),
+        (3, 3),
+    ),
+    "number-key-is-a-name": (
+        lambda lua, d: _with_entry(
+            d, 0, style=lua.KeyStyle.NUMBER, key=lua.LuaNumber(lead=b"", raw="math.huge")
+        ),
+        (b"math.huge",),
+        (3, 3),
+    ),
+    "name-key-is-a-path": (
+        lambda lua, d: _with_entry(d, 0, style=lua.KeyStyle.NAME, key="os.exit"),
+        (b"os.exit",),
+        (3, 2),
+    ),
+    "name-key-is-a-keyword": (
+        lambda lua, d: _with_entry(d, 0, style=lua.KeyStyle.NAME, key="function"),
+        (b"function",),
+        (3, 2),
+    ),
+    "assignment-name-is-a-path": (
+        lambda lua, d: _with_first_assignment(d, name="a.b"),
+        (b"a.b",),
+        (2, 1),
+    ),
+    "assignment-name-is-a-keyword": (
+        lambda lua, d: _with_first_assignment(d, name="end"),
+        (b"end",),
+        (2, 1),
+    ),
 }
 
 
 @pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
-@pytest.mark.parametrize("hostile", list(HOSTILE.values()), ids=list(HOSTILE))
-def test_serialize_refuses_what_is_not_data(luadata: Any, hostile: Any) -> None:
-    """Item 2 (owner): a given trivia slot holding anything but whitespace
-    and `--` line comments (a call, a long comment, a NUL, an operator), or a
-    `raw`, key or name that is not a literal §4.1 accepts, raises
-    `LuaDataError`; no bytes come back. L3 holds for writes."""
+@pytest.mark.parametrize(
+    ("hostile", "refused", "position"), list(HOSTILE.values()), ids=list(HOSTILE)
+)
+def test_serialize_refuses_what_is_not_data(
+    luadata: Any, hostile: Any, refused: tuple[bytes, ...], position: tuple[int, int] | None
+) -> None:
+    """Items 2, 8 and 9: every slot is checked. A trivia slot holding
+    anything but whitespace and `--` line comments (a call, a long comment,
+    a NUL, an operator), or a comment that does not end with a line break
+    inside its slot (it would swallow what follows), a `sep` other than
+    `,`, `;` or empty, an `Entry.comment` that is not one line comment, a
+    `raw`, key or name that is not a literal §4.1 accepts, or a `nil` inside
+    a table raises `LuaDataError`; no bytes come back, so L3 holds for
+    writes. `.token` is at most the first 40 bytes of the refused slot, and
+    `.line` / `.column` are where it would start in the output (Lua line
+    counting, 1-based, the column in bytes)."""
     doc = hostile(luadata, luadata.parse(DATA_SOURCE))
-    with pytest.raises(luadata.LuaDataError):
+    with pytest.raises(luadata.LuaDataError) as caught:
         luadata.serialize(doc)
+    token = caught.value.token
+    assert isinstance(token, bytes)
+    assert 1 <= len(token) <= 40
+    assert any(slot.startswith(token) for slot in refused), token
+    if position is not None:
+        assert (caught.value.line, caught.value.column) == position
+
+
+def _legal_trivia(lua: Any, d: Any) -> Any:
+    d = _with_first_assignment(d, lead=b"\r\n-- a comment line\r\n \t")
+    d = _with_entry(
+        d,
+        0,
+        lead=b"\r\n\t--[1] not a long comment\r\n\t",
+        key_close_lead=b"  ",
+        eq_lead=b"  \t",
+        sep_lead=b" \t-- before the separator\r\n\t",
+        sep=b";",
+    )
+    d = _with_entry(d, 1, sep_lead=b" ", sep=b"")
+    d = _with_close_lead(d, b" -- after the list\r\n\f\v")
+    return d._replace(tail=b"\r\n-- end\r\n")
+
+
+LEGAL_SLOTS = {
+    "given-trivia-and-separators": (_legal_trivia, None),
+    "one-line-comment-after-the-old-last-entry": (
+        lambda lua, d: _with_close_lead(_with_entry(d, 1, comment=b"-- fine"), None),
+        replace_once(DATA_SOURCE, b"\t},\r\n}", b"\t}, -- fine\r\n}"),
+    ),
+}
 
 
 @pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
-def test_serialize_writes_legal_comments_and_whitespace_as_given(luadata: Any) -> None:
-    """The positive control for the data-only rule: given slots holding
+@pytest.mark.parametrize(("legal", "expected"), list(LEGAL_SLOTS.values()), ids=list(LEGAL_SLOTS))
+def test_serialize_writes_legal_slot_contents_as_given(
+    luadata: Any, legal: Any, expected: bytes | None
+) -> None:
+    """The positive control for the data-only rule, on the same slots:
     whitespace (space, tab, form feed, vertical tab, line breaks) and `--`
-    line comments, `--[1]` included, are written exactly, and the output
-    parses back to the same bytes."""
-    doc = luadata.parse(DATA_SOURCE)
-    doc = _with_first_assignment(doc, lead=b"\r\n-- a comment line\r\n \t")
-    doc = _with_entry_a(luadata, doc, lead=b"\r\n\t--[1] not a long comment\r\n\t", eq_lead=b"  \t")
-    doc = _with_close_lead(doc, b" -- after the list\r\n\f\v")
-    doc = doc._replace(tail=b"\r\n-- end\r\n")
+    line comments ending with a line break (`--[1]` included) in a lead, a
+    `key_close_lead`, an `eq_lead`, a `sep_lead` and a `close_lead`; a `;`
+    separator and an empty one on the last entry; a comment in the tail; a
+    one-line `Entry.comment` written after the old last entry's separator.
+    All written exactly, and the output parses back to the same bytes."""
+    doc = legal(luadata, luadata.parse(DATA_SOURCE))
     out = luadata.serialize(doc)
-    assert out == rebuild(luadata, doc)
-    assert out.startswith(
-        b"\r\n-- a comment line\r\n \tLabDataDB = {\r\n\t--[1] not a long comment"
-    )
+    assert out == (rebuild(luadata, doc) if expected is None else expected)
     assert luadata.serialize(luadata.parse(out)) == out

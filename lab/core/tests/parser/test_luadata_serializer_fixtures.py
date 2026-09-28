@@ -585,7 +585,7 @@ def test_a_sibling_showing_no_indentation_decides_no_array_comments(
 
 
 @pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
-def test_new_document_in_a_flavor_with_no_savedvariables_is_the_fallback(
+def test_constructed_other_flavor_is_no_sibling_so_a_new_document_is_the_fallback(
     luadata: Any, tmp_path: Path
 ) -> None:
     """The target's flavor folder has no SavedVariables of its own; the
@@ -648,6 +648,11 @@ DISAGREEING = {
         ("Tab.lua",),
         FLAT_CRLF,
     ),
+    "constructed-lab-written-compared-after-resolve": (
+        {"Syndicator.lua": (SYN, OLD), "Tab.lua": (TAB, NEW)},
+        ("unresolved/../Tab.lua",),
+        FLAT_CRLF,
+    ),
     "constructed-tie-lowest-byte-path-Zeta-before-alpha": (
         {"alpha.lua": (SYN, NEW), "Zeta.lua": (TAB, NEW)},
         (),
@@ -678,7 +683,9 @@ def test_disagreeing_siblings_newest_showing_the_property_decides(
     tmp_path: Path,
 ) -> None:
     """Item 4 (owner): per property, the most recently modified sibling that
-    shows it decides, leaving out the files in `lab_written`; equal times
+    shows it decides, leaving out the files in `lab_written` (compared
+    after `Path.resolve()`, item 8, so an unresolved spelling of the same
+    file counts); equal times
     break on the byte-wise path relative to the flavor folder, lowest first
     (`Z` 0x5A sorts before `a` 0x61, so neither case folding nor directory
     order can pass both tie cases). A newest sibling that shows only its
@@ -697,7 +704,7 @@ def test_disagreeing_siblings_newest_showing_the_property_decides(
 
 
 SIBLING_SETS = {
-    "decoys-ignored": (
+    "constructed-decoys-ignored": (
         {
             "_lab_one_": {
                 f"{ACCOUNT_SV}/Syndicator.lua": (SYN, OLD),
@@ -750,7 +757,9 @@ def test_sibling_set_is_decided_by_path(
 
 
 @pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
-def test_unreadable_unparsable_and_empty_siblings_are_skipped(luadata: Any, tmp_path: Path) -> None:
+def test_constructed_unreadable_unparsable_and_empty_siblings_are_skipped(
+    luadata: Any, tmp_path: Path
+) -> None:
     """Item 3: a sibling that is empty, cut off mid-table, over the depth
     bound, or not a file at all is skipped, even when it is the newest, and
     never makes `serialize` raise; Syndicator.lua decides."""
@@ -893,7 +902,7 @@ def _serialize_all(
 
 
 @pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
-def test_hundred_runs_give_identical_bytes_under_a_decimal_comma_locale(
+def test_constructed_trees_hundred_runs_give_identical_bytes_under_a_decimal_comma_locale(
     luadata: Any, tmp_path: Path
 ) -> None:
     """100 serializations of each case under a locale whose decimal point
@@ -926,7 +935,7 @@ with open(sys.argv[2], "wb") as handle:
 
 
 @pytest.mark.xfail(strict=True, reason="M10-12 not implemented")
-def test_fresh_interpreters_with_other_hash_seeds_and_locales_give_the_same_bytes(
+def test_constructed_trees_fresh_interpreters_with_other_hash_seeds_and_locales_agree(
     luadata: Any, tmp_path: Path
 ) -> None:
     """Same documents, same bytes, in fresh interpreters under a
