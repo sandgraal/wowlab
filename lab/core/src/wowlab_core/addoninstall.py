@@ -7,8 +7,10 @@ taken first, the change is journaled and `wowlab undo` reverses it. The
 TOC's `## Interface: @WOWLAB_INTERFACE@` line is filled with the interface
 version derived from the flavor's discovered version by the patch-number
 rule (GLOSSARY, "Interface version"): `major * 10000 + minor * 100 + patch`.
-Nothing about a flavor is known here (L6): the version comes from
-`.build.info` through `install`.
+The rule gave 16001 for 1.60.1, confirmed in game on 2026-09-22
+(`docs/DATA_SOURCES.md`); M11-03 checks it again against the fourth value
+`GetBuildInfo()` returns. Nothing about a flavor is known here (L6): the
+version comes from `.build.info` through `install`.
 
 What is copied: `WowLab.toc` and every `*.lua` file directly in the source
 folder, nothing else (the README, the linter's configuration and its client
@@ -18,26 +20,35 @@ files, so what is copied is what the client loads.
 Re-installing over a copy plans only the files whose bytes differ, and
 deletes files under `Interface/AddOns/WowLab/` that are not part of the
 sources (an older version's leftovers). `wowlab addon remove lab` deletes
-every file under that folder through the gate. The folder itself stays,
-empty: the gate deletes files, not folders. Neither ever touches the
-addon's SavedVariables (`WowLab.lua` under `WTF/`, which holds `WowLabDB`
-and each character's `WowLabCharDB`): those are the captures. Profiles
-(§13.3) never touch the folder or `WowLab.lua` either.
+every file under that folder through the gate, and a delete the gate
+refuses refuses the whole removal. The folder itself stays: the gate
+deletes files, not folders. Neither ever touches the addon's SavedVariables
+(`WowLab.lua` under `WTF/`, which holds `WowLabDB` and each character's
+`WowLabCharDB`): those are the captures. Profiles (§13.3) never touch the
+folder or `WowLab.lua` either.
 
-Reads of the install are listings only, made without following any link,
-junction or reparse point (L1); every byte written or deleted goes through
-`guard`, which checks every path again.
+Reads of the install are listings, and reads of the files install left
+alone as up to date, made without following any link, junction or reparse
+point (L1); every byte written or deleted goes through `guard`, which checks
+every path again. Inside the transaction, with the gate's locks held, the
+folder is listed again and the up-to-date files are read again; any
+difference from the plan raises `AddonChangedError`, so the gate rolls back.
 
-The sources are found from this package: the nearest ancestor folder of it
-holding `lab/addon/WowLab/WowLab.toc`, which is the repository when wowlab
-runs from a checkout. Anywhere else `AddonSourceError` says so.
+The sources are found from this package: the nearest ancestor folder of it,
+up to the workspace root (the first ancestor holding `.git` or a
+`pyproject.toml` that declares the uv workspace), holding
+`lab/addon/WowLab/WowLab.toc`. A link in `lab`, `addon` or `WowLab` is
+refused, and each source file is opened without following a link and
+checked to be the regular file its `lstat` saw. Anywhere else
+`AddonSourceError` says so.
 """
 
 from __future__ import annotations
 
 import os
 import stat
-from collections.abc import Mapping
+import tomllib
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Protocol
 
@@ -49,6 +60,7 @@ from wowlab_core.toc import parse_toc
 __all__ = [
     "ADDON_FOLDER",
     "ADDON_NAME",
+    "FOLDER_LEFT_NOTE",
     "FOLDER_STAYS_NOTE",
     "INTERFACE_LINE",
     "INTERFACE_PLACEHOLDER",
@@ -56,6 +68,8 @@ __all__ = [
     "LOAD_NOTE",
     "MAX_ENTRIES",
     "MAX_SOURCE_BYTES",
+    "MAX_VERSION_DIGITS",
+    "PATCH_NOTE",
     "SAVED_VARIABLES_NOTE",
     "SOURCE_PARTS",
     "TOC_NAME",
@@ -91,20 +105,37 @@ MAX_SOURCE_BYTES = 1 << 20
 """A source file larger than this is refused (the addon's files are a few KiB)."""
 MAX_ENTRIES = 1000
 """More entries than this under the installed folder is refused, not walked."""
+MAX_VERSION_DIGITS = 9
+"""A version part longer than this many digits is refused."""
+_MAX_PYPROJECT_BYTES = 1 << 20
 
 SAVED_VARIABLES_NOTE = (
-    "The addon's SavedVariables are left alone: WowLab.lua under WTF/ (WowLabDB, and "
-    "WowLabCharDB in each character's folder) holds its captures. wowlab never deletes it; "
-    "remove it yourself if you no longer want it."
+    "The addon's SavedVariables are left alone: WowLab.lua (and the client's WowLab.lua.bak) "
+    "in WTF/Account/<account>/SavedVariables/ (WowLabDB) and in each character's "
+    "SavedVariables/ folder (WowLabCharDB) hold its captures. `wowlab addon install` and "
+    "`remove` never touch them; delete them yourself if you no longer want them."
 )
 FOLDER_STAYS_NOTE = (
-    f"The folder {ADDON_FOLDER}/ itself stays, empty: the write gate deletes files, not "
-    "folders. With no TOC in it there is no addon for the client to load."
+    f"The folder {ADDON_FOLDER}/ stays: the write gate deletes files, not folders. With no "
+    f"{TOC_NAME} left in it, the client has no addon to load from it, and `wowlab addons list` "
+    "shows it as a folder with no TOC. You can delete the folder yourself."
 )
+FOLDER_LEFT_NOTE = "It still holds the path(s) listed above as left alone."
+"""Added to `FOLDER_STAYS_NOTE` when a removal leaves paths alone."""
 LOAD_NOTE = (
-    "The client reads Interface/AddOns/ when it starts; check that WowLab is enabled in the "
-    "AddOns list at character select."
+    "Start the client. At character select, open AddOns, choose each character you will play "
+    "(or all characters) in the drop-down, and check that WowLab is listed and ticked. If it "
+    "is marked out of date, the ## Interface: value wowlab derived does not match this "
+    "client: report it. WowLab.lua appears under WTF/ only after your first logout or /reload."
 )
+PATCH_NOTE = (
+    "The TOC says ## Interface: {interface}, derived from the client version {version} in "
+    ".build.info (flavor folder {folder}). When a client update changes the first three "
+    "numbers of that version, the AddOns list may mark WowLab out of date: close the client "
+    "and run `wowlab addon install lab` again. An update that changes only the build number "
+    "needs no reinstall."
+)
+"""`str.format` with `interface`, `version` and `folder`."""
 
 
 class AddonError(Exception):
@@ -145,6 +176,8 @@ class InstallPlan(_Frozen):
     plan: tuple[guard.PlanItem, ...]  # writes of new or changed files, then deletes
     unchanged: tuple[str, ...]  # files already holding the bytes install would write
     left: tuple[LeftPath, ...]
+    listed: tuple[str, ...]  # every entry the listing of the folder found (the re-check)
+    notes: tuple[str, ...]
 
 
 class RemovePlan(_Frozen):
@@ -152,8 +185,10 @@ class RemovePlan(_Frozen):
 
     flavor_path: str
     plan: tuple[guard.PlanItem, ...]  # deletes only
-    left: tuple[LeftPath, ...]
+    left: tuple[LeftPath, ...]  # links and other entries that are not regular files
     folder_exists: bool
+    listed: tuple[str, ...]  # every entry the listing of the folder found (the re-check)
+    notes: tuple[str, ...]
 
 
 class _FlavorLike(Protocol):
@@ -161,7 +196,66 @@ class _FlavorLike(Protocol):
     def path(self) -> Path: ...
 
     @property
+    def folder(self) -> str: ...
+
+    @property
     def version(self) -> str | None: ...
+
+
+class _Tx(Protocol):
+    @property
+    def plan(self) -> tuple[guard.PlanItem, ...]: ...
+
+    def delete(self, rel_path: str) -> None: ...
+
+
+# ─── reading without following links ─────────────────────────────────────────
+
+
+class _UnreadableError(Exception):
+    """A file that is not a regular file readable without following a link."""
+
+
+def _is_link(path: Path, st: os.stat_result) -> bool:
+    """A symlink, or on Windows a junction or other directory link."""
+    if stat.S_ISLNK(st.st_mode):
+        return True
+    try:
+        return stat.S_ISDIR(st.st_mode) and path.is_junction()
+    except OSError:
+        return True
+
+
+def _read_regular(path: Path, limit: int) -> bytes:
+    """The bytes of the regular file at `path`, opened without following a
+    link, checked by `fstat` to be the file `lstat` saw, at most `limit`."""
+    try:
+        seen = path.lstat()
+    except OSError as exc:
+        raise _UnreadableError(f"cannot be read: {exc}") from exc
+    if not stat.S_ISREG(seen.st_mode):
+        raise _UnreadableError("is not a regular file")
+    if seen.st_size > limit:
+        raise _UnreadableError(f"is {seen.st_size} bytes, over {limit}")
+    try:
+        fd = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_CLOEXEC", 0),
+        )
+    except OSError as exc:
+        raise _UnreadableError(f"cannot be opened without following a link: {exc}") from exc
+    with os.fdopen(fd, "rb") as handle:
+        st = os.fstat(handle.fileno())
+        if not stat.S_ISREG(st.st_mode) or (st.st_dev, st.st_ino) != (seen.st_dev, seen.st_ino):
+            raise _UnreadableError("changed while it was opened")
+        data = handle.read(limit + 1)
+    if len(data) > limit:
+        raise _UnreadableError(f"grew past {limit} bytes")
+    return data
 
 
 # ─── the sources ─────────────────────────────────────────────────────────────
@@ -169,59 +263,99 @@ class _FlavorLike(Protocol):
 _HERE = Path(__file__).resolve().parent
 
 
+def _is_workspace_root(folder: Path) -> bool:
+    """`.git` (a folder, or a worktree's file) or a `pyproject.toml` that
+    declares the uv workspace."""
+    try:
+        if (folder / ".git").lstat():
+            return True
+    except OSError:
+        pass
+    try:
+        data = _read_regular(folder / "pyproject.toml", _MAX_PYPROJECT_BYTES)
+        tool = tomllib.loads(data.decode("utf-8")).get("tool", {})
+    except (_UnreadableError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return False
+    uv = tool.get("uv", {}) if isinstance(tool, dict) else {}
+    return isinstance(uv, dict) and "workspace" in uv
+
+
+def _candidate(folder: Path) -> Path | None:
+    """`folder/lab/addon/WowLab` if it holds a `WowLab.toc`, refusing a link
+    in any of its components."""
+    current = folder
+    for part in SOURCE_PARTS:
+        current = current / part
+        try:
+            st = current.lstat()
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise AddonSourceError(f"cannot look at {current}: {exc}") from exc
+        if _is_link(current, st):
+            raise AddonSourceError(
+                f"{current} is a link (a symlink or junction); the lab-addon's sources are "
+                "read only from a real folder of the checkout"
+            )
+        if not stat.S_ISDIR(st.st_mode):
+            return None
+    try:
+        st = (current / TOC_NAME).lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise AddonSourceError(f"cannot look at {current / TOC_NAME}: {exc}") from exc
+    if not stat.S_ISREG(st.st_mode):
+        raise AddonSourceError(f"{current / TOC_NAME} is not a regular file")
+    return current
+
+
 def find_source(start: Path | None = None) -> Path:
     """The lab-addon's source folder: `lab/addon/WowLab/` in the nearest
-    ancestor of `start` (default: this package's folder) that holds one with
-    a `WowLab.toc`. Raises `AddonSourceError` when there is none, as when
-    wowlab runs from an installed package rather than a checkout."""
+    ancestor of `start` (default: this package's folder), up to the
+    workspace root, that holds one with a `WowLab.toc`. Raises
+    `AddonSourceError` when there is none, as when wowlab runs from an
+    installed package rather than a checkout."""
     here = (start if start is not None else _HERE).resolve()
     for folder in (here, *here.parents):
-        candidate = folder.joinpath(*SOURCE_PARTS)
-        if (candidate / TOC_NAME).is_file():
-            return candidate
+        found = _candidate(folder)
+        if found is not None:
+            return found
+        if _is_workspace_root(folder):
+            break
     raise AddonSourceError(
         f"the lab-addon's sources ({'/'.join(SOURCE_PARTS)}/{TOC_NAME}) were not found in any "
-        f"folder above {here}; `wowlab addon install lab` runs from a checkout of the "
-        "wowlab repository (uv run wowlab ...)"
+        f"folder above {here} up to the workspace root; `wowlab addon install lab` runs from a "
+        "checkout of the wowlab repository (uv run wowlab ...)"
     )
 
 
 def _read_source(path: Path) -> bytes:
     try:
-        st = path.lstat()
-    except OSError as exc:
-        raise AddonSourceError(f"cannot read the lab-addon source {path}: {exc}") from exc
-    if not stat.S_ISREG(st.st_mode):
-        raise AddonSourceError(f"the lab-addon source {path} is not a regular file")
-    if st.st_size > MAX_SOURCE_BYTES:
-        raise AddonSourceError(
-            f"the lab-addon source {path} is {st.st_size} bytes, over {MAX_SOURCE_BYTES}"
-        )
-    try:
-        data = path.read_bytes()
-    except OSError as exc:
-        raise AddonSourceError(f"cannot read the lab-addon source {path}: {exc}") from exc
-    if len(data) > MAX_SOURCE_BYTES:
-        raise AddonSourceError(f"the lab-addon source {path} grew past {MAX_SOURCE_BYTES} bytes")
-    return data
+        return _read_regular(path, MAX_SOURCE_BYTES)
+    except _UnreadableError as exc:
+        raise AddonSourceError(f"the lab-addon source {path} {exc}") from exc
 
 
 def interface_version(version: str | None) -> int:
     """The interface version for a flavor version, by the patch-number rule:
-    `"1.60.1.69913"` -> `16001`, `"12.1.5.65432"` -> `120105`."""
+    `"1.60.1.69913"` -> `16001`, `"12.1.5.65432"` -> `120105`. Every part of
+    the version must be 1 to `MAX_VERSION_DIGITS` ASCII digits."""
     if version is None:
         raise AddonVersionError(
             "the flavor has no version in .build.info, so the TOC's ## Interface: cannot be "
             "filled; nothing was changed"
         )
     parts = version.split(".")
-    numbers = parts[:3]
-    if len(numbers) < 3 or not all(p.isascii() and p.isdecimal() for p in numbers):
+    if len(parts) < 3 or not all(
+        p.isascii() and p.isdecimal() and len(p) <= MAX_VERSION_DIGITS for p in parts
+    ):
         raise AddonVersionError(
-            f"the flavor's version {version!r} is not major.minor.patch[.build], so the TOC's "
-            "## Interface: cannot be filled; nothing was changed"
+            f"the flavor's version {version[:64]!r} is not major.minor.patch[.build] with at "
+            f"most {MAX_VERSION_DIGITS} digits a part, so the TOC's ## Interface: cannot be "
+            "filled; nothing was changed"
         )
-    major, minor, patch = (int(p) for p in numbers)
+    major, minor, patch = (int(p) for p in parts[:3])
     if minor > 99 or patch > 99:
         raise AddonVersionError(
             f"the flavor's version {version!r} has a minor or patch number over 99, which the "
@@ -290,16 +424,6 @@ def addon_files(interface: int, source: Path | None = None) -> dict[str, bytes]:
 # ─── what is installed ───────────────────────────────────────────────────────
 
 
-def _is_link(path: Path, st: os.stat_result) -> bool:
-    """A symlink, or on Windows a junction or other directory link."""
-    if stat.S_ISLNK(st.st_mode):
-        return True
-    try:
-        return stat.S_ISDIR(st.st_mode) and path.is_junction()
-    except OSError:
-        return True
-
-
 def _installed(flavor_dir: Path) -> tuple[list[str], list[LeftPath], bool]:
     """The regular files under the addon folder (flavor-relative, sorted),
     the entries left alone, and whether the folder exists. Nothing is
@@ -360,6 +484,26 @@ def _installed(flavor_dir: Path) -> tuple[list[str], list[LeftPath], bool]:
     return sorted(files), left, True
 
 
+def _listed(files: Sequence[str], left: Sequence[LeftPath]) -> tuple[str, ...]:
+    return tuple(sorted([*files, *(lp.path for lp in left)]))
+
+
+def _in_folder(rel: str) -> None:
+    """Refuse a path outside the addon folder: nothing else is ever touched."""
+    if not rel.startswith(ADDON_FOLDER + "/"):
+        raise AddonError(f"{rel!r} is not under {ADDON_FOLDER}/; wowlab refuses to touch it")
+
+
+def _relisted(flavor_dir: Path, expected: tuple[str, ...]) -> None:
+    """With the gate's locks held: the folder must list as it did for the plan."""
+    files, left, _ = _installed(flavor_dir)
+    if _listed(files, left) != expected:
+        raise AddonChangedError(
+            f"{ADDON_FOLDER}/ changed after the plan was made, so nothing was changed; run the "
+            "command again to see the new plan"
+        )
+
+
 # ─── install ─────────────────────────────────────────────────────────────────
 
 
@@ -367,15 +511,14 @@ def _install_label(interface: int) -> str:
     return f"addon install {LAB_ADDON} (## Interface: {interface})"
 
 
-class _Tx(Protocol):
-    @property
-    def plan(self) -> tuple[guard.PlanItem, ...]: ...
-
-    def delete(self, rel_path: str) -> None: ...
-
-
-def _deletes(tx: _Tx, paths: list[str], left: list[LeftPath]) -> None:
+def _deletes(tx: _Tx, paths: Iterable[str], left: list[LeftPath] | None) -> None:
+    """Plan a delete of each path. With `left`, a path the gate refuses is
+    set aside there (install's leftovers); without it the refusal raises."""
     for rel in paths:
+        _in_folder(rel)
+        if left is None:
+            tx.delete(rel)
+            continue
         try:
             tx.delete(rel)
         except guard.PathNotAllowedError as exc:
@@ -396,12 +539,14 @@ def plan_install(
     version = str(flavor.version)  # not None: interface_version refused that
     folder = find_source() if source is None else source
     files = addon_files(interface, folder)
-    present, left, _ = _installed(flavor.path)
+    present, found_left, _ = _installed(flavor.path)
+    left = list(found_left)
     extras = [p for p in present if p not in files]
     with guard.transaction(
         flavor, label=_install_label(interface), store=store, dry_run=True
     ) as tx:
         for rel, data in files.items():
+            _in_folder(rel)
             tx.write(rel, data)
         _deletes(tx, extras, left)
         whole = tx.plan
@@ -414,6 +559,11 @@ def plan_install(
         plan=tuple(i for i in whole if i.before != i.after),
         unchanged=tuple(i.path for i in whole if i.before == i.after),
         left=tuple(left),
+        listed=_listed(present, found_left),
+        notes=(
+            PATCH_NOTE.format(interface=interface, version=version, folder=flavor.folder),
+            LOAD_NOTE,
+        ),
     )
 
 
@@ -428,14 +578,35 @@ def _checked(tx: _Tx, plan: tuple[guard.PlanItem, ...]) -> None:
 
 def install(plan: InstallPlan, flavor: _FlavorLike, *, store: Path | None = None) -> str:
     """Make exactly the changes `plan` lists, in one gate transaction, and
-    return its journal record id (`wowlab undo` reverses it). If the gate's
-    own plan differs from `plan`, `AddonChangedError` is raised inside the
-    transaction, so the gate rolls it back."""
+    return its journal record id (`wowlab undo` reverses it).
+
+    Before anything is written, with the gate's locks held, the folder is
+    listed again and every file the plan called up to date is read again;
+    a difference, or a gate plan that differs from `plan`, raises
+    `AddonChangedError` inside the transaction, so the gate rolls back."""
     files: Mapping[str, bytes] = addon_files(plan.interface, Path(plan.source))
+    for item in plan.plan:
+        _in_folder(item.path)
+    for rel in plan.unchanged:
+        _in_folder(rel)
+    changed = AddonChangedError(
+        "the lab-addon's sources or its installed files changed after the plan was made, so "
+        "nothing was changed; run the command again to see the new plan"
+    )
     with guard.transaction(flavor, label=_install_label(plan.interface), store=store) as tx:
+        _relisted(flavor.path, plan.listed)
+        for rel in plan.unchanged:
+            try:
+                current = _read_regular(flavor.path.joinpath(*rel.split("/")), MAX_SOURCE_BYTES)
+            except _UnreadableError as exc:
+                raise changed from exc
+            if rel not in files or current != files[rel]:
+                raise changed
         for item in plan.plan:
             if item.after is None:
                 tx.delete(item.path)
+            elif item.path not in files:
+                raise changed
             else:
                 tx.write(item.path, files[item.path])
         _checked(tx, plan.plan)
@@ -447,23 +618,40 @@ def install(plan: InstallPlan, flavor: _FlavorLike, *, store: Path | None = None
 _REMOVE_LABEL = f"addon remove {LAB_ADDON}"
 
 
+def _remove_notes(left: Sequence[LeftPath], exists: bool) -> tuple[str, ...]:
+    notes = [SAVED_VARIABLES_NOTE]
+    if exists and not any(lp.path.casefold().endswith(".toc") for lp in left):
+        notes.append(FOLDER_STAYS_NOTE + (" " + FOLDER_LEFT_NOTE if left else ""))
+    return tuple(notes)
+
+
 def plan_remove(flavor: _FlavorLike, *, store: Path | None = None) -> RemovePlan:
     """What `remove` would delete: every regular file under the addon folder,
-    from a dry run of the gate. SavedVariables are never part of it."""
+    from a dry run of the gate. SavedVariables are never part of it. A
+    delete the gate refuses raises its `guard.GuardError`: the removal is
+    refused as a whole."""
     present, left, exists = _installed(flavor.path)
     with guard.transaction(flavor, label=_REMOVE_LABEL, store=store, dry_run=True) as tx:
-        _deletes(tx, present, left)
+        _deletes(tx, present, None)
         whole = tx.plan
     return RemovePlan(
-        flavor_path=str(flavor.path), plan=whole, left=tuple(left), folder_exists=exists
+        flavor_path=str(flavor.path),
+        plan=whole,
+        left=tuple(left),
+        folder_exists=exists,
+        listed=_listed(present, left),
+        notes=_remove_notes(left, exists),
     )
 
 
 def remove(plan: RemovePlan, flavor: _FlavorLike, *, store: Path | None = None) -> str:
     """Delete exactly the files `plan` lists, in one gate transaction, and
-    return its journal record id (`wowlab undo` puts them back)."""
+    return its journal record id (`wowlab undo` puts them back). The folder
+    is listed again first, with the gate's locks held."""
+    for item in plan.plan:
+        _in_folder(item.path)
     with guard.transaction(flavor, label=_REMOVE_LABEL, store=store) as tx:
-        for item in plan.plan:
-            tx.delete(item.path)
+        _relisted(flavor.path, plan.listed)
+        _deletes(tx, (item.path for item in plan.plan), None)
         _checked(tx, plan.plan)
     return guard.history(store=store)[-1].id

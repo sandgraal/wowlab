@@ -322,14 +322,28 @@ def test_reinstall_when_up_to_date_writes_nothing(root: Path) -> None:
     assert len(guard.history()) == 1
 
 
-def test_an_executable_name_in_the_folder_is_left_alone_constructed(flavor: Path) -> None:
+def test_an_executable_name_in_the_folder_is_left_alone_by_install_constructed(
+    flavor: Path,
+) -> None:
     ok("addon", "install", "lab", "--yes")
     planted = flavor / LAB / "helper.dll"
     planted.write_bytes(b"constructed, not an executable")
-    ok("addon", "install", "lab", "--yes")  # nothing else changed
-    report = _json_of(cli.AddonRemoveReport, "addon", "remove", "lab", "--yes")
-    assert [lp.path for lp in report.left] == [f"{LAB}/helper.dll"]
+    report = _json_of(cli.AddonInstallReport, "addon", "install", "lab", "--yes")
+    assert report.plan == [] and [lp.path for lp in report.left] == [f"{LAB}/helper.dll"]
     assert planted.read_bytes() == b"constructed, not an executable"
+
+
+def test_remove_refused_by_the_gate_exits_3_with_its_reason_constructed(root: Path) -> None:
+    ok("addon", "install", "lab", "--yes")
+    planted = root / FLAVOR / LAB / "helper.dll"
+    planted.write_bytes(b"constructed, not an executable")
+    before = _tree(root)
+    result = run("addon", "remove", "lab", "--yes")
+    assert result.exit_code == 3, (result.stdout, result.stderr)
+    assert "refused by the write gate" in result.stderr and "executable" in result.stderr
+    assert "Nothing to remove" not in result.stdout
+    assert _tree(root) == before
+    assert len(guard.history()) == 1
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="symlinks need a privilege on Windows")
@@ -385,7 +399,8 @@ def test_remove_deletes_the_code_and_leaves_saved_variables(root: Path, flavor: 
     result = ok("addon", "remove", "lab", "--yes")
     assert "SavedVariables are left alone" in result.stdout
     assert "WowLab.lua" in result.stdout
-    assert "stays, empty" in result.stdout
+    assert addoninstall.FOLDER_STAYS_NOTE in result.stdout
+    assert addoninstall.FOLDER_LEFT_NOTE not in result.stdout
     assert list((flavor / LAB).iterdir()) == []
     for rel, data in planted.items():
         assert (flavor / rel).read_bytes() == data
@@ -441,3 +456,211 @@ def test_remove_declined_changes_nothing(root: Path) -> None:
     result = run("addon", "remove", "lab", input="n\n")
     assert result.exit_code == 1
     assert _tree(root) == before
+
+
+# ─── fix round 1 (PR #105 reviews) ───────────────────────────────────────────
+
+
+def _chosen(root: Path) -> install.Flavor:
+    return next(f for f in install.discover(root).flavors if f.folder == FLAVOR)
+
+
+def test_a_leftover_added_after_the_plan_rolls_back_constructed(root: Path, flavor: Path) -> None:
+    ok("addon", "install", "lab", "--yes")
+    (flavor / LAB / "Gear.lua").write_bytes(b"-- stale\n")
+    chosen = _chosen(root)
+    plan = addoninstall.plan_install(chosen)
+    (flavor / LAB / "New.lua").write_bytes(b"-- constructed, planted after the plan\n")
+    with pytest.raises(addoninstall.AddonChangedError):
+        addoninstall.install(plan, chosen)
+    assert (flavor / LAB / "Gear.lua").read_bytes() == b"-- stale\n"
+    assert guard.history()[-1].state == "rolled_back"
+
+
+def test_remove_lists_the_folder_again_under_the_locks_constructed(
+    root: Path, flavor: Path
+) -> None:
+    ok("addon", "install", "lab", "--yes")
+    chosen = _chosen(root)
+    plan = addoninstall.plan_remove(chosen)
+    (flavor / LAB / "New.lua").write_bytes(b"-- constructed, planted after the plan\n")
+    with pytest.raises(addoninstall.AddonChangedError):
+        addoninstall.remove(plan, chosen)
+    assert (flavor / LAB / "WowLab.toc").exists()
+
+
+def test_a_change_between_the_plan_and_the_confirm_exits_1_cleanly_constructed(
+    root: Path, flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ok("addon", "install", "lab", "--yes")
+    (flavor / LAB / "Gear.lua").write_bytes(b"-- stale\n")
+    core = flavor / LAB / "Core.lua"
+
+    def confirm_after_an_edit(question: str, yes: bool) -> None:
+        core.write_bytes(b"-- constructed, edited at the prompt\n")
+
+    monkeypatch.setattr(cli, "_confirm", confirm_after_an_edit)
+    result = run("addon", "install", "lab")
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "changed after the plan" in result.stderr
+    assert core.read_bytes() == b"-- constructed, edited at the prompt\n"
+    assert (flavor / LAB / "Gear.lua").read_bytes() == b"-- stale\n"
+
+
+@pytest.mark.parametrize("which", ["install", "remove"])
+def test_a_plan_naming_a_path_outside_the_folder_is_refused_constructed(
+    root: Path, which: str
+) -> None:
+    ok("addon", "install", "lab", "--yes")
+    chosen = _chosen(root)
+    before = _tree(root)
+    records = len(guard.history())
+    outside = guard.PlanItem(
+        path=f"WTF/Account/{ACCOUNT}/macros-cache.txt", before="0" * 64, after=None, size=None
+    )
+    with pytest.raises(addoninstall.AddonError, match="is not under"):
+        if which == "install":
+            plan = addoninstall.plan_install(chosen)
+            addoninstall.install(plan.model_copy(update={"plan": (outside,)}), chosen)
+        else:
+            rplan = addoninstall.plan_remove(chosen)
+            addoninstall.remove(rplan.model_copy(update={"plan": (outside,)}), chosen)
+    assert _tree(root) == before
+    assert len(guard.history()) == records
+
+
+def test_a_write_that_is_not_an_addon_file_is_refused_constructed(root: Path) -> None:
+    chosen = _chosen(root)
+    plan = addoninstall.plan_install(chosen)
+    extra = guard.PlanItem(path=f"{LAB}/Extra.lua", before=None, after="0" * 64, size=1)
+    before = _tree(root)
+    with pytest.raises(addoninstall.AddonChangedError):
+        addoninstall.install(plan.model_copy(update={"plan": (*plan.plan, extra)}), chosen)
+    assert _tree(root) == before
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need a privilege on Windows")
+@pytest.mark.parametrize("component", ["lab", "addon", "WowLab"])
+def test_a_link_in_the_source_path_is_refused_constructed(tmp_path: Path, component: str) -> None:
+    parts = list(addoninstall.SOURCE_PARTS)
+    cut = parts.index(component)
+    ws = tmp_path / "ws"
+    ws.joinpath(*parts[:cut]).mkdir(parents=True)
+    (ws / ".git").mkdir()
+    real = tmp_path / "real"
+    leaf = real.joinpath(*parts[cut:])
+    leaf.mkdir(parents=True)
+    (leaf / "WowLab.toc").write_bytes((SOURCE / "WowLab.toc").read_bytes())
+    ws.joinpath(*parts[: cut + 1]).symlink_to(real / component, target_is_directory=True)
+    with pytest.raises(addoninstall.AddonSourceError, match="is a link"):
+        addoninstall.find_source(ws)
+
+
+@pytest.mark.parametrize("marker", ["git", "pyproject"])
+def test_the_source_walk_stops_at_the_workspace_root_constructed(
+    tmp_path: Path, marker: str
+) -> None:
+    above = tmp_path.joinpath(*addoninstall.SOURCE_PARTS)
+    above.mkdir(parents=True)
+    (above / "WowLab.toc").write_bytes((SOURCE / "WowLab.toc").read_bytes())
+    ws = tmp_path / "ws"
+    (ws / "pkg").mkdir(parents=True)
+    if marker == "git":
+        (ws / ".git").write_text("gitdir: elsewhere\n")
+    else:
+        (ws / "pyproject.toml").write_text('[tool.uv.workspace]\nmembers = ["pkg"]\n')
+    with pytest.raises(addoninstall.AddonSourceError, match="workspace root"):
+        addoninstall.find_source(ws / "pkg")
+    assert addoninstall.find_source(tmp_path / "elsewhere-without-a-root") == above
+
+
+def test_a_member_pyproject_is_not_the_workspace_root_constructed(tmp_path: Path) -> None:
+    found = tmp_path.joinpath(*addoninstall.SOURCE_PARTS)
+    found.mkdir(parents=True)
+    (found / "WowLab.toc").write_bytes((SOURCE / "WowLab.toc").read_bytes())
+    member = tmp_path / "lab" / "core"
+    member.mkdir(parents=True)
+    (member / "pyproject.toml").write_text('[project]\nname = "x"\n')
+    assert addoninstall.find_source(member) == found
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need a privilege on Windows")
+def test_a_linked_source_file_is_refused_constructed(tmp_path: Path) -> None:
+    folder = _source_copy(tmp_path)
+    elsewhere = tmp_path / "elsewhere.lua"
+    elsewhere.write_bytes((folder / "Core.lua").read_bytes())
+    (folder / "Core.lua").unlink()
+    (folder / "Core.lua").symlink_to(elsewhere)
+    with pytest.raises(addoninstall.AddonSourceError, match="not a regular file"):
+        addoninstall.addon_files(INTERFACE, folder)
+
+
+@pytest.mark.parametrize(
+    "version",
+    ["1.60.1.1234567890", "1234567890.1.1.2", "1.60.0000000001.2"],
+    ids=["build-10-digits", "major-10-digits", "patch-10-digits"],
+)
+def test_a_version_part_over_nine_digits_is_refused_constructed(version: str) -> None:
+    with pytest.raises(addoninstall.AddonVersionError, match="at most 9 digits"):
+        addoninstall.interface_version(version)
+
+
+PATCH_TEXT = (
+    "The TOC says ## Interface: 16001, derived from the client version 1.60.1.69913 in "
+    ".build.info (flavor folder _classic_beta_). When a client update changes the first three "
+    "numbers of that version, the AddOns list may mark WowLab out of date: close the client "
+    "and run `wowlab addon install lab` again. An update that changes only the build number "
+    "needs no reinstall."
+)
+
+
+def test_install_notes_are_the_same_in_text_and_json_on_every_path(root: Path) -> None:
+    expected = [PATCH_TEXT, addoninstall.LOAD_NOTE]
+    dry = ok("addon", "install", "lab", "--dry-run").stdout
+    assert all(n in dry for n in expected)
+    assert _json_of(cli.AddonInstallReport, "addon", "install", "lab", "--dry-run").notes == (
+        expected
+    )
+    done = ok("addon", "install", "lab", "--yes").stdout
+    assert all(n in done for n in expected)
+    again = ok("addon", "install", "lab", "--yes").stdout
+    assert "Nothing to install" in again and all(n in again for n in expected)
+    assert _json_of(cli.AddonInstallReport, "addon", "install", "lab").notes == expected
+
+
+def test_remove_notes_are_printed_on_every_path(root: Path) -> None:
+    nothing = ok("addon", "remove", "lab", "--yes").stdout
+    assert addoninstall.SAVED_VARIABLES_NOTE in nothing
+    assert addoninstall.FOLDER_STAYS_NOTE not in nothing  # there is no folder
+    ok("addon", "install", "lab", "--yes")
+    dry = ok("addon", "remove", "lab", "--dry-run").stdout
+    assert addoninstall.SAVED_VARIABLES_NOTE in dry and addoninstall.FOLDER_STAYS_NOTE in dry
+    report = _json_of(cli.AddonRemoveReport, "addon", "remove", "lab", "--dry-run")
+    assert report.notes == [addoninstall.SAVED_VARIABLES_NOTE, addoninstall.FOLDER_STAYS_NOTE]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need a privilege on Windows")
+@pytest.mark.parametrize(
+    ("name", "folder_note"),
+    [
+        ("Linked.toc", None),
+        (
+            "linked-notes",
+            addoninstall.FOLDER_STAYS_NOTE + " " + addoninstall.FOLDER_LEFT_NOTE,
+        ),
+    ],
+    ids=["toc-left-constructed", "other-left-constructed"],
+)
+def test_the_folder_note_follows_what_is_left_alone(
+    root: Path, flavor: Path, tmp_path: Path, name: str, folder_note: str | None
+) -> None:
+    ok("addon", "install", "lab", "--yes")
+    target = tmp_path / "link-target"
+    target.write_bytes(b"constructed")
+    (flavor / LAB / name).symlink_to(target)
+    report = _json_of(cli.AddonRemoveReport, "addon", "remove", "lab", "--yes")
+    assert [lp.path for lp in report.left] == [f"{LAB}/{name}"]
+    expected = [addoninstall.SAVED_VARIABLES_NOTE] + ([folder_note] if folder_note else [])
+    assert report.notes == expected
+    assert (flavor / LAB / name).is_symlink()

@@ -3422,9 +3422,10 @@ def addon_install(
     pre-write snapshot is taken first, and `wowlab undo` reverses it.
 
     The TOC's ## Interface: is filled from the flavor's discovered version by the
-    patch-number rule; after a client patch, run this again. Only WowLab.toc and the
-    .lua files it lists are copied. Over an existing copy only changed files are
-    written, and files not in the sources are deleted. JSON: AddonInstallReport."""
+    patch-number rule; after a client update that changes the first three parts of
+    the version, run this again. Only WowLab.toc and the .lua files it lists are
+    copied. Over an existing copy only changed files are written, and files not in
+    the sources are deleted. JSON: AddonInstallReport."""
     _lab_addon(name)
     inst, _ = _discover(root)
     chosen = _select_flavor(inst, flavor)
@@ -3432,14 +3433,8 @@ def addon_install(
     prompting = json_out and not yes and not dry_run
     show = _say if not json_out else _note
     target = addoninstall.ADDON_FOLDER
-    patch_note = (
-        f"The TOC says ## Interface: {plan.interface}, from {chosen.folder}'s version "
-        f"{plan.flavor_version}; after a client patch the client may list it as out of date. "
-        "Run `wowlab addon install lab` again then."
-    )
 
     def report(*, applied: bool, transaction: str | None = None) -> AddonInstallReport:
-        notes = [patch_note, addoninstall.LOAD_NOTE] if plan.plan else [patch_note]
         return AddonInstallReport(
             addon=addoninstall.ADDON_NAME,
             flavor_path=str(chosen.path),
@@ -3453,7 +3448,7 @@ def addon_install(
             dry_run=dry_run,
             applied=applied,
             transaction=transaction,
-            notes=notes,
+            notes=list(plan.notes),
         )
 
     if not json_out or (prompting and plan.plan):
@@ -3470,6 +3465,8 @@ def addon_install(
         if plan.unchanged and plan.plan:
             show(f"  {len(plan.unchanged)} file(s) already up to date.")
         _print_left(show, plan.left)
+        for n in plan.notes:
+            show(n)
     if not plan.plan:
         if json_out:
             _emit(report(applied=False))
@@ -3500,8 +3497,6 @@ def addon_install(
         f"Installed the lab-addon: {len(plan.plan)} change(s). `wowlab undo` puts back what "
         "was there before."
     )
-    for n in done.notes:
-        _say(n)
 
 
 @addon_app.command("remove")
@@ -3516,11 +3511,12 @@ def addon_remove(
 ) -> None:
     """Delete the lab-addon's files from the flavor's Interface/AddOns/WowLab/, through
     the write gate: the client must be closed, a pre-write snapshot is taken first,
-    and `wowlab undo` puts them back.
+    and `wowlab undo` puts them back. A file the gate will not delete refuses the
+    whole removal (exit 3).
 
-    Its SavedVariables (WowLab.lua under WTF/, holding WowLabDB and each
-    character's WowLabCharDB) are never touched: they are the captures. The empty
-    folder stays; the gate deletes files, not folders. JSON: AddonRemoveReport."""
+    Its SavedVariables (WowLab.lua and WowLab.lua.bak under WTF/, holding WowLabDB
+    and each character's WowLabCharDB) are never touched: they are the captures.
+    The folder stays; the gate deletes files, not folders. JSON: AddonRemoveReport."""
     _lab_addon(name)
     inst, _ = _discover(root)
     chosen = _select_flavor(inst, flavor)
@@ -3530,9 +3526,6 @@ def addon_remove(
     target = addoninstall.ADDON_FOLDER
 
     def report(*, applied: bool, transaction: str | None = None) -> AddonRemoveReport:
-        notes = [addoninstall.SAVED_VARIABLES_NOTE]
-        if plan.folder_exists:
-            notes.append(addoninstall.FOLDER_STAYS_NOTE)
         return AddonRemoveReport(
             addon=addoninstall.ADDON_NAME,
             flavor_path=str(chosen.path),
@@ -3541,7 +3534,7 @@ def addon_remove(
             dry_run=dry_run,
             applied=applied,
             transaction=transaction,
-            notes=notes,
+            notes=list(plan.notes),
         )
 
     if not json_out or (prompting and plan.plan):
@@ -3550,7 +3543,8 @@ def addon_remove(
         for item in plan.plan:
             show(_plan_line(item))
         _print_left(show, plan.left)
-        show(addoninstall.SAVED_VARIABLES_NOTE)
+        for n in plan.notes:
+            show(n)
     if not plan.plan:
         if json_out:
             _emit(report(applied=False))
@@ -3575,8 +3569,6 @@ def addon_remove(
         _emit(done)
         return
     _say(f"Removed the lab-addon: {len(plan.plan)} file(s) deleted. `wowlab undo` puts them back.")
-    if plan.folder_exists:
-        _say(addoninstall.FOLDER_STAYS_NOTE)
 
 
 # ─── looks ───────────────────────────────────────────────────────────────────
