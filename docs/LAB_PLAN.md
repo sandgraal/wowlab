@@ -871,6 +871,22 @@ after the PR #49 security review; tickets M10-16T and M10-16):*
    format-1 records read as naming no temp paths and as having run no
    cleanup.
 
+*Amended 2026-09-28 (M10-17T/M10-17, from the M10-14 security and code
+reviews):* `guard.store_lock(store=None, create: bool = False)`. With
+`create=True`, the inside-any-install check runs first, on the store path
+and every ancestor, through links and junctions (an ancestor that cannot be
+examined counts as an install); only then are the store and any missing
+parents created, and the lock taken as above. Nothing is created anywhere
+when it refuses. `create=False` keeps the behaviour above: a missing store
+raises `GuardError` and nothing is created. `guard.undo(*, store=None,
+expected_id: str | None = None)`: with `expected_id`, the journal's last
+record id is compared under the store lock, and a mismatch (another
+transaction committed after the caller read the journal, or an id that names
+no record) raises `GuardError` naming an id, with nothing in the store or the
+install changed. Without it, `undo` behaves as before. The CLI passes both
+(M10-17): the first `snap create` holds the store lock like every later one,
+and `undo` passes the id of the record it showed the owner.
+
 ### 6.11 CLI — `wowlab` (M10-14)
 
 ```
