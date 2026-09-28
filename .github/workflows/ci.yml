@@ -82,6 +82,9 @@ jobs:
       - name: mypy --strict
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         run: uv run --frozen mypy
+      - name: Generate a decimal-comma locale (serializer determinism graders)
+        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
+        run: sudo locale-gen de_DE.UTF-8
       - name: pytest
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         run: uv run --frozen pytest -q
@@ -106,6 +109,9 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
+      - name: Generate a decimal-comma locale (serializer determinism graders)
+        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
+        run: sudo locale-gen de_DE.UTF-8
       - name: make test-parser
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         run: |
