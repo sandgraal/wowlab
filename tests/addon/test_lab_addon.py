@@ -15,7 +15,9 @@ getting around them. Deliberate obfuscation is caught by review only:
   similar and indexing with it;
 - changing a guarded key or field inside its `if type(X) == ... then` block
   through an alias of the table (`local d = c` ... `d.option = api`) or through
-  a call that writes to it.
+  a call that writes to it;
+- changing an index key inside its guard (`k = ...` inside
+  `if type(r[k]) == "number" then`).
 
 The stored-value check (M11-13) also does not check table keys, and it trusts
 the Core.lua plumbing listed in `PLUMBING_STORES`.
@@ -24,6 +26,7 @@ the Core.lua plumbing listed in `PLUMBING_STORES`.
 from __future__ import annotations
 
 import re
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -1560,8 +1563,23 @@ class _Flow:
                     return True
                 if x.text in {"[", ")"}:
                     after = self.pair[i] + 1 if x.text == "[" else i + 1
-                    if after < e and self.call_start(after):
-                        return True  # a call through an index or parentheses
+                    k = after
+                    while k < e:
+                        if (
+                            t[k].kind == "op"
+                            and t[k].text == "."
+                            and k + 1 < e
+                            and t[k + 1].kind == "name"
+                        ):
+                            k += 2
+                        elif t[k].kind == "op" and t[k].text == "[":
+                            k = self.pair[k] + 1
+                        else:
+                            break
+                    if k < e and (self.call_start(k) or (t[k].kind == "op" and t[k].text == ":")):
+                        return (
+                            True  # a call through an index or parentheses (`a[1].f()`, `a[1]:f()`)
+                        )
                     i = after
                     continue
                 i = self.pair[i] + 1 if x.text == "{" else i + 1
@@ -1758,21 +1776,7 @@ def test_every_gather_and_carry_returns_checked_values() -> None:
 
 
 # Names the stored-value check trusts; no source may rebind them.
-_TRUSTED_NAMES = frozenset(
-    {
-        "type",
-        "pcall",
-        "ipairs",
-        "pairs",
-        "select",
-        "tostring",
-        "tonumber",
-        "string",
-        "math",
-        "table",
-        "ns",
-    }
-)
+_TRUSTED_NAMES = _LUA_BUILTINS | {"ns"}
 
 
 @pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
@@ -1855,10 +1859,12 @@ def test_every_ns_function_is_defined_once() -> None:
 def test_trusted_names_are_never_rebound(path: Path) -> None:
     """Review of M11-13: `local type = function() return "number" end` would
     make every `type(X) == "number"` guard pass. No local, parameter, loop
-    variable, local or global function, or assignment binds `type`, `pcall`,
-    `ipairs`, `pairs`, `select`, `tostring`, `tonumber`, `string`, `math`,
-    `table` or `ns`, and no field of `string`, `math` or `table` is assigned;
-    the one `local _, ns = ...` at the top of each file is the exception."""
+    variable, local or global function, or assignment binds a name in
+    `_LUA_BUILTINS` (`type`, `pcall`, `ipairs`, `pairs`, `next`, `select`,
+    `tostring`, `tonumber`, `unpack`, `print`, `error`, `string`, `table`,
+    `math`) or `ns`, and no field of `string`, `math` or `table` is assigned or
+    defined (`function string.sub()`); the one `local _, ns = ...` at the top
+    of each file is the exception."""
     program = _program()
     flow = program.flows[path.name]
     t = flow.tokens
@@ -1871,9 +1877,62 @@ def test_trusted_names_are_never_rebound(path: Path) -> None:
         if name in _TRUSTED_NAMES or name in {"string.", "math.", "table."}:
             bad.append(f"{_where(path, t[at])} assigns {_render(t[at : at + 3])!r}")
     for head, label in flow.labels.items():
-        if label in _TRUSTED_NAMES and t[head + 1].text == label:
+        root = t[head + 1]
+        if root.kind == "name" and root.text in _TRUSTED_NAMES - {"ns"} and root.text != "(":
             bad.append(f"{_where(path, t[head])} function {label}")
     assert not bad, bad
+
+
+_INDEXED_CALL_HEAD = """local _, ns = ...
+
+local function characterData()
+    return ns.Call(ns.Fn(C_BarberShop, "GetCurrentCharacterData"))
+end
+
+ns.Section({
+    key = "zz",
+    path = { "zz" },
+    on_world = true,
+    gather = function()
+"""
+_INDEXED_CALL_TAIL = """    end,
+})
+"""
+# Constructed inputs (boundary cases for this grader, from the #106 security
+# review), not addon sources: a call reached through an index and a field or
+# method. Each must fail the stored-value or gather/carry check.
+_INDEXED_CALLS = {
+    "constructed-index-then-field-call": """        local readers = { { read = characterData } }
+        local record = {}
+        for i = 1, #readers do
+            record[i] = readers[i].read()
+        end
+        return record
+""",
+    "constructed-index-then-method-call": """        local readers = { { read = characterData } }
+        return { cd = readers[1]:read() }
+""",
+    "constructed-index-then-field-call-with-argument": """        local readers = { { read = characterData } }
+        return { cd = readers[1].read(1) }
+""",
+}
+
+
+def test_stored_value_check_taints_calls_through_an_index() -> None:
+    """Constructed inputs (boundary tests of the stored-value check itself; no
+    fixture argument, so the review probes can call it bare)."""
+    missed = []
+    for tag, body in sorted(_INDEXED_CALLS.items()):
+        with tempfile.TemporaryDirectory(prefix="wowlab-addon-") as tmp:
+            source = Path(tmp) / "Constructed.lua"
+            source.write_text(_INDEXED_CALL_HEAD + body + _INDEXED_CALL_TAIL, encoding="utf-8")
+            program = _Program([source])
+        flow = program.flows[source.name]
+        unchecked = [store.text for store in flow.stores if not program.store_ok(flow, store)]
+        gather = next(head for head, label in flow.labels.items() if label == "gather")
+        if not unchecked and (source.name, gather) not in program.unsafe:
+            missed.append(tag)
+    assert not missed, missed
 
 
 # --- carry: the saved record is copied only through checked values ------------
