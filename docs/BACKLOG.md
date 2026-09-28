@@ -158,11 +158,13 @@ Graders from `docs/LAB_PLAN.md` §6.4 (serializer half) and `docs/LAB_FORMATS.md
 *Merged 2026-09-28 (#66): 142 graders of the §6.4 amendment of 2026-09-27, items 1–9 (owner decisions: fallback layout, pairing, newest sibling wins, data only; clarifications #70, #71). For M10-12: a refused `Entry.comment` is positioned at its `--` and a refused `nil` at `nil` (conductor ruling). Not graded yet: positions in CR-only or LF-CR documents; `lab_written` through a symlink.*
 ---
 
-## [ ] M10-12 — luadata serializer [IMPL]
+## [x] M10-12 — luadata serializer [IMPL]
 **Size:** M · **Depends on:** M10-12T
 
 **Acceptance:** `make test-parser` green with all M10-12T markers removed. Any real fixture that cannot round-trip is a finding against the parser's document model, reported rather than special-cased.
 
+
+*Merged 2026-09-28 (#74). Follow-ups recorded at merge, not scheduled: skip a sibling folder with over 65,536 entries so a hostile folder is never read in full (today about 2.5 s and 450 MB per million entries; the owner's machine only); a Windows junction test via `_winapi.CreateJunction`; `_path_key` casefolds on case-sensitive Linux too (can only lose a style source); serialize at 50 MiB takes about 8.5 s since the output is re-parsed before return (§6.4 sets no serializer target).*
 ---
 
 ## [ ] M10-13 — Combat log tokenizer
