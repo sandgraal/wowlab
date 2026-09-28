@@ -34,11 +34,11 @@ Create `lab/core/` as the uv workspace's only member, `wowlab-core` (import `wow
 
 *Follow-ups 4 and 5 merged (#63, 2026-09-23; #64, 2026-09-27): `--pseudonymise-other-players`; invented location parts of unit GUIDs in combat logs; each combat log's timestamps and file name moved by its own secret offset (owner decision 2026-09-24); `--combat-log NAME`; folded identity checks. Not scheduled: U+2212, U+2043, U+30FC, prime and backtick between letters are not treated as separators (the client does not write them); the byte-oracle test proves bytes outside spans, not what each span became; scrub time about 1.4× on large non-ASCII SavedVariables.*
 
-*Follow-up 6 (owner-approved 2026-09-28): treat U+2212, U+2043, U+30FC, prime (U+2032) and backtick as separators between letters in every identity check (detect and refuse only), with constructed tests; the client does not write them, so this is defence in depth. Reviewed by `security-reviewer`.*
+*Follow-up 6 (owner-approved 2026-09-28): treat U+2212, U+2043, U+30FC, prime (U+2032) and backtick as separators between letters in every identity check (detect and refuse only), with constructed tests; the client does not write them, so this is defence in depth. Reviewed by `security-reviewer`.* Merged 2026-09-28 (#85), with `_`, LF, CR, VT and FF added to the loose byte check and U+30FC no longer hiding an adjacent short name.
 
 ---
 
-## [ ] M10-03 — Capture the fixture corpus
+## [x] M10-03 — Capture the fixture corpus
 **Size:** S · **Depends on:** M10-02 · **owner** (needs the machine with the game installed)
 
 Follow `docs/handoffs/M10-03.md`: log one character in and out on each installed flavor (retail; Forever beta if installed), run the capture tool, review the output, commit it with index rows. Record in `docs/DATA_SOURCES.md` (Local game install section and breakage log) what the capture shows for every **[verify]** item in `docs/LAB_FORMATS.md` and `docs/LAB_FILE_MAP.md`: Forever's flavor folder, product code, version string, interface number, executable name, preferred TOC suffix, SavedVariables line endings per platform, and whether the Forever client writes a combat log.
@@ -49,6 +49,8 @@ Follow `docs/handoffs/M10-03.md`: log one character in and out on each installed
 
 *Amended 2026-09-22 (owner decision): the coverage list's multi-MB SavedVariables file is waived for now: no SavedVariables file on the Forever install is much over 14 KB (the largest, `Syndicator.lua`, is 14,484 bytes as committed). M10-04 measures its performance target on a constructed input and says so (§6.4 amendment item 5); a real large file is added when one exists.*
 
+
+*Done 2026-09-28: parts 1–3 merged (#35, #51, #80). Coverage list met or waived: the multi-MB SavedVariables file waived (owner, 2026-09-22); no installed addon ships more than one TOC; the combat log is a solo open-world fight with shifted timestamps, so `COMBATANT_INFO` and groups stay open (M10-13 grades them on constructed lines; a boss-pull log is an optional owner capture). Every **[verify]** item has a dated amendment in `docs/LAB_FORMATS.md` or `docs/DATA_SOURCES.md`, resolved or recorded open.*
 ---
 
 ## [x] M10-04T — luadata parser graders [TEST]
@@ -255,7 +257,7 @@ Owner-approved follow-ups (2026-09-28) from the M10-12 reviews, graded on `luada
 
 ---
 
-## [ ] M10-19T — Guard grader polish [TEST]
+## [x] M10-19T — Guard grader polish [TEST]
 **Size:** S · **Depends on:** M10-17
 
 From the M10-17 reviews (owner-approved 2026-09-28), test-only: a comment on the `dotdot-after-a-symlink` grader saying it intentionally requires refusing both readings (Windows collapses `..` as text before following links); the creating-call recorder in `test_guard_store_create_undo_id.py` also records builtin `open`/`io.open` in create or write modes, `os.link`, `os.symlink`, `os.mkfifo`, `os.mknod` and the destinations of `os.rename`/`os.replace`, so a create-and-remove is caught on filesystems with coarse timestamps. No grader is weakened; every existing assertion stays.
@@ -264,7 +266,7 @@ From the M10-17 reviews (owner-approved 2026-09-28), test-only: a comment on the
 
 ---
 
-## [ ] M10-19 — `snap create` checks overlap before taking the store lock
+## [x] M10-19 — `snap create` checks overlap before taking the store lock
 **Size:** S · **Depends on:** M10-17
 
 From the M10-17 security review (owner-approved 2026-09-28): `wowlab snap create` runs the store/source overlap check before `guard.store_lock(create=True)`, so a store path that is an ancestor of the install is refused without leaving an empty `lock` file there. Tests through Typer's runner; `snapshot`/`guard` public APIs only.
