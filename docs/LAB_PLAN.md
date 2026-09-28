@@ -1340,7 +1340,15 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
     battle-pet ids, they are GUIDs), and appearances as collected source
     (item-modified-appearance) ids. Lists read through a filtered journal
     say so, and the addon never changes the owner's filters or collapsed
-    headers;
+    headers. Amended 2026-09-28 (M11-20): appearances are not recorded on
+    Forever. M11-03 found that
+    `C_TransmogCollection.GetCategoryAppearances`, called for an
+    `Enum.TransmogCollectionType` category on entering the world, hits a
+    C++ assertion inside the client and crashes it, which `pcall` cannot
+    catch. The addon never calls it and registers no transmog events;
+    `collections.appearances` is always written as absent with that
+    reason. Another way to enumerate appearances needs its own ticket and
+    a live check;
   - currencies: id and quantity, and the total cap, weekly cap, weekly
     earned and account-wide flag raw where the client gives them
     **[verify]**; weekly values follow the region's reset (GLOSSARY);

@@ -131,16 +131,10 @@ globals:
     property: read-only
   C_PetJournal.IsUsingDefaultFilters:
     property: read-only
-  Enum.TransmogCollectionType:
-    any: true
-  C_TransmogCollection.GetCategoryAppearances:
-    property: read-only
-  C_TransmogCollection.GetAllAppearanceSources:
-    property: read-only
-  C_TransmogCollection.PlayerHasTransmogItemModifiedAppearance:
-    property: read-only
-  C_TransmogCollection.IsUsingDefaultFilters:
-    property: read-only
+  # No C_TransmogCollection and no Enum.TransmogCollectionType: appearances
+  # are never gathered, because the per-category enumeration crashed the
+  # Forever client in M11-03 (M11-20). Leaving them out makes selene fail on
+  # any use.
 
   # --- Currencies -------------------------------------------------------------
   C_CurrencyInfo.GetCurrencyListSize:
