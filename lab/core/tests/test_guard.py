@@ -3319,7 +3319,9 @@ def test_constructed_public_surface_is_exactly_the_gate(
     assert transaction["label"].default == ""
     assert transaction["store"].default is None
     assert transaction["dry_run"].default is False
-    assert list(inspect.signature(guard.undo).parameters) == ["store"]
+    # Amended by M10-17T: M10-17 adds `expected_id`, pinned in
+    # test_guard_store_create_undo_id.py.
+    assert list(inspect.signature(guard.undo).parameters) in (["store"], ["store", "expected_id"])
     assert list(inspect.signature(guard.history).parameters) == ["store"]
     # `store` is a directory path, never an object a caller could have
     # prepared: guard builds its own SnapshotStore (the last injection seam).

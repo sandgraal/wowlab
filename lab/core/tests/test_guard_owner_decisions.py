@@ -733,7 +733,9 @@ def test_constructed_store_lock_is_the_store_lock_alone_in_this_process_and_othe
     import inspect
 
     parameters = inspect.signature(guard.store_lock).parameters
-    assert list(parameters) == ["store"]
+    # Amended by M10-17T: M10-17 adds `create`, pinned in
+    # test_guard_store_create_undo_id.py.
+    assert list(parameters) in (["store"], ["store", "create"])
     assert parameters["store"].default is None
     assert inspect.signature(guard.store_lock, eval_str=True).parameters["store"].annotation == (
         Path | None
