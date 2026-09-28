@@ -6,6 +6,7 @@ workspace member.
 | Directory | Package | What it is |
 |---|---|---|
 | `core/` | `wowlab-core` (import `wowlab_core`, command `wowlab`) | The library and CLI every later tool stands on: install discovery, layout, parsers, game data, snapshots, the write gate. Spec: `docs/LAB_PLAN.md`. |
+| `addon/` | none (Lua for the game client, ADR-0026) | The Lab's own addons, first `WowLab/` (§13.1). Never run by the Lab; linted by `make lint-lua`. See `addon/README.md`. |
 
 Later waves add siblings of `core/` (`lab/<app>/`). Apps depend on
 `wowlab-core`; `wowlab-core` depends on none of them. Nothing here is

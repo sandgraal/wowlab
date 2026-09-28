@@ -1,0 +1,166 @@
+# selene standard library for lab/addon: the game client's globals that the
+# addon sources touch, and nothing else. It is also the addon's API
+# inventory: tests/addon/test_lab_addon.py checks that every client API the
+# sources reference is declared here and listed in lab/addon/README.md with
+# its status, and that nothing here is unused. A name the sources use but
+# this file lacks fails the lint as an undefined variable.
+#
+# Declaring a name here says the addon may test for it; it is not a claim
+# that the Forever client has it. Status per name: lab/addon/README.md.
+---
+base: lua51
+name: wow_client
+globals:
+  # --- Saved variables and slash command (written by the addon) -----------
+  WowLabCharDB:
+    property: full-write
+  WowLabDB:
+    property: full-write
+  SLASH_WOWLAB1:
+    property: full-write
+  SlashCmdList:
+    property: new-fields
+
+  # --- Frames, events, timers ----------------------------------------------
+  CreateFrame:
+    args:
+      - type: string
+  C_EventUtils.IsEventValid:
+    property: read-only
+  C_Timer.After:
+    property: read-only
+
+  # --- Client ---------------------------------------------------------------
+  GetBuildInfo:
+    args: []
+
+  # --- Unit (the only unit token used is "player") ------------------------
+  UnitLevel:
+    args:
+      - type: string
+  UnitRace:
+    args:
+      - type: string
+
+  # --- Gear -------------------------------------------------------------------
+  INVSLOT_FIRST_EQUIPPED:
+    property: read-only
+  INVSLOT_LAST_EQUIPPED:
+    property: read-only
+  GetInventoryItemLink:
+    args:
+      - type: string
+      - type: number
+  GetAverageItemLevel:
+    args: []
+  ItemLocation.CreateFromEquipmentSlot:
+    property: read-only
+  C_Item.GetCurrentItemLevel:
+    property: read-only
+  C_Item.GetDetailedItemLevelInfo:
+    property: read-only
+
+  # --- Spec -------------------------------------------------------------------
+  C_SpecializationInfo.GetSpecialization:
+    property: read-only
+  C_SpecializationInfo.GetSpecializationInfo:
+    property: read-only
+  GetSpecialization:
+    property: read-only
+  GetSpecializationInfo:
+    property: read-only
+
+  # --- Talents (C_Traits) -----------------------------------------------------
+  C_ClassTalents.GetActiveConfigID:
+    property: read-only
+  C_ClassTalents.GetLastSelectedSavedConfigID:
+    property: read-only
+  C_Traits.GenerateImportString:
+    property: read-only
+  C_Traits.GetConfigIDBySystemID:
+    property: read-only
+  C_Traits.GetConfigInfo:
+    property: read-only
+  C_Traits.GetConfigsByType:
+    property: read-only
+  C_Traits.GetNodeInfo:
+    property: read-only
+  C_Traits.GetSystemIDByTreeID:
+    property: read-only
+  C_Traits.GetTreeCurrencyInfo:
+    property: read-only
+  C_Traits.GetTreeNodes:
+    property: read-only
+  Enum.TraitConfigType:
+    any: true
+  Constants:
+    any: true
+  ToggleLegacySystemUI:
+    property: read-only
+
+  # --- Customization ----------------------------------------------------------
+  C_BarberShop.GetAvailableCustomizations:
+    property: read-only
+  C_BarberShop.GetCurrentCharacterData:
+    property: read-only
+  C_BarberShop.GetViewingChrModel:
+    property: read-only
+
+  # --- Collections ------------------------------------------------------------
+  C_MountJournal.GetMountIDs:
+    property: read-only
+  C_MountJournal.GetMountInfoByID:
+    property: read-only
+  C_ToyBox.GetNumFilteredToys:
+    property: read-only
+  C_ToyBox.GetToyFromIndex:
+    property: read-only
+  C_ToyBox.GetCollectedShown:
+    property: read-only
+  C_ToyBox.GetUncollectedShown:
+    property: read-only
+  C_ToyBox.GetUnusableShown:
+    property: read-only
+  PlayerHasToy:
+    property: read-only
+  C_PetJournal.GetNumPets:
+    property: read-only
+  C_PetJournal.GetPetInfoByIndex:
+    property: read-only
+  C_PetJournal.GetNumCollectedInfo:
+    property: read-only
+  C_PetJournal.IsUsingDefaultFilters:
+    property: read-only
+  Enum.TransmogCollectionType:
+    any: true
+  C_TransmogCollection.GetCategoryAppearances:
+    property: read-only
+  C_TransmogCollection.GetAllAppearanceSources:
+    property: read-only
+  C_TransmogCollection.PlayerHasTransmogItemModifiedAppearance:
+    property: read-only
+  C_TransmogCollection.IsUsingDefaultFilters:
+    property: read-only
+
+  # --- Currencies -------------------------------------------------------------
+  C_CurrencyInfo.GetCurrencyListSize:
+    property: read-only
+  C_CurrencyInfo.GetCurrencyListInfo:
+    property: read-only
+  C_CurrencyInfo.GetCurrencyListLink:
+    property: read-only
+  C_CurrencyInfo.GetCurrencyIDFromLink:
+    property: read-only
+  C_CurrencyInfo.GetCurrencyInfo:
+    property: read-only
+  C_CurrencyInfo.IsAccountWideCurrency:
+    property: read-only
+  C_CurrencyInfo.GetCurrencyFilter:
+    property: read-only
+
+  # --- Professions ------------------------------------------------------------
+  GetProfessions:
+    args: []
+  GetProfessionInfo:
+    args:
+      - type: number

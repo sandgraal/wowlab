@@ -1255,8 +1255,10 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   (`/wowlab save` refreshes the tables in memory; the file on disk changes
   only at the next `/reload`, logout or clean exit, and a crash writes
   nothing), as a versioned table (`schema = 1`):
-  - equipped gear: item links as strings, so bonus IDs and enchants survive;
-    each slot's current item level and the equipped average as the client
+  - equipped gear: item links as strings, so bonus IDs and enchants survive,
+    with any player GUID in a link (the crafter field of a crafted item)
+    blanked before storing and the slot flagged `crafter_removed`
+    (ADR-0026; whether Forever fills the field is **[verify]**); each slot's current item level and the equipped average as the client
     reports them; slots come from the client's own first/last
     equipped-slot constants, not a fixed list (a ranged slot on Forever is
     **[verify]**);
@@ -1282,11 +1284,19 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
     API function; `GetSpecialization` is never called unguarded. The field is
     optional in the schema-1 model;
   - customization choices (option id to choice id, mapped from the barber
-    shop's choice index to the choice's `id`), recorded only at
-    `BARBER_SHOP_OPEN` and after an applied change
-    (`BARBER_SHOP_APPEARANCE_APPLIED` **[verify]**), never at close after a
-    cancelled preview. The record says it is "as of the last barber-shop
-    visit with the addon enabled";
+    shop's choice index to the choice's `id`) for the model the barber shop
+    was showing (`chr_model_id`), recorded only at `BARBER_SHOP_OPEN` and
+    after an applied change (`BARBER_SHOP_APPEARANCE_APPLIED` **[verify]**),
+    never at close after a cancelled preview. Appearance changes only in the
+    barber shop or through a paid service at character select, so the last
+    record is kept from session to session and describes the character
+    until the next visit. It carries `recorded_load`, the `probe.loads`
+    value of the session that recorded it; the reader shows it as "as of
+    the last barber-shop visit with the addon enabled, N logins or reloads
+    ago". The addon drops the record, with a reason, when the race it holds
+    no longer matches the character. A paid appearance change that keeps
+    the race is invisible to the addon, and the reader says so
+    (2026-09-28, conductor ruling on the M11-01 reviews);
   - collections: mounts, toys and pets (by species id and count; no
     battle-pet ids, they are GUIDs), and appearances as collected source
     (item-modified-appearance) ids. Lists read through a filtered journal
@@ -1304,9 +1314,14 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   file's modification time (if a time is ever added, the scrub tool must
   shift it like combat-log times). `WowLabCharDB` also holds
   `probe = { loads = <n> }`: at `ADDON_LOADED` the addon reads the value the
-  file held, adds 1 and keeps it; if the value was nil on a character that
-  already has a capture file, it sets `probe.lost = true`. This is the only
-  state the addon carries from one session to the next. It exists for
+  file held, adds 1 and keeps it; if `WowLabCharDB` loaded as a table
+  without a probe, it sets `probe.lost = true` for that load only (a later
+  load that finds the probe clears it). The addon cannot tell a first load
+  from a whole file that failed to load: both show `loads = 1`, and §13.4's
+  two-snapshot check catches the second (amended 2026-09-28, M11-01
+  review). The probe and the last customization record are the only state
+  the addon carries from one session to the next; both are lost if the
+  SavedVariables loader fails (§13.4). The probe exists for
   §13.4's loader check (the sv-health idea in `docs/LAB_IDEAS.md`, cut down
   to what sv-merge needs; the full `doctor` check stays an idea). All
   sections go in
