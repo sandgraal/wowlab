@@ -182,9 +182,12 @@ end
 
 -- Events TRAIT_CONFIG_UPDATED, TRAIT_CONFIG_LIST_UPDATED,
 -- TRAIT_TREE_CURRENCY_INFO_UPDATED, PLAYER_TALENT_UPDATE and
--- TRAIT_SYSTEM_INTERACTION_STARTED: confirmed by forever-addon-kit on 69893,
--- re-verify in M11-03 (the walker registers them). ACTIVE_COMBAT_CONFIG_CHANGED
--- and PLAYER_LEVEL_UP: [verify]. Unknown events are skipped (Core.lua).
+-- TRAIT_SYSTEM_INTERACTION_STARTED are registered by forever-addon-kit's
+-- walker on 69893, but its registration is wrapped in pcall and it also
+-- registers LEARNED_SPELL_IN_TAB, which its README says does not exist; so
+-- they are [verify] like every other event, as are
+-- ACTIVE_COMBAT_CONFIG_CHANGED and PLAYER_LEVEL_UP. Unknown events are
+-- skipped (Core.lua).
 
 ns.Section({
     key = "talents.class",

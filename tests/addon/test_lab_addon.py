@@ -503,13 +503,44 @@ def test_stored_item_links_only_come_from_crafter_blanking() -> None:
     assert blanking_sites[0].startswith(str(Path("lab/addon/WowLab/Gear.lua")))
 
 
+def _fn_call_problems(path: Path, tokens: list[Token]) -> list[str]:
+    """Every `ns.Fn(` call, other than its definition, is `ns.Fn(<Name>, "<literal>")`,
+    so no API can be looked up by a computed key."""
+    problems = []
+    for i in range(len(tokens) - 3):
+        if [t.text for t in tokens[i : i + 4]] != ["ns", ".", "Fn", "("]:
+            continue
+        if i > 0 and tokens[i - 1].text == "function":
+            continue  # function ns.Fn(tbl, key): the definition in Core.lua
+        args = tokens[i + 4 : i + 8]
+        ok = (
+            len(args) == 4
+            and args[0].kind == "name"
+            and args[1].text == ","
+            and args[2].kind == "string"
+            and args[3].text == ")"
+        )
+        if not ok:
+            problems.append(f"{_where(path, tokens[i])} {_render(tokens[i : i + 8])!r}")
+    return problems
+
+
+@pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
+def test_every_fn_lookup_uses_a_literal_key(path: Path) -> None:
+    problems = _fn_call_problems(path, _tokens(path))
+    assert not problems, problems
+
+
 def test_pet_rows_bind_only_species_and_owned() -> None:
     """GetPetInfoByIndex's first return is a battle-pet GUID: it is only ever
-    reached as `local a, b = select(2, ns.Call(byIndex, ...))`."""
+    reached as `local a, b = select(2, ns.Call(byIndex, ...))`. A lookup by a
+    computed key could hide a second handle, so every `ns.Fn` call must use a
+    literal key (the review probe for M11-01 checks this through here)."""
     problems = []
     lookups = 0
     for path in SOURCES:
         tokens = _tokens(path)
+        problems += _fn_call_problems(path, tokens)
         handles: set[str] = set()
         for i, t in enumerate(tokens):
             if t.kind == "string" and t.text == "GetPetInfoByIndex":
@@ -543,6 +574,193 @@ def test_std_declares_no_identity_like_api() -> None:
         if STD_PRIVACY.search(n) and n not in STD_PRIVACY_ALLOW
     )
     assert not hits, hits
+
+
+def test_raw_item_link_only_reaches_item_level_and_blanking() -> None:
+    """The raw link (which may hold a crafter GUID) is bound once, in Gear.lua,
+    and only type-checked, passed to the item-level lookup, and blanked.
+    This covers what the literal `link =` check cannot see."""
+    allowed_uses = {
+        "type ( raw )",
+        "itemLevel ( slot , raw )",
+        'string . gsub ( raw , "Player%-%d+%-%x+"',
+    }
+    binding = 'local raw = GetInventoryItemLink ( "player" , slot )'
+    problems = []
+    bindings = 0
+    for path in SOURCES:
+        tokens = _tokens(path)
+        for i, t in enumerate(tokens):
+            if t.kind == "name" and t.text == "GetInventoryItemLink" and not _is_field(tokens, i):
+                if tokens[i - 1].text == "(" and tokens[i - 2].text == "type":
+                    continue  # existence test
+                if _render(tokens[i - 3 : i + 6]) != binding:
+                    problems.append(f"{_where(path, t)} GetInventoryItemLink not bound to `raw`")
+            if t.kind != "name" or t.text != "raw" or _is_field(tokens, i):
+                continue
+            if path.name != "Gear.lua":
+                problems.append(f"{_where(path, t)} `raw` outside Gear.lua")
+            elif tokens[i - 1].text == "local":
+                bindings += 1
+                if _render(tokens[i - 1 : i + 8]) != binding:
+                    problems.append(f"{_where(path, t)} `raw` bound by something else")
+            elif not any(
+                use in {_render(tokens[i - k : i - k + len(use.split(" "))]) for k in range(6)}
+                for use in allowed_uses
+            ):
+                problems.append(
+                    f"{_where(path, t)} `raw` used as {_render(tokens[i - 3 : i + 3])!r}"
+                )
+    assert bindings == 1
+    assert not problems, problems
+
+
+def _binding_rhs(lines: list[str], name: str) -> list[str]:
+    """Right-hand sides of `local <name> = ...` lines (one line each)."""
+    pattern = re.compile(rf"^\s*local\s+{re.escape(name)}\s*=\s*(.*)$")
+    return [m.group(1) for line in lines if (m := pattern.match(line))]
+
+
+def _loop_source(lines: list[str], name: str) -> list[str]:
+    """For `for a, <name> in pairs(X) do`: the X of each such loop."""
+    pattern = re.compile(
+        rf"^\s*for\s+[\w\s,]*\b{re.escape(name)}\b[\w\s,]*\s+in\s+i?pairs\((\w+)\)\s+do\s*$"
+    )
+    return [m.group(1) for line in lines if (m := pattern.match(line))]
+
+
+@pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
+def test_pairs_and_next_never_walk_an_api_result(path: Path) -> None:
+    """Walking the keys of an API result could copy unknown fields (a name,
+    a GUID) into the capture. `pairs`/`next` take a bare name that is a table
+    the addon builds, a client table (Enum/Constants, not a call result), or a
+    loop value of one of those; never a call or a value bound from a call."""
+    tokens = _tokens(path)
+    lines = [re.sub(r"--.*$", "", line) for line in path.read_text(encoding="utf-8").splitlines()]
+    std = _std_globals()
+    problems = []
+
+    def allowed(name: str, depth: int = 0) -> bool:
+        if depth > 4:
+            return False
+        rhs = _binding_rhs(lines, name)
+        loops = _loop_source(lines, name)
+        if not rhs and not loops:
+            return name in std or any(g.startswith(name + ".") for g in std)
+        for text in rhs:
+            without_type = re.sub(r"\btype\(\w+\)", "", text)
+            if "(" in without_type:
+                return False
+        return all(allowed(source, depth + 1) for source in loops)
+
+    for i, t in enumerate(tokens):
+        if t.kind != "name" or t.text not in {"pairs", "next"} or _is_field(tokens, i):
+            continue
+        arg, close = tokens[i + 2], tokens[i + 3]
+        if tokens[i + 1].text != "(" or arg.kind != "name" or close.text != ")":
+            problems.append(f"{_where(path, t)} {t.text} over {_render(tokens[i + 1 : i + 6])!r}")
+        elif not allowed(arg.text):
+            problems.append(f"{_where(path, t)} {t.text}({arg.text}): bound from a call")
+    assert not problems, problems
+
+
+_CONCAT = re.compile(r"(?<!\.)\.\.(?!\.)")  # the `..` operator, not the `...` vararg
+
+
+@pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
+def test_no_concatenated_value_is_used_as_an_index(path: Path) -> None:
+    """A name assigned an expression containing `..` never appears inside
+    `[...]`, so no key is assembled at run time (with the `..`-inside-`[...]`
+    rule above, and literal `ns.Fn` keys)."""
+    tokens = _tokens(path)
+    # Line-based: `local a, b = <expr>` / `a = <expr>`, plus continuation lines
+    # that start with `..` (they extend the previous assignment).
+    source = [re.sub(r"--.*$", "", line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assignment = re.compile(
+        r"^\s*(?:local\s+)?([A-Za-z_][\w]*(?:\s*,\s*[A-Za-z_]\w*)*)\s*=(?!=)(.*)$"
+    )
+    assigned: set[str] = set()
+    last: list[str] = []
+    for line in source:
+        match = assignment.match(line)
+        if match:
+            last = [name.strip() for name in match.group(1).split(",")]
+            if _CONCAT.search(re.sub(r'"[^"]*"', '""', match.group(2))):
+                assigned.update(last)
+        elif _CONCAT.match(line.strip()):
+            assigned.update(last)
+        elif line.strip():
+            last = []
+    bad = []
+    brackets = 0
+    for t in tokens:
+        if t.text == "[":
+            brackets += 1
+        elif t.text == "]":
+            brackets -= 1
+        elif brackets > 0 and t.kind == "name" and t.text in assigned:
+            bad.append(f"{_where(path, t)} {t.text} (assigned a concatenation) used as an index")
+    assert not bad, bad
+
+
+def _carry_lines() -> list[str]:
+    """The `carry = function(saved) ... end,` lines of Customization.lua, comments removed."""
+    lines = (ADDON / "Customization.lua").read_text(encoding="utf-8").splitlines()
+    start = next(
+        i for i, line in enumerate(lines) if re.match(r"^\s*carry = function\(saved\)\s*$", line)
+    )
+    indent = len(lines[start]) - len(lines[start].lstrip())
+    end = next(i for i in range(start + 1, len(lines)) if lines[i] == " " * indent + "end,")
+    return [re.sub(r"--.*$", "", line).rstrip() for line in lines[start + 1 : end]]
+
+
+_ASSIGN = re.compile(r"^(\s*)(local\s+)?([\w.\[\]#+ ]+?)\s*=(?!=)\s*(.*?),?$")
+_SAVED_ACCESS = re.compile(r"\b(?:r|c)(?:\.\w+|\[\w+\])")
+
+
+def test_carried_customization_is_rebuilt_from_checked_values() -> None:
+    """Security review, M11-01: `carry` returns a NEW table (`out`), never its
+    input or any table from the saved file, and copies only values that are
+    type-checked as numbers, or checked against the two `recorded_at` values,
+    at the store or in the enclosing `if`."""
+    lines = _carry_lines()
+    body = "\n".join(lines)
+    problems = []
+    returns = re.findall(r"\breturn\s+(\w+)", body)
+    if not returns or any(value not in {"nil", "out"} for value in returns):
+        problems.append(f"carry returns {returns}, not only nil / out")
+    out_bindings = [line for line in lines if re.match(r"^\s*local\s+out\s*=", line)]
+    if len(out_bindings) != 1 or not re.match(r"^\s*local\s+out\s*=\s*\{", out_bindings[0]):
+        problems.append(f"`out` must be bound once, to a new table: {out_bindings}")
+    if re.search(r"^\s*out\s*=", body, re.MULTILINE):
+        problems.append("`out` reassigned")
+    for n, line in enumerate(lines):
+        match = _ASSIGN.match(line)
+        if not match or line.lstrip().startswith(("if ", "for ", "elseif ")):
+            continue
+        indent, is_local, target, value = match.groups()
+        if is_local and target == "r":
+            continue  # the guarded read of saved.customization
+        constants_blanked = re.sub(r'"[^"]*"', '""', value)  # string literals are constants
+        if re.search(r"\b(saved|r|c)\b(?![.\[])", constants_blanked):
+            problems.append(f"line {n}: stores a saved table itself: {line.strip()!r}")
+        guard = ""
+        for back in range(n - 1, -1, -1):
+            prev = lines[back]
+            if prev.strip().startswith("if ") and len(prev) - len(prev.lstrip()) < len(indent):
+                guard = prev
+                break
+        for access in _SAVED_ACCESS.findall(value):
+            inline = re.search(
+                rf"type\({re.escape(access)}\) == \"number\" and {re.escape(access)} or nil", value
+            )
+            numeric = f'type({access}) == "number"' in guard
+            enum = re.search(
+                rf'{re.escape(access)} == "open" or {re.escape(access)} == "applied"', guard
+            )
+            if not (inline or numeric or enum):
+                problems.append(f"line {n}: unchecked copy of {access}: {line.strip()!r}")
+    assert not problems, problems
 
 
 # --- API inventory: std file, sources, README -----------------------------------

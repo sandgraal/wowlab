@@ -9,7 +9,7 @@ wrote (M11-04).
 
 ## WowLab
 
-Records this character's equipped gear, spec, class talents, Legacy trees,
+Records this character's equipped gear, spec, class talents, Legacy-tree candidates,
 barber-shop choices, collections, currencies and professions into
 `WowLabCharDB` (`## SavedVariablesPerCharacter`) as a versioned table
 (`schema = 1`), written by the client at logout, `/reload` or a clean exit.
@@ -187,10 +187,11 @@ exists, not of what it returns.
 Addon-defined globals: `WowLabCharDB`, `WowLabDB`, `SLASH_WOWLAB1`.
 
 Events. `TRAIT_CONFIG_UPDATED`, `TRAIT_CONFIG_LIST_UPDATED`,
-`TRAIT_TREE_CURRENCY_INFO_UPDATED` and `PLAYER_TALENT_UPDATE`: the kit's
-walker registers them, so confirmed by forever-addon-kit on 69893, re-verify
-in M11-03; so is `TRAIT_SYSTEM_INTERACTION_STARTED`. All others
-**[verify]**: `ACTIVE_COMBAT_CONFIG_CHANGED`, `PLAYER_LEVEL_UP`, `ADDON_LOADED`, `PLAYER_ENTERING_WORLD`,
+`TRAIT_TREE_CURRENCY_INFO_UPDATED`, `PLAYER_TALENT_UPDATE` and
+`TRAIT_SYSTEM_INTERACTION_STARTED` are registered by forever-addon-kit's
+walker on 69893, but its registration is wrapped in `pcall` and it also
+registers `LEARNED_SPELL_IN_TAB`, which its README says does not exist; so
+they are **[verify]** like every other event: `ACTIVE_COMBAT_CONFIG_CHANGED`, `PLAYER_LEVEL_UP`, `ADDON_LOADED`, `PLAYER_ENTERING_WORLD`,
 `PLAYER_LOGOUT`, `PLAYER_EQUIPMENT_CHANGED`, `PLAYER_AVG_ITEM_LEVEL_UPDATE`,
 `ACTIVE_PLAYER_SPECIALIZATION_CHANGED`, `PLAYER_SPECIALIZATION_CHANGED`,
 `BARBER_SHOP_OPEN`, `BARBER_SHOP_APPEARANCE_APPLIED`, `NEW_MOUNT_ADDED`,
@@ -202,7 +203,9 @@ listed in the section's `events_unregistered`.
 
 ## M11-03 [verify] checklist
 
-What the owner's capture must settle, from the M11-01 reviews. Each item ends
+What the owner's capture must settle **in addition to** every **[verify]** in
+`docs/LAB_PLAN.md` §13.1 (which the M11-03 table lists in full), from the
+M11-01 reviews. Each item ends
 up confirmed, contradicted (with what Forever returned) or still open in the
 `docs/LAB_FORMATS.md` table M11-03 adds.
 
@@ -212,9 +215,13 @@ Capture steps beyond §13.1's:
 - after the barber-shop logout, log in and out once more **without** a
   visit, so the carried customization record (`carried = true`,
   `recorded_load`) is captured;
-- stage a talent change without applying it, run `/wowlab save`, `/reload`,
-  and compare `ranks_purchased` / `current_rank` / `active_rank` and the
-  tree currencies;
+- with the talent panel still open, stage a talent change without applying
+  it, type `/wowlab save`, then `/reload`; compare `ranks_purchased` /
+  `current_rank` / `active_rank` and the tree currencies with what the panel
+  showed as applied;
+- optional, costs gold: apply one barber-shop change, then log out (needed
+  for item 12; without it item 12 stays open);
+- open the character sheet before logging out, for item 13;
 - watch for hitches after logging in or `/reload`: the pet and transmog
   rescans (collections) run once per session and on their events.
 
@@ -231,7 +238,8 @@ Items:
 4. Whether `GetTreeCurrencyInfo` carries the Legacy points spent and the
    seasonal cap.
 5. `events_unregistered` on every section: which events Forever does not
-   know.
+   know. `events_unregistered` shows only events the client refused; it does
+   not prove that an accepted event ever fires.
 6. Empty lists from the pet journal, toy box or transmog collection (journal
    not initialized, or filters hiding rows) versus real contents.
 7. Currencies: whether `GetCurrencyInfo` has `isAccountWide`, or the
@@ -242,6 +250,14 @@ Items:
 10. Crafter GUIDs in item links: any `crafter_removed = true`, and no
     `Player-` left in any stored link.
 11. `currentChoiceIndex` base: `choice` matches `choices[choice_index]`
-    1-based (compare with the barber shop on screen).
+    1-based (compare with the barber shop on screen). The race-mismatch drop
+    cannot be tested without a paid race change; it stays open.
 12. `BARBER_SHOP_APPEARANCE_APPLIED` firing: an applied change gives
     `recorded_at = "applied"`.
+13. Gear: `first_slot` / `last_slot` values; whether slot 18 (ranged) ever
+    holds an item; `item_level_api` per slot; `average.equipped` equals the
+    character-sheet figure.
+14. Customization: `sex` is 0 or 1; `chr_model_id` is present; no name field
+    appears anywhere in the record.
+15. `talents.legacy` on a character below level 25, if one exists: `configs`
+    empty, `legacy_ui` true.

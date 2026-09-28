@@ -63,13 +63,35 @@ ns.Section({
     immediate = true,
     not_gathered = "no barber-shop visit recorded with the addon enabled",
     -- Keeps the last saved record, unless it was itself an absent marker.
+    -- The record is rebuilt field by field into a new table: only numbers,
+    -- the two known `recorded_at` values and the addon's own constants are
+    -- copied, so nothing else in the saved file (not the saved table itself,
+    -- nor its old events_unregistered) is carried forward.
+    -- tests/addon/test_lab_addon.py checks this shape.
     carry = function(saved)
-        local record = type(saved) == "table" and saved.customization or nil
-        if type(record) ~= "table" or record.absent ~= nil or type(record.choices) ~= "table" then
+        local r = type(saved) == "table" and saved.customization or nil
+        if type(r) ~= "table" or r.absent ~= nil or type(r.choices) ~= "table" then
             return nil
         end
-        record.carried = true
-        return record
+        local out = { as_of = "last barber-shop visit with the addon enabled", carried = true, choices = {} }
+        if r.recorded_at == "open" or r.recorded_at == "applied" then
+            out.recorded_at = r.recorded_at
+        end
+        for _, k in ipairs({ "recorded_load", "race_id", "sex", "chr_model_id" }) do
+            if type(r[k]) == "number" then
+                out[k] = r[k]
+            end
+        end
+        for _, c in ipairs(r.choices) do
+            if type(c) == "table" and type(c.option) == "number" then
+                out.choices[#out.choices + 1] = {
+                    option = c.option,
+                    choice_index = type(c.choice_index) == "number" and c.choice_index or nil,
+                    choice = type(c.choice) == "number" and c.choice or nil,
+                }
+            end
+        end
+        return out
     end,
     gather = function(event)
         local available = ns.Fn(C_BarberShop, "GetAvailableCustomizations")
