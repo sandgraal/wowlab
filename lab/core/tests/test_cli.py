@@ -604,6 +604,29 @@ def test_db2_fetch_and_head(root: Path, user_data: Path) -> None:
     assert len(text.splitlines()) == 2  # header and one row
 
 
+@pytest.mark.parametrize("command", ["fetch", "head"])
+@pytest.mark.parametrize(
+    ("table", "build", "words"),
+    [
+        ("ChrClasses", "69876", "not a full build string"),
+        ("ChrClasses", "1.60.1.x", "not a full build string"),
+        ("ChrClasses", "../1.60.1.69876", "not a full build string"),
+        ("../ChrClasses", TABLE_BUILD, "not a table name"),
+        ("Chr Classes", TABLE_BUILD, "not a table name"),
+    ],
+)
+def test_db2_malformed_build_or_table_is_a_usage_error(
+    root: Path, user_data: Path, command: str, table: str, build: str, words: str
+) -> None:
+    """M11-14: exit 2 with one line on stderr, not an uncaught ValueError;
+    nothing is fetched and nothing is cached."""
+    result = run("db2", command, table, "--build", build)
+    assert result.exit_code == 2, (result.stdout, result.stderr, result.exception)
+    assert not isinstance(result.exception, ValueError)
+    assert words in result.stderr and "Traceback" not in result.stderr
+    assert not (user_data / "gamedata" / "tables").exists()
+
+
 def test_db2_fetch_defaults_to_the_flavor_version_and_reports_unpublished(root: Path) -> None:
     result = run("db2", "fetch", "ChrClasses")
     assert result.exit_code == 1
