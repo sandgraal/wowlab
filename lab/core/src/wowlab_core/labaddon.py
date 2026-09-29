@@ -87,6 +87,8 @@ __all__ = [
     "ADDON_NAME",
     "CHAR_SCHEMAS",
     "CHAR_VARIABLE",
+    "MAX_IMPORT_CHOICES",
+    "OPEN_RECORD_NOTE",
     "PAID_CHANGE_NOTE",
     "REASON_LIMIT",
     "SECTION_KEYS",
@@ -141,6 +143,11 @@ SECTION_KEYS: tuple[str, ...] = (
 
 # The addon's absent reason for a section in the skip list (Core.lua).
 SWITCHED_OFF = "switched off by the owner"
+
+OPEN_RECORD_NOTE = (
+    "Recorded when the barber shop opened: a change applied during that visit may not be in "
+    "it [verify]."
+)
 
 PAID_CHANGE_NOTE = (
     "A paid appearance change that keeps the race is invisible to the addon: "
@@ -931,6 +938,11 @@ def customization_loads_ago(char: CharDBV1) -> int | None:
     return ago if ago >= 0 else None
 
 
+# More choices than any model's options (about 20 on 70009's playable
+# models); a record over it is refused rather than saved (M11-23 security review).
+MAX_IMPORT_CHOICES = 256
+
+
 class NoCustomizationError(LabAddonError):
     """The file holds no customization record a look can be made from.
     `reason` is the addon's own absent reason when it wrote one."""
@@ -970,8 +982,14 @@ def customization_import(char: CharDBV1) -> CustomizationImport:
     if record is None:
         raise NoCustomizationError(f"customization: {NOT_IN_FILE}")
     if not isinstance(record, Customization):
+        clipped = (
+            " (the addon's reason was clipped; see char show)"
+            if record.absent_clipped is not None
+            else ""
+        )
         raise NoCustomizationError(
-            f"customization is absent, with the addon's reason: {record.absent}", record.absent
+            f"customization is absent, with the addon's reason: {record.absent}{clipped}",
+            record.absent,
         )
     if record.race_id is None:
         raise NoCustomizationError("the customization record names no race (race_id)")
@@ -981,6 +999,11 @@ def customization_import(char: CharDBV1) -> CustomizationImport:
         raise NoCustomizationError(
             f"the customization record's sex is {record.sex}, not 0 or 1 as the barber shop "
             "writes it; no body type is taken from it"
+        )
+    if len(record.choices) > MAX_IMPORT_CHOICES:
+        raise NoCustomizationError(
+            f"the customization record lists {len(record.choices)} choices, more than the "
+            f"{MAX_IMPORT_CHOICES} an import takes (a barber shop lists about 20 options)"
         )
     choices: dict[int, int] = {}
     without: list[int] = []
@@ -1346,6 +1369,8 @@ def _customization(record: Customization, char: CharDBV1) -> list[str]:
     for choice in record.choices:
         index = "" if choice.choice_index is None else f" (index {choice.choice_index})"
         lines.append(f"  option {choice.option}: choice {_num(choice.choice)}{index}")
+    if record.recorded_at == "open":
+        lines.append(f"  {OPEN_RECORD_NOTE}")
     lines.append(f"  {PAID_CHANGE_NOTE}")
     return lines + _events(record)
 

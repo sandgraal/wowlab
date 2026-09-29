@@ -4341,10 +4341,16 @@ _HOTFIX_HINT = (
     "read from the game may come from a hotfix the exported tables lack"
 )
 _IMPORTED_REMARK = (
-    "Imported from a character's lab-addon customization record (wowlab looks import-char): "
-    "the choices as of that character's last recorded barber-shop visit when it was imported; "
-    "a later appearance change is not in it."
+    "Look {name} was imported from a character's lab-addon customization record (wowlab "
+    "looks import-char): the choices the addon had last recorded in the barber shop before "
+    "the import. It may miss a change applied during that visit [verify], and any change since."
 )
+_IMPORTED_BUILD_REMARK = "Look {name} was recorded by client build {client}."
+_IMPORTED_UNKNOWN = (
+    " (recorded by client {client}; checked against {build}'s tables; possibly a newer build "
+    "or a hotfix)"
+)
+_MODEL_HOTFIX = " (possibly a hotfix)"
 _ID = re.compile(r"[0-9]{1,9}")
 _ALLIANCE_WORDS = {0: "Alliance", 1: "Horde", 2: "neither faction"}
 _SEX_WORDS = {"male": 0, "female": 1}
@@ -4726,7 +4732,11 @@ def _look_report(
     race = model.races.get(look.race_id)
     notes = list(remarks)
     if saved.origin == "imported" and path is not None and imported_remark:
-        notes.append(_IMPORTED_REMARK)
+        notes.append(_IMPORTED_REMARK.format(name=look.name))
+        if saved.recorded_client_build is not None:
+            notes.append(
+                _IMPORTED_BUILD_REMARK.format(name=look.name, client=saved.recorded_client_build)
+            )
     if saved.saved_build != model.build:
         notes.append(
             f"Saved against build {saved.saved_build}; checked here against build {model.build}."
@@ -4750,7 +4760,29 @@ def _look_report(
         notes=list(verdict.notes),
         remarks=notes,
     )
-    return _save_wording(model, report) if saved.origin == "typed" else report
+    if saved.origin == "typed":
+        return _save_wording(model, report)
+    return _imported_wording(model, report, saved.recorded_client_build)
+
+
+def _imported_wording(
+    model: looks.Customizations, report: LookReport, client: str | None
+) -> LookReport:
+    """An imported look keeps the model's "(possibly a hotfix)", unless the
+    recording client's build is known and differs from the checking build:
+    then the id may simply be newer than those tables (M11-23 review, P4)."""
+    if client is None or client == model.build:
+        return report
+    tail = _IMPORTED_UNKNOWN.format(client=client, build=model.build)
+
+    def reworded(f: looks.Finding) -> looks.Finding:
+        if f.kind is not looks.FindingKind.UNKNOWN_TO_BUILD or not f.message.endswith(
+            _MODEL_HOTFIX
+        ):
+            return f
+        return f.model_copy(update={"message": f.message[: -len(_MODEL_HOTFIX)] + tail})
+
+    return report.model_copy(update={"notes": [reworded(f) for f in report.notes]})
 
 
 def _save_wording(model: looks.Customizations, report: LookReport) -> LookReport:
@@ -5291,7 +5323,13 @@ _OPEN_REMARK = (
     'it (a capture has shown a record left at "open" after a change was applied) [verify].'
 )
 _MODEL_ONLY_REMARK = (
-    "The record holds only the options the barber shop listed for the model it was showing."
+    "The record holds only the options the barber shop listed, for the model it was showing; "
+    "it can leave out options the tables give that model."
+)
+_NOT_LISTED_REMARK = (
+    "Not listed by the barber shop, so not in this look: {options} (options of model {model} "
+    "in build {build}'s tables). The record cannot say what the character has there; a choice "
+    "that depends on one of them is shown as undecided."
 )
 _NO_CLASS_REMARK = (
     "The record holds no class: class-restricted choices are noted, not refused; --class "
@@ -5341,6 +5379,21 @@ def _import_remarks(
         remarks.append(f"Recorded with no choice id, so left out of the look: option(s) {listed}.")
     race = model.races.get(got.race_id)
     expected = race.model_for(got.body_type) if race is not None else None
+    if expected is not None:
+        listed_ids = {*got.choices, *got.without_choice}
+        unlisted = sorted(
+            (o for o in model.options.values() if o.chr_model_id == expected),
+            key=lambda o: o.id,
+        )
+        unlisted = [o for o in unlisted if o.id not in listed_ids]
+        if unlisted:
+            remarks.append(
+                _NOT_LISTED_REMARK.format(
+                    options=", ".join(f"{o.name} ({o.id})" for o in unlisted),
+                    model=expected,
+                    build=model.build,
+                )
+            )
     if got.chr_model_id is None:
         remarks.append(
             "The record names no model (chr_model_id): the body type is its sex value "
@@ -5397,7 +5450,9 @@ def looks_import_char(
     try:
         got = labaddon.customization_import(record)
     except labaddon.NoCustomizationError as exc:
-        raise CliError(f"{who}: nothing to import: {exc}; nothing was saved") from exc
+        raise CliError(
+            f"{who}{_picked_words(how, tie)}: nothing to import: {exc}; nothing was saved"
+        ) from exc
     with _open_gamedata() as data:
         version, build_remarks = _looks_build(data, build, root, flavor)
         model = _load_model(data, version)
@@ -5409,7 +5464,12 @@ def looks_import_char(
         class_id=class_id,
         choices=got.choices,
     )
-    saved = lookstore.SavedLook(saved_build=version, origin="imported", look=look)
+    saved = lookstore.SavedLook(
+        saved_build=version,
+        origin="imported",
+        recorded_client_build=got.client_build,
+        look=look,
+    )
     remarks = [*_import_remarks(model, got, class_id), *build_remarks]
     report = _look_report(model, saved, None, remarks, imported_remark=False)
     path: Path | None = None
@@ -5451,7 +5511,11 @@ _PAGE_LEGEND = (
     "option, a class the ClassMask excludes, or a choice it depends on set to something "
     "else).",
     'note: shown, never a refusal: "needs <unlock>" (an achievement, quest or item '
-    'appearance to earn), "unknown to build <version> (possibly a hotfix)", a dependency on '
+    'appearance to earn), an id the build lacks (in a typed look: "is not in build '
+    "<version>'s tables: check the id with `wowlab looks options`\"; in an imported look: "
+    '"unknown to build <version> (possibly a hotfix)", or, when the recording client was '
+    "another build, \"(recorded by client <build>; checked against <version>'s tables; "
+    'possibly a newer build or a hotfix)"), a dependency on '
     "an option the look leaves unset, a class-restricted choice when no class is chosen, "
     "conditions, and options on a model no race uses (a form, pet or mount), checked by "
     "their requirements only [verify].",

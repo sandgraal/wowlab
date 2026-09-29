@@ -23,6 +23,7 @@ a doubled option, the section removed), a saved look file written by hand
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 from collections.abc import Iterator
@@ -60,6 +61,12 @@ AS_OF = "last barber-shop visit with the addon enabled"
 UNDEAD = 5
 RECORDED = {58: 918, 59: 923, 60: 941, 61: 962, 563: 6287, 62: 980, 534: 5330}
 UNDEAD_BODY_0_MODEL = 9  # ChrRaceXChrModel: race 5, Sex 0 -> ChrModel 9 (70009)
+NOT_LISTED = (
+    "Not listed by the barber shop, so not in this look: Skin Type (567), Eyesight (6346), "
+    "Eye Style (8530) (options of model 9 in build 1.60.1.70009's tables). The record cannot "
+    "say what the character has there; a choice that depends on one of them is shown as "
+    "undecided."
+)
 
 runner = CliRunner()
 
@@ -259,6 +266,7 @@ def test_import_char_saves_the_real_record_as_an_imported_look(
     saved = SavedLook.model_validate_json(path.read_bytes())
     assert saved.origin == "imported"
     assert saved.saved_build == BUILD
+    assert saved.recorded_client_build == CLIENT_BUILD
     assert saved.look == Look(name="undead", race_id=UNDEAD, body_type=0, choices=RECORDED)
 
 
@@ -281,7 +289,8 @@ def test_import_char_remarks_say_when_the_record_was_made(visited: Path) -> None
         "id they lack may be newer than those tables, or a hotfix."
     ) in remarks
     assert EXPORTED_ONLY in remarks
-    assert cli._IMPORTED_REMARK not in remarks  # that one is for `show`
+    assert NOT_LISTED in remarks
+    assert cli._IMPORTED_REMARK.format(name="undead") not in remarks  # that one is for `show`
 
 
 def test_import_char_text_never_calls_the_look_current(visited: Path) -> None:
@@ -324,10 +333,16 @@ def test_show_and_compare_of_an_imported_look(visited: Path) -> None:
         ok("looks", "show", "undead", "--build", BUILD, "--json").stdout
     )
     assert shown.origin == "imported"
-    assert cli._IMPORTED_REMARK in shown.remarks
+    assert shown.remarks[:2] == [
+        "Look undead was imported from a character's lab-addon customization record (wowlab "
+        "looks import-char): the choices the addon had last recorded in the barber shop before "
+        "the import. It may miss a change applied during that visit [verify], and any change "
+        "since.",
+        f"Look undead was recorded by client build {CLIENT_BUILD}.",
+    ]
     assert shown.refused is False
     text = ok("looks", "show", "undead", "--build", BUILD).stdout
-    assert cli._IMPORTED_REMARK in text
+    assert cli._IMPORTED_REMARK.format(name="undead") in text
     assert "current" not in text.casefold()
     assert _import(visited, "undead2").exit_code == 0
     compared = cli.LooksCompareReport.model_validate_json(
@@ -335,6 +350,18 @@ def test_show_and_compare_of_an_imported_look(visited: Path) -> None:
     )
     assert len(compared.same) == len(RECORDED)
     assert compared.different == []
+    # M3: the compare text says which look was imported
+    both = ok("looks", "compare", "undead", "undead2", "--build", BUILD).stdout
+    assert cli._IMPORTED_REMARK.format(name="undead") in both
+    assert cli._IMPORTED_REMARK.format(name="undead2") in both
+
+
+def test_compare_text_names_only_the_imported_look(visited: Path) -> None:
+    assert _import(visited, "undead").exit_code == 0
+    assert run("looks", "save", "t", "--race", "5", "--sex", "0", "--build", BUILD).exit_code == 0
+    both = ok("looks", "compare", "undead", "t", "--build", BUILD).stdout
+    assert cli._IMPORTED_REMARK.format(name="undead") in both
+    assert "Look t was imported" not in both
 
 
 # ─── the no-visit case ───────────────────────────────────────────────────────
@@ -448,7 +475,7 @@ def test_a_typed_id_the_build_lacks_stays_a_thing_to_check(user_data: Path) -> N
     )
     assert shown.origin == "typed"
     assert [f.message for f in shown.notes] == expected
-    assert cli._IMPORTED_REMARK not in shown.remarks
+    assert not any("was imported" in r for r in shown.remarks)
     compared = cli.LooksCompareReport.model_validate_json(
         ok("looks", "compare", "t", "t", "--build", BUILD, "--json").stdout
     )
@@ -484,3 +511,136 @@ def test_origin_takes_only_the_two_values_constructed() -> None:
             {"format": 1, "saved_build": BUILD, "origin": "guessed", "look": UNKNOWN_CHOICE_LOOK}
         )
     assert lookstore.LOOKS_FORMAT == 1
+
+
+# ─── fix round 1 (M11-23 reviews) ────────────────────────────────────────────
+
+
+def test_char_show_says_an_open_record_may_miss_an_applied_change(visited: Path) -> None:
+    """M1: `char show` on the real record carries the open caveat."""
+    text = ok("char", "show", "--root", str(visited)).stdout
+    assert f"  {labaddon.OPEN_RECORD_NOTE}\n" in text
+    assert labaddon.OPEN_RECORD_NOTE == (
+        "Recorded when the barber shop opened: a change applied during that visit may not be "
+        "in it [verify]."
+    )
+
+
+def test_no_record_on_the_newest_file_names_how_it_was_picked(visited: Path) -> None:
+    """C1: the 70009 character without a record, copied in with a newer mtime
+    (real bytes, constructed placement), is picked as the newest; the error
+    says so and names --character."""
+    other = visited / FLAVOR / "WTF/Account/90000001#6/1/Labcharb-Labrealmf/SavedVariables"
+    other.mkdir(parents=True)
+    shutil.copy2(NO_VISIT_B, other / "WowLab.lua")
+    newest = (visited / FLAVOR / CHAR).stat().st_mtime + 10
+    os.utime(other / "WowLab.lua", (newest, newest))
+    result = _import(visited, "a")
+    assert result.exit_code == 1
+    assert (
+        "1/Labcharb-Labrealmf (the WowLab.lua with the newest modification time; a wowlab "
+        "restore also sets it; choose another with --character): nothing to import:"
+    ) in result.stderr
+    assert _import(visited, "a", "--character", "Labchard-Labrealmg").exit_code == 0
+
+
+def test_a_clipped_reason_says_it_was_clipped_constructed() -> None:
+    """C3: an absent reason over REASON_LIMIT is clipped by the reader."""
+    char = _real_char()
+    char["customization"] = {"absent": "x" * (labaddon.REASON_LIMIT + 10)}
+    with pytest.raises(labaddon.NoCustomizationError) as caught:
+        labaddon.customization_import(labaddon.load_char(char))
+    assert str(caught.value).endswith(" (the addon's reason was clipped; see char show)")
+
+
+def test_a_record_of_too_many_choices_is_refused_constructed() -> None:
+    """S2: at MAX_IMPORT_CHOICES it imports; one more is refused, naming the count."""
+    limit = labaddon.MAX_IMPORT_CHOICES
+    assert limit == 256
+
+    def with_choices(n: int) -> labaddon.CharDBV1:
+        char = _customization()
+        char["customization"]["choices"] = [{"option": 100000 + i, "choice": i} for i in range(n)]
+        return labaddon.load_char(char)
+
+    assert len(labaddon.customization_import(with_choices(limit)).choices) == limit
+    with pytest.raises(labaddon.NoCustomizationError, match="lists 257 choices, more than the 256"):
+        labaddon.customization_import(with_choices(limit + 1))
+
+
+def test_save_refuses_what_read_would_refuse_constructed(user_data: Path) -> None:
+    """S1: a look whose file would pass MAX_LOOK_BYTES is refused before anything
+    is created; the same body written by hand is refused by read."""
+    choices = {i: i for i in range(1, 70000)}
+    look = Look(name="big", race_id=1, body_type=0, choices=choices)
+    saved = SavedLook(saved_build=BUILD, look=look)
+    body = saved.model_dump_json(indent=2).encode("utf-8") + b"\n"
+    assert len(body) > lookstore.MAX_LOOK_BYTES
+    store = LookStore()
+    with pytest.raises(lookstore.LookStoreError, match="over the 1048576-byte limit"):
+        store.save(saved)
+    assert not store.root.exists()
+    store.root.mkdir(parents=True)
+    (store.root / "big.json").write_bytes(body)
+    with pytest.raises(lookstore.LookStoreError, match="1048576-byte"):
+        store.load("big")
+
+
+def test_save_keeps_a_look_under_the_limit_constructed(user_data: Path) -> None:
+    """S1 boundary: a large look under the limit saves and reads back."""
+    look = Look(name="large", race_id=1, body_type=0, choices={i: i for i in range(1, 20000)})
+    saved = SavedLook(saved_build=BUILD, look=look)
+    assert len(saved.model_dump_json(indent=2)) < lookstore.MAX_LOOK_BYTES
+    store = LookStore()
+    store.save(saved)
+    assert store.load("large") == saved
+
+
+@pytest.mark.parametrize(
+    ("recorded", "tail"),
+    [
+        (None, " (possibly a hotfix)"),
+        (BUILD, " (possibly a hotfix)"),
+        (
+            CLIENT_BUILD,
+            f" (recorded by client {CLIENT_BUILD}; checked against {BUILD}'s tables; possibly "
+            "a newer build or a hotfix)",
+        ),
+    ],
+    ids=["no-client-build", "same-build", "newer-client"],
+)
+def test_an_imported_unknown_id_names_the_recording_client_constructed(
+    user_data: Path, recorded: str | None, tail: str
+) -> None:
+    """P4: constructed imported look files with a choice id 70009 lacks."""
+    body: dict[str, Any] = {"format": 1, "saved_build": BUILD, "origin": "imported"}
+    if recorded is not None:
+        body["recorded_client_build"] = recorded
+    _write_look(user_data, "x", {**body, "look": UNKNOWN_CHOICE_LOOK})
+    shown = cli.LookReport.model_validate_json(
+        ok("looks", "show", "x", "--build", BUILD, "--json").stdout
+    )
+    assert [f.message for f in shown.notes] == [f"choice 999999 is unknown to build {BUILD}{tail}"]
+    build_remark = f"Look x was recorded by client build {recorded}."
+    assert (build_remark in shown.remarks) is (recorded is not None)
+
+
+def test_recorded_client_build_takes_only_a_version_constructed() -> None:
+    with pytest.raises(ValueError, match="recorded_client_build"):
+        SavedLook.model_validate(
+            {
+                "format": 1,
+                "saved_build": BUILD,
+                "origin": "imported",
+                "recorded_client_build": "1.60\x1b[31m",
+                "look": UNKNOWN_CHOICE_LOOK,
+            }
+        )
+
+
+def test_the_page_legend_gives_both_unknown_id_wordings() -> None:
+    """C2."""
+    legend = cli._PAGE_LEGEND[2]
+    assert "check the id with `wowlab looks options`" in legend
+    assert "unknown to build <version> (possibly a hotfix)" in legend
+    assert "possibly a newer build or a hotfix" in legend

@@ -594,22 +594,26 @@ Dated entries, newest last. Each names the fixture that prompted it.
   `macos-70058/forever/WTF/Account/90000001#6/1/Labchard-Labrealmg/SavedVariables/WowLab.lua`,
   Forever beta 1.60.1.70058, interface 16001, macOS). A later run of the same addon (after M11-22)
   on one character. The owner opened the barber shop in Orgrimmar on 70058
-  (the UI opened, with no Lua error), changed the hair colour and clicked
-  Accept, which also worked. The rows below update the table above for this
+  (the UI opened, with no Lua error) twice in one session: first sat down
+  and cancelled, then sat again, changed the hair colour and clicked Accept,
+  which also worked; no open came after the Accept. The rows below update the table above for this
   build; they leave its 70009 findings as they were.
 
   | Item | Result | What Forever 1.60.1.70058 returned |
   |---|---|---|
-  | `BARBER_SHOP_APPEARANCE_APPLIED` (§13.1) | **contradicted in part** (event registers; record not rewritten) **[verify]** | the section's `events_unregistered` is `{}`, so the client accepted both barber-shop events, yet the record reads `recorded_at = "open"`, with `recorded_load` 8 equal to `probe.loads` 8 (the same session as the applied change). Either the event did not fire, or it fired and the gather did not replace the record. The file cannot tell which. Whether `choices` hold the colour before or after the change is not known. Follow-up for the addon (not changed in M11-23). The reader and `looks import-char` say "as of the last barber-shop open" and never call the look the character's appearance now |
-  | `chr_model_id` from `C_BarberShop.GetViewingChrModel` (§13.1, capture checklist item 14) | **contradicted**: absent | the key is not in the record. Either the function is missing or it returned no number: the addon writes the key only for a number, and the file cannot say which. `import-char` takes the body type from `sex` and says so |
-  | `sex` from `C_BarberShop.GetCurrentCharacterData()` (`Enum.UnitSex` 0/1) | present: 0 | all seven recorded options are on `ChrModel` 9, the model that `ChrRaceXChrModel` gives race 5 with `Sex` 0 (70009 tables). So `sex` 0 reads as the tables' body type 0. Sex 1 is not yet seen **[verify]** |
+  | `BARBER_SHOP_APPEARANCE_APPLIED` (§13.1) | **contradicted in part** (event registers; record not rewritten) **[verify]** | the section's `events_unregistered` is `{}`, so the client accepted both barber-shop events, yet the record reads `recorded_at = "open"`, with `recorded_load` 8 equal to `probe.loads` 8 (the same session as the applied change). In the addon (`Core.lua` `listen` and `gather`), every call of the section's handler replaces the record: with `recorded_at = "applied"`, or with an absent marker if the gather fails. So either `BARBER_SHOP_APPEARANCE_APPLIED` did not reach the handler in that session, or the barber shop was opened again after the change (a second `BARBER_SHOP_OPEN` leaves `"open"` with the new colour). The owner opened the shop twice in that session: once with no change (cancelled), then again, changing the hair colour and accepting, with no open after the Accept. So `BARBER_SHOP_APPEARANCE_APPLIED` did not reach the handler, and `choices` are most likely the look at the second open, before the hair-colour change. Follow-up for the addon (not changed in M11-23). `looks import-char` says "as of the last barber-shop open" and never calls the look the character's appearance now |
+  | `chr_model_id` from `C_BarberShop.GetViewingChrModel` (§13.1, capture checklist item 14) | **contradicted**: absent | the key is not in the record. The function is missing, raised an error, or returned no number: the addon writes the key only for a number, and the file cannot say which. `import-char` takes the body type from `sex` and says so |
+  | `sex` from `C_BarberShop.GetCurrentCharacterData()` (`Enum.UnitSex` 0/1) | present: 0 | all seven recorded options are on `ChrModel` 9, the model that `ChrRaceXChrModel` gives race 5 with `Sex` 0 (70009 tables). So `sex` 0 reads as the tables' body type 0. Option ids are per model: race 5 `Sex` 1 is model 10, whose options are 63–67, 535, 559, 568, 6347 and 8531, so the record cannot come from model 10. Sex 1 is not yet seen **[verify]** |
   | The name fields of `C_BarberShop.GetCurrentCharacterData()` never stored | confirmed on this record | no name field and no name, realm or GUID anywhere in the file (checked by grep before commit) |
-  | `currentChoiceIndex` 1-based (addon `Customization.lua` **[verify]**) | consistent with 1-based | for all seven choices, `choice_index` is the choice's `UiOrderIndex` + 1 in the 70009 `ChrCustomizationChoice` table (for example 918: `UiOrderIndex` 5, index 6; 980: `UiOrderIndex` 9, index 10). That fits a 1-based index into choices listed in `UiOrderIndex` order; the list itself is not recorded |
+  | `currentChoiceIndex` 1-based (addon `Customization.lua` **[verify]**) | consistent with 1-based; 0-based ruled out for option 62 | For all seven choices, `choice_index` is the choice's 1-based position among its option's choices sorted by `UiOrderIndex` in the 70009 table (918: 6; 980: 10). Option 62 has ten choices (`UiOrderIndex` 0–9), so a 0-based 10 would point past the end. The addon takes each `choice` id from `option.choices[currentChoiceIndex]`, so the ids themselves are right only if the index is 1-based. The list the barber returned is not recorded. |
   | Which options the barber shop lists | 7 of model 9's 10 options | `race_id` 5 (Undead). Options 58, 59, 60, 61, 563, 62 and 534 were listed. Skin Type (567), Eyesight (6346) and Eye Style (8530), on model 9 in the 70009 tables, were not. Choice 918 depends on option 567, so a look imported from this record shows that dependency as undecided |
   | Currencies on this character | empty, with the M11-22 counts | `rows` 0, `headers` 0, `list` empty, `filter` 1, `headers_collapsed` 0. The client listed no rows at all, as the owner saw in game |
 
   Also in the file, and outside the table's scope: `professions` is
   `{ absent = "switched off by the owner" }`, but the file holds no `skip`
-  list. That fits a `/wowlab skip professions` followed by `/wowlab unskip
-  professions` in the same session (§13.1: an unskip takes effect from the
-  next load). The file cannot confirm it.
+  list. That is what the addon writes when a section is off this session and the
+  owner unskipped it before the save (§13.1: an unskip takes effect from the
+  next `/reload` or login, never in the same session); the skip may be from
+  this session or loaded from an earlier one. The owner reports `/wowlab
+  skip professions` then `/wowlab unskip professions` in this session. Not
+  an addon defect.
