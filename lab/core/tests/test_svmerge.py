@@ -136,6 +136,17 @@ _NODES = 'WowLabCharDB["talents"]["class"]["config"]["trees"][1]["nodes"]'
 ONLY_IN_B = {f"{_NODES}[53]", f"{_NODES}[54]"}
 
 
+# `sv merge` of a character's `WowLab.lua` keeps the target's probe, which is
+# neither a conflict nor taken, and says so (§13.4, owner ruling for M11-24;
+# conductor ruling on M11-24T, 2026-09-29). The library `merge` still lists it.
+PROBE_NOTE = "probe kept from the target: it counts that character's logins (§13.4)"
+_PROBE = 'WowLabCharDB["probe"]'
+
+
+def _under_probe(path: str) -> bool:
+    return path == _PROBE or path.startswith(_PROBE + "[")
+
+
 def _svmerge() -> ModuleType:
     return importlib.import_module("wowlab_core.svmerge")
 
@@ -491,18 +502,24 @@ def test_a_copied_subtree_takes_the_target_documents_style_constructed() -> None
 # ─── CLI: two characters (two-way) ───────────────────────────────────────────
 
 
+@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 def test_cli_two_characters_conflicts_are_listed_and_nothing_is_written(root: Path) -> None:
     before = _state(root)
     text = run("sv", "merge", LAB, "--from", CHAR_B, "--into", CHAR_A, "--yes")
     assert text.exit_code == 1, _out(text)
-    assert _path("WowLabCharDB", "probe", "loads") in _out(text)
+    listed = sorted(p for p in _two_way_oracle(REAL_A, REAL_B)[0] if not _under_probe(p))
+    assert all(p in _out(text) for p in listed[:5]), "the conflicts are listed"
+    assert _path("WowLabCharDB", "probe", "loads") not in _out(text), "the probe is no conflict"
+    assert PROBE_NOTE in _out(text)
     result = run("sv", "merge", LAB, "--from", CHAR_B, "--into", CHAR_A, "--yes", "--json")
     assert result.exit_code == 1, _out(result)
     cli.SvMergeReport.model_validate_json(result.stdout)
     report = _report(result)
     conflicts, _, _ = _two_way_oracle(REAL_A, REAL_B)
     assert report["mode"] == "two-way"
-    assert {c["path"] for c in report["conflicts"]} == conflicts
+    # The probe differs between any two characters; M11-24 keeps it out of the conflicts.
+    assert {c["path"] for c in report["conflicts"]} == {p for p in conflicts if not _under_probe(p)}
+    assert report["notes"].count(PROBE_NOTE) == 1
     assert {(a["path"], a["missing_from"]) for a in report["absent"]} == {
         (p, "ours") for p in ONLY_IN_B
     }
@@ -527,6 +544,7 @@ def test_cli_take_theirs_writes_only_the_target_through_guard(root: Path, flavor
     assert (flavor / LAB_A).read_bytes() == REAL_A
 
 
+@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 def test_cli_take_ours_keeps_the_target_and_lists_the_conflicts(flavor: Path) -> None:
     result = run(
         "sv", "merge", LAB, "--from", CHAR_B, "--into", CHAR_A,
@@ -535,7 +553,10 @@ def test_cli_take_ours_keeps_the_target_and_lists_the_conflicts(flavor: Path) ->
     assert result.exit_code == 0, _out(result)
     report = _report(result)
     conflicts, _, _ = _two_way_oracle(REAL_A, REAL_B)
-    assert {c["path"] for c in report["conflicts"]} == conflicts, "resolved, still listed"
+    assert {c["path"] for c in report["conflicts"]} == {
+        p for p in conflicts if not _under_probe(p)
+    }, "resolved, still listed; the probe is no conflict (M11-24)"
+    assert report["notes"].count(PROBE_NOTE) == 1
     assert (flavor / LAB_A).read_bytes() == REAL_A
     assert (flavor / LAB_B).read_bytes() == REAL_B
 

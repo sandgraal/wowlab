@@ -22,14 +22,20 @@ Every expectation comes from docs/LAB_PLAN.md §13.4, the bullet
   note "the Lab wrote WowLab.lua after that snapshot; the loader was not
   re-checked".
 
-The seam these graders fix: (a) is a rule of `wowlab sv merge` on
-`WowLab.lua`, not of the generic `wowlab_core.svmerge.merge`, which knows no
-file names (§13.4, "the library entry point"). The M11-09T library grader
-`test_two_way_real_pair_take_theirs_follows_the_target_layout` therefore still
-expects a plain `merge(..., take="theirs")` to copy every differing leaf. A
-probe leaf that differs may still be listed as a conflict (the M11-09T grader
-`test_cli_two_characters_conflicts_are_listed_and_nothing_is_written` lists it),
-but it is never taken and never reported as resolved from theirs.
+Conductor rulings on M11-24T (2026-09-29), within the owner's ruling:
+
+1. (a) is a rule of `wowlab sv merge` on a per-character `WowLab.lua`, not of
+   the generic `wowlab_core.svmerge.merge`, which knows no file names. The
+   M11-09T library graders still expect a plain `merge()` to list and take
+   the probe like any other leaf.
+2. The probe is not a conflict: its paths appear in neither `conflicts` nor
+   `taken`, and `notes` holds one entry, exactly "probe kept from the target:
+   it counts that character's logins (§13.4)", in text and `--json`. When the
+   probe was the only difference, the merge exits 0, writes nothing and says
+   so as the no-change path does.
+3. The Lab-write note prints whenever a comparison was skipped, whether or
+   not the check would have passed.
+4. The (b) refusal names the older differing snapshot's id.
 
 Real fixtures (L8): the two characters' `WowLab.lua` from the M11-03 capture
 (`probe.loads` 4 and 2) and the account-wide `DBM-Party-Vanilla.lua`, in the
@@ -68,7 +74,9 @@ from test_svmerge import (
     DBM,
     LAB,
     LAB_A,
+    LAB_B,
     NO_LOGIN_NOTE,
+    PROBE_NOTE,
     REAL_A,
     REAL_B,
     REAL_DBM,
@@ -77,12 +85,12 @@ from test_svmerge import (
     _out,
     _report,
     _snap,
+    _under_probe,
 )
 
 from wowlab_core import guard, luadata
 
 LAB_NOTE = "the Lab wrote WowLab.lua after that snapshot; the loader was not re-checked"
-PROBE = 'WowLabCharDB["probe"]'
 PROBE_A = b'\r\n["probe"] = {\r\n["loads"] = 4,\r\n},\r\n'  # the first character's, as written
 
 _LOADS_1 = (b'["loads"] = 4,', b'["loads"] = 1,')
@@ -94,8 +102,11 @@ def _probe(data: bytes) -> object:
     return luadata.parse(data).to_python()["WowLabCharDB"]["probe"]
 
 
-def _under_probe(path: str) -> bool:
-    return path == PROBE or path.startswith(PROBE + "[")
+def _probe_kept(report: dict[str, Any]) -> None:
+    """The probe is neither a conflict nor taken, and one note says it was kept."""
+    assert not [c["path"] for c in report["conflicts"] if _under_probe(c["path"])]
+    assert not [t["path"] for t in report["taken"] if _under_probe(t["path"])]
+    assert report["notes"].count(PROBE_NOTE) == 1, report["notes"]
 
 
 def _frozen(root: Path, user_data: Path) -> tuple[object, ...]:
@@ -124,12 +135,7 @@ def test_take_theirs_keeps_the_targets_probe_and_does_not_report_it_taken(flavor
     out = (flavor / LAB_A).read_bytes()
     assert _probe(out) == {"loads": 4}, "the target's login counter, not the source's 2"
     assert PROBE_A in out, "the probe keeps its bytes"
-    assert not [t["path"] for t in report["taken"] if _under_probe(t["path"])]
-    assert not [
-        c["path"]
-        for c in report["conflicts"]
-        if _under_probe(c["path"]) and c["resolved"] == "theirs"
-    ], "a probe conflict, if listed, is not resolved from theirs"
+    _probe_kept(report)
     # Everything else was taken: the gear block is the source's.
     merged = luadata.parse(out).to_python()["WowLabCharDB"]
     assert merged["gear"] == luadata.parse(REAL_B).to_python()["WowLabCharDB"]["gear"]
@@ -149,7 +155,7 @@ def test_key_copy_of_the_whole_variable_keeps_the_targets_probe(flavor: Path) ->
     assert luadata.parse(out).to_python() == expected
     assert PROBE_A in out
     assert b"\t" not in out and out.count(b"\n") == out.count(b"\r\n"), "the target's layout"
-    assert not [t["path"] for t in report["taken"] if _under_probe(t["path"])]
+    _probe_kept(report)
 
 
 @pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
@@ -163,7 +169,7 @@ def test_key_naming_the_probe_changes_nothing(root: Path, flavor: Path, key: str
     assert result.exit_code == 0, _out(result)
     report = _report(result)
     assert report["written"] is False
-    assert not [t["path"] for t in report["taken"] if _under_probe(t["path"])]
+    _probe_kept(report)
     assert (flavor / LAB_A).read_bytes() == REAL_A
     assert guard.history() == ()
 
@@ -176,6 +182,7 @@ def test_key_copy_within_the_file_onto_the_probe_changes_nothing(flavor: Path) -
     assert result.exit_code == 0, _out(result)
     report = _report(result)
     assert report["written"] is False
+    _probe_kept(report)
     assert (flavor / LAB_A).read_bytes() == REAL_A
     assert guard.history() == ()
 
@@ -200,8 +207,30 @@ def test_three_way_keeps_the_targets_probe_when_only_theirs_changed_it_construct
     report = _report(result)
     assert report["mode"] == "three-way" and report["written"] is True
     assert report["conflicts"] == []
-    assert not [t["path"] for t in report["taken"] if _under_probe(t["path"])]
+    _probe_kept(report)
     assert target.read_bytes() == _once(ours, *_EQUIPPED)
+
+
+@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
+def test_probe_as_the_only_difference_writes_nothing_and_says_so_constructed(
+    root: Path, flavor: Path
+) -> None:
+    # The second character's file replaced by the first's with loads 2: the
+    # two files differ only in the probe. No --take: nothing is left to resolve.
+    (flavor / LAB_B).write_bytes(_once(REAL_A, *_LOADS_2))
+    before = _state(root)
+    result = _merge_lab("--from", CHAR_B)
+    assert result.exit_code == 0, _out(result)
+    report = _report(result)
+    assert report["written"] is False
+    assert report["conflicts"] == [] and report["taken"] == []
+    assert report["notes"].count(PROBE_NOTE) == 1, report["notes"]
+    text = run("sv", "merge", LAB, "--from", CHAR_B, "--into", CHAR_A, "--yes")
+    assert text.exit_code == 0, _out(text)
+    assert "Nothing to change" in _out(text), "the no-change path's wording"
+    assert PROBE_NOTE in _out(text)
+    assert _state(root) == before
+    assert guard.history() == ()
 
 
 # ─── (b) walk past byte-identical snapshots ─────────────────────────────────
@@ -347,6 +376,49 @@ def test_restore_then_merge_prints_the_note_in_text_output_constructed(flavor: P
     result = _copy_within()
     assert result.exit_code == 0, _out(result)
     assert LAB_NOTE in _out(result)
+    assert (flavor / DBM).read_bytes() != REAL_DBM
+
+
+def _merge_gear_into_wowlab_lua() -> None:
+    """An earlier `sv merge` of the first character's `WowLab.lua` (another
+    gear block, `loads` still 4): a committed guard write to that file."""
+    ok(
+        "sv",
+        "merge",
+        LAB,
+        "--from",
+        CHAR_B,
+        "--into",
+        CHAR_A,
+        "--key",
+        "WowLabCharDB.gear",
+        "--yes",
+    )
+
+
+@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
+@pytest.mark.parametrize(
+    "then_snapshot",
+    [False, True],
+    ids=["would-have-passed-disk-equal-loads", "would-have-refused-pair-equal-loads"],
+)
+def test_earlier_sv_merge_of_wowlab_lua_skips_the_comparison_with_the_note(
+    flavor: Path, then_snapshot: bool
+) -> None:
+    # Snapshot at 4, then a merge of the file itself. Without --then_snapshot
+    # the disk (4, other bytes) against the guard's snapshot (4) would pass
+    # today with no note; with it the pair guard (4) -> later (4, other bytes)
+    # would be refused as "did not go up". Both span the Lab write: skipped,
+    # with the note (conductor ruling 3).
+    _snap("loads 4")
+    _merge_gear_into_wowlab_lua()
+    if then_snapshot:
+        _snap("after the merge")
+    result = _copy_within("--json")
+    assert result.exit_code == 0, _out(result)
+    report = _report(result)
+    assert report["written"] is True
+    assert any(LAB_NOTE in note for note in report["notes"]), report["notes"]
     assert (flavor / DBM).read_bytes() != REAL_DBM
 
 
