@@ -22,9 +22,9 @@ What the models accept (M11-03 capture, `docs/LAB_FORMATS.md` amendment of
 - Reasons are the one text that is clipped instead of refused (M11-27): a
   reason longer than REASON_LIMIT characters, or holding any character
   outside printable ASCII (a long Lua error the addon stored), is escaped
-  and truncated by `clip_reason` to printable ASCII of at most REASON_LIMIT
-  characters, and `<field>_clipped` records the original length and what
-  was done, so one reason no longer hides every other section. Every other
+  byte by byte (`\\xHH`, a backslash as `\\\\`) and truncated by
+  `clip_reason` to printable ASCII of at most REASON_LIMIT characters, and
+  `<field>_clipped` records the original length in bytes and what was done, so one reason no longer hides every other section. Every other
   text field keeps its shape check. Printable ASCII is still the only text
   that reaches the terminal or the JSON unescaped.
 - Unknown keys are kept (L4 spirit) and come back in `model_extra` and in
@@ -262,20 +262,21 @@ def _check_unknown(path: str, value: object) -> None:
 _FROM_FILE = "wowlab_from_file"
 CLIPPED_SUFFIX = "_clipped"
 _PRINTABLE = re.compile(r"[\x20-\x7e]{1,1024}")
-_NOT_PRINTABLE = re.compile(r"[^\x20-\x7e]")
+_NOT_PRINTABLE_BYTE = re.compile(rb"[^\x20-\x7e]")
 
 
 class ClippedReason(BaseModel):
     """What this reader did to a reason that was not printable ASCII of 1 to
     REASON_LIMIT characters (a long Lua error the addon stored, say), so the
-    reason reads instead of refusing the file. `original_length`: the
-    reason's length in characters as the file held it. `escaped`: it held a
-    character outside printable ASCII (U+0020 to U+007E), so every such
-    character is written as an escape (`\\xHH`, `\\uHHHH` or `\\UHHHHHHHH`)
-    and a backslash as `\\\\`; when False no escape was applied and a
-    backslash is itself. `truncated`: the text shown stops before the end of
-    the reason, at the last whole character or escape that fits in
-    REASON_LIMIT characters."""
+    reason reads instead of refusing the file. The reason is taken as the
+    bytes the file holds (`luadata` decodes a string as UTF-8 with
+    `surrogateescape`, so encoding it back the same way gives those bytes).
+    `original_length`: the reason's length in bytes as the file holds it.
+    `escaped`: it held a byte outside printable ASCII (0x20 to 0x7E), so every
+    such byte is written as `\\xHH` and every backslash as `\\\\`; when False
+    no escape was applied and a backslash is itself. `truncated`: the text
+    shown stops before the end of the reason, at the last whole byte or
+    escape that fits in REASON_LIMIT characters. The file is never changed."""
 
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 
@@ -290,39 +291,56 @@ class ClippedReason(BaseModel):
         return self
 
 
-def _escape(ch: str) -> str:
-    if ch == "\\":
-        return "\\\\"
-    if " " <= ch <= "~":
-        return ch
-    point = ord(ch)
-    if point <= 0xFF:
-        return f"\\x{point:02x}"
-    if point <= 0xFFFF:
-        return f"\\u{point:04x}"
-    return f"\\U{point:08x}"
+def _char_bytes(ch: str) -> bytes:
+    """One character as UTF-8; a surrogate `surrogateescape` cannot map back
+    to a byte (only reachable from a caller other than `luadata`) is written
+    as its three-byte surrogate encoding."""
+    try:
+        return ch.encode("utf-8", "surrogateescape")
+    except UnicodeEncodeError:
+        return ch.encode("utf-8", "surrogatepass")
+
+
+def _file_bytes(value: str) -> bytes:
+    """The bytes a reason came from in the file (see `ClippedReason`)."""
+    try:
+        return value.encode("utf-8", "surrogateescape")
+    except UnicodeEncodeError:
+        return b"".join(_char_bytes(ch) for ch in value)
+
+
+# Each byte as it is shown in an escaped reason: printable ASCII as itself,
+# a backslash doubled, every other byte as \xHH.
+_BYTE_ESCAPES: tuple[str, ...] = tuple(
+    "\\\\" if b == 0x5C else chr(b) if 0x20 <= b <= 0x7E else f"\\x{b:02x}" for b in range(256)
+)
 
 
 def clip_reason(value: str) -> tuple[str, ClippedReason | None]:
     """A reason as the models hold it, and what was done to it (None when
     nothing was: printable ASCII of 1 to REASON_LIMIT characters). An empty
-    reason is returned as it is; the model refuses it. One scan of the reason
-    (already bounded by `luadata.MAX_FILE_BYTES`), then at most REASON_LIMIT
-    characters are built."""
+    reason is returned as it is; the model refuses it. The reason is encoded
+    once (its size is already bounded by `luadata.MAX_FILE_BYTES`); then at
+    most REASON_LIMIT bytes are looked at and at most REASON_LIMIT characters
+    are built."""
     if not value or _PRINTABLE.fullmatch(value):
         return value, None
-    escaped = _NOT_PRINTABLE.search(value) is not None
+    data = _file_bytes(value)
+    escaped = _NOT_PRINTABLE_BYTE.search(data) is not None
+    if not escaped:  # printable ASCII, only too long
+        text = data[:REASON_LIMIT].decode("ascii")
+        return text, ClippedReason(original_length=len(data), escaped=False, truncated=True)
     out: list[str] = []
     size = 0
     used = 0
-    for ch in value:
-        piece = _escape(ch) if escaped else ch
+    for byte in data[:REASON_LIMIT]:
+        piece = _BYTE_ESCAPES[byte]
         if size + len(piece) > REASON_LIMIT:
             break
         out.append(piece)
         size += len(piece)
         used += 1
-    clip = ClippedReason(original_length=len(value), escaped=escaped, truncated=used < len(value))
+    clip = ClippedReason(original_length=len(data), escaped=True, truncated=used < len(data))
     return "".join(out), clip
 
 
@@ -959,17 +977,13 @@ def _clip_words(clip: ClippedReason | None) -> str:
     """What the reader did to a reason, after it (printable ASCII only)."""
     if clip is None:
         return ""
-    done = []
-    if clip.escaped:
-        done.append(
-            "wrote each character outside printable ASCII as an escape (\\xHH, \\uHHHH or "
-            "\\UHHHHHHHH, and a backslash as \\\\)"
-        )
-    if clip.truncated:
-        done.append(f"cut it to at most {REASON_LIMIT} characters")
+    size = f"the reason is {_count(clip.original_length, 'byte')} in the file"
+    if not clip.escaped:
+        return f" [{size}; shown cut to its first {REASON_LIMIT} characters; the file is unchanged]"
+    cut = f", and cut to at most {REASON_LIMIT} characters" if clip.truncated else ""
     return (
-        f" [the reason held {_count(clip.original_length, 'character')}; this reader "
-        f"{' and '.join(done)}]"
+        f" [{size}; shown with each byte outside printable ASCII written as \\xHH and each "
+        f"backslash as \\\\{cut}; the file is unchanged]"
     )
 
 
@@ -1158,25 +1172,49 @@ def legacy_headline(legacy: LegacyTalents) -> str:
     not say which one the Legacy panel uses, so each gets its own figures."""
     if not legacy.configs:
         return f"Legacy candidates: {NONE_RECORDED}"
-    configs = [c for c in legacy.configs if isinstance(c, LegacyConfig)]
-    if not configs:
+    if not any(isinstance(c, LegacyConfig) for c in legacy.configs):
         return "Legacy candidates: present, every config absent with a reason"
-    if len(configs) == 1:
-        return f"Legacy candidates: present, {_legacy_points(configs[0])}"
-    each = "; ".join(f"config {c.id}: {_legacy_points(c)}" for c in configs)
-    return (
-        f"Legacy candidates: present, {len(configs)} configs with their own figures "
-        f"(not added together): {each}"
+    single = _single_config(legacy)
+    if single is not None:
+        return f"Legacy candidates: present, {_legacy_points(single)}"
+    each = "; ".join(
+        f"config {c.id}: {_legacy_points(c)}"
+        if isinstance(c, LegacyConfig)
+        else f"config {_num(c.id)}: absent with a reason (see below)"
+        for c in legacy.configs
     )
+    level = "" if legacy.player_level is None else f" (level {legacy.player_level})"
+    return (
+        f"Legacy candidates: present, {len(legacy.configs)} configs{level}; the file does not "
+        "say which one is the Legacy system, so each has its own figures (not added together): "
+        f"{each}"
+    )
+
+
+def _single_config(legacy: LegacyTalents) -> LegacyConfig | None:
+    """The one candidate, when the file lists exactly one and it has figures."""
+    if len(legacy.configs) == 1 and isinstance(legacy.configs[0], LegacyConfig):
+        return legacy.configs[0]
+    return None
 
 
 def _legacy(legacy: LegacyTalents) -> list[str]:
-    level = "" if legacy.player_level is None else f" (level {legacy.player_level})"
-    lines = [f"{legacy_headline(legacy)}{level}"]
-    lines.append(
-        "  which config is the Legacy system is inferred by elimination; "
-        f"panel opener ToggleLegacySystemUI present: {_yes(legacy.legacy_ui)}"
+    opener = f"panel opener ToggleLegacySystemUI present: {_yes(legacy.legacy_ui)}"
+    several = _single_config(legacy) is None and any(
+        isinstance(c, LegacyConfig) for c in legacy.configs
     )
+    if several:  # the headline names the level and every config
+        lines = [
+            legacy_headline(legacy),
+            "  the addon lists every trait config it did not rule out (types below); which of "
+            f"these is the Legacy system is not recorded; {opener}",
+        ]
+    else:
+        level = "" if legacy.player_level is None else f" (level {legacy.player_level})"
+        lines = [
+            f"{legacy_headline(legacy)}{level}",
+            f"  which config is the Legacy system is inferred by elimination; {opener}",
+        ]
     skipped = ", ".join(legacy.skipped_types) or NONE_RECORDED
     lines.append(f"  config types not searched: {skipped}")
     for config in legacy.configs:
@@ -1315,12 +1353,22 @@ def _professions(record: Professions) -> list[str]:
     return lines + _events(record)
 
 
+APPEARANCES_EVENTS_NOTE = (
+    "  events_unregistered is in the file, though the addon registers no events for this "
+    "section (kept in --json)"
+)
+
+
 def _appearances(record: AbsentSection | None) -> list[str]:
     """`collections.appearances` registers no events (M11-20), so its line
-    says nothing about events; a list in the file stays in --json."""
+    says nothing about events; a list in the file gets a note and stays in
+    --json."""
     if record is None:
         return [f"Appearances: {NOT_IN_FILE}"]
-    return [f"Appearances: {_absent(record, events_shown=False)}"]
+    lines = [f"Appearances: {_absent(record, events_shown=False)}"]
+    if record.events_unregistered is not None:
+        lines.append(APPEARANCES_EVENTS_NOTE)
+    return lines
 
 
 def _section(label: str, record: object, present: Any) -> list[str]:

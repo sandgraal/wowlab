@@ -1546,6 +1546,31 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   empty string", never refused; a Legacy trait currency listed under several
   trees of one config counts once when the trees agree, and is not added up
   when they differ.
+  *Amended 2026-09-29 (M11-27):* the file does not say which Legacy
+  candidate is the Legacy system, so two candidates are never added
+  together. When `talents.legacy.configs` holds exactly one config and it
+  has figures, the headline is unchanged ("present, nothing spent, N points
+  available (level L)"). Otherwise, when any config has figures, the
+  headline names the count and the level once, then gives each config its
+  own figures ("config 7: absent with a reason (see below)" for one without
+  figures). The line under it then says the addon lists every trait config
+  it did not rule out and that which one is the Legacy system is not
+  recorded. `collections.appearances` registers no events, so its line
+  says nothing about events. Only when the file holds `events_unregistered`
+  there, a note says so (the list stays in `--json`). The three reason
+  fields (`absent` at every level, `export_absent`,
+  `last_selected_config_absent`) are clipped instead of refused. A reason
+  longer than 1024 characters, or holding any byte outside printable ASCII
+  (a long Lua error the addon stored), is taken as the bytes the file holds.
+  If any byte is outside 0x20 to 0x7E, each such byte is shown as `\xHH`
+  and each backslash as `\\`. The text is cut to at most 1024 characters,
+  never inside an escape. Lengths are counted in bytes. Beside the field,
+  the model and `--json` carry `<field>_clipped` =
+  `{original_length, escaped, truncated}`, left out when nothing was done.
+  A `_clipped` key inside a `WowLab.lua` is refused: only the reader writes
+  one. An empty reason is still refused, and every other string limit is
+  unchanged. Printable ASCII is still the only text that reaches the
+  terminal or the JSON unescaped, and the file itself is never changed.
 - **Capture** (owner): install; on each character log in, then log out or
   `/reload` (a crash writes nothing); on at least one character open the
   barber shop and close it without changing anything, then log out. Capture

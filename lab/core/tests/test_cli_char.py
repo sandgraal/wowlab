@@ -255,8 +255,12 @@ def test_constructed_long_non_ascii_reason_reads_escaped_and_flagged(flavor: Pat
     target.write_bytes(data.replace(old, b'["absent"] = "' + reason + b'",'))
     out = ok("char", "show", "--character", FIRST).stdout
     assert all(" " <= ch <= "~" for ch in out.replace("\n", ""))
-    assert "Customization: absent (Core.lua:12: CANARY\\x0a\\u202e\\udcff" in out
-    assert "[the reason held 3022 characters; this reader wrote each character" in out
+    assert "Customization: absent (Core.lua:12: CANARY\\x0a\\xe2\\x80\\xae\\xff" in out
+    assert (
+        "[the reason is 3024 bytes in the file; shown with each byte outside printable ASCII "
+        "written as \\xHH and each backslash as \\\\, and cut to at most 1024 characters; "
+        "the file is unchanged]"
+    ) in " ".join(out.split())
     assert "Gear (slots 1 to 19" in out and "Professions (by skill line)" in out
     result = ok("char", "show", "--character", FIRST, "--json")
     assert all(" " <= ch <= "~" for ch in result.stdout.replace("\n", ""))
@@ -265,5 +269,5 @@ def test_constructed_long_non_ascii_reason_reads_escaped_and_flagged(flavor: Pat
     section = report.record.customization
     assert isinstance(section, labaddon.AbsentSection)
     assert section.absent_clipped == labaddon.ClippedReason(
-        original_length=3022, escaped=True, truncated=True
+        original_length=3024, escaped=True, truncated=True
     )
