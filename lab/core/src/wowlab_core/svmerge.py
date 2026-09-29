@@ -195,6 +195,12 @@ class _Path:
         self.steps = steps
         self.source = source
 
+    def same(self, other: _Path) -> bool:
+        """Whether both name one Lua key path (`A.p` and `A["p"]` do)."""
+        return self.head == other.head and [s.key_id for s in self.steps] == [
+            s.key_id for s in other.steps
+        ]
+
 
 def _lua_quote(data: bytes) -> bytes:
     """A double-quoted Lua 5.1 literal that loads as `data`."""
@@ -510,12 +516,32 @@ class _Merger:
     def __init__(self, *, three: bool, take: Side | None) -> None:
         self.three = three
         self.take = take
-        self.conflicts: list[Conflict] = []
-        self.taken: list[Taken] = []
-        self.absent: list[Absent] = []
+        # By path, in the order first met: one leaf is one item, however many
+        # overlapping `--key` passes meet it (a later pass updates `taken`).
+        self._conflicts: dict[str, Conflict] = {}
+        self._taken: dict[str, Taken] = {}
+        self._absent: dict[str, Absent] = {}
+
+    @property
+    def conflicts(self) -> tuple[Conflict, ...]:
+        return tuple(self._conflicts.values())
+
+    @property
+    def taken(self) -> tuple[Taken, ...]:
+        return tuple(self._taken.values())
+
+    @property
+    def absent(self) -> tuple[Absent, ...]:
+        return tuple(self._absent.values())
 
     def took(self, path: str, value: LuaValue) -> None:
-        self.taken.append(Taken(path=path, value=_show(value)))
+        self._taken[path] = Taken(path=path, value=_show(value))
+
+    def missing(self, path: str, side: Side) -> None:
+        self._absent.setdefault(path, Absent(path=path, missing_from=side))
+
+    def conflict(self, item: Conflict) -> None:
+        self._conflicts.setdefault(item.path, item)
 
     def slot(
         self, ours: LuaValue | None, theirs: LuaValue | None, base: LuaValue | None, path: str
@@ -524,13 +550,13 @@ class _Merger:
         if ours is not None and theirs is not None:
             return self.both(ours, theirs, base, path)
         if ours is not None:
-            self.absent.append(Absent(path=path, missing_from="theirs"))
+            self.missing(path, "theirs")
             return ours
         if theirs is not None:
             if self.three and base is None:
                 self.took(path, theirs)
                 return _adopt(theirs, None)
-            self.absent.append(Absent(path=path, missing_from="ours"))
+            self.missing(path, "ours")
         return None
 
     def both(self, ours: LuaValue, theirs: LuaValue, base: LuaValue | None, path: str) -> LuaValue:
@@ -544,7 +570,7 @@ class _Merger:
                 return _adopt(theirs, ours)
             if _same(theirs, base):
                 return ours
-        self.conflicts.append(
+        self.conflict(
             Conflict(
                 path=path,
                 ours=_show(ours),
@@ -678,7 +704,7 @@ class _Placer:
         top = _top(ours)
         if path.head not in top:
             if path.steps:
-                self.merger.absent.append(Absent(path=path.head, missing_from="ours"))
+                self.merger.missing(path.head, "ours")
                 return ours
             new = change(None, path.head)
             if new is None:
@@ -712,7 +738,7 @@ class _Placer:
         if index is None:
             here = spelled + step.spelling
             if rest:
-                self.merger.absent.append(Absent(path=here, missing_from="ours"))
+                self.merger.missing(here, "ours")
                 return value
             new = change(None, here)
             if new is None:
@@ -751,7 +777,7 @@ class _Copy(_Change):
     def __call__(self, ours: LuaValue | None, path: str) -> LuaValue | None:
         theirs = self.source.value
         if theirs is None:
-            self.merger.absent.append(Absent(path=self.source.spelled, missing_from="theirs"))
+            self.merger.missing(self.source.spelled, "theirs")
             return ours
         if ours is not None and _same(ours, theirs):
             return ours
@@ -769,7 +795,7 @@ class _Limited(_Change):
 
     def __call__(self, ours: LuaValue | None, path: str) -> LuaValue | None:
         if ours is None and self.theirs.value is None:
-            self.merger.absent.append(Absent(path=self.theirs.spelled, missing_from="theirs"))
+            self.merger.missing(self.theirs.spelled, "theirs")
             return None
         return self.merger.slot(ours, self.theirs.value, self.base.value, path)
 
@@ -808,7 +834,7 @@ def merge(
         document = ours
         for src, dst in parsed:
             if three:
-                if src.source != dst.source:
+                if not src.same(dst):
                     raise MergeError(
                         f"--key {src.source}={dst.source}: a copy between two paths is a "
                         "two-way merge; it takes no --base"
@@ -820,9 +846,9 @@ def merge(
     return MergeResult(
         document=document,
         mode="three-way" if three else "two-way",
-        conflicts=tuple(merger.conflicts),
-        taken=tuple(merger.taken),
-        absent=tuple(merger.absent),
+        conflicts=merger.conflicts,
+        taken=merger.taken,
+        absent=merger.absent,
     )
 
 
@@ -853,10 +879,14 @@ def _field(table: LuaValue | None, name: str) -> LuaValue | None:
     return _Keys(table).value(("s", name.encode("ascii")))
 
 
-def check_keys(keys: Iterable[str]) -> None:
+def check_keys(keys: Iterable[str]) -> list[bool]:
     """Raise `MergeError` for a `--key` string `merge` could not read, before
-    anything else is done with it."""
+    anything else is done with it. For each key, whether it names one path
+    on both sides (`PATH`, or `SRC=DST` with SRC and DST the same path)."""
     if isinstance(keys, str):
         raise MergeError("keys is a list of --key strings, not one string")
+    same: list[bool] = []
     for key in keys:
-        _parse_key(key)
+        src, dst = _parse_key(key)
+        same.append(src.same(dst))
+    return same

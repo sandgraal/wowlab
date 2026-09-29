@@ -1706,20 +1706,32 @@ def _sv_name(f: layout.SavedVariablesFile) -> str:
 
 
 def _character_sv(
-    files: Sequence[layout.SavedVariablesFile], char: layout.Character, name: str
+    files: Sequence[layout.SavedVariablesFile],
+    account: layout.Account,
+    char: layout.Character,
+    name: str,
 ) -> layout.SavedVariablesFile | None:
+    """The file `name` in `char`'s SavedVariables/ in `account` (another
+    account may hold a character folder of the same name), or None. More
+    than one match (names differing only in case) is an error, never read
+    as "none"."""
     mine = [
         f
         for f in files
         if f.scope == "character"
         and not f.backup
+        and f.account == account.folder
         and f.realm_folder == char.realm_folder
         and f.character_folder == char.folder
     ]
     exact = [f for f in mine if _sv_name(f) == name]
-    folded = [f for f in mine if _sv_name(f).casefold() == name.casefold()]
-    match = exact or folded
-    return match[0] if len(match) == 1 else None
+    match = exact or [f for f in mine if _sv_name(f).casefold() == name.casefold()]
+    if len(match) > 1:
+        raise CliError(
+            f"{char.path}/SavedVariables/ holds {len(match)} files named like {name!r}: "
+            + ", ".join(f.path for f in match)
+        )
+    return match[0] if match else None
 
 
 def _merge_target(
@@ -1733,7 +1745,7 @@ def _merge_target(
     account's; or a path as `sv dump` takes it, whose scope `layout` gives."""
     usable = [f for f in files if not f.backup and f.account == account.folder]
     if "/" not in file and os.sep not in file:
-        found = _character_sv(usable, char, file)
+        found = _character_sv(usable, account, char, file)
         if found is not None:
             return found
         acct = [f for f in usable if f.scope == "account"]
@@ -1806,13 +1818,14 @@ def _loader_check(
     chosen: install.Flavor,
     lay: layout.Layout,
     files: Sequence[layout.SavedVariablesFile],
+    account: layout.Account,
     char: layout.Character,
 ) -> tuple[str | None, list[str]]:
     """(the reason to refuse, or None; notes) from the --into character's
     `WowLab.lua` and the two newest snapshots of it (§13.4 as ruled on
     2026-09-29). Reads only."""
     name = svmerge.LAB_ADDON_FILE
-    found = _character_sv(files, char, name)
+    found = _character_sv(files, account, char, name)
     who = f"{char.realm_folder}/{char.folder}"
     if found is None:
         return None, [
@@ -1983,9 +1996,17 @@ def sv_merge(
     is checked for a SavedVariables loader failure (exit 3). JSON: SvMergeReport."""
     keys = list(key or [])
     try:
-        svmerge.check_keys(keys)
+        same_path = svmerge.check_keys(keys)
     except svmerge.MergeError as exc:
         raise CliError(str(exc), EXIT_USAGE) from exc
+    if from_ is None:
+        for given, same in zip(keys, same_path, strict=True):
+            if same:
+                raise CliError(
+                    f"--key {given} names the same path on both sides, which needs --from: "
+                    "within one file, copy with --key SRC=DST",
+                    EXIT_USAGE,
+                )
     if from_ is None and base is not None:
         raise CliError(
             "--base names the common ancestor of --from SNAPSHOT; give --from", EXIT_USAGE
@@ -2031,7 +2052,7 @@ def sv_merge(
     target_path = lay.flavor_path / target.path
     ours_bytes = _read_sv(target_path)
     if source_char is not None:
-        found = _character_sv(files, source_char, _sv_name(target))
+        found = _character_sv(files, acct, source_char, _sv_name(target))
         if found is None:
             raise CliError(f"{source_char.path}/SavedVariables/ has no {_sv_name(target)}")
         theirs_bytes = _read_sv(lay.flavor_path / found.path)
@@ -2046,7 +2067,7 @@ def sv_merge(
         _snapshot_sv(store, base_id, target.path, chosen.folder) if base_id is not None else None
     )
 
-    refusal, notes = _loader_check(store, inst, chosen, lay, files, char)
+    refusal, notes = _loader_check(store, inst, chosen, lay, files, acct, char)
     if refusal is not None:
         if not force_loader_check:
             raise CliError(f"refused by the loader check: {refusal}", EXIT_REFUSED)
