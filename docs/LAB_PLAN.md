@@ -1882,6 +1882,24 @@ them as follows, and M11-09 builds to them.
     the file edited after the snapshot); byte-identical passes. This
     catches a loader reset (N, then 1 on disk) whenever the newest snapshot
     holds N ≥ 2; a reset from a snapshot at 1 cannot be detected this way.
+  - *2026-09-29, owner ruling for M11-24 (not yet built):*
+    - **`probe` stays ours.** When `WowLab.lua` itself is merged, the
+      `probe` table of the `--into` file is kept whatever `--take` or
+      `--key` says. It counts that character's logins, and copying it
+      would make the next loader check read a counter the client never
+      wrote. This supersedes the M11-09T grader that copies it, through new
+      graders from a test-writer.
+    - **Walk past identical snapshots.** When the two newest snapshots of
+      the file are byte-identical, compare against the newest snapshot
+      whose bytes differ from them, not against nothing. The "no login
+      between the two snapshots" pass applies only when no older differing
+      snapshot exists.
+    - **A Lab write is not a loader failure.** A comparison that spans a
+      committed guard write to that `WowLab.lua` (a `snap restore`, a
+      profile apply, an earlier `sv merge`; the guard journal records each)
+      is skipped. The merge prints the note "the Lab wrote WowLab.lua after
+      that snapshot; the loader was not re-checked", instead of blaming the
+      loader.
   - `--force-loader-check` overrides every refusal.
 - **`--json` is required** (§6.11). It prints `SvMergeReport`, holding at
   least `mode` (`two-way` or `three-way`), `conflicts`, `absent` (with

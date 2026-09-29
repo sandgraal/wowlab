@@ -17,7 +17,7 @@ until the owner picks Wave 3; the recommendation is at the end.
 | M11-06 | #101 | `wowlab looks races/options/save/show/compare` |
 | M11-07 | #104 | `wowlab looks page` (static HTML, ADR-0027) |
 | M11-08 | #96 | profiles |
-| M11-09T / M11-09 | #122 / #TBD | sv-merge graders, then `wowlab sv merge` |
+| M11-09T / M11-09 | #122 / #126 | sv-merge graders, then `wowlab sv merge` |
 | M11-11T / M11-11 | #99 / #107 | guard and store reads never block |
 | M11-12 | #100 | profiles hardening |
 | M11-13 | #106 | lab-addon static checks (every stored value type-checked) |
@@ -35,7 +35,8 @@ Also: `guard_bash.py` blocks `pkill`/`killall` (#109); backlog updates #108,
 #119; Dependabot #113 (Actions, security-reviewed), #114, #115.
 
 Deferred, not blocking the wave: **M11-23** `looks import-char` (owner
-decision, 2026-09-28: no real capture holds a customization record).
+decision, 2026-09-28: no real capture held a customization record). The
+2026-09-29 guided session captured one, and M11-23 is now in progress.
 
 ## What was learned about the client (Forever beta, 1.60.1.70009)
 
@@ -51,10 +52,15 @@ Details and the full table are in `docs/LAB_FORMATS.md`'s M11-03 amendment.
   answers the location **[verify]** on the crash-forensics idea. The reports
   hold the character name, GUID, BattleTag and guild roster: never capture
   one into the repository.
-- **The barber shop UI did not open in-world** (entering the shop and
-  right-clicking a chair did nothing; one capital, two characters). The
-  customization record stays absent, so `looks import-char` has nothing real
-  to read.
+- **The barber shop UI did not open in-world on 70009** (entering the shop
+  and right-clicking a chair did nothing; one capital, two characters).
+  *Update 2026-09-29, build 70058:* in a guided session it opened in the same
+  capital with no Lua error, and Accept applied a hair-colour change. The
+  capture holds a real `customization` record, which unblocks M11-23. The
+  record still read `recorded_at = "open"` after the applied change although
+  the applied event was registered **[verify]**, and it has no
+  `chr_model_id`. The earlier failure matched a known beta Lua error in the
+  barber frame, which the client hides unless `scriptErrors` is on.
 - **Forever's character sheet shows no item level.** `GetAverageItemLevel`
   still returns values, but nothing in the UI backs them.
 - **Legacy talents are present below level 25**, every node at rank 0, not
@@ -187,8 +193,8 @@ A pick of 1 + 2 is a full wave (about the size Wave 2 turned out to be).
 ## Owner actions outstanding
 
 - **Pick Wave 3** (above).
-- **Rule on M11-24** when convenient. It changes the §13.4 merge rules and
-  can go in with Wave 3's plan PR.
-- Optional, when convenient: a login on a level-25+ character (Legacy talents,
-  the points cap) with a staged talent change and `/wowlab save`; a barber
-  visit if the UI ever opens; a solo dungeon boss log for corpus part 4.
+- M11-24 was ruled by the owner on 2026-09-29 (§13.4); nothing is owed.
+- Later, after the beta (the owner's level-25+ characters come then): a login
+  on a level-25+ character (Legacy talents, the points cap), and a staged
+  talent change once the character has points, then `/wowlab save`. A solo
+  dungeon boss log for corpus part 4 whenever convenient.
