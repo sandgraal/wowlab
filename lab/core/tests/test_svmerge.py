@@ -308,7 +308,6 @@ def _take_theirs_expected(out: bytes) -> None:
 BASE3 = _crlf("DB = {", '["a"] = 1,', '["b"] = 1,', '["c"] = 1,', "}")
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_three_way_takes_a_change_made_on_one_side_only_constructed() -> None:
     ours = _crlf("DB = {", '["a"] = 1,', '["b"] = 3,', '["c"] = 1,', "}")
     theirs = _crlf("DB = {", '["a"] = 2,', '["b"] = 1,', '["c"] = 1,', "}")
@@ -319,7 +318,6 @@ def test_three_way_takes_a_change_made_on_one_side_only_constructed() -> None:
     assert luadata.serialize(result.document) == expected.encode()
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_three_way_takes_the_same_change_once_constructed() -> None:
     # Both sides changed a the same way and both added n: one value each, no conflict.
     same = _crlf("DB = {", '["a"] = 2,', '["b"] = 1,', '["c"] = 1,', '["n"] = true,', "}")
@@ -330,7 +328,6 @@ def test_three_way_takes_the_same_change_once_constructed() -> None:
     assert out.count(b'["n"]') == 1 and out.count(b'["a"]') == 1
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_three_way_takes_a_key_theirs_added_constructed() -> None:
     theirs = _crlf("DB = {", '["a"] = 1,', '["b"] = 1,', '["c"] = 1,', '["d"] = "new",', "}")
     result = _svmerge().merge(_doc(BASE3), _doc(theirs), base=_doc(BASE3))
@@ -340,7 +337,6 @@ def test_three_way_takes_a_key_theirs_added_constructed() -> None:
     assert merged == {"DB": {"a": 1, "b": 1, "c": 1, "d": "new"}}
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_three_way_different_changes_are_a_conflict_never_guessed_constructed() -> None:
     svmerge = _svmerge()
     ours = _crlf("DB = {", '["a"] = 2,', '["b"] = 1,', '["c"] = 1,', "}")
@@ -364,7 +360,6 @@ def test_three_way_different_changes_are_a_conflict_never_guessed_constructed() 
     )
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_three_way_a_key_missing_from_theirs_is_absent_not_deleted_constructed() -> None:
     theirs = _crlf("DB = {", '["b"] = 1,', '["c"] = 1,', "}")
     result = _svmerge().merge(_doc(BASE3), _doc(theirs), base=_doc(BASE3))
@@ -373,7 +368,6 @@ def test_three_way_a_key_missing_from_theirs_is_absent_not_deleted_constructed()
     assert luadata.serialize(result.document) == BASE3.encode(), "ours keeps the key"
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_three_way_key_limits_the_merge_to_that_subtree_constructed() -> None:
     # §13.4: "--key limits the merge to named subtrees". Inside DB.p the
     # three-way rules apply (x taken from theirs, y kept from ours: not a
@@ -393,7 +387,6 @@ def test_three_way_key_limits_the_merge_to_that_subtree_constructed() -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_merge_keeps_the_target_key_order_and_the_taken_number_text_constructed() -> None:
     # The client writes keys in its own hash order (M11-03 amendment): ours'
     # order stays, whatever order theirs has, and a taken number keeps its text.
@@ -409,7 +402,6 @@ def test_merge_keeps_the_target_key_order_and_the_taken_number_text_constructed(
 # ─── library: the two-way merge on the M11-03 two-character pair ─────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_two_way_real_pair_every_differing_key_is_a_conflict() -> None:
     conflicts, only_a, only_b = _two_way_oracle(REAL_A, REAL_B)
     assert (len(conflicts), only_a, only_b) == (235, set(), ONLY_IN_B), "the fixtures as indexed"
@@ -423,20 +415,17 @@ def test_two_way_real_pair_every_differing_key_is_a_conflict() -> None:
     assert luadata.serialize(result.document) == REAL_A, "nothing guessed, nothing changed"
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_two_way_real_pair_keys_on_one_side_are_listed_from_either_direction() -> None:
     result = _svmerge().merge(luadata.parse(REAL_B), luadata.parse(REAL_A))
     assert {(a.path, a.missing_from) for a in result.absent} == {(p, "theirs") for p in ONLY_IN_B}
     assert luadata.serialize(result.document) == REAL_B, "absent is not deleted"
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_two_way_real_pair_take_theirs_follows_the_target_layout() -> None:
     result = _svmerge().merge(luadata.parse(REAL_A), luadata.parse(REAL_B), take="theirs")
     _take_theirs_expected(luadata.serialize(result.document))
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_key_copies_a_subtree_whole_between_the_real_pair() -> None:
     result = _svmerge().merge(
         luadata.parse(REAL_A), luadata.parse(REAL_B), keys=["WowLabCharDB.gear"]
@@ -446,7 +435,6 @@ def test_key_copies_a_subtree_whole_between_the_real_pair() -> None:
     assert luadata.serialize(result.document) == _splice(REAL_A, REAL_B, b'["gear"]')
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_key_missing_from_the_source_is_reported_absent() -> None:
     # The first character has no 53rd class-tree node; copying it into the
     # second is reported, and nothing is deleted.
@@ -458,7 +446,6 @@ def test_key_missing_from_the_source_is_reported_absent() -> None:
     assert luadata.serialize(result.document) == REAL_B
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_key_copy_within_one_real_account_file() -> None:
     src = f'{DBM_VAR}["Labchard Labrealmg"]'
     dst = f'{DBM_VAR}["Labcharb Labrealmf"]'
@@ -474,7 +461,6 @@ def test_key_copy_within_one_real_account_file() -> None:
     assert b"\t" not in out and out.count(b"\n") == out.count(b"\r\n")
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_a_copied_subtree_takes_the_target_documents_style_constructed() -> None:
     # Target: tab indentation and LF (the §4.2 retail form); source: the
     # Forever layout. The copy is laid out as the target is (§13.4).
@@ -500,7 +486,6 @@ def test_a_copied_subtree_takes_the_target_documents_style_constructed() -> None
 # ─── CLI: two characters (two-way) ───────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_cli_two_characters_conflicts_are_listed_and_nothing_is_written(root: Path) -> None:
     before = _state(root)
     text = run("sv", "merge", LAB, "--from", CHAR_B, "--into", CHAR_A, "--yes")
@@ -521,7 +506,6 @@ def test_cli_two_characters_conflicts_are_listed_and_nothing_is_written(root: Pa
     assert guard.history() == ()
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_cli_take_theirs_writes_only_the_target_through_guard(root: Path, flavor: Path) -> None:
     result = run(
         "sv", "merge", LAB, "--from", CHAR_B, "--into", CHAR_A, "--take", "theirs", "--yes"
@@ -536,7 +520,6 @@ def test_cli_take_theirs_writes_only_the_target_through_guard(root: Path, flavor
     assert (flavor / LAB_A).read_bytes() == REAL_A
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_cli_take_ours_keeps_the_target_and_lists_the_conflicts(flavor: Path) -> None:
     result = run(
         "sv", "merge", LAB, "--from", CHAR_B, "--into", CHAR_A,
@@ -550,7 +533,6 @@ def test_cli_take_ours_keeps_the_target_and_lists_the_conflicts(flavor: Path) ->
     assert (flavor / LAB_B).read_bytes() == REAL_B
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_cli_key_copies_a_subtree_between_the_real_pair(flavor: Path) -> None:
     result = run(
         "sv", "merge", LAB, "--from", CHAR_B, "--into", CHAR_A,
@@ -563,7 +545,6 @@ def test_cli_key_copies_a_subtree_between_the_real_pair(flavor: Path) -> None:
     assert (flavor / LAB_A).read_bytes() == _splice(REAL_A, REAL_B, b'["gear"]')
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_cli_merge_is_refused_while_the_client_runs(
     root: Path, flavor: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -583,7 +564,6 @@ def test_cli_merge_is_refused_while_the_client_runs(
     [DBM_NAME, LAB_ACCOUNT],
     ids=["account-only-name", "account-path-of-a-name-both-scopes-have"],
 )
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_cli_account_wide_file_is_refused_character_to_character(root: Path, file: str) -> None:
     before = _state(root)
     result = run("sv", "merge", file, "--from", CHAR_B, "--into", CHAR_A, "--yes")
@@ -596,7 +576,6 @@ def test_cli_account_wide_file_is_refused_character_to_character(root: Path, fil
 # ─── CLI: a snapshot as the source (three-way with a base) ───────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_cli_three_way_with_a_snapshot_base_constructed(flavor: Path) -> None:
     # Base: the real file. Theirs (a snapshot): a later session (loads 5)
     # that changed the currency filter. Ours (the disk): the same later
@@ -621,7 +600,6 @@ def test_cli_three_way_with_a_snapshot_base_constructed(flavor: Path) -> None:
     assert target.read_bytes() == _once(ours, *_FILTER)
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_cli_account_wide_file_from_a_snapshot_constructed(flavor: Path) -> None:
     # §13.4: the account-wide case is `--from <snapshot>` (an earlier state).
     # The disk then changes one value inside ["Unknown"] (constructed edit);
@@ -642,7 +620,6 @@ def test_cli_account_wide_file_from_a_snapshot_constructed(flavor: Path) -> None
 # ─── CLI: --key within one file ──────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_cli_key_copy_within_one_account_file(flavor: Path) -> None:
     src = f'{DBM_VAR}["Labchard Labrealmg"]'
     dst = f'{DBM_VAR}["Labcharb Labrealmf"]'
@@ -689,7 +666,6 @@ def _loads_equal_bytes_differ(flavor: Path) -> None:
 NO_LOGIN_NOTE = "no login between the two snapshots; the loader was not re-checked"
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_cli_loader_check_refuses_when_probe_lost_is_true_constructed(
     root: Path, flavor: Path
 ) -> None:
@@ -702,7 +678,6 @@ def test_cli_loader_check_refuses_when_probe_lost_is_true_constructed(
     assert guard.history() == ()
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_cli_loader_check_refuses_when_two_snapshots_show_loads_not_going_up(
     root: Path, flavor: Path
 ) -> None:
@@ -715,7 +690,6 @@ def test_cli_loader_check_refuses_when_two_snapshots_show_loads_not_going_up(
     assert guard.history() == ()
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_cli_loader_check_passes_when_loads_goes_up(flavor: Path) -> None:
     (flavor / LAB_A).write_bytes(REAL_B)  # loads 2
     _snap("loads 2")
@@ -726,7 +700,6 @@ def test_cli_loader_check_passes_when_loads_goes_up(flavor: Path) -> None:
     assert (flavor / DBM).read_bytes() != REAL_DBM
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_cli_loader_check_refuses_equal_loads_when_the_file_changed_constructed(
     root: Path, flavor: Path
 ) -> None:
@@ -739,7 +712,6 @@ def test_cli_loader_check_refuses_equal_loads_when_the_file_changed_constructed(
     assert guard.history() == ()
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_cli_loader_check_passes_byte_identical_snapshots_with_a_note(flavor: Path) -> None:
     # Two snapshots with nothing written in between: equal loads says nothing.
     _snap("first")
@@ -755,7 +727,6 @@ def test_cli_loader_check_passes_byte_identical_snapshots_with_a_note(flavor: Pa
 @pytest.mark.parametrize(
     "cause", ["probe-lost-constructed", "loads-went-down", "loads-equal-constructed"]
 )
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_cli_force_loader_check_overrides_the_refusal(flavor: Path, cause: str) -> None:
     if cause == "probe-lost-constructed":
         (flavor / LAB_A).write_bytes(_lost(REAL_A))
@@ -770,7 +741,6 @@ def test_cli_force_loader_check_overrides_the_refusal(flavor: Path, cause: str) 
     assert [p.path for p in record.paths] == [DBM]
 
 
-@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_cli_loader_check_warns_and_continues_without_a_capture_constructed(
     flavor: Path,
 ) -> None:
