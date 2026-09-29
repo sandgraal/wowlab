@@ -32,10 +32,10 @@ import re
 import stat
 import uuid
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 import platformdirs
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError
 
 from wowlab_core.install import BUILD_INFO, FLAVOR_INFO
 from wowlab_core.looks import Look
@@ -75,6 +75,13 @@ _NO_HARD_LINKS = frozenset(
 )
 
 
+# A full version string as the client gives it ("1.60.1.70058"): digits and
+# dots, wide enough for `labaddon`'s client version plus its build.
+VersionText = Annotated[
+    str, StringConstraints(pattern=r"^[0-9]{1,10}(?:\.[0-9]{1,10}){0,6}$", max_length=76)
+]
+
+
 class LookStoreError(Exception):
     """A saved look cannot be read or written."""
 
@@ -93,12 +100,26 @@ class LookLocationError(LookStoreError):
 
 class SavedLook(BaseModel):
     """One saved look. ``saved_build`` is the full version string whose tables
-    checked it when it was saved; a later check may use another build."""
+    checked it when it was saved; a later check may use another build.
+
+    ``origin`` (M11-23, additive, format stays 1): ``typed`` for a look given
+    on the command line (``looks save``), ``imported`` for one read from a
+    character's lab-addon record (``looks import-char``). A file without it
+    predates import and was typed. It decides how an id the build lacks is
+    worded: a typed id is something to check, an imported one may be a
+    hotfix.
+
+    ``recorded_client_build`` (M11-23, additive, optional): for an imported
+    look, the full version of the client that recorded the barber-shop
+    record, from the record's client block; it words an id the checking
+    build lacks as possibly newer than those tables."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     format: Literal[1] = LOOKS_FORMAT
     saved_build: str
+    origin: Literal["typed", "imported"] = "typed"
+    recorded_client_build: VersionText | None = None
     look: Look
 
 
@@ -258,8 +279,17 @@ class LookStore:
         return found, damaged
 
     def save(self, saved: SavedLook, *, replace: bool = False) -> Path:
-        """Write ``saved`` as ``<name>.json``; refuse a taken name unless ``replace``."""
+        """Write ``saved`` as ``<name>.json``; refuse a taken name unless ``replace``.
+        A body ``read`` would refuse (over ``MAX_LOOK_BYTES``) is refused before
+        anything is created (M11-23), so the store never writes what it cannot
+        read back."""
         name = check_name(saved.look.name)
+        body = saved.model_dump_json(indent=2).encode("utf-8") + b"\n"
+        if len(body) > MAX_LOOK_BYTES:
+            raise LookStoreError(
+                f"look {name!r} would be {len(body)} bytes, over the {MAX_LOOK_BYTES}-byte "
+                "limit for a look; nothing was saved"
+            )
         refuse_install(self._root)
         self._root.mkdir(parents=True, exist_ok=True)
         refuse_install(self._root)
@@ -271,7 +301,6 @@ class LookStore:
             )
         # Replacing keeps the name the file already has on a case-insensitive volume.
         final = existing if existing is not None else self._root / f"{name}{_SUFFIX}"
-        body = saved.model_dump_json(indent=2).encode("utf-8") + b"\n"
         tmp = self._root / f".{name}.{uuid.uuid4().hex}.tmp"
         try:
             with tmp.open("xb") as handle:

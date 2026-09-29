@@ -4226,6 +4226,65 @@ def char_show(
     _, chosen, lay = _open(root, flavor)
     acct = _select_account(lay, account)
     files = [f for f in lay.saved_variables() if f.account == acct.folder and _is_lab_file(f)]
+    target, how, tie = _lab_char_file(acct, files, character)
+    record = labaddon.read_char(lay.flavor_path / target.path)
+    account_files = [f for f in files if f.scope == "account"]
+    account_file = account_files[0] if account_files else None
+    account_record = (
+        labaddon.read_account(lay.flavor_path / account_file.path) if account_file else None
+    )
+    known, ignored = labaddon.skip_known(record)
+    report = CharShowReport(
+        flavor_folder=chosen.folder,
+        account=acct.folder,
+        character=f"{target.realm_folder}/{target.character_folder}",
+        chosen_by=how,
+        file=target.path,
+        mtime_ns=target.mtime_ns,
+        account_file=account_file.path if account_file else None,
+        account_record=account_record,
+        record=record,
+        skip_known=known,
+        skip_ignored=ignored,
+        customization_loads_ago=labaddon.customization_loads_ago(record),
+        unknown_keys=labaddon.unknown_keys(record),
+        notes=_CHAR_NOTES,
+    )
+    if json_out:
+        _emit(report)
+        return
+    _say(f"Character: {report.character} in account {acct.folder}{_picked_words(how, tie)}")
+    _say(f"File: {target.path}")
+    _say(f"Written: {_local_time(target.mtime_ns)} (the file's modification time)")
+    for line in labaddon.describe(record):
+        _say(line)
+    _say()
+    if account_record is None:
+        _say(f"Account {labaddon.ACCOUNT_VARIABLE}: no account {labaddon.ADDON_NAME}.lua")
+    else:
+        for line in labaddon.describe_account(account_record):
+            _say(line)
+    for note in _CHAR_NOTES:
+        _say(note)
+
+
+def _picked_words(how: Literal["--character", "latest"], tie: str) -> str:
+    """How `char show` and `looks import-char` say which file they took."""
+    if how != "latest":
+        return ""
+    return (
+        " (the WowLab.lua with the newest modification time; a wowlab restore also sets it"
+        f"{tie}; choose another with --character)"
+    )
+
+
+def _lab_char_file(
+    acct: layout.Account,
+    files: Sequence[layout.SavedVariablesFile],
+    character: str | None,
+) -> tuple[layout.SavedVariablesFile, Literal["--character", "latest"], str]:
+    """The character `WowLab.lua` to read: the one `--character` names, else
+    the newest by modification time (ties by path, said in the third value)."""
     char_files = [f for f in files if f.scope == "character"]
     how: Literal["--character", "latest"]
     tie = ""
@@ -4262,51 +4321,7 @@ def char_show(
                 "time, taken by path order"
             )
         how = "latest"
-    record = labaddon.read_char(lay.flavor_path / target.path)
-    account_files = [f for f in files if f.scope == "account"]
-    account_file = account_files[0] if account_files else None
-    account_record = (
-        labaddon.read_account(lay.flavor_path / account_file.path) if account_file else None
-    )
-    known, ignored = labaddon.skip_known(record)
-    report = CharShowReport(
-        flavor_folder=chosen.folder,
-        account=acct.folder,
-        character=f"{target.realm_folder}/{target.character_folder}",
-        chosen_by=how,
-        file=target.path,
-        mtime_ns=target.mtime_ns,
-        account_file=account_file.path if account_file else None,
-        account_record=account_record,
-        record=record,
-        skip_known=known,
-        skip_ignored=ignored,
-        customization_loads_ago=labaddon.customization_loads_ago(record),
-        unknown_keys=labaddon.unknown_keys(record),
-        notes=_CHAR_NOTES,
-    )
-    if json_out:
-        _emit(report)
-        return
-    picked = (
-        " (the WowLab.lua with the newest modification time; a wowlab restore also sets it"
-        f"{tie}; choose another with --character)"
-        if how == "latest"
-        else ""
-    )
-    _say(f"Character: {report.character} in account {acct.folder}{picked}")
-    _say(f"File: {target.path}")
-    _say(f"Written: {_local_time(target.mtime_ns)} (the file's modification time)")
-    for line in labaddon.describe(record):
-        _say(line)
-    _say()
-    if account_record is None:
-        _say(f"Account {labaddon.ACCOUNT_VARIABLE}: no account {labaddon.ADDON_NAME}.lua")
-    else:
-        for line in labaddon.describe_account(account_record):
-            _say(line)
-    for note in _CHAR_NOTES:
-        _say(note)
+    return target, how, tie
 
 
 # ─── looks ───────────────────────────────────────────────────────────────────
@@ -4325,6 +4340,19 @@ _HOTFIX_HINT = (
     "is not in build {version}'s tables: check the id with `wowlab looks options`; an id "
     "read from the game may come from a hotfix the exported tables lack"
 )
+_IMPORTED_REMARK = (
+    "Look {name} was imported from a character's lab-addon customization record (wowlab "
+    "looks import-char): the choices the addon had last recorded in the barber shop before "
+    "the import. It may miss a change applied during that visit [verify], and any change since."
+)
+_IMPORTED_BUILD_REMARK = (
+    "Look {name} comes from a record the lab-addon made on client build {client}."
+)
+_IMPORTED_UNKNOWN = (
+    " (recorded by client {client}, not the build of these tables: the id may exist only in "
+    "that build, or come from a hotfix)"
+)
+_MODEL_HOTFIX = " (possibly a hotfix)"
 _ID = re.compile(r"[0-9]{1,9}")
 _ALLIANCE_WORDS = {0: "Alliance", 1: "Horde", 2: "neither faction"}
 _SEX_WORDS = {"male": 0, "female": 1}
@@ -4403,6 +4431,8 @@ class LookReport(_Out):
     name: str
     path: str | None
     saved_build: str | None  # the build whose tables checked it when it was saved
+    # typed (`save`) or imported (`import-char`); decides the unknown-id wording
+    origin: Literal["typed", "imported"] = "typed"
     build: str  # the build whose tables checked it now
     race_id: int
     race_name: str | None
@@ -4693,23 +4723,33 @@ def _look_report(
     remarks: Sequence[str] = (),
     *,
     exported_only: bool = True,
+    imported_remark: bool = True,
 ) -> LookReport:
     """`exported_only=False` leaves the tables-only remark to the caller
-    (`compare` states it once, at its top level)."""
+    (`compare` states it once, at its top level). An id the build lacks is
+    worded by the look's origin (M11-23): a typed id as a thing to check, an
+    imported one as the model words it, "(possibly a hotfix)"."""
     look = saved.look
     verdict = model.check(look)
     race = model.races.get(look.race_id)
     notes = list(remarks)
+    if saved.origin == "imported" and path is not None and imported_remark:
+        notes.append(_IMPORTED_REMARK.format(name=look.name))
+        if saved.recorded_client_build is not None:
+            notes.append(
+                _IMPORTED_BUILD_REMARK.format(name=look.name, client=saved.recorded_client_build)
+            )
     if saved.saved_build != model.build:
         notes.append(
             f"Saved against build {saved.saved_build}; checked here against build {model.build}."
         )
     if exported_only:
         notes.append(_EXPORTED_ONLY.format(version=model.build))
-    return LookReport(
+    report = LookReport(
         name=look.name,
         path=str(path) if path is not None else None,
         saved_build=saved.saved_build if path is not None else None,
+        origin=saved.origin,
         build=model.build,
         race_id=look.race_id,
         race_name=race.name if race else None,
@@ -4722,11 +4762,46 @@ def _look_report(
         notes=list(verdict.notes),
         remarks=notes,
     )
+    if saved.origin == "typed":
+        return _save_wording(model, report)
+    return _imported_wording(model, report, saved.recorded_client_build)
+
+
+def _imported_wording(
+    model: looks.Customizations, report: LookReport, client: str | None
+) -> LookReport:
+    """An imported look keeps the model's "(possibly a hotfix)", unless the
+    recording client's build is known and differs from the checking build:
+    then an option or choice id from the record may exist only in that build
+    (either direction; M11-23 review, P4 and D1). A requirement id the
+    tables name is theirs, not the record's, and keeps the model's words."""
+    if client is None or client == model.build:
+        return report
+    tail = _IMPORTED_UNKNOWN.format(client=client)
+
+    def from_record(f: looks.Finding) -> bool:
+        # Only the option and choice ids came from the record; a requirement
+        # id an option or choice names comes from the tables themselves.
+        return (
+            f.option_id is not None and f.message.startswith(f"option {f.option_id} is unknown")
+        ) or (f.choice_id is not None and f.message.startswith(f"choice {f.choice_id} is unknown"))
+
+    def reworded(f: looks.Finding) -> looks.Finding:
+        if (
+            f.kind is not looks.FindingKind.UNKNOWN_TO_BUILD
+            or not f.message.endswith(_MODEL_HOTFIX)
+            or not from_record(f)
+        ):
+            return f
+        return f.model_copy(update={"message": f.message[: -len(_MODEL_HOTFIX)] + tail})
+
+    return report.model_copy(update={"notes": [reworded(f) for f in report.notes]})
 
 
 def _save_wording(model: looks.Customizations, report: LookReport) -> LookReport:
-    """`save` words an id the build lacks as a thing to check, since it was just
-    typed; `show` and `compare` keep the model's "(possibly a hotfix)"."""
+    """A typed look (`save`, and `show`/`compare` of a look saved that way)
+    words an id the build lacks as a thing to check; an imported look keeps
+    the model's "(possibly a hotfix)" (M11-23)."""
     hint = _HOTFIX_HINT.format(version=model.build)
 
     def reworded(f: looks.Finding) -> looks.Finding:
@@ -5049,7 +5124,7 @@ def looks_save(
         choices=choices,
     )
     saved = lookstore.SavedLook(saved_build=version, look=look)
-    report = _save_wording(model, _look_report(model, saved, None, remarks))
+    report = _look_report(model, saved, None, remarks)
     if report.refused:
         if json_out:
             _emit(report)
@@ -5057,7 +5132,7 @@ def looks_save(
             _print_look(report, heading="Not saved: the tables refuse look")
         raise CliError(f"look {name} is refused by build {version}'s tables; nothing was saved")
     path = lookstore.LookStore().save(saved, replace=replace)
-    report = _save_wording(model, _look_report(model, saved, path, remarks))
+    report = _look_report(model, saved, path, remarks)
     if json_out:
         _emit(report)
     else:
@@ -5249,6 +5324,196 @@ def looks_compare(
         _say(remark)
 
 
+# ─── looks import-char ───────────────────────────────────────────────────────
+
+_AS_OF_WORDS: dict[str | None, str] = {
+    "open": "as of the last barber-shop open",
+    "applied": "as of the last applied barber-shop change",
+    None: "as of the last barber-shop visit",
+}
+_OPEN_REMARK = (
+    "Recorded when the barber shop opened: a change applied during that visit may not be in "
+    'it (a capture has shown a record left at "open" after a change was applied) [verify].'
+)
+_MODEL_ONLY_REMARK = (
+    "The record holds only the options the barber shop listed, for the model it was showing; "
+    "it can leave out options the tables give that model."
+)
+_NOT_LISTED_REMARK = (
+    "Not listed by the barber shop, so not in this look: {options} (options of model {model} "
+    "in build {build}'s tables). The record cannot say what the character has there; a choice "
+    "that depends on one of them is shown as undecided."
+)
+_NO_CLASS_REMARK = (
+    "The record holds no class: class-restricted choices are noted, not refused; --class "
+    "checks them."
+)
+
+
+class LooksImportReport(_Out):
+    """`wowlab looks import-char --json`. `saved` is False when the tables
+    refuse the look (nothing written; `look.path` is None)."""
+
+    flavor_folder: str
+    account: str
+    character: str  # "<realm folder>/<character folder>"
+    chosen_by: Literal["--character", "latest"]
+    file: str  # relative to the flavor folder
+    mtime_ns: int
+    record: labaddon.CustomizationImport
+    as_of_words: str  # how the record's moment is said: never the character's appearance now
+    saved: bool
+    look: LookReport
+
+
+def _loads_ago_text(ago: int | None) -> str:
+    if ago is None:
+        return "an unknown number of logins or reloads before this file was saved"
+    if ago == 0:
+        return "in the session that saved this file"
+    return f"{ago} login(s) or reload(s) before the session that saved this file"
+
+
+def _import_remarks(
+    model: looks.Customizations, got: labaddon.CustomizationImport, class_id: int | None
+) -> list[str]:
+    at = got.recorded_at if got.recorded_at is not None else "not recorded"
+    remarks = [
+        f"Customization {_AS_OF_WORDS[got.recorded_at]} (recorded_at: {at}; the addon's as_of: "
+        f'"{got.as_of}"), {_loads_ago_text(got.loads_ago)}. The character may look different '
+        "since.",
+    ]
+    if got.recorded_at == "open":
+        remarks.append(_OPEN_REMARK)
+    remarks.append(labaddon.PAID_CHANGE_NOTE)
+    remarks.append(_MODEL_ONLY_REMARK)
+    if got.without_choice:
+        listed = ", ".join(str(o) for o in got.without_choice)
+        remarks.append(f"Recorded with no choice id, so left out of the look: option(s) {listed}.")
+    race = model.races.get(got.race_id)
+    expected = race.model_for(got.body_type) if race is not None else None
+    shown_model = got.chr_model_id if got.chr_model_id is not None else expected
+    if shown_model is not None:
+        listed_ids = {*got.choices, *got.without_choice}
+        unlisted = sorted(
+            (o for o in model.options.values() if o.chr_model_id == shown_model),
+            key=lambda o: o.id,
+        )
+        unlisted = [o for o in unlisted if o.id not in listed_ids]
+        if unlisted:
+            remarks.append(
+                _NOT_LISTED_REMARK.format(
+                    options=", ".join(f"{o.name} ({o.id})" for o in unlisted),
+                    model=shown_model,
+                    build=model.build,
+                )
+            )
+    if got.chr_model_id is None:
+        remarks.append(
+            "The record names no model (chr_model_id): the body type is its sex value "
+            f"{got.body_type}, read as the tables' body type (ChrRaceXChrModel.Sex) [verify]."
+        )
+    elif expected is not None and expected != got.chr_model_id:
+        remarks.append(
+            f"The barber shop was showing model {got.chr_model_id}; build {model.build}'s "
+            f"tables give race {got.race_id} body type {got.body_type} model {expected}."
+        )
+    if class_id is None:
+        remarks.append(_NO_CLASS_REMARK)
+    if got.client_build is not None and got.client_build != model.build:
+        remarks.append(
+            f"Recorded by client build {got.client_build}; checked against build "
+            f"{model.build}'s tables: an id they lack may exist only in the recording build, or "
+            "come from a hotfix."
+        )
+    return remarks
+
+
+@looks_app.command("import-char")
+@_handled
+def looks_import_char(
+    name: LookNameArg,
+    character: CharacterOpt = None,
+    account: AccountOpt = None,
+    class_: ClassOpt = None,
+    replace: Annotated[
+        bool, typer.Option("--replace", help="Overwrite a saved look with this name.")
+    ] = False,
+    build: LooksBuildOpt = None,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+) -> None:
+    """Save a character's customization choices, as the lab-addon recorded
+    them at its last barber-shop visit, as a look under the user data
+    directory (never in an install). Reads the character's WowLab.lua (read
+    only); without --character, the one written last. A character with no
+    recorded visit gets the addon's reason (exit 1). The look is checked like
+    `looks save`: one the tables refuse is not saved (exit 1); an id the
+    tables lack is noted "(possibly a hotfix)". JSON: LooksImportReport."""
+    try:
+        lookstore.check_name(name)
+    except lookstore.LookStoreError as exc:
+        raise CliError(str(exc), EXIT_USAGE) from exc
+    _, chosen, lay = _open(root, flavor)
+    acct = _select_account(lay, account)
+    files = [f for f in lay.saved_variables() if f.account == acct.folder and _is_lab_file(f)]
+    target, how, tie = _lab_char_file(acct, files, character)
+    who = f"{target.realm_folder}/{target.character_folder}"
+    record = labaddon.read_char(lay.flavor_path / target.path)
+    try:
+        got = labaddon.customization_import(record)
+    except labaddon.NoCustomizationError as exc:
+        raise CliError(
+            f"{who}{_picked_words(how, tie)}: nothing to import: {exc}; nothing was saved"
+        ) from exc
+    with _open_gamedata() as data:
+        version, build_remarks = _looks_build(data, build, root, flavor)
+        model = _load_model(data, version)
+    class_id = _resolve_class(model, class_)
+    look = looks.Look(
+        name=name,
+        race_id=got.race_id,
+        body_type=got.body_type,
+        class_id=class_id,
+        choices=got.choices,
+    )
+    saved = lookstore.SavedLook(
+        saved_build=version,
+        origin="imported",
+        recorded_client_build=got.client_build,
+        look=look,
+    )
+    remarks = [*_import_remarks(model, got, class_id), *build_remarks]
+    report = _look_report(model, saved, None, remarks, imported_remark=False)
+    path: Path | None = None
+    if not report.refused:
+        path = lookstore.LookStore().save(saved, replace=replace)
+        report = _look_report(model, saved, path, remarks, imported_remark=False)
+    out = LooksImportReport(
+        flavor_folder=chosen.folder,
+        account=acct.folder,
+        character=who,
+        chosen_by=how,
+        file=target.path,
+        mtime_ns=target.mtime_ns,
+        record=got,
+        as_of_words=_AS_OF_WORDS[got.recorded_at],
+        saved=path is not None,
+        look=report,
+    )
+    if json_out:
+        _emit(out)
+    else:
+        _say(f"Character: {who} in account {acct.folder}{_picked_words(how, tie)}")
+        _say(f"File: {target.path}")
+        _say(f"Written: {_local_time(target.mtime_ns)} (the file's modification time)")
+        heading = "Imported look" if path is not None else "Not saved: the tables refuse look"
+        _print_look(report, heading=heading)
+    if path is None:
+        raise CliError(f"look {name} is refused by build {version}'s tables; nothing was saved")
+
+
 # ─── looks page ──────────────────────────────────────────────────────────────
 
 LOOKS_PAGE_FORMAT: Literal[1] = 1
@@ -5260,7 +5525,11 @@ _PAGE_LEGEND = (
     "option, a class the ClassMask excludes, or a choice it depends on set to something "
     "else).",
     'note: shown, never a refusal: "needs <unlock>" (an achievement, quest or item '
-    'appearance to earn), "unknown to build <version> (possibly a hotfix)", a dependency on '
+    'appearance to earn), an id the build lacks (in a typed look: "is not in build '
+    "<version>'s tables: check the id with `wowlab looks options`\"; in an imported look: "
+    '"unknown to build <version> (possibly a hotfix)", or, when the recording client was '
+    'another build, "(recorded by client <build>, not the build of these tables: the id may '
+    'exist only in that build, or come from a hotfix)"), a dependency on '
     "an option the look leaves unset, a class-restricted choice when no class is chosen, "
     "conditions, and options on a model no race uses (a form, pet or mount), checked by "
     "their requirements only [verify].",

@@ -1692,6 +1692,51 @@ link. An existing page there is replaced whole. Damaged
 look files are listed on the page and named on stderr, and the command then
 exits 1, as `show` does.
 
+*Amended 2026-09-29 (M11-23):* `import-char` as built. `wowlab looks
+import-char <name> [--character C] [--account A] [--class C] [--replace]
+[--build V] [--json]` reads a character's `WowLab.lua` the same way as `char show`
+(the newest by modification time unless `--character` names one; read only)
+and turns its customization record into a look
+(`labaddon.customization_import`): `race_id` is the race, `sex` (0 or 1) the body type, read as `ChrRaceXChrModel.Sex` (0 confirmed by the M11-23 capture, 1 **[verify]**), each option with a choice id one mapping. An option recorded
+without a choice id is left out and named, and a record without a race or
+`sex` (or with `sex` other than 0 or 1, an option listed twice, or more
+than 256 choices) is not imported. A section absent with a reason gives the addon's reason, and a section
+missing from the file gives "not in the file" (a reason the reader clipped
+says so). When the file was picked as the newest, the error says so and
+names `--character`. Both exit 1, write nothing
+and ask for no tables. The look is checked and saved as `save` does it: a
+refused look is not written (exit 1). The build is `--build`, else the
+flavor's version. The record holds no class, so without `--class`
+class-restricted choices are noted. Remarks say when the record was made,
+by its own fields: "as of the last barber-shop open" (`recorded_at` "open"),
+"as of the last applied barber-shop change" ("applied"), or "as of the last
+barber-shop visit" (not recorded), next to `recorded_at`, the addon's
+`as_of` and how many logins or reloads ago. They never call the look the
+character's appearance now. They also say: a record left at "open" may miss
+a change applied during that visit (M11-23 capture, **[verify]**); a paid
+change that keeps the race is invisible; only the options the barber shop listed are recorded, for the model it showed, which can be fewer than the tables give that model (7 of 10 on the M11-23 capture); a choice depending on an unlisted option is undecided (the unlisted options are named); a missing `chr_model_id` means the body
+type came from `sex`, and a `chr_model_id` that differs from the tables'
+model for that race and body type is named; the recording client's build
+when it differs from the checked build. A saved look now has `origin`
+(`SavedLook`, additive, format stays 1): `typed` (`save`, and every file
+written before it) or `imported`; an imported look also keeps
+`recorded_client_build`, the recording client's full version (optional,
+additive). Every command words an id the build lacks by origin: a typed id
+as "is not in build <version>'s tables: check the id …" (as `save` did), an
+imported one as "unknown to build <version> (possibly a hotfix)", or, when
+the recording client was another build, "(recorded by client <build>, not
+the build of these tables: the id may exist only in that build, or come
+from a hotfix)"; only option and choice ids from the record get that
+ending, not a requirement id the tables name.
+`show`, `compare` and `page` of an imported look add a remark naming the
+look: it holds the choices the addon had last recorded in the barber shop
+before the import, and may miss a change applied during that visit
+**[verify]** and any change since; plus the recording client's build.
+`LookStore.save` refuses a look whose file would be over `MAX_LOOK_BYTES`,
+the limit `read` applies, before creating anything. `char show` adds
+"Recorded when the barber shop opened: a change applied during that visit
+may not be in it [verify]." to a record with `recorded_at` "open".
+
 ### 13.3 profiles
 
 Named sets of the client's local UI files (not the whole UI: action-bar
