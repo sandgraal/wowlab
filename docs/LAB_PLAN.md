@@ -1386,20 +1386,29 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   `talents.class`, `talents.legacy`, `customization`,
   `collections.mounts`, `collections.toys`, `collections.pets`,
   `collections.appearances`, `currencies`, `professions`. The list is
-  saved in `WowLabCharDB` as `skip = { "<section key>", ... }` (strings in
+  saved in `WowLabCharDB`, per character, as `skip = { "<section key>", ... }` (strings in
   section order, left out when empty; the reader keeps it as a list of
   strings and ignores a key it does not know) and read at `ADDON_LOADED`,
   before any section is carried, registers an event or is gathered. A
   section in it registers no event, is never carried or gathered (not on
   its events, not at entering the world, not by `/wowlab save`, not at
   `PLAYER_LOGOUT`) and is written as
-  `{ absent = "switched off by the owner" }`. The switch exists because a client assertion inside a section
-  crashes the client at every login while the addon is enabled, and a
-  crash writes nothing, so the addon cannot mark the culprit itself
-  (M11-20); a switch typed before a crash is lost too, so it is saved by a
-  `/reload` or logout. It stops only that section's own gather: another
-  section may still call the same client API (`talents.class` asks for the
-  spec). This is a schema-1 edit made before M11-04 starts. The probe exists for
+  `{ absent = "switched off by the owner" }` (`collections.appearances`,
+  which has no gather, keeps its own reason). The switch exists because a
+  client assertion inside a section crashes the client at every login
+  while the addon is enabled, and a crash writes nothing, so the addon
+  cannot mark the culprit itself (M11-20); a switch typed before a crash is
+  lost too, so it is saved by a `/reload` or logout. It stops only that
+  section's own gather: another section may still call the same client API
+  (`talents.class` asks for the spec). This is a schema-1 edit made before
+  M11-04 starts. Amended 2026-09-29 (M11-21 review): the first on-world
+  pass after each `ADDON_LOADED` (login or `/reload`) runs 10 s after
+  `PLAYER_ENTERING_WORLD` on its own timer, announced in chat at that
+  moment, so the owner can switch a section off before it runs; until then
+  change events gather nothing, and after it they keep the 2 s debounce. A
+  logout inside the 10 s still records (`PLAYER_LOGOUT` gathers what is
+  waiting). Without `C_Timer` the pass runs at once and there is no window.
+  The probe exists for
   §13.4's loader check (the sv-health idea in `docs/LAB_IDEAS.md`, cut down
   to what sv-merge needs; the full `doctor` check stays an idea). All
   sections go in

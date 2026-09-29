@@ -120,23 +120,47 @@ it, and a crash writes nothing, so the addon cannot mark the culprit itself
 - `/wowlab unskip <section>` switches it back on from the next `/reload` or
   login (never in the same session: the section may be the one that
   crashes). `/reload` or log out to save that too.
-- `/wowlab skip` with no section lists the sections switched off.
+- `/wowlab skip` with no section lists the sections switched off, then every
+  section key.
 - A key that is not a section is refused, and the chat line lists the valid
   keys. The typed text is compared, never stored or printed.
+- It is per character (`WowLabCharDB`): switching a section off on one
+  character leaves it on for every other character.
 
-Section keys (as in `docs/LAB_PLAN.md` §13.1): `gear`, `spec`,
-`talents.class`, `talents.legacy`, `customization`, `collections.mounts`,
-`collections.toys`, `collections.pets`, `collections.appearances`,
-`currencies`, `professions`.
+Section keys (as in `docs/LAB_PLAN.md` §13.1), by the file that registers
+them. A crash report names a file and line, not a section, and one file can
+hold several sections:
+
+- `Gear.lua`: `gear`
+- `Talents.lua`: `spec`, `talents.class`, `talents.legacy`
+- `Customization.lua`: `customization`
+- `Collections.lua`: `collections.mounts`, `collections.toys`, `collections.pets`, `collections.appearances`
+- `Currencies.lua`: `currencies`
+- `Professions.lua`: `professions`
+- `Core.lua` holds no section: events, tables and the slash command.
 
 The list is saved as `WowLabCharDB.skip = { "<section key>", ... }` (section
 order, left out when empty) and read at `ADDON_LOADED`, before any section is
 carried, registers an event or is gathered. A section in it registers no
 event and is never gathered, not on its events, not on entering the world,
 not by `/wowlab save`, not at `PLAYER_LOGOUT`; it is written as
-`{ absent = "switched off by the owner" }`. A string in the saved list that
-is not a section key (for example after a later version renames a section)
-is ignored and dropped at the next save.
+`{ absent = "switched off by the owner" }`. `collections.appearances` has no
+gather at all (M11-20): it can be switched off, but it keeps its own absent
+reason. A string in the saved list that is not a section key (for example
+after a later version renames a section) is ignored and dropped at the next
+save.
+
+The 10 s window. The first on-world pass after each `ADDON_LOADED` (login or
+`/reload`) runs 10 s after the world appears (`PLAYER_ENTERING_WORLD`), on
+its own timer, and the addon says so in chat at that moment:
+`WowLab: recording in 10 s. To switch a section off first: /wowlab skip <section>  (/wowlab skip lists them)`.
+Until that pass has run, change events gather nothing (what they would have
+gathered is taken by the pass); after it, change events keep the 2 s
+debounce. A `/wowlab skip` typed inside the 10 s takes effect for that pass.
+A logout or `/reload` inside the 10 s still records: `PLAYER_LOGOUT` gathers
+every section still waiting. `/wowlab save` inside the 10 s gathers at once,
+as always. If the client has no `C_Timer`, there is no window: the pass runs
+at once, as before.
 
 What the switch does not do:
 
@@ -146,10 +170,12 @@ What the switch does not do:
 - Switching off `customization` drops the carried barber-shop record: the
   section is written absent, so after `unskip` it stays absent until the next
   barber-shop visit.
-- It needs the addon loaded to type the command. Every section that gathers
-  on entering the world runs about 2 s after it (the event debounce), so a
-  crash in one of them leaves that long to type the command; otherwise
-  untick the addon at character select as before.
+- It needs the addon loaded. Type it during the 10 s after the world
+  appears, before the announced first recording pass; that pass runs every
+  on-world section in one go. Without `C_Timer` there is no window. The one
+  crash seen (M11-20) came about 4 s after entering the world on the old
+  timing. If it cannot be typed in time, untick the addon at character
+  select.
 
 ## Lint
 

@@ -198,8 +198,20 @@ end)
 -- is read, so a switched-off section (section.off) never registers one, is
 -- never carried and never gathered: not on an event, not on entering the
 -- world, not by `/wowlab save`, not at PLAYER_LOGOUT. It is written as
--- absent with SWITCHED_OFF.
+-- absent with SWITCHED_OFF (a section with no gather keeps its not_gathered
+-- reason).
 local pending = false
+
+-- The first on-world pass after ADDON_LOADED (login or /reload) runs
+-- FIRST_PASS_DELAY seconds after PLAYER_ENTERING_WORLD, on its own timer, and
+-- is announced in chat, so the owner can `/wowlab skip` a section that
+-- crashes the client before it runs. Until it has run, the change-event
+-- debounce gathers nothing: whatever it would have gathered is still dirty
+-- and the first pass takes it. Without C_Timer there is no window: the pass
+-- runs at once, as before.
+local FIRST_PASS_DELAY = 10
+local firstPassStarted = false
+local firstPassDone = false
 
 local function gather(section, event)
     if section.off then
@@ -237,6 +249,23 @@ local function schedule()
     pending = true
     timerAfter(2, function()
         pending = false
+        if firstPassDone then
+            gatherDirty()
+        end
+    end)
+end
+
+-- Starts the first on-world pass: once, on its own timer, never merged into a
+-- pending debounce. A section switched off in the meantime is no longer dirty
+-- (switchOff) and gather refuses it anyway.
+local function startFirstPass()
+    if firstPassStarted then
+        return
+    end
+    firstPassStarted = true
+    say("recording in 10 s. To switch a section off first: /wowlab skip <section>  (/wowlab skip lists them)")
+    timerAfter(FIRST_PASS_DELAY, function()
+        firstPassDone = true
         gatherDirty()
     end)
 end
@@ -375,8 +404,10 @@ end
 function ns.Write()
     local db = { schema = ns.SCHEMA, probe = copyProbe(), client = clientInfo() }
     for _, section in ipairs(ns.sections) do
+        -- A section with no gather (collections.appearances, M11-20) keeps
+        -- its own reason even when switched off: it never gathers anyway.
         local record
-        if section.off then
+        if section.off and section.gather then
             record = ns.Absent(SWITCHED_OFF)
         else
             record = ns.state[section.key] or ns.Absent(section.not_gathered or "not gathered this session")
@@ -446,7 +477,11 @@ ns.On("PLAYER_ENTERING_WORLD", function()
             section.dirty = true
         end
     end
-    schedule()
+    if timerAfter and not firstPassDone then
+        startFirstPass()
+    else
+        schedule()
+    end
 end)
 
 ns.On("PLAYER_LOGOUT", function()
@@ -494,6 +529,7 @@ local function skipCommand(command, key)
         if later ~= "" then
             say("switched back on from the next /reload or login: " .. later)
         end
+        say("sections: " .. keyList(isSection))
         return
     end
     local section = sectionByKey(key)
@@ -507,6 +543,9 @@ local function skipCommand(command, key)
     elseif ns.skip[section.key] then
         ns.skip[section.key] = nil
         say(section.key .. " switched back on from the next /reload or login; /reload or log out to save that.")
+    elseif section.off then
+        say(section.key .. " is already switched back on from the next /reload or login.")
+        return
     else
         say(section.key .. " is not switched off.")
         return

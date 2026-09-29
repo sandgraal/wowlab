@@ -2201,18 +2201,21 @@ def _body(flow: _Flow, label: str) -> str:
     return _render(flow.tokens[heads[0] : flow.block_end(heads[0]) + 1])
 
 
-def _section_keys() -> list[str]:
-    """The `key` of every ns.Section spec, read from the sources (a literal, or
-    a file-level `local KEY = "..."`)."""
+def _keys_in(path: Path) -> list[str]:
+    """The `key` of every ns.Section spec in one source (a literal, or a
+    file-level `local KEY = "..."`)."""
     keys = []
-    for path in SOURCES:
-        text = path.read_text(encoding="utf-8")
-        constants = dict(re.findall(r'^local ([A-Z_]+) = "([^"]+)"$', text, flags=re.M))
-        for spec in re.findall(r"ns\.Section\(\{(.*?)\n\}\)", text, flags=re.S):
-            match = re.search(r'^\s*key = (?:"([^"]+)"|([A-Z_]+)),$', spec, flags=re.M)
-            assert match, f"{path.name}: an ns.Section spec without a key"
-            keys.append(match.group(1) or constants[match.group(2)])
+    text = path.read_text(encoding="utf-8")
+    constants = dict(re.findall(r'^local ([A-Z_]+) = "([^"]+)"$', text, flags=re.M))
+    for spec in re.findall(r"ns\.Section\(\{(.*?)\n\}\)", text, flags=re.S):
+        match = re.search(r'^\s*key = (?:"([^"]+)"|([A-Z_]+)),$', spec, flags=re.M)
+        assert match, f"{path.name}: an ns.Section spec without a key"
+        keys.append(match.group(1) or constants[match.group(2)])
     return keys
+
+
+def _section_keys() -> list[str]:
+    return [key for path in SOURCES for key in _keys_in(path)]
 
 
 def test_skip_section_keys_are_the_plan_keys() -> None:
@@ -2268,13 +2271,20 @@ def test_gather_does_nothing_for_a_switched_off_section() -> None:
     before calling the section when the section is off."""
     flow = _core()
     assert _body(flow, "gather").startswith(f"function gather ( section , event ) {OFF_GUARD}")
-    reached = []
+    called, read = [], []
     for path in SOURCES:
         tokens = _tokens(path)
-        for i in range(len(tokens) - 2):
-            if [t.text for t in tokens[i : i + 3]] == ["section", ".", "gather"]:
-                reached.append((path.name, _Flow(path, tokens).label_at(i)))
-    assert reached == [("Core.lua", "gather")], reached
+        for i in range(2, len(tokens) - 3):
+            if [t.text for t in tokens[i : i + 3]] != ["section", ".", "gather"]:
+                continue
+            where = (path.name, _Flow(path, tokens).label_at(i))
+            if tokens[i + 3].text == "(" or [t.text for t in tokens[i - 2 : i]] == ["pcall", "("]:
+                called.append(where)
+            else:
+                read.append((*where, _render(tokens[i - 4 : i + 4])))
+    assert called == [("Core.lua", "gather")], called
+    # The one other mention is ns.Write testing whether the section has a gather.
+    assert read == [("Core.lua", "ns.Write", "section . off and section . gather then")], read
 
 
 def test_no_entry_point_marks_a_switched_off_section() -> None:
@@ -2336,7 +2346,11 @@ def test_switched_off_section_is_written_absent_with_the_owner_reason() -> None:
     flow = _core()
     assert f'local SWITCHED_OFF = "{SWITCHED_OFF_REASON}"' in _render(flow.tokens)
     write = _body(flow, "ns.Write")
-    assert "if section . off then record = ns . Absent ( SWITCHED_OFF ) else" in write
+    # A section with no gather (collections.appearances) keeps its own reason.
+    assert (
+        "if section . off and section . gather then record = ns . Absent ( SWITCHED_OFF ) else"
+        in write
+    )
     assert write.index("putSkip ( db )") < write.index("WowLabCharDB = db")
 
 
@@ -2355,7 +2369,7 @@ def test_skip_list_is_saved_as_wowlabchardb_skip() -> None:
 def test_readme_and_plan_document_the_switch() -> None:
     readme = README.read_text(encoding="utf-8")
     plan = PLAN.read_text(encoding="utf-8")
-    runbook = RUNBOOK.read_text(encoding="utf-8")
+    runbook = " ".join(RUNBOOK.read_text(encoding="utf-8").split())  # joined across line breaks
     for command in SKIP_COMMANDS:
         assert f"/wowlab {command} <section>" in readme, command
         assert f"/wowlab {command} <section>" in plan, command
@@ -2365,3 +2379,97 @@ def test_readme_and_plan_document_the_switch() -> None:
     for key in _section_keys():
         assert f"`{key}`" in readme, f"README does not list the section key {key}"
     assert "/wowlab skip <section>" in runbook
+    # Fix round 1: the 10 s window and the per-character switch.
+    for text in (readme, plan):
+        assert "per character" in text
+        assert "10 s" in text
+    assert "ask the conductor which section key it belongs to" in runbook
+    assert "within the 10 s the addon announces" in runbook
+
+
+def test_readme_maps_each_file_to_its_section_keys() -> None:
+    """A crash report names a file and line, not a section: the README maps
+    every source that registers sections to its keys."""
+    readme = README.read_text(encoding="utf-8")
+    mapped = 0
+    for path in SOURCES:
+        keys = _keys_in(path)
+        if keys:
+            mapped += 1
+            line = f"- `{path.name}`: " + ", ".join(f"`{k}`" for k in keys)
+            assert line in readme, f"README lacks the line {line!r}"
+    assert mapped >= 6, mapped
+
+
+# Fix round 1 (domain review): the first on-world pass after ADDON_LOADED waits
+# 10 s on its own timer and says so, so `/wowlab skip` can be typed before it.
+# Source scans on Core.lua tokens, constructed checks; no Lua runs (L3).
+
+
+def _first_pass_delay(flow: _Flow) -> int:
+    match = re.search(r"local FIRST_PASS_DELAY = (\d+) ", _render(flow.tokens))
+    assert match, "expected `local FIRST_PASS_DELAY = <n>` in Core.lua"
+    return int(match.group(1))
+
+
+def test_first_pass_runs_on_its_own_timer() -> None:
+    flow = _core()
+    delay = _first_pass_delay(flow)
+    assert delay == 10
+    first = _body(flow, "startFirstPass")
+    assert first.startswith(
+        "function startFirstPass ( ) if firstPassStarted then return end firstPassStarted = true"
+    )
+    assert (
+        "timerAfter ( FIRST_PASS_DELAY , function ( ) firstPassDone = true gatherDirty ( ) end )"
+        in first
+    )
+    # Not merged into, nor swallowed by, the change-event debounce.
+    assert "pending" not in first.split() and "schedule" not in first.split()
+    assert "pending = false if firstPassDone then gatherDirty ( ) end" in _body(flow, "schedule")
+    world = _body(flow, 'ns.On("PLAYER_ENTERING_WORLD")')
+    assert (
+        "if timerAfter and not firstPassDone then startFirstPass ( ) else schedule ( ) end" in world
+    )
+    t = flow.tokens
+    calls = [
+        flow.label_at(i)
+        for i, tok in enumerate(t)
+        if tok.text == "startFirstPass" and t[i + 1].text == "(" and t[i - 1].text != "function"
+    ]
+    assert calls == ['ns.On("PLAYER_ENTERING_WORLD")'], calls
+
+
+def test_first_pass_is_announced_in_chat() -> None:
+    flow = _core()
+    delay = _first_pass_delay(flow)
+    first = _body(flow, "startFirstPass")
+    line = (
+        f'say ( "recording in {delay} s. To switch a section off first: '
+        '/wowlab skip <section>  (/wowlab skip lists them)" )'
+    )
+    assert line in first
+    assert first.index(line) < first.index("timerAfter (")
+    # `/wowlab skip` with no section does list every key, as the line says.
+    assert 'say ( "sections: " .. keyList ( isSection ) )' in _body(flow, "skipCommand")
+
+
+def test_skip_before_the_first_pass_takes_effect() -> None:
+    """A skip typed during the 10 s: switchOff clears `dirty`, the first pass
+    gathers only dirty sections (gatherDirty), and gather refuses an off
+    section anyway. A logout inside the window still records (PLAYER_LOGOUT
+    runs gatherDirty)."""
+    flow = _core()
+    assert "section . dirty = false" in _body(flow, "switchOff")
+    dirty = _body(flow, "gatherDirty")
+    assert "if section . dirty then gather ( section ) end" in dirty
+    assert _body(flow, "gather").startswith(f"function gather ( section , event ) {OFF_GUARD}")
+    assert "gatherDirty ( ) ns . Write ( )" in _body(flow, 'ns.On("PLAYER_LOGOUT")')
+
+
+def test_unskip_of_a_section_already_back_on_says_so() -> None:
+    body = _body(_core(), "skipCommand")
+    assert (
+        'elseif section . off then say ( section . key .. " is already switched back on '
+        'from the next /reload or login." ) return else'
+    ) in body
