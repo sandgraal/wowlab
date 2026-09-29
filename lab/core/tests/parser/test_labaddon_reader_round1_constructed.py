@@ -206,9 +206,16 @@ def test_constructed_infinite_float_is_refused() -> None:
     ],
 )
 def test_constructed_reason_is_printable_ascii_only(reason: str) -> None:
+    # M11-27: such a reason is clipped to printable ASCII and flagged instead
+    # of refusing the file (test_labaddon_char_show_followups_constructed.py).
     raw = _base()
     raw["customization"] = {"absent": reason}
-    assert "CANARY" not in _refused(raw, "WowLabCharDB.customization")
+    record = _load(raw)
+    section = record.customization
+    assert isinstance(section, labaddon.AbsentSection)
+    assert section.absent_clipped is not None
+    assert all(" " <= ch <= "~" for ch in section.absent)
+    assert all(" " <= ch <= "~" for ch in _text(record).replace("\n", ""))
 
 
 def test_constructed_reason_at_the_length_cap_reads() -> None:
