@@ -19,6 +19,14 @@ What the models accept (M11-03 capture, `docs/LAB_FORMATS.md` amendment of
   `found_by`, `skipped_types`, the skip list, `client.version`,
   `client.build`), each checked against the shape the addon writes. A
   hand-edited or tampered capture cannot pass free text through.
+- Reasons are the one text that is clipped instead of refused (M11-27): a
+  reason longer than REASON_LIMIT characters, or holding any character
+  outside printable ASCII (a long Lua error the addon stored), is escaped
+  byte by byte (`\\xHH`, a backslash as `\\\\`) and truncated by
+  `clip_reason` to printable ASCII of at most REASON_LIMIT characters, and
+  `<field>_clipped` records the original length in bytes and what was done, so one reason no longer hides every other section. Every other
+  text field keeps its shape check. Printable ASCII is still the only text
+  that reaches the terminal or the JSON unescaped.
 - Unknown keys are kept (L4 spirit) and come back in `model_extra` and in
   JSON, provided each is a plain name (`[A-Za-z_][A-Za-z0-9_]*`, at most 64
   characters) and its value holds no text anywhere: numbers, booleans and
@@ -54,7 +62,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator, Mapping
 from pathlib import Path
-from typing import Annotated, Any, Literal, Self, TypeVar
+from typing import Annotated, Any, ClassVar, Literal, Self, TypeVar
 
 from pydantic import (
     BaseModel,
@@ -62,9 +70,12 @@ from pydantic import (
     ConfigDict,
     Discriminator,
     Field,
+    SerializerFunctionWrapHandler,
     StringConstraints,
     Tag,
     ValidationError,
+    ValidationInfo,
+    model_serializer,
     model_validator,
 )
 
@@ -77,6 +88,7 @@ __all__ = [
     "CHAR_SCHEMAS",
     "CHAR_VARIABLE",
     "PAID_CHANGE_NOTE",
+    "REASON_LIMIT",
     "SECTION_KEYS",
     "SWITCHED_OFF",
     "AbsentConfig",
@@ -86,9 +98,11 @@ __all__ = [
     "AccountDBV1",
     "CharDBV1",
     "ClassTalents",
+    "ClippedReason",
     "LabAddonError",
     "LegacyConfig",
     "LegacyTalents",
+    "clip_reason",
     "customization_loads_ago",
     "describe",
     "describe_account",
@@ -162,7 +176,10 @@ Int = Annotated[int, Field(ge=-INT_BOUND, le=INT_BOUND)]
 # never infinite or NaN.
 Number = Int | Annotated[float, Field(allow_inf_nan=False)]
 
-# Every reason the addon writes is ASCII: printable ASCII only.
+# A reason as the models hold it: printable ASCII only, at most REASON_LIMIT
+# characters. What the addon wrote is clipped to this shape first (see
+# `clip_reason`), so a reason is never the one string that refuses a file.
+REASON_LIMIT = 1024
 Reason = Annotated[str, StringConstraints(pattern=r"^[\x20-\x7e]{1,1024}$")]
 # The item name inside a link: no control, format (Cf) or line/paragraph
 # separator (Zl, Zp) characters, and no "]".
@@ -237,8 +254,102 @@ def _check_unknown(path: str, value: object) -> None:
     raise ValueError(f"the unknown key {path} holds a value of an unexpected kind")
 
 
+# ─── reasons the reader had to clip (M11-27) ─────────────────────────────────
+
+# The validation context key `load_char` and `load_account` set: the data came
+# from a `WowLab.lua`, so a `<reason>_clipped` key in it is refused (only this
+# reader writes one, into the model and the --json output).
+_FROM_FILE = "wowlab_from_file"
+CLIPPED_SUFFIX = "_clipped"
+_PRINTABLE = re.compile(r"[\x20-\x7e]{1,1024}")
+_NOT_PRINTABLE_BYTE = re.compile(rb"[^\x20-\x7e]")
+
+
+class ClippedReason(BaseModel):
+    """What this reader did to a reason that was not printable ASCII of 1 to
+    REASON_LIMIT characters (a long Lua error the addon stored, say), so the
+    reason reads instead of refusing the file. The reason is taken as the
+    bytes the file holds (`luadata` decodes a string as UTF-8 with
+    `surrogateescape`, so encoding it back the same way gives those bytes).
+    `original_length`: the reason's length in bytes as the file holds it.
+    `escaped`: it held a byte outside printable ASCII (0x20 to 0x7E), so every
+    such byte is written as `\\xHH` and every backslash as `\\\\`; when False
+    no escape was applied and a backslash is itself. `truncated`: the text
+    shown stops before the end of the reason, at the last whole byte or
+    escape that fits in REASON_LIMIT characters. The file is never changed."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    original_length: Annotated[int, Field(ge=1, le=INT_BOUND)]
+    escaped: bool
+    truncated: bool
+
+    @model_validator(mode="after")
+    def _something_done(self) -> Self:
+        if not (self.escaped or self.truncated):
+            raise ValueError("a clipped reason is escaped, truncated or both")
+        return self
+
+
+def _char_bytes(ch: str) -> bytes:
+    """One character as UTF-8; a surrogate `surrogateescape` cannot map back
+    to a byte (only reachable from a caller other than `luadata`) is written
+    as its three-byte surrogate encoding."""
+    try:
+        return ch.encode("utf-8", "surrogateescape")
+    except UnicodeEncodeError:
+        return ch.encode("utf-8", "surrogatepass")
+
+
+def _file_bytes(value: str) -> bytes:
+    """The bytes a reason came from in the file (see `ClippedReason`)."""
+    try:
+        return value.encode("utf-8", "surrogateescape")
+    except UnicodeEncodeError:
+        return b"".join(_char_bytes(ch) for ch in value)
+
+
+# Each byte as it is shown in an escaped reason: printable ASCII as itself,
+# a backslash doubled, every other byte as \xHH.
+_BYTE_ESCAPES: tuple[str, ...] = tuple(
+    "\\\\" if b == 0x5C else chr(b) if 0x20 <= b <= 0x7E else f"\\x{b:02x}" for b in range(256)
+)
+
+
+def clip_reason(value: str) -> tuple[str, ClippedReason | None]:
+    """A reason as the models hold it, and what was done to it (None when
+    nothing was: printable ASCII of 1 to REASON_LIMIT characters). An empty
+    reason is returned as it is; the model refuses it. The reason is encoded
+    once (its size is already bounded by `luadata.MAX_FILE_BYTES`); then at
+    most REASON_LIMIT bytes are looked at and at most REASON_LIMIT characters
+    are built."""
+    if not value or _PRINTABLE.fullmatch(value):
+        return value, None
+    data = _file_bytes(value)
+    escaped = _NOT_PRINTABLE_BYTE.search(data) is not None
+    if not escaped:  # printable ASCII, only too long
+        text = data[:REASON_LIMIT].decode("ascii")
+        return text, ClippedReason(original_length=len(data), escaped=False, truncated=True)
+    out: list[str] = []
+    size = 0
+    used = 0
+    for byte in data[:REASON_LIMIT]:
+        piece = _BYTE_ESCAPES[byte]
+        if size + len(piece) > REASON_LIMIT:
+            break
+        out.append(piece)
+        size += len(piece)
+        used += 1
+    clip = ClippedReason(original_length=len(data), escaped=True, truncated=used < len(data))
+    return "".join(out), clip
+
+
 class _Record(BaseModel):
-    """Every table the addon writes: exact types, unknown keys kept (checked)."""
+    """Every table the addon writes: exact types, unknown keys kept (checked).
+
+    `reason_fields` names the fields that hold a reason; each has a
+    `<name>_clipped` field, set only when `clip_reason` changed the text and
+    left out of a dump when unset."""
 
     model_config = ConfigDict(
         strict=True,
@@ -249,11 +360,15 @@ class _Record(BaseModel):
         serialize_by_alias=True,
     )
 
+    reason_fields: ClassVar[tuple[str, ...]] = ()
+
     @model_validator(mode="before")
     @classmethod
-    def _keys(cls, data: Any) -> Any:
+    def _keys(cls, data: Any, info: ValidationInfo) -> Any:
         if not isinstance(data, dict):
             return data
+        if cls.reason_fields:
+            data = cls._clip(data, bool(info.context and info.context.get(_FROM_FILE)))
         # Only the name the addon writes: a Python-side name (`schema_`,
         # `list_`, `class_`) in the file is an unknown key, checked as one.
         known = {field.alias or name for name, field in cls.model_fields.items()}
@@ -264,14 +379,43 @@ class _Record(BaseModel):
                 _check_unknown(key, value)
         return data
 
+    @classmethod
+    def _clip(cls, data: dict[Any, Any], from_file: bool) -> dict[Any, Any]:
+        data = dict(data)
+        for name in cls.reason_fields:
+            flag = name + CLIPPED_SUFFIX
+            if from_file and flag in data:
+                raise ValueError(f"{flag} is written by this reader, never by the addon")
+            value = data.get(name)
+            if isinstance(value, str):
+                text, clip = clip_reason(value)
+                if clip is not None:
+                    data[name] = text
+                    data[flag] = clip
+        return data
+
+    @model_serializer(mode="wrap")
+    def _dump(self, handler: SerializerFunctionWrapHandler) -> Any:
+        out = handler(self)
+        if isinstance(out, dict):
+            for name in self.reason_fields:
+                flag = name + CLIPPED_SUFFIX
+                if flag in out and out[flag] is None:
+                    del out[flag]
+        return out
+
 
 # ─── absent records ──────────────────────────────────────────────────────────
 
 
 class _Absent(_Record):
-    """`{ absent = "<reason>" }`: the addon could not provide this."""
+    """`{ absent = "<reason>" }`: the addon could not provide this.
+    `absent_clipped`: set when the reader clipped the reason (M11-27)."""
+
+    reason_fields: ClassVar[tuple[str, ...]] = ("absent",)
 
     absent: Reason
+    absent_clipped: ClippedReason | None = None
 
 
 class AbsentRecord(_Absent):
@@ -444,11 +588,15 @@ class ClassTalents(_Section):
     last selected saved loadout's id, each possibly missing (nil) or absent
     with a reason."""
 
+    reason_fields: ClassVar[tuple[str, ...]] = ("export_absent", "last_selected_config_absent")
+
     config: Annotated[Annotated[TraitConfig, Tag(_P)] | Annotated[AbsentConfig, Tag(_A)], _SPLIT]
     export: TalentExport | None = None
     export_absent: Reason | None = None
+    export_absent_clipped: ClippedReason | None = None
     last_selected_config: Int | None = None
     last_selected_config_absent: Reason | None = None
+    last_selected_config_absent_clipped: ClippedReason | None = None
 
     @model_validator(mode="after")
     def _one_of_each(self) -> Self:
@@ -695,7 +843,7 @@ def _schema_model[M: BaseModel](variable: str, value: object, schemas: Mapping[i
             "it was written by another version of the lab-addon; nothing was read"
         )
     try:
-        return model.model_validate(value)
+        return model.model_validate(value, context={_FROM_FILE: True})
     except ValidationError as exc:
         raise LabAddonError(
             f"{variable} does not fit the schema-{schema} model: {_explain(variable, exc)}"
@@ -825,10 +973,28 @@ def _num(value: Number | None) -> str:
     return "not returned" if value is None else str(value)
 
 
-def _absent(record: _Absent) -> str:
-    text = f"absent ({record.absent})"
+def _clip_words(clip: ClippedReason | None) -> str:
+    """What the reader did to a reason, after it (printable ASCII only)."""
+    if clip is None:
+        return ""
+    size = f"the reason is {_count(clip.original_length, 'byte')} in the file"
+    if not clip.escaped:
+        return f" [{size}; shown cut to its first {REASON_LIMIT} characters; the file is unchanged]"
+    cut = f", and cut to at most {REASON_LIMIT} characters" if clip.truncated else ""
+    return (
+        f" [{size}; shown with each byte outside printable ASCII written as \\xHH and each "
+        f"backslash as \\\\{cut}; the file is unchanged]"
+    )
+
+
+def _reason(text: str, clip: ClippedReason | None) -> str:
+    return f"absent ({text}){_clip_words(clip)}"
+
+
+def _absent(record: _Absent, *, events_shown: bool = True) -> str:
+    text = _reason(record.absent, record.absent_clipped)
     events = getattr(record, "events_unregistered", None)
-    if events is not None:
+    if events is not None and events_shown:
         if events:
             text += f"; events the client did not know: {', '.join(events)}"
         else:
@@ -939,54 +1105,48 @@ def _class_talents(talents: ClassTalents) -> list[str]:
     elif talents.export == "":
         lines.append("  export string: the client returned an empty string")
     elif talents.export_absent is not None:
-        lines.append(f"  export string: absent ({talents.export_absent})")
+        lines.append(
+            f"  export string: {_reason(talents.export_absent, talents.export_absent_clipped)}"
+        )
     else:
         lines.append("  export string: not returned by the client")
     if talents.last_selected_config is not None:
         lines.append(f"  last selected saved loadout: {talents.last_selected_config} (raw)")
     elif talents.last_selected_config_absent is not None:
-        lines.append(
-            f"  last selected saved loadout: absent ({talents.last_selected_config_absent})"
+        reason = _reason(
+            talents.last_selected_config_absent, talents.last_selected_config_absent_clipped
         )
+        lines.append(f"  last selected saved loadout: {reason}")
     else:
         lines.append("  last selected saved loadout: not returned by the client")
     return lines + _events(talents)
 
 
-def _legacy_pool(configs: list[LegacyConfig]) -> tuple[list[TraitCurrency], list[int | None]]:
-    """The trait currencies of the Legacy candidates, each counted once per
-    config: `C_Traits.GetTreeCurrencyInfo` reports one pool under every tree
-    that spends it. Returns the pooled rows, and the ids whose trees report
+def _legacy_pool(config: LegacyConfig) -> tuple[list[TraitCurrency], list[int | None]]:
+    """The trait currencies of one Legacy candidate, each counted once:
+    `C_Traits.GetTreeCurrencyInfo` reports one pool under every tree that
+    spends it. Returns the pooled rows, and the ids whose trees report
     different values (those are not added up)."""
     pooled: list[TraitCurrency] = []
     disagree: list[int | None] = []
-    for config in configs:
-        by_id: dict[int | None, list[TraitCurrency]] = {}
-        for tree in config.trees:
-            if isinstance(tree.currencies, AbsentRecord):
-                continue
-            for currency in tree.currencies:
-                by_id.setdefault(currency.id, []).append(currency)
-        for currency_id, rows in by_id.items():
-            if len({(r.quantity, r.spent, r.max_quantity) for r in rows}) == 1:
-                pooled.append(rows[0])
-            else:
-                disagree.append(currency_id)
+    by_id: dict[int | None, list[TraitCurrency]] = {}
+    for tree in config.trees:
+        if isinstance(tree.currencies, AbsentRecord):
+            continue
+        for currency in tree.currencies:
+            by_id.setdefault(currency.id, []).append(currency)
+    for currency_id, rows in by_id.items():
+        if len({(r.quantity, r.spent, r.max_quantity) for r in rows}) == 1:
+            pooled.append(rows[0])
+        else:
+            disagree.append(currency_id)
     return pooled, disagree
 
 
-def legacy_headline(legacy: LegacyTalents) -> str:
-    """One line for the Legacy candidates, never "empty" or "locked": the
-    addon lists candidates by elimination, and below the unlock level the
-    client still returns the trees, with nothing spent and a max_quantity of
-    0. Each trait currency counts once per config (see `_legacy_pool`)."""
-    if not legacy.configs:
-        return f"Legacy candidates: {NONE_RECORDED}"
-    configs = [c for c in legacy.configs if isinstance(c, LegacyConfig)]
-    if not configs:
-        return "Legacy candidates: present, every config absent with a reason"
-    ranks = sum(n.active_rank or 0 for c in configs for t in c.trees for n in t.nodes)
-    pooled, disagree = _legacy_pool(configs)
+def _legacy_points(config: LegacyConfig) -> str:
+    """Ranks, points spent and points available for one candidate config."""
+    ranks = sum(n.active_rank or 0 for t in config.trees for n in t.nodes)
+    pooled, disagree = _legacy_pool(config)
     spent = sum(cur.spent or 0 for cur in pooled)
     if ranks == 0 and spent == 0:
         spent_words = "nothing spent"
@@ -994,25 +1154,67 @@ def legacy_headline(legacy: LegacyTalents) -> str:
         spent_words = f"{_count(ranks, 'rank')} active, {_count(spent, 'point')} spent"
     if disagree:
         return (
-            f"Legacy candidates: present, {spent_words}, points available not added up: "
-            f"currency {_num(disagree[0])} reports different values on different trees "
-            "(see below)"
+            f"{spent_words}, points available not added up: currency {_num(disagree[0])} "
+            "reports different values on different trees (see below)"
         )
     quantities = [cur.quantity for cur in pooled if cur.quantity is not None]
     if not quantities:
-        return f"Legacy candidates: present, {spent_words}, points available not reported"
-    return (
-        f"Legacy candidates: present, {spent_words}, {_count(sum(quantities), 'point')} available"
+        return f"{spent_words}, points available not reported"
+    return f"{spent_words}, {_count(sum(quantities), 'point')} available"
+
+
+def legacy_headline(legacy: LegacyTalents) -> str:
+    """One line for the Legacy candidates, never "empty" or "locked": the
+    addon lists candidates by elimination, and below the unlock level the
+    client still returns the trees, with nothing spent and a max_quantity of
+    0. Each trait currency counts once per config (see `_legacy_pool`), and
+    two candidate configs are never added together (M11-27): the addon does
+    not say which one the Legacy panel uses, so each gets its own figures."""
+    if not legacy.configs:
+        return f"Legacy candidates: {NONE_RECORDED}"
+    if not any(isinstance(c, LegacyConfig) for c in legacy.configs):
+        return "Legacy candidates: present, every config absent with a reason"
+    single = _single_config(legacy)
+    if single is not None:
+        return f"Legacy candidates: present, {_legacy_points(single)}"
+    each = "; ".join(
+        f"config {c.id}: {_legacy_points(c)}"
+        if isinstance(c, LegacyConfig)
+        else f"config {_num(c.id)}: absent with a reason (see below)"
+        for c in legacy.configs
     )
+    level = "" if legacy.player_level is None else f" (level {legacy.player_level})"
+    return (
+        f"Legacy candidates: present, {len(legacy.configs)} configs{level}; the file does not "
+        "say which one is the Legacy system, so each has its own figures (not added together): "
+        f"{each}"
+    )
+
+
+def _single_config(legacy: LegacyTalents) -> LegacyConfig | None:
+    """The one candidate, when the file lists exactly one and it has figures."""
+    if len(legacy.configs) == 1 and isinstance(legacy.configs[0], LegacyConfig):
+        return legacy.configs[0]
+    return None
 
 
 def _legacy(legacy: LegacyTalents) -> list[str]:
-    level = "" if legacy.player_level is None else f" (level {legacy.player_level})"
-    lines = [f"{legacy_headline(legacy)}{level}"]
-    lines.append(
-        "  which config is the Legacy system is inferred by elimination; "
-        f"panel opener ToggleLegacySystemUI present: {_yes(legacy.legacy_ui)}"
+    opener = f"panel opener ToggleLegacySystemUI present: {_yes(legacy.legacy_ui)}"
+    several = _single_config(legacy) is None and any(
+        isinstance(c, LegacyConfig) for c in legacy.configs
     )
+    if several:  # the headline names the level and every config
+        lines = [
+            legacy_headline(legacy),
+            "  the addon lists every trait config it did not rule out (types below); which of "
+            f"these is the Legacy system is not recorded; {opener}",
+        ]
+    else:
+        level = "" if legacy.player_level is None else f" (level {legacy.player_level})"
+        lines = [
+            f"{legacy_headline(legacy)}{level}",
+            f"  which config is the Legacy system is inferred by elimination; {opener}",
+        ]
     skipped = ", ".join(legacy.skipped_types) or NONE_RECORDED
     lines.append(f"  config types not searched: {skipped}")
     for config in legacy.configs:
@@ -1151,6 +1353,24 @@ def _professions(record: Professions) -> list[str]:
     return lines + _events(record)
 
 
+APPEARANCES_EVENTS_NOTE = (
+    "  events_unregistered is in the file, though the addon registers no events for this "
+    "section (kept in --json)"
+)
+
+
+def _appearances(record: AbsentSection | None) -> list[str]:
+    """`collections.appearances` registers no events (M11-20), so its line
+    says nothing about events; a list in the file gets a note and stays in
+    --json."""
+    if record is None:
+        return [f"Appearances: {NOT_IN_FILE}"]
+    lines = [f"Appearances: {_absent(record, events_shown=False)}"]
+    if record.events_unregistered is not None:
+        lines.append(APPEARANCES_EVENTS_NOTE)
+    return lines
+
+
 def _section(label: str, record: object, present: Any) -> list[str]:
     if record is None:
         return [f"{label}: {NOT_IN_FILE}"]
@@ -1207,7 +1427,7 @@ def describe(char: CharDBV1) -> list[str]:
     lines += _section("Mounts", collections.mounts if collections else None, _mounts)
     lines += _section("Toys", collections.toys if collections else None, _toys)
     lines += _section("Pets", collections.pets if collections else None, _pets)
-    lines += _section("Appearances", collections.appearances if collections else None, lambda r: [])
+    lines += _appearances(collections.appearances if collections else None)
     lines += _section("Currencies", char.currencies, _currencies)
     lines += _section("Professions", char.professions, _professions)
     unknown = unknown_keys(char)

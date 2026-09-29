@@ -241,3 +241,33 @@ def test_constructed_no_lab_file_anywhere_exits_1(flavor: Path) -> None:
     result = run("char", "show")
     assert result.exit_code == 1
     assert "no character in account" in result.stderr
+
+
+def test_constructed_long_non_ascii_reason_reads_escaped_and_flagged(flavor: Path) -> None:
+    # M11-27 (c): a long reason with a bidi override, a newline escape and an
+    # invalid UTF-8 byte (a long Lua error the addon stored) no longer refuses
+    # the file; the terminal and the JSON get printable ASCII only.
+    target = _lab_file(flavor, FIRST)
+    reason = b"Core.lua:12: CANARY\\n\xe2\x80\xae\xff" + b"x" * 3000
+    data = target.read_bytes()
+    old = b'["absent"] = "no barber-shop visit recorded with the addon enabled",'
+    assert data.count(old) == 1
+    target.write_bytes(data.replace(old, b'["absent"] = "' + reason + b'",'))
+    out = ok("char", "show", "--character", FIRST).stdout
+    assert all(" " <= ch <= "~" for ch in out.replace("\n", ""))
+    assert "Customization: absent (Core.lua:12: CANARY\\x0a\\xe2\\x80\\xae\\xff" in out
+    assert (
+        "[the reason is 3024 bytes in the file; shown with each byte outside printable ASCII "
+        "written as \\xHH and each backslash as \\\\, and cut to at most 1024 characters; "
+        "the file is unchanged]"
+    ) in " ".join(out.split())
+    assert "Gear (slots 1 to 19" in out and "Professions (by skill line)" in out
+    result = ok("char", "show", "--character", FIRST, "--json")
+    assert all(" " <= ch <= "~" for ch in result.stdout.replace("\n", ""))
+    report = cli.CharShowReport.model_validate_json(result.stdout)
+    assert report.record == labaddon.read_char(target)
+    section = report.record.customization
+    assert isinstance(section, labaddon.AbsentSection)
+    assert section.absent_clipped == labaddon.ClippedReason(
+        original_length=3024, escaped=True, truncated=True
+    )
