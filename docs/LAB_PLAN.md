@@ -1970,6 +1970,33 @@ them as follows, and M11-09 builds to them.
       is skipped. The merge prints the note "the Lab wrote WowLab.lua after
       that snapshot; the loader was not re-checked", instead of blaming the
       loader.
+  - *2026-09-29, owner ruling amending "A Lab write is not a loader
+    failure" (M11-24 security review):* skipping hid real failures. Guard
+    snapshots before it writes, so the comparison after a Lab write
+    usually spans the next login too, and a loader failure in that session,
+    or one that persists, passed. So a comparison that spans a committed
+    guard write to that `WowLab.lua` is **compared from the state the write
+    left**, never skipped. W is the latest such write in the span, and
+    "after" is the hash the journal records for what W wrote.
+    1. **No session since W.** If the newer side of the comparison (the
+       disk, or a snapshot) is byte-identical to W's `after`, the client
+       has not written since. The merge passes with the note "the Lab wrote
+       WowLab.lua after that snapshot; the loader was not re-checked".
+    2. **A session since W.** Otherwise the older side becomes W's result:
+       the store object whose hash is W's `after`. Its `probe.loads` is
+       compared with the newer side under the normal rules (lower: refused;
+       equal: refused unless byte-identical; higher: passes). Every Lab
+       write to `WowLab.lua` (`snap restore`, profile apply, `sv merge`)
+       keeps the bytes it wrote as a store object, so this object exists
+       for any write made after M11-24.
+    3. **W's result cannot be read** (the object is missing, damaged or
+       unparseable, or the write predates this rule): refused, naming the
+       journal record, and `--force-loader-check` overrides. Never skipped.
+    - A journal record or snapshot dated later than the current time is
+      ignored for this check, with a note naming it: a clock that ran ahead
+      must not turn the check off.
+    - The graders for this amendment come from a test-writer (M11-24T2).
+      The M11-24 implementation is not merged until they pass.
   - `--force-loader-check` overrides every refusal.
 - **`--json` is required** (§6.11). It prints `SvMergeReport`, holding at
   least `mode` (`two-way` or `three-way`), `conflicts`, `absent` (with
