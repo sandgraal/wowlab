@@ -120,6 +120,63 @@ EXPECTED: dict[str, dict[str, Any]] = {
     },
 }
 
+# The M11-23 capture run (2026-09-29): a second macOS install root, one run
+# on build 70058 (fixtures README: `<platform>-<build>` folders). The same
+# 15 cells in the same order; only the two keys and the version differ from
+# the `macos` capture.
+_MACOS_70058_BUILD_KEY = _cell("macos-70058", 2)
+_MACOS_70058_CDN_KEY = _cell("macos-70058", 3)
+EXPECTED["macos-70058"] = {
+    "flavors": [
+        {
+            "folder": "_classic_beta_",
+            "product": "wow_classic_beta",
+            "version": "1.60.1.70058",
+            "build": 70058,
+            "build_key": _MACOS_70058_BUILD_KEY,
+            "matching_rows": 1,
+        }
+    ],
+    "rows": [
+        {
+            "product": "wow_classic_beta",
+            "version": "1.60.1.70058",
+            "build_key": _MACOS_70058_BUILD_KEY,
+            "branch": "us",
+            "active": "1",
+            "tags": (
+                "OSX x86_64 US? acct-USA? geoip-US? enUS speech?:"
+                "OSX x86_64 US? acct-USA? geoip-US? enUS text?"
+            ),
+            "extra": (
+                ("CDN Key", _MACOS_70058_CDN_KEY),
+                ("Install Key", ""),
+                ("IM Size", ""),
+                ("CDN Path", "tpr/wow"),
+                ("CDN Hosts", "level3.blizzard.com us.cdn.blizzard.com"),
+                (
+                    "CDN Servers",
+                    "http://level3.blizzard.com/?maxhosts=8 "
+                    "http://us.cdn.blizzard.com/?maxhosts=4&fallback=1 "
+                    "https://level3.ssl.blizzard.com/?maxhosts=4&fallback=1 "
+                    "https://us.cdn.blizzard.com/?maxhosts=4&fallback=1",
+                ),
+                ("Armadillo", ""),
+                ("Last Activated", ""),
+                ("KeyRing", ""),
+            ),
+        }
+    ],
+}
+
+
+@pytest.mark.parser
+def test_hand_split_keys_of_the_70058_run_are_the_keys() -> None:
+    for key in (_MACOS_70058_BUILD_KEY, _MACOS_70058_CDN_KEY):
+        assert re.fullmatch(r"[0-9a-f]{32}", key), "cell positions moved; fix _cell() calls"
+    assert _MACOS_70058_BUILD_KEY != _MACOS_70058_CDN_KEY
+    assert _MACOS_70058_BUILD_KEY != _MACOS_BUILD_KEY
+
 
 @pytest.mark.parser
 def test_hand_split_keys_are_the_keys() -> None:
