@@ -16,11 +16,10 @@ No test needs or touches a real install (ADR-0012).
 
 from __future__ import annotations
 
-import time
 from pathlib import Path, PurePosixPath
 
 import pytest
-from test_lab_capture import lab_capture
+from test_lab_capture import cpu_clock, lab_capture
 
 Identity = lab_capture.Identity
 OtherPlayers = lab_capture.OtherPlayers
@@ -240,7 +239,10 @@ def test_constructed_prolonged_mark_beside_a_longer_word_other_player_control(
 def test_constructed_long_separator_runs_scan_in_linear_time(tmp_path: Path) -> None:
     """2000 log lines, each with runs of 200 separators after the first letters
     of every hunted name (about 5.6 MB). Measured about 2 s, as on the code
-    before this change; the time grows linearly with the run length."""
+    before this change; the time grows linearly with the run length. The
+    budget is CPU time (M11-19, see `cpu_clock`). On the owner's M1: idle,
+    1.8 s CPU and wall clock; under 7 spinning processes, 2.5 s CPU against
+    3.2 to 3.9 s wall clock."""
     identity = Identity(
         characters=["Orlavin", "Ash"],
         realms=["Kestrel Hollow", "QuelThalas"],
@@ -250,8 +252,9 @@ def test_constructed_long_separator_runs_scan_in_linear_time(tmp_path: Path) -> 
     run = "".join(SEPARATORS) * 40
     body = "Zor" + run + "x Orla" + run + "x Quel" + run + "x Q" + run + "x" + run
     log = _one_player("hello") + b"".join(_emote(body) for _ in range(2000))
-    started = time.perf_counter()
+    clock, name = cpu_clock()
+    started = clock()
     problems, _data = _process(log, tmp_path, identity)
-    elapsed = time.perf_counter() - started
+    elapsed = clock() - started
     assert problems == [], problems
-    assert elapsed < 10, f"{elapsed:.1f} s for {len(log)} bytes"
+    assert elapsed < 10, f"{elapsed:.1f} {name} s for {len(log)} bytes"

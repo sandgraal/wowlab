@@ -15,7 +15,7 @@ import os
 import re
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -737,8 +737,55 @@ def test_undecodable_file_names_on_disk_constructed(tmp_path: Path) -> None:
 
 # ─── performance (LAB_PLAN §6.2) ────────────────────────────────────────────
 
+TARGET_SECONDS = 2.0  # §6.2: 400 addons inventory in under two seconds on an SSD
+WALK_RATIO = 20.0
+
+
+def _bare_walk_seconds(root: Path) -> float:
+    """Wall clock for the least file-system work an inventory of `root` does:
+    walk it, `lstat` every entry, read every TOC."""
+    started = time.perf_counter()
+    for folder, dirs, names in root.walk():
+        for name in (*dirs, *names):
+            path = folder / name
+            path.lstat()
+            if name.endswith(".toc"):
+                path.read_bytes()
+    return time.perf_counter() - started
+
+
+def _timed[T](call: Callable[[], T], root: Path) -> tuple[T, float, float]:
+    """`call()`'s result, its wall clock, and its budget: the §6.2 target, or
+    WALK_RATIO times the slower bare walk of `root` (one just before the
+    call, one just after), whichever is larger."""
+    before = _bare_walk_seconds(root)
+    started = time.perf_counter()
+    result = call()
+    seconds = time.perf_counter() - started
+    walk = max(before, _bare_walk_seconds(root))
+    print(f"\n{call.__name__}(): {seconds:.3f} s, bare walk {walk:.3f} s", end="")
+    return result, seconds, max(TARGET_SECONDS, WALK_RATIO * walk)
+
 
 def test_400_addon_folders_inventory_under_two_seconds_constructed(tmp_path: Path) -> None:
+    """What is measured, and why (M11-19, 2026-09-28). `addons()` and
+    `inventory()` by wall clock, not CPU time: the inventory is bound by the
+    file system (a directory listing and an `lstat` per entry, a read per
+    TOC), and time spent waiting on it is part of what §6.2 budgets. A fixed
+    2 s budget flaked on the Windows runner (#110 review), so each call is
+    also judged against a relative control measured right next to it: a bare
+    walk of the same tree (`_bare_walk_seconds`), under the same load and on
+    the same file system. The budget is the §6.2 target of 2 s, or
+    WALK_RATIO times the walk, whichever is larger. Measured on the owner's
+    M1: idle, the walk takes about 0.06 s and each call 0.21 to 0.30 s (3.3x
+    to 4.9x the walk), so 20x the walk is about 1.2 s and an idle machine is
+    held to the 2 s target, unchanged. Under 7 spinning processes the walk
+    took about 0.10 s and the calls 0.38 to 0.45 s (3.6x to 4.3x). The
+    budget rises above 2 s only when a bare walk of this tree takes over
+    0.1 s, that is, when the machine or the file system is slow at that
+    moment. A slow inventory still fails: a per-addon or quadratic cost
+    multiplies the call, not the walk. CPU time would be the wrong clock
+    here: it leaves out the waiting on the file system that §6.2 counts."""
     files: dict[str, bytes] = {}
     for i in range(400):
         name = f"Addon{i:03d}"
@@ -751,19 +798,19 @@ def test_400_addon_folders_inventory_under_two_seconds_constructed(tmp_path: Pat
     _, flavor = _install(tmp_path, files)
     lay = Layout(flavor)
 
-    start = time.perf_counter()
-    addons = lay.addons()
-    addons_seconds = time.perf_counter() - start
-    start = time.perf_counter()
-    inv = lay.inventory()
-    inventory_seconds = time.perf_counter() - start
+    addons, addons_seconds, addons_budget = _timed(lay.addons, flavor)
+    inv, inventory_seconds, inventory_budget = _timed(lay.inventory, flavor)
 
-    print(f"\n400 addons: addons() {addons_seconds:.3f}s, inventory() {inventory_seconds:.3f}s")
     assert len(addons) == len(inv.addons) == 400
     assert sum(len(a.tocs) for a in addons) == 500
     assert all(t.document is not None for a in addons for t in a.tocs)
-    assert addons_seconds < 2.0
-    assert inventory_seconds < 2.0
+    budget_rule = f"the larger of {TARGET_SECONDS:.0f} s and {WALK_RATIO:.0f}x a bare walk"
+    assert addons_seconds < addons_budget, (
+        f"addons() took {addons_seconds:.3f} s, over {addons_budget:.2f} s ({budget_rule})"
+    )
+    assert inventory_seconds < inventory_budget, (
+        f"inventory() took {inventory_seconds:.3f} s, over {inventory_budget:.2f} s ({budget_rule})"
+    )
 
 
 # ─── L6 ─────────────────────────────────────────────────────────────────────

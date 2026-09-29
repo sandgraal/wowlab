@@ -9,11 +9,18 @@ from __future__ import annotations
 
 import os
 import sys
-import time
 from pathlib import Path
 
 import pytest
-from test_lab_capture import ACCOUNT, MAIN, REALM, build_install, capture, lab_capture
+from test_lab_capture import (
+    ACCOUNT,
+    MAIN,
+    REALM,
+    build_install,
+    capture,
+    cpu_clock,
+    lab_capture,
+)
 
 Identity = lab_capture.Identity
 
@@ -214,14 +221,16 @@ def test_constructed_identity_map_is_broken_down_for_a_sanity_check(
 
 @pytest.mark.parametrize("run", [b"a", b"ab.", "é".encode(), b"Horde-"])
 def test_constructed_one_megabyte_run_scrubs_in_bounded_time(run: bytes) -> None:
-    """Every detector walks a long run once. Measured: well under a second each."""
+    """Every detector walks a long run once. Measured: well under a second each.
+    The budget is CPU time (M11-19, see `cpu_clock`)."""
     identity = Identity(accounts=[ACCOUNT], characters=[MAIN, "Mara"], realms=[REALM])
     data = b'Blob = "' + run * (1_000_000 // len(run)) + b'"\n'
-    started = time.perf_counter()
+    clock, name = cpu_clock()
+    started = clock()
     result = identity.scrub(data)
-    elapsed = time.perf_counter() - started
+    elapsed = clock() - started
     assert result.data == data
-    assert elapsed < 20, f"{elapsed:.1f} s for a 1 MB run of {run!r}"
+    assert elapsed < 20, f"{elapsed:.1f} {name} s for a 1 MB run of {run!r}"
 
 
 # ─── 8. one more GUID family ─────────────────────────────────────────────────
