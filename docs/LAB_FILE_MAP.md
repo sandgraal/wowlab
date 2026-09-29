@@ -90,7 +90,7 @@ scope permanently (LAB_PLAN L7).
 | `Logs/*.log` (`Client.log`, `gx.log`, `Sound.log`, `FrameXML.log`, `taint.log` when enabled) | Diagnostics | Client | no | A (read) | none |
 | `Logs/`, anything under it not in the two rows above | Other client logs; not described here yet **[verify]** | Client | no | — | none |
 | `Screenshots/` | `WoWScrnShot_MMDDYY_HHMMSS.jpg` (or `.tga`/`.png` per CVar) | Client on Print Screen | n/a | A | `layout` |
-| `Errors/` | Crash dumps and reports | Client | no | — | none |
+| `Errors/` | Crash dumps and reports. On Forever (macOS, 2026-09-28) the client writes `<date>_<time>_Error_<pid>.txt` here. A report names the character, account, BattleTag and guild members: never capture one into the repository; the capture tool skips this folder | Client | no | — | none |
 | `Utils/`, `*.dll`, `*.dylib` | Client support binaries | Agent | no | — | none |
 <!-- filemap:end flavor -->
 

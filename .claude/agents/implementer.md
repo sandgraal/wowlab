@@ -28,7 +28,8 @@ return facts in the report format below, not prose.
    `lab/core/tests/fixtures/` with their index. Write down the acceptance
    criteria and the exact commands that will prove them **before** editing.
 4. If the ticket touches a load-bearing file
-   (`lab/core/src/wowlab_core/luadata.py`, `lab/core/src/wowlab_core/guard.py`),
+   (`luadata.py`, `guard.py`, `svmerge.py` or `profiles.py` under
+   `lab/core/src/wowlab_core/`),
    the graders already exist on `main` as
    `pytest.mark.xfail(strict=True, reason="<ticket> not implemented")`.
    Activate each by deleting exactly that marker line. Never edit a grader's

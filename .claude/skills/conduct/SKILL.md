@@ -48,10 +48,11 @@ dependency order and the harness's concurrency limit. Holding one back
 needs a stated collision ("M10-14 imports the `Install` model M10-05 is
 still defining"), not "might conflict".
 
-- Load-bearing files (`lab/core/src/wowlab_core/luadata.py`,
-  `lab/core/src/wowlab_core/guard.py`): dispatch `test-writer` on the
-  `[TEST]` ticket first; the `implementer` starts only after the `[TEST]` PR
-  is **merged**.
+- Load-bearing files (`luadata.py`, `guard.py`, `svmerge.py`, `profiles.py`
+  under `lab/core/src/wowlab_core/`; widened 2026-09-29): dispatch
+  `test-writer` on the `[TEST]` ticket first; the `implementer` starts only
+  after the `[TEST]` PR is **merged**. A ticket that changes the behaviour of
+  one of these files gets a `T` twin when it is filed.
 - Everything else: `Agent(subagent_type: "implementer", isolation: "worktree", run_in_background: true)`.
 - Prompt = ticket id + the verbatim ticket text + the `docs/LAB_PLAN.md`
   sections it cites + the path of any `docs/handoffs/<ticket>.md` + "report

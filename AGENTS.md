@@ -89,10 +89,11 @@ required checks are green, threads are resolved, and reviews are clean.
   review comments (`SendMessage` to the implementer that has the context).
 - Parallel is the default. Dispatch every independent eligible ticket at
   once; holding one back needs a named file or interface collision.
-- Test-writer / implementer separation is mandatory for the two
-  load-bearing files, `lab/core/src/wowlab_core/luadata.py` (M10-04) and
-  `lab/core/src/wowlab_core/guard.py` (M10-11): a `[TEST]` ticket lands
-  graders before the `[IMPL]` ticket creates the file. The session that writes the code never
+- Test-writer / implementer separation is mandatory for the load-bearing
+  files, which rewrite the owner's data: `luadata.py`, `guard.py`, `svmerge.py`
+  and `profiles.py` under `lab/core/src/wowlab_core/` (widened by the owner,
+  2026-09-29): a `[TEST]` ticket lands graders before the `[IMPL]` ticket
+  creates the file or changes what it does. The session that writes the code never
   writes, edits, or weakens the tests that grade it.
 - Work runs in owner-selected waves (ADR-0024). One wave is one milestone.
   When a wave's review ticket is the only one left, the conductor writes
