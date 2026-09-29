@@ -502,3 +502,76 @@ Dated entries, newest last. Each names the fixture that prompted it.
   1.60.1; **[verify]** on a committed fixture). The Lab keeps every number's
   text and never reformats a number it did not create; a number built from
   a Python float must not use `repr()`, which can give 17 digits.
+- **2026-09-28, lab-addon output, Forever beta 1.60.1.70009 (interface
+  16001), macOS (M11-03; fixtures
+  `macos/forever/WTF/Account/90000001#6/SavedVariables/WowLab.lua`,
+  `…/1/Labchard-Labrealmg/SavedVariables/WowLab.lua` and
+  `…/1/Labcharb-Labrealmf/SavedVariables/WowLab.lua`).** Written by
+  `lab/addon/WowLab/` after M11-20 (the first install crashed the client in
+  the appearance scan; that session wrote nothing). Two low-level characters
+  of one account, one capture run: the first at level 13 with `probe.loads`
+  = 4 (session notes expected 2; the file wins), the second at level 10
+  with `probe.loads` = 2. The counter goes up by one per addon load (each
+  login and each `/reload`) whose previous session wrote the file; a value
+  above 1 can only come from the addon reading the value the file held, so
+  the counter persists and increments. Every section was gathered on both
+  characters except `customization` (absent: "no barber-shop visit
+  recorded with the addon enabled") and `collections.appearances` (absent by
+  M11-20). No gathered section carries `events_unregistered`, so every
+  event those sections asked for registered. The file cannot say the same
+  of the barber-shop events: a section never gathered is written as the
+  plain `not_gathered` reason, without `events_unregistered`
+  (`lab/addon/WowLab/Core.lua`). The account file is `WowLabDB = { ["schema"] = 1, }`:
+  schema 1 puts every section per character. Grammar: as §4.2 amended
+  (CRLF, leading blank line, no indentation, no `-- [n]`, empty tables on
+  two lines), nesting depth 10; `client.build` is written as a string
+  (`"70009"`), `client.interface` as a number (16001). Keys are written in
+  the client's table-iteration order, not insertion order: the addon puts
+  `schema` into `WowLabCharDB` first, and the client writes it ninth of ten
+  top-level keys. Item-link field meanings used below (the level and
+  specialization fields after the item id) come from community
+  documentation **[verify]**.
+  Barber shop (owner, 2026-09-28): on Forever, walking into a barber shop
+  and right-clicking a barber chair did nothing; no customization UI
+  opened. Tried in one capital on two characters. That is an observation
+  about reaching the UI in-world on this build, not evidence that the
+  client lacks the feature: a paid service or a later build may differ. So
+  the addon's customization record stays absent until the client fires
+  `BARBER_SHOP_OPEN` with the addon enabled; whether that event (or
+  `BARBER_SHOP_APPEARANCE_APPLIED`) exists on 70009 is not recorded,
+  because a section never gathered carries no `events_unregistered`.
+
+  Every **[verify]** in `docs/LAB_PLAN.md` §13.1, and the forever-addon-kit
+  findings §13.1 says M11-03 re-verifies:
+
+  | §13.1 item | Result | What Forever returned |
+  |---|---|---|
+  | Forever fills the crafter field of an item link (`crafter_removed`) | still open | 18 equipped items over two characters: `crafter_removed = false` on every slot and no GUID-shaped run in any link. Whether any of them is player-crafted was not checked against game data, so the capture cannot tell "Forever leaves the field empty" from "nothing crafted was worn"; it needs a worn item the owner knows a player crafted. |
+  | A ranged slot on Forever | confirmed | `INVSLOT_FIRST_EQUIPPED` 1 and `INVSLOT_LAST_EQUIPPED` 19; the first character has a wand in slot 18 (the second has nothing there) |
+  | Per-slot item level and the equipped average as the client reports them | answered in part: the API returns values; what the average means on Forever is open | `C_Item.GetCurrentItemLevel` gave a level on every filled slot; `GetAverageItemLevel` returns one value three times (3.3125, 2.375). Forever's character sheet shows no item level (owner, 2026-09-28), so nothing in the UI backs `average.equipped` and the reader must not call it the character-sheet figure. Neither value is the mean of the slot levels over filled, 16 or 19 slots (sums 85, and 58 without the shirt). Both values times 16 are whole numbers (53, 38), which fits a 16-slot divisor over per-item levels other than those recorded (hypothesis). How the client computes it is open |
+  | `talents.class` through `C_ClassTalents.GetActiveConfigID()` then `C_Traits` | confirmed | a config of `type` 4 with one tree (`system_id` 10; 52 and 54 nodes), trait currency 3820 (`spent` = `max_quantity` = 4 at level 13, 1 at level 10), and an export string from `C_Traits.GenerateImportString`. `last_selected_config` is neither written nor absent with a reason on either character: `GetLastSelectedSavedConfigID` exists and a spec id was there, so the call returned no number or failed inside `ns.Call` (M11-04 must allow the key to be missing). Hypothesis, from Retail memory: it returns nil when no saved loadout was ever selected |
+  | Class talents and the Legacy trees both on `C_Traits` (kit, 69893) | confirmed (the Legacy half rests on the identification above) | both sections are `C_Traits` config dumps |
+  | Legacy panel `ToggleLegacySystemUI` (kit) | confirmed: the global exists (not called) | `legacy_ui = true` on both |
+  | `talents.legacy` "empty below level 25" | contradicted as written (not empty); nothing spent | at levels 13 and 10: one candidate config (`type` 3, found by `type:Generic`, not by a Constants system id), taken to be the Legacy system by elimination, since nothing in the file names it **[verify]**. Four trees with `system_id` 45: 1118 with no nodes and no currency; 1187, 1188 and 1189 with 9 nodes each, all `is_visible = true`, all at rank 0. The same tree, node and entry ids appear on both characters (warlock and mage); the config ids differ. Currency 4225 has `max_quantity` 0, so nothing can be spent at these levels. The reader shows "present, nothing spent, 0 points available", never "locked" and never "empty" |
+  | Legacy points spent and the seasonal cap, if the client gives them | still open | each Legacy tree with nodes carries trait currency 4225 with `quantity`, `spent` and `max_quantity` all 0 below level 25; whether `max_quantity` becomes the cap after the unlock needs a character at 25 or above |
+  | Legacy unlocked at level 25 (kit) | still open | no character at 25 |
+  | No `GetSpecialization` global (kit) | still open | not tested: `C_SpecializationInfo.GetSpecialization` exists, so the addon never looked at the global |
+  | Spec found by testing for the API; new spec ids (kit: paladin 1486) | confirmed | `spec = { api = "C_SpecializationInfo", index = 1, id = 1490 }` and `id = 1482`; item links carry the same id in their specialization field (`…:13:1490:…`) |
+  | `BARBER_SHOP_APPEARANCE_APPLIED` | still open (the barber UI did not open in the owner's attempt on 70009) | whether the event registered is not recorded for a section that was never gathered |
+  | The name fields of `C_BarberShop.GetCurrentCharacterData()` never stored | still open (the barber UI did not open in the owner's attempt on 70009) | never called; neither file holds a name |
+  | Currencies: total cap, weekly cap, weekly earned, account-wide flag | still open | `list` empty, `headers_collapsed` 0 and `filter` 1 (meaning of 1 unknown) on both characters. The file does not record how many rows `GetCurrencyListSize` gave, so it cannot tell an empty panel from rows whose id could not be read; no currency field was seen. |
+  | Forever's profession model | answered: Retail's five-position `GetProfessions` shape | positions 1 and 2 hold two primary skill lines (e.g. 182 and 393); First Aid (129 **[verify]**) in the position Retail gives archaeology (3); position 4 (Retail: fishing) empty; Cooking (185 **[verify]**) in position 5; caps 75/150 (Classic tiers, from memory); `modifier` 0 |
+  | Which collections are account-wide (§13.1: "until the M11-03 capture shows") | still open | mounts, toys and pets: none collected among what the client listed (count not recorded), on both characters (mounts unfiltered; toys through the toy box filter with every switch shown; pets with default filters) |
+  | A later patch makes the installed TOC out of date | still open | no patch during the capture; the unsuffixed `WowLab.toc` with `## Interface: 16001` loaded |
+  | Forever's preferred TOC suffix | still open | only an unsuffixed TOC was tried, and it loads |
+  | The client does not delete `WowLab.lua` on `remove` | still open | `remove` not exercised |
+
+  Not done in this session, still open for the owner: a barber-shop visit
+  that opens the UI (without it the customization APIs and events stay
+  untested), a staged-talent `/wowlab save` test (whether `ranks_purchased`
+  and `current_rank` include staged changes), a character at level 25 or
+  above (Legacy cap and unlock), and the dungeon combat log. Seen in the
+  staged capture but not committed (so **[verify]** against a committed
+  fixture): on 70009 both characters' `<digits>/<First>-<Second>/` folders
+  hold an `AddOns.txt` (371 bytes, `WowLab: enabled`) as well as the
+  `<Realm>/<First>/` twin (`docs/LAB_FILE_MAP.md`, amended the same day).
