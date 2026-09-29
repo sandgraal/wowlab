@@ -1,0 +1,4 @@
+
+WowLabDB = {
+["schema"] = 1,
+}
