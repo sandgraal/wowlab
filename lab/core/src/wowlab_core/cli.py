@@ -2627,7 +2627,14 @@ def snap_verify(json_out: JsonOpt = False) -> None:
             f"{report.objects_checked} object(s) and {report.manifests_checked} manifest(s) checked"
         )
         for name in report.corrupt_objects:
-            _say(f"  corrupt object: {name}")
+            if name == snapshot.OBJECTS_DIR_ENTRY:
+                _say(
+                    f"  {name} is a link: nothing under it was checked. snap create "
+                    "refuses to write through it, but reads (restore, undo, snap diff) "
+                    "still follow it; move it aside and put the real directory back"
+                )
+            else:
+                _say(f"  corrupt object: {name}")
         for miss in report.missing_objects:
             _say(f"  missing object {miss.sha256[:12]} for {miss.path} in {miss.snapshot_id}")
         for bad in report.invalid_manifests:
@@ -2689,7 +2696,7 @@ def snap_gc(
             f"{_bytes(report.unreferenced_bytes)} on disk (dry run)."
         )
     else:
-        _say(f"Removed {len(report.removed)} object(s), {_bytes(report.unreferenced_bytes)}.")
+        _say(f"Removed {len(report.removed)} object(s), {_bytes(report.removed_bytes)}.")
 
 
 _RELOGIN = (

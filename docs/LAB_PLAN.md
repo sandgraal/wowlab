@@ -779,6 +779,51 @@ where the platform takes one; on Windows it `utime`s the path only after
 `lstat` shows it is still that file and not a link, and a path that no
 longer names the checked file is rewritten, never reused.
 
+*Amended 2026-09-28 (M11-18, from the #112 security review):* (a) `create`
+never writes through a link. A store whose `objects/`, `manifests/` or `tmp/`
+is a link (on Windows also a junction), dangling or not, or is not a
+directory, is refused (`SnapshotError`) before the walk, and nothing is made
+behind it. Every object and manifest is staged in `tmp/` and moved into its
+object shard or `manifests/` through descriptors on those directories, each
+opened with `O_DIRECTORY | O_NOFOLLOW` relative to its parent, checked against
+its `lstat`, and used for `os.replace(..., src_dir_fd=, dst_dir_fd=)` (POSIX);
+on Windows each directory is checked by `lstat` and a link refused, then
+checked again just before the rename. A shard that is a link refuses the
+`create` when it is reached; the reuse check never reuses an object through
+one (the object must be the entry of the checked shard). The store root is
+opened as named, so a store below a linked directory still works. `set_label`
+writes its manifest the same way. *2026-09-29 (M11-18 fix rounds 1 and 2):*
+one `create` holds the store root, `objects/`, `manifests/` and `tmp/` open for
+its whole run, at most four descriptors, and re-checks each against its path
+by `lstat` through its parent's descriptor on every use (one that no longer
+matches is reopened, which refuses a link). Object shards are opened per use
+and closed after it: holding all 256 would exhaust macOS's default soft limit
+of 256 descriptors. A directory that cannot be opened for any reason other
+than being a link or not a directory (`EMFILE`, `EACCES`) is reported as
+"cannot open", never as a link to move aside. What can still end up outside the store on
+Windows, where there are no directory descriptors, if a directory is swapped
+for a link after its last check: an empty two-hex shard directory (made by
+the `mkdir` through a swapped `objects/`), a staged temp file (removed when
+`create` refuses), or the finished object if the shard is swapped between
+the re-check (`still_checked()`) and `os.replace`. Directories renamed away,
+rather than replaced by a link, after their descriptor is opened are written
+into where they now are; one writer per store is assumed. Reads are not
+covered: `read_object` opens an object by path with `O_NOFOLLOW` on its last
+component only, so restore, undo, rollback and `snap diff` still read
+through a linked `objects/` or shard. (b) On Windows, gc's delete-by-rename checks
+`tmp/` only before its rename: a `tmp/` swapped for a link at that last moment
+moves gc's own, already unreferenced object into the outside directory, where
+it is deleted; nothing else is deleted. (c) Parked `tmp/gc-<uuid>` leftovers
+get no cleaner: one exists only after a failed move back (which raises naming
+it) or a crash mid-delete, and it may be a file a swapped link made the rename
+move from outside the store, so deleting it unasked would be the delete
+through a link gc refuses; nothing reads `tmp/`, so it costs only space until
+the owner removes it. (d) `verify` names a linked `objects/` as `objects/`
+(`OBJECTS_DIR_ENTRY`) instead of `.`, and `snap verify` says nothing under it
+was checked and that reads still follow it. (e) `GcReport` gains
+`removed_bytes`, the size of the objects actually removed; `snap gc` reports
+it, not `unreferenced_bytes`, after a real run.
+
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 
 The only module that writes into an install (L2, ADR-0021).
