@@ -289,12 +289,17 @@ _FILTER = (b'["filter"] = 1,', b'["filter"] = 2,')
 _EQUIPPED = (b'["equipped"] = 3.3125,', b'["equipped"] = 3.375,')
 
 
-def _take_theirs_expected(out: bytes) -> None:
+def _take_theirs_expected(out: bytes, *, probe_from: bytes = REAL_B) -> None:
     """The M11-03 pair merged two-way with every conflict taken from theirs
-    (the second character) into ours (the first)."""
+    (the second character) into ours (the first). `probe_from=REAL_A`: the
+    `sv merge` of `WowLab.lua` keeps the target's probe (§13.4, owner ruling
+    for M11-24); the library `merge` knows no file names and takes it."""
     expected = luadata.parse(REAL_B).to_python()
     nodes = expected["WowLabCharDB"]["talents"]["class"]["config"]["trees"][0]["nodes"]
     del nodes[52:]  # keys only theirs has are listed, not added (two-way)
+    expected["WowLabCharDB"]["probe"] = luadata.parse(probe_from).to_python()["WowLabCharDB"][
+        "probe"
+    ]
     assert luadata.parse(out).to_python() == expected
     assert _key_order(out) == _key_order(REAL_A), "ours' key order, not one invented"
     assert b'["equipped"] = 2.375,\r\n' in out, "theirs' number text"
@@ -506,12 +511,14 @@ def test_cli_two_characters_conflicts_are_listed_and_nothing_is_written(root: Pa
     assert guard.history() == ()
 
 
+@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 def test_cli_take_theirs_writes_only_the_target_through_guard(root: Path, flavor: Path) -> None:
     result = run(
         "sv", "merge", LAB, "--from", CHAR_B, "--into", CHAR_A, "--take", "theirs", "--yes"
     )
     assert result.exit_code == 0, _out(result)
-    _take_theirs_expected((flavor / LAB_A).read_bytes())
+    # The probe stays the target's (M11-24T, superseding the M11-09T copy).
+    _take_theirs_expected((flavor / LAB_A).read_bytes(), probe_from=REAL_A)
     assert (flavor / LAB_B).read_bytes() == REAL_B, "the source is only read"
     (record,) = guard.history()
     assert record.state == "committed"
