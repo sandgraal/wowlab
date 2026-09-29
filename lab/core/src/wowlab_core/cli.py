@@ -2629,8 +2629,9 @@ def snap_verify(json_out: JsonOpt = False) -> None:
         for name in report.corrupt_objects:
             if name == snapshot.OBJECTS_DIR_ENTRY:
                 _say(
-                    f"  {name} is a link: nothing under it was checked, and the store "
-                    "never reads or writes through it"
+                    f"  {name} is a link: nothing under it was checked. snap create "
+                    "refuses to write through it, but reads (restore, undo, snap diff) "
+                    "still follow it; move it aside and put the real directory back"
                 )
             else:
                 _say(f"  corrupt object: {name}")

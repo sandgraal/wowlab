@@ -724,6 +724,8 @@ class SnapshotStore:
 
     def __init__(self, path: Path | None = None) -> None:
         self.path: Path = Path(path) if path is not None else default_store_path()
+        self._held: dict[tuple[str, ...], tuple[int, os.stat_result]] | None = None
+        """Directory descriptors held during one `create` (`_holding_dirs`)."""
 
     # -- layout ------------------------------------------------------------
 
@@ -825,65 +827,70 @@ class SnapshotStore:
         if when.tzinfo is None:
             raise SnapshotError("`now` must be timezone-aware")
         when = when.astimezone(UTC)
-        self._refuse_linked_store_dirs()
+        # One set of held directory descriptors for the whole create (M11-18),
+        # each re-checked against its path on every use, closed at the end.
+        with self._holding_dirs():
+            self._refuse_linked_store_dirs()
 
-        header: dict[str, Any] = {
-            "created_at": f"{when:%Y-%m-%dT%H:%M:%S}.{when.microsecond:06d}Z",
-            "label": label,
-            "install_root": str(root),
-            "flavor_folder": flavor_folder,
-            "flavor_version": flavor_version,
-            "subtrees": tuple(wanted),
-            "excluded": tuple(excluded),
-            "client_running": client_running,
-            "purpose": purpose,
-        }
-        # Hold the caller's values to the model before anything is stored, so
-        # a bad argument fails with a typed error and an untouched store.
-        self._manifest(header, snapshot_id="", entries=())
+            header: dict[str, Any] = {
+                "created_at": f"{when:%Y-%m-%dT%H:%M:%S}.{when.microsecond:06d}Z",
+                "label": label,
+                "install_root": str(root),
+                "flavor_folder": flavor_folder,
+                "flavor_version": flavor_version,
+                "subtrees": tuple(wanted),
+                "excluded": tuple(excluded),
+                "client_running": client_running,
+                "purpose": purpose,
+            }
+            # Hold the caller's values to the model before anything is stored, so
+            # a bad argument fails with a typed error and an untouched store.
+            self._manifest(header, snapshot_id="", entries=())
 
-        found: dict[str, Entry] = {}
-        verified: set[str] = set()  # objects re-hashed during this create
-        for subtree in wanted:
-            for rel, abs_path in self._walk(root, subtree, excluded):
-                if rel in found:
-                    continue  # overlapping subtrees
-                entry = self._capture(rel, abs_path, verified)
-                if entry is not None:
-                    found[rel] = entry
-        entries = tuple(found[k] for k in sorted(found))
+            found: dict[str, Entry] = {}
+            verified: set[str] = set()  # objects re-hashed during this create
+            for subtree in wanted:
+                for rel, abs_path in self._walk(root, subtree, excluded):
+                    if rel in found:
+                        continue  # overlapping subtrees
+                    entry = self._capture(rel, abs_path, verified)
+                    if entry is not None:
+                        found[rel] = entry
+            entries = tuple(found[k] for k in sorted(found))
 
-        fingerprint = tree_fingerprint(wanted, excluded, entries)
-        snapshot_id = f"{when:%Y%m%dT%H%M%S}.{when.microsecond:06d}Z-{fingerprint}"
-        manifest = self._manifest(header, snapshot_id=snapshot_id, entries=entries)
+            fingerprint = tree_fingerprint(wanted, excluded, entries)
+            snapshot_id = f"{when:%Y%m%dT%H%M%S}.{when.microsecond:06d}Z-{fingerprint}"
+            manifest = self._manifest(header, snapshot_id=snapshot_id, entries=entries)
 
-        data = manifest_bytes(manifest)
-        name = self._manifest_path(snapshot_id).name
-        self._check_publishable(manifest, data)
-        with self._store_dir(("manifests",), create=True) as manifests:
-            assert manifests is not None
-            # Same microsecond, same tree. Identical bytes make this a no-op;
-            # anything else would be a silent overwrite of an immutable file.
-            # The existing one is read as every store file is (M11-11): never
-            # blocking, never through a link, and no more than one byte past
-            # the length it would need to be identical; and (M11-18) as an
-            # entry of the `manifests/` just checked, by its descriptor.
-            try:
-                existing = read_regular_file(
-                    manifests.at(name), limit=len(data), dir_fd=manifests.fd
-                )
-            except FileNotFoundError:
-                existing = None
-            except OSError as exc:
-                raise SnapshotExistsError(
-                    f"a different manifest already exists for {snapshot_id}: {exc}"
-                ) from exc
-            if existing is not None:
-                if existing == data:
-                    return manifest
-                raise SnapshotExistsError(f"a different manifest already exists for {snapshot_id}")
-            self._write_manifest(manifests, name, data)
-        return manifest
+            data = manifest_bytes(manifest)
+            name = self._manifest_path(snapshot_id).name
+            self._check_publishable(manifest, data)
+            with self._store_dir(("manifests",), create=True) as manifests:
+                assert manifests is not None
+                # Same microsecond, same tree. Identical bytes make this a no-op;
+                # anything else would be a silent overwrite of an immutable file.
+                # The existing one is read as every store file is (M11-11): never
+                # blocking, never through a link, and no more than one byte past
+                # the length it would need to be identical; and (M11-18) as an
+                # entry of the `manifests/` just checked, by its descriptor.
+                try:
+                    existing = read_regular_file(
+                        manifests.at(name), limit=len(data), dir_fd=manifests.fd
+                    )
+                except FileNotFoundError:
+                    existing = None
+                except OSError as exc:
+                    raise SnapshotExistsError(
+                        f"a different manifest already exists for {snapshot_id}: {exc}"
+                    ) from exc
+                if existing is not None:
+                    if existing == data:
+                        return manifest
+                    raise SnapshotExistsError(
+                        f"a different manifest already exists for {snapshot_id}"
+                    )
+                self._write_manifest(manifests, name, data)
+            return manifest
 
     @staticmethod
     def _manifest(
@@ -1256,32 +1263,112 @@ class SnapshotStore:
         if not _WRITE_BY_DIR_FD:
             yield self._checked_dir_path(parts, create=create)
             return
+        opened: list[int] = []  # descriptors this call owns (none are held)
+        try:
+            yield self._dir_chain(parts, create=create, opened=opened)
+        finally:
+            for fd in opened:
+                os.close(fd)
+
+    def _dir_chain(
+        self, parts: Sequence[str], *, create: bool, opened: list[int]
+    ) -> _StoreDir | None:
+        """`_store_dir` with descriptors: the root, then each component opened
+        relative to its parent (or taken from `_held` and re-checked)."""
+        fd = self._held_or_open((), None, self.path, create=create, opened=opened)
+        if fd is None:
+            return None
+        key: tuple[str, ...] = ()
+        path = self.path
+        for part in parts:
+            key = (*key, part)
+            path = path / part
+            fd = self._held_or_open(key, fd, path, create=create, opened=opened)
+            if fd is None:
+                return None
+        return _StoreDir(path, fd)
+
+    def _held_or_open(
+        self,
+        key: tuple[str, ...],
+        parent_fd: int | None,
+        path: Path,
+        *,
+        create: bool,
+        opened: list[int],
+    ) -> int | None:
+        """The descriptor for one component: a held one when its path still
+        names that directory by `lstat` (the root: by `stat`, as it is opened
+        as named), else a fresh one, held when `create` holds descriptors and
+        otherwise added to `opened` for the caller to close."""
+        held = self._held
+        if held is not None and key in held:
+            fd, st = held.pop(key)
+            if self._still_there(key, parent_fd, st):
+                held[key] = (fd, st)
+                return fd
+            os.close(fd)  # gone or replaced: open afresh, which refuses a link
+        if parent_fd is None:
+            fresh = self._open_root(create=create)
+        else:
+            fresh = self._open_child_dir(parent_fd, key[-1], path, create=create)
+        if fresh is None:
+            return None
+        if held is not None:
+            held[key] = (fresh, os.fstat(fresh))
+        else:
+            opened.append(fresh)
+        return fresh
+
+    def _still_there(self, key: tuple[str, ...], parent_fd: int | None, st: os.stat_result) -> bool:
+        """The held directory `st` is still what its path names: for the root,
+        by `stat` of the store path; for a component, by `lstat` through its
+        parent's descriptor, a directory that is not a link."""
+        try:
+            if parent_fd is None:
+                now = self.path.stat()
+            else:
+                now = os.stat(key[-1], dir_fd=parent_fd, follow_symlinks=False)
+        except OSError:
+            return False
+        return (
+            stat.S_ISDIR(now.st_mode)
+            and not _is_link_stat(now)
+            and _file_identity(now) == _file_identity(st)
+        )
+
+    def _open_root(self, *, create: bool) -> int | None:
+        """A descriptor on the store root, opened as named (see above)."""
         try:
             if create:
                 self.path.mkdir(parents=True, exist_ok=True)
-            fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
+            return os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
         except FileNotFoundError:
             if create:
                 raise SnapshotError(f"the store {self.path} vanished as it was created") from None
-            yield None
-            return
+            return None
         except OSError as exc:
             raise SnapshotError(f"cannot open the store {self.path}: {exc}") from exc
-        found: _StoreDir | None = None
-        path = self.path
+
+    @contextlib.contextmanager
+    def _holding_dirs(self) -> Iterator[None]:
+        """Hold the store's directory descriptors for the length of one
+        `create` instead of opening each chain per object (M11-18, fix round
+        1: that cost about 1.7 times the time of a `create`). A held one is
+        re-checked against its path by `lstat` through its parent's
+        descriptor on every use; one that no longer matches is closed and
+        opened afresh, which refuses a link. All are closed on the way out."""
+        if self._held is not None or not _WRITE_BY_DIR_FD:
+            yield
+            return
+        self._held = {}
         try:
-            for part in parts:
-                path = path / part
-                child = self._open_child_dir(fd, part, path, create=create)
-                if child is None:
-                    break
-                os.close(fd)
-                fd = child
-            else:
-                found = _StoreDir(path, fd)
-            yield found
+            yield
         finally:
-            os.close(fd)
+            held, self._held = self._held, None
+            for fd, _ in held.values():
+                with contextlib.suppress(OSError):
+                    os.close(fd)
 
     @staticmethod
     def _open_child_dir(parent_fd: int, name: str, path: Path, *, create: bool) -> int | None:

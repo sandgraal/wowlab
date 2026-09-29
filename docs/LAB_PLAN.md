@@ -792,7 +792,21 @@ checked again just before the rename. A shard that is a link refuses the
 `create` when it is reached; the reuse check never reuses an object through
 one (the object must be the entry of the checked shard). The store root is
 opened as named, so a store below a linked directory still works. `set_label`
-writes its manifest the same way. (b) On Windows, gc's delete-by-rename checks
+writes its manifest the same way. *2026-09-29 (M11-18 fix round 1):* one
+`create` holds these directory descriptors for its whole run instead of
+opening them per object, and re-checks each against its path by `lstat`
+through its parent's descriptor on every use (one that no longer matches is
+reopened, which refuses a link). What can still end up outside the store on
+Windows, where there are no directory descriptors, if a directory is swapped
+for a link after its last check: an empty two-hex shard directory (made by
+the `mkdir` through a swapped `objects/`), a staged temp file (removed when
+`create` refuses), or the finished object if the shard is swapped between
+the re-check (`still_checked()`) and `os.replace`. Directories renamed away,
+rather than replaced by a link, after their descriptor is opened are written
+into where they now are; one writer per store is assumed. Reads are not
+covered: `read_object` opens an object by path with `O_NOFOLLOW` on its last
+component only, so restore, undo, rollback and `snap diff` still read
+through a linked `objects/` or shard. (b) On Windows, gc's delete-by-rename checks
 `tmp/` only before its rename: a `tmp/` swapped for a link at that last moment
 moves gc's own, already unreferenced object into the outside directory, where
 it is deleted; nothing else is deleted. (c) Parked `tmp/gc-<uuid>` leftovers
@@ -802,9 +816,9 @@ move from outside the store, so deleting it unasked would be the delete
 through a link gc refuses; nothing reads `tmp/`, so it costs only space until
 the owner removes it. (d) `verify` names a linked `objects/` as `objects/`
 (`OBJECTS_DIR_ENTRY`) instead of `.`, and `snap verify` says nothing under it
-was checked. (e) `GcReport` gains `removed_bytes`, the size of the objects
-actually removed; `snap gc` reports it, not `unreferenced_bytes`, after a real
-run.
+was checked and that reads still follow it. (e) `GcReport` gains
+`removed_bytes`, the size of the objects actually removed; `snap gc` reports
+it, not `unreferenced_bytes`, after a real run.
 
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 

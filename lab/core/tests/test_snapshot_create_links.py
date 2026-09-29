@@ -19,6 +19,7 @@ removed.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import sys
@@ -231,8 +232,12 @@ def test_constructed_directory_swapped_for_a_link_after_its_lstat_is_not_written
     which: str, source: Path, store: SnapshotStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The descriptor path: the directory passes its `lstat`, and only then is
-    it swapped for a link to an outside directory. The `O_NOFOLLOW` open, or
-    the identity check against that `lstat`, refuses it."""
+    it swapped for a link to an outside directory, and `create` refuses with
+    nothing written behind it. This does not pin the open that follows the
+    `lstat`: without `O_NOFOLLOW` and the identity check, the next use of
+    that directory (a re-open or re-check) sees the link by `lstat` and
+    refuses before anything is written. The `O_NOFOLLOW` open is pinned by
+    `..._swapped_just_before_its_directory_open_...` below."""
     if not snapshot._WRITE_BY_DIR_FD:
         pytest.skip("this platform has no directory descriptors")
     name = _config_shard() if which == "shard" else which
@@ -303,6 +308,167 @@ def test_constructed_shard_swapped_for_a_link_during_the_reuse_check_is_not_reus
     assert _tree(copy) == [obj.name]
     assert (copy / obj.name).stat().st_mtime_ns == old, "the copy behind the link was not freshened"
     assert [m.id for m in store.list()] == [first.id]
+
+
+# ─── races that pin each protection (fix round 1 of the #118 review) ─────────
+#
+# Each test below fails against one mutation of `snapshot.py` that every
+# other test here survives: (a) `_open_child_dir` without `O_NOFOLLOW` and
+# the identity check, (b) `_publish` renaming by path, (c) `_staged` opening
+# its file by path, (d) `_publish` without the Windows re-check.
+
+
+def _swap_for_link(where: Path, moved: Path, outside: Path) -> None:
+    where.rename(moved)
+    where.symlink_to(outside, target_is_directory=True)
+
+
+def _needs_dir_fds() -> None:
+    if not snapshot._WRITE_BY_DIR_FD:
+        pytest.skip("this platform has no directory descriptors")
+
+
+@posix_symlinks
+@pytest.mark.parametrize(
+    "which",
+    [
+        pytest.param("shard", id="constructed-shard"),
+        pytest.param("manifests", id="constructed-manifests"),
+        pytest.param("tmp", id="constructed-tmp"),
+    ],
+)
+def test_constructed_directory_swapped_just_before_its_directory_open_is_refused(
+    which: str, source: Path, store: SnapshotStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(a) The directory is swapped for a link after its `lstat`, right before
+    the `O_DIRECTORY` open that would hold it. `O_NOFOLLOW` (and the identity
+    check) refuse that open, so `create` stops at once: nothing behind the
+    link, and (for `manifests/` and `tmp/`, opened first) no object stored."""
+    _needs_dir_fds()
+    name = _config_shard() if which == "shard" else which
+    parent = store.objects_dir if which == "shard" else store.path
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    real_open = os.open
+    swapped: list[str] = []
+
+    def swap_then_open(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        if (
+            not swapped
+            and os.fspath(path) == name
+            and flags & os.O_DIRECTORY
+            and kwargs.get("dir_fd") is not None
+        ):
+            swapped.append(name)
+            _swap_for_link(parent / name, tmp_path / "moved", outside)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", swap_then_open)
+    with pytest.raises(SnapshotError, match=REFUSAL):
+        store.create(source, ["WTF"], now=T0)
+    monkeypatch.undo()
+    assert swapped, "the directory open was reached"
+    assert _tree(outside) == [], "nothing was written behind the link"
+    if which != "shard":  # both are opened before any object is stored
+        assert _tree(store.objects_dir) == [], "refused before any object was stored"
+
+
+@posix_symlinks
+@pytest.mark.parametrize(
+    "which",
+    [
+        pytest.param("shard", id="constructed-shard"),
+        pytest.param("manifests", id="constructed-manifests"),
+    ],
+)
+def test_constructed_destination_swapped_for_a_link_just_before_the_rename_is_not_written_through(
+    which: str, source: Path, store: SnapshotStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(b) The object's shard, or `manifests/`, is swapped for a link after its
+    descriptor is open, right before the rename into it. The rename goes
+    through the held descriptor, so the file lands in the real directory
+    (now moved aside), never behind the link. Whether `create` then finishes
+    depends on later checks; what is pinned is the empty link target."""
+    _needs_dir_fds()
+    digest = hashlib.sha256(CONFIG_BYTES).hexdigest()
+    where = store.objects_dir / digest[:2] if which == "shard" else store.manifests_dir
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    real_replace = os.replace
+    swapped: list[str] = []
+
+    def is_target(dst: Any) -> bool:
+        leaf = Path(os.fspath(dst)).name
+        return leaf == digest[2:] if which == "shard" else leaf.endswith(".json")
+
+    def swap_then_replace(src: Any, dst: Any, *args: Any, **kwargs: Any) -> None:
+        if not swapped and is_target(dst):
+            swapped.append(which)
+            _swap_for_link(where, tmp_path / "moved", outside)
+        real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(os, "replace", swap_then_replace)
+    with contextlib.suppress(SnapshotError):
+        store.create(source, ["WTF"], now=T0)
+    monkeypatch.undo()
+    assert swapped, "the rename was reached"
+    assert _tree(outside) == [], "nothing was written behind the link"
+
+
+@posix_symlinks
+def test_constructed_tmp_swapped_for_a_link_before_the_staged_file_is_created_holds_nothing(
+    source: Path, store: SnapshotStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(c) `tmp/` is swapped for a link after its descriptor is open, right
+    before the staged object file is created. The file is created through
+    the held descriptor, so nothing, not even a leftover staged file, ever
+    appears behind the link."""
+    _needs_dir_fds()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    real_open = os.open
+    swapped: list[str] = []
+
+    def swap_then_open(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        if not swapped and Path(os.fspath(path)).name.startswith("obj-"):
+            swapped.append("tmp")
+            _swap_for_link(store.tmp_dir, tmp_path / "moved", outside)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", swap_then_open)
+    with contextlib.suppress(SnapshotError):
+        store.create(source, ["WTF"], now=T0)
+    monkeypatch.undo()
+    assert swapped, "the staged file was created"
+    assert _tree(outside) == [], "nothing was written behind the link"
+
+
+@posix_symlinks
+def test_constructed_lstat_path_shard_swapped_after_its_check_is_refused_at_the_rename(
+    source: Path, store: SnapshotStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(d) The Windows path, emulated: the shard passes its `lstat` check and
+    is swapped for a link before `_publish` (at its `fsync`). The re-check
+    just before the rename refuses it; nothing is behind the link."""
+    monkeypatch.setattr(snapshot, "_WRITE_BY_DIR_FD", False)
+    shard = store.objects_dir / _config_shard()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    real_fsync = os.fsync
+    swapped: list[str] = []
+
+    def swap_then_fsync(fd: int) -> None:
+        real_fsync(fd)
+        if not swapped:  # the first publish is Config.wtf's object
+            swapped.append("shard")
+            _swap_for_link(shard, tmp_path / "moved", outside)
+
+    monkeypatch.setattr(os, "fsync", swap_then_fsync)
+    with pytest.raises(SnapshotError, match=REFUSAL):
+        store.create(source, ["WTF"], now=T0)
+    monkeypatch.undo()
+    assert swapped, "the publish was reached"
+    assert _tree(outside) == [], "nothing was written behind the link"
 
 
 # ─── what still works ────────────────────────────────────────────────────────
