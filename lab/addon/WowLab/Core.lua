@@ -209,7 +209,7 @@ local pending = false
 -- debounce gathers nothing: whatever it would have gathered is still dirty
 -- and the first pass takes it. Without C_Timer there is no window: the pass
 -- runs at once, as before.
-local FIRST_PASS_DELAY = 10
+local FIRST_PASS_DELAY = 15
 local firstPassStarted = false
 local firstPassDone = false
 
@@ -263,7 +263,11 @@ local function startFirstPass()
         return
     end
     firstPassStarted = true
-    say("recording in 10 s. To switch a section off first: /wowlab skip <section>  (/wowlab skip lists them)")
+    say(
+        "recording in "
+            .. FIRST_PASS_DELAY
+            .. " s. To switch a section off first: /wowlab skip <section>  (/wowlab skip lists them)"
+    )
     timerAfter(FIRST_PASS_DELAY, function()
         firstPassDone = true
         gatherDirty()

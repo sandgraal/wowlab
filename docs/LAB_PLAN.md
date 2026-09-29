@@ -1402,11 +1402,11 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   section's own gather: another section may still call the same client API
   (`talents.class` asks for the spec). This is a schema-1 edit made before
   M11-04 starts. Amended 2026-09-29 (M11-21 review): the first on-world
-  pass after each `ADDON_LOADED` (login or `/reload`) runs 10 s after
+  pass after each `ADDON_LOADED` (login or `/reload`) runs 15 s after
   `PLAYER_ENTERING_WORLD` on its own timer, announced in chat at that
   moment, so the owner can switch a section off before it runs; until then
   change events gather nothing, and after it they keep the 2 s debounce. A
-  logout inside the 10 s still records (`PLAYER_LOGOUT` gathers what is
+  logout inside the 15 s still records (`PLAYER_LOGOUT` gathers what is
   waiting). Without `C_Timer` the pass runs at once and there is no window.
   The probe exists for
   §13.4's loader check (the sv-health idea in `docs/LAB_IDEAS.md`, cut down

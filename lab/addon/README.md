@@ -150,17 +150,22 @@ reason. A string in the saved list that is not a section key (for example
 after a later version renames a section) is ignored and dropped at the next
 save.
 
-The 10 s window. The first on-world pass after each `ADDON_LOADED` (login or
-`/reload`) runs 10 s after the world appears (`PLAYER_ENTERING_WORLD`), on
-its own timer, and the addon says so in chat at that moment:
-`WowLab: recording in 10 s. To switch a section off first: /wowlab skip <section>  (/wowlab skip lists them)`.
+The 15 s window. The first on-world pass after each `ADDON_LOADED` (login or
+`/reload`) runs 15 s after `PLAYER_ENTERING_WORLD`, on its own timer, and
+the addon says so in chat at that moment. That event fires just before the
+loading screen clears (**[verify]**), so a little less than 15 s is left
+once the world is visible, less on a slow first login. The chat line is
+`WowLab: recording in 15 s. To switch a section off first: /wowlab skip <section>  (/wowlab skip lists them)`.
 Until that pass has run, change events gather nothing (what they would have
 gathered is taken by the pass); after it, change events keep the 2 s
-debounce. A `/wowlab skip` typed inside the 10 s takes effect for that pass.
-A logout or `/reload` inside the 10 s still records: `PLAYER_LOGOUT` gathers
-every section still waiting. `/wowlab save` inside the 10 s gathers at once,
-as always. If the client has no `C_Timer`, there is no window: the pass runs
-at once, as before.
+debounce. A `/wowlab skip` typed inside the 15 s takes effect for that pass.
+A logout or `/reload` inside the 15 s still records: `PLAYER_LOGOUT` gathers
+every section still waiting, the crashing one included unless it was
+switched off first. `/wowlab save` inside the 15 s gathers at once, as
+always. If the client has no `C_Timer`, there is no window: the pass runs at
+once, as before. After the first pass, a section that crashes on a later
+change event (2 s debounce) gives no window; switch it off at the next
+login.
 
 What the switch does not do:
 
@@ -170,9 +175,9 @@ What the switch does not do:
 - Switching off `customization` drops the carried barber-shop record: the
   section is written absent, so after `unskip` it stays absent until the next
   barber-shop visit.
-- It needs the addon loaded. Type it during the 10 s after the world
-  appears, before the announced first recording pass; that pass runs every
-  on-world section in one go. Without `C_Timer` there is no window. The one
+- It needs the addon loaded. Type it as soon as the world is visible,
+  before the announced first recording pass; that pass runs every on-world
+  section in one go. Without `C_Timer` there is no window. The one
   crash seen (M11-20) came about 4 s after entering the world on the old
   timing. If it cannot be typed in time, untick the addon at character
   select.
@@ -338,3 +343,6 @@ Items:
     appears anywhere in the record.
 15. `talents.legacy` on a character below level 25, if one exists: `configs`
     empty, `legacy_ui` true.
+16. Whether the "recording in 15 s" line was on screen when the world
+    appeared, how many seconds were left, and whether
+    `LOADING_SCREEN_DISABLED` is a known event on Forever.

@@ -2379,12 +2379,15 @@ def test_readme_and_plan_document_the_switch() -> None:
     for key in _section_keys():
         assert f"`{key}`" in readme, f"README does not list the section key {key}"
     assert "/wowlab skip <section>" in runbook
-    # Fix round 1: the 10 s window and the per-character switch.
+    # Fix rounds 1 and 2: the 15 s window and the per-character switch.
     for text in (readme, plan):
         assert "per character" in text
-        assert "10 s" in text
-    assert "ask the conductor which section key it belongs to" in runbook
-    assert "within the 10 s the addon announces" in runbook
+        assert "15 s" in text
+        assert "10 s" not in text.split("### 13.2")[0].split("### 13.1")[-1]
+    assert "ask the conductor which section key the crash report's file and line" in runbook
+    assert "within the 15 s the addon announces" in runbook
+    assert "Type the skip before any `/reload` or logout" in runbook
+    assert "10 s" not in runbook
 
 
 def test_readme_maps_each_file_to_its_section_keys() -> None:
@@ -2402,7 +2405,8 @@ def test_readme_maps_each_file_to_its_section_keys() -> None:
 
 
 # Fix round 1 (domain review): the first on-world pass after ADDON_LOADED waits
-# 10 s on its own timer and says so, so `/wowlab skip` can be typed before it.
+# (15 s since fix round 2) on its own timer and says so, so `/wowlab skip` can
+# be typed before it.
 # Source scans on Core.lua tokens, constructed checks; no Lua runs (L3).
 
 
@@ -2415,7 +2419,7 @@ def _first_pass_delay(flow: _Flow) -> int:
 def test_first_pass_runs_on_its_own_timer() -> None:
     flow = _core()
     delay = _first_pass_delay(flow)
-    assert delay == 10
+    assert delay == 15
     first = _body(flow, "startFirstPass")
     assert first.startswith(
         "function startFirstPass ( ) if firstPassStarted then return end firstPassStarted = true"
@@ -2441,11 +2445,11 @@ def test_first_pass_runs_on_its_own_timer() -> None:
 
 
 def test_first_pass_is_announced_in_chat() -> None:
+    """The line is built from FIRST_PASS_DELAY, so it cannot drift from the timer."""
     flow = _core()
-    delay = _first_pass_delay(flow)
     first = _body(flow, "startFirstPass")
     line = (
-        f'say ( "recording in {delay} s. To switch a section off first: '
+        'say ( "recording in " .. FIRST_PASS_DELAY .. " s. To switch a section off first: '
         '/wowlab skip <section>  (/wowlab skip lists them)" )'
     )
     assert line in first
@@ -2455,7 +2459,7 @@ def test_first_pass_is_announced_in_chat() -> None:
 
 
 def test_skip_before_the_first_pass_takes_effect() -> None:
-    """A skip typed during the 10 s: switchOff clears `dirty`, the first pass
+    """A skip typed during the 15 s: switchOff clears `dirty`, the first pass
     gathers only dirty sections (gatherDirty), and gather refuses an off
     section anyway. A logout inside the window still records (PLAYER_LOGOUT
     runs gatherDirty)."""
