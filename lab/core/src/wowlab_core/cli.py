@@ -49,6 +49,11 @@ does it fall back to a saved look's build or the one fully cached build.
 `looks page` (M11-07, ADR-0027) writes all of that into one self-contained
 HTML file (`lookspage`), under the user data directory or at `--out`, never in
 an install: every verdict on the page is computed here and only shown there.
+
+`char show` (§13.1, M11-04) reads one character's `WowLab.lua`, written by
+the lab-addon, through `wowlab_core.labaddon`, and the account's
+`WowLab.lua` beside it; read only. Without `--character` it takes the
+character whose `WowLab.lua` has the newest modification time.
 """
 
 import base64
@@ -75,6 +80,7 @@ from wowlab_core import (
     gamedata,
     guard,
     install,
+    labaddon,
     layout,
     looks,
     lookspage,
@@ -141,6 +147,11 @@ app.add_typer(snap_app, name="snap")
 app.add_typer(log_app, name="log")
 app.add_typer(profile_app, name="profile")
 app.add_typer(looks_app, name="looks")
+char_app = typer.Typer(
+    help="Characters as the lab-addon recorded them in WowLab.lua (read only).",
+    no_args_is_help=True,
+)
+app.add_typer(char_app, name="char")
 
 
 # ─── options ─────────────────────────────────────────────────────────────────
@@ -294,6 +305,7 @@ def _handled[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
             snapshot.SnapshotError,
             profiles.ProfileError,
             addoninstall.AddonError,
+            labaddon.LabAddonError,
             gamedata.GameDataError,
             lookstore.LookStoreError,
             OSError,
@@ -3603,6 +3615,132 @@ def addon_remove(
         _emit(done)
         return
     _say(f"Removed the lab-addon: {len(plan.plan)} file(s) deleted. `wowlab undo` puts them back.")
+
+
+# ─── char ────────────────────────────────────────────────────────────────────
+
+
+_CHAR_NOTES = [
+    "WowLab.lua is written at logout, /reload or a clean exit (a crash writes nothing): "
+    "this is the character as of that save, not the session in progress.",
+    "The addon records no time; the time shown is the file's modification time.",
+]
+
+
+class CharShowReport(_Out):
+    """`wowlab char show --json`: the character's `WowLabCharDB` as the
+    schema-1 model reads it (unknown keys kept), and the account `WowLabDB`."""
+
+    flavor_folder: str
+    account: str
+    character: str  # "<realm folder>/<character folder>"
+    chosen_by: Literal["--character", "latest"]
+    file: str  # relative to the flavor folder
+    mtime_ns: int
+    account_file: str | None
+    account_record: labaddon.AccountDBV1 | None
+    record: labaddon.CharDBV1
+    skip_known: list[str]  # section keys in `skip` this reader knows
+    skip_ignored: list[str]  # the rest of `skip`, kept in `record` and ignored
+    customization_loads_ago: int | None
+    unknown_keys: list[str]
+    notes: list[str]
+
+
+def _is_lab_file(f: layout.SavedVariablesFile) -> bool:
+    return (
+        not f.backup
+        and f.addon is not None
+        and f.addon.casefold() == labaddon.ADDON_NAME.casefold()
+    )
+
+
+def _local_time(mtime_ns: int) -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S %z", time.localtime(mtime_ns // 1_000_000_000))
+
+
+@char_app.command("show")
+@_handled
+def char_show(
+    character: CharacterOpt = None,
+    account: AccountOpt = None,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+) -> None:
+    """What the lab-addon recorded for one character, from its WowLab.lua.
+    Without --character, the character whose WowLab.lua was written last.
+    JSON: CharShowReport."""
+    _, chosen, lay = _open(root, flavor)
+    acct = _select_account(lay, account)
+    files = [f for f in lay.saved_variables() if f.account == acct.folder and _is_lab_file(f)]
+    char_files = [f for f in files if f.scope == "character"]
+    how: Literal["--character", "latest"]
+    if character is not None:
+        char = _select_character(acct, character)
+        mine = [
+            f
+            for f in char_files
+            if f.realm_folder == char.realm_folder and f.character_folder == char.folder
+        ]
+        if not mine:
+            raise CliError(
+                f"no {labaddon.ADDON_NAME}.lua for {char.realm_folder}/{char.folder}: the "
+                "lab-addon has not written for this character (install it with `wowlab addon "
+                "install lab`, log in, then log out or /reload)"
+            )
+        target, how = mine[0], "--character"
+    else:
+        if not char_files:
+            raise CliError(
+                f"no character in account {acct.folder} has a {labaddon.ADDON_NAME}.lua "
+                "(install the lab-addon with `wowlab addon install lab`, log in, then log out "
+                "or /reload)"
+            )
+        target = max(char_files, key=lambda f: (f.mtime_ns, f.path))
+        how = "latest"
+    record = labaddon.read_char(lay.flavor_path / target.path)
+    account_files = [f for f in files if f.scope == "account"]
+    account_file = account_files[0] if account_files else None
+    account_record = (
+        labaddon.read_account(lay.flavor_path / account_file.path) if account_file else None
+    )
+    known, ignored = labaddon.skip_known(record)
+    report = CharShowReport(
+        flavor_folder=chosen.folder,
+        account=acct.folder,
+        character=f"{target.realm_folder}/{target.character_folder}",
+        chosen_by=how,
+        file=target.path,
+        mtime_ns=target.mtime_ns,
+        account_file=account_file.path if account_file else None,
+        account_record=account_record,
+        record=record,
+        skip_known=known,
+        skip_ignored=ignored,
+        customization_loads_ago=labaddon.customization_loads_ago(record),
+        unknown_keys=labaddon.unknown_keys(record),
+        notes=_CHAR_NOTES,
+    )
+    if json_out:
+        _emit(report)
+        return
+    picked = (
+        " (the WowLab.lua written last; choose another with --character)" if how == "latest" else ""
+    )
+    _say(f"Character: {report.character} in account {acct.folder}{picked}")
+    _say(f"File: {target.path}")
+    _say(f"Written: {_local_time(target.mtime_ns)} (the file's modification time)")
+    for line in labaddon.describe(record):
+        _say(line)
+    _say()
+    if account_record is None:
+        _say(f"Account {labaddon.ACCOUNT_VARIABLE}: no account {labaddon.ADDON_NAME}.lua")
+    else:
+        for line in labaddon.describe_account(account_record):
+            _say(line)
+    for note in _CHAR_NOTES:
+        _say(note)
 
 
 # ─── looks ───────────────────────────────────────────────────────────────────
