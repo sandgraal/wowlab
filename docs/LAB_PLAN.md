@@ -1959,7 +1959,7 @@ them as follows, and M11-09 builds to them.
     the file edited after the snapshot); byte-identical passes. This
     catches a loader reset (N, then 1 on disk) whenever the newest snapshot
     holds N ≥ 2; a reset from a snapshot at 1 cannot be detected this way.
-  - *2026-09-29, owner ruling for M11-24 (not yet built):*
+  - *2026-09-29, owner ruling for M11-24 (built in M11-24):*
     - **`probe` stays ours.** When `WowLab.lua` itself is merged, the
       `probe` table of the `--into` file is kept whatever `--take` or
       `--key` says. It counts that character's logins, and copying it

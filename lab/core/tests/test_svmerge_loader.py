@@ -134,7 +134,6 @@ def _merge_lab(*args: str) -> Any:
 # ─── (a) probe stays ours when WowLab.lua itself is merged ──────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 def test_take_theirs_keeps_the_targets_probe_and_does_not_report_it_taken(flavor: Path) -> None:
     result = _merge_lab("--from", CHAR_B, "--take", "theirs")
     assert result.exit_code == 0, _out(result)
@@ -149,7 +148,6 @@ def test_take_theirs_keeps_the_targets_probe_and_does_not_report_it_taken(flavor
     assert merged["gear"] == luadata.parse(REAL_B).to_python()["WowLabCharDB"]["gear"]
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 def test_key_copy_of_the_whole_variable_keeps_the_targets_probe(flavor: Path) -> None:
     # Two-way `--key` copies a subtree whole (§13.4); the probe inside it is
     # the one part that stays ours.
@@ -166,7 +164,6 @@ def test_key_copy_of_the_whole_variable_keeps_the_targets_probe(flavor: Path) ->
     _probe_kept(report)
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 @pytest.mark.parametrize(
     "key",
     ["WowLabCharDB.probe", "WowLabCharDB.probe.loads", 'WowLabCharDB["probe"]["loads"]'],
@@ -182,7 +179,6 @@ def test_key_naming_the_probe_changes_nothing(root: Path, flavor: Path, key: str
     assert guard.history() == ()
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 def test_key_copy_within_the_file_onto_the_probe_changes_nothing(flavor: Path) -> None:
     # `schema` is 1, the value a failed load leaves in `loads`: copying it onto
     # the counter would fake exactly the reset the loader check looks for.
@@ -195,7 +191,6 @@ def test_key_copy_within_the_file_onto_the_probe_changes_nothing(flavor: Path) -
     assert guard.history() == ()
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 def test_three_way_keeps_the_targets_probe_when_only_theirs_changed_it_constructed(
     flavor: Path,
 ) -> None:
@@ -219,7 +214,6 @@ def test_three_way_keeps_the_targets_probe_when_only_theirs_changed_it_construct
     assert target.read_bytes() == _once(ours, *_EQUIPPED)
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 def test_probe_as_the_only_difference_writes_nothing_and_says_so_constructed(
     root: Path, flavor: Path
 ) -> None:
@@ -259,7 +253,6 @@ def _two_identical_by_unrelated_writes(flavor: Path) -> None:
         ok("snap", "restore", first, "--paths", SYNDICATOR, "--yes")
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 @pytest.mark.parametrize(
     "identical",
     [_two_identical_by_snapshot, _two_identical_by_unrelated_writes],
@@ -281,7 +274,6 @@ def test_reset_then_two_identical_snapshots_is_refused_constructed(
     assert (flavor / DBM).read_bytes() == REAL_DBM
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 def test_walk_back_to_a_lower_count_passes_without_the_no_login_note(flavor: Path) -> None:
     # 2, then 4 twice (the second character's real file stands in for the
     # earlier session, as in the M11-09T graders): loads went up.
@@ -298,7 +290,6 @@ def test_walk_back_to_a_lower_count_passes_without_the_no_login_note(flavor: Pat
     assert (flavor / DBM).read_bytes() != REAL_DBM
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 def test_walk_back_to_an_equal_count_with_other_bytes_is_refused_constructed(
     root: Path, flavor: Path, user_data: Path
 ) -> None:
@@ -358,7 +349,6 @@ def _two_snapshots_after(flavor: Path) -> None:
     _snap("after the restore, again")
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 @pytest.mark.parametrize(
     "after",
     [_nothing_after, _one_snapshot_after, _two_snapshots_after],
@@ -378,7 +368,6 @@ def test_restore_of_wowlab_lua_then_merge_is_not_blamed_on_the_loader_constructe
     assert (flavor / DBM).read_bytes() != REAL_DBM
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 def test_restore_then_merge_prints_the_note_in_text_output_constructed(flavor: Path) -> None:
     _restore_after_a_login(flavor)
     result = _copy_within()
@@ -404,7 +393,6 @@ def _merge_gear_into_wowlab_lua() -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 @pytest.mark.parametrize(
     "then_snapshot",
     [False, True],
