@@ -1849,6 +1849,14 @@ them as follows, and M11-09 builds to them.
   - `loads` higher: passes.
   - `probe.lost = true`: refused.
   - No `WowLab.lua`: a warning, and the merge goes ahead.
+  - *2026-09-29, M11-09 review ruling:* the file on disk is also compared
+    with the newest snapshot that holds it. `loads` on disk strictly lower
+    than that snapshot's: refused ("loads on disk (n) went down from the
+    newest snapshot (m): the last session's SavedVariables did not load").
+    Equal `loads` with other bytes passes with no note (the same session,
+    the file edited after the snapshot); byte-identical passes. This
+    catches a loader reset (N, then 1 on disk) whenever the newest snapshot
+    holds N ≥ 2; a reset from a snapshot at 1 cannot be detected this way.
   - `--force-loader-check` overrides every refusal.
 - **`--json` is required** (§6.11). It prints `SvMergeReport`, holding at
   least `mode` (`two-way` or `three-way`), `conflicts`, `absent` (with

@@ -1822,8 +1822,8 @@ def _loader_check(
     char: layout.Character,
 ) -> tuple[str | None, list[str]]:
     """(the reason to refuse, or None; notes) from the --into character's
-    `WowLab.lua` and the two newest snapshots of it (§13.4 as ruled on
-    2026-09-29). Reads only."""
+    `WowLab.lua` on disk, the newest snapshot of it and the two newest
+    (§13.4 as ruled on 2026-09-29). Reads only."""
     name = svmerge.LAB_ADDON_FILE
     found = _character_sv(files, account, char, name)
     who = f"{char.realm_folder}/{char.folder}"
@@ -1833,8 +1833,9 @@ def _loader_check(
             "lab-addon installed (`wowlab addon install lab`), one login and logout writes it."
         ]
     rel = found.path
+    disk = _read_sv(lay.flavor_path / rel)
     try:
-        probe = svmerge.read_probe(luadata.parse(_read_sv(lay.flavor_path / rel)))
+        probe = svmerge.read_probe(luadata.parse(disk))
     except luadata.LuaDataError as exc:
         return f"{rel} is not data the parser accepts ({exc}), so its probe cannot be read", []
     if probe.lost:
@@ -1855,6 +1856,32 @@ def _loader_check(
         if entry is not None and entry.kind == "file" and entry.sha256 is not None:
             holding.append((m, entry))
     holding.sort(key=lambda pair: (pair[0].created_at, pair[0].id))
+    if holding:
+        # The disk against the newest snapshot (ruling of 2026-09-29): lower
+        # `loads` means the session since did not load its SavedVariables.
+        # Equal `loads` with other bytes is that session with the file edited
+        # after the snapshot, and passes.
+        newest, newest_entry = holding[-1]
+        if hashlib.sha256(disk).hexdigest() != newest_entry.sha256:
+            assert newest_entry.sha256 is not None
+            data = store.read_object(newest_entry.sha256, size=newest_entry.size)
+            try:
+                newest_loads = svmerge.read_probe(luadata.parse(data)).loads
+            except luadata.LuaDataError as exc:
+                return f"{rel} in snapshot {newest.id} is not data the parser accepts ({exc})", []
+            if newest_loads is None:
+                return (
+                    f"{rel} in snapshot {newest.id} holds no probe.loads, so the file on disk "
+                    "cannot be compared with it",
+                    [],
+                )
+            if probe.loads < newest_loads:
+                return (
+                    f"{rel}: loads on disk ({probe.loads}) went down from the newest snapshot "
+                    f"({newest_loads}): the last session's SavedVariables did not load "
+                    f"(snapshot {newest.id}); {_LOADER_BUG}.",
+                    [],
+                )
     if len(holding) < 2:
         return None, [
             f"Fewer than two snapshots hold {rel}, so probe.loads was not compared across "

@@ -133,3 +133,70 @@ def test_check_keys_says_which_keys_name_one_path() -> None:
         False,
         True,
     ]
+
+
+# ─── the disk against the newest snapshot (ruling of 2026-09-29) ─────────────
+
+_LOADS_1 = (b'["loads"] = 4,', b'["loads"] = 1,')
+_LOADS_5 = (b'["loads"] = 4,', b'["loads"] = 5,')
+_FILTER = (b'["filter"] = 1,', b'["filter"] = 2,')
+
+
+def _edit(data: bytes, old: bytes, new: bytes) -> bytes:
+    assert data.count(old) == 1, old
+    return data.replace(old, new)
+
+
+def _snap_json(label: str) -> None:
+    result = run("snap", "create", "-m", label, "--json")
+    assert result.exit_code == 0, result.stderr
+
+
+def test_disk_loads_reset_below_the_newest_snapshot_is_refused_constructed(
+    root: Path, flavor: Path
+) -> None:
+    _snap_json("loads 4")  # one snapshot: the two-snapshot rule cannot run
+    (flavor / LAB_A).write_bytes(_edit(REAL_A, *_LOADS_1))  # a session that loaded nothing
+    before = _state(root)
+    result = _copy_within()
+    assert result.exit_code == 3, (result.stdout, result.stderr)
+    assert "loads on disk (1) went down from the newest snapshot (4)" in result.stderr
+    assert _state(root) == before
+    assert guard.history() == ()
+
+
+def test_force_loader_check_overrides_the_disk_refusal_constructed(flavor: Path) -> None:
+    _snap_json("loads 4")
+    (flavor / LAB_A).write_bytes(_edit(REAL_A, *_LOADS_1))
+    result = _copy_within("--force-loader-check", "--json")
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    report = json.loads(result.stdout)
+    assert report["written"] is True
+    assert any("went down" in note for note in report["notes"])
+    (record,) = guard.history()
+    assert [p.path for p in record.paths] == [DBM]
+
+
+def test_disk_loads_higher_than_the_newest_snapshot_passes_constructed(flavor: Path) -> None:
+    _snap_json("loads 4")
+    (flavor / LAB_A).write_bytes(_edit(REAL_A, *_LOADS_5))
+    result = _copy_within()
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    assert (flavor / DBM).read_bytes() != REAL_DBM
+
+
+def test_disk_loads_equal_with_other_bytes_passes_constructed(flavor: Path) -> None:
+    _snap_json("loads 4")
+    (flavor / LAB_A).write_bytes(_edit(REAL_A, *_FILTER))  # same session, edited since
+    result = _copy_within("--json")
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    report = json.loads(result.stdout)
+    assert report["written"] is True
+    assert not any("went down" in note for note in report["notes"])
+
+
+def test_disk_identical_to_the_newest_snapshot_passes_constructed(flavor: Path) -> None:
+    _snap_json("loads 4")
+    result = _copy_within()
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    assert (flavor / DBM).read_bytes() != REAL_DBM
