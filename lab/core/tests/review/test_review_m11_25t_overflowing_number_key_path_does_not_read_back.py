@@ -58,6 +58,5 @@ def test_positive_control_finite_number_key_reads_back_constructed(tmp_path: Pat
     _check(tmp_path, b"1e3")
 
 
-@pytest.mark.xfail(strict=True, reason="M11-25: sv merge refuses the [1e400] path it prints")
 def test_overflowing_number_key_path_reads_back_constructed(tmp_path: Path) -> None:
     _check(tmp_path, b"1e400")

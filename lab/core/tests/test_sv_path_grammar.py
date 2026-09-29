@@ -478,7 +478,6 @@ def test_sv_dump_path_of_a_plain_key_reads_back_as_that_key(tmp_path: Path, chai
     assert _dump_round_trip(file, OURS, chain) == []
 
 
-@pytest.mark.xfail(strict=True, reason="M11-25 not implemented")
 @pytest.mark.parametrize("chain", ESCAPED)
 def test_sv_dump_path_of_a_key_needing_an_escape_reads_back_as_that_key(
     tmp_path: Path, chain: Chain
@@ -636,7 +635,6 @@ def test_sv_merge_conflict_paths_of_plain_keys_read_back_constructed(flavor: Pat
     assert _merge_round_trip(flavor, escaped=False) == []
 
 
-@pytest.mark.xfail(strict=True, reason="M11-25 not implemented")
 def test_sv_merge_conflict_paths_of_keys_needing_an_escape_read_back_constructed(
     flavor: Path,
 ) -> None:
@@ -660,7 +658,6 @@ def _text_paths(stdout: str, marker: str) -> list[str]:
     return out
 
 
-@pytest.mark.xfail(strict=True, reason="M11-25 not implemented")
 def test_sv_merge_text_report_prints_the_same_paths_as_json_constructed(flavor: Path) -> None:
     """The text report lists every conflict and absent path on its own line,
     each exactly as `--json` prints it."""
@@ -674,7 +671,6 @@ def test_sv_merge_text_report_prints_the_same_paths_as_json_constructed(flavor: 
         assert _control(path) == [], path
 
 
-@pytest.mark.xfail(strict=True, reason="M11-25 not implemented")
 def test_sv_merge_absent_paths_read_back_on_the_side_that_has_them_constructed(
     flavor: Path,
 ) -> None:
@@ -699,7 +695,6 @@ def test_sv_merge_absent_paths_read_back_on_the_side_that_has_them_constructed(
     assert (flavor / PG_A).read_bytes() == OURS, "declined: nothing written"
 
 
-@pytest.mark.xfail(strict=True, reason="M11-25 not implemented")
 @pytest.mark.parametrize("json_out", [True, False], ids=["json", "text"])
 def test_sv_merge_taken_paths_read_back_after_the_write_constructed(
     flavor: Path, json_out: bool
@@ -737,7 +732,6 @@ def _written_keys(flavor: Path) -> dict[Chain, Node]:
     return {n.chain: n for n in _nodes(luadata.read(flavor / PG_A))}
 
 
-@pytest.mark.xfail(strict=True, reason="M11-25 not implemented")
 @pytest.mark.parametrize(
     ("src", "dst", "dst_key"),
     [
@@ -929,7 +923,6 @@ ESCAPES: list[tuple[str, str, Chain | None]] = [
 ]
 
 
-@pytest.mark.xfail(strict=True, reason="M11-25 not implemented")
 @pytest.mark.parametrize(
     ("spelling", "chain"),
     [pytest.param(s, c, id=f"constructed-{i}") for i, s, c in ESCAPES],
