@@ -3,7 +3,8 @@
 A thin shell over the library. Every command reads through the modules the
 spec names and prints text, or JSON with `--json`; the only commands that
 change an install are `snap restore`, `profile apply` (§13.3, M11-08),
-`addon install|remove lab` (§13.1, M11-02) and `undo`, and all go through `wowlab_core.guard` (L2, ADR-0021): they print
+`addon install|remove lab` (§13.1, M11-02), `sv merge` (§13.4, M11-09) and `undo`, and all go
+through `wowlab_core.guard` (L2, ADR-0021): they print
 the plan and ask before writing unless `--yes` is given. Nothing here writes a file itself; the
 snapshot store, the game-data cache and saved looks are written by `snapshot`,
 `gamedata` and `lookstore`, under the user data directory (L1).
@@ -12,6 +13,9 @@ Exit codes: 0 ok, 1 error, 2 usage (including "more than one flavor, pick
 one with --flavor"), 3 refused by the write gate (any `guard.GuardError`:
 client running or unknown, a path outside the allowlist, the store busy, a
 file changed since the pre-write snapshot, a snapshot of another install).
+`sv merge` also exits 1 when conflicts are left unresolved (its report is
+printed, nothing is written), 2 for a character-to-character merge of an
+account-wide file, and 3 when its SavedVariables loader check refuses.
 
 Where the install is: `--root`, else `$WOWLAB_WOW_ROOT`, else the platform
 defaults (`install.discover`). Which flavor: `--flavor`, implied when the
@@ -60,6 +64,7 @@ import base64
 import contextlib
 import csv
 import functools
+import hashlib
 import io
 import json
 import os
@@ -89,6 +94,7 @@ from wowlab_core import (
     process,
     profiles,
     snapshot,
+    svmerge,
     wtfconfig,
 )
 from wowlab_core.filemap import FileMapEntry
@@ -106,7 +112,10 @@ app = typer.Typer(
     rich_markup_mode=None,
 )
 install_app = typer.Typer(help="The install and its flavors.", no_args_is_help=True)
-sv_app = typer.Typer(help="SavedVariables files (read only).", no_args_is_help=True)
+sv_app = typer.Typer(
+    help="SavedVariables files: list and dump read them; merge writes one through the write gate.",
+    no_args_is_help=True,
+)
 cvar_app = typer.Typer(help="CVars in Config.wtf and config-cache.wtf.", no_args_is_help=True)
 binds_app = typer.Typer(help="Key bindings in bindings-cache.wtf.", no_args_is_help=True)
 macros_app = typer.Typer(help="Macros in macros-cache.txt.", no_args_is_help=True)
@@ -1635,6 +1644,549 @@ def sv_dump(
             for p, v in _flatten(a.name, a.value):
                 _say(f"{p} = {v}")
     _note(_SV_TIMING)
+
+
+# ─── sv merge (§13.4, M11-09) ────────────────────────────────────────────────
+
+
+class SvMergeReport(_Out):
+    """`wowlab sv merge --json`: what the merge found and whether it wrote.
+    Printed when unresolved conflicts stop the write, too."""
+
+    file: str  # the target, relative to the flavor folder
+    scope: Literal["account", "character"]  # the file's, from `layout`
+    into: str  # the --into character, <realm folder>/<character folder>
+    source: str  # "character <realm folder>/<folder>", "snapshot <id>" or "this file"
+    base: str | None  # the --base snapshot, for a three-way merge
+    mode: Literal["two-way", "three-way"]
+    keys: list[str]  # --key as given
+    take: Literal["ours", "theirs"] | None
+    conflicts: list[svmerge.Conflict]  # resolved ones too (`resolved` says how)
+    absent: list[svmerge.Absent]  # on one side only: never deleted from the target
+    taken: list[svmerge.Taken]  # taken from the source into the target
+    written: bool
+    transaction: str | None  # the journal record of the write (`wowlab undo` reverses it)
+    notes: list[str]  # the warnings and caveats the text output prints
+
+
+_MERGE_PROVEN = (
+    "The addon reads the merged file at its next login, may migrate it, and rewrites it at "
+    "logout: the merge is proven only after one login and logout, and a subtree taken from "
+    "an older version of the addon may be reset by it."
+)
+_ABSENT_NOTE = (
+    "A key listed as absent is on one side only. Many addons leave out values equal to their "
+    "defaults [verify], which wowlab cannot see, so absent is not deleted: it is never "
+    "removed from the target."
+)
+_NO_LOGIN = "no login between the two snapshots; the loader was not re-checked"
+_LOADER_BUG = (
+    "the target addon would load its defaults at the next login and save them at logout, "
+    "overwriting the merge (the Forever beta had such a SavedVariables loader bug, "
+    "https://github.com/nobewayo/ForeverSVFix). Log in and out once with the lab-addon "
+    "enabled and check again, or pass --force-loader-check to merge anyway"
+)
+
+
+def _into_character(account: layout.Account, spec: str, option: str) -> layout.Character:
+    """A character folder for --into/--from; never a `<Realm>/<First>/` twin
+    of `<digits>/<First>-<Second>/` folders (§13.4)."""
+    char = _select_character(account, spec)
+    if char.shape == "realm_name" and char.twins:
+        raise CliError(
+            f"{option} {spec!r} is the folder {char.realm_folder}/{char.folder}, a twin of "
+            f"{', '.join(char.twins)}; SavedVariables are kept in the <digits>/<First>-<Second> "
+            f"folder, so name that one with {option}",
+            EXIT_USAGE,
+        )
+    return char
+
+
+def _is_character(account: layout.Account, spec: str) -> bool:
+    realm, _, folder = spec.rpartition("/")
+    for r in account.realms:
+        for c in r.characters:
+            if realm and c.realm_folder == realm and c.folder == folder:
+                return True
+            if not realm and c.folder.casefold() == spec.casefold():
+                return True
+    return False
+
+
+def _sv_name(f: layout.SavedVariablesFile) -> str:
+    return f.path.rsplit("/", 1)[-1]
+
+
+def _character_sv(
+    files: Sequence[layout.SavedVariablesFile],
+    account: layout.Account,
+    char: layout.Character,
+    name: str,
+) -> layout.SavedVariablesFile | None:
+    """The file `name` in `char`'s SavedVariables/ in `account` (another
+    account may hold a character folder of the same name), or None. More
+    than one match (names differing only in case) is an error, never read
+    as "none"."""
+    mine = [
+        f
+        for f in files
+        if f.scope == "character"
+        and not f.backup
+        and f.account == account.folder
+        and f.realm_folder == char.realm_folder
+        and f.character_folder == char.folder
+    ]
+    exact = [f for f in mine if _sv_name(f) == name]
+    match = exact or [f for f in mine if _sv_name(f).casefold() == name.casefold()]
+    if len(match) > 1:
+        raise CliError(
+            f"{char.path}/SavedVariables/ holds {len(match)} files named like {name!r}: "
+            + ", ".join(f.path for f in match)
+        )
+    return match[0] if match else None
+
+
+def _merge_target(
+    lay: layout.Layout,
+    files: Sequence[layout.SavedVariablesFile],
+    file: str,
+    account: layout.Account,
+    char: layout.Character,
+) -> layout.SavedVariablesFile:
+    """FILE: a bare name in the --into character's SavedVariables/, then the
+    account's; or a path as `sv dump` takes it, whose scope `layout` gives."""
+    usable = [f for f in files if not f.backup and f.account == account.folder]
+    if "/" not in file and os.sep not in file:
+        found = _character_sv(usable, account, char, file)
+        if found is not None:
+            return found
+        acct = [f for f in usable if f.scope == "account"]
+        match = [f for f in acct if _sv_name(f) == file] or [
+            f for f in acct if _sv_name(f).casefold() == file.casefold()
+        ]
+        if len(match) == 1:
+            return match[0]
+        raise CliError(
+            f"no SavedVariables file {file!r} in {char.path}/SavedVariables/ or in "
+            f"WTF/Account/{account.folder}/SavedVariables/"
+        )
+    given = Path(file)
+    if not given.is_absolute() and not os.path.lexists(given):
+        given = lay.flavor_path / given
+    absolute = Path(os.path.normpath(given.absolute()))
+    if not _is_inside(absolute, lay.flavor_path):
+        raise CliError(f"{file} is not inside the flavor folder {lay.flavor_path}", EXIT_USAGE)
+    rel = absolute.relative_to(lay.flavor_path).as_posix()
+    every = [f for f in files if f.path == rel] or [
+        f for f in files if f.path.casefold() == rel.casefold()
+    ]
+    if len(every) != 1:
+        raise CliError(f"{file} is not a SavedVariables file wowlab lists (see `wowlab sv list`)")
+    target = every[0]
+    if target.backup:
+        raise CliError(
+            f"{file} is the client's backup of the previous write; not merged", EXIT_USAGE
+        )
+    if target.account != account.folder:
+        raise CliError(f"{file} is in account {target.account}, not {account.folder}", EXIT_USAGE)
+    if target.scope == "character" and (
+        target.realm_folder != char.realm_folder or target.character_folder != char.folder
+    ):
+        raise CliError(
+            f"{file} belongs to {target.realm_folder}/{target.character_folder}, not to the "
+            f"--into character {char.realm_folder}/{char.folder}",
+            EXIT_USAGE,
+        )
+    return target
+
+
+def _read_sv(path: Path) -> bytes:
+    """A SavedVariables file's bytes, read without following a link and
+    without blocking on anything but a regular file (L1)."""
+    return snapshot.read_regular_file(path, limit=luadata.MAX_FILE_BYTES)
+
+
+def _snapshot_sv(store: snapshot.SnapshotStore, snapshot_id: str, rel: str, folder: str) -> bytes:
+    manifest = store.show(snapshot_id)
+    held = f"{manifest.flavor_folder or folder}/{rel}"
+    entry = manifest.entry(held)
+    if entry is None or entry.kind != "file" or entry.sha256 is None:
+        raise CliError(f"snapshot {manifest.id} does not hold {held}")
+    return store.read_object(entry.sha256, size=entry.size)
+
+
+def _same_root(a: str, b: Path) -> bool:
+    if Path(a) == b:
+        return True
+    try:
+        return Path(a).resolve() == b.resolve()
+    except (OSError, RuntimeError):
+        return False
+
+
+def _loader_check(
+    store: snapshot.SnapshotStore,
+    inst: install.Install,
+    chosen: install.Flavor,
+    lay: layout.Layout,
+    files: Sequence[layout.SavedVariablesFile],
+    account: layout.Account,
+    char: layout.Character,
+) -> tuple[str | None, list[str]]:
+    """(the reason to refuse, or None; notes) from the --into character's
+    `WowLab.lua` on disk, the newest snapshot of it and the two newest
+    (§13.4 as ruled on 2026-09-29). Reads only."""
+    name = svmerge.LAB_ADDON_FILE
+    found = _character_sv(files, account, char, name)
+    who = f"{char.realm_folder}/{char.folder}"
+    if found is None:
+        return None, [
+            f"No {name} for {who}: the SavedVariables loader was not checked. With the "
+            "lab-addon installed (`wowlab addon install lab`), one login and logout writes it."
+        ]
+    rel = found.path
+    disk = _read_sv(lay.flavor_path / rel)
+    try:
+        probe = svmerge.read_probe(luadata.parse(disk))
+    except luadata.LuaDataError as exc:
+        return f"{rel} is not data the parser accepts ({exc}), so its probe cannot be read", []
+    if probe.lost:
+        return (
+            f"{rel}: probe.lost is true. At its last load the lab-addon found WowLabCharDB "
+            f"without its probe, which is what a SavedVariables loader failure leaves: "
+            f"{_LOADER_BUG}.",
+            [],
+        )
+    if probe.loads is None:
+        return f"{rel} holds no probe.loads, so the loader cannot be checked; {_LOADER_BUG}.", []
+    held = f"{chosen.folder}/{rel}"
+    holding: list[tuple[snapshot.Manifest, snapshot.Entry]] = []
+    for m in store.list_lenient().manifests:
+        if m.flavor_folder != chosen.folder or not _same_root(m.install_root, Path(inst.root)):
+            continue
+        entry = m.entry(held)
+        if entry is not None and entry.kind == "file" and entry.sha256 is not None:
+            holding.append((m, entry))
+    holding.sort(key=lambda pair: (pair[0].created_at, pair[0].id))
+    if holding:
+        # The disk against the newest snapshot (ruling of 2026-09-29): lower
+        # `loads` means the session since did not load its SavedVariables.
+        # Equal `loads` with other bytes is that session with the file edited
+        # after the snapshot, and passes.
+        newest, newest_entry = holding[-1]
+        if hashlib.sha256(disk).hexdigest() != newest_entry.sha256:
+            assert newest_entry.sha256 is not None
+            data = store.read_object(newest_entry.sha256, size=newest_entry.size)
+            try:
+                newest_loads = svmerge.read_probe(luadata.parse(data)).loads
+            except luadata.LuaDataError as exc:
+                return f"{rel} in snapshot {newest.id} is not data the parser accepts ({exc})", []
+            if newest_loads is None:
+                return (
+                    f"{rel} in snapshot {newest.id} holds no probe.loads, so the file on disk "
+                    "cannot be compared with it",
+                    [],
+                )
+            if probe.loads < newest_loads:
+                return (
+                    f"{rel}: loads on disk ({probe.loads}) went down from the newest snapshot "
+                    f"({newest_loads}): the last session's SavedVariables did not load "
+                    f"(snapshot {newest.id}); {_LOADER_BUG}.",
+                    [],
+                )
+    if len(holding) < 2:
+        return None, [
+            f"Fewer than two snapshots hold {rel}, so probe.loads was not compared across "
+            "sessions (`wowlab snap create` before and after a login makes the check possible)."
+        ]
+    (old, old_entry), (new, new_entry) = holding[-2:]
+    if old_entry.sha256 == new_entry.sha256:
+        return None, [f"{rel}: {_NO_LOGIN} (snapshots {old.id} and {new.id} hold the same bytes)."]
+    counts: list[int] = []
+    for m, entry in ((old, old_entry), (new, new_entry)):
+        assert entry.sha256 is not None
+        data = store.read_object(entry.sha256, size=entry.size)
+        try:
+            loads = svmerge.read_probe(luadata.parse(data)).loads
+        except luadata.LuaDataError as exc:
+            return f"{rel} in snapshot {m.id} is not data the parser accepts ({exc})", []
+        if loads is None:
+            return f"{rel} in snapshot {m.id} holds no probe.loads, so loads cannot be compared", []
+        counts.append(loads)
+    before, after = counts
+    if after > before:
+        return None, []
+    went = "went down" if after < before else "did not go up"
+    return (
+        f"{rel}: probe.loads {went}, from {before} in snapshot {old.id} to {after} in snapshot "
+        f"{new.id}. It goes up at every load of the lab-addon, so the client did not load "
+        f"this character's SavedVariables back in between: {_LOADER_BUG}.",
+        [],
+    )
+
+
+def _lab_written(store: snapshot.SnapshotStore, flavor_path: Path) -> list[Path]:
+    """Files the guard journal records as last written by wowlab in this
+    flavor: `luadata.serialize` never takes its style from them."""
+    last: dict[str, str | None] = {}
+    for record in guard.history(store=store.path):
+        if record.state != "committed" or Path(record.flavor_path) != flavor_path:
+            continue
+        for change in record.paths:
+            last[change.path] = change.after
+    return [flavor_path / p for p, after in last.items() if after is not None]
+
+
+def _print_merge(show: Callable[[str], None], report: SvMergeReport) -> None:
+    base = f", base snapshot {report.base}" if report.base else ""
+    show(
+        f"Merge {report.file} ({report.scope}, {report.mode}{base}) from {report.source} "
+        f"into {report.into}"
+    )
+    if report.keys:
+        show(f"  limited to --key {', '.join(report.keys)}")
+    if report.conflicts:
+        how = {None: "unresolved", "ours": "kept ours", "theirs": "took theirs"}[report.take]
+        show(f"  {len(report.conflicts)} conflict(s), {how}:")
+        for c in report.conflicts:
+            base_text = f", base {c.base}" if c.base is not None else ""
+            show(f"    {c.path}: ours {c.ours}, theirs {c.theirs}{base_text}")
+    if report.absent:
+        show(f"  {len(report.absent)} key(s) absent from one side (never deleted):")
+        for a in report.absent:
+            show(f"    {a.path}  (missing from {a.missing_from})")
+    if report.taken:
+        show(f"  {len(report.taken)} value(s) taken from the source:")
+        for t in report.taken:
+            show(f"    {t.path} = {t.value}")
+
+
+@sv_app.command("merge")
+@_handled
+def sv_merge(
+    file: Annotated[
+        str,
+        typer.Argument(
+            help="A SavedVariables file: a name (WowLab.lua), looked up in the --into "
+            "character's SavedVariables/ and then the account's; or a path as `sv dump` takes it."
+        ),
+    ],
+    into: Annotated[
+        str,
+        typer.Option(
+            "--into",
+            help="The target character folder (<digits>/<First>-<Second> on Forever); its "
+            "WowLab.lua is read for the loader check.",
+        ),
+    ],
+    from_: Annotated[
+        str | None,
+        typer.Option(
+            "--from",
+            help="The source: a character folder (per-character files only) or a snapshot "
+            "id. Left out, --key SRC=DST copies within the file.",
+        ),
+    ] = None,
+    base: Annotated[
+        str | None,
+        typer.Option(
+            "--base",
+            help="A snapshot holding the common ancestor: with --from SNAPSHOT, a three-way merge.",
+        ),
+    ] = None,
+    key: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--key",
+            help='A subtree, e.g. Var.profile or Var["some key"]; SRC=DST copies SRC to DST. '
+            "Repeatable.",
+        ),
+    ] = None,
+    take: Annotated[
+        Literal["ours", "theirs"] | None,
+        typer.Option(
+            "--take", help="Resolve every conflict with the target's or the source's value."
+        ),
+    ] = None,
+    force_loader_check: Annotated[
+        bool,
+        typer.Option(
+            "--force-loader-check", help="Merge even when the SavedVariables loader check refuses."
+        ),
+    ] = False,
+    account: AccountOpt = None,
+    yes: YesOpt = False,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+) -> None:
+    """Merge one SavedVariables file into a character's copy, by key path, and
+    write it through the write gate (client closed, snapshot first, `wowlab undo`
+    reverses it). Parsed and written as data by `luadata`, never run.
+
+    Two-way (--from a character or a snapshot): every key whose values differ is a
+    conflict. Three-way (--from SNAPSHOT --base SNAPSHOT): a change on one side is
+    taken, the same change on both once, different changes are conflicts. Conflicts
+    are listed and nothing is written unless --take resolves them; exit 1. A key on
+    one side only is listed as absent and never deleted. An account-wide file is
+    shared by every character, so merging it from another character is refused
+    (exit 2); use --from SNAPSHOT, or --key SRC=DST to copy between the per-character
+    keys an addon keeps inside it. Before writing, the --into character's WowLab.lua
+    is checked for a SavedVariables loader failure (exit 3). JSON: SvMergeReport."""
+    keys = list(key or [])
+    try:
+        same_path = svmerge.check_keys(keys)
+    except svmerge.MergeError as exc:
+        raise CliError(str(exc), EXIT_USAGE) from exc
+    if from_ is None:
+        for given, same in zip(keys, same_path, strict=True):
+            if same:
+                raise CliError(
+                    f"--key {given} names the same path on both sides, which needs --from: "
+                    "within one file, copy with --key SRC=DST",
+                    EXIT_USAGE,
+                )
+    if from_ is None and base is not None:
+        raise CliError(
+            "--base names the common ancestor of --from SNAPSHOT; give --from", EXIT_USAGE
+        )
+    if from_ is None and not keys:
+        raise CliError(
+            "give --from CHARACTER|SNAPSHOT, or --key SRC=DST to copy within the file", EXIT_USAGE
+        )
+    store = snapshot.SnapshotStore()
+    inst, chosen, lay = _open(root, flavor)
+    acct = _select_account(lay, account)
+    char = _into_character(acct, into, "--into")
+    files = lay.saved_variables()
+    target = _merge_target(lay, files, file, acct, char)
+    source_char: layout.Character | None = None
+    source_snap: str | None = None
+    if from_ is not None:
+        if _is_character(acct, from_):
+            source_char = _into_character(acct, from_, "--from")
+        else:
+            try:
+                source_snap = store.resolve_id(from_)
+            except snapshot.SnapshotNotFoundError as exc:
+                raise CliError(
+                    f"--from {from_!r} is neither a character folder in account {acct.folder} "
+                    f"nor a snapshot id ({exc})",
+                    EXIT_USAGE,
+                ) from exc
+    if source_char is not None:
+        if target.scope == "account":
+            raise CliError(
+                f"{target.path} is account-wide: every character on account {acct.folder} "
+                "shares this one file, so there is nothing to merge between two characters. "
+                "Use --from SNAPSHOT (another machine or an earlier state), or --key SRC=DST "
+                "to copy between per-character keys inside it",
+                EXIT_USAGE,
+            )
+        if source_char.path == char.path:
+            raise CliError("--from and --into name the same character", EXIT_USAGE)
+        if base is not None:
+            raise CliError("--base goes with --from SNAPSHOT, not a character", EXIT_USAGE)
+    base_id = store.resolve_id(base) if base is not None else None
+    target_path = lay.flavor_path / target.path
+    ours_bytes = _read_sv(target_path)
+    if source_char is not None:
+        found = _character_sv(files, acct, source_char, _sv_name(target))
+        if found is None:
+            raise CliError(f"{source_char.path}/SavedVariables/ has no {_sv_name(target)}")
+        theirs_bytes = _read_sv(lay.flavor_path / found.path)
+        source = f"character {source_char.realm_folder}/{source_char.folder}"
+    elif source_snap is not None:
+        theirs_bytes = _snapshot_sv(store, source_snap, target.path, chosen.folder)
+        source = f"snapshot {source_snap}"
+    else:
+        theirs_bytes = ours_bytes
+        source = "this file"
+    base_bytes = (
+        _snapshot_sv(store, base_id, target.path, chosen.folder) if base_id is not None else None
+    )
+
+    refusal, notes = _loader_check(store, inst, chosen, lay, files, acct, char)
+    if refusal is not None:
+        if not force_loader_check:
+            raise CliError(f"refused by the loader check: {refusal}", EXIT_REFUSED)
+        notes.append(f"The loader check was overridden by --force-loader-check: {refusal}")
+
+    ours = luadata.parse(ours_bytes)
+    theirs = ours if source_char is None and source_snap is None else luadata.parse(theirs_bytes)
+    base_doc = luadata.parse(base_bytes) if base_bytes is not None else None
+    try:
+        result = svmerge.merge(ours, theirs, base=base_doc, keys=keys, take=take)
+    except svmerge.MergeError as exc:
+        raise CliError(str(exc), EXIT_USAGE) from exc
+    if result.absent:
+        notes.append(_ABSENT_NOTE)
+    show = _say if not json_out else _note
+
+    def report(*, written: bool, transaction: str | None = None) -> SvMergeReport:
+        return SvMergeReport(
+            file=target.path,
+            scope=target.scope,
+            into=f"{char.realm_folder}/{char.folder}",
+            source=source,
+            base=base_id,
+            mode=result.mode,
+            keys=keys,
+            take=take,
+            conflicts=list(result.conflicts),
+            absent=list(result.absent),
+            taken=list(result.taken),
+            written=written,
+            transaction=transaction,
+            notes=[*notes, _MERGE_PROVEN] if written else notes,
+        )
+
+    def finish(done: SvMergeReport, line: str) -> None:
+        if json_out:
+            _emit(done)
+            return
+        _print_merge(_say, done)
+        for n in done.notes:
+            _note(n)
+        _say(line)
+
+    if result.unresolved:
+        finish(
+            report(written=False),
+            f"{len(result.conflicts)} conflict(s) left unresolved: nothing was written. "
+            "Resolve them with --take ours|theirs, or limit the merge with --key.",
+        )
+        raise typer.Exit(EXIT_ERROR)
+    data = luadata.serialize(
+        result.document, target=target_path, lab_written=_lab_written(store, chosen.path)
+    )
+    if data == ours_bytes:
+        finish(report(written=False), f"Nothing to change: {target.path} already holds the merge.")
+        return
+    if not yes:
+        _print_merge(show, report(written=False))
+        show(f"  replace  {target.path}  ({_bytes(len(data))})")
+        show(_MERGE_PROVEN)
+    try:
+        _confirm("Write the merge?", yes)
+    except typer.Exit:
+        if json_out:
+            _emit(report(written=False))
+        raise
+    expected = hashlib.sha256(ours_bytes).hexdigest()
+    with guard.transaction(chosen, label=f"sv merge {target.path}", store=store.path) as tx:
+        tx.write(target.path, data)
+        if [item.before for item in tx.plan] != [expected]:
+            raise CliError(
+                f"{target.path} changed after it was read, so the merge was rolled back; "
+                "run the command again"
+            )
+    record = guard.history(store=store.path)[-1].id
+    finish(
+        report(written=True, transaction=record),
+        f"Merged into {target.path}: {len(result.taken)} value(s) taken. `wowlab undo` puts "
+        "back what was there before.",
+    )
 
 
 # ─── cvar, binds, macros ─────────────────────────────────────────────────────
