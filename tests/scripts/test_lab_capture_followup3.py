@@ -21,7 +21,7 @@ import re
 from pathlib import Path, PurePosixPath
 
 import pytest
-from test_lab_capture import build_install, capture, lab_capture, outputs
+from test_lab_capture import build_install, capture, cpu_clock, lab_capture, outputs
 
 Identity = lab_capture.Identity
 GAME_TEXT = lab_capture.COMBAT_LOG_TEXT_LABEL
@@ -284,13 +284,14 @@ def test_constructed_unindented_positional_file_is_picked_as_positional_array(
     [b"--[[ open\n", b"--[==[ open ]=]\n", b"[[ open\n", b"[=[ open ]]\n", b",--[[\n", b'"\\'],
 )
 def test_constructed_unclosed_openers_do_not_rescan_the_file(opener: bytes) -> None:
-    """10^4 openers with no closer: a closer search per opener would take seconds."""
-    import time
-
+    """10^4 openers with no closer: a closer search per opener would take seconds.
+    The budget is CPU time (M11-19, see `cpu_clock`)."""
     data = b"\nX = {\n" + opener * 10_000 + b"{ { } }\n"
-    started = time.perf_counter()
+    clock, name = cpu_clock()
+    started = clock()
     depth, _positional = lab_capture.table_shape(data)
-    assert time.perf_counter() - started < 1.0
+    elapsed = clock() - started
+    assert elapsed < 1.0, f"{elapsed:.2f} {name} s for {len(data)} bytes"
     assert depth == 1  # the first unclosed opener runs to the end, as in Lua
 
 

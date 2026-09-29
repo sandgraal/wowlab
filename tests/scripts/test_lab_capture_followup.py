@@ -8,7 +8,7 @@ install (ADR-0012).
 from __future__ import annotations
 
 import pytest
-from test_lab_capture import MAIN, REALM, lab_capture
+from test_lab_capture import MAIN, REALM, cpu_clock, lab_capture
 
 Identity = lab_capture.Identity
 
@@ -129,16 +129,16 @@ def test_constructed_unexplained_word_note_is_counted_per_pseudonym_and_read_onc
 
 
 def test_constructed_one_line_of_many_own_realms_stays_fast() -> None:
-    """A serialized blob puts thousands of realm keys on one line: the line is read once."""
-    import time
-
+    """A serialized blob puts thousands of realm keys on one line: the line is read once.
+    The budget is CPU time (M11-19, see `cpu_clock`)."""
     identity = Identity(characters=[MAIN], realms=[REALM])
     data = b'blob = "' + b'["Area52"]=1,' * 20_000 + b'"\n'
-    started = time.perf_counter()
+    clock, name = cpu_clock()
+    started = clock()
     result = identity.scrub(data)
-    elapsed = time.perf_counter() - started
+    elapsed = clock() - started
     assert not result.problems and not [n for n in result.notes if n.startswith(UNEXPLAINED)]
-    assert elapsed < 5, f"{elapsed:.1f} s"
+    assert elapsed < 5, f"{elapsed:.1f} {name} s"
 
 
 # ─── R4. more social slash commands ──────────────────────────────────────────
@@ -179,16 +179,17 @@ def test_constructed_unit_tokens_and_lookalike_commands_still_produce_no_note() 
 
 @pytest.mark.parametrize("newline", [b"\n", b"\r", b"\r\n"])
 def test_constructed_many_short_lines_scrub_in_linear_time(newline: bytes) -> None:
-    """Finding 1: reading a realm's line must not scan back to byte 0 (LF-only or CR-only files)."""
-    import time
-
+    """Finding 1: reading a realm's line must not scan back to byte 0 (LF-only or CR-only files).
+    The budget is CPU time (M11-19, see `cpu_clock`)."""
     line = b"Area52" + newline
     data = line * (400_000 // len(line))
-    started = time.perf_counter()
+    clock, name = cpu_clock()
+    started = clock()
     result = Identity(characters=[MAIN], realms=[REALM]).scrub(data)
-    elapsed = time.perf_counter() - started
+    elapsed = clock() - started
     assert not result.problems and not result.notes
-    assert elapsed < 5, f"{elapsed:.1f} s for {len(data)} bytes"  # measured 0.6 s; was 13.6 s
+    # measured 0.6 s wall clock; was 13.6 s
+    assert elapsed < 5, f"{elapsed:.1f} {name} s for {len(data)} bytes"
 
 
 @pytest.mark.parametrize(

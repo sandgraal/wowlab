@@ -14,6 +14,8 @@ import importlib.util
 import os
 import re
 import sys
+import time
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 
@@ -32,6 +34,36 @@ def _load() -> ModuleType:
 
 
 lab_capture = _load()
+
+
+# ─── timing budgets (M11-19) ─────────────────────────────────────────────────
+
+
+def cpu_clock() -> tuple[Callable[[], float], str]:
+    """The clock for a CPU-bound timing budget in these suites, and its name.
+
+    What is measured, and why (M11-19, 2026-09-28): `time.process_time()`,
+    the CPU time (user plus system, every thread) of the test process, read
+    around the scrub or scan alone. Those scans compute over bytes already in
+    memory, so on an idle machine CPU time and wall clock agree. Under load,
+    wall clock also counts the time the scan waits for a core. That says
+    nothing about the scan, and it made the long-separator budget fail on busy
+    review runs while it passed alone. M11-16T moved the M10-04 probes to CPU
+    time for the same reason. A slower scan still fails, because more work
+    uses more CPU. CPU time also rises somewhat under load (a slower core, a
+    lower clock), so under load a budget can only overstate a scan, never
+    flatter it. The blind spot is a scan that waits (sleep, blocking I/O)
+    rather than computes; these scans do no I/O, except that followup6's
+    `_process` writes and reads its log in `tmp_path`, which is counted as
+    system time. Where the platform has no process clock, the clock is wall
+    clock (`time.perf_counter()`), and the name says so in the failure message.
+    """
+    try:
+        time.get_clock_info("process_time")
+    except (AttributeError, ValueError, OSError):
+        return time.perf_counter, "wall-clock"
+    return time.process_time, "CPU"
+
 
 # ─── the synthetic install ───────────────────────────────────────────────────
 
