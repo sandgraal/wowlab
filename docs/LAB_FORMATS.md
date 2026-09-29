@@ -575,3 +575,13 @@ Dated entries, newest last. Each names the fixture that prompted it.
   fixture): on 70009 both characters' `<digits>/<First>-<Second>/` folders
   hold an `AddOns.txt` (371 bytes, `WowLab: enabled`) as well as the
   `<Realm>/<First>/` twin (`docs/LAB_FILE_MAP.md`, amended the same day).
+
+  Follow-up, 2026-09-29 (M11-22; `docs/LAB_PLAN.md` §13.1 amended the same
+  day). The addon now writes three keys the fixtures above predate, so a
+  later capture answers what these could not: `events_unregistered` on a
+  never-gathered section's absent record too (the barber-shop events); a
+  currencies `rows` count from `GetCurrencyListSize`; and in `talents.class`
+  a `last_selected_config_absent` reason (`"the client returned no saved
+  loadout"` for nil, others for an error or a non-number) and an
+  `export_absent` reason whenever `export` is missing. Schema stays 1; each
+  key is optional to the reader.

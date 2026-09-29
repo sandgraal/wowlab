@@ -223,9 +223,6 @@ local function gather(section, event)
     elseif type(record) ~= "table" then
         record = ns.Absent("the section gathered nothing")
     end
-    if section.events_unregistered then
-        record.events_unregistered = section.events_unregistered
-    end
     ns.state[section.key] = record
     section.dirty = false
 end
@@ -415,6 +412,15 @@ function ns.Write()
             record = ns.Absent(SWITCHED_OFF)
         else
             record = ns.state[section.key] or ns.Absent(section.not_gathered or "not gathered this session")
+            -- The events the client refused, on every record written for a
+            -- section that registered them this session: gathered, carried
+            -- (customization) or never gathered (its not_gathered reason), so
+            -- one login answers whether an event such as BARBER_SHOP_OPEN
+            -- exists even when the section never runs (M11-22). A
+            -- switched-off section keeps the plain owner reason.
+            if section.events_unregistered then
+                record.events_unregistered = section.events_unregistered
+            end
         end
         place(db, section.path, record)
     end

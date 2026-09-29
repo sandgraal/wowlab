@@ -3,7 +3,8 @@
 -- them. Weekly values follow the region's reset (docs/GLOSSARY.md). The list
 -- is the currency panel's, read through its collapsed headers and filter,
 -- which the addon never changes: currencies under a collapsed header are
--- missing, and the record counts the collapsed headers it saw. Every API here
+-- missing, and the record counts the collapsed headers it saw and the rows
+-- the panel gave (`rows`, headers included). Every API here
 -- is [verify] for M11-03 (present on 69893 per forever-addon-kit's API
 -- baseline). Currency names are not recorded.
 
@@ -82,7 +83,10 @@ ns.Section({
         for _, id in ipairs(ids) do
             list[#list + 1] = describe(id, getInfo, accountWide)
         end
-        local record = { list = list, filtered = true, headers_collapsed = collapsed }
+        -- rows: the count GetCurrencyListSize gave (headers included), so an
+        -- empty panel (0) can be told from rows whose id could not be read;
+        -- missing when that call failed or returned no number (M11-22).
+        local record = { list = list, filtered = true, headers_collapsed = collapsed, rows = ns.Number(rows) }
         local filter = ns.Fn(C_CurrencyInfo, "GetCurrencyFilter")
         if filter then
             record.filter = ns.Number(ns.Call(filter))

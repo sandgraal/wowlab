@@ -44,7 +44,7 @@ WowLabCharDB = {
   gear = { first_slot, last_slot, slots = { { slot, link, crafter_removed, item_level, item_level_api } },
           average = { overall (best items owned, bags included), equipped (the character-sheet figure), pvp } },
   talents = {
-    class = { config = <config>, export, last_selected_config | last_selected_config_absent },
+    class = { config = <config>, export | export_absent, last_selected_config | last_selected_config_absent },
     legacy = { legacy_ui, player_level, skipped_types, configs = { <config + found_by> } },
   },
   customization = { as_of, recorded_at = "open"|"applied", recorded_load, carried = true?, choices = {…}, race_id, sex, chr_model_id }, -- kept across sessions until the next visit
@@ -54,7 +54,7 @@ WowLabCharDB = {
     pets = { species = { { species, count } }, filtered = true, default_filters },
     appearances = { absent = "not gathered: …" },  -- always absent (M11-20)
   },
-  currencies = { list = { { id, quantity, max_quantity, max_weekly_quantity, earned_this_week, can_earn_per_week, total_earned, use_total_earned_for_max, account_wide } }, filtered = true, headers_collapsed, filter },
+  currencies = { list = { { id, quantity, max_quantity, max_weekly_quantity, earned_this_week, can_earn_per_week, total_earned, use_total_earned_for_max, account_wide } }, filtered = true, headers_collapsed, rows, filter },
   professions = { list = { { position, skill_line, rank, max_rank, modifier } } },
 }
 <config> = { id, type, trees = { { id, system_id, currencies = { { id, quantity, max_quantity, spent } }, nodes = { { id, ranks_purchased, active_rank, current_rank, max_ranks, is_visible, entries, sub_tree, active_entry, active_entry_rank } } } } }
@@ -73,6 +73,19 @@ Notes on the fields:
   (`GetTreeCurrencyInfo(config, tree, true)`). `last_selected_config` is kept
   raw and may be a negative sentinel (for example a starter build) rather
   than a config id.
+- `talents.class` holds exactly one of `export` and `export_absent`, and
+  exactly one of `last_selected_config` and `last_selected_config_absent`
+  (M11-22). `last_selected_config_absent` is
+  `"the client returned no saved loadout"` when
+  `GetLastSelectedSavedConfigID` returned nil; the other reasons say the
+  function is missing, there was no spec id to ask with, the call raised an
+  error, or it returned no number. `export_absent` says
+  `GenerateImportString` is missing, raised an error or returned no string.
+  Both calls go through `pcall` directly, so an error is not taken for nil.
+- `currencies`: `rows` is the count `GetCurrencyListSize` gave (headers
+  included), so an empty panel (`rows = 0`, empty `list`) can be told from
+  rows whose id could not be read; it is missing only when that call raised
+  an error or returned no number (M11-22).
 - `talents.legacy` holds every trait config the client lists that is neither
   the active class config nor of type Combat or Profession, each with
   `found_by`; which of them is the Legacy system is decided from the M11-03
@@ -101,9 +114,15 @@ Notes on the fields:
   for that load only; a later load that finds the probe clears it. A first
   load and a file that failed to load both show `loads = 1`.
 
-Any section may instead be `{ absent = "<reason>" }`, and carry
-`events_unregistered = { ... }` when the client did not know one of its
-change events. Schema 1 may change after M11-03; after M11-04 merges, any
+Any section may instead be `{ absent = "<reason>" }`. A section that
+registered its change events this session carries
+`events_unregistered = { ... }` when the client did not know one of them, on
+whatever record is written for it: gathered, carried (customization), or the
+never-gathered `not_gathered` absent record, so one login shows whether
+`BARBER_SHOP_OPEN` exists even when the barber shop never opens (M11-22). A
+switched-off section registers no event and keeps its plain
+`"switched off by the owner"` reason; `collections.appearances` has no
+events. Schema 1 may change after M11-03; after M11-04 merges, any
 change is schema 2.
 
 ### Switching a section off
@@ -312,20 +331,24 @@ Items:
 1. `C_SpecializationInfo.GetSpecialization` / `.GetSpecializationInfo`: what
    they return on Forever (index, id; paladin = 1486 per the kit).
 2. Loadouts: `last_selected_config` (a config id, a negative sentinel or
-   absent), `C_Traits.GenerateImportString` output, and whether any node has
-   a `sub_tree`.
+   absent; since M11-22 an absent one carries `last_selected_config_absent`
+   with the reason), `C_Traits.GenerateImportString` output (or
+   `export_absent`), and whether any node has a `sub_tree`.
 3. Which `found_by` entry finds the Legacy config in `talents.legacy`. If
    `configs` is empty at level 25 or above with `legacy_ui = true`, add the
    kit's numeric system-ID probe (`GetConfigIDBySystemID` over 1–120).
 4. Whether `GetTreeCurrencyInfo` carries the Legacy points spent and the
    seasonal cap.
 5. `events_unregistered` on every section: which events Forever does not
-   know. `events_unregistered` shows only events the client refused; it does
+   know. Since M11-22 a never-gathered section carries it too, so a login
+   without a barber-shop visit settles `BARBER_SHOP_OPEN` and
+   `BARBER_SHOP_APPEARANCE_APPLIED` being known. `events_unregistered` shows only events the client refused; it does
    not prove that an accepted event ever fires.
 6. Empty lists from the pet journal or toy box (journal
    not initialized, or filters hiding rows) versus real contents.
 7. Currencies: whether `GetCurrencyInfo` has `isAccountWide`, or the
-   `IsAccountWideCurrency` fallback was used; `headers_collapsed`.
+   `IsAccountWideCurrency` fallback was used; `headers_collapsed`; `rows`
+   (M11-22) against the length of `list`.
 8. `GetProfessionInfo` on Forever's 1–300 skill model: rank and maximum per
    tier or overall.
 9. `probe.loads` rising across the two logins, and `probe.lost` absent.

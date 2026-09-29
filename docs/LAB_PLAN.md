@@ -1425,6 +1425,31 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   `C_BarberShop.GetCurrentCharacterData()` returns are never stored
   **[verify]**.
 
+  Amended 2026-09-29 (M11-22, from the M11-03 domain review): three places
+  where a capture could not tell "the client returned nothing" from "the
+  call failed" or "never ran". (1) A section that registered its events
+  this session carries `events_unregistered = { ... }` (the change events
+  the client refused) on whatever record is written for it: a gathered
+  record, a carried customization record, and the never-gathered
+  `{ absent = "<not_gathered reason>" }`. So one login answers whether
+  `BARBER_SHOP_OPEN` exists on the client even when the barber shop never
+  opens. A switched-off section registers no event and keeps
+  `{ absent = "switched off by the owner" }` alone; `collections.appearances`
+  has no events, so its reason gets nothing added. (2) `currencies` records
+  `rows`, the count `GetCurrencyListSize` gave (headers included), beside
+  `list`, so an empty panel (0) can be told from rows whose id could not be
+  read; `rows` is missing only when that call raised an error or returned
+  no number. (3) `talents.class` writes exactly one of `export` and
+  `export_absent` (the function missing, raised an error, or returned no
+  string), and exactly one of `last_selected_config` and
+  `last_selected_config_absent`: `"the client returned no saved loadout"`
+  when the call returned nil, with separate reasons when the function is
+  missing, there is no spec id to ask with, the call raised an error, or it
+  returned something other than a number. Both calls go through `pcall`
+  directly, not `ns.Call`, so an error is told apart from nil. The keys are
+  additive: the schema stays 1, and the reader treats each as optional
+  (the M11-03 fixtures predate them).
+
   Schema 1 may change after M11-03. Edits from the capture land before
   M11-04 starts; after M11-04 merges, any change is schema 2.
 - **Install** `wowlab addon install lab` / `wowlab addon remove lab`: copies
