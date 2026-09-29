@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from _cpu_clock import cpu_clock
 
 from wowlab_core.toc import (
     Blank,
@@ -244,9 +245,10 @@ def test_read_toc_refuses_an_oversized_file_constructed(tmp_path: Path) -> None:
     ],
 )
 def test_hostile_lines_parse_in_linear_time_constructed(line: bytes) -> None:
-    import time
-
-    start = time.perf_counter()
+    """Timed by CPU time, not wall clock (M11-26): see `_cpu_clock`."""
+    clock, name = cpu_clock()
+    start = clock()
     doc = parse_toc(line + b"\n")
-    assert time.perf_counter() - start < 1.0
+    elapsed = clock() - start
+    assert elapsed < 1.0, f"{elapsed:.2f} {name} s for a {len(line)}-byte line"
     assert doc.to_bytes() == line + b"\n"

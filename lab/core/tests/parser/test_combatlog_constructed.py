@@ -13,9 +13,8 @@ and the distinct shapes that are yielded as `Unparsed`.
 
 from __future__ import annotations
 
-import time
-
 import pytest
+from _cpu_clock import cpu_clock
 
 from wowlab_core import combatlog
 from wowlab_core.combatlog import (
@@ -425,11 +424,12 @@ def test_an_overlong_line_with_no_break_at_the_end_constructed() -> None:
 def test_an_unclosed_quote_over_a_megabyte_is_refused_in_linear_time_constructed() -> None:
     head = f'{TS}  EVENT,"'
     line = head + ",a" * ((MAX_LINE_BYTES - len(head)) // 2)
-    started = time.perf_counter()
+    clock, name = cpu_clock()  # CPU time, not wall clock (M11-26): see `_cpu_clock`
+    started = clock()
     entry = tokenize_line(line)
-    elapsed = time.perf_counter() - started
+    elapsed = clock() - started
     assert isinstance(entry, Unparsed) and entry.reason == "a quoted string is not closed"
-    assert elapsed < 1.0, f"{elapsed:.2f}s for a {len(line)}-byte line"
+    assert elapsed < 1.0, f"{elapsed:.2f} {name} s for a {len(line)}-byte line"
     closed = tokenize_line(head + 'x"' + ",a" * ((MAX_LINE_BYTES - len(head)) // 2))
     assert isinstance(closed, Record)
 
