@@ -25,6 +25,7 @@ by a `create` that has not yet written its manifest is not collected.
 from __future__ import annotations
 
 import contextlib
+import errno
 import hashlib
 import json
 import os
@@ -720,6 +721,9 @@ class SnapshotStore:
 
     Reading methods never create the store. `create` makes the directories it
     needs on first use.
+
+    One instance is not safe to share across threads during `create`: it
+    holds per-call directory descriptors (`_held`) for the call's length.
     """
 
     def __init__(self, path: Path | None = None) -> None:
@@ -1299,9 +1303,13 @@ class SnapshotStore:
     ) -> int | None:
         """The descriptor for one component: a held one when its path still
         names that directory by `lstat` (the root: by `stat`, as it is opened
-        as named), else a fresh one, held when `create` holds descriptors and
-        otherwise added to `opened` for the caller to close."""
-        held = self._held
+        as named), else a fresh one. Only the root and the fixed directories
+        right below it (`objects/`, `manifests/`, `tmp/`) are ever held, and
+        only while `create` holds descriptors: at most four. An object shard
+        is always opened afresh and added to `opened` for the caller to close
+        (fix round 2: holding all 256 shards ran out of descriptors under
+        macOS's default soft limit of 256)."""
+        held = self._held if len(key) <= 1 else None
         if held is not None and key in held:
             fd, st = held.pop(key)
             if self._still_there(key, parent_fd, st):
@@ -1352,9 +1360,11 @@ class SnapshotStore:
 
     @contextlib.contextmanager
     def _holding_dirs(self) -> Iterator[None]:
-        """Hold the store's directory descriptors for the length of one
-        `create` instead of opening each chain per object (M11-18, fix round
-        1: that cost about 1.7 times the time of a `create`). A held one is
+        """Hold the store root, `objects/`, `manifests/` and `tmp/` open for
+        the length of one `create` instead of opening each chain per object
+        (M11-18, fix round 1: that cost about 1.7 times the time of a
+        `create`); object shards are opened per use (see `_held_or_open`), so
+        at most four descriptors are held. A held one is
         re-checked against its path by `lstat` through its parent's
         descriptor on every use; one that no longer matches is closed and
         opened afresh, which refuses a link. All are closed on the way out."""
@@ -1390,8 +1400,12 @@ class SnapshotStore:
             raise _linked_store_dir(path)
         try:
             fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | _O_NOFOLLOW, dir_fd=parent_fd)
-        except OSError as exc:  # swapped for a link or a file since the lstat
-            raise _linked_store_dir(path) from exc
+        except OSError as exc:
+            if exc.errno in (errno.ELOOP, errno.ENOTDIR):  # a link or file swapped in
+                raise _linked_store_dir(path) from exc
+            # EMFILE, EACCES, ...: a real directory that cannot be opened now.
+            # It is not a link, so there is no advice to move it aside.
+            raise SnapshotError(f"cannot open {path}: {exc.strerror}") from exc
         if _file_identity(os.fstat(fd)) != _file_identity(st):
             os.close(fd)
             raise _linked_store_dir(path)

@@ -792,11 +792,15 @@ checked again just before the rename. A shard that is a link refuses the
 `create` when it is reached; the reuse check never reuses an object through
 one (the object must be the entry of the checked shard). The store root is
 opened as named, so a store below a linked directory still works. `set_label`
-writes its manifest the same way. *2026-09-29 (M11-18 fix round 1):* one
-`create` holds these directory descriptors for its whole run instead of
-opening them per object, and re-checks each against its path by `lstat`
-through its parent's descriptor on every use (one that no longer matches is
-reopened, which refuses a link). What can still end up outside the store on
+writes its manifest the same way. *2026-09-29 (M11-18 fix rounds 1 and 2):*
+one `create` holds the store root, `objects/`, `manifests/` and `tmp/` open for
+its whole run, at most four descriptors, and re-checks each against its path
+by `lstat` through its parent's descriptor on every use (one that no longer
+matches is reopened, which refuses a link). Object shards are opened per use
+and closed after it: holding all 256 would exhaust macOS's default soft limit
+of 256 descriptors. A directory that cannot be opened for any reason other
+than being a link or not a directory (`EMFILE`, `EACCES`) is reported as
+"cannot open", never as a link to move aside. What can still end up outside the store on
 Windows, where there are no directory descriptors, if a directory is swapped
 for a link after its last check: an empty two-hex shard directory (made by
 the `mkdir` through a swapped `objects/`), a staged temp file (removed when

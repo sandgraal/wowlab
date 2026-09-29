@@ -471,6 +471,65 @@ def test_constructed_lstat_path_shard_swapped_after_its_check_is_refused_at_the_
     assert _tree(outside) == [], "nothing was written behind the link"
 
 
+def _two_in_one_shard() -> tuple[bytes, bytes]:
+    """Two constructed contents whose objects share a shard (first two hex digits)."""
+    first = b"constructed first\n"
+    shard = hashlib.sha256(first).hexdigest()[:2]
+    for i in range(100_000):
+        second = f"constructed second {i}\n".encode()
+        if hashlib.sha256(second).hexdigest()[:2] == shard:
+            return first, second
+    raise AssertionError("no second content in the same shard")
+
+
+@posix_symlinks
+@pytest.mark.parametrize(
+    "which",
+    [
+        pytest.param("objects", id="constructed-objects"),
+        pytest.param("shard", id="constructed-shard"),
+    ],
+)
+def test_constructed_directory_swapped_between_two_objects_for_a_link_to_itself_is_refused(
+    which: str, store: SnapshotStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two objects in one shard. Right after the first is moved into place,
+    `objects/` (held for the whole `create`) or the shard (opened per use) is
+    renamed away and a link to that moved-away directory put in its place:
+    the same directory, reached through a link. The next use checks by
+    `lstat`, which sees the link, and `create` refuses; the link target holds
+    the first object only. A check that followed the link would find the very
+    directory it holds and pass, so for `objects/` this pins `_still_there`'s
+    `follow_symlinks=False`."""
+    _needs_dir_fds()
+    first, second = _two_in_one_shard()
+    root = tmp_path / "Install"
+    (root / "WTF").mkdir(parents=True)
+    (root / "WTF" / "a.wtf").write_bytes(first)
+    (root / "WTF" / "b.wtf").write_bytes(second)
+    digest = hashlib.sha256(first).hexdigest()
+    moved = tmp_path / "moved"
+    where = store.objects_dir if which == "objects" else store.objects_dir / digest[:2]
+    real_replace = os.replace
+    swapped: list[str] = []
+
+    def replace_then_swap(src: Any, dst: Any, *args: Any, **kwargs: Any) -> None:
+        real_replace(src, dst, *args, **kwargs)
+        if not swapped and Path(os.fspath(dst)).name == digest[2:]:
+            swapped.append(which)
+            where.rename(moved)
+            where.symlink_to(moved, target_is_directory=True)
+
+    monkeypatch.setattr(os, "replace", replace_then_swap)
+    with pytest.raises(SnapshotError, match=REFUSAL):
+        store.create(root, ["WTF"], now=T0)
+    monkeypatch.undo()
+    assert swapped, "the first object was moved into place"
+    held = _tree(moved)
+    expected = [digest[:2], f"{digest[:2]}/{digest[2:]}"] if which == "objects" else [digest[2:]]
+    assert held == expected, f"only the first object is behind the link: {held}"
+
+
 # ─── what still works ────────────────────────────────────────────────────────
 
 
