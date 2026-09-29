@@ -220,8 +220,14 @@ def test_gear_slots_are_keyed_by_slot_not_position() -> None:
     assert 18 not in [s.slot for s in second.slots]
     assert first.slots[0].slot == 5  # position 0 holds slot 5
     text = _text(FIRST)
-    assert "slot 18: item 5071 [Shadow Wand], item level 14" in text
-    assert "slot  5: item 9749 [Simple Blouse of the Owl], item level 15" in text
+    assert (
+        "  slot 18: Shadow Wand (item 5071; full link in --json), item level 14 "
+        "(C_Item.GetCurrentItemLevel)" in text
+    )
+    assert (
+        "  slot 5: Simple Blouse of the Owl (item 9749; full link in --json), item level 15 "
+        "(C_Item.GetCurrentItemLevel)" in text
+    )
     assert "slots 1 to 19 as the client numbers them, 9 filled" in text
 
 
@@ -229,8 +235,15 @@ def test_gear_slots_are_keyed_by_slot_not_position() -> None:
 def test_equipped_average_is_never_called_a_character_sheet_figure(name: str) -> None:
     text = _text(name)
     assert "sheet" not in text.casefold()
-    assert "as the client reports it" in text
-    assert "how the client computes it is not known" in text
+    average = {
+        FIRST: "  GetAverageItemLevel: equipped 3.3125, overall 3.3125 (best owned, bags included; "
+        "Retail meaning, from memory), pvp 3.3125, as the client returns them; not the mean of "
+        "the item levels above, and how the client computes them is not known",
+        SECOND: "  GetAverageItemLevel: equipped 2.375, overall 2.375 (best owned, bags included; "
+        "Retail meaning, from memory), pvp 2.375, as the client returns them; not the mean of "
+        "the item levels above, and how the client computes them is not known",
+    }
+    assert average[name] in text.splitlines()
 
 
 def test_equipped_average_keeps_the_float() -> None:
@@ -250,7 +263,10 @@ def test_professions_are_named_by_skill_line(name: str) -> None:
     start = lines.index("Professions (by skill line)")
     shown = lines[start + 1 : start + 1 + len(raw)]
     for entry, line in zip(raw, shown, strict=True):
-        assert line.startswith(f"  skill line {entry['skill_line']}: rank {entry['rank']} of ")
+        assert line == (
+            f"  skill line {entry['skill_line']}: skill {entry['rank']} of {entry['max_rank']} "
+            f"(the current cap), modifier {entry['modifier']}"
+        )
     joined = "\n".join(shown).casefold()
     for word in ("position", "primary", "secondary", "archaeology", "fishing", "cooking"):
         assert word not in joined
@@ -263,8 +279,10 @@ def test_professions_are_named_by_skill_line(name: str) -> None:
 def test_empty_currencies_and_collections_read_none_recorded(name: str) -> None:
     text = _text(name)
     assert (
-        "Currencies: none recorded (read through the currency panel: filter 1, "
-        "0 collapsed headers)" in text
+        "Currencies: none recorded (read through the currency panel: filter value 1 (the "
+        "client's raw value; meaning not known), 0 collapsed headers; the file does not say "
+        "how many rows the panel listed, so an empty list may also mean rows the addon could "
+        "not read)" in text
     )
     assert "Mounts: none recorded (the journal read unfiltered)" in text
     assert (
@@ -285,3 +303,44 @@ def test_capture_has_no_skip_list(name: str) -> None:
     assert char.skip is None
     assert labaddon.skip_known(char) == ([], [])
     assert "Switched off by the owner (skip): none recorded" in _text(name)
+
+
+# ─── fix round 1 wordings, on the capture ────────────────────────────────────
+
+CLASS_TREE = {
+    FIRST: "  tree 1116 (system 10): 52 nodes, 4 ranks active; trait currency 3820: 4 spent, "
+    "0 unspent, max_quantity 4",
+    SECOND: "  tree 1112 (system 10): 54 nodes, 1 rank active; trait currency 3820: 1 spent, "
+    "0 unspent, max_quantity 1",
+}
+
+
+@pytest.mark.parametrize("name", CHARACTERS)
+def test_trait_currency_reads_max_quantity_with_the_note_once(name: str) -> None:
+    lines = _text(name).splitlines()
+    assert CLASS_TREE[name] in lines
+    note = (
+        "  max_quantity is the client's figure; for class talents it has matched the points "
+        "earned at the character's level (M11-03), not the tree's final cap."
+    )
+    assert lines.count(note) == 1
+    assert lines.index(note) == lines.index(CLASS_TREE[name]) + 1
+    assert "cap 0" not in _text(name) and ", cap " not in _text(name)
+
+
+@pytest.mark.parametrize("name", CHARACTERS)
+def test_probe_line_wording(name: str) -> None:
+    assert (
+        f"Probe: loads {LOADS[name]} (each login or /reload with the addon enabled adds 1 to "
+        "the value the file held)"
+    ) in _text(name).splitlines()
+
+
+@pytest.mark.parametrize("name", CHARACTERS)
+def test_legacy_currency_listed_on_three_trees_agrees_and_counts_once(name: str) -> None:
+    raw = _raw(name)["talents"]["legacy"]["configs"][0]["trees"]
+    ids = [c["id"] for t in raw if isinstance(t["currencies"], list) for c in t["currencies"]]
+    assert ids == [4225, 4225, 4225]  # one pool, reported under each tree that spends it
+    talents = _char(name).talents
+    assert talents is not None and isinstance(talents.legacy, labaddon.LegacyTalents)
+    assert "not added up" not in labaddon.legacy_headline(talents.legacy)

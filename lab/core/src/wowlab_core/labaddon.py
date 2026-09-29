@@ -151,19 +151,34 @@ def _empty_list(value: Any) -> Any:
 # A list the addon writes; an empty table read back as a dict is an empty list.
 Lst = Annotated[list[_T], BeforeValidator(_empty_list)]
 
-# A Lua number: every number is a double in Lua 5.1; `to_python` gives an
-# int for integer spelling and a float otherwise. Never a boolean or text.
-Number = int | float
+# Every integer the addon can write is a Lua 5.1 double holding a whole
+# number, exact up to 2**53. A larger one (a hand-edited file) is refused, so
+# no later step formats a number past CPython's 4300-digit limit.
+INT_BOUND = 2**53
+Int = Annotated[int, Field(ge=-INT_BOUND, le=INT_BOUND)]
 
-Reason = Annotated[str, StringConstraints(min_length=1, max_length=1024)]
+# A Lua number: every number is a double in Lua 5.1; `to_python` gives an
+# int for integer spelling and a float otherwise. Never a boolean or text,
+# never infinite or NaN.
+Number = Int | Annotated[float, Field(allow_inf_nan=False)]
+
+# Every reason the addon writes is ASCII: printable ASCII only.
+Reason = Annotated[str, StringConstraints(pattern=r"^[\x20-\x7e]{1,1024}$")]
+# The item name inside a link: no control, format (Cf) or line/paragraph
+# separator (Zl, Zp) characters, and no "]".
 ItemLink = Annotated[
     str,
     StringConstraints(
         max_length=1024,
-        pattern=r"^\|c[0-9A-Za-z:]{1,16}\|Hitem:[0-9:\-]*\|h\[[^\x00-\x1f\x7f\]]*\]\|h\|r$",
+        pattern=(
+            r"^\|c[0-9A-Za-z:]{1,16}\|Hitem:[0-9:\-]*"
+            r"\|h\[[^\x00-\x1f\x7f-\x9f\]\p{Cf}\p{Zl}\p{Zp}]*\]\|h\|r$"
+        ),
     ),
 ]
-TalentExport = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9+/=]{1,4096}$")]
+# The export string; "" is what an addon from before M11-22 wrote when the
+# client returned an empty string, read as no export (never refused).
+TalentExport = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9+/=]{0,4096}$")]
 EventName = Annotated[str, StringConstraints(pattern=r"^[A-Z][A-Z0-9_]{0,127}$")]
 FoundBy = Annotated[str, StringConstraints(pattern=r"^(type|system):[A-Za-z0-9_.]{1,128}$")]
 SkipKey = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_.]{0,63}$")]
@@ -171,7 +186,13 @@ ClientVersion = Annotated[str, StringConstraints(pattern=r"^[0-9]{1,6}(\.[0-9]{1
 ClientBuild = Annotated[str, StringConstraints(pattern=r"^[0-9]{1,10}$")]
 
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
-_NESTED_NAME = re.compile(r"[A-Za-z0-9_]{1,64}")
+# Keys inside an unknown key's tables: a plain name, or an integer as JSON
+# writes it (`-1` becomes "-1"), so the `--json` output validates again.
+_NESTED_NAME = re.compile(r"[A-Za-z0-9_]{1,64}|-[0-9]{1,16}")
+
+
+def _in_bound(n: int) -> bool:
+    return -INT_BOUND <= n <= INT_BOUND
 
 
 def _key_words(key: object) -> str:
@@ -179,7 +200,7 @@ def _key_words(key: object) -> str:
     if isinstance(key, bool):
         return "a boolean key"
     if isinstance(key, int):
-        return f"the number key {key}"
+        return f"the number key {key}" if _in_bound(key) else "a number key out of range"
     if isinstance(key, float):
         return "a number key"
     if isinstance(key, str):
@@ -189,7 +210,11 @@ def _key_words(key: object) -> str:
 
 def _check_unknown(path: str, value: object) -> None:
     """An unknown key's value may hold numbers, booleans and tables of them."""
-    if value is None or isinstance(value, bool | int | float):
+    if value is None or isinstance(value, bool | float):
+        return
+    if isinstance(value, int):
+        if not _in_bound(value):
+            raise ValueError(f"the unknown key {path} holds a number out of range")
         return
     if isinstance(value, str):
         raise ValueError(
@@ -203,7 +228,8 @@ def _check_unknown(path: str, value: object) -> None:
     if isinstance(value, dict):
         for key, item in value.items():
             if isinstance(key, bool) or not (
-                isinstance(key, int) or (isinstance(key, str) and _NESTED_NAME.fullmatch(key))
+                (isinstance(key, int) and _in_bound(key))
+                or (isinstance(key, str) and _NESTED_NAME.fullmatch(key))
             ):
                 raise ValueError(f"the unknown key {path} holds {_key_words(key)}")
             _check_unknown(f"{path}.{key}", item)
@@ -218,7 +244,7 @@ class _Record(BaseModel):
         strict=True,
         extra="allow",
         frozen=True,
-        validate_by_name=True,
+        validate_by_name=False,
         validate_by_alias=True,
         serialize_by_alias=True,
     )
@@ -228,11 +254,9 @@ class _Record(BaseModel):
     def _keys(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
-        known: set[str] = set()
-        for name, field in cls.model_fields.items():
-            known.add(name)
-            if field.alias:
-                known.add(field.alias)
+        # Only the name the addon writes: a Python-side name (`schema_`,
+        # `list_`, `class_`) in the file is an unknown key, checked as one.
+        known = {field.alias or name for name, field in cls.model_fields.items()}
         for key, value in data.items():
             if not isinstance(key, str) or not _NAME.fullmatch(key):
                 raise ValueError(f"the table holds {_key_words(key)}")
@@ -256,9 +280,10 @@ class AbsentRecord(_Absent):
 
 
 class AbsentSection(_Absent):
-    """A whole section absent with the addon's reason. `events_unregistered`:
-    the change events the client did not know, when the addon attached them
-    (a gather that failed, or since M11-22 a section never gathered)."""
+    """A whole section absent with the addon's reason. `events_unregistered`
+    (M11-22): the change events the client did not know, empty when all
+    registered; missing on a switched-off section and in files from before
+    M11-22."""
 
     events_unregistered: Lst[EventName] | None = None
 
@@ -266,13 +291,13 @@ class AbsentSection(_Absent):
 class AbsentConfig(_Absent):
     """One trait config `C_Traits.GetConfigInfo` returned nothing for."""
 
-    id: int | None = None
+    id: Int | None = None
 
 
 class AbsentCurrency(_Absent):
     """One currency `C_CurrencyInfo.GetCurrencyInfo` returned nothing for."""
 
-    id: int | None = None
+    id: Int | None = None
 
 
 _P = "<present>"
@@ -303,14 +328,14 @@ class Client(_Record):
 
     version: ClientVersion | None = None
     build: ClientBuild | None = None
-    interface: int | None = None
+    interface: Int | None = None
 
 
 class Probe(_Record):
     """`probe`: the addon's load counter (§13.1). `lost`: this load found a
     `WowLabCharDB` without a probe."""
 
-    loads: int
+    loads: Int
     lost: bool | None = None
 
 
@@ -321,10 +346,10 @@ class GearSlot(_Record):
     """One filled slot, identified by `slot` (the list is dense, the slot
     numbers sparse)."""
 
-    slot: int
+    slot: Int
     link: ItemLink
     crafter_removed: bool
-    item_level: int | None = None
+    item_level: Int | None = None
     item_level_api: (
         Literal["C_Item.GetCurrentItemLevel", "C_Item.GetDetailedItemLevelInfo"] | None
     ) = None
@@ -339,12 +364,10 @@ class GearAverage(_Record):
 
 
 class Gear(_Section):
-    first_slot: int | None = None
-    last_slot: int | None = None
+    first_slot: Int
+    last_slot: Int
     slots: Lst[GearSlot]
-    average: (
-        Annotated[Annotated[GearAverage, Tag(_P)] | Annotated[AbsentRecord, Tag(_A)], _SPLIT] | None
-    ) = None
+    average: Annotated[Annotated[GearAverage, Tag(_P)] | Annotated[AbsentRecord, Tag(_A)], _SPLIT]
 
 
 # ─── spec ────────────────────────────────────────────────────────────────────
@@ -354,34 +377,36 @@ class Spec(_Section):
     """The spec as the client exposes it, found by testing for the API."""
 
     api: Literal["C_SpecializationInfo", "GetSpecialization"]
-    index: int | None = None
-    id: int | None = None
+    index: Int | None = None
+    id: Int | None = None
 
 
 # ─── talents ─────────────────────────────────────────────────────────────────
 
 
 class TraitCurrency(_Record):
-    """`C_Traits.GetTreeCurrencyInfo`, one currency: `quantity` unspent,
-    `spent`, `max_quantity` the cap, raw."""
+    """`C_Traits.GetTreeCurrencyInfo`, one currency, raw: `quantity` unspent,
+    `spent`, and `max_quantity` the client's figure (for class talents it
+    matched the points earned at the character's level in M11-03, not the
+    tree's final cap)."""
 
-    id: int | None = None
-    quantity: int | None = None
-    max_quantity: int | None = None
-    spent: int | None = None
+    id: Int | None = None
+    quantity: Int | None = None
+    max_quantity: Int | None = None
+    spent: Int | None = None
 
 
 class TraitNode(_Record):
-    id: int
-    ranks_purchased: int | None = None
-    active_rank: int | None = None
-    current_rank: int | None = None
-    max_ranks: int | None = None
+    id: Int
+    ranks_purchased: Int | None = None
+    active_rank: Int | None = None
+    current_rank: Int | None = None
+    max_ranks: Int | None = None
     is_visible: bool | None = None
-    entries: Lst[int]
-    sub_tree: int | None = None
-    active_entry: int | None = None
-    active_entry_rank: int | None = None
+    entries: Lst[Int]
+    sub_tree: Int | None = None
+    active_entry: Int | None = None
+    active_entry_rank: Int | None = None
 
 
 TreeCurrencies = Annotated[
@@ -390,17 +415,17 @@ TreeCurrencies = Annotated[
 
 
 class TraitTree(_Record):
-    id: int
+    id: Int
     nodes: Lst[TraitNode]
-    system_id: int | None = None
+    system_id: Int | None = None
     currencies: TreeCurrencies
 
 
 class TraitConfig(_Record):
     """A `C_Traits` config dump; `type` is the raw client enum number."""
 
-    id: int
-    type: int | None = None
+    id: Int
+    type: Int | None = None
     trees: Lst[TraitTree]
 
 
@@ -411,7 +436,7 @@ class LegacyConfig(TraitConfig):
 
 
 class AbsentLegacyConfig(AbsentConfig):
-    found_by: Lst[FoundBy] | None = None
+    found_by: Lst[FoundBy]
 
 
 class ClassTalents(_Section):
@@ -422,13 +447,14 @@ class ClassTalents(_Section):
     config: Annotated[Annotated[TraitConfig, Tag(_P)] | Annotated[AbsentConfig, Tag(_A)], _SPLIT]
     export: TalentExport | None = None
     export_absent: Reason | None = None
-    last_selected_config: int | None = None
+    last_selected_config: Int | None = None
     last_selected_config_absent: Reason | None = None
 
     @model_validator(mode="after")
     def _one_of_each(self) -> Self:
         # The addon writes at most one of each value and its `_absent` reason
         # (exactly one since M11-22; neither in captures made before it).
+        # An empty `export` (before M11-22) counts as a value here.
         if self.export is not None and self.export_absent is not None:
             raise ValueError("both export and export_absent are set")
         if self.last_selected_config is not None and self.last_selected_config_absent is not None:
@@ -441,7 +467,7 @@ class LegacyTalents(_Section):
     config nor Combat nor Profession, each with `found_by`."""
 
     legacy_ui: bool
-    player_level: int | None = None
+    player_level: Int | None = None
     skipped_types: Lst[Literal["Invalid", "Combat", "Profession"]]
     configs: Lst[
         Annotated[Annotated[LegacyConfig, Tag(_P)] | Annotated[AbsentLegacyConfig, Tag(_A)], _SPLIT]
@@ -463,29 +489,29 @@ class Talents(_Record):
 
 
 class CustomizationChoice(_Record):
-    option: int
-    choice_index: int | None = None
-    choice: int | None = None
+    option: Int
+    choice_index: Int | None = None
+    choice: Int | None = None
 
 
 class Customization(_Section):
     """The last barber-shop record, carried from session to session."""
 
-    as_of: Literal["last barber-shop visit with the addon enabled"] | None = None
+    as_of: Literal["last barber-shop visit with the addon enabled"]
     recorded_at: Literal["open", "applied"] | None = None
-    recorded_load: int | None = None
+    recorded_load: Int | None = None
     carried: bool | None = None
     choices: Lst[CustomizationChoice]
-    race_id: int | None = None
-    sex: int | None = None
-    chr_model_id: int | None = None
+    race_id: Int | None = None
+    sex: Int | None = None
+    chr_model_id: Int | None = None
 
 
 # ─── collections ─────────────────────────────────────────────────────────────
 
 
 class Mounts(_Section):
-    collected: Lst[int]
+    collected: Lst[Int]
     filtered: bool
 
 
@@ -496,14 +522,14 @@ class ToyFilter(_Record):
 
 
 class Toys(_Section):
-    collected: Lst[int]
+    collected: Lst[Int]
     filtered: bool
-    filter: ToyFilter | None = None
+    filter: ToyFilter
 
 
 class PetSpecies(_Record):
-    species: int
-    count: int | None = None
+    species: Int
+    count: Int | None = None
 
 
 class Pets(_Section):
@@ -530,39 +556,42 @@ class Collections(_Record):
 
 
 class Currency(_Record):
-    id: int
-    quantity: int | None = None
-    max_quantity: int | None = None
-    max_weekly_quantity: int | None = None
-    earned_this_week: int | None = None
+    id: Int
+    quantity: Int | None = None
+    max_quantity: Int | None = None
+    max_weekly_quantity: Int | None = None
+    earned_this_week: Int | None = None
     can_earn_per_week: bool | None = None
-    total_earned: int | None = None
+    total_earned: Int | None = None
     use_total_earned_for_max: bool | None = None
     account_wide: bool | None = None
 
 
 class Currencies(_Section):
     """The currency panel read through its filter and collapsed headers.
-    `rows` (M11-22): the row count `GetCurrencyListSize` gave."""
+    Since M11-22: `rows`, the row count `GetCurrencyListSize` gave (header
+    rows included; missing when the call failed), and `headers`, every
+    header row seen. Both are missing in files written before M11-22."""
 
     list_: Lst[
         Annotated[Annotated[Currency, Tag(_P)] | Annotated[AbsentCurrency, Tag(_A)], _SPLIT]
     ] = Field(alias="list")
     filtered: bool
-    headers_collapsed: int
-    filter: int | None = None
-    rows: int | None = None
+    headers_collapsed: Int
+    filter: Int | None = None
+    rows: Int | None = None
+    headers: Int | None = None
 
 
 class Profession(_Record):
     """One profession, identified by `skill_line`; `position` is where
     `GetProfessions` returned it, not an identity."""
 
-    position: int
-    skill_line: int | None = None
-    rank: int | None = None
-    max_rank: int | None = None
-    modifier: int | None = None
+    position: Int
+    skill_line: Int | None = None
+    rank: Int | None = None
+    max_rank: Int | None = None
+    modifier: Int | None = None
 
 
 class Professions(_Section):
@@ -655,6 +684,10 @@ def _schema_model[M: BaseModel](variable: str, value: object, schemas: Mapping[i
         raise LabAddonError(
             f"{variable}.schema is not a whole number; this reader knows schema {known}"
         )
+    if not 0 <= schema <= 9999:  # checked before the number is ever formatted
+        raise LabAddonError(
+            f"{variable}.schema is out of range; this reader knows schema {known} only"
+        )
     model = schemas.get(schema)
     if model is None:
         raise LabAddonError(
@@ -682,8 +715,14 @@ def load_account(value: object) -> AccountDBV1:
 def _variable(data: bytes, variable: str) -> object:
     values = luadata.parse(data).to_python()
     if variable not in values:
-        found = ", ".join(sorted(values)) or "nothing"
-        raise LabAddonError(f"the file assigns no {variable} (it assigns: {found})")
+        names = sorted(values)
+        shown = [name if len(name) <= 64 else name[:64] + "..." for name in names[:10]]
+        found = ", ".join(shown) or "nothing"
+        if len(names) > 10:
+            found += f" and {len(names) - 10} more"
+        raise LabAddonError(
+            f"the file assigns no {variable} (it assigns {len(names)} names: {found})"
+        )
     value = values[variable]
     if value is None:
         raise LabAddonError(f"the file sets {variable} to nil")
@@ -729,12 +768,13 @@ def skip_known(char: CharDBV1) -> tuple[list[str], list[str]]:
 
 def customization_loads_ago(char: CharDBV1) -> int | None:
     """How many logins or reloads ago the customization record was made:
-    `probe.loads` minus `recorded_load`; None when either is missing or the
-    difference is negative (a reset probe)."""
+    `probe.loads` minus `recorded_load`; None when either is missing, when
+    the probe was lost on this load (the count restarted at 1), or when the
+    difference is negative."""
     record = char.customization
     if not isinstance(record, Customization) or record.recorded_load is None:
         return None
-    if char.probe is None:
+    if char.probe is None or char.probe.lost:
         return None
     ago = char.probe.loads - record.recorded_load
     return ago if ago >= 0 else None
@@ -760,6 +800,15 @@ def unknown_keys(record: BaseModel) -> list[str]:
 # ─── text ────────────────────────────────────────────────────────────────────
 
 NONE_RECORDED = "none recorded"
+NOT_IN_FILE = (
+    "not in the file (the addon's logout write did not reach it in the session that saved "
+    "this file)"
+)
+MAX_QUANTITY_NOTE = (
+    "  max_quantity is the client's figure; for class talents it has matched the points "
+    "earned at the character's level (M11-03), not the tree's final cap."
+)
+ALL_EVENTS_REGISTERED = "all its change events registered"
 
 
 def _count(n: int, noun: str) -> str:
@@ -779,56 +828,64 @@ def _num(value: Number | None) -> str:
 def _absent(record: _Absent) -> str:
     text = f"absent ({record.absent})"
     events = getattr(record, "events_unregistered", None)
-    if events:
-        text += f"; events the client did not know: {', '.join(events)}"
+    if events is not None:
+        if events:
+            text += f"; events the client did not know: {', '.join(events)}"
+        else:
+            text += f"; {ALL_EVENTS_REGISTERED}"
     return text
 
 
 def _events(section: _Section) -> list[str]:
-    if section.events_unregistered:
-        return [
-            "  events the client did not know (gathered only on entering the world): "
-            + ", ".join(section.events_unregistered)
-        ]
-    return []
+    """Since M11-22 every section that registered events carries the list,
+    empty when all registered; a file from before M11-22 has no key."""
+    events = section.events_unregistered
+    if events is None:
+        return []
+    if not events:
+        return [f"  {ALL_EVENTS_REGISTERED}"]
+    return [
+        "  events the client did not know (so the section was not refreshed on that change): "
+        + ", ".join(events)
+    ]
 
 
-_LINK = re.compile(r"\|Hitem:([0-9]+)[^|]*\|h\[([^\]]*)\]")
+_LINK = re.compile(r"\|Hitem:([0-9]*)[^|]*\|h\[([^\]]*)\]")
 
 
 def _item(link: str) -> str:
     match = _LINK.search(link)
     if match is None:
-        return link
-    return f"item {match.group(1)} [{match.group(2)}]"
+        return "(full link in --json)"
+    item = f"item {match.group(1)}" if match.group(1) else "no item id in the link"
+    return f"{match.group(2)} ({item}; full link in --json)"
 
 
 def _gear(gear: Gear) -> list[str]:
-    span = ""
-    if gear.first_slot is not None and gear.last_slot is not None:
-        span = f"slots {gear.first_slot} to {gear.last_slot} as the client numbers them, "
-    lines = [f"Gear ({span}{len(gear.slots)} filled)"]
+    lines = [
+        f"Gear (slots {gear.first_slot} to {gear.last_slot} as the client numbers them, "
+        f"{len(gear.slots)} filled)"
+    ]
     if not gear.slots:
         lines.append(f"  slots: {NONE_RECORDED}")
     for slot in sorted(gear.slots, key=lambda s: s.slot):
-        level = (
-            "item level not returned"
-            if slot.item_level is None
-            else f"item level {slot.item_level}"
-        )
+        if slot.item_level is None:
+            level = "item level not returned"
+        else:
+            api = "" if slot.item_level_api is None else f" ({slot.item_level_api})"
+            level = f"item level {slot.item_level}{api}"
         crafter = "; crafter GUID removed from the link" if slot.crafter_removed else ""
-        lines.append(f"  slot {slot.slot:>2}: {_item(slot.link)}, {level}{crafter}")
+        lines.append(f"  slot {slot.slot}: {_item(slot.link)}, {level}{crafter}")
     average = gear.average
     if isinstance(average, GearAverage):
         lines.append(
-            f"  equipped average {_num(average.equipped)}, as the client reports it "
-            f"(GetAverageItemLevel; how the client computes it is not known); "
-            f"overall {_num(average.overall)}, pvp {_num(average.pvp)}"
+            f"  GetAverageItemLevel: equipped {_num(average.equipped)}, overall "
+            f"{_num(average.overall)} (best owned, bags included; Retail meaning, from memory), "
+            f"pvp {_num(average.pvp)}, as the client returns them; not the mean of the item "
+            "levels above, and how the client computes them is not known"
         )
-    elif isinstance(average, AbsentRecord):
-        lines.append(f"  average item level: {_absent(average)}")
     else:
-        lines.append("  average item level: not in the file")
+        lines.append(f"  GetAverageItemLevel: {_absent(average)}")
     return lines + _events(gear)
 
 
@@ -845,7 +902,7 @@ def _currency_words(currencies: list[TraitCurrency] | AbsentRecord) -> str:
         return f"trait currencies {NONE_RECORDED}"
     return "; ".join(
         f"trait currency {_num(c.id)}: {_num(c.spent)} spent, {_num(c.quantity)} unspent, "
-        f"cap {_num(c.max_quantity)}"
+        f"max_quantity {_num(c.max_quantity)}"
         for c in currencies
     )
 
@@ -876,8 +933,11 @@ def _class_talents(talents: ClassTalents) -> list[str]:
         if not config.trees:
             lines.append(f"  trees: {NONE_RECORDED}")
         lines.extend(f"  {_tree(tree)}" for tree in config.trees)
-    if talents.export is not None:
+        lines.append(MAX_QUANTITY_NOTE)
+    if talents.export:
         lines.append(f"  export string: {talents.export}")
+    elif talents.export == "":
+        lines.append("  export string: the client returned an empty string")
     elif talents.export_absent is not None:
         lines.append(f"  export string: absent ({talents.export_absent})")
     else:
@@ -893,34 +953,57 @@ def _class_talents(talents: ClassTalents) -> list[str]:
     return lines + _events(talents)
 
 
+def _legacy_pool(configs: list[LegacyConfig]) -> tuple[list[TraitCurrency], list[int | None]]:
+    """The trait currencies of the Legacy candidates, each counted once per
+    config: `C_Traits.GetTreeCurrencyInfo` reports one pool under every tree
+    that spends it. Returns the pooled rows, and the ids whose trees report
+    different values (those are not added up)."""
+    pooled: list[TraitCurrency] = []
+    disagree: list[int | None] = []
+    for config in configs:
+        by_id: dict[int | None, list[TraitCurrency]] = {}
+        for tree in config.trees:
+            if isinstance(tree.currencies, AbsentRecord):
+                continue
+            for currency in tree.currencies:
+                by_id.setdefault(currency.id, []).append(currency)
+        for currency_id, rows in by_id.items():
+            if len({(r.quantity, r.spent, r.max_quantity) for r in rows}) == 1:
+                pooled.append(rows[0])
+            else:
+                disagree.append(currency_id)
+    return pooled, disagree
+
+
 def legacy_headline(legacy: LegacyTalents) -> str:
     """One line for the Legacy candidates, never "empty" or "locked": the
     addon lists candidates by elimination, and below the unlock level the
-    client still returns the trees, with nothing spent and a cap of 0."""
+    client still returns the trees, with nothing spent and a max_quantity of
+    0. Each trait currency counts once per config (see `_legacy_pool`)."""
     if not legacy.configs:
         return f"Legacy candidates: {NONE_RECORDED}"
     configs = [c for c in legacy.configs if isinstance(c, LegacyConfig)]
     if not configs:
         return "Legacy candidates: present, every config absent with a reason"
-    nodes = [n for c in configs for t in c.trees for n in t.nodes]
-    currencies = [
-        cur
-        for c in configs
-        for t in c.trees
-        if not isinstance(t.currencies, AbsentRecord)
-        for cur in t.currencies
-    ]
-    ranks = sum(n.active_rank or 0 for n in nodes)
-    spent = sum(cur.spent or 0 for cur in currencies)
+    ranks = sum(n.active_rank or 0 for c in configs for t in c.trees for n in t.nodes)
+    pooled, disagree = _legacy_pool(configs)
+    spent = sum(cur.spent or 0 for cur in pooled)
     if ranks == 0 and spent == 0:
         spent_words = "nothing spent"
     else:
         spent_words = f"{_count(ranks, 'rank')} active, {_count(spent, 'point')} spent"
-    quantities = [cur.quantity for cur in currencies if cur.quantity is not None]
-    available = (
-        f"{sum(quantities)} points available" if quantities else "points available not reported"
+    if disagree:
+        return (
+            f"Legacy candidates: present, {spent_words}, points available not added up: "
+            f"currency {_num(disagree[0])} reports different values on different trees "
+            "(see below)"
+        )
+    quantities = [cur.quantity for cur in pooled if cur.quantity is not None]
+    if not quantities:
+        return f"Legacy candidates: present, {spent_words}, points available not reported"
+    return (
+        f"Legacy candidates: present, {spent_words}, {_count(sum(quantities), 'point')} available"
     )
-    return f"Legacy candidates: present, {spent_words}, {available}"
 
 
 def _legacy(legacy: LegacyTalents) -> list[str]:
@@ -933,7 +1016,7 @@ def _legacy(legacy: LegacyTalents) -> list[str]:
     skipped = ", ".join(legacy.skipped_types) or NONE_RECORDED
     lines.append(f"  config types not searched: {skipped}")
     for config in legacy.configs:
-        found = ", ".join(config.found_by or []) or NONE_RECORDED
+        found = ", ".join(config.found_by) or NONE_RECORDED
         if isinstance(config, AbsentLegacyConfig):
             lines.append(f"  config {_num(config.id)} {_absent(config)}; found by {found}")
             continue
@@ -944,24 +1027,29 @@ def _legacy(legacy: LegacyTalents) -> list[str]:
     return lines + _events(legacy)
 
 
-def _customization(record: Customization, char: CharDBV1) -> list[str]:
-    ago = customization_loads_ago(char)
+def _loads_ago_words(ago: int | None) -> str:
     if ago is None:
-        when = "an unknown number of logins or reloads ago"
-    else:
-        when = f"{ago} login{'' if ago == 1 else 's'} or reloads ago"
+        return "an unknown number of logins or reloads ago"
+    if ago == 0:
+        return "in the session that saved this file"
+    if ago == 1:
+        return "1 login or reload ago"
+    return f"{ago} logins or reloads ago"
+
+
+def _customization(record: Customization, char: CharDBV1) -> list[str]:
+    when = _loads_ago_words(customization_loads_ago(char))
     facts = []
     if record.recorded_at is not None:
         facts.append(f"recorded at {record.recorded_at}")
     if record.carried:
         facts.append("carried from an earlier session")
-    for label, value in (
-        ("model", record.chr_model_id),
-        ("race", record.race_id),
-        ("sex", record.sex),
-    ):
-        if value is not None:
-            facts.append(f"{label} {value}")
+    if record.chr_model_id is not None:
+        facts.append(f"model {record.chr_model_id}")
+    if record.race_id is not None:
+        facts.append(f"race {record.race_id}")
+    if record.sex is not None:
+        facts.append(f"sex {record.sex} (the client's raw value)")
     tail = f" ({', '.join(facts)})" if facts else ""
     lines = [
         f"Customization: as of the last barber-shop visit with the addon enabled, {when}{tail}"
@@ -990,7 +1078,7 @@ def _mounts(mounts: Mounts) -> list[str]:
 
 def _toys(toys: Toys) -> list[str]:
     how = "read through the toy box's filter" if toys.filtered else "read unfiltered"
-    switches = toys.filter or ToyFilter()
+    switches = toys.filter
     return [
         f"Toys: {_ids(toys.collected, 'collected')} ({how}: collected shown "
         f"{_yes(switches.collected_shown)}, uncollected shown "
@@ -1008,12 +1096,33 @@ def _pets(pets: Pets) -> list[str]:
     ]
 
 
-def _currencies(record: Currencies) -> list[str]:
-    rows = "" if record.rows is None else f", {record.rows} rows listed, headers included"
+def _panel_words(record: Currencies) -> str:
+    if record.filter is None:
+        filter_words = "filter value not returned"
+    else:
+        filter_words = f"filter value {record.filter} (the client's raw value; meaning not known)"
     how = (
-        f"read through the currency panel: filter {_num(record.filter)}, "
-        f"{record.headers_collapsed} collapsed headers{rows}"
+        f"read through the currency panel: {filter_words}, "
+        f"{_count(record.headers_collapsed, 'collapsed header')}"
     )
+    if record.rows is None:
+        how += (
+            "; the file does not say how many rows the panel listed, so an empty list may also "
+            "mean rows the addon could not read"
+        )
+    elif record.headers is None:
+        how += f"; {_count(record.rows, 'row')} listed, header rows included"
+    else:
+        unread = record.rows - record.headers - len(record.list_)
+        how += (
+            f"; {_count(record.rows, 'row')} listed, {_count(record.headers, 'header row')}, "
+            f"{_count(unread, 'row')} with no id the addon could read"
+        )
+    return how
+
+
+def _currencies(record: Currencies) -> list[str]:
+    how = _panel_words(record)
     if not record.list_:
         return [f"Currencies: {NONE_RECORDED} ({how})", *_events(record)]
     lines = [f"Currencies: {len(record.list_)} ({how})"]
@@ -1022,8 +1131,8 @@ def _currencies(record: Currencies) -> list[str]:
             lines.append(f"  currency {_num(entry.id)}: {_absent(entry)}")
             continue
         lines.append(
-            f"  currency {entry.id}: quantity {_num(entry.quantity)}, cap "
-            f"{_num(entry.max_quantity)}, weekly cap {_num(entry.max_weekly_quantity)}, "
+            f"  currency {entry.id}: quantity {_num(entry.quantity)}, max_quantity "
+            f"{_num(entry.max_quantity)}, weekly max {_num(entry.max_weekly_quantity)}, "
             f"earned this week {_num(entry.earned_this_week)}, account-wide "
             f"{_yes(entry.account_wide)}"
         )
@@ -1036,15 +1145,15 @@ def _professions(record: Professions) -> list[str]:
     lines = ["Professions (by skill line)"]
     for entry in record.list_:
         lines.append(
-            f"  skill line {_num(entry.skill_line)}: rank {_num(entry.rank)} of "
-            f"{_num(entry.max_rank)}, modifier {_num(entry.modifier)}"
+            f"  skill line {_num(entry.skill_line)}: skill {_num(entry.rank)} of "
+            f"{_num(entry.max_rank)} (the current cap), modifier {_num(entry.modifier)}"
         )
     return lines + _events(record)
 
 
 def _section(label: str, record: object, present: Any) -> list[str]:
     if record is None:
-        return [f"{label}: not in the file"]
+        return [f"{label}: {NOT_IN_FILE}"]
     if isinstance(record, _Absent):
         return [f"{label}: {_absent(record)}"]
     lines: list[str] = present(record)
@@ -1063,14 +1172,19 @@ def describe(char: CharDBV1) -> list[str]:
     elif isinstance(client, AbsentRecord):
         lines.append(f"Client: {_absent(client)}")
     else:
-        lines.append("Client: not in the file")
+        lines.append(f"Client: {NOT_IN_FILE}")
     if char.probe is None:
         lines.append("Probe: not in the file")
     else:
-        lost = "; lost: the file loaded without a probe on this load" if char.probe.lost else ""
+        lost = (
+            "; lost: WowLabCharDB loaded without a probe count, so the count restarted at 1 "
+            "on this load"
+            if char.probe.lost
+            else ""
+        )
         lines.append(
-            f"Probe: loads {char.probe.loads} (each login or /reload adds 1 to the value the "
-            f"file held){lost}"
+            f"Probe: loads {char.probe.loads} (each login or /reload with the addon enabled "
+            f"adds 1 to the value the file held){lost}"
         )
     known, ignored = skip_known(char)
     lines.append(f"Switched off by the owner (skip): {', '.join(known) or NONE_RECORDED}")

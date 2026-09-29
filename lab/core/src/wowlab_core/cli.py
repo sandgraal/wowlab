@@ -3676,6 +3676,7 @@ def char_show(
     files = [f for f in lay.saved_variables() if f.account == acct.folder and _is_lab_file(f)]
     char_files = [f for f in files if f.scope == "character"]
     how: Literal["--character", "latest"]
+    tie = ""
     if character is not None:
         char = _select_character(acct, character)
         mine = [
@@ -3684,10 +3685,14 @@ def char_show(
             if f.realm_folder == char.realm_folder and f.character_folder == char.folder
         ]
         if not mine:
+            having = (
+                ", ".join(f"{f.realm_folder}/{f.character_folder}" for f in char_files) or "none"
+            )
             raise CliError(
-                f"no {labaddon.ADDON_NAME}.lua for {char.realm_folder}/{char.folder}: the "
-                "lab-addon has not written for this character (install it with `wowlab addon "
-                "install lab`, log in, then log out or /reload)"
+                f"no {labaddon.ADDON_NAME}.lua in {char.realm_folder}/{char.folder}. Character "
+                f"folders in account {acct.folder} that have one: {having}. If none is listed: "
+                "install the lab-addon (wowlab addon install lab), log in on the character, "
+                "then log out or /reload."
             )
         target, how = mine[0], "--character"
     else:
@@ -3697,7 +3702,13 @@ def char_show(
                 "(install the lab-addon with `wowlab addon install lab`, log in, then log out "
                 "or /reload)"
             )
-        target = max(char_files, key=lambda f: (f.mtime_ns, f.path))
+        ranked = sorted(char_files, key=lambda f: (f.mtime_ns, f.path), reverse=True)
+        target = ranked[0]
+        if len(ranked) > 1 and ranked[1].mtime_ns == target.mtime_ns:
+            tie = (
+                f"; tied with {ranked[1].realm_folder}/{ranked[1].character_folder} on that "
+                "time, taken by path order"
+            )
         how = "latest"
     record = labaddon.read_char(lay.flavor_path / target.path)
     account_files = [f for f in files if f.scope == "account"]
@@ -3726,7 +3737,10 @@ def char_show(
         _emit(report)
         return
     picked = (
-        " (the WowLab.lua written last; choose another with --character)" if how == "latest" else ""
+        " (the WowLab.lua with the newest modification time; a wowlab restore also sets it"
+        f"{tie}; choose another with --character)"
+        if how == "latest"
+        else ""
     )
     _say(f"Character: {report.character} in account {acct.folder}{picked}")
     _say(f"File: {target.path}")

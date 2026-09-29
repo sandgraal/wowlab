@@ -124,7 +124,10 @@ def test_char_show_without_character_picks_the_latest_capture(flavor: Path) -> N
     os.utime(_lab_file(flavor, FIRST), ns=(1_000_000_000_000_000_000, 1_000_000_000_000_000_000))
     os.utime(_lab_file(flavor, SECOND), ns=(2_000_000_000_000_000_000, 2_000_000_000_000_000_000))
     out = ok("char", "show").stdout
-    assert f"Character: {SECOND} in account {ACCOUNT} (the WowLab.lua written last" in out
+    assert (
+        f"Character: {SECOND} in account {ACCOUNT} (the WowLab.lua with the newest modification "
+        "time; a wowlab restore also sets it; choose another with --character)\n"
+    ) in out
     report = cli.CharShowReport.model_validate_json(ok("char", "show", "--json").stdout)
     assert report.character == SECOND and report.chosen_by == "latest"
     os.utime(_lab_file(flavor, FIRST), ns=(3_000_000_000_000_000_000, 3_000_000_000_000_000_000))
@@ -142,7 +145,58 @@ def test_char_show_reads_without_writing(root: Path) -> None:
 def test_constructed_character_without_lab_file_exits_1(flavor: Path) -> None:
     result = run("char", "show", "--character", NO_ADDON)
     assert result.exit_code == 1
-    assert "has not written for this character" in result.stderr
+    assert (
+        f"no WowLab.lua in 1/{NO_ADDON}. Character folders in account {ACCOUNT} that have one: "
+        f"{SECOND}, {FIRST}."
+        in " ".join(result.stderr.split())
+        or f"no WowLab.lua in 1/{NO_ADDON}. Character folders in account {ACCOUNT} that have "
+        f"one: {FIRST}, {SECOND}."
+        in " ".join(result.stderr.split())
+    )
+    assert (
+        "If none is listed: install the lab-addon (wowlab addon install lab), log in on the "
+        "character, then log out or /reload." in " ".join(result.stderr.split())
+    )
+
+
+def test_constructed_first_name_alone_matches_the_realm_name_twin(flavor: Path) -> None:
+    # `Labchard` alone names the `<Realm>/<First>/` twin folder, which holds no
+    # WowLab.lua; the message lists the folders that do.
+    result = run("char", "show", "--character", "Labchard")
+    assert result.exit_code == 1
+    message = " ".join(result.stderr.split())
+    assert "no WowLab.lua in Labrealmb Partb Partc Partd/Labchard." in message
+    assert FIRST in message and SECOND in message
+    assert "has not written" not in message
+
+
+def test_constructed_no_lab_file_lists_none(flavor: Path) -> None:
+    _lab_file(flavor, FIRST).unlink()
+    _lab_file(flavor, SECOND).unlink()
+    result = run("char", "show", "--character", "Labchard")
+    assert result.exit_code == 1
+    assert "that have one: none. If none is listed:" in " ".join(result.stderr.split())
+
+
+def test_constructed_tie_on_modification_time_is_mentioned(flavor: Path) -> None:
+    stamp = 1_500_000_000_000_000_000
+    os.utime(_lab_file(flavor, FIRST), ns=(stamp, stamp))
+    os.utime(_lab_file(flavor, SECOND), ns=(stamp, stamp))
+    out = ok("char", "show").stdout
+    first_line = out.splitlines()[0]
+    assert "; tied with 1/" in first_line
+    assert "on that time, taken by path order; choose another with --character)" in first_line
+
+
+def test_constructed_huge_integer_exits_1_without_traceback(flavor: Path) -> None:
+    target = _lab_file(flavor, FIRST)
+    data = target.read_bytes()
+    target.write_bytes(data.replace(b'["loads"] = 4,', b'["loads"] = 0x' + b"F" * 4000 + b","))
+    result = run("char", "show", "--character", FIRST)
+    assert result.exit_code == 1
+    assert "probe.loads" in result.stderr
+    assert "Traceback" not in result.stderr + result.stdout
+    assert result.exception is None or isinstance(result.exception, SystemExit)
 
 
 def test_constructed_unknown_character_is_a_usage_error(flavor: Path) -> None:

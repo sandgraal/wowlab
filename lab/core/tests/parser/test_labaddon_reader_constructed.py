@@ -169,7 +169,7 @@ NIL_KEYS = [
     ("spec.id", "id not returned"),
     ("talents.class.config.trees.0.nodes.0.active_entry", None),
     ("gear.slots.0.item_level", "item level not returned"),
-    ("currencies.filter", "filter not returned"),
+    ("currencies.filter", "filter value not returned"),
     ("collections.pets.default_filters", "default filters: not reported"),
     ("collections.toys.filter.collected_shown", "collected shown not reported"),
     ("collections.toys.filter.uncollected_shown", "uncollected shown not reported"),
@@ -207,14 +207,21 @@ def test_constructed_probe_lost_is_shown() -> None:
     raw["probe"] = {"loads": 1, "lost": True}
     char = _load(raw)
     assert char.probe is not None and char.probe.lost is True
-    assert "lost: the file loaded without a probe on this load" in _text(char)
+    assert (
+        "Probe: loads 1 (each login or /reload with the addon enabled adds 1 to the value "
+        "the file held); lost: WowLabCharDB loaded without a probe count, so the count "
+        "restarted at 1 on this load"
+    ) in _text(char).splitlines()
 
 
 def test_constructed_section_missing_from_the_file_is_not_absent() -> None:
     raw = {"schema": 1, "probe": {"loads": 1}}
     char = _load(raw)
     text = _text(char)
-    assert "Gear: not in the file" in text
+    assert (
+        "Gear: not in the file (the addon's logout write did not reach it in the session "
+        "that saved this file)"
+    ) in text.splitlines()
     assert "Class talents: not in the file" in text
     assert "Client: not in the file" in text
     assert "absent" not in text
@@ -263,7 +270,7 @@ def test_constructed_one_currency_absent_and_one_present() -> None:
     char = _load(raw)
     text = _text(char)
     assert "currency 1: absent (C_CurrencyInfo.GetCurrencyInfo returned nothing)" in text
-    assert "currency 2: quantity 10, cap 0" in text
+    assert "currency 2: quantity 10, max_quantity 0" in text
     assert "account-wide no" in text
 
 
@@ -281,7 +288,7 @@ def test_constructed_gear_average_and_client_absent() -> None:
     raw["gear"]["average"] = {"absent": "GetAverageItemLevel missing"}
     raw["client"] = {"absent": "GetBuildInfo missing"}
     text = _text(_load(raw))
-    assert "average item level: absent (GetAverageItemLevel missing)" in text
+    assert "  GetAverageItemLevel: absent (GetAverageItemLevel missing)" in text
     assert "Client: absent (GetBuildInfo missing)" in text
 
 
@@ -317,7 +324,7 @@ def test_constructed_events_unregistered_on_a_present_section() -> None:
     char = _load(raw)
     text = _text(char)
     assert (
-        "events the client did not know (gathered only on entering the world): "
+        "  events the client did not know (so the section was not refreshed on that change): "
         "ACTIVE_COMBAT_CONFIG_CHANGED" in text
     )
     assert "PLAYER_AVG_ITEM_LEVEL_UPDATE" in text
@@ -344,7 +351,7 @@ def test_constructed_currency_rows() -> None:
     char = _load(raw)
     assert isinstance(char.currencies, labaddon.Currencies)
     assert char.currencies.rows == 3
-    assert "3 rows listed, headers included" in _text(char)
+    assert "; 3 rows listed, header rows included)" in _text(char)
     assert labaddon.unknown_keys(char) == []
 
 
@@ -364,17 +371,20 @@ def test_constructed_legacy_absent_with_reason() -> None:
 def test_constructed_legacy_with_no_candidate_reads_none_recorded() -> None:
     raw = _base()
     raw["talents"]["legacy"]["configs"] = {}
-    text = _text(_load(raw))
-    assert "Legacy candidates: none recorded" in text
-    assert "empty" not in text.casefold()
-    assert "locked" not in text.casefold()
+    lines = _text(_load(raw)).splitlines()
+    legacy = [line for line in lines if line.startswith(("Legacy", "  config types", "  which"))]
+    assert legacy[0] == "Legacy candidates: none recorded (level 13)"
+    joined = "\n".join(legacy).casefold()
+    assert "empty" not in joined
+    assert "locked" not in joined
 
 
 def test_constructed_legacy_with_ranks_and_points() -> None:
     raw = _base()
-    tree = raw["talents"]["legacy"]["configs"][0]["trees"][1]
-    tree["nodes"][0]["active_rank"] = 1
-    tree["currencies"][0].update({"spent": 1, "quantity": 2, "max_quantity": 3})
+    trees = raw["talents"]["legacy"]["configs"][0]["trees"]
+    trees[1]["nodes"][0]["active_rank"] = 1
+    for tree in trees[1:]:  # one pool, the same row under each tree
+        tree["currencies"][0].update({"spent": 1, "quantity": 2, "max_quantity": 3})
     talents = _load(raw).talents
     assert talents is not None and isinstance(talents.legacy, labaddon.LegacyTalents)
     assert (
@@ -474,7 +484,10 @@ def test_constructed_customization_record_as_of_the_last_visit() -> None:
 
 def test_constructed_customization_without_recorded_load() -> None:
     raw = _base()
-    raw["customization"] = {"choices": [{"option": 1}]}
+    raw["customization"] = {
+        "as_of": "last barber-shop visit with the addon enabled",
+        "choices": [{"option": 1}],
+    }
     char = _load(raw)
     assert labaddon.customization_loads_ago(char) is None
     assert "an unknown number of logins or reloads ago" in _text(char)

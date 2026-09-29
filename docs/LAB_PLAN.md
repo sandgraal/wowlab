@@ -1533,8 +1533,19 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   (#97: text passes only in the fields the addon writes as text). A file
   that holds both a value and its `_absent` reason (`export`,
   `last_selected_config`) is refused. A section key missing from the file
-  (a session whose write never ran past `ADDON_LOADED`) reads "not in the
-  file", which is neither nil inside a section nor absent with a reason.
+  reads "not in the file": the addon's logout write did not run in a
+  session that started with no WowLabCharDB (it creates only schema, probe
+  and skip at ADDON_LOADED). It is neither nil inside a section nor absent
+  with a reason. When an earlier table existed, the same failure instead
+  leaves that earlier session's sections under the newer probe count, which
+  one file cannot reveal. Also pinned (M11-04 reviews): only the key names
+  the addon writes are fields (`schema_`, `list_`, `class_` in a file are
+  unknown keys); every integer is bounded to ±2^53 (a Lua double's exact
+  range), inside unknown keys too; absent reasons are printable ASCII; an
+  empty `export` (written before M11-22) reads as "the client returned an
+  empty string", never refused; a Legacy trait currency listed under several
+  trees of one config counts once when the trees agree, and is not added up
+  when they differ.
 - **Capture** (owner): install; on each character log in, then log out or
   `/reload` (a crash writes nothing); on at least one character open the
   barber shop and close it without changing anything, then log out. Capture
