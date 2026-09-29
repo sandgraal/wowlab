@@ -983,11 +983,6 @@ PLUMBING_STORES: dict[tuple[str, str, str], str] = {
     (
         "Core.lua",
         "gather",
-        "record . events_unregistered = section . events_unregistered",
-    ): "the list of refused event names built in listen",
-    (
-        "Core.lua",
-        "gather",
         "ns . state [ section . key ] = record",
     ): "a gather result, checked as a table (test_every_gather_and_carry_returns_checked_values)",
     (
@@ -2477,3 +2472,186 @@ def test_unskip_of_a_section_already_back_on_says_so() -> None:
         'elseif section . off then say ( section . key .. " is already switched back on '
         'from the next /reload or login." ) return else'
     ) in body
+
+
+# M11-22: say why a value is missing --------------------------------------------
+#
+# Source scans on the addon's own tokens (constructed checks; no Lua runs, L3).
+# From the M11-03 domain review: three places where a capture could not tell
+# "the client returned nothing" from "the call failed" or "never ran". Every
+# value stored here is also held to the stored-value rules above
+# (test_every_stored_value_is_type_checked).
+
+NO_SAVED_LOADOUT = "the client returned no last-selected loadout for this spec"
+EMPTY_EXPORT = "C_Traits.GenerateImportString returned an empty string"
+
+
+def _section_source(path: Path, key: str) -> str:
+    """The rendered tokens of the one `ns.Section({ ... })` call in `path`
+    whose spec has `key = "<key>"` (or a file-level `local KEY = "<key>"`)."""
+    tokens = _tokens(path)
+    constants = dict(
+        re.findall(r'^local ([A-Z_]+) = "([^"]+)"$', path.read_text(encoding="utf-8"), flags=re.M)
+    )
+    spellings = {f'key = "{key}" ,'} | {
+        f"key = {name} ," for name, v in constants.items() if v == key
+    }
+    heads = [
+        i
+        for i in range(len(tokens) - 4)
+        if [t.text for t in tokens[i : i + 4]] == ["ns", ".", "Section", "("]
+    ]
+    found = []
+    for head in heads:
+        depth, end = 0, head + 3
+        for end in range(head + 3, len(tokens)):
+            if tokens[end].kind != "op":
+                continue
+            if tokens[end].text in {"(", "{", "["}:
+                depth += 1
+            elif tokens[end].text in {")", "}", "]"}:
+                depth -= 1
+                if depth == 0:
+                    break
+        text = _render(tokens[head : end + 1])
+        if any(spelling in text for spelling in spellings):
+            found.append(text)
+    assert len(found) == 1, (
+        f"expected one ns.Section with key {key} in {path.name}, found {len(found)}"
+    )
+    return found[0]
+
+
+def test_never_gathered_section_is_written_with_events_unregistered() -> None:
+    """(1) ns.Write writes `events_unregistered` (the refused events, or an
+    empty list: the key is always there, so a missing key means a file from
+    before M11-22) on every record it writes for a section that registered a
+    non-empty `events` list this session: gathered, carried, or the
+    never-gathered `not_gathered` absent record. `section.listener` is set by
+    `listen` and cleared by `switchOff`, so a section switched off at load or
+    this session gets nothing but the owner reason. `gather` no longer
+    attaches the list itself, so ns.Write is the one place."""
+    flow = _core()
+    write = _body(flow, "ns.Write")
+    assert (
+        "if section . off and section . gather then record = ns . Absent ( SWITCHED_OFF ) "
+        'else record = ns . state [ section . key ] or ns . Absent ( section . not_gathered or "not gathered this session" ) '
+        'if section . listener and type ( section . events ) == "table" and # section . events > 0 then '
+        "record . events_unregistered = section . events_unregistered or { } end "
+        "end place ( db , section . path , record )"
+    ) in write, write
+    attach = "record . events_unregistered = section . events_unregistered or { }"
+    rendered = [_render(_tokens(path)) for path in SOURCES]
+    assert sum(text.count(attach) for text in rendered) == 1
+    assert "events_unregistered" not in _body(flow, "gather")
+    # The list itself is built only in `listen`, from the section's own
+    # `events` literal, and a switched-off section never listens.
+    assert "section . events_unregistered = section . events_unregistered or { }" in _body(
+        flow, "listen"
+    )
+    assert "if not section . off then listen ( section ) end" in _body(
+        flow, 'ns.On("ADDON_LOADED")'
+    )
+    # `listener` marks "registered this session": set only in listen, cleared
+    # in switchOff.
+    sets = [
+        (flow.label_at(i), _render(flow.tokens[i : i + 5]))
+        for i in range(len(flow.tokens) - 5)
+        if [t.text for t in flow.tokens[i : i + 4]] == ["section", ".", "listener", "="]
+    ]
+    assert sorted(sets) == [
+        ("listen", "section . listener = onEvent"),
+        ("switchOff", "section . listener = nil"),
+    ], sets
+
+
+def test_the_sections_this_is_for_have_events_and_not_gathered() -> None:
+    """customization (BARBER_SHOP_OPEN) is the motivating case: it has events
+    and a not_gathered reason. collections.appearances has no events, so its
+    M11-20 reason gets nothing added."""
+    barber = _section_source(ADDON / "Customization.lua", "customization")
+    assert 'events = { "BARBER_SHOP_OPEN" , "BARBER_SHOP_APPEARANCE_APPLIED" } ,' in barber
+    assert "not_gathered = " in barber
+    appearances = _section_source(ADDON / "Collections.lua", "collections.appearances")
+    assert "events =" not in appearances
+    assert "gather =" not in appearances
+    assert "not_gathered = " in appearances
+
+
+def test_currencies_record_the_row_count() -> None:
+    """(2) `rows`: the count GetCurrencyListSize gave, beside `list`, and
+    `headers`, every header row seen, so `rows - headers - #list` is the rows
+    whose id could not be read. The loop walks the same count."""
+    section = _section_source(ADDON / "Currencies.lua", "currencies")
+    assert "local rows = ns . Call ( size )" in section
+    assert 'for index = 1 , type ( rows ) == "number" and rows or 0 do' in section
+    assert "local ids , seen , headers , collapsed = { } , { } , 0 , 0" in section
+    assert "if info . isHeader then headers = headers + 1 if not info . isHeaderExpanded then" in (
+        section
+    )
+    assert (
+        "local record = { list = list , filtered = true , headers = headers , "
+        "headers_collapsed = collapsed , rows = ns . Number ( rows ) , }"
+    ) in section
+    assert section.count("rows = ns . Number ( rows )") == 1
+    assert section.count("headers = headers + 1") == 1
+
+
+def test_talents_class_says_why_there_is_no_saved_loadout() -> None:
+    """(3) Exactly one of `last_selected_config` and
+    `last_selected_config_absent`: nil from the client is "no saved loadout";
+    an error (pcall, not ns.Call, so the two are told apart) and a value that
+    is not a number have their own reasons."""
+    section = _section_source(ADDON / "Talents.lua", "talents.class")
+    assert (
+        "if not lastSaved then "
+        'record . last_selected_config_absent = "C_ClassTalents.GetLastSelectedSavedConfigID missing" '
+        "elseif not ( spec and spec . id ) then "
+        'record . last_selected_config_absent = "no spec id to ask with" '
+        "else local ok , value = pcall ( lastSaved , spec . id ) "
+        "if not ok then "
+        'record . last_selected_config_absent = "C_ClassTalents.GetLastSelectedSavedConfigID raised an error" '
+        'elseif type ( value ) == "number" then record . last_selected_config = value '
+        f'elseif value == nil then record . last_selected_config_absent = "{NO_SAVED_LOADOUT}" '
+        "else "
+        'record . last_selected_config_absent = "C_ClassTalents.GetLastSelectedSavedConfigID returned no number" '
+        "end end"
+    ) in section, section
+    assert section.count("record . last_selected_config =") == 1
+
+
+def test_talents_class_says_why_there_is_no_export() -> None:
+    """(3) Exactly one of `export` and `export_absent`, whatever the client
+    does: the function missing, raising an error, returning an empty string,
+    or returning no string."""
+    section = _section_source(ADDON / "Talents.lua", "talents.class")
+    assert (
+        'local export = ns . Fn ( C_Traits , "GenerateImportString" ) '
+        'if not export then record . export_absent = "C_Traits.GenerateImportString missing" '
+        "else local ok , text = pcall ( export , configID ) "
+        'if not ok then record . export_absent = "C_Traits.GenerateImportString raised an error" '
+        'elseif type ( text ) == "string" and text ~= "" then record . export = text '
+        f'elseif text == "" then record . export_absent = "{EMPTY_EXPORT}" '
+        'else record . export_absent = "C_Traits.GenerateImportString returned no string" '
+        "end end"
+    ) in section, section
+    assert section.count("record . export =") == 1
+
+
+def test_readme_and_plan_document_why_a_value_is_missing() -> None:
+    readme = README.read_text(encoding="utf-8")
+    plan = PLAN.read_text(encoding="utf-8")
+    section = plan.split("### 13.2")[0].split("### 13.1")[-1]
+    assert "Amended 2026-09-29 (M11-22" in section
+    for text in (readme, section):
+        joined = " ".join(text.split())  # literals may wrap across lines
+        assert NO_SAVED_LOADOUT in joined
+        assert "export_absent" in joined
+        assert "`rows`" in joined
+        assert "`headers`" in joined
+        assert "An empty list is the answer" in joined
+        assert "`carry` drops the saved list" in joined
+        assert "no saved loadout is selected for this spec **[verify]**" in joined
+    assert f'`"{EMPTY_EXPORT}"`' in readme
+    assert "export | export_absent" in readme
+    assert "headers, headers_collapsed, rows, filter" in readme

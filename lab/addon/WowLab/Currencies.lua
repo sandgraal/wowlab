@@ -3,7 +3,9 @@
 -- them. Weekly values follow the region's reset (docs/GLOSSARY.md). The list
 -- is the currency panel's, read through its collapsed headers and filter,
 -- which the addon never changes: currencies under a collapsed header are
--- missing, and the record counts the collapsed headers it saw. Every API here
+-- missing, and the record counts the header rows and collapsed headers it
+-- saw and the rows the panel gave (`rows`; that it counts header rows and
+-- leaves out rows under a collapsed header is [verify]). Every API here
 -- is [verify] for M11-03 (present on 69893 per forever-addon-kit's API
 -- baseline). Currency names are not recorded.
 
@@ -59,12 +61,13 @@ ns.Section({
             return ns.Absent("C_CurrencyInfo list or info functions missing")
         end
         local accountWide = ns.Fn(C_CurrencyInfo, "IsAccountWideCurrency")
-        local ids, seen, collapsed = {}, {}, 0
+        local ids, seen, headers, collapsed = {}, {}, 0, 0
         local rows = ns.Call(size)
         for index = 1, type(rows) == "number" and rows or 0 do
             local info = ns.Call(listInfo, index)
             if type(info) == "table" then
                 if info.isHeader then
+                    headers = headers + 1
                     if not info.isHeaderExpanded then
                         collapsed = collapsed + 1
                     end
@@ -82,7 +85,18 @@ ns.Section({
         for _, id in ipairs(ids) do
             list[#list + 1] = describe(id, getInfo, accountWide)
         end
-        local record = { list = list, filtered = true, headers_collapsed = collapsed }
+        -- rows: the count GetCurrencyListSize gave (header rows included,
+        -- rows under a collapsed header left out: [verify]); headers: every
+        -- header row seen. rows - headers - #list is the rows whose id could
+        -- not be read. rows is missing when that call raised an error or
+        -- returned no number (M11-22).
+        local record = {
+            list = list,
+            filtered = true,
+            headers = headers,
+            headers_collapsed = collapsed,
+            rows = ns.Number(rows),
+        }
         local filter = ns.Fn(C_CurrencyInfo, "GetCurrencyFilter")
         if filter then
             record.filter = ns.Number(ns.Call(filter))

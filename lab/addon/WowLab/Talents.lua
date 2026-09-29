@@ -214,18 +214,35 @@ ns.Section({
         local record = { config = dumpConfig(configID) }
 
         -- C_Traits.GenerateImportString: present on 69893 per the kit's API
-        -- baseline; its output on Forever is [verify].
+        -- baseline; its output on Forever is [verify]. Exactly one of
+        -- `export` and `export_absent` is written (M11-22): the reason says
+        -- whether the function is missing, raised an error, returned an
+        -- empty string or returned no string. It is called through pcall, not ns.Call, so an error can be
+        -- told from an empty return.
         local export = ns.Fn(C_Traits, "GenerateImportString")
-        if export then
-            record.export = ns.String(ns.Call(export, configID))
-        else
+        if not export then
             record.export_absent = "C_Traits.GenerateImportString missing"
+        else
+            local ok, text = pcall(export, configID)
+            if not ok then
+                record.export_absent = "C_Traits.GenerateImportString raised an error"
+            elseif type(text) == "string" and text ~= "" then
+                record.export = text
+            elseif text == "" then
+                record.export_absent = "C_Traits.GenerateImportString returned an empty string"
+            else
+                record.export_absent = "C_Traits.GenerateImportString returned no string"
+            end
         end
 
         -- C_ClassTalents.GetLastSelectedSavedConfigID(specID): [verify]. It
         -- needs a spec id, which Forever may not expose the Retail way. The
         -- value is kept raw: it may be a negative sentinel (e.g. a starter
-        -- build) rather than a config id.
+        -- build) rather than a config id. Exactly one of
+        -- `last_selected_config` and `last_selected_config_absent` is written
+        -- (M11-22); nil from the client is taken, from Retail behaviour, to
+        -- mean no saved loadout is selected for this spec [verify], told apart
+        -- from an error by calling through pcall.
         local lastSaved = ns.Fn(C_ClassTalents, "GetLastSelectedSavedConfigID")
         local spec = ns.Spec()
         if not lastSaved then
@@ -233,7 +250,16 @@ ns.Section({
         elseif not (spec and spec.id) then
             record.last_selected_config_absent = "no spec id to ask with"
         else
-            record.last_selected_config = ns.Number(ns.Call(lastSaved, spec.id))
+            local ok, value = pcall(lastSaved, spec.id)
+            if not ok then
+                record.last_selected_config_absent = "C_ClassTalents.GetLastSelectedSavedConfigID raised an error"
+            elseif type(value) == "number" then
+                record.last_selected_config = value
+            elseif value == nil then
+                record.last_selected_config_absent = "the client returned no last-selected loadout for this spec"
+            else
+                record.last_selected_config_absent = "C_ClassTalents.GetLastSelectedSavedConfigID returned no number"
+            end
         end
         return record
     end,
