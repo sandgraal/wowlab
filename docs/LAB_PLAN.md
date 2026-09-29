@@ -1052,6 +1052,7 @@ wowlab undo
 wowlab profile save|apply|list|show|delete …         # §13.3 (M11-08)
 wowlab addon install|remove lab [--dry-run] [--yes]  # §13.1 (M11-02)
 wowlab looks races|options|save|show|compare|page …  # §13.2 (M11-06, M11-07)
+wowlab char show [--character C] [--json]           # §13.1 (M11-04)
 ```
 
 *Amended 2026-09-28:* the Wave 2 commands above are listed for
@@ -1521,6 +1522,30 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   into Pydantic models, one per section, keyed by schema version; unknown
   keys are kept, not dropped (L4 spirit). CLI `wowlab char show [--json]`
   over the latest capture.
+  Amended 2026-09-29 (M11-04), reader behaviour the bullets above left
+  open: "the latest capture" is the character `WowLab.lua` with the newest
+  modification time in the account, unless `--character` names one (the
+  whole folder name, or `<realm folder>/<folder>`, as every other command).
+  An unknown key is kept only when its name is a plain name
+  (`[A-Za-z_][A-Za-z0-9_]*`, at most 64 characters) and its value holds no
+  text anywhere (numbers, booleans, tables of them); otherwise the file is
+  refused, and the message names the key path but never echoes a value
+  (#97: text passes only in the fields the addon writes as text). A file
+  that holds both a value and its `_absent` reason (`export`,
+  `last_selected_config`) is refused. A section key missing from the file
+  reads "not in the file": the addon's logout write did not run in a
+  session that started with no WowLabCharDB (it creates only schema, probe
+  and skip at ADDON_LOADED). It is neither nil inside a section nor absent
+  with a reason. When an earlier table existed, the same failure instead
+  leaves that earlier session's sections under the newer probe count, which
+  one file cannot reveal. Also pinned (M11-04 reviews): only the key names
+  the addon writes are fields (`schema_`, `list_`, `class_` in a file are
+  unknown keys); every integer is bounded to ±2^53 (a Lua double's exact
+  range), inside unknown keys too; absent reasons are printable ASCII; an
+  empty `export` (written before M11-22) reads as "the client returned an
+  empty string", never refused; a Legacy trait currency listed under several
+  trees of one config counts once when the trees agree, and is not added up
+  when they differ.
 - **Capture** (owner): install; on each character log in, then log out or
   `/reload` (a crash writes nothing); on at least one character open the
   barber shop and close it without changing anything, then log out. Capture
