@@ -18,11 +18,13 @@ project can copy the setup — see the last section.
 | **pr-shepherd** | `.claude/agents/pr-shepherd.md` | PR text, thread replies, comment-level fixes, rebases, lock regeneration | PR state, checks, threads |
 | **Automated review** | `.github/workflows/claude-review.yml` | PR comments | `AGENTS.md`, diff |
 
-Every writer is graded by someone who did not write the thing. For the two
-load-bearing files, `lab/core/src/wowlab_core/luadata.py` and
-`lab/core/src/wowlab_core/guard.py`, that separation is enforced at the
-ticket level: a `[TEST]` ticket lands graders on `main` as
-`pytest.mark.xfail(strict=True)` before the `[IMPL]` ticket starts.
+Every writer is graded by someone who did not write the thing. For the
+load-bearing files, the ones that rewrite the owner's data
+(`luadata.py`, `guard.py`, `svmerge.py` and `profiles.py` under
+`lab/core/src/wowlab_core/`; the last two added by the owner on 2026-09-29),
+that separation is enforced at the ticket level: a `[TEST]` ticket lands
+graders on `main` as `pytest.mark.xfail(strict=True)` before the `[IMPL]`
+ticket starts.
 
 ## Ticket lifecycle
 
@@ -40,13 +42,41 @@ docs/BACKLOG.md  ──frontier──▶  conductor dispatches (parallel, worktr
      code-reviewer (+ domain-reviewer / security-reviewer by area)
                  │  findings → same implementer, ≤2 rounds
                  ▼
-            pr-shepherd: draft PR → CI → threads → ready → merge (squash)
+     (code that writes or parses the owner's files: the reviewers that
+      raised findings give GO / NO-GO on the fixed head)
                  │
                  ▼
-     conductor: verify on main, remove worktree, recompute frontier,
+            pr-shepherd: draft PR → CI → threads → ready → merge (squash)
+                         → remove the branch's worktree and local branch
+                 │
+                 ▼
+     conductor: verify on main, recompute frontier,
                 dispatch newly unblocked tickets in the same turn,
                 batch backlog ticks into one docs(backlog) PR per session
 ```
+
+**Verification pass** (added 2026-09-29, Wave 2 review). After the last fix
+round on a branch that writes into an install, the snapshot store or the
+owner's SavedVariables, or parses a file an edited capture could reach
+(guard, snapshot, luadata, profiles, sv-merge, the lab-addon reader), the
+security and code reviewers that raised findings re-run their own probes on
+the fixed head and answer GO or NO-GO. It is not a third fix round: a NO-GO
+goes to the owner under the two-round rule.
+
+**Performance asks get the adversarial review a security fix gets** (added
+2026-09-29). M11-18's round-1 speed-up held one descriptor per shard and ran
+out under macOS's default 256 open files. Any change made for speed is tested
+under the platform's default limits (open files, stack, the soft `ulimit`
+values a shell started from Finder gets), and a failure to open is reported
+as "cannot open", never as something it is not.
+
+**A lab-addon call is unverified until a capture proves it** (added
+2026-09-29). `pcall` catches Lua errors, not client assertions: one
+`C_TransmogCollection` call crashed the Forever client (M11-20). A ticket that
+adds a client API call to the lab-addon marks it **[verify]** in
+`lab/addon/README.md`, puts it on the section `/wowlab skip` can switch off,
+and is not trusted until an owner capture shows it ran; that capture gets a
+runbook step, as M11-03 did.
 
 **Frontier** = tickets whose heading is `## [ ] …`, that no merged PR title
 names in parentheses, and whose `Depends on` list is entirely done. The
@@ -108,6 +138,12 @@ other ticket moving.
   `.git/hooks/pre-commit` to point at *one* worktree's `.venv`, and removing
   that worktree breaks every commit in every checkout — this happened.
 - Remove a worktree after its PR merges (`git worktree remove <path>`).
+  The pr-shepherd does it after a confirmed merge, together with the local
+  branch and the `worktree-agent-*` branch; the conductor checks
+  `git worktree list` once per session for leftovers.
+- `gh pr merge` from inside an agent worktree prints "'main' is already used
+  by worktree" when it tries to check out `main` locally. The merge on GitHub
+  has already happened; confirm it with `git log origin/main -1`.
 
 ## Guardrails and their limits
 

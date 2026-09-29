@@ -99,6 +99,18 @@ the reviewer verdicts are clean. Then
 `git fetch origin main && git log origin/main -1 --format=%H%n%s`. Do not
 edit `docs/BACKLOG.md`; the conductor batches ticks.
 
+`gh pr merge` may print "fatal: 'main' is already used by worktree …": it
+tried to check out `main` locally after the merge. Ignore it once the
+confirm step above shows your squash commit on `origin/main`.
+
+Then clean up, only after that confirmation. From the main checkout
+(`git worktree list` names it; `cd` there by absolute path), run
+`git worktree remove <your worktree path>`, then
+`git branch -D <branch> <worktree-agent-… branch>` for the branch you merged
+and the worktree's own branch if one exists. Never remove a worktree you were
+not dispatched into, and never use `--force` on a worktree with uncommitted
+changes; report it under follow-ups instead.
+
 ## Report — final message
 
 ```
@@ -108,4 +120,5 @@ threads: <n> resolved (<n> fixed, <n> answered), <n> open
 checks: all required green @ <sha> | <which failed and why>
 rebases: <n>   lockfile regenerations: <n>
 follow-ups worth a ticket: <bullets, or none>
+cleanup: worktree removed, branches deleted | <what is left and why>
 ```

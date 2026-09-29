@@ -14,7 +14,7 @@ The backlog holds the current wave only (ADR-0024). Milestone numbers start at `
 
 Spec: `docs/LAB_PLAN.md` §13. Decisions: ADR-0026, ADR-0027 (accepted 2026-09-28). Owner pick 2026-09-28. L1–L8 apply to every ticket.
 
-The wave is 25 tickets (10 planned plus the follow-ups M11-11T, M11-11, M11-12, M11-13, M11-14, M11-15, M11-16T, M11-17, M11-18, M11-19, M11-20, M11-21, M11-22 and M11-23 added 2026-09-28; M11-23 is deferred and does not hold the wave review), four of them M-sized (M11-01, M11-05, M11-08, M11-09), not the four S-sized ideas listed in `docs/LAB_IDEAS.md`; the M11-10 review compares actual effort against that. Wave 1 closes before M11 dispatch (§13.5); the critical path M11-01 → M11-02 → M11-03 goes first.
+The wave is 25 tickets (10 planned plus the follow-ups M11-11T, M11-11, M11-12, M11-13, M11-14, M11-15, M11-16T, M11-17, M11-18, M11-19, M11-20, M11-21, M11-22 and M11-23 added 2026-09-28; M11-23 is deferred and does not hold the wave review). The wave closed on 2026-09-29 (`docs/handoffs/M11-review.md`); M11-23 and the follow-ups M11-24 to M11-27, filed at the review, carry into the next wave, four of them M-sized (M11-01, M11-05, M11-08, M11-09), not the four S-sized ideas listed in `docs/LAB_IDEAS.md`; the M11-10 review compares actual effort against that. Wave 1 closes before M11 dispatch (§13.5); the critical path M11-01 → M11-02 → M11-03 goes first.
 
 ## [x] M11-01 — lab-addon sources and Lua lint
 **Size:** M · **Depends on:** —
@@ -36,7 +36,7 @@ Copies `lab/addon/WowLab/` into `Interface/AddOns/WowLab/` through one `guard` t
 
 ---
 
-## [ ] M11-03 — Capture the lab-addon's output
+## [x] M11-03 — Capture the lab-addon's output
 **Size:** S · **Depends on:** M11-02 · **owner**
 
 Install with `wowlab addon install lab`; on each character log in, then log out or `/reload` (a crash writes nothing); log in twice on one character, so the `probe.loads` counter is proven to increment; on at least one character open the barber shop and close it without changing anything, then log out. Capture `WowLab.lua` (account and per-character) and, for sv-merge, a `## SavedVariablesPerCharacter` file from two characters that holds no other player's names (or `WowLab.lua` itself), with `scripts/lab_capture.py` (extended with `--sv` patterns if needed, as a scrub-tool follow-up with `security-reviewer`). Index rows; `docs/LAB_FORMATS.md` amendment for what each API section actually returned on Forever.
@@ -45,7 +45,7 @@ Install with `wowlab addon install lab`; on each character log in, then log out 
 
 ---
 
-## [ ] M11-04 — `wowlab_core.labaddon` reader and `wowlab char show`
+## [x] M11-04 — `wowlab_core.labaddon` reader and `wowlab char show`
 **Size:** S · **Depends on:** M11-03, M10-14, M11-21
 
 Pydantic models per section and schema version; unknown keys kept, but a string value is accepted only in the fields the addon writes as strings (`link`, `export`, the enum-like fields such as `recorded_at`), so a hand-edited or tampered capture cannot pass free text through (#97 security review); exact numeric and boolean types; absent sections reported with the addon's reason. `wowlab char show [--json]`. The customization section is carried across sessions (§13.1): when present, show it as "as of the last barber-shop visit with the addon enabled, N logins or reloads ago" from `recorded_load` and `probe.loads`, and say that a paid appearance change keeping the race is invisible to the addon.
@@ -105,7 +105,7 @@ One self-contained HTML file per ADR-0027 (inline CSS/JS, embedded JSON, CSP for
 
 ---
 
-## [ ] M11-09T — sv-merge graders [TEST]
+## [x] M11-09T — sv-merge graders [TEST]
 **Size:** S · **Depends on:** M11-03
 
 Graders for §13.4 on the M11-03 two-character captures and constructed documents (labelled): with a common snapshot base, one-sided changes taken and the same change taken once; without one (two characters), a two-way merge where every differing key is a conflict and one-sided keys are listed; conflicts listed and nothing written; an account-wide file refused for character-to-character with the reason; `--key` copies within one file; a missing key reported as "absent"; output in the target document's style, written through `guard`; the loader check: refuse with exit 3 when `probe.lost` is true, refuse when two snapshots of `WowLab.lua` show `loads` not going up, warn and continue with no capture, and `--force-loader-check` overriding the refusal. `xfail(strict=True)` one marker line each.
@@ -114,7 +114,7 @@ Graders for §13.4 on the M11-03 two-character captures and constructed document
 
 ---
 
-## [ ] M11-09 — sv-merge [IMPL]
+## [x] M11-09 — sv-merge [IMPL]
 **Size:** M · **Depends on:** M11-09T
 
 `wowlab sv merge` per §13.4. Activate graders by marker deletion only.
@@ -195,7 +195,7 @@ From the #104 and #105 reviews. `addoninstall.py`: `TOC_LEFT_NOTE` becomes "The 
 
 ---
 
-## [ ] M11-18 — snapshot create never writes through a link
+## [x] M11-18 — snapshot create never writes through a link
 **Size:** S · **Depends on:** M11-15
 
 From the #112 security review (pre-existing). `SnapshotStore.create` writes objects and manifests through a linked `objects/`, object shard, `manifests/` or `tmp/`: the store then holds a snapshot whose object `verify` reports missing while guard can still restore through the link. File names are fixed hex or manifest ids, so no arbitrary file is overwritten. Open those directories with `O_DIRECTORY | O_NOFOLLOW`, check each against `lstat`, and replace by directory descriptor (`os.replace(..., src_dir_fd=, dst_dir_fd=)`) on POSIX; refuse a linked directory on Windows. Also, from the same review: document that a `tmp/` swapped at the last moment can move gc's own object through an outside directory before deleting it; give parked `tmp/gc-<uuid>` leftovers a cleaner (or say why none is needed); and fix the cosmetic `snap verify` "corrupt object: ." for a linked `objects/` and the `snap gc` byte count for skipped objects. A dated §6.9 sentence per change.
@@ -204,7 +204,7 @@ From the #112 security review (pre-existing). `SnapshotStore.create` writes obje
 
 ---
 
-## [ ] M11-19 — load-tolerant timing tests outside luadata
+## [x] M11-19 — load-tolerant timing tests outside luadata
 **Size:** S · **Depends on:** —
 
 From the #110 review. Under heavy load `tests/scripts/test_lab_capture_followup6.py` (the long-separator scan, 10 s budget) fails, and the other `tests/scripts/test_lab_capture_*` timing sites (`followup.py`, `round2.py`, `followup3.py`) use wall clock too; `lab/core/tests/test_layout.py`'s 400-folder inventory test (2 s) flaked on the Windows runner. For CPU-bound checks measure CPU time as M11-16T did; for the filesystem-bound layout test use a relative control or a wider budget, not CPU time. Keep what each test asserts.
@@ -222,7 +222,7 @@ Found in the owner's M11-03 first start: one call to `C_TransmogCollection.GetCa
 
 ---
 
-## [ ] M11-21 — lab-addon per-section off switch
+## [x] M11-21 — lab-addon per-section off switch
 **Size:** S · **Depends on:** M11-20
 
 From the M11-20 review. A client assertion in any section crashes the client at every login while the addon is enabled, and a crash writes no SavedVariables, so the addon cannot mark the culprit itself. Add `/wowlab skip <section>` and `/wowlab unskip <section>` (and `/wowlab skip` with no argument lists the switched-off sections), stored in `WowLabCharDB`, read at `ADDON_LOADED` before any section is gathered; a skipped section is written as absent with the reason "switched off by the owner". Section keys as in §13.1. No change to what the other sections record.
@@ -231,7 +231,7 @@ From the M11-20 review. A client assertion in any section crashes the client at 
 
 ---
 
-## [ ] M11-22 — lab-addon: say why a value is missing
+## [x] M11-22 — lab-addon: say why a value is missing
 **Size:** S · **Depends on:** M11-21
 
 From the M11-03 domain review. Three places where a capture cannot tell "the client returned nothing" from "the call failed" or "never ran": (1) `ns.Write` also attaches `section.events_unregistered` to a never-gathered (`not_gathered`) absent record, so one login answers whether an event such as `BARBER_SHOP_OPEN` exists on the client even when the section never runs; (2) `currencies` records `rows`, the count `GetCurrencyListSize` gave, beside `list`; (3) `talents.class` writes `last_selected_config_absent = "the client returned no saved loadout"` when that call returns nil, and `export_absent` whenever `export` is missing. Schema stays 1 (additive keys); §13.1 dated amendment; README.
@@ -249,7 +249,47 @@ Moved out of M11-04 by the owner on 2026-09-28: the addon records customization 
 
 ---
 
-## [ ] M11-10 — Wave 2 review
+## [x] M11-10 — Wave 2 review
 **Size:** S · **Depends on:** all M11 tickets · **owner**
 
 `docs/handoffs/M11-review.md` per §11; stop dispatch until the owner picks.
+
+---
+
+# Carried forward (filed at the Wave 2 review, 2026-09-29)
+
+Code follow-ups from the M11-04 and M11-09 reviews. None holds the wave review; the next wave's plan PR decides where they go.
+
+## [ ] M11-24 — sv-merge loader check: `probe` and identical snapshots
+**Size:** S · **Depends on:** M11-09
+
+Gaps in the M11-09 loader check. The owner ruled on all three on 2026-09-29 (the dated §13.4 bullet "owner ruling for M11-24"); build to that text. (a) `sv merge` of `WowLab.lua` itself copies `probe` from theirs, because the M11-09T graders require every key to merge, so the next loader comparison reads a counter the client never wrote; keep `probe` from ours. (b) After a reset of `probe.loads` on disk, two snapshots taken with no login between them (guard takes one on every write, so two unrelated wowlab writes are enough) are byte-identical, the approved exception applies, and the older snapshot that shows the drop is never read; walk back to the newest snapshot whose bytes differ. (c) The opposite error: a Lab write that lowers `loads` on disk (`snap restore` of an older `WowLab.lua`, or a merge of `WowLab.lua` that takes theirs) makes the next merge refuse with "the last session's SavedVariables did not load" until logins raise the counter again; a comparison that spans a committed guard write to that file (the journal records it) should be skipped or worded as such. `svmerge.py` is load-bearing (owner, 2026-09-29), and (a) contradicts a merged grader, so this is dispatched as `M11-24T` (test-writer) then `M11-24` (implementer).
+
+**Acceptance:** new graders fail on main for (a), (b) and (c) only; the implementation turns them green with the M11-09T graders changed only by the test-writer; the reset-then-two-snapshots sequence is refused with exit 3 and nothing written; a restore of `WowLab.lua` followed by a merge is not blamed on the loader; reviewed by `security-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M11-25 — one path grammar for `sv dump --path` and `sv merge --key`
+**Size:** S · **Depends on:** M11-09
+
+`svmerge.py` has its own copy of `cli.py`'s path parser, and the two can drift. Move the grammar into one function both use. A path the tools print for a key that needs a Lua escape cannot be pasted back into `--path` or `--key`; make every printed path parse back to the same key, or say in `--help` which keys cannot be addressed. `svmerge.py` is load-bearing, so the round-trip graders come first from a test-writer (`M11-25T`).
+
+**Acceptance:** one parser, used by both commands; a round-trip test (print, then parse) over the real fixtures' keys and labelled constructed keys with quotes, backslashes and control characters; `make ci` green; reviewed by `code-reviewer`.
+
+---
+
+## [ ] M11-26 — the last wall-clock parser timing tests
+**Size:** S · **Depends on:** —
+
+`lab/core/tests/parser/test_toc_constructed.py:249` and `lab/core/tests/parser/test_combatlog_constructed.py:428` still assert 1 s wall-clock budgets and can fail under load. Measure CPU time as M11-16T and M11-19 did, keeping what each test asserts.
+
+**Acceptance:** both pass under a CPU-saturating background load you start and stop yourself (no `pkill`) and still fail against a constructed slow parse (scratch patch, reverted); `make test-parser` and `make ci` green.
+
+---
+
+## [ ] M11-27 — `wowlab char show` follow-ups
+**Size:** S · **Depends on:** M11-04
+
+From the M11-04 reviews. (a) The Legacy headline adds the point pools of every candidate config; show one per config, or the selected one, so two configs with points are not summed. (b) "all its change events registered" is printed for `collections.appearances`, which registers none; say nothing, or that the section has no events. (c) A reason longer than 1024 characters or holding non-ASCII (a long Lua error the addon stored) makes the reader refuse the whole file; truncate and flag it in the model instead, keeping the other sections readable. The limits on every other string stay.
+
+**Acceptance:** a labelled constructed test per item, plus the real fixtures unchanged in output except for (a) and (b); `--json` still validates; reviewed by `code-reviewer` and `domain-reviewer`.

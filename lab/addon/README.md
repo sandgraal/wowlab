@@ -247,6 +247,13 @@ code was copied. Everything else is **[verify]** for the owner's capture
 captured API list (`data/forever_api.json`, 69893); that is evidence the name
 exists, not of what it returns.
 
+**A new call stays [verify] until a capture shows it ran** (2026-09-29). `pcall`
+catches Lua errors, not client assertions: `C_TransmogCollection.GetCategoryAppearances`
+passed review and crashed the Forever client on its first login (M11-20). Any
+API added later is listed here as **[verify]**, lives in a section
+`/wowlab skip` can switch off, and is trusted only after an owner capture in
+which it ran; `docs/AGENT_WORKFLOW.md` has the rule.
+
 | API | Used for | Status | Baseline |
 |---|---|---|---|
 | `C_Traits.GetConfigInfo` | talents: config type and tree ids (the `name` field is never read) | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
@@ -384,8 +391,9 @@ Items:
 12. `BARBER_SHOP_APPEARANCE_APPLIED` firing: an applied change gives
     `recorded_at = "applied"`.
 13. Gear: `first_slot` / `last_slot` values; whether slot 18 (ranged) ever
-    holds an item; `item_level_api` per slot; `average.equipped` equals the
-    character-sheet figure.
+    holds an item; `item_level_api` per slot; `average.equipped` and
+    `average.overall` are plausible for the gear worn (Forever's character
+    sheet shows no item level to compare against, 2026-09-28).
 14. Customization: `sex` is 0 or 1; `chr_model_id` is present; no name field
     appears anywhere in the record.
 15. `talents.legacy` on a character below level 25, if one exists: `configs`
