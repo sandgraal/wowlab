@@ -14,6 +14,8 @@ barber-shop choices, collections, currencies and professions into
 `WowLabCharDB` (`## SavedVariablesPerCharacter`) as a versioned table
 (`schema = 1`), written by the client at logout, `/reload` or a clean exit.
 `/wowlab save` refreshes the tables in memory only; a crash writes nothing.
+`/wowlab skip <section>` and `/wowlab unskip <section>` switch one section
+off and on ("Switching a section off" below).
 `WowLabDB` (`## SavedVariables`) holds only `{ schema = 1 }` until the M11-03
 capture shows which data is account-wide.
 
@@ -36,6 +38,7 @@ capture shows which data is account-wide.
 WowLabCharDB = {
   schema = 1,
   probe = { loads = <n>, lost = true? },      -- carried across sessions, with customization; lost: this load only
+  skip = { "<section key>", ... },            -- sections the owner switched off; left out when none (M11-21)
   client = { version, build, interface },     -- GetBuildInfo(); its date is not kept
   spec = { index, id?, api } | { absent },
   gear = { first_slot, last_slot, slots = { { slot, link, crafter_removed, item_level, item_level_api } },
@@ -102,6 +105,51 @@ Any section may instead be `{ absent = "<reason>" }`, and carry
 `events_unregistered = { ... }` when the client did not know one of its
 change events. Schema 1 may change after M11-03; after M11-04 merges, any
 change is schema 2.
+
+### Switching a section off
+
+A client assertion inside a section crashes the client, `pcall` cannot catch
+it, and a crash writes nothing, so the addon cannot mark the culprit itself
+(M11-20). The owner can (M11-21):
+
+- `/wowlab skip <section>` switches the section off at once: its event
+  handler is removed (an event no other section uses is unregistered), a
+  pending gather is dropped, and what it gathered this session is forgotten.
+  `/reload` or log out to save the switch; a crash writes nothing, so a
+  switch typed just before a crash is lost.
+- `/wowlab unskip <section>` switches it back on from the next `/reload` or
+  login (never in the same session: the section may be the one that
+  crashes). `/reload` or log out to save that too.
+- `/wowlab skip` with no section lists the sections switched off.
+- A key that is not a section is refused, and the chat line lists the valid
+  keys. The typed text is compared, never stored or printed.
+
+Section keys (as in `docs/LAB_PLAN.md` §13.1): `gear`, `spec`,
+`talents.class`, `talents.legacy`, `customization`, `collections.mounts`,
+`collections.toys`, `collections.pets`, `collections.appearances`,
+`currencies`, `professions`.
+
+The list is saved as `WowLabCharDB.skip = { "<section key>", ... }` (section
+order, left out when empty) and read at `ADDON_LOADED`, before any section is
+carried, registers an event or is gathered. A section in it registers no
+event and is never gathered, not on its events, not on entering the world,
+not by `/wowlab save`, not at `PLAYER_LOGOUT`; it is written as
+`{ absent = "switched off by the owner" }`. A string in the saved list that
+is not a section key (for example after a later version renames a section)
+is ignored and dropped at the next save.
+
+What the switch does not do:
+
+- It stops the section's own gather only. Another section may call the same
+  client API: `talents.class` asks for the spec too, so switching off `spec`
+  does not keep the spec API from being called.
+- Switching off `customization` drops the carried barber-shop record: the
+  section is written absent, so after `unskip` it stays absent until the next
+  barber-shop visit.
+- It needs the addon loaded to type the command. Every section that gathers
+  on entering the world runs about 2 s after it (the event debounce), so a
+  crash in one of them leaves that long to type the command; otherwise
+  untick the addon at character select as before.
 
 ## Lint
 

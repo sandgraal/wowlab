@@ -5,9 +5,16 @@
 -- section's change events) and writes the versioned tables (schema 1) into
 -- its SavedVariables at PLAYER_LOGOUT. `/wowlab save` refreshes the tables in
 -- memory; the client writes the file at the next /reload, logout or clean
--- exit, and a crash writes nothing. Only two things are carried from one
--- session to the next: the probe count, and the last barber-shop record
--- (Customization.lua), both read back from the file at ADDON_LOADED.
+-- exit, and a crash writes nothing. Only three things are carried from one
+-- session to the next: the probe count, the last barber-shop record
+-- (Customization.lua) and the skip list, all read back from the file at
+-- ADDON_LOADED.
+--
+-- The owner can switch a section off (`/wowlab skip <section>`, M11-21): a
+-- client assertion inside a section crashes the client, `pcall` cannot catch
+-- it, and a crash writes nothing, so the addon cannot mark the culprit
+-- itself. The skip list is read at ADDON_LOADED, before any section registers
+-- an event or is gathered.
 --
 -- Privacy (ADR-0026): no names, realms, GUIDs, guild or chat of anyone, the
 -- owner included; no text the owner typed (loadout, equipment-set or pet
@@ -31,6 +38,12 @@ ns.sections = {}
 ns.state = {}
 -- probe = { loads = <n>, lost = true? }: carried across sessions, with customization.
 ns.probe = nil
+-- Section keys the owner switched off, as saved in the file (`skip`). A key
+-- switched back on stays off for the rest of the session (section.off).
+ns.skip = {}
+
+-- The absent reason of a switched-off section.
+local SWITCHED_OFF = "switched off by the owner"
 
 -- C_Timer.After: confirmed by forever-addon-kit on 69893, re-verify in M11-03
 -- (the kit's trait walker schedules with it). C_EventUtils.IsEventValid: [verify].
@@ -135,6 +148,27 @@ function ns.On(event, fn)
     return true
 end
 
+-- Removes `fn` from `event`'s handlers, and unregisters the event from the
+-- frame when no handler is left.
+local function off(event, fn)
+    local list = handlers[event]
+    if not list then
+        return
+    end
+    local kept = {}
+    for _, other in ipairs(list) do
+        if other ~= fn then
+            kept[#kept + 1] = other
+        end
+    end
+    if #kept > 0 then
+        handlers[event] = kept
+        return
+    end
+    handlers[event] = nil
+    pcall(frame.UnregisterEvent, frame, event)
+end
+
 frame:SetScript("OnEvent", function(_, event, ...)
     local list = handlers[event]
     if not list then
@@ -159,9 +193,18 @@ end)
 --   carry = function(saved) ... end,   -- at ADDON_LOADED: a record to keep from
 --                                      -- the loaded WowLabCharDB, or nil
 -- }
+--
+-- A section registers its events at ADDON_LOADED, after the saved skip list
+-- is read, so a switched-off section (section.off) never registers one, is
+-- never carried and never gathered: not on an event, not on entering the
+-- world, not by `/wowlab save`, not at PLAYER_LOGOUT. It is written as
+-- absent with SWITCHED_OFF.
 local pending = false
 
 local function gather(section, event)
+    if section.off then
+        return
+    end
     local ok, record = pcall(section.gather, event)
     if not ok then
         record = ns.Absent("error: " .. tostring(record))
@@ -200,21 +243,101 @@ end
 
 function ns.Section(section)
     ns.sections[#ns.sections + 1] = section
+end
+
+-- Registers the section's change events (at ADDON_LOADED, never for a
+-- switched-off section). One handler serves all its events, so switching the
+-- section off later removes exactly that handler.
+local function listen(section)
+    local function onEvent(fired)
+        if section.off then
+            return
+        end
+        if section.immediate then
+            gather(section, fired)
+        else
+            section.dirty = true
+            schedule()
+        end
+    end
+    section.listener = onEvent
     for _, event in ipairs(section.events or {}) do
-        local registered = ns.On(event, function(fired)
-            if section.immediate then
-                gather(section, fired)
-            else
-                section.dirty = true
-                schedule()
-            end
-        end)
+        local registered = ns.On(event, onEvent)
         if not registered then
             section.events_unregistered = section.events_unregistered or {}
             local missing = section.events_unregistered
             missing[#missing + 1] = event
         end
     end
+end
+
+local function sectionByKey(key)
+    for _, section in ipairs(ns.sections) do
+        if section.key == key then
+            return section
+        end
+    end
+    return nil
+end
+
+-- Switches a section off for the rest of the session and adds it to the skip
+-- list: its handler is removed from every event (an event no other section
+-- uses is unregistered), a pending gather is dropped, and what it gathered
+-- this session is forgotten.
+local function switchOff(section)
+    section.off = true
+    section.dirty = false
+    ns.skip[section.key] = true
+    ns.state[section.key] = nil
+    if section.listener then
+        for _, event in ipairs(section.events or {}) do
+            off(event, section.listener)
+        end
+        section.listener = nil
+    end
+end
+
+-- At ADDON_LOADED: switches off every section the loaded file lists in
+-- `skip`. A string that is not a section key is ignored.
+local function loadSkip(saved)
+    local list = type(saved) == "table" and saved.skip or nil
+    if type(list) ~= "table" then
+        return
+    end
+    for _, value in ipairs(list) do
+        if type(value) == "string" then
+            local section = sectionByKey(value)
+            if section then
+                switchOff(section)
+            end
+        end
+    end
+end
+
+-- Writes the skip list into `db` in section order, or removes it when empty.
+local function putSkip(db)
+    local list = {}
+    for _, section in ipairs(ns.sections) do
+        if ns.skip[section.key] then
+            list[#list + 1] = ns.String(section.key)
+        end
+    end
+    if #list > 0 then
+        db.skip = list
+    else
+        db.skip = nil
+    end
+end
+
+-- The keys of the sections `pick` accepts, comma-separated.
+local function keyList(pick)
+    local text = ""
+    for _, section in ipairs(ns.sections) do
+        if pick(section) then
+            text = text == "" and section.key or text .. ", " .. section.key
+        end
+    end
+    return text
 end
 
 -- Tables ----------------------------------------------------------------------
@@ -252,10 +375,15 @@ end
 function ns.Write()
     local db = { schema = ns.SCHEMA, probe = copyProbe(), client = clientInfo() }
     for _, section in ipairs(ns.sections) do
-        local record = ns.state[section.key]
-            or ns.Absent(section.not_gathered or "not gathered this session")
+        local record
+        if section.off then
+            record = ns.Absent(SWITCHED_OFF)
+        else
+            record = ns.state[section.key] or ns.Absent(section.not_gathered or "not gathered this session")
+        end
         place(db, section.path, record)
     end
+    putSkip(db)
     WowLabCharDB = db
     -- Account-wide table: empty until M11-03 shows which data reads the same
     -- from every character (docs/LAB_PLAN.md §13.1).
@@ -287,25 +415,34 @@ ns.On("ADDON_LOADED", function(_, name)
         return
     end
     ns.probe = loadProbe(WowLabCharDB)
+    -- The skip list first: a switched-off section is not carried and
+    -- registers no event.
+    loadSkip(WowLabCharDB)
     for _, section in ipairs(ns.sections) do
-        if section.carry then
+        if section.carry and not section.off then
             local ok, record = pcall(section.carry, WowLabCharDB)
             if ok and type(record) == "table" then
                 ns.state[section.key] = record
             end
         end
     end
-    -- Keep the count in the live table at once, so it is saved even if a
-    -- later step fails before PLAYER_LOGOUT.
+    for _, section in ipairs(ns.sections) do
+        if not section.off then
+            listen(section)
+        end
+    end
+    -- Keep the count and the skip list in the live table at once, so they
+    -- are saved even if a later step fails before PLAYER_LOGOUT.
     if type(WowLabCharDB) ~= "table" then
         WowLabCharDB = { schema = ns.SCHEMA }
     end
     WowLabCharDB.probe = copyProbe()
+    putSkip(WowLabCharDB)
 end)
 
 ns.On("PLAYER_ENTERING_WORLD", function()
     for _, section in ipairs(ns.sections) do
-        if section.on_world and not (section.heavy and ns.state[section.key]) then
+        if section.on_world and not section.off and not (section.heavy and ns.state[section.key]) then
             section.dirty = true
         end
     end
@@ -324,18 +461,74 @@ end)
 
 function ns.Refresh()
     for _, section in ipairs(ns.sections) do
-        if section.on_world then
+        if section.on_world and not section.off then
             gather(section)
         end
     end
     ns.Write()
 end
 
+local function isSection()
+    return true
+end
+
+local function isSkipped(section)
+    return ns.skip[section.key] == true
+end
+
+local function isBackOnAtReload(section)
+    return section.off and not ns.skip[section.key]
+end
+
+-- `/wowlab skip [section]` and `/wowlab unskip <section>`. The typed key is
+-- only compared with the section keys; it is never stored or printed.
+local function skipCommand(command, key)
+    if key == "" then
+        if command == "unskip" then
+            say("/wowlab unskip <section>  sections: " .. keyList(isSection))
+            return
+        end
+        local skipped = keyList(isSkipped)
+        say("switched off: " .. (skipped == "" and "no section" or skipped))
+        local later = keyList(isBackOnAtReload)
+        if later ~= "" then
+            say("switched back on from the next /reload or login: " .. later)
+        end
+        return
+    end
+    local section = sectionByKey(key)
+    if not section then
+        say("no such section. Sections: " .. keyList(isSection))
+        return
+    end
+    if command == "skip" then
+        switchOff(section)
+        say(section.key .. " switched off now; /reload or log out to save that (a crash writes nothing).")
+    elseif ns.skip[section.key] then
+        ns.skip[section.key] = nil
+        say(section.key .. " switched back on from the next /reload or login; /reload or log out to save that.")
+    else
+        say(section.key .. " is not switched off.")
+        return
+    end
+    if type(WowLabCharDB) == "table" then
+        putSkip(WowLabCharDB)
+    end
+end
+
 SLASH_WOWLAB1 = "/wowlab"
 SlashCmdList.WOWLAB = function(message)
     -- The typed text is compared, never stored.
-    local command = string.lower(string.match(message or "", "^%s*(%S*)") or "")
-    if command == "save" then
+    local command, key = string.match(message or "", "^%s*(%S*)%s*(%S*)")
+    command = string.lower(command or "")
+    key = string.lower(key or "")
+    if command == "skip" or command == "unskip" then
+        if not ns.probe then
+            say("not loaded yet.")
+            return
+        end
+        skipCommand(command, key)
+    elseif command == "save" then
         if not ns.probe then
             say("not loaded yet.")
             return
@@ -344,5 +537,6 @@ SlashCmdList.WOWLAB = function(message)
         say("tables refreshed in memory; the file is written at the next /reload or logout.")
     else
         say("/wowlab save  refreshes the tables in memory (written at the next /reload or logout).")
+        say("/wowlab skip <section>  switches a section off; /wowlab unskip <section>  back on; /wowlab skip  lists.")
     end
 end

@@ -1373,9 +1373,33 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   load that finds the probe clears it). The addon cannot tell a first load
   from a whole file that failed to load: both show `loads = 1`, and §13.4's
   two-snapshot check catches the second (amended 2026-09-28, M11-01
-  review). The probe and the last customization record are the only state
-  the addon carries from one session to the next; both are lost if the
-  SavedVariables loader fails (§13.4). The probe exists for
+  review). The probe, the last customization record and the skip list
+  (below) are the only state the addon carries from one session to the
+  next; all three are lost if the SavedVariables loader fails (§13.4).
+  Amended 2026-09-28 (M11-21): the owner can switch one section off.
+  `/wowlab skip <section>` takes it off at once (its event handler removed,
+  a pending gather dropped, what it gathered this session forgotten);
+  `/wowlab unskip <section>` puts it back from the next `/reload` or login,
+  never in the same session; `/wowlab skip` with no section lists the
+  switched-off sections; a key that is not a section is refused with a
+  chat line listing the valid keys. Section keys: `gear`, `spec`,
+  `talents.class`, `talents.legacy`, `customization`,
+  `collections.mounts`, `collections.toys`, `collections.pets`,
+  `collections.appearances`, `currencies`, `professions`. The list is
+  saved in `WowLabCharDB` as `skip = { "<section key>", ... }` (strings in
+  section order, left out when empty; the reader keeps it as a list of
+  strings and ignores a key it does not know) and read at `ADDON_LOADED`,
+  before any section is carried, registers an event or is gathered. A
+  section in it registers no event, is never carried or gathered (not on
+  its events, not at entering the world, not by `/wowlab save`, not at
+  `PLAYER_LOGOUT`) and is written as
+  `{ absent = "switched off by the owner" }`. The switch exists because a client assertion inside a section
+  crashes the client at every login while the addon is enabled, and a
+  crash writes nothing, so the addon cannot mark the culprit itself
+  (M11-20); a switch typed before a crash is lost too, so it is saved by a
+  `/reload` or logout. It stops only that section's own gather: another
+  section may still call the same client API (`talents.class` asks for the
+  spec). This is a schema-1 edit made before M11-04 starts. The probe exists for
   §13.4's loader check (the sv-health idea in `docs/LAB_IDEAS.md`, cut down
   to what sv-merge needs; the full `doctor` check stays an idea). All
   sections go in
