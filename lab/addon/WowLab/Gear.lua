@@ -65,7 +65,9 @@ ns.Section({
         end
         if type(GetAverageItemLevel) == "function" then
             -- overall: best items owned, bags included; equipped: the
-            -- character-sheet figure.
+            -- equipped average as the client reports it. On Retail that is
+            -- the character-sheet figure; Forever's character sheet shows
+            -- no item level (M11-03), so nothing in its UI backs it.
             local overall, equipped, pvp = GetAverageItemLevel()
             record.average = { overall = ns.Number(overall), equipped = ns.Number(equipped), pvp = ns.Number(pvp) }
         else

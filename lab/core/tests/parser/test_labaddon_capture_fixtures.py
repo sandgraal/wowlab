@@ -112,12 +112,14 @@ def test_character_file_legacy_talents_present_below_level_25_with_no_ranks(name
     assert all(n["ranks_purchased"] == 0 and n["current_rank"] == 0 for n in nodes)
 
 
-def test_two_characters_share_the_top_level_shape() -> None:
-    # The sv-merge pair (docs/LAB_PLAN.md §13.4): same keys in the same order.
-    def keys(name: str) -> list[str]:
+def test_two_characters_share_the_top_level_keys() -> None:
+    # The sv-merge pair (docs/LAB_PLAN.md §13.4): the same top-level keys.
+    # Their order is the client's table-iteration (hash) order, not the
+    # addon's insertion order, so only the sets are compared.
+    def keys(name: str) -> set[str]:
         top = luadata.parse(_bytes(name)).assignments[0].value
         assert isinstance(top, luadata.LuaTable)
-        return [e.key.value for e in top.entries if isinstance(e.key, luadata.LuaString)]
+        return {e.key.value for e in top.entries if isinstance(e.key, luadata.LuaString)}
 
     assert keys(FIRST) == keys(SECOND)
     assert _char_db(FIRST) != _char_db(SECOND)
