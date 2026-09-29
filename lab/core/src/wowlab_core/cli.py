@@ -1931,8 +1931,9 @@ def sv_merge(
         list[str] | None,
         typer.Option(
             "--key",
-            help='A subtree, e.g. Var.profile or Var["some key"]; SRC=DST copies SRC to DST. '
-            "Repeatable.",
+            help='A subtree, e.g. Var.profile or Var["some key"], spelled as sv dump prints it; '
+            'a quoted key takes Lua 5.1 escapes (\\n, \\\\, \\", \\ddd). SRC=DST copies SRC '
+            "to DST. Repeatable.",
         ),
     ] = None,
     take: Annotated[

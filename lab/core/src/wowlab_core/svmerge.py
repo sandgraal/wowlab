@@ -256,20 +256,58 @@ class KeyPath(_Frozen):
         ]
 
 
+# Unicode format and separator characters (categories Cf, Zl and Zp, Unicode
+# 15.0, plus the unassigned U+2065 inside the U+2060 block): invisible, and
+# some reorder or break the text around them (U+202E, U+2028), so a printed
+# path shows them as escapes. Inclusive ranges.
+_FORMAT_CHARACTERS: tuple[tuple[int, int], ...] = (
+    (0x00AD, 0x00AD),
+    (0x0600, 0x0605),
+    (0x061C, 0x061C),
+    (0x06DD, 0x06DD),
+    (0x070F, 0x070F),
+    (0x0890, 0x0891),
+    (0x08E2, 0x08E2),
+    (0x180E, 0x180E),
+    (0x200B, 0x200F),
+    (0x2028, 0x202E),
+    (0x2060, 0x206F),
+    (0xFEFF, 0xFEFF),
+    (0xFFF9, 0xFFFB),
+    (0x110BD, 0x110BD),
+    (0x110CD, 0x110CD),
+    (0x13430, 0x1343F),
+    (0x1BCA0, 0x1BCA3),
+    (0x1D173, 0x1D17A),
+    (0xE0001, 0xE0001),
+    (0xE0020, 0xE007F),
+)
+
+
+def _utf8_escapes(code: int) -> str:
+    return "".join(f"\\{b:03d}" for b in chr(code).encode())
+
+
 # How `_quoted` spells each character that needs an escape: the quote, the
-# backslash, every C0 control, DEL, every C1 control (U+0080 to U+009F, as
-# the UTF-8 bytes that carry it), and every byte that is not UTF-8 (carried
-# by `surrogateescape` as U+DC80 to U+DCFF). A printed path holds none raw.
+# backslash, every C0 control, DEL, every C1 control (U+0080 to U+009F) and
+# every format or separator character (both as the UTF-8 bytes that carry
+# them), and every byte that is not UTF-8 (carried by `surrogateescape` as
+# U+DC80 to U+DCFF). A printed path holds none of them raw.
 _QUOTE_ESCAPES: dict[int, str] = {code: f"\\{code:03d}" for code in (*range(0x20), 0x7F)}
+_QUOTE_ESCAPES.update({code: _utf8_escapes(code) for code in range(0x80, 0xA0)})
 _QUOTE_ESCAPES.update(
-    {code: "".join(f"\\{b:03d}" for b in chr(code).encode()) for code in range(0x80, 0xA0)}
+    {code: _utf8_escapes(code) for lo, hi in _FORMAT_CHARACTERS for code in range(lo, hi + 1)}
 )
 _QUOTE_ESCAPES.update({0xDC00 + b: f"\\{b:03d}" for b in range(0x80, 0x100)})
 _QUOTE_ESCAPES.update(
     {0x07: "\\a", 0x08: "\\b", 0x09: "\\t", 0x0A: "\\n", 0x0B: "\\v", 0x0C: "\\f", 0x0D: "\\r"}
 )
 _QUOTE_ESCAPES.update({0x22: '\\"', 0x5C: "\\\\"})
-_QUOTE_PLAIN = re.compile('[^"\\\\\x00-\x1f\x7f-\x9f\udc80-\udcff]*')
+_QUOTE_PLAIN = re.compile(
+    '[^"\\\\\x00-\x1f\x7f-\x9f\udc80-\udcff'
+    + "".join(f"{chr(lo)}-{chr(hi)}" for lo, hi in _FORMAT_CHARACTERS)
+    + "]*"
+)
 
 
 def _quoted(data: bytes) -> str:
@@ -604,6 +642,16 @@ def _number_text(value: float, typed: str | None) -> str:
     return typed
 
 
+def _written_spelling(step: PathStep) -> str:
+    """The step as `path_step` prints the key `_new_entry` writes for it: a
+    number as `_number_text` writes it (`[0x11]` is written, and so reported,
+    as `[17]`; the next positional index prints the same), any other key as
+    the step spells it."""
+    if step.kind != "number":
+        return step.spelling
+    return f"[{_number_text(LuaNumber(None, step.raw).as_float(), step.raw)}]"
+
+
 def _new_entry(
     kid: _KeyId, like: Entry | None, npos: int, value: LuaValue, typed: str | None = None
 ) -> Entry:
@@ -872,10 +920,10 @@ class _Placer:
         keys = _Keys(value)
         index = keys.loaded.get(step.key_id)
         if index is None:
-            here = spelled + step.spelling
             if rest:
-                self.merger.missing(here, "ours")
+                self.merger.missing(spelled + step.spelling, "ours")
                 return value
+            here = spelled + _written_spelling(step)
             new = change(None, here)
             if new is None:
                 return value

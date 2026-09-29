@@ -1040,7 +1040,7 @@ wowlab install show [--json]
 wowlab tree [PATH] [--explain]      # inventory; --explain adds the file-map entry per path
 wowlab explain PATH                 # what is this file, who writes it, is it safe to edit
 wowlab sv list [--account A] [--character C]
-wowlab sv dump FILE [--json] [--path 'Var.key[3].name']
+wowlab sv dump FILE [--json] [--path 'Var.key[3].name']   # path grammar: §13.4, M11-25 note
 wowlab cvar list|get NAME [--scope global|account|character]
 wowlab binds list / wowlab macros list
 wowlab addons list [--json]
@@ -1883,6 +1883,13 @@ them as follows, and M11-09 builds to them.
 - **Paths are spelled as `wowlab sv dump` prints them:**
   `WowLabCharDB["probe"]["loads"]`, with `[n]` for a number key or a
   positional entry.
+  *Amended 2026-09-29 (M11-25):* printed string keys are always
+  double-quoted; `\a \b \t \n \v \f \r` are named escapes; other C0, DEL,
+  C1 (as UTF-8 bytes), Unicode format and separator characters (as UTF-8
+  bytes) and non-UTF-8 bytes print as three-digit `\ddd`; number steps are
+  spelled as the file holds them; unknown escapes are refused (exit 2);
+  whitespace inside brackets is Lua whitespace only; one grammar,
+  `svmerge.parse_path`, serves `sv dump --path` and `sv merge --key`.
 - **Output style.** Unchanged nodes keep their bytes and keys keep the
   target's order (the client writes in its own hash order; the Lab invents
   none). A taken number keeps its source text. Taken nodes are laid out in
