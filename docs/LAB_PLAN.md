@@ -1677,6 +1677,77 @@ refusal. With no capture of `WowLab.lua`, it warns and continues.
 
 Graders come first (`M11-09T`), since it rewrites user data.
 
+*Amended 2026-09-29, M11-09T conductor rulings:* the text above leaves
+several choices open. The graders (`lab/core/tests/test_svmerge.py`) fix
+them as follows, and M11-09 builds to them.
+
+- **Three-way needs `--base SNAPSHOT`.** `--from <snapshot> --base
+  <snapshot>` is the three-way merge: base is the file in the `--base`
+  snapshot, theirs is the file in the `--from` snapshot, and ours is the
+  target on disk. `--from` alone, whether it names a snapshot or a
+  character, is the two-way merge. `--from` is either a snapshot id or a
+  character folder; `--into <character>` is always required, because the
+  loader check reads that character's `WowLab.lua`.
+- **A copy within one file is `--key SRC=DST` with no `--from`.** `SRC` and
+  `DST` are paths in `sv dump --path` syntax. `--key PATH` means the same
+  path on both sides. In the two-way merge a `--key` subtree is copied
+  whole. With `--base`, `--key` limits the three-way merge to that
+  subtree: inside it the three-way rules apply, and changes outside it are
+  neither taken nor listed as conflicts.
+- **FILE is resolved like this.** A bare file name is looked up in the
+  `--into` character's `SavedVariables/`, then in the account's. A path is
+  taken as `sv dump` takes it (absolute, relative to the current folder,
+  or relative to the flavor folder), and `layout` gives its scope. On
+  Forever the `--into` character is the `<digits>/<First>-<Second>` folder,
+  so the target path never lies in the `<Realm>/<First>/` twin. The graders
+  cover this only indirectly.
+- **Exit codes.**
+  - 1: conflicts left unresolved. The report lists them and nothing is
+    written.
+  - 2: a character-to-character merge of an account-wide file (usage). The
+    message says the file is account-wide.
+  - 3: a refusal by the write gate or by the loader check.
+- **Conflicts are leaves, keyed by Lua key.** Tables present on both sides
+  are merged key by key. A conflict is a scalar, or a key holding a table on
+  one side and a scalar on the other. Positional entries are keyed by their
+  index (the Lua key they load as). On the M11-03 pair this gives 235
+  conflicts, plus class-tree `nodes[53]` and `[54]` on one side only.
+- **Keys on one side only.** Such a key is reported as `absent` with the
+  side it is missing from, and it is never deleted from ours. In the
+  two-way merge it is also never added. In the three-way merge a key theirs
+  added (absent from base and ours) is a one-sided change and is taken.
+  `--take ours|theirs` resolves conflicts, and resolved conflicts are still
+  listed.
+- **Paths are spelled as `wowlab sv dump` prints them:**
+  `WowLabCharDB["probe"]["loads"]`, with `[n]` for a number key or a
+  positional entry.
+- **Output style.** Unchanged nodes keep their bytes and keys keep the
+  target's order (the client writes in its own hash order; the Lab invents
+  none). A taken number keeps its source text. Taken nodes are laid out in
+  the target document's style (line endings, indentation, spacing).
+- **Loader check.** "Two snapshots" are the two newest snapshots in the
+  store that hold the `--into` character's `WowLab.lua`.
+  - `loads` lower in the newer snapshot: refused.
+  - `loads` equal: refused too, because a loader bug that persists makes
+    every session write `loads = 1`, so snapshots read N, 1, 1, 1.
+  - Exception: when the two snapshot entries of that file are
+    byte-identical, the client did not write in between. The merge goes
+    ahead with the note "no login between the two snapshots; the loader
+    was not re-checked".
+  - `loads` higher: passes.
+  - `probe.lost = true`: refused.
+  - No `WowLab.lua`: a warning, and the merge goes ahead.
+  - `--force-loader-check` overrides every refusal.
+- **`--json` is required** (§6.11). It prints `SvMergeReport`, holding at
+  least `mode` (`two-way` or `three-way`), `conflicts`, `absent` (with
+  `missing_from`), `taken`, `written` and `notes`. The report is printed
+  when conflicts stop the write, too.
+- **The library entry point** is
+  `wowlab_core.svmerge.merge(ours, theirs, *, base=None, keys=(),
+  take=None)`. It works on `luadata` documents, reads and writes nothing,
+  and returns the merged document with its `conflicts`, `taken` and
+  `absent` lists.
+
 ### 13.5 Order
 
 ```

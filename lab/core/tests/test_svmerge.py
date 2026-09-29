@@ -22,7 +22,8 @@ the three-way rules, which no capture can show (there is no real common
 ancestor); edited copies of a real file standing for "a later session"
 (`loads` raised, one value changed); a `probe.lost = true` file; a missing
 `WowLab.lua`; a target written in another layout (tab indentation, LF), to
-show a copied subtree takes the target's style.
+show a copied subtree takes the target's style; a real file with one value
+changed after a snapshot (`["Enabled"]`, `["filter"]`).
 
 The interface these graders assume, and where §13.4 leads to it (the gaps
 it leaves are decided here and reported with M11-09T):
@@ -63,9 +64,21 @@ CLI, `wowlab sv merge FILE [--from CHARACTER|SNAPSHOT] --into CHARACTER
 - `--from` is a snapshot id or a character folder. `--base SNAPSHOT` names
   the common ancestor for a three-way merge; without it the merge is two-way.
 - The loader check reads the `--into` character's `WowLab.lua`; "two
-  snapshots" are the two newest in the store that hold that file. The
-  graders refuse only on `loads` strictly lower (4, then 2) and pass on
-  strictly higher, so they hold whichever way equal counts are decided.
+  snapshots" are the two newest in the store that hold that file. `loads`
+  lower in the newer one: refused (exit 3). Equal: refused too, since a
+  loader bug that persists makes every session write `loads = 1` (N, 1, 1,
+  …); unless the two snapshot entries are byte-identical (the client did
+  not write in between), which passes with the note "no login between the
+  two snapshots; the loader was not re-checked" (conductor ruling,
+  2026-09-29). Higher: passes. `--force-loader-check` overrides every
+  refusal.
+- The `<Realm>/<First>/` twin (§13.4: `--into` never resolves to it) is
+  covered only indirectly: every grader names a `<digits>/<First>-<Second>`
+  folder with `--into`, and the target path comes from `--into`. No grader
+  passes the twin itself.
+
+The rulings above are recorded in docs/LAB_PLAN.md §13.4 ("M11-09T
+conductor rulings", 2026-09-29).
 - Exit codes (§6.11): 0 merged or nothing to change; 1 conflicts left
   unresolved (the report lists them, nothing is written); 2 usage, including
   a character-to-character merge of an account-wide file; 3 refused, by the
@@ -361,6 +374,26 @@ def test_three_way_a_key_missing_from_theirs_is_absent_not_deleted_constructed()
 
 
 @pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
+def test_three_way_key_limits_the_merge_to_that_subtree_constructed() -> None:
+    # §13.4: "--key limits the merge to named subtrees". Inside DB.p the
+    # three-way rules apply (x taken from theirs, y kept from ours: not a
+    # whole copy); outside it, q changed differently on both sides and is
+    # neither taken nor listed.
+    base = _crlf("DB = {", '["p"] = {', '["x"] = 1,', '["y"] = 1,', "},", '["q"] = 1,', "}")
+    ours = _crlf("DB = {", '["p"] = {', '["x"] = 1,', '["y"] = 2,', "},", '["q"] = 2,', "}")
+    theirs = _crlf("DB = {", '["p"] = {', '["x"] = 3,', '["y"] = 1,', "},", '["q"] = 3,', "}")
+    result = _svmerge().merge(_doc(ours), _doc(theirs), base=_doc(base), keys=["DB.p"])
+    assert list(result.conflicts) == [] and list(result.absent) == []
+    assert _paths(result.taken) == {'DB["p"]["x"]'}
+    assert (
+        luadata.serialize(result.document)
+        == _crlf(
+            "DB = {", '["p"] = {', '["x"] = 3,', '["y"] = 2,', "},", '["q"] = 2,', "}"
+        ).encode()
+    )
+
+
+@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_merge_keeps_the_target_key_order_and_the_taken_number_text_constructed() -> None:
     # The client writes keys in its own hash order (M11-03 amendment): ours'
     # order stays, whatever order theirs has, and a taken number keeps its text.
@@ -504,6 +537,20 @@ def test_cli_take_theirs_writes_only_the_target_through_guard(root: Path, flavor
 
 
 @pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
+def test_cli_take_ours_keeps_the_target_and_lists_the_conflicts(flavor: Path) -> None:
+    result = run(
+        "sv", "merge", LAB, "--from", CHAR_B, "--into", CHAR_A,
+        "--take", "ours", "--yes", "--json",
+    )  # fmt: skip
+    assert result.exit_code == 0, _out(result)
+    report = _report(result)
+    conflicts, _, _ = _two_way_oracle(REAL_A, REAL_B)
+    assert {c["path"] for c in report["conflicts"]} == conflicts, "resolved, still listed"
+    assert (flavor / LAB_A).read_bytes() == REAL_A
+    assert (flavor / LAB_B).read_bytes() == REAL_B
+
+
+@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_cli_key_copies_a_subtree_between_the_real_pair(flavor: Path) -> None:
     result = run(
         "sv", "merge", LAB, "--from", CHAR_B, "--into", CHAR_A,
@@ -575,7 +622,7 @@ def test_cli_three_way_with_a_snapshot_base_constructed(flavor: Path) -> None:
 
 
 @pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
-def test_cli_account_wide_file_from_a_snapshot(flavor: Path) -> None:
+def test_cli_account_wide_file_from_a_snapshot_constructed(flavor: Path) -> None:
     # §13.4: the account-wide case is `--from <snapshot>` (an earlier state).
     # The disk then changes one value inside ["Unknown"] (constructed edit);
     # copying that subtree back from the snapshot restores the real bytes.
@@ -630,6 +677,18 @@ def _loads_went_down(flavor: Path) -> None:
     _snap("loads 2")
 
 
+def _loads_equal_bytes_differ(flavor: Path) -> None:
+    """Constructed: two snapshots of the first character's `WowLab.lua`, both
+    at `loads` 4 but with different bytes (the client wrote in between and the
+    counter did not go up: what a persisting loader bug leaves, N, 1, 1, …)."""
+    _snap("loads 4")
+    (flavor / LAB_A).write_bytes(_once(REAL_A, *_FILTER))
+    _snap("loads 4 again, rewritten")
+
+
+NO_LOGIN_NOTE = "no login between the two snapshots; the loader was not re-checked"
+
+
 @pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_cli_loader_check_refuses_when_probe_lost_is_true_constructed(
     root: Path, flavor: Path
@@ -667,13 +726,43 @@ def test_cli_loader_check_passes_when_loads_goes_up(flavor: Path) -> None:
     assert (flavor / DBM).read_bytes() != REAL_DBM
 
 
-@pytest.mark.parametrize("cause", ["probe-lost-constructed", "loads-went-down"])
+@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
+def test_cli_loader_check_refuses_equal_loads_when_the_file_changed_constructed(
+    root: Path, flavor: Path
+) -> None:
+    _loads_equal_bytes_differ(flavor)
+    before = _state(root)
+    result = _copy_within()
+    assert result.exit_code == 3, _out(result)
+    assert "loads" in result.stderr
+    assert _state(root) == before
+    assert guard.history() == ()
+
+
+@pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
+def test_cli_loader_check_passes_byte_identical_snapshots_with_a_note(flavor: Path) -> None:
+    # Two snapshots with nothing written in between: equal loads says nothing.
+    _snap("first")
+    _snap("second, no login since")
+    result = _copy_within("--json")
+    assert result.exit_code == 0, _out(result)
+    report = _report(result)
+    assert report["written"] is True
+    assert any(NO_LOGIN_NOTE in note for note in report["notes"])
+    assert (flavor / DBM).read_bytes() != REAL_DBM
+
+
+@pytest.mark.parametrize(
+    "cause", ["probe-lost-constructed", "loads-went-down", "loads-equal-constructed"]
+)
 @pytest.mark.xfail(strict=True, reason="M11-09 not implemented")
 def test_cli_force_loader_check_overrides_the_refusal(flavor: Path, cause: str) -> None:
     if cause == "probe-lost-constructed":
         (flavor / LAB_A).write_bytes(_lost(REAL_A))
-    else:
+    elif cause == "loads-went-down":
         _loads_went_down(flavor)
+    else:
+        _loads_equal_bytes_differ(flavor)
     result = _copy_within("--force-loader-check")
     assert result.exit_code == 0, _out(result)
     assert (flavor / DBM).read_bytes() != REAL_DBM
