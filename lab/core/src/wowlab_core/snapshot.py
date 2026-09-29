@@ -50,6 +50,7 @@ from pydantic import (
 
 __all__ = [
     "MANIFEST_FORMAT",
+    "OBJECTS_DIR_ENTRY",
     "Change",
     "Entry",
     "GcReport",
@@ -72,6 +73,10 @@ __all__ = [
 ]
 
 MANIFEST_FORMAT = 1
+
+OBJECTS_DIR_ENTRY = "objects/"
+"""What `verify` puts in `corrupt_objects` for `objects/` itself when it is a
+link (M11-18). No object name or stray path under `objects/` ends in `/`."""
 
 _CHUNK = 1 << 20
 _ID_RE = re.compile(r"\A\d{8}T\d{6}\.\d{6}Z-[0-9a-f]{8}\Z")
@@ -150,8 +155,15 @@ def _is_link_stat(st: os.stat_result) -> bool:
     )
 
 
+def _lstat_at(path: Path, dir_fd: int | None) -> os.stat_result:
+    """`os.lstat(path)`, relative to `dir_fd` when one is given."""
+    if dir_fd is None:
+        return os.lstat(path)
+    return os.stat(path, dir_fd=dir_fd, follow_symlinks=False)
+
+
 def open_regular_file(
-    path: Path, *, expect: os.stat_result | None = None
+    path: Path, *, expect: os.stat_result | None = None, dir_fd: int | None = None
 ) -> tuple[int, os.stat_result]:
     """Open `path` read-only and return the descriptor with its `fstat`.
 
@@ -164,12 +176,13 @@ def open_regular_file(
     `O_NOFOLLOW`, a link or reparse point is refused by `lstat` before the
     open, and the path is checked after it to still name the opened file.
     The caller owns the descriptor returned; on any error it is closed here.
-    A missing path raises `FileNotFoundError`.
+    A missing path raises `FileNotFoundError`. With `dir_fd` (M11-18), a
+    relative `path` names an entry of that directory descriptor.
     """
     nofollow = _O_NOFOLLOW
     before: os.stat_result | None = None
     if not nofollow:
-        before = os.lstat(path)
+        before = _lstat_at(path, dir_fd)
         if _is_link_stat(before) or not stat.S_ISREG(before.st_mode):
             raise UnsafeReadError(f"{path} is not a regular file")
     flags = (
@@ -179,7 +192,7 @@ def open_regular_file(
         | getattr(os, "O_NONBLOCK", 0)
         | getattr(os, "O_NOCTTY", 0)
     )
-    fd = os.open(path, flags)
+    fd = os.open(path, flags, dir_fd=dir_fd)
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
@@ -187,7 +200,7 @@ def open_regular_file(
         if expect is not None and _file_identity(st) != _file_identity(expect):
             raise UnsafeReadError(f"{path} was replaced before it was opened")
         if before is not None:
-            after = os.lstat(path)
+            after = _lstat_at(path, dir_fd)
             if _is_link_stat(after) or _file_identity(after) != _file_identity(st):
                 raise UnsafeReadError(f"{path} changed as it was opened")
     except BaseException:
@@ -197,16 +210,21 @@ def open_regular_file(
 
 
 def read_regular_file(
-    path: Path, *, limit: int | None = None, expect: os.stat_result | None = None
+    path: Path,
+    *,
+    limit: int | None = None,
+    expect: os.stat_result | None = None,
+    dir_fd: int | None = None,
 ) -> bytes:
-    """The bytes of `path`, opened as `open_regular_file` opens it.
+    """The bytes of `path`, opened as `open_regular_file` opens it (relative
+    to `dir_fd` when one is given).
 
     With a `limit`, a file whose `fstat` size is over it is refused before
     any read, and at most `limit + 1` bytes are read, so one that grows past
     it while being read is refused too (`UnsafeReadError`). The descriptor is
     closed on every path.
     """
-    fd, st = open_regular_file(path, expect=expect)
+    fd, st = open_regular_file(path, expect=expect, dir_fd=dir_fd)
     try:
         if limit is not None and st.st_size > limit:
             raise UnsafeReadError(f"{path} holds {st.st_size} bytes, more than {limit}")
@@ -288,6 +306,69 @@ _UNLINK_BY_DIR_FD = (
 """True where `gc` can delete an object through descriptors on `objects/` and
 its shard, opened without following a link (POSIX). Elsewhere (Windows) each
 component is checked by `lstat` just before the delete."""
+
+_WRITE_BY_DIR_FD = (
+    bool(_O_NOFOLLOW)
+    and hasattr(os, "O_DIRECTORY")
+    and {os.open, os.stat, os.mkdir, os.rename, os.unlink} <= os.supports_dir_fd
+)
+"""True where `create` writes into the store through descriptors on `tmp/`,
+`manifests/`, `objects/` and the object shard, each opened without following
+a link and checked against its `lstat` (M11-18): POSIX. `os.replace` is
+`os.rename`'s twin and shares its `dir_fd` support (the set names only
+`rename`). Elsewhere (Windows) each of those directories is checked by
+`lstat` just before it is used, and one that is a link is refused."""
+
+
+class _StoreDir(NamedTuple):
+    """A directory of the store that `create` writes into (M11-18), checked
+    not to be a link (a symlink, or on Windows a junction or other
+    name-surrogate reparse point) and to be a directory."""
+
+    path: Path
+    fd: int | None
+    """A descriptor on it opened with `O_DIRECTORY | O_NOFOLLOW` (POSIX), or
+    None where there are no directory descriptors (Windows)."""
+    checked: tuple[tuple[Path, os.stat_result], ...] = ()
+    """Without a descriptor: each component below the store root with the
+    `lstat` it passed, so a later step can ask again (`still_checked`)."""
+
+    def still_checked(self) -> bool:
+        """Every component in `checked` is, by `lstat` now, still the
+        directory it was and not a link. Always true with a descriptor."""
+        for path, st in self.checked:
+            try:
+                now = os.lstat(path)
+            except OSError:
+                return False
+            if (
+                _is_link_stat(now)
+                or not stat.S_ISDIR(now.st_mode)
+                or _file_identity(now) != _file_identity(st)
+            ):
+                return False
+        return True
+
+    def at(self, name: str) -> Path:
+        """What to hand an `os` call together with `dir_fd=self.fd` to reach
+        the entry `name`: the bare name against the descriptor, else the path."""
+        return Path(name) if self.fd is not None else self.path / name
+
+
+class _Staged(NamedTuple):
+    """A file being written under the store's `tmp/` (M11-18)."""
+
+    tmp: _StoreDir
+    name: str
+    out: BinaryIO
+
+
+def _linked_store_dir(path: Path) -> SnapshotError:
+    return SnapshotError(
+        f"{path} is a link or not a directory; the snapshot store never writes through a "
+        "link. Nothing was written there. Move it aside so the store can make a real "
+        "directory in its place"
+    )
 
 
 def _checked_stream(fd: int) -> BinaryIO:
@@ -479,7 +560,9 @@ class VerifyReport(_Frozen):
     objects_checked: int
     manifests_checked: int
     corrupt_objects: tuple[str, ...]
-    """Object names (or stray file paths under `objects/`) that failed re-hash."""
+    """Object names (or stray file paths under `objects/`) that failed re-hash;
+    `OBJECTS_DIR_ENTRY` (`"objects/"`) when `objects/` itself is a link, so
+    nothing under it was checked (M11-18; it was `"."` before)."""
     missing_objects: tuple[MissingObject, ...]
     invalid_manifests: tuple[InvalidManifest, ...]
 
@@ -497,6 +580,10 @@ class GcReport(_Frozen):
     removed: tuple[str, ...]
     """Empty on a dry run; after a real run, `unreferenced` less any object
     whose path changed between the listing and the delete (then in `skipped`)."""
+    removed_bytes: int = 0
+    """The compressed size on disk of `removed` alone, as listed: 0 on a dry
+    run, and less than `unreferenced_bytes` when an object was skipped at its
+    delete (M11-18)."""
     skipped: tuple[str, ...] = ()
     """Entries under `objects/` that gc left alone because they are links
     (symlinks, and on Windows junctions and other name-surrogate reparse
@@ -708,6 +795,14 @@ class SnapshotStore:
         rewritten if it is damaged, so a new snapshot never depends on a bad
         object.
 
+        Nothing is written through a link (M11-18): a store whose
+        `objects/`, `manifests/` or `tmp/` is a link (on Windows also a
+        junction) or not a directory is refused before the walk, and every
+        object and the manifest are written through descriptors on those
+        directories and the object shard, each opened without following a
+        link (see "writing into the store's own directories" below), so a
+        shard that is a link refuses the `create` when it is reached.
+
         `purpose` is recorded in the manifest (`"profile"` from
         `profiles.save`, M11-08); a manifest with none omits the field.
 
@@ -730,6 +825,7 @@ class SnapshotStore:
         if when.tzinfo is None:
             raise SnapshotError("`now` must be timezone-aware")
         when = when.astimezone(UTC)
+        self._refuse_linked_store_dirs()
 
         header: dict[str, Any] = {
             "created_at": f"{when:%Y-%m-%dT%H:%M:%S}.{when.microsecond:06d}Z",
@@ -762,26 +858,31 @@ class SnapshotStore:
         manifest = self._manifest(header, snapshot_id=snapshot_id, entries=entries)
 
         data = manifest_bytes(manifest)
-        target = self._manifest_path(snapshot_id)
+        name = self._manifest_path(snapshot_id).name
         self._check_publishable(manifest, data)
-        # Same microsecond, same tree. Identical bytes make this a no-op;
-        # anything else would be a silent overwrite of an immutable file. The
-        # existing one is read as every store file is (M11-11): never
-        # blocking, never through a link, and no more than one byte past
-        # the length it would need to be identical.
-        try:
-            existing = read_regular_file(target, limit=len(data))
-        except FileNotFoundError:
-            existing = None
-        except OSError as exc:
-            raise SnapshotExistsError(
-                f"a different manifest already exists for {snapshot_id}: {exc}"
-            ) from exc
-        if existing is not None:
-            if existing == data:
-                return manifest
-            raise SnapshotExistsError(f"a different manifest already exists for {snapshot_id}")
-        self._write_atomic(target, data)
+        with self._store_dir(("manifests",), create=True) as manifests:
+            assert manifests is not None
+            # Same microsecond, same tree. Identical bytes make this a no-op;
+            # anything else would be a silent overwrite of an immutable file.
+            # The existing one is read as every store file is (M11-11): never
+            # blocking, never through a link, and no more than one byte past
+            # the length it would need to be identical; and (M11-18) as an
+            # entry of the `manifests/` just checked, by its descriptor.
+            try:
+                existing = read_regular_file(
+                    manifests.at(name), limit=len(data), dir_fd=manifests.fd
+                )
+            except FileNotFoundError:
+                existing = None
+            except OSError as exc:
+                raise SnapshotExistsError(
+                    f"a different manifest already exists for {snapshot_id}: {exc}"
+                ) from exc
+            if existing is not None:
+                if existing == data:
+                    return manifest
+                raise SnapshotExistsError(f"a different manifest already exists for {snapshot_id}")
+            self._write_manifest(manifests, name, data)
         return manifest
 
     @staticmethod
@@ -998,34 +1099,36 @@ class SnapshotStore:
         stream.seek(0)
         # `manifests/` exists before any object does, so a store holding
         # objects without it is broken, and `gc` refuses it (M11-15).
-        self.manifests_dir.mkdir(parents=True, exist_ok=True)
-        self.tmp_dir.mkdir(parents=True, exist_ok=True)
-        tmp = self.tmp_dir / f"obj-{uuid.uuid4().hex}"
+        with self._store_dir(("manifests",), create=True):
+            pass
         hasher = hashlib.sha256()
         size = 0
         compressor = zlib.compressobj(6)
-        try:
-            with tmp.open("xb") as out:
-                while chunk := stream.read(_CHUNK):
-                    hasher.update(chunk)
-                    size += len(chunk)
-                    out.write(compressor.compress(chunk))
-                out.write(compressor.flush())
-                out.flush()
-                os.fsync(out.fileno())
+        with self._staged("obj") as staged:
+            while chunk := stream.read(_CHUNK):
+                hasher.update(chunk)
+                size += len(chunk)
+                staged.out.write(compressor.compress(chunk))
+            staged.out.write(compressor.flush())
             digest = hasher.hexdigest()
             # The file may have changed between the passes, so ask again.
             if not self._reusable(digest, verified):
-                final = self.object_path(digest)
-                final.parent.mkdir(parents=True, exist_ok=True)
-                tmp.replace(final)  # new, or healing a damaged object
+                with self._store_dir(("objects", digest[:2]), create=True) as shard:
+                    assert shard is not None
+                    self._publish(staged, shard, digest[2:])  # new, or healing a damaged one
                 verified.add(digest)
-        finally:
-            tmp.unlink(missing_ok=True)
         return digest, size
 
     def _reusable(self, digest: str, verified: set[str]) -> bool:
         """True when a sound object for `digest` is already in the store.
+
+        `objects/` and the shard are first checked not to be links (M11-18):
+        a link there refuses the whole `create` (`SnapshotError`), so an
+        object is never reused from, nor written to, a directory outside the
+        store. The object is opened by its path and then held to being the
+        entry of that checked shard (looked up through the shard's
+        descriptor, POSIX) with the same device and inode, so a shard
+        swapped for a link after the check is not reused either.
 
         The object is re-hashed through one descriptor (never through a
         link, never blocking: M11-11) and its mtime freshened, so a
@@ -1043,23 +1146,28 @@ class SnapshotStore:
         if digest in verified:
             return True
         existing = self.object_path(digest)
-        try:
-            fd, st = open_regular_file(existing)
-        except OSError:
-            return False  # missing, a link, or not a regular file
-        try:
-            if _hash_object_fd(fd) != digest:
-                return False
-            if os.utime in os.supports_fd:
-                os.utime(fd)
-            elif not self._still_names(existing, st):
-                return False
-            else:
-                os.utime(existing)
-            if not self._still_names(existing, st):
-                return False
-        finally:
-            os.close(fd)
+        with self._store_dir(("objects", digest[:2]), create=False) as shard:
+            if shard is None:
+                return False  # no shard, so no object
+            try:
+                fd, st = open_regular_file(existing)
+            except OSError:
+                return False  # missing, a link, or not a regular file
+            try:
+                if not self._entry_is(shard, existing.name, st):
+                    return False  # not the entry of the checked shard
+                if _hash_object_fd(fd) != digest:
+                    return False
+                if os.utime in os.supports_fd:
+                    os.utime(fd)
+                elif not self._still_names(existing, st):
+                    return False
+                else:
+                    os.utime(existing)
+                if not self._entry_is(shard, existing.name, st):
+                    return False
+            finally:
+                os.close(fd)
         verified.add(digest)
         return True
 
@@ -1068,6 +1176,20 @@ class SnapshotStore:
         """`path` is, by `lstat`, not a link and the file `st` describes."""
         try:
             now = os.lstat(path)
+        except OSError:
+            return False
+        return not _is_link_stat(now) and _file_identity(now) == _file_identity(st)
+
+    @staticmethod
+    def _entry_is(where: _StoreDir, name: str, st: os.stat_result) -> bool:
+        """The entry `name` of the checked directory `where` is, by `lstat`
+        (through `where`'s descriptor where there is one), not a link and the
+        file `st` describes (M11-18). Without a descriptor, the directories
+        on the way are first held again to their checked `lstat`."""
+        if not where.still_checked():
+            return False
+        try:
+            now = os.stat(where.at(name), dir_fd=where.fd, follow_symlinks=False)
         except OSError:
             return False
         return not _is_link_stat(now) and _file_identity(now) == _file_identity(st)
@@ -1081,18 +1203,190 @@ class SnapshotStore:
         if loaded != manifest:
             raise SnapshotError(f"refusing to write {manifest.id}: it does not round-trip")
 
-    def _write_atomic(self, target: Path, data: bytes) -> None:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        self.tmp_dir.mkdir(parents=True, exist_ok=True)
-        tmp = self.tmp_dir / f"manifest-{uuid.uuid4().hex}"
+    def _write_manifest(self, manifests: _StoreDir, name: str, data: bytes) -> None:
+        """Write `data` as the manifest file `name` in the checked `manifests/`:
+        staged under `tmp/` and moved into place in one rename (M11-18)."""
+        with self._staged("manifest") as staged:
+            staged.out.write(data)
+            self._publish(staged, manifests, name)
+
+    # -- writing into the store's own directories (M11-18) ------------------
+    #
+    # `create` (and `set_label`) write only into `tmp/`, `manifests/` and an
+    # object shard under `objects/`. The names are fixed hex digests and
+    # manifest ids, so a link planted at one of those directories could not
+    # make the store overwrite an arbitrary file, but it would put a
+    # snapshot's objects or manifest outside the store, where `verify` (which
+    # follows no link) reports them missing while a read through the link
+    # still finds them. So each of those directories is opened with
+    # `O_DIRECTORY | O_NOFOLLOW` relative to its parent's descriptor, checked
+    # against the `lstat` taken just before, and written through that
+    # descriptor: the staged file is created in `tmp/` by descriptor and moved
+    # into place with `os.replace(..., src_dir_fd=, dst_dir_fd=)`. A directory
+    # that is a link, or not a directory, refuses the write. The store root
+    # itself is opened as named: the owner chooses where the store lives, and
+    # it may sit below a linked directory (`/var` on macOS, say). Where there
+    # are no directory descriptors (Windows), each directory is checked by
+    # `lstat` (a junction or other name-surrogate reparse point counts as a
+    # link) when it is first used and again just before the rename and the
+    # reuse decision; the window between that last check and the operation
+    # is narrowed there, not closed.
+    #
+    # What this does not cover: a directory renamed away (not replaced by a
+    # link) after its descriptor was opened is written into where it now is.
+    # One process at a time writes to a store (the module's concurrency
+    # note, and guard's store lock); this guards against a link planted
+    # beforehand, not against a concurrent writer moving the store around.
+
+    def _refuse_linked_store_dirs(self) -> None:
+        """Refuse, before `create` walks anything, a store whose `objects/`,
+        `manifests/` or `tmp/` is a link or not a directory (M11-18). Missing
+        ones are fine; `create` makes them."""
+        for part in ("objects", "manifests", "tmp"):
+            with self._store_dir((part,), create=False):
+                pass
+
+    @contextlib.contextmanager
+    def _store_dir(self, parts: Sequence[str], *, create: bool) -> Iterator[_StoreDir | None]:
+        """The store directory `self.path / parts...`, every component below
+        the store root checked not to be a link and to be a directory; each is
+        made first when `create`. None when one is missing and not `create`.
+        `SnapshotError` when one is a link or not a directory, or cannot be
+        inspected. Any descriptor is closed on the way out."""
+        if not _WRITE_BY_DIR_FD:
+            yield self._checked_dir_path(parts, create=create)
+            return
         try:
-            with tmp.open("xb") as out:
-                out.write(data)
-                out.flush()
-                os.fsync(out.fileno())
-            tmp.replace(target)
+            if create:
+                self.path.mkdir(parents=True, exist_ok=True)
+            fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
+        except FileNotFoundError:
+            if create:
+                raise SnapshotError(f"the store {self.path} vanished as it was created") from None
+            yield None
+            return
+        except OSError as exc:
+            raise SnapshotError(f"cannot open the store {self.path}: {exc}") from exc
+        found: _StoreDir | None = None
+        path = self.path
+        try:
+            for part in parts:
+                path = path / part
+                child = self._open_child_dir(fd, part, path, create=create)
+                if child is None:
+                    break
+                os.close(fd)
+                fd = child
+            else:
+                found = _StoreDir(path, fd)
+            yield found
         finally:
-            tmp.unlink(missing_ok=True)
+            os.close(fd)
+
+    @staticmethod
+    def _open_child_dir(parent_fd: int, name: str, path: Path, *, create: bool) -> int | None:
+        """A descriptor on the directory `name` of `parent_fd`, opened with
+        `O_DIRECTORY | O_NOFOLLOW` and holding the device and inode its
+        `lstat` showed; see `_store_dir`."""
+        try:
+            if create:
+                with contextlib.suppress(FileExistsError):
+                    os.mkdir(name, dir_fd=parent_fd)  # never follows a link at `name`
+            st = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            if create:
+                raise SnapshotError(f"{path} vanished as it was created") from None
+            return None
+        except OSError as exc:
+            raise SnapshotError(f"cannot inspect {path}: {exc}") from exc
+        if _is_link_stat(st) or not stat.S_ISDIR(st.st_mode):
+            raise _linked_store_dir(path)
+        try:
+            fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | _O_NOFOLLOW, dir_fd=parent_fd)
+        except OSError as exc:  # swapped for a link or a file since the lstat
+            raise _linked_store_dir(path) from exc
+        if _file_identity(os.fstat(fd)) != _file_identity(st):
+            os.close(fd)
+            raise _linked_store_dir(path)
+        return fd
+
+    def _checked_dir_path(self, parts: Sequence[str], *, create: bool) -> _StoreDir | None:
+        """`_store_dir` where there are no directory descriptors (Windows):
+        each component is checked by `lstat` just before it is used."""
+        path = self.path
+        checked: list[tuple[Path, os.stat_result]] = []
+        try:
+            if create:
+                path.mkdir(parents=True, exist_ok=True)
+            elif not path.is_dir():
+                return None
+            for part in parts:
+                path = path / part
+                if create:
+                    with contextlib.suppress(FileExistsError):
+                        path.mkdir()  # never follows a link at `path`
+                try:
+                    st = os.lstat(path)
+                except FileNotFoundError:
+                    if create:
+                        raise SnapshotError(f"{path} vanished as it was created") from None
+                    return None
+                if _is_link_stat(st) or not stat.S_ISDIR(st.st_mode):
+                    raise _linked_store_dir(path)
+                checked.append((path, st))
+        except OSError as exc:
+            raise SnapshotError(f"cannot inspect {path}: {exc}") from exc
+        return _StoreDir(path, None, tuple(checked))
+
+    @contextlib.contextmanager
+    def _staged(self, prefix: str) -> Iterator[_Staged]:
+        """A new file `tmp/<prefix>-<uuid>` open for writing, created in the
+        checked `tmp/` exclusively and without following a link. It is
+        removed on the way out unless `_publish` moved it into place."""
+        with self._store_dir(("tmp",), create=True) as tmp:
+            assert tmp is not None
+            name = f"{prefix}-{uuid.uuid4().hex}"
+            flags = (
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | _O_NOFOLLOW
+                | getattr(os, "O_BINARY", 0)
+                | getattr(os, "O_NOCTTY", 0)
+            )
+            try:
+                fd = os.open(tmp.at(name), flags, 0o666, dir_fd=tmp.fd)
+            except OSError as exc:
+                raise SnapshotError(f"cannot write in {tmp.path}: {exc}") from exc
+            try:
+                out = os.fdopen(fd, "wb")
+            except BaseException:
+                os.close(fd)
+                raise
+            try:
+                with out:
+                    yield _Staged(tmp, name, out)
+            finally:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(tmp.at(name), dir_fd=tmp.fd)
+
+    @staticmethod
+    def _publish(staged: _Staged, dest: _StoreDir, name: str) -> None:
+        """Flush, sync and close the staged file, then move it to `name` in
+        the checked `dest` in one rename (replacing an entry there, never
+        following one), through both directories' descriptors."""
+        staged.out.flush()
+        os.fsync(staged.out.fileno())
+        staged.out.close()
+        for where in (staged.tmp, dest):
+            if not where.still_checked():  # always true with descriptors
+                raise _linked_store_dir(where.path)
+        os.replace(
+            staged.tmp.at(staged.name),
+            dest.at(name),
+            src_dir_fd=staged.tmp.fd,
+            dst_dir_fd=dest.fd,
+        )
 
     # -- read --------------------------------------------------------------
 
@@ -1331,7 +1625,9 @@ class SnapshotStore:
 
         Guarded by id: the full id is required (no prefix), the manifest on
         disk must carry that id and still match its fingerprint, and the
-        replacement differs from it in the `label` field alone.
+        replacement differs from it in the `label` field alone. It is written
+        as `create` writes a manifest (M11-18): never through a linked
+        `manifests/` or `tmp/`, which are refused (`SnapshotError`).
         """
         path = self._manifest_path(snapshot_id)
         if not path.is_file():
@@ -1342,7 +1638,10 @@ class SnapshotStore:
             raise ManifestIntegrityError("label write would change another field")
         data = manifest_bytes(updated)
         self._check_publishable(updated, data)
-        self._write_atomic(path, data)
+        with self._store_dir(("manifests",), create=False) as manifests:
+            if manifests is None:
+                raise SnapshotNotFoundError(f"no snapshot {snapshot_id!r}")
+            self._write_manifest(manifests, path.name, data)
         return updated
 
     # -- health ------------------------------------------------------------
@@ -1417,7 +1716,12 @@ class SnapshotStore:
         for obj in self._object_files():
             checked += 1
             if obj.name is None:
-                corrupt.append(obj.path.relative_to(self.objects_dir).as_posix())
+                corrupt.append(
+                    # `objects/` itself as a link (M11-18): named, not ".".
+                    OBJECTS_DIR_ENTRY
+                    if obj.path == self.objects_dir
+                    else obj.path.relative_to(self.objects_dir).as_posix()
+                )
                 continue
             present.add(obj.name)
             if self._rehash(obj.path) != obj.name:
@@ -1491,10 +1795,12 @@ class SnapshotStore:
         candidates.sort(key=lambda c: c[0])
 
         removed: list[str] = []
+        removed_bytes = 0
         if not dry_run:
             for name, obj in candidates:
                 if self._remove_object(obj):
                     removed.append(name)
+                    removed_bytes += obj.st.st_size
                 else:
                     skipped.append(obj.path.relative_to(self.path).as_posix())
         return GcReport(
@@ -1502,6 +1808,7 @@ class SnapshotStore:
             unreferenced=tuple(name for name, _ in candidates),
             unreferenced_bytes=sum(obj.st.st_size for _, obj in candidates),
             removed=tuple(removed),
+            removed_bytes=removed_bytes,
             skipped=tuple(sorted(skipped)),
         )
 
@@ -1560,6 +1867,25 @@ class SnapshotStore:
         when anything is not what the listing saw; `SnapshotError` if
         something moved into `tmp/` cannot be moved back (it is then named,
         still whole, in `tmp/`).
+
+        `tmp/` itself is checked not to be a link only before the rename
+        (`_parking_dir`), and there is no descriptor to hold it by. A `tmp/`
+        swapped for a link to an outside directory at that last moment makes
+        the rename move gc's own object (the file the listing saw, already
+        proven unreferenced) into that outside directory, where it passes
+        the identity check and is deleted: nothing but that object is
+        deleted, but it is deleted from outside the store (M11-18; POSIX
+        never takes this path).
+
+        Leftovers `tmp/gc-<uuid>` get no cleaner, by design (M11-18). One
+        exists only after a failed move back, which raises naming it, or a
+        crash between the rename and the delete. What it holds is then either
+        the store's own unreferenced object or whatever a swapped link made
+        the rename move, which may be a file that belongs outside the store:
+        deleting it unasked is the delete through a link this method exists
+        to prevent. Nothing reads `tmp/` (it is never listed as objects or
+        manifests), so a leftover costs only its space until the owner moves
+        or deletes it by hand.
         """
         assert obj.top_st is not None and obj.shard_st is not None
         shard = obj.path.parent

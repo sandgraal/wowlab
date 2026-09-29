@@ -779,6 +779,33 @@ where the platform takes one; on Windows it `utime`s the path only after
 `lstat` shows it is still that file and not a link, and a path that no
 longer names the checked file is rewritten, never reused.
 
+*Amended 2026-09-28 (M11-18, from the #112 security review):* (a) `create`
+never writes through a link. A store whose `objects/`, `manifests/` or `tmp/`
+is a link (on Windows also a junction), dangling or not, or is not a
+directory, is refused (`SnapshotError`) before the walk, and nothing is made
+behind it. Every object and manifest is staged in `tmp/` and moved into its
+object shard or `manifests/` through descriptors on those directories, each
+opened with `O_DIRECTORY | O_NOFOLLOW` relative to its parent, checked against
+its `lstat`, and used for `os.replace(..., src_dir_fd=, dst_dir_fd=)` (POSIX);
+on Windows each directory is checked by `lstat` and a link refused, then
+checked again just before the rename. A shard that is a link refuses the
+`create` when it is reached; the reuse check never reuses an object through
+one (the object must be the entry of the checked shard). The store root is
+opened as named, so a store below a linked directory still works. `set_label`
+writes its manifest the same way. (b) On Windows, gc's delete-by-rename checks
+`tmp/` only before its rename: a `tmp/` swapped for a link at that last moment
+moves gc's own, already unreferenced object into the outside directory, where
+it is deleted; nothing else is deleted. (c) Parked `tmp/gc-<uuid>` leftovers
+get no cleaner: one exists only after a failed move back (which raises naming
+it) or a crash mid-delete, and it may be a file a swapped link made the rename
+move from outside the store, so deleting it unasked would be the delete
+through a link gc refuses; nothing reads `tmp/`, so it costs only space until
+the owner removes it. (d) `verify` names a linked `objects/` as `objects/`
+(`OBJECTS_DIR_ENTRY`) instead of `.`, and `snap verify` says nothing under it
+was checked. (e) `GcReport` gains `removed_bytes`, the size of the objects
+actually removed; `snap gc` reports it, not `unreferenced_bytes`, after a real
+run.
+
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 
 The only module that writes into an install (L2, ADR-0021).
