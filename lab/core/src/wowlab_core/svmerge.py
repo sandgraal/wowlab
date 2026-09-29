@@ -44,7 +44,11 @@ the table's last entry.
 
 Paths are spelled as `wowlab sv dump` prints them: `WowLabCharDB["probe"]
 ["loads"]`, `[n]` for a number key (its text) or a positional entry, `.name`
-for a bare-name key.
+for a bare-name key, and a string key as a double-quoted Lua 5.1 literal with
+escapes for quotes, backslashes, control characters and bytes that are not
+UTF-8. `path_step` prints a step and `parse_path` reads a path back; `wowlab
+sv dump --path` uses the same two, so every printed path reads back to the
+key it was printed for (M11-25).
 
 The loader check's reading of the lab-addon's probe (§13.1:
 `WowLabCharDB.probe.loads` and `.lost`) is `read_probe`, also pure.
@@ -78,13 +82,17 @@ __all__ = [
     "LAB_ADDON_FILE",
     "Absent",
     "Conflict",
+    "KeyPath",
     "MergeError",
     "MergeResult",
+    "PathStep",
     "Probe",
     "Side",
     "Taken",
     "check_keys",
     "merge",
+    "parse_path",
+    "path_step",
     "read_probe",
 ]
 
@@ -160,113 +168,225 @@ class Probe(_Frozen):
     lost: bool
 
 
-# ─── key paths (`wowlab sv dump --path` syntax) ──────────────────────────────
+# ─── key paths: the one grammar of `sv dump --path` and `sv merge --key` ─────
+#
+# A path is a top-level variable name, then steps: `.name`, `["text"]` or
+# `['text']`, `[number]`, `[true]`, `[false]`. A quoted step is a Lua 5.1
+# string literal exactly as the file grammar reads one (docs/LAB_FORMATS.md
+# §4 and its 2026-09-22 amendment): the simple escapes, decimal `\ddd` of at
+# most three digits up to 255, a backslash before a line break; `\x`, `\u{}`,
+# `\z`, `\ddd` above 255 and any other escape are refused. A number step is a
+# number literal as the file grammar reads one and names the key Lua loads it
+# as (`[2]`, `[2.0]` and the second positional entry are one key); its text
+# is kept, so `[1e400]` stays `[1e400]`. `path_step` prints every key so that
+# `parse_path` reads it back to the same key, on one line and with no raw
+# control character.
 
 _PATH_HEAD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-_PATH_STEP = re.compile(
-    r"""\.(?P<name>[A-Za-z_][A-Za-z0-9_]*)"""
-    r"""|\[\s*(?:"(?P<dq>(?:[^"\\]|\\.)*)"|'(?P<sq>(?:[^'\\]|\\.)*)'"""
-    r"""|(?P<bool>true|false)|(?P<num>-?(?:0[xX][0-9A-Fa-f]+|[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)))\s*\]"""
+_PATH_NAME = re.compile(r"\.([A-Za-z_][A-Za-z0-9_]*)")
+_PATH_SPACE = re.compile(r"[ \t\r\n\f\v]*")
+# The body of a quoted step, complete for what the grammar accepts, so where
+# a match stops is where the step goes wrong: any character but the quote, a
+# backslash, a line break or NUL; a simple escape; a decimal escape of at
+# most three digits up to 255; an escaped line break.
+_PATH_ESCAPE = (
+    r"\\(?:[abfnrtv\\\"']|[01][0-9]{2}|2[0-4][0-9]|25[0-5]|[0-9]{1,2}(?![0-9])"
+    r"|\r\n|\n\r|[\r\n])"
 )
-_PATH_ESCAPE = re.compile(r"\\(.)")
+_PATH_BODY = {
+    '"': re.compile(r'(?:[^"\\\r\n\x00]|' + _PATH_ESCAPE + r")*"),
+    "'": re.compile(r"(?:[^'\\\r\n\x00]|" + _PATH_ESCAPE + r")*"),
+}
+_PATH_NUMBER = re.compile(
+    r"-?(?:0[xX][0-9A-Fa-f]+|[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)(?![0-9A-Za-z_.])"
+)
+_PATH_BOOL = re.compile(r"(?:true|false)(?![A-Za-z0-9_])")
 
 # A Lua key as the loader compares it: ("n", float) for numbers and
 # positional entries, ("s", bytes) for strings and bare names, ("b", bool).
 _KeyId = tuple[str, object]
 
 
-class _Step:
-    """One step of a key path: its Lua key and how to spell it when ours
-    does not hold it yet."""
+class PathStep(_Frozen):
+    """One step of a key path: the Lua key it names. `data` is a string
+    key's bytes (a `.name` step is the string `name`), `raw` a number key's
+    text as written (`2.0`, `0x10`, `1e400`), `flag` a boolean key."""
 
-    __slots__ = ("key_id", "spelling", "text")
+    kind: Literal["string", "number", "boolean"]
+    data: bytes = b""
+    raw: str = ""
+    flag: bool = False
 
-    def __init__(self, key_id: _KeyId, spelling: str, text: str | None) -> None:
-        self.key_id = key_id
-        self.spelling = spelling
-        self.text = text  # the string, for a text step
+    @property
+    def key_id(self) -> _KeyId:
+        """The key as the loader compares it."""
+        if self.kind == "string":
+            return ("s", self.data)
+        if self.kind == "number":
+            return ("n", LuaNumber(None, self.raw).as_float())
+        return ("b", self.flag)
+
+    @property
+    def spelling(self) -> str:
+        """The step as `path_step` prints it (a string key always quoted)."""
+        if self.kind == "string":
+            return "[" + _quoted(self.data) + "]"
+        if self.kind == "number":
+            return f"[{self.raw}]"
+        return "[true]" if self.flag else "[false]"
+
+    def matches(self, entry: Entry, position: int | None) -> bool:
+        """Whether `entry` holds the key this step names; `position` is its
+        index among its table's positional entries (None: a keyed entry)."""
+        return _key_id(entry, position) == self.key_id
 
 
-class _Path:
-    __slots__ = ("head", "source", "steps")
+class KeyPath(_Frozen):
+    """A key path as `parse_path` read it: the top-level variable, the steps
+    under it, and the text it was read from."""
 
-    def __init__(self, head: str, steps: list[_Step], source: str) -> None:
-        self.head = head
-        self.steps = steps
-        self.source = source
+    head: str
+    steps: tuple[PathStep, ...]
+    source: str
 
-    def same(self, other: _Path) -> bool:
+    def same(self, other: KeyPath) -> bool:
         """Whether both name one Lua key path (`A.p` and `A["p"]` do)."""
         return self.head == other.head and [s.key_id for s in self.steps] == [
             s.key_id for s in other.steps
         ]
 
 
-def _lua_quote(data: bytes) -> bytes:
-    """A double-quoted Lua 5.1 literal that loads as `data`."""
-    out = bytearray(b'"')
-    for byte in data:
-        if byte in (0x22, 0x5C):  # " and backslash
-            out += b"\\" + bytes([byte])
-        elif byte == 0x0A:
-            out += b"\\n"
-        elif byte == 0x0D:
-            out += b"\\r"
-        elif byte < 0x20 or byte == 0x7F:
-            out += b"\\%03d" % byte
-        else:
-            out.append(byte)
-    out += b'"'
-    return bytes(out)
+# How `_quoted` spells each character that needs an escape: the quote, the
+# backslash, every C0 control, DEL, every C1 control (U+0080 to U+009F, as
+# the UTF-8 bytes that carry it), and every byte that is not UTF-8 (carried
+# by `surrogateescape` as U+DC80 to U+DCFF). A printed path holds none raw.
+_QUOTE_ESCAPES: dict[int, str] = {code: f"\\{code:03d}" for code in (*range(0x20), 0x7F)}
+_QUOTE_ESCAPES.update(
+    {code: "".join(f"\\{b:03d}" for b in chr(code).encode()) for code in range(0x80, 0xA0)}
+)
+_QUOTE_ESCAPES.update({0xDC00 + b: f"\\{b:03d}" for b in range(0x80, 0x100)})
+_QUOTE_ESCAPES.update(
+    {0x07: "\\a", 0x08: "\\b", 0x09: "\\t", 0x0A: "\\n", 0x0B: "\\v", 0x0C: "\\f", 0x0D: "\\r"}
+)
+_QUOTE_ESCAPES.update({0x22: '\\"', 0x5C: "\\\\"})
+_QUOTE_PLAIN = re.compile('[^"\\\\\x00-\x1f\x7f-\x9f\udc80-\udcff]*')
 
 
-def _number_text(value: float) -> str:
-    if not math.isfinite(value):
-        raise MergeError(f"{value!r} is not a number a SavedVariables file can hold")
-    return str(int(value)) if value.is_integer() else repr(value)
+def _quoted(data: bytes) -> str:
+    """`data` as a double-quoted Lua 5.1 string literal that loads as those
+    bytes and is safe to print (`_QUOTE_ESCAPES`). A `\\ddd` escape always
+    has three digits, so a digit after it is never read into it."""
+    text = data.decode("utf-8", "surrogateescape")
+    if _QUOTE_PLAIN.fullmatch(text) is None:
+        text = text.translate(_QUOTE_ESCAPES)
+    return f'"{text}"'
 
 
-def _read_path(text: str, pos: int, whole: str) -> tuple[_Path, int]:
-    head = _PATH_HEAD.match(text, pos)
+def path_step(entry: Entry, position: int | None) -> str:
+    """The step naming `entry` in a key path, as `sv dump` and `sv merge`
+    print it: `[n]` for the `position`th positional entry, `.name` for a
+    bare-name key, `[text]` for a number key (its text as written),
+    `[true]`/`[false]`, and a string key as a double-quoted Lua literal with
+    escapes (`_quoted`). `parse_path` reads every one back to the same key."""
+    if position is not None:
+        return f"[{position}]"
+    key = entry.key
+    if isinstance(key, str):
+        return f".{key}"
+    if isinstance(key, LuaString):
+        return "[" + _quoted(key.data) + "]"
+    if isinstance(key, LuaNumber):
+        return f"[{key.raw}]"
+    if isinstance(key, LuaBool):
+        return "[true]" if key.value else "[false]"
+    raise MergeError(f"an entry with no key: {entry.style}")
+
+
+def _space(text: str, pos: int) -> int:
+    m = _PATH_SPACE.match(text, pos)
+    return pos if m is None else m.end()
+
+
+def _read_path(text: str, whole: str, option: str) -> tuple[KeyPath, int]:
+    """The path at the start of `text` (the tail of `whole`), read up to its
+    end or an `=` between steps, and where it stopped. `MergeError`, naming
+    `option` and the column in `whole`, when it cannot be read."""
+    head = _PATH_HEAD.match(text)
     if head is None:
-        raise MergeError(f"--key must start with a variable name: {whole!r}")
-    steps: list[_Step] = []
+        raise MergeError(f"{option} must start with a variable name: {whole!r}")
+    offset = len(whole) - len(text)
+
+    def fail(at: int, why: str = "") -> MergeError:
+        copy = ", and SRC=DST for a copy" if option == "--key" else ""
+        return MergeError(
+            f"cannot read {option} {whole!r} at column {offset + at + 1}{why}; use .name, "
+            f'[n], ["text"] (Lua escapes such as \\n, \\\\, \\" and \\ddd) or [true]{copy}'
+        )
+
+    steps: list[PathStep] = []
     pos = head.end()
     while pos < len(text) and text[pos] != "=":
-        m = _PATH_STEP.match(text, pos)
-        if m is None:
-            raise MergeError(
-                f"cannot read --key {whole!r} at column {pos + 1}; use .name, [n], "
-                '["text"] or [true], and SRC=DST for a copy'
-            )
-        if m.group("name") is not None or m.group("dq") is not None or m.group("sq") is not None:
-            if m.group("name") is not None:
-                value = m.group("name")
-            else:
-                quoted = m.group("dq") if m.group("dq") is not None else m.group("sq")
-                value = _PATH_ESCAPE.sub(r"\1", quoted)
-            data = value.encode("utf-8", "surrogateescape")
-            spelling = "[" + _lua_quote(data).decode("utf-8", "backslashreplace") + "]"
-            steps.append(_Step(("s", data), spelling, value))
-        elif m.group("bool") is not None:
-            flag = m.group("bool") == "true"
-            steps.append(_Step(("b", flag), f"[{m.group('bool')}]", None))
+        if text[pos] == ".":
+            name = _PATH_NAME.match(text, pos)
+            if name is None:
+                raise fail(pos)
+            steps.append(PathStep(kind="string", data=name.group(1).encode("ascii")))
+            pos = name.end()
+            continue
+        if text[pos] != "[":
+            raise fail(pos)
+        at = _space(text, pos + 1)
+        quote = text[at : at + 1]
+        body = _PATH_BODY[quote].match(text, at + 1) if quote in _PATH_BODY else None
+        if body is not None:
+            end = body.end()
+            if text[end : end + 1] != quote:
+                bad = text[end : end + 1] == "\\"
+                raise fail(end, " (not a Lua 5.1 escape)" if bad else " (an unclosed string)")
+            try:
+                data = LuaString(None, text[at : end + 1].encode("utf-8", "surrogateescape")).data
+            except (UnicodeEncodeError, ValueError) as exc:
+                raise fail(at) from exc
+            steps.append(PathStep(kind="string", data=data))
+            at = end + 1
+        elif (flag := _PATH_BOOL.match(text, at)) is not None:
+            steps.append(PathStep(kind="boolean", flag=flag.group() == "true"))
+            at = flag.end()
+        elif (number := _PATH_NUMBER.match(text, at)) is not None:
+            steps.append(PathStep(kind="number", raw=number.group()))
+            at = number.end()
         else:
-            number = LuaNumber(b"", m.group("num")).as_float()
-            steps.append(_Step(("n", number), f"[{_number_text(number)}]", None))
-        pos = m.end()
-    return _Path(head.group(), steps, text[:pos]), pos
+            raise fail(at)
+        at = _space(text, at)
+        if text[at : at + 1] != "]":
+            raise fail(at)
+        pos = at + 1
+    return KeyPath(head=head.group(), steps=tuple(steps), source=text[:pos]), pos
 
 
-def _parse_key(key: str) -> tuple[_Path, _Path]:
+def parse_path(text: str, option: str = "--path") -> KeyPath:
+    """Read one whole key path (`Var.key[3]["some key"]`): the grammar `sv
+    dump --path` and `sv merge --key` share. `MergeError`, naming `option`
+    and the column, for text that is not one."""
+    if not isinstance(text, str):
+        raise MergeError(f"a {option} is a str, not {type(text).__name__}")
+    path, end = _read_path(text, text, option)
+    if end != len(text):
+        raise MergeError(
+            f"cannot read {option} {text!r} at column {end + 1}: '=' is not part of a path"
+        )
+    return path
+
+
+def _parse_key(key: str) -> tuple[KeyPath, KeyPath]:
     """(SRC, DST) of a `--key` string: `PATH` or `SRC=DST`."""
     if not isinstance(key, str):
         raise MergeError(f"a --key is a str, not {type(key).__name__}")
-    src, pos = _read_path(key, 0, key)
+    src, pos = _read_path(key, key, "--key")
     if pos == len(key):
         return src, src
     rest = key[pos + 1 :]
-    dst, end = _read_path(rest, 0, key)
+    dst, end = _read_path(rest, key, "--key")
     if end != len(rest):
         raise MergeError(f"--key {key!r} has more than one '='; use SRC=DST")
     return src, dst
@@ -292,22 +412,6 @@ def _key_id(entry: Entry, position: int | None) -> _KeyId:
 
 def _lua_text(raw: bytes) -> str:
     return raw.decode("utf-8", "backslashreplace")
-
-
-def _segment(entry: Entry, position: int | None) -> str:
-    """The entry's step as `wowlab sv dump` spells it."""
-    if position is not None:
-        return f"[{position}]"
-    key = entry.key
-    if isinstance(key, str):
-        return f".{key}"
-    if isinstance(key, LuaString):
-        return f"[{_lua_text(key.raw)}]"
-    if isinstance(key, LuaNumber):
-        return f"[{key.raw}]"
-    if isinstance(key, LuaBool):
-        return "[true]" if key.value else "[false]"
-    raise MergeError(f"an entry with no key: {entry.style}")
 
 
 class _Keys:
@@ -351,7 +455,7 @@ class _Keys:
         return None if index is None else self.table.entries[index].value
 
     def spelled(self, index: int) -> str:
-        return _segment(self.table.entries[index], self.positions[index])
+        return path_step(self.table.entries[index], self.positions[index])
 
 
 _EMPTY = LuaTable(b"", (), b"")
@@ -471,10 +575,42 @@ def _appended(table: LuaTable, entries: list[Entry], added: Sequence[Entry]) -> 
     return LuaTable(table.lead, tuple(entries) + tuple(added), close)
 
 
-def _new_entry(kid: _KeyId, like: Entry | None, npos: int, value: LuaValue) -> Entry:
+def _lua_quote(data: bytes) -> bytes:
+    """A double-quoted Lua 5.1 literal that loads as `data`, for writing
+    into a file (other bytes stay raw, as the client writes them)."""
+    out = bytearray(b'"')
+    for byte in data:
+        if byte in (0x22, 0x5C):  # " and backslash
+            out += b"\\" + bytes([byte])
+        elif byte == 0x0A:
+            out += b"\\n"
+        elif byte == 0x0D:
+            out += b"\\r"
+        elif byte < 0x20 or byte == 0x7F:
+            out += b"\\%03d" % byte
+        else:
+            out.append(byte)
+    out += b'"'
+    return bytes(out)
+
+
+def _number_text(value: float, typed: str | None) -> str:
+    """A number key to write: the shortest text for a finite number, else
+    the text the path was typed with (`1e400`)."""
+    if math.isfinite(value):
+        return str(int(value)) if value.is_integer() else repr(value)
+    if typed is None:  # pragma: no cover - a position or a loaded key is finite or typed
+        raise MergeError(f"{value!r} is not a number a SavedVariables file can hold")
+    return typed
+
+
+def _new_entry(
+    kid: _KeyId, like: Entry | None, npos: int, value: LuaValue, typed: str | None = None
+) -> Entry:
     """An entry for key `kid`, appended to a table with `npos` positional
     entries: positional when it is the next index, else theirs' key (`like`)
-    or, for a `--key` destination ours lacks, a key written from `kid`."""
+    or, for a `--key` destination ours lacks, a key written from `kid` (a
+    number that overflows a double from the `typed` text of its step)."""
     kind, raw_key = kid
     style: KeyStyle
     key: luadata.LuaKey
@@ -488,7 +624,7 @@ def _new_entry(kid: _KeyId, like: Entry | None, npos: int, value: LuaValue) -> E
             else like.key
         )
     elif kind == "n" and isinstance(raw_key, float):
-        style, key = KeyStyle.NUMBER, LuaNumber(None, _number_text(raw_key))
+        style, key = KeyStyle.NUMBER, LuaNumber(None, _number_text(raw_key, typed))
     elif kind == "s" and isinstance(raw_key, bytes):
         style, key = KeyStyle.STRING, LuaString(None, _lua_quote(raw_key))
     elif kind == "b" and isinstance(raw_key, bool):
@@ -668,7 +804,7 @@ class _Found:
         self.spelled = spelled
 
 
-def _find(document: LuaDocument | None, path: _Path) -> _Found:
+def _find(document: LuaDocument | None, path: KeyPath) -> _Found:
     spelled = path.head
     if document is None:
         return _Found(None, spelled + "".join(s.spelling for s in path.steps))
@@ -698,7 +834,7 @@ class _Placer:
     def place(
         self,
         ours: LuaDocument,
-        path: _Path,
+        path: KeyPath,
         change: _Change,
     ) -> LuaDocument:
         top = _top(ours)
@@ -726,7 +862,7 @@ class _Placer:
         return ours._replace(assignments=tuple(assignments))
 
     def inside(
-        self, value: LuaValue, steps: list[_Step], spelled: str, change: _Change
+        self, value: LuaValue, steps: tuple[PathStep, ...], spelled: str, change: _Change
     ) -> LuaValue:
         if not isinstance(value, LuaTable):
             raise MergeError(
@@ -743,7 +879,7 @@ class _Placer:
             new = change(None, here)
             if new is None:
                 return value
-            entry = _new_entry(step.key_id, None, keys.npos, new)
+            entry = _new_entry(step.key_id, None, keys.npos, new, step.raw or None)
             return _appended(value, list(value.entries), [entry])
         entry = value.entries[index]
         here = spelled + keys.spelled(index)

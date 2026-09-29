@@ -67,7 +67,6 @@ def test_positive_control_printed_path_reads_back_constructed(tmp_path: Path, va
     assert (code, out) == (0, f"{path} = {value}\n"), err
 
 
-@pytest.mark.xfail(strict=True, reason="M11-25: a C1 key's printed path does not read back")
 @pytest.mark.parametrize("value", ["13", "14"], ids=["nel-u0085", "csi-u009b"])
 def test_c1_control_key_printed_path_reads_back_constructed(tmp_path: Path, value: str) -> None:
     path, code, out, err = _round_trip(tmp_path, value)

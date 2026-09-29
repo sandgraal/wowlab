@@ -1449,19 +1449,6 @@ def _stream_dump(file: str, path: str | None, rows: Iterator[dict[str, Any]]) ->
     out.flush()
 
 
-def _key_segment(entry: luadata.Entry) -> str:
-    key = entry.key
-    if isinstance(key, str):
-        return f".{key}"
-    if isinstance(key, luadata.LuaString):
-        return f"[{_lua_text(key.raw)}]"
-    if isinstance(key, luadata.LuaNumber):
-        return f"[{key.raw}]"
-    if isinstance(key, luadata.LuaBool):
-        return "[true]" if key.value else "[false]"
-    raise AssertionError(f"entry without a key: {entry.style}")
-
-
 def _scalar(value: luadata.LuaValue) -> str:
     if isinstance(value, luadata.LuaTable):
         return "{}"
@@ -1489,11 +1476,11 @@ def _flatten(path: str, value: luadata.LuaValue) -> Iterator[tuple[str, str]]:
         if entry is None:
             stack.pop()
             continue
+        position: int | None = None
         if entry.style is luadata.KeyStyle.POSITIONAL:
             counter[0] += 1
-            child = f"{prefix}[{counter[0]}]"
-        else:
-            child = prefix + _key_segment(entry)
+            position = counter[0]
+        child = prefix + svmerge.path_step(entry, position)
         inner = entry.value
         if isinstance(inner, luadata.LuaTable) and inner.entries:
             stack.append((child, iter(inner.entries), [0]))
@@ -1501,83 +1488,25 @@ def _flatten(path: str, value: luadata.LuaValue) -> Iterator[tuple[str, str]]:
             yield child, _scalar(inner)
 
 
-_PATH_HEAD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-_PATH_STEP = re.compile(
-    r"""\.(?P<name>[A-Za-z_][A-Za-z0-9_]*)"""
-    r"""|\[\s*(?:"(?P<dq>(?:[^"\\]|\\.)*)"|'(?P<sq>(?:[^'\\]|\\.)*)'"""
-    r"""|(?P<bool>true|false)|(?P<num>-?(?:0[xX][0-9A-Fa-f]+|[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)))\s*\]"""
-)
-_PATH_ESCAPE = re.compile(r"\\(.)")
-
-_Step = tuple[Literal["text"], str] | tuple[Literal["number"], float] | tuple[Literal["bool"], bool]
-
-
-def _parse_path(expr: str) -> tuple[str, list[_Step]]:
-    head = _PATH_HEAD.match(expr)
-    if head is None:
-        raise CliError(f"--path must start with a variable name: {expr!r}", EXIT_USAGE)
-    steps: list[_Step] = []
-    pos = head.end()
-    while pos < len(expr):
-        m = _PATH_STEP.match(expr, pos)
-        if m is None:
-            raise CliError(
-                f"cannot read --path {expr!r} at column {pos + 1}; use .name, [n], "
-                '["text"] or [true]',
-                EXIT_USAGE,
-            )
-        if m.group("name") is not None:
-            steps.append(("text", m.group("name")))
-        elif m.group("dq") is not None or m.group("sq") is not None:
-            quoted = m.group("dq") if m.group("dq") is not None else m.group("sq")
-            steps.append(("text", _PATH_ESCAPE.sub(r"\1", quoted)))
-        elif m.group("bool") is not None:
-            steps.append(("bool", m.group("bool") == "true"))
-        else:
-            steps.append(("number", luadata.LuaNumber(b"", m.group("num")).as_float()))
-        pos = m.end()
-    return head.group(), steps
-
-
-def _step_text(step: _Step) -> str:
-    kind, value = step
-    if kind == "text":
-        return f"[{json.dumps(value)}]"
-    if kind == "bool":
-        return "[true]" if value else "[false]"
-    return f"[{value:g}]"
-
-
-def _entry_matches(entry: luadata.Entry, position: int | None, step: _Step) -> bool:
-    kind, wanted = step
-    key = entry.key
-    if kind == "number":
-        if position is not None:
-            return float(position) == wanted
-        return isinstance(key, luadata.LuaNumber) and key.as_float() == wanted
-    if position is not None:
-        return False
-    if kind == "text":
-        if isinstance(key, str):
-            return key == wanted
-        return (
-            isinstance(key, luadata.LuaString)
-            and isinstance(wanted, str)
-            and (key.data == wanted.encode("utf-8"))
-        )
-    return isinstance(key, luadata.LuaBool) and key.value == wanted
+def _parse_path(expr: str) -> svmerge.KeyPath:
+    """`--path`, read by the grammar `sv merge --key` reads (M11-25)."""
+    try:
+        return svmerge.parse_path(expr, "--path")
+    except svmerge.MergeError as exc:
+        raise CliError(str(exc), EXIT_USAGE) from exc
 
 
 def _resolve_path(doc: luadata.LuaDocument, expr: str) -> luadata.LuaValue:
-    name, steps = _parse_path(expr)
+    path = _parse_path(expr)
+    name = path.head
     found = [a for a in doc.assignments if a.name == name]
     if not found:
         raise CliError(f"no top-level variable {name!r} in this file")
     value: luadata.LuaValue = found[-1].value  # the client runs the file top to bottom
     where = name
-    for step in steps:
+    for step in path.steps:
         if not isinstance(value, luadata.LuaTable):
-            raise CliError(f"{where} is not a table, so it has no {_step_text(step)}")
+            raise CliError(f"{where} is not a table, so it has no {step.spelling}")
         matches = []
         position = 0
         for entry in value.entries:
@@ -1585,16 +1514,16 @@ def _resolve_path(doc: luadata.LuaDocument, expr: str) -> luadata.LuaValue:
             if entry.style is luadata.KeyStyle.POSITIONAL:
                 position += 1
                 pos = position
-            if _entry_matches(entry, pos, step):
+            if step.matches(entry, pos):
                 matches.append(entry)
         if not matches:
-            raise CliError(f"{where} has no key {_step_text(step)}")
+            raise CliError(f"{where} has no key {step.spelling}")
         if len(matches) > 1:
             raise CliError(
-                f"{where} has the key {_step_text(step)} {len(matches)} times (duplicate keys); "
+                f"{where} has the key {step.spelling} {len(matches)} times (duplicate keys); "
                 "see `wowlab sv dump` without --path"
             )
-        where += _step_text(step)
+        where += step.spelling
         value = matches[0].value
     return value
 
@@ -1619,7 +1548,11 @@ def sv_dump(
     ],
     path: Annotated[
         str | None,
-        typer.Option("--path", help='One value, e.g. Var.key[3].name or Var["some key"].'),
+        typer.Option(
+            "--path",
+            help='One value, e.g. Var.key[3].name or Var["some key"], spelled as the dump '
+            'prints it; a quoted key takes Lua 5.1 escapes (\\n, \\\\, \\", \\ddd).',
+        ),
     ] = None,
     root: RootOpt = None,
     flavor: FlavorOpt = None,
