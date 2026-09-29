@@ -4345,10 +4345,12 @@ _IMPORTED_REMARK = (
     "looks import-char): the choices the addon had last recorded in the barber shop before "
     "the import. It may miss a change applied during that visit [verify], and any change since."
 )
-_IMPORTED_BUILD_REMARK = "Look {name} was recorded by client build {client}."
+_IMPORTED_BUILD_REMARK = (
+    "Look {name} comes from a record the lab-addon made on client build {client}."
+)
 _IMPORTED_UNKNOWN = (
-    " (recorded by client {client}; checked against {build}'s tables; possibly a newer build "
-    "or a hotfix)"
+    " (recorded by client {client}, not the build of these tables: the id may exist only in "
+    "that build, or come from a hotfix)"
 )
 _MODEL_HOTFIX = " (possibly a hotfix)"
 _ID = re.compile(r"[0-9]{1,9}")
@@ -4770,14 +4772,25 @@ def _imported_wording(
 ) -> LookReport:
     """An imported look keeps the model's "(possibly a hotfix)", unless the
     recording client's build is known and differs from the checking build:
-    then the id may simply be newer than those tables (M11-23 review, P4)."""
+    then an option or choice id from the record may exist only in that build
+    (either direction; M11-23 review, P4 and D1). A requirement id the
+    tables name is theirs, not the record's, and keeps the model's words."""
     if client is None or client == model.build:
         return report
-    tail = _IMPORTED_UNKNOWN.format(client=client, build=model.build)
+    tail = _IMPORTED_UNKNOWN.format(client=client)
+
+    def from_record(f: looks.Finding) -> bool:
+        # Only the option and choice ids came from the record; a requirement
+        # id an option or choice names comes from the tables themselves.
+        return (
+            f.option_id is not None and f.message.startswith(f"option {f.option_id} is unknown")
+        ) or (f.choice_id is not None and f.message.startswith(f"choice {f.choice_id} is unknown"))
 
     def reworded(f: looks.Finding) -> looks.Finding:
-        if f.kind is not looks.FindingKind.UNKNOWN_TO_BUILD or not f.message.endswith(
-            _MODEL_HOTFIX
+        if (
+            f.kind is not looks.FindingKind.UNKNOWN_TO_BUILD
+            or not f.message.endswith(_MODEL_HOTFIX)
+            or not from_record(f)
         ):
             return f
         return f.model_copy(update={"message": f.message[: -len(_MODEL_HOTFIX)] + tail})
@@ -5379,10 +5392,11 @@ def _import_remarks(
         remarks.append(f"Recorded with no choice id, so left out of the look: option(s) {listed}.")
     race = model.races.get(got.race_id)
     expected = race.model_for(got.body_type) if race is not None else None
-    if expected is not None:
+    shown_model = got.chr_model_id if got.chr_model_id is not None else expected
+    if shown_model is not None:
         listed_ids = {*got.choices, *got.without_choice}
         unlisted = sorted(
-            (o for o in model.options.values() if o.chr_model_id == expected),
+            (o for o in model.options.values() if o.chr_model_id == shown_model),
             key=lambda o: o.id,
         )
         unlisted = [o for o in unlisted if o.id not in listed_ids]
@@ -5390,7 +5404,7 @@ def _import_remarks(
             remarks.append(
                 _NOT_LISTED_REMARK.format(
                     options=", ".join(f"{o.name} ({o.id})" for o in unlisted),
-                    model=expected,
+                    model=shown_model,
                     build=model.build,
                 )
             )
@@ -5409,8 +5423,8 @@ def _import_remarks(
     if got.client_build is not None and got.client_build != model.build:
         remarks.append(
             f"Recorded by client build {got.client_build}; checked against build "
-            f"{model.build}'s tables: an id they lack may be newer than those tables, or a "
-            "hotfix."
+            f"{model.build}'s tables: an id they lack may exist only in the recording build, or "
+            "come from a hotfix."
         )
     return remarks
 
@@ -5514,8 +5528,8 @@ _PAGE_LEGEND = (
     'appearance to earn), an id the build lacks (in a typed look: "is not in build '
     "<version>'s tables: check the id with `wowlab looks options`\"; in an imported look: "
     '"unknown to build <version> (possibly a hotfix)", or, when the recording client was '
-    "another build, \"(recorded by client <build>; checked against <version>'s tables; "
-    'possibly a newer build or a hotfix)"), a dependency on '
+    'another build, "(recorded by client <build>, not the build of these tables: the id may '
+    'exist only in that build, or come from a hotfix)"), a dependency on '
     "an option the look leaves unset, a class-restricted choice when no class is chosen, "
     "conditions, and options on a model no race uses (a form, pet or mount), checked by "
     "their requirements only [verify].",

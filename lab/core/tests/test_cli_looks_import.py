@@ -38,7 +38,7 @@ from typer.testing import CliRunner
 
 from wowlab_core import cli, install, labaddon, lookstore
 from wowlab_core.gamedata import GameData
-from wowlab_core.looks import Look
+from wowlab_core.looks import Customizations, Finding, FindingKind, Look
 from wowlab_core.lookstore import LookStore, SavedLook
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -96,6 +96,12 @@ def source(monkeypatch: pytest.MonkeyPatch, user_data: Path) -> _Source:
 
     monkeypatch.setattr(cli, "_open_gamedata", fake)
     return served
+
+
+@pytest.fixture(scope="module")
+def model(tmp_path_factory: pytest.TempPathFactory) -> Customizations:
+    data = GameData(_Source(), cache_dir=tmp_path_factory.mktemp("gamedata"))
+    return Customizations.from_gamedata(data, BUILD)
 
 
 def _install(tmp_path: Path, capture: Path, name: str) -> Path:
@@ -286,7 +292,7 @@ def test_import_char_remarks_say_when_the_record_was_made(visited: Path) -> None
     ) in remarks
     assert (
         f"Recorded by client build {CLIENT_BUILD}; checked against build {BUILD}'s tables: an "
-        "id they lack may be newer than those tables, or a hotfix."
+        "id they lack may exist only in the recording build, or come from a hotfix."
     ) in remarks
     assert EXPORTED_ONLY in remarks
     assert NOT_LISTED in remarks
@@ -338,7 +344,7 @@ def test_show_and_compare_of_an_imported_look(visited: Path) -> None:
         "looks import-char): the choices the addon had last recorded in the barber shop before "
         "the import. It may miss a change applied during that visit [verify], and any change "
         "since.",
-        f"Look undead was recorded by client build {CLIENT_BUILD}.",
+        f"Look undead comes from a record the lab-addon made on client build {CLIENT_BUILD}.",
     ]
     assert shown.refused is False
     text = ok("looks", "show", "undead", "--build", BUILD).stdout
@@ -603,11 +609,16 @@ def test_save_keeps_a_look_under_the_limit_constructed(user_data: Path) -> None:
         (BUILD, " (possibly a hotfix)"),
         (
             CLIENT_BUILD,
-            f" (recorded by client {CLIENT_BUILD}; checked against {BUILD}'s tables; possibly "
-            "a newer build or a hotfix)",
+            f" (recorded by client {CLIENT_BUILD}, not the build of these tables: the id may "
+            "exist only in that build, or come from a hotfix)",
+        ),
+        (
+            "1.60.1.69913",  # an older client: the wording names no direction (D1)
+            " (recorded by client 1.60.1.69913, not the build of these tables: the id may "
+            "exist only in that build, or come from a hotfix)",
         ),
     ],
-    ids=["no-client-build", "same-build", "newer-client"],
+    ids=["no-client-build", "same-build", "newer-client", "older-client"],
 )
 def test_an_imported_unknown_id_names_the_recording_client_constructed(
     user_data: Path, recorded: str | None, tail: str
@@ -621,7 +632,7 @@ def test_an_imported_unknown_id_names_the_recording_client_constructed(
         ok("looks", "show", "x", "--build", BUILD, "--json").stdout
     )
     assert [f.message for f in shown.notes] == [f"choice 999999 is unknown to build {BUILD}{tail}"]
-    build_remark = f"Look x was recorded by client build {recorded}."
+    build_remark = f"Look x comes from a record the lab-addon made on client build {recorded}."
     assert (build_remark in shown.remarks) is (recorded is not None)
 
 
@@ -643,4 +654,67 @@ def test_the_page_legend_gives_both_unknown_id_wordings() -> None:
     legend = cli._PAGE_LEGEND[2]
     assert "check the id with `wowlab looks options`" in legend
     assert "unknown to build <version> (possibly a hotfix)" in legend
-    assert "possibly a newer build or a hotfix" in legend
+    assert (
+        "(recorded by client <build>, not the build of these tables: the id may exist only in "
+        "that build, or come from a hotfix)"
+    ) in legend
+
+
+def test_not_listed_uses_the_model_the_record_names_constructed(visited: Path) -> None:
+    """D3: the record given `chr_model_id` 10 (race 5's body type 1 model) is
+    compared with model 10's options, not the tables' model 9 for body type 0."""
+    _constructed(visited, b'["sex"] = 0,', b'["sex"] = 0,\r\n["chr_model_id"] = 10,')
+    remarks = _report(visited, "undead").look.remarks
+    assert NOT_LISTED not in remarks
+    (not_listed,) = [r for r in remarks if r.startswith("Not listed by the barber shop")]
+    assert "(options of model 10 in build 1.60.1.70009's tables)" in not_listed
+    # model 10's options, none of which the record lists
+    for option in ("63", "64", "65", "66", "67", "535", "559", "568", "6347", "8531"):
+        assert f"({option})" in not_listed
+    assert "(567)" not in not_listed
+
+
+def test_a_requirement_id_the_tables_lack_keeps_the_models_words_constructed(
+    model: Customizations,
+) -> None:
+    """C-info: only option and choice ids come from the record. A constructed
+    report holding an unknown choice and an unknown requirement (a note the
+    model gives when its own tables name a requirement they lack)."""
+    choice = Finding(
+        kind=FindingKind.UNKNOWN_TO_BUILD,
+        message=f"choice 999999 is unknown to build {BUILD} (possibly a hotfix)",
+        option_id=9,
+        choice_id=999999,
+    )
+    requirement = Finding(
+        kind=FindingKind.UNKNOWN_TO_BUILD,
+        message=(
+            "choice 1 of option 'Skin Color' (9): requirement 77777 is unknown to build "
+            f"{BUILD} (possibly a hotfix)"
+        ),
+        option_id=9,
+        choice_id=1,
+    )
+    report = cli.LookReport(
+        name="x",
+        path=None,
+        saved_build=None,
+        origin="imported",
+        build=BUILD,
+        race_id=1,
+        race_name="Human",
+        body_type=0,
+        class_id=None,
+        class_name=None,
+        choices=[],
+        refused=False,
+        refusals=[],
+        notes=[choice, requirement],
+        remarks=[],
+    )
+    out = cli._imported_wording(model, report, CLIENT_BUILD)
+    assert [f.message for f in out.notes] == [
+        f"choice 999999 is unknown to build {BUILD} (recorded by client {CLIENT_BUILD}, not the "
+        "build of these tables: the id may exist only in that build, or come from a hotfix)",
+        requirement.message,
+    ]

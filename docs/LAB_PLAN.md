@@ -1724,8 +1724,10 @@ written before it) or `imported`; an imported look also keeps
 additive). Every command words an id the build lacks by origin: a typed id
 as "is not in build <version>'s tables: check the id …" (as `save` did), an
 imported one as "unknown to build <version> (possibly a hotfix)", or, when
-the recording client was another build, "(recorded by client <build>;
-checked against <version>'s tables; possibly a newer build or a hotfix)".
+the recording client was another build, "(recorded by client <build>, not
+the build of these tables: the id may exist only in that build, or come
+from a hotfix)"; only option and choice ids from the record get that
+ending, not a requirement id the tables name.
 `show`, `compare` and `page` of an imported look add a remark naming the
 look: it holds the choices the addon had last recorded in the barber shop
 before the import, and may miss a change applied during that visit
