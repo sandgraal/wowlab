@@ -2482,7 +2482,8 @@ def test_unskip_of_a_section_already_back_on_says_so() -> None:
 # value stored here is also held to the stored-value rules above
 # (test_every_stored_value_is_type_checked).
 
-NO_SAVED_LOADOUT = "the client returned no saved loadout"
+NO_SAVED_LOADOUT = "the client returned no last-selected loadout for this spec"
+EMPTY_EXPORT = "C_Traits.GenerateImportString returned an empty string"
 
 
 def _section_source(path: Path, key: str) -> str:
@@ -2522,21 +2523,24 @@ def _section_source(path: Path, key: str) -> str:
 
 
 def test_never_gathered_section_is_written_with_events_unregistered() -> None:
-    """(1) ns.Write attaches the refused events to every record it writes for a
-    section that is not switched off: gathered, carried, or the never-gathered
-    `not_gathered` absent record. The switched-off branch keeps the plain
-    owner reason. `gather` no longer attaches them itself, so ns.Write is the
-    one place."""
+    """(1) ns.Write writes `events_unregistered` (the refused events, or an
+    empty list: the key is always there, so a missing key means a file from
+    before M11-22) on every record it writes for a section that registered a
+    non-empty `events` list this session: gathered, carried, or the
+    never-gathered `not_gathered` absent record. `section.listener` is set by
+    `listen` and cleared by `switchOff`, so a section switched off at load or
+    this session gets nothing but the owner reason. `gather` no longer
+    attaches the list itself, so ns.Write is the one place."""
     flow = _core()
     write = _body(flow, "ns.Write")
     assert (
         "if section . off and section . gather then record = ns . Absent ( SWITCHED_OFF ) "
         'else record = ns . state [ section . key ] or ns . Absent ( section . not_gathered or "not gathered this session" ) '
-        "if section . events_unregistered then "
-        "record . events_unregistered = section . events_unregistered end "
+        'if section . listener and type ( section . events ) == "table" and # section . events > 0 then '
+        "record . events_unregistered = section . events_unregistered or { } end "
         "end place ( db , section . path , record )"
     ) in write, write
-    attach = "record . events_unregistered = section . events_unregistered"
+    attach = "record . events_unregistered = section . events_unregistered or { }"
     rendered = [_render(_tokens(path)) for path in SOURCES]
     assert sum(text.count(attach) for text in rendered) == 1
     assert "events_unregistered" not in _body(flow, "gather")
@@ -2548,6 +2552,17 @@ def test_never_gathered_section_is_written_with_events_unregistered() -> None:
     assert "if not section . off then listen ( section ) end" in _body(
         flow, 'ns.On("ADDON_LOADED")'
     )
+    # `listener` marks "registered this session": set only in listen, cleared
+    # in switchOff.
+    sets = [
+        (flow.label_at(i), _render(flow.tokens[i : i + 5]))
+        for i in range(len(flow.tokens) - 5)
+        if [t.text for t in flow.tokens[i : i + 4]] == ["section", ".", "listener", "="]
+    ]
+    assert sorted(sets) == [
+        ("listen", "section . listener = onEvent"),
+        ("switchOff", "section . listener = nil"),
+    ], sets
 
 
 def test_the_sections_this_is_for_have_events_and_not_gathered() -> None:
@@ -2564,17 +2579,22 @@ def test_the_sections_this_is_for_have_events_and_not_gathered() -> None:
 
 
 def test_currencies_record_the_row_count() -> None:
-    """(2) `rows`: the count GetCurrencyListSize gave, beside `list`, so an
-    empty panel can be told from rows whose id could not be read. The loop
-    walks the same count."""
+    """(2) `rows`: the count GetCurrencyListSize gave, beside `list`, and
+    `headers`, every header row seen, so `rows - headers - #list` is the rows
+    whose id could not be read. The loop walks the same count."""
     section = _section_source(ADDON / "Currencies.lua", "currencies")
     assert "local rows = ns . Call ( size )" in section
     assert 'for index = 1 , type ( rows ) == "number" and rows or 0 do' in section
+    assert "local ids , seen , headers , collapsed = { } , { } , 0 , 0" in section
+    assert "if info . isHeader then headers = headers + 1 if not info . isHeaderExpanded then" in (
+        section
+    )
     assert (
-        "local record = { list = list , filtered = true , headers_collapsed = collapsed , "
-        "rows = ns . Number ( rows ) }"
+        "local record = { list = list , filtered = true , headers = headers , "
+        "headers_collapsed = collapsed , rows = ns . Number ( rows ) , }"
     ) in section
     assert section.count("rows = ns . Number ( rows )") == 1
+    assert section.count("headers = headers + 1") == 1
 
 
 def test_talents_class_says_why_there_is_no_saved_loadout() -> None:
@@ -2602,14 +2622,16 @@ def test_talents_class_says_why_there_is_no_saved_loadout() -> None:
 
 def test_talents_class_says_why_there_is_no_export() -> None:
     """(3) Exactly one of `export` and `export_absent`, whatever the client
-    does: the function missing, raising an error, or returning no string."""
+    does: the function missing, raising an error, returning an empty string,
+    or returning no string."""
     section = _section_source(ADDON / "Talents.lua", "talents.class")
     assert (
         'local export = ns . Fn ( C_Traits , "GenerateImportString" ) '
         'if not export then record . export_absent = "C_Traits.GenerateImportString missing" '
         "else local ok , text = pcall ( export , configID ) "
         'if not ok then record . export_absent = "C_Traits.GenerateImportString raised an error" '
-        'elseif type ( text ) == "string" then record . export = text '
+        'elseif type ( text ) == "string" and text ~= "" then record . export = text '
+        f'elseif text == "" then record . export_absent = "{EMPTY_EXPORT}" '
         'else record . export_absent = "C_Traits.GenerateImportString returned no string" '
         "end end"
     ) in section, section
@@ -2622,8 +2644,14 @@ def test_readme_and_plan_document_why_a_value_is_missing() -> None:
     section = plan.split("### 13.2")[0].split("### 13.1")[-1]
     assert "Amended 2026-09-29 (M11-22" in section
     for text in (readme, section):
-        assert NO_SAVED_LOADOUT in text
-        assert "export_absent" in text
-        assert "`rows`" in text
+        joined = " ".join(text.split())  # literals may wrap across lines
+        assert NO_SAVED_LOADOUT in joined
+        assert "export_absent" in joined
+        assert "`rows`" in joined
+        assert "`headers`" in joined
+        assert "An empty list is the answer" in joined
+        assert "`carry` drops the saved list" in joined
+        assert "no saved loadout is selected for this spec **[verify]**" in joined
+    assert f'`"{EMPTY_EXPORT}"`' in readme
     assert "export | export_absent" in readme
-    assert "headers_collapsed, rows, filter" in readme
+    assert "headers, headers_collapsed, rows, filter" in readme

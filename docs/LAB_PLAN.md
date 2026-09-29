@@ -1428,25 +1428,34 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   Amended 2026-09-29 (M11-22, from the M11-03 domain review): three places
   where a capture could not tell "the client returned nothing" from "the
   call failed" or "never ran". (1) A section that registered its events
-  this session carries `events_unregistered = { ... }` (the change events
-  the client refused) on whatever record is written for it: a gathered
-  record, a carried customization record, and the never-gathered
-  `{ absent = "<not_gathered reason>" }`. So one login answers whether
-  `BARBER_SHOP_OPEN` exists on the client even when the barber shop never
-  opens. A switched-off section registers no event and keeps
-  `{ absent = "switched off by the owner" }` alone; `collections.appearances`
-  has no events, so its reason gets nothing added. (2) `currencies` records
-  `rows`, the count `GetCurrencyListSize` gave (headers included), beside
-  `list`, so an empty panel (0) can be told from rows whose id could not be
-  read; `rows` is missing only when that call raised an error or returned
-  no number. (3) `talents.class` writes exactly one of `export` and
-  `export_absent` (the function missing, raised an error, or returned no
-  string), and exactly one of `last_selected_config` and
-  `last_selected_config_absent`: `"the client returned no saved loadout"`
-  when the call returned nil, with separate reasons when the function is
-  missing, there is no spec id to ask with, the call raised an error, or it
-  returned something other than a number. Both calls go through `pcall`
-  directly, not `ns.Call`, so an error is told apart from nil. The keys are
+  this session carries `events_unregistered` on whatever record is written
+  for it (a gathered record, a carried customization record, and the
+  never-gathered `{ absent = "<not_gathered reason>" }`): the change events
+  the client refused, or an empty list when it accepted all of them. An
+  empty list is the answer; a record with no key at all was written before
+  M11-22 (the M11-03 fixtures, or any file from before the owner
+  reinstalled) and says nothing about the client's events. On a carried
+  customization record the list is this session's, not the recorded
+  visit's: `carry` drops the saved list. A section switched off (at load,
+  or by `/wowlab skip` this session) is written with its plain "switched
+  off by the owner" reason and nothing else; `collections.appearances` has
+  no events, so its reason gets nothing added. (2) `currencies` records
+  `rows`, the count `GetCurrencyListSize` gave; it counts header rows and
+  leaves out rows under a collapsed header (community documentation,
+  **[verify]**). `headers` counts every header row seen, so
+  `rows − headers − #list` is the rows the addon could not read an id
+  from. `rows` is missing when the call raised an error or returned no
+  number, or when the file predates M11-22 (the M11-03 fixtures). (3)
+  `talents.class` writes exactly one of `export` and `export_absent` (the
+  function missing, raised an error, returned an empty string, or returned
+  no string), and exactly one of `last_selected_config` and
+  `last_selected_config_absent`: `"the client returned no last-selected
+  loadout for this spec"` when the call returned nil (nil is taken, from
+  Retail behaviour, to mean no saved loadout is selected for this spec
+  **[verify]**), with separate reasons when the function is missing, there
+  is no spec id to ask with, the call raised an error, or it returned
+  something other than a number. Both calls go through `pcall` directly,
+  not `ns.Call`, so an error is told apart from nil. The keys are
   additive: the schema stays 1, and the reader treats each as optional
   (the M11-03 fixtures predate them).
 
