@@ -14,7 +14,7 @@ The backlog holds the current wave only (ADR-0024). Milestone numbers start at `
 
 Spec: `docs/LAB_PLAN.md` §13. Decisions: ADR-0026, ADR-0027 (accepted 2026-09-28). Owner pick 2026-09-28. L1–L8 apply to every ticket.
 
-The wave is 23 tickets (10 planned plus the follow-ups M11-11T, M11-11, M11-12, M11-13, M11-14, M11-15, M11-16T, M11-17, M11-18, M11-19, M11-20 and M11-21 added 2026-09-28), four of them M-sized (M11-01, M11-05, M11-08, M11-09), not the four S-sized ideas listed in `docs/LAB_IDEAS.md`; the M11-10 review compares actual effort against that. Wave 1 closes before M11 dispatch (§13.5); the critical path M11-01 → M11-02 → M11-03 goes first.
+The wave is 25 tickets (10 planned plus the follow-ups M11-11T, M11-11, M11-12, M11-13, M11-14, M11-15, M11-16T, M11-17, M11-18, M11-19, M11-20, M11-21, M11-22 and M11-23 added 2026-09-28; M11-23 is deferred and does not hold the wave review), four of them M-sized (M11-01, M11-05, M11-08, M11-09), not the four S-sized ideas listed in `docs/LAB_IDEAS.md`; the M11-10 review compares actual effort against that. Wave 1 closes before M11 dispatch (§13.5); the critical path M11-01 → M11-02 → M11-03 goes first.
 
 ## [x] M11-01 — lab-addon sources and Lua lint
 **Size:** M · **Depends on:** —
@@ -45,12 +45,27 @@ Install with `wowlab addon install lab`; on each character log in, then log out 
 
 ---
 
-## [ ] M11-04 — `wowlab_core.labaddon` reader, `wowlab char show` and `looks import-char`
-**Size:** S · **Depends on:** M11-03, M10-14, M11-06
+## [ ] M11-04 — `wowlab_core.labaddon` reader and `wowlab char show`
+**Size:** S · **Depends on:** M11-03, M10-14, M11-21
 
-Pydantic models per section and schema version; unknown keys kept, but a string value is accepted only in the fields the addon writes as strings (`link`, `export`, the enum-like fields such as `recorded_at`), so a hand-edited or tampered capture cannot pass free text through (#97 security review); exact numeric and boolean types; absent sections reported with the addon's reason. `wowlab char show [--json]`. The reader and `char show` handle `talents.legacy` present, absent (with its reason) and empty (below level 25), and an optional spec. The customization section is carried across sessions (§13.1): show it as "as of the last barber-shop visit with the addon enabled, N logins or reloads ago" from `recorded_load` and `probe.loads`, and say that a paid appearance change keeping the race is invisible to the addon. Also `wowlab looks import-char` (moved here from M11-06 on 2026-09-28 so the looks CLI need not wait for the capture): reads the capture's customization section into a look and checks it with the M11-05 model.
+Pydantic models per section and schema version; unknown keys kept, but a string value is accepted only in the fields the addon writes as strings (`link`, `export`, the enum-like fields such as `recorded_at`), so a hand-edited or tampered capture cannot pass free text through (#97 security review); exact numeric and boolean types; absent sections reported with the addon's reason. `wowlab char show [--json]`. The customization section is carried across sessions (§13.1): when present, show it as "as of the last barber-shop visit with the addon enabled, N logins or reloads ago" from `recorded_load` and `probe.loads`, and say that a paid appearance change keeping the race is invisible to the addon.
 
-**Acceptance:** every M11-03 fixture reads; `--json` validates; a constructed schema-2 document (labelled) is refused with a clear message; `import-char` reads the M11-03 capture and a character without a recorded visit gets the addon's reason; a saved look records its origin (typed or imported) so `show`/`compare` keep the right unknown-id wording (#101 domain review).
+What the M11-03 capture showed the reader must tolerate (domain review, 2026-09-28; details in `docs/LAB_FORMATS.md`'s M11-03 amendment):
+- an empty Lua table read back as a dict wherever a list is expected (`nodes`, `currencies.list`, `collected`, `species`, `configs`, `trees`, `slots`, `entries`, `found_by`, `skipped_types`);
+- a missing key means the client returned nil (`last_selected_config`, `sub_tree`, `export`, `spec.id`, `active_entry`, `item_level`, currency `filter`, pets `default_filters`, toy switches, `player_level`, `probe.lost`): optional, never reported as "absent with reason";
+- absent at several levels: a whole section, one config, one currency, `export_absent`, `last_selected_config_absent`, and `events_unregistered` on a present section;
+- `talents.legacy` present with every node at rank 0 and a zero points cap below level 25: shown as "Legacy candidates: present, nothing spent, 0 points available", never "empty" or "locked"; also absent (with its reason) and an optional spec;
+- raw client enum numbers for config `type`, never Retail's names;
+- gear slots sparse and keyed by `slot`; `average.equipped` never called the character-sheet figure (Forever's sheet shows none);
+- professions identified by `skill_line`, never by position;
+- empty currencies and collections shown as "none recorded", with the filter state;
+- the account `WowLabDB` holding only `schema`;
+- a switched-off section (M11-21) and its reason; `WowLabCharDB.skip`;
+- the keys M11-22 adds (unknown keys are kept regardless).
+
+`looks import-char` moved to M11-23 (owner decision, 2026-09-28): no real capture holds a customization record.
+
+**Acceptance:** every M11-03 fixture reads and `char show` renders each without error; `--json` validates; a constructed schema-2 document (labelled) is refused with a clear message; each tolerance above has a test (real fixture where it occurs, labelled constructed input otherwise); reviewed by `code-reviewer` and `domain-reviewer`.
 
 ---
 
@@ -213,6 +228,24 @@ Found in the owner's M11-03 first start: one call to `C_TransmogCollection.GetCa
 From the M11-20 review. A client assertion in any section crashes the client at every login while the addon is enabled, and a crash writes no SavedVariables, so the addon cannot mark the culprit itself. Add `/wowlab skip <section>` and `/wowlab unskip <section>` (and `/wowlab skip` with no argument lists the switched-off sections), stored in `WowLabCharDB`, read at `ADDON_LOADED` before any section is gathered; a skipped section is written as absent with the reason "switched off by the owner". Section keys as in §13.1. No change to what the other sections record.
 
 **Acceptance:** the static addon tests cover the command names and that a skipped section is never gathered (source-level, labelled); README and §13.1 document it; the M11-03 runbook's crash step mentions it; `make ci` green; reviewed by `code-reviewer` and `domain-reviewer`.
+
+---
+
+## [ ] M11-22 — lab-addon: say why a value is missing
+**Size:** S · **Depends on:** M11-21
+
+From the M11-03 domain review. Three places where a capture cannot tell "the client returned nothing" from "the call failed" or "never ran": (1) `ns.Write` also attaches `section.events_unregistered` to a never-gathered (`not_gathered`) absent record, so one login answers whether an event such as `BARBER_SHOP_OPEN` exists on the client even when the section never runs; (2) `currencies` records `rows`, the count `GetCurrencyListSize` gave, beside `list`; (3) `talents.class` writes `last_selected_config_absent = "the client returned no saved loadout"` when that call returns nil, and `export_absent` whenever `export` is missing. Schema stays 1 (additive keys); §13.1 dated amendment; README.
+
+**Acceptance:** static addon tests (labelled source scans) for each of the three; `make lint-lua` and `make ci` green; reviewed by `code-reviewer` and `domain-reviewer`.
+
+---
+
+## [ ] M11-23 — `wowlab looks import-char` (deferred)
+**Size:** S · **Depends on:** M11-04, a real capture with a customization record
+
+Moved out of M11-04 by the owner on 2026-09-28: the addon records customization choices only during a barber-shop visit, the barber UI did not open on Forever 1.60.1.70009 (M11-03), so no real capture holds that record and L8 rules out building against an invented one. Reads the capture's customization section into a look and checks it with the M11-05 model; a character without a recorded visit gets the addon's reason; a saved look records its origin (typed or imported) so `show`/`compare` keep the right unknown-id wording (#101 domain review). Stays open until a real capture holds the record; the Wave 2 review does not wait for it.
+
+**Acceptance:** `import-char` reads a real capture's customization record; the no-visit case gives the addon's reason; reviewed by `code-reviewer` and `domain-reviewer`.
 
 ---
 
