@@ -93,12 +93,20 @@ class LookLocationError(LookStoreError):
 
 class SavedLook(BaseModel):
     """One saved look. ``saved_build`` is the full version string whose tables
-    checked it when it was saved; a later check may use another build."""
+    checked it when it was saved; a later check may use another build.
+
+    ``origin`` (M11-23, additive, format stays 1): ``typed`` for a look given
+    on the command line (``looks save``), ``imported`` for one read from a
+    character's lab-addon record (``looks import-char``). A file without it
+    predates import and was typed. It decides how an id the build lacks is
+    worded: a typed id is something to check, an imported one may be a
+    hotfix."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     format: Literal[1] = LOOKS_FORMAT
     saved_build: str
+    origin: Literal["typed", "imported"] = "typed"
     look: Look
 
 

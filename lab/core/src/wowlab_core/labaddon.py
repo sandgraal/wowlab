@@ -99,10 +99,13 @@ __all__ = [
     "CharDBV1",
     "ClassTalents",
     "ClippedReason",
+    "CustomizationImport",
     "LabAddonError",
     "LegacyConfig",
     "LegacyTalents",
+    "NoCustomizationError",
     "clip_reason",
+    "customization_import",
     "customization_loads_ago",
     "describe",
     "describe_account",
@@ -926,6 +929,88 @@ def customization_loads_ago(char: CharDBV1) -> int | None:
         return None
     ago = char.probe.loads - record.recorded_load
     return ago if ago >= 0 else None
+
+
+class NoCustomizationError(LabAddonError):
+    """The file holds no customization record a look can be made from.
+    `reason` is the addon's own absent reason when it wrote one."""
+
+    def __init__(self, message: str, reason: str | None = None) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+class CustomizationImport(BaseModel):
+    """A character's customization record, as `looks import-char` turns it
+    into a look (M11-23). `body_type` is the record's `sex` (the barber
+    shop's `Enum.UnitSex`, 0 or 1), read as `ChrRaceXChrModel.Sex`: the
+    M11-23 capture's choices all sit on the model that row gives for its race
+    and sex 0 **[verify for 1]**. `without_choice` lists options the record
+    holds with no choice id; they are left out of `choices`."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    race_id: int
+    body_type: int
+    chr_model_id: int | None
+    choices: dict[int, int]
+    without_choice: list[int]
+    recorded_at: Literal["open", "applied"] | None
+    as_of: str
+    carried: bool
+    loads_ago: int | None
+    client_build: str | None  # "<version>.<build>" from the client block, when both are there
+
+
+def customization_import(char: CharDBV1) -> CustomizationImport:
+    """The customization record as look material, or `NoCustomizationError`
+    (with the addon's reason when the section is absent with one). Pure: the
+    record is already read."""
+    record = char.customization
+    if record is None:
+        raise NoCustomizationError(f"customization: {NOT_IN_FILE}")
+    if not isinstance(record, Customization):
+        raise NoCustomizationError(
+            f"customization is absent, with the addon's reason: {record.absent}", record.absent
+        )
+    if record.race_id is None:
+        raise NoCustomizationError("the customization record names no race (race_id)")
+    if record.sex is None:
+        raise NoCustomizationError("the customization record names no body type (sex)")
+    if record.sex not in (0, 1):
+        raise NoCustomizationError(
+            f"the customization record's sex is {record.sex}, not 0 or 1 as the barber shop "
+            "writes it; no body type is taken from it"
+        )
+    choices: dict[int, int] = {}
+    without: list[int] = []
+    for entry in record.choices:
+        if entry.option in choices or entry.option in without:
+            raise NoCustomizationError(
+                f"the customization record lists option {entry.option} twice"
+            )
+        if entry.choice is None:
+            without.append(entry.option)
+        else:
+            choices[entry.option] = entry.choice
+    client = char.client
+    build = (
+        f"{client.version}.{client.build}"
+        if isinstance(client, Client) and client.version is not None and client.build is not None
+        else None
+    )
+    return CustomizationImport(
+        race_id=record.race_id,
+        body_type=record.sex,
+        chr_model_id=record.chr_model_id,
+        choices=choices,
+        without_choice=without,
+        recorded_at=record.recorded_at,
+        as_of=record.as_of,
+        carried=bool(record.carried),
+        loads_ago=customization_loads_ago(char),
+        client_build=build,
+    )
 
 
 def _extra_paths(value: object, path: str) -> Iterator[str]:

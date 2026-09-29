@@ -269,7 +269,8 @@ def test_saved_looks_are_what_looks_show_prints() -> None:
         assert entry.verdict == f"not refused, {len(printed.notes)} note(s)"
     hotfix = data.looks[1].report
     assert [f.kind for f in hotfix.notes] == ["unknown_to_build"]
-    assert "(possibly a hotfix)" in hotfix.notes[0].message
+    # M11-23: a typed look keeps the typed wording, as `show` gives it
+    assert "check the id with `wowlab looks options`" in hotfix.notes[0].message
     assert EXPORTED_ONLY in hotfix.remarks
 
 

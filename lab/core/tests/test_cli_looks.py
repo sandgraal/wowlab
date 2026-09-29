@@ -472,9 +472,11 @@ def test_save_keeps_an_unknown_choice_as_a_note_constructed() -> None:
     assert [f.message for f in report.notes] == [
         f"choice 999999 of option 'Skin Color' (9) {HOTFIX_HINT}"
     ]
+    # M11-23: a typed look keeps the typed wording in `show` too; an imported
+    # look gets "(possibly a hotfix)" (test_cli_looks_import.py).
     shown = _json(cli.LookReport, "looks", "show", "hotfix", "--build", BUILD)
     assert [f.message for f in shown.notes] == [
-        f"choice 999999 is unknown to build {BUILD} (possibly a hotfix)"
+        f"choice 999999 of option 'Skin Color' (9) {HOTFIX_HINT}"
     ]
     option = _save("hotfix2", "77777=1", extra=("--json",))
     assert option.exit_code == 0, option.stderr
@@ -691,7 +693,8 @@ def test_compare_two_looks() -> None:
     assert diff[9].b is not None and diff[9].b.choice_id == OTHER_SKIN
     assert diff[999999].a is None and diff[999999].option_name is None
     assert not report.a.refused and not report.b.refused
-    assert any("option 999999 is unknown to build" in f.message for f in report.b.notes)
+    # M11-23: `b` was typed, so its unknown option keeps the typed wording
+    assert any(f.message == f"option 999999 {HOTFIX_HINT}" for f in report.b.notes)
 
     text = ok("looks", "compare", "a", "b").stdout
     assert f"Looks a | b, checked against build {BUILD}" in text
