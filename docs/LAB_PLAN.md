@@ -1363,7 +1363,7 @@ game installed. M10-08, M10-09 and M10-10 do not wait on it.
 
 *Amended 2026-09-30:* the Wave 1 captures answered 1 and 2 in practice. The
 primary install is on macOS, and the Forever beta client is installed; the
-committed fixture roots are `macos-*`. Question 3 has no owner ruling. The
+committed fixture roots are `macos` and `macos-<build>`. Question 3 has no owner ruling. The
 job still runs, non-required, and `guard`'s Windows lock rules rely on it.
 4. ~~Accept or reject ADR-0019 through ADR-0025.~~ Answered 2026-09-21: all
    accepted, together with ADR-0013 and ADR-0014.
