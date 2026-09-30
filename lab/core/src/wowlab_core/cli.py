@@ -1879,7 +1879,8 @@ def _loader_check(
     disk_loads: int = probe.loads
     disk_sha = hashlib.sha256(disk).hexdigest()
     now = _stamp_now()
-    notes: list[str] = []
+    notes: list[str] = []  # printed with a refusal too
+    passed: list[str] = []  # rule-1 notes: printed only when the whole check passes
     held = f"{chosen.folder}/{rel}"
     when_of: dict[str, _When] = {}
     holding: list[tuple[snapshot.Manifest, snapshot.Entry]] = []
@@ -1921,7 +1922,9 @@ def _loader_check(
         state W left. None: it passes (with the note when no session ran
         since W); else the reason to refuse."""
         if newer_sha == w.after:  # rule 1, before anything is read
-            notes.append(f"{rel}: {_LAB_WROTE} (snapshot {older}, then journal record {w.record}).")
+            passed.append(
+                f"{rel}: {_LAB_WROTE} (snapshot {older}, then journal record {w.record})."
+            )
             return None
         unreadable = (
             f"{rel}: the Lab wrote it after snapshot {older} (journal record {w.record}) and "
@@ -1929,20 +1932,21 @@ def _loader_check(
             "which cannot be read"
         )
         again = (
-            "Take a snapshot (`wowlab snap create`), log in and out once with the lab-addon "
-            "enabled and check again, or pass --force-loader-check to merge anyway"
+            "Take a snapshot now (wowlab snap create), log in and out once with the "
+            "lab-addon enabled, take another snapshot, then check again; or pass "
+            "--force-loader-check if you are sure the last session loaded."
         )
         if w.after is None:
-            return f"{unreadable}: the write removed the file. {again}."
+            return f"{unreadable}: the write removed the file. {again}"
         try:
             data = store.read_object(w.after, size=luadata.MAX_FILE_BYTES)
             before = svmerge.read_probe(luadata.parse(data)).loads
         except (snapshot.SnapshotError, OSError) as exc:
-            return f"{unreadable}: {exc}. {again}."
+            return f"{unreadable}: {exc}. {again}"
         except luadata.LuaDataError as exc:
-            return f"{unreadable}: it is not data the parser accepts ({exc}). {again}."
+            return f"{unreadable}: it is not data the parser accepts ({exc}). {again}"
         if before is None:
-            return f"{unreadable}: it holds no probe.loads. {again}."
+            return f"{unreadable}: it holds no probe.loads. {again}"
         after = newer_loads()
         if isinstance(after, str):
             return after
@@ -1984,6 +1988,7 @@ def _loader_check(
     if len(holding) < 2:
         return None, [
             *notes,
+            *passed,
             f"Fewer than two snapshots hold {rel}, so probe.loads was not compared across "
             "sessions (`wowlab snap create` before and after a login makes the check possible).",
         ]
@@ -1997,6 +2002,7 @@ def _loader_check(
         old = holding[-2][0]
         return None, [
             *notes,
+            *passed,
             f"{rel}: {_NO_LOGIN} (snapshots {old.id} and {new.id} hold the same bytes).",
         ]
     old, old_entry = differing[-1]
@@ -2005,7 +2011,7 @@ def _loader_check(
         refusal = from_lab_write(
             w, old.id, new_entry.sha256, lambda: loads_in(new, new_entry), f"snapshot {new.id}"
         )
-        return refusal, notes
+        return refusal, notes if refusal is not None else [*notes, *passed]
     before = loads_in(old, old_entry)
     if isinstance(before, str):
         return before, notes
@@ -2013,7 +2019,7 @@ def _loader_check(
     if isinstance(after, str):
         return after, notes
     if after > before:
-        return None, notes
+        return None, [*notes, *passed]
     went = "went down" if after < before else "did not go up"
     same = "" if old is holding[-2][0] else " (the snapshots after it hold the same bytes)"
     return (
@@ -3345,8 +3351,10 @@ def snap_gc(
     json_out: JsonOpt = False,
 ) -> None:
     """Remove stored objects no snapshot refers to and older than an hour
-    (GC_GRACE_SECONDS). Holds the store lock for the whole run, so no
-    transaction or `snap create` runs meanwhile. JSON: snapshot.GcReport."""
+    (GC_GRACE_SECONDS). An object a committed write in the guard journal
+    names as what it wrote is kept too: the SavedVariables loader check of
+    `sv merge` compares from it. Holds the store lock for the whole run, so
+    no transaction or `snap create` runs meanwhile. JSON: snapshot.GcReport."""
     store = snapshot.SnapshotStore()
     if not store.path.is_dir():
         report = snapshot.GcReport(dry_run=True, unreferenced=(), unreferenced_bytes=0, removed=())
@@ -3356,7 +3364,16 @@ def snap_gc(
             _say(f"No snapshot store at {store.path} yet; nothing to collect.")
         return
     with guard.store_lock(store.path):
-        report = store.gc(dry_run=True, grace_seconds=GC_GRACE_SECONDS)
+        # What committed writes left (M11-24), read under the store lock, so
+        # no transaction adds a record between this and the removal.
+        written = {
+            change.after
+            for record in guard.history(store=store.path)
+            if record.state == "committed"
+            for change in record.paths
+            if change.after is not None
+        }
+        report = store.gc(dry_run=True, grace_seconds=GC_GRACE_SECONDS, keep=written)
         if report.unreferenced and not dry_run:
             if not json_out:
                 _say(
@@ -3364,7 +3381,7 @@ def snap_gc(
                     f"{_bytes(report.unreferenced_bytes)} on disk."
                 )
             _confirm("Remove them?", yes)
-            report = store.gc(dry_run=False, grace_seconds=GC_GRACE_SECONDS)
+            report = store.gc(dry_run=False, grace_seconds=GC_GRACE_SECONDS, keep=written)
     if json_out:
         _emit(report)
         return
@@ -3377,8 +3394,9 @@ def snap_gc(
         )
     if not report.unreferenced:
         _say(
-            "Nothing to collect: every stored object is referred to by a snapshot, or is "
-            "younger than an hour (kept in case a snapshot is being written)."
+            "Nothing to collect: every stored object is referred to by a snapshot or by a "
+            "committed write in the journal, or is younger than an hour (kept in case a "
+            "snapshot is being written)."
         )
     elif report.dry_run:
         _say(

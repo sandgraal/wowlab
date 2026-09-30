@@ -1647,8 +1647,9 @@ class SnapshotStore:
         return its SHA-256 (M11-24: the bytes a Lab write left in the
         lab-addon's `WowLab.lua`, which the loader check compares from). A
         sound object already stored under that hash is reused; a damaged
-        one is rewritten. No manifest refers to it, so `gc` treats it as
-        unreferenced once its grace period is over."""
+        one is rewritten. No manifest refers to it: `gc` keeps it only when
+        its caller names it in `keep`, as `wowlab snap gc` does for every
+        object a committed guard journal record names as `after`."""
         if not isinstance(data, bytes):
             raise SnapshotError(f"an object is bytes, not {type(data).__name__}")
         with self._holding_dirs():
@@ -1865,8 +1866,16 @@ class SnapshotStore:
             invalid_manifests=tuple(invalid),
         )
 
-    def gc(self, *, dry_run: bool = True, grace_seconds: float = 0.0) -> GcReport:
+    def gc(
+        self, *, dry_run: bool = True, grace_seconds: float = 0.0, keep: Iterable[str] = ()
+    ) -> GcReport:
         """Find objects no manifest references; remove them unless `dry_run`.
+
+        `keep` names more live objects by SHA-256 (M11-24: `wowlab snap gc`
+        passes every `after` a committed guard journal record names, so the
+        bytes an `sv merge` of `WowLab.lua` kept with `put_object` stay for
+        the loader check). A name that is not a SHA-256 hex digest is a
+        `SnapshotError`, raised before anything is listed or removed.
 
         Dry-run is the default. Refuses outright when any manifest fails to
         load, because that manifest's objects would look unreferenced.
@@ -1891,8 +1900,14 @@ class SnapshotStore:
         while `objects/` holds anything: a dangling link or an unmounted
         volume would otherwise make every object look unreferenced.
         """
-        self._refuse_gc_without_manifests()
+        if isinstance(keep, str | bytes):
+            raise SnapshotError("keep is an iterable of SHA-256 digests, not a single string")
         referenced: set[str] = set()
+        for digest in keep:
+            if not isinstance(digest, str) or not _SHA_RE.match(digest):
+                raise SnapshotError(f"not a SHA-256 hex digest: {digest!r}")
+            referenced.add(digest)
+        self._refuse_gc_without_manifests()
         for manifest in self.list():  # raises ManifestIntegrityError
             referenced.update(e.sha256 for e in manifest.entries if e.sha256 is not None)
 
