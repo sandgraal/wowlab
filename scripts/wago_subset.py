@@ -3,7 +3,7 @@
 
     uv run python scripts/wago_subset.py SOURCE --sha256 HEX --column NAME \
         (--value V ... | --values-from CSV --values-column COL ... | --no-values) \
-        [--except V ...] --out PATH
+        [--except V ...] [--max-bytes N] --out PATH
 
 Writes the source's header line and every data line whose cell in the
 column NAME is one of the given values, in the source's order, to PATH.
@@ -16,22 +16,36 @@ tool follows). The CSV is parsed only to read one cell of each line, and a
 line here is one CSV record: a quoted field holding a line break keeps its
 record's physical lines together, so they are kept or dropped as one.
 
-Refusals (exit 1, nothing written): the source's SHA-256 is not the one given
-(so the provenance row names exactly the download that was cut); the column is
+Refusals (exit 1): `--out` is inside a game install (a directory with
+`.build.info` in it or above it, symlinks resolved): only `guard` writes
+into an install (L1, L2); the output file already exists (a committed fixture
+is never replaced); the source or `--values-from` is over `--max-bytes`
+(64 MiB unless given); the source's SHA-256 is not the one given (so the
+provenance row names exactly the download that was cut); the column is
 missing from the header or named twice; a line is not valid UTF-8, has an
 unterminated quote, cannot be read as CSV, or has a different number of
-fields from the header; the output file already exists (a committed fixture is
-never replaced).
+fields from the header; the header is longer than `csv.field_size_limit()`
+bytes, or a data line longer than the header's width times that limit plus
+three (two quotes and a comma per field), checked before the line is decoded.
+Everything is checked before the output file is created; if writing it then
+fails part-way (a full disk), the file this run created is removed, so a
+refusal never leaves a file behind.
 
 Matching is exact text: the cell as the CSV reader gives it (quotes removed)
 must equal a value character for character, so `7` does not match `007`.
-`--values-from` takes the non-empty cells of the named columns of another CSV;
-`--except` drops values from the set (`--except 0` for "no spell"). An empty
-set must be asked for with `--no-values`: the output is then the header alone.
+`--value` must not be empty. `--values-from` takes the non-empty cells of the
+named columns of another CSV, read once (the SHA-256 printed is of the bytes
+the values came from); `--except` drops values from the set (`--except 0`
+for "no spell"). An empty set must be asked for with `--no-values`: the output
+is then the header alone.
 
 On success it prints the filter, the counts and the values that matched no
-line, for the provenance row in `lab/core/tests/fixtures/README.md`.
-Standard library only; it never touches the network or a game install.
+line, for the provenance row in `lab/core/tests/fixtures/README.md`. That
+text goes into a public file, so every name and value from the input or the
+command line is printed as is only when it is printable (`str.isprintable`:
+no control, format, bidi or line-separator character); otherwise it is
+printed as its `ascii()` escape. Standard library only; it never touches the
+network.
 """
 
 from __future__ import annotations
@@ -47,10 +61,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+INSTALL_MARKER = ".build.info"  # at an install's root (docs/LAB_FILE_MAP.md)
+DEFAULT_MAX_BYTES = 64 * 1024 * 1024
 
 
 class SubsetError(Exception):
     """A refusal: the message says why, and nothing was written."""
+
+
+def _safe(text: str) -> str:
+    """``text`` for a terminal and a public provenance row: as is when every
+    character is printable, else its ``ascii()`` escape (quoted)."""
+    return text if text.isprintable() else ascii(text)
 
 
 @dataclass(frozen=True)
@@ -63,13 +85,10 @@ class Record:
 
 @dataclass(frozen=True)
 class Subset:
-    header: Record
-    kept: list[Record]
+    data: bytes  # the header and the kept records, verbatim, in file order
+    kept: int  # data records kept
     total: int  # data records in the source
     unmatched: list[str]  # values no line matched, in the order given
-
-    def data(self) -> bytes:
-        return self.header.raw + b"".join(r.raw for r in self.kept)
 
 
 def records(data: bytes) -> Iterator[Record]:
@@ -122,6 +141,38 @@ def fields(record: Record) -> list[str]:
     return rows[0]
 
 
+def table(data: bytes) -> Iterator[tuple[Record, list[str]]]:
+    """The header record and its names, then every data record and its cells.
+
+    A record's length is checked before it is decoded: the header against
+    ``csv.field_size_limit()``, a data record against what the header's width
+    of fields at that limit can take, so a huge line is refused without being
+    read as text.
+    """
+    it = records(data)
+    header = next(it, None)
+    if header is None:
+        raise SubsetError("the file is empty")
+    limit = csv.field_size_limit()
+    if len(header.raw) > limit:
+        raise SubsetError(f"line 1: the header is {len(header.raw)} bytes, over {limit}")
+    names = fields(header)
+    yield header, names
+    cap = len(names) * (limit + 3)
+    for record in it:
+        if len(record.raw) > cap:
+            raise SubsetError(
+                f"line {record.line}: {len(record.raw)} bytes, more than {len(names)} "
+                f"fields can hold ({cap})"
+            )
+        cells = fields(record)
+        if len(cells) != len(names):
+            raise SubsetError(
+                f"line {record.line}: {len(cells)} fields, the header has {len(names)}"
+            )
+        yield record, cells
+
+
 def column_index(header: list[str], column: str) -> int:
     found = [i for i, name in enumerate(header) if name == column]
     if not found:
@@ -133,49 +184,73 @@ def column_index(header: list[str], column: str) -> int:
 
 def select(data: bytes, column: str, values: Sequence[str]) -> Subset:
     """The header and every record whose ``column`` cell is in ``values``."""
-    it = records(data)
-    header = next(it, None)
-    if header is None:
-        raise SubsetError("the source is empty")
-    names = fields(header)
+    rows = table(data)
+    header, names = next(rows)
     index = column_index(names, column)
     wanted = set(values)
     seen: set[str] = set()
-    kept: list[Record] = []
+    out = bytearray(header.raw)
+    kept = 0
     total = 0
-    for record in it:
+    for record, cells in rows:
         total += 1
-        cells = fields(record)
-        if len(cells) != len(names):
-            raise SubsetError(
-                f"line {record.line}: {len(cells)} fields, the header has {len(names)}"
-            )
         if cells[index] in wanted:
-            kept.append(record)
+            out += record.raw
+            kept += 1
             seen.add(cells[index])
     unmatched = [v for v in dict.fromkeys(values) if v not in seen]
-    return Subset(header, kept, total, unmatched)
+    return Subset(bytes(out), kept, total, unmatched)
 
 
-def values_from(path: Path, columns: Sequence[str]) -> list[str]:
-    """Distinct non-empty cells of ``columns`` in ``path``, in first-seen order."""
-    it = records(path.read_bytes())
-    header = next(it, None)
-    if header is None:
-        raise SubsetError(f"{path.name}: the file is empty")
-    names = fields(header)
+def values_from(data: bytes, columns: Sequence[str]) -> list[str]:
+    """Distinct non-empty cells of ``columns`` in ``data``, in first-seen order."""
+    rows = table(data)
+    _, names = next(rows)
     indexes = [column_index(names, c) for c in columns]
     found: dict[str, None] = {}
-    for record in it:
-        cells = fields(record)
-        if len(cells) != len(names):
-            raise SubsetError(
-                f"{path.name}: line {record.line}: {len(cells)} fields, the header has {len(names)}"
-            )
+    for _, cells in rows:
         for i in indexes:
             if cells[i] != "":
                 found.setdefault(cells[i], None)
     return list(found)
+
+
+def refuse_install(out: Path) -> None:
+    """Refuse an output path inside a game install, every symlink resolved."""
+    parent = out.parent.resolve()
+    for candidate in (parent, *parent.parents):
+        if (candidate / INSTALL_MARKER).exists():
+            raise SubsetError(
+                f"{_safe(str(out))} is inside a game install ({_safe(str(candidate))}); "
+                "nothing but guard writes into an install (L1, L2)"
+            )
+
+
+def read_capped(path: Path, max_bytes: int) -> bytes:
+    with path.open("rb") as handle:
+        data = handle.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise SubsetError(
+            f"{_safe(path.name)} is over {max_bytes} bytes; --max-bytes allows a larger file"
+        )
+    return data
+
+
+def write_new(path: Path, data: bytes) -> None:
+    """Create ``path`` and write ``data``; never replace a file. If the write
+    fails part-way, remove the file this call created."""
+    try:
+        handle = path.open("xb")
+    except FileExistsError:
+        raise SubsetError(
+            f"{_safe(str(path))}: already exists; a recorded fixture is never replaced"
+        ) from None
+    try:
+        with handle:
+            handle.write(data)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
 
 
 def _numeric_key(value: str) -> tuple[int, int, str]:
@@ -192,14 +267,14 @@ def describe(
     subset: Subset,
     out: Path,
 ) -> str:
-    kept = len(subset.kept)
-    unmatched = sorted(subset.unmatched, key=_numeric_key)
+    unmatched = [_safe(v) for v in sorted(subset.unmatched, key=_numeric_key)]
     lines = [
-        f"source: {source.name}, {len(data)} bytes, sha256 {digest}, {subset.total} data lines",
-        f"filter: column {column} in {len(values)} distinct values ({origin})",
-        f"kept: the header and {kept} of {subset.total} data lines, in file order, "
-        f"to {out.name} ({len(subset.data())} bytes, "
-        f"sha256 {hashlib.sha256(subset.data()).hexdigest()})",
+        f"source: {_safe(source.name)}, {len(data)} bytes, sha256 {digest}, "
+        f"{subset.total} data lines",
+        f"filter: column {_safe(column)} in {len(values)} distinct values ({origin})",
+        f"kept: the header and {subset.kept} of {subset.total} data lines, in file order, "
+        f"to {_safe(out.name)} ({len(subset.data)} bytes, "
+        f"sha256 {hashlib.sha256(subset.data).hexdigest()})",
         f"values with no line: {len(unmatched)}"
         + (f" ({', '.join(unmatched)})" if unmatched else ""),
     ]
@@ -234,6 +309,12 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--no-values", action="store_true", help="the set is empty: write the header only"
     )
+    parser.add_argument(
+        "--max-bytes",
+        type=int,
+        default=DEFAULT_MAX_BYTES,
+        help=f"refuse a source or --values-from larger than this (default {DEFAULT_MAX_BYTES})",
+    )
     parser.add_argument("--out", type=Path, required=True, help="the subset; must not exist")
     args = parser.parse_args(argv)
     if bool(args.values_from) != bool(args.values_column):
@@ -241,17 +322,23 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     has_values = bool(args.value) or bool(args.values_from)
     if args.no_values == has_values:
         parser.error("give --value or --values-from, or --no-values for an empty set")
+    if "" in args.value:
+        parser.error("--value must not be empty (an unset shell variable?)")
     if not _SHA256.fullmatch(args.sha256):
         parser.error("--sha256 must be 64 lower-case hex digits")
+    if args.max_bytes < 1:
+        parser.error("--max-bytes must be at least 1")
     return args
 
 
 def run(args: argparse.Namespace) -> int:
-    data = args.source.read_bytes()
+    out: Path = args.out
+    refuse_install(out)
+    data = read_capped(args.source, args.max_bytes)
     digest = hashlib.sha256(data).hexdigest()
     if digest != args.sha256:
         raise SubsetError(
-            f"{args.source.name}: sha256 is {digest}, not {args.sha256}; "
+            f"{_safe(args.source.name)}: sha256 is {digest}, not {args.sha256}; "
             "cut only the download the provenance row names"
         )
     values = list(dict.fromkeys(args.value))
@@ -259,27 +346,27 @@ def run(args: argparse.Namespace) -> int:
     if args.value:
         origins.append(f"{len(values)} given with --value")
     if args.values_from is not None:
-        found = values_from(args.values_from, args.values_column)
-        from_digest = hashlib.sha256(args.values_from.read_bytes()).hexdigest()
+        ids = read_capped(args.values_from, args.max_bytes)
+        try:
+            found = values_from(ids, args.values_column)
+        except SubsetError as exc:
+            raise SubsetError(f"{_safe(args.values_from.name)}: {exc}") from None
+        columns = ", ".join(_safe(c) for c in args.values_column)
         origins.append(
-            f"the non-empty {', '.join(args.values_column)} cells of {args.values_from.name} "
-            f"(sha256 {from_digest}): {len(found)} distinct"
+            f"the non-empty {columns} cells of {_safe(args.values_from.name)} "
+            f"(sha256 {hashlib.sha256(ids).hexdigest()}): {len(found)} distinct"
         )
         values = list(dict.fromkeys([*values, *found]))
     if args.exclude:
         excluded = set(args.exclude)
         dropped = sum(1 for v in values if v in excluded)
         values = [v for v in values if v not in excluded]
-        origins.append(f"except {', '.join(dict.fromkeys(args.exclude))} ({dropped} dropped)")
+        shown = ", ".join(_safe(v) for v in dict.fromkeys(args.exclude))
+        origins.append(f"except {shown} ({dropped} dropped)")
     if args.no_values:
         origins.append("an empty set, asked for with --no-values")
     subset = select(data, args.column, values)
-    out: Path = args.out
-    try:
-        with out.open("xb") as handle:
-            handle.write(subset.data())
-    except FileExistsError:
-        raise SubsetError(f"{out}: already exists; a recorded fixture is never replaced") from None
+    write_new(out, subset.data)
     print(describe(args.source, data, digest, args.column, values, "; ".join(origins), subset, out))
     return 0
 
@@ -292,7 +379,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"wago_subset: refused: {exc}", file=sys.stderr)
         return 1
     except OSError as exc:
-        print(f"wago_subset: {exc.strerror or exc}: {exc.filename}", file=sys.stderr)
+        where = _safe(str(exc.filename)) if exc.filename is not None else "?"
+        print(f"wago_subset: {_safe(exc.strerror or str(exc))}: {where}", file=sys.stderr)
         return 1
 
 

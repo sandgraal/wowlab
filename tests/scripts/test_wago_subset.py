@@ -203,8 +203,9 @@ def _refused(
     source: bytes,
     *args: str,
     sha: str | None = None,
+    out_name: str = "out.csv",
 ) -> str:
-    code, out = _run(tmp_path, source, *args, sha=sha)
+    code, out = _run(tmp_path, source, *args, sha=sha, out_name=out_name)
     assert code == 1
     assert not out.exists(), "a refusal writes nothing"
     err = capsys.readouterr().err
@@ -272,6 +273,186 @@ def test_constructed_existing_output_is_never_replaced(
     assert code == 1
     assert out.read_bytes() == b"committed fixture\n"
     assert "already exists" in capsys.readouterr().err
+
+
+def _fake_install(tmp_path: Path) -> Path:
+    root = tmp_path / "install"
+    (root / "_flavor_" / "Data").mkdir(parents=True)
+    (root / ".build.info").write_bytes(b"Branch!STRING:0|Version!STRING:0\nus|1.0.0.1\n")
+    return root
+
+
+@pytest.mark.parametrize(
+    "where",
+    ["install/out.csv", "install/_flavor_/out.csv", "install/_flavor_/Data/out.csv"],
+    ids=["constructed-install-root", "constructed-flavor", "constructed-data"],
+)
+def test_constructed_out_inside_an_install_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], where: str
+) -> None:
+    _fake_install(tmp_path)
+    err = _refused(tmp_path, capsys, CONSTRUCTED, "--column", "ID", "--value", "1", out_name=where)
+    assert "inside a game install" in err
+
+
+def test_constructed_out_through_a_symlink_into_an_install_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _fake_install(tmp_path)
+    try:
+        (tmp_path / "elsewhere").symlink_to(root / "_flavor_", target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot create a symlink here: {exc}")
+    err = _refused(
+        tmp_path, capsys, CONSTRUCTED, "--column", "ID", "--value", "1", out_name="elsewhere/o.csv"
+    )
+    assert "inside a game install" in err
+    assert not (root / "_flavor_" / "o.csv").exists()
+
+
+def test_constructed_empty_value_is_a_usage_error(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit) as info:
+        _run(tmp_path, CONSTRUCTED, "--column", "Kind", "--value", "")
+    assert info.value.code == 2
+    assert not (tmp_path / "out.csv").exists()
+
+
+def test_constructed_source_over_max_bytes_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    err = _refused(
+        tmp_path,
+        capsys,
+        CONSTRUCTED,
+        "--column",
+        "ID",
+        "--value",
+        "1",
+        "--max-bytes",
+        str(len(CONSTRUCTED) - 1),
+    )
+    assert f"over {len(CONSTRUCTED) - 1} bytes" in err
+    code, out = _run(
+        tmp_path,
+        CONSTRUCTED,
+        "--column",
+        "ID",
+        "--value",
+        "1",
+        "--max-bytes",
+        str(len(CONSTRUCTED)),
+    )
+    assert code == 0, "a file exactly at the cap is read"
+    assert out.exists()
+
+
+def test_constructed_values_from_over_max_bytes_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ids = tmp_path / "ids.csv"
+    ids.write_bytes(b"SpellID\n1\n" + b"2\n" * len(CONSTRUCTED))
+    err = _refused(
+        tmp_path,
+        capsys,
+        CONSTRUCTED,
+        "--column",
+        "ID",
+        "--values-from",
+        str(ids),
+        "--values-column",
+        "SpellID",
+        "--max-bytes",
+        str(len(CONSTRUCTED)),
+    )
+    assert "ids.csv is over" in err
+
+
+def test_constructed_long_record_is_refused_before_it_is_decoded(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cap = 2 * (csv.field_size_limit() + 3)
+    # Invalid UTF-8 throughout: decoding it first would give a UTF-8 error.
+    source = b"ID,Name\n1,a\n2," + b"\xff" * cap + b"\n"
+    err = _refused(tmp_path, capsys, source, "--column", "ID", "--value", "1")
+    assert f"more than 2 fields can hold ({cap})" in err
+    assert "UTF-8" not in err
+
+
+def test_constructed_long_header_is_refused_before_it_is_decoded(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = b"ID," + b"\xff" * csv.field_size_limit() + b"\n1,a\n"
+    err = _refused(tmp_path, capsys, source, "--column", "ID", "--value", "1")
+    assert "the header is" in err
+    assert "UTF-8" not in err
+
+
+def test_constructed_a_failed_write_leaves_no_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_open = Path.open
+
+    class _DiskFull:
+        """Wraps the created file; the first write puts a few bytes down, then fails."""
+
+        def __init__(self, handle: io.BufferedWriter) -> None:
+            self._handle = handle
+
+        def __enter__(self) -> _DiskFull:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            self._handle.close()
+
+        def write(self, data: bytes) -> int:
+            self._handle.write(data[:3])
+            self._handle.flush()
+            raise OSError(28, "No space left on device", str(tmp_path / "out.csv"))
+
+    def fake_open(self: Path, mode: str = "r", *args: object, **kwargs: object) -> object:
+        handle = real_open(self, mode, *args, **kwargs)  # type: ignore[call-overload]
+        return _DiskFull(handle) if mode == "xb" else handle
+
+    monkeypatch.setattr(Path, "open", fake_open)
+    code, out = _run(tmp_path, CONSTRUCTED, "--column", "ID", "--value", "1")
+    assert code == 1
+    assert not out.exists(), "the partly written file this run created is removed"
+    assert "No space left on device" in capsys.readouterr().err
+
+
+def test_constructed_printed_filter_escapes_control_and_format_characters(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    esc, bel, rlo = chr(0x1B), chr(0x07), chr(0x202E)
+    column = "Spell" + rlo + "DI"
+    hostile = [
+        esc + "[31mred" + bel,
+        "x" + rlo + "gnp.exe",
+        "9\nkept: the header and 999 of 999 data lines",
+    ]
+    ids = tmp_path / ("ids" + rlo + ".csv")
+    body = [f'"{column}"'] + ['"' + v.replace('"', '""') + '"' for v in hostile]
+    ids.write_bytes(("\n".join(body) + "\n").encode("utf-8"))
+    code, _ = _run(
+        tmp_path,
+        CONSTRUCTED,
+        "--column",
+        "ID",
+        "--values-from",
+        str(ids),
+        "--values-column",
+        column,
+        "--except",
+        bel,
+    )
+    assert code == 0
+    printed = capsys.readouterr().out
+    for raw in (esc, bel, rlo):
+        assert raw not in printed, f"{raw!r} reached the terminal"
+    lines = printed.splitlines()
+    assert len(lines) == 4, "a newline in a value cannot add a line"
+    assert sum(line.startswith("kept:") for line in lines) == 1
+    assert ascii(hostile[0]) in printed and ascii(column) in printed
 
 
 # ─── real recordings ─────────────────────────────────────────────────────────
