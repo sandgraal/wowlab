@@ -107,8 +107,8 @@ def test_constructed_wiki_passes(tmp_path: Path) -> None:
 
 
 def test_constructed_broken_link_fails(tmp_path: Path) -> None:
-    root = _build(tmp_path / "wiki", Extra="# Extra\n\nSee [the guide](Getting-Startd).\n")
-    assert _failures(root) == ["Extra.md:3: link to a page that does not exist: Getting-Startd"]
+    root = _build(tmp_path / "wiki", Extra="# Extra\n\nSee [the guide](GettingStartd).\n")
+    assert _failures(root) == ["Extra.md:3: link to a page that does not exist: GettingStartd"]
 
 
 def test_constructed_broken_anchor_fails(tmp_path: Path) -> None:
@@ -120,8 +120,8 @@ def test_constructed_broken_anchor_fails(tmp_path: Path) -> None:
 
 def test_constructed_broken_sidebar_entry_fails(tmp_path: Path) -> None:
     root = _build(tmp_path / "wiki")
-    (root / "_Sidebar.md").write_text("- [Home](Home)\n- [Gone](Gone-Page)\n", encoding="utf-8")
-    assert _failures(root) == ["_Sidebar.md:2: link to a page that does not exist: Gone-Page"]
+    (root / "_Sidebar.md").write_text("- [Home](Home)\n- [Gone](Gone-page-2)\n", encoding="utf-8")
+    assert _failures(root) == ["_Sidebar.md:2: link to a page that does not exist: Gone-page-2"]
 
 
 def test_constructed_wiki_links_and_same_page_anchors_resolve(tmp_path: Path) -> None:
@@ -382,7 +382,7 @@ def test_constructed_cli_prints_one_line_per_failure(
         tmp_path / "wiki",
         Extra="# Extra\n\n[x](Nope) `wowlab nope`\n\nBrakka-Stonewhisper\n",
     )
-    assert cw.main([str(root)]) == 1
+    assert cw.main([str(root)]) == cw.EXIT_PERSONAL
     out = capsys.readouterr().out.splitlines()
     assert out == [
         "Extra.md:3: link to a page that does not exist: Nope",

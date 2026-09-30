@@ -8,23 +8,33 @@ name: Wiki daily
 #            CLI-Reference, lets Claude edit the wiki copy (prompt:
 #            .github/prompts/wiki-daily.md), then gates the result with
 #            scripts/check_wiki.py and gitleaks. Read-only token only.
-#   publish  on main only, for a schedule run or a dispatch with push: true.
-#            Takes the pages from `improve` as data, rebuilds the generated
-#            page and .lab/state.json itself, runs both gates again, commits
-#            and pushes. The model cannot influence it beyond page text.
+#   publish  on main only, and only when the repository variable
+#            WIKI_DAILY_PUBLISH is `true`: a scheduled run, or a dispatch with
+#            push: true. Takes the pages from `improve` as data, rebuilds the
+#            generated page and .lab/state.json itself, runs both gates again,
+#            commits and pushes. The model cannot influence it beyond page text.
 #   report   when either job fails on main: opens, or comments on, the one
 #            open issue labelled wiki-daily. Nothing is pushed on a failure.
+#
+# Publishing is off until the owner sets the repository variable
+# WIKI_DAILY_PUBLISH to `true` (Settings > Secrets and variables > Actions >
+# Variables), after reading the diff artifact of a dispatch run whose Claude
+# step ran. Until then every run is a dry run: it uploads the gate report and,
+# when the gate found no personal data and gitleaks found nothing, the pages
+# and the wiki diff as artifacts.
 #
 # Needs ANTHROPIC_API_KEY (the Claude step skips cleanly without it, or when
 # the API reports exhausted credit or a rate limit; the rest still runs).
 #
-# The push uses the job's own GITHUB_TOKEN with `contents: write` on the
-# publish job alone. Verified on 2026-09-30 (M12-14 dry run, runs
-# 36765448581 and 36765760456): the wiki's push service accepted a
-# `contents: write` GITHUB_TOKEN (HTTP 200 on the receive-pack advertisement)
-# and refused a `contents: read` one (HTTP 403; its fetch got 200). It lives for this job only and
-# cannot bypass the main-branch ruleset, so the WIKI_PUSH_TOKEN secret
-# (a long-lived, fine-grained token) is not used.
+# Permissions beyond `contents: read`: `actions: read` on improve (it reads
+# the previous run's gate report), `contents: write` on publish, `issues:
+# write` on report. The push uses publish's own GITHUB_TOKEN. Verified on
+# 2026-09-30 (M12-14 dry run, runs 36765448581 and 36765760456): the wiki's
+# push service accepted a `contents: write` GITHUB_TOKEN (HTTP 200 on the
+# receive-pack advertisement) and refused a `contents: read` one (HTTP 403;
+# its fetch got 200). It lives for that job only and cannot bypass the
+# main-branch ruleset, so the WIKI_PUSH_TOKEN secret (a long-lived,
+# fine-grained token) is not used.
 
 on:
   schedule:
@@ -32,7 +42,7 @@ on:
   workflow_dispatch:
     inputs:
       push:
-        description: Push the result to the wiki (a scheduled run always does)
+        description: Push the result to the wiki (needs the WIKI_DAILY_PUBLISH variable)
         type: boolean
         default: false
 
@@ -59,6 +69,9 @@ jobs:
     name: Check and improve the wiki
     runs-on: ubuntu-latest
     timeout-minutes: 75
+    permissions:
+      contents: read
+      actions: read
     outputs:
       main_sha: ${{ steps.plan.outputs.main }}
       wiki_base: ${{ steps.wiki.outputs.base }}
@@ -71,7 +84,7 @@ jobs:
       # comment on its job `env`).
       ANTHROPIC_CUSTOM_HEADERS: "${{ vars.ANTHROPIC_WORKSPACE_ID != '' && format('anthropic-workspace-id: {0}', vars.ANTHROPIC_WORKSPACE_ID) || '' }}"
       # Claude Code strips credentials from the environment of every command
-      # it runs (the only one it may run is `uv run wowlab ... --help`).
+      # it runs (the only one it may run is the gate on the wiki).
       CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
     steps:
       # The workspace root is deliberately not a git repository: main is
@@ -114,8 +127,25 @@ jobs:
           echo "main=$(jq -r .main <<<"$plan")" >> "$GITHUB_OUTPUT"
           echo "review=$(jq -r '.review | join(",")' <<<"$plan")" >> "$GITHUB_OUTPUT"
           # What the gate would reject now: the model's list of gaps to fill.
+          # Its lines never quote personal data, so printing them is safe.
           uv run --frozen python scripts/check_wiki.py ../wiki > ../context/check-before.txt || true
           cat ../context/check-before.txt
+      # So that repeated near misses converge: the report of the last run on
+      # main, when that run failed and kept its report.
+      - name: The previous run's gate report
+        if: steps.plan.outcome == 'success' && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prev=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow wiki-daily.yml --branch main \
+            --status completed --limit 5 --json databaseId,conclusion \
+            --jq "map(select(.databaseId != ${GITHUB_RUN_ID}))[0] | select(.conclusion == \"failure\") | .databaseId")
+          if [ -n "$prev" ] && gh run download "$prev" --repo "$GITHUB_REPOSITORY" \
+              --name wiki-daily-report --dir "$RUNNER_TEMP/previous"; then
+            cp "$RUNNER_TEMP/previous/check.txt" context/previous-check.txt
+            echo "- The previous run (${prev}) was rejected by the gate; its report is \`context/previous-check.txt\`." >> context/run.md
+          fi
 
       - name: Check secret
         id: secret
@@ -158,6 +188,19 @@ jobs:
           echo "API key can call ${WIKI_MODEL}"
           echo "available=true" >> "$GITHUB_OUTPUT"
 
+      # Claude Code reads CLAUDE.md files (and a .claude folder's settings and
+      # rules) as instructions. Neither the pinned action nor the CLI has an
+      # input that turns that off for folders below the working directory, so
+      # they are removed from both checkouts before the model starts. The
+      # checkout's state after this is what "Nothing outside the wiki
+      # changed" compares against.
+      - name: Keep instruction files out of the model's reach
+        if: steps.plan.outcome == 'success'
+        run: |
+          find repo wiki \( -path repo/.git -o -path wiki/.git \) -prune -o \
+            \( -iname CLAUDE.md -o -iname CLAUDE.local.md -o \( -type d -name .claude \) \) -print0 \
+            | xargs -0 -r rm -rf --
+          git -C repo status --porcelain > "$RUNNER_TEMP/repo-status-before"
       # Runs even when the Claude step will not, so a skipped run still
       # proves the prompt and the settings are well-formed.
       - name: Build the prompt and the permission settings
@@ -195,20 +238,23 @@ jobs:
           echo "settings=$RUNNER_TEMP/wiki-daily-settings.json" >> "$GITHUB_OUTPUT"
           echo "prompt: $(cat repo/.github/prompts/wiki-daily.md context/run.md | wc -c) bytes"
           jq -c . "$RUNNER_TEMP/wiki-daily-settings.json"
-          # `uv run wowlab` from the workspace root, offline, never re-syncing.
+          # The gate command runs from the workspace root, offline, never
+          # re-syncing; if its environment loses UV_PROJECT, the venv's
+          # python is still first on PATH.
           {
             echo "UV_PROJECT=${GITHUB_WORKSPACE}/repo"
             echo "UV_FROZEN=1"
             echo "UV_NO_SYNC=1"
             echo "UV_OFFLINE=1"
           } >> "$GITHUB_ENV"
-          # And if the command's environment loses UV_PROJECT, `uv run` still
-          # finds `wowlab` on PATH.
           echo "${GITHUB_WORKSPACE}/repo/.venv/bin" >> "$GITHUB_PATH"
 
       # Tools: read anything the deny list above leaves, edit and create only
-      # inside wiki/, and print help. No git, no network tool, no other
-      # command; the commit and push happen in `publish`, from page text only.
+      # inside wiki/, and run exactly one command: the gate on the wiki. The
+      # rule has no wildcard, so it matches that command string and no other
+      # (compound commands are split and each part must match). Command help
+      # is in wiki/CLI-Reference.md. No git, no network tool; the commit and
+      # push happen in `publish`, from page text only.
       - name: Improve the wiki (Claude)
         id: claude
         if: steps.preflight.outputs.available == 'true'
@@ -223,14 +269,14 @@ jobs:
           claude_args: |
             --model ${{ env.WIKI_MODEL }}
             --max-turns 60
-            --allowedTools "Read,Grep,Glob,Edit(/${{ github.workspace }}/wiki/**),Write(/${{ github.workspace }}/wiki/**),Bash(uv run wowlab --help),Bash(uv run wowlab * --help)"
+            --allowedTools "Read,Grep,Glob,Edit(/${{ github.workspace }}/wiki/**),Write(/${{ github.workspace }}/wiki/**),Bash(uv run python repo/scripts/check_wiki.py wiki)"
 
       - name: Nothing outside the wiki changed
         if: always() && steps.plan.outcome == 'success'
         run: |
-          changes=$(git -C repo status --porcelain)
-          if [ -n "$changes" ]; then
-            printf '%s\n' "$changes"
+          git -C repo status --porcelain > "$RUNNER_TEMP/repo-status-after"
+          if ! cmp -s "$RUNNER_TEMP/repo-status-before" "$RUNNER_TEMP/repo-status-after"; then
+            diff "$RUNNER_TEMP/repo-status-before" "$RUNNER_TEMP/repo-status-after" || true
             echo "::error::the checkout of main changed during the run; nothing is pushed"
             exit 1
           fi
@@ -242,14 +288,19 @@ jobs:
           REVIEW: ${{ steps.plan.outputs.review }}
         run: uv run --frozen python scripts/wiki_state.py update --wiki ../wiki --main "$MAIN" --reviewed "$REVIEW" --date "$(date -u +%F)"
 
+      # Exit codes (scripts/check_wiki.py): 0 clean, 1 failures, 3 failures
+      # including personal data, 2 error. Only 0 and 1 let artifacts out.
       - name: Gate - check_wiki
         id: check
         if: always() && steps.plan.outcome == 'success'
-        continue-on-error: true
         working-directory: repo
         env:
           BASE: ${{ steps.wiki.outputs.base }}
-        run: uv run --frozen python scripts/check_wiki.py ../wiki --base "$BASE" | tee ../report/check.txt
+        run: |
+          code=0
+          uv run --frozen python scripts/check_wiki.py ../wiki --base "$BASE" > ../report/check.txt || code=$?
+          cat ../report/check.txt
+          echo "code=$code" >> "$GITHUB_OUTPUT"
       - name: Install gitleaks
         if: always() && steps.plan.outcome == 'success'
         run: |
@@ -258,6 +309,8 @@ jobs:
           echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
           sudo install "$RUNNER_TEMP/gitleaks" /usr/local/bin/gitleaks
+      # gitleaks reads the whole change; the artifact's diff holds only the
+      # top-level pages (the `:(glob)` pathspec does not descend).
       - name: Gate - gitleaks on the wiki diff
         id: gitleaks
         if: always() && steps.plan.outcome == 'success'
@@ -266,21 +319,23 @@ jobs:
           BASE: ${{ steps.wiki.outputs.base }}
         run: |
           git -C wiki add -A
-          git -C wiki diff --cached "$BASE" > report/wiki.diff
-          gitleaks stdin --redact --no-banner --exit-code 1 --config repo/.gitleaks.toml < report/wiki.diff
+          git -C wiki diff --cached "$BASE" > "$RUNNER_TEMP/wiki-full.diff"
+          git -C wiki diff --cached "$BASE" -- ':(glob)*.md' > report/wiki.diff
+          gitleaks stdin --redact --no-banner --exit-code 1 --config repo/.gitleaks.toml < "$RUNNER_TEMP/wiki-full.diff"
       - name: Gate result
         id: gate
         if: always() && steps.plan.outcome == 'success'
         env:
-          CHECK: ${{ steps.check.outcome }}
+          CODE: ${{ steps.check.outputs.code }}
           LEAKS: ${{ steps.gitleaks.outcome }}
           CLAUDE: ${{ steps.claude.outcome }}
           BASE: ${{ steps.wiki.outputs.base }}
         run: |
-          # Personal data found by the check keeps the pages out of the
-          # (public) artifact, as a leak found by gitleaks does.
-          if [ "$LEAKS" = success ] && ! grep -q 'not quoted here' report/check.txt; then
-            echo "clean=true" >> "$GITHUB_OUTPUT"
+          # The report leaves only when check_wiki found no personal data; the
+          # pages and the diff only when, besides, gitleaks found nothing.
+          if [ "$CODE" = 0 ] || [ "$CODE" = 1 ]; then
+            echo "report=true" >> "$GITHUB_OUTPUT"
+            if [ "$LEAKS" = success ]; then echo "pages=true" >> "$GITHUB_OUTPUT"; fi
           fi
           if git -C wiki diff --cached --quiet "$BASE"; then changed=false; else changed=true; fi
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
@@ -288,19 +343,20 @@ jobs:
             echo "### Wiki daily"
             echo
             echo "- Claude step: ${CLAUDE:-skipped}"
-            echo "- check_wiki: $CHECK; gitleaks: $LEAKS; wiki changed: $changed"
+            echo "- check_wiki exit: ${CODE:-none}; gitleaks: $LEAKS; wiki changed: $changed"
             echo
             echo '```text'
             cat report/check.txt
-            git -C wiki diff --cached --stat "$BASE"
+            # File names may be personal data too: listed only when clean.
+            if [ "$CODE" = 0 ] || [ "$CODE" = 1 ]; then git -C wiki diff --cached --stat "$BASE"; fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$CHECK" != success ] || [ "$LEAKS" != success ]; then
+          if [ "$CODE" != 0 ] || [ "$LEAKS" != success ]; then
             echo "::error::the gate rejected the wiki; nothing is pushed"
             exit 1
           fi
       - name: Upload the gate report
-        if: always()
+        if: always() && steps.gate.outputs.report == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: wiki-daily-report
@@ -308,7 +364,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
       - name: Upload the pages and the wiki diff
-        if: always() && steps.gate.outputs.clean == 'true'
+        if: always() && steps.gate.outputs.pages == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: wiki-daily-pages
@@ -321,9 +377,11 @@ jobs:
   publish:
     name: Push the wiki
     needs: improve
-    # Never from a branch, and never on a dispatch unless push is true.
+    # Never from a branch; never until the owner sets WIKI_DAILY_PUBLISH; and
+    # a dispatch only with push: true.
     if: >-
       github.ref == 'refs/heads/main' &&
+      vars.WIKI_DAILY_PUBLISH == 'true' &&
       needs.improve.outputs.changed == 'true' &&
       (github.event_name == 'schedule' ||
        (github.event_name == 'workflow_dispatch' && inputs.push))
@@ -433,6 +491,7 @@ jobs:
     permissions:
       issues: write
     steps:
+      # Present only when the gate found no personal data (see "Gate result").
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         continue-on-error: true
         with:
@@ -455,7 +514,7 @@ jobs:
             echo "Gate report (scripts/check_wiki.py; personal data is named by kind, never quoted):"
             echo
             echo '~~~~text'
-            if [ -s report/check.txt ]; then head -c 50000 report/check.txt; else echo "(no gate report; see the run log)"; fi
+            if [ -s report/check.txt ]; then head -c 50000 report/check.txt; else echo "(no gate report: withheld because it found personal data, or the run stopped earlier; see the run log)"; fi
             echo '~~~~'
           } > "$RUNNER_TEMP/body.md"
           gh label create wiki-daily --repo "$GITHUB_REPOSITORY" --color D93F0B \
