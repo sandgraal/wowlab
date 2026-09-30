@@ -84,7 +84,7 @@ def _second_config(raw: dict[str, Any], config_id: int, quantity: int) -> None:
 def _headline(raw: dict[str, Any]) -> str:
     talents = _load(raw).talents
     assert talents is not None and isinstance(talents.legacy, labaddon.LegacyTalents)
-    return labaddon.legacy_headline(talents.legacy)
+    return labaddon.legacy_headline(talents.legacy, class_config=None)
 
 
 SEVERAL = (

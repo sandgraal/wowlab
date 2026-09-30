@@ -1411,15 +1411,58 @@ def _legacy_points(config: LegacyConfig) -> str:
     return f"{spent_words}, {_count(sum(quantities), 'point')} available"
 
 
-def legacy_headline(legacy: LegacyTalents) -> str:
+def _class_config(talents: Talents) -> TraitConfig | AbsentConfig | None:
+    """The active class config `talents.class` records (present, or absent
+    with a reason and possibly an id), or None when the section is not in
+    the file or is absent with a reason."""
+    section = talents.class_
+    return section.config if isinstance(section, ClassTalents) else None
+
+
+def _lone_class_config(
+    legacy: LegacyTalents, class_config: TraitConfig | AbsentConfig | None
+) -> TraitConfig | AbsentConfig | None:
+    """M11-34: `talents.class`'s config when it is the one config
+    `talents.legacy` lists (the same id), else None. The headline and the
+    line under it both ask here, so they cannot disagree.
+
+    The addon leaves the active class config out only when
+    `C_ClassTalents.GetActiveConfigID` gave an id, and `talents.legacy` does
+    not record the id it left out; `talents.class` records the active class
+    config as of its own gather, which may be another moment. A match means
+    the addon did not leave that config out. This is the id check the M11-32
+    amendment deferred, made for one listed config only."""
+    if class_config is None or class_config.id is None or len(legacy.configs) != 1:
+        return None
+    return class_config if legacy.configs[0].id == class_config.id else None
+
+
+def legacy_headline(
+    legacy: LegacyTalents, *, class_config: TraitConfig | AbsentConfig | None
+) -> str:
     """One line for the Legacy candidates, never "empty" or "locked": the
     addon lists candidates by elimination, and below the unlock level the
     client still returns the trees, with nothing spent and a max_quantity of
     0. Each trait currency counts once per config (see `_legacy_pool`), and
     two candidate configs are never added together (M11-27): the addon does
-    not say which one the Legacy panel uses, so each gets its own figures."""
+    not say which one the Legacy panel uses, so each gets its own figures.
+
+    `class_config` is the config `talents.class` records (`_class_config`),
+    required so that no caller skips the comparison by leaving it out; pass
+    None only when the file records no class config, and the one-config
+    headline is then unchecked. When the one config listed has its id
+    (M11-34), the headline gives no figures: they are the class talents',
+    shown under Class talents, not a Legacy system's."""
     if not legacy.configs:
         return f"Legacy candidates: {NONE_RECORDED}"
+    lone = _lone_class_config(legacy, class_config)
+    if lone is not None:
+        where = (
+            "its figures are under Class talents"
+            if isinstance(lone, TraitConfig)
+            else "Class talents shows it absent with a reason"
+        )
+        return f"Legacy candidates: only the active class config listed (config {lone.id}; {where})"
     if not any(isinstance(c, LegacyConfig) for c in legacy.configs):
         return "Legacy candidates: present, every config absent with a reason"
     single = _single_config(legacy)
@@ -1446,14 +1489,67 @@ def _single_config(legacy: LegacyTalents) -> LegacyConfig | None:
     return None
 
 
-def _legacy(legacy: LegacyTalents) -> list[str]:
+ELIMINATION = "which config is the Legacy system is inferred by elimination"
+CLASS_LEFT_OUT = "(the addon leaves that out only when the client gave its id)"
+
+
+def _one_config_words(
+    legacy: LegacyTalents, class_config: TraitConfig | AbsentConfig | None
+) -> str:
+    """M11-34: the line under the headline when the file lists one config.
+    It matches the headline through `_lone_class_config`: on a match nothing
+    is inferred to be the Legacy system; with no id on either side the
+    elimination cannot be checked, and the line says so. A different id
+    keeps the M11-32 line: a class config missing from the list proves
+    nothing either way, so the line claims no more than before."""
+    lone = _lone_class_config(legacy, class_config)
+    if lone is not None:
+        return (
+            f"the one config listed is the active class config (config {lone.id}, as Class "
+            "talents records it), which the addon did not leave out, so no config is inferred to "
+            "be the Legacy system"
+        )
+    if class_config is None or class_config.id is None:
+        return (
+            f"{ELIMINATION}, but Class talents records no config id, so the config listed may be "
+            f"the active class config {CLASS_LEFT_OUT}"
+        )
+    if legacy.configs[0].id is None:
+        return (
+            f"{ELIMINATION}, but the config listed has no id, so it may be the active class "
+            f"config {CLASS_LEFT_OUT}"
+        )
+    return ELIMINATION
+
+
+def _skipped_words(legacy: LegacyTalents) -> str:
+    """M11-34: the types the addon's type search passed over. The addon
+    leaves `skipped_types` empty when it did not search by type at all
+    (`C_Traits.GetConfigsByType` or `Enum.TraitConfigType` missing), and
+    also when the search ran and the client's enum lists none of Invalid,
+    Combat and Profession. A config found by type shows the search ran;
+    without one, an empty list does not."""
+    if legacy.skipped_types:
+        return ", ".join(legacy.skipped_types)
+    if any(how.startswith("type:") for c in legacy.configs for how in c.found_by):
+        return NONE_RECORDED
+    return (
+        f"{NONE_RECORDED}, and no config was found by type, so the type search may not have run "
+        "(the addon records none when C_Traits.GetConfigsByType or Enum.TraitConfigType is "
+        "missing, or when the enum has none of Invalid, Combat and Profession)"
+    )
+
+
+def _legacy(legacy: LegacyTalents, class_config: TraitConfig | AbsentConfig | None) -> list[str]:
+    """The Legacy candidates; `class_config` is the config `talents.class`
+    records (`_class_config`)."""
     opener = f"panel opener ToggleLegacySystemUI present: {_yes(legacy.legacy_ui)}"
     # The headline names the level itself when it gives each config's figures.
     each = _single_config(legacy) is None and any(
         isinstance(c, LegacyConfig) for c in legacy.configs
     )
     level = "" if each or legacy.player_level is None else f" (level {legacy.player_level})"
-    lines = [f"{legacy_headline(legacy)}{level}"]
+    lines = [f"{legacy_headline(legacy, class_config=class_config)}{level}"]
     if len(legacy.configs) > 1:
         # M11-32: with several configs listed, nothing picks one out, even
         # when every one of them is absent with a reason. A config found by a
@@ -1466,11 +1562,10 @@ def _legacy(legacy: LegacyTalents) -> list[str]:
             f"id; which of these is the Legacy system is not recorded; {opener}"
         )
     elif legacy.configs:
-        lines.append(f"  which config is the Legacy system is inferred by elimination; {opener}")
+        lines.append(f"  {_one_config_words(legacy, class_config)}; {opener}")
     else:
         lines.append(f"  no candidate config listed; {opener}")
-    skipped = ", ".join(legacy.skipped_types) or NONE_RECORDED
-    lines.append(f"  config types not searched: {skipped}")
+    lines.append(f"  config types not searched: {_skipped_words(legacy)}")
     for config in legacy.configs:
         found = ", ".join(config.found_by) or NONE_RECORDED
         if isinstance(config, AbsentLegacyConfig):
@@ -1680,7 +1775,12 @@ def describe(char: CharDB) -> list[str]:
     lines += _section("Spec", char.spec, _spec)
     talents = char.talents
     lines += _section("Class talents", talents.class_ if talents else None, _class_talents)
-    lines += _section("Legacy candidates", talents.legacy if talents else None, _legacy)
+    class_config = _class_config(talents) if talents else None
+    lines += _section(
+        "Legacy candidates",
+        talents.legacy if talents else None,
+        lambda record: _legacy(record, class_config),
+    )
     lines += _section(
         "Customization",
         char.customization,

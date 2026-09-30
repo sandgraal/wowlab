@@ -391,7 +391,7 @@ def test_constructed_legacy_with_ranks_and_points() -> None:
     talents = _load(raw).talents
     assert talents is not None and isinstance(talents.legacy, labaddon.LegacyTalents)
     assert (
-        labaddon.legacy_headline(talents.legacy)
+        labaddon.legacy_headline(talents.legacy, class_config=None)
         == "Legacy candidates: present, 1 rank active, 1 point spent, 2 points available"
     )
 
