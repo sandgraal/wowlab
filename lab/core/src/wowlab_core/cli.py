@@ -60,7 +60,11 @@ an install: every verdict on the page is computed here and only shown there.
 `char show` (§13.1, M11-04) reads one character's `WowLab.lua`, written by
 the lab-addon, through `wowlab_core.labaddon`, and the account's
 `WowLab.lua` beside it; read only. Without `--character` it takes the
-character whose `WowLab.lua` has the newest modification time.
+character whose `WowLab.lua` has the newest modification time. `char list`
+(§14.4, M12-09) lists every character's `WowLab.lua` through
+`labaddon.read_all`, in every account unless `--account` names one; a file
+it cannot read is listed with the reason, named on stderr, and makes the
+command exit 1 after the others are printed.
 """
 
 import base64
@@ -4577,6 +4581,71 @@ def _lab_char_file(
             )
         how = "latest"
     return target, how, tie
+
+
+class CharListReport(_Out):
+    """`wowlab char list --json`: every character `WowLab.lua` in the flavor
+    (or in `--account`), in `labaddon.read_all`'s order, each with its record
+    or the reason it could not be read. The command exits 1 when any
+    character has an `error`."""
+
+    flavor_folder: str
+    account: layout.FsText | None  # --account as the layout spells it; None: every account
+    characters: list[labaddon.CharacterFile]
+    notes: list[str]
+
+
+@char_app.command("list")
+@_handled
+def char_list(
+    account: Annotated[
+        str | None,
+        typer.Option("--account", help="Only this account folder under WTF/Account/."),
+    ] = None,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+) -> None:
+    """Every character with a WowLab.lua, in every account unless --account
+    names one: when the file was written, and its schema, client build and
+    spec, or why it could not be read. An unreadable file is named on stderr
+    and the command then exits 1; the others are still listed.
+    JSON: CharListReport."""
+    _, chosen, lay = _open(root, flavor)
+    acct = _select_account(lay, account) if account is not None else None
+    entries = labaddon.read_all(lay, account=acct.folder if acct else None)
+    report = CharListReport(
+        flavor_folder=chosen.folder,
+        account=acct.folder if acct else None,
+        characters=entries,
+        notes=_CHAR_NOTES,
+    )
+    if json_out:
+        _emit(report)
+    elif not entries:
+        where = f"account {acct.folder}" if acct else "any account"
+        _say(
+            f"No character in {where} has a {labaddon.ADDON_NAME}.lua (install the lab-addon "
+            "with `wowlab addon install lab`, log in on the character, then log out or /reload)."
+        )
+    else:
+        width = max(len(e.character) for e in entries)
+        shown: str | None = None
+        for e in entries:
+            if e.account != shown:
+                shown = e.account
+                count = sum(1 for other in entries if other.account == e.account)
+                noun = "character" if count == 1 else "characters"
+                _say(f"Account {e.account}: {count} {noun} with a {labaddon.ADDON_NAME}.lua")
+            what = labaddon.summary(e.record) if e.record is not None else f"not read: {e.error}"
+            _say(f"  {e.character:<{width}}  written {_local_time(e.mtime_ns)}  {what}")
+        for note in _CHAR_NOTES:
+            _say(note)
+    for e in entries:
+        if e.error is not None:
+            _note("wowlab: could not read {}: {}", e.file, e.error)
+    if any(e.error is not None for e in entries):
+        raise typer.Exit(EXIT_ERROR)
 
 
 # ─── looks ───────────────────────────────────────────────────────────────────

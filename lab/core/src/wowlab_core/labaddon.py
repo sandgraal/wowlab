@@ -50,6 +50,12 @@ What the models accept (M11-03 capture, `docs/LAB_FORMATS.md` amendment of
   addon's reason; `WowLabCharDB.skip` is kept as a list of section keys, and
   a key this reader does not know is kept but ignored (`skip_known`).
 
+`read_all` (§14.4, M12-09) reads every character's `WowLab.lua` that
+`layout` finds, in both folder shapes, into `CharacterFile` entries: the
+character folder's name, the file's modification time, and the record or the
+reason it could not be read, so one unreadable file never hides the others.
+`summary` is each one's row in `wowlab char list`.
+
 `describe` and `describe_account` turn a record into the text `wowlab char
 show` prints. The wording follows the domain review of the M11-03 capture:
 the equipped average is "as the client reports it", never a UI figure;
@@ -59,7 +65,8 @@ the raw client enum number; professions are named by skill line.
 
 Reads never write (L1): `read_char` and `read_account` open one file with
 `snapshot.read_regular_file` (read-only, no final link followed, no blocking
-on a FIFO, bounded by `luadata.MAX_FILE_BYTES`) and write nothing anywhere.
+on a FIFO, bounded by `luadata.MAX_FILE_BYTES`) and write nothing anywhere;
+`read_all` lists folders through `layout` and reads each file the same way.
 Nothing here names a flavor, a product or a build (L6).
 """
 
@@ -85,7 +92,8 @@ from pydantic import (
     model_validator,
 )
 
-from wowlab_core import luadata, snapshot
+from wowlab_core import layout, luadata, snapshot
+from wowlab_core.layout import FsText
 
 __all__ = [
     "ACCOUNT_SCHEMAS",
@@ -110,6 +118,7 @@ __all__ = [
     "CharDB",
     "CharDBV1",
     "CharDBV2",
+    "CharacterFile",
     "ClassTalents",
     "ClippedReason",
     "Customization",
@@ -130,8 +139,10 @@ __all__ = [
     "parse_account",
     "parse_char",
     "read_account",
+    "read_all",
     "read_char",
     "skip_known",
+    "summary",
     "unknown_keys",
 ]
 
@@ -1028,6 +1039,154 @@ def read_account(path: Path) -> AccountDB:
     return parse_account(_read(path))
 
 
+# ─── every character (§14.4, M12-09) ─────────────────────────────────────────
+
+
+class CharacterFile(BaseModel):
+    """One character's `WowLab.lua` as `read_all` found it: the parsed record,
+    or the reason it could not be read (`error`), never both.
+
+    `label` is the character folder's name as it is on disk (§14.4), and
+    `realm_folder` the folder above it (a realm name, or on Forever a digits
+    folder); `<realm_folder>/<label>` is what `--character` takes. `file` is
+    the path relative to the flavor folder, `/`-separated, and `mtime_ns` the
+    file's modification time as the layout walk saw it (the addon records no
+    time of its own). An `error` never holds the file's absolute path, so it
+    names no folder the entry does not already name."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    label: FsText
+    account: FsText
+    realm_folder: FsText
+    file: FsText
+    mtime_ns: int
+    record: CharDBV1 | CharDBV2 | None = None
+    error: str | None = None
+
+    @model_validator(mode="after")
+    def _record_or_error(self) -> Self:
+        if (self.record is None) == (self.error is None):
+            raise ValueError(
+                "a CharacterFile holds either a record or an error, not both or neither"
+            )
+        return self
+
+    @property
+    def character(self) -> str:
+        """`<realm folder>/<character folder>`, as `wowlab char show --character` takes it."""
+        return f"{self.realm_folder}/{self.label}"
+
+
+def _is_lab_file(f: layout.SavedVariablesFile) -> bool:
+    return not f.backup and f.addon is not None and f.addon.casefold() == ADDON_NAME.casefold()
+
+
+def _os_error(exc: OSError, path: Path) -> str:
+    """Why the file could not be opened or read, without its absolute path
+    (the entry names the file): the system's own words when it gave some,
+    else `snapshot`'s refusal (not a regular file, over the size bound, ...)
+    with the path it names worded as "the file"."""
+    if exc.strerror:
+        return f"could not be read: {exc.strerror}"
+    return str(exc).replace(str(path), "the file")
+
+
+def _read_one(
+    flavor_path: Path,
+    account: str,
+    character: layout.Character,
+    found: list[layout.SavedVariablesFile],
+) -> CharacterFile:
+    """The one `WowLab.lua` in `character`'s SavedVariables/, read. The name
+    spelled as the addon spells it wins; case variants of it alone are more
+    than one candidate, and none is read (which one the client reads is not
+    known), as `sv merge` refuses them."""
+    exact = [f for f in found if f.addon == ADDON_NAME]
+    candidates = sorted(exact or found, key=lambda f: f.path)
+    chosen = candidates[0]
+
+    def entry(record: CharDB | None = None, error: str | None = None) -> CharacterFile:
+        return CharacterFile(
+            label=character.folder,
+            account=account,
+            realm_folder=character.realm_folder,
+            file=chosen.path,
+            mtime_ns=chosen.mtime_ns,
+            record=record,
+            error=error,
+        )
+
+    if len(candidates) > 1:
+        names = ", ".join(f.path.rsplit("/", 1)[-1] for f in candidates)
+        return entry(
+            error=(
+                f"SavedVariables/ holds {len(candidates)} files named like {ADDON_NAME}.lua "
+                f"({names}) and none spelled exactly so; which one the client reads is not "
+                "known, so none was read"
+            )
+        )
+    path = flavor_path / chosen.path
+    try:
+        return entry(record=read_char(path))
+    except LabAddonError as exc:
+        error = str(exc)
+    except luadata.LuaLimitError as exc:
+        error = f"beyond what the SavedVariables parser will hold ({exc.message})"
+    except luadata.LuaDataError as exc:
+        error = f"not SavedVariables data the parser accepts: {exc}"
+    except OSError as exc:
+        error = _os_error(exc, path)
+    return entry(error=error)
+
+
+def _order(entry: CharacterFile) -> tuple[str, ...]:
+    return (
+        entry.account.casefold(),
+        entry.account,
+        entry.realm_folder.casefold(),
+        entry.realm_folder,
+        entry.label.casefold(),
+        entry.label,
+    )
+
+
+def read_all(lay: layout.Layout, *, account: str | None = None) -> list[CharacterFile]:
+    """Every character `WowLab.lua` in the flavor (§14.4, M12-09).
+
+    Walks every character folder `layout` finds under each account folder
+    (`account`: that folder only, named as the layout reports it), of both
+    shapes: `<Realm>/<Character>/` and Forever's `<digits>/<First>-<Second>/`.
+    A folder whose SavedVariables/ holds a `WowLab.lua` gives one entry; a
+    folder without one gives none, so Forever's retail-style `<Realm>/<First>/`
+    twin, which holds only `AddOns.txt`, is not listed. `.lua.bak` siblings
+    are never read.
+
+    A file that cannot be read (not the addon's variable, a schema this
+    reader does not know, a value that does not fit the model, not data the
+    parser accepts, or an error opening it) gives an entry with its reason
+    and never stops the others. Any other exception is a bug and is raised.
+
+    The order is by account, then realm folder, then character folder, each
+    compared with case folded and then as spelled: stable across runs and
+    independent of modification times. Read only (L1): each file is read as
+    `read_char` reads it, and nothing is written anywhere."""
+    lab_files: dict[tuple[str, str | None, str | None], list[layout.SavedVariablesFile]] = {}
+    for f in lay.saved_variables("character"):
+        if _is_lab_file(f):
+            lab_files.setdefault((f.account, f.realm_folder, f.character_folder), []).append(f)
+    entries: list[CharacterFile] = []
+    for acct in lay.accounts():
+        if account is not None and acct.folder != account:
+            continue
+        for realm in acct.realms:
+            for character in realm.characters:
+                found = lab_files.get((acct.folder, character.realm_folder, character.folder))
+                if found:
+                    entries.append(_read_one(lay.flavor_path, acct.folder, character, found))
+    return sorted(entries, key=_order)
+
+
 # ─── derived facts ───────────────────────────────────────────────────────────
 
 
@@ -1713,3 +1872,27 @@ def describe_account(account: AccountDB) -> list[str]:
         f"{', '.join(extra)} (kept in --json; account data reflects whichever character "
         "logged out last)"
     ]
+
+
+def summary(char: CharDB) -> str:
+    """One character's row in `wowlab char list` (M12-09): the schema, the
+    client version and build, and the spec id, as `describe` words them; an
+    absent section's reason is left to `wowlab char show`."""
+    client = char.client
+    if isinstance(client, Client):
+        client_words = (
+            f"client {client.version or 'version not returned'}, "
+            f"build {client.build or 'not returned'}"
+        )
+    elif isinstance(client, AbsentRecord):
+        client_words = "client absent (the reason is in char show)"
+    else:
+        client_words = "client not in the file"
+    spec = char.spec
+    if isinstance(spec, Spec):
+        spec_words = "spec id not returned" if spec.id is None else f"spec id {spec.id}"
+    elif isinstance(spec, AbsentSection):
+        spec_words = "spec absent (the reason is in char show)"
+    else:
+        spec_words = "spec not in the file"
+    return f"schema {char.schema_}, {client_words}, {spec_words}"

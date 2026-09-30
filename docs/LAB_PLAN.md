@@ -1059,6 +1059,7 @@ wowlab profile save|apply|list|show|delete …         # §13.3 (M11-08)
 wowlab addon install|remove lab [--dry-run] [--yes]  # §13.1 (M11-02)
 wowlab looks races|options|save|show|compare|page …  # §13.2 (M11-06, M11-07)
 wowlab char show [--character C] [--json]           # §13.1 (M11-04)
+wowlab char list [--account A] [--json]             # §14.4 (M12-09)
 ```
 
 *Amended 2026-09-28:* the Wave 2 commands above are listed for
@@ -2348,6 +2349,29 @@ A static local page over every character's `WowLab.lua`.
   it could not be read. One unreadable file names itself and exits 1 (as
   `looks show` does) and never blocks the others. `wowlab char list` prints
   the table.
+  *Amended 2026-09-30 (M12-09), the reader as built:* `read_all(layout,
+  account=None)` returns one `CharacterFile` (`label`, `account`,
+  `realm_folder`, `file`, `mtime_ns`, and either `record` or `error`) per
+  character folder, of either shape, whose `SavedVariables/` holds a
+  `WowLab.lua`. A folder without one (the `<Realm>/<First>/` twin, a
+  character that never ran the addon) is not listed, `.lua.bak` siblings
+  are never read, and a folder holding only case variants of the name
+  (`wowlab.lua` and `WOWLAB.lua`) gets an error instead of a guess, as
+  `sv merge` refuses them. The order is account, realm folder, character
+  folder, each compared with case folded and then as spelled; it never
+  follows modification times. An `error` is the reader's message (a schema
+  it does not know, a value that does not fit, not the addon's variable),
+  the parser's, or the system's words for a failed open or read, and never
+  holds the absolute path. `char list` covers every account unless
+  `--account` names one (as `sv list` does; `char show` instead needs
+  `--account` when there are several). A row is `<realm folder>/<folder>`,
+  the file's modification time, and the schema, client version and build
+  and spec id (`labaddon.summary`), or `not read:` and the reason. Each
+  unreadable file is also named on stderr, one line each, and the command
+  exits 1 after printing everything, `--json` (`CharListReport`) included.
+  Not covered: a `SavedVariables/` folder the walk cannot list drops out of
+  `layout`'s file list, so its character is not listed and no error names
+  it (the walk's errors are only in `Layout.inventory()`).
 - **Page** `wowlab char page [--out PATH] [--anonymize] [--offline]`: one
   static file (ADR-0027), a card per character: when the client last saved the
   file (a time from the file, not from the addon, which records none), the
