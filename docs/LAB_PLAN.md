@@ -2145,12 +2145,18 @@ them as follows, and M11-09 builds to them.
       object only when it is the `after` of a committed write to a
       character's `WowLab.lua`: every such write, not only the latest,
       since the check compares any character's file and walks back over
-      older spans. The file is any path the check's `_character_sv` can
-      return for a character's own lab file, decided from the journal
-      record's `path` alone (gc takes no install and reads none): seven
+      older spans. The kept set is decided from the journal record's
+      `path` alone (gc takes no install and reads none) by one rule: seven
       parts, `WTF/Account/<account>/<realm or digits>/<character>/SavedVariables/WowLab.lua`,
       with `WTF`, `Account`, `SavedVariables` and `WowLab.lua` compared
-      case-folded, since the journal records the spelling on disk. Every
+      case-folded, since the journal records the spelling on disk, and the
+      path split no further than seven separators. That set is a superset
+      of what the check's `_character_sv` can return for a character's own
+      lab file, which is the safe direction: it also keeps the `after` of
+      a few writes the check never reads from (to a path whose realm or
+      character folder is named `SavedVariables`, or that has an empty or
+      `..` part, and a write whose `before` equals its `after`), which
+      costs only space. Every
       other `after` (the account-wide `WowLab.lua`, a `WowLab.lua.bak`,
       any other file a `snap restore` or profile apply wrote from a
       snapshot since deleted) is collected like any object no snapshot

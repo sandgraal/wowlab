@@ -1809,8 +1809,10 @@ def _is_character_lab_file(rel: str) -> bool:
     spelled exactly, while the journal records the spelling on disk. The
     account-wide `WowLab.lua`, a `WowLab.lua.bak` beside the character's file
     and every other file are not it. Decided from the path alone: `snap gc`
-    takes no install and reads none."""
-    parts = rel.split("/")
+    takes no install and reads none. The split stops after seven separators,
+    so a longer path yields eight parts and fails the length test without
+    splitting a crafted journal path of any length in full."""
+    parts = rel.split("/", _CHARACTER_SV_PARTS)
     return (
         len(parts) == _CHARACTER_SV_PARTS
         and parts[0].casefold() == _FOLDED_WTF
