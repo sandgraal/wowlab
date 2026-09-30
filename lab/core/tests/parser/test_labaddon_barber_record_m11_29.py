@@ -402,3 +402,88 @@ def test_constructed_events_received_number_key_is_refused() -> None:
     raw = _base_v2()
     raw["customization"]["events_received"] = {1: 1}
     _refused(raw, "events_received", "the number key 1")
+
+
+# ─── an unknown key never reaches the text (M11-29 security review) ──────────
+#
+# A model keeps an unknown key and hands it back as an attribute, so the text
+# must read only declared fields. Each value below is what `luadata` gives for
+# a Lua table the reader keeps as an unknown key: `{ 3, 1 }`, `5`,
+# `{ [1] = 1, A = 2 }`, `{ PLAYER_NAME = 1 }`.
+
+UNKNOWN_SHAPES = {
+    "list": [3, 1],
+    "number": 5,
+    "mixed-keys": {1: 1, "A": 2},
+    "plain-name": {"PLAYER_NAME": 1},
+}
+# (schema, section): where `events_received` is not a declared field.
+UNDECLARED = [(1, "customization"), (1, "professions"), (2, "professions")]
+
+
+@pytest.mark.parametrize("value", UNKNOWN_SHAPES.values(), ids=UNKNOWN_SHAPES.keys())
+@pytest.mark.parametrize(
+    ("schema", "section"), UNDECLARED, ids=["v1-customization", "v1-professions", "v2-professions"]
+)
+def test_constructed_unknown_events_received_on_an_absent_section_is_kept_not_shown(
+    schema: int, section: str, value: object
+) -> None:
+    raw = _base_v1()
+    raw["schema"] = schema
+    raw[section] = {
+        "absent": "a reason",
+        "events_unregistered": [],
+        "events_received": value,
+    }
+    char = labaddon.load_char(raw)
+    text = _text(char)  # must not raise
+    assert "times each registered event reached" not in text
+    assert "PLAYER_NAME" not in text.split("Keys this reader does not know")[0]
+    assert f"{section}.events_received" in labaddon.unknown_keys(char)
+    label = "Customization" if section == "customization" else "Professions"
+    assert f"{label}: absent (a reason); all its change events registered" in text
+
+
+@pytest.mark.parametrize("value", UNKNOWN_SHAPES.values(), ids=UNKNOWN_SHAPES.keys())
+def test_constructed_schema_2_absent_customization_refuses_those_shapes(value: object) -> None:
+    """On schema 2's absent customization the field is declared, so each
+    shape is refused rather than kept."""
+    raw = _base_v2()
+    raw["customization"] = {"absent": "a reason", "events_received": value}
+    if value == {"PLAYER_NAME": 1}:
+        # An event-shaped name is a valid key there: kept as a count.
+        char = labaddon.load_char(raw)
+        assert "PLAYER_NAME 1" in _text(char)
+        return
+    _refused(raw, "WowLabCharDB.customization.events_received")
+
+
+def test_constructed_unknown_events_unregistered_on_an_absent_client_is_kept_not_shown() -> None:
+    """The same cause on main: `events_unregistered` is declared on absent
+    sections only, so on the absent client block it is an unknown key."""
+    raw = _base_v1()
+    raw["client"] = {"absent": "GetBuildInfo missing", "events_unregistered": [3, 1]}
+    char = labaddon.load_char(raw)
+    text = _text(char)  # must not raise
+    assert "Client: absent (GetBuildInfo missing)\n" in text + "\n"
+    assert "client.events_unregistered" in labaddon.unknown_keys(char)
+
+
+def test_constructed_unknown_events_received_from_lua_text() -> None:
+    """End to end from bytes, as `char show` reads it: the real schema-1 file
+    with its customization record made absent and `{ 3, 1 }` added."""
+    data = (FIXTURES / RECORD_70058).read_bytes()
+    start = data.index(b'["customization"] = {\r\n')
+    end = data.index(b'["gear"] = {\r\n', start)
+    data = (
+        data[:start]
+        + b'["customization"] = {\r\n["absent"] = "a reason",\r\n'
+        + b'["events_received"] = {\r\n3,\r\n1,\r\n},\r\n},\r\n'
+        + data[end:]
+    )
+    char = labaddon.parse_char(data)
+    assert type(char) is labaddon.CharDBV1
+    text = _text(char)
+    assert "Customization: absent (a reason)" in text
+    assert "times each registered event reached" not in text
+    assert "customization.events_received" in labaddon.unknown_keys(char)

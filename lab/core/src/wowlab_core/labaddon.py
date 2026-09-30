@@ -43,8 +43,9 @@ What the models accept (M11-03 capture, `docs/LAB_FORMATS.md` amendment of
 - Schema 2 (M11-29) is schema 1 with two keys on `customization`:
   `chr_model_id_absent` (at most one of it and `chr_model_id`) and
   `events_received` (event name to a count), on a present or an absent
-  record. Schema 1 files are read exactly as before, and the new keys are
-  not accepted in them (`chr_model_id_absent` is text in an unknown key).
+  record. Schema 1 files are read exactly as before: `chr_model_id_absent`
+  in one is refused (text in an unknown key), and `events_received` is kept
+  as an unknown key, as it always was.
 - A section the owner switched off (M11-21) is an absent record with the
   addon's reason; `WowLabCharDB.skip` is kept as a list of section keys, and
   a key this reader does not know is kept but ignored (`skip_known`).
@@ -1231,14 +1232,19 @@ def _received(counts: dict[str, int]) -> str:
 
 def _absent(record: _Absent, *, events_shown: bool = True) -> str:
     text = _reason(record.absent, record.absent_clipped)
-    events = getattr(record, "events_unregistered", None)
+    # Declared fields only (M11-29 security review): a model keeps an unknown
+    # key and would hand it back as an attribute, so `getattr` would read a
+    # kept `events_unregistered` or `events_received` of any shape, from any
+    # absent record of any schema. `events_unregistered` is declared on
+    # AbsentSection; `events_received` only on schema 2's
+    # AbsentCustomizationV2.
+    events = record.events_unregistered if isinstance(record, AbsentSection) else None
     if events is not None and events_shown:
         if events:
             text += f"; events the client did not know: {', '.join(events)}"
         else:
             text += f"; {ALL_EVENTS_REGISTERED}"
-    # Only a schema-2 absent customization record has the attribute.
-    received = getattr(record, "events_received", None)
+    received = record.events_received if isinstance(record, AbsentCustomizationV2) else None
     if received is not None and events_shown:
         text += f"; {EVENTS_RECEIVED}: {_received(received)}"
     return text
