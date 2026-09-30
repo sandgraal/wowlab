@@ -204,9 +204,11 @@ jobs:
           echo "API key can call ${WIKI_MODEL}"
           echo "available=true" >> "$GITHUB_OUTPUT"
 
+      # Runs even when the Claude step will not, so a skipped run still
+      # proves the prompt and the settings are well-formed.
       - name: Build the prompt and the permission settings
         id: prompt
-        if: steps.preflight.outputs.available == 'true'
+        if: steps.plan.outcome == 'success'
         run: |
           delim="WIKI_DAILY_$(openssl rand -hex 16)"
           {
@@ -237,6 +239,8 @@ jobs:
             }
           }' > "$RUNNER_TEMP/wiki-daily-settings.json"
           echo "settings=$RUNNER_TEMP/wiki-daily-settings.json" >> "$GITHUB_OUTPUT"
+          echo "prompt: $(cat repo/.github/prompts/wiki-daily.md context/run.md | wc -c) bytes"
+          jq -c . "$RUNNER_TEMP/wiki-daily-settings.json"
           # `uv run wowlab` from the workspace root, offline, never re-syncing.
           {
             echo "UV_PROJECT=${GITHUB_WORKSPACE}/repo"
