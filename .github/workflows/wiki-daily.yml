@@ -1,0 +1,529 @@
+name: Wiki daily
+
+# Checks and improves the GitHub wiki once a day, then pushes it with no pull
+# request (owner decision 2026-09-30, ticket M12-14). Three jobs, so that the
+# model and the push credential never share a runner:
+#
+#   improve  reads main and a credential-free clone of the wiki, regenerates
+#            CLI-Reference, lets Claude edit the wiki copy (prompt:
+#            .github/prompts/wiki-daily.md), then gates the result with
+#            scripts/check_wiki.py and gitleaks. Read-only token only.
+#   publish  on main only, and only when the repository variable
+#            WIKI_DAILY_PUBLISH is `true`: a scheduled run, or a dispatch with
+#            push: true. Takes the pages from `improve` as data, rebuilds the
+#            generated page and .lab/state.json itself, runs both gates again,
+#            commits and pushes. The model cannot influence it beyond page text.
+#   report   when either job fails on main: opens, or comments on, the one
+#            open issue labelled wiki-daily. Nothing is pushed on a failure.
+#
+# Publishing is off until the owner sets the repository variable
+# WIKI_DAILY_PUBLISH to `true` (Settings > Secrets and variables > Actions >
+# Variables), after reading the diff artifact of a dispatch run whose Claude
+# step ran. Until then every run is a dry run: it uploads the gate report and,
+# when the gate found no personal data and gitleaks found nothing, the pages
+# and the wiki diff as artifacts.
+#
+# Needs ANTHROPIC_API_KEY (the Claude step skips cleanly without it, or when
+# the API reports exhausted credit or a rate limit; the rest still runs).
+#
+# Permissions beyond `contents: read`: `actions: read` on improve (it reads
+# the previous run's gate report), `contents: write` on publish, `issues:
+# write` on report. The push uses publish's own GITHUB_TOKEN. Verified on
+# 2026-09-30 (M12-14 dry run, runs 36765448581 and 36765760456): the wiki's
+# push service accepted a `contents: write` GITHUB_TOKEN (HTTP 200 on the
+# receive-pack advertisement) and refused a `contents: read` one (HTTP 403;
+# its fetch got 200). It lives for that job only and cannot bypass the
+# main-branch ruleset, so the WIKI_PUSH_TOKEN secret (a long-lived,
+# fine-grained token) is not used.
+
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    inputs:
+      push:
+        description: Push the result to the wiki (needs the WIKI_DAILY_PUBLISH variable)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wiki-daily
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  UV_VERSION: "0.12.12"
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+  # Pinned by full id, as in claude-review.yml.
+  WIKI_MODEL: claude-opus-5-5
+
+jobs:
+  improve:
+    name: Check and improve the wiki
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      main_sha: ${{ steps.plan.outputs.main }}
+      wiki_base: ${{ steps.wiki.outputs.base }}
+      wiki_branch: ${{ steps.wiki.outputs.branch }}
+      review: ${{ steps.plan.outputs.review }}
+      claude_ran: ${{ steps.claude.outcome == 'success' }}
+      changed: ${{ steps.gate.outputs.changed }}
+    env:
+      # The workspace header, forwarded as in claude-review.yml (see the
+      # comment on its job `env`).
+      ANTHROPIC_CUSTOM_HEADERS: "${{ vars.ANTHROPIC_WORKSPACE_ID != '' && format('anthropic-workspace-id: {0}', vars.ANTHROPIC_WORKSPACE_ID) || '' }}"
+      # Claude Code strips credentials from the environment of every command
+      # it runs (the only one it may run is the gate on the wiki).
+      CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
+    steps:
+      # The workspace root is deliberately not a git repository: main is
+      # checked out into repo/, the wiki cloned into wiki/, the run's input
+      # written to context/. The Claude action writes its token into the git
+      # config of the directory it starts in; here there is none to write to.
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: repo
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: repo/uv.lock
+      - name: Install
+        working-directory: repo
+        run: uv sync --frozen
+      - name: Clone the wiki (public, no credential)
+        id: wiki
+        run: |
+          git clone --quiet "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.wiki.git" wiki
+          echo "base=$(git -C wiki rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "branch=$(git -C wiki symbolic-ref --short HEAD)" >> "$GITHUB_OUTPUT"
+          mkdir -p report context
+      # Written before the check and before Claude, and verified byte for byte
+      # by the gate afterwards: nobody edits the generated page.
+      - name: Regenerate CLI-Reference
+        working-directory: repo
+        run: uv run --frozen python scripts/gen_command_reference.py --out ../wiki/CLI-Reference.md
+      - name: Plan the run
+        id: plan
+        working-directory: repo
+        run: |
+          plan=$(uv run --frozen python scripts/wiki_state.py plan --wiki ../wiki --repo . --context ../context)
+          echo "$plan"
+          echo "main=$(jq -r .main <<<"$plan")" >> "$GITHUB_OUTPUT"
+          echo "review=$(jq -r '.review | join(",")' <<<"$plan")" >> "$GITHUB_OUTPUT"
+          # What the gate would reject now: the model's list of gaps to fill.
+          # Its lines never quote personal data, so printing them is safe.
+          uv run --frozen python scripts/check_wiki.py ../wiki > ../context/check-before.txt || true
+          cat ../context/check-before.txt
+      # So that repeated near misses converge: the report of the last run on
+      # main, when that run failed and kept its report.
+      - name: The previous run's gate report
+        if: steps.plan.outcome == 'success' && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prev=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow wiki-daily.yml --branch main \
+            --status completed --limit 5 --json databaseId,conclusion \
+            --jq "map(select(.databaseId != ${GITHUB_RUN_ID}))[0] | select(.conclusion == \"failure\") | .databaseId")
+          if [ -n "$prev" ] && gh run download "$prev" --repo "$GITHUB_REPOSITORY" \
+              --name wiki-daily-report --dir "$RUNNER_TEMP/previous"; then
+            cp "$RUNNER_TEMP/previous/check.txt" context/previous-check.txt
+            echo "- The previous run (${prev}) was rejected by the gate; its report is \`context/previous-check.txt\`." >> context/run.md
+          fi
+
+      - name: Check secret
+        id: secret
+        env:
+          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "$KEY" ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "ANTHROPIC_API_KEY is not set; skipping the Claude step (see docs/SETUP.md)"; echo "present=false" >> "$GITHUB_OUTPUT"; fi
+      # Copied from claude-review.yml: one 1-token request surfaces the API's
+      # real error; exhausted credit, a rate limit or an overloaded API skips
+      # the Claude step cleanly, and a bad key, model or workspace fails.
+      - name: Check API access for the model
+        id: preflight
+        if: steps.secret.outputs.present == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          body=$(jq -nc --arg m "$WIKI_MODEL" '{model: $m, max_tokens: 1, messages: [{role: "user", content: "ok"}]}')
+          # Headers go in on stdin so the key never sits in curl's argv;
+          # ANTHROPIC_CUSTOM_HEADERS (the workspace header, when set) rides along.
+          status=$({ printf 'x-api-key: %s\n' "$ANTHROPIC_API_KEY"; [ -n "$ANTHROPIC_CUSTOM_HEADERS" ] && printf '%s\n' "$ANTHROPIC_CUSTOM_HEADERS"; true; } | curl -sS -o "$RUNNER_TEMP/preflight.json" -w '%{http_code}' \
+            https://api.anthropic.com/v1/messages \
+            -H @- \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d "$body")
+          if [ "$status" != "200" ]; then
+            # Escape %, CR and LF so the message cannot start a new workflow command.
+            detail=$(jq -r '((.error.type // "unknown") + ": " + (.error.message // "no message")) | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A")' "$RUNNER_TEMP/preflight.json" 2>/dev/null || echo "unparseable response")
+            case "$status:$detail" in
+              429:*|529:*|*:rate_limit_error:*|*:overloaded_error:*|*"specified API usage limits"*|*"credit balance is too low"*)
+                echo "::warning title=Claude step skipped::HTTP ${status} ${detail}"
+                echo "Claude step skipped: HTTP ${status} ${detail}" >> "$GITHUB_STEP_SUMMARY"
+                echo "available=false" >> "$GITHUB_OUTPUT"
+                exit 0
+                ;;
+            esac
+            echo "::error title=Anthropic API rejected ${WIKI_MODEL}::HTTP ${status} ${detail}"
+            exit 1
+          fi
+          echo "API key can call ${WIKI_MODEL}"
+          echo "available=true" >> "$GITHUB_OUTPUT"
+
+      # Claude Code reads CLAUDE.md files (and a .claude folder's settings and
+      # rules) as instructions. Neither the pinned action nor the CLI has an
+      # input that turns that off for folders below the working directory, so
+      # they are removed from both checkouts before the model starts. The
+      # checkout's state after this is what "Nothing outside the wiki
+      # changed" compares against.
+      - name: Keep instruction files out of the model's reach
+        if: steps.plan.outcome == 'success'
+        run: |
+          find repo wiki \( -path repo/.git -o -path wiki/.git \) -prune -o \
+            \( -iname CLAUDE.md -o -iname CLAUDE.local.md -o \( -type d -name .claude \) \) -print0 \
+            | xargs -0 -r rm -rf --
+          git -C repo status --porcelain > "$RUNNER_TEMP/repo-status-before"
+      # Runs even when the Claude step will not, so a skipped run still
+      # proves the prompt and the settings are well-formed.
+      - name: Build the prompt and the permission settings
+        id: prompt
+        if: steps.plan.outcome == 'success'
+        run: |
+          delim="WIKI_DAILY_$(openssl rand -hex 16)"
+          {
+            echo "text<<${delim}"
+            cat repo/.github/prompts/wiki-daily.md
+            echo
+            cat context/run.md
+            echo "${delim}"
+          } >> "$GITHUB_OUTPUT"
+          # Deny rules win over every allow rule. `//` starts an absolute path.
+          ws="/${GITHUB_WORKSPACE}"
+          jq -n --arg ws "$ws" --arg tmp "/${RUNNER_TEMP}" '{
+            permissions: {
+              disableBypassPermissionsMode: "disable",
+              deny: [
+                "WebFetch", "WebSearch", "NotebookEdit", "Task", "Agent",
+                "Read(//proc/**)", "Read(//sys/**)", "Read(//etc/**)", "Read(//root/**)",
+                "Read(\($tmp)/**)",
+                "Read(//home/runner/actions-runner/**)", "Read(//home/runner/runners/**)",
+                "Read(~/.claude.json)", "Read(~/.claude/**)", "Read(~/.config/**)",
+                "Read(~/.gitconfig)", "Read(~/.git-credentials)", "Read(~/.netrc)",
+                "Read(~/.ssh/**)", "Read(~/.docker/**)", "Read(~/.npmrc)",
+                "Edit(\($ws)/wiki/CLI-Reference.md)", "Edit(\($ws)/wiki/.lab/**)",
+                "Edit(\($ws)/wiki/.git/**)",
+                "Write(\($ws)/wiki/CLI-Reference.md)", "Write(\($ws)/wiki/.lab/**)",
+                "Write(\($ws)/wiki/.git/**)"
+              ]
+            }
+          }' > "$RUNNER_TEMP/wiki-daily-settings.json"
+          echo "settings=$RUNNER_TEMP/wiki-daily-settings.json" >> "$GITHUB_OUTPUT"
+          echo "prompt: $(cat repo/.github/prompts/wiki-daily.md context/run.md | wc -c) bytes"
+          jq -c . "$RUNNER_TEMP/wiki-daily-settings.json"
+          # The gate command runs from the workspace root, offline, never
+          # re-syncing; if its environment loses UV_PROJECT, the venv's
+          # python is still first on PATH.
+          {
+            echo "UV_PROJECT=${GITHUB_WORKSPACE}/repo"
+            echo "UV_FROZEN=1"
+            echo "UV_NO_SYNC=1"
+            echo "UV_OFFLINE=1"
+          } >> "$GITHUB_ENV"
+          echo "${GITHUB_WORKSPACE}/repo/.venv/bin" >> "$GITHUB_PATH"
+
+      # Tools: read anything the deny list above leaves, edit and create only
+      # inside wiki/, and run exactly one command: the gate on the wiki. The
+      # rule has no wildcard, so it matches that command string and no other
+      # (compound commands are split and each part must match). Command help
+      # is in wiki/CLI-Reference.md. No git, no network tool; the commit and
+      # push happen in `publish`, from page text only.
+      - name: Improve the wiki (Claude)
+        id: claude
+        if: steps.preflight.outputs.available == 'true'
+        uses: anthropics/claude-code-action@756cc22e19660d20e8cc9496b4f242475a7f7790 # v1.0.235
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Agent mode takes a token instead of minting one through OIDC, so
+          # the job needs no id-token permission; this one can only read.
+          github_token: ${{ github.token }}
+          settings: ${{ steps.prompt.outputs.settings }}
+          prompt: ${{ steps.prompt.outputs.text }}
+          claude_args: |
+            --model ${{ env.WIKI_MODEL }}
+            --max-turns 60
+            --allowedTools "Read,Grep,Glob,Edit(/${{ github.workspace }}/wiki/**),Write(/${{ github.workspace }}/wiki/**),Bash(uv run python repo/scripts/check_wiki.py wiki)"
+
+      - name: Nothing outside the wiki changed
+        if: always() && steps.plan.outcome == 'success'
+        run: |
+          git -C repo status --porcelain > "$RUNNER_TEMP/repo-status-after"
+          if ! cmp -s "$RUNNER_TEMP/repo-status-before" "$RUNNER_TEMP/repo-status-after"; then
+            diff "$RUNNER_TEMP/repo-status-before" "$RUNNER_TEMP/repo-status-after" || true
+            echo "::error::the checkout of main changed during the run; nothing is pushed"
+            exit 1
+          fi
+      - name: Record the pass in .lab/state.json
+        if: steps.claude.outcome == 'success'
+        working-directory: repo
+        env:
+          MAIN: ${{ steps.plan.outputs.main }}
+          REVIEW: ${{ steps.plan.outputs.review }}
+        run: uv run --frozen python scripts/wiki_state.py update --wiki ../wiki --main "$MAIN" --reviewed "$REVIEW" --date "$(date -u +%F)"
+
+      # Exit codes (scripts/check_wiki.py): 0 clean, 1 failures, 3 failures
+      # including personal data, 2 error. Only 0 and 1 let artifacts out.
+      - name: Gate - check_wiki
+        id: check
+        if: always() && steps.plan.outcome == 'success'
+        working-directory: repo
+        env:
+          BASE: ${{ steps.wiki.outputs.base }}
+        run: |
+          code=0
+          uv run --frozen python scripts/check_wiki.py ../wiki --base "$BASE" > ../report/check.txt || code=$?
+          cat ../report/check.txt
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+      - name: Install gitleaks
+        if: always() && steps.plan.outcome == 'success'
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/gitleaks.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          sudo install "$RUNNER_TEMP/gitleaks" /usr/local/bin/gitleaks
+      # gitleaks reads the whole change; the artifact's diff holds only the
+      # top-level pages (the `:(glob)` pathspec does not descend).
+      - name: Gate - gitleaks on the wiki diff
+        id: gitleaks
+        if: always() && steps.plan.outcome == 'success'
+        continue-on-error: true
+        env:
+          BASE: ${{ steps.wiki.outputs.base }}
+        run: |
+          git -C wiki add -A
+          git -C wiki diff --cached "$BASE" > "$RUNNER_TEMP/wiki-full.diff"
+          git -C wiki diff --cached "$BASE" -- ':(glob)*.md' > report/wiki.diff
+          gitleaks stdin --redact --no-banner --exit-code 1 --config repo/.gitleaks.toml < "$RUNNER_TEMP/wiki-full.diff"
+      - name: Gate result
+        id: gate
+        if: always() && steps.plan.outcome == 'success'
+        env:
+          CODE: ${{ steps.check.outputs.code }}
+          LEAKS: ${{ steps.gitleaks.outcome }}
+          CLAUDE: ${{ steps.claude.outcome }}
+          BASE: ${{ steps.wiki.outputs.base }}
+        run: |
+          # The report leaves only when check_wiki found no personal data; the
+          # pages and the diff only when, besides, gitleaks found nothing.
+          if [ "$CODE" = 0 ] || [ "$CODE" = 1 ]; then
+            echo "report=true" >> "$GITHUB_OUTPUT"
+            if [ "$LEAKS" = success ]; then echo "pages=true" >> "$GITHUB_OUTPUT"; fi
+          fi
+          if git -C wiki diff --cached --quiet "$BASE"; then changed=false; else changed=true; fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Wiki daily"
+            echo
+            echo "- Claude step: ${CLAUDE:-skipped}"
+            echo "- check_wiki exit: ${CODE:-none}; gitleaks: $LEAKS; wiki changed: $changed"
+            echo
+            echo '```text'
+            cat report/check.txt
+            # File names may be personal data too: listed only when clean.
+            if [ "$CODE" = 0 ] || [ "$CODE" = 1 ]; then git -C wiki diff --cached --stat "$BASE"; fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$CODE" != 0 ] || [ "$LEAKS" != success ]; then
+            echo "::error::the gate rejected the wiki; nothing is pushed"
+            exit 1
+          fi
+      - name: Upload the gate report
+        if: always() && steps.gate.outputs.report == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wiki-daily-report
+          path: report/check.txt
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Upload the pages and the wiki diff
+        if: always() && steps.gate.outputs.pages == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wiki-daily-pages
+          path: |
+            wiki/*.md
+            report/wiki.diff
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Push the wiki
+    needs: improve
+    # Never from a branch; never until the owner sets WIKI_DAILY_PUBLISH; and
+    # a dispatch only with push: true.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      vars.WIKI_DAILY_PUBLISH == 'true' &&
+      needs.improve.outputs.changed == 'true' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && inputs.push))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Only the push step uses this token's write access (see the header).
+    permissions:
+      contents: write
+    steps:
+      - name: Check out main at the commit the pass read
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.improve.outputs.main_sha }}
+          path: repo
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: repo/uv.lock
+      - name: Install
+        working-directory: repo
+        run: uv sync --frozen
+      - name: Clone the wiki at the commit the pass started from
+        env:
+          BASE: ${{ needs.improve.outputs.wiki_base }}
+        run: |
+          git clone --quiet "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.wiki.git" wiki
+          if [ "$(git -C wiki rev-parse HEAD)" != "$BASE" ]; then
+            echo "::error::the wiki changed while the pass ran; nothing is pushed (the next run starts from the new wiki)"
+            exit 1
+          fi
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: wiki-daily-pages
+          path: incoming
+      # The pages are data: only regular top-level .md files are taken. The
+      # generated page and the state file are rebuilt here, not taken.
+      - name: Apply the pages
+        working-directory: repo
+        env:
+          CLAUDE_RAN: ${{ needs.improve.outputs.claude_ran }}
+          MAIN: ${{ needs.improve.outputs.main_sha }}
+          REVIEW: ${{ needs.improve.outputs.review }}
+        run: |
+          find ../wiki -maxdepth 1 -type f -name '*.md' -delete
+          find ../incoming/wiki -maxdepth 1 -type f -name '*.md' -exec cp -- {} ../wiki/ \;
+          uv run --frozen python scripts/gen_command_reference.py --out ../wiki/CLI-Reference.md
+          if [ "$CLAUDE_RAN" = true ]; then
+            uv run --frozen python scripts/wiki_state.py update --wiki ../wiki --main "$MAIN" --reviewed "$REVIEW" --date "$(date -u +%F)"
+          fi
+      - name: Gate again - check_wiki
+        working-directory: repo
+        env:
+          BASE: ${{ needs.improve.outputs.wiki_base }}
+        run: uv run --frozen python scripts/check_wiki.py ../wiki --base "$BASE"
+      - name: Commit
+        id: commit
+        run: |
+          git -C wiki add -A
+          if git -C wiki diff --cached --quiet; then
+            echo "Nothing to push."
+            echo "made=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git -C wiki -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit --quiet -m "wiki: daily pass $(date -u +%F) (run ${GITHUB_RUN_ID})"
+          echo "made=true" >> "$GITHUB_OUTPUT"
+      - name: Install gitleaks
+        if: steps.commit.outputs.made == 'true'
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/gitleaks.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          sudo install "$RUNNER_TEMP/gitleaks" /usr/local/bin/gitleaks
+      - name: Gate again - gitleaks on the commit
+        if: steps.commit.outputs.made == 'true'
+        env:
+          BASE: ${{ needs.improve.outputs.wiki_base }}
+        run: gitleaks git wiki --log-opts="${BASE}..HEAD" --redact --no-banner --exit-code 1 --config repo/.gitleaks.toml
+      # The token reaches git as an http.extraheader scoped to the wiki's URL,
+      # through GIT_CONFIG_* variables: never in argv, a remote URL or a file.
+      # No force: if the wiki moved, the push fails and the issue says so.
+      - name: Push
+        if: steps.commit.outputs.made == 'true'
+        env:
+          TOKEN: ${{ github.token }}
+          BRANCH: ${{ needs.improve.outputs.wiki_branch }}
+        run: |
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+          echo "::add-mask::${auth}"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0="http.${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.wiki.git.extraheader"
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${auth}"
+          git -C wiki push --quiet origin "HEAD:refs/heads/${BRANCH}"
+
+  report:
+    name: Report a failure
+    needs: [improve, publish]
+    if: >-
+      always() && github.ref == 'refs/heads/main' &&
+      (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      issues: write
+    steps:
+      # Present only when the gate found no personal data (see "Gate result").
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true
+        with:
+          name: wiki-daily-report
+          path: report
+      - name: Open or comment on the wiki-daily issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMPROVE: ${{ needs.improve.result }}
+          PUBLISH: ${{ needs.publish.result }}
+        run: |
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          {
+            echo "The daily wiki pass of $(date -u +%F) failed, and nothing was pushed to the wiki."
+            echo
+            echo "- check and improve: ${IMPROVE}"
+            echo "- push: ${PUBLISH}"
+            echo "- run: ${run_url}"
+            echo
+            echo "Gate report (scripts/check_wiki.py; personal data is named by kind, never quoted):"
+            echo
+            echo '~~~~text'
+            if [ -s report/check.txt ]; then head -c 50000 report/check.txt; else echo "(no gate report: withheld because it found personal data, or the run stopped earlier; see the run log)"; fi
+            echo '~~~~'
+          } > "$RUNNER_TEMP/body.md"
+          gh label create wiki-daily --repo "$GITHUB_REPOSITORY" --color D93F0B \
+            --description "The daily wiki job failed" 2>/dev/null || true
+          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --label wiki-daily --state open \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --label wiki-daily \
+              --title "wiki-daily: the daily wiki pass failed" --body-file "$RUNNER_TEMP/body.md"
+          fi

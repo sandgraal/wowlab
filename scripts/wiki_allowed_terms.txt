@@ -1,0 +1,89 @@
+# Reviewed `Word-Word` terms that scripts/check_wiki.py must not read as a
+# character's `Name-Realm` (M12-14). One term per line, compared without
+# case; `#` starts a comment. The daily wiki job's model cannot edit this
+# file (it writes only the wiki); a person adds a term here in a reviewed
+# pull request. Never add a real character or realm name.
+
+# Wiki page names made of two words.
+Getting-Started
+Command-Reference
+Customization-Looks
+Game-Data
+Combat-Log
+Lab-Addon
+Forever-Beta
+
+# Client and add-on vocabulary.
+Add-On
+Add-Ons
+Interface-Classic
+Blizzard-Style
+Pre-Patch
+User-Agent
+Cross-Realm
+Battle-Net
+Multi-Boxing
+
+# Common technical compounds (as written at the start of a sentence or in a heading).
+Read-Only
+Read-Write
+Built-In
+Opt-In
+Opt-Out
+Plug-In
+Drop-In
+Sign-In
+Log-In
+Log-Out
+Set-Up
+Follow-Up
+Dry-Run
+Round-Trip
+Real-Time
+Run-Time
+Third-Party
+First-Party
+Per-Character
+Per-Account
+Per-Page
+Non-Zero
+Well-Known
+Right-Click
+Left-Click
+Double-Click
+Plain-Text
+Time-Stamp
+Sub-Folder
+Top-Level
+Byte-Identical
+Write-Gate
+Hand-Written
+
+# Found in the wiki and the generated page as of 2026-09-30.
+Two-Way
+Three-Way
+One-Way
+Action-Bar
+Action-Bars
+Re-Hash
+Re-Hashes
+Lua-Syntax
+In-Game
+Account-Wide
+Forever-Compatibility
+Local-Only
+User-Facing
+Deep-Check
+
+# Likely in the same places.
+Re-Run
+Re-Read
+Re-Apply
+Self-Contained
+Case-Sensitive
+Case-Insensitive
+Build-Keyed
+Server-Side
+Client-Side
+Game-Wide
+Realm-Wide
