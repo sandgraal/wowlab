@@ -19,9 +19,10 @@ name: Wiki daily
 # the API reports exhausted credit or a rate limit; the rest still runs).
 #
 # The push uses the job's own GITHUB_TOKEN with `contents: write` on the
-# publish job alone. Verified on 2026-09-30 (M12-14 dry run): the wiki's
-# push service accepted a `contents: write` GITHUB_TOKEN (HTTP 200) and
-# refused a `contents: read` one (HTTP 403). It lives for this job only and
+# publish job alone. Verified on 2026-09-30 (M12-14 dry run, runs
+# 36765448581 and 36765760456): the wiki's push service accepted a
+# `contents: write` GITHUB_TOKEN (HTTP 200 on the receive-pack advertisement)
+# and refused a `contents: read` one (HTTP 403; its fetch got 200). It lives for this job only and
 # cannot bypass the main-branch ruleset, so the WIKI_PUSH_TOKEN secret
 # (a long-lived, fine-grained token) is not used.
 
@@ -34,11 +35,6 @@ on:
         description: Push the result to the wiki (a scheduled run always does)
         type: boolean
         default: false
-  # TEMPORARY (M12-14 dry run, removed before merge): a dispatch needs the file
-  # on the default branch, so the branch runs it on push. `publish` and
-  # `report` never run off main.
-  push:
-    branches: [m12/14-wiki-daily]
 
 permissions:
   contents: read
@@ -59,48 +55,6 @@ env:
   WIKI_MODEL: claude-opus-5-5
 
 jobs:
-  # TEMPORARY (M12-14, removed before merge): can each token push to the
-  # wiki? Asks for the push service's ref advertisement, which needs push
-  # rights and writes nothing. Prints HTTP codes only.
-  probe:
-    name: Probe wiki push rights (temporary)
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    steps:
-      - name: Probe
-        env:
-          ACTIONS_TOKEN: ${{ github.token }}
-          PAT: ${{ secrets.WIKI_PUSH_TOKEN }}
-        run: |
-          url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.wiki.git/info/refs?service=git-receive-pack"
-          for name in ACTIONS_TOKEN PAT; do
-            tok="${!name}"
-            if [ -z "$tok" ]; then echo "$name: not set"; continue; fi
-            code=$(printf 'user = "x-access-token:%s"\n' "$tok" | curl -s -o /dev/null -w '%{http_code}' -K - "$url")
-            echo "$name: HTTP $code (receive-pack advertisement)"
-            echo "- $name: HTTP $code" >> "$GITHUB_STEP_SUMMARY"
-          done
-          code=$(curl -s -o /dev/null -w '%{http_code}' "$url")
-          echo "no token: HTTP $code"
-  probe-read:
-    name: Probe wiki push rights, read-only token (temporary)
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Probe
-        env:
-          ACTIONS_TOKEN: ${{ github.token }}
-        run: |
-          url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.wiki.git/info/refs?service=git-receive-pack"
-          code=$(printf 'user = "x-access-token:%s"\n' "$ACTIONS_TOKEN" | curl -s -o /dev/null -w '%{http_code}' -K - "$url")
-          echo "ACTIONS_TOKEN (contents: read): HTTP $code (receive-pack advertisement)"
-          code=$(printf 'user = "x-access-token:%s"\n' "$ACTIONS_TOKEN" | curl -s -o /dev/null -w '%{http_code}' -K - "${url/receive-pack/upload-pack}")
-          echo "ACTIONS_TOKEN (contents: read): HTTP $code (upload-pack advertisement)"
-
   improve:
     name: Check and improve the wiki
     runs-on: ubuntu-latest
