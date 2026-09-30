@@ -1186,10 +1186,13 @@ def choose_lab_file(paths: list[str]) -> str | None:
     one the client reads is not known, so none is read. `survey`, `wowlab
     char show` and `looks import-char` all choose with this rule (M12-09),
     but the two commands give it regular files only, while `survey` also
-    gives it a link, FIFO or folder of that name. So for such an entry they
-    can still answer differently: the client opens the exact name and
-    follows links, and on a case-sensitive volume (under Wine, say) `char
-    show` can read a case variant the client does not."""
+    gives it a link, FIFO or folder of that name, and names a SavedVariables/
+    folder it cannot list. So there they can still answer differently: the
+    client opens the exact name and follows links; on a case-sensitive
+    volume (under Wine, say) `char show` can read a case variant the client
+    does not; and where SavedVariables/ cannot be listed, `char show` says
+    the character has no `WowLab.lua` (with install advice) and `looks
+    import-char` exits 2, while `char list` says it could not look."""
     named = [p for p in paths if is_lab_file_name(_name(p))]
     exact = [p for p in named if _name(p) == LAB_FILE_NAME]
     match = sorted(exact or named)
@@ -1267,7 +1270,7 @@ class _Reader:
                 error=f"the file holds {st.st_size} bytes, more than {luadata.MAX_FILE_BYTES}"
             )
         key = (st.st_dev, st.st_ino)
-        if st.st_ino and key in self.seen:  # an inode of 0 says nothing (some file systems)
+        if key in self.seen:  # never an inode of 0: see below
             first_account, first = self.seen[key]
             where = first if first_account == account else f"{first} in account {first_account}"
             return _Read(
@@ -1294,8 +1297,10 @@ class _Reader:
             return _Read(error=f"beyond what the SavedVariables parser will hold ({exc.message})")
         except luadata.LuaDataError as exc:
             return _Read(error=f"not SavedVariables data the parser accepts: {exc}")
+        # Only a file read and parsed stands for its twins; an inode of 0 (some
+        # file systems report it for every file) says nothing, so it is never kept.
         if st.st_ino:
-            self.seen[key] = (account, who)  # only a file read and parsed stands for its twins
+            self.seen[key] = (account, who)
         return _Read(record=record if self.keep_records else None, summary=summary(record))
 
 
