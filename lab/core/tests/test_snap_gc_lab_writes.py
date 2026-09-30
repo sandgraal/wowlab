@@ -402,25 +402,64 @@ def test_gc_keeps_what_a_restore_wrote_into_a_characters_lab_file_spelled_wowlab
     _passes(_copy_within("--json"))
 
 
+LAB_A_IN_FOLDED_DIR = LAB_A.replace("/SavedVariables/", "/savedvariables/")  # constructed
+
+
+def test_gc_keeps_what_a_restore_wrote_into_a_characters_lab_file_under_savedvariables_in_lower_case_constructed(
+    flavor: Path,
+) -> None:
+    """Exists to fail a rule that folds only the file name (conductor ruling,
+    M11-31T round 1; review of #141, round 2). The ruling folds `WTF`,
+    `Account` and `SavedVariables` too. Layout and the loader check still find
+    the character's `WowLab.lua` in a folder spelled `savedvariables`, and the
+    journal records that spelling, so gc must keep that write's `after`.
+    Green on main, which keeps every `after`."""
+    sv_dir = (flavor / LAB_A).parent
+    sv_dir.rename(sv_dir.with_name("savedvariables"))
+    assert "savedvariables" in {p.name for p in sv_dir.parent.iterdir()}
+    assert "SavedVariables" not in {p.name for p in sv_dir.parent.iterdir()}
+    written = _restore_from_a_deleted_snapshot(flavor, {LAB_A_IN_FOLDED_DIR: _a(5)})
+    assert written == {LAB_A_IN_FOLDED_DIR: _sha(REAL_A)}, "the journal records the spelling"
+    store = _store()
+    assert _unreferenced(store) == {_sha(REAL_A)}, "only the journal names it"
+    _age_objects(store)
+
+    assert _json(GcReport, "snap", "gc", "--dry-run").unreferenced == ()
+    assert _json(GcReport, "snap", "gc", "--yes").removed == ()
+    assert store.object_path(_sha(REAL_A)).is_file(), "the loader check compares from it"
+
+    # As above: a session since the restore; only rule 2, from the kept
+    # object, passes the merge.
+    (flavor / LAB_A_IN_FOLDED_DIR).write_bytes(_once(_a(5), *_FILTER))
+    _passes(_copy_within("--json"))
+
+
 @posix_symlinks
 @pytest.mark.xfail(strict=True, reason="M11-31 not implemented")
 def test_gc_never_removes_an_object_the_journal_alone_names_through_a_symlinked_shard_constructed(
     flavor: Path, tmp_path: Path
 ) -> None:
     """Collection goes through the store's link-safe removal (§6.9, M11-15),
-    never a delete of its own. What a restore wrote into the account-wide
-    `WowLab.lua`, from a deleted snapshot, is an object gc now collects. Its
-    shard is moved outside the store with a symbolic link left in its place:
-    gc names the link in `skipped`, and every file behind it, the object among
-    them, is left as it was. With the shard put back, the store verifies and
-    gc collects the object. That last step is what fails on main, which keeps
-    every `after`."""
-    later = _once(REAL_ACCOUNT_LAB, b'["schema"] = 1,', b'["schema"] = 2,')
-    written = _restore_from_a_deleted_snapshot(flavor, {LAB_ACCOUNT: later})
-    digest = written[LAB_ACCOUNT]
-    assert digest == _sha(REAL_ACCOUNT_LAB)
+    never a delete of its own. One restore, from a snapshot then deleted,
+    writes the account-wide `WowLab.lua` and the account-wide DBM file: two
+    objects gc now collects, in different shards. The first one's shard is
+    moved outside the store with a symbolic link left in its place. The DBM
+    object's shard stays real, so the dry run finds it and the real run
+    happens while the link is there. That run removes the DBM object only,
+    names the link in `skipped`, leaves every file behind the link as it was
+    and leaves the link itself alone. With the shard put back, the store
+    verifies and gc collects the first object. Main keeps every `after`, so
+    it removes nothing, and that is where it fails (review of #141, round 2)."""
+    later = {
+        LAB_ACCOUNT: _once(REAL_ACCOUNT_LAB, b'["schema"] = 1,', b'["schema"] = 2,'),
+        DBM: REAL_DBM.replace(b'["Enabled"] = true,', b'["Enabled"] = false,', 1),
+    }
+    written = _restore_from_a_deleted_snapshot(flavor, later)
+    digest, other = written[LAB_ACCOUNT], written[DBM]
+    assert (digest, other) == (_sha(REAL_ACCOUNT_LAB), _sha(REAL_DBM))
+    assert other[:2] != digest[:2], "the DBM object sits in a shard that stays real"
     store = _store()
-    assert _unreferenced(store) == {digest}, "only the journal names it"
+    assert _unreferenced(store) == {digest, other}, "only the journal names them"
     _age_objects(store)
     shard = store.objects_dir / digest[:2]
     outside = tmp_path / "outside" / digest[:2]
@@ -432,9 +471,9 @@ def test_gc_never_removes_an_object_the_journal_alone_names_through_a_symlinked_
 
     report = _json(GcReport, "snap", "gc", "--yes")
     assert f"objects/{digest[:2]}" in report.skipped, report
-    assert report.removed == ()
+    assert report.removed == (other,), "the real run happened, and removed only the DBM object"
     assert {p.name: p.read_bytes() for p in outside.iterdir()} == behind, "nothing behind it"
-    assert shard.is_symlink(), "the link itself is left as it is"
+    assert shard.is_symlink() and shard.readlink() == outside, "the link is left as it is"
 
     shard.unlink()
     outside.rename(shard)
