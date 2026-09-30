@@ -653,10 +653,12 @@ Dated entries, newest last. Each names the fixture that prompted it.
   accepts any name, and "not refused" proves nothing. The reading holds
   whether or not `C_EventUtils.IsEventValid` exists, because the control
   tests the addon's whole gate (that check, then `RegisterEvent`).
-  Registering a name the client does not know has never been exercised on
-  Forever; it happens at `ADDON_LOADED`, before `/wowlab skip` can be typed,
-  so if it ever crashed the client, the only recourse is to untick WowLab at
-  character select. Schema 1 files, these fixtures included,
+  Registering a name the client does not know is not known to be safe on
+  Forever: the empty `events_unregistered` lists show only that no refusal
+  was seen. It happens at `ADDON_LOADED`, before `/wowlab skip` can be
+  typed, so if it ever crashed the client, untick WowLab at character
+  select, or with the client closed `wowlab undo` the install. Schema 1
+  files, these fixtures included,
   are still read as before. The cause behind each of the two rows stays open
   until a capture made after M11-29 (runbook: `lab/addon/README.md`, "M11-29
   capture step").
