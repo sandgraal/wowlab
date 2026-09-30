@@ -2914,7 +2914,8 @@ def test_m11_29_readme_and_plan_say_what_is_confirmed_and_what_stays_verify() ->
         "`wowlab undo` cannot reverse",
         "a second sit in the same session spoils the counts",
         "have enough for the price the shop shows on Accept",
-        'If the "recording in 15 s" line does not appear, WowLab is not running',
+        "WowLab is probably not running",
+        "type `/wowlab`; if the addon loaded, it answers with two lines starting `WowLab:`",
         "stop and report",
         "If the barber shop does not open, log out, capture anyway and report it; do not redo.",
         "left to right, then top to bottom",
@@ -2927,11 +2928,12 @@ def test_m11_29_readme_and_plan_say_what_is_confirmed_and_what_stays_verify() ->
         "saw shop activity during the visit",
         "either the applied event fired before the choices updated, or it was not the Accept's",
         "neither noted position: report both; item 11 stays open",
-        "if it is the old position, both opens came before the Accept",
+        "at the old position the last open saw the old look: both opens came before the "
+        "Accept, or the second came before the choices updated; item 12 stays open",
         "most likely the applied event fired",
         "every other entry, 0 included, is a name this client knows",
         "because the control tests the addon's whole gate",
-        "has never been exercised on Forever",
+        "is not known to be safe on Forever",
     ):
         assert part in readme, part
     # One row per outcome, in the order the first that fits applies, with a

@@ -191,12 +191,13 @@ Notes on the fields:
       name, so "not refused" proves nothing about a name being known. The
       reading holds whether or not `C_EventUtils.IsEventValid` exists,
       because the control tests the addon's whole gate (that check, then
-      `RegisterEvent`). Registering a name the client does not know has never
-      been exercised on Forever (every `events_unregistered` on 70058 is
-      `{}`). It happens at `ADDON_LOADED`, before `/wowlab skip` can be
-      typed, so if it ever crashed the client, untick WowLab at character
-      select ("Switching a section off" above), or with the client closed
-      `wowlab undo` the install.
+      `RegisterEvent`). Registering a name the client does not know is not
+      known to be safe on Forever: the empty `events_unregistered` lists
+      (every one on 70058 is `{}`) show only that no refusal was seen. It
+      happens at `ADDON_LOADED`, before `/wowlab skip` can be typed, so if
+      it ever crashed the client, untick WowLab at character select
+      ("Switching a section off" above), or with the client closed `wowlab
+      undo` the install.
 - `collections.appearances` is always
   `{ absent = "not gathered: asking the client for the appearance collection crashed the Forever client once (M11-03); the addon no longer asks" }`.
   On the first M11-03 login (build 1.60.1.70009), one call,
@@ -543,13 +544,16 @@ Steps:
    undo` reverses the install). The copy installed before M11-29 writes
    schema 1 and neither new key.
 2. Log in on one character and wait for the "recording in 15 s" line to
-   pass. If the "recording in 15 s" line does not appear, WowLab is not
-   running: check it is listed, ticked and not out of date at character
-   select (`docs/handoffs/M11-03.md` §2); stop and report. If the client
-   crashes at login, untick WowLab (§2 step 4): the six new event names are
-   registered at `ADDON_LOADED`, before `/wowlab skip` can be typed in that
-   session. Then stop and report (the `Error:` line and the WowLab file and
-   line, M11-03 §2 step 4), and do not go on to step 3.
+   pass. If the "recording in 15 s" line does not appear, WowLab is probably
+   not running (the line can be missed): type `/wowlab`; if the addon loaded,
+   it answers with two lines starting `WowLab:` (`/wowlab save ...` and
+   `/wowlab skip <section> ...`); then go on. If nothing answers, check it
+   is listed, ticked and not out of date at character select
+   (`docs/handoffs/M11-03.md` §2); stop and report. If the client crashes at
+   login, untick WowLab (§2 step 4): the six new event names are registered
+   at `ADDON_LOADED`, before `/wowlab skip` can be typed in that session.
+   Then stop and report (the `Error:` line and the WowLab file and line,
+   M11-03 §2 step 4), and do not go on to step 3.
 3. Sit in a barber chair once and change one colour (hair colour is
    enough). Before changing it, note the position of the current swatch and
    of the one you pick, counting from 1, left to right, then top to bottom
@@ -633,8 +637,9 @@ the client refused that name (a refused change event is also in
   you sat once**: the client fired the second open itself, for example to
   refresh after the Accept (**[verify]**). An open reached the section after
   the applied event. Compare the changed option's `choice_index` with step
-  3: at the new position, the choices are the new look; if it is the old
-  position, both opens came before the Accept.
+  3: at the new position, the choices are the new look; at the old position
+  the last open saw the old look: both opens came before the Accept, or the
+  second came before the choices updated; item 12 stays open.
 - **`recorded_at = "open"`, `APPLIED` at 1 or more, `OPEN` at 1**: the
   applied event reached the section before the only open, so on this build
   it does not mark the Accept. The choices should be the old look: compare
@@ -682,8 +687,9 @@ Read with every row that has `events_received`:
   type from `sex`.
 
 Registering a name the client does not know (the control, or any of the new
-names Forever lacks) has never been exercised on Forever: every
-`events_unregistered` on 70058 is `{}`. It happens at `ADDON_LOADED`, before
+names Forever lacks) is not known to be safe on Forever: the empty
+`events_unregistered` lists (every one on 70058 is `{}`) show only that no
+refusal was seen. It happens at `ADDON_LOADED`, before
 `/wowlab skip` can be typed, so if it ever crashed the client, untick WowLab
 at character select (`docs/handoffs/M11-03.md` §2 step 4), or with the
 client closed `wowlab undo` the step 1 install.
