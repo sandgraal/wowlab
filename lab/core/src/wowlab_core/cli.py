@@ -137,8 +137,10 @@ class _WowlabApp(typer.Typer):
     an int or no code) the hook is put back as it was before the call. A
     `SystemExit` with any other code, which Python would print raw itself
     without calling a hook, is printed here on one escaped line and becomes
-    exit 1, as Python would make it. The test runner calls the root
-    command's `main`, not this, and so gets the exception itself."""
+    exit 1, as Python would make it; Ctrl-C while that line is escaped is
+    swallowed, and `_excepthook` is in place first in case it is not. The
+    test runner calls the root command's `main`, not this, and so gets the
+    exception itself."""
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         hook = sys.excepthook
@@ -147,8 +149,14 @@ class _WowlabApp(typer.Typer):
         except SystemExit as exc:
             if exc.code is None or isinstance(exc.code, int):
                 raise
-            with contextlib.suppress(Exception):
+            hook = _excepthook
+            # Not `contextlib.suppress`: the handler body makes no call.
+            # Python checks for a pending signal at a call, so a second
+            # Ctrl-C while the guard itself runs would escape.
+            try:  # noqa: SIM105
                 _say_err(_text(exc.code, "exit code"))
+            except BaseException:
+                pass
             raise SystemExit(EXIT_ERROR) from None
         except BaseException:
             hook = _excepthook
@@ -444,6 +452,9 @@ def _text(value: object, what: str, fn: Callable[[object], str] = str) -> str:
 # exceptions"; a group nested this deep is one line.
 _GROUP_WIDTH = 15
 _GROUP_DEPTH = 10
+# In place of a group member already printed (a shared member, or one that
+# is also in a chain), so its section is never empty.
+_PRINTED_ELSEWHERE = "[printed elsewhere in this traceback]"
 
 
 def _exception_name(kind: type[BaseException]) -> str:
@@ -482,7 +493,10 @@ def _exception_lines(exc: BaseException, seen: set[int], level: int) -> list[str
         count = len(exc.exceptions)
         for n, sub in enumerate(exc.exceptions[:_GROUP_WIDTH], 1):
             lines.append(f"sub-exception {n} of {count}:")
-            lines.extend(f"  {line}" for line in _traceback_lines(sub, seen, level + 1))
+            if id(sub) in seen:
+                lines.append(f"  {_PRINTED_ELSEWHERE}")
+            else:
+                lines.extend(f"  {line}" for line in _traceback_lines(sub, seen, level + 1))
         if count > _GROUP_WIDTH:
             more = count - _GROUP_WIDTH
             lines.append(f"and {more} more exception{'s' if more > 1 else ''}")
@@ -502,10 +516,12 @@ def _traceback_lines(exc: BaseException, seen: set[int] | None = None, level: in
     mean" for a NameError, AttributeError or ImportError. An exception
     group's sub-exceptions are listed as "sub-exception n of m:" with their
     lines indented, not in Python's boxes, with Python's limits (15 per
-    group, then "and N more exceptions"; a group 10 deep is one line).
-    Frames (file, line, function, source) are code and keep Python's
-    layout. An exception already printed (a cycle through `__context__`)
-    is not printed again."""
+    group, then "and N more exceptions"; a group 10 deep is one line). An
+    exception is printed once: a cycle through `__cause__` or `__context__`
+    stops where it meets one already printed, as Python's does, and a group
+    member printed elsewhere in the traceback is one line (Python prints it
+    again). Frames (file, line, function, source) are code and keep
+    Python's layout."""
     seen = set() if seen is None else seen
     chain: list[tuple[BaseException, str]] = []
     current: BaseException | None = exc
@@ -537,11 +553,13 @@ def _traceback_text(exc: BaseException) -> list[str]:
 
     It raises nothing but a BaseException that is not an Exception
     (KeyboardInterrupt): in a command that stops the command, and
-    `_excepthook` catches it too."""
+    `_excepthook` catches it too. The fallback line is made before the
+    `try`, so the handler body makes no call."""
+    fallback = [_unprintable(exc)]
     try:
         return _traceback_lines(exc)
     except Exception:
-        return [_unprintable(exc)]
+        return fallback
 
 
 def _excepthook(kind: type[BaseException], exc: BaseException, tb: TracebackType | None) -> None:
@@ -556,13 +574,17 @@ def _excepthook(kind: type[BaseException], exc: BaseException, tb: TracebackType
     The hook raises nothing, not even KeyboardInterrupt (Ctrl-C while a long
     message is escaped): a hook that raised would make Python print the
     original exception itself, raw. What stops it prints one line naming
-    the type instead, if that can still be printed."""
+    the type instead, if that can still be printed. The outer handler's
+    body makes no call: Python checks for a pending signal at a call, so a
+    second Ctrl-C right after the first could otherwise escape from it."""
     try:
-        for line in _traceback_text(exc):
-            _say_err(line)
-    except BaseException:
-        with contextlib.suppress(BaseException):
+        try:
+            for line in _traceback_text(exc):
+                _say_err(line)
+        except BaseException:
             _say_err(_unprintable(exc))
+    except BaseException:
+        pass
 
 
 class _SafeLogFormatter(logging.Formatter):
@@ -597,14 +619,16 @@ class _StderrLogHandler(logging.Handler):
     @override
     def handleError(self, record: logging.LogRecord) -> None:
         """One escaped line naming the record, instead of logging's report,
-        which prints the record's message, arguments and exception raw."""
-        with contextlib.suppress(Exception):
-            typer.echo(
-                _safe(
-                    f"wowlab: a log record could not be printed ({record.levelname}, {record.name})"
-                ),
-                err=True,
-            )
+        which prints the record's message, arguments and exception raw. A
+        KeyboardInterrupt goes on and stops the command, which prints
+        nothing of the record; the handler body makes no call."""
+        line = _safe(
+            f"wowlab: a log record could not be printed ({record.levelname}, {record.name})"
+        )
+        try:  # noqa: SIM105 (not contextlib.suppress: no call in the handler)
+            typer.echo(line, err=True)
+        except Exception:
+            pass
 
 
 _LIBRARY_LOGGER = "wowlab_core"

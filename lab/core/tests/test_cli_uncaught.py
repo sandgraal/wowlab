@@ -25,6 +25,7 @@ them sits raw in this file.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 import subprocess
@@ -258,7 +259,8 @@ def test_a_system_exit_with_a_text_code_is_one_escaped_line_constructed(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """CPython prints a `SystemExit` code that is not an int or None itself,
-    raw, and exits 1; the app prints it through `_say_err` and exits 1."""
+    raw, and exits 1; the app prints it through `_say_err` and exits 1. The
+    escaping hook is in place first, in case Ctrl-C interrupts that."""
 
     def text_exit(*args: Any, **kwargs: Any) -> None:
         raise SystemExit(MESSAGE)
@@ -271,7 +273,49 @@ def test_a_system_exit_with_a_text_code_is_one_escaped_line_constructed(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == f"{SHOWN}\n"
-    assert sys.excepthook is sys.__excepthook__
+    assert sys.excepthook is cli._excepthook
+
+
+def test_ctrl_c_while_a_text_exit_code_prints_is_swallowed_constructed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Ctrl-C while the text is escaped: the app still exits 1 and prints
+    nothing raw (the child-process version is the M11-33 review probe)."""
+
+    def text_exit(*args: Any, **kwargs: Any) -> None:
+        raise SystemExit(MESSAGE)
+
+    def interrupted(text: str = "") -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(sys, "excepthook", sys.__excepthook__)
+    monkeypatch.setattr(cli, "_discover", text_exit)
+    monkeypatch.setattr(cli, "_say_err", interrupted)
+    try:
+        cli.app(["install", "show"], prog_name="wowlab")
+    except SystemExit as exited:
+        assert exited.code == cli.EXIT_ERROR
+    except BaseException as escaped:
+        pytest.fail(f"{escaped!r} left the app")
+    assert capsys.readouterr() == ("", "")
+    assert sys.excepthook is cli._excepthook
+
+
+def test_ctrl_c_before_click_runs_leaves_through_the_escaping_hook_constructed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A KeyboardInterrupt can leave the app without passing click's own
+    handling (typer builds the command before click's `try`); it is an
+    uncaught exception like any other, so `_excepthook` is put in place."""
+
+    def interrupted(*args: Any, **kwargs: Any) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(sys, "excepthook", sys.__excepthook__)
+    monkeypatch.setattr(typer.main, "get_command", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        cli.app(["--version"], prog_name="wowlab")
+    assert sys.excepthook is cli._excepthook
 
 
 def _caught(fn: Any) -> BaseException:
@@ -282,8 +326,17 @@ def _caught(fn: Any) -> BaseException:
     raise AssertionError("expected an exception")
 
 
+def _call_hook(exc: BaseException) -> None:
+    """`cli._excepthook(exc)`; anything it lets out fails the test (a
+    KeyboardInterrupt would otherwise stop the whole run)."""
+    try:
+        cli._excepthook(type(exc), exc, exc.__traceback__)
+    except BaseException as escaped:
+        pytest.fail(f"the hook let {escaped!r} out")
+
+
 def _hook_output(exc: BaseException, capsys: pytest.CaptureFixture[str]) -> list[str]:
-    cli._excepthook(type(exc), exc, exc.__traceback__)
+    _call_hook(exc)
     captured = capsys.readouterr()
     assert captured.out == ""
     assert _lines_are_safe(captured.err), _unsafe(captured.err)
@@ -346,6 +399,90 @@ def test_the_hook_prints_an_exception_group_escaped_constructed(
     assert f"  ValueError: {SHOWN}" in lines
     assert f"  OSError: {SHOWN}" in lines
     assert lines.count(f"ExceptionGroup: {SHOWN} (2 sub-exceptions)") == 1
+
+
+def test_a_group_member_printed_elsewhere_is_one_line_constructed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Member 2 is member 1's context, so it is printed under member 1; its
+    own section is one line saying so, never empty (Python prints it twice)."""
+    first, second = ValueError(MESSAGE), OSError(MESSAGE)
+    first.__context__ = second
+    lines = _hook_output(ExceptionGroup("g", [first, second]), capsys)
+    assert lines == [
+        "ExceptionGroup: g (2 sub-exceptions)",
+        "sub-exception 1 of 2:",
+        f"  OSError: {SHOWN}",
+        "  ",
+        f"  {CONTEXT}",
+        "  ",
+        f"  ValueError: {SHOWN}",
+        "sub-exception 2 of 2:",
+        "  [printed elsewhere in this traceback]",
+    ]
+
+
+def test_the_hook_hides_a_context_raised_from_none_constructed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`raise ... from None` hides the context, as Python does."""
+
+    def from_none() -> None:
+        try:
+            raise KeyError(MESSAGE)
+        except KeyError:
+            raise LookupError("the error shown") from None
+
+    lines = _hook_output(_caught(from_none), capsys)
+    assert lines[0] == TRACEBACK
+    assert lines[-1] == "LookupError: the error shown"
+    assert CONTEXT not in lines
+    assert not any("folder Evil" in line for line in lines), "the context's message"
+
+
+# Three chains that loop: a context cycle of two exceptions, a cause cycle
+# of two, and an exception that is its own context. Rendered in a child
+# process that a watchdog ends after 3 s, so a renderer that follows the
+# loop fails this test instead of hanging the run. ASCII JSON out: the lines
+# `_traceback_lines` makes and the lines Python's own formatter makes.
+CYCLES = """
+import faulthandler
+import json
+import traceback
+
+from wowlab_core import cli
+
+a, b = ValueError("a"), OSError("b")
+a.__context__, b.__context__ = b, a
+c, d = ValueError("c"), OSError("d")
+c.__cause__, d.__cause__ = d, c
+e = ValueError("e")
+e.__context__ = e
+faulthandler.dump_traceback_later(3, exit=True)
+out = {
+    name: [cli._traceback_lines(x), "".join(traceback.format_exception(x)).split(chr(10))[:-1]]
+    for name, x in (("context", a), ("cause", c), ("self", e))
+}
+faulthandler.cancel_dump_traceback_later()
+print(json.dumps(out))
+"""
+
+
+def test_the_renderer_stops_where_a_chain_loops_constructed(tmp_path: Path) -> None:
+    child = subprocess.run(
+        [sys.executable, "-c", CYCLES],
+        capture_output=True,
+        cwd=tmp_path,
+        timeout=120,
+        check=False,
+    )
+    assert child.returncode == 0, _lines_of(child.stderr)
+    found = json.loads(child.stdout)
+    assert found["context"][0] == ["OSError: b", "", CONTEXT, "", "ValueError: a"]
+    assert found["cause"][0] == ["OSError: d", "", CAUSE, "", "ValueError: c"]
+    assert found["self"][0] == ["ValueError: e"]
+    for name, (ours, python) in found.items():
+        assert ours == python, name
 
 
 def _python_lines(exc: BaseException) -> list[str]:
@@ -460,9 +597,47 @@ def test_the_hook_survives_a_write_that_fails_constructed(
         raise error
 
     monkeypatch.setattr(cli, "_say_err", failing)
-    exc = _caught(_context_chain)
-    assert cli._excepthook(type(exc), exc, exc.__traceback__) is None
+    _call_hook(_caught(_context_chain))
     assert len(calls) == 2, "the first line, then the fallback line"
+    assert capsys.readouterr() == ("", "")
+
+
+def test_the_hook_survives_two_ctrl_c_in_a_row_constructed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Ctrl-C while the message is made, then again while the fallback line
+    is written: the hook still returns, and nothing was written raw."""
+    calls: list[str] = []
+
+    def interrupted(text: str = "") -> None:
+        calls.append(text)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "_say_err", interrupted)
+    _call_hook(_caught(_raise_interrupted))
+    assert calls == ["wowlab: _InterruptedError: its traceback could not be printed"]
+    assert capsys.readouterr() == ("", "")
+
+
+def test_the_hooks_last_guard_makes_no_call_constructed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Python checks for a pending signal at a call, so a guard that makes
+    one after catching a first Ctrl-C (building `contextlib.suppress(...)`
+    does) lets a second one out. Here any use of `contextlib` in `cli`
+    raises KeyboardInterrupt, standing for that second signal, while the
+    rendering and the fallback line both fail: the hook still returns."""
+
+    class _Signalled:
+        def __getattr__(self, name: str) -> Any:
+            raise KeyboardInterrupt
+
+    def interrupted(text: str = "") -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "contextlib", _Signalled())
+    monkeypatch.setattr(cli, "_say_err", interrupted)
+    _call_hook(_caught(_raise_interrupted))
     assert capsys.readouterr() == ("", "")
 
 
@@ -509,6 +684,13 @@ def _notes_fail() -> None:
     raise _NotesFailError("its notes cannot be read")
 
 
+def _from_none() -> None:
+    try:
+        raise KeyError("a hidden context")
+    except KeyError:
+        raise LookupError("the error shown") from None
+
+
 @pytest.mark.parametrize(
     "fn",
     [
@@ -519,6 +701,7 @@ def _notes_fail() -> None:
         pytest.param(_notes_text, id="notes-a-string"),
         pytest.param(_nowhere, id="module-none"),
         pytest.param(_notes_fail, id="notes-raise"),
+        pytest.param(_from_none, id="from-none"),
     ],
 )
 def test_the_hook_prints_what_python_prints_when_nothing_needs_escaping(
@@ -761,6 +944,23 @@ def test_a_logged_deep_exception_group_is_bounded_and_escaped_constructed(
     lines = _logged(capsys, deep)
     assert len(lines) < 100
     assert lines[-1].strip() == "... (max_group_depth is 10)"
+
+
+def test_a_logged_traceback_that_cannot_be_rendered_is_one_line_constructed(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The formatter's own fallback: the record's message, then one line
+    naming the type in place of the traceback (not the handler's
+    "could not be printed" line for the whole record)."""
+
+    def broken(exc: BaseException, *args: Any) -> list[str]:
+        raise RuntimeError(MESSAGE)
+
+    monkeypatch.setattr(cli, "_traceback_lines", broken)
+    assert _logged(capsys, OSError(MESSAGE)) == [
+        f"wowlab: could not record the rollback of {SHOWN}",
+        "wowlab: OSError: its traceback could not be printed",
+    ]
 
 
 def test_a_record_that_cannot_be_formatted_is_one_escaped_line_constructed(
