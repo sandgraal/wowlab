@@ -4459,11 +4459,7 @@ class CharShowReport(_Out):
 
 
 def _is_lab_file(f: layout.SavedVariablesFile) -> bool:
-    return (
-        not f.backup
-        and f.addon is not None
-        and f.addon.casefold() == labaddon.ADDON_NAME.casefold()
-    )
+    return not f.backup and labaddon.is_lab_file_name(_sv_name(f))
 
 
 def _local_time(mtime_ns: int) -> str:
@@ -4542,8 +4538,10 @@ def _lab_char_file(
     files: Sequence[layout.SavedVariablesFile],
     character: str | None,
 ) -> tuple[layout.SavedVariablesFile, Literal["--character", "latest"], str]:
-    """The character `WowLab.lua` to read: the one `--character` names, else
-    the newest by modification time (ties by path, said in the third value)."""
+    """The character `WowLab.lua` to read: in the folder `--character` names,
+    else in the folder holding the newest file by modification time (ties by
+    path, said in the third value). Within the folder the file is the one
+    `labaddon.choose_lab_file` chooses, as `char list` does (M12-09)."""
     char_files = [f for f in files if f.scope == "character"]
     how: Literal["--character", "latest"]
     tie = ""
@@ -4564,7 +4562,7 @@ def _lab_char_file(
                 "install the lab-addon (wowlab addon install lab), log in on the character, "
                 "then log out or /reload."
             )
-        target, how = mine[0], "--character"
+        target, how = _chosen_lab_file(mine), "--character"
     else:
         if not char_files:
             raise CliError(
@@ -4573,26 +4571,65 @@ def _lab_char_file(
                 "or /reload)"
             )
         ranked = sorted(char_files, key=lambda f: (f.mtime_ns, f.path), reverse=True)
-        target = ranked[0]
-        if len(ranked) > 1 and ranked[1].mtime_ns == target.mtime_ns:
+        top = ranked[0]
+        folder = (top.realm_folder, top.character_folder)
+        target = _chosen_lab_file(
+            [f for f in char_files if (f.realm_folder, f.character_folder) == folder]
+        )
+        others = [f for f in ranked if (f.realm_folder, f.character_folder) != folder]
+        if others and others[0].mtime_ns == top.mtime_ns:
             tie = (
-                f"; tied with {ranked[1].realm_folder}/{ranked[1].character_folder} on that "
+                f"; tied with {others[0].realm_folder}/{others[0].character_folder} on that "
                 "time, taken by path order"
             )
         how = "latest"
     return target, how, tie
 
 
+def _chosen_lab_file(
+    mine: Sequence[layout.SavedVariablesFile],
+) -> layout.SavedVariablesFile:
+    """The file `labaddon.choose_lab_file` chooses among one character
+    folder's `WowLab.lua` files (at least one); several with no single
+    choice is an error naming the folder."""
+    by_path = {f.path: f for f in mine}
+    who = f"{mine[0].realm_folder}/{mine[0].character_folder}"
+    try:
+        path = labaddon.choose_lab_file(list(by_path))
+    except labaddon.LabAddonError as exc:
+        raise CliError(f"{who}: {exc}") from exc
+    if path is None:  # every file given is named like WowLab.lua (`_is_lab_file`)
+        raise CliError(f"{who}: no {labaddon.LAB_FILE_NAME}")
+    return by_path[path]
+
+
 class CharListReport(_Out):
-    """`wowlab char list --json`: every character `WowLab.lua` in the flavor
-    (or in `--account`), in `labaddon.read_all`'s order, each with its record
-    or the reason it could not be read. The command exits 1 when any
-    character has an `error`."""
+    """`wowlab char list --json`: every character folder with a `WowLab.lua`
+    in the flavor (or in `--account`), as `labaddon.survey` gives them, each
+    with its record or the reason it could not be read, and every place
+    above the character folders wowlab could not look inside. The command
+    exits 1 when any character has an `error` or `not_looked_at` is not
+    empty."""
 
     flavor_folder: str
     account: layout.FsText | None  # --account as the layout spells it; None: every account
     characters: list[labaddon.CharacterFile]
+    not_looked_at: list[labaddon.NotLookedAt]
     notes: list[str]
+
+
+_CHAR_LIST_NOTES = [
+    _CHAR_NOTES[0],
+    "The addon records no time; the time shown is the file's modification time: the "
+    "client's last save, unless something wrote the file since (a wowlab restore or undo, "
+    "a copy).",
+    "One row per character folder: a renamed, moved or deleted character keeps its old "
+    "folder and last save here.",
+]
+
+
+def _plural(n: int, noun: str) -> str:
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
 
 
 @char_app.command("list")
@@ -4606,45 +4643,75 @@ def char_list(
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
 ) -> None:
-    """Every character with a WowLab.lua, in every account unless --account
-    names one: when the file was written, and its schema, client build and
-    spec, or why it could not be read. An unreadable file is named on stderr
-    and the command then exits 1; the others are still listed.
-    JSON: CharListReport."""
+    """Every character folder with a WowLab.lua, in every account unless
+    --account names one: when the file was last written, and its schema, the
+    client that saved it and the spec, or why it could not be read. A file or
+    folder wowlab could not read or look inside is named on stderr and the
+    command then exits 1; the others are still listed. JSON: CharListReport."""
     _, chosen, lay = _open(root, flavor)
     acct = _select_account(lay, account) if account is not None else None
-    entries = labaddon.read_all(lay, account=acct.folder if acct else None)
+    found = labaddon.survey(lay, account=acct.folder if acct else None)
+    entries, unseen = found.characters, found.not_looked_at
     report = CharListReport(
         flavor_folder=chosen.folder,
         account=acct.folder if acct else None,
         characters=entries,
-        notes=_CHAR_NOTES,
+        not_looked_at=unseen,
+        notes=_CHAR_LIST_NOTES,
+    )
+    unseen_words = (
+        f"wowlab could not look inside {_plural(len(unseen), 'folder')} under WTF/ (named on "
+        "stderr): a character folder behind one is not listed"
     )
     if json_out:
         _emit(report)
     elif not entries:
         where = f"account {acct.folder}" if acct else "any account"
-        _say(
-            f"No character in {where} has a {labaddon.ADDON_NAME}.lua (install the lab-addon "
-            "with `wowlab addon install lab`, log in on the character, then log out or /reload)."
-        )
+        if unseen:
+            _say(
+                f"No character folder in {where} with a {labaddon.LAB_FILE_NAME} was found, "
+                f"but {unseen_words}."
+            )
+        else:
+            _say(
+                f"No character folder in {where} has a {labaddon.LAB_FILE_NAME} (install the "
+                "lab-addon with `wowlab addon install lab`, log in on the character, then log "
+                "out or /reload)."
+            )
     else:
-        width = max(len(e.character) for e in entries)
-        shown: str | None = None
-        for e in entries:
-            if e.account != shown:
-                shown = e.account
-                count = sum(1 for other in entries if other.account == e.account)
-                noun = "character" if count == 1 else "characters"
-                _say(f"Account {e.account}: {count} {noun} with a {labaddon.ADDON_NAME}.lua")
-            what = labaddon.summary(e.record) if e.record is not None else f"not read: {e.error}"
-            _say(f"  {e.character:<{width}}  written {_local_time(e.mtime_ns)}  {what}")
-        for note in _CHAR_NOTES:
+        names = {e.character: _safe(e.character) for e in entries}
+        width = max(len(name) for name in names.values())
+        for acct_folder in dict.fromkeys(e.account for e in entries):
+            mine = [e for e in entries if e.account == acct_folder]
+            blocked = sum(
+                1 for e in mine if not labaddon.is_lab_file_name(e.file.rsplit("/", 1)[-1])
+            )
+            heading = (
+                f"Account {acct_folder}: "
+                f"{_plural(len(mine) - blocked, 'character folder')} with a "
+                f"{labaddon.LAB_FILE_NAME}"
+            )
+            if blocked:
+                heading += f", {blocked} that wowlab could not look inside"
+            _say(heading)
+            for e in mine:
+                when = (
+                    "time unknown" if e.mtime_ns is None else f"written {_local_time(e.mtime_ns)}"
+                )
+                what = (
+                    labaddon.summary(e.record) if e.record is not None else f"not read: {e.error}"
+                )
+                _say(f"  {names[e.character]:<{width}}  {when}  {what}")
+        if unseen:
+            _say(f"{unseen_words}.")
+        for note in _CHAR_LIST_NOTES:
             _say(note)
     for e in entries:
         if e.error is not None:
             _note("wowlab: could not read {}: {}", e.file, e.error)
-    if any(e.error is not None for e in entries):
+    for place in unseen:
+        _note("wowlab: could not look inside {}: {}", place.path, place.reason)
+    if unseen or any(e.error is not None for e in entries):
         raise typer.Exit(EXIT_ERROR)
 
 
