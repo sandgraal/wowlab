@@ -502,7 +502,6 @@ def test_a_copied_subtree_takes_the_target_documents_style_constructed() -> None
 # ─── CLI: two characters (two-way) ───────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 def test_cli_two_characters_conflicts_are_listed_and_nothing_is_written(root: Path) -> None:
     before = _state(root)
     text = run("sv", "merge", LAB, "--from", CHAR_B, "--into", CHAR_A, "--yes")
@@ -528,7 +527,6 @@ def test_cli_two_characters_conflicts_are_listed_and_nothing_is_written(root: Pa
     assert guard.history() == ()
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 def test_cli_take_theirs_writes_only_the_target_through_guard(root: Path, flavor: Path) -> None:
     result = run(
         "sv", "merge", LAB, "--from", CHAR_B, "--into", CHAR_A, "--take", "theirs", "--yes"
@@ -544,7 +542,6 @@ def test_cli_take_theirs_writes_only_the_target_through_guard(root: Path, flavor
     assert (flavor / LAB_A).read_bytes() == REAL_A
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 def test_cli_take_ours_keeps_the_target_and_lists_the_conflicts(flavor: Path) -> None:
     result = run(
         "sv", "merge", LAB, "--from", CHAR_B, "--into", CHAR_A,

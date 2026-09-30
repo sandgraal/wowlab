@@ -52,6 +52,9 @@ key it was printed for (M11-25).
 
 The loader check's reading of the lab-addon's probe (§13.1:
 `WowLabCharDB.probe.loads` and `.lost`) is `read_probe`, also pure.
+`keep_probe` puts the target's probe back into a merge result: `wowlab sv
+merge` applies it to the lab-addon's own per-character file (§13.4, owner
+ruling for M11-24), and `merge` never does.
 """
 
 from __future__ import annotations
@@ -90,6 +93,7 @@ __all__ = [
     "Side",
     "Taken",
     "check_keys",
+    "keep_probe",
     "merge",
     "parse_path",
     "path_step",
@@ -1061,6 +1065,108 @@ def _field(table: LuaValue | None, name: str) -> LuaValue | None:
     if not isinstance(table, LuaTable):
         return None
     return _Keys(table).value(("s", name.encode("ascii")))
+
+
+_PROBE_KEY: _KeyId = ("s", b"probe")
+
+
+def _probe_entry(document: LuaDocument | None) -> Entry | None:
+    """The `WowLabCharDB.probe` entry Lua loads, or None."""
+    if document is None:
+        return None
+    db = _top_value(document, _top(document), LAB_ADDON_CHARACTER_VARIABLE)
+    if not isinstance(db, LuaTable):
+        return None
+    index = _Keys(db).loaded.get(_PROBE_KEY)
+    return None if index is None else db.entries[index]
+
+
+def _under_probe(path: str) -> bool:
+    """Whether a report path (printed canonically, M11-25) names
+    `WowLabCharDB.probe` or anything under it."""
+    try:
+        parsed = parse_path(path)
+    except MergeError:
+        return False
+    return (
+        parsed.head == LAB_ADDON_CHARACTER_VARIABLE
+        and bool(parsed.steps)
+        and parsed.steps[0].key_id == _PROBE_KEY
+    )
+
+
+def keep_probe(ours: LuaDocument, result: MergeResult) -> tuple[MergeResult, bool]:
+    """`result` with ours' `WowLabCharDB.probe` put back, for a merge of the
+    lab-addon's own per-character file (§13.4, owner ruling for M11-24): the
+    probe counts that character's logins, so it is never taken, whatever
+    `take` or `keys` said. Its paths leave `conflicts`, `taken` and
+    `absent`. Returns the result and whether the probe needed keeping (a
+    probe path was listed, or the merged probe was not ours). `merge`
+    itself knows no file names and is unchanged; `wowlab sv merge` calls
+    this for the `--into` character's `WowLab.lua`. Pure, like `merge`.
+    `MergeError` when the merged `WowLabCharDB` is no longer a table, so
+    ours' probe has nowhere to go."""
+    kept = _probe_entry(ours)
+    merged = result.document
+    document = merged
+    name = LAB_ADDON_CHARACTER_VARIABLE
+    top = _top(merged)
+    if name in top:
+        at = top[name]
+        assignment = merged.assignments[at]
+        table = assignment.value
+        new_table: LuaTable | None = None
+        if isinstance(table, LuaTable):
+            entries = list(table.entries)
+            index = _Keys(table).loaded.get(_PROBE_KEY)
+            if kept is not None:
+                if index is None:
+                    new_table = _appended(table, entries, [_bare_entry(kept)])
+                elif entries[index].value != kept.value:
+                    entries[index] = entries[index]._replace(value=kept.value)
+                    new_table = table._replace(entries=tuple(entries))
+            elif index is not None:
+                # Ours has no probe: the merge added one from theirs (every
+                # such entry was placed bare). Lua loads the last of equal
+                # keys, so remove until none is loaded.
+                current = table
+                while index is not None:
+                    rest = list(current.entries)
+                    del rest[index]
+                    current = current._replace(entries=tuple(rest))
+                    index = _Keys(current).loaded.get(_PROBE_KEY)
+                new_table = current
+        elif kept is not None:
+            raise MergeError(
+                f"the merge would make {name} a {_show(table)}, so the target's probe cannot "
+                "be kept; limit the merge with --key"
+            )
+        if new_table is not None:
+            assignments = list(merged.assignments)
+            assignments[at] = assignment._replace(value=new_table)
+            document = merged._replace(assignments=tuple(assignments))
+    elif kept is not None:  # pragma: no cover - a merge never removes ours' variables
+        raise MergeError(f"the merge lost {name}, so the target's probe cannot be kept")
+    conflicts = tuple(c for c in result.conflicts if not _under_probe(c.path))
+    taken = tuple(t for t in result.taken if not _under_probe(t.path))
+    absent = tuple(a for a in result.absent if not _under_probe(a.path))
+    touched = document is not merged or (conflicts, taken, absent) != (
+        result.conflicts,
+        result.taken,
+        result.absent,
+    )
+    if not touched:
+        return result, False
+    return (
+        MergeResult(
+            document=document,
+            mode=result.mode,
+            conflicts=conflicts,
+            taken=taken,
+            absent=absent,
+        ),
+        True,
+    )
 
 
 def check_keys(keys: Iterable[str]) -> list[bool]:

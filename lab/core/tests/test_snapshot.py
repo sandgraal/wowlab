@@ -537,6 +537,7 @@ def test_no_operation_but_set_label_changes_a_manifest_file(
     store.read_file(m1.id, "WTF/Config.wtf")
     store.refuse_holding(source)  # M10-19
     store.list_tree(source, SUBTREES)  # M11-08
+    store.put_object(b"an object no manifest names\n")  # M11-24
     assert path.read_bytes() == original
 
     mutators = {
@@ -559,6 +560,7 @@ def test_no_operation_but_set_label_changes_a_manifest_file(
         "object_path",
         "refuse_holding",  # M10-19: reads only
         "list_tree",  # M11-08: reads listings and lstat only
+        "put_object",  # M11-24: writes an object, never a manifest
     }
 
 
