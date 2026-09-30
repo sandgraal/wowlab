@@ -1081,46 +1081,21 @@ def _probe_entry(document: LuaDocument | None) -> Entry | None:
     return None if index is None else db.entries[index]
 
 
-def _probe_spellings(documents: Iterable[LuaDocument | None]) -> set[str]:
-    """`WowLabCharDB.probe` as each document spells it (`["probe"]`,
-    `.probe`, a long-bracket string ...), for matching report paths."""
-    out: set[str] = set()
-    for document in documents:
-        if document is None:
-            continue
-        db = _top_value(document, _top(document), LAB_ADDON_CHARACTER_VARIABLE)
-        if not isinstance(db, LuaTable):
-            continue
-        keys = _Keys(db)
-        index = keys.loaded.get(_PROBE_KEY)
-        if index is not None:
-            out.add(LAB_ADDON_CHARACTER_VARIABLE + keys.spelled(index))
-    return out
-
-
-def _under_probe(path: str, spellings: set[str]) -> bool:
-    for prefix in spellings:
-        if path == prefix or path.startswith((prefix + "[", prefix + ".")):
-            return True
+def _under_probe(path: str) -> bool:
+    """Whether a report path (printed canonically, M11-25) names
+    `WowLabCharDB.probe` or anything under it."""
     try:
-        parsed, end = _read_path(path, 0, path)
+        parsed = parse_path(path)
     except MergeError:
         return False
     return (
-        end == len(path)
-        and parsed.head == LAB_ADDON_CHARACTER_VARIABLE
+        parsed.head == LAB_ADDON_CHARACTER_VARIABLE
         and bool(parsed.steps)
         and parsed.steps[0].key_id == _PROBE_KEY
     )
 
 
-def keep_probe(
-    ours: LuaDocument,
-    result: MergeResult,
-    *,
-    theirs: LuaDocument | None = None,
-    base: LuaDocument | None = None,
-) -> tuple[MergeResult, bool]:
+def keep_probe(ours: LuaDocument, result: MergeResult) -> tuple[MergeResult, bool]:
     """`result` with ours' `WowLabCharDB.probe` put back, for a merge of the
     lab-addon's own per-character file (§13.4, owner ruling for M11-24): the
     probe counts that character's logins, so it is never taken, whatever
@@ -1133,7 +1108,6 @@ def keep_probe(
     ours' probe has nowhere to go."""
     kept = _probe_entry(ours)
     merged = result.document
-    spellings = _probe_spellings((ours, theirs, base, merged))
     document = merged
     name = LAB_ADDON_CHARACTER_VARIABLE
     top = _top(merged)
@@ -1173,9 +1147,9 @@ def keep_probe(
             document = merged._replace(assignments=tuple(assignments))
     elif kept is not None:  # pragma: no cover - a merge never removes ours' variables
         raise MergeError(f"the merge lost {name}, so the target's probe cannot be kept")
-    conflicts = tuple(c for c in result.conflicts if not _under_probe(c.path, spellings))
-    taken = tuple(t for t in result.taken if not _under_probe(t.path, spellings))
-    absent = tuple(a for a in result.absent if not _under_probe(a.path, spellings))
+    conflicts = tuple(c for c in result.conflicts if not _under_probe(c.path))
+    taken = tuple(t for t in result.taken if not _under_probe(t.path))
+    absent = tuple(a for a in result.absent if not _under_probe(a.path))
     touched = document is not merged or (conflicts, taken, absent) != (
         result.conflicts,
         result.taken,

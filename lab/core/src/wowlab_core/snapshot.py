@@ -27,6 +27,7 @@ from __future__ import annotations
 import contextlib
 import errno
 import hashlib
+import io
 import json
 import os
 import re
@@ -1640,6 +1641,20 @@ class SnapshotStore:
         if hashlib.sha256(data).hexdigest() != sha256:
             raise ObjectCorruptError(f"object {sha256} does not hash to its name")
         return data
+
+    def put_object(self, data: bytes) -> str:
+        """Store `data` as an object, as `create` stores a file's bytes, and
+        return its SHA-256 (M11-24: the bytes a Lab write left in the
+        lab-addon's `WowLab.lua`, which the loader check compares from). A
+        sound object already stored under that hash is reused; a damaged
+        one is rewritten. No manifest refers to it, so `gc` treats it as
+        unreferenced once its grace period is over."""
+        if not isinstance(data, bytes):
+            raise SnapshotError(f"an object is bytes, not {type(data).__name__}")
+        with self._holding_dirs():
+            self._refuse_linked_store_dirs()
+            digest, _ = self._store_stream(io.BytesIO(data), set())
+        return digest
 
     def read_file(self, snapshot_id: str, path: str) -> bytes:
         """Content of `path` as captured in a snapshot."""

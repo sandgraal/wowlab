@@ -63,6 +63,7 @@ character whose `WowLab.lua` has the newest modification time.
 import base64
 import contextlib
 import csv
+import datetime
 import functools
 import hashlib
 import io
@@ -73,7 +74,7 @@ import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Annotated, Any, Literal, NoReturn
+from typing import Annotated, Any, Literal, NamedTuple, NoReturn
 
 import typer
 from pydantic import BaseModel, ConfigDict, Field, RootModel
@@ -1759,44 +1760,78 @@ def _same_root(a: str, b: Path) -> bool:
 
 
 _LAB_WROTE = "the Lab wrote WowLab.lua after that snapshot; the loader was not re-checked"
+_CLOCK_AHEAD = (
+    "later than now, so the loader check ignored it (a clock that ran ahead must not "
+    "turn the check off)"
+)
 
 # A point in the order the loader check compares states in: a snapshot's
 # (created_at, id), the key `holding` sorts by.
 _When = tuple[str, str]
 
 
+class _LabWrite(NamedTuple):
+    """A committed guard write that changed the file the loader check reads."""
+
+    at: _When  # the point it happened right after
+    record: str  # its journal record id
+    after: str | None  # SHA-256 of what it wrote; None: it removed the file
+
+
+def _stamp_now() -> str:
+    """The current time as manifests and journal records spell theirs."""
+    when = datetime.datetime.now(datetime.UTC)
+    return f"{when:%Y-%m-%dT%H:%M:%S}.{when.microsecond:06d}Z"
+
+
 def _lab_writes(
     store: snapshot.SnapshotStore,
     flavor_path: Path,
     rel: str,
-    manifests: Sequence[snapshot.Manifest],
-) -> list[tuple[_When, str]]:
+    when_of: dict[str, _When],
+    now: str,
+    notes: list[str],
+) -> list[_LabWrite]:
     """Committed guard writes that changed the file `rel` (the full path
-    relative to the flavor folder, not its name) in this flavor, each as
-    (the point it happened after, its journal record id). A write happened
-    right after its pre-write snapshot; when that snapshot is gone from the
-    store, after the record's own `created_at`. Records that rolled back,
-    did not finish rolling back, or are still open (killed) are left out:
-    only a committed write is the Lab's (§13.4, owner ruling for M11-24)."""
-    when = {m.id: (m.created_at, m.id) for m in manifests}
-    out: list[tuple[_When, str]] = []
+    relative to the flavor folder, never just its name) in this flavor,
+    oldest first. Records that rolled back, did not finish rolling back, or
+    are still open (killed) are left out: only a committed write is the
+    Lab's. A write happened right after its pre-write snapshot; when that
+    snapshot is not in `when_of` (gone, or dated in the future), after the
+    record's own `created_at`. A record dated after `now` is ignored, with a
+    note naming it (§13.4, owner ruling amending "A Lab write is not a
+    loader failure")."""
+    out: list[_LabWrite] = []
     for record in guard.history(store=store.path):
         if record.state != "committed" or not _same_root(record.flavor_path, flavor_path):
             continue
-        if any(c.path == rel and c.before != c.after for c in record.paths):
-            out.append((when.get(record.snapshot_id, (record.created_at, "")), record.id))
+        changes = [c for c in record.paths if c.path == rel and c.before != c.after]
+        if not changes:
+            continue
+        if record.created_at > now:
+            notes.append(
+                f"{rel}: journal record {record.id} is dated {record.created_at}, {_CLOCK_AHEAD}."
+            )
+            continue
+        at = when_of.get(record.snapshot_id, (record.created_at, ""))
+        out.append(_LabWrite(at, record.id, changes[-1].after))
     return out
 
 
-def _spanned(writes: Sequence[tuple[_When, str]], older: _When, newer: _When | None) -> str | None:
-    """The journal id of a Lab write between the states `older` (a snapshot)
-    and `newer` (a later snapshot; None: the disk now), or None. A write
-    after snapshot S lies after S and before the next snapshot, so the pair
-    S and an older snapshot does not span it."""
-    for point, record in writes:
-        if older <= point and (newer is None or point < newer):
-            return record
-    return None
+def _latest_in(writes: Sequence[_LabWrite], older: _When, newer: _When | None) -> _LabWrite | None:
+    """W: the latest Lab write between the states `older` (a snapshot) and
+    `newer` (a later snapshot; None: the disk now), or None. A write right
+    after snapshot S lies after S and before the next snapshot, so a pair
+    whose newer side is S does not span it."""
+    found: _LabWrite | None = None
+    for w in writes:
+        if (
+            older <= w.at
+            and (newer is None or w.at < newer)
+            and (found is None or w.at >= found.at)
+        ):
+            found = w
+    return found
 
 
 def _loader_check(
@@ -1811,9 +1846,13 @@ def _loader_check(
     """(the reason to refuse, or None; notes) from the --into character's
     `WowLab.lua` on disk, the newest snapshot of it, and the newest snapshot
     together with the newest older one whose bytes differ from it (§13.4 as
-    ruled on 2026-09-29, and the owner ruling for M11-24). A comparison that
-    spans a committed guard write to that file is skipped with a note: the
-    Lab, not the client, changed the counter. Reads only."""
+    ruled on 2026-09-29, and the owner rulings for M11-24). A comparison
+    that spans a committed guard write W to that file is made from the state
+    W left, never skipped: the newer side byte-identical to W's bytes passes
+    with a note (no session since W); otherwise W's bytes, kept in the
+    store, are the older side; W's bytes that cannot be read refuse.
+    Snapshots and journal records dated in the future are ignored with a
+    note. The notes are returned with a refusal too. Reads only."""
     name = svmerge.LAB_ADDON_FILE
     found = _character_sv(files, account, char, name)
     who = f"{char.realm_folder}/{char.folder}"
@@ -1837,19 +1876,28 @@ def _loader_check(
         )
     if probe.loads is None:
         return f"{rel} holds no probe.loads, so the loader cannot be checked; {_LOADER_BUG}.", []
+    disk_loads: int = probe.loads
+    disk_sha = hashlib.sha256(disk).hexdigest()
+    now = _stamp_now()
+    notes: list[str] = []
     held = f"{chosen.folder}/{rel}"
-    mine: list[snapshot.Manifest] = []
+    when_of: dict[str, _When] = {}
     holding: list[tuple[snapshot.Manifest, snapshot.Entry]] = []
     for m in store.list_lenient().manifests:
         if m.flavor_folder != chosen.folder or not _same_root(m.install_root, Path(inst.root)):
             continue
-        mine.append(m)
         entry = m.entry(held)
-        if entry is not None and entry.kind == "file" and entry.sha256 is not None:
+        holds = entry is not None and entry.kind == "file" and entry.sha256 is not None
+        if m.created_at > now:
+            if holds:
+                notes.append(f"{rel}: snapshot {m.id} is dated {m.created_at}, {_CLOCK_AHEAD}.")
+            continue
+        when_of[m.id] = (m.created_at, m.id)
+        if holds:
+            assert entry is not None
             holding.append((m, entry))
     holding.sort(key=lambda pair: (pair[0].created_at, pair[0].id))
-    writes = _lab_writes(store, lay.flavor_path, rel, mine)
-    notes: list[str] = []
+    writes = _lab_writes(store, lay.flavor_path, rel, when_of, now, notes)
 
     def when(m: snapshot.Manifest) -> _When:
         return (m.created_at, m.id)
@@ -1866,28 +1914,72 @@ def _loader_check(
             return f"{rel} in snapshot {m.id} holds no probe.loads, so loads cannot be compared"
         return loads
 
+    def from_lab_write(
+        w: _LabWrite, older: str, newer_sha: str, newer_loads: Callable[[], int | str], newer: str
+    ) -> str | None:
+        """The comparison `older` -> `newer`, which spans W, made from the
+        state W left. None: it passes (with the note when no session ran
+        since W); else the reason to refuse."""
+        if newer_sha == w.after:  # rule 1, before anything is read
+            notes.append(f"{rel}: {_LAB_WROTE} (snapshot {older}, then journal record {w.record}).")
+            return None
+        unreadable = (
+            f"{rel}: the Lab wrote it after snapshot {older} (journal record {w.record}) and "
+            f"{newer} holds other bytes, so the loader is checked from what that write left, "
+            "which cannot be read"
+        )
+        again = (
+            "Take a snapshot (`wowlab snap create`), log in and out once with the lab-addon "
+            "enabled and check again, or pass --force-loader-check to merge anyway"
+        )
+        if w.after is None:
+            return f"{unreadable}: the write removed the file. {again}."
+        try:
+            data = store.read_object(w.after, size=luadata.MAX_FILE_BYTES)
+            before = svmerge.read_probe(luadata.parse(data)).loads
+        except (snapshot.SnapshotError, OSError) as exc:
+            return f"{unreadable}: {exc}. {again}."
+        except luadata.LuaDataError as exc:
+            return f"{unreadable}: it is not data the parser accepts ({exc}). {again}."
+        if before is None:
+            return f"{unreadable}: it holds no probe.loads. {again}."
+        after = newer_loads()
+        if isinstance(after, str):
+            return after
+        if after > before:
+            return None
+        went = "went down" if after < before else "did not go up"
+        return (
+            f"{rel}: probe.loads {went}, from {before} in what the Lab wrote (journal record "
+            f"{w.record}, after snapshot {older}) to {after} in {newer}. It goes up at every "
+            f"load of the lab-addon, so the client did not load this character's "
+            f"SavedVariables back in the session since: {_LOADER_BUG}."
+        )
+
     if holding:
         # The disk against the newest snapshot (ruling of 2026-09-29): lower
         # `loads` means the session since did not load its SavedVariables.
         # Equal `loads` with other bytes is that session with the file edited
         # after the snapshot, and passes.
         newest, newest_entry = holding[-1]
-        if hashlib.sha256(disk).hexdigest() != newest_entry.sha256:
-            record = _spanned(writes, when(newest), None)
-            if record is not None:
-                notes.append(
-                    f"{rel}: {_LAB_WROTE} (snapshot {newest.id}, then journal record {record})."
+        if disk_sha != newest_entry.sha256:
+            w = _latest_in(writes, when(newest), None)
+            if w is not None:
+                refusal = from_lab_write(
+                    w, newest.id, disk_sha, lambda: disk_loads, "the file on disk"
                 )
+                if refusal is not None:
+                    return refusal, notes
             else:
                 newest_loads = loads_in(newest, newest_entry)
                 if isinstance(newest_loads, str):
-                    return newest_loads, []
-                if probe.loads < newest_loads:
+                    return newest_loads, notes
+                if disk_loads < newest_loads:
                     return (
-                        f"{rel}: loads on disk ({probe.loads}) went down from the newest snapshot "
+                        f"{rel}: loads on disk ({disk_loads}) went down from the newest snapshot "
                         f"({newest_loads}): the last session's SavedVariables did not load "
                         f"(snapshot {newest.id}); {_LOADER_BUG}.",
-                        [],
+                        notes,
                     )
     if len(holding) < 2:
         return None, [
@@ -1899,6 +1991,7 @@ def _loader_check(
     # (owner ruling for M11-24): snapshots with the same bytes are one state,
     # and guard snapshots before every write, whatever the file.
     new, new_entry = holding[-1]
+    assert new_entry.sha256 is not None
     differing = [pair for pair in holding[:-1] if pair[1].sha256 != new_entry.sha256]
     if not differing:
         old = holding[-2][0]
@@ -1907,19 +2000,18 @@ def _loader_check(
             f"{rel}: {_NO_LOGIN} (snapshots {old.id} and {new.id} hold the same bytes).",
         ]
     old, old_entry = differing[-1]
-    record = _spanned(writes, when(old), when(new))
-    if record is not None:
-        notes.append(
-            f"{rel}: {_LAB_WROTE} (snapshot {old.id}, then journal record {record}, then "
-            f"snapshot {new.id})."
+    w = _latest_in(writes, when(old), when(new))
+    if w is not None:
+        refusal = from_lab_write(
+            w, old.id, new_entry.sha256, lambda: loads_in(new, new_entry), f"snapshot {new.id}"
         )
-        return None, notes
+        return refusal, notes
     before = loads_in(old, old_entry)
     if isinstance(before, str):
-        return before, []
+        return before, notes
     after = loads_in(new, new_entry)
     if isinstance(after, str):
-        return after, []
+        return after, notes
     if after > before:
         return None, notes
     went = "went down" if after < before else "did not go up"
@@ -1928,7 +2020,7 @@ def _loader_check(
         f"{rel}: probe.loads {went}, from {before} in snapshot {old.id}{same} to {after} in "
         f"snapshot {new.id}. It goes up at every load of the lab-addon, so the client did not "
         f"load this character's SavedVariables back in between: {_LOADER_BUG}.",
-        [],
+        notes,
     )
 
 
@@ -2117,6 +2209,8 @@ def sv_merge(
     refusal, notes = _loader_check(store, inst, chosen, lay, files, acct, char)
     if refusal is not None:
         if not force_loader_check:
+            for n in notes:  # e.g. an ignored future-dated snapshot or record
+                _note(n)
             raise CliError(f"refused by the loader check: {refusal}", EXIT_REFUSED)
         notes.append(f"The loader check was overridden by --force-loader-check: {refusal}")
 
@@ -2128,12 +2222,13 @@ def sv_merge(
     except svmerge.MergeError as exc:
         raise CliError(str(exc), EXIT_USAGE) from exc
     lab_file = _character_sv(files, acct, char, svmerge.LAB_ADDON_FILE)
-    if lab_file is not None and lab_file.path == target.path:
+    is_lab_file = lab_file is not None and lab_file.path == target.path
+    if is_lab_file:
         # The --into character's own WowLab.lua: its probe counts that
         # character's logins, and the next loader check reads it (§13.4,
         # owner ruling for M11-24).
         try:
-            result, kept = svmerge.keep_probe(ours, result, theirs=theirs, base=base_doc)
+            result, kept = svmerge.keep_probe(ours, result)
         except svmerge.MergeError as exc:
             raise CliError(str(exc), EXIT_USAGE) from exc
         if kept:
@@ -2194,6 +2289,18 @@ def sv_merge(
         raise
     expected = hashlib.sha256(ours_bytes).hexdigest()
     with guard.transaction(chosen, label=f"sv merge {target.path}", store=store.path) as tx:
+        if is_lab_file:
+            # The next loader check compares from what this write leaves
+            # (§13.4, owner ruling amending "A Lab write is not a loader
+            # failure"): keep those bytes as a store object. A failure here
+            # stops the transaction before anything is written.
+            try:
+                store.put_object(data)
+            except snapshot.SnapshotError as exc:
+                raise CliError(
+                    f"cannot keep the merged {target.path} in the snapshot store ({exc}); "
+                    "nothing was written"
+                ) from exc
         tx.write(target.path, data)
         if [item.before for item in tx.plan] != [expected]:
             raise CliError(

@@ -224,7 +224,6 @@ def _persisting_snapshot_each_session(flavor: Path) -> None:
     _snap("after the next session")
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 @pytest.mark.parametrize(
     "failure",
     [_failed_once_no_snapshot, _persisting_one_snapshot, _persisting_snapshot_each_session],
@@ -271,7 +270,6 @@ def _merge_of_the_file(flavor: Path) -> None:
     assert _disk(flavor).read_bytes() != REAL_A
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 @pytest.mark.parametrize(
     "lab_write", [_restore_over_a_login, _merge_of_the_file], ids=["snap-restore", "sv-merge"]
 )
@@ -298,7 +296,6 @@ def test_rule1_lab_write_then_merge_passes_with_the_note_in_text_and_json_constr
 # ─── rule 2: a session since the Lab write ──────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 def test_rule2_session_after_a_restore_that_raised_loads_passes_constructed(
     flavor: Path,
 ) -> None:
@@ -331,7 +328,6 @@ def test_rule2_session_after_a_restore_that_raised_loads_passes_on_disk_construc
     assert not any(LAB_NOTE in note for note in report["notes"]), "rule 2 re-checked the loader"
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 def test_rule2_sv_merge_then_a_session_that_raised_loads_passes_from_the_kept_object_constructed(
     flavor: Path,
 ) -> None:
@@ -347,7 +343,6 @@ def test_rule2_sv_merge_then_a_session_that_raised_loads_passes_from_the_kept_ob
     assert not any(LAB_NOTE in note for note in report["notes"]), "rule 2 re-checked the loader"
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 def test_rule2_persisting_reset_after_a_restore_is_refused_constructed(
     root: Path, flavor: Path, user_data: Path
 ) -> None:
@@ -368,7 +363,6 @@ def test_rule2_persisting_reset_after_a_restore_is_refused_constructed(
     assert (flavor / DBM).read_bytes() == REAL_DBM
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 @pytest.mark.parametrize(
     "session",
     [
@@ -412,7 +406,6 @@ def _object_unparseable(user_data: Path, record: guard.HistoryRecord) -> None:
     _edit_record(user_data, record.id, after=digest)
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 @pytest.mark.parametrize(
     "damage",
     [_object_missing, _object_damaged, _object_unparseable],
@@ -448,7 +441,6 @@ def test_rule3_unreadable_result_of_the_lab_write_is_refused_naming_the_record(
     assert (flavor / DBM).read_bytes() != REAL_DBM
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 @pytest.mark.parametrize(
     "damage",
     [_object_missing, _object_damaged],
@@ -479,7 +471,6 @@ def test_rule1_wins_over_rule3_when_no_session_ran_since_the_lab_write(
 # ─── every Lab write to WowLab.lua keeps the bytes it wrote ─────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 @pytest.mark.parametrize(
     "args",
     [("--take", "theirs"), ("--key", "WowLabCharDB.gear")],
@@ -525,7 +516,6 @@ def test_profile_apply_never_writes_wowlab_lua_constructed(flavor: Path) -> None
 # ─── future-dated journal records and snapshots are ignored ─────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 def test_future_dated_journal_record_is_ignored_and_does_not_turn_the_check_off_constructed(
     root: Path, flavor: Path, user_data: Path
 ) -> None:
@@ -571,7 +561,6 @@ def _snapshot_ahead_then_two_logins(flavor: Path) -> str:
     return ahead
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 def test_future_dated_snapshot_is_ignored_with_a_note_constructed(flavor: Path) -> None:
     # Sorted by date, the 2099 snapshot (4) would be the newest and the pair
     # 6 -> 4 would read as a loader failure. Ignored, the pair is 5 -> 6.
@@ -586,7 +575,6 @@ def test_future_dated_snapshot_is_ignored_with_a_note_constructed(flavor: Path) 
     assert any(ahead in note for note in report["notes"]), report["notes"]
 
 
-@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
 def test_future_dated_snapshot_does_not_turn_the_check_off_constructed(
     root: Path, flavor: Path, user_data: Path
 ) -> None:
