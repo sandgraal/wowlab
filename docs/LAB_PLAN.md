@@ -2349,29 +2349,55 @@ A static local page over every character's `WowLab.lua`.
   it could not be read. One unreadable file names itself and exits 1 (as
   `looks show` does) and never blocks the others. `wowlab char list` prints
   the table.
-  *Amended 2026-09-30 (M12-09), the reader as built:* `read_all(layout,
-  account=None)` returns one `CharacterFile` (`label`, `account`,
-  `realm_folder`, `file`, `mtime_ns`, and either `record` or `error`) per
-  character folder, of either shape, whose `SavedVariables/` holds a
-  `WowLab.lua`. A folder without one (the `<Realm>/<First>/` twin, a
-  character that never ran the addon) is not listed, `.lua.bak` siblings
-  are never read, and a folder holding only case variants of the name
-  (`wowlab.lua` and `WOWLAB.lua`) gets an error instead of a guess, as
-  `sv merge` refuses them. The order is account, realm folder, character
-  folder, each compared with case folded and then as spelled; it never
-  follows modification times. An `error` is the reader's message (a schema
-  it does not know, a value that does not fit, not the addon's variable),
-  the parser's, or the system's words for a failed open or read, and never
-  holds the absolute path. `char list` covers every account unless
-  `--account` names one (as `sv list` does; `char show` instead needs
-  `--account` when there are several). A row is `<realm folder>/<folder>`,
-  the file's modification time, and the schema, client version and build
-  and spec id (`labaddon.summary`), or `not read:` and the reason. Each
-  unreadable file is also named on stderr, one line each, and the command
-  exits 1 after printing everything, `--json` (`CharListReport`) included.
-  Not covered: a `SavedVariables/` folder the walk cannot list drops out of
-  `layout`'s file list, so its character is not listed and no error names
-  it (the walk's errors are only in `Layout.inventory()`).
+  *Amended 2026-09-30 (M12-09), the reader as built:* `labaddon.survey(layout,
+  account=None)` makes one walk of `WTF/` (`Layout.wtf_walk`, which also
+  names the folders, links, read errors and non-regular entries the typed
+  lists leave out) and returns `AllCharacters`: one `CharacterFile`
+  (`label`, `account`, `realm_folder`, `shape`, `file`, `mtime_ns`, and
+  either `record` or `error`) per character folder, of either shape, whose
+  `SavedVariables/` holds a `WowLab.lua`, and `not_looked_at`.
+  `read_all` is `survey(...).characters`. A row is a character folder, not
+  proof of a character: a renamed, moved or deleted character keeps its old
+  folder and last save (GLOSSARY, Identity). `shape` says whether the folder
+  above it is a realm name (`realm_name`) or, on Forever, a digits folder
+  (`numeric_folder`), which is not a realm name. A folder without the file
+  (the `<Realm>/<First>/` twin, a character never saved with the addon
+  enabled; a crash writes nothing) is not listed, and `.lua.bak` siblings
+  are never read. Which file is the character's is one rule,
+  `labaddon.choose_lab_file`, shared with `char show` and `looks
+  import-char`: the whole name `WowLab.lua` exactly, else its one case
+  variant; two with the exact name, or several case variants and no exact
+  one, are refused with the same reason by both commands. `char show`
+  changed only there: it used to take the first such file in path order.
+  **Whatever wowlab could not look at is named and makes `char list` exit
+  1:** a `WowLab.lua` it cannot read (the reader's, the parser's or the
+  system's reason, never an absolute path), or that is a link (not
+  followed: wowlab does not follow links), a FIFO or other non-regular
+  entry (never opened) or a folder; and a character folder or its
+  `SavedVariables/` that is a link or cannot be listed. Each gives that
+  character an entry with the reason (`mtime_ns` None when no regular file
+  was looked at). A link or unlistable folder above the character folders
+  (`WTF/`, `WTF/Account/`, an account folder, a realm or digits folder; a
+  linked name in an account folder only where the file map would take it
+  for one, so a linked `config-cache.wtf` hides nothing), and a walk that
+  hit its bound, are in `not_looked_at` with the reason. The order is
+  account, realm or digits folder, character folder, each compared with
+  case folded and then as spelled; it never follows modification times.
+  `char list` covers every account unless `--account` names one (as `sv
+  list` does; `char show` instead needs `--account` when there are
+  several). The heading counts character folders; a row is `<realm or
+  digits folder>/<character folder>`, the file's modification time (the
+  client's last save, unless something wrote the file since: a wowlab
+  restore or undo, a copy; "time unknown" when none was read), and the
+  schema, the client that saved it as its full version (`saved by client
+  1.60.1.70009`, which need not be the installed build) and the spec id
+  (`labaddon.summary`), or `not read:` and the reason. Each character not
+  read (`could not read <path>: <reason>`) and each place not looked
+  inside (`could not look inside <path>: <reason>`) is named on stderr, one
+  line each, and the command exits 1 after printing everything, `--json`
+  (`CharListReport`, with `not_looked_at`) included. With nothing listed
+  and something not looked inside, the text says so instead of giving
+  install advice.
 - **Page** `wowlab char page [--out PATH] [--anonymize] [--offline]`: one
   static file (ADR-0027), a card per character: when the client last saved the
   file (a time from the file, not from the addon, which records none), the

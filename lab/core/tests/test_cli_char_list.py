@@ -11,8 +11,11 @@ is redirected into `tmp_path`; nothing reads or writes a real install.
 Inputs labelled `constructed` (L8) are boundary and hostile cases: a
 capture cut short, a second account, extra character folders copied from a
 captured one (names that sort differently from their creation order, names
-holding a line feed or a bidirectional override), and no lab file at all.
-Characters outside printable ASCII are spelled with `chr`.
+holding a line feed or a bidirectional override), no lab file at all, a
+folder replaced by a link or made unlistable (skipped where the platform
+cannot), and a second spelling of a real `WowLab.lua` added to the layout's
+listing (names a case-insensitive volume cannot hold twice). Characters
+outside printable ASCII are spelled with `chr`.
 """
 
 from __future__ import annotations
@@ -42,11 +45,17 @@ FIRST = "1/Labchard-Labrealmg"
 SECOND = "1/Labcharb-Labrealmf"
 TWIN_REALM = "Labrealmb Partb Partc Partd"  # holds the <Realm>/<First>/ twin, only AddOns.txt
 NO_ADDON = "Labcharb-Labrealmd"
-HEADING = f"Account {ACCOUNT}: 2 characters with a WowLab.lua"
+HEADING = f"Account {ACCOUNT}: 2 character folders with a WowLab.lua"
 ROW = re.compile(
-    r"^  (?P<character>.+?) +written \d{4}-\d\d-\d\d \d\d:\d\d:\d\d [+-]\d{4}  (?P<what>.+)$"
+    r"^  (?P<character>.+?) +(?:written \d{4}-\d\d-\d\d \d\d:\d\d:\d\d [+-]\d{4}|time unknown)"
+    r"  (?P<what>.+)$"
 )
 RLO = chr(0x202E)  # RIGHT-TO-LEFT OVERRIDE, Cf
+NOT_FOLLOWED = "a link, not followed: wowlab does not follow links"
+POSIX_PERMISSIONS = pytest.mark.skipif(
+    sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="POSIX permissions, and not as root",
+)
 
 runner = CliRunner()
 
@@ -123,24 +132,32 @@ def test_char_list_lists_each_captured_character_once(flavor: Path) -> None:
     lines = result.stdout.split("\n")
     assert lines[0] == HEADING
     assert _rows(result.stdout) == [
-        (SECOND, "schema 1, client 1.60.1, build 70009, spec id 1482"),
-        (FIRST, "schema 1, client 1.60.1, build 70009, spec id 1490"),
+        (SECOND, "schema 1, saved by client 1.60.1.70009, spec id 1482"),
+        (FIRST, "schema 1, saved by client 1.60.1.70009, spec id 1490"),
     ]
     assert result.stdout.count(SECOND) == 1 and result.stdout.count(FIRST) == 1
     # The twin and the folder without the addon's file are not listed.
     assert TWIN_REALM not in result.stdout and NO_ADDON not in result.stdout
     assert not any(line.lstrip().startswith("Labchard ") for line in lines)
-    for note in cli._CHAR_NOTES:
-        assert note in lines
+    assert lines[3:6] == [
+        cli._CHAR_NOTES[0],
+        "The addon records no time; the time shown is the file's modification time: the "
+        "client's last save, unless something wrote the file since (a wowlab restore or undo, "
+        "a copy).",
+        "One row per character folder: a renamed, moved or deleted character keeps its old "
+        "folder and last save here.",
+    ]
     assert result.stderr == ""
 
 
 def test_char_list_on_the_70058_capture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _install(CAPTURE_70058, tmp_path, monkeypatch)
     result = ok("char", "list")
-    assert result.stdout.split("\n")[0] == f"Account {ACCOUNT}: 1 character with a WowLab.lua"
+    assert (
+        result.stdout.split("\n")[0] == f"Account {ACCOUNT}: 1 character folder with a WowLab.lua"
+    )
     assert _rows(result.stdout) == [
-        (FIRST, "schema 1, client 1.60.1, build 70058, spec id 1490"),
+        (FIRST, "schema 1, saved by client 1.60.1.70058, spec id 1490"),
     ]
 
 
@@ -156,9 +173,12 @@ def test_char_list_json_validates(flavor: Path) -> None:
     report = cli.CharListReport.model_validate_json(result.stdout)
     assert report.flavor_folder == FLAVOR
     assert report.account is None
-    assert report.notes == cli._CHAR_NOTES
+    assert report.notes == cli._CHAR_LIST_NOTES
+    assert report.not_looked_at == []
     assert [e.character for e in report.characters] == [SECOND, FIRST]
     assert report.characters == labaddon.read_all(Layout(flavor))
+    assert {e.shape for e in report.characters} == {"numeric_folder"}
+    assert '"shape": "numeric_folder"' in result.stdout
     for entry in report.characters:
         assert entry.error is None
         assert entry.record == labaddon.read_char(flavor / entry.file)
@@ -193,7 +213,7 @@ def test_constructed_damaged_file_is_named_and_the_rest_listed_exit_1(flavor: Pa
     assert "Traceback" not in result.stdout + result.stderr
     rows = _rows(result.stdout)
     assert [character for character, _ in rows] == [SECOND, FIRST]
-    assert rows[0][1] == "schema 1, client 1.60.1, build 70009, spec id 1482"
+    assert rows[0][1] == "schema 1, saved by client 1.60.1.70009, spec id 1482"
     assert rows[1][1].startswith("not read: not SavedVariables data the parser accepts: line ")
     (line,) = result.stderr.split("\n")[:-1]
     assert line.startswith(
@@ -225,7 +245,7 @@ def test_constructed_unknown_schema_is_named_and_the_rest_listed(flavor: Path) -
         "not read: WowLabCharDB is schema 3, and this reader knows schema 1, 2 only: it was "
         "written by another version of the lab-addon; nothing was read"
     )
-    assert rows[FIRST] == "schema 1, client 1.60.1, build 70009, spec id 1490"
+    assert rows[FIRST] == "schema 1, saved by client 1.60.1.70009, spec id 1490"
     assert "wowlab: could not read " in result.stderr and SECOND in result.stderr
 
 
@@ -250,7 +270,7 @@ def test_constructed_order_is_stable(flavor: Path) -> None:
     expected = ["1/Alpha-B", "1/beta-C", SECOND, FIRST, "1/zeta-A", "Realm Name/Gamma"]
     first = ok("char", "list").stdout
     assert [c for c, _ in _rows(first)] == expected
-    assert first.split("\n")[0] == f"Account {ACCOUNT}: 6 characters with a WowLab.lua"
+    assert first.split("\n")[0] == f"Account {ACCOUNT}: 6 character folders with a WowLab.lua"
     for step, character in enumerate(reversed(expected)):
         stamp = 1_000_000_000_000_000_000 + step * 1_000_000_000
         os.utime(_lab_file(flavor, character), ns=(stamp, stamp))
@@ -266,10 +286,10 @@ def test_constructed_every_account_unless_one_is_named(flavor: Path) -> None:
     everyone = ok("char", "list").stdout
     lines = everyone.split("\n")
     assert lines[0] == HEADING
-    assert "Account 90000002#1: 1 character with a WowLab.lua" in lines
+    assert "Account 90000002#1: 1 character folder with a WowLab.lua" in lines
     assert [c for c, _ in _rows(everyone)] == [SECOND, FIRST, "2/Other-Char"]
     only = ok("char", "list", "--account", "90000002#1").stdout
-    assert only.split("\n")[0] == "Account 90000002#1: 1 character with a WowLab.lua"
+    assert only.split("\n")[0] == "Account 90000002#1: 1 character folder with a WowLab.lua"
     assert [c for c, _ in _rows(only)] == ["2/Other-Char"]
     report = cli.CharListReport.model_validate_json(
         ok("char", "list", "--account", "90000002#1", "--json").stdout
@@ -292,7 +312,9 @@ def test_constructed_account_is_matched_with_case_folded_as_char_show_does(
 ) -> None:
     (flavor / "WTF/Account" / ACCOUNT).rename(flavor / "WTF/Account/MixedCase")
     result = ok("char", "list", "--account", "mixedcase")
-    assert result.stdout.split("\n")[0] == "Account MixedCase: 2 characters with a WowLab.lua"
+    assert (
+        result.stdout.split("\n")[0] == "Account MixedCase: 2 character folders with a WowLab.lua"
+    )
     report = cli.CharListReport.model_validate_json(
         ok("char", "list", "--account", "mixedcase", "--json").stdout
     )
@@ -304,13 +326,112 @@ def test_constructed_nothing_to_list(flavor: Path) -> None:
     _lab_file(flavor, SECOND).unlink()
     result = ok("char", "list")
     assert result.stdout == (
-        "No character in any account has a WowLab.lua (install the lab-addon with `wowlab "
-        "addon install lab`, log in on the character, then log out or /reload).\n"
+        "No character folder in any account has a WowLab.lua (install the lab-addon with "
+        "`wowlab addon install lab`, log in on the character, then log out or /reload).\n"
     )
     named = ok("char", "list", "--account", ACCOUNT)
-    assert named.stdout.startswith(f"No character in account {ACCOUNT} has a WowLab.lua")
+    assert named.stdout.startswith(f"No character folder in account {ACCOUNT} has a WowLab.lua")
     report = cli.CharListReport.model_validate_json(ok("char", "list", "--json").stdout)
+    assert report.characters == [] and report.not_looked_at == []
+
+
+# ─── what wowlab could not look at ───────────────────────────────────────────
+
+
+def _move_and_link(path: Path, tmp_path: Path, *, is_dir: bool) -> None:
+    outside = tmp_path / f"outside-{path.name}"
+    shutil.move(path, outside)
+    try:
+        path.symlink_to(outside, target_is_directory=is_dir)
+    except (OSError, NotImplementedError) as exc:  # Windows without the privilege
+        pytest.skip(f"cannot create a symlink here: {exc}")
+
+
+def test_constructed_linked_character_folder_is_named_exit_1(flavor: Path, tmp_path: Path) -> None:
+    _move_and_link(flavor / ACCOUNT_DIR / SECOND, tmp_path, is_dir=True)
+    result = run("char", "list")
+    assert result.exit_code == 1
+    lines = result.stdout.split("\n")
+    assert lines[0] == (
+        f"Account {ACCOUNT}: 1 character folder with a WowLab.lua, 1 that wowlab could not "
+        "look inside"
+    )
+    assert _rows(result.stdout) == [
+        (SECOND, f"not read: the character folder: {NOT_FOLLOWED}"),
+        (FIRST, "schema 1, saved by client 1.60.1.70009, spec id 1490"),
+    ]
+    assert f"  {SECOND}  time unknown  not read: " in result.stdout
+    assert result.stderr == (
+        f"wowlab: could not read {ACCOUNT_DIR}/{SECOND}: the character folder: {NOT_FOLLOWED}\n"
+    )
+    report = cli.CharListReport.model_validate_json(run("char", "list", "--json").stdout)
+    entry = report.characters[0]
+    assert entry.character == SECOND and entry.record is None and entry.mtime_ns is None
+
+
+def test_constructed_linked_folder_above_the_characters_is_named_exit_1(
+    flavor: Path, tmp_path: Path
+) -> None:
+    other = "WTF/Account/90000002#1"
+    _plant(flavor, "2/Other-Char", other)
+    _move_and_link(flavor / other / "2", tmp_path, is_dir=True)
+    result = run("char", "list")
+    assert result.exit_code == 1
+    assert [c for c, _ in _rows(result.stdout)] == [SECOND, FIRST]
+    assert (
+        "wowlab could not look inside 1 folder under WTF/ (named on stderr): a character "
+        "folder behind one is not listed." in result.stdout.split("\n")
+    )
+    assert result.stderr == f"wowlab: could not look inside {other}/2: {NOT_FOLLOWED}\n"
+    report = cli.CharListReport.model_validate_json(run("char", "list", "--json").stdout)
+    assert [(n.path, n.reason) for n in report.not_looked_at] == [(f"{other}/2", NOT_FOLLOWED)]
+    # Only the account it is in: another account is not told about it.
+    assert ok("char", "list", "--account", ACCOUNT).stderr == ""
+
+
+@POSIX_PERMISSIONS
+def test_constructed_nothing_listed_because_a_folder_could_not_be_looked_at(
+    flavor: Path,
+) -> None:
+    """No install advice when wowlab could not look: it says what it missed."""
+    folder = flavor / ACCOUNT_DIR / "1"
+    folder.chmod(0)
+    try:
+        text = run("char", "list")
+        named = run("char", "list", "--account", ACCOUNT)
+        as_json = run("char", "list", "--json")
+    finally:
+        folder.chmod(0o755)
+    assert text.exit_code == named.exit_code == as_json.exit_code == 1
+    assert text.stdout == (
+        "No character folder in any account with a WowLab.lua was found, but wowlab could not "
+        "look inside 1 folder under WTF/ (named on stderr): a character folder behind one is "
+        "not listed.\n"
+    )
+    assert "install" not in text.stdout + named.stdout
+    assert text.stderr == f"wowlab: could not look inside {ACCOUNT_DIR}/1: Permission denied\n"
+    assert named.stdout.startswith(f"No character folder in account {ACCOUNT} with a WowLab.lua")
+    report = cli.CharListReport.model_validate_json(as_json.stdout)
     assert report.characters == []
+    assert [(n.path, n.reason) for n in report.not_looked_at] == [
+        (f"{ACCOUNT_DIR}/1", "Permission denied")
+    ]
+
+
+@POSIX_PERMISSIONS
+def test_constructed_permission_denied_reads_once(flavor: Path) -> None:
+    target = _lab_file(flavor, FIRST)
+    target.chmod(0)
+    try:
+        result = run("char", "list")
+    finally:
+        target.chmod(0o644)
+    assert result.exit_code == 1
+    assert dict(_rows(result.stdout))[FIRST] == "not read: Permission denied"
+    assert result.stderr == (
+        f"wowlab: could not read {ACCOUNT_DIR}/{FIRST}/SavedVariables/WowLab.lua: "
+        "Permission denied\n"
+    )
 
 
 # ─── terminal-safe text ──────────────────────────────────────────────────────
@@ -347,3 +468,92 @@ def test_constructed_hostile_folder_names_are_escaped(flavor: Path) -> None:
     report = cli.CharListReport.model_validate_json(run("char", "list", "--json").stdout)
     labels = {e.label for e in report.characters}
     assert set(names) <= labels and f"Bad{RLO}Name" in labels
+    # The columns line up after escaping: every row's time starts at one offset.
+    rows = [ln for ln in result.stdout.split("\n") if ln.startswith("  ")]
+    assert len(rows) == 5
+    assert len({ln.index("  written ", 2) for ln in rows}) == 1
+
+
+# ─── char show chooses the same file (one rule, M12-09) ─────────────────────
+
+
+def _listed_beside(monkeypatch: pytest.MonkeyPatch, character: str, spelling: str) -> None:
+    """Every Layout lists `spelling` beside `character`'s WowLab.lua, as a
+    case-sensitive volume could hold it."""
+    real_walk = Layout.wtf_walk
+    real_list = Layout.saved_variables
+
+    def add(files: tuple[Any, ...]) -> tuple[Any, ...]:
+        extra = [
+            f.model_copy(
+                update={"path": f.path[: -len("WowLab.lua")] + spelling, "addon": spelling[:-4]}
+            )
+            for f in files
+            if f.path == f"{ACCOUNT_DIR}/{character}/SavedVariables/WowLab.lua"
+        ]
+        return (*files, *extra)
+
+    def walk(self: Layout) -> Any:
+        found = real_walk(self)
+        return found.model_copy(update={"saved_variables": add(found.saved_variables)})
+
+    def listing(self: Layout, scope: Any = None) -> tuple[Any, ...]:
+        return add(real_list(self, scope))
+
+    monkeypatch.setattr(Layout, "wtf_walk", walk)
+    monkeypatch.setattr(Layout, "saved_variables", listing)
+
+
+@pytest.mark.parametrize("spelling", ["WOWLAB.lua", "WowLab.LUA", "wowlab.lua"])
+def test_constructed_char_show_and_char_list_read_the_exact_name(
+    flavor: Path, monkeypatch: pytest.MonkeyPatch, spelling: str
+) -> None:
+    newest = 2_000_000_000_000_000_000  # FIRST is the latest, so `char show` alone takes it
+    os.utime(_lab_file(flavor, FIRST), ns=(newest, newest))
+    _listed_beside(monkeypatch, FIRST, spelling)
+    listed = cli.CharListReport.model_validate_json(ok("char", "list", "--json").stdout)
+    (entry,) = [e for e in listed.characters if e.character == FIRST]
+    assert entry.file.endswith("/SavedVariables/WowLab.lua") and entry.record is not None
+    for args in (["--character", FIRST], []):
+        shown = cli.CharShowReport.model_validate_json(ok("char", "show", *args, "--json").stdout)
+        assert shown.character == FIRST
+        assert shown.file == entry.file
+
+
+def test_constructed_char_show_and_char_list_refuse_the_same_variants(
+    flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lab = _lab_file(flavor, FIRST)
+    lab.rename(lab.with_name("wowlab.lua"))
+    real_walk = Layout.wtf_walk
+    real_list = Layout.saved_variables
+
+    def add(files: tuple[Any, ...]) -> tuple[Any, ...]:
+        extra = [
+            f.model_copy(update={"path": f.path[: -len("wowlab.lua")] + "WOWLAB.lua"})
+            for f in files
+            if f.path == f"{ACCOUNT_DIR}/{FIRST}/SavedVariables/wowlab.lua"
+        ]
+        return (*files, *extra)
+
+    monkeypatch.setattr(
+        Layout,
+        "wtf_walk",
+        lambda self: real_walk(self).model_copy(
+            update={"saved_variables": add(real_walk(self).saved_variables)}
+        ),
+    )
+    monkeypatch.setattr(
+        Layout, "saved_variables", lambda self, scope=None: add(real_list(self, scope))
+    )
+    reason = (
+        "the character folder holds 2 files named like WowLab.lua (SavedVariables/WOWLAB.lua, "
+        "SavedVariables/wowlab.lua, none spelled exactly WowLab.lua); which one the client "
+        "reads is not known, so none was read"
+    )
+    listed = run("char", "list")
+    assert listed.exit_code == 1
+    assert dict(_rows(listed.stdout))[FIRST] == f"not read: {reason}"
+    shown = run("char", "show", "--character", FIRST)
+    assert shown.exit_code == 1
+    assert shown.stderr == f"wowlab: {FIRST}: {reason}\n"

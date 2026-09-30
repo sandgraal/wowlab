@@ -61,10 +61,12 @@ an install: every verdict on the page is computed here and only shown there.
 the lab-addon, through `wowlab_core.labaddon`, and the account's
 `WowLab.lua` beside it; read only. Without `--character` it takes the
 character whose `WowLab.lua` has the newest modification time. `char list`
-(§14.4, M12-09) lists every character's `WowLab.lua` through
-`labaddon.read_all`, in every account unless `--account` names one; a file
-it cannot read is listed with the reason, named on stderr, and makes the
-command exit 1 after the others are printed.
+(§14.4, M12-09) lists every character folder's `WowLab.lua` through
+`labaddon.survey`, in every account unless `--account` names one; a file it
+cannot read, and a file or folder it could not look at (a link, a FIFO, a
+folder it cannot list), is listed or noted with the reason, named on stderr,
+and makes the command exit 1 after the others are printed. Both commands
+choose a character's file with `labaddon.choose_lab_file`.
 """
 
 import base64

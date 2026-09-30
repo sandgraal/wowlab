@@ -1229,7 +1229,7 @@ def _place(path: str, entry_id: str | None, *, is_link: bool) -> tuple[_Place, l
 
 
 class _Folder:
-    """What `read_all` gathered for one character folder."""
+    """What `survey` gathered for one character folder."""
 
     def __init__(self, account: str, realm: layout.Realm, label: str) -> None:
         self.account = account
@@ -1259,9 +1259,11 @@ class _Folder:
         )
 
     def read(self, flavor_path: Path) -> CharacterFile | None:
+        """The folder's entry, or None when it holds no `WowLab.lua`."""
         if self.blocked:
-            path = self.blocked[0][0]
-            return self.entry(path, None, error="; ".join(reason for _, reason in self.blocked))
+            blocked = sorted(self.blocked)
+            reasons = "; ".join(reason for _, reason in blocked)
+            return self.entry(blocked[0][0], None, error=reasons)
         try:
             chosen = choose_lab_file([*self.files, *self.odd])
         except LabAddonError as exc:
