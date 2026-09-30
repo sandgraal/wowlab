@@ -2655,3 +2655,309 @@ def test_readme_and_plan_document_why_a_value_is_missing() -> None:
     assert f'`"{EMPTY_EXPORT}"`' in readme
     assert "export | export_absent" in readme
     assert "headers, headers_collapsed, rows, filter" in readme
+
+
+# M11-29: the barber-shop record after an applied change ---------------------------
+#
+# Source scans on the addon's own tokens (constructed checks; no Lua runs, L3).
+# In the M11-23 capture (1.60.1.70058), after one applied change, the record's
+# last write came from an open, with no `chr_model_id`, and the file could not
+# say why. The addon changes only so the next capture can, as schema 2 (the
+# first format change after M11-04): `events_received` counts every event the
+# customization section registered, six count-only events (one a made-up
+# control name) are counted and never gathered on, and `chr_model_id_absent`
+# records how the model-id call went. Every value stored here is also held to
+# the stored-value rules above (test_every_stored_value_is_type_checked).
+#
+# Sources are found through ADDON at call time (the review probes point ADDON
+# at an edited copy); the docs, like PLAN above, are bound once to the repo.
+
+FORMATS = ROOT / "docs" / "LAB_FORMATS.md"
+BARBER_CHANGE_EVENTS = ("BARBER_SHOP_OPEN", "BARBER_SHOP_APPEARANCE_APPLIED")
+BARBER_COUNT_ONLY = (
+    "BARBER_SHOP_RESULT",
+    "BARBER_SHOP_CLOSE",
+    "BARBER_SHOP_FORCE_CUSTOMIZATIONS_UPDATE",
+    "BARBER_SHOP_COST_UPDATE",
+    "BARBER_SHOP_SUCCESS",
+    "WOWLAB_CONTROL_NOT_A_REAL_EVENT",
+)
+# Made up on purpose: whether it gets an entry shows whether the client
+# refuses a name it does not know.
+CONTROL_EVENT = "WOWLAB_CONTROL_NOT_A_REAL_EVENT"
+MODEL_ABSENT = (
+    "C_BarberShop.GetViewingChrModel missing",
+    "C_BarberShop.GetViewingChrModel raised an error",
+    "C_BarberShop.GetViewingChrModel returned nil",
+    "C_BarberShop.GetViewingChrModel returned no number",
+)
+# The reader's EventName shape (wowlab_core.labaddon): a name it would refuse
+# would make the whole file unreadable.
+_READER_EVENT_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
+
+
+def _customization_lua() -> Path:
+    return ADDON / "Customization.lua"
+
+
+def _literal_list(section: str, field: str) -> tuple[str, ...]:
+    match = re.search(rf"{field} = \{{ ((?:\"[A-Z0-9_]+\" ,? ?)+)\}} ,", section)
+    assert match, f"expected a literal `{field} = {{ ... }}` in the section"
+    return tuple(re.findall(r'"([A-Z0-9_]+)"', match.group(1)))
+
+
+def test_m11_29_customization_counts_six_more_events_and_gathers_on_two() -> None:
+    """The change events are unchanged; the count-only list is a literal of
+    six event names, none of them a change event, each a name the reader
+    accepts and none a private event, the last a control that names no
+    client event (not BARBER_SHOP_*, and the addon's own prefix). No other
+    section has a count-only list."""
+    section = _section_source(_customization_lua(), "customization")
+    assert _literal_list(section, "events") == BARBER_CHANGE_EVENTS
+    assert _literal_list(section, "count_only") == BARBER_COUNT_ONLY
+    assert not set(BARBER_COUNT_ONLY) & set(BARBER_CHANGE_EVENTS)
+    assert CONTROL_EVENT.startswith("WOWLAB_") and "NOT_A_REAL_EVENT" in CONTROL_EVENT
+    for name in BARBER_CHANGE_EVENTS + BARBER_COUNT_ONLY:
+        assert _READER_EVENT_NAME.match(name), name
+        assert not PRIVATE_EVENT.match(name), name
+    others = [
+        path.name
+        for path in SOURCES
+        if path.name != "Customization.lua" and "count_only =" in _render(_tokens(path))
+    ]
+    assert others == [], others
+
+
+def test_m11_29_count_only_events_are_counted_and_never_gather() -> None:
+    """In `listen`: the count comes before the change-event test, and a
+    count-only event returns before `gather`, `dirty` or `schedule`, so the
+    record still comes only from the two change events (never at close).
+    Every registered event starts at 0; a refused count-only event gets no
+    entry and never reaches events_unregistered."""
+    flow = _core()
+    listen = _body(flow, "listen")
+    assert listen.startswith(
+        "function listen ( section ) local changes = { } "
+        "for _ , event in ipairs ( section . events or { } ) do changes [ event ] = true end "
+        "local counts = nil if section . count_only then counts = { } end"
+    ), listen
+    assert _body(flow, "onEvent") == (
+        f"function onEvent ( fired ) {OFF_GUARD} "
+        "if counts then counts [ fired ] = ( ns . Number ( counts [ fired ] ) or 0 ) + 1 end "
+        "if not changes [ fired ] then return end "
+        "if section . immediate then gather ( section , fired ) "
+        "else section . dirty = true schedule ( ) end end"
+    )
+    assert "section . listener = onEvent section . events_received = counts" in listen
+    assert (
+        "local registered = ns . On ( event , onEvent ) if not registered then "
+        "section . events_unregistered = section . events_unregistered or { } "
+        "local missing = section . events_unregistered missing [ # missing + 1 ] = event "
+        "elseif counts then counts [ event ] = 0 end end"
+    ) in listen
+    count_only_loop = (
+        "for _ , event in ipairs ( section . count_only or { } ) do "
+        "if ns . On ( event , onEvent ) and counts then counts [ event ] = 0 end end"
+    )
+    assert listen.endswith(count_only_loop + " end"), listen
+    # events_received is set in `listen` only; nothing else writes the count.
+    sets = [
+        (path.name, _Flow(path, tokens).label_at(i))
+        for path in SOURCES
+        for tokens in [_tokens(path)]
+        for i in range(len(tokens) - 3)
+        if [t.text for t in tokens[i : i + 4]] == ["section", ".", "events_received", "="]
+    ]
+    assert sets == [("Core.lua", "listen")], sets
+
+
+def test_m11_29_switching_off_removes_the_count_only_handlers() -> None:
+    """`/wowlab skip customization` takes the one handler off the count-only
+    events too, before the listener is forgotten."""
+    body = _body(_core(), "switchOff")
+    assert (
+        "for _ , event in ipairs ( section . events or { } ) do off ( event , section . listener ) end "
+        "for _ , event in ipairs ( section . count_only or { } ) do off ( event , section . listener ) end "
+        "section . listener = nil"
+    ) in body, body
+
+
+def test_m11_29_write_puts_events_received_on_every_record_of_a_listening_section() -> None:
+    """ns.Write attaches the counts to whatever record it placed (gathered,
+    carried or never gathered), only while the section listens; a switched-off
+    section has no listener and keeps its plain owner reason. It is the one
+    place that writes the key, and neither gather nor carry does."""
+    flow = _core()
+    write = _body(flow, "ns.Write")
+    attach = "record . events_received = section . events_received"
+    assert (
+        "place ( db , section . path , record ) "
+        f"if section . listener and section . events_received then {attach} end end putSkip ( db )"
+    ) in write, write
+    rendered = [_render(_tokens(path)) for path in SOURCES]
+    assert sum(text.count("events_received =") for text in rendered) == 2  # listen and here
+    assert sum(text.count(attach) for text in rendered) == 1
+    section = _section_source(_customization_lua(), "customization")
+    assert "events_received" not in section
+
+
+def test_m11_29_model_id_or_the_reason_it_is_missing() -> None:
+    """Exactly one of `chr_model_id` and `chr_model_id_absent` on a gathered
+    record. The call goes through pcall directly, not ns.Call, so an error is
+    told apart from nil; a number is stored only inside its type test."""
+    section = _section_source(_customization_lua(), "customization")
+    missing, error, nil, not_number = MODEL_ABSENT
+    assert (
+        'local model = ns . Fn ( C_BarberShop , "GetViewingChrModel" ) '
+        f'if not model then record . chr_model_id_absent = "{missing}" '
+        "else local ok , id = pcall ( model ) "
+        f'if not ok then record . chr_model_id_absent = "{error}" '
+        'elseif type ( id ) == "number" then record . chr_model_id = id '
+        f'elseif id == nil then record . chr_model_id_absent = "{nil}" '
+        f'else record . chr_model_id_absent = "{not_number}" '
+        "end end return record end"
+    ) in section, section
+    assert section.count("record . chr_model_id =") == 1
+    assert section.count("record . chr_model_id_absent =") == len(MODEL_ABSENT)
+    assert "ns . Call ( model )" not in section
+
+
+def test_m11_29_carry_keeps_the_model_number_but_not_the_reason_or_the_counts() -> None:
+    """The reason and the counts describe one visit or one session: carry
+    rebuilds the record without either (a carried record may hold neither
+    chr_model_id nor its reason), and still copies chr_model_id as a number."""
+    tokens = _tokens(_customization_lua())
+    start, end = _carry_body(tokens)
+    carry = _render(tokens[start:end])
+    assert 'ipairs ( { "recorded_load" , "race_id" , "sex" , "chr_model_id" } )' in carry
+    for key in ("chr_model_id_absent", "events_received", "events_unregistered"):
+        assert key not in carry, key
+
+
+def test_m11_29_schema_2_and_the_probe_survives_the_bump() -> None:
+    """Schema 2 (§13.1: the first format change after M11-04). Both
+    variables take `ns.SCHEMA`; nothing read back at ADDON_LOADED looks at the
+    schema (the probe, the skip list and the carried record are read by key),
+    and the logout write carries the probe, so a schema-1 file's
+    `probe.loads` keeps rising across the bump."""
+    flow = _core()
+    rendered = _render(flow.tokens)
+    assert "ns . SCHEMA = 2" in rendered
+    assert rendered.count("ns . SCHEMA =") == 1
+    assert "local db = { schema = ns . SCHEMA , probe = copyProbe ( ) ," in _body(flow, "ns.Write")
+    assert "WowLabDB = { schema = ns . SCHEMA }" in _body(flow, "ns.Write")
+    assert (
+        "local prior = saved . probe "
+        'if type ( prior ) == "table" and type ( prior . loads ) == "number" then '
+        "probe . loads = ns . Number ( prior . loads + 1 )"
+    ) in _body(flow, "loadProbe")
+    loaded = _body(flow, 'ns.On("ADDON_LOADED")')
+    assert "ns . probe = loadProbe ( WowLabCharDB )" in loaded
+    assert "WowLabCharDB . probe = copyProbe ( )" in loaded
+    for label in ("loadProbe", "loadSkip", 'ns.On("ADDON_LOADED")'):
+        assert "schema" not in _body(flow, label).replace("schema = ns . SCHEMA", ""), label
+    tokens = _tokens(_customization_lua())
+    start, end = _carry_body(tokens)
+    assert "schema" not in _render(tokens[start:end])
+
+
+def test_m11_29_readme_and_plan_say_what_is_confirmed_and_what_stays_verify() -> None:
+    raw_readme = README.read_text(encoding="utf-8")
+    readme = " ".join(raw_readme.split())
+    plan_text = PLAN.read_text(encoding="utf-8")
+    plan = " ".join(plan_text.split("### 13.2")[0].split("### 13.1")[-1].split())
+    formats = " ".join(FORMATS.read_text(encoding="utf-8").split())
+    assert "Amended 2026-09-29 (M11-29" in plan
+    assert "Follow-up, 2026-09-29 (M11-29, schema 2" in formats
+    for text in (readme, plan):
+        for reason in MODEL_ABSENT:
+            assert reason in text, reason
+        for name in BARBER_COUNT_ONLY:
+            assert f"`{name}`" in text, name
+        assert "`events_received`" in text
+        assert "`chr_model_id_absent`" in text
+        assert "Still **[verify]**: that `BARBER_SHOP_APPEARANCE_APPLIED` ever reaches" in text
+        assert "`BARBER_SHOP_OPEN` fires and reaches the section" in text
+        assert "M11-29 capture step" in text
+        assert "schema 2" in text
+        assert "the schema stays 1" not in text.split("(M11-29")[-1]
+    # Schema 2 in the README's layout, and schema 1 still read.
+    assert "### Table layout (schema 2)" in raw_readme
+    assert "  schema = 2," in raw_readme
+    assert "The Lab still reads schema 1 files" in readme
+    # M4: the file shows only that the last write came from an open.
+    for text in (readme, plan, formats):
+        assert "the record was not rewritten" not in text
+        assert "last write came from an open" in text
+    assert "rules out a second sit, not an open the client fires itself" in formats
+    # M5: the reason is how the call went, not why; the hypothesis stays one.
+    for text in (readme, plan):
+        assert "when the section gathered" in text
+        assert "stays **[verify]**" in text
+    for line in (
+        "the function is not on this client",
+        "it exists but refused this call",
+        "it named no model at that moment",
+    ):
+        assert line in readme and line in plan, line
+    # P2 and the delta: IsEventValid is in the kit list; the file does not
+    # record that it ran on 70058; three limits.
+    for text in (readme, formats):
+        assert "the file does not record whether it did on 70058" in text
+        assert "never been seen refusing any name" in text
+        assert "only a count of 1 or more" in text
+    # The runbook: cautions and steps, with the stops (round 2).
+    for part in (
+        "## M11-29 capture step",
+        "Do not change the body type",
+        "`C_BarberShop.SetSelectedSex`",
+        "`wowlab undo` cannot reverse",
+        "a second sit in the same session spoils the counts",
+        "have enough for the price the shop shows on Accept",
+        "WowLab is probably not running",
+        "type `/wowlab`; if the addon loaded, it answers with two lines starting `WowLab:`",
+        "stop and report",
+        "If the barber shop does not open, log out, capture anyway and report it; do not redo.",
+        "left to right, then top to bottom",
+        "No `/reload` between the visit and the logout",
+        "Do not log that character in again before capturing",
+        "check that the new colour shows on the character",
+        "it is not an apply signal and nothing may be recorded on it (§13.1)",
+        "says the client answered the Accept, not that it succeeded",
+        "is expected at 1 on any visit, applied or cancelled (on Retail, **[verify]**)",
+        "saw shop activity during the visit",
+        "either the applied event fired before the choices updated, or it was not the Accept's",
+        "neither noted position: report both; item 11 stays open",
+        "at the old position the last open saw the old look: both opens came before the "
+        "Accept, or the second came before the choices updated; item 12 stays open",
+        "most likely the applied event fired",
+        "every other entry, 0 included, is a name this client knows",
+        "because the control tests the addon's whole gate",
+        "is not known to be safe on Forever",
+    ):
+        assert part in readme, part
+    # One row per outcome, in the order the first that fits applies, with a
+    # catch-all last.
+    table = readme.split("How the capture reads.")[1].split("Read with every row")[0]
+    rows = [
+        "**`schema = 1`**",
+        '**`customization = { absent = "switched off by the owner" }`**',
+        "**The shop did not open (step 3), or the colour did not change (step 4)**",
+        "**`carried = true`**",
+        '**`customization = { absent = "no barber-shop visit recorded with the addon '
+        'enabled" }` with `OPEN` at 0 or no entry**',
+        "**You sat or clicked Accept more than once (notes from steps 3 and 4)**",
+        "**`customization` absent with a gather reason and counts**",
+        '**`recorded_at = "applied"` with `APPLIED` at 1 or more**',
+        '**`recorded_at = "open"`, `APPLIED` at 1 or more, `OPEN` at 2 or more, and you sat once**',
+        '**`recorded_at = "open"`, `APPLIED` at 1 or more, `OPEN` at 1**',
+        '**`recorded_at = "open"` with `APPLIED` at 0 or no entry, and the new colour '
+        "visible on the character (step 4)**",
+        "**None of these**",
+    ]
+    at = [table.find(row) for row in rows]
+    assert -1 not in at, [row for row, i in zip(rows, at, strict=True) if i == -1]
+    assert at == sorted(at), at
+    assert table.count("- **") == len(rows)
+    assert f"**`{CONTROL_EVENT}`**" in readme
+    assert "chr_model_id | chr_model_id_absent, events_received" in readme

@@ -30,8 +30,11 @@ NUL followed by four hex digits); snapshot manifests are written with
 `snapshot.manifest_bytes`, the one canonical encoding. `sv dump --json` is
 flat (each value one row naming its parent) and written compact, row by
 row, so its size grows with the number of values and never with depth.
-Text output escapes every control character but tab (`\\x1b` for ESC), so
-nothing read from an install reaches the terminal as a control sequence.
+Text output escapes every control character, tab and line feed included
+(`\\x1b` for ESC), and every Unicode format and separator character (Cf,
+Zl, Zp, such as U+202E and U+2028, as their UTF-8 bytes), so nothing read
+from an install reaches the terminal as a control sequence or reorders or
+breaks a line (M11-30, §6.11 amendment).
 
 A whole-snapshot `snap restore` leaves alone the files the client manages
 (file-map Edit `no`) unless they are named with `--paths` (owner decision
@@ -68,6 +71,7 @@ import functools
 import hashlib
 import io
 import json
+import logging
 import os
 import re
 import time
@@ -209,37 +213,139 @@ class CliError(Exception):
         self.code = code
 
 
-_CONTROL = re.compile("[\x00-\x08\x0a-\x1f\x7f-\x9f]")
+# What `_safe` escapes: every C0 control (tab and line feed included), DEL,
+# every C1 control, and the Unicode format and separator characters (Cf, Zl,
+# Zp; U+202E reverses the text after it, U+2028 breaks a line) in the one
+# table printed key paths use (`svmerge._FORMAT_CHARACTERS`, Unicode 15.0,
+# M11-25). A newer Unicode database is caught by the exhaustive test in
+# `tests/test_cli_terminal_safe.py`, not here.
+_UNSAFE = re.compile(
+    "[\x00-\x1f\x7f-\x9f"
+    + "".join(f"{chr(lo)}-{chr(hi)}" for lo, hi in svmerge._FORMAT_CHARACTERS)
+    + "]"
+)
+
+
+def _escape(match: re.Match[str]) -> str:
+    """A C0 control or DEL as `\\xNN` of its one byte; a C1 control, format
+    or separator character as `\\xNN` of each UTF-8 byte that carries it
+    (U+0085 is `\\xc2\\x85`), so every `\\xNN` stands for one byte of the
+    name as stored, as M11-25's printed key paths do."""
+    char = match.group()
+    if char < "\x80":
+        return f"\\x{ord(char):02x}"
+    return "".join(f"\\x{b:02x}" for b in char.encode())
 
 
 def _safe(text: str) -> str:
-    """Printable text for a terminal.
+    """Printable text for a terminal, on one line.
 
     Bytes that are not UTF-8 (carried as lone surrogates) are shown as `\\xNN`
     escapes instead of failing the write, and so is every C0 and C1 control
-    character but tab, line feed included: a file name or value from the
+    character, tab and line feed included: a file name or value from the
     install can carry ESC or OSC sequences, which must never reach the
-    terminal as control codes."""
+    terminal as control codes. Unicode format and separator characters
+    (U+202E, U+2028, U+200B, ...) are shown as their UTF-8 bytes, `\\xNN`
+    each, so a name cannot reorder or break the line it is printed on.
+    Letters, accented or not, print as they are. A backslash is not
+    escaped (it would mangle every Windows path), so a name holding the
+    literal text `\\x85` prints like an invalid byte 0x85."""
     try:
         text = text.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
     except UnicodeEncodeError:
         text = text.encode("utf-8", "backslashreplace").decode("utf-8")
-    return _CONTROL.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
+    return _UNSAFE.sub(_escape, text)
 
 
 def _say(text: str = "") -> None:
+    """One line on stdout, escaped by `_safe`."""
     typer.echo(_safe(text))
 
 
-def _note(text: str) -> None:
-    """A message on stderr. Its own line breaks (a multi-line error from the
-    library) are kept; every other control character is escaped."""
-    typer.echo("\n".join(_safe(line) for line in text.split("\n")), err=True)
+def _say_err(text: str = "") -> None:
+    """One line on stderr, escaped by `_safe`: `_say` for output that must
+    not mix with JSON on stdout, and for notes the library built."""
+    typer.echo(_safe(text), err=True)
 
 
-def _fail(message: str, code: int) -> NoReturn:
-    _note(f"wowlab: {message}")
+_FIELD = "{}"
+
+
+def _note(message: str, *values: object) -> None:
+    """A message on stderr.
+
+    `message` is this module's own text: its line breaks are kept, and every
+    other control, format or separator character is escaped. Anything from
+    elsewhere (a path, a folder name, an error text) is never put into
+    `message` by the caller: it is passed in `values`, and each value takes
+    the place of the next `{}` in `message`, escaped by `_safe` with its
+    line breaks, so a value can never start a line of its own. Nothing else
+    in `message` or a value is a field (no `str.format`): a value holding
+    `{}` or `{:>9}` prints as it is. A `message` whose `{}` count differs
+    from the number of values is a bug in this module (ValueError)."""
+    parts = message.split(_FIELD)
+    if len(parts) != len(values) + 1:
+        raise ValueError(
+            f"_note: {len(parts) - 1} {_FIELD} field(s) in the message, {len(values)} value(s)"
+        )
+    out = ["\n".join(_safe(line) for line in parts[0].split("\n"))]
+    for value, part in zip(values, parts[1:], strict=True):
+        out.append(_safe(str(value)))
+        out.append("\n".join(_safe(line) for line in part.split("\n")))
+    typer.echo("".join(out), err=True)
+
+
+def _fail(message: str, code: int, exc: BaseException | None = None) -> NoReturn:
+    """The error `message` as one line on stderr: it holds values (paths,
+    folder names) the library or this module put in it, so every line
+    break in it is escaped. The notes `exc` carries (`add_note`, such as
+    the write gate's "the rollback did not finish") follow, one line each."""
+    _note("wowlab: {}", message)
+    for extra in getattr(exc, "__notes__", ()):
+        _note("{}", extra)
     raise typer.Exit(code)
+
+
+class _SafeLogFormatter(logging.Formatter):
+    """A library log record as one line, escaped by `_safe`."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return _safe(super().format(record))
+
+
+class _StderrLogHandler(logging.Handler):
+    """Library log records (the write gate's warnings) on stderr, looked up
+    at each record so it follows the stream the command is writing to."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            typer.echo(self.format(record), err=True)
+        except Exception:
+            self.handleError(record)
+
+
+_LIBRARY_LOGGER = "wowlab_core"
+_LOG_HANDLER = _StderrLogHandler(logging.WARNING)
+_LOG_HANDLER.setFormatter(_SafeLogFormatter("wowlab: %(message)s"))
+
+
+@contextmanager
+def _library_log_on_stderr() -> Iterator[None]:
+    """While a command runs, `wowlab_core` log records go to stderr through
+    `_LOG_HANDLER` and nowhere else (Python's fallback handler would print
+    them raw); the logger is put back as it was afterwards."""
+    logger = logging.getLogger(_LIBRARY_LOGGER)
+    if _LOG_HANDLER in logger.handlers:  # nested: already installed
+        yield
+        return
+    propagate = logger.propagate
+    logger.addHandler(_LOG_HANDLER)
+    logger.propagate = False
+    try:
+        yield
+    finally:
+        logger.removeHandler(_LOG_HANDLER)
+        logger.propagate = propagate
 
 
 _SURROGATE = re.compile("[\ud800-\udfff]")
@@ -299,17 +405,18 @@ def _handled[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
         try:
             return fn(*args, **kwargs)
         except guard.GuardError as exc:
-            _fail(f"refused by the write gate: {exc}", EXIT_REFUSED)
+            _fail(f"refused by the write gate: {exc}", EXIT_REFUSED, exc)
         except CliError as exc:
-            _fail(str(exc), exc.code)
+            _fail(str(exc), exc.code, exc)
         except luadata.LuaLimitError as exc:
             _fail(
                 f"refused: this file is beyond what the SavedVariables parser will hold "
                 f"({exc.message}); nothing was printed",
                 EXIT_ERROR,
+                exc,
             )
         except luadata.LuaDataError as exc:
-            _fail(f"not SavedVariables data the parser accepts: {exc}", EXIT_ERROR)
+            _fail(f"not SavedVariables data the parser accepts: {exc}", EXIT_ERROR, exc)
         except (
             install.InstallError,
             snapshot.SnapshotError,
@@ -320,7 +427,7 @@ def _handled[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
             lookstore.LookStoreError,
             OSError,
         ) as exc:
-            _fail(str(exc), EXIT_ERROR)
+            _fail(str(exc), EXIT_ERROR, exc)
 
     return wrapper
 
@@ -893,9 +1000,9 @@ def install_show(root: RootOpt = None, json_out: JsonOpt = False) -> None:
         inst, found_by = _discover(root)
     except install.InstallNotFoundError as exc:
         for p in exc.searched:
-            _note(f"searched, no install there: {p}")
+            _note("searched, no install there: {}", p)
         for p, why in zip(exc.unchecked, exc.unchecked_reasons, strict=True):
-            _note(f"could not check: {p} ({why})")
+            _note("could not check: {} ({})", p, why)
         raise
     if json_out:
         _emit(inst)
@@ -1102,7 +1209,7 @@ def tree(
     if inv.truncated:
         _note("The walk hit a bound; the listing is incomplete.")
     for err in errors:
-        _note(f"could not read {err}")
+        _note("could not read {}", err)
 
 
 def _plain(markdown: str) -> str:
@@ -2216,7 +2323,7 @@ def sv_merge(
     if refusal is not None:
         if not force_loader_check:
             for n in notes:  # e.g. an ignored future-dated snapshot or record
-                _note(n)
+                _say_err(n)
             raise CliError(f"refused by the loader check: {refusal}", EXIT_REFUSED)
         notes.append(f"The loader check was overridden by --force-loader-check: {refusal}")
 
@@ -2241,7 +2348,7 @@ def sv_merge(
             notes.append(_PROBE_KEPT)
     if result.absent:
         notes.append(_ABSENT_NOTE)
-    show = _say if not json_out else _note
+    show = _say if not json_out else _say_err
 
     def report(*, written: bool, transaction: str | None = None) -> SvMergeReport:
         return SvMergeReport(
@@ -2267,7 +2374,7 @@ def sv_merge(
             return
         _print_merge(_say, done)
         for n in done.notes:
-            _note(n)
+            _say_err(n)
         _say(line)
 
     if result.unresolved:
@@ -2778,7 +2885,7 @@ def _follow_log(
     """`log tail --follow`: print as the client appends, until Ctrl-C."""
     logs = _logs_dir(lay)
     if newest is None:
-        _note(f"{_NO_LOG}; waiting for one")
+        _note("{}; waiting for one", _NO_LOG)
     while logs is None:
         _follow_sleep(_LOG_POLL)
         logs = _logs_dir(lay)
@@ -2864,7 +2971,7 @@ def log_tail(
     for entry in entries:
         _print_log_entry(entry, json_out)
     for note in notes:
-        _note(note)
+        _say_err(note)
 
 
 # ─── db2 ─────────────────────────────────────────────────────────────────────
@@ -2997,10 +3104,14 @@ def db2_head(
     if not got:
         _say("(no rows)")
         return
+    # Text for a terminal: every column name and cell is escaped by `_safe`
+    # before the CSV is written (the rows come from a community-run service
+    # or its cache, ADR-0022); `--json` has the exact values.
+    fields = list(got[0])
     buffer = io.StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=list(got[0]), lineterminator="\n")
-    writer.writeheader()
-    writer.writerows(got)
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow([_safe(name) for name in fields])
+    writer.writerows([_safe(row[name]) for name in fields] for row in got)
     typer.echo(buffer.getvalue(), nl=False)
 
 
@@ -3146,7 +3257,7 @@ def snap_list(json_out: JsonOpt = False) -> None:
             version = s.flavor_version or "no version"
             _say(f"{s.id}  {s.flavor_folder}  {version}  {s.files} files{label}{running}")
     for bad in report.damaged:
-        _note(f"damaged manifest {bad.name}: {bad.reason}")
+        _note("damaged manifest {}: {}", bad.name, bad.reason)
     if report.damaged:
         raise typer.Exit(EXIT_ERROR)
 
@@ -3536,11 +3647,11 @@ def snap_restore(
             "was taken from."
         )
     chosen = match[0]
-    say = _note if json_out else _say
+    say = _say_err if json_out else _say
     # With --json the plan goes to stdout as JSON at the end; when a prompt
     # will ask first, the text plan goes to stderr so the question is not blind.
     prompting = json_out and not yes and not dry_run
-    show = _say if not json_out else _note
+    show = _say if not json_out else _say_err
     label = f"restore {manifest.id}"
     if paths:
         label += " (" + ", ".join(paths) + ")"
@@ -3664,7 +3775,7 @@ def undo(yes: YesOpt = False, json_out: JsonOpt = False) -> None:
             _say(f'The most recent transaction, {last.id} ("{last.label}"), changed no files.')
         return
     # With --json, the text plan goes to stderr when a prompt will ask first.
-    show = _say if not json_out else _note
+    show = _say if not json_out else _say_err
     if not json_out or not yes:
         show(f'Undo {last.id} ("{last.label}", {last.state}, {last.created_at})')
         show(f"  in {last.flavor_path}:")
@@ -3913,7 +4024,7 @@ def profile_list(json_out: JsonOpt = False) -> None:
                 f"{s.name}  {s.snapshot_id}  {s.flavor_folder}  {version}  {s.files} files{presets}"
             )
     for bad in report.damaged:
-        _note(f"damaged manifest {bad.name}: {bad.reason}")
+        _note("damaged manifest {}: {}", bad.name, bad.reason)
     if report.damaged:
         raise typer.Exit(EXIT_ERROR)
 
@@ -4016,7 +4127,7 @@ def profile_apply(
     chosen = match[0]
     plan = profiles.plan_apply(profile, chosen, Path(inst.root), store=store)
     prompting = json_out and not yes and not dry_run
-    show = _say if not json_out else _note
+    show = _say if not json_out else _say_err
 
     def report(*, applied: bool, transaction: str | None = None) -> ProfileApplyReport:
         notes = [profiles.SERVER_SIDE_NOTE, *plan.notes]
@@ -4168,7 +4279,7 @@ def addon_install(
     chosen = _select_flavor(inst, flavor)
     plan = addoninstall.plan_install(chosen)
     prompting = json_out and not yes and not dry_run
-    show = _say if not json_out else _note
+    show = _say if not json_out else _say_err
     target = addoninstall.ADDON_FOLDER
 
     def report(*, applied: bool, transaction: str | None = None) -> AddonInstallReport:
@@ -4264,7 +4375,7 @@ def addon_remove(
     chosen = _select_flavor(inst, flavor)
     plan = addoninstall.plan_remove(chosen)
     prompting = json_out and not yes and not dry_run
-    show = _say if not json_out else _note
+    show = _say if not json_out else _say_err
     target = addoninstall.ADDON_FOLDER
 
     def report(*, applied: bool, transaction: str | None = None) -> AddonRemoveReport:
@@ -4324,8 +4435,8 @@ _CHAR_NOTES = [
 
 
 class CharShowReport(_Out):
-    """`wowlab char show --json`: the character's `WowLabCharDB` as the
-    schema-1 model reads it (unknown keys kept), and the account `WowLabDB`."""
+    """`wowlab char show --json`: the character's `WowLabCharDB` as the model
+    for its schema reads it (unknown keys kept), and the account `WowLabDB`."""
 
     flavor_folder: str
     account: str
@@ -4334,8 +4445,8 @@ class CharShowReport(_Out):
     file: str  # relative to the flavor folder
     mtime_ns: int
     account_file: str | None
-    account_record: labaddon.AccountDBV1 | None
-    record: labaddon.CharDBV1
+    account_record: labaddon.AccountDBV1 | labaddon.AccountDBV2 | None
+    record: labaddon.CharDBV1 | labaddon.CharDBV2
     skip_known: list[str]  # section keys in `skip` this reader knows
     skip_ignored: list[str]  # the rest of `skip`, kept in `record` and ignored
     customization_loads_ago: int | None
@@ -5370,7 +5481,7 @@ def looks_show(
         for remark in list_remarks:
             _say(remark)
     for bad in damaged:
-        _note(f"wowlab: damaged look file {bad.file}: {bad.error}")
+        _note("wowlab: damaged look file {}: {}", bad.file, bad.error)
     if damaged:
         raise typer.Exit(EXIT_ERROR)
 
@@ -5980,7 +6091,7 @@ def looks_page(
         for remark in remarks:
             _say(remark)
     for bad in damaged:
-        _note(f"wowlab: damaged look file {bad.file}: {bad.error}")
+        _note("wowlab: damaged look file {}: {}", bad.file, bad.error)
     if damaged:
         raise typer.Exit(EXIT_ERROR)
 
@@ -5996,6 +6107,7 @@ def _print_version(value: bool) -> None:
 
 @app.callback()
 def main(
+    ctx: typer.Context,
     version: Annotated[
         bool,
         typer.Option(
@@ -6007,3 +6119,4 @@ def main(
     ] = False,
 ) -> None:
     """Local-only toolchain over a World of Warcraft install."""
+    ctx.with_resource(_library_log_on_stderr())

@@ -17,22 +17,37 @@ directive as `##[ \\t]*([^\\s:]+)[ \\t]*:(.*)` and strip the value with
 `bytes.strip(b" \\t")`; peel trailing conditions with one right-to-left scan
 (or `re.finditer` over `\\s+\\[[^\\[\\]]*\\]` anchored at the end) instead of
 re-matching the whole line per condition.
+
+What is measured (M11-28, 2026-09-29): the CPU time of `parse_toc` alone,
+from `cpu_clock()` in `tests/parser/_cpu_clock.py`, whose docstring says why.
+Wall clock also counts time spent waiting for a core, so a busy machine could
+fail the 1 s limit while the parser is linear; a quadratic parse still fails
+it, because the extra work is CPU. Measured idle on the owner's M1: each line
+here takes 10 ms or less on both clocks.
 """
 
 from __future__ import annotations
 
-import time
+import sys
+from pathlib import Path
 
-from wowlab_core.toc import MAX_TOC_BYTES, parse_toc
+PARSER = Path(__file__).resolve().parents[1] / "parser"
+if str(PARSER) not in sys.path:
+    sys.path.insert(0, str(PARSER))
+
+from _cpu_clock import cpu_clock  # noqa: E402
+
+from wowlab_core.toc import MAX_TOC_BYTES, parse_toc  # noqa: E402
 
 LIMIT_SECONDS = 1.0
+CLOCK, CLOCK_NAME = cpu_clock()
 
 
 def _seconds(data: bytes) -> float:
     assert len(data) < MAX_TOC_BYTES // 8, "well inside the read limit"
-    start = time.perf_counter()
+    start = CLOCK()
     parse_toc(data)
-    return time.perf_counter() - start
+    return CLOCK() - start
 
 
 def test_control_same_length_lines_parse_fast_constructed() -> None:
@@ -42,9 +57,9 @@ def test_control_same_length_lines_parse_fast_constructed() -> None:
 
 def test_directive_value_with_a_long_space_run_is_linear_constructed() -> None:
     elapsed = _seconds(b"## Title: x" + b" " * 40_000 + b"y\n")
-    assert elapsed < LIMIT_SECONDS, f"one 40 KB directive line took {elapsed:.1f}s"
+    assert elapsed < LIMIT_SECONDS, f"one 40 KB directive line took {elapsed:.1f} {CLOCK_NAME} s"
 
 
 def test_file_line_with_many_trailing_conditions_is_linear_constructed() -> None:
     elapsed = _seconds(b"Foo.lua" + b" [c]" * 8_000 + b"\n")
-    assert elapsed < LIMIT_SECONDS, f"one 32 KB file line took {elapsed:.1f}s"
+    assert elapsed < LIMIT_SECONDS, f"one 32 KB file line took {elapsed:.1f} {CLOCK_NAME} s"

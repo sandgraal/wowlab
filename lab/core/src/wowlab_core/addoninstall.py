@@ -668,7 +668,9 @@ def plan_remove(flavor: _FlavorLike, *, store: Path | None = None) -> RemovePlan
     `guard.GuardError` (the CLI's exit 3) names every refused path with the
     gate's reason, followed by `REMOVE_REFUSED_NOTE` and, when a `WowLab.toc`
     was among the entries found (a regular file or one left alone, such as a
-    link), `STILL_INSTALLED_NOTE`."""
+    link), `STILL_INSTALLED_NOTE`. The error's text is the first refused
+    path; each further one, and then the notes, is a note on the exception
+    (`add_note`), which the CLI prints one line each (M11-30)."""
     present, left, exists = _installed(flavor.path)
     refused: list[str] = []
     with guard.transaction(flavor, label=_REMOVE_LABEL, store=store, dry_run=True) as tx:
@@ -683,7 +685,10 @@ def plan_remove(flavor: _FlavorLike, *, store: Path | None = None) -> RemovePlan
         notes = [REMOVE_REFUSED_NOTE]
         if _toc_found(present, left):
             notes.append(STILL_INSTALLED_NOTE)
-        raise guard.GuardError("\n".join([*refused, " ".join(notes)]))
+        error = guard.GuardError(refused[0])
+        for line in [*refused[1:], " ".join(notes)]:
+            error.add_note(line)
+        raise error
     return RemovePlan(
         flavor_path=str(flavor.path),
         plan=whole,

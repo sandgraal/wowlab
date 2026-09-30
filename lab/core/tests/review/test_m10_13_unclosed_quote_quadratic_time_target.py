@@ -15,20 +15,35 @@ Positive control: the same line with the quote closed (``E,"a"`` + ``,a`` * N),
 which the fast path handles in one pass.
 
 Named `*_time_target.py`, so `conftest.py` here skips it on Windows.
+
+What is measured (M11-28, 2026-09-29): the CPU time of `tokenize_line`
+alone, from `cpu_clock()` in `tests/parser/_cpu_clock.py`, whose docstring
+says why. Wall clock also counts time spent waiting for a core, so a busy
+machine could fail the budget while the tokenizer is linear; the quadratic
+fast path still fails it, because the extra work is CPU. Measured idle on the
+owner's M1: 0.04 s (unclosed) and 0.06 s (closed) on both clocks.
 """
 
 from __future__ import annotations
 
-import time
+import sys
+from pathlib import Path
 
 import pytest
 
-from wowlab_core import combatlog
+PARSER = Path(__file__).resolve().parents[1] / "parser"
+if str(PARSER) not in sys.path:
+    sys.path.insert(0, str(PARSER))
+
+from _cpu_clock import cpu_clock  # noqa: E402
+
+from wowlab_core import combatlog  # noqa: E402
 
 pytestmark = pytest.mark.parser
 
 HEAD = "4/1/2026 02:16:30.000-4  E,"
 BUDGET_S = 2.0  # about 30 times the linear cost of a 1 MiB line
+CLOCK, CLOCK_NAME = cpu_clock()
 
 
 def _line(start: str) -> str:
@@ -37,9 +52,9 @@ def _line(start: str) -> str:
 
 
 def _time(line: str) -> tuple[float, object]:
-    t = time.perf_counter()
+    t = CLOCK()
     entry = combatlog.tokenize_line(line)
-    return time.perf_counter() - t, entry
+    return CLOCK() - t, entry
 
 
 @pytest.mark.parametrize("start", [pytest.param('"a"', id="constructed-closed-quote-1MiB")])
@@ -53,4 +68,6 @@ def test_control_closed_quote_line_is_linear(start: str) -> None:
 def test_unclosed_quote_line_is_refused_in_linear_time(start: str) -> None:
     elapsed, entry = _time(_line(start))
     assert isinstance(entry, combatlog.Unparsed)
-    assert elapsed < BUDGET_S, f"{elapsed:.2f}s for one {combatlog.MAX_LINE_BYTES}-byte line"
+    assert elapsed < BUDGET_S, (
+        f"{elapsed:.2f} {CLOCK_NAME} s for one {combatlog.MAX_LINE_BYTES}-byte line"
+    )

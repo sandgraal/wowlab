@@ -1081,6 +1081,33 @@ subtrees, as "no; wowlab leaves it alone (a restore writes it only if you
 name it with --paths)". `snap restore` and `undo` also take `--json` (the
 plan, and with `--yes` the result).
 
+*Amended 2026-09-29 (M11-30):* text output is terminal-safe. No C0
+control (tab and line feed included), no DEL, no C1 control and no Unicode
+format or separator character (Cf, Zl, Zp) reaches stdout or stderr raw.
+Each is shown as `\xNN` escapes, one per byte of the text as stored: C0 and
+DEL as their one byte (`\x09`, `\x0a`, `\x1b`), C1, format and separator
+characters as their UTF-8 bytes (U+0085 is `\xc2\x85`, U+202E is
+`\xe2\x80\xae`), and a byte that is not UTF-8 as itself (`\x85`), so a C1
+character and an invalid byte never print alike. The Cf, Zl and Zp set is
+the one table §13.4's printed paths use, pinned to Unicode 15.0 (Python
+3.12's database); a test over every code point of the running Python's
+database is what catches a newer Unicode version that adds one. Letters,
+accented or not, print as they are. A backslash is not escaped (every
+Windows path has one), so a name holding the literal text `\x85` prints
+like an invalid byte 0x85; that ambiguity is accepted.
+This covers every text line: `_say` on stdout; messages on stderr, which
+keep only their own line breaks (a value inserted into one, such as a path
+or a folder name, fills a `{}` of the message with its line breaks escaped;
+there is no other field syntax, so a value holding `{}` or `{:>9}` prints as
+it is); errors, always one line, followed by any notes the exception
+carries (such as the write gate's "the rollback did not finish"), one line
+each; the library's log records (the write gate's warnings), which go to
+stderr through the CLI's own handler, escaped and one line each, while a
+command runs, instead of Python's fallback handler; and `db2 head`, whose
+column names and cells are escaped before the CSV is written. `--json`
+output is unaffected (JSON's own escapes, ASCII only). An uncaught
+exception's traceback is not covered yet (a follow-up).
+
 ## 7. Repository layout
 
 ```
@@ -1349,7 +1376,8 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   section's change events) and writes the tables at `PLAYER_LOGOUT`
   (`/wowlab save` refreshes the tables in memory; the file on disk changes
   only at the next `/reload`, logout or clean exit, and a crash writes
-  nothing), as a versioned table (`schema = 1`):
+  nothing), as a versioned table (`schema = 1`; schema 2 since M11-29,
+  below):
   - equipped gear: item links as strings, so bonus IDs and enchants survive,
     with any player GUID in a link (the crafter field of a crafted item)
     blanked before storing and the slot flagged `crafter_removed`
@@ -1515,8 +1543,68 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   additive: the schema stays 1, and the reader treats each as optional
   (the M11-03 fixtures predate them).
 
+  Amended 2026-09-29 (M11-29, from the M11-23 capture on 1.60.1.70058,
+  `docs/LAB_FORMATS.md`): schema 2. After one applied barber-shop change the
+  customization record's last write came from an open
+  (`recorded_at = "open"`), and it had no `chr_model_id`; the file could not
+  say why. Confirmed by that capture: `BARBER_SHOP_OPEN` fires and reaches
+  the section; `C_BarberShop.GetAvailableCustomizations`,
+  `GetCurrentCharacterData` (`sex` 0) and `UnitRace` ran; no name field was
+  stored. Still **[verify]**: that `BARBER_SHOP_APPEARANCE_APPLIED` ever
+  reaches the section (the client did not refuse it, yet the record's last
+  write came from an open), what `GetViewingChrModel` returns, and
+  `currentChoiceIndex` being 1-based (consistent with the tables, not
+  proven). The addon changes only so that the next capture can say why, not
+  on a guess at the cause, and nothing changes about when the record is
+  made. This is the first change to the format after M11-04, so, by the rule
+  below, it is schema 2: `WowLabCharDB` and `WowLabDB` are written with
+  `schema = 2`, and schema 2 is schema 1 plus two keys on `customization`.
+  The reader reads schema 1 files (the M11-03 and M11-23 captures) exactly as
+  before: it refuses `chr_model_id_absent` in them (text in an unknown key)
+  and keeps `events_received` as an unknown key, as it always did. It
+  refuses a schema it does not know. The addon reads the probe, the skip list and the
+  carried customization record back by key, never by schema, so a schema-1
+  file's `probe.loads` keeps rising across the first schema-2 write, and
+  §13.4's loader check (which reads `WowLabCharDB.probe` by key) is
+  unaffected. (1) The section writes `events_received`: every event it
+  registered this session, with how many times it reached the section's
+  handler (0 when it never did). With `recorded_at` it tells "the applied
+  event never came" from "an open came after it". It goes on whatever record
+  is written for the section, like `events_unregistered`, and is this
+  session's: `carry` drops it. (2) The section also registers six
+  count-only events, **[verify]** on Forever: `BARBER_SHOP_RESULT`,
+  `BARBER_SHOP_CLOSE`, `BARBER_SHOP_FORCE_CUSTOMIZATIONS_UPDATE` and
+  `BARBER_SHOP_COST_UPDATE` (Retail names), `BARBER_SHOP_SUCCESS` (the name
+  before 9.0), and `WOWLAB_CONTROL_NOT_A_REAL_EVENT`, a made-up control
+  whose entry, or its absence, shows whether this client refuses a name it
+  does not know. They are counted and nothing else, and no event argument is
+  read: the record still comes only from `BARBER_SHOP_OPEN` and
+  `BARBER_SHOP_APPEARANCE_APPLIED`, never at close. A count-only event the
+  client refuses has no entry and is not in `events_unregistered`, which
+  stays the list of refused change events. (3) A gathered record holds
+  exactly one of `chr_model_id` and `chr_model_id_absent`, one of
+  `"C_BarberShop.GetViewingChrModel missing"`,
+  `"C_BarberShop.GetViewingChrModel raised an error"`,
+  `"C_BarberShop.GetViewingChrModel returned nil"` and
+  `"C_BarberShop.GetViewingChrModel returned no number"`: which outcome the
+  call had when the section gathered (the function is not on this client;
+  it exists but refused this call; it named no model at that moment; it
+  returned something else). None says why the client gave no id: that stays
+  **[verify]**, and the reader keeps taking the body type from `sex`. A
+  hypothesis only: the function names a model only while the shop shows an
+  alternate form, and returns nil for the character's own form;
+  forever-addon-kit's 69893 API list (`HasAlteredForm`,
+  `IsViewingAlteredForm`, `SetViewingAlteredForm`, `SetViewingChrModel` in
+  `C_BarberShop`) is consistent with it and does not prove it. The call
+  goes through `pcall` directly, so an error is not taken for nil. `carry`
+  keeps only the number, so a carried record may hold neither. Whether the
+  applied event reaches the section, and why there was no model id, stays
+  open until the owner's capture in `lab/addon/README.md` ("M11-29 capture
+  step").
+
   Schema 1 may change after M11-03. Edits from the capture land before
-  M11-04 starts; after M11-04 merges, any change is schema 2.
+  M11-04 starts; after M11-04 merges, any change is a new schema (schema 2
+  is M11-29's, above; the next change is schema 3).
 - **Install** `wowlab addon install lab` / `wowlab addon remove lab`: copies
   the addon into `Interface/AddOns/WowLab/` through a `guard` transaction
   (client closed, snapshot first, undoable), filling the TOC's
@@ -1581,6 +1669,28 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   one. An empty reason is still refused, and every other string limit is
   unchanged. Printable ASCII is still the only text that reaches the
   terminal or the JSON unescaped, and the file itself is never changed.
+  *Amended 2026-09-29 (M11-32):* the line under the Legacy headline says
+  how the addon found the configs: "the addon lists every trait config it
+  found by type (except the types below) or by a client system id, less the
+  active class talents when the client gave their id; which of these is the
+  Legacy system is not recorded". This replaces both the M11-27 line and
+  the ticket's proposed "except the active class talents and the types
+  below" (changed in review on the conductor's authority), because the
+  addon does less than that wording claims. It leaves the active class
+  config out by id, whatever its type, but only when
+  `C_ClassTalents.GetActiveConfigID` gave an id. `talents.legacy` does not
+  record the id it left out. `talents.class` records the active class
+  config as of its own gather, which may be a different moment, so a class
+  config missing from the list proves nothing; one whose id is in the list
+  shows the addon did not leave it out, a check the reader does not make
+  yet. A config
+  found through `C_Traits.GetConfigIDBySystemID` is not type-checked, so
+  it may have one of the types the next line says were not searched. The
+  line is used whenever `talents.legacy.configs` lists more than one
+  config, including when every one is absent with a reason. With one
+  config, the line still says the Legacy system is inferred by
+  elimination; with none, it says "no candidate config listed". Every
+  variant ends with the panel opener clause as computed.
 - **Capture** (owner): install; on each character log in, then log out or
   `/reload` (a crash writes nothing); on at least one character open the
   barber shop and close it without changing anything, then log out. Capture
