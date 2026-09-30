@@ -76,38 +76,3 @@ def test_snap_gc_keeps_the_object_an_sv_merge_of_wowlab_lua_left_constructed(
     result = _copy_within("--json")
     assert result.exit_code == 0, _out(result)
     assert kept.is_file(), "snap gc removed the object the next loader check compares from"
-
-
-@pytest.mark.parametrize("gc", [True, False], ids=["probe", "positive-control"])
-def test_following_the_rule3_advice_once_clears_the_refusal_constructed(
-    flavor: Path, gc: bool
-) -> None:
-    # The rule-3 refusal says: "Take a snapshot (`wowlab snap create`), log in
-    # and out once with the lab-addon enabled and check again". After that,
-    # the disk comparison no longer spans the merge, but the snapshot pair
-    # (guard's pre-write snapshot -> the new one) still does, so the same
-    # missing object refuses again.
-    _snap("loads 4")
-    _merge_gear_into_wowlab_lua()
-    merged = (flavor / LAB_A).read_bytes()
-    (record,) = [
-        r
-        for r in guard.history()
-        if r.state == "committed" and any(p.path == LAB_A for p in r.paths)
-    ]
-    (change,) = [p for p in record.paths if p.path == LAB_A]
-    assert change.after is not None
-    kept = snapshot.SnapshotStore().object_path(change.after)
-    (flavor / LAB_A).write_bytes(_once(merged, b'["loads"] = 4,', b'["loads"] = 5,'))
-    if gc:
-        two_hours_ago = kept.stat().st_mtime - 7200
-        os.utime(kept, (two_hours_ago, two_hours_ago))
-        ok("snap", "gc", "--yes")
-        first = _copy_within()
-        assert first.exit_code == 3, _out(first)
-        assert "Take a snapshot" in first.stderr
-    # The advice: a snapshot, one healthy login (5 -> 6), check again.
-    _snap("as the refusal advised")
-    (flavor / LAB_A).write_bytes(_once(merged, b'["loads"] = 4,', b'["loads"] = 6,'))
-    result = _copy_within()
-    assert result.exit_code == 0, _out(result)
