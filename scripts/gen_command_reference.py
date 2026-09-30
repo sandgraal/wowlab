@@ -140,11 +140,17 @@ def _opts(param: Any) -> list[str]:
     return [*param.opts, *getattr(param, "secondary_opts", [])]
 
 
-def _argument_name(param: Any) -> str:
-    metavar = getattr(param, "metavar", None)
-    if isinstance(metavar, str) and metavar:
-        return metavar.strip("[]").rstrip(".")
-    return str(param.name).upper()
+def _context(cmd: Any, name: str) -> Any:
+    """A Click context for `cmd`, built through the command's own context class."""
+    return cmd.context_class(cmd, info_name=name)
+
+
+def _argument_name(param: Any, ctx: Any) -> str:
+    """The argument's name as `--help` lists it under "Arguments"."""
+    try:
+        return str(param.make_metavar(ctx))
+    except TypeError:  # Click before 8.2: make_metavar() takes no context
+        return str(param.make_metavar())
 
 
 def _is_flag(param: Any) -> bool:
@@ -192,17 +198,34 @@ def _render_range(ptype: Any, kind: str) -> str:
     return ", ".join([kind, *bounds])
 
 
+def _home() -> str:
+    """The home folder as text, or "" when there is none worth matching (unset, or `/`)."""
+    try:
+        home = str(Path.home())
+    except RuntimeError:
+        return ""
+    return "" if home.strip("/\\") == "" else home.rstrip("/\\")
+
+
 def _machine_specific(value: object) -> bool:
-    """A default naming a place on this machine: absolute, home-relative, or under home."""
+    """A default naming a place on this machine: absolute, home-relative, or under home.
+
+    A list or tuple is machine-specific when any element is. The home test is
+    a path-prefix test, never a substring one, and is off when home is `/`, so
+    a relative default renders the same on every machine.
+    """
+    if isinstance(value, (list, tuple)):
+        return any(_machine_specific(v) for v in value)
     if isinstance(value, Path):
         value = str(value)
     if not isinstance(value, str) or not value:
         return False
+    home = _home()
     return (
         PurePosixPath(value).is_absolute()
         or PureWindowsPath(value).is_absolute()
         or value.startswith("~")
-        or str(Path.home()) in value
+        or (bool(home) and (value == home or value.startswith((home + "/", home + "\\"))))
     )
 
 
@@ -246,18 +269,11 @@ def _code(text: str) -> str:
     return f"{fence}{pad}{text}{pad}{fence}"
 
 
-def _prose(text: str, *, table: bool = False) -> str:
-    """Help prose as Markdown: code spans kept, markup characters escaped.
-
-    In a table cell a pipe ends the cell even inside a code span, so there it
-    is escaped inside code spans too (GitHub renders `\\|` there as `|`).
-    """
+def _prose(text: str) -> str:
+    """Help prose as Markdown: code spans kept, markup characters escaped."""
     out = []
     for i, part in enumerate(re.split(r"(`[^`]*`)", text)):
-        if i % 2 == 1:
-            out.append(part.replace("|", "\\|") if table else part)
-        else:
-            out.append(_MD_ESCAPE.sub(r"\\\1", part))
+        out.append(part if i % 2 == 1 else _MD_ESCAPE.sub(r"\\\1", part))
     rendered = "".join(out)
     if _BLOCK_START.match(rendered):
         rendered = "\\" + rendered
@@ -265,8 +281,8 @@ def _prose(text: str, *, table: bool = False) -> str:
 
 
 def _cell(text: str) -> str:
-    """Prose for a table cell, on one line."""
-    return _prose(" ".join(text.split()), table=True)
+    """Prose for a table cell: on one line, pipes escaped even inside code spans."""
+    return _table_safe(_prose(" ".join(text.split())))
 
 
 def _help_text(cmd: Any) -> str:
@@ -286,18 +302,22 @@ def _paragraphs(text: str) -> list[str]:
 
 
 def _usage(full_name: str, cmd: Any) -> str:
-    pieces = [full_name]
-    params = _visible_params(cmd)
-    if any(_is_option(p) for p in params):
-        pieces.append("[OPTIONS]")
-    for p in params:
-        if _is_option(p):
-            continue
-        name = _argument_name(p)
-        if getattr(p, "nargs", 1) == -1:
-            name += "..."
-        pieces.append(name if getattr(p, "required", False) else f"[{name}]")
-    return " ".join(pieces)
+    """The usage line as `--help` prints it (Click's own pieces, never wrapped)."""
+    ctx = _context(cmd, full_name.rsplit(" ", 1)[-1])
+    return " ".join([full_name, *cmd.collect_usage_pieces(ctx)])
+
+
+def _table_safe(cell: str) -> str:
+    """One table cell: line breaks become spaces; every unescaped pipe is escaped.
+
+    In a GFM table a `|` ends the cell even inside a code span, and a line
+    break ends the row; GitHub renders `\\|` as `|` in both places.
+    """
+    return re.sub(r"(?<!\\)\|", r"\\|", re.sub(r"[\r\n]+", " ", cell))
+
+
+def _row(cells: list[str]) -> str:
+    return "| " + " | ".join(_table_safe(c) for c in cells) + " |"
 
 
 def _param_tables(cmd: Any) -> list[str]:
@@ -306,20 +326,32 @@ def _param_tables(cmd: Any) -> list[str]:
     options = [p for p in params if _is_option(p)]
     lines: list[str] = []
     if arguments:
+        ctx = _context(cmd, str(getattr(cmd, "name", "") or PROG))
         lines += ["| Argument | Type | Default | Help |", "|---|---|---|---|"]
         for p in arguments:
             lines.append(
-                f"| {_code(_argument_name(p))} | {_render_type(p)} | {_render_default(p)} "
-                f"| {_cell(getattr(p, 'help', None) or '')} |"
+                _row(
+                    [
+                        _code(_argument_name(p, ctx)),
+                        _render_type(p),
+                        _render_default(p),
+                        _cell(getattr(p, "help", None) or ""),
+                    ]
+                )
             )
         lines.append("")
     if options:
         lines += ["| Option | Type | Default | Help |", "|---|---|---|---|"]
         for p in options:
-            names = ", ".join(_code(o) for o in _opts(p))
             lines.append(
-                f"| {names} | {_render_type(p)} | {_render_default(p)} "
-                f"| {_cell(getattr(p, 'help', None) or '')} |"
+                _row(
+                    [
+                        ", ".join(_code(o) for o in _opts(p)),
+                        _render_type(p),
+                        _render_default(p),
+                        _cell(getattr(p, "help", None) or ""),
+                    ]
+                )
             )
         lines.append("")
     return lines
@@ -395,6 +427,13 @@ def check(path: Path, rendered: str) -> tuple[bool, str]:
     return False, "".join(diff)
 
 
+def _write_stdout(text: str) -> None:
+    """UTF-8 bytes with LF line ends, whatever stdout's encoding and newline mode."""
+    sys.stdout.flush()
+    sys.stdout.buffer.write(text.encode("utf-8"))
+    sys.stdout.buffer.flush()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     mode = parser.add_mutually_exclusive_group()
@@ -410,16 +449,16 @@ def main(argv: list[str] | None = None) -> int:
         if ok:
             print(f"{args.check.name}: up to date")
             return 0
-        sys.stdout.write(diff)
         if diff and not diff.endswith("\n"):
-            sys.stdout.write("\n")
+            diff += "\n"
+        _write_stdout(diff)
         print(f"{args.check.name}: stale; run {GENERATOR} --out {args.check}", file=sys.stderr)
         return 1
     if args.out is not None:
         args.out.write_bytes(rendered.encode("utf-8"))
         print(f"{args.out.name}: written")
         return 0
-    sys.stdout.write(rendered)
+    _write_stdout(rendered)
     return 0
 
 

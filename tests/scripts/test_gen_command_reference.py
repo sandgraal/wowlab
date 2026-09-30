@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -20,6 +22,7 @@ from typing import Any
 import pytest
 import typer
 from pydantic import BaseModel
+from typer.testing import CliRunner
 
 from wowlab_core import cli
 
@@ -52,10 +55,15 @@ gen = _load()
 
 
 def _tree_leaves() -> dict[str, Any]:
-    """Every leaf of the Click tree by full name, walked without the script."""
+    """Every visible leaf of the Click tree by full name, walked without the script.
+
+    Hidden commands are skipped, as `--help` and the script skip them.
+    """
     leaves: dict[str, Any] = {}
 
     def walk(cmd: Any, path: str) -> None:
+        if getattr(cmd, "hidden", False):
+            return
         subs = getattr(cmd, "commands", None)
         if isinstance(subs, dict):
             for name, sub in subs.items():
@@ -179,7 +187,10 @@ def test_every_json_command_names_a_model_that_resolves(page: str) -> None:
         if not any("--json" in p.opts for p in cmd.params):
             continue
         models = gen.json_models(cmd)
-        assert models, name
+        assert models, (
+            f"{name}: its help names no model its --json output validates against; "
+            "add 'JSON: <Model>.' to the command's help"
+        )
         for model in models:
             resolved = gen._resolve_model(model)
             assert isinstance(resolved, type) and issubclass(resolved, BaseModel), (name, model)
@@ -204,10 +215,10 @@ def test_arguments_and_options_are_listed_with_type_default_and_help(page: str) 
     assert "| `--lines`, `-n` | integer, 0 to 100000 | `10` | How many of the last lines" in tail
     assert "| `--follow`, `-f` | flag | off |" in tail
     cvar = sections["wowlab cvar get"]
-    assert "| `NAME` | text | required | CVar name; compared without case. |" in cvar
+    assert "| `name` | text | required | CVar name; compared without case. |" in cvar
     assert "| `--scope` | one of `global`, `account`, `character` | `global` |" in cvar
     restore = sections["wowlab snap restore"]
-    assert "Usage: `wowlab snap restore [OPTIONS] ID`" in restore
+    assert "Usage: `wowlab snap restore [OPTIONS] {ID}`" in restore
     assert "| `--paths` | text, repeatable | none |" in restore
     assert "| `--root` | path | none |" in restore
     looks = sections["wowlab looks save"]
@@ -295,3 +306,81 @@ def test_script_reads_only_the_package() -> None:
         "httpx",
         "platformdirs",
     }
+
+
+# ─── fix round 1 (review of M12-13) ─────────────────────────────────────────
+
+
+def test_usage_and_argument_names_are_the_ones_help_prints(page: str) -> None:
+    # Real: the page's usage line and argument names, against `--help` itself.
+    runner = CliRunner()
+    sections = _sections(page)
+    for name in _tree_leaves():
+        result = runner.invoke(
+            cli.app, [*name.split()[1:], "--help"], env={"COLUMNS": "400"}, terminal_width=400
+        )
+        assert result.exit_code == 0, (name, result.output)
+        lines = result.output.splitlines()
+        usage = next(ln for ln in lines if ln.startswith("Usage: "))
+        assert f"Usage: `{usage.removeprefix('Usage: ').strip()}`" in sections[name], name
+        if "Arguments:" in lines:
+            listed: list[str] = []
+            for ln in lines[lines.index("Arguments:") + 1 :]:
+                if not ln.startswith("  "):
+                    break
+                listed.append(ln.split()[0])
+            assert listed, name
+            for arg in listed:
+                assert f"| `{arg}` |" in sections[name], (name, arg)
+
+
+def test_constructed_relative_default_is_its_value_whatever_home_is(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    for home in ("/", str(tmp_path)):
+        monkeypatch.setenv("HOME", home)
+        assert gen._render_default(_param(default="pages/looks.html")) == "`pages/looks.html`"
+    # The home test is a prefix test: home's text inside a relative value is not home.
+    monkeypatch.setenv("HOME", "/Users/someone")
+    assert gen._render_default(_param(default="x/Users/someone/y")) == "`x/Users/someone/y`"
+    assert gen._render_default(_param(default="/Users/someone/y")) == "depends on the machine"
+
+
+def test_constructed_sequence_default_with_a_machine_path_is_generic() -> None:
+    home_path = Path.home() / "b"
+    assert gen._render_default(_param(multiple=True, default=["a", home_path])) == (
+        "depends on the machine"
+    )
+    assert gen._render_default(_param(multiple=True, default=("~/x",))) == (
+        "depends on the machine"
+    )
+    assert gen._render_default(_param(multiple=True, default=["a", "b"])) == "`a`, `b`"
+
+
+def test_constructed_table_cells_escape_pipes_and_line_breaks() -> None:
+    row = gen._row(["`a|b`", "x\ny", "c \\| d", "e|f"])
+    assert row == "| `a\\|b` | x y | c \\| d | e\\|f |"
+
+
+@pytest.mark.parametrize("encoding", ["latin-1", "ascii"])
+def test_printed_page_and_diff_are_utf8_bytes_whatever_stdout_is(
+    encoding: str, tmp_path: Path
+) -> None:
+    # Real: the script on the real app in a subprocess; nothing reads an install.
+    env = {**os.environ, "PYTHONIOENCODING": encoding}
+    env.pop("PYTHONUTF8", None)
+    page = gen.render().encode("utf-8")
+    shown = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, env=env, check=False)
+    assert shown.returncode == 0, shown.stderr
+    assert shown.stdout == page
+    stale = tmp_path / "Command-Reference.md"
+    stale.write_bytes(page.replace("…".encode(), b"..."))
+    checked = subprocess.run(
+        [sys.executable, str(SCRIPT), "--check", str(stale)],
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+    assert checked.returncode == 1, checked.stderr
+    assert b"+Every command" in checked.stdout
+    assert "…".encode() in checked.stdout
