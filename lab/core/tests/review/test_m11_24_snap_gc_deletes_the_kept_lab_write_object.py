@@ -1,4 +1,4 @@
-# Probe from review of m11/24-sv-merge-loader; reproduces `wowlab snap gc` deleting the object an `sv merge` of WowLab.lua kept, so the next merge after a healthy login is refused under rule 3, and following the refusal's advice once does not clear it.
+# Probe from review of m11/24-sv-merge-loader; checks that `wowlab snap gc` keeps the object an `sv merge` of WowLab.lua kept, so the next merge after a healthy login passes from it (rule 2) instead of being refused under rule 3.
 """Constructed (L8: boundary case; an edited copy of the real M11-03
 `WowLab.lua` stands for the session after the merge, and the kept object's
 mtime is set back past the gc grace period in the temporary user data).
