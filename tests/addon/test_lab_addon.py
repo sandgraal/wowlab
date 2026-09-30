@@ -2667,8 +2667,11 @@ def test_readme_and_plan_document_why_a_value_is_missing() -> None:
 # counted and never gathered on, and `chr_model_id_absent` says why there is
 # no model id. Every value stored here is also held to the stored-value rules
 # above (test_every_stored_value_is_type_checked).
+#
+# Sources are found through ADDON at call time (the review probes point ADDON
+# at an edited copy); the docs, like PLAN above, are bound once to the repo.
 
-CUSTOMIZATION = ADDON / "Customization.lua"
+FORMATS = ROOT / "docs" / "LAB_FORMATS.md"
 BARBER_CHANGE_EVENTS = ("BARBER_SHOP_OPEN", "BARBER_SHOP_APPEARANCE_APPLIED")
 BARBER_COUNT_ONLY = (
     "BARBER_SHOP_RESULT",
@@ -2686,6 +2689,10 @@ MODEL_ABSENT = (
 _READER_EVENT_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
 
 
+def _customization_lua() -> Path:
+    return ADDON / "Customization.lua"
+
+
 def _literal_list(section: str, field: str) -> tuple[str, ...]:
     match = re.search(rf"{field} = \{{ ((?:\"[A-Z0-9_]+\" ,? ?)+)\}} ,", section)
     assert match, f"expected a literal `{field} = {{ ... }}` in the section"
@@ -2696,7 +2703,7 @@ def test_m11_29_customization_counts_three_more_events_and_gathers_on_two() -> N
     """The change events are unchanged; the count-only list is a literal of
     three event names, none of them a change event, each a name the reader
     accepts and none a private event. No other section has a count-only list."""
-    section = _section_source(CUSTOMIZATION, "customization")
+    section = _section_source(_customization_lua(), "customization")
     assert _literal_list(section, "events") == BARBER_CHANGE_EVENTS
     assert _literal_list(section, "count_only") == BARBER_COUNT_ONLY
     assert not set(BARBER_COUNT_ONLY) & set(BARBER_CHANGE_EVENTS)
@@ -2706,7 +2713,7 @@ def test_m11_29_customization_counts_three_more_events_and_gathers_on_two() -> N
     others = [
         path.name
         for path in SOURCES
-        if path != CUSTOMIZATION and "count_only =" in _render(_tokens(path))
+        if path.name != "Customization.lua" and "count_only =" in _render(_tokens(path))
     ]
     assert others == [], others
 
@@ -2780,7 +2787,7 @@ def test_m11_29_write_puts_events_received_on_every_record_of_a_listening_sectio
     rendered = [_render(_tokens(path)) for path in SOURCES]
     assert sum(text.count("events_received =") for text in rendered) == 2  # listen and here
     assert sum(text.count(attach) for text in rendered) == 1
-    section = _section_source(CUSTOMIZATION, "customization")
+    section = _section_source(_customization_lua(), "customization")
     assert "events_received" not in section
 
 
@@ -2788,7 +2795,7 @@ def test_m11_29_model_id_or_the_reason_it_is_missing() -> None:
     """Exactly one of `chr_model_id` and `chr_model_id_absent` on a gathered
     record. The call goes through pcall directly, not ns.Call, so an error is
     told apart from nil; a number is stored only inside its type test."""
-    section = _section_source(CUSTOMIZATION, "customization")
+    section = _section_source(_customization_lua(), "customization")
     missing, error, nil, not_number = MODEL_ABSENT
     assert (
         'local model = ns . Fn ( C_BarberShop , "GetViewingChrModel" ) '
@@ -2809,7 +2816,7 @@ def test_m11_29_carry_keeps_the_model_number_but_not_the_reason_or_the_counts() 
     """The reason and the counts describe one visit or one session: carry
     rebuilds the record without either (a carried record may hold neither
     chr_model_id nor its reason), and still copies chr_model_id as a number."""
-    tokens = _tokens(CUSTOMIZATION)
+    tokens = _tokens(_customization_lua())
     start, end = _carry_body(tokens)
     carry = _render(tokens[start:end])
     assert 'ipairs ( { "recorded_load" , "race_id" , "sex" , "chr_model_id" } )' in carry
@@ -2821,7 +2828,7 @@ def test_m11_29_readme_and_plan_say_what_is_confirmed_and_what_stays_verify() ->
     readme = " ".join(README.read_text(encoding="utf-8").split())
     plan_text = PLAN.read_text(encoding="utf-8")
     plan = " ".join(plan_text.split("### 13.2")[0].split("### 13.1")[-1].split())
-    formats = " ".join((ROOT / "docs" / "LAB_FORMATS.md").read_text(encoding="utf-8").split())
+    formats = " ".join(FORMATS.read_text(encoding="utf-8").split())
     assert "Amended 2026-09-29 (M11-29" in plan
     assert "Follow-up, 2026-09-29 (M11-29" in formats
     for text in (readme, plan):
