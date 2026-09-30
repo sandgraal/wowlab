@@ -85,6 +85,9 @@ def test_a_refused_remove_keeps_the_library_line_breaks_constructed(root: Path) 
     assert any(f"'{LAB}/tool.exe' is an executable" in line for line in lines[1:]), lines
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="Windows file names cannot hold a line feed or ':'"
+)
 def test_guard_a_refused_path_holding_a_line_break_stays_escaped_constructed(
     root: Path,
 ) -> None:
