@@ -1319,6 +1319,12 @@ yet, and a fixture produced by the thing under test proves nothing).
   platform and at least one CI run on `windows-latest` for the `lab` suite,
   added in M10-01 as a non-required job.
 
+  *Amended 2026-09-30 (owner decision):* the `windows-latest` job is removed.
+  The only install is on macOS. The Windows branches in `guard`, `snapshot`
+  and `process` stay in the code, and their `skipif` tests stay in the suite,
+  but CI no longer runs them. Before the Lab is ever used against a Windows
+  install, the job comes back first; it caught the byte-0 lock bug on PR #59.
+
 ## 10. Wave 1 tickets
 
 `docs/BACKLOG.md`, milestone `M10`. Dependency shape:
@@ -1363,8 +1369,9 @@ game installed. M10-08, M10-09 and M10-10 do not wait on it.
 
 *Amended 2026-09-30:* the Wave 1 captures answered 1 and 2 in practice. The
 primary install is on macOS, and the Forever beta client is installed; the
-committed fixture roots are `macos` and `macos-<build>`. Question 3 has no owner ruling. The
-job still runs, non-required, and `guard`'s Windows lock rules rely on it.
+committed fixture roots are `macos` and `macos-<build>`. Question 3 was
+answered by the owner on 2026-09-30: the Windows job is removed (§9
+amendment).
 4. ~~Accept or reject ADR-0019 through ADR-0025.~~ Answered 2026-09-21: all
    accepted, together with ADR-0013 and ADR-0014.
 

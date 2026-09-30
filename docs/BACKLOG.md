@@ -122,7 +122,7 @@ The one class-talent capture so far has a single node ranked (a level-13 charact
 
 The conductor writes `docs/handoffs/M12-review.md` per `docs/LAB_PLAN.md` §11 (what shipped, what was learned about the client, which ideas are unblocked, which estimates were wrong, a recommended next wave of at most three ideas), archives the wave's backlog, and stops dispatch until the owner picks Wave 4.
 
-The owner has already named Wave 4 (2026-09-30): a local UI, `wowlab ui`, over every command, with a parity test so that each new command is reachable in it. The review recommends it as the pick and says what M12 added to the surface it must cover. Its plan section, ADR (a localhost server that supersedes part of ADR-0027) and tickets land in the Wave 4 plan PR, per ADR-0024.
+The owner has already named Wave 4 (2026-09-30): a local UI, `wowlab ui`, over every command, with a parity test so that each new command is reachable in it. The review recommends it as the pick and says what M12 added to the surface it must cover. Its decision is already made: ADR-0029, accepted 2026-09-30. Its plan section and tickets land in the Wave 4 plan PR, per ADR-0024.
 
 ---
 

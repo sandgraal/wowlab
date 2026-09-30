@@ -70,7 +70,9 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 **Amendment (2026-09-21):** revised at the Bronze retirement (ADR-0025).
 
-**Superseded by (in part, if accepted):** ADR-0030 (Proposed 2026-09-30) replaces "No other language or runtime is part of the toolchain" with one language per purpose, each admitted by an ADR. Lua (ADR-0026) and inline page templates (ADR-0027) are already admitted that way.
+**Superseded by (in part):** ADR-0030 (accepted 2026-09-30) replaces "No other language or runtime is part of the toolchain" with one language per purpose, each admitted by an ADR. Lua (ADR-0026) and inline page templates (ADR-0027) are already admitted that way.
+
+**Amendment (2026-09-30, owner decision):** the non-required `lab (windows)` job is removed from CI. The required checks listed above are unchanged. `docs/LAB_PLAN.md` §9 records what stops being exercised.
 
 ---
 
@@ -96,7 +98,7 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 **Consequences:** One toolchain for agents and CI. Local CASC reading, which has no mature pure-Python implementation, is deferred to the wave that needs models or textures and will be decided then (binding vs. a bridge to an existing exporter). Every parser must tolerate both retail and Forever captures from day one, which the fixture corpus (M10-03) has to reflect.
 
-**Superseded by (in part, if accepted):** ADR-0030 (Proposed 2026-09-30) replaces the rule for admitting a second language. The measurement requirement stays for languages added for performance in the core.
+**Superseded by (in part):** ADR-0030 (accepted 2026-09-30) replaces the rule for admitting a second language. The measurement requirement stays for languages added for performance in the core.
 
 ---
 
@@ -186,7 +188,7 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 **Consequences:** Pages cost one template and one generator per feature and cannot leak data off the machine. Interactivity stays modest; anything needing a real front-end toolchain needs a superseding ADR.
 
-**Superseded by (in part, if accepted):** ADR-0029 (Proposed 2026-09-30) replaces the "no server" clause for `wowlab ui` only. Every other page stays a static file.
+**Superseded by (in part):** ADR-0029 (accepted 2026-09-30) replaces the "no server" clause for `wowlab ui` only. Every other page stays a static file.
 
 ---
 
@@ -204,7 +206,7 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 ## ADR-0029 — `wowlab ui`: a local UI server over the CLI
 
-**Status:** Proposed (2026-09-30)
+**Status:** Accepted (2026-09-30; proposed 2026-09-30) — owner decision; the status edit was made by the conductor on the owner's explicit instruction
 
 **Supersedes:** ADR-0027, in part: its "no server" clause, for `wowlab ui` only. Every other page stays a static file.
 
@@ -235,13 +237,13 @@ The constraints that shape it:
 - A local port is a new attack surface. The token, the Host and Origin checks and the fixed argument vector are there for DNS rebinding and for other local pages and processes; `security-reviewer` owns them.
 - Richer views, such as the looks, talents and character pages, are embedded or linked rather than rebuilt.
 - Anything that needs a front-end toolchain, or a server that another machine can reach, still needs its own ADR, and the latter also revisits ADR-0019.
-- ADR-0027 carries a "Superseded by (in part)" note that takes effect only if this ADR is accepted.
+- ADR-0027 carries a "Superseded by (in part)" note.
 
 ---
 
 ## ADR-0030 — Languages: one per purpose, each admitted by an ADR
 
-**Status:** Proposed (2026-09-30)
+**Status:** Accepted (2026-09-30; proposed 2026-09-30) — owner decision; the status edit was made by the conductor on the owner's explicit instruction
 
 **Supersedes:** ADR-0020, in part: its sentence "A second language is introduced only by a superseding ADR that carries measurements…". ADR-0014's "No other language or runtime is part of the toolchain" is replaced by the rule below.
 

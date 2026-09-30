@@ -112,13 +112,16 @@ required checks are green, threads are resolved, and reviews are clean.
 
 Python 3.12, one uv workspace (members under `lab/`), ruff for lint and
 format, `mypy --strict` on `lab/core/src`, pytest, Pydantic v2 models for
-anything that crosses a module boundary, `pathlib` everywhere. Python is the
-only language outside two fenced exceptions, each admitted by an ADR:
-- Lua under `lab/addon/`, run only by the game client (ADR-0026).
-- Inline HTML, CSS and JavaScript page templates inside the package (ADR-0027).
+anything that crosses a module boundary, `pathlib` everywhere. One language
+per purpose, each admitted by an ADR that names where it lives and how it is
+verified (ADR-0030):
+- Python for everything in the Lab.
+- Lua only under `lab/addon/`, run only by the game client (ADR-0026).
+- HTML, CSS and plain JavaScript only as template text inside the package,
+  with no build step (ADR-0027, ADR-0029).
 
-Any other language or runtime arrives only through an ADR in the wave that
-needs it (ADR-0020; ADR-0030, Proposed, states the general rule). Runtime dependencies are limited
+Any other language, runtime or build toolchain needs a new ADR; one added
+for performance in the core also carries measurements (ADR-0020). Runtime dependencies are limited
 to the list in `docs/LAB_PLAN.md` §6; adding one needs a line in the PR body.
 
 Tests use real fixtures, not generated examples. For anything parsing an

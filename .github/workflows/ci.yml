@@ -6,8 +6,9 @@ on:
   push:
     branches: [main]
 
-# Every job below except `lab (windows)` is a required status check on main,
-# by exact name (see .github/rulesets/main.json). Renaming a job means changing
+# Every job below is a required status check on main, by exact name (see
+# .github/rulesets/main.json). The non-required `lab (windows)` job was
+# removed by the owner on 2026-09-30 (docs/LAB_PLAN.md §9, §12). Renaming a job means changing
 # the ruleset and re-applying it with scripts/bootstrap-github.sh.
 permissions:
   contents: read
@@ -125,36 +126,6 @@ jobs:
       - name: Doc-only PR — skipped
         if: needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true'
         run: echo "doc-only PR — parser suite skipped"
-
-  # NOT a required check (it is absent from .github/rulesets/main.json on
-  # purpose). It exists for Windows path behaviour in the write gate: case-
-  # insensitive collisions, reserved names, long paths, locked files
-  # (docs/LAB_PLAN.md §9). A red run here is a finding, not a merge block.
-  lab-windows:
-    name: lab (windows)
-    needs: changes
-    if: ${{ !cancelled() }}
-    runs-on: windows-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-      - name: Install
-        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
-        run: uv sync --frozen
-      - name: pytest lab/core/tests
-        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
-        run: uv run --frozen pytest -q lab/core/tests
-      - name: Doc-only PR — skipped
-        if: needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true'
-        run: echo "doc-only PR - lab suite skipped"
 
   harness:
     name: Agent harness (hooks on 3.9 and 3.12, lockfile, workflows)
