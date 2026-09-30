@@ -40,6 +40,9 @@ What the models accept (M11-03 capture, `docs/LAB_FORMATS.md` amendment of
   block, one trait config, a tree's currencies, one currency; plus
   `export_absent` and `last_selected_config_absent` on `talents.class`, and
   `events_unregistered` on a present or an absent section (M11-22).
+- M11-29 adds `chr_model_id_absent` on `customization` (at most one of it and
+  `chr_model_id`) and `events_received` (event name to a count) on a present
+  or an absent section.
 - A section the owner switched off (M11-21) is an absent record with the
   addon's reason; `WowLabCharDB.skip` is kept as a list of section keys, and
   a key this reader does not know is kept but ignored (`skip_known`).
@@ -180,6 +183,8 @@ Lst = Annotated[list[_T], BeforeValidator(_empty_list)]
 # no later step formats a number past CPython's 4300-digit limit.
 INT_BOUND = 2**53
 Int = Annotated[int, Field(ge=-INT_BOUND, le=INT_BOUND)]
+# How many times something happened: a whole number from 0.
+Count = Annotated[int, Field(ge=0, le=INT_BOUND)]
 
 # A Lua number: every number is a double in Lua 5.1; `to_python` gives an
 # int for integer spelling and a float otherwise. Never a boolean or text,
@@ -207,6 +212,28 @@ ItemLink = Annotated[
 # client returned an empty string, read as no export (never refused).
 TalentExport = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9+/=]{0,4096}$")]
 EventName = Annotated[str, StringConstraints(pattern=r"^[A-Z][A-Z0-9_]{0,127}$")]
+_EVENT_NAME = re.compile(r"[A-Z][A-Z0-9_]{0,127}")
+
+
+def _event_count_keys(value: Any) -> Any:
+    """`events_received` (M11-29) is the one table read from a file whose keys
+    are data. A refusal names where it happened, and pydantic's location would
+    carry the key itself, so every key is checked here first: a key that is
+    not an event name is refused without echoing it."""
+    if isinstance(value, dict):
+        for key in value:
+            if not (isinstance(key, str) and _EVENT_NAME.fullmatch(key)):
+                words = (
+                    f"a key of {len(key)} characters that is not an event name"
+                    if isinstance(key, str)
+                    else _key_words(key)
+                )
+                raise ValueError(f"the table holds {words}")
+    return value
+
+
+# Event name to how many times it reached a section (M11-29).
+EventCounts = Annotated[dict[EventName, Count], BeforeValidator(_event_count_keys)]
 FoundBy = Annotated[str, StringConstraints(pattern=r"^(type|system):[A-Za-z0-9_.]{1,128}$")]
 SkipKey = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_.]{0,63}$")]
 ClientVersion = Annotated[str, StringConstraints(pattern=r"^[0-9]{1,6}(\.[0-9]{1,6}){0,5}$")]
@@ -437,9 +464,10 @@ class AbsentSection(_Absent):
     """A whole section absent with the addon's reason. `events_unregistered`
     (M11-22): the change events the client did not know, empty when all
     registered; missing on a switched-off section and in files from before
-    M11-22."""
+    M11-22. `events_received` (M11-29): see `_Section`."""
 
     events_unregistered: Lst[EventName] | None = None
+    events_received: EventCounts | None = None
 
 
 class AbsentConfig(_Absent):
@@ -469,9 +497,15 @@ _SPLIT = Discriminator(_kind)
 
 class _Section(_Record):
     """A present section. `events_unregistered`: change events the client did
-    not know, so the section was only gathered at entering the world."""
+    not know, so the section was only gathered at entering the world.
+    `events_received` (M11-29, written for `customization` only): each event
+    the section registered this session, change events and count-only events
+    alike, with how many times it reached the section's handler in that
+    session; an event the client refused has no entry. Missing in files from
+    before M11-29 and on a switched-off section."""
 
     events_unregistered: Lst[EventName] | None = None
+    events_received: EventCounts | None = None
 
 
 # ─── client, probe ───────────────────────────────────────────────────────────
@@ -657,7 +691,12 @@ class CustomizationChoice(_Record):
 
 
 class Customization(_Section):
-    """The last barber-shop record, carried from session to session."""
+    """The last barber-shop record, carried from session to session.
+    `chr_model_id_absent` (M11-29): why `C_BarberShop.GetViewingChrModel`
+    gave no number at the visit; not carried, so a carried record may hold
+    neither it nor `chr_model_id`."""
+
+    reason_fields: ClassVar[tuple[str, ...]] = ("chr_model_id_absent",)
 
     as_of: Literal["last barber-shop visit with the addon enabled"]
     recorded_at: Literal["open", "applied"] | None = None
@@ -667,6 +706,16 @@ class Customization(_Section):
     race_id: Int | None = None
     sex: Int | None = None
     chr_model_id: Int | None = None
+    chr_model_id_absent: Reason | None = None
+    chr_model_id_absent_clipped: ClippedReason | None = None
+
+    @model_validator(mode="after")
+    def _model_or_reason(self) -> Self:
+        # The addon writes at most one of them (exactly one on a record
+        # gathered since M11-29; neither on a carried record or an older one).
+        if self.chr_model_id is not None and self.chr_model_id_absent is not None:
+            raise ValueError("both chr_model_id and chr_model_id_absent are set")
+        return self
 
 
 # ─── collections ─────────────────────────────────────────────────────────────
@@ -1069,6 +1118,7 @@ MAX_QUANTITY_NOTE = (
     "earned at the character's level (M11-03), not the tree's final cap."
 )
 ALL_EVENTS_REGISTERED = "all its change events registered"
+EVENTS_RECEIVED = "events that reached the section in the session that saved this file"
 
 
 def _count(n: int, noun: str) -> str:
@@ -1103,6 +1153,13 @@ def _reason(text: str, clip: ClippedReason | None) -> str:
     return f"absent ({text}){_clip_words(clip)}"
 
 
+def _received(counts: dict[str, int]) -> str:
+    """`events_received` (M11-29) as `EVENT n` pairs, by event name."""
+    if not counts:
+        return NONE_RECORDED
+    return ", ".join(f"{name} {counts[name]}" for name in sorted(counts))
+
+
 def _absent(record: _Absent, *, events_shown: bool = True) -> str:
     text = _reason(record.absent, record.absent_clipped)
     events = getattr(record, "events_unregistered", None)
@@ -1111,21 +1168,28 @@ def _absent(record: _Absent, *, events_shown: bool = True) -> str:
             text += f"; events the client did not know: {', '.join(events)}"
         else:
             text += f"; {ALL_EVENTS_REGISTERED}"
+    received = getattr(record, "events_received", None)
+    if received is not None and events_shown:
+        text += f"; {EVENTS_RECEIVED}: {_received(received)}"
     return text
 
 
 def _events(section: _Section) -> list[str]:
     """Since M11-22 every section that registered events carries the list,
-    empty when all registered; a file from before M11-22 has no key."""
+    empty when all registered; a file from before M11-22 has no key. Since
+    M11-29 a section with count-only events also carries `events_received`."""
+    lines: list[str] = []
     events = section.events_unregistered
-    if events is None:
-        return []
-    if not events:
-        return [f"  {ALL_EVENTS_REGISTERED}"]
-    return [
-        "  events the client did not know (so the section was not refreshed on that change): "
-        + ", ".join(events)
-    ]
+    if events is not None and not events:
+        lines.append(f"  {ALL_EVENTS_REGISTERED}")
+    elif events:
+        lines.append(
+            "  events the client did not know (so the section was not refreshed on that change): "
+            + ", ".join(events)
+        )
+    if section.events_received is not None:
+        lines.append(f"  {EVENTS_RECEIVED}: {_received(section.events_received)}")
+    return lines
 
 
 _LINK = re.compile(r"\|Hitem:([0-9]*)[^|]*\|h\[([^\]]*)\]")
@@ -1374,6 +1438,9 @@ def _customization(record: Customization, char: CharDBV1) -> list[str]:
     lines = [
         f"Customization: as of the last barber-shop visit with the addon enabled, {when}{tail}"
     ]
+    if record.chr_model_id is None and record.chr_model_id_absent is not None:
+        reason = _reason(record.chr_model_id_absent, record.chr_model_id_absent_clipped)
+        lines.append(f"  model: {reason}")
     if not record.choices:
         lines.append(f"  choices: {NONE_RECORDED}")
     for choice in record.choices:
