@@ -181,7 +181,7 @@ def test_legacy_present_with_nothing_spent(name: str) -> None:
     assert isinstance(legacy, labaddon.LegacyTalents)
     assert legacy.player_level == LEVEL[name]
     assert (
-        labaddon.legacy_headline(legacy)
+        labaddon.legacy_headline(legacy, class_config=None)
         == "Legacy candidates: present, nothing spent, 0 points available"
     )
     legacy_lines = [line for line in _text(name).splitlines() if "Legacy" in line or "    " in line]
@@ -343,4 +343,4 @@ def test_legacy_currency_listed_on_three_trees_agrees_and_counts_once(name: str)
     assert ids == [4225, 4225, 4225]  # one pool, reported under each tree that spends it
     talents = _char(name).talents
     assert talents is not None and isinstance(talents.legacy, labaddon.LegacyTalents)
-    assert "not added up" not in labaddon.legacy_headline(talents.legacy)
+    assert "not added up" not in labaddon.legacy_headline(talents.legacy, class_config=None)

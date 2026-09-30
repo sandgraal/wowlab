@@ -77,12 +77,11 @@ MATCH_LINE = (
     + OPENER
 )
 UNCHECKED_LINE = (
-    "  which config is the Legacy system is inferred by elimination, but {why}, so the reader "
-    "cannot check that the config listed is not the active class config (the addon leaves the "
-    "active class config out only when the client gave its id); " + OPENER
+    "  which config is the Legacy system is inferred by elimination, but {why} may be the active "
+    "class config (the addon leaves that out only when the client gave its id); " + OPENER
 )
-NO_CLASS_ID = "Class talents records no config id"
-NO_LISTED_ID = "the config listed has no id"
+NO_CLASS_ID = "Class talents records no config id, so the config listed"
+NO_LISTED_ID = "the config listed has no id, so it"
 SEVERAL_LINE = (  # M11-32, must not change
     "  the addon lists every trait config it found by type (except the types below) or by a "
     "client system id, less the active class talents when the client gave their id; which of "
@@ -93,11 +92,12 @@ NONE_LINE = "  no candidate config listed; panel opener ToggleLegacySystemUI pre
 SKIPPED_LINE = "  config types not searched: Invalid, Combat, Profession"
 NONE_SKIPPED_LINE = "  config types not searched: none recorded"
 NO_TYPE_SEARCH_LINE = (
-    "  config types not searched: none recorded, which does not show the type search ran: no "
-    "config here was found by type, and the addon records none both when "
-    "C_Traits.GetConfigsByType or Enum.TraitConfigType is missing (no type searched) and when "
-    "the client's enum lists none of Invalid, Combat and Profession"
+    "  config types not searched: none recorded, and no config was found by type, so the type "
+    "search may not have run (the addon records none when C_Traits.GetConfigsByType or "
+    "Enum.TraitConfigType is missing, or when the enum has none of Invalid, Combat and "
+    "Profession)"
 )
+LONGEST_ON_MAIN = 265  # the longest line `char show` printed before M11-34 (domain review)
 BY_SYSTEM = "system:ExampleConsts.EXAMPLE_SYSTEM_ID"  # constructed, the shape Talents.lua writes
 MATCH_HEAD = "Legacy candidates: only the active class config listed"
 MATCH_START = "  the one config listed is the active class config"
@@ -258,16 +258,24 @@ def test_constructed_several_configs_one_matching_the_class_id_keep_their_lines(
 
 
 def test_constructed_legacy_headline_takes_the_class_config() -> None:
-    # The public function: without the class config it cannot compare and
-    # gives the M11-27 headline; with it, the match headline (no level: the
-    # caller adds it) or, on a different id, the M11-27 headline.
+    # The public function: the class config is a required keyword, so no
+    # caller skips the comparison by leaving it out. None (no class config
+    # known) cannot compare and gives the M11-27 headline; the config gives
+    # the match headline (no level: the caller adds it) or, on a different
+    # id, the M11-27 headline.
     raw = _base()
     _legacy(raw)["configs"][0]["id"] = CLASS_ID
     legacy, config = _models(raw)
-    assert labaddon.legacy_headline(legacy) == HEADLINE.removesuffix(LEVEL)
-    assert labaddon.legacy_headline(legacy, config) == MATCH_HEADLINE.format(id=CLASS_ID, level="")
+    with pytest.raises(TypeError):
+        labaddon.legacy_headline(legacy)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        labaddon.legacy_headline(legacy, config)  # type: ignore[misc]
+    assert labaddon.legacy_headline(legacy, class_config=None) == HEADLINE.removesuffix(LEVEL)
+    assert labaddon.legacy_headline(legacy, class_config=config) == MATCH_HEADLINE.format(
+        id=CLASS_ID, level=""
+    )
     legacy, config = _models(_base())
-    assert labaddon.legacy_headline(legacy, config) == HEADLINE.removesuffix(LEVEL)
+    assert labaddon.legacy_headline(legacy, class_config=config) == HEADLINE.removesuffix(LEVEL)
 
 
 # ─── (1) talents.class records no config id: the elimination is qualified ────
@@ -310,8 +318,10 @@ def test_constructed_lone_config_without_a_class_id_qualifies_the_elimination(ca
         SKIPPED_LINE,
     ]
     assert not _elimination_claimed(lines)
-    # the noun is named: no bare "it" for the config being checked
-    assert "cannot check that it " not in lines[lines.index(HEADLINE) + 1]
+    # the noun is named, not a bare "it", and there is no double negative
+    line = lines[lines.index(HEADLINE) + 1]
+    assert "so the config listed may be the active class config" in line
+    assert " it may be" not in line and "cannot" not in line and " not the active" not in line
 
 
 def test_constructed_lone_absent_config_without_a_class_id_qualifies_the_elimination() -> None:
@@ -337,6 +347,29 @@ def test_constructed_lone_config_without_an_id_qualifies_the_elimination() -> No
     # with no id on either side, the missing class id is the one named
     _no_class_section(raw)
     assert _described(raw)[1] == UNCHECKED_LINE.format(why=NO_CLASS_ID, opener="yes")
+
+
+def test_constructed_no_id_on_either_side_is_not_a_match() -> None:
+    # talents.class's config absent without an id, and the one listed config
+    # absent without an id (a config with figures always has one): None is
+    # not an id, so None == None is no match. The M11-27 headline stays,
+    # only the line under it is qualified, and no line says "config None".
+    raw = _base()
+    _class_config_absent_without_id(raw)
+    _legacy(raw)["configs"] = [_absent_config(None)]
+    lines = _lines(raw)
+    assert _legacy_lines(lines) == [
+        ALL_ABSENT_HEADLINE,
+        UNCHECKED_LINE.format(why=NO_CLASS_ID, opener="yes"),
+        SKIPPED_LINE,
+    ]
+    assert not any("config None" in line for line in lines)
+    assert not any(line.startswith((MATCH_HEAD, MATCH_START)) for line in lines)
+    legacy, config = _models(raw)
+    assert isinstance(config, labaddon.AbsentConfig) and config.id is None
+    assert labaddon.legacy_headline(
+        legacy, class_config=config
+    ) == ALL_ABSENT_HEADLINE.removesuffix(LEVEL)
 
 
 @pytest.mark.parametrize("case", sorted(NO_CLASS_ID_CASES))
@@ -372,6 +405,11 @@ def _listed_without_id(raw: dict[str, Any]) -> None:
     _legacy(raw)["configs"] = [_absent_config(None)]
 
 
+def _no_id_either_side(raw: dict[str, Any]) -> None:
+    _class_config_absent_without_id(raw)
+    _legacy(raw)["configs"] = [_absent_config(None)]
+
+
 def _several_one_matching(raw: dict[str, Any]) -> None:
     _legacy(raw)["configs"].append(_absent_config(CLASS_ID))
 
@@ -387,6 +425,7 @@ AGREEMENT: dict[str, tuple[Callable[[dict[str, Any]], None], bool]] = {
     "different-id": (lambda raw: None, False),
     "different-id-absent": (_other_absent, False),
     "listed-without-id": (_listed_without_id, False),
+    "no-id-either-side": (_no_id_either_side, False),
     "several-one-matching": (_several_one_matching, False),
     "none-listed": (_none_listed, False),
     **{f"no-class-id-{name}": (change, False) for name, change in NO_CLASS_ID_CASES.items()},
@@ -483,6 +522,34 @@ def test_constructed_lone_class_config_found_by_system_id_with_no_type_search() 
     assert not any("inferred by elimination" in line for line in lines)
 
 
+# ─── line length (domain review, round 2) ────────────────────────────────────
+
+
+def _no_type_search(raw: dict[str, Any]) -> None:
+    _legacy(raw)["skipped_types"] = []
+    _legacy(raw)["configs"][0]["found_by"] = [BY_SYSTEM]
+
+
+LENGTH_CASES: dict[str, Callable[[dict[str, Any]], None]] = {
+    "match-present": _match_present,
+    "match-class-config-absent": _match_class_absent,
+    "listed-without-id": _listed_without_id,
+    "no-type-search": _no_type_search,
+    **{f"no-class-id-{name}": change for name, change in NO_CLASS_ID_CASES.items()},
+}
+
+
+@pytest.mark.parametrize("case", sorted(LENGTH_CASES))
+def test_constructed_new_lines_are_no_longer_than_the_longest_on_main(case: str) -> None:
+    # Every line M11-34 adds, with the longer opener clause ("yes"/"no" are
+    # the only values), fits within the longest line `char show` printed
+    # before it.
+    raw = _base()
+    LENGTH_CASES[case](raw)
+    lines = _described(raw)
+    assert max(len(line) for line in lines) <= LONGEST_ON_MAIN, lines
+
+
 # ─── real captures: byte-identical ───────────────────────────────────────────
 
 
@@ -504,4 +571,6 @@ def test_real_captures_keep_all_three_lines(name: str) -> None:
         ONE_LINE,
         SKIPPED_LINE,
     ]
-    assert labaddon.legacy_headline(legacy, klass.config) == labaddon.legacy_headline(legacy)
+    assert labaddon.legacy_headline(legacy, class_config=klass.config) == labaddon.legacy_headline(
+        legacy, class_config=None
+    )

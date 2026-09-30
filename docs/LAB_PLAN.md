@@ -1709,8 +1709,10 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   one config listed, the reader compares its id with the one
   `talents.class` records (its config's id, present or absent with a
   reason). This is the id check the M11-32 amendment deferred, made for the
-  one-config case only; the reader makes it once, and the headline and the
-  line under it both use the answer. On a match, the M11-27 one-config
+  one-config case only; the reader makes it in one place, and the headline
+  and the line under it both use the answer. An id is compared only with an
+  id: a missing id on either side is never a match. On a match, the M11-27
+  one-config
   headline, which gave the lone listed config's figures as the candidate's,
   no longer applies: the figures are the class talents', so the headline
   reads "Legacy candidates: only the active class config listed (config N;
@@ -1721,24 +1723,26 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   addon did not leave out, so no config is inferred to be the Legacy
   system". When `talents.class` records no config id (not in the file,
   absent with a reason, or its config absent without an id), or the listed
-  config has none, the elimination line gains ", but Class talents records
-  no config id" (or "the config listed has no id") ", so the reader cannot
-  check that the config listed is not the active class config (the addon
-  leaves the active class config out only when the client gave its id)".
-  The several-config, no-config and different-id lines are unchanged:
-  with a different id, the M11-27 headline and "inferred by elimination"
-  stay. (2) The addon leaves `skipped_types` empty when it did not search
-  by type at all (`C_Traits.GetConfigsByType` or `Enum.TraitConfigType`
-  missing), and also when the search ran and the client's enum lists none
-  of Invalid, Combat and Profession. A config found by type shows the
-  search ran, and the line keeps "config types not searched: none
-  recorded". Without one, it reads "none recorded, which does not show the
-  type search ran: no config here was found by type, and the addon records
-  none both when C_Traits.GetConfigsByType or Enum.TraitConfigType is
-  missing (no type searched) and when the client's enum lists none of
-  Invalid, Combat and Profession". Every committed capture lists one
-  config, found by type, that is not the class config, so its output is
-  unchanged.
+  config has none, the M11-27 headline stays and only the line under it is
+  qualified: "inferred by elimination" gains ", but Class talents records
+  no config id, so the config listed may be the active class config" (or
+  ", but the config listed has no id, so it may be the active class
+  config") " (the addon leaves that out only when the client gave its
+  id)". The several-config, no-config and different-id lines are
+  unchanged: with a different id, the M11-27 headline and "inferred by
+  elimination" stay. (2) The addon leaves `skipped_types` empty when it did
+  not search by type at all (`C_Traits.GetConfigsByType` or
+  `Enum.TraitConfigType` missing), and also when the search ran and the
+  client's enum lists none of Invalid, Combat and Profession. A config
+  found by type shows the search ran, and the line keeps "config types not
+  searched: none recorded". Without one, it reads "none recorded, and no
+  config was found by type, so the type search may not have run (the addon
+  records none when C_Traits.GetConfigsByType or Enum.TraitConfigType is
+  missing, or when the enum has none of Invalid, Combat and Profession)".
+  No line these cases add is longer than the longest `char show` printed
+  before (265 characters, the M11-32 several-config line). Every committed
+  capture lists one config, found by type, that is not the class config,
+  so its output is unchanged.
 - **Capture** (owner): install; on each character log in, then log out or
   `/reload` (a crash writes nothing); on at least one character open the
   barber shop and close it without changing anything, then log out. Capture
