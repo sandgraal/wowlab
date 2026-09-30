@@ -6,7 +6,7 @@
   <a href="https://github.com/sandgraal/wowlab/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/sandgraal/wowlab/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python 3.12" src="https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white">
   <img alt="Local only, uploads nothing" src="https://img.shields.io/badge/local--only-uploads%20nothing-2ea44f">
-  <img alt="Wave 1 done, Wave 2 next" src="https://img.shields.io/badge/status-Wave%201%20done%20%C2%B7%20Wave%202%20next-f3c969">
+  <img alt="Waves 1 and 2 done, Wave 3 in progress" src="https://img.shields.io/badge/status-Waves%201%20and%202%20done%20%C2%B7%20Wave%203%20in%20progress-f3c969">
   <a href="LICENSE"><img alt="License Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
 </p>
 
@@ -25,7 +25,7 @@
 - **"What is `config-cache.wtf` and can I delete it?"** `wowlab explain` answers that for any file in your install: what it is, who writes it, when, and whether editing it is safe.
 - **"My addon settings are a mess."** Read any addon's saved settings as plain text, with nothing executed and nothing changed.
 - **"I play on the Forever beta and nothing is documented."** wowlab was built against a real Forever install: its folder layout, file formats and combat log are written up in plain words.
-- **"Someday I want to plan my character offline."** That is exactly where this is going. See [the full vision](#-the-full-vision).
+- **"I want to see, and later plan, my character offline."** `wowlab char show` already shows what wowlab's own small in-game addon recorded for a character; a talent planner is what the next wave builds. See [the full vision](#-the-full-vision).
 
 ## ✨ What it does today
 
@@ -38,6 +38,10 @@
 | 📜 | **Read your saved data.** Addon SavedVariables, CVars, keybinds, macros and your addon list, as readable text or JSON. | `wowlab sv dump` · `cvar` · `binds` · `macros` · `addons` |
 | 📚 | **Game data.** Any game table for your exact build, from [wago.tools](https://wago.tools), cached forever and keyed by build. | `wowlab db2 fetch TABLE` |
 | ⚔️ | **Combat log.** A streaming combat-log reader and a live `tail` that follows the game as it writes, even across new log files. | `wowlab log tail --follow` |
+| 🎛️ | **Profiles.** Save named UI setups (`raid`, `clean`, `gamepad`) and switch between them with one command. You see the plan first, applying one also deletes files created since it was saved, and `wowlab undo` reverses it. | `wowlab profile save` · `profile apply` |
+| 🔀 | **Merge addon settings.** Copy one addon's settings between characters, or from a snapshot, without clobbering the rest. Conflicts are listed and never guessed, and it first checks that the client has been loading saved data correctly. | `wowlab sv merge` |
+| 🧩 | **The lab-addon and your characters.** wowlab's own small in-game addon records a character's gear, talents, customization, collections, currencies and professions (never a name) when you log out, and reads them back offline. | `wowlab addon install lab` · `wowlab char show` |
+| 🎨 | **Customization looks.** Browse every race's customization options from the game's own tables, save and compare looks, import one from a character, and open it all as a local web page. Data only: it never touches the game. | `wowlab looks races` · `save` · `compare` · `page` |
 
 <details>
 <summary><b>See it in action</b> (output from a test copy of a Forever install)</summary>
@@ -92,26 +96,24 @@ flowchart LR
     I -- "read only" --> D
     P --> CLI[wowlab CLI]
     G --> CLI
-    CLI -- "restore / undo" --> W
+    CLI -- "restore / undo / apply / merge" --> W
     W -- "1. game closed?<br/>2. snapshot first<br/>3. atomic write" --> I
     W --> S
 ```
 
 Flavor folders, product codes and build numbers are **discovered from your install**, never hard-coded, so wowlab works the same on retail and on *World of Warcraft: Forever*. The details: [`docs/LAB_PLAN.md`](docs/LAB_PLAN.md) (the spec), [`docs/LAB_FILE_MAP.md`](docs/LAB_FILE_MAP.md) (every path) and [`docs/LAB_FORMATS.md`](docs/LAB_FORMATS.md) (every file format).
 
-## 🧭 Coming next: Wave 2
+## 🧭 Where it is now
 
-wowlab grows in **waves**: the owner picks each one after reviewing the last. Wave 2 is planned and about to start:
+wowlab grows in **waves**: the owner picks each one after reviewing the last. **Waves 1 and 2 are done**: everything in the table above. **Wave 3 is in progress**:
 
 | | Feature | What you'll be able to do |
 |---|---|---|
-| 🧩 | **lab-addon** | Install wowlab's own small in-game addon with one command. At logout it records your gear, talents (class and Legacy trees), customization, collections, currencies and professions, and never anyone's name, including yours. |
-| 🧙 | **`wowlab char show`** | See your character's full state offline, straight from what the addon recorded. |
-| 🎨 | **customization sandbox** | Browse every race's customization options from the game's own tables, save and compare looks, and open it all as a local web page. |
-| 🎛️ | **profiles** | Save named UI setups (`raid`, `clean`, `gamepad`) and switch with one command, with undo. |
-| 🔀 | **sv-merge** | Copy one addon's settings between characters or machines without clobbering the rest. It checks first that the game will actually load the result. |
+| 🗄️ | **db2lake** | Ask questions of the game's tables with SQL: one local database per game build, columns typed from the data, joins across builds. Read-only, and nothing leaves your machine. |
+| 🌳 | **char-planner** (talents first) | View a character's class-talent build offline from what the addon recorded, plan a new one, and have it checked against the game's own tables. Legacy talents and gear come in later waves. |
+| 📊 | **alt-dashboard** | One local page over every character's recorded state, with an option to hide character names. |
 
-The plan and its tickets: [`docs/LAB_PLAN.md`](docs/LAB_PLAN.md) §13 and [`docs/BACKLOG.md`](docs/BACKLOG.md).
+The plan and its tickets: [`docs/LAB_PLAN.md`](docs/LAB_PLAN.md) §14 and [`docs/BACKLOG.md`](docs/BACKLOG.md).
 
 ## 🌌 The full vision
 
@@ -199,7 +201,7 @@ uv run wowlab --help        # every command
 Set `WOWLAB_WOW_ROOT` if your install is not in a default location ([`.env.example`](.env.example)). Machine setup without a package manager: [`docs/SETUP.md`](docs/SETUP.md).
 
 > [!TIP]
-> Exit codes: `0` ok, `1` error, `2` usage, `3` refused by the write gate. Only `snap restore` and `undo` change your install, and both show the plan and ask first unless you pass `--yes`.
+> Exit codes: `0` ok, `1` error, `2` usage, `3` refused by the write gate. Only these commands change your install: `snap restore`, `undo`, `profile apply`, `sv merge` and `addon install` / `addon remove`. Every one goes through the write gate and shows the plan and asks first unless you pass `--yes`; most of them also take `--dry-run`.
 
 <details>
 <summary><b>Developer commands</b></summary>
@@ -216,7 +218,7 @@ Set `WOWLAB_WOW_ROOT` if your install is not in a default location ([`.env.examp
 
 ## 🏗️ How it's built
 
-wowlab is written by Claude Code agents coordinated by a *conductor* session, while the owner makes every decision and captures the real test files from the game. Each change is a small ticket with checkable acceptance criteria. Every branch gets an independent code review, plus security and WoW-accuracy reviews wherever they apply. The two most critical files, the SavedVariables parser and the write gate, get their tests written first by a different agent than the one that writes the code. Test files are real captures from the game, scrubbed of names and identifiers before they are committed. Details: [`docs/AGENT_WORKFLOW.md`](docs/AGENT_WORKFLOW.md) and [`AGENTS.md`](AGENTS.md).
+wowlab is written by Claude Code agents coordinated by a *conductor* session, while the owner makes every decision and captures the real test files from the game. Each change is a small ticket with checkable acceptance criteria. Every branch gets an independent code review, plus security and WoW-accuracy reviews wherever they apply. The files that rewrite your data (the SavedVariables parser, the write gate, sv-merge and profiles) get their tests written first by a different agent than the one that writes the code. Test files are real captures from the game, scrubbed of names and identifiers before they are committed. Details: [`docs/AGENT_WORKFLOW.md`](docs/AGENT_WORKFLOW.md) and [`AGENTS.md`](AGENTS.md).
 
 ```
 lab/core/   wowlab-core: the library and the wowlab CLI (later apps: lab/<app>/)
@@ -230,7 +232,8 @@ docs/       spec, formats, file map, ideas, decisions, backlog, glossary, workfl
 
 | Document | What it holds |
 |---|---|
-| [`docs/LAB_PLAN.md`](docs/LAB_PLAN.md) | The spec: purpose, architecture, every module, testing, how waves work, the Wave 2 plan. |
+| [The wiki](https://github.com/sandgraal/wowlab/wiki) | Guides for every command, the safety rules in plain words, a command reference, notes on the Forever beta, a glossary and the roadmap. |
+| [`docs/LAB_PLAN.md`](docs/LAB_PLAN.md) | The spec: purpose, architecture, every module, testing, how waves work, the Wave 2 and Wave 3 plans. |
 | [`docs/LAB_FILE_MAP.md`](docs/LAB_FILE_MAP.md) | Every path in an install: what it is, who writes it, whether it is safe to edit. |
 | [`docs/LAB_FORMATS.md`](docs/LAB_FORMATS.md) | The client file formats, with what real Forever captures showed. |
 | [`docs/LAB_IDEAS.md`](docs/LAB_IDEAS.md) | The menu for later waves. |
