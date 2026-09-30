@@ -81,7 +81,7 @@ import os
 import re
 from collections.abc import Iterator, Mapping
 from pathlib import Path
-from typing import Annotated, Any, ClassVar, Literal, Self, TypeVar
+from typing import Annotated, Any, ClassVar, Literal, NamedTuple, Self, TypeVar
 
 from pydantic import (
     BaseModel,
@@ -1069,9 +1069,12 @@ _SAVED_VARIABLES = "SavedVariables"
 _REALM_ENTRIES = frozenset({"realm-folder", "numeric-folder"})
 # The most `survey` reads in one run, all files together (M12-09). A real
 # `WowLab.lua` is tens of KB to a few MB, so a real install stays far below
-# it; it bounds the time and memory a folder of large or hard-linked copies
-# can cost. Each file is also bounded on its own (`luadata.MAX_FILE_BYTES`).
-MAX_SURVEY_BYTES = 256 * 1024 * 1024
+# it; it bounds what a folder of large or hard-linked copies can cost. It
+# counts bytes, not parse cost: dense files take longer and keep more memory
+# per byte than real ones. Each file is also bounded on its own
+# (`luadata.MAX_FILE_BYTES`), and a file over that bound is refused without
+# charging this one.
+MAX_SURVEY_BYTES = 64 * 1024 * 1024
 
 NOT_FOLLOWED = "a link, not followed, as wowlab never follows links"
 NOT_REGULAR = "not a regular file (a FIFO, socket or device), so it was not opened"
@@ -1102,7 +1105,11 @@ class CharacterFile(BaseModel):
     client's last save, unless something wrote the file since (a wowlab snap
     restore, undo or sv merge, or a copy); the addon records no time of its
     own. It is None when no regular file was looked at. An `error` never
-    holds an absolute path."""
+    holds an absolute path. `same_as` is set when the file is a hard link to
+    one already read on another character's row (`<realm or digits
+    folder>/<character folder>`, and the account when it differs): it is
+    not read twice, and `error` says so, since the row cannot vouch that the
+    record is this character's."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -1116,6 +1123,7 @@ class CharacterFile(BaseModel):
     summary: str | None = None
     record: CharDBV1 | CharDBV2 | None = None
     error: str | None = None
+    same_as: FsText | None = None
 
     @model_validator(mode="after")
     def _read_or_error(self) -> Self:
@@ -1126,6 +1134,8 @@ class CharacterFile(BaseModel):
             )
         if self.record is not None and self.error is not None:
             raise ValueError("a CharacterFile with an error holds no record")
+        if self.same_as is not None and self.error is None:
+            raise ValueError("a CharacterFile that is the same file as another holds an error")
         return self
 
     @property
@@ -1203,6 +1213,20 @@ def _os_error(exc: OSError, path: Path) -> str:
     return str(exc).replace(str(path), "the file")
 
 
+def _size_words(n: int) -> str:
+    mib = 1024 * 1024
+    return f"{n // mib} MiB" if n > 0 and n % mib == 0 else f"{n:,} bytes"
+
+
+class _Read(NamedTuple):
+    """What `_Reader.read` found for one file."""
+
+    record: CharDB | None = None  # None unless the reader keeps records
+    summary: str | None = None  # set when the file was read and parsed
+    error: str | None = None
+    same_as: str | None = None  # a hard link to the file read on this character's row
+
+
 class _Reader:
     """Reads the files one `survey` run chooses, within `budget` bytes for
     all of them together, and each (device, inode) once."""
@@ -1213,43 +1237,74 @@ class _Reader:
         self.left = budget
         self.keep_records = keep_records
         self.full = False
-        self.seen: dict[tuple[int, int], str] = {}  # (device, inode) -> path read first
+        # (device, inode) of each file read and parsed -> (its account, its character)
+        self.seen: dict[tuple[int, int], tuple[str, str]] = {}
 
-    def read(self, rel: str) -> tuple[CharDB | None, str | None, str | None]:
-        """(record, summary, error) for the file `rel`: a file the reader
-        cannot read is an error, never an exception (any other exception is
-        a bug). The record is None unless `keep_records`."""
+    def _spent(self, account: str, who: str) -> _Read:
+        self.full = True  # every file after this one gets the same answer
+        return _Read(
+            error=(
+                "the listing's total size bound was reached (wowlab reads at most "
+                f"{_size_words(self.budget)} of {LAB_FILE_NAME} files in one listing, and the "
+                f"files before this one used it up); `wowlab char show --account {account} "
+                f"--character {who}` reads this one on its own"
+            )
+        )
+
+    def read(self, rel: str, account: str, who: str) -> _Read:
+        """The file `rel`, the `WowLab.lua` of character `who` in `account`.
+        A file the reader cannot read is an error, never an exception (any
+        other exception is a bug)."""
         path = self.flavor_path / rel
         try:
             st = os.lstat(path)
         except OSError as exc:
-            return None, None, _os_error(exc, path)
-        key = (st.st_dev, st.st_ino)
-        if st.st_ino and key in self.seen:
-            return None, None, f"the same file as {self.seen[key]} (a hard link), read once above"
-        if self.full or st.st_size > self.left:
-            self.full = True  # every file after this one gets the same answer
-            bound = (
-                f"the listing's total size bound was reached ({self.budget:,} bytes for all "
-                "files together)"
+            return _Read(error=_os_error(exc, path))
+        if st.st_size > luadata.MAX_FILE_BYTES:
+            # Refused on its own bound, before a byte is read: the total
+            # bound is not charged, so it never blocks the files after it.
+            return _Read(
+                error=f"the file holds {st.st_size} bytes, more than {luadata.MAX_FILE_BYTES}"
             )
-            return None, None, bound
-        if st.st_ino:
-            self.seen[key] = rel
+        key = (st.st_dev, st.st_ino)
+        if st.st_ino and key in self.seen:  # an inode of 0 says nothing (some file systems)
+            first_account, first = self.seen[key]
+            where = first if first_account == account else f"{first} in account {first_account}"
+            return _Read(
+                error=f"the same file as {where} (a hard link), read once, on that character's row",
+                same_as=where,
+            )
+        if self.full or self.left <= 0 or st.st_size > self.left:
+            return self._spent(account, who)
+        limit = min(luadata.MAX_FILE_BYTES, self.left)
         try:
-            data = snapshot.read_regular_file(path, limit=luadata.MAX_FILE_BYTES, expect=st)
+            data = snapshot.read_regular_file(path, limit=limit, expect=st)
+        except snapshot.UnsafeReadError as exc:
+            if limit < luadata.MAX_FILE_BYTES and _grew_past(path, limit):
+                return self._spent(account, who)  # it grew past what was left
+            return _Read(error=_os_error(exc, path))
         except OSError as exc:
-            return None, None, _os_error(exc, path)
-        self.left -= len(data)
+            return _Read(error=_os_error(exc, path))
+        self.left -= len(data)  # the bytes read, not the size the lstat saw
         try:
             record = parse_char(data)
         except LabAddonError as exc:
-            return None, None, str(exc)
+            return _Read(error=str(exc))
         except luadata.LuaLimitError as exc:
-            return None, None, f"beyond what the SavedVariables parser will hold ({exc.message})"
+            return _Read(error=f"beyond what the SavedVariables parser will hold ({exc.message})")
         except luadata.LuaDataError as exc:
-            return None, None, f"not SavedVariables data the parser accepts: {exc}"
-        return (record if self.keep_records else None), summary(record), None
+            return _Read(error=f"not SavedVariables data the parser accepts: {exc}")
+        if st.st_ino:
+            self.seen[key] = (account, who)  # only a file read and parsed stands for its twins
+        return _Read(record=record if self.keep_records else None, summary=summary(record))
+
+
+def _grew_past(path: Path, limit: int) -> bool:
+    """Whether the file at `path` now holds more than `limit` bytes."""
+    try:
+        return os.lstat(path).st_size > limit
+    except OSError:
+        return False
 
 
 # Where a place the walk could not look inside sits, for `read_all`.
@@ -1319,6 +1374,7 @@ class _Folder:
         record: CharDB | None = None,
         summary: str | None = None,
         error: str | None = None,
+        same_as: str | None = None,
     ) -> CharacterFile:
         return CharacterFile(
             label=self.label,
@@ -1331,6 +1387,7 @@ class _Folder:
             summary=summary,
             record=record,
             error=error,
+            same_as=same_as,
         )
 
     def read(self, reader: _Reader) -> CharacterFile | None:
@@ -1349,8 +1406,15 @@ class _Folder:
         if chosen in self.odd:
             return self.entry(chosen, None, error=self.odd[chosen])
         found = self.files[chosen]
-        record, words, error = reader.read(chosen)
-        return self.entry(chosen, found.mtime_ns, record=record, summary=words, error=error)
+        got = reader.read(chosen, self.account, f"{self.realm.folder}/{self.label}")
+        return self.entry(
+            chosen,
+            found.mtime_ns,
+            record=got.record,
+            summary=got.summary,
+            error=got.error,
+            same_as=got.same_as,
+        )
 
 
 def _order_key(account: str, realm_folder: str, label: str) -> tuple[str, ...]:
@@ -1403,13 +1467,20 @@ def survey(
     others. Links are never followed and non-regular entries never opened.
     Any other exception is a bug and is raised.
 
-    The run reads at most `budget` bytes in all (`MAX_SURVEY_BYTES`); once a
-    file would pass it, that file and every one after it in the order below
-    get an error instead of being read. A file already read in this run
-    (the same device and inode: a hard link) is not read again; its entry
-    says so. With `keep_records` False the entries hold each file's
-    `summary` but not its parsed record, so memory stays bounded by the
-    largest single file.
+    The run reads at most `budget` bytes of files in all (`MAX_SURVEY_BYTES`;
+    one byte more when a file grows while it is read, which is how that is
+    noticed). The bound counts bytes, not parse cost. A file over the
+    per-file bound (`luadata.MAX_FILE_BYTES`) gets its own reason and is not
+    charged. Once a file would pass the total, or grows past what is left
+    while it is read, that file and every one after it in the order below
+    get an error instead of being read; each file is charged the bytes
+    actually read. With `budget` 0 nothing is opened: only the listing
+    (`not_looked_at`) is worth reading then. A file already read and parsed
+    in this run (the same device and inode, not 0: a hard link) is not read
+    again; its entry names the character it was read for (`same_as`). A
+    link to a file that could not be read is read on its own. With
+    `keep_records` False the entries hold each file's `summary` but not its
+    parsed record, so memory stays bounded by the largest single file.
 
     The order is by account, then realm folder, then character folder, each
     compared with case folded and then as spelled: stable across runs and

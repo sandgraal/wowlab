@@ -28,9 +28,11 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+import types
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -523,43 +525,220 @@ def test_constructed_places_in_another_account_are_left_out_with_account(
 # ─── the total bound ─────────────────────────────────────────────────────────
 
 
+TINY = b'\r\nWowLabCharDB = {\r\n["schema"] = 1,\r\n}\r\n'  # constructed: a valid, tiny file
+
+
+def _bound(budget_words: str, who: str, account: str = ACCOUNT) -> str:
+    return (
+        "the listing's total size bound was reached (wowlab reads at most "
+        f"{budget_words} of WowLab.lua files in one listing, and the files before this one "
+        f"used it up); `wowlab char show --account {account} --character {who}` reads this "
+        "one on its own"
+    )
+
+
+def _size(flavor: Path, character: str) -> int:
+    return _lab_file(flavor, character).stat().st_size
+
+
+def _results(found: labaddon.AllCharacters) -> list[tuple[str, bool, str | None]]:
+    return [(e.character, e.summary is not None, e.error) for e in found.characters]
+
+
 def test_constructed_total_bound_stops_reading_and_names_every_file_after_it(
     flavor: Path,
 ) -> None:
     """A budget injected small (real files never reach `MAX_SURVEY_BYTES`):
     the first file fits, the second would pass the bound, so it and every
-    file after it in the order get the bound's reason and are not read."""
+    file after it in the order get the bound's reason and are not read,
+    even a tiny one that would fit in what is left (the bound stays
+    reached)."""
     donor = _lab_file(flavor, FIRST).read_bytes()
-    for character in ("1/Xa-A", "1/Xb-B"):
-        _plant(flavor, character, donor)
-    first_size = _lab_file(flavor, SECOND).stat().st_size
-    found = labaddon.survey(Layout(flavor), budget=first_size + 10)
-    got = [(e.character, e.summary is not None, e.error) for e in found.characters]
-    bound = (
-        f"the listing's total size bound was reached ({first_size + 10:,} bytes for all files "
-        "together)"
-    )
-    assert got == [
+    _plant(flavor, "1/Xa-A", donor)
+    _plant(flavor, "1/Zz-Tiny", TINY)
+    budget = _size(flavor, SECOND) + len(TINY) + 10
+    found = labaddon.survey(Layout(flavor), budget=budget)
+    words = f"{budget:,} bytes"
+    assert _results(found) == [
         (SECOND, True, None),
-        (FIRST, False, bound),
-        ("1/Xa-A", False, bound),
-        ("1/Xb-B", False, bound),
+        (FIRST, False, _bound(words, FIRST)),
+        ("1/Xa-A", False, _bound(words, "1/Xa-A")),
+        ("1/Zz-Tiny", False, _bound(words, "1/Zz-Tiny")),
     ]
-    assert labaddon.MAX_SURVEY_BYTES == 256 * 1024 * 1024
+
+
+def test_the_total_bound_is_64_mib_and_says_so() -> None:
+    assert labaddon.MAX_SURVEY_BYTES == 64 * 1024 * 1024
+    assert labaddon._size_words(labaddon.MAX_SURVEY_BYTES) == "64 MiB"
+    assert labaddon._size_words(23_019) == "23,019 bytes"
+
+
+def test_constructed_a_file_exactly_at_the_bound_is_read_and_the_next_is_not(
+    flavor: Path,
+) -> None:
+    budget = _size(flavor, SECOND)
+    found = labaddon.survey(Layout(flavor), budget=budget)
+    assert _results(found) == [
+        (SECOND, True, None),
+        (FIRST, False, _bound(f"{budget:,} bytes", FIRST)),
+    ]
+
+
+def test_constructed_a_budget_of_zero_opens_no_file(
+    flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    empty = _plant(flavor, "1/Aa-Empty", b"")
+
+    def never(path: Path, **kwargs: object) -> bytes:
+        raise AssertionError(f"read {path}")
+
+    monkeypatch.setattr(snapshot, "read_regular_file", never)
+    found = labaddon.survey(Layout(flavor), budget=0)
+    assert [e.summary for e in found.characters] == [None, None, None]
+    assert all("total size bound was reached" in (e.error or "") for e in found.characters)
+    assert empty.stat().st_size == 0  # even an empty file is not opened
+
+
+def test_constructed_bytes_read_are_charged_not_the_size_seen_first(
+    flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first file grows by 5 bytes between its lstat and its read: the
+    run is charged what it read, so the second file no longer fits."""
+    grown = _lab_file(flavor, SECOND)
+    budget = _size(flavor, SECOND) + 5 + _size(flavor, FIRST) - 1
+    real = snapshot.read_regular_file
+
+    def read(path: Path, **kwargs: Any) -> bytes:
+        if Path(path) == grown and grown.stat().st_size < budget:
+            with grown.open("ab") as fh:
+                fh.write(b"\r\n\r\n\n")
+        return real(path, **kwargs)
+
+    monkeypatch.setattr(snapshot, "read_regular_file", read)
+    found = labaddon.survey(Layout(flavor), budget=budget)
+    assert _results(found) == [
+        (SECOND, True, None),
+        (FIRST, False, _bound(f"{budget:,} bytes", FIRST)),
+    ]
+
+
+def test_constructed_file_swapped_between_lstat_and_open_is_refused(
+    flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The open is checked against the lstat: a file replaced in between
+    (another inode) is refused, never read in the first one's place."""
+    swapped = _lab_file(flavor, SECOND)
+    real = snapshot.read_regular_file
+
+    def read(path: Path, **kwargs: Any) -> bytes:
+        if Path(path) == swapped:
+            fresh = swapped.with_name("m12-09-fresh")
+            fresh.write_bytes(swapped.read_bytes())
+            fresh.replace(swapped)
+        return real(path, **kwargs)
+
+    monkeypatch.setattr(snapshot, "read_regular_file", read)
+    by = _by(flavor)
+    assert by[SECOND].summary is None
+    assert by[SECOND].error == "the file was replaced before it was opened"
+    assert by[FIRST].summary is not None
+
+
+def test_constructed_inode_zero_is_never_taken_for_a_hard_link(
+    flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file system that reports inode 0 for every file (some do): two
+    different files are both read, not taken for one."""
+
+    def lstat_ino_0(path: Any) -> os.stat_result:
+        st = os.lstat(path)
+        fields = (st.st_mode, 0, st.st_dev, st.st_nlink, st.st_uid, st.st_gid, st.st_size)
+        return os.stat_result((*fields, int(st.st_atime), int(st.st_mtime), int(st.st_ctime)))
+
+    real = snapshot.read_regular_file
+    monkeypatch.setattr(labaddon, "os", types.SimpleNamespace(lstat=lstat_ino_0))
+    monkeypatch.setattr(
+        snapshot, "read_regular_file", lambda path, **kw: real(path, limit=kw["limit"])
+    )
+    found = labaddon.survey(Layout(flavor))
+    assert _results(found) == [(SECOND, True, None), (FIRST, True, None)]
+    assert all(e.same_as is None for e in found.characters)
+
+
+def _hard_link(flavor: Path, source: str, character: str, account_dir: str = ACCOUNT_DIR) -> None:
+    extra = _lab_file(flavor, character, account_dir)
+    extra.parent.mkdir(parents=True)
+    try:
+        os.link(_lab_file(flavor, source), extra)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot make a hard link here: {exc}")
 
 
 def test_constructed_hard_linked_copy_is_read_once(flavor: Path) -> None:
-    extra = _lab_file(flavor, "1/Linked-Copy")
-    extra.parent.mkdir(parents=True)
-    try:
-        os.link(_lab_file(flavor, FIRST), extra)
-    except (OSError, NotImplementedError) as exc:
-        pytest.skip(f"cannot make a hard link here: {exc}")
+    _hard_link(flavor, FIRST, "1/Linked-Copy")
+    other = "WTF/Account/90000002#1"
+    _hard_link(flavor, FIRST, "2/Far-Copy", other)
+    found = labaddon.survey(Layout(flavor))
+    by = {(e.account, e.character): e for e in found.characters}
+    twin = by[(ACCOUNT, "1/Linked-Copy")]
+    assert twin.record is None and twin.summary is None and twin.same_as == FIRST
+    assert twin.error == (
+        f"the same file as {FIRST} (a hard link), read once, on that character's row"
+    )
+    far = by[("90000002#1", "2/Far-Copy")]
+    assert far.same_as == f"{FIRST} in account {ACCOUNT}"
+    assert far.error == (
+        f"the same file as {FIRST} in account {ACCOUNT} (a hard link), read once, on that "
+        "character's row"
+    )
+    assert by[(ACCOUNT, FIRST)].record is not None and by[(ACCOUNT, SECOND)].record is not None
+
+
+def test_constructed_a_hard_link_to_a_file_that_failed_is_read_on_its_own(
+    flavor: Path,
+) -> None:
+    """Only a file read and parsed stands for its twins: a twin of a file
+    that failed reports its own error, never "read once"."""
+    _lab_file(flavor, FIRST).write_bytes(b"not = a lab file\n")
+    _hard_link(flavor, FIRST, "1/Linked-Copy")
     by = _by(flavor)
-    first = f"{ACCOUNT_DIR}/{FIRST}/SavedVariables/WowLab.lua"
-    assert by["1/Linked-Copy"].record is None
-    assert by["1/Linked-Copy"].error == f"the same file as {first} (a hard link), read once above"
-    assert by[FIRST].record is not None and by[SECOND].record is not None
+    assert by[FIRST].error is not None and by[FIRST].error.startswith("not SavedVariables")
+    assert by["1/Linked-Copy"].same_as is None
+    assert by["1/Linked-Copy"].error == by[FIRST].error
+
+
+@POSIX_PERMISSIONS
+def test_constructed_a_hard_link_to_an_unreadable_file_reports_its_own_error(
+    flavor: Path,
+) -> None:
+    _hard_link(flavor, FIRST, "1/Linked-Copy")
+    target = _lab_file(flavor, FIRST)
+    target.chmod(0)
+    try:
+        by = _by(flavor)
+    finally:
+        target.chmod(0o644)
+    assert by[FIRST].error == "Permission denied"
+    assert by["1/Linked-Copy"].error == "Permission denied"
+    assert by["1/Linked-Copy"].same_as is None
+
+
+def test_constructed_a_file_over_the_per_file_bound_is_not_charged(
+    flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file refused on its own bound (checked first, nothing read) leaves
+    the total untouched: the files after it are read."""
+    monkeypatch.setattr(luadata, "MAX_FILE_BYTES", _size(flavor, SECOND) - 1)
+    budget = _size(flavor, SECOND) + 10
+    _plant(flavor, "1/Zz-Tiny", TINY)
+    found = labaddon.survey(Layout(flavor), budget=budget)
+    size = _size(flavor, SECOND)
+    assert _results(found)[0] == (
+        SECOND,
+        False,
+        f"the file holds {size} bytes, more than {size - 1}",
+    )
+    assert _results(found)[2] == ("1/Zz-Tiny", True, None)
 
 
 def test_constructed_summaries_without_records_when_asked(flavor: Path) -> None:

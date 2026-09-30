@@ -32,7 +32,7 @@ import platformdirs
 import pytest
 from typer.testing import CliRunner
 
-from wowlab_core import cli, install, labaddon
+from wowlab_core import cli, install, labaddon, snapshot
 from wowlab_core.layout import Layout
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -303,7 +303,9 @@ def test_constructed_unknown_account_is_a_usage_error(flavor: Path) -> None:
     assert result.stdout.split("\n")[0] == HEADING
     unknown = run("char", "list", "--account", "Nobody")
     assert unknown.exit_code == cli.EXIT_USAGE
-    assert unknown.stderr == f"wowlab: no account folder 'Nobody' (accounts: {ACCOUNT})\n"
+    assert unknown.stderr == (
+        f"wowlab: no account folder 'Nobody' (accounts wowlab could look inside: {ACCOUNT})\n"
+    )
     assert unknown.stdout == ""
 
 
@@ -381,11 +383,11 @@ def test_constructed_unlistable_saved_variables_folder_is_named_once(flavor: Pat
         folder.chmod(0o755)
     assert result.exit_code == 1
     assert dict(_rows(result.stdout))[SECOND] == (
-        "not read: could not look inside its SavedVariables folder (Permission denied)"
+        "not read: could not look inside the character's SavedVariables folder (Permission denied)"
     )
     assert result.stderr == (
-        f"wowlab: could not look inside {ACCOUNT_DIR}/{SECOND}/SavedVariables (its "
-        "SavedVariables folder): Permission denied\n"
+        f"wowlab: could not look inside {ACCOUNT_DIR}/{SECOND}/SavedVariables (the "
+        "character's SavedVariables folder): Permission denied\n"
     )
 
 
@@ -436,6 +438,75 @@ def test_constructed_account_option_naming_a_linked_account_names_the_link(
     assert [n.path for n in report.not_looked_at] == [f"WTF/Account/{linked}"]
     nowhere = run("char", "list", "--account", "Nobody")
     assert nowhere.exit_code == cli.EXIT_USAGE
+    assert nowhere.stderr == (
+        f"wowlab: no account folder 'Nobody' (accounts wowlab could look inside: {ACCOUNT})\n"
+    )
+
+
+def test_constructed_account_option_is_folded_for_a_linked_account(
+    flavor: Path, tmp_path: Path
+) -> None:
+    """`--account` is compared with case folded against a linked account as
+    against a listed one, and the report spells it as the install does."""
+    outside = tmp_path / "outside-account"
+    shutil.copytree(flavor / "WTF/Account" / ACCOUNT, outside)
+    try:
+        (flavor / "WTF/Account/LinkedAcct").symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot create a symlink here: {exc}")
+    result = run("char", "list", "--account", "linkedacct")
+    assert result.exit_code == 1
+    assert (
+        result.stderr == f"wowlab: could not look inside WTF/Account/LinkedAcct: {NOT_FOLLOWED}\n"
+    )
+    report = cli.CharListReport.model_validate_json(
+        run("char", "list", "--account", "linkedacct", "--json").stdout
+    )
+    assert report.account == "LinkedAcct"
+    assert [n.path for n in report.not_looked_at] == ["WTF/Account/LinkedAcct"]
+
+
+def test_constructed_a_mistyped_account_opens_no_file(
+    flavor: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deciding whether a missing account is hidden needs the listing only:
+    no WowLab.lua is opened before the usage error, nor before the hidden
+    account's own answer."""
+    outside = tmp_path / "outside-account"
+    shutil.copytree(flavor / "WTF/Account" / ACCOUNT, outside)
+    try:
+        (flavor / "WTF/Account/LinkedAcct").symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot create a symlink here: {exc}")
+
+    def never(path: Path, **kwargs: object) -> bytes:
+        raise AssertionError(f"read {path}")
+
+    monkeypatch.setattr(snapshot, "read_regular_file", never)
+    typo = run("char", "list", "--account", "Nobody")
+    assert typo.exit_code == cli.EXIT_USAGE, (typo.stderr, typo.exception)
+    hidden = run("char", "list", "--account", "LinkedAcct")
+    assert hidden.exit_code == 1
+    assert not isinstance(hidden.exception, AssertionError), hidden.exception
+    assert "not followed" in hidden.stderr
+
+
+def test_constructed_hard_linked_copy_has_its_own_row_and_line(flavor: Path) -> None:
+    extra = _lab_file(flavor, "1/Linked-Copy")
+    extra.parent.mkdir(parents=True)
+    try:
+        os.link(_lab_file(flavor, FIRST), extra)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot make a hard link here: {exc}")
+    result = run("char", "list")
+    assert result.exit_code == 1
+    twin = f"the same file as {FIRST} (a hard link), read once, on that character's row"
+    assert dict(_rows(result.stdout))["1/Linked-Copy"] == twin
+    assert "not read" not in dict(_rows(result.stdout))["1/Linked-Copy"]
+    assert (
+        result.stderr
+        == f"wowlab: {ACCOUNT_DIR}/1/Linked-Copy/SavedVariables/WowLab.lua is {twin}\n"
+    )
 
 
 @POSIX_PERMISSIONS

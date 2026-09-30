@@ -68,8 +68,10 @@ folder it cannot list), is listed or noted with the reason, named on stderr,
 and makes the command exit 1 after the others are printed (with `--account`
 too, when the account folder itself could not be looked at). Both commands
 choose a character's file by `labaddon.choose_lab_file`, but `char show`
-gives it regular files only, so for a link, FIFO or folder named like the
-file the two can still answer differently.
+(and `looks import-char`) give it regular files only, so for a link, FIFO or
+folder named like the file, or a SavedVariables/ folder that cannot be
+listed, they can still answer differently: there `char list` says it could
+not look, and `char show` answers as if the character had no `WowLab.lua`.
 """
 
 import base64
@@ -506,7 +508,10 @@ def _select_account(lay: layout.Layout, name: str | None) -> layout.Account:
         ]
         if len(match) == 1:
             return match[0]
-        raise CliError(f"no account folder {name!r} (accounts: {names})", EXIT_USAGE)
+        raise CliError(
+            f"no account folder {name!r} (accounts wowlab could look inside: {names})",
+            EXIT_USAGE,
+        )
     if len(accounts) == 1:
         return accounts[0]
     if not accounts:
@@ -4547,8 +4552,10 @@ def _lab_char_file(
     else in the folder holding the newest file by modification time (ties by
     path, said in the third value). Within the folder the file is the one
     `labaddon.choose_lab_file` chooses (M12-09), the rule `char list` uses;
-    `files` are regular files only, so for a `WowLab.lua` that is a link,
-    FIFO or folder this can still answer differently from `char list`."""
+    `files` are regular files only, so for a link, FIFO or folder of that
+    name, or a SavedVariables/ folder that cannot be listed, this can still
+    answer differently from `char list`: it finds no file there and says so
+    (with install advice), where `char list` says it could not look."""
     char_files = [f for f in files if f.scope == "character"]
     how: Literal["--character", "latest"]
     tie = ""
@@ -4619,7 +4626,10 @@ class CharListReport(_Out):
     `not_looked_at` is not empty."""
 
     flavor_folder: str
-    account: layout.FsText | None  # --account as the layout spells it; None: every account
+    # --account as the layout spells the account folder, or as the place wowlab
+    # could not look inside spells it; as typed when neither names it (such as
+    # an unlistable WTF/Account/); None: every account.
+    account: layout.FsText | None
     characters: list[labaddon.CharacterFile]
     not_looked_at: list[labaddon.NotLookedAt]
     notes: list[str]
@@ -4637,7 +4647,7 @@ _CHAR_LIST_NOTES = [
 # How a row and stderr name the folder `CharacterFile.file` is, when it is one.
 _BLOCKED_PLACE = {
     "character_folder": "the character folder",
-    "saved_variables_folder": "its SavedVariables folder",
+    "saved_variables_folder": "the character's SavedVariables folder",
 }
 
 
@@ -4650,6 +4660,8 @@ def _row_words(e: labaddon.CharacterFile) -> str:
         return e.summary
     if e.place in _BLOCKED_PLACE:
         return f"not read: could not look inside {_BLOCKED_PLACE[e.place]} ({e.error})"
+    if e.same_as is not None:  # skipped on purpose: the same bytes, read on another row
+        return f"{e.error}"
     return f"not read: {e.error}"
 
 
@@ -4664,8 +4676,9 @@ def _unseen_words(n: int) -> str:
 def _hidden_account(lay: layout.Layout, name: str) -> list[labaddon.NotLookedAt]:
     """What wowlab could not look inside that could be, or hold, the account
     folder `name` (compared with case folded, as `_select_account` does):
-    a place above every account, or one in an account of that name."""
-    found = labaddon.survey(lay, keep_records=False).not_looked_at
+    a place above every account, or one in an account of that name. The
+    listing alone answers this: `budget=0` opens no file."""
+    found = labaddon.survey(lay, keep_records=False, budget=0).not_looked_at
     return [n for n in found if n.account is None or n.account.casefold() == name.casefold()]
 
 
@@ -4759,6 +4772,8 @@ def char_list(
                 _BLOCKED_PLACE[e.place],
                 e.error,
             )
+        elif e.same_as is not None:
+            _note("wowlab: {} is {}", e.file, e.error)
         else:
             _note("wowlab: could not read {}: {}", e.file, e.error)
     for place in unseen:
