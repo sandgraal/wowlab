@@ -62,6 +62,10 @@ For engineers who do not play World of Warcraft. Several of these are named misl
 
 **`C_Traits`** — the modern client API namespace for talent trees (configs, trees, nodes, entries, ranks). It replaced the old per-tab talent functions, and it is what Forever is reported to use as well (`docs/DATA_SOURCES.md`). An addon reads a character's talents through it; the tree definitions themselves are in the `Trait*` DB2 tables.
 
+**Trait tables** — the DB2 tables that define talent trees, joined by id: `TraitTree` (a tree, with a `TraitSystemID`) → `TraitNode` (a place in the tree, with `PosX`, `PosY`) → `TraitNodeXTraitNodeEntry` → `TraitNodeEntry` (what a node offers, with `MaxRanks`; a node with several entries is a choice) → `TraitDefinition` (names a `SpellID`) → `SpellName` (the text). `TraitEdge` joins two nodes, `TraitCond` holds gates (points spent, level, and others), `TraitCurrency` and `TraitTreeXTraitCurrency` are the point pools. The meaning of the enum columns is community documentation, **[verify]** on Forever. On the beta (build 1.60.1.70058) the tables are small: 17 trees, 558 nodes. `TraitSubTree` and the loadout tables are not served at that build (wago answers `400`, which cannot tell "absent from this game version" from "no such table").
+
+**Trait system id** — `TraitTree.TraitSystemID`, also recorded per tree by the lab-addon as `system_id`. In the 70058 capture the class talent tree (1116) is system 10 and the four trees of the one Legacy candidate are system 45; nine trees in the table are 10 and four are 45. That 45 is *the* Legacy system is **[verify]**: the addon does not record which candidate is Legacy.
+
 ## Content and progression
 
 **Raid** — organized group content, 10-30 players, weekly lockout. Difficulty tiers: LFR, Normal, Heroic, Mythic — ascending, with correspondingly higher item level rewards.

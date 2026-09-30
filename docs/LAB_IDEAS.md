@@ -9,6 +9,11 @@ Blizzard). **Needs** = `wowlab_core` modules it stands on. **New** = the
 capability it has to add. **Size** = rough, for one wave: `S` a few tickets,
 `M` a wave, `L` more than one wave.
 
+**Picked.** Wave 2 (M11, 2026-09-28): lab-addon, customization-sandbox,
+profiles, sv-merge. Wave 3 (M12, 2026-09-29): **db2lake**, **char-planner**
+(talents first) and **alt-dashboard**; the plan is `docs/LAB_PLAN.md` §14 and
+the rows below stay as the original descriptions.
+
 Two things from the original brainstorm are deliberately absent: anything
 needing memory access, injection, packets or a modified `Data/` (ADR-0023),
 and a private-server sandbox, which would live in a separate private
