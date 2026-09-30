@@ -16,20 +16,32 @@ tool follows). The CSV is parsed only to read one cell of each line, and a
 line here is one CSV record: a quoted field holding a line break keeps its
 record's physical lines together, so they are kept or dropped as one.
 
-Refusals (exit 1): `--out` is inside a game install (a directory with
-`.build.info` in it or above it, symlinks resolved): only `guard` writes
-into an install (L1, L2); the output file already exists (a committed fixture
-is never replaced); the source or `--values-from` is over `--max-bytes`
-(64 MiB unless given); the source's SHA-256 is not the one given (so the
-provenance row names exactly the download that was cut); the column is
-missing from the header or named twice; a line is not valid UTF-8, has an
-unterminated quote, cannot be read as CSV, or has a different number of
-fields from the header; the header is longer than `csv.field_size_limit()`
-bytes, or a data line longer than the header's width times that limit plus
-three (two quotes and a comma per field), checked before the line is decoded.
-Everything is checked before the output file is created; if writing it then
-fails part-way (a full disk), the file this run created is removed, so a
-refusal never leaves a file behind.
+Refusals (exit 1):
+
+- `--out` is inside a game install (a directory with `.build.info` in it or
+  above it, symlinks resolved), or its folder cannot be resolved (a symlink
+  loop): only `guard` writes into an install (L1, L2);
+- the output file already exists (a committed fixture is never replaced);
+- the source or `--values-from` is over `--max-bytes` (64 MiB unless given;
+  at most 1 GiB, the table cap `gamedata` uses);
+- the source's SHA-256 is not the one given (so the provenance row names
+  exactly the download that was cut);
+- the column is missing from the header or named twice;
+- a line is not valid UTF-8, has an unterminated quote, cannot be read as
+  CSV, or has a different number of fields from the header;
+- the header line is longer than `csv.field_size_limit()` bytes (131072 by
+  default) or has more than 4096 columns; a data line, counted in bytes with
+  its terminator, is longer than the smaller of 1 MiB and the header's
+  column count times (`csv.field_size_limit()` + 3). Both are checked before
+  the line is decoded. (A data line within that count can still be refused
+  by the CSV reader, whose limit is per field, in characters);
+- the set of values holds more than 100000 distinct values (real use is a
+  few hundred).
+
+Everything, the printed description included, is worked out before the
+output file is created. If writing it then fails part-way (a full disk), the
+file this run created is removed, so a refusal or a failure never leaves a
+file behind. Any other error ends in one line on stderr and exit 1.
 
 Matching is exact text: the cell as the CSV reader gives it (quotes removed)
 must equal a value character for character, so `7` does not match `007`.
@@ -40,11 +52,13 @@ for "no spell"). An empty set must be asked for with `--no-values`: the output
 is then the header alone.
 
 On success it prints the filter, the counts and the values that matched no
-line, for the provenance row in `lab/core/tests/fixtures/README.md`. That
-text goes into a public file, so every name and value from the input or the
-command line is printed as is only when it is printable (`str.isprintable`:
-no control, format, bidi or line-separator character); otherwise it is
-printed as its `ascii()` escape. Standard library only; it never touches the
+line (the first 20 in numeric order, then how many more), for the provenance
+row in `lab/core/tests/fixtures/README.md`. That text goes into a public
+file, so every name and value from the input or the command line is printed
+as is only when it is printable (`str.isprintable`: no control, format, bidi
+or line-separator character); otherwise it is printed as its `ascii()`
+escape. A line the terminal's encoding cannot represent is printed with
+backslash escapes instead. Standard library only; it never touches the
 network.
 """
 
@@ -56,13 +70,20 @@ import hashlib
 import io
 import re
 import sys
-from collections.abc import Iterator, Sequence
+from collections.abc import Collection, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TextIO
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 INSTALL_MARKER = ".build.info"  # at an install's root (docs/LAB_FILE_MAP.md)
 DEFAULT_MAX_BYTES = 64 * 1024 * 1024
+MAX_BYTES_CEILING = 1024 * 1024 * 1024  # gamedata's table cap
+MAX_COLUMNS = 4096  # the widest committed wago table has 62
+MAX_LINE_BYTES = 1024 * 1024  # a wago line is a few hundred bytes
+MAX_VALUES = 100_000
+SHOWN_UNMATCHED = 20
+_CHUNK = 1024 * 1024
 
 
 class SubsetError(Exception):
@@ -73,6 +94,16 @@ def _safe(text: str) -> str:
     """``text`` for a terminal and a public provenance row: as is when every
     character is printable, else its ``ascii()`` escape (quoted)."""
     return text if text.isprintable() else ascii(text)
+
+
+def _emit(text: str, stream: TextIO) -> None:
+    """Print ``text``; if ``stream``'s encoding cannot represent it, print it
+    with backslash escapes instead of failing."""
+    try:
+        text.encode(stream.encoding or "utf-8")
+    except (UnicodeEncodeError, LookupError):
+        text = text.encode("ascii", "backslashreplace").decode("ascii")
+    print(text, file=stream)
 
 
 @dataclass(frozen=True)
@@ -141,13 +172,20 @@ def fields(record: Record) -> list[str]:
     return rows[0]
 
 
+def line_cap(columns: int) -> int:
+    """The most bytes a data line may have, terminator included: the smaller
+    of ``MAX_LINE_BYTES`` and ``columns`` times (``csv.field_size_limit()`` + 3)."""
+    return min(MAX_LINE_BYTES, columns * (csv.field_size_limit() + 3))
+
+
 def table(data: bytes) -> Iterator[tuple[Record, list[str]]]:
     """The header record and its names, then every data record and its cells.
 
-    A record's length is checked before it is decoded: the header against
-    ``csv.field_size_limit()``, a data record against what the header's width
-    of fields at that limit can take, so a huge line is refused without being
-    read as text.
+    Byte counts are checked before a line is decoded: the header line
+    (terminator included) must be at most ``csv.field_size_limit()`` bytes,
+    and every data line at most ``line_cap(columns)`` bytes. After decoding,
+    the header may have at most ``MAX_COLUMNS`` columns and every data line
+    must have exactly as many fields.
     """
     it = records(data)
     header = next(it, None)
@@ -157,13 +195,15 @@ def table(data: bytes) -> Iterator[tuple[Record, list[str]]]:
     if len(header.raw) > limit:
         raise SubsetError(f"line 1: the header is {len(header.raw)} bytes, over {limit}")
     names = fields(header)
+    if len(names) > MAX_COLUMNS:
+        raise SubsetError(f"line 1: the header has {len(names)} columns, over {MAX_COLUMNS}")
     yield header, names
-    cap = len(names) * (limit + 3)
+    cap = line_cap(len(names))
     for record in it:
         if len(record.raw) > cap:
             raise SubsetError(
-                f"line {record.line}: {len(record.raw)} bytes, more than {len(names)} "
-                f"fields can hold ({cap})"
+                f"line {record.line}: {len(record.raw)} bytes, longer than the {cap} "
+                f"a line of {len(names)} columns may have"
             )
         cells = fields(record)
         if len(cells) != len(names):
@@ -182,12 +222,12 @@ def column_index(header: list[str], column: str) -> int:
     return found[0]
 
 
-def select(data: bytes, column: str, values: Sequence[str]) -> Subset:
-    """The header and every record whose ``column`` cell is in ``values``."""
+def select(data: bytes, column: str, wanted: Collection[str]) -> Subset:
+    """The header and every record whose ``column`` cell is in ``wanted``
+    (an ordered collection with fast membership, such as a dict's keys)."""
     rows = table(data)
     header, names = next(rows)
     index = column_index(names, column)
-    wanted = set(values)
     seen: set[str] = set()
     out = bytearray(header.raw)
     kept = 0
@@ -198,11 +238,11 @@ def select(data: bytes, column: str, values: Sequence[str]) -> Subset:
             out += record.raw
             kept += 1
             seen.add(cells[index])
-    unmatched = [v for v in dict.fromkeys(values) if v not in seen]
+    unmatched = [v for v in wanted if v not in seen]
     return Subset(bytes(out), kept, total, unmatched)
 
 
-def values_from(data: bytes, columns: Sequence[str]) -> list[str]:
+def values_from(data: bytes, columns: Sequence[str]) -> dict[str, None]:
     """Distinct non-empty cells of ``columns`` in ``data``, in first-seen order."""
     rows = table(data)
     _, names = next(rows)
@@ -212,12 +252,20 @@ def values_from(data: bytes, columns: Sequence[str]) -> list[str]:
         for i in indexes:
             if cells[i] != "":
                 found.setdefault(cells[i], None)
-    return list(found)
+        if len(found) > MAX_VALUES:
+            raise SubsetError(f"more than {MAX_VALUES} distinct values")
+    return found
 
 
 def refuse_install(out: Path) -> None:
     """Refuse an output path inside a game install, every symlink resolved."""
-    parent = out.parent.resolve()
+    try:
+        parent = out.parent.resolve()
+    except (OSError, RuntimeError) as exc:  # RuntimeError: a symlink loop (3.12)
+        raise SubsetError(
+            f"cannot resolve the folder of {_safe(str(out))} ({_safe(str(exc))}), "
+            "so it cannot be shown to be outside a game install"
+        ) from None
     for candidate in (parent, *parent.parents):
         if (candidate / INSTALL_MARKER).exists():
             raise SubsetError(
@@ -227,13 +275,18 @@ def refuse_install(out: Path) -> None:
 
 
 def read_capped(path: Path, max_bytes: int) -> bytes:
+    """The file's bytes, read in chunks so nothing is allocated for bytes
+    that are not there; refused once it passes ``max_bytes``."""
+    buf = bytearray()
     with path.open("rb") as handle:
-        data = handle.read(max_bytes + 1)
-    if len(data) > max_bytes:
-        raise SubsetError(
-            f"{_safe(path.name)} is over {max_bytes} bytes; --max-bytes allows a larger file"
-        )
-    return data
+        while chunk := handle.read(min(_CHUNK, max_bytes + 1 - len(buf))):
+            buf += chunk
+            if len(buf) > max_bytes:
+                raise SubsetError(
+                    f"{_safe(path.name)} is over {max_bytes} bytes; "
+                    "--max-bytes allows a larger file"
+                )
+    return bytes(buf)
 
 
 def write_new(path: Path, data: bytes) -> None:
@@ -248,13 +301,20 @@ def write_new(path: Path, data: bytes) -> None:
     try:
         with handle:
             handle.write(data)
-    except BaseException:
+    except BaseException as exc:
         path.unlink(missing_ok=True)
+        if isinstance(exc, OSError) and exc.filename is None:
+            raise OSError(exc.errno, exc.strerror or str(exc), str(path)) from exc
         raise
 
 
-def _numeric_key(value: str) -> tuple[int, int, str]:
-    return (0, int(value), "") if value.isdecimal() and value.isascii() else (1, 0, value)
+def _numeric_key(value: str) -> tuple[int, int, str, str]:
+    """Decimal text in numeric order without ``int()`` (which refuses more
+    than 4300 digits), then everything else in text order."""
+    if value.isascii() and value.isdecimal():
+        digits = value.lstrip("0")
+        return (0, len(digits), digits, value)
+    return (1, 0, "", value)
 
 
 def describe(
@@ -262,12 +322,15 @@ def describe(
     data: bytes,
     digest: str,
     column: str,
-    values: Sequence[str],
+    values: Collection[str],
     origin: str,
     subset: Subset,
     out: Path,
 ) -> str:
-    unmatched = [_safe(v) for v in sorted(subset.unmatched, key=_numeric_key)]
+    unmatched = sorted(subset.unmatched, key=_numeric_key)
+    shown = ", ".join(_safe(v) for v in unmatched[:SHOWN_UNMATCHED])
+    if len(unmatched) > SHOWN_UNMATCHED:
+        shown = f"the first {SHOWN_UNMATCHED}: {shown}; {len(unmatched) - SHOWN_UNMATCHED} more"
     lines = [
         f"source: {_safe(source.name)}, {len(data)} bytes, sha256 {digest}, "
         f"{subset.total} data lines",
@@ -275,8 +338,7 @@ def describe(
         f"kept: the header and {subset.kept} of {subset.total} data lines, in file order, "
         f"to {_safe(out.name)} ({len(subset.data)} bytes, "
         f"sha256 {hashlib.sha256(subset.data).hexdigest()})",
-        f"values with no line: {len(unmatched)}"
-        + (f" ({', '.join(unmatched)})" if unmatched else ""),
+        f"values with no line: {len(unmatched)}" + (f" ({shown})" if unmatched else ""),
     ]
     return "\n".join(lines)
 
@@ -313,7 +375,8 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--max-bytes",
         type=int,
         default=DEFAULT_MAX_BYTES,
-        help=f"refuse a source or --values-from larger than this (default {DEFAULT_MAX_BYTES})",
+        help="refuse a source or --values-from larger than this "
+        f"(default {DEFAULT_MAX_BYTES}, at most {MAX_BYTES_CEILING})",
     )
     parser.add_argument("--out", type=Path, required=True, help="the subset; must not exist")
     args = parser.parse_args(argv)
@@ -326,8 +389,8 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         parser.error("--value must not be empty (an unset shell variable?)")
     if not _SHA256.fullmatch(args.sha256):
         parser.error("--sha256 must be 64 lower-case hex digits")
-    if args.max_bytes < 1:
-        parser.error("--max-bytes must be at least 1")
+    if not 1 <= args.max_bytes <= MAX_BYTES_CEILING:
+        parser.error(f"--max-bytes must be from 1 to {MAX_BYTES_CEILING}")
     return args
 
 
@@ -341,7 +404,7 @@ def run(args: argparse.Namespace) -> int:
             f"{_safe(args.source.name)}: sha256 is {digest}, not {args.sha256}; "
             "cut only the download the provenance row names"
         )
-    values = list(dict.fromkeys(args.value))
+    values: dict[str, None] = dict.fromkeys(args.value)
     origins: list[str] = []
     if args.value:
         origins.append(f"{len(values)} given with --value")
@@ -356,18 +419,22 @@ def run(args: argparse.Namespace) -> int:
             f"the non-empty {columns} cells of {_safe(args.values_from.name)} "
             f"(sha256 {hashlib.sha256(ids).hexdigest()}): {len(found)} distinct"
         )
-        values = list(dict.fromkeys([*values, *found]))
+        values.update(found)
     if args.exclude:
-        excluded = set(args.exclude)
-        dropped = sum(1 for v in values if v in excluded)
-        values = [v for v in values if v not in excluded]
-        shown = ", ".join(_safe(v) for v in dict.fromkeys(args.exclude))
+        excluded = dict.fromkeys(args.exclude)
+        dropped = sum(1 for v in excluded if v in values)
+        for v in excluded:
+            values.pop(v, None)
+        shown = ", ".join(_safe(v) for v in excluded)
         origins.append(f"except {shown} ({dropped} dropped)")
     if args.no_values:
         origins.append("an empty set, asked for with --no-values")
-    subset = select(data, args.column, values)
+    if len(values) > MAX_VALUES:
+        raise SubsetError(f"{len(values)} distinct values, more than {MAX_VALUES}")
+    subset = select(data, args.column, values.keys())
+    text = describe(args.source, data, digest, args.column, values, "; ".join(origins), subset, out)
     write_new(out, subset.data)
-    print(describe(args.source, data, digest, args.column, values, "; ".join(origins), subset, out))
+    _emit(text, sys.stdout)
     return 0
 
 
@@ -376,12 +443,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return run(args)
     except SubsetError as exc:
-        print(f"wago_subset: refused: {exc}", file=sys.stderr)
-        return 1
+        _emit(f"wago_subset: refused: {exc}", sys.stderr)
     except OSError as exc:
         where = _safe(str(exc.filename)) if exc.filename is not None else "?"
-        print(f"wago_subset: {_safe(exc.strerror or str(exc))}: {where}", file=sys.stderr)
-        return 1
+        _emit(f"wago_subset: {_safe(exc.strerror or str(exc))}: {where}", sys.stderr)
+    except (RuntimeError, ValueError, MemoryError, OverflowError) as exc:
+        detail = _safe(str(exc)) or "no detail"
+        _emit(f"wago_subset: {type(exc).__name__}: {detail}", sys.stderr)
+    return 1
 
 
 if __name__ == "__main__":

@@ -317,33 +317,40 @@ def test_constructed_empty_value_is_a_usage_error(tmp_path: Path) -> None:
     assert not (tmp_path / "out.csv").exists()
 
 
-def test_constructed_source_over_max_bytes_is_refused(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("delta", "code"),
+    [(-1, 1), (0, 0), (1, 0)],
+    ids=["constructed-cap-one-under-the-file", "constructed-cap-at-the-file", "constructed-over"],
+)
+def test_constructed_max_bytes_boundary(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], delta: int, code: int
 ) -> None:
-    err = _refused(
-        tmp_path,
-        capsys,
-        CONSTRUCTED,
-        "--column",
-        "ID",
-        "--value",
-        "1",
-        "--max-bytes",
-        str(len(CONSTRUCTED) - 1),
+    cap = len(CONSTRUCTED) + delta
+    got, out = _run(
+        tmp_path, CONSTRUCTED, "--column", "ID", "--value", "1", "--max-bytes", str(cap)
     )
-    assert f"over {len(CONSTRUCTED) - 1} bytes" in err
+    assert (got, out.exists()) == (code, code == 0)
+    if code:
+        assert f"source.csv is over {cap} bytes" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["0", "-1", str(2**30 + 1), str(10**15), str(2**63)],
+    ids=lambda v: f"constructed-{v}",
+)
+def test_constructed_max_bytes_out_of_range_is_a_usage_error(tmp_path: Path, value: str) -> None:
+    with pytest.raises(SystemExit) as info:
+        _run(tmp_path, CONSTRUCTED, "--column", "ID", "--value", "1", "--max-bytes", value)
+    assert info.value.code == 2
+    assert not (tmp_path / "out.csv").exists()
+
+
+def test_constructed_max_bytes_ceiling_itself_is_accepted(tmp_path: Path) -> None:
     code, out = _run(
-        tmp_path,
-        CONSTRUCTED,
-        "--column",
-        "ID",
-        "--value",
-        "1",
-        "--max-bytes",
-        str(len(CONSTRUCTED)),
+        tmp_path, CONSTRUCTED, "--column", "ID", "--value", "1", "--max-bytes", str(2**30)
     )
-    assert code == 0, "a file exactly at the cap is read"
-    assert out.exists()
+    assert code == 0 and out.exists()
 
 
 def test_constructed_values_from_over_max_bytes_is_refused(
@@ -367,38 +374,198 @@ def test_constructed_values_from_over_max_bytes_is_refused(
     assert "ids.csv is over" in err
 
 
-def test_constructed_long_record_is_refused_before_it_is_decoded(
+# Line-length limits. Over a limit, the line is invalid UTF-8 throughout, so a
+# refusal that names UTF-8 would mean the line was decoded before its length
+# was checked.
+
+
+@pytest.mark.parametrize(
+    ("delta", "refused"),
+    [(-1, False), (0, False), (1, True)],
+    ids=["constructed-limit-less-1", "constructed-at-limit", "constructed-limit-plus-1"],
+)
+def test_constructed_header_length_boundary(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], delta: int, refused: bool
+) -> None:
+    size = csv.field_size_limit() + delta
+    header = b"ID," + (b"\xff" if refused else b"x") * (size - 4) + b"\n"
+    assert len(header) == size
+    code, out = _run(tmp_path, header + b"1,a\n", "--column", "ID", "--value", "1")
+    if refused:
+        err = capsys.readouterr().err
+        assert (code, out.exists()) == (1, False)
+        assert f"the header is {size} bytes" in err and "UTF-8" not in err
+    else:
+        assert code == 0 and out.read_bytes() == header + b"1,a\n"
+
+
+@pytest.mark.parametrize(
+    ("columns", "refused"),
+    [(4096, False), (4097, True)],
+    ids=["constructed-4096-columns", "constructed-4097-columns"],
+)
+def test_constructed_column_count_boundary(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], columns: int, refused: bool
+) -> None:
+    source = b"ID" + b"," * (columns - 1) + b"\n1" + b"," * (columns - 1) + b"\n"
+    code, out = _run(tmp_path, source, "--column", "ID", "--value", "1")
+    if refused:
+        assert (code, out.exists()) == (1, False)
+        assert f"the header has {columns} columns, over 4096" in capsys.readouterr().err
+    else:
+        assert code == 0 and out.read_bytes() == source
+
+
+@pytest.mark.parametrize(
+    ("terminator", "refused"),
+    [(b"\n", False), (b"\r\n", True)],
+    ids=["constructed-at-the-cap", "constructed-one-over"],
+)
+def test_constructed_line_length_boundary_for_two_columns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], terminator: bytes, refused: bool
+) -> None:
+    """Two quoted fields at the field limit and LF are exactly the cap of
+    2 x (limit + 3) bytes; the same line with CRLF is one byte over."""
+    limit = csv.field_size_limit()
+    cap = 2 * (limit + 3)
+    assert wago_subset.line_cap(2) == cap
+    fill = b"\xff" if refused else b"x"
+    line = b'"' + fill * limit + b'","' + fill * limit + b'"' + terminator
+    assert len(line) == cap + (len(terminator) - 1)
+    source = b"ID,Name\n" + line + b"1,a\n"
+    code, out = _run(tmp_path, source, "--column", "ID", "--value", "1")
+    if refused:
+        err = capsys.readouterr().err
+        assert (code, out.exists()) == (1, False)
+        assert f"{cap + 1} bytes, longer than the {cap}" in err and "UTF-8" not in err
+    else:
+        assert code == 0 and out.read_bytes() == b"ID,Name\n1,a\n"
+
+
+@pytest.mark.parametrize(
+    ("extra", "refused"),
+    [(0, False), (1, True)],
+    ids=["constructed-at-one-mebibyte", "constructed-one-byte-over"],
+)
+def test_constructed_line_length_boundary_at_one_mebibyte(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], extra: int, refused: bool
+) -> None:
+    """Ten columns could hold more than 1 MiB of fields; the cap is 1 MiB."""
+    columns = 10
+    cap = wago_subset.MAX_LINE_BYTES
+    assert cap == 1024 * 1024 and wago_subset.line_cap(columns) == cap
+    text = cap + extra - len(b"2,") - (columns - 2) - len(b"\n")  # bytes in fields 2 to 10
+    sizes = [text // 9 + (1 if i < text % 9 else 0) for i in range(9)]
+    fill = b"\xff" if refused else b"x"
+    line = b"2," + b",".join(fill * n for n in sizes) + b"\n"
+    assert len(line) == cap + extra
+    header = b"ID," + b",".join(b"c%d" % i for i in range(columns - 1)) + b"\n"
+    last = b"1" + b"," * (columns - 1) + b"\n"
+    code, out = _run(tmp_path, header + line + last, "--column", "ID", "--value", "1")
+    if refused:
+        err = capsys.readouterr().err
+        assert (code, out.exists()) == (1, False)
+        assert f"{cap + 1} bytes, longer than the {cap}" in err and "UTF-8" not in err
+    else:
+        assert code == 0 and out.read_bytes() == header + last
+
+
+def test_constructed_widest_header_does_not_lift_the_line_limit(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    cap = 2 * (csv.field_size_limit() + 3)
-    # Invalid UTF-8 throughout: decoding it first would give a UTF-8 error.
-    source = b"ID,Name\n1,a\n2," + b"\xff" * cap + b"\n"
+    source = b"ID" + b"," * 4095 + b"\n2," + b"\xff" * (1024 * 1024) + b"\n"
     err = _refused(tmp_path, capsys, source, "--column", "ID", "--value", "1")
-    assert f"more than 2 fields can hold ({cap})" in err
-    assert "UTF-8" not in err
+    assert "longer than the 1048576" in err and "UTF-8" not in err
 
 
-def test_constructed_long_header_is_refused_before_it_is_decoded(
+# ─── the value set ───────────────────────────────────────────────────────────
+
+
+def _ids_file(tmp_path: Path, count: int, start: int = 0) -> Path:
+    ids = tmp_path / "ids.csv"
+    ids.write_bytes(b"SpellID\n" + b"".join(b"%d\n" % i for i in range(start, start + count)))
+    return ids
+
+
+def test_constructed_more_distinct_values_than_the_limit_is_refused(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    source = b"ID," + b"\xff" * csv.field_size_limit() + b"\n1,a\n"
-    err = _refused(tmp_path, capsys, source, "--column", "ID", "--value", "1")
-    assert "the header is" in err
-    assert "UTF-8" not in err
+    limit = wago_subset.MAX_VALUES
+    ids = _ids_file(tmp_path, limit + 1)
+    args = ("--column", "ID", "--values-from", str(ids), "--values-column", "SpellID")
+    err = _refused(tmp_path, capsys, CONSTRUCTED, *args)
+    assert f"ids.csv: more than {limit} distinct values" in err
 
 
-def test_constructed_a_failed_write_leaves_no_file(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+def test_constructed_the_limit_counts_value_and_values_from_together(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    limit = wago_subset.MAX_VALUES
+    ids = _ids_file(tmp_path, limit)
+    args = ("--column", "ID", "--values-from", str(ids), "--values-column", "SpellID")
+    err = _refused(tmp_path, capsys, CONSTRUCTED, *args, "--value", "x")
+    assert f"{limit + 1} distinct values, more than {limit}" in err
+
+
+def test_constructed_the_value_limit_itself_is_accepted_and_the_print_stays_short(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    limit = wago_subset.MAX_VALUES
+    ids = _ids_file(tmp_path, limit)
+    code, out = _run(
+        tmp_path,
+        CONSTRUCTED,
+        "--column",
+        "ID",
+        "--values-from",
+        str(ids),
+        "--values-column",
+        "SpellID",
+    )
+    assert code == 0 and out.exists()
+    printed = capsys.readouterr().out
+    assert f"in {limit} distinct values" in printed
+    # ids 1 to 7 have a line ("007" is not "7"), the rest do not
+    last = printed.splitlines()[-1]
+    assert last.startswith(f"values with no line: {limit - 7} (the first 20: 0, 8, 9, 10,")
+    assert last.endswith(f"; {limit - 7 - 20} more)")
+    assert len(printed) < 1000
+
+
+def test_constructed_at_most_twenty_unmatched_values_are_printed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    values = [a for v in range(124, 99, -1) for a in ("--value", str(v))]  # 124 down to 100
+    code, _ = _run(tmp_path, CONSTRUCTED, "--column", "ID", *values)
+    assert code == 0
+    last = capsys.readouterr().out.splitlines()[-1]
+    shown = ", ".join(str(v) for v in range(100, 120))
+    assert last == f"values with no line: 25 (the first 20: {shown}; 5 more)"
+
+
+def test_constructed_huge_decimal_values_sort_without_int(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sevens, eights = "7" * 5000, "8" * 4400  # int() refuses more than 4300 digits
+    args = ("--value", "1", "--value", sevens, "--value", eights, "--value", "0009")
+    code, out = _run(tmp_path, CONSTRUCTED, "--column", "ID", *args)
+    assert code == 0 and out.exists()
+    last = capsys.readouterr().out.splitlines()[-1]
+    assert last == f"values with no line: 3 (0009, {eights}, {sevens})"
+
+
+# ─── failures after the checks ───────────────────────────────────────────────
+
+
+def _failing_open(monkeypatch: pytest.MonkeyPatch, error: OSError) -> None:
+    """Make the output file's first write put a few bytes down, then fail."""
     real_open = Path.open
 
-    class _DiskFull:
-        """Wraps the created file; the first write puts a few bytes down, then fails."""
-
+    class _Failing:
         def __init__(self, handle: io.BufferedWriter) -> None:
             self._handle = handle
 
-        def __enter__(self) -> _DiskFull:
+        def __enter__(self) -> _Failing:
             return self
 
         def __exit__(self, *_exc: object) -> None:
@@ -407,17 +574,115 @@ def test_constructed_a_failed_write_leaves_no_file(
         def write(self, data: bytes) -> int:
             self._handle.write(data[:3])
             self._handle.flush()
-            raise OSError(28, "No space left on device", str(tmp_path / "out.csv"))
+            raise error
 
     def fake_open(self: Path, mode: str = "r", *args: object, **kwargs: object) -> object:
         handle = real_open(self, mode, *args, **kwargs)  # type: ignore[call-overload]
-        return _DiskFull(handle) if mode == "xb" else handle
+        return _Failing(handle) if mode == "xb" else handle
 
     monkeypatch.setattr(Path, "open", fake_open)
+
+
+def test_constructed_a_failed_write_leaves_no_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _failing_open(monkeypatch, OSError(28, "No space left on device", str(tmp_path / "out.csv")))
     code, out = _run(tmp_path, CONSTRUCTED, "--column", "ID", "--value", "1")
     assert code == 1
     assert not out.exists(), "the partly written file this run created is removed"
     assert "No space left on device" in capsys.readouterr().err
+
+
+def test_constructed_a_failed_write_names_the_output(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _failing_open(monkeypatch, OSError(27, "File too large"))  # no filename, as write() gives
+    code, out = _run(tmp_path, CONSTRUCTED, "--column", "ID", "--value", "1")
+    assert (code, out.exists()) == (1, False)
+    assert capsys.readouterr().err == f"wago_subset: File too large: {out}\n"
+
+
+def test_constructed_the_description_is_built_before_the_file_is_written(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*_args: object) -> str:
+        raise ValueError("cannot describe")
+
+    monkeypatch.setattr(wago_subset, "describe", broken)
+    code, out = _run(tmp_path, CONSTRUCTED, "--column", "ID", "--value", "1")
+    assert (code, out.exists()) == (1, False)
+    assert capsys.readouterr().err == "wago_subset: ValueError: cannot describe\n"
+
+
+@pytest.mark.parametrize(
+    ("error", "line"),
+    [
+        (MemoryError(), "wago_subset: MemoryError: no detail\n"),
+        (OverflowError("too big"), "wago_subset: OverflowError: too big\n"),
+        (RuntimeError("loop"), "wago_subset: RuntimeError: loop\n"),
+    ],
+    ids=["constructed-memory", "constructed-overflow", "constructed-runtime"],
+)
+def test_constructed_other_errors_end_in_one_line_not_a_traceback(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    error: BaseException,
+    line: str,
+) -> None:
+    def failing(*_args: object) -> bytes:
+        raise error
+
+    monkeypatch.setattr(wago_subset, "read_capped", failing)
+    code, out = _run(tmp_path, CONSTRUCTED, "--column", "ID", "--value", "1")
+    assert (code, out.exists()) == (1, False)
+    assert capsys.readouterr().err == line
+
+
+def test_constructed_symlink_loop_in_the_out_folder_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    loop = tmp_path / "loop"
+    try:
+        loop.symlink_to(loop)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot create a symlink here: {exc}")
+    err = _refused(
+        tmp_path, capsys, CONSTRUCTED, "--column", "ID", "--value", "1", out_name="loop/out.csv"
+    )
+    assert "cannot resolve the folder of" in err
+
+
+def test_constructed_unencodable_stdout_gets_escapes_not_a_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / ("caf" + E_ACUTE + ".csv")  # printable, so not ascii()-escaped
+    source.write_bytes(CONSTRUCTED)
+    buffer = io.BytesIO()
+    stream = io.TextIOWrapper(buffer, encoding="ascii")  # errors="strict"
+    monkeypatch.setattr(sys, "stdout", stream)
+    out = tmp_path / "out.csv"
+    argv = [str(source), "--sha256", _sha(CONSTRUCTED), "--column", "ID", "--value", "1"]
+    code = wago_subset.main([*argv, "--out", str(out)])
+    stream.flush()
+    assert code == 0 and out.exists()
+    assert b"source: caf\\xe9.csv, " in buffer.getvalue()
+
+
+def test_constructed_unencodable_stderr_gets_escapes_not_a_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / ("caf" + E_ACUTE + ".csv")
+    source.write_bytes(CONSTRUCTED)
+    buffer = io.BytesIO()
+    stream = io.TextIOWrapper(buffer, encoding="ascii")
+    monkeypatch.setattr(sys, "stderr", stream)
+    out = tmp_path / "out.csv"
+    argv = [str(source), "--sha256", "0" * 64, "--column", "ID", "--value", "1"]
+    code = wago_subset.main([*argv, "--out", str(out)])
+    stream.flush()
+    assert code == 1 and not out.exists()
+    assert buffer.getvalue().startswith(b"wago_subset: refused: caf\\xe9.csv: sha256 is ")
 
 
 def test_constructed_printed_filter_escapes_control_and_format_characters(
