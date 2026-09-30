@@ -7,18 +7,21 @@ docs/LAB_PLAN.md §13.4, the 2026-09-29 amendment, rule 2: "Every Lab write to
 `WowLab.lua` (`snap restore`, profile apply, `sv merge`) keeps the bytes it
 wrote as a store object, so this object exists for any write made after
 M11-24." `SnapshotStore.put_object` stores that object for `sv merge`, but no
-manifest refers to it, and `wowlab snap gc` removes every object no manifest
-refers to once it is an hour old (`GC_GRACE_SECONDS`). After a routine
-`snap gc`, a healthy login (loads 4 -> 5) following an `sv merge` of the file
-is refused as "W's result cannot be read" (rule 3), and
-`--force-loader-check` becomes the only way through.
+manifest refers to it, and `wowlab snap gc` removes an object no manifest
+refers to once it is an hour old (`GC_GRACE_SECONDS`) unless it keeps it for
+another reason. Were gc to remove this one, a healthy login (loads 4 -> 5)
+following an `sv merge` of the file would be refused as "W's result cannot be
+read" (rule 3), and `--force-loader-check` would be the only way through.
 
-The refusal then advises "Take a snapshot, log in and out once ... and check
-again"; after exactly that, the snapshot pair (guard's pre-write snapshot ->
-the new one) still spans the merge and refuses on the same missing object.
+The probe: a snapshot at loads 4, an `sv merge` of the first character's
+`WowLab.lua` (its gear block, from the second character) whose committed
+journal record names the kept object as `after`, a session that raises
+loads to 5 on disk, the kept object's mtime set back two hours, and
+`snap gc --yes`. A merge checked against that character must then pass
+(exit 0), and the kept object must still be in the store.
 
-Each positive control is the same sequence without `snap gc`: the merge
-passes under rule 2 from the kept object. The only variable is the gc.
+The positive control is the same sequence without `snap gc`. The only
+variable is the gc.
 
 The user data directory is redirected into `tmp_path`. Nothing reads or
 writes a real install.
