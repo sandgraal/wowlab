@@ -1075,6 +1075,33 @@ subtrees, as "no; wowlab leaves it alone (a restore writes it only if you
 name it with --paths)". `snap restore` and `undo` also take `--json` (the
 plan, and with `--yes` the result).
 
+*Amended 2026-09-29 (M11-30):* text output is terminal-safe. No C0
+control (tab and line feed included), no DEL, no C1 control and no Unicode
+format or separator character (Cf, Zl, Zp) reaches stdout or stderr raw.
+Each is shown as `\xNN` escapes, one per byte of the text as stored: C0 and
+DEL as their one byte (`\x09`, `\x0a`, `\x1b`), C1, format and separator
+characters as their UTF-8 bytes (U+0085 is `\xc2\x85`, U+202E is
+`\xe2\x80\xae`), and a byte that is not UTF-8 as itself (`\x85`), so a C1
+character and an invalid byte never print alike. The Cf, Zl and Zp set is
+the one table §13.4's printed paths use, pinned to Unicode 15.0 (Python
+3.12's database); a test over every code point of the running Python's
+database is what catches a newer Unicode version that adds one. Letters,
+accented or not, print as they are. A backslash is not escaped (every
+Windows path has one), so a name holding the literal text `\x85` prints
+like an invalid byte 0x85; that ambiguity is accepted.
+This covers every text line: `_say` on stdout; messages on stderr, which
+keep only their own line breaks (a value inserted into one, such as a path
+or a folder name, fills a `{}` of the message with its line breaks escaped;
+there is no other field syntax, so a value holding `{}` or `{:>9}` prints as
+it is); errors, always one line, followed by any notes the exception
+carries (such as the write gate's "the rollback did not finish"), one line
+each; the library's log records (the write gate's warnings), which go to
+stderr through the CLI's own handler, escaped and one line each, while a
+command runs, instead of Python's fallback handler; and `db2 head`, whose
+column names and cells are escaped before the CSV is written. `--json`
+output is unaffected (JSON's own escapes, ASCII only). An uncaught
+exception's traceback is not covered yet (a follow-up).
+
 ## 7. Repository layout
 
 ```

@@ -1427,10 +1427,11 @@ def test_control_characters_never_reach_the_terminal_constructed(
     (flavor / csi).write_bytes(b"one")
     a = _create("a")
     (flavor / csi).write_bytes(b"two")
+    # C1 is spelled as its UTF-8 bytes since M11-30 (U+009B is \xc2\x9b).
     plan = ok("snap", "restore", a.id, "--yes").stdout
-    assert "\x9b" not in plan and "csi\\x9b31m.txt" in plan
+    assert "\x9b" not in plan and "csi\\xc2\\x9b31m.txt" in plan
     undo = ok("undo", "--yes").stdout
-    assert "\x9b" not in undo and "csi\\x9b31m.txt" in undo
+    assert "\x9b" not in undo and "csi\\xc2\\x9b31m.txt" in undo
 
 
 def test_explain_words_for_edit_and_tier(root: Path) -> None:

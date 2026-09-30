@@ -354,6 +354,27 @@ def test_remove_refused_by_the_gate_exits_3_with_its_reason_constructed(root: Pa
     assert len(guard.history()) == 1
 
 
+def test_a_refused_remove_prints_one_line_per_refused_path_then_the_notes_constructed(
+    root: Path,
+) -> None:
+    """M11-30: the refusal keeps its line structure (the note speaks of "the
+    path(s) named above"): the error line names the first refused path, and
+    each further refused path and the notes follow on lines of their own,
+    as the library carries them as notes on the exception."""
+    ok("addon", "install", "lab", "--yes")
+    for name in ("helper.dll", "tool.exe"):
+        (root / FLAVOR / LAB / name).write_bytes(b"constructed, not an executable")
+    result = run("addon", "remove", "lab", "--yes")
+    assert result.exit_code == 3, (result.stdout, result.stderr)
+    assert result.stderr.split("\n") == [
+        f"wowlab: refused by the write gate: '{LAB}/helper.dll' is an executable; "
+        "guard never writes one",
+        f"'{LAB}/tool.exe' is an executable; guard never writes one",
+        f"{addoninstall.REMOVE_REFUSED_NOTE} {addoninstall.STILL_INSTALLED_NOTE}",
+        "",
+    ]
+
+
 @pytest.mark.parametrize(
     ("names", "still_installed"),
     [
