@@ -11,6 +11,7 @@
 - [ ] `luadata.py`, `guard.py` or another parser changed? `make test-parser` green and graders activated by marker deletion only
 - [ ] New external-format parsing? Real, scrubbed fixture with a provenance row
 - [ ] New runtime dependency? Named here with why the standard library does not do
+- [ ] User-facing surface: commands, options, output shapes (text or `--json`), pages or addon commands added or changed are listed here with the wiki pages they affect, or `n/a`
 
 ## Invariants (AGENTS.md)
 

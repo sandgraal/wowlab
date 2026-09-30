@@ -73,6 +73,10 @@ allowed only for hostile-input and boundary tests, and are labelled as such.
 - `docs/AGENT_WORKFLOW.md` — how work moves: roles, lifecycle, conventions.
 - `docs/DATA_SOURCES.md` — the local install, wago.tools, format references, breakage log.
 - `docs/SETUP.md` — machine setup. Machine-specific notes go in `CLAUDE.local.md` (gitignored).
+- The GitHub wiki (`sandgraal/wowlab.wiki`) — the owner-facing guide. It
+  describes what is on `main`, never what is planned; the spec is `docs/`.
+  User-facing changes are listed in reports and PRs so it can follow them
+  (`docs/AGENT_WORKFLOW.md`, Definition of done).
 
 ## Operating mode: conductor
 

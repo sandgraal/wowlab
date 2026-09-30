@@ -126,6 +126,17 @@ needs or touches a real install; anything contradicting an ADR ships with a
 superseding ADR (`Proposed`) rather than a silent deviation; review threads
 all replied to and resolved.
 
+**User-facing changes (2026-09-30, owner request).** A change that adds,
+removes or changes a command, an option, an output shape (text or
+`--json`), a generated page or an addon command lists them in the
+implementer report's `user-facing changes:` field and in the PR body's
+"User-facing surface" box, with the wiki pages they affect. The wiki
+(`sandgraal/wowlab.wiki`) describes what is on `main`; implementers do not
+edit it. The daily wiki job reads merged PRs and documents them; the
+conductor may also update a page directly after a merge. From Wave 4 on,
+every command must also be reachable in `wowlab ui` (the parity test in the
+required `quality` job enforces it).
+
 ## Stop-and-ask
 
 The `AGENTS.md` list, plus: reviewer/implementer deadlock after two rounds,

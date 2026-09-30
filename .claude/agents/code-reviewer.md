@@ -62,6 +62,11 @@ own internal consistency.
 - Fixtures carry no email address, BattleTag, player GUID or real account
   folder name. Workflow permissions are least-privilege.
 - Performance claims in the report have the command and numbers behind them.
+- Every user-visible change in the diff (a command, option, help text,
+  output shape in text or `--json`, generated page, addon command) is listed
+  in the report's `user-facing changes:` and the PR's "User-facing surface"
+  box. An unlisted one is a finding: the daily wiki job and, from Wave 4,
+  the UI depend on that list.
 
 ## Probes
 
