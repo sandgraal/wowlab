@@ -240,7 +240,7 @@ From the M11-03 domain review. Three places where a capture cannot tell "the cli
 
 ---
 
-## [ ] M11-23 — `wowlab looks import-char` (deferred)
+## [x] M11-23 — `wowlab looks import-char` (deferred)
 **Size:** S · **Depends on:** M11-04, a real capture with a customization record
 
 Moved out of M11-04 by the owner on 2026-09-28: the addon records customization choices only during a barber-shop visit, the barber UI did not open on Forever 1.60.1.70009 (M11-03), so no real capture holds that record and L8 rules out building against an invented one. Reads the capture's customization section into a look and checks it with the M11-05 model; a character without a recorded visit gets the addon's reason; a saved look records its origin (typed or imported) so `show`/`compare` keep the right unknown-id wording (#101 domain review). Stays open until a real capture holds the record; the Wave 2 review does not wait for it.
@@ -260,7 +260,7 @@ Moved out of M11-04 by the owner on 2026-09-28: the addon records customization 
 
 Code follow-ups from the M11-04 and M11-09 reviews. None holds the wave review; the next wave's plan PR decides where they go.
 
-## [ ] M11-24 — sv-merge loader check: `probe` and identical snapshots
+## [x] M11-24 — sv-merge loader check: `probe` and identical snapshots
 **Size:** S · **Depends on:** M11-09
 
 Gaps in the M11-09 loader check. The owner ruled on all three on 2026-09-29 (the dated §13.4 bullet "owner ruling for M11-24"); build to that text. The security review of the first implementation showed that skipping a comparison across a Lab write hid real loader failures, so the owner amended (c) the same day (§13.4, "owner ruling amending …"): compare from the state the write left, never skip. Graders for the amendment come from a test-writer (`M11-24T2`) before the implementation continues. (a) `sv merge` of `WowLab.lua` itself copies `probe` from theirs, because the M11-09T graders require every key to merge, so the next loader comparison reads a counter the client never wrote; keep `probe` from ours. (b) After a reset of `probe.loads` on disk, two snapshots taken with no login between them (guard takes one on every write, so two unrelated wowlab writes are enough) are byte-identical, the approved exception applies, and the older snapshot that shows the drop is never read; walk back to the newest snapshot whose bytes differ. (c) The opposite error: a Lab write that lowers `loads` on disk (`snap restore` of an older `WowLab.lua`, or a merge of `WowLab.lua` that takes theirs) makes the next merge refuse with "the last session's SavedVariables did not load" until logins raise the counter again; a comparison that spans a committed guard write to that file (the journal records it) should be skipped or worded as such. `svmerge.py` is load-bearing (owner, 2026-09-29), and (a) contradicts a merged grader, so this is dispatched as `M11-24T` (test-writer) then `M11-24` (implementer).
@@ -269,7 +269,7 @@ Gaps in the M11-09 loader check. The owner ruled on all three on 2026-09-29 (the
 
 ---
 
-## [ ] M11-25 — one path grammar for `sv dump --path` and `sv merge --key`
+## [x] M11-25 — one path grammar for `sv dump --path` and `sv merge --key`
 **Size:** S · **Depends on:** M11-09
 
 `svmerge.py` has its own copy of `cli.py`'s path parser, and the two can drift. Move the grammar into one function both use. A path the tools print for a key that needs a Lua escape cannot be pasted back into `--path` or `--key`; make every printed path parse back to the same key, or say in `--help` which keys cannot be addressed. `svmerge.py` is load-bearing, so the round-trip graders come first from a test-writer (`M11-25T`).
@@ -278,7 +278,7 @@ Gaps in the M11-09 loader check. The owner ruled on all three on 2026-09-29 (the
 
 ---
 
-## [ ] M11-26 — the last wall-clock parser timing tests
+## [x] M11-26 — the last wall-clock parser timing tests
 **Size:** S · **Depends on:** —
 
 `lab/core/tests/parser/test_toc_constructed.py:249` and `lab/core/tests/parser/test_combatlog_constructed.py:428` still assert 1 s wall-clock budgets and can fail under load. Measure CPU time as M11-16T and M11-19 did, keeping what each test asserts.
@@ -287,9 +287,58 @@ Gaps in the M11-09 loader check. The owner ruled on all three on 2026-09-29 (the
 
 ---
 
-## [ ] M11-27 — `wowlab char show` follow-ups
+## [x] M11-27 — `wowlab char show` follow-ups
 **Size:** S · **Depends on:** M11-04
 
 From the M11-04 reviews. (a) The Legacy headline adds the point pools of every candidate config; show one per config, or the selected one, so two configs with points are not summed. (b) "all its change events registered" is printed for `collections.appearances`, which registers none; say nothing, or that the section has no events. (c) A reason longer than 1024 characters or holding non-ASCII (a long Lua error the addon stored) makes the reader refuse the whole file; truncate and flag it in the model instead, keeping the other sections readable. The limits on every other string stay.
 
 **Acceptance:** a labelled constructed test per item, plus the real fixtures unchanged in output except for (a) and (b); `--json` still validates; reviewed by `code-reviewer` and `domain-reviewer`.
+
+---
+
+# Carried forward, second batch (filed 2026-09-29, after the M11-23 to M11-27 reviews)
+
+Follow-ups the reviews of the carried-forward tickets found. None is urgent; the next wave's plan PR decides where they go.
+
+## [ ] M11-28 — the remaining wall-clock timing checks
+**Size:** S · **Depends on:** — · **[TEST]** (test-writer only)
+
+M11-26's review found three more wall-clock budgets that can fail under load: the review probes `lab/core/tests/review/test_m10_06_toc_parse_quadratic_time.py` (`LIMIT_SECONDS = 1.0`, `perf_counter`) and `lab/core/tests/review/test_m10_13_unclosed_quote_quadratic_time_target.py` (`BUDGET_S = 2.0`), and the luadata grader `lab/core/tests/parser/test_luadata_constructed.py` around line 1060 (a 60 s budget). Measure CPU time with `lab/core/tests/parser/_cpu_clock.py` (M11-26), keeping every assertion and budget. The first two are review probes a reviewer cannot edit and the third grades the load-bearing `luadata.py`, so all three belong to a test-writer.
+
+**Acceptance:** each passes under a CPU-saturating load started and stopped by PID (not while the owner is playing) and still fails against a constructed slow parse (scratch patch, reverted); `make ci` green; reviewed by `code-reviewer`.
+
+---
+
+## [ ] M11-29 — lab-addon: the barber-shop record after an applied change
+**Size:** S · **Depends on:** M11-23 · **owner** (a short in-game check)
+
+From the M11-23 capture (1.60.1.70058; `docs/LAB_FORMATS.md`, M11-23 follow-up table): the owner opened the barber shop twice, the second time changing the hair colour and accepting, yet the record reads `recorded_at = "open"` although `BARBER_SHOP_APPEARANCE_APPLIED` registered; and `chr_model_id` is absent. Find why the applied event does not reach the section's handler (or whether a different event fires on Forever) and why `C_BarberShop` gives no model id; change the addon only for what a capture can confirm. Per `docs/AGENT_WORKFLOW.md`, any new API call is **[verify]**, sits in a section `/wowlab skip` can switch off, and gets a runbook step.
+
+**Acceptance:** static addon tests (labelled source scans) for the change; the README and §13.1 say what is confirmed and what stays [verify]; an owner capture after one applied change shows `recorded_at = "applied"` (or the reason it cannot); reviewed by `code-reviewer` and `domain-reviewer`.
+
+---
+
+## [ ] M11-30 — terminal-safe error text
+**Size:** S · **Depends on:** —
+
+From the M11-23 and M11-25 security reviews. `cli._safe` escapes C0 and C1 control characters only, and `cli._note` keeps line breaks from inserted values, so a character folder name holding a newline, U+202E or another Unicode format or separator character (Cf, Zl, Zp) reaches stderr raw and can spoof a line. Escape those in `_safe` the way M11-25 escapes printed keys (UTF-8 `\ddd` or `\xHH`, consistently with the surrounding output), and have `_note` escape line breaks that come from inserted values while keeping the ones the message itself contains. Real character names with accented letters must still print as they are.
+
+**Acceptance:** labelled constructed tests with folder names holding a newline, U+202E, U+2028 and an accented letter; no raw Cf, Zl, Zp or control character reaches stdout or stderr; `make ci` green; reviewed by `security-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M11-31 — snapshot store follow-ups from M11-24
+**Size:** S · **Depends on:** M11-24
+
+From the M11-24 reviews. (a) `snap gc` now keeps every `after` a committed journal record names, including content a `snap restore` or profile apply wrote from snapshots the owner later deletes, so that space is never reclaimed; keep only what the loader check can need (the `after` of writes to a character's `WowLab.lua`), and say in `snap gc --help` what is kept. (b) A directory planted at an object path makes `put_object` raise a raw `IsADirectoryError`; wrap `OSError` as `SnapshotError` with a clear message. (c) The module docstring of `lab/core/tests/review/test_m11_24_snap_gc_deletes_the_kept_lab_write_object.py` still describes the removed "follow the advice once" scenario; a test-writer corrects it (reviewers cannot edit an existing probe). Part (a) changes what the loader check can rely on, so its graders come from a test-writer first (`M11-31T`).
+
+**Acceptance:** (a) graded by a test-writer and green; (b) a labelled constructed test; (c) the docstring matches the file; `make ci` green; reviewed by `security-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M11-32 — `char show` Legacy wording, two tweaks
+**Size:** S · **Depends on:** M11-27
+
+From the M11-27 domain review (optional then, filed now). (1) The several-config second line should say the active class-talent config is also excluded, since on Forever it is type 4, not Combat. Replacement: `  the addon lists every trait config except the active class talents and the types below; which of these is the Legacy system is not recorded; panel opener ToggleLegacySystemUI present: yes` (the last clause as the code computes it). (2) When two or more configs are listed and all are absent, the second line still says "inferred by elimination"; use the line from (1) whenever more than one config is listed.
+
+**Acceptance:** labelled constructed tests for both; real-fixture output unchanged (both captures have one config); reviewed by `domain-reviewer`.
