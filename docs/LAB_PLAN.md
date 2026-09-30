@@ -1705,6 +1705,28 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   config, the line still says the Legacy system is inferred by
   elimination; with none, it says "no candidate config listed". Every
   variant ends with the panel opener clause as computed.
+  *Amended 2026-09-30 (M11-34):* two cases no capture has shown. (1) With
+  one config listed, the reader compares its id with the one
+  `talents.class` records (its config's id, present or absent with a
+  reason). On a match the line says "the one config listed is the active
+  class config (config N, as Class talents records it), which the addon did
+  not leave out, so no config is inferred to be the Legacy system". When
+  `talents.class` records no config id (not in the file, absent with a
+  reason, or its config absent without an id), or the listed config has
+  none, the elimination line gains ", but Class talents records no config
+  id" (or "the config listed has no id") ", so the reader cannot check that
+  it is not the active class config (the addon leaves that out only when
+  the client gave its id)". A different id keeps "inferred by elimination"
+  unchanged, and the several-config and no-config lines do not change. (2)
+  The addon leaves `skipped_types` empty both when its type search skipped
+  nothing and when it did not search by type at all
+  (`C_Traits.GetConfigsByType` or `Enum.TraitConfigType` missing). A config
+  found by type shows the search ran, and the line keeps "config types not
+  searched: none recorded". Without one, the line adds "no config was found
+  by type, and the addon also records none when it did not search by type
+  at all (C_Traits.GetConfigsByType or Enum.TraitConfigType missing), so
+  possibly no type was searched". Every committed capture lists one config,
+  found by type, that is not the class config, so its output is unchanged.
 - **Capture** (owner): install; on each character log in, then log out or
   `/reload` (a crash writes nothing); on at least one character open the
   barber shop and close it without changing anything, then log out. Capture

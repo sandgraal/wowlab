@@ -1446,7 +1446,69 @@ def _single_config(legacy: LegacyTalents) -> LegacyConfig | None:
     return None
 
 
-def _legacy(legacy: LegacyTalents) -> list[str]:
+def _class_config_id(talents: Talents) -> int | None:
+    """The active class config id `talents.class` records, or None when it
+    records none: the section not in the file or absent with a reason, or
+    its config absent without an id."""
+    section = talents.class_
+    if not isinstance(section, ClassTalents):
+        return None
+    return section.config.id
+
+
+ELIMINATION = "which config is the Legacy system is inferred by elimination"
+UNCHECKED_CLASS = (
+    "so the reader cannot check that it is not the active class config (the addon leaves that "
+    "out only when the client gave its id)"
+)
+
+
+def _one_config_words(config: LegacyConfig | AbsentLegacyConfig, class_id: int | None) -> str:
+    """M11-34: the line under the headline when the file lists one config.
+
+    The addon leaves the active class config out only when
+    `C_ClassTalents.GetActiveConfigID` gave an id, and `talents.legacy` does
+    not record the id it left out. So the one listed config is compared with
+    the id `talents.class` records (as of its own gather, which may be
+    another moment): a match means the addon did not leave the class config
+    out, and nothing is inferred to be the Legacy system; with no id on
+    either side the elimination cannot be checked, and the line says so. A
+    different id keeps the M11-32 line: a class config missing from the list
+    proves nothing either way, so the line claims no more than before."""
+    if class_id is not None and config.id == class_id:
+        return (
+            f"the one config listed is the active class config (config {class_id}, as Class "
+            "talents records it), which the addon did not leave out, so no config is inferred to "
+            "be the Legacy system"
+        )
+    if class_id is None:
+        return f"{ELIMINATION}, but Class talents records no config id, {UNCHECKED_CLASS}"
+    if config.id is None:
+        return f"{ELIMINATION}, but the config listed has no id, {UNCHECKED_CLASS}"
+    return ELIMINATION
+
+
+def _skipped_words(legacy: LegacyTalents) -> str:
+    """M11-34: the types the addon's type search passed over. The addon
+    leaves `skipped_types` empty both when the search ran and the client's
+    enum has none of Invalid, Combat and Profession, and when it did not
+    search by type at all (`C_Traits.GetConfigsByType` or
+    `Enum.TraitConfigType` missing). A config found by type shows the search
+    ran; without one, the file cannot tell the two apart."""
+    if legacy.skipped_types:
+        return ", ".join(legacy.skipped_types)
+    if any(how.startswith("type:") for c in legacy.configs for how in c.found_by):
+        return NONE_RECORDED
+    return (
+        f"{NONE_RECORDED}; no config was found by type, and the addon also records none when "
+        "it did not search by type at all (C_Traits.GetConfigsByType or Enum.TraitConfigType "
+        "missing), so possibly no type was searched"
+    )
+
+
+def _legacy(legacy: LegacyTalents, class_id: int | None) -> list[str]:
+    """The Legacy candidates; `class_id` is the active class config id
+    `talents.class` records (`_class_config_id`)."""
     opener = f"panel opener ToggleLegacySystemUI present: {_yes(legacy.legacy_ui)}"
     # The headline names the level itself when it gives each config's figures.
     each = _single_config(legacy) is None and any(
@@ -1466,11 +1528,10 @@ def _legacy(legacy: LegacyTalents) -> list[str]:
             f"id; which of these is the Legacy system is not recorded; {opener}"
         )
     elif legacy.configs:
-        lines.append(f"  which config is the Legacy system is inferred by elimination; {opener}")
+        lines.append(f"  {_one_config_words(legacy.configs[0], class_id)}; {opener}")
     else:
         lines.append(f"  no candidate config listed; {opener}")
-    skipped = ", ".join(legacy.skipped_types) or NONE_RECORDED
-    lines.append(f"  config types not searched: {skipped}")
+    lines.append(f"  config types not searched: {_skipped_words(legacy)}")
     for config in legacy.configs:
         found = ", ".join(config.found_by) or NONE_RECORDED
         if isinstance(config, AbsentLegacyConfig):
@@ -1680,7 +1741,12 @@ def describe(char: CharDB) -> list[str]:
     lines += _section("Spec", char.spec, _spec)
     talents = char.talents
     lines += _section("Class talents", talents.class_ if talents else None, _class_talents)
-    lines += _section("Legacy candidates", talents.legacy if talents else None, _legacy)
+    class_id = _class_config_id(talents) if talents else None
+    lines += _section(
+        "Legacy candidates",
+        talents.legacy if talents else None,
+        lambda record: _legacy(record, class_id),
+    )
     lines += _section(
         "Customization",
         char.customization,
