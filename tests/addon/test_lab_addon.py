@@ -17,7 +17,10 @@ getting around them. Deliberate obfuscation is caught by review only:
   through an alias of the table (`local d = c` ... `d.option = api`) or through
   a call that writes to it;
 - changing an index key inside its guard (`k = ...` inside
-  `if type(r[k]) == "number" then`).
+  `if type(r[k]) == "number" then`);
+- handing a client function out of a section's code as a call's return value
+  (`saved = helper()` in a gather, `saved()` in a handler), which the M11-37
+  section scan does not follow.
 
 The stored-value check (M11-13) also does not check table keys, and it trusts
 the Core.lua plumbing listed in `PLUMBING_STORES`.
@@ -2961,3 +2964,693 @@ def test_m11_29_readme_and_plan_say_what_is_confirmed_and_what_stays_verify() ->
     assert table.count("- **") == len(rows)
     assert f"**`{CONTROL_EVENT}`**" in readme
     assert "chr_model_id | chr_model_id_absent, events_received" in readme
+
+
+# M11-37: every client API call sits inside a section ---------------------------
+#
+# Source scans on the addon's own tokens (constructed checks; no Lua runs, L3).
+# From the M11-29 reviews: nothing checked where a new client call went, and a
+# `C_BarberShop.GetViewingChrModel` call added at ADDON_LOADED in a copy passed
+# every test. `pcall` catches Lua errors, not client assertions, so a client
+# call must sit in a section `/wowlab skip` can switch off
+# (docs/AGENT_WORKFLOW.md; lab/addon/README.md, "API status").
+#
+# A *client API reference* is a global name the sources read or write that is
+# neither a Lua 5.1 standard global (`_LUA51_GLOBALS`; `print` counts as Lua)
+# nor one of the addon's own (`OWN_GLOBALS`). selene fails any global that
+# wow_client.yml does not declare, so these are the std's names (the `C_*`
+# namespaces, `CreateFrame`, `GetBuildInfo`, `Enum`, the client constants), and
+# the scan checks that it sees exactly them. A *handle* is a file-level local
+# that is ever bound or assigned a value holding a client global, a handle, or
+# a local that holds either (Core.lua's `frame`, `timerAfter`, `isEventValid`);
+# each use of a handle is a reference too, call or not. A reference is named as
+# written, fields and one method joined: `C_Timer.After`, `frame.RegisterEvent`,
+# `frame:SetScript`. The sources do no dynamic global lookup and never index a
+# std global or `ns` by brackets (tests above), so every client call is made
+# through a reference.
+#
+# *Section code* is what only a section's own gather or carry runs: the
+# `gather` and `carry` of each `ns.Section({ ... })` (a function literal or a
+# local function), and any local function, `ns` function or function literal
+# that section code calls on the spot (`f(...)`, or as the first argument of
+# `pcall` or `ns.Call`) and nothing else refers to, other than its own
+# `gather = f` entry. A function handed on as a value (to `ns.On`,
+# `C_Timer.After`, a field) may run after its section is switched off, so it
+# counts as outside. Core.lua calls a section's gather only in `gather`, which
+# returns first for a switched-off section, and its carry only at
+# ADDON_LOADED for a section that is not off (pinned below), so `/wowlab skip`
+# switches all of it off. Everything else runs outside every section: a file's
+# top level, an `ns.On` handler, the slash command, any other field of a
+# section spec, and a helper that any of them also calls.
+#
+# Every reference outside section code must match an entry of
+# `SECTIONLESS_API`, keyed (file, innermost enclosing function, reference as
+# written), each with its reason, and every entry must match one. A new call
+# outside a section fails until someone adds it there deliberately. Review
+# only: a client function handed out of section code as a call's return value
+# (`saved = helper()` in a gather, `saved()` in a handler).
+
+# The Lua 5.1 standard globals (the `lua51` base of wow_client.yml).
+_LUA51_GLOBALS = frozenset(
+    {
+        "_G",
+        "_VERSION",
+        "assert",
+        "collectgarbage",
+        "coroutine",
+        "debug",
+        "dofile",
+        "error",
+        "gcinfo",
+        "getfenv",
+        "getmetatable",
+        "io",
+        "ipairs",
+        "load",
+        "loadfile",
+        "loadstring",
+        "math",
+        "module",
+        "newproxy",
+        "next",
+        "os",
+        "package",
+        "pairs",
+        "pcall",
+        "print",
+        "rawequal",
+        "rawget",
+        "rawset",
+        "require",
+        "select",
+        "setfenv",
+        "setmetatable",
+        "string",
+        "table",
+        "tonumber",
+        "tostring",
+        "type",
+        "unpack",
+        "xpcall",
+    }
+)
+
+# Client API references that run outside every section, each with its reason.
+SECTIONLESS_API: dict[tuple[str, str, str], str] = {
+    # Core.lua infrastructure: the event frame, the timer, the event check,
+    # the `client` block and the slash command.
+    ("Core.lua", _TOP, "CreateFrame"): "the one event frame every section's events arrive on",
+    ("Core.lua", _TOP, "frame:SetScript"): "the frame's OnEvent dispatcher",
+    ("Core.lua", _TOP, "C_Timer"): "timerAfter: tests that the client has C_Timer",
+    ("Core.lua", _TOP, "C_Timer.After"): "timerAfter, bound once: the debounce and the first pass",
+    ("Core.lua", _TOP, "C_EventUtils"): "isEventValid: tests that the client has C_EventUtils",
+    ("Core.lua", _TOP, "C_EventUtils.IsEventValid"): "isEventValid, bound once for ns.On",
+    ("Core.lua", _TOP, "SlashCmdList.WOWLAB"): "registers /wowlab (a field store; no call)",
+    ("Core.lua", "ns.On", "isEventValid"): "an event the client does not know is not registered",
+    ("Core.lua", "ns.On", "frame.RegisterEvent"): "registers an event, through pcall",
+    ("Core.lua", "ns.On", "frame"): "RegisterEvent's self argument",
+    ("Core.lua", "off", "frame.UnregisterEvent"): "unregisters an event with no handler left",
+    ("Core.lua", "off", "frame"): "UnregisterEvent's self argument",
+    ("Core.lua", "schedule", "timerAfter"): "the 2 s change-event debounce",
+    ("Core.lua", "startFirstPass", "timerAfter"): "the 15 s window before the first on-world pass",
+    ("Core.lua", 'ns.On("PLAYER_ENTERING_WORLD")', "timerAfter"): "tests for the timer; no call",
+    ("Core.lua", "clientInfo", "GetBuildInfo"): "the `client` block: version, build, interface",
+    # The one entry outside Core.lua. It runs only while the customization
+    # section holds a carried record, which a switched-off section never does
+    # (test_m11_37_the_race_check_calls_the_client_only_for_a_carried_record).
+    ("Customization.lua", "raceID", "UnitRace"): (
+        "the gather's race id, and the PLAYER_ENTERING_WORLD check that drops a carried "
+        "record made for another race"
+    ),
+}
+
+
+@dataclass(frozen=True)
+class _ApiRef:
+    """One client API reference: a client global, or a use of a handle."""
+
+    file: str
+    function: str  # the innermost enclosing function's label, or _TOP
+    api: str  # as written: `C_Timer.After`, `frame:SetScript`
+    line: int
+    client: bool  # a client global (False: a handle)
+    in_section: bool
+
+    @property
+    def key(self) -> tuple[str, str, str]:
+        return (self.file, self.function, self.api)
+
+
+def _api_name(tokens: list[Token], k: int) -> str:
+    """The reference at k as written: its field chain, and a method if one follows."""
+    name, j = tokens[k].text, k + 1
+    while (
+        j + 1 < len(tokens)
+        and tokens[j].kind == "op"
+        and tokens[j].text in {".", ":"}
+        and tokens[j + 1].kind == "name"
+    ):
+        name += tokens[j].text + tokens[j + 1].text
+        if tokens[j].text == ":":
+            break
+        j += 2
+    return name
+
+
+class _SectionScan:
+    """Section code, and every client API reference in the sources (M11-37)."""
+
+    def __init__(self, sources: list[Path]) -> None:
+        self.flows = {p.name: _Flow(p, _tokens(p)) for p in sources}
+        self.problems: list[str] = []
+        # The name token of each declaration (local, parameter, loop variable,
+        # local function), by id of the _Decl: _Flow records both in one order.
+        self.decl_at: dict[str, dict[int, int]] = {}
+        for name, flow in self.flows.items():
+            ats: dict[str, list[int]] = {}
+            for n, at in flow.assigned:
+                if flow.tokens[at].kind == "name" and flow.tokens[at].text == n:
+                    ats.setdefault(n, []).append(at)
+            self.decl_at[name] = {
+                id(d): at
+                for n, ds in flow.decls.items()
+                for d, at in zip(ds, ats.get(n, []), strict=True)
+            }
+        self.declared = {name: set(at.values()) for name, at in self.decl_at.items()}
+        self.handles = {name: self._handles(flow) for name, flow in self.flows.items()}
+        self.roots = self._roots()
+        self.named = self._named()
+        self.section = self._solve()
+        self.refs = [ref for name in self.flows for ref in self._refs(name)]
+
+    # what is a reference
+
+    def _variable(self, flow: _Flow, k: int) -> bool:
+        """Is token k a name used as a variable: not a keyword, a field, a
+        declaration or a table-constructor key?"""
+        x = flow.tokens[k]
+        return (
+            x.kind == "name"
+            and x.text not in _KEYWORDS
+            and not _is_field(flow.tokens, k)
+            and k not in self.declared[flow.path.name]
+            and not self._constructor_key(flow, k)
+        )
+
+    def client(self, flow: _Flow, k: int) -> bool:
+        """Is token k a client global: a global name neither Lua's nor the addon's own?"""
+        text = flow.tokens[k].text
+        return (
+            self._variable(flow, k)
+            and text not in _LUA51_GLOBALS
+            and text not in OWN_GLOBALS
+            and flow.resolve(text, k) is None
+        )
+
+    def _use_of(self, flow: _Flow, k: int, decls: set[int]) -> bool:
+        """Is token k a use of one of `decls` (by id)?"""
+        if not self._variable(flow, k):
+            return False
+        decl = flow.resolve(flow.tokens[k].text, k)
+        return decl is not None and id(decl) in decls
+
+    @staticmethod
+    def _constructor_key(flow: _Flow, k: int) -> bool:
+        """Is token k the key of a `{ key = value }` entry?"""
+        t = flow.tokens
+        o = flow.opener[k]
+        if o is None or t[o].text != "{" or k + 1 >= len(t):
+            return False
+        if not (t[k + 1].kind == "op" and t[k + 1].text == "="):
+            return False
+        fn = flow.function_at(k)
+        if fn is not None and o < fn.start:
+            return False  # a statement in a function literal inside the constructor
+        return t[k - 1].kind == "op" and t[k - 1].text in {"{", ",", ";"}
+
+    def _handles(self, flow: _Flow) -> set[int]:
+        """ids of the handles: file-level locals that ever hold a value with a
+        client global in it, directly or through other locals."""
+        decls = [d for ds in flow.decls.values() for d in ds if d.function is None]
+        holds: set[int] = set()
+        changed = True
+        while changed:
+            changed = False
+            for d in decls:
+                if id(d) not in holds and any(
+                    self.client(flow, k) or self._use_of(flow, k, holds)
+                    for s, e in d.sources
+                    for k in range(s, e)
+                ):
+                    holds.add(id(d))
+                    changed = True
+        at = self.decl_at[flow.path.name]
+        return {id(d) for d in decls if id(d) in holds and flow.function_at(at[id(d)]) is None}
+
+    # what is section code
+
+    def _roots(self) -> dict[tuple[str, int], set[int]]:
+        """Each section's gather and carry function, with the spec tokens that name it."""
+        roots: dict[tuple[str, int], set[int]] = {}
+        call = ["ns", ".", "Section", "(", "{"]
+        for name, flow in self.flows.items():
+            t = flow.tokens
+            for k in range(len(t) - 4):
+                if _is_field(t, k) or [x.text for x in t[k : k + 5]] != call:
+                    continue
+                for key, s, e in flow.entries(k + 4):
+                    if key not in {"{gather}", "{carry}"}:
+                        continue
+                    literal = t[s].kind == "name" and t[s].text == "function"
+                    if literal and flow.block_end(s) == e - 1:
+                        roots.setdefault((name, s), set())
+                        continue
+                    one_name = e == s + 1 and t[s].kind == "name"
+                    decl = flow.resolve(t[s].text, s) if one_name else None
+                    if decl is not None and decl.function is not None:
+                        roots.setdefault((name, decl.function), set()).add(s)
+                    else:
+                        self.problems.append(
+                            f"{name}:{t[s].line} {key[1:-1]} is neither a function literal "
+                            "nor a local function"
+                        )
+        return roots
+
+    def _named(self) -> dict[tuple[str, int], list[tuple[str, int, int]]]:
+        """Every reference, as (file, start, end token), to each local function
+        (`f`) and `ns` function (`ns.F`)."""
+        named: dict[tuple[str, int], list[tuple[str, int, int]]] = {}
+        ns_heads: dict[str, tuple[str, int]] = {}
+        for name, flow in self.flows.items():
+            for head, label in flow.labels.items():
+                if label.startswith("ns.") and flow.tokens[head + 1].text == "ns":
+                    ns_heads[label[3:]] = (name, head)
+                    named[(name, head)] = []
+            for decls in flow.decls.values():
+                for d in decls:
+                    if d.function is not None:
+                        named[(name, d.function)] = []
+        for name, flow in self.flows.items():
+            t = flow.tokens
+            for k, x in enumerate(t):
+                if not self._variable(flow, k):
+                    continue
+                decl = flow.resolve(x.text, k)
+                if decl is None:
+                    continue
+                if decl.function is not None:
+                    named[(name, decl.function)].append((name, k, k + 1))
+                elif (
+                    decl is flow.namespace
+                    and not (k > 0 and t[k - 1].text == "function")
+                    and k + 2 < len(t)
+                    and t[k + 1].text == "."
+                    and t[k + 2].text in ns_heads
+                ):
+                    named[ns_heads[t[k + 2].text]].append((name, k, k + 3))
+        return named
+
+    def inside(
+        self,
+        file: str,
+        k: int,
+        section: set[tuple[str, int]] | None = None,
+        exclude: int | None = None,
+    ) -> bool:
+        """Does token k run only as section code (is the innermost function around it)?"""
+        flow = self.flows[file]
+        around = [b for b in flow.functions.values() if b.head <= k <= b.stop and b.head != exclude]
+        if not around:
+            return False  # a file's top level
+        fn = max(around, key=lambda b: b.head)
+        return (file, fn.head) in (self.section if section is None else section)
+
+    def _solve(self) -> set[tuple[str, int]]:
+        """The largest set of functions that run only as section code."""
+        section = {(name, head) for name, flow in self.flows.items() for head in flow.functions}
+        changed = True
+        while changed:
+            changed = False
+            for fid in sorted(section):
+                if not self._runs_in_section(fid, section):
+                    section.discard(fid)
+                    changed = True
+        return section
+
+    def called_here(self, file: str, s: int, e: int) -> bool:
+        """Is the function expression tokens[s:e] called where it stands:
+        followed by call arguments, or the first argument of `pcall(` or
+        `ns.Call(`? Passed anywhere else (`ns.On`, `C_Timer.After`, a field),
+        it may run after its section is switched off."""
+        flow = self.flows[file]
+        t = flow.tokens
+        if flow.call_start(e):
+            return True
+        if not (
+            s >= 2
+            and e < len(t)
+            and t[s - 1].kind == "op"
+            and t[s - 1].text == "("
+            and t[e].kind == "op"
+            and t[e].text in {",", ")"}
+        ):
+            return False
+        if t[s - 2].kind == "name" and t[s - 2].text == "pcall" and not _is_field(t, s - 2):
+            return True
+        return (
+            s >= 4
+            and [x.text for x in t[s - 4 : s - 1]] == ["ns", ".", "Call"]
+            and not _is_field(t, s - 4)
+        )
+
+    def _runs_in_section(self, fid: tuple[str, int], section: set[tuple[str, int]]) -> bool:
+        name, head = fid
+        entries = self.roots.get(fid)
+        refs = self.named.get(fid)
+        if refs is None:  # a function literal
+            end = self.flows[name].block_end(head) + 1
+            return entries is not None or (
+                self.inside(name, head, section, exclude=head) and self.called_here(name, head, end)
+            )
+        uses = [(f, s, e) for f, s, e in refs if not (f == name and entries and s in entries)]
+        if entries is None and not uses:
+            return False  # never referenced: fail closed
+        return all(self.inside(f, s, section) and self.called_here(f, s, e) for f, s, e in uses)
+
+    def _refs(self, name: str) -> list[_ApiRef]:
+        flow = self.flows[name]
+        t = flow.tokens
+        out = []
+        for k in range(len(t)):
+            client = self.client(flow, k)
+            if client or self._use_of(flow, k, self.handles[name]):
+                out.append(
+                    _ApiRef(
+                        name,
+                        flow.label_at(k),
+                        _api_name(t, k),
+                        t[k].line,
+                        client,
+                        self.inside(name, k),
+                    )
+                )
+        return out
+
+
+def _section_scan(sources: list[Path] | None = None) -> _SectionScan:
+    """The scan of `sources`, or of the sources under ADDON as it is now (the
+    review probes point ADDON at an edited copy)."""
+    try:
+        return _SectionScan(sorted(ADDON.glob("*.lua")) if sources is None else sources)
+    except (ValueError, IndexError, KeyError, StopIteration) as err:  # fail closed
+        raise AssertionError(f"the sources could not be analysed: {err!r}") from err
+
+
+def _unlisted(scan: _SectionScan) -> list[_ApiRef]:
+    return [ref for ref in scan.refs if not ref.in_section and ref.key not in SECTIONLESS_API]
+
+
+def test_m11_37_every_client_api_call_is_inside_a_section() -> None:
+    """Every client API reference sits in section code, which `/wowlab skip`
+    switches off, or is one of the named SECTIONLESS_API entries. See the
+    comment above `_LUA51_GLOBALS` for what counts as each."""
+    scan = _section_scan()
+    problems = list(scan.problems)
+    problems += [
+        f"{ref.file}:{ref.line} in {ref.function}: `{ref.api}` is outside every section's "
+        "gather and carry; move it into a section, or add it to SECTIONLESS_API with its reason"
+        for ref in _unlisted(scan)
+    ]
+    assert not problems, problems
+
+
+def test_m11_37_every_sectionless_entry_is_used() -> None:
+    """An entry no reference outside a section matches is stale (its call moved
+    into a section, or away): it fails until it is removed."""
+    scan = _section_scan()
+    used = {ref.key for ref in scan.refs if not ref.in_section}
+    stale = sorted(set(SECTIONLESS_API) - used)
+    assert not stale, stale
+
+
+def test_m11_37_the_scan_sees_exactly_the_std_names() -> None:
+    """The scan's client globals are the names wow_client.yml declares (less
+    the addon's own), so it neither misses a client name nor takes a local for
+    one; and every file that registers a section has client references inside
+    section code, so the section test is not passing vacuously."""
+    scan = _section_scan()
+    roots = {re.split(r"[.:]", ref.api)[0] for ref in scan.refs if ref.client}
+    std = {name.split(".")[0] for name in _std_globals()} - OWN_GLOBALS
+    assert roots == std, (sorted(roots - std), sorted(std - roots))
+    with_sections = {path.name for path in sorted(ADDON.glob("*.lua")) if _keys_in(path)}
+    in_section = {ref.file for ref in scan.refs if ref.in_section}
+    assert in_section == with_sections, (sorted(in_section), sorted(with_sections))
+
+
+def test_m11_37_section_code_runs_only_behind_the_off_switch() -> None:
+    """The scan's premise. Only Core.lua reads a section's gather or carry: it
+    calls the gather in `gather`, which returns first for a switched-off
+    section, tests for one in ns.Write, and tests for and calls the carry at
+    ADDON_LOADED only for a section that is not off. No source names either in
+    a string. ns.Call, which the scan takes as calling its first argument on
+    the spot, is `pcall` on it."""
+    reads = []
+    for path in sorted(ADDON.glob("*.lua")):
+        tokens = _tokens(path)
+        flow = _Flow(path, tokens)
+        for k, tok in enumerate(tokens):
+            if tok.kind == "string" and tok.text in {"gather", "carry"}:
+                reads.append((path.name, flow.label_at(k), f"string {tok.text!r}"))
+            elif tok.kind == "name" and tok.text in {"gather", "carry"} and _is_field(tokens, k):
+                reads.append((path.name, flow.label_at(k), _render(tokens[k - 2 : k + 1])))
+    assert sorted(reads) == sorted(
+        [
+            ("Core.lua", "gather", "section . gather"),
+            ("Core.lua", "ns.Write", "section . gather"),
+            ("Core.lua", 'ns.On("ADDON_LOADED")', "section . carry"),
+            ("Core.lua", 'ns.On("ADDON_LOADED")', "section . carry"),
+        ]
+    ), reads
+    core = _core()
+    assert _body(core, "gather").startswith(
+        f"function gather ( section , event ) {OFF_GUARD} "
+        "local ok , record = pcall ( section . gather , event )"
+    )
+    assert (
+        "if section . carry and not section . off then "
+        "local ok , record = pcall ( section . carry , WowLabCharDB )"
+    ) in _body(core, 'ns.On("ADDON_LOADED")')
+    assert _body(core, "ns.Call").startswith(
+        "function ns . Call ( fn , ... ) local results = ns . Pack ( pcall ( fn , ... ) )"
+    )
+
+
+def test_m11_37_the_race_check_calls_the_client_only_for_a_carried_record() -> None:
+    """The one SECTIONLESS_API entry outside Core.lua. `raceID` (UnitRace) runs
+    from the customization gather and from Customization.lua's
+    PLAYER_ENTERING_WORLD race check, which returns before calling it unless
+    ns.state holds a carried customization record. A switched-off section
+    never holds one: switchOff clears its entry, and ns.state is otherwise
+    written only by `gather` (which refuses an off section), by the carry at
+    ADDON_LOADED (skipped for an off section) and by the race check itself (an
+    absent record). So `/wowlab skip customization` stops this call too. It
+    runs at PLAYER_ENTERING_WORLD itself, not after the 15 s window."""
+    scan = _section_scan()
+    flow = scan.flows["Customization.lua"]
+    heads = [d.function for d in flow.decls.get("raceID", []) if d.function is not None]
+    assert len(heads) == 1, heads
+    callers = sorted(
+        {
+            scan.flows[f].label_at(s)
+            for f, s, _ in scan.named[("Customization.lua", heads[0])]
+            if not scan.inside(f, s)
+        }
+    )
+    assert callers == ['ns.On("PLAYER_ENTERING_WORLD")'], callers
+    check = _body(flow, 'ns.On("PLAYER_ENTERING_WORLD")')
+    assert check.startswith(
+        "function ( ) local record = ns . state [ KEY ] "
+        'if type ( record ) ~= "table" or not record . carried '
+        'or type ( record . race_id ) ~= "number" then return end '
+        "local race = raceID ( )"
+    ), check
+    assert check.count("raceID (") == 1, check
+    stores = sorted(
+        (name, f.label_at(store.at), store.text)
+        for name, f in scan.flows.items()
+        for store in f.stores
+        if store.text.startswith("ns . state ")
+    )
+    assert stores == sorted(
+        [
+            ("Core.lua", _TOP, "ns . state = { }"),
+            ("Core.lua", "gather", "ns . state [ section . key ] = record"),
+            ("Core.lua", "switchOff", "ns . state [ section . key ] = nil"),
+            ("Core.lua", 'ns.On("ADDON_LOADED")', "ns . state [ section . key ] = record"),
+            (
+                "Customization.lua",
+                'ns.On("PLAYER_ENTERING_WORLD")',
+                "ns . state [ KEY ] = ns . Absent "
+                '( "dropped: the recorded race no longer matches the character" )',
+            ),
+        ]
+    ), stores
+
+
+# Constructed inputs (boundary cases for this grader), not addon sources: a
+# copy of the real sources with ordinary edits to one file, as
+# (file, [(text found once, its replacement), ...]).
+_ADDON_LOADED = "    ns.probe = loadProbe(WowLabCharDB)\n"
+_REFRESH = "function ns.Refresh()\n"
+_RACE_CHECK = "    local race = raceID()\n"
+_MODEL_LOOKUP = '        local model = ns.Fn(C_BarberShop, "GetViewingChrModel")\n'
+_PROFESSIONS_GATHER = "    gather = function()\n"
+_GEAR_SLOTS = "        local first, last ="
+# Each leaves this reference outside every section and outside SECTIONLESS_API.
+_M11_37_CASES: dict[str, tuple[str, list[tuple[str, str]], tuple[str, str, str]]] = {
+    # The M11-29 review's copy.
+    "constructed-model-call-at-addon-loaded": (
+        "Core.lua",
+        [(_ADDON_LOADED, _ADDON_LOADED + _MODEL_LOOKUP[4:] + "    ns.Call(model)\n")],
+        ("Core.lua", 'ns.On("ADDON_LOADED")', "C_BarberShop"),
+    ),
+    "constructed-direct-call-at-file-level": (
+        "Gear.lua",
+        [("local _, ns = ...\n", 'local _, ns = ...\nlocal level = UnitLevel("player")\n')],
+        ("Gear.lua", _TOP, "UnitLevel"),
+    ),
+    "constructed-section-helper-also-called-by-a-handler": (
+        "Gear.lua",
+        [
+            (
+                "ns.Section({\n",
+                'ns.On("PLAYER_LEVEL_UP", function()\n    itemLevel(1, "")\nend)\n\nns.Section({\n',
+            )
+        ],
+        ("Gear.lua", "itemLevel", "C_Item"),
+    ),
+    "constructed-ns-helper-called-from-core": (
+        "Core.lua",
+        [(_REFRESH, _REFRESH + "    ns.Spec()\n")],
+        ("Talents.lua", "ns.Spec", "C_SpecializationInfo"),
+    ),
+    "constructed-infrastructure-call-in-a-new-place": (
+        "Core.lua",
+        [(_REFRESH, _REFRESH + "    GetBuildInfo()\n")],
+        ("Core.lua", "ns.Refresh", "GetBuildInfo"),
+    ),
+    "constructed-new-method-on-the-event-frame": (
+        "Core.lua",
+        [(_ADDON_LOADED, _ADDON_LOADED + "    frame:Hide()\n")],
+        ("Core.lua", 'ns.On("ADDON_LOADED")', "frame:Hide"),
+    ),
+    "constructed-function-field-beside-gather": (
+        "Professions.lua",
+        [
+            (
+                '    key = "professions",\n',
+                '    key = "professions",\n'
+                "    check = function()\n        return GetProfessions()\n    end,\n",
+            )
+        ],
+        ("Professions.lua", "check", "GetProfessions"),
+    ),
+    "constructed-timer-in-the-race-check": (
+        "Customization.lua",
+        [(_RACE_CHECK, "    C_Timer.After(1, raceID)\n" + _RACE_CHECK)],
+        ("Customization.lua", 'ns.On("PLAYER_ENTERING_WORLD")', "C_Timer.After"),
+    ),
+    "constructed-client-function-kept-in-a-file-local": (
+        "Customization.lua",
+        [
+            ('local KEY = "customization"\n', 'local KEY = "customization"\nlocal later = nil\n'),
+            (_MODEL_LOOKUP, _MODEL_LOOKUP + "        later = model\n"),
+            (_RACE_CHECK, "    if later then\n        later()\n    end\n" + _RACE_CHECK),
+        ],
+        ("Customization.lua", 'ns.On("PLAYER_ENTERING_WORLD")', "later"),
+    ),
+    "constructed-handler-registered-from-a-gather": (
+        "Professions.lua",
+        [
+            (
+                _PROFESSIONS_GATHER,
+                _PROFESSIONS_GATHER + '        ns.On("SKILL_LINES_CHANGED", function()\n'
+                "            GetProfessions()\n        end)\n",
+            )
+        ],
+        ("Professions.lua", 'ns.On("SKILL_LINES_CHANGED")', "GetProfessions"),
+    ),
+    "constructed-section-helper-handed-to-a-timer": (
+        "Gear.lua",
+        [(_GEAR_SLOTS, "        C_Timer.After(1, itemLevel)\n" + _GEAR_SLOTS)],
+        ("Gear.lua", "itemLevel", "C_Item"),
+    ),
+}
+# Controls: calls added inside section code leave nothing unlisted.
+_M11_37_CONTROLS: dict[str, tuple[str, list[tuple[str, str]]]] = {
+    "control-call-in-a-gather": (
+        "Professions.lua",
+        [
+            (
+                _PROFESSIONS_GATHER,
+                _PROFESSIONS_GATHER + '        local level = UnitLevel("player")\n',
+            )
+        ],
+    ),
+    "control-helper-called-only-by-a-gather": (
+        "Gear.lua",
+        [
+            (
+                "ns.Section({\n",
+                "local function average()\n    return GetAverageItemLevel()\nend\n\nns.Section({\n",
+            ),
+            (_GEAR_SLOTS, "        average()\n" + _GEAR_SLOTS),
+        ],
+    ),
+    "control-literal-under-pcall-in-a-gather": (
+        "Professions.lua",
+        [
+            (
+                _PROFESSIONS_GATHER,
+                _PROFESSIONS_GATHER + "        pcall(function()\n"
+                "            return GetProfessions()\n        end)\n",
+            )
+        ],
+    ),
+}
+
+
+def _m11_37_edited_scan(name: str, edits: list[tuple[str, str]]) -> _SectionScan:
+    with tempfile.TemporaryDirectory(prefix="wowlab-m11-37-") as tmp:
+        for path in sorted(ADDON.glob("*.lua")):
+            text = path.read_text(encoding="utf-8")
+            if path.name == name:
+                for found, replacement in edits:
+                    assert text.count(found) == 1, f"{name}: {found!r} is not there exactly once"
+                    text = text.replace(found, replacement)
+            (Path(tmp) / path.name).write_text(text, encoding="utf-8")
+        return _section_scan(sorted(Path(tmp).glob("*.lua")))
+
+
+def test_m11_37_a_call_added_outside_a_section_fails() -> None:
+    """Constructed inputs (boundary tests of the scan; no fixture argument, so
+    the review probes can call it bare): each edit calls the client outside a
+    section, and the scan must name that reference as unlisted."""
+    missed = []
+    for tag, (name, edits, expected) in sorted(_M11_37_CASES.items()):
+        unlisted = {ref.key for ref in _unlisted(_m11_37_edited_scan(name, edits))}
+        if expected not in unlisted:
+            missed.append(f"{tag}: expected {expected}, got {sorted(unlisted)}")
+    assert not missed, missed
+
+
+def test_m11_37_a_call_added_inside_a_section_passes() -> None:
+    """Constructed inputs (controls for the test above): a call added to a
+    gather, or to a helper only a gather calls, leaves nothing unlisted."""
+    wrong = []
+    for tag, (name, edits) in sorted(_M11_37_CONTROLS.items()):
+        scan = _m11_37_edited_scan(name, edits)
+        unlisted = sorted(ref.key for ref in _unlisted(scan))
+        if unlisted or scan.problems:
+            wrong.append(f"{tag}: {unlisted} {scan.problems}")
+    assert not wrong, wrong

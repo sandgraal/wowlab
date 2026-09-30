@@ -340,6 +340,21 @@ API added later is listed here as **[verify]**, lives in a section
 `/wowlab skip` can switch off, and is trusted only after an owner capture in
 which it ran; `docs/AGENT_WORKFLOW.md` has the rule.
 
+`tests/addon/test_lab_addon.py` checks where each call sits (M11-37). Every
+reference to a client global, and every use of a file-level local that holds
+one, must be in a section's `gather` or `carry` or in a function only they
+call. The references that run outside every section are listed by file,
+function and name, each with its reason, in `SECTIONLESS_API`. In `Core.lua`
+they are the event frame (`CreateFrame`, `RegisterEvent`, `UnregisterEvent`,
+`SetScript`), the timer (`C_Timer.After`), `C_EventUtils.IsEventValid`,
+`GetBuildInfo` for the `client` block and the `/wowlab` registration
+(`SlashCmdList`). The one other is `UnitRace` in the `PLAYER_ENTERING_WORLD`
+race check in `Customization.lua`. It runs only while a carried barber-shop
+record is held, so switching `customization` off stops it too, but it runs
+as the world is entered, not after the 15 s window. A call added anywhere
+else outside a section fails that test until it is put on the list on
+purpose.
+
 | API | Used for | Status | Baseline |
 |---|---|---|---|
 | `C_Traits.GetConfigInfo` | talents: config type and tree ids (the `name` field is never read) | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
