@@ -1581,8 +1581,11 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   addon does less than that wording claims. It leaves the active class
   config out by id, whatever its type, but only when
   `C_ClassTalents.GetActiveConfigID` gave an id. `talents.legacy` does not
-  record the id it left out, and `talents.class` is gathered separately, so
-  the reader cannot tell whether the class config was left out. A config
+  record the id it left out. `talents.class` records the active class
+  config as of its own gather, which may be a different moment, so a class
+  config missing from the list proves nothing; one whose id is in the list
+  shows the addon did not leave it out, a check the reader does not make
+  yet. A config
   found through `C_Traits.GetConfigIDBySystemID` is not type-checked, so
   it may have one of the types the next line says were not searched. The
   line is used whenever `talents.legacy.configs` lists more than one

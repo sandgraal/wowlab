@@ -623,9 +623,10 @@ class ClassTalents(_Section):
 class LegacyTalents(_Section):
     """`talents.legacy`: every trait config the addon found by type (any type
     but Invalid, Combat and Profession; `skipped_types` names those of them
-    the client's enum has) or by a client system id (not type-checked), less
-    the active class config when the client gave its id, each with
-    `found_by`. The file does not record which id was left out."""
+    the client's enum has, when the type search ran) or by a client system
+    id (not type-checked), less the active class config when the client gave
+    its id, each with `found_by`. The file does not record which id was left
+    out."""
 
     legacy_ui: bool
     player_level: Int | None = None
