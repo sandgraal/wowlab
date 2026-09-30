@@ -26,7 +26,10 @@ a comparison, and "after" is the hash the journal records for what W wrote.
 4. A journal record or snapshot dated later than the current time is ignored
    for the check, with a note naming it, and does not turn the check off.
 
-Choices made here where the ruling leaves room (reported with M11-24T2):
+Choices made here where the ruling leaves room, confirmed by the conductor
+on M11-24T2 (2026-09-29), with one more ruling: rule 1 wins over rule 3.
+Byte-identical bytes prove no session ran, so an unreadable object for W's
+`after` does not refuse when the newer side is W's own bytes.
 
 - A pass under rule 2 does not print the rule-1 note: that note says the
   loader was not re-checked, and under rule 2 it was.
@@ -442,6 +445,34 @@ def test_rule3_unreadable_result_of_the_lab_write_is_refused_naming_the_record(
     report = _report(forced)
     assert report["written"] is True
     assert any(record.id in note for note in report["notes"]), report["notes"]
+    assert (flavor / DBM).read_bytes() != REAL_DBM
+
+
+@pytest.mark.xfail(strict=True, reason="M11-24 not implemented")
+@pytest.mark.parametrize(
+    "damage",
+    [_object_missing, _object_damaged],
+    ids=["object-missing-constructed", "object-damaged-constructed"],
+)
+def test_rule1_wins_over_rule3_when_no_session_ran_since_the_lab_write(
+    flavor: Path, user_data: Path, damage: Any
+) -> None:
+    # Conductor ruling on M11-24T2 (5): the disk is byte-identical to W's
+    # `after`, which proves no session ran, so nothing needs reading and an
+    # unreadable object does not refuse. The write is an `sv merge` of the
+    # file: a restore's `after` is the restored snapshot's own object, and
+    # removing it would also break the snapshot comparison the check reads.
+    _merge_of_the_file(flavor)
+    record = _last_lab_write()
+    assert _store().object_path(_after(record)).is_file(), "the merge kept the bytes it wrote"
+    damage(user_data, record)
+    assert _sha(_disk(flavor).read_bytes()) == _after(record), "no session since W"
+    result = _copy_within("--json")
+    assert result.exit_code == 0, _out(result)
+    report = _report(result)
+    assert report["written"] is True
+    assert any(LAB_NOTE in note for note in report["notes"]), report["notes"]
+    assert not any("--force-loader-check" in note for note in report["notes"]), report["notes"]
     assert (flavor / DBM).read_bytes() != REAL_DBM
 
 
