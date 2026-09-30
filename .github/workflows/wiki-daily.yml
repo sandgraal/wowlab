@@ -16,8 +16,14 @@ name: Wiki daily
 #            open issue labelled wiki-daily. Nothing is pushed on a failure.
 #
 # Needs ANTHROPIC_API_KEY (the Claude step skips cleanly without it, or when
-# the API reports exhausted credit or a rate limit; the rest still runs) and
-# WIKI_PUSH_TOKEN (publish only).
+# the API reports exhausted credit or a rate limit; the rest still runs).
+#
+# The push uses the job's own GITHUB_TOKEN with `contents: write` on the
+# publish job alone. Verified on 2026-09-30 (M12-14 dry run): the wiki's
+# push service accepted a `contents: write` GITHUB_TOKEN (HTTP 200) and
+# refused a `contents: read` one (HTTP 403). It lives for this job only and
+# cannot bypass the main-branch ruleset, so the WIKI_PUSH_TOKEN secret
+# (a long-lived, fine-grained token) is not used.
 
 on:
   schedule:
@@ -79,6 +85,21 @@ jobs:
           done
           code=$(curl -s -o /dev/null -w '%{http_code}' "$url")
           echo "no token: HTTP $code"
+  probe-read:
+    name: Probe wiki push rights, read-only token (temporary)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe
+        env:
+          ACTIONS_TOKEN: ${{ github.token }}
+        run: |
+          url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.wiki.git/info/refs?service=git-receive-pack"
+          code=$(printf 'user = "x-access-token:%s"\n' "$ACTIONS_TOKEN" | curl -s -o /dev/null -w '%{http_code}' -K - "$url")
+          echo "ACTIONS_TOKEN (contents: read): HTTP $code (receive-pack advertisement)"
+          code=$(printf 'user = "x-access-token:%s"\n' "$ACTIONS_TOKEN" | curl -s -o /dev/null -w '%{http_code}' -K - "${url/receive-pack/upload-pack}")
+          echo "ACTIONS_TOKEN (contents: read): HTTP $code (upload-pack advertisement)"
 
   improve:
     name: Check and improve the wiki
@@ -347,6 +368,9 @@ jobs:
        (github.event_name == 'workflow_dispatch' && inputs.push))
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Only the push step uses this token's write access (see the header).
+    permissions:
+      contents: write
     steps:
       - name: Check out main at the commit the pass read
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -427,10 +451,9 @@ jobs:
       - name: Push
         if: steps.commit.outputs.made == 'true'
         env:
-          TOKEN: ${{ secrets.WIKI_PUSH_TOKEN }}
+          TOKEN: ${{ github.token }}
           BRANCH: ${{ needs.improve.outputs.wiki_branch }}
         run: |
-          if [ -z "$TOKEN" ]; then echo "::error::WIKI_PUSH_TOKEN is not set"; exit 1; fi
           auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
           echo "::add-mask::${auth}"
           export GIT_CONFIG_COUNT=1
