@@ -72,7 +72,8 @@ known-first-party = ["wowlab_core"]
 strict = true
 python_version = "3.12"
 # The scrub tool is the repository's privacy boundary; hold it to the library's standard.
-files = ["lab/core/src", "scripts/lab_capture.py"]
+# The subset tool (M12-01) makes fixtures the same byte-for-byte way; the same standard.
+files = ["lab/core/src", "scripts/lab_capture.py", "scripts/wago_subset.py"]
 exclude = ["\\.claude/worktrees", "\\.venv"]
 warn_unreachable = true
 pretty = true
