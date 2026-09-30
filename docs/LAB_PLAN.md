@@ -2309,6 +2309,15 @@ fixtures.
   numbers row by row (`_Row.number`). db2lake's typed rows are what a second
   consumer should use; moving `looks` onto them is not part of this wave.
 
+*Amended 2026-09-30 (M12-02):* `gamedata` no longer reports the bare URL
+and `HTTP 400`. A `400` from the table endpoint is `TableNotPublished` when
+the builds listing lists the build, with a message that names the status and
+the URL and says the table may not exist in this game version, and
+`BuildNotPublished` when it does not, as a `404` is. The status alone
+decides (the body is not read); a `400` is never retried and never cached.
+The committed listing that lists 1.60.1.70058 is
+`wago/builds.2026-09-30.json.gz`.
+
 ### 14.2 db2lake
 
 Decision: ADR-0028. The design, so tickets can be graded:

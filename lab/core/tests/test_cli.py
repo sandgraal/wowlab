@@ -633,6 +633,71 @@ def test_db2_fetch_defaults_to_the_flavor_version_and_reports_unpublished(root: 
     assert VERSION in result.stderr
 
 
+# M12-02: the 400 wago gives for a table a listed build lacks (M12-01's
+# recording) and the listing of 2026-09-30, the first committed one that lists
+# that build (fixture index rows).
+LACKING_TABLE = "TraitSubTree"
+LISTED_BUILD = "1.60.1.70058"
+
+
+def _recorded_2026_09_30(request: httpx.Request) -> httpx.Response:
+    if request.url.path == "/api/builds":
+        body = gzip.decompress((WAGO / "builds.2026-09-30.json.gz").read_bytes())
+        return httpx.Response(200, headers={"content-type": "application/json"}, content=body)
+    if (
+        request.url.path == f"/db2/{LACKING_TABLE}/csv"
+        and request.url.params.get("build") == LISTED_BUILD
+    ):
+        return httpx.Response(
+            400,
+            headers={"content-type": "application/json"},
+            content=(WAGO / f"{LACKING_TABLE}.{LISTED_BUILD}.400.json").read_bytes(),
+        )
+    return _recorded(request)
+
+
+@pytest.mark.parametrize("json_out", [False, True], ids=["text", "json"])
+@pytest.mark.parametrize("command", ["head", "fetch"])
+def test_db2_table_the_build_lacks_exits_1_with_the_reason(
+    root: Path,
+    user_data: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    json_out: bool,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return _recorded_2026_09_30(request)
+
+    @contextmanager
+    def fake() -> Iterator[GameData]:
+        source = WagoSource(transport=httpx.MockTransport(handler), sleep=lambda _: None)
+        try:
+            yield GameData(source, cache_dir=user_data / "gamedata")
+        finally:
+            source.close()
+
+    monkeypatch.setattr(cli, "_open_gamedata", fake)
+    args = ["db2", command, LACKING_TABLE, "--build", LISTED_BUILD]
+    result = run(*args, *(["--json"] if json_out else []))
+
+    assert result.exit_code == 1, (result.stdout, result.stderr, result.exception)
+    assert isinstance(result.exception, SystemExit), "a clean exit, not an uncaught error"
+    assert result.stdout == ""
+    assert result.stderr == (
+        f"wowlab: table {LACKING_TABLE!r} is not published for build {LISTED_BUILD!r}: "
+        f"wago.tools answered HTTP 400 for "
+        f"https://wago.tools/db2/{LACKING_TABLE}/csv?build={LISTED_BUILD}; "
+        "the table may not exist in this game version\n"
+    )
+    assert "Traceback" not in result.output
+    assert [r.url.path for r in requests].count(f"/db2/{LACKING_TABLE}/csv") == 1
+    tables = user_data / "gamedata" / "tables"
+    assert not [p for p in tables.rglob("*") if p.is_file()], "the 400 is never cached"
+
+
 # ─── snap ────────────────────────────────────────────────────────────────────
 
 
