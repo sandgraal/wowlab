@@ -321,11 +321,14 @@ standard library: Lua 5.1 plus exactly the client globals the addon uses. A
 global it lacks (for example `UnitName`) fails the lint as undefined.
 `tests/addon/test_lab_addon.py` checks the TOC template, the privacy rules,
 and that this file, `wow_client.yml` and the sources list the same APIs.
-No tracked text file may hold a raw bidirectional control character (the
+No tracked file may hold a raw bidirectional control character (the
 embeddings, overrides, isolates and marks that can make text read in a
-different order than it runs): `tests/repo/test_bidi_controls.py` checks every
-one, this folder's Lua and YAML included, and ruff's `PLE2502` checks Python
-as well (M11-37).
+different order than it runs). `tests/repo/test_bidi_controls.py` searches the
+raw bytes of every tracked file, this folder's Lua and YAML included, so a NUL
+or a stray byte elsewhere in a file does not hide one, and it checks every
+tracked file name. It leaves out only the real captures under
+`lab/core/tests/fixtures/`; their index, the README there, is scanned. ruff's
+`PLE2502` checks Python as well (M11-37).
 
 ## API status
 
@@ -347,34 +350,45 @@ which it ran; `docs/AGENT_WORKFLOW.md` has the rule.
 
 Where a call may sit (M11-37). A call is *switchable* when a `/wowlab skip`
 typed in the session stops it: it sits in a section's `gather`, or in a
-function only gathers call at once. A gather runs on the first on-world pass
-(15 s after entering the world), on its section's change events, on
-`/wowlab save` and at logout, and never for a switched-off section. A `carry`
-is not switchable: it runs at `ADDON_LOADED`, before the world is visible, so
-only a skip saved in an earlier session stops it. Nor is anything run at load
-or from an event handler outside a section. `tests/addon/test_lab_addon.py`
-holds the sources to three rules:
+function that only gathers call, and call at once (directly, through `pcall`,
+`xpcall` or `ns.Call`, or as a `table.sort` comparator). A gather runs on the
+first on-world pass (15 s after entering the world), on its section's change
+events, on `/wowlab save` and at logout, and never for a switched-off
+section. A `carry` is not switchable: it runs at `ADDON_LOADED`, before the
+world is visible, so only a skip saved in an earlier session stops it. Nor is
+anything run at load or from an event handler outside a section.
+`tests/addon/test_lab_addon.py` holds the sources to three rules:
 
 - Every reference to a client global, and every use of a file-level local
   that holds one, sits in a gather, or is listed in `SECTIONLESS_API` by
-  file, function and name, with the ways it may be used and why. That
-  function must be the only one of its name in its file, and a function
-  holding such a reference is only ever called directly, from the callers
-  pinned in `SECTIONLESS_CALLERS`. In `Core.lua` the list holds the event
-  frame (`CreateFrame`, `RegisterEvent`, `UnregisterEvent`, `SetScript`),
-  the timer (`C_Timer.After`), `C_EventUtils.IsEventValid`, `GetBuildInfo`
-  for the `client` block and the `/wowlab` registration (`SlashCmdList`).
-- A gather hands no function on. Nothing that may be a function (a function
-  literal, an addon function, a client function, `ns.Fn(...)`, or a local
-  that holds one) goes to `ns.On`, a timer, `SetScript`, a hook or any other
-  call that could run it later, into a table or a global, or out as a return
-  value: it would keep running after `/wowlab skip`. The exceptions are
-  listed in `HANDED_ON`, each with its reason. Today there is one:
-  `ItemLocation` as the self of its own `CreateFromEquipmentSlot`, called at
-  once.
-- `ns` is written only as `ns.Name` or `ns:Name`, and `ns.state` is only
-  indexed or assigned where it stands, so neither is reached through an
-  alias.
+  file, function and name, with how many times it is called, tested, bound,
+  passed as its own method's self or assigned there, and why. That function
+  must be the only one of its label in its file (a gather or carry written
+  in a section spec is labelled with its key, `gather("gear")`), and a
+  function holding such a reference is only ever called directly, from the
+  callers pinned in `SECTIONLESS_CALLERS`, each with its number of calls. In
+  `Core.lua` the list holds the event frame (`CreateFrame`, `RegisterEvent`,
+  `UnregisterEvent`, `SetScript`), the timer (`C_Timer.After`),
+  `C_EventUtils.IsEventValid`, `GetBuildInfo` for the `client` block and the
+  `/wowlab` registration (`SlashCmdList`).
+- A gather hands no function on. Nothing that may be a function goes to
+  `ns.On`, a timer, `SetScript`, a hook or any other call that could keep it,
+  into a table, a field, a global or a local declared outside the gather's
+  own code, or out as a return value; a function statement such as
+  `function ns.later()` written in a gather counts too. Such a function would
+  keep running after `/wowlab skip`. "May be a function" covers a function
+  literal, an addon function, a client global, `ns.Fn(...)`, what `next`,
+  `pairs`, `ipairs`, `select` or `unpack` return from one, a loop variable
+  over one, and any local or helper parameter ever given one. The exceptions
+  are listed in `HANDED_ON`, each with its reason. Today there are four:
+  `ItemLocation` as the self of its own `CreateFromEquipmentSlot`, and three
+  values `talents.legacy` reads out of the client's `Enum.TraitConfigType`
+  and `Constants` tables and hands at once to `C_Traits` or `string.find`.
+- Each file binds its `...` once, as `local <name>, ns = ...`, and uses it
+  nowhere else. `ns` is written only as `ns.Name` or `ns:Name`, and
+  `ns.state` is only indexed or assigned where it stands. So neither the
+  namespace nor the state the race check reads can be reached under another
+  name.
 
 The one listed call outside `Core.lua` is `UnitRace` in the
 `PLAYER_ENTERING_WORLD` race check in `Customization.lua`. It runs only while
@@ -385,12 +399,20 @@ record and no skip saved in an earlier session, nothing typed in that session
 can stop the first one: if it crashed the client, the crash would repeat until
 the addon is unticked at character select.
 
-Left to review, because the test does not follow them: a function read out
-of a table (a `pairs` loop, a field of what a call returned) or returned by a
-client call, and a way of reaching a client global that the dynamic-lookup
-check does not name (it rejects `_G`, `getfenv`, `debug`, `setmetatable` and
-the others it lists). Anything else outside a gather, or handed on from one,
-fails the test until someone lists it on purpose.
+Left to review, because the test does not follow them:
+
+- a function returned by a call other than `ns.Fn`, `next`, `pairs`,
+  `ipairs`, `select` and `unpack` (a client call's result, or a field of it);
+- a way of reaching a client global that the dynamic-lookup check does not
+  name (it rejects `_G`, `getfenv`, `debug`, `setmetatable` and the others
+  it lists);
+- which addon functions `Core.lua`'s own handlers call: for example,
+  `ns.Refresh()` added to its `PLAYER_ENTERING_WORLD` handler would gather
+  every on-world section as the world is entered, before the 15 s window,
+  and the test would not see it.
+
+Within those limits, a new client call outside a gather, or a function handed
+on from one, fails the test until someone lists it on purpose.
 
 | API | Used for | Status | Baseline |
 |---|---|---|---|
