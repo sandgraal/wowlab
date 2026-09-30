@@ -16,11 +16,17 @@ Every expectation comes from docs/LAB_PLAN.md §13.4, the bullet
   file are byte-identical, the check compares against the newest snapshot
   whose bytes differ from them. The "no login between the two snapshots"
   pass applies only when no older differing snapshot exists.
-- (c) **A Lab write is not a loader failure.** A comparison that spans a
-  committed guard write to that `WowLab.lua` (a `snap restore`, a profile
-  apply, an earlier `sv merge`; the journal records each) is skipped, with the
-  note "the Lab wrote WowLab.lua after that snapshot; the loader was not
-  re-checked".
+- (c) **A Lab write is not a loader failure**, as amended by the owner on
+  2026-09-29 (M11-24 security review): a comparison that spans a committed
+  guard write W to that `WowLab.lua` (a `snap restore`, a profile apply, an
+  earlier `sv merge`; the journal records each) is compared from the state W
+  left, never skipped. When the newer side is byte-identical to W's `after`
+  (no session since W), the merge passes with the note "the Lab wrote
+  WowLab.lua after that snapshot; the loader was not re-checked". Otherwise
+  W's result (the store object named by `after`) is the older side under the
+  normal rules. The graders for the amendment's new cases are in
+  `test_svmerge_lab_write.py` (M11-24T2); every (c) grader here is a case of
+  "no session since W" and keeps its expected outcome.
 
 Conductor rulings on M11-24T (2026-09-29), within the owner's ruling:
 
@@ -33,8 +39,10 @@ Conductor rulings on M11-24T (2026-09-29), within the owner's ruling:
    it counts that character's logins (§13.4)", in text and `--json`. When the
    probe was the only difference, the merge exits 0, writes nothing and says
    so as the no-change path does.
-3. The Lab-write note prints whenever a comparison was skipped, whether or
-   not the check would have passed.
+3. The Lab-write note prints whenever a comparison spanning a Lab write
+   passes because its newer side is W's own bytes (the amended ruling's rule
+   1), whether or not the comparison against the older snapshot would have
+   passed.
 4. The (b) refusal names the older differing snapshot's id.
 
 Real fixtures (L8): the two characters' `WowLab.lua` from the M11-03 capture
@@ -402,14 +410,15 @@ def _merge_gear_into_wowlab_lua() -> None:
     [False, True],
     ids=["would-have-passed-disk-equal-loads", "would-have-refused-pair-equal-loads"],
 )
-def test_earlier_sv_merge_of_wowlab_lua_skips_the_comparison_with_the_note(
+def test_earlier_sv_merge_of_wowlab_lua_with_no_session_since_passes_with_the_note(
     flavor: Path, then_snapshot: bool
 ) -> None:
-    # Snapshot at 4, then a merge of the file itself. Without --then_snapshot
+    # Snapshot at 4, then a merge of the file itself. Without then_snapshot
     # the disk (4, other bytes) against the guard's snapshot (4) would pass
     # today with no note; with it the pair guard (4) -> later (4, other bytes)
-    # would be refused as "did not go up". Both span the Lab write: skipped,
-    # with the note (conductor ruling 3).
+    # would be refused as "did not go up". Both span the Lab write and their
+    # newer side is the merge's own bytes (rule 1 of the amended ruling):
+    # passed, with the note (conductor ruling 3).
     _snap("loads 4")
     _merge_gear_into_wowlab_lua()
     if then_snapshot:
@@ -442,7 +451,7 @@ def test_loader_failure_after_a_restore_is_still_refused_constructed(
     root: Path, flavor: Path, user_data: Path, failure: Any
 ) -> None:
     # Control, green today: the restore is older than the comparison that
-    # shows the reset, so nothing skips it.
+    # shows the reset, so that comparison does not span it.
     _restore_after_a_login(flavor)
     failure(flavor)
     before = _frozen(root, user_data)
