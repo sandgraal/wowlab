@@ -1,0 +1,3 @@
+Name_lang,FemaleName_lang,Description_lang,ID,ClassID,OrderIndex,PetTalentType,Role,Flags,SpellIconFileID,PrimaryStatPriority,AnimReplacements,MasterySpellID_0,MasterySpellID_1
+Mage,Mage,,1482,8,0,0,2,4,626001,0,0,0,0
+Warlock,Warlock,,1490,9,0,0,2,4,626007,0,0,0,0
