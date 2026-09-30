@@ -496,7 +496,9 @@ def test_sv_merge_of_wowlab_lua_keeps_the_written_bytes_as_a_store_object(
     assert _store().read_object(_after(record), size=len(written)) == written
 
 
-def test_snap_restore_of_wowlab_lua_leaves_the_written_bytes_in_the_store(flavor: Path) -> None:
+def test_snap_restore_of_wowlab_lua_leaves_the_written_bytes_in_the_store_constructed(
+    flavor: Path,
+) -> None:
     # Control, green today: a restore writes a snapshot's bytes, which the
     # store already holds.
     _restore_over_a_login(flavor)
