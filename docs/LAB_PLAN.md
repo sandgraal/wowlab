@@ -2410,6 +2410,101 @@ Decision: ADR-0028. The design, so tickets can be graded:
 it (it requires WoWDBDefs)" is replaced, if ADR-0028 is accepted, by this
 section: Wave 3 types by inference; WoWDBDefs waits for foreign keys.
 
+*Amended 2026-09-30 (M12-03, what the code settled; ADR-0028 unchanged):*
+
+- **SQLite.** The standard library's `sqlite3`, version 3.37 or later
+  (checked on first connection; the bundled one here is 3.49.1), because the
+  tables are `STRICT`: a value of the wrong type is an error, so SQLite is a
+  second line behind the inference, never a silently mixed column. Also used:
+  URI filenames (`mode=ro` for an attached build), the table-valued
+  `pragma_table_info` for `schema`, and Python 3.12's `Connection.setconfig`.
+  At most 10 builds attach at once (SQLite's default limit).
+- **The connection** (security review, 2026-09-30). `query_only` alone does
+  not stop a statement opening a file: `ATTACH` creates its file and
+  `VACUUM INTO` creates its target before failing. So the lake's connection
+  has an authorizer that refuses every `ATTACH` (which is also how
+  `VACUUM INTO` opens its file), `DETACH` and `PRAGMA` except the statement
+  the module itself is issuing at that moment (`Lake.attach`'s own
+  `ATTACH`, `_writing`'s `query_only`), with `table_info` open to all; the
+  statement cache is off, so every execution is authorized afresh.
+  `query_only` stays on outside a write, as a second layer. A lake file may
+  have been planted: triggers and views are switched off on the connection,
+  the schema is untrusted (`TRUSTED_SCHEMA` off), `DEFENSIVE` is on and the
+  two-argument `fts3_tokenizer` is off. SQLite writes a database and its
+  journal in place, so the file (resolved once, and connected to by that
+  resolved path) is refused when it has a second hard link, and so is a
+  `-journal`, `-wal` or `-shm` beside it that is a hard link or a symlink, at
+  connection, before every operation (a read can roll back a hot journal)
+  and before every write; an attach target likewise. A progress handler runs
+  every 10,000 SQLite steps: Ctrl-C stops any statement (`KeyboardInterrupt`),
+  and `Lake.query` stops at a deadline (300 s by default, wall clock from the
+  call) or an operation budget (`QueryStopped`).
+- **A file the lake did not write** is refused and never written into: an
+  empty file gets the metadata tables; any other must hold exactly the two
+  metadata tables as this module creates them (their `CREATE` text is
+  compared), one `STRICT` table per `_lake_tables` row, and nothing else (no
+  view, trigger, index or other table). The messages say what is known:
+  damaged or not a database (delete it, it is derived), busy (another process
+  is writing it), or refused (the authorizer), naming the file concerned.
+- **The rule as coded.** An INTEGER cell is `-?(0|[1-9][0-9]*)` in ASCII
+  digits, within signed 64 bits. `-0` fits the ADR's words (an optional minus,
+  then `0`) and reads as `0`. "Another finite decimal number" is the same
+  integer part with an optional `.digits` fraction, finite as a double:
+  decimal notation only, which is what wago writes in every recording
+  (fixed-point, up to 11 decimals, trailing zeros stripped). So `007`, `00.5`,
+  `+1`, a space, `.5`, `5.`, `1e5`, `inf`, `1_000` and non-ASCII digits are
+  text, and one such cell makes its column TEXT, where the numbers keep their
+  text. An integer outside 64 bits is a finite decimal number, so its column
+  is REAL and the value is the nearest double (exact to 2^53). SQLite stores
+  `-0.0` in a REAL column as `0.0`. A column is typed over every row of the
+  build's table.
+- **An all-empty column** is TEXT and keeps its empty strings: the owner's
+  ruling of 2026-09-30 (recorded against ADR-0028 in `docs/DECISIONS.md`),
+  where the ADR's words read literally gave INTEGER with NULLs. In the
+  recordings there are 20 such columns in 9 recordings of 6 tables, every one
+  a `_lang` or other string column (`TraitTree.TitleText_lang`,
+  `TraitDefinition.OverrideSubtext_lang` and `OverrideDescription_lang`,
+  ChrClasses, ChrRaces, and the ChrSpecialization and SkillLine subsets). A
+  column with any non-empty cell is typed as before:
+  `TraitDefinition.OverrideName_lang` holds one cell, `16972`, beside 653
+  empty ones, so it is INTEGER and its empty cells are NULL (the ADR's
+  Consequences).
+- **Metadata.** `_lake_tables (name, sha256, row_count)`; `name` compares
+  without ASCII case, as SQLite's names do, so `traittree` after `TraitTree`
+  is refused, not fetched. `_lake_meta` records the format (1) and the build;
+  a file recording another build is refused, opened or attached. Table names
+  beginning `_lake_` or `sqlite_` are refused, as is any name `gamedata`'s key
+  rule refuses, before anything is asked.
+- **The hash.** The SHA-256 recorded is of the bytes loaded, hashed as they
+  are read. A cached CSV whose sidecar gives another SHA-256 is not loaded
+  (`SourceChanged`, citing L5). `load` on a loaded table hashes the cached CSV
+  again: the same, a no-op; different, `SourceChanged`. `rows` and `schema`
+  compare once per `Lake` object. If the cache no longer holds the CSV, the
+  lake keeps the table and nothing is refetched.
+- **Batches and bounds.** Two streaming passes: the first infers the types
+  and hashes; the second, inside one `BEGIN IMMEDIATE` transaction, inserts in
+  batches and hashes again, and a file that changed between them is refused
+  and rolled back. A batch is cut at 5,000 rows (`BATCH_ROWS`), 50,000 cells
+  (so a 2,000-column table takes 25 rows) or 4 MiB of CSV, whichever comes
+  first. One record (all its physical lines) may be at most 1 MiB
+  (`MAX_RECORD_BYTES`), refused before it is decoded; the longest record in
+  the recordings is under 2 KB. A header wider than SQLite's column limit
+  (2,000) is `MalformedTable` before any per-name check, and repeated names
+  are found in linear time. Measured on the owner's M1 (shared with other
+  work): a constructed 200,000-row, 10-column CSV (13.3 MB) loads in 1.2 to
+  1.8 CPU s; Python's peak allocation during a load is about 2.4 MB, the same
+  for a 2.5 MB and a 13.3 MB file, about 0.7 MB for a 2,000-column table and
+  about 4.4 MB for 20 KB rows, whatever the row count (SQLite's page cache,
+  2 MB by default, is apart).
+- **Rows** come back in CSV order: ordered by the row id, under whichever of
+  `rowid`, `_rowid_` and `oid` no column shadows. `Lake.query(sql,
+  parameters)` runs SQL the library writes, on the connection that holds the
+  attachments, under the authorizer, `query_only` and a budget; it is not the
+  owner's SQL surface, which M12-04 builds with its own guards.
+- **The file** is created by `load`, `rows`, `schema`, `attach` and `query`
+  (holding only the metadata until a table is loaded); `tables` never
+  creates it.
+
 ### 14.3 char-planner, talents first
 
 Class talents only. Legacy talents wait for a level-25+ capture (the owner's
