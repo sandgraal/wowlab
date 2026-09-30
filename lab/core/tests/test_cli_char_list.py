@@ -51,7 +51,7 @@ ROW = re.compile(
     r"  (?P<what>.+)$"
 )
 RLO = chr(0x202E)  # RIGHT-TO-LEFT OVERRIDE, Cf
-NOT_FOLLOWED = "a link, not followed: wowlab does not follow links"
+NOT_FOLLOWED = "a link, not followed, as wowlab never follows links"
 POSIX_PERMISSIONS = pytest.mark.skipif(
     sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
     reason="POSIX permissions, and not as root",
@@ -142,10 +142,10 @@ def test_char_list_lists_each_captured_character_once(flavor: Path) -> None:
     assert lines[3:6] == [
         cli._CHAR_NOTES[0],
         "The addon records no time; the time shown is the file's modification time: the "
-        "client's last save, unless something wrote the file since (a wowlab restore or undo, "
-        "a copy).",
-        "One row per character folder: a renamed, moved or deleted character keeps its old "
-        "folder and last save here.",
+        "client's last save, unless something wrote the file since (a wowlab snap restore, "
+        "undo or sv merge, or a copy).",
+        "One row per character folder: a renamed or transferred character (and a deleted one "
+        "[verify]) keeps its old folder and last save here.",
     ]
     assert result.stderr == ""
 
@@ -357,16 +357,36 @@ def test_constructed_linked_character_folder_is_named_exit_1(flavor: Path, tmp_p
         "look inside"
     )
     assert _rows(result.stdout) == [
-        (SECOND, f"not read: the character folder: {NOT_FOLLOWED}"),
+        (SECOND, f"not read: could not look inside the character folder ({NOT_FOLLOWED})"),
         (FIRST, "schema 1, saved by client 1.60.1.70009, spec id 1490"),
     ]
     assert f"  {SECOND}  time unknown  not read: " in result.stdout
     assert result.stderr == (
-        f"wowlab: could not read {ACCOUNT_DIR}/{SECOND}: the character folder: {NOT_FOLLOWED}\n"
+        f"wowlab: could not look inside {ACCOUNT_DIR}/{SECOND} (the character folder): "
+        f"{NOT_FOLLOWED}\n"
     )
     report = cli.CharListReport.model_validate_json(run("char", "list", "--json").stdout)
     entry = report.characters[0]
     assert entry.character == SECOND and entry.record is None and entry.mtime_ns is None
+    assert entry.place == "character_folder" and entry.error == NOT_FOLLOWED
+
+
+@POSIX_PERMISSIONS
+def test_constructed_unlistable_saved_variables_folder_is_named_once(flavor: Path) -> None:
+    folder = _lab_file(flavor, SECOND).parent
+    folder.chmod(0)
+    try:
+        result = run("char", "list")
+    finally:
+        folder.chmod(0o755)
+    assert result.exit_code == 1
+    assert dict(_rows(result.stdout))[SECOND] == (
+        "not read: could not look inside its SavedVariables folder (Permission denied)"
+    )
+    assert result.stderr == (
+        f"wowlab: could not look inside {ACCOUNT_DIR}/{SECOND}/SavedVariables (its "
+        "SavedVariables folder): Permission denied\n"
+    )
 
 
 def test_constructed_linked_folder_above_the_characters_is_named_exit_1(
@@ -379,14 +399,43 @@ def test_constructed_linked_folder_above_the_characters_is_named_exit_1(
     assert result.exit_code == 1
     assert [c for c, _ in _rows(result.stdout)] == [SECOND, FIRST]
     assert (
-        "wowlab could not look inside 1 folder under WTF/ (named on stderr): a character "
-        "folder behind one is not listed." in result.stdout.split("\n")
+        "wowlab could not look inside 1 place where character folders can be (named on "
+        "stderr); any character folder inside it is not listed." in result.stdout.split("\n")
     )
     assert result.stderr == f"wowlab: could not look inside {other}/2: {NOT_FOLLOWED}\n"
     report = cli.CharListReport.model_validate_json(run("char", "list", "--json").stdout)
-    assert [(n.path, n.reason) for n in report.not_looked_at] == [(f"{other}/2", NOT_FOLLOWED)]
+    assert [(n.path, n.reason, n.account) for n in report.not_looked_at] == [
+        (f"{other}/2", NOT_FOLLOWED, "90000002#1")
+    ]
     # Only the account it is in: another account is not told about it.
     assert ok("char", "list", "--account", ACCOUNT).stderr == ""
+
+
+def test_constructed_account_option_naming_a_linked_account_names_the_link(
+    flavor: Path, tmp_path: Path
+) -> None:
+    """`--account` naming an account folder that is a link: the link is named
+    (exit 1), not "no account folder" (exit 2); an account that exists
+    nowhere is still a usage error."""
+    linked = "90000002#1"
+    _move_and_link(flavor / "WTF/Account" / ACCOUNT, tmp_path, is_dir=True)
+    (flavor / "WTF/Account" / ACCOUNT).rename(flavor / "WTF/Account" / linked)
+    shutil.copytree(tmp_path / f"outside-{ACCOUNT}", flavor / "WTF/Account" / ACCOUNT)
+    result = run("char", "list", "--account", linked)
+    assert result.exit_code == 1
+    assert result.stdout == (
+        f"No character folder in account {linked} with a WowLab.lua was found, but wowlab could "
+        "not look inside 1 place where character folders can be (named on stderr); any "
+        "character folder inside it is not listed.\n"
+    )
+    assert result.stderr == f"wowlab: could not look inside WTF/Account/{linked}: {NOT_FOLLOWED}\n"
+    report = cli.CharListReport.model_validate_json(
+        run("char", "list", "--account", linked, "--json").stdout
+    )
+    assert report.account == linked and report.characters == []
+    assert [n.path for n in report.not_looked_at] == [f"WTF/Account/{linked}"]
+    nowhere = run("char", "list", "--account", "Nobody")
+    assert nowhere.exit_code == cli.EXIT_USAGE
 
 
 @POSIX_PERMISSIONS
@@ -405,8 +454,8 @@ def test_constructed_nothing_listed_because_a_folder_could_not_be_looked_at(
     assert text.exit_code == named.exit_code == as_json.exit_code == 1
     assert text.stdout == (
         "No character folder in any account with a WowLab.lua was found, but wowlab could not "
-        "look inside 1 folder under WTF/ (named on stderr): a character folder behind one is "
-        "not listed.\n"
+        "look inside 1 place where character folders can be (named on stderr); any character "
+        "folder inside it is not listed.\n"
     )
     assert "install" not in text.stdout + named.stdout
     assert text.stderr == f"wowlab: could not look inside {ACCOUNT_DIR}/1: Permission denied\n"
@@ -416,6 +465,26 @@ def test_constructed_nothing_listed_because_a_folder_could_not_be_looked_at(
     assert [(n.path, n.reason) for n in report.not_looked_at] == [
         (f"{ACCOUNT_DIR}/1", "Permission denied")
     ]
+
+
+def test_text_keeps_summaries_only_and_json_keeps_records(
+    flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Text needs only each file's summary, so it asks `survey` not to keep
+    the parsed records (memory stays bounded by the largest single file)."""
+    real = labaddon.survey
+    asked: list[bool] = []
+
+    def spy(*args: Any, **kwargs: Any) -> labaddon.AllCharacters:
+        asked.append(kwargs["keep_records"])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(labaddon, "survey", spy)
+    text = ok("char", "list").stdout
+    as_json = cli.CharListReport.model_validate_json(ok("char", "list", "--json").stdout)
+    assert asked == [False, True]
+    assert "saved by client 1.60.1.70009" in text
+    assert all(e.record is not None and e.summary for e in as_json.characters)
 
 
 @POSIX_PERMISSIONS

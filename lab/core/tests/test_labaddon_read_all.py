@@ -48,7 +48,7 @@ FIRST = "1/Labchard-Labrealmg"
 SECOND = "1/Labcharb-Labrealmf"
 NO_ADDON = "1/Labcharb-Labrealmd"  # a captured character folder without the lab-addon's file
 TWIN = "Labrealmb Partb Partc Partd/Labchard"  # the <Realm>/<First>/ twin: only AddOns.txt
-NOT_FOLLOWED = "a link, not followed: wowlab does not follow links"
+NOT_FOLLOWED = "a link, not followed, as wowlab never follows links"
 NOT_REGULAR = "not a regular file (a FIFO, socket or device), so it was not opened"
 
 POSIX_PERMISSIONS = pytest.mark.skipif(
@@ -309,10 +309,10 @@ def test_constructed_unreadable_file_on_disk_is_named(flavor: Path) -> None:
 def test_an_unexpected_exception_is_not_swallowed_constructed(
     flavor: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def broken(path: Path) -> labaddon.CharDB:
+    def broken(data: bytes) -> labaddon.CharDB:
         raise RuntimeError("a bug, not a file problem")
 
-    monkeypatch.setattr(labaddon, "read_char", broken)
+    monkeypatch.setattr(labaddon, "parse_char", broken)
     with pytest.raises(RuntimeError, match="a bug"):
         labaddon.read_all(Layout(flavor))
 
@@ -329,7 +329,7 @@ def test_constructed_linked_lab_file_is_named_and_not_followed(
     assert found.not_looked_at == []
     by = {e.character: e for e in found.characters}
     assert by[SECOND].record is None and by[SECOND].mtime_ns is None
-    assert by[SECOND].error == NOT_FOLLOWED
+    assert by[SECOND].error == NOT_FOLLOWED and by[SECOND].place == "file"
     assert by[SECOND].file == f"{ACCOUNT_DIR}/{SECOND}/SavedVariables/WowLab.lua"
     assert by[FIRST].record is not None
 
@@ -338,7 +338,8 @@ def test_constructed_linked_saved_variables_folder_is_named(flavor: Path, tmp_pa
     _move_and_link(_lab_file(flavor, SECOND).parent, tmp_path, is_dir=True)
     by = _by(flavor)
     assert by[SECOND].record is None and by[SECOND].mtime_ns is None
-    assert by[SECOND].error == f"its SavedVariables folder: {NOT_FOLLOWED}"
+    assert by[SECOND].error == NOT_FOLLOWED
+    assert by[SECOND].place == "saved_variables_folder"
     assert by[SECOND].file == f"{ACCOUNT_DIR}/{SECOND}/SavedVariables"
     assert by[FIRST].record is not None
 
@@ -351,7 +352,7 @@ def test_constructed_linked_character_folder_is_named(flavor: Path, tmp_path: Pa
     entry = by[SECOND]
     assert entry.label == "Labcharb-Labrealmf" and entry.shape == "numeric_folder"
     assert entry.record is None and entry.mtime_ns is None
-    assert entry.error == f"the character folder: {NOT_FOLLOWED}"
+    assert entry.error == NOT_FOLLOWED and entry.place == "character_folder"
     assert entry.file == f"{ACCOUNT_DIR}/{SECOND}"
     assert by[FIRST].record is not None
 
@@ -382,7 +383,8 @@ def test_constructed_unlistable_saved_variables_folder_is_named(flavor: Path) ->
     with _unlistable(_lab_file(flavor, SECOND).parent):
         by = _by(flavor)
     assert by[SECOND].record is None
-    assert by[SECOND].error == "its SavedVariables folder: Permission denied"
+    assert by[SECOND].error == "Permission denied"
+    assert by[SECOND].place == "saved_variables_folder"
     assert by[SECOND].file == f"{ACCOUNT_DIR}/{SECOND}/SavedVariables"
     assert by[FIRST].record is not None
 
@@ -392,7 +394,7 @@ def test_constructed_unlistable_character_folder_is_named(flavor: Path) -> None:
     with _unlistable(flavor / ACCOUNT_DIR / SECOND):
         by = _by(flavor)
     assert by[SECOND].record is None
-    assert by[SECOND].error == "the character folder: Permission denied"
+    assert by[SECOND].error == "Permission denied" and by[SECOND].place == "character_folder"
     assert by[SECOND].file == f"{ACCOUNT_DIR}/{SECOND}"
     assert by[FIRST].record is not None
 
@@ -411,25 +413,46 @@ def test_constructed_unlistable_folder_above_the_characters_is_named(
     with _unlistable(flavor / folder):
         found = labaddon.survey(Layout(flavor))
     assert found.characters == []
-    assert found.not_looked_at == [labaddon.NotLookedAt(path=folder, reason="Permission denied")]
+    assert found.not_looked_at == [
+        labaddon.NotLookedAt(path=folder, reason="Permission denied", account=ACCOUNT)
+    ]
 
 
 @pytest.mark.parametrize(
-    "folder",
+    ("folder", "account"),
     [
-        pytest.param("WTF", id="constructed-wtf"),
-        pytest.param("WTF/Account", id="constructed-accounts-folder"),
-        pytest.param(ACCOUNT_DIR, id="constructed-account"),
-        pytest.param(f"{ACCOUNT_DIR}/1", id="constructed-digits-folder"),
+        pytest.param("WTF", None, id="constructed-wtf"),
+        pytest.param("WTF/Account", None, id="constructed-accounts-folder"),
+        pytest.param(ACCOUNT_DIR, ACCOUNT, id="constructed-account"),
+        pytest.param(f"{ACCOUNT_DIR}/1", ACCOUNT, id="constructed-digits-folder"),
     ],
 )
 def test_constructed_linked_folder_above_the_characters_is_named(
-    flavor: Path, tmp_path: Path, folder: str
+    flavor: Path, tmp_path: Path, folder: str, account: str | None
 ) -> None:
     _move_and_link(flavor / folder, tmp_path, is_dir=True)
     found = labaddon.survey(Layout(flavor))
     assert found.characters == []
-    assert found.not_looked_at == [labaddon.NotLookedAt(path=folder, reason=NOT_FOLLOWED)]
+    assert found.not_looked_at == [
+        labaddon.NotLookedAt(path=folder, reason=NOT_FOLLOWED, account=account)
+    ]
+
+
+@POSIX_PERMISSIONS
+def test_constructed_flavor_folder_that_cannot_be_listed_is_named_by_its_name(
+    flavor: Path,
+) -> None:
+    """Entered but not listed (0o111): `WTF/` is never found. The flavor
+    folder is named by its own name, never by an absolute path."""
+    flavor.chmod(0o111)
+    try:
+        found = labaddon.survey(Layout(flavor))
+    finally:
+        flavor.chmod(0o755)
+    assert found.characters == []
+    assert found.not_looked_at == [
+        labaddon.NotLookedAt(path=FLAVOR, reason="Permission denied", account=None)
+    ]
 
 
 def test_constructed_truncated_walk_is_named(flavor: Path) -> None:
@@ -438,8 +461,8 @@ def test_constructed_truncated_walk_is_named(flavor: Path) -> None:
         labaddon.NotLookedAt(
             path="WTF",
             reason=(
-                "the walk stopped at its bound (10 entries, 24 folders deep): what lies past "
-                "it was not looked at"
+                "the walk stopped at its bound (10 entries, 24 folders deep), so what lies "
+                "past it was not looked at"
             ),
         )
     ]
@@ -448,20 +471,36 @@ def test_constructed_truncated_walk_is_named(flavor: Path) -> None:
 def test_constructed_links_and_fifos_that_hide_no_lab_file_are_not_named(
     flavor: Path, tmp_path: Path
 ) -> None:
-    """A linked account-level file the file map names, the account's own
-    SavedVariables/, another addon's file, a twin's AddOns.txt and a FIFO
-    with another name cannot hide a character's WowLab.lua."""
+    """A linked account-level file the file map names, a linked file, a FIFO
+    and a linked `WowLab.lua` in the account's own SavedVariables/, another
+    addon's linked file in a character's SavedVariables/, a twin's linked
+    AddOns.txt, a FIFO with another name and a FIFO in a digits folder
+    cannot hide a character's WowLab.lua: none is named, and the FIFO is
+    not taken for a character folder."""
     _move_and_link(flavor / ACCOUNT_DIR / "config-cache.wtf", tmp_path, is_dir=False)
-    _move_and_link(flavor / ACCOUNT_DIR / "SavedVariables", tmp_path, is_dir=True)
+    account_sv = flavor / ACCOUNT_DIR / "SavedVariables"
+    _move_and_link(account_sv / "RareScanner.lua", tmp_path, is_dir=False)
+    _move_and_link(account_sv / "WowLab.lua", tmp_path, is_dir=False)
     _move_and_link(flavor / ACCOUNT_DIR / TWIN / "AddOns.txt", tmp_path, is_dir=False)
     other = _lab_file(flavor, FIRST).with_name("Syndicator.lua")
     other.write_bytes(b"x = 1\n")
     _move_and_link(other, tmp_path, is_dir=False)
     if hasattr(os, "mkfifo"):
         os.mkfifo(_lab_file(flavor, FIRST).with_name("Other.lua"))
+        os.mkfifo(account_sv / "WeakAuras.lua")
+        os.mkfifo(flavor / ACCOUNT_DIR / "1" / "Not-A-Folder")
     found = labaddon.survey(Layout(flavor))
     assert found.not_looked_at == []
     assert [(e.character, e.error) for e in found.characters] == [(SECOND, None), (FIRST, None)]
+
+
+def test_constructed_linked_account_saved_variables_folder_is_not_named(
+    flavor: Path, tmp_path: Path
+) -> None:
+    _move_and_link(flavor / ACCOUNT_DIR / "SavedVariables", tmp_path, is_dir=True)
+    found = labaddon.survey(Layout(flavor))
+    assert found.not_looked_at == []
+    assert [e.character for e in found.characters] == [SECOND, FIRST]
 
 
 def test_constructed_places_in_another_account_are_left_out_with_account(
@@ -472,11 +511,65 @@ def test_constructed_places_in_another_account_are_left_out_with_account(
     (flavor / other / "4").mkdir()
     _move_and_link(flavor / other / "4", tmp_path, is_dir=True)
     everyone = labaddon.survey(Layout(flavor))
-    assert everyone.not_looked_at == [labaddon.NotLookedAt(path=f"{other}/4", reason=NOT_FOLLOWED)]
+    assert everyone.not_looked_at == [
+        labaddon.NotLookedAt(path=f"{other}/4", reason=NOT_FOLLOWED, account="90000002#1")
+    ]
     assert [e.character for e in everyone.characters] == [SECOND, FIRST, "2/Other-Char"]
     mine = labaddon.survey(Layout(flavor), account=ACCOUNT)
     assert mine.not_looked_at == []
     assert [e.character for e in mine.characters] == [SECOND, FIRST]
+
+
+# ─── the total bound ─────────────────────────────────────────────────────────
+
+
+def test_constructed_total_bound_stops_reading_and_names_every_file_after_it(
+    flavor: Path,
+) -> None:
+    """A budget injected small (real files never reach `MAX_SURVEY_BYTES`):
+    the first file fits, the second would pass the bound, so it and every
+    file after it in the order get the bound's reason and are not read."""
+    donor = _lab_file(flavor, FIRST).read_bytes()
+    for character in ("1/Xa-A", "1/Xb-B"):
+        _plant(flavor, character, donor)
+    first_size = _lab_file(flavor, SECOND).stat().st_size
+    found = labaddon.survey(Layout(flavor), budget=first_size + 10)
+    got = [(e.character, e.summary is not None, e.error) for e in found.characters]
+    bound = (
+        f"the listing's total size bound was reached ({first_size + 10:,} bytes for all files "
+        "together)"
+    )
+    assert got == [
+        (SECOND, True, None),
+        (FIRST, False, bound),
+        ("1/Xa-A", False, bound),
+        ("1/Xb-B", False, bound),
+    ]
+    assert labaddon.MAX_SURVEY_BYTES == 256 * 1024 * 1024
+
+
+def test_constructed_hard_linked_copy_is_read_once(flavor: Path) -> None:
+    extra = _lab_file(flavor, "1/Linked-Copy")
+    extra.parent.mkdir(parents=True)
+    try:
+        os.link(_lab_file(flavor, FIRST), extra)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot make a hard link here: {exc}")
+    by = _by(flavor)
+    first = f"{ACCOUNT_DIR}/{FIRST}/SavedVariables/WowLab.lua"
+    assert by["1/Linked-Copy"].record is None
+    assert by["1/Linked-Copy"].error == f"the same file as {first} (a hard link), read once above"
+    assert by[FIRST].record is not None and by[SECOND].record is not None
+
+
+def test_constructed_summaries_without_records_when_asked(flavor: Path) -> None:
+    kept = labaddon.survey(Layout(flavor))
+    lean = labaddon.survey(Layout(flavor), keep_records=False)
+    assert [e.record for e in lean.characters] == [None, None]
+    assert [e.summary for e in lean.characters] == [e.summary for e in kept.characters]
+    assert [e.summary for e in kept.characters] == [
+        labaddon.summary(e.record) for e in kept.characters if e.record is not None
+    ]
 
 
 # ─── choosing the file ───────────────────────────────────────────────────────
@@ -687,14 +780,23 @@ def _entry(**changes: object) -> dict[str, object]:
     return {**base, **changes}
 
 
-def test_constructed_an_entry_holds_a_record_or_an_error(flavor: Path) -> None:
+def test_constructed_an_entry_holds_a_summary_or_an_error(flavor: Path) -> None:
     record = labaddon.read_char(_lab_file(flavor, FIRST))
-    with pytest.raises(ValidationError, match="either a record or an error"):
+    words = labaddon.summary(record)
+    with pytest.raises(ValidationError, match="either a summary"):
         labaddon.CharacterFile.model_validate(_entry())
-    with pytest.raises(ValidationError, match="either a record or an error"):
-        labaddon.CharacterFile.model_validate(_entry(record=record, error="both"))
-    assert labaddon.CharacterFile.model_validate(_entry(record=record)).record == record
+    with pytest.raises(ValidationError, match="either a summary"):
+        labaddon.CharacterFile.model_validate(_entry(summary=words, error="both"))
+    with pytest.raises(ValidationError, match="either a summary"):
+        labaddon.CharacterFile.model_validate(_entry(record=record))
+    with pytest.raises(ValidationError, match="with an error holds no record"):
+        labaddon.CharacterFile.model_validate(_entry(record=record, summary=None, error="x"))
+    kept = labaddon.CharacterFile.model_validate(_entry(record=record, summary=words))
+    assert kept.record == record and kept.place == "file"
+    assert labaddon.CharacterFile.model_validate(_entry(summary=words)).record is None
     assert labaddon.CharacterFile.model_validate(_entry(error="why")).error == "why"
+    with pytest.raises(ValidationError):
+        labaddon.CharacterFile.model_validate(_entry(error="why", place="somewhere"))
     assert (
         labaddon.CharacterFile.model_validate(_entry(error="why", mtime_ns=None)).mtime_ns is None
     )

@@ -50,13 +50,14 @@ What the models accept (M11-03 capture, `docs/LAB_FORMATS.md` amendment of
   addon's reason; `WowLabCharDB.skip` is kept as a list of section keys, and
   a key this reader does not know is kept but ignored (`skip_known`).
 
-`read_all` (§14.4, M12-09) reads every character's `WowLab.lua` that
-`layout` finds, in both folder shapes, into `CharacterFile` entries: the
-character folder's name and shape, the file's modification time, and the
-record or the reason it could not be read, so one unreadable file never hides
-the others; what it could not look inside above the character folders is in
-`AllCharacters.not_looked_at`. `choose_lab_file` is the one rule for which
-file in a folder is the character's (shared with `wowlab char show`), and
+`survey` (§14.4, M12-09) reads every character's `WowLab.lua` that `layout`
+finds, in both folder shapes, into `CharacterFile` entries: the character
+folder's name and shape, the file's modification time, and the record (or
+only its summary) or the reason it could not be read, so one unreadable file
+never hides the others; what it could not look inside above the character
+folders is in `AllCharacters.not_looked_at`. `read_all` is its list of
+entries alone. `choose_lab_file` is the rule for which file in a folder is
+the character's (`wowlab char show` applies it to regular files only), and
 `summary` is each one's row in `wowlab char list`.
 
 `describe` and `describe_account` turn a record into the text `wowlab char
@@ -69,12 +70,14 @@ the raw client enum number; professions are named by skill line.
 Reads never write (L1): `read_char` and `read_account` open one file with
 `snapshot.read_regular_file` (read-only, no final link followed, no blocking
 on a FIFO, bounded by `luadata.MAX_FILE_BYTES`) and write nothing anywhere;
-`read_all` lists folders through `layout` and reads each file the same way.
+`survey` lists folders through `layout` and reads each file the same way,
+within `MAX_SURVEY_BYTES` for all of them together.
 Nothing here names a flavor, a product or a build (L6).
 """
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Iterator, Mapping
 from pathlib import Path
@@ -102,11 +105,14 @@ __all__ = [
     "ACCOUNT_SCHEMAS",
     "ACCOUNT_VARIABLE",
     "ADDON_NAME",
+    "A_FOLDER",
     "CHAR_SCHEMAS",
     "CHAR_VARIABLE",
     "LAB_FILE_NAME",
     "MAX_IMPORT_CHOICES",
+    "MAX_SURVEY_BYTES",
     "NOT_FOLLOWED",
+    "NOT_REGULAR",
     "OPEN_RECORD_NOTE",
     "PAID_CHANGE_NOTE",
     "REASON_LIMIT",
@@ -135,6 +141,7 @@ __all__ = [
     "LegacyTalents",
     "NoCustomizationError",
     "NotLookedAt",
+    "Place",
     "choose_lab_file",
     "clip_reason",
     "customization_import",
@@ -1060,27 +1067,42 @@ _SAVED_VARIABLES = "SavedVariables"
 # File-map entries for what a name directly in an account folder can be when
 # it is not a file the map names: a realm-name folder or a digits folder.
 _REALM_ENTRIES = frozenset({"realm-folder", "numeric-folder"})
-NOT_FOLLOWED = "a link, not followed: wowlab does not follow links"
+# The most `survey` reads in one run, all files together (M12-09). A real
+# `WowLab.lua` is tens of KB to a few MB, so a real install stays far below
+# it; it bounds the time and memory a folder of large or hard-linked copies
+# can cost. Each file is also bounded on its own (`luadata.MAX_FILE_BYTES`).
+MAX_SURVEY_BYTES = 256 * 1024 * 1024
+
+NOT_FOLLOWED = "a link, not followed, as wowlab never follows links"
+NOT_REGULAR = "not a regular file (a FIFO, socket or device), so it was not opened"
+A_FOLDER = "a folder, not a file"
+
+# What `CharacterFile.file` names.
+Place = Literal["file", "saved_variables_folder", "character_folder"]
 
 
 class CharacterFile(BaseModel):
-    """One character folder's `WowLab.lua` as `read_all` found it: the parsed
-    record, or the reason it could not be read (`error`), never both.
+    """One character folder's `WowLab.lua` as `survey` found it: its
+    `summary` (and, unless the caller asked not to keep it, the parsed
+    `record`), or the reason it could not be read (`error`), never both.
 
     `label` is the character folder's name as it is on disk (§14.4), and
     `realm_folder` the folder above it: a realm name (`shape` `realm_name`)
     or, on Forever, a digits folder (`numeric_folder`), which is not a realm
-    name. `<realm_folder>/<label>` is what `--character` takes. A row is a
-    folder, not proof of a character: a renamed, moved or deleted character
-    leaves its folder and last save behind (GLOSSARY, Identity).
+    name. A row is a folder, not proof of a character: a renamed or
+    transferred character (and a deleted one **[verify]**) leaves its folder
+    and last save behind (GLOSSARY, Identity). `wowlab char show --character`
+    takes `<realm_folder>/<label>` for a folder the layout lists; a linked
+    character folder (`place` `character_folder`) is not one of them.
 
-    `file` is the file read, relative to the flavor folder and `/`-separated,
-    or, when wowlab could not look inside the character folder or its
-    SavedVariables/, that folder. `mtime_ns` is the file's modification time
-    as the walk saw it: the client's last save, unless something wrote the
-    file since (a wowlab restore or undo, a copy); the addon records no time
-    of its own. It is None when no regular file was looked at. An `error`
-    never holds an absolute path."""
+    `file` is the file read, relative to the flavor folder and `/`-separated
+    (`place` `file`), or, when wowlab could not look inside the character
+    folder or its SavedVariables/, that folder (`place` says which).
+    `mtime_ns` is the file's modification time as the walk saw it: the
+    client's last save, unless something wrote the file since (a wowlab snap
+    restore, undo or sv merge, or a copy); the addon records no time of its
+    own. It is None when no regular file was looked at. An `error` never
+    holds an absolute path."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -1089,40 +1111,45 @@ class CharacterFile(BaseModel):
     realm_folder: FsText
     shape: Literal["realm_name", "numeric_folder"]
     file: FsText
+    place: Place = "file"
     mtime_ns: int | None
+    summary: str | None = None
     record: CharDBV1 | CharDBV2 | None = None
     error: str | None = None
 
     @model_validator(mode="after")
-    def _record_or_error(self) -> Self:
-        if (self.record is None) == (self.error is None):
+    def _read_or_error(self) -> Self:
+        if (self.summary is None) == (self.error is None):
             raise ValueError(
-                "a CharacterFile holds either a record or an error, not both or neither"
+                "a CharacterFile holds either a summary (the file was read) or an error, "
+                "not both or neither"
             )
+        if self.record is not None and self.error is not None:
+            raise ValueError("a CharacterFile with an error holds no record")
         return self
 
     @property
     def character(self) -> str:
-        """`<realm or digits folder>/<character folder>`, as `wowlab char show
-        --character` takes it (both commands choose the file with
-        `choose_lab_file`)."""
+        """`<realm or digits folder>/<character folder>`."""
         return f"{self.realm_folder}/{self.label}"
 
 
 class NotLookedAt(BaseModel):
-    """A place under `WTF/` that could hide character folders and that
-    wowlab could not look inside: a folder it could not list, a link it does
-    not follow, or the walk's bound (`path` `WTF`). Not tied to one
-    character; `path` is relative to the flavor folder."""
+    """A place where character folders can be and that wowlab could not look
+    inside: a folder it could not list, a link it does not follow, or the
+    walk's bound (`path` `WTF`). Not tied to one character. `path` is
+    relative to the flavor folder; the flavor folder itself is named by its
+    own name. `account` is the account folder it is in, None above them."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     path: FsText
     reason: str
+    account: FsText | None = None
 
 
 class AllCharacters(BaseModel):
-    """What `read_all` found: one entry per character folder, and every place
+    """What `survey` found: one entry per character folder, and every place
     it could not look inside that no character folder accounts for."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -1146,8 +1173,13 @@ def choose_lab_file(paths: list[str]) -> str | None:
     file whose name differs from it only in case; None when there is none.
     Names are compared whole, extension included. Two with the exact name,
     or none with it and several case variants, raise `LabAddonError`: which
-    one the client reads is not known, so none is read. `wowlab char show`
-    and `read_all` both choose with this (M12-09), so they read one file."""
+    one the client reads is not known, so none is read. `survey`, `wowlab
+    char show` and `looks import-char` all choose with this rule (M12-09),
+    but the two commands give it regular files only, while `survey` also
+    gives it a link, FIFO or folder of that name. So for such an entry they
+    can still answer differently: the client opens the exact name and
+    follows links, and on a case-sensitive volume (under Wine, say) `char
+    show` can read a case variant the client does not."""
     named = [p for p in paths if is_lab_file_name(_name(p))]
     exact = [p for p in named if _name(p) == LAB_FILE_NAME]
     match = sorted(exact or named)
@@ -1171,19 +1203,53 @@ def _os_error(exc: OSError, path: Path) -> str:
     return str(exc).replace(str(path), "the file")
 
 
-def _read_error(path: Path) -> tuple[CharDB | None, str | None]:
-    """`read_char(path)`, or the reason it refused: a file the reader cannot
-    read is an entry, never an exception (any other exception is a bug)."""
-    try:
-        return read_char(path), None
-    except LabAddonError as exc:
-        return None, str(exc)
-    except luadata.LuaLimitError as exc:
-        return None, f"beyond what the SavedVariables parser will hold ({exc.message})"
-    except luadata.LuaDataError as exc:
-        return None, f"not SavedVariables data the parser accepts: {exc}"
-    except OSError as exc:
-        return None, _os_error(exc, path)
+class _Reader:
+    """Reads the files one `survey` run chooses, within `budget` bytes for
+    all of them together, and each (device, inode) once."""
+
+    def __init__(self, flavor_path: Path, budget: int, keep_records: bool) -> None:
+        self.flavor_path = flavor_path
+        self.budget = budget
+        self.left = budget
+        self.keep_records = keep_records
+        self.full = False
+        self.seen: dict[tuple[int, int], str] = {}  # (device, inode) -> path read first
+
+    def read(self, rel: str) -> tuple[CharDB | None, str | None, str | None]:
+        """(record, summary, error) for the file `rel`: a file the reader
+        cannot read is an error, never an exception (any other exception is
+        a bug). The record is None unless `keep_records`."""
+        path = self.flavor_path / rel
+        try:
+            st = os.lstat(path)
+        except OSError as exc:
+            return None, None, _os_error(exc, path)
+        key = (st.st_dev, st.st_ino)
+        if st.st_ino and key in self.seen:
+            return None, None, f"the same file as {self.seen[key]} (a hard link), read once above"
+        if self.full or st.st_size > self.left:
+            self.full = True  # every file after this one gets the same answer
+            bound = (
+                f"the listing's total size bound was reached ({self.budget:,} bytes for all "
+                "files together)"
+            )
+            return None, None, bound
+        if st.st_ino:
+            self.seen[key] = rel
+        try:
+            data = snapshot.read_regular_file(path, limit=luadata.MAX_FILE_BYTES, expect=st)
+        except OSError as exc:
+            return None, None, _os_error(exc, path)
+        self.left -= len(data)
+        try:
+            record = parse_char(data)
+        except LabAddonError as exc:
+            return None, None, str(exc)
+        except luadata.LuaLimitError as exc:
+            return None, None, f"beyond what the SavedVariables parser will hold ({exc.message})"
+        except luadata.LuaDataError as exc:
+            return None, None, f"not SavedVariables data the parser accepts: {exc}"
+        return (record if self.keep_records else None), summary(record), None
 
 
 # Where a place the walk could not look inside sits, for `read_all`.
@@ -1196,7 +1262,8 @@ def _place(path: str, entry_id: str | None, *, is_link: bool) -> tuple[_Place, l
     folder (`WTF/`, `WTF/Account/`, an account folder, a realm or digits
     folder), at a character folder, at its SavedVariables/, or at the file.
     None for anything else (another addon's file, a character's other files,
-    the account's own SavedVariables/). A link directly in an account folder
+    the account's own SavedVariables/ and everything in it). The flavor
+    folder itself (`""`) is the caller's to name. A link directly in an account folder
     counts only where the file map would take it for a realm or digits
     folder, so a linked `config-cache.wtf` hides nothing."""
     parts = path.split("/")
@@ -1209,9 +1276,9 @@ def _place(path: str, entry_id: str | None, *, is_link: bool) -> tuple[_Place, l
     below = parts[2:]  # account, realm, character, SavedVariables, file
     if len(below) <= 1:
         return "above", parts
+    if below[1].casefold() == _SAVED_VARIABLES.casefold():
+        return None  # the account's own SavedVariables/ and anything in it
     if len(below) == 2:
-        if below[1].casefold() == _SAVED_VARIABLES.casefold():
-            return None
         if is_link and entry_id not in _REALM_ENTRIES:
             return None
         return "above", parts
@@ -1235,16 +1302,22 @@ class _Folder:
         self.account = account
         self.realm = realm
         self.label = label
-        self.blocked: list[tuple[str, str]] = []  # (path, reason): folder or SavedVariables/
+        # (path, place, reason): the character folder or its SavedVariables/
+        self.blocked: list[tuple[str, Place, str]] = []
         self.files: dict[str, layout.SavedVariablesFile] = {}  # regular files, by path
         self.odd: dict[str, str] = {}  # other entries named like the file: path -> reason
+
+    def key(self) -> tuple[str, ...]:
+        return _order_key(self.account, self.realm.folder, self.label)
 
     def entry(
         self,
         file: str,
         mtime_ns: int | None,
         *,
+        place: Place = "file",
         record: CharDB | None = None,
+        summary: str | None = None,
         error: str | None = None,
     ) -> CharacterFile:
         return CharacterFile(
@@ -1253,17 +1326,18 @@ class _Folder:
             realm_folder=self.realm.folder,
             shape="numeric_folder" if self.realm.kind == "numeric" else "realm_name",
             file=file,
+            place=place,
             mtime_ns=mtime_ns,
+            summary=summary,
             record=record,
             error=error,
         )
 
-    def read(self, flavor_path: Path) -> CharacterFile | None:
+    def read(self, reader: _Reader) -> CharacterFile | None:
         """The folder's entry, or None when it holds no `WowLab.lua`."""
         if self.blocked:
-            blocked = sorted(self.blocked)
-            reasons = "; ".join(reason for _, reason in blocked)
-            return self.entry(blocked[0][0], None, error=reasons)
+            path, place, reason = min(self.blocked)
+            return self.entry(path, None, place=place, error=reason)
         try:
             chosen = choose_lab_file([*self.files, *self.odd])
         except LabAddonError as exc:
@@ -1275,18 +1349,18 @@ class _Folder:
         if chosen in self.odd:
             return self.entry(chosen, None, error=self.odd[chosen])
         found = self.files[chosen]
-        record, error = _read_error(flavor_path / chosen)
-        return self.entry(chosen, found.mtime_ns, record=record, error=error)
+        record, words, error = reader.read(chosen)
+        return self.entry(chosen, found.mtime_ns, record=record, summary=words, error=error)
 
 
-def _order(entry: CharacterFile) -> tuple[str, ...]:
+def _order_key(account: str, realm_folder: str, label: str) -> tuple[str, ...]:
     return (
-        entry.account.casefold(),
-        entry.account,
-        entry.realm_folder.casefold(),
-        entry.realm_folder,
-        entry.label.casefold(),
-        entry.label,
+        account.casefold(),
+        account,
+        realm_folder.casefold(),
+        realm_folder,
+        label.casefold(),
+        label,
     )
 
 
@@ -1298,7 +1372,13 @@ def read_all(lay: layout.Layout, *, account: str | None = None) -> list[Characte
     return survey(lay, account=account).characters
 
 
-def survey(lay: layout.Layout, *, account: str | None = None) -> AllCharacters:
+def survey(
+    lay: layout.Layout,
+    *,
+    account: str | None = None,
+    keep_records: bool = True,
+    budget: int = MAX_SURVEY_BYTES,
+) -> AllCharacters:
     """Every character `WowLab.lua` in the flavor (§14.4, M12-09), from one
     walk of `WTF/` (`Layout.wtf_walk`).
 
@@ -1317,11 +1397,19 @@ def survey(lay: layout.Layout, *, account: str | None = None) -> AllCharacters:
     non-regular entry, or a folder, and a character folder or SavedVariables/
     that is a link or could not be listed, each give that character an entry
     with the reason. A place above the character folders that could not be
-    looked inside (a link or unlistable folder at `WTF/`, `WTF/Account/`, an
-    account, realm or digits folder) and a walk that hit its bound are in
-    `not_looked_at`. None of these stops the others. Links are never
-    followed and non-regular entries never opened. Any other exception is a
-    bug and is raised.
+    looked inside (the flavor folder itself, and a link or unlistable folder
+    at `WTF/`, `WTF/Account/`, an account, realm or digits folder) and a
+    walk that hit its bound are in `not_looked_at`. None of these stops the
+    others. Links are never followed and non-regular entries never opened.
+    Any other exception is a bug and is raised.
+
+    The run reads at most `budget` bytes in all (`MAX_SURVEY_BYTES`); once a
+    file would pass it, that file and every one after it in the order below
+    get an error instead of being read. A file already read in this run
+    (the same device and inode: a hard link) is not read again; its entry
+    says so. With `keep_records` False the entries hold each file's
+    `summary` but not its parsed record, so memory stays bounded by the
+    largest single file.
 
     The order is by account, then realm folder, then character folder, each
     compared with case folded and then as spelled: stable across runs and
@@ -1338,6 +1426,10 @@ def survey(lay: layout.Layout, *, account: str | None = None) -> AllCharacters:
                 folders[key] = _Folder(acct.folder, realm, character.folder)
     not_looked_at: list[NotLookedAt] = []
 
+    def unseen(path: str, reason: str, parts: list[str]) -> None:
+        in_account = parts[2] if len(parts) > 2 else None
+        not_looked_at.append(NotLookedAt(path=path, reason=reason, account=in_account))
+
     def note(path: str, reason: str, entry_id: str | None = None, is_link: bool = False) -> None:
         found = _place(path, entry_id, is_link=is_link)
         if found is None:
@@ -1346,33 +1438,36 @@ def survey(lay: layout.Layout, *, account: str | None = None) -> AllCharacters:
         if account is not None and len(parts) > 2 and parts[2] != account:
             return
         if place == "above":
-            not_looked_at.append(NotLookedAt(path=path, reason=reason))
+            unseen(path, reason, parts)
             return
         key = (parts[2], parts[3], parts[4])
         folder = folders.get(key)
         if folder is None:  # a linked character folder: not in the typed lists
             realm = realms.get((parts[2], parts[3]))
             if realm is None:
-                not_looked_at.append(NotLookedAt(path=path, reason=reason))
+                unseen(path, reason, parts)
                 return
             folder = folders[key] = _Folder(parts[2], realm, parts[4])
         if place == "character":
-            folder.blocked.append((path, f"the character folder: {reason}"))
+            folder.blocked.append((path, "character_folder", reason))
         elif place == "saved_variables":
-            folder.blocked.append((path, f"its {parts[5]} folder: {reason}"))
+            folder.blocked.append((path, "saved_variables_folder", reason))
         else:
             folder.odd[path] = reason
 
     for link in walk.symlinks:
         note(link.path, NOT_FOLLOWED, link.entry_id, is_link=True)
     for error in walk.errors:
-        note(error.path, error.error)
-    for path in walk.not_regular:
-        note(path, "not a regular file (a FIFO, socket or device), so it was not opened")
-    for path in walk.folders:
+        if error.path == "":  # the flavor folder itself could not be listed
+            not_looked_at.append(NotLookedAt(path=lay.flavor_folder, reason=error.error))
+        else:
+            note(error.path, error.error)
+    for path in walk.not_regular + walk.folders:
+        # Only an entry with the file's own name can stand in for it; a FIFO
+        # or folder anywhere else hides no character.
         found = _place(path, None, is_link=False)
         if found is not None and found[0] == "file":
-            note(path, "a folder, not a file")
+            note(path, NOT_REGULAR if path in walk.not_regular else A_FOLDER)
     for f in walk.saved_variables:
         if f.scope != "character" or f.backup or not is_lab_file_name(_name(f.path)):
             continue
@@ -1386,19 +1481,20 @@ def survey(lay: layout.Layout, *, account: str | None = None) -> AllCharacters:
                 path=_WTF,
                 reason=(
                     f"the walk stopped at its bound ({limits.max_entries} entries, "
-                    f"{limits.max_depth} folders deep): what lies past it was not looked at"
+                    f"{limits.max_depth} folders deep), so what lies past it was not looked at"
                 ),
             )
         )
+    reader = _Reader(lay.flavor_path, budget, keep_records)
     entries = []
-    for key, folder in folders.items():
-        if account is not None and key[0] != account:
+    for folder in sorted(folders.values(), key=_Folder.key):
+        if account is not None and folder.account != account:
             continue
-        entry = folder.read(lay.flavor_path)
+        entry = folder.read(reader)
         if entry is not None:
             entries.append(entry)
     return AllCharacters(
-        characters=sorted(entries, key=_order),
+        characters=entries,
         not_looked_at=sorted(not_looked_at, key=lambda n: n.path),
     )
 

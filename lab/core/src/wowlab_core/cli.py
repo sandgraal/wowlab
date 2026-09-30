@@ -4608,10 +4608,10 @@ def _chosen_lab_file(
 class CharListReport(_Out):
     """`wowlab char list --json`: every character folder with a `WowLab.lua`
     in the flavor (or in `--account`), as `labaddon.survey` gives them, each
-    with its record or the reason it could not be read, and every place
-    above the character folders wowlab could not look inside. The command
-    exits 1 when any character has an `error` or `not_looked_at` is not
-    empty."""
+    with its record and summary or the reason it could not be read, and
+    every place where character folders can be that wowlab could not look
+    inside. The command exits 1 when any character has an `error` or
+    `not_looked_at` is not empty."""
 
     flavor_folder: str
     account: layout.FsText | None  # --account as the layout spells it; None: every account
@@ -4623,15 +4623,45 @@ class CharListReport(_Out):
 _CHAR_LIST_NOTES = [
     _CHAR_NOTES[0],
     "The addon records no time; the time shown is the file's modification time: the "
-    "client's last save, unless something wrote the file since (a wowlab restore or undo, "
-    "a copy).",
-    "One row per character folder: a renamed, moved or deleted character keeps its old "
-    "folder and last save here.",
+    "client's last save, unless something wrote the file since (a wowlab snap restore, undo "
+    "or sv merge, or a copy).",
+    "One row per character folder: a renamed or transferred character (and a deleted one "
+    "[verify]) keeps its old folder and last save here.",
 ]
+
+# How a row and stderr name the folder `CharacterFile.file` is, when it is one.
+_BLOCKED_PLACE = {
+    "character_folder": "the character folder",
+    "saved_variables_folder": "its SavedVariables folder",
+}
 
 
 def _plural(n: int, noun: str) -> str:
     return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
+def _row_words(e: labaddon.CharacterFile) -> str:
+    if e.summary is not None:
+        return e.summary
+    if e.place in _BLOCKED_PLACE:
+        return f"not read: could not look inside {_BLOCKED_PLACE[e.place]} ({e.error})"
+    return f"not read: {e.error}"
+
+
+def _unseen_words(n: int) -> str:
+    return (
+        f"wowlab could not look inside {_plural(n, 'place')} where character folders can be "
+        f"(named on stderr); any character folder inside {'it' if n == 1 else 'them'} is not "
+        "listed"
+    )
+
+
+def _hidden_account(lay: layout.Layout, name: str) -> list[labaddon.NotLookedAt]:
+    """What wowlab could not look inside that could be, or hold, the account
+    folder `name` (compared with case folded, as `_select_account` does):
+    a place above every account, or one in an account of that name."""
+    found = labaddon.survey(lay, keep_records=False).not_looked_at
+    return [n for n in found if n.account is None or n.account.casefold() == name.casefold()]
 
 
 @char_app.command("list")
@@ -4648,31 +4678,43 @@ def char_list(
     """Every character folder with a WowLab.lua, in every account unless
     --account names one: when the file was last written, and its schema, the
     client that saved it and the spec, or why it could not be read. A file or
-    folder wowlab could not read or look inside is named on stderr and the
+    place wowlab could not read or look inside is named on stderr and the
     command then exits 1; the others are still listed. JSON: CharListReport."""
     _, chosen, lay = _open(root, flavor)
-    acct = _select_account(lay, account) if account is not None else None
-    found = labaddon.survey(lay, account=acct.folder if acct else None)
-    entries, unseen = found.characters, found.not_looked_at
+    acct_folder: str | None = None
+    hidden: list[labaddon.NotLookedAt] | None = None
+    if account is not None:
+        try:
+            acct_folder = _select_account(lay, account).folder
+        except CliError as exc:
+            # No such account folder in the layout's lists: say so only if
+            # nothing wowlab could not look inside could be (or hold) it.
+            hidden = _hidden_account(lay, account) if exc.code == EXIT_USAGE else []
+            if not hidden:
+                raise
+            acct_folder = next((n.account for n in hidden if n.account), account)
+    entries: list[labaddon.CharacterFile] = []
+    unseen: list[labaddon.NotLookedAt]
+    if hidden is not None:
+        unseen = hidden
+    else:
+        found = labaddon.survey(lay, account=acct_folder, keep_records=json_out)
+        entries, unseen = found.characters, found.not_looked_at
     report = CharListReport(
         flavor_folder=chosen.folder,
-        account=acct.folder if acct else None,
+        account=acct_folder,
         characters=entries,
         not_looked_at=unseen,
         notes=_CHAR_LIST_NOTES,
     )
-    unseen_words = (
-        f"wowlab could not look inside {_plural(len(unseen), 'folder')} under WTF/ (named on "
-        "stderr): a character folder behind one is not listed"
-    )
     if json_out:
         _emit(report)
     elif not entries:
-        where = f"account {acct.folder}" if acct else "any account"
+        where = f"account {acct_folder}" if acct_folder is not None else "any account"
         if unseen:
             _say(
                 f"No character folder in {where} with a {labaddon.LAB_FILE_NAME} was found, "
-                f"but {unseen_words}."
+                f"but {_unseen_words(len(unseen))}."
             )
         else:
             _say(
@@ -4683,14 +4725,11 @@ def char_list(
     else:
         names = {e.character: _safe(e.character) for e in entries}
         width = max(len(name) for name in names.values())
-        for acct_folder in dict.fromkeys(e.account for e in entries):
-            mine = [e for e in entries if e.account == acct_folder]
-            blocked = sum(
-                1 for e in mine if not labaddon.is_lab_file_name(e.file.rsplit("/", 1)[-1])
-            )
+        for folder in dict.fromkeys(e.account for e in entries):
+            mine = [e for e in entries if e.account == folder]
+            blocked = sum(1 for e in mine if e.place in _BLOCKED_PLACE)
             heading = (
-                f"Account {acct_folder}: "
-                f"{_plural(len(mine) - blocked, 'character folder')} with a "
+                f"Account {folder}: {_plural(len(mine) - blocked, 'character folder')} with a "
                 f"{labaddon.LAB_FILE_NAME}"
             )
             if blocked:
@@ -4700,16 +4739,22 @@ def char_list(
                 when = (
                     "time unknown" if e.mtime_ns is None else f"written {_local_time(e.mtime_ns)}"
                 )
-                what = (
-                    labaddon.summary(e.record) if e.record is not None else f"not read: {e.error}"
-                )
-                _say(f"  {names[e.character]:<{width}}  {when}  {what}")
+                _say(f"  {names[e.character]:<{width}}  {when}  {_row_words(e)}")
         if unseen:
-            _say(f"{unseen_words}.")
+            _say(f"{_unseen_words(len(unseen))}.")
         for note in _CHAR_LIST_NOTES:
             _say(note)
     for e in entries:
-        if e.error is not None:
+        if e.error is None:
+            continue
+        if e.place in _BLOCKED_PLACE:
+            _note(
+                "wowlab: could not look inside {} ({}): {}",
+                e.file,
+                _BLOCKED_PLACE[e.place],
+                e.error,
+            )
+        else:
             _note("wowlab: could not read {}: {}", e.file, e.error)
     for place in unseen:
         _note("wowlab: could not look inside {}: {}", place.path, place.reason)
