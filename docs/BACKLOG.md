@@ -128,7 +128,7 @@ The conductor writes `docs/handoffs/M12-review.md` per `docs/LAB_PLAN.md` §11 (
 
 The five follow-ups filed after the Wave 2 review stay here until they merge; the Wave 3 plan PR (2026-09-29) decided they are independent of Wave 3 except that M12-04 needs M11-30 merged. Their milestone stays M11.
 
-## [ ] M11-28 — the remaining wall-clock timing checks
+## [x] M11-28 — the remaining wall-clock timing checks
 **Size:** S · **Depends on:** — · **[TEST]** (test-writer only)
 
 M11-26's review found three more wall-clock budgets that can fail under load: the review probes `lab/core/tests/review/test_m10_06_toc_parse_quadratic_time.py` (`LIMIT_SECONDS = 1.0`, `perf_counter`) and `lab/core/tests/review/test_m10_13_unclosed_quote_quadratic_time_target.py` (`BUDGET_S = 2.0`), and the luadata grader `lab/core/tests/parser/test_luadata_constructed.py` around line 1060 (a 60 s budget). Measure CPU time with `lab/core/tests/parser/_cpu_clock.py` (M11-26), keeping every assertion and budget. The first two are review probes a reviewer cannot edit and the third grades the load-bearing `luadata.py`, so all three belong to a test-writer.
@@ -146,9 +146,11 @@ From the M11-23 capture (1.60.1.70058; `docs/LAB_FORMATS.md`, M11-23 follow-up t
 
 **Acceptance:** static addon tests (labelled source scans) for the change; the README and §13.1 say what is confirmed and what stays [verify]; an owner capture after one applied change shows `recorded_at = "applied"` (or the reason it cannot); reviewed by `code-reviewer` and `domain-reviewer`.
 
+*Status 2026-09-30:* the code merged (#143, `5784422`): the addon now records which barber-shop events reach the section and why the model id is missing, and its saved format is **schema 2** (§13.1: any change after M11-04). The ticket stays **open** until the owner's capture is read: the runbook is `docs/handoffs/M11-29.md` (the reading table is in `lab/addon/README.md`, "M11-29 capture step"). Later tickets, only if the capture shows none of the watched events marks the Accept: record an event's payload (`BARBER_SHOP_RESULT`'s success argument) or a `hooksecurefunc` post-hook on `C_BarberShop.ApplyCustomizationChoices`, each **[verify]** with its own runbook step and capture.
+
 ---
 
-## [ ] M11-30 — terminal-safe error text
+## [x] M11-30 — terminal-safe error text
 **Size:** S · **Depends on:** —
 
 From the M11-23 and M11-25 security reviews. `cli._safe` escapes C0 and C1 control characters only, and `cli._note` keeps line breaks from inserted values, so a character folder name holding a newline, U+202E or another Unicode format or separator character (Cf, Zl, Zp) reaches stderr raw and can spoof a line. Escape those in `_safe` the way M11-25 escapes printed keys (UTF-8 `\ddd` or `\xHH`, consistently with the surrounding output), and have `_note` escape line breaks that come from inserted values while keeping the ones the message itself contains. Real character names with accented letters must still print as they are.
@@ -166,9 +168,11 @@ From the M11-24 reviews. (a) `snap gc` now keeps every `after` a committed journ
 
 *Amended 2026-09-29 (from the M11-31T report):* (c) is done in `M11-31T`. The graders pin the account-wide `WowLab.lua` and `WowLab.lua.bak` as reclaimable and every write to a character's `WowLab.lua` as kept, not only the latest. The implementation must also update the "Nothing to collect … a committed write in the journal" message in `snap_gc`, the `put_object` and `gc` docstrings in `snapshot.py`, and add a dated §13.4 amendment; none of those is graded.
 
+*Status 2026-09-30:* the graders merged (#141, `0ce4c97`); the implementation is PR #144 (branch `m11/31-snap-gc-lab-writes`, CI green, reviews by `security-reviewer` and `code-reviewer` still to run). Tick this heading when #144 merges.
+
 ---
 
-## [ ] M11-32 — `char show` Legacy wording, two tweaks
+## [x] M11-32 — `char show` Legacy wording, two tweaks
 **Size:** S · **Depends on:** M11-27
 
 From the M11-27 domain review (optional then, filed now). (1) The several-config second line should say the active class-talent config is also excluded, since on Forever it is type 4, not Combat. Replacement: `  the addon lists every trait config except the active class talents and the types below; which of these is the Legacy system is not recorded; panel opener ToggleLegacySystemUI present: yes` (the last clause as the code computes it). (2) When two or more configs are listed and all are absent, the second line still says "inferred by elimination"; use the line from (1) whenever more than one config is listed.
@@ -176,3 +180,52 @@ From the M11-27 domain review (optional then, filed now). (1) The several-config
 **Acceptance:** labelled constructed tests for both; real-fixture output unchanged (both captures have one config); reviewed by `domain-reviewer`.
 
 *Amended 2026-09-29 (PR #138 reviews):* the replacement text in (1) can say something false: the addon excludes the active class config only when the client gave it the id, and a config found by system id is not type-checked. The built wording follows the domain review (`docs/LAB_PLAN.md` §13.1, M11-32 amendment), and a config list of zero no longer says "inferred by elimination". Follow-ups filed from that review: the reader notes when a listed candidate's id equals the `talents.class` config id; the addon records which id `talents.legacy` excluded (a schema change); the comments at `lab/addon/WowLab/Talents.lua` lines 8 and 279–280 describe the rule without those conditions.
+
+---
+
+# Carried forward, third batch (filed 2026-09-30, from the M11-28 to M11-32 reviews)
+
+Follow-ups the reviews of the second batch found. None is urgent and none holds Wave 3.
+
+## [ ] M11-33 — CLI: uncaught exceptions print through the escaping
+**Size:** S · **Depends on:** M11-30
+
+From the M11-30 security review (finding 3, deferred). Typer's pretty exceptions are on by default and Rich strips only BEL, BS, VT, FF and CR, so an exception message that holds install-derived text (a folder name with a line feed, U+202E or an escape sequence) and is not caught by `_handled` prints raw. No route is reachable today (every command is under `@_handled`, and the library's generic `ValueError`s interpolate with `!r`), so this is hardening. Set `pretty_exceptions_enable=False` and install an excepthook that prints the traceback line by line through `_say_err`. Entry points: the `wowlab` console script `wowlab_core.cli:app`; exceptions `_handled` does not catch, in any command body; the `main()` callback (including its `ctx.with_resource`) and the eager `--version` callback; click and typer usage errors, which echo the user's own arguments. A `_log.exception` traceback also prints as one escaped line today; decide whether that is enough.
+
+**Acceptance:** labelled constructed tests that raise from a command body, the `main()` callback and `--version` with a message holding a newline, U+202E, U+2028 and an ESC sequence: no raw Cc, Cf, Zl or Zp reaches stdout or stderr and the exit code is non-zero; `make ci` green; reviewed by `security-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M11-34 — `char show`: the lone-candidate case and the `GetConfigsByType` wording
+**Size:** S · **Depends on:** M11-32
+
+From the M11-32 domain reviews. (1) If the addon fails to exclude the class config and it is the only listed Legacy candidate (unobserved), the line "inferred by elimination" calls the owner's class talents Legacy. Compare the listed id with `talents.class.config.id`: on a match say the one config listed is the active class config and name no Legacy system; when `talents.class` has no config id, qualify the elimination. (2) If `C_Traits.GetConfigsByType` is missing while `Enum.TraitConfigType` exists, `Talents.lua` leaves `skipped` empty and `char show` prints "config types not searched: none recorded" although no type was searched; say so.
+
+**Acceptance:** labelled constructed tests for both; the real-fixture output byte-identical (all committed captures have one config, found by type, that is not the class config); reviewed by `domain-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M11-35 — lab-addon: record the config id `talents.legacy` left out (schema 3)
+**Size:** S · **Depends on:** M11-34 · **owner** (a short capture)
+
+From the M11-32 domain review. `talents.legacy` does not record which id it excluded, so the reader cannot tell whether the class config was left out. Record it. This changes the saved format, so it is **schema 3** (§13.1): the reader keeps reading 1 and 2. Also correct the comments at `lab/addon/WowLab/Talents.lua` lines 8 and 279–280, which describe the exclusion rule without the "when the client gave the id" condition or the system-id path (a config found by system id is not type-checked).
+
+**Acceptance:** static addon tests (labelled source scans); reader tests for schema 3 next to 1 and 2; the committed captures read identically; a schema-3 owner capture; reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer`.
+
+---
+
+## [ ] M11-36 — the last wall-clock review probe
+**Size:** S · **Depends on:** — · **[TEST]** (test-writer only)
+
+`lab/core/tests/review/test_review_m10_02_followup_blank_runs.py` lines 70–79 time `scrub()` with `perf_counter` against a fixed `crlf < 5` s and a ratio check. It is a review probe, so its change is test-writer work. Measure CPU time with `lab/core/tests/parser/_cpu_clock.py`, keeping every assertion and budget.
+
+**Acceptance:** passes under a CPU-saturating load started and stopped by literal PID (not while the owner is playing; check `ps` for a WoW process first, and never follow a `kill` with a bare `wait`) and still fails against a constructed slow scrub (scratch patch, reverted); `make ci` green; reviewed by `code-reviewer`.
+
+---
+
+## [ ] M11-37 — guard rails: bidirectional Unicode, and API calls outside a switchable section
+**Size:** S · **Depends on:** —
+
+From the M11-29 reviews. (a) Enable the ruff rule `PLE2502` (bidirectional Unicode in source) so no file can carry a raw override character, and fix anything it flags. (b) Add a static test that every client API call in `lab/addon/WowLab/` sits inside a section `/wowlab skip` can switch off. Today nothing checks where a new C API call goes: a `GetViewingChrModel` call added at `ADDON_LOADED` in a copy passed every test.
+
+**Acceptance:** `make lint` enforces (a); a labelled test for (b) fails against a scratch copy with a call added outside a section and passes on the real sources; `make ci` green; reviewed by `code-reviewer` and `security-reviewer`.
