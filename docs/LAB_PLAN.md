@@ -1339,7 +1339,8 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   section's change events) and writes the tables at `PLAYER_LOGOUT`
   (`/wowlab save` refreshes the tables in memory; the file on disk changes
   only at the next `/reload`, logout or clean exit, and a crash writes
-  nothing), as a versioned table (`schema = 1`):
+  nothing), as a versioned table (`schema = 1`; schema 2 since M11-29,
+  below):
   - equipped gear: item links as strings, so bonus IDs and enchants survive,
     with any player GUID in a link (the crafter field of a crafted item)
     blanked before storing and the slot flagged `crafter_removed`
@@ -1522,8 +1523,9 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   below, it is schema 2: `WowLabCharDB` and `WowLabDB` are written with
   `schema = 2`, and schema 2 is schema 1 plus two keys on `customization`.
   The reader reads schema 1 files (the M11-03 and M11-23 captures) exactly as
-  before, refuses the new keys in them as it always did, and refuses a
-  schema it does not know. The addon reads the probe, the skip list and the
+  before: it refuses `chr_model_id_absent` in them (text in an unknown key)
+  and keeps `events_received` as an unknown key, as it always did. It
+  refuses a schema it does not know. The addon reads the probe, the skip list and the
   carried customization record back by key, never by schema, so a schema-1
   file's `probe.loads` keeps rising across the first schema-2 write, and
   §13.4's loader check (which reads `WowLabCharDB.probe` by key) is
@@ -1558,9 +1560,9 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   `IsViewingAlteredForm`, `SetViewingAlteredForm`, `SetViewingChrModel` in
   `C_BarberShop`) is consistent with it and does not prove it. The call
   goes through `pcall` directly, so an error is not taken for nil. `carry`
-  keeps only the number, so a carried record may hold neither. Why the
-  applied event did not arrive, and why there was no model id, stays open
-  until the owner's capture in `lab/addon/README.md` ("M11-29 capture
+  keeps only the number, so a carried record may hold neither. Whether the
+  applied event reaches the section, and why there was no model id, stays
+  open until the owner's capture in `lab/addon/README.md` ("M11-29 capture
   step").
 
   Schema 1 may change after M11-03. Edits from the capture land before

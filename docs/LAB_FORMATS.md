@@ -646,10 +646,17 @@ Dated entries, newest last. Each names the fixture that prompted it.
   six count-only events, **[verify]**: `BARBER_SHOP_RESULT`,
   `BARBER_SHOP_CLOSE`, `BARBER_SHOP_FORCE_CUSTOMIZATIONS_UPDATE`,
   `BARBER_SHOP_COST_UPDATE`, `BARBER_SHOP_SUCCESS`, and the made-up control
-  `WOWLAB_CONTROL_NOT_A_REAL_EVENT`. The control settles the first limit:
-  with no entry, this client refuses a name it does not know, so a missing
-  entry means the name is unknown; with an entry at 0, it accepts any name,
-  so "not refused" proves nothing. Schema 1 files, these fixtures included,
+  `WOWLAB_CONTROL_NOT_A_REAL_EVENT`. The control is for this reading: if it
+  has no entry, every other entry, 0 included, is a name this client knows
+  (0 means it did not reach the section in that session), and a missing
+  entry means a name it does not know. If it has an entry at 0, the client
+  accepts any name, and "not refused" proves nothing. The reading holds
+  whether or not `C_EventUtils.IsEventValid` exists, because the control
+  tests the addon's whole gate (that check, then `RegisterEvent`).
+  Registering a name the client does not know has never been exercised on
+  Forever; it happens at `ADDON_LOADED`, before `/wowlab skip` can be typed,
+  so if it ever crashed the client, the only recourse is to untick WowLab at
+  character select. Schema 1 files, these fixtures included,
   are still read as before. The cause behind each of the two rows stays open
   until a capture made after M11-29 (runbook: `lab/addon/README.md`, "M11-29
   capture step").

@@ -2906,7 +2906,7 @@ def test_m11_29_readme_and_plan_say_what_is_confirmed_and_what_stays_verify() ->
         assert "the file does not record whether it did on 70058" in text
         assert "never been seen refusing any name" in text
         assert "only a count of 1 or more" in text
-    # The runbook: cautions, steps and one row per outcome.
+    # The runbook: cautions and steps, with the stops (round 2).
     for part in (
         "## M11-29 capture step",
         "Do not change the body type",
@@ -2914,23 +2914,48 @@ def test_m11_29_readme_and_plan_say_what_is_confirmed_and_what_stays_verify() ->
         "`wowlab undo` cannot reverse",
         "a second sit in the same session spoils the counts",
         "have enough for the price the shop shows on Accept",
+        'If the "recording in 15 s" line does not appear, WowLab is not running',
+        "stop and report",
+        "If the barber shop does not open, log out, capture anyway and report it; do not redo.",
+        "left to right, then top to bottom",
         "No `/reload` between the visit and the logout",
         "Do not log that character in again before capturing",
         "check that the new colour shows on the character",
-        "**`schema = 1`**",
-        '**`customization = { absent = "switched off by the owner" }`**',
-        "**`carried = true`**",
-        "**The colour did not change (step 4)**",
-        "**`customization` absent with a gather reason and counts**",
-        '**`recorded_at = "applied"`, `APPLIED` at 1 or more, and the changed option\'s '
-        "`choice_index` is the position picked in step 3**",
-        '**`recorded_at = "open"`, `APPLIED` at 1 or more, `OPEN` at 2 or more**',
-        '**`recorded_at = "open"`, `APPLIED` at 1 or more, `OPEN` at 1**',
-        '**`recorded_at = "open"` with `APPLIED` at 0, and the new colour visible on the '
-        "character (step 4)**",
         "it is not an apply signal and nothing may be recorded on it (§13.1)",
         "says the client answered the Accept, not that it succeeded",
-        f"**`{CONTROL_EVENT}`**",
+        "is expected at 1 on any visit, applied or cancelled (on Retail, **[verify]**)",
+        "saw shop activity during the visit",
+        "either the applied event fired before the choices updated, or it was not the Accept's",
+        "neither noted position: report both; item 11 stays open",
+        "if it is the old position, both opens came before the Accept",
+        "most likely the applied event fired",
+        "every other entry, 0 included, is a name this client knows",
+        "because the control tests the addon's whole gate",
+        "has never been exercised on Forever",
     ):
         assert part in readme, part
+    # One row per outcome, in the order the first that fits applies, with a
+    # catch-all last.
+    table = readme.split("How the capture reads.")[1].split("Read with every row")[0]
+    rows = [
+        "**`schema = 1`**",
+        '**`customization = { absent = "switched off by the owner" }`**',
+        "**The shop did not open (step 3), or the colour did not change (step 4)**",
+        "**`carried = true`**",
+        '**`customization = { absent = "no barber-shop visit recorded with the addon '
+        'enabled" }` with `OPEN` at 0 or no entry**',
+        "**You sat or clicked Accept more than once (notes from steps 3 and 4)**",
+        "**`customization` absent with a gather reason and counts**",
+        '**`recorded_at = "applied"` with `APPLIED` at 1 or more**',
+        '**`recorded_at = "open"`, `APPLIED` at 1 or more, `OPEN` at 2 or more, and you sat once**',
+        '**`recorded_at = "open"`, `APPLIED` at 1 or more, `OPEN` at 1**',
+        '**`recorded_at = "open"` with `APPLIED` at 0 or no entry, and the new colour '
+        "visible on the character (step 4)**",
+        "**None of these**",
+    ]
+    at = [table.find(row) for row in rows]
+    assert -1 not in at, [row for row, i in zip(rows, at, strict=True) if i == -1]
+    assert at == sorted(at), at
+    assert table.count("- **") == len(rows)
+    assert f"**`{CONTROL_EVENT}`**" in readme
     assert "chr_model_id | chr_model_id_absent, events_received" in readme

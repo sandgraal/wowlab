@@ -68,7 +68,9 @@ Schema 2 (M11-29) is schema 1 with `chr_model_id_absent` and
 customization record); nothing else changed. It is the first change to the
 format after M11-04, so it is a new schema (`docs/LAB_PLAN.md` §13.1). The
 Lab still reads schema 1 files (the M11-03 and M11-23 captures) exactly as
-before, and refuses a schema it does not know. The first logout with the
+before: it refuses `chr_model_id_absent` in one (text in an unknown key) and
+keeps `events_received` as an unknown key, as it always did. It refuses a
+schema it does not know. The first logout with the
 M11-29 addon rewrites a schema-1 file as schema 2; `probe.loads` keeps
 rising across that write, because the addon reads the probe, the skip list
 and the carried customization record back by key, never by schema.
@@ -181,11 +183,19 @@ Notes on the fields:
       and the Accept.
     - `BARBER_SHOP_SUCCESS`: the name before 9.0; unlikely to exist, cheap to
       count.
-    - `WOWLAB_CONTROL_NOT_A_REAL_EVENT`: made up on purpose, a control. With
-      no entry, this client refuses a name it does not know, so a missing
-      entry for another name means that name is unknown. With an entry at 0,
-      the client accepts any name, so "not refused" proves nothing about a
-      name being known.
+    - `WOWLAB_CONTROL_NOT_A_REAL_EVENT`: made up on purpose, a control. If
+      it has no entry, this client refuses a name it does not know, so every
+      other entry, 0 included, is a name this client knows (0 means it did
+      not reach the section in that session), and a missing entry means a
+      name it does not know. If it has an entry at 0, the client accepts any
+      name, so "not refused" proves nothing about a name being known. The
+      reading holds whether or not `C_EventUtils.IsEventValid` exists,
+      because the control tests the addon's whole gate (that check, then
+      `RegisterEvent`). Registering a name the client does not know has never
+      been exercised on Forever (every `events_unregistered` on 70058 is
+      `{}`). It happens at `ADDON_LOADED`, before `/wowlab skip` can be
+      typed, so if it ever crashed the client, untick WowLab at character
+      select ("Switching a section off" above).
 - `collections.appearances` is always
   `{ absent = "not gathered: asking the client for the appearance collection crashed the Forever client once (M11-03); the addon no longer asks" }`.
   On the first M11-03 login (build 1.60.1.70009), one call,
@@ -532,11 +542,18 @@ Steps:
    undo` reverses the install). The copy installed before M11-29 writes
    schema 1 and neither new key.
 2. Log in on one character and wait for the "recording in 15 s" line to
-   pass.
+   pass. If the "recording in 15 s" line does not appear, WowLab is not
+   running: check it is listed, ticked and not out of date at character
+   select (`docs/handoffs/M11-03.md` §2); stop and report. If the client
+   crashes at login, untick WowLab (§2 step 4): the six new event names are
+   registered at `ADDON_LOADED`, before `/wowlab skip` can be typed in that
+   session.
 3. Sit in a barber chair once and change one colour (hair colour is
    enough). Before changing it, note the position of the current swatch and
-   of the one you pick, counting from 1 in the order the shop shows them
-   (for example "hair colour: 7th, then 3rd").
+   of the one you pick, counting from 1, left to right, then top to bottom
+   (**[verify]** that this is the order the shop lists them), for example
+   "hair colour: 7th, then 3rd". If the barber shop does not open, log out,
+   capture anyway and report it; do not redo.
 4. Click Accept once. Do not cancel and do not sit down again. Note whether
    the barber shop closed by itself after Accept or stayed open, and if it
    stayed open, how you left it. After you stand up, check that the new
@@ -551,71 +568,108 @@ Steps:
    fine. `/wowlab save` first is harmless; the file is written at logout.
    Exit the client.
 6. Capture that character's `WowLab.lua` with `scripts/lab_capture.py`
-   (`--sv WowLab.lua`, as in `docs/handoffs/M11-03.md` step 4), and report
-   the notes from steps 3 and 4 with it.
+   (`--sv WowLab.lua`, as in `docs/handoffs/M11-03.md` §4), and report the
+   notes from steps 3 and 4 with it.
 
-How the capture reads, for one sit with one Accept. The rows are in order;
-the first one that fits applies. `OPEN`, `APPLIED` and the other short names
-are the `BARBER_SHOP_*` entries of `customization.events_received`.
+How the capture reads. The rows are in order; the first one that fits
+applies. `OPEN`, `APPLIED` and the other short names are the
+`BARBER_SHOP_*` entries of `customization.events_received`; "no entry" means
+the client refused that name (a refused change event is also in
+`events_unregistered`).
 
-- **`schema = 1`**: the addon from before M11-29 ran. Redo from step 1.
+- **`schema = 1`**: the file was last written by the addon from before
+  M11-29: the old copy ran, or the new one did not load, or the session
+  crashed and wrote nothing. Report it with your notes; redo from step 1
+  only if step 1 was skipped.
 - **`customization = { absent = "switched off by the owner" }`**: nothing to
   read. Type `/wowlab unskip customization`, `/reload`, and redo from step 2.
-- **`carried = true`**: the session that saved the file is not the visit's
-  session (a `/reload` or a second login came after the visit), and the
-  counts belong to that later session. Redo from step 2.
-- **The colour did not change (step 4)**: the Accept did not apply (not
-  enough money is one way). The capture says nothing about the applied
-  event. Redo from step 2.
+- **The shop did not open (step 3), or the colour did not change (step
+  4)**: the Accept did not apply, or there was none (not enough money is one
+  way). The capture says nothing about the applied event; send it anyway: it
+  still answers the control and the `BARBER_SHOP_CLOSE` baseline. If the shop
+  did not open, do not redo. If it opened and the Accept failed, you may redo
+  from step 2 in a new session.
+- **`carried = true`**: no `BARBER_SHOP_OPEN` or
+  `BARBER_SHOP_APPEARANCE_APPLIED` reached the section in the session that
+  saved the file, and the counts belong to that session. If a `/reload` or
+  second login came after the visit, that is why. `carry` keeps
+  `recorded_at` and the choices, so a carried `recorded_at = "applied"` with
+  `recorded_load` one below `probe.loads` and the picked position still
+  confirms item 12; only the counts are lost. Otherwise report it with
+  `events_unregistered`; do not redo.
+- **`customization = { absent = "no barber-shop visit recorded with the
+  addon enabled" }` with `OPEN` at 0 or no entry**: no open reached the
+  section in the session that saved the file: the visit was in another
+  session, or this is another character's file; if neither, `OPEN` did not
+  reach the section: report it.
+- **You sat or clicked Accept more than once (notes from steps 3 and 4)**:
+  the "applied" row and the "`APPLIED` at 0" row below still read as
+  written. An "open" record with `APPLIED` at 1 or more cannot tell your
+  later sit from an open the client fires itself: report it, and redo from
+  step 2 in a new session if item 12 is still open.
 - **`customization` absent with a gather reason and counts** (for example
   `"C_BarberShop.GetAvailableCustomizations returned nothing"` or
   `"error: ..."`, with `events_received` on the absent record): the last
   gather found nothing to read or failed, and it replaced the earlier record.
-  With `APPLIED` at 1 or more and `OPEN` at 1, the applied event fired when
-  the barber API had nothing to give, and it replaced the open record.
-- **`customization = { absent = "no barber-shop visit recorded with the
-  addon enabled" }` with `OPEN` at 0**: no open reached the section in the
-  session that saved the file, so the visit was in another session. Redo
-  from step 2.
-- **`recorded_at = "applied"`, `APPLIED` at 1 or more, and the changed
-  option's `choice_index` is the position picked in step 3**: the applied
-  event reaches the section on this build, nothing opened the shop after it,
-  and the record holds the new look. Item 12 is confirmed for that build,
-  and item 11 (a 1-based index) with it. If `choice_index` is still the old
-  position, the applied event came before the client updated the choices:
-  it fires, but the record holds the old look.
-- **`recorded_at = "open"`, `APPLIED` at 1 or more, `OPEN` at 2 or more**:
-  you sat once, so the client fired the second open itself, for example to
+  With `APPLIED` at 1 or more and `OPEN` at 1, most likely the applied event
+  fired when the barber API had nothing to give, and it replaced the open
+  record (an absent record has no `recorded_at`, so the order is not shown).
+- **`recorded_at = "applied"` with `APPLIED` at 1 or more**: the applied
+  event reaches the section on this build, and no open reached it after.
+  Then the changed option's `choice_index`:
+  - the position picked in step 3: the record holds the new look. Item 12 is
+    confirmed for that build, and item 11 (a 1-based index) with it.
+  - the old position: either the applied event fired before the choices
+    updated, or it was not the Accept's. Item 12 stays open.
+  - neither noted position: report both; item 11 stays open.
+- **`recorded_at = "open"`, `APPLIED` at 1 or more, `OPEN` at 2 or more, and
+  you sat once**: the client fired the second open itself, for example to
   refresh after the Accept (**[verify]**). An open reached the section after
-  the applied event. The choices should be the new look; compare the changed
-  option's `choice_index` with step 3.
+  the applied event. Compare the changed option's `choice_index` with step
+  3: at the new position, the choices are the new look; if it is the old
+  position, both opens came before the Accept.
 - **`recorded_at = "open"`, `APPLIED` at 1 or more, `OPEN` at 1**: the
   applied event reached the section before the only open, so on this build
   it does not mark the Accept. The choices are the old look.
-- **`recorded_at = "open"` with `APPLIED` at 0, and the new colour visible
-  on the character (step 4)**: the applied event did not reach the section
-  after this Accept. `BARBER_SHOP_CLOSE` is expected at 1 on any visit,
-  applied or cancelled; it is not an apply signal and nothing may be
+- **`recorded_at = "open"` with `APPLIED` at 0 or no entry, and the new
+  colour visible on the character (step 4)**: the applied event did not
+  reach the section after this Accept. With `OPEN` at 1 the choices are the
+  look at the open; compare the old position from step 3 for item 11.
+  `BARBER_SHOP_CLOSE` is expected at 1 on any visit, applied or cancelled (on
+  Retail, **[verify]**); it is not an apply signal and nothing may be
   recorded on it (§13.1). `BARBER_SHOP_RESULT` at 1 or more says the client
   answered the Accept, not that it succeeded. `BARBER_SHOP_COST_UPDATE` at 1
-  or more says the addon saw shop activity between the open and the Accept;
-  it counts previews, not the apply. `BARBER_SHOP_FORCE_CUSTOMIZATIONS_UPDATE`
-  or `BARBER_SHOP_SUCCESS` at 1 or more is the candidate a later ticket may
-  test with its own capture. If only `BARBER_SHOP_CLOSE` moved (besides
-  `OPEN` and `BARBER_SHOP_COST_UPDATE`), none of the watched events marked
-  the apply; whether the client offers another signal stays open.
+  or more says the addon saw shop activity during the visit (on Retail it
+  fires as previewed choices change the price, **[verify]**); it is not an
+  apply signal. `BARBER_SHOP_FORCE_CUSTOMIZATIONS_UPDATE` or
+  `BARBER_SHOP_SUCCESS` at 1 or more is the candidate a later ticket may test
+  with its own capture. If only `BARBER_SHOP_CLOSE` moved (besides `OPEN` and
+  `BARBER_SHOP_COST_UPDATE`), none of the watched events marked the apply;
+  whether the client offers another signal stays open.
+- **None of these**: report the file and your notes as they are.
 
 Read with every row that has `events_received`:
 
-- **`WOWLAB_CONTROL_NOT_A_REAL_EVENT`**, the made-up control: with no entry,
-  this client refuses a name it does not know, so any other event with no
-  entry is unknown to it. With an entry at 0, the client accepts any name,
-  so "not refused" (an entry here, or a name missing from
-  `events_unregistered`) proves nothing about a name being known; only a
-  count of 1 or more shows an event exists and fires.
+- **`WOWLAB_CONTROL_NOT_A_REAL_EVENT`**, the made-up control. If the control
+  has no entry, this client refuses a name it does not know, so every other
+  entry, 0 included, is a name this client knows; 0 means it did not reach
+  the section in that session, and a missing entry means a name the client
+  does not know. If the control has an entry at 0, the client accepts any
+  name, so an entry (or a name missing from `events_unregistered`) proves
+  nothing about a name being known; only a count of 1 or more shows an event
+  exists and fires. The reading holds whether or not
+  `C_EventUtils.IsEventValid` exists, because the control tests the addon's
+  whole gate (that check, then `RegisterEvent`).
 - An event with no entry in `events_received` was refused by the client (a
   refused change event is also in `events_unregistered`).
 - `chr_model_id` is a number, or `chr_model_id_absent` gives one of the four
   outcomes listed under "`customization` in schema 2" above: the outcome of
   the call when the section gathered, not why. The Lab keeps taking the body
   type from `sex`.
+
+Registering a name the client does not know (the control, or any of the new
+names Forever lacks) has never been exercised on Forever: every
+`events_unregistered` on 70058 is `{}`. It happens at `ADDON_LOADED`, before
+`/wowlab skip` can be typed, so if it ever crashed the client, the only
+recourse is to untick WowLab at character select (`docs/handoffs/M11-03.md`
+§2 step 4).
