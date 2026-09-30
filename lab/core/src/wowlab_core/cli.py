@@ -209,36 +209,76 @@ class CliError(Exception):
         self.code = code
 
 
-_CONTROL = re.compile("[\x00-\x08\x0a-\x1f\x7f-\x9f]")
+# What `_safe` escapes: every C0 control but tab (line feed included), DEL,
+# every C1 control, and the Unicode format and separator characters (Cf, Zl,
+# Zp; U+202E reverses the text after it, U+2028 breaks a line) in the one
+# table printed key paths use (`svmerge._FORMAT_CHARACTERS`, M11-25).
+_UNSAFE = re.compile(
+    "[\x00-\x08\x0a-\x1f\x7f-\x9f"
+    + "".join(f"{chr(lo)}-{chr(hi)}" for lo, hi in svmerge._FORMAT_CHARACTERS)
+    + "]"
+)
+
+
+def _escape(match: re.Match[str]) -> str:
+    """A C0 or C1 control as `\\xNN` of its code point; a format or separator
+    character as `\\xNN` of each UTF-8 byte that carries it."""
+    char = match.group()
+    if char <= "\x9f":
+        return f"\\x{ord(char):02x}"
+    return "".join(f"\\x{b:02x}" for b in char.encode())
 
 
 def _safe(text: str) -> str:
-    """Printable text for a terminal.
+    """Printable text for a terminal, on one line.
 
     Bytes that are not UTF-8 (carried as lone surrogates) are shown as `\\xNN`
     escapes instead of failing the write, and so is every C0 and C1 control
     character but tab, line feed included: a file name or value from the
     install can carry ESC or OSC sequences, which must never reach the
-    terminal as control codes."""
+    terminal as control codes. Unicode format and separator characters
+    (U+202E, U+2028, U+200B, ...) are shown as their UTF-8 bytes, `\\xNN`
+    each, so a name cannot reorder or break the line it is printed on.
+    Letters, accented or not, print as they are."""
     try:
         text = text.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
     except UnicodeEncodeError:
         text = text.encode("utf-8", "backslashreplace").decode("utf-8")
-    return _CONTROL.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
+    return _UNSAFE.sub(_escape, text)
 
 
 def _say(text: str = "") -> None:
+    """One line on stdout, escaped by `_safe`."""
     typer.echo(_safe(text))
 
 
-def _note(text: str) -> None:
-    """A message on stderr. Its own line breaks (a multi-line error from the
-    library) are kept; every other control character is escaped."""
-    typer.echo("\n".join(_safe(line) for line in text.split("\n")), err=True)
+def _say_err(text: str = "") -> None:
+    """One line on stderr, escaped by `_safe`: `_say` for output that must
+    not mix with JSON on stdout, and for notes the library built."""
+    typer.echo(_safe(text), err=True)
+
+
+def _note(message: str, *values: object) -> None:
+    """A message on stderr.
+
+    `message` is this module's own text: its line breaks are kept, and every
+    other control, format or separator character is escaped. Anything from
+    elsewhere (a path, a folder name, an error text) is never formatted into
+    `message` by the caller: it is passed in `values` and fills the next `{}`
+    of `message` escaped by `_safe`, its line breaks included, so a value
+    can never start a line of its own. With `values`, a literal brace in
+    `message` is written `{{` or `}}`."""
+    text = "\n".join(_safe(line) for line in message.split("\n"))
+    if values:
+        text = text.format(*(_safe(str(v)) for v in values))
+    typer.echo(text, err=True)
 
 
 def _fail(message: str, code: int) -> NoReturn:
-    _note(f"wowlab: {message}")
+    """The error `message` as one line on stderr: it holds values (paths,
+    folder names) the library or this module put in it, so every line
+    break in it is escaped."""
+    _note("wowlab: {}", message)
     raise typer.Exit(code)
 
 
@@ -893,9 +933,9 @@ def install_show(root: RootOpt = None, json_out: JsonOpt = False) -> None:
         inst, found_by = _discover(root)
     except install.InstallNotFoundError as exc:
         for p in exc.searched:
-            _note(f"searched, no install there: {p}")
+            _note("searched, no install there: {}", p)
         for p, why in zip(exc.unchecked, exc.unchecked_reasons, strict=True):
-            _note(f"could not check: {p} ({why})")
+            _note("could not check: {} ({})", p, why)
         raise
     if json_out:
         _emit(inst)
@@ -1102,7 +1142,7 @@ def tree(
     if inv.truncated:
         _note("The walk hit a bound; the listing is incomplete.")
     for err in errors:
-        _note(f"could not read {err}")
+        _note("could not read {}", err)
 
 
 def _plain(markdown: str) -> str:
@@ -2216,7 +2256,7 @@ def sv_merge(
     if refusal is not None:
         if not force_loader_check:
             for n in notes:  # e.g. an ignored future-dated snapshot or record
-                _note(n)
+                _say_err(n)
             raise CliError(f"refused by the loader check: {refusal}", EXIT_REFUSED)
         notes.append(f"The loader check was overridden by --force-loader-check: {refusal}")
 
@@ -2241,7 +2281,7 @@ def sv_merge(
             notes.append(_PROBE_KEPT)
     if result.absent:
         notes.append(_ABSENT_NOTE)
-    show = _say if not json_out else _note
+    show = _say if not json_out else _say_err
 
     def report(*, written: bool, transaction: str | None = None) -> SvMergeReport:
         return SvMergeReport(
@@ -2267,7 +2307,7 @@ def sv_merge(
             return
         _print_merge(_say, done)
         for n in done.notes:
-            _note(n)
+            _say_err(n)
         _say(line)
 
     if result.unresolved:
@@ -2864,7 +2904,7 @@ def log_tail(
     for entry in entries:
         _print_log_entry(entry, json_out)
     for note in notes:
-        _note(note)
+        _say_err(note)
 
 
 # ─── db2 ─────────────────────────────────────────────────────────────────────
@@ -3146,7 +3186,7 @@ def snap_list(json_out: JsonOpt = False) -> None:
             version = s.flavor_version or "no version"
             _say(f"{s.id}  {s.flavor_folder}  {version}  {s.files} files{label}{running}")
     for bad in report.damaged:
-        _note(f"damaged manifest {bad.name}: {bad.reason}")
+        _note("damaged manifest {}: {}", bad.name, bad.reason)
     if report.damaged:
         raise typer.Exit(EXIT_ERROR)
 
@@ -3536,11 +3576,11 @@ def snap_restore(
             "was taken from."
         )
     chosen = match[0]
-    say = _note if json_out else _say
+    say = _say_err if json_out else _say
     # With --json the plan goes to stdout as JSON at the end; when a prompt
     # will ask first, the text plan goes to stderr so the question is not blind.
     prompting = json_out and not yes and not dry_run
-    show = _say if not json_out else _note
+    show = _say if not json_out else _say_err
     label = f"restore {manifest.id}"
     if paths:
         label += " (" + ", ".join(paths) + ")"
@@ -3664,7 +3704,7 @@ def undo(yes: YesOpt = False, json_out: JsonOpt = False) -> None:
             _say(f'The most recent transaction, {last.id} ("{last.label}"), changed no files.')
         return
     # With --json, the text plan goes to stderr when a prompt will ask first.
-    show = _say if not json_out else _note
+    show = _say if not json_out else _say_err
     if not json_out or not yes:
         show(f'Undo {last.id} ("{last.label}", {last.state}, {last.created_at})')
         show(f"  in {last.flavor_path}:")
@@ -3913,7 +3953,7 @@ def profile_list(json_out: JsonOpt = False) -> None:
                 f"{s.name}  {s.snapshot_id}  {s.flavor_folder}  {version}  {s.files} files{presets}"
             )
     for bad in report.damaged:
-        _note(f"damaged manifest {bad.name}: {bad.reason}")
+        _note("damaged manifest {}: {}", bad.name, bad.reason)
     if report.damaged:
         raise typer.Exit(EXIT_ERROR)
 
@@ -4016,7 +4056,7 @@ def profile_apply(
     chosen = match[0]
     plan = profiles.plan_apply(profile, chosen, Path(inst.root), store=store)
     prompting = json_out and not yes and not dry_run
-    show = _say if not json_out else _note
+    show = _say if not json_out else _say_err
 
     def report(*, applied: bool, transaction: str | None = None) -> ProfileApplyReport:
         notes = [profiles.SERVER_SIDE_NOTE, *plan.notes]
@@ -4168,7 +4208,7 @@ def addon_install(
     chosen = _select_flavor(inst, flavor)
     plan = addoninstall.plan_install(chosen)
     prompting = json_out and not yes and not dry_run
-    show = _say if not json_out else _note
+    show = _say if not json_out else _say_err
     target = addoninstall.ADDON_FOLDER
 
     def report(*, applied: bool, transaction: str | None = None) -> AddonInstallReport:
@@ -4264,7 +4304,7 @@ def addon_remove(
     chosen = _select_flavor(inst, flavor)
     plan = addoninstall.plan_remove(chosen)
     prompting = json_out and not yes and not dry_run
-    show = _say if not json_out else _note
+    show = _say if not json_out else _say_err
     target = addoninstall.ADDON_FOLDER
 
     def report(*, applied: bool, transaction: str | None = None) -> AddonRemoveReport:
@@ -5370,7 +5410,7 @@ def looks_show(
         for remark in list_remarks:
             _say(remark)
     for bad in damaged:
-        _note(f"wowlab: damaged look file {bad.file}: {bad.error}")
+        _note("wowlab: damaged look file {}: {}", bad.file, bad.error)
     if damaged:
         raise typer.Exit(EXIT_ERROR)
 
@@ -5980,7 +6020,7 @@ def looks_page(
         for remark in remarks:
             _say(remark)
     for bad in damaged:
-        _note(f"wowlab: damaged look file {bad.file}: {bad.error}")
+        _note("wowlab: damaged look file {}: {}", bad.file, bad.error)
     if damaged:
         raise typer.Exit(EXIT_ERROR)
 

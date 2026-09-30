@@ -1075,6 +1075,17 @@ subtrees, as "no; wowlab leaves it alone (a restore writes it only if you
 name it with --paths)". `snap restore` and `undo` also take `--json` (the
 plan, and with `--yes` the result).
 
+*Amended 2026-09-29 (M11-30):* text output is terminal-safe. No C0
+control but tab, no DEL, no C1 control and no Unicode format or separator
+character (Cf, Zl, Zp, the table §13.4's printed paths use) reaches stdout
+or stderr raw: C0, DEL and C1 print as `\xNN` of the code point, format and
+separator characters as `\xNN` of each UTF-8 byte (U+202E is
+`\xe2\x80\xae`), and bytes that are not UTF-8 as `\xNN`. Letters, accented
+or not, print as they are. A message on stderr keeps only its own line
+breaks: a value inserted into it (a path, a folder name) has its line
+breaks escaped, and an error is always one line. `--json` output is
+unaffected (JSON's own escapes, ASCII only).
+
 ## 7. Repository layout
 
 ```
