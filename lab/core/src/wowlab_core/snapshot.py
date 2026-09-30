@@ -1648,14 +1648,47 @@ class SnapshotStore:
         lab-addon's `WowLab.lua`, which the loader check compares from). A
         sound object already stored under that hash is reused; a damaged
         one is rewritten. No manifest refers to it: `gc` keeps it only when
-        its caller names it in `keep`, as `wowlab snap gc` does for every
-        object a committed guard journal record names as `after`."""
+        its caller names it in `keep`, as `wowlab snap gc` does for the
+        `after` of every committed guard journal record's write to a
+        character's `WowLab.lua` (M11-31).
+
+        Any `OSError` on the way (M11-31), such as a directory planted at the
+        object's path, is raised as `SnapshotError` naming that path; the
+        staged copy is removed and nothing is written in its place."""
         if not isinstance(data, bytes):
             raise SnapshotError(f"an object is bytes, not {type(data).__name__}")
-        with self._holding_dirs():
-            self._refuse_linked_store_dirs()
-            digest, _ = self._store_stream(io.BytesIO(data), set())
+        planned = hashlib.sha256(data).hexdigest()
+        try:
+            with self._holding_dirs():
+                self._refuse_linked_store_dirs()
+                digest, _ = self._store_stream(io.BytesIO(data), set())
+        except OSError as exc:
+            raise SnapshotError(self._cannot_store(planned, exc)) from exc
         return digest
+
+    def _cannot_store(self, digest: str, exc: OSError) -> str:
+        """Why `put_object` could not store `digest`, naming the object's
+        path, and what is in its place when that is not a regular file (by
+        `lstat`, following nothing)."""
+        path = self.object_path(digest)
+        reason = exc.strerror or str(exc)
+        try:
+            st = os.lstat(path)
+        except OSError:
+            return f"cannot store object {digest} at {path}: {reason}"
+        if stat.S_ISREG(st.st_mode):
+            return f"cannot store object {digest} at {path}: {reason}"
+        what = (
+            "a link"
+            if _is_link_stat(st)
+            else "a directory"
+            if stat.S_ISDIR(st.st_mode)
+            else "something that is not a regular file"
+        )
+        return (
+            f"cannot store object {digest} at {path}: {what} is in its place ({reason}); "
+            "move it out of the store and try again"
+        )
 
     def read_file(self, snapshot_id: str, path: str) -> bytes:
         """Content of `path` as captured in a snapshot."""
@@ -1871,11 +1904,14 @@ class SnapshotStore:
     ) -> GcReport:
         """Find objects no manifest references; remove them unless `dry_run`.
 
-        `keep` names more live objects by SHA-256 (M11-24: `wowlab snap gc`
-        passes every `after` a committed guard journal record names, so the
-        bytes an `sv merge` of `WowLab.lua` kept with `put_object` stay for
-        the loader check). A name that is not a SHA-256 hex digest is a
-        `SnapshotError`, raised before anything is listed or removed.
+        `keep` names more live objects by SHA-256 (M11-24, narrowed in
+        M11-31: `wowlab snap gc` passes the `after` of every committed guard
+        journal record's write to a character's `WowLab.lua`, so the bytes
+        an `sv merge` of that file kept with `put_object`, or a `snap
+        restore` of it wrote, stay for the loader check; any other `after`
+        is collected like every object no manifest refers to). A name that
+        is not a SHA-256 hex digest is a `SnapshotError`, raised before
+        anything is listed or removed.
 
         Dry-run is the default. Refuses outright when any manifest fails to
         load, because that manifest's objects would look unreferenced.

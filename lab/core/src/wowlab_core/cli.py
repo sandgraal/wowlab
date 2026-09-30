@@ -1788,6 +1788,38 @@ def _character_sv(
     return match[0] if match else None
 
 
+# The parts of a character's SavedVariables path that `layout` and
+# `_character_sv` match case-folded: WTF/Account/<account>/<realm or
+# digits>/<character>/SavedVariables/<file> (M11-31).
+_CHARACTER_SV_PARTS = 7
+_FOLDED_WTF = "WTF".casefold()
+_FOLDED_ACCOUNT = "Account".casefold()
+_FOLDED_SAVED_VARIABLES = "SavedVariables".casefold()
+
+
+def _is_character_lab_file(rel: str) -> bool:
+    """Whether `rel`, a flavor-relative path as a guard journal record spells
+    it, can be a file the loader check reads: a character's own lab-addon
+    file, which `_character_sv` returns for any `--into` character (§13.4;
+    M11-31, conductor ruling on M11-31T). That is
+    `WTF/Account/<account>/<realm or digits>/<character>/SavedVariables/WowLab.lua`,
+    seven parts, with `WTF`, `Account`, `SavedVariables` and the file name
+    compared case-folded: `layout` finds each folder by its case-folded name,
+    and `_character_sv` falls back to a case-folded file name when none is
+    spelled exactly, while the journal records the spelling on disk. The
+    account-wide `WowLab.lua`, a `WowLab.lua.bak` beside the character's file
+    and every other file are not it. Decided from the path alone: `snap gc`
+    takes no install and reads none."""
+    parts = rel.split("/")
+    return (
+        len(parts) == _CHARACTER_SV_PARTS
+        and parts[0].casefold() == _FOLDED_WTF
+        and parts[1].casefold() == _FOLDED_ACCOUNT
+        and parts[5].casefold() == _FOLDED_SAVED_VARIABLES
+        and parts[6].casefold() == svmerge.LAB_ADDON_FILE.casefold()
+    )
+
+
 def _merge_target(
     lay: layout.Layout,
     files: Sequence[layout.SavedVariablesFile],
@@ -3461,11 +3493,15 @@ def snap_gc(
     yes: YesOpt = False,
     json_out: JsonOpt = False,
 ) -> None:
-    """Remove stored objects no snapshot refers to and older than an hour
-    (GC_GRACE_SECONDS). An object a committed write in the guard journal
-    names as what it wrote is kept too: the SavedVariables loader check of
-    `sv merge` compares from it. Holds the store lock for the whole run, so
-    no transaction or `snap create` runs meanwhile. JSON: snapshot.GcReport."""
+    """Remove stored objects that nothing keeps, once they are older than an
+    hour (GC_GRACE_SECONDS, in case a snapshot is being written). Kept: every
+    object a snapshot refers to, and what each committed write left in a
+    character's WowLab.lua (the lab-addon's per-character file, in any
+    install), which the SavedVariables loader check of `sv merge` compares
+    from. Anything else a write left, such as what a `snap restore` or
+    profile apply wrote from a snapshot since deleted, is collected. Holds
+    the store lock for the whole run, so no transaction or `snap create`
+    runs meanwhile. JSON: snapshot.GcReport."""
     store = snapshot.SnapshotStore()
     if not store.path.is_dir():
         report = snapshot.GcReport(dry_run=True, unreferenced=(), unreferenced_bytes=0, removed=())
@@ -3475,21 +3511,24 @@ def snap_gc(
             _say(f"No snapshot store at {store.path} yet; nothing to collect.")
         return
     with guard.store_lock(store.path):
-        # What committed writes left (M11-24), read under the store lock, so
-        # no transaction adds a record between this and the removal.
+        # What committed writes left in a character's WowLab.lua, the only
+        # journal-named objects the loader check reads (M11-24, narrowed in
+        # M11-31): every such write, not only the latest, since the check
+        # walks back over older spans. Read under the store lock, so no
+        # transaction adds a record between this and the removal.
         written = {
             change.after
             for record in guard.history(store=store.path)
             if record.state == "committed"
             for change in record.paths
-            if change.after is not None
+            if change.after is not None and _is_character_lab_file(change.path)
         }
         report = store.gc(dry_run=True, grace_seconds=GC_GRACE_SECONDS, keep=written)
         if report.unreferenced and not dry_run:
             if not json_out:
                 _say(
-                    f"{len(report.unreferenced)} object(s) no snapshot refers to, "
-                    f"{_bytes(report.unreferenced_bytes)} on disk."
+                    f"{len(report.unreferenced)} object(s) no snapshot refers to and the "
+                    f"loader check does not need, {_bytes(report.unreferenced_bytes)} on disk."
                 )
             _confirm("Remove them?", yes)
             report = store.gc(dry_run=False, grace_seconds=GC_GRACE_SECONDS, keep=written)
@@ -3505,8 +3544,9 @@ def snap_gc(
         )
     if not report.unreferenced:
         _say(
-            "Nothing to collect: every stored object is referred to by a snapshot or by a "
-            "committed write in the journal, or is younger than an hour (kept in case a "
+            "Nothing to collect: every stored object is referred to by a snapshot, or is "
+            "what a committed write left in a character's WowLab.lua (the loader check of "
+            "`sv merge` compares from it), or is younger than an hour (kept in case a "
             "snapshot is being written)."
         )
     elif report.dry_run:
