@@ -8,9 +8,10 @@ imports it. Read it, then `docs/LAB_PLAN.md`, before touching anything.
 wowlab (the Lab) is a local toolchain for one player's own machine. It reads
 a World of Warcraft install directly, explains what every file in it is,
 snapshots it, and lets the owner change the client's configurable state and
-change it back. Wave 1 is a Python library and a CLI (`wowlab_core`,
-`wowlab`); character-customization tools, offline character tools and addon
-experiments are built on that base in later, owner-selected waves. It is
+change it back. Its base is a Python library and a CLI (`wowlab_core`,
+`wowlab`), built in Wave 1. Later owner-selected waves add tools on that
+base: the lab-addon, the customization sandbox, profiles and sv-merge in
+Wave 2, and db2lake, talents and the alt-dashboard in Wave 3. It is
 never distributed, never deployed, and never uploads anything (ADR-0019).
 
 ## Hard invariants
@@ -111,9 +112,13 @@ required checks are green, threads are resolved, and reviews are clean.
 
 Python 3.12, one uv workspace (members under `lab/`), ruff for lint and
 format, `mypy --strict` on `lab/core/src`, pytest, Pydantic v2 models for
-anything that crosses a module boundary, `pathlib` everywhere. There is no
-other language or runtime in this repository; one arrives only through an
-ADR in the wave that needs it (ADR-0020). Runtime dependencies are limited
+anything that crosses a module boundary, `pathlib` everywhere. Python is the
+only language outside two fenced exceptions, each admitted by an ADR:
+- Lua under `lab/addon/`, run only by the game client (ADR-0026).
+- Inline HTML, CSS and JavaScript page templates inside the package (ADR-0027).
+
+Any other language or runtime arrives only through an ADR in the wave that
+needs it (ADR-0020; ADR-0030, Proposed, states the general rule). Runtime dependencies are limited
 to the list in `docs/LAB_PLAN.md` §6; adding one needs a line in the PR body.
 
 Tests use real fixtures, not generated examples. For anything parsing an

@@ -2,8 +2,10 @@
 
 **Status:** Wave 1 specified (2026-09-20), revised 2026-09-21 when the Lab
 became the whole repository (ADR-0025). Later waves are chosen by the owner
-after each wave ships (ADR-0024); nothing beyond Wave 1 is specified here on
-purpose.
+after each wave ships (ADR-0024). Each later wave is specified only once the
+owner has picked it, in its own section: Wave 2 in §13 and Wave 3 in §14
+(amended 2026-09-30; this line used to say that nothing beyond Wave 1 is
+specified here).
 
 The Lab is the application this repository exists for, not a track beside
 another product. It is a local toolchain for one player's own machine: it
@@ -617,7 +619,7 @@ Local CASC reading (the install's own `Data/`) is deferred to the wave that
 needs models or textures. `gamedata` exposes a `Source` protocol so a CASC
 source can be added beside the HTTP one without changing callers.
 
-*Amended 2026-09-29 (Wave 3 plan, proposed):* typed columns arrive in Wave 3
+*Amended 2026-09-29 (Wave 3 plan; ADR-0028 accepted by the owner 2026-09-30):* typed columns arrive in Wave 3
 as `wowlab_core.db2lake` (§14.2, ADR-0028), inferred from the build's data
 rather than from WoWDBDefs, and `gamedata.rows` stays untyped. A table the
 build lacks answers `HTTP 400` at wago, which M12-02 maps to
@@ -1358,6 +1360,11 @@ game installed. M10-08, M10-09 and M10-10 do not wait on it.
    on retail fixtures and Forever fixtures are added when it is.
 3. Whether the non-required Windows CI job stays (it was added with M10-01)
    or is dropped until `guard` needs it.
+
+*Amended 2026-09-30:* the Wave 1 captures answered 1 and 2 in practice. The
+primary install is on macOS, and the Forever beta client is installed; the
+committed fixture roots are `macos-*`. Question 3 has no owner ruling. The
+job still runs, non-required, and `guard`'s Windows lock rules rely on it.
 4. ~~Accept or reject ADR-0019 through ADR-0025.~~ Answered 2026-09-21: all
    accepted, together with ADR-0013 and ADR-0014.
 

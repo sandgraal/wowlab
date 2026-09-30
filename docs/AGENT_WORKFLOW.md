@@ -197,7 +197,9 @@ that is an owner action in a terminal.
 Limits: writes made from inside `python -c`, a heredoc-fed interpreter, or
 an editor are invisible to it, and so is anything a pre-approved tool does
 internally (`uv sync` running a build hook). That is why `uv run python:*`
-and `uv add:*` are not pre-approved, why the Edit/Write path is the one that
+is not pre-approved and `uv add:*` is denied outright in
+`.claude/settings.json` (a new runtime dependency is justified in the PR
+body and added by hand to `pyproject.toml`, then `uv lock`), why the Edit/Write path is the one that
 is fully guarded, and why CI (`harness`, `gitleaks`, `semgrep`, `trivy`) and
 the branch ruleset are the backstop. The hooks exist to fail earlier and
 explain why.
