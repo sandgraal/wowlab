@@ -202,6 +202,9 @@ jobs:
             echo "UV_NO_SYNC=1"
             echo "UV_OFFLINE=1"
           } >> "$GITHUB_ENV"
+          # And if the command's environment loses UV_PROJECT, `uv run` still
+          # finds `wowlab` on PATH.
+          echo "${GITHUB_WORKSPACE}/repo/.venv/bin" >> "$GITHUB_PATH"
 
       # Tools: read anything the deny list above leaves, edit and create only
       # inside wiki/, and print help. No git, no network tool, no other
