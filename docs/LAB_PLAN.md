@@ -2140,6 +2140,26 @@ them as follows, and M11-09 builds to them.
         the write.
       - **gc keeps them.** `snap gc` keeps every `after` a committed journal
         record names. M11-31 narrows this to what the check can need.
+    - *Amended 2026-09-30 (M11-31, graded by M11-31T, with the conductor
+      ruling on M11-31T of 2026-09-29):* `snap gc` keeps a journal-named
+      object only when it is the `after` of a committed write to a
+      character's `WowLab.lua`: every such write, not only the latest,
+      since the check compares any character's file and walks back over
+      older spans. The file is any path the check's `_character_sv` can
+      return for a character's own lab file, decided from the journal
+      record's `path` alone (gc takes no install and reads none): seven
+      parts, `WTF/Account/<account>/<realm or digits>/<character>/SavedVariables/WowLab.lua`,
+      with `WTF`, `Account`, `SavedVariables` and `WowLab.lua` compared
+      case-folded, since the journal records the spelling on disk. Every
+      other `after` (the account-wide `WowLab.lua`, a `WowLab.lua.bak`,
+      any other file a `snap restore` or profile apply wrote from a
+      snapshot since deleted) is collected like any object no snapshot
+      refers to, through the same link-safe removal (§6.9, M11-15).
+      `snap gc --help` says what is kept. `put_object` raises any
+      `OSError` on the way (a directory planted at the object's path, for
+      one) as `SnapshotError`, naming the object's path and what is in its
+      place, so `sv merge` stops with "cannot keep the merged … in the
+      snapshot store (…); nothing was written".
   - `--force-loader-check` overrides every refusal.
 - **`--json` is required** (§6.11). It prints `SvMergeReport`, holding at
   least `mode` (`two-way` or `three-way`), `conflicts`, `absent` (with

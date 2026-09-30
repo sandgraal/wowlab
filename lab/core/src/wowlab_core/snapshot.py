@@ -1657,12 +1657,12 @@ class SnapshotStore:
         staged copy is removed and nothing is written in its place."""
         if not isinstance(data, bytes):
             raise SnapshotError(f"an object is bytes, not {type(data).__name__}")
-        planned = hashlib.sha256(data).hexdigest()
         try:
             with self._holding_dirs():
                 self._refuse_linked_store_dirs()
                 digest, _ = self._store_stream(io.BytesIO(data), set())
         except OSError as exc:
+            planned = hashlib.sha256(data).hexdigest()
             raise SnapshotError(self._cannot_store(planned, exc)) from exc
         return digest
 
