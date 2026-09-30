@@ -151,12 +151,18 @@ class BuildNotPublished(GameDataError):  # noqa: N818 - name fixed by docs/LAB_P
 
 
 class TableNotPublished(GameDataError):  # noqa: N818
-    """The source has the build but not this table for it."""
+    """The source has the build but not this table for it.
 
-    def __init__(self, table: str, build: str) -> None:
+    ``reason``, when the source gives one, is the source's own text about
+    why (built from what it asked and the status it got, never from a
+    response body) and is appended to the message."""
+
+    def __init__(self, table: str, build: str, *, reason: str | None = None) -> None:
         self.table = table
         self.build = build
-        super().__init__(f"table {table!r} is not published for build {build!r}")
+        self.reason = reason
+        message = f"table {table!r} is not published for build {build!r}"
+        super().__init__(f"{message}: {reason}" if reason else message)
 
 
 class SourceUnavailable(GameDataError):  # noqa: N818
@@ -252,17 +258,31 @@ class Source(Protocol):
 
 
 class _NotFoundError(Exception):
-    pass
+    """A status that means "not there" at the endpoint asked (``_Expected.absent``)."""
+
+    def __init__(self, url: str, status: int) -> None:
+        super().__init__(f"{url}: HTTP {status}")
+        self.url = url
+        self.status = status
 
 
 class _RetryableError(Exception):
     pass
 
 
+# What "not there" looks like at each endpoint, as recorded (docs/DATA_SOURCES.md):
+# a version that was never published is a 404 (2026-09-21); a table that a
+# listed build lacks is a 400 (2026-09-29, M12-02). Neither is retried, and the
+# body of either is never read.
+_ABSENT_BUILDS = frozenset({404})
+_ABSENT_TABLE = frozenset({404, 400})
+
+
 class _Expected(NamedTuple):
     content_type: str
     filename: str | None  # exact Content-Disposition filename, for tables
     max_bytes: int
+    absent: frozenset[int]  # statuses raised as _NotFoundError
 
 
 def _no_cookies() -> http.cookiejar.CookieJar:
@@ -280,7 +300,10 @@ class WagoSource:
     honoured up to ``backoff_cap``.
 
     URL shapes come from the recordings under ``tests/fixtures/wago/``:
-    ``/api/builds`` and ``/db2/<Table>/csv?build=<full build string>``.
+    ``/api/builds`` and ``/db2/<Table>/csv?build=<full build string>``. The
+    table endpoint answers 404 for a build it never published and 400 for a
+    table a listed build lacks; both are ``TableNotPublished`` here, never
+    retried, and their bodies (cookies included) are neither read nor kept.
 
     A table response is checked against the recording's
     ``Content-Disposition: attachment; filename="<Table>.<build>.csv"``: a
@@ -349,20 +372,35 @@ class WagoSource:
 
     def fetch_builds(self, dest: BinaryIO) -> str:
         url = f"{self._base_url}/api/builds"
-        expected = _Expected("application/json", None, self._max_builds_bytes)
+        expected = _Expected("application/json", None, self._max_builds_bytes, _ABSENT_BUILDS)
         try:
             return self._download(url, {}, dest, expected)
         except _NotFoundError as exc:
             raise UnexpectedResponse(url, "404 for the builds listing") from exc
 
     def fetch_table(self, table: str, build: str, dest: BinaryIO) -> str:
+        """A 404 or a 400 is ``TableNotPublished``; ``GameData.table`` turns
+        either into ``BuildNotPublished`` when the listing lacks the build.
+
+        wago answers 400 (``application/json``, no ``Content-Disposition``)
+        for a table a listed build does not have (2026-09-29, M12-02). The
+        status alone decides: the body is not read, so an HTML or empty 400
+        is the same answer, and nothing from it reaches the message."""
         _check_key(table, build)
         url = f"{self._base_url}/db2/{table}/csv"
-        expected = _Expected("text/csv", f"{table}.{build}.csv", self._max_table_bytes)
+        expected = _Expected(
+            "text/csv", f"{table}.{build}.csv", self._max_table_bytes, _ABSENT_TABLE
+        )
         try:
             return self._download(url, {"build": build}, dest, expected)
         except _NotFoundError as exc:
-            raise TableNotPublished(table, build) from exc
+            if exc.status == 404:
+                raise TableNotPublished(table, build) from exc
+            reason = (
+                f"{self.name} answered HTTP {exc.status} for {exc.url}; "
+                "the table may not exist in this game version"
+            )
+            raise TableNotPublished(table, build, reason=reason) from exc
 
     def _download(
         self, url: str, params: dict[str, str], dest: BinaryIO, expected: _Expected
@@ -386,8 +424,9 @@ class WagoSource:
                     with self._client.stream("GET", url, params=params) as response:
                         full_url = str(response.request.url)
                         status = response.status_code
-                        if status == 404:
-                            raise _NotFoundError(full_url)
+                        if status in expected.absent:
+                            # Raised before the body is read; never retried.
+                            raise _NotFoundError(full_url, status)
                         if status == 429 or status >= 500:
                             last = f"HTTP {status}"
                             retry_after = _retry_after(
@@ -768,6 +807,11 @@ class GameData:
         A file already under that name is returned untouched, whatever it
         holds (L5). Otherwise the table is downloaded to a temp name beside
         it and published without overwriting.
+
+        When the source has no such table, the builds listing decides what
+        is missing: ``BuildNotPublished`` if it does not list ``build``,
+        ``TableNotPublished`` (the source's error, as raised) if it does.
+        Nothing is cached either way.
         """
         final = self.table_path(name, build)
         if final.exists():
