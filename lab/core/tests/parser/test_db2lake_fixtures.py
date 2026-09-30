@@ -141,21 +141,78 @@ def test_trait_tree_keeps_the_placeholder_columns(tmp_path: Path) -> None:
 
 
 def test_recorded_all_empty_and_numeric_looking_text_columns(tmp_path: Path) -> None:
-    """The ADR-0028 rule on real data, pinned so a change is seen (§14.2
-    amendment 2026-09-30): `TitleText_lang` is empty in all 17 rows, so it is
-    INTEGER and NULL (every non-empty cell, of which there is none, is an
-    integer); `OverrideName_lang` holds one cell, `16972`, and 653 empty
-    ones, so it is INTEGER too; the two all-empty `Override*_lang` columns
-    likewise."""
+    """The rule on real data, pinned so a change is seen (§14.2 amendment
+    2026-09-30): `TitleText_lang` is empty in all 17 rows, so it is TEXT and
+    keeps its empty strings (the owner's ruling of 2026-09-30); so are the
+    all-empty `Override*_lang` columns. `OverrideName_lang` holds one cell,
+    `16972`, and 653 empty ones, so it is INTEGER (ADR-0028's Consequences)
+    and its empty cells are NULL."""
     with _lake(tmp_path, B70058) as lake:
         tree = {c.name: c.type for c in lake.schema("TraitTree").columns}
         definition = {c.name: c.type for c in lake.schema("TraitDefinition").columns}
         titles = {row["TitleText_lang"] for row in lake.rows("TraitTree")}
-        names = [row["OverrideName_lang"] for row in lake.rows("TraitDefinition")]
-    assert tree["TitleText_lang"] == "INTEGER" and titles == {None}
+        rows = list(lake.rows("TraitDefinition"))
+    assert tree["TitleText_lang"] == "TEXT" and titles == {""}
     assert definition["OverrideName_lang"] == "INTEGER"
+    names = [row["OverrideName_lang"] for row in rows]
     assert [n for n in names if n is not None] == [16972]
-    assert definition["OverrideSubtext_lang"] == definition["OverrideDescription_lang"] == "INTEGER"
+    assert names.count(None) == 653
+    assert definition["OverrideSubtext_lang"] == definition["OverrideDescription_lang"] == "TEXT"
+    assert {row["OverrideSubtext_lang"] for row in rows} == {""}
+
+
+def _every_recording() -> list[tuple[str, str]]:
+    found = []
+    for path in sorted(WAGO.glob("*.csv")):
+        parts = path.name.split(".")
+        table, build = parts[0], ".".join(parts[1:5])
+        found.append((table, build))
+    return found
+
+
+@pytest.mark.parametrize(("table", "build"), _every_recording())
+def test_every_recording_loads_and_all_empty_columns_are_text(
+    tmp_path: Path, table: str, build: str
+) -> None:
+    """Every committed CSV recording loads with its columns and rows; each
+    column with no non-empty cell is TEXT holding "" in every row, and every
+    column with a non-empty cell is typed as ADR-0028 says."""
+    header, records = _csv(_recording(table, build))
+    empty = [i for i, _ in enumerate(header) if all(not record[i] for record in records)]
+    with _lake(tmp_path, build) as lake:
+        kinds = [c.type for c in lake.schema(table).columns]
+        rows = list(lake.rows(table))
+    assert len(rows) == len(records)
+    for i in empty:
+        assert kinds[i] == "TEXT", header[i]
+        assert {row[header[i]] for row in rows} <= {""}, header[i]
+    for record, row in zip(records, rows, strict=True):
+        for name, kind, cell in zip(header, kinds, record, strict=True):
+            if kind == "REAL":  # the nearest double to the recorded text
+                assert row[name] == (float(cell) if cell else None), name
+            else:
+                assert _as_csv_cell(row[name], kind) == cell, name
+
+
+def test_the_recordings_hold_twenty_all_empty_columns() -> None:
+    """The count the ruling was made on (2026-09-30), so a new recording
+    that changes it is noticed."""
+    columns = {}
+    for table, build in _every_recording():
+        header, records = _csv(_recording(table, build))
+        for i, name in enumerate(header):
+            if all(not record[i] for record in records):
+                columns[(table, build, name)] = True
+    assert len(columns) == 20
+    assert len({(t, b) for t, b, _ in columns}) == 9, "recordings"
+    assert {t for t, _, _ in columns} == {
+        "ChrClasses",
+        "ChrRaces",
+        "ChrSpecialization",
+        "SkillLine",
+        "TraitDefinition",
+        "TraitTree",
+    }
 
 
 def test_spellname_subset_is_integer_ids_and_text_names(tmp_path: Path) -> None:

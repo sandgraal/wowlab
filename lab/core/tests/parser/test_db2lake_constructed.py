@@ -18,7 +18,7 @@ from typing import BinaryIO
 import pytest
 from _cpu_clock import cpu_clock
 
-from wowlab_core.db2lake import Cell, Lake
+from wowlab_core.db2lake import MAX_RECORD_BYTES, Cell, Lake
 from wowlab_core.gamedata import GameData, MalformedTable
 
 pytestmark = pytest.mark.parser
@@ -71,7 +71,6 @@ INTEGER_COLUMNS = [
     ("i64-edges-and-small", ["9223372036854775807", "-9223372036854775808", "7"], None),
     ("with-empty", ["1", "", "3"], [1, None, 3]),
     ("quoted-empty", ["5", '""'], [5, None]),
-    ("all-empty", ["", "", '""'], [None, None, None]),
 ]
 
 
@@ -149,6 +148,21 @@ def test_a_cell_that_is_not_a_decimal_number_makes_the_column_text(
     assert values == ["1", expected, "", "2.5"], "numbers in a TEXT column stay their text"
 
 
+@pytest.mark.parametrize(
+    "cells",
+    [
+        pytest.param(["", ""], id="constructed-all-empty"),
+        pytest.param(["", '""', ""], id="constructed-all-empty-some-quoted"),
+    ],
+)
+def test_a_column_with_no_non_empty_cell_is_text(tmp_path: Path, cells: list[str]) -> None:
+    """The owner's ruling of 2026-09-30: an all-empty column keeps its empty
+    strings (TEXT), rather than ADR-0028's words read literally (INTEGER)."""
+    kind, values = _column(tmp_path, *cells)
+    assert kind == "TEXT"
+    assert values == [""] * len(cells)
+
+
 def test_constructed_numeric_looking_text_column(tmp_path: Path) -> None:
     """Numbers until the last row; the whole column is TEXT and keeps every
     cell's text, zero padding included."""
@@ -162,13 +176,17 @@ def test_constructed_empty_cells_are_null_or_empty_string_by_type(tmp_path: Path
     with _lake(tmp_path, body) as lake:
         kinds = [(c.name, c.type) for c in lake.schema(TABLE).columns]
         rows = list(lake.rows(TABLE))
-        stored = list(lake.query('SELECT typeof("I"), typeof("R"), typeof("T") FROM "Constructed"'))
-    assert kinds == [("I", "INTEGER"), ("R", "REAL"), ("T", "TEXT"), ("E", "INTEGER")]
+        stored = list(
+            lake.query(
+                'SELECT typeof("I"), typeof("R"), typeof("T"), typeof("E") FROM "Constructed"'
+            )
+        )
+    assert kinds == [("I", "INTEGER"), ("R", "REAL"), ("T", "TEXT"), ("E", "TEXT")]
     assert rows == [
-        {"I": 1, "R": 0.5, "T": "a", "E": None},
-        {"I": None, "R": None, "T": "", "E": None},
+        {"I": 1, "R": 0.5, "T": "a", "E": ""},
+        {"I": None, "R": None, "T": "", "E": ""},
     ]
-    assert stored == [("integer", "real", "text"), ("null", "null", "text")]
+    assert stored == [("integer", "real", "text", "text"), ("null", "null", "text", "text")]
 
 
 def test_constructed_tables_are_strict(tmp_path: Path) -> None:
@@ -188,7 +206,7 @@ def test_constructed_header_only_table_loads_with_no_rows(tmp_path: Path) -> Non
     with _lake(tmp_path, b"ID,Name_lang\r\n") as lake:
         schema = lake.schema(TABLE)
         assert list(lake.rows(TABLE)) == []
-    assert [c.name for c in schema.columns] == ["ID", "Name_lang"]
+    assert [(c.name, c.type) for c in schema.columns] == [("ID", "TEXT"), ("Name_lang", "TEXT")]
     assert schema.row_count == 0
 
 
@@ -239,6 +257,35 @@ def test_constructed_hostile_column_names_are_quoted_and_kept(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize(
+    "shadowed",
+    [
+        pytest.param(["rowid"], id="constructed-only-rowid"),
+        pytest.param(["oid"], id="constructed-only-oid"),
+        pytest.param(["_rowid_"], id="constructed-only-underscore-rowid"),
+        pytest.param(["ROWID", "_rowid_"], id="constructed-rowid-and-underscore-rowid"),
+        pytest.param(["rowid", "Oid"], id="constructed-rowid-and-oid"),
+    ],
+)
+def test_rows_come_back_in_csv_order_whichever_row_id_names_are_shadowed(
+    tmp_path: Path, shadowed: list[str]
+) -> None:
+    """Each shadowing column holds values in the opposite order to the file,
+    so ordering by the column instead of the row id is seen."""
+    header = ",".join([*shadowed, "Value"])
+    body = (
+        header
+        + "\n"
+        + "".join(
+            ",".join([str(key)] * len(shadowed) + [label]) + "\n"
+            for key, label in ((3, "first"), (2, "second"), (1, "third"))
+        )
+    )
+    with _lake(tmp_path, body.encode()) as lake:
+        values = [row["Value"] for row in lake.rows(TABLE)]
+    assert values == ["first", "second", "third"]
+
+
+@pytest.mark.parametrize(
     ("header", "match"),
     [
         pytest.param(b"ID,Name,ID\n", "column names repeat", id="constructed-repeated"),
@@ -286,6 +333,83 @@ def test_constructed_quoted_fields_keep_commas_quotes_and_newlines(tmp_path: Pat
     assert [r["Text"] for r in rows] == ["a, b", 'say "hi"', "two\r\nlines"]
 
 
+# ── bounds ─────────────────────────────────────────────────────────────────
+
+
+def _columns(n: int) -> bytes:
+    return (",".join(f"C{i}" for i in range(n)) + "\n" + ",".join(["0"] * n) + "\n").encode()
+
+
+def test_constructed_the_widest_table_sqlite_allows_loads(tmp_path: Path) -> None:
+    with _lake(tmp_path, _columns(2000)) as lake:
+        schema = lake.schema(TABLE)
+    assert len(schema.columns) == 2000 and schema.row_count == 1
+
+
+@pytest.mark.parametrize("width", [2001, 30_000])
+def test_constructed_a_header_wider_than_sqlite_allows_is_malformed_and_quick(
+    tmp_path: Path, width: int
+) -> None:
+    """Refused by the column count before any per-name work (the repeat
+    check was quadratic in the width)."""
+    body = _columns(width)
+    with _lake(tmp_path, body) as lake:
+        clock, name = cpu_clock()
+        started = clock()
+        with pytest.raises(MalformedTable, match="more than SQLite's limit of 2000"):
+            lake.load(TABLE)
+        elapsed = clock() - started
+        assert lake.tables() == []
+    assert elapsed < 1, f"{elapsed:.2f} {name} s"
+
+
+def test_constructed_repeats_in_a_wide_header_are_found_in_linear_time(tmp_path: Path) -> None:
+    names = [f"C{i}" for i in range(1999)] + ["C0"]
+    body = (",".join(names) + "\n").encode()
+    with _lake(tmp_path, body) as lake, pytest.raises(MalformedTable, match="repeat"):
+        lake.load(TABLE)
+
+
+def test_constructed_a_record_longer_than_the_limit_is_refused_before_decoding(
+    tmp_path: Path,
+) -> None:
+    """A 20 MB line: refused having read a little over `MAX_RECORD_BYTES`,
+    not the line (the peak is traced across the load)."""
+    body = b"ID,Text\n1," + b"x" * (20 << 20) + b"\n"
+    data = GameData(_Tables({TABLE: body}), cache_dir=tmp_path / "cache")
+    data.table(TABLE, BUILD)
+    del body
+    with Lake(BUILD, gamedata=data, lake_dir=tmp_path / "lake") as lake:
+        tracemalloc.start()
+        try:
+            with pytest.raises(MalformedTable, match=f"longer than {MAX_RECORD_BYTES} bytes"):
+                lake.load(TABLE)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+    assert peak < 4 * MAX_RECORD_BYTES, peak
+
+
+def test_constructed_a_multi_line_record_longer_than_the_limit_is_refused(tmp_path: Path) -> None:
+    """Each physical line is short, and so is each field (under csv's own
+    field limit); ten quoted fields of many lines make one record over it."""
+    field = b'"' + b"line of text\n" * 9000 + b'"'  # 117,002 bytes
+    body = b"A,B,C,D,E,F,G,H,I,J\n" + b",".join([field] * 10) + b"\n"
+    assert len(body) > MAX_RECORD_BYTES
+    with _lake(tmp_path, body) as lake, pytest.raises(MalformedTable, match="longer than"):
+        lake.load(TABLE)
+
+
+def test_constructed_a_record_just_under_the_limit_loads(tmp_path: Path) -> None:
+    cell = "y" * 100_000  # under csv's own field limit of 131,072
+    record = ",".join([cell] * 10)
+    assert len(record) + 3 < MAX_RECORD_BYTES
+    body = ("A,B,C,D,E,F,G,H,I,J\n" + record + "\n").encode()
+    with _lake(tmp_path, body) as lake:
+        (row,) = list(lake.rows(TABLE))
+    assert row["J"] == cell
+
+
 # ── size ───────────────────────────────────────────────────────────────────
 
 
@@ -331,7 +455,7 @@ def test_constructed_200k_rows_load_within_the_cpu_budget(tmp_path: Path) -> Non
         kinds = [c.type for c in lake.schema(TABLE).columns]
         last = list(lake.query('SELECT * FROM "Constructed" WHERE "ID" = ?', (rows,)))
     assert result.loaded and result.table.row_count == rows
-    assert kinds == ["INTEGER"] * 5 + ["REAL", "TEXT", "INTEGER", "TEXT", "INTEGER"]
+    assert kinds == ["INTEGER"] * 5 + ["REAL", "TEXT", "TEXT", "TEXT", "INTEGER"]
     assert last[0][8] == "X" and last[0][9] == -rows
     assert result.table.sha256 == hashlib.sha256(source.read_bytes()).hexdigest()
     print(
@@ -366,3 +490,45 @@ def test_constructed_load_memory_follows_the_batch_not_the_file(tmp_path: Path) 
     assert large < small * 1.25 + 64 * 1024, (small, large)
     assert large < 40_000 * 50, "a fraction of what the whole table would need"
     assert bigger_batch > large * 4, (large, bigger_batch)
+
+
+def _peak_for(tmp_path: Path, body: bytes) -> int:
+    data = GameData(_Tables({TABLE: body}), cache_dir=tmp_path / "cache")
+    data.table(TABLE, BUILD)
+    with Lake(BUILD, gamedata=data, lake_dir=tmp_path / "lake") as lake:
+        tracemalloc.start()
+        try:
+            lake.load(TABLE)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+    return peak
+
+
+def _wide(rows: int) -> bytes:
+    header = ",".join(f"C{i}" for i in range(2000))
+    return (header + "\n" + (",".join(["0"] * 2000) + "\n") * rows).encode()
+
+
+def _long_text(rows: int) -> bytes:
+    return ("A,B,C,D\n" + (",".join(["t" * 5000] * 4) + "\n") * rows).encode()
+
+
+def test_constructed_a_wide_table_is_batched_by_cells_not_rows(tmp_path: Path) -> None:
+    """2,000 columns: a 5,000-row batch would hold 10 million cells. The
+    batch is cut at 50,000 cells, so four times the rows cost no more."""
+    small = _peak_for(tmp_path / "small", _wide(100))
+    large = _peak_for(tmp_path / "large", _wide(400))
+    print(f"db2lake wide peak: 100 rows {small}, 400 rows {large}")
+    assert large < small * 1.25 + 256 * 1024, (small, large)
+    assert large < 16 << 20, large
+
+
+def test_constructed_long_text_is_batched_by_bytes_not_rows(tmp_path: Path) -> None:
+    """20 KB rows: a 5,000-row batch would hold 100 MB. The batch is cut at
+    4 MiB of CSV, so twice the rows cost no more."""
+    small = _peak_for(tmp_path / "small", _long_text(1000))
+    large = _peak_for(tmp_path / "large", _long_text(2000))
+    print(f"db2lake long-text peak: 1000 rows {small}, 2000 rows {large}")
+    assert large < small * 1.25 + 256 * 1024, (small, large)
+    assert large < 16 << 20, large

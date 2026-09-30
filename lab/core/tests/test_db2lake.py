@@ -13,9 +13,12 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import sqlite3
 import sys
-from collections.abc import Iterator
+import threading
+import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import BinaryIO
 
@@ -27,6 +30,7 @@ from wowlab_core.db2lake import (
     Lake,
     LakeError,
     LakeLocationError,
+    QueryStopped,
     SourceChanged,
     attach_alias,
     default_lake_dir,
@@ -236,8 +240,8 @@ def test_constructed_load_racing_another_process(
     rival = _lake(tmp_path, source=source)
     pending: list[str] = []
 
-    def scan_then_rival_loads(path: Path) -> db2lake._Scan:
-        result = real_scan(path)
+    def scan_then_rival_loads(path: Path, max_columns: int) -> db2lake._Scan:
+        result = real_scan(path, max_columns)
         if pending:
             rival.load(pending.pop())  # its own scan runs with nothing pending
         return result
@@ -266,23 +270,40 @@ def test_constructed_load_racing_another_process(
         assert lake.load("TraitEdge").table.sha256 == _sha256(WAGO / f"TraitEdge.{B70058}.csv")
 
 
+def _same_count_edit(data: bytes) -> bytes:
+    """One digit of the last cell changed: the same rows, the same widths,
+    every cell still an integer; only the bytes (and one value) differ."""
+    body = data.rstrip(b"\r\n")
+    last = body[-1:]
+    assert last.isdigit()
+    return body[:-1] + (b"1" if last != b"1" else b"2") + data[len(body) :]
+
+
+EDITS_BETWEEN_PASSES = [
+    pytest.param(lambda data: data + b"999999,1,1,0,0\n", id="constructed-row-appended"),
+    pytest.param(_same_count_edit, id="constructed-one-digit-same-row-count"),
+]
+
+
+@pytest.mark.parametrize("edit", EDITS_BETWEEN_PASSES)
 def test_constructed_source_changing_between_the_passes_is_refused(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, edit: Callable[[bytes], bytes]
 ) -> None:
     """Constructed: the cached file changes after the inference pass. The
-    insert pass sees other bytes; the transaction rolls back."""
+    insert pass sees other bytes (a new row, or one digit with the row count
+    unchanged, which only the hash sees); the transaction rolls back."""
     data = _gamedata(tmp_path)
     cached = data.table("TraitNodeEntry", B70058)
     real_scan = db2lake._scan
 
-    def scan_then_edit(path: Path) -> db2lake._Scan:
-        result = real_scan(path)
-        path.write_bytes(path.read_bytes() + b"999999,1,1,0,0\n")
+    def scan_then_edit(path: Path, max_columns: int) -> db2lake._Scan:
+        result = real_scan(path, max_columns)
+        path.write_bytes(edit(path.read_bytes()))
         return result
 
     monkeypatch.setattr(db2lake, "_scan", scan_then_edit)
     with Lake(B70058, gamedata=data, lake_dir=tmp_path / "lake") as lake:
-        with pytest.raises(SourceChanged, match="changed"):
+        with pytest.raises(SourceChanged, match="changed while it was loaded"):
             lake.load("TraitNodeEntry")
         assert lake.tables() == []
         assert (
@@ -369,14 +390,36 @@ def test_attach_is_read_only(tmp_path: Path) -> None:
     assert _sha256(other) == before
 
 
-def test_attach_refuses_own_build_missing_lake_and_alias_collision(tmp_path: Path) -> None:
+def test_attach_is_read_only_in_the_file_not_only_by_query_only(tmp_path: Path) -> None:
+    """Inside the lake's own write transaction (`query_only` off, the path a
+    load takes), the attached file still refuses a write: it is opened with
+    `mode=ro`, not merely guarded by the pragma. White-box on purpose."""
+    source = _Recordings()
+    with _lake(tmp_path, B70009, source) as older:
+        older.load("TraitEdge")
+    other = tmp_path / "lake" / f"{B70009}.sqlite"
+    before = _sha256(other)
+    with _lake(tmp_path, B70058, source) as lake:
+        lake.load("TraitEdge")
+        alias = lake.attach(B70009)
+        conn = lake._connect()
+        with pytest.raises(sqlite3.OperationalError, match="readonly"), lake._writing(conn):
+            conn.execute(f'DELETE FROM "{alias}"."TraitEdge"')
+        assert list(lake.query(f'SELECT count(*) FROM "{alias}"."TraitEdge"')) == [(96,)]
+    assert _sha256(other) == before
+
+
+def test_constructed_attach_refuses_own_build_missing_lake_and_alias_collision(
+    tmp_path: Path,
+) -> None:
+    """Constructed: a twin build string (16.0.1.70009) with the same digits
+    as a real one, and a copied lake file under its name."""
     with _lake(tmp_path) as lake:
         lake.load("TraitTree")
         with pytest.raises(LakeError, match="own build"):
             lake.attach(B70058)
         with pytest.raises(LakeError, match="no lake for build"):
             lake.attach(B70009)
-    # Constructed builds whose digits are the same: 1.60.1.70009 and 16.0.1.70009.
     with _lake(tmp_path, B70009) as older:
         older.load("TraitTree")
     twin = "16.0.1.70009"
@@ -404,15 +447,276 @@ def test_constructed_a_file_that_records_another_build_is_refused(tmp_path: Path
         lake.load("TraitTree")
         with pytest.raises(LakeError, match=r"holds build '1\.60\.1\.70009'"):
             lake.attach("1.2.3.4")
-        assert list(lake.query("PRAGMA database_list"))[-1][1] == "main", "detached again"
+        with pytest.raises(LakeError, match="no such table"):
+            list(lake.query('SELECT 1 FROM "b1234"."_lake_meta"'))  # detached again
+        lake.attach(B70009)  # the lake is still usable
 
 
 def test_constructed_a_file_that_is_not_a_database_is_reported(tmp_path: Path) -> None:
     lake_dir = tmp_path / "lake"
     lake_dir.mkdir()
-    (lake_dir / f"{B70058}.sqlite").write_bytes(b"not a database, just bytes" * 100)
-    with _lake(tmp_path) as lake, pytest.raises(LakeError, match="delete it"):
+    planted = lake_dir / f"{B70058}.sqlite"
+    planted.write_bytes(b"not a database, just bytes" * 100)
+    before = _sha256(planted)
+    with _lake(tmp_path) as lake, pytest.raises(LakeError, match="damaged or not a database"):
         lake.load("TraitTree")
+    assert _sha256(planted) == before
+
+
+# ── statements that would open or change another file ─────────────────────
+
+
+def _two_lakes(tmp_path: Path) -> Lake:
+    source = _Recordings()
+    with _lake(tmp_path, B70009, source) as older:
+        older.load("TraitTree")
+    lake = _lake(tmp_path, B70058, source)
+    lake.load("TraitTree")
+    return lake
+
+
+REFUSED_STATEMENTS = [
+    pytest.param("ATTACH DATABASE ? AS x", True, id="constructed-attach-param"),
+    pytest.param("ATTACH DATABASE '{target}' AS x", False, id="constructed-attach-literal"),
+    pytest.param(
+        "ATTACH DATABASE 'file:{target}?mode=rwc' AS x", False, id="constructed-attach-uri"
+    ),
+    pytest.param("VACUUM INTO ?", True, id="constructed-vacuum-into"),
+    pytest.param("VACUUM INTO '{target}'", False, id="constructed-vacuum-into-literal"),
+    pytest.param("PRAGMA query_only = OFF", False, id="constructed-pragma-query-only-off"),
+    pytest.param("PRAGMA query_only", False, id="constructed-pragma-query-only-read"),
+    pytest.param("PRAGMA journal_mode = WAL", False, id="constructed-pragma-journal-mode"),
+    pytest.param("PRAGMA writable_schema = ON", False, id="constructed-pragma-writable-schema"),
+    pytest.param("PRAGMA temp_store_directory = '{target}'", False, id="constructed-pragma-temp"),
+    pytest.param("SELECT * FROM pragma_database_list", False, id="constructed-pragma-function"),
+    pytest.param('DETACH DATABASE "b160170009"', False, id="constructed-detach-attached"),
+]
+
+
+@pytest.mark.parametrize(("sql", "bind"), REFUSED_STATEMENTS)
+def test_constructed_query_refuses_what_opens_files_or_changes_the_connection(
+    tmp_path: Path, sql: str, bind: bool
+) -> None:
+    install = _install(tmp_path / "Game")
+    target = install / "_flavor_" / "planted.sqlite"
+    before = _files(install)
+    lake = _two_lakes(tmp_path)
+    try:
+        alias = lake.attach(B70009)
+        text = sql.replace("{target}", str(target))
+        with pytest.raises(LakeError, match=r"refused.*L1"):
+            list(lake.query(text, (str(target),) if bind else ()))
+        # Nothing changed: still query_only, still attached, still loadable.
+        with pytest.raises(LakeError, match=r"readonly|query_only"):
+            list(lake.query('DELETE FROM "TraitTree"'))
+        assert list(lake.query(f'SELECT count(*) FROM "{alias}"."TraitTree"')) == [(17,)]
+        assert lake.load("TraitEdge").loaded
+        assert lake.schema("TraitEdge").row_count == 96
+        assert len(list(lake.rows("TraitEdge"))) == 96
+    finally:
+        lake.close()
+    assert _files(install) == before, "nothing was created in the install"
+    assert sorted(p.name for p in (tmp_path / "lake").iterdir()) == sorted(
+        [f"{B70009}.sqlite", f"{B70058}.sqlite"]
+    )
+
+
+def test_table_info_stays_open_to_query(tmp_path: Path) -> None:
+    with _lake(tmp_path) as lake:
+        lake.load("TraitEdge")
+        names = [row[1] for row in lake.query('PRAGMA table_info("TraitEdge")')]
+    assert names == ["ID", "VisualStyle", "LeftTraitNodeID", "RightTraitNodeID", "Type"]
+
+
+# ── a lake file someone else made ─────────────────────────────────────────
+
+
+def _loaded_lake_file(tmp_path: Path, build: str = B70058) -> Path:
+    with _lake(tmp_path, build) as lake:
+        lake.load("TraitTree")
+        lake.load("TraitEdge")
+    return tmp_path / "lake" / f"{build}.sqlite"
+
+
+def _plant(path: Path, *statements: str) -> None:
+    connection = sqlite3.connect(path, isolation_level=None)
+    try:
+        for statement in statements:
+            connection.execute(statement)
+    finally:
+        connection.close()
+
+
+PLANTS = [
+    pytest.param(
+        (
+            'DROP TABLE "TraitEdge"',
+            'CREATE VIEW "TraitEdge" AS SELECT 1 AS "ID"',
+        ),
+        "view 'TraitEdge'",
+        id="constructed-view-for-a-loaded-table",
+    ),
+    pytest.param(
+        (
+            "CREATE TRIGGER t AFTER INSERT ON _lake_tables BEGIN "
+            "UPDATE _lake_tables SET row_count = 999999; END",
+        ),
+        "trigger 't'",
+        id="constructed-trigger-on-lake-tables",
+    ),
+    pytest.param(
+        ("CREATE TABLE extra (x)",),
+        "table 'extra'",
+        id="constructed-extra-table",
+    ),
+    pytest.param(
+        ('CREATE INDEX i ON "TraitTree" ("ID")',),
+        "index 'i'",
+        id="constructed-extra-index",
+    ),
+    pytest.param(
+        ("DELETE FROM _lake_tables WHERE name = 'TraitEdge'",),
+        "table 'TraitEdge'",
+        id="constructed-table-not-recorded",
+    ),
+    pytest.param(
+        ('DROP TABLE "TraitEdge"',),
+        "does not hold",
+        id="constructed-recorded-table-missing",
+    ),
+    pytest.param(
+        (
+            "ALTER TABLE _lake_meta RENAME TO m_",
+            "CREATE VIEW _lake_meta AS SELECT key, value FROM m_",
+        ),
+        "not a db2lake file",
+        id="constructed-meta-is-a-view",
+    ),
+    pytest.param(
+        ("DROP TABLE _lake_meta",),
+        "not a db2lake file",
+        id="constructed-meta-less-file",
+    ),
+    pytest.param(
+        (
+            "DROP TABLE _lake_tables",
+            "CREATE TABLE _lake_tables (name, sha256, row_count)",
+            "INSERT INTO _lake_tables VALUES ('TraitTree', 7, 'many')",
+            "INSERT INTO _lake_tables VALUES ('TraitEdge', 7, 'many')",
+        ),
+        "not a db2lake file",
+        id="constructed-lake-tables-not-strict",
+    ),
+]
+
+
+@pytest.mark.parametrize(("statements", "match"), PLANTS)
+def test_constructed_a_planted_lake_file_is_refused_and_not_written(
+    tmp_path: Path, statements: tuple[str, ...], match: str
+) -> None:
+    path = _loaded_lake_file(tmp_path)
+    _plant(path, *statements)
+    before = _sha256(path)
+    with _lake(tmp_path) as lake:
+        with pytest.raises(LakeError, match=match):
+            lake.load("TraitNode")
+        with pytest.raises(LakeError, match=match):
+            lake.tables()
+    assert _sha256(path) == before, "refused, never repaired or written into"
+
+
+@pytest.mark.parametrize(("statements", "match"), PLANTS)
+def test_constructed_a_planted_file_is_not_attached(
+    tmp_path: Path, statements: tuple[str, ...], match: str
+) -> None:
+    path = _loaded_lake_file(tmp_path, B70009)
+    _plant(path, *statements)
+    with _lake(tmp_path) as lake:
+        lake.load("TraitTree")
+        with pytest.raises(LakeError, match=match):
+            lake.attach(B70009)
+        with pytest.raises(LakeError, match="no such table"):
+            list(lake.query('SELECT 1 FROM "b160170009"."_lake_meta"'))
+
+
+def test_constructed_a_foreign_database_is_refused_and_not_written(tmp_path: Path) -> None:
+    lake_dir = tmp_path / "lake"
+    lake_dir.mkdir()
+    foreign = lake_dir / f"{B70058}.sqlite"
+    _plant(foreign, "CREATE TABLE notes (text TEXT)", "INSERT INTO notes VALUES ('mine')")
+    before = _sha256(foreign)
+    with _lake(tmp_path) as lake, pytest.raises(LakeError, match="not a db2lake file"):
+        lake.load("TraitTree")
+    assert _sha256(foreign) == before
+
+
+def test_constructed_triggers_and_views_are_off_on_the_connection(tmp_path: Path) -> None:
+    """White-box: even a view or trigger the checks above let through would
+    not run; the connection has them switched off."""
+    with _lake(tmp_path) as lake:
+        lake.load("TraitTree")
+        conn = lake._connect()
+        for option in (
+            sqlite3.SQLITE_DBCONFIG_ENABLE_TRIGGER,
+            sqlite3.SQLITE_DBCONFIG_ENABLE_VIEW,
+            sqlite3.SQLITE_DBCONFIG_TRUSTED_SCHEMA,
+            sqlite3.SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER,
+        ):
+            assert conn.getconfig(option) is False
+        assert conn.getconfig(sqlite3.SQLITE_DBCONFIG_DEFENSIVE) is True
+
+
+# ── stopping a statement ──────────────────────────────────────────────────
+
+
+RUNAWAY = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT count(*) FROM c"
+
+
+def test_constructed_query_stops_at_its_deadline(tmp_path: Path) -> None:
+    with _lake(tmp_path) as lake:
+        lake.load("TraitTree")
+        started = time.monotonic()
+        with pytest.raises(QueryStopped, match="deadline"):
+            list(lake.query(RUNAWAY, deadline_seconds=0.2))
+        assert time.monotonic() - started < 5
+        assert list(lake.query('SELECT count(*) FROM "TraitTree"')) == [(17,)]
+
+
+def test_constructed_query_stops_at_its_operation_budget(tmp_path: Path) -> None:
+    with _lake(tmp_path) as lake:
+        lake.load("TraitTree")
+        with pytest.raises(QueryStopped, match="budget of 100000 operations"):
+            list(lake.query(RUNAWAY, max_operations=100_000))
+        small = list(lake.query('SELECT count(*) FROM "TraitTree"', max_operations=100_000))
+    assert small == [(17,)]
+
+
+def test_constructed_budget_counts_while_rows_are_read(tmp_path: Path) -> None:
+    """A lazy statement is budgeted on every step, not only the first."""
+    rows = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT x FROM c"
+    with _lake(tmp_path) as lake:
+        lake.load("TraitTree")
+        seen = 0
+        with pytest.raises(QueryStopped):
+            for _ in lake.query(rows, max_operations=1_000_000):
+                seen += 1
+    assert 0 < seen < 1_000_000
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="SIGINT to oneself is POSIX")
+def test_constructed_ctrl_c_stops_a_runaway_query(tmp_path: Path) -> None:
+    with _lake(tmp_path) as lake:
+        lake.load("TraitTree")
+        timer = threading.Timer(0.3, os.kill, (os.getpid(), signal.SIGINT))
+        started = time.monotonic()
+        timer.start()
+        try:
+            with pytest.raises(KeyboardInterrupt):
+                list(lake.query(RUNAWAY, deadline_seconds=None))
+        finally:
+            timer.cancel()
+        assert time.monotonic() - started < 5, "stopped within moments, not at the end"
+        assert list(lake.query('SELECT count(*) FROM "TraitTree"')) == [(17,)]
 
 
 # ── L1: never inside an install ───────────────────────────────────────────
@@ -461,6 +765,80 @@ def test_constructed_a_lake_reached_through_a_link_into_an_install_is_refused(
         with pytest.raises(LakeLocationError, match="L1"):
             lake.attach(B70009)
     assert _files(install) == before, "nothing was created in the install"
+
+
+def test_constructed_a_hard_linked_lake_file_is_refused(tmp_path: Path) -> None:
+    """Constructed: `<build>.sqlite` is a second name of a file inside an
+    install. SQLite would write the lake into that file in place."""
+    install = _install(tmp_path / "Game")
+    victim = install / "_flavor_" / "Config.wtf"
+    victim.write_bytes(b"SET constructed 1\n")
+    lake_dir = tmp_path / "lake"
+    lake_dir.mkdir()
+    (lake_dir / f"{B70058}.sqlite").hardlink_to(victim)
+    before = _files(install)
+    with _lake(tmp_path) as lake:
+        with pytest.raises(LakeLocationError, match="hard links"):
+            lake.load("TraitTree")
+        with pytest.raises(LakeLocationError, match="hard links"):
+            lake.tables()
+    assert _files(install) == before
+
+
+@pytest.mark.parametrize("suffix", ["-journal", "-wal", "-shm"])
+def test_constructed_a_hard_linked_journal_is_refused(tmp_path: Path, suffix: str) -> None:
+    """Constructed: a journal planted beside the lake as a second name of an
+    install file, before the lake is opened and after (before a write)."""
+    install = _install(tmp_path / "Game")
+    victim = install / "_flavor_" / "Config.wtf"
+    victim.write_bytes(b"SET constructed 1\n")
+    lake_dir = tmp_path / "lake"
+    lake_dir.mkdir()
+    journal = lake_dir / f"{B70058}.sqlite{suffix}"
+    journal.hardlink_to(victim)
+    before = _files(install)
+    with _lake(tmp_path) as lake, pytest.raises(LakeLocationError, match="hard links"):
+        lake.load("TraitTree")
+    journal.unlink()
+
+    with _lake(tmp_path) as lake:
+        lake.load("TraitTree")
+        journal.hardlink_to(victim)
+        for operation in (
+            lambda: lake.load("TraitEdge"),
+            lambda: lake.rows("TraitTree"),
+            lake.tables,
+            lambda: lake.query("SELECT 1"),
+        ):
+            with pytest.raises(LakeLocationError, match="hard links"):
+                operation()
+        journal.unlink()
+        assert [t.name for t in lake.tables()] == ["TraitTree"]
+    assert _files(install) == before
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="making a link needs a privilege on Windows")
+def test_constructed_a_symlinked_journal_is_refused(tmp_path: Path) -> None:
+    install = _install(tmp_path / "Game")
+    lake_dir = tmp_path / "lake"
+    lake_dir.mkdir()
+    (lake_dir / f"{B70058}.sqlite-journal").symlink_to(install / "_flavor_" / "journal")
+    before = _files(install)
+    with _lake(tmp_path) as lake, pytest.raises(LakeLocationError, match="symbolic link"):
+        lake.load("TraitTree")
+    assert _files(install) == before
+
+
+def test_constructed_a_hard_linked_attach_target_is_refused(tmp_path: Path) -> None:
+    install = _install(tmp_path / "Game")
+    with _lake(tmp_path, B70009) as older:
+        older.load("TraitTree")
+    other = tmp_path / "lake" / f"{B70009}.sqlite"
+    (install / "_flavor_" / "copy.sqlite").hardlink_to(other)
+    with _lake(tmp_path) as lake:
+        lake.load("TraitTree")
+        with pytest.raises(LakeLocationError, match="hard links"):
+            lake.attach(B70009)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="making a link needs a privilege on Windows")

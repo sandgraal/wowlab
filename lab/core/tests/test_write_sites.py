@@ -81,7 +81,11 @@ _LAKE_DIR = (
     "directory's db2lake/ folder) and <build>.sqlite in it (with SQLite's -journal beside "
     "it); the directory is refused before and after it is created, and the database file "
     "with every symlink resolved before every connection, when it or any folder above it "
-    "holds .build.info or .flavor.info; another build's file is attached read-only (mode=ro)"
+    "holds .build.info or .flavor.info; the file and any -journal, -wal or -shm beside it "
+    "are refused when hard-linked (or, for the three, a symlink), since SQLite writes them "
+    "in place; the connection's authorizer refuses every ATTACH (and so VACUUM INTO), "
+    "DETACH and PRAGMA but the module's own (table_info aside), so no statement run "
+    "through the lake opens another file; another build's file is attached read-only (mode=ro)"
 )
 ALLOWED: dict[tuple[str, str], str] = {
     (_DB2LAKE, "import sqlite3"): _LAKE_DIR,
