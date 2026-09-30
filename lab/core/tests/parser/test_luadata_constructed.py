@@ -28,11 +28,11 @@ from __future__ import annotations
 import ast
 import math
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
 import pytest
+from _cpu_clock import cpu_clock
 from _luadata_oracle import (
     BOOLEAN,
     NAME,
@@ -1049,7 +1049,10 @@ def test_multi_megabyte_document_parses_whole(luadata: Any) -> None:
     limit only catches a super-linear parser (60 s for 4 MB is ~40 times
     slower than §6.4's 50 MB in 10 s); the target itself is measured in
     M10-04's PR on a constructed input (§6.4 amendment item 5), not graded
-    here."""
+    here.
+
+    The limit is on the parse's CPU time, not wall clock (M11-28): see
+    `_cpu_clock`. Measured idle on the owner's M1: 0.24 s on both clocks."""
     count = 20_000
     lines = ["BIG = {"]
     for i in range(count):
@@ -1057,14 +1060,15 @@ def test_multi_megabyte_document_parses_whole(luadata: Any) -> None:
     lines.append("}")
     data = _doc(*lines)
     assert len(data) > 4 * 10**6
-    started = time.perf_counter()
+    clock, name = cpu_clock()
+    started = clock()
     doc = luadata.parse(data)
-    elapsed = time.perf_counter() - started
+    elapsed = clock() - started
     records = doc.assignments[0].value.entries
     assert len(records) == count
     assert records[-1].value.entries[1].value.raw == str(200_000 + count - 1)
     assert rebuild(luadata, doc) == data
-    assert elapsed < 60, f"{elapsed:.1f} s for {len(data)} bytes"
+    assert elapsed < 60, f"{elapsed:.1f} {name} s for {len(data)} bytes"
 
 
 # ── L3: data, never code ────────────────────────────────────────────────────

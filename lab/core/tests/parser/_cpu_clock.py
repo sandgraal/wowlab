@@ -19,6 +19,12 @@ budget can only overstate a parse, never flatter it. The blind spot is a
 parse that waits (sleep, blocking I/O) rather than computes; these parses do
 neither. Where the platform has no process clock, the clock is wall clock
 (`time.perf_counter()`), and the name says so in the failure message.
+
+Also used (M11-28) by the multi-MB document grader in
+`test_luadata_constructed.py` and by two in-process review probes,
+`tests/review/test_m10_06_toc_parse_quadratic_time.py` and
+`tests/review/test_m10_13_unclosed_quote_quadratic_time_target.py`, which put
+this folder on `sys.path` to import it.
 """
 
 from __future__ import annotations
