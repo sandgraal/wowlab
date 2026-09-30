@@ -1127,14 +1127,21 @@ the traceback line by line in Python's layout, with these differences:
 - an exception group's sub-exceptions are listed as "sub-exception n of m:"
   with their lines indented instead of in Python's boxes. Python's limits
   still apply: 15 per group, then "and N more exceptions", and a group 10
-  deep is one line.
+  deep is one line;
+- an exception is printed once. A cycle through `__cause__` or `__context__`
+  stops where it meets one already printed, as Python's does. A group
+  member already printed elsewhere in the traceback is the one line
+  "[printed elsewhere in this traceback]", where Python prints it again.
 
 Python then exits non-zero as usual (1, or by the signal for
 KeyboardInterrupt). The hook never raises, not even on Ctrl-C while it
 escapes a long message: a hook that raised would make Python print the
 original exception itself, raw. Whatever stops it prints one line naming the
-exception's type instead. A `SystemExit` whose code is text, which Python
-prints raw without calling a hook, prints as one escaped line and exits 1.
+exception's type instead. Its last guard makes no call, because Python checks
+for a pending signal at a call and a second Ctrl-C could escape it. A
+`SystemExit` whose code is text, which Python prints raw without calling a
+hook, prints as one escaped line and exits 1. Ctrl-C while that line is
+escaped prints nothing more.
 
 A click error (an unknown option, an extra argument, a bad value) prints its
 usage and help hint as click does. Its `Error:` line, which can hold the
