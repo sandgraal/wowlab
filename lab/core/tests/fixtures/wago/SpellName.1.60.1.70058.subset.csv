@@ -1,0 +1,524 @@
+ID,Name_lang
+5570,"Insect Swarm"
+5923,"Holy Power"
+6057,"Wand Specialization"
+9453,"Unyielding Faith"
+9799,"Eye for an Eye"
+10060,"Power Infusion"
+11069,"Improved Fireball"
+11070,"Improved Frostbolt"
+11071,Frostbite
+11078,"Wake of Fire"
+11083,"Burning Soul"
+11094,"Improved Fire Ward"
+11095,"Improved Scorch"
+11100,"Flame Throwing"
+11103,Impact
+11108,"Improved Flamestrike"
+11113,"Blast Wave"
+11115,"Critical Mass"
+11129,Combustion
+11151,"Piercing Ice"
+11160,"Frost Channeling"
+11165,"Improved Frost Nova"
+11170,Shatter
+11175,Permafrost
+11180,"Winter's Chill"
+11185,"Improved Blizzard"
+11189,"Frost Warding"
+11190,"Improved Cone of Cold"
+11207,"Ice Shards"
+11210,"Arcane Subtlety"
+11213,"Arcane Concentration"
+11222,"Arcane Focus"
+11232,"Arcane Mind"
+11237,"Improved Channeling"
+11242,"Arcane Impact"
+11247,"Arcane Geometry"
+11252,"Arcane Shielding"
+11255,"Improved Counterspell"
+11366,Pyroblast
+11426,"Ice Barrier"
+11958,"Ice Block"
+12042,"Arcane Power"
+12043,"Presence of Mind"
+12163,"Two-Handed Weapon Specialization"
+12281,Weaponmaster
+12282,"Improved Heroic Strike"
+12285,"Improved Charge"
+12286,"Improved Rend"
+12287,"Improved Thunder Clap"
+12289,"Improved Hamstring"
+12290,"Improved Overpower"
+12292,"Sweeping Strikes"
+12295,"Improved Tactical Mastery"
+12296,"Anger Management"
+12297,Anticipation
+12298,"Shield Specialization"
+12301,"Improved Bloodrage"
+12308,"Improved Sunder Armor"
+12311,"Improved Shield Bash"
+12312,"Improved Shield Wall"
+12313,"Improved Disarm"
+12319,Flurry
+12320,Cruelty
+12321,"Booming Voice"
+12322,"Unbridled Wrath"
+12328,"Death Wish"
+12329,"Improved Cleave"
+12472,"Cold Snap"
+12792,Defiance
+12797,"Improved Revenge"
+12809,"Concussion Blow"
+12862,"Improved Slam"
+12962,"Iron Will"
+12975,"Last Stand"
+13705,Precision
+13713,Deflection
+13715,"Dual Wield Specialization"
+13732,"Improved Sinister Strike"
+13741,"Improved Gouge"
+13742,Endurance
+13743,"Improved Sprint"
+13750,"Adrenaline Rush"
+13754,"Improved Kick"
+13877,"Blade Flurry"
+13958,"Master of Deception"
+13975,Camouflage
+13976,Initiative
+13981,Elusiveness
+13983,Setup
+14057,Opportunity
+14079,"Improved Ambush"
+14082,"Dirty Deeds"
+14084,"Improved Distract"
+14113,"Improved Poisons"
+14128,Lethality
+14138,Malice
+14144,"Remorseless Attacks"
+14156,Ruthlessness
+14158,Murder
+14162,"Improved Eviscerate"
+14165,"Improved Slice and Dice"
+14168,"Improved Expose Armor"
+14171,"Serrated Blades"
+14174,"Improved Kidney Shot"
+14177,"Cold Blood"
+14179,"Relentless Strikes"
+14183,Premeditation
+14185,Preparation
+14186,"Seal Fate"
+14278,"Ghostly Strike"
+14520,"Mental Agility"
+14523,"Silent Resolve"
+14531,Martyrdom
+14747,"Improved Inner Fire"
+14748,"Improved Power Word: Shield"
+14750,"Improved Mana Burn"
+14751,"Inner Focus"
+14889,"Holy Specialization"
+14892,Inspiration
+14898,"Spiritual Healing"
+14901,"Spiritual Guidance"
+14908,"Improved Renew"
+14909,"Searing Light"
+14912,"Improved Healing"
+14913,"Twilight Focus"
+14983,Vigor
+15058,"Arcane Instability"
+15237,"Holy Nova"
+15257,"Shadow Weaving"
+15259,Darkness
+15260,"Shadow Focus"
+15270,"Spirit Tap"
+15273,"Improved Mind Blast"
+15274,"Improved Fade"
+15275,"Improved Shadow Word: Pain"
+15286,"Vampiric Embrace"
+15318,"Shadow Affinity"
+15392,"Improved Psychic Scream"
+15407,"Mind Flay"
+15473,Shadowform
+16035,Concussion
+16038,"Call of Flame"
+16039,Convection
+16040,Reverberation
+16043,"Earth's Grasp"
+16086,"Improved Fire Nova"
+16120,"Call of Thunder"
+16164,"Elemental Focus"
+16173,"Totemic Focus"
+16176,"Ancestral Healing"
+16178,Purification
+16179,"Tidal Focus"
+16181,"Healing Focus"
+16182,"Improved Healing Wave"
+16184,"Improved Reincarnation"
+16187,"Restorative Totems"
+16188,"Nature's Swiftness"
+16190,"Mana Tide Totem"
+16194,"Tidal Mastery"
+16255,"Thundering Strikes"
+16258,"Guardian Totems"
+16261,"Improved Lightning Shield"
+16262,"Improved Ghost Wolf"
+16266,"Elemental Weapons"
+16268,"Spirit Weapons"
+16487,"Blood Craze"
+16511,Hemorrhage
+16513,"Vile Poisons"
+16538,Bastion
+16578,"Elemental Alacrity"
+16757,"Arctic Reach"
+16814,"Improved Wrath"
+16819,"Nature's Reach"
+16821,"Improved Moonfire"
+16833,"Natural Shapeshifter"
+16845,Moonglow
+16850,"Improved Starfire"
+16880,"Nature's Grace"
+16896,Moonfury
+16918,"Improved Entangling Roots"
+16929,"Thick Hide"
+16940,"Brutal Impact"
+16942,"Sharpened Claws"
+16947,"Feral Instinct"
+16966,"Shredding Attacks"
+16972,"Predatory Strikes"
+16979,"Feral Charge (Bear)"
+16998,"Savage Fury"
+17002,"Feral Swiftness"
+17003,"Heart of the Wild"
+17007,"Leader of the Pack"
+17056,Furor
+17063,"Nature's Focus"
+17069,Naturalist
+17074,"Improved Regrowth"
+17104,"Gift of Nature"
+17111,"Improved Rejuvenation"
+17118,Subtlety
+17123,"Improved Tranquility"
+17245,Overgrowth
+17322,"Shadow Reach"
+17364,Stormstrike
+17485,"Ancestral Knowledge"
+17778,Cataclysm
+17783,"Fel Concentration"
+17788,Bane
+17793,"Improved Shadow Bolt"
+17810,"Improved Corruption"
+17877,Shadowburn
+17917,"Destructive Reach"
+17927,"Agonizing Flames"
+17959,Ruin
+18073,Pyroclasm
+18094,Nightfall
+18135,Intensity
+18182,"Improved Life Tap"
+18218,"Grim Reach"
+18223,"Curse of Exhaustion"
+18265,"Siphon Life"
+18271,"Shadow Mastery"
+18288,"Amplify Curse"
+18427,Aggression
+18462,"Arcane Meditation"
+18530,"Divine Fury"
+18551,"Mental Strength"
+18562,Swiftmend
+18694,"Improved Imp"
+18697,"Demonic Embrace"
+18703,"Improved Health Funnel"
+18705,"Improved Voidwalker"
+18708,"Fel Domination"
+18709,"Master Summoner"
+18731,"Fel Vitality"
+18754,"Improved Sayaad"
+18769,"Unholy Power"
+18788,"Demonic Sacrifice"
+18827,"Improved Bane of Agony"
+19028,"Soul Link"
+19159,"Savage Strikes"
+19184,Entrapment
+19228,"Improved Wing Clip"
+19239,"Clever Traps"
+19255,Survivalist
+19263,Deterrence
+19290,Surefooted
+19306,Counterattack
+19376,"Survival Tactics"
+19407,"Improved Concussive Shot"
+19416,Efficiency
+19421,"Improved Hunter's Mark"
+19426,"Lethal Attacks"
+19454,"Improved Arcane Shot"
+19461,Barrage
+19464,"Improved Serpent Sting"
+19485,"Mortal Shots"
+19498,"Hawk Eye"
+19507,"Ranged Weapon Specialization"
+19549,"Improved Aspect of the Monkey"
+19552,"Deadly Aspects"
+19572,"Improved Mend Pet"
+19574,"Bestial Wrath"
+19578,"Spirit Bond"
+19583,"Endurance Training"
+19590,"Bestial Discipline"
+19596,"Bestial Swiftness"
+19616,"Unleashed Fury"
+20066,Repentance
+20101,Benediction
+20117,Conviction
+20127,Redoubt
+20174,"Guardian's Favor"
+20177,Reckoning
+20196,"One-Handed Weapon Specialization"
+20205,"Spiritual Focus"
+20210,Illumination
+20216,"Divine Favor"
+20224,"Improved Seals"
+20237,"Healing Light"
+20254,"Improved Concentration Aura"
+20257,"Divine Intellect"
+20262,"Divine Strength"
+20375,"Seal of Command"
+20468,"Improved Righteous Fury"
+20487,"Improved Hammer of Justice"
+20500,"Improved Berserker Rage"
+20502,"Improved Execute"
+20504,"Improved Intercept"
+20711,"Spirit of Redemption"
+23881,Bloodthirst
+24293,"Improved Tracking"
+24443,"Improved Revive Pet"
+24858,"Moonkin Form"
+24968,"Tranquil Spirit"
+25956,"Improved Judgement"
+26022,"Pursuit of Justice"
+27789,"Holy Reach"
+27811,"Blessed Recovery"
+27900,"Spell Warding"
+28574,"Arcane Resilience"
+28996,"Elemental Warding"
+28999,"Elemental Reach"
+29062,"Eye of the Storm"
+29074,"Master of Elements"
+29187,"Natural Grace"
+29206,"Healing Way"
+29438,"Elemental Precision"
+29441,"Magic Absorption"
+29787,"Focused Rage"
+30160,"Elemental Devastation"
+30812,"Mental Quickness"
+30892,"Sleight of Hand"
+30902,Deadliness
+30919,"Weapon Expertise"
+400588,"Missile Barrage"
+400647,"Fingers of Frost"
+401937,"Binding Heal"
+402000,"Soul Warding"
+402174,Penance
+403511,"Improved Drains"
+407995,"Primal Bite"
+408120,"Wild Growth"
+408248,Eclipse
+408258,Dreamstate
+408438,"Lightning Overload"
+408498,"Maelstrom Weapon"
+408510,"Water Shield"
+412732,"Demonic Knowledge"
+412751,"Fire and Brimstone"
+414673,"Gift of the Earthmother"
+415140,"Mental Dexterity"
+415405,"Rapid Killing"
+417046,"King of the Jungle"
+417051,"Natural Reaction"
+425280,"Renewed Hope"
+425336,"Rage of the Farseer"
+425464,"Demonic Pact"
+426316,"Shadow and Flame"
+427712,Pandemic
+429144,"Purifying Power"
+431622,"Divine Aegis"
+432259,"Combat Potency"
+437032,"Soul Harvesting"
+440529,Resourcefulness
+440870,Decimation
+1222988,Earthbound
+1223030,"Shamanistic Focus"
+1223031,"Improved Stormstrike"
+1223033,Mindfulness
+1223082,"Nature's Majesty"
+1223083,"Nature's Splendor"
+1223242,"Predatory Instincts"
+1223246,"Rend and Tear"
+1223755,"Focused Fire"
+1223984,"Careful Aim"
+1223987,"Rapid Recuperation"
+1224553,"Sanctified Light"
+1224692,Divinity
+1224697,"Sacred Duty"
+1224716,"Puncturing Wounds"
+1224782,"Dirty Tricks"
+1225132,"Twin Disciplines"
+1225139,"Improved Mind Flay"
+1225177,Malediction
+1225214,"Demonic Energies"
+1225217,"Improved Felhunter"
+1225220,"Molten Skin"
+1225228,"Bane of Havoc"
+1225435,"Bountiful Harvest"
+1225451,"Working Overtime"
+1225455,Luremaster
+1225456,"Performance Bonus"
+1225457,"Master Chef"
+1225459,Bartering
+1225460,"Optimization - NYI"
+1225461,"Salvaging - NYI"
+1225465,Meticulous
+1225468,"Master Forager"
+1225469,"Dedicated Study"
+1225470,"Essence of Innovation"
+1225472,"Thrill of Adventure"
+1225474,Talented
+1225475,"Field Medicine"
+1225477,"High Alert"
+1225478,"Well Rested"
+1225479,"Field Guide"
+1225485,Diplomat
+1225487,"Iron Stomach"
+1225490,"Frequent Flier"
+1225491,"Master Swimmer"
+1225493,"Personal Banking"
+1225494,"Second Home"
+1225497,Reinforce
+1225498,"Mount Up"
+1225499,Gourmand
+1225500,"The Quick and the Dead"
+1225501,"For Great Honor"
+1225502,Permanence
+1225503,"Reagent Economy"
+1225504,"Better Living Through Chemistry"
+1225505,"Fast Recovery"
+1225506,"Conquering Hero"
+1225508,"Second Chance"
+1225509,Adaptability
+1237268,"Holy Conduit"
+1293241,"Summon Hawk"
+1293695,"Demonic Brand"
+1309631,"Living Spirit"
+1309950,"Devouring Contagion"
+1309957,"Holy Precision"
+1309969,"Power in Light"
+1310076,"Early Demise"
+1310222,"Spearing Strike"
+1310236,"Boundless Rage"
+1310315,"Raging Blows"
+1310317,Vanguard
+1310496,"Survivalist's Discipline"
+1310532,"Expose Prey"
+1310533,"Lacerating Strikes"
+1310627,"Predator's Edge"
+1310661,"Improved Stings"
+1310703,Venom
+1310709,"Coup de Grace"
+1310711,"Flawless Execution"
+1310721,"Thousand Cuts"
+1310735,"Twist of Light"
+1310897,"Voice of Truth"
+1310899,Reverence
+1310902,"Improved Holy Strike"
+1310904,"Divine Precision"
+1310905,"Consecrated Ground"
+1311015,"Templar's Bulwark"
+1311074,"Sanctified Judgement"
+1311083,Crusade
+1311084,"Champion of the Light"
+1311085,"Instrument of Law"
+1311087,"Sacred Arbiter"
+1314103,"Improved Seal of Fury"
+1316697,Wrack
+1317006,"Litany of Light"
+1317257,"Strider Kick"
+9452,Vindication
+12299,Toughness
+16252,Toughness
+20143,Toughness
+14521,Meditation
+16089,"Elemental Fury"
+1310707,Mutilate
+12317,Enrage
+1310687,"Sniper Shot"
+19503,"Scatter Shot"
+11119,Ignite
+16934,Ferocity
+19598,Ferocity
+13712,"Lightning Reflexes"
+19168,"Lightning Reflexes"
+1225492,"Play Dead"
+14251,Riposte
+11124,"Fire Power"
+14524,"Wand Specialization"
+18459,Incineration
+19559,Pathfinding
+15487,Silence
+19577,Intimidation
+17804,"Soul Siphon"
+23922,"Shield Slam"
+16909,Vengeance
+20049,Vengeance
+12294,"Mortal Strike"
+20925,"Holy Shield"
+17106,Reflection
+12323,"Piercing Howl"
+400574,"Arcane Blast"
+12834,"Deep Wounds"
+20111,"Two-Handed Weapon Specialization"
+12700,Weaponmaster
+1290261,Weaponmaster
+16254,Anticipation
+20096,Anticipation
+20150,"Shield Specialization"
+16256,Flurry
+18174,Suppression
+20189,Precision
+1225295,Precision
+13709,"Hack and Slash"
+13960,"Hack and Slash"
+16462,Deflection
+19295,Deflection
+20060,Deflection
+23584,"Dual Wield Specialization"
+15326,Blackout
+16493,Impale
+17116,"Nature's Swiftness"
+16958,"Blood Frenzy"
+1293817,Conflagrate
+18119,Aftermath
+412758,Incinerate
+19621,Frenzy
+1299346,"Trueshot Aura"
+1238122,"Feral Charge"
+1311606,"Holy Shock"
+408490,"Lava Burst"
+408521,Riptide
+417141,Berserk
+1310316,"Master of Defense"
+23785,"Master Demonologist"
+30894,"Heightened Senses"
+401859,"Prayer of Mending"
+400624,"Hot Streak"
+426065,"Infusion of Light"
+1312002,"Ice Lance"
+415370,"Lone Wolf"
+415059,"Guarded by the Light"
+1289849,"Main Gauche"
+462708,Cutthroat
+1310949,Malevolence
+1310994,"Swift Judgement"
+1235316,"Demonic Aegis"
+1223081,Genesis
+1310728,Quietus
+1289682,Bloodthrill
+1310911,"Light's Vigil"
+1311034,"Iron Creed"
+1317256,Unknown
