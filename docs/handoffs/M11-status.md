@@ -1,5 +1,8 @@
 # M11 — conductor status for the next session
 
+> **Superseded on 2026-09-29.** Wave 2 closed; read `docs/handoffs/M11-review.md`
+> instead. This file is kept as the record of the state on 2026-09-28.
+
 Written 2026-09-28 at the end of a long conductor session, mid-wave. Read this,
 then `AGENTS.md`, `CLAUDE.md` and `docs/BACKLOG.md`, then run `/conduct next`.
 

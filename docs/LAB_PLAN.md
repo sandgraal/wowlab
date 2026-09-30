@@ -2004,6 +2004,22 @@ them as follows, and M11-09 builds to them.
       must not turn the check off.
     - The graders for this amendment come from a test-writer (M11-24T2).
       The M11-24 implementation is not merged until they pass.
+    - *Conductor rulings within the amendment, 2026-09-29 (M11-24T2, as
+      built in #136):*
+      - **Profile apply** never writes `WowLab.lua`: profiles leave out the
+        lab-addon's SavedVariables (§13.3), so the "profile apply" in the
+        lists above names no real case.
+      - **Rule 1 is checked first.** It wins over rule 3: identical bytes
+        prove no session ran, so a missing or damaged object does not refuse
+        then.
+      - **A rule-2 pass** prints no rule-1 note, since the loader was
+        re-checked. Rule-1 notes print only when the whole check passes.
+      - **Where the result comes from.** `snap restore` and undo write from
+        snapshot objects that already exist; `sv merge` stores what it wrote
+        with `SnapshotStore.put_object` inside the guard transaction, before
+        the write.
+      - **gc keeps them.** `snap gc` keeps every `after` a committed journal
+        record names. M11-31 narrows this to what the check can need.
   - `--force-loader-check` overrides every refusal.
 - **`--json` is required** (§6.11). It prints `SvMergeReport`, holding at
   least `mode` (`two-way` or `three-way`), `conflicts`, `absent` (with

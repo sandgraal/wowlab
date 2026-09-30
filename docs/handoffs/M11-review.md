@@ -162,6 +162,41 @@ A pick of 1 + 2 is a full wave (about the size Wave 2 turned out to be).
   - the events line for a section with no events;
   - a long or non-ASCII reason refuses the whole file.
 
+## After the review: the carried-forward tickets (2026-09-29)
+
+The owner asked for the follow-ups to be done before Wave 3. All five merged:
+
+| Ticket | PR | What |
+|---|---|---|
+| M11-26 | #128 | the last two parser timing tests measure CPU time |
+| M11-27 | #129 | `char show`: Legacy per config, no false events line, long or odd reasons clipped and escaped instead of refusing the file |
+| M11-25T / M11-25 | #130 / #134 | one path grammar for `sv dump --path` and `sv merge --key`; every printed path reads back; format characters escaped |
+| M11-23 | #132 | `looks import-char` from a real barber-shop record (new fixture root `macos-70058/`) |
+| M11-24T, M11-24T2 / M11-24 | #131, #135 / #136 | the loader check keeps the target's probe, walks past identical snapshots, and compares from a Lab write's result |
+
+- **A guided live session** (owner at the keyboard, the conductor watching
+  the process table and the game window) captured the first real
+  customization record. The barber shop worked on build 70058; the earlier
+  failure matched a known beta Lua error the client hides by default.
+- **The owner amended the M11-24 ruling** (#133) after the security review
+  showed that skipping a comparison across a Lab write hid real loader
+  failures. The implementation was rebuilt against new graders; the first
+  version never merged.
+- **Five more follow-ups** were filed (M11-28 to M11-32); none is urgent.
+
+What this stretch taught, now in `docs/AGENT_WORKFLOW.md`:
+- Heavy agent runs (full suites, CPU-saturation tests) made the owner's game
+  lag. While the owner plays, the conductor pauses them.
+- In fix rounds on a load-bearing file, the conductor asked implementers for
+  new tests, which bends the separation rule. New tests there come from a
+  reviewer's probe or a test-writer. A reviewer cannot edit an existing
+  probe, so deleting or changing one goes to a test-writer.
+- A fix message quotes the reviewers' replacement texts in full; the
+  implementer should never have to find them.
+- An owner ruling can be wrong in a way only the implementation shows. The
+  security review caught it here, and the owner amended the ruling rather
+  than the code working around it.
+
 ## Changed before Wave 3 because of what was learned
 
 - Test-writer/implementer separation now covers `svmerge.py` and
@@ -193,7 +228,9 @@ A pick of 1 + 2 is a full wave (about the size Wave 2 turned out to be).
 ## Owner actions outstanding
 
 - **Pick Wave 3** (above).
-- M11-24 was ruled by the owner on 2026-09-29 (§13.4); nothing is owed.
+- M11-24 was ruled, and amended, by the owner on 2026-09-29 (§13.4); nothing is owed.
+- M11-29 needs a short in-game check once its code lands (one applied barber
+  change, then `/wowlab save` and a capture).
 - Later, after the beta (the owner's level-25+ characters come then): a login
   on a level-25+ character (Legacy talents, the points cap), and a staged
   talent change once the character has points, then `/wowlab save`. A solo

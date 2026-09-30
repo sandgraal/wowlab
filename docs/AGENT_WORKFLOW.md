@@ -78,6 +78,19 @@ adds a client API call to the lab-addon marks it **[verify]** in
 and is not trusted until an owner capture shows it ran; that capture gets a
 runbook step, as M11-03 did.
 
+**New tests on a load-bearing file come from an independent session**
+(added 2026-09-29). In a fix round on `luadata.py`, `guard.py`, `svmerge.py`
+or `profiles.py`, the conductor never asks the implementer for a new test: a
+gap goes to a reviewer's probe (a new file under `tests/review/`) or to a
+test-writer. Reviewers may only add probe files, so changing or deleting an
+existing probe is a test-writer's job. Fix messages quote every reviewer's
+replacement text in full.
+
+**The owner's machine is shared** (added 2026-09-29). Agents run on the
+owner's own computer. While the owner is playing, the conductor pauses
+CPU-heavy work (full suites, load tests) and resumes it when the game is
+closed: in M11 a CPU-saturation test made the game lag.
+
 **Frontier** = tickets whose heading is `## [ ] …`, that no merged PR title
 names in parentheses, and whose `Depends on` list is entirely done. The
 SessionStart hook prints it; `/conduct` recomputes it after every merge.
