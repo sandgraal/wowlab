@@ -75,7 +75,17 @@ _PAGE_FILE = (
     "after creating it, refusing when it or any folder above it holds .build.info or "
     ".flavor.info, and the command runs it before doing any work"
 )
+_DB2LAKE = "lab/core/src/wowlab_core/db2lake.py"
+_LAKE_DIR = (
+    "the db2lake (§14.2, ADR-0028, M12-03): only the lake directory (default the user data "
+    "directory's db2lake/ folder) and <build>.sqlite in it (with SQLite's -journal beside "
+    "it); the directory is refused before and after it is created, and the database file "
+    "with every symlink resolved before every connection, when it or any folder above it "
+    "holds .build.info or .flavor.info; another build's file is attached read-only (mode=ro)"
+)
 ALLOWED: dict[tuple[str, str], str] = {
+    (_DB2LAKE, "import sqlite3"): _LAKE_DIR,
+    (_DB2LAKE, "path.mkdir(parents=True, exist_ok=True)"): _LAKE_DIR,
     (_LOOKSTORE, "self._root.mkdir(parents=True, exist_ok=True)"): _LOOKS_DIR,
     (_LOOKSTORE, 'with tmp.open("xb") as handle:'): _LOOKS_DIR + "; a new temp name (x mode)",
     (_LOOKSTORE, "tmp.replace(final)"): _LOOKS_DIR + "; the temp file onto <name>.json",

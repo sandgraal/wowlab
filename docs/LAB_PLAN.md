@@ -2410,6 +2410,61 @@ Decision: ADR-0028. The design, so tickets can be graded:
 it (it requires WoWDBDefs)" is replaced, if ADR-0028 is accepted, by this
 section: Wave 3 types by inference; WoWDBDefs waits for foreign keys.
 
+*Amended 2026-09-30 (M12-03, what the code settled; ADR-0028 unchanged):*
+
+- **SQLite.** The standard library's `sqlite3`, version 3.37 or later
+  (checked on first connection; the bundled one here is 3.49.1), because the
+  tables are `STRICT`: a value of the wrong type is an error, so SQLite is a
+  second line behind the inference, never a silently mixed column. Also used:
+  URI filenames (`mode=ro` for an attached build) and the table-valued
+  `pragma_table_info` for `schema`. At most 10 builds attach at once (SQLite's
+  default limit).
+- **The rule as coded.** An INTEGER cell is `-?(0|[1-9][0-9]*)` in ASCII
+  digits, within signed 64 bits. `-0` fits the ADR's words (an optional minus,
+  then `0`) and reads as `0`. "Another finite decimal number" is the same
+  integer part with an optional `.digits` fraction, finite as a double:
+  decimal notation only, which is what wago writes in every recording
+  (fixed-point, up to 11 decimals, trailing zeros stripped). So `007`, `00.5`,
+  `+1`, a space, `.5`, `5.`, `1e5`, `inf`, `1_000` and non-ASCII digits are
+  text, and one such cell makes its column TEXT, where the numbers keep their
+  text. An integer outside 64 bits is a finite decimal number, so its column
+  is REAL and the value is the nearest double (exact to 2^53). SQLite stores
+  `-0.0` in a REAL column as `0.0`. A column is typed over every row of the
+  build's table.
+- **An all-empty column** is INTEGER with every cell NULL: the ADR's rule
+  read as written ("every non-empty cell is a canonical integer" holds when
+  there is none). In the recordings every all-empty column is a `_lang`
+  string column (`TraitTree.TitleText_lang`, `TraitDefinition.OverrideSubtext_lang`
+  and `OverrideDescription_lang` among them), and
+  `TraitDefinition.OverrideName_lang` holds one cell, `16972`, beside 653
+  empty ones, so it is INTEGER too. Typing an all-empty column TEXT (keeping
+  its empty strings) would change what the ADR says; it is left to the owner.
+- **Metadata.** `_lake_tables (name, sha256, row_count)`; `name` compares
+  without ASCII case, as SQLite's names do, so `traittree` after `TraitTree`
+  is refused, not fetched. `_lake_meta` records the format (1) and the build;
+  a file recording another build is refused, opened or attached. Table names
+  beginning `_lake_` or `sqlite_` are refused, as is any name `gamedata`'s key
+  rule refuses, before anything is asked.
+- **The hash.** The SHA-256 recorded is of the bytes loaded, hashed as they
+  are read. A cached CSV whose sidecar gives another SHA-256 is not loaded
+  (`SourceChanged`, citing L5). `load` on a loaded table hashes the cached CSV
+  again: the same, a no-op; different, `SourceChanged`. `rows` and `schema`
+  compare once per `Lake` object. If the cache no longer holds the CSV, the
+  lake keeps the table and nothing is refetched.
+- **Batches.** Two streaming passes: the first infers the types and hashes;
+  the second, inside one `BEGIN IMMEDIATE` transaction, inserts in batches of
+  5,000 rows (`BATCH_ROWS`) and hashes again, and a file that changed between
+  them is refused and rolled back. Measured on the owner's M1: a constructed
+  200,000-row, 10-column CSV (13.3 MB) loads in 1.24 CPU s; Python's peak
+  allocation during a load is about 4.7 MB at 5,000-row batches, the same for
+  a 2.5 MB and a 13.3 MB file (SQLite's page cache, 2 MB by default, is
+  apart).
+- **Rows** come back in CSV order: ordered by the row id, under whichever of
+  `rowid`, `_rowid_` and `oid` no column shadows. `Lake.query(sql,
+  parameters)` runs SQL the library writes, on the connection that holds the
+  attachments, `query_only` outside loads; it is not the owner's SQL surface,
+  which M12-04 builds with its own guards.
+
 ### 14.3 char-planner, talents first
 
 Class talents only. Legacy talents wait for a level-25+ capture (the owner's
