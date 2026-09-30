@@ -20,19 +20,24 @@
 -- C_BarberShop.GetViewingChrModel. The choices cover only the model being
 -- viewed. The name fields that GetCurrentCharacterData returns are never read.
 --
--- M11-29, from the M11-23 capture (1.60.1.70058; docs/LAB_FORMATS.md): after
--- one applied change the record still read recorded_at = "open", and it had no
--- chr_model_id. The file could not say why. Every change here is for the next
--- capture to answer that, not a guess at the cause:
--- - events_received (Core.lua `listen`): how many times each barber-shop event
---   reached this section's handler in the session. With recorded_at it tells
---   "the applied event never came" from "an open came after it".
--- - count_only events [verify]: BARBER_SHOP_RESULT, BARBER_SHOP_CLOSE and
---   BARBER_SHOP_FORCE_CUSTOMIZATIONS_UPDATE, Retail names for events a client
---   may fire around an applied change. They are counted only: nothing is
---   recorded on them until a capture shows which one fires, and when.
--- - chr_model_id_absent: why GetViewingChrModel gave no number (missing, an
---   error, nil, or something else), from a direct pcall.
+-- M11-29 (schema 2), from the M11-23 capture (1.60.1.70058;
+-- docs/LAB_FORMATS.md): after one applied change the record's last write
+-- came from an open (recorded_at = "open"), and it had no chr_model_id. The
+-- file could not say why. Every change here is for the next capture to answer
+-- that, not a guess at the cause:
+-- - events_received (Core.lua `listen`): how many times each registered
+--   barber-shop event reached this section's handler in the session. With
+--   recorded_at it tells "the applied event never came" from "an open came
+--   after it".
+-- - count_only events [verify]: counted only, never recorded on, and no
+--   event argument is read. BARBER_SHOP_RESULT, BARBER_SHOP_CLOSE,
+--   BARBER_SHOP_FORCE_CUSTOMIZATIONS_UPDATE and BARBER_SHOP_COST_UPDATE are
+--   Retail names; BARBER_SHOP_SUCCESS is the pre-9.0 name.
+--   WOWLAB_CONTROL_NOT_A_REAL_EVENT is made up on purpose: whether it gets an
+--   entry shows whether this client refuses a name it does not know.
+-- - chr_model_id_absent: which outcome the GetViewingChrModel call had when
+--   the section gathered (missing, an error, nil, or not a number), from a
+--   direct pcall. It says how the call went, not why the client gave no id.
 
 local _, ns = ...
 
@@ -75,7 +80,14 @@ ns.Section({
     path = { "customization" },
     events = { "BARBER_SHOP_OPEN", "BARBER_SHOP_APPEARANCE_APPLIED" },
     -- Counted, never gathered on (M11-29; see the top of this file).
-    count_only = { "BARBER_SHOP_RESULT", "BARBER_SHOP_CLOSE", "BARBER_SHOP_FORCE_CUSTOMIZATIONS_UPDATE" },
+    count_only = {
+        "BARBER_SHOP_RESULT",
+        "BARBER_SHOP_CLOSE",
+        "BARBER_SHOP_FORCE_CUSTOMIZATIONS_UPDATE",
+        "BARBER_SHOP_COST_UPDATE",
+        "BARBER_SHOP_SUCCESS",
+        "WOWLAB_CONTROL_NOT_A_REAL_EVENT",
+    },
     immediate = true,
     not_gathered = "no barber-shop visit recorded with the addon enabled",
     -- Keeps the last saved record, unless it was itself an absent marker.
@@ -138,9 +150,10 @@ ns.Section({
         if type(data) == "table" and type(data.sex) == "number" then
             record.sex = data.sex
         end
-        -- Exactly one of chr_model_id and chr_model_id_absent (M11-29). The
-        -- call goes through pcall directly, not ns.Call, so an error is told
-        -- apart from nil.
+        -- Exactly one of chr_model_id and chr_model_id_absent (M11-29): the
+        -- outcome of this call at this gather. It goes through pcall
+        -- directly, not ns.Call, so an error is told apart from nil ("returned
+        -- nil" also covers a call that returned no value at all).
         local model = ns.Fn(C_BarberShop, "GetViewingChrModel")
         if not model then
             record.chr_model_id_absent = "C_BarberShop.GetViewingChrModel missing"
