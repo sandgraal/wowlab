@@ -1110,6 +1110,26 @@ column names and cells are escaped before the CSV is written. `--json`
 output is unaffected (JSON's own escapes, ASCII only). An uncaught
 exception's traceback is not covered yet (a follow-up).
 
+*Amended 2026-09-30 (M11-33):* that follow-up is done. Typer's pretty
+(Rich) exceptions are off, and an exception nothing caught prints through
+`_say_err` like every other line. That covers an exception `_handled` does
+not catch in any command body, the `main()` callback and its
+`ctx.with_resource`, and the eager `--version` callback. The `wowlab`
+console script (`wowlab_core.cli:app`) sets `sys.excepthook` as the
+exception leaves the app, because Typer's own `__call__` replaces the hook
+on every call. The hook prints Python's traceback line by line. Frames keep
+Python's layout, and the exception's message and each of its notes are one
+line each, whatever they hold, so text from the install never starts a line.
+Python then exits 1. If the traceback cannot be rendered, one line names the
+exception's type instead. A click usage error (an unknown option, an extra
+argument, a bad value) prints its usage and help hint as click does. Its
+`Error:` line, which can hold the user's own arguments, prints as one
+escaped line. The help that `no_args_is_help` prints is unchanged. A library
+log record that carries a traceback (`_log.exception`, such as the write
+gate's "could not record the rollback") or a stack prints its message as one
+line and then the traceback line by line in the same way. Before this, the
+whole record printed on one line with `\x0a` escapes.
+
 ## 7. Repository layout
 
 ```

@@ -34,7 +34,11 @@ Text output escapes every control character, tab and line feed included
 (`\\x1b` for ESC), and every Unicode format and separator character (Cf,
 Zl, Zp, such as U+202E and U+2028, as their UTF-8 bytes), so nothing read
 from an install reaches the terminal as a control sequence or reorders or
-breaks a line (M11-30, §6.11 amendment).
+breaks a line (M11-30, §6.11 amendment). So does the traceback of an
+exception nothing caught, which the console script prints line by line with
+its message and each note on one line (`_excepthook`), and a click usage
+error, whose `Error:` line can hold the user's own arguments (`_click_error`,
+M11-33).
 
 A whole-snapshot `snap restore` leaves alone the files the client manages
 (file-map Edit `no`) unless they are named with `--paths` (owner decision
@@ -74,14 +78,24 @@ import json
 import logging
 import os
 import re
+import sys
 import time
+import traceback
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
+from types import TracebackType
 from typing import Annotated, Any, Literal, NamedTuple, NoReturn
 
 import typer
 from pydantic import BaseModel, ConfigDict, Field, RootModel
+
+# Typer 0.27 vendors click as `typer._click` and gives its exceptions and
+# context no public name: the root command (`_WowlabGroup`) catches click's
+# errors and prints them itself (`_click_error`).
+from typer._click import Context
+from typer._click.exceptions import ClickException, NoArgsIsHelpError, UsageError
+from typer.core import TyperGroup
 
 from wowlab_core import (
     __version__,
@@ -109,12 +123,59 @@ EXIT_ERROR = 1
 EXIT_USAGE = 2
 EXIT_REFUSED = 3
 
-app = typer.Typer(
+
+class _WowlabApp(typer.Typer):
+    """The `wowlab` app: run as the console script (`wowlab_core.cli:app`),
+    an exception nothing caught is printed by `_excepthook`, escaped.
+
+    Typer's `__call__` puts its own hook in `sys.excepthook` on every call,
+    and with pretty exceptions off that hook hands the exception to the one
+    Python had when typer was imported, which prints it raw. So the hook is
+    put back here as the exception leaves the app, just before Python's top
+    level calls it. The test runner calls the root command's `main`, not
+    this, and so gets the exception itself."""
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return super().__call__(*args, **kwargs)
+        except BaseException:
+            sys.excepthook = _excepthook
+            raise
+
+
+class _WowlabGroup(TyperGroup):
+    """The root command: a click error (an unknown option, an extra argument,
+    a bad value), whose message can hold the user's own arguments, is
+    printed by `_click_error` instead of click. Subcommands are parsed and
+    run inside the root's `invoke`, so this covers them too."""
+
+    def make_context(
+        self,
+        info_name: str | None,
+        args: list[str],
+        parent: Context | None = None,
+        **extra: Any,
+    ) -> Context:
+        try:
+            return super().make_context(info_name, args, parent, **extra)
+        except ClickException as exc:
+            _click_error(exc)
+
+    def invoke(self, ctx: Context) -> Any:
+        try:
+            return super().invoke(ctx)
+        except ClickException as exc:
+            _click_error(exc)
+
+
+app = _WowlabApp(
     name="wowlab",
     help="Local-only toolchain over a World of Warcraft install.",
     no_args_is_help=True,
     add_completion=False,
     rich_markup_mode=None,
+    cls=_WowlabGroup,
+    pretty_exceptions_enable=False,
 )
 install_app = typer.Typer(help="The install and its flavors.", no_args_is_help=True)
 sv_app = typer.Typer(
@@ -306,11 +367,136 @@ def _fail(message: str, code: int, exc: BaseException | None = None) -> NoReturn
     raise typer.Exit(code)
 
 
+def _click_error(exc: ClickException) -> NoReturn:
+    """A click error as click's `show()` prints it, line by line through
+    `_say_err`, then its exit code (2 for a usage error).
+
+    `Error: ...` can hold the user's own arguments (an unknown option, an
+    extra argument), so it is one line whatever they hold. The usage and
+    help-hint lines above it (`UsageError.show`) are click's text, and so
+    is the help that `no_args_is_help` raises instead of an error, which
+    keeps its line breaks."""
+    if isinstance(exc, NoArgsIsHelpError):
+        lines = exc.format_message().split("\n")
+    else:
+        lines = []
+        ctx = exc.ctx if isinstance(exc, UsageError) else None
+        if ctx is not None:
+            lines.extend(ctx.get_usage().split("\n"))
+            if ctx.command.get_help_option(ctx) is not None:
+                lines.append(f"Try '{ctx.command_path} {ctx.help_option_names[0]}' for help.")
+            lines.append("")
+        lines.append(f"Error: {exc.format_message()}")
+    for line in lines:
+        _say_err(line)
+    raise typer.Exit(exc.exit_code)
+
+
+_CAUSE = "The above exception was the direct cause of the following exception:"
+_CONTEXT = "During handling of the above exception, another exception occurred:"
+
+
+def _text(value: object, what: str, fn: Callable[[object], str] = str) -> str:
+    """`fn(value)`, or what Python's traceback prints when that fails."""
+    try:
+        return fn(value)
+    except Exception:
+        return f"<{what} {fn.__name__}() failed>"
+
+
+def _exception_lines(exc: BaseException, seen: set[int]) -> list[str]:
+    """One exception as Python prints it, without its chain: its frames, its
+    type and message, its notes, and its sub-exceptions if it is a group."""
+    lines: list[str] = []
+    frames = traceback.extract_tb(exc.__traceback__)
+    if frames:
+        lines.append("Traceback (most recent call last):")
+        for frame in frames.format():
+            lines.extend(frame.removesuffix("\n").split("\n"))
+    kind = type(exc)
+    name = kind.__qualname__
+    if kind.__module__ not in ("builtins", "__main__"):
+        name = f"{kind.__module__}.{name}"
+    message = _text(exc, "exception")
+    lines.append(f"{name}: {message}" if message else name)
+    notes = getattr(exc, "__notes__", None)
+    if isinstance(notes, Sequence):
+        lines.extend(_text(note, "note") for note in notes)
+    elif notes is not None:
+        lines.append(_text(notes, "__notes__", repr))
+    if isinstance(exc, BaseExceptionGroup):
+        count = len(exc.exceptions)
+        for n, sub in enumerate(exc.exceptions, 1):
+            lines.append(f"sub-exception {n} of {count}:")
+            lines.extend(f"  {line}" for line in _traceback_lines(sub, seen))
+    return lines
+
+
+def _traceback_lines(exc: BaseException, seen: set[int] | None = None) -> list[str]:
+    """`exc`'s traceback as Python prints it, one string per line: its causes
+    and contexts first, oldest first, each followed by the line that links
+    it to the next.
+
+    The difference from Python's own: an exception's message and each of
+    its notes are one line each, whatever they hold, so once `_say_err`
+    escapes the line breaks in them, text from the install can never start
+    a line of its own. Frames (file, line, function, source) are code and
+    keep Python's layout, one line each after `_say_err`. An exception
+    already printed (a cycle through `__context__`) is not printed again."""
+    seen = set() if seen is None else seen
+    chain: list[tuple[BaseException, str]] = []
+    current: BaseException | None = exc
+    link = ""
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        chain.append((current, link))
+        if current.__cause__ is not None:
+            current, link = current.__cause__, _CAUSE
+        elif current.__context__ is not None and not current.__suppress_context__:
+            current, link = current.__context__, _CONTEXT
+        else:
+            current = None
+    lines: list[str] = []
+    for current, link in reversed(chain):
+        lines.extend(_exception_lines(current, seen))
+        if link:
+            lines.extend(["", link, ""])
+    return lines
+
+
+def _excepthook(kind: type[BaseException], exc: BaseException, tb: TracebackType | None) -> None:
+    """`sys.excepthook` for the `wowlab` command (`_WowlabApp`): an exception
+    nothing caught, from a command body, the root callback or an option
+    callback, is printed as Python prints it, line by line through
+    `_say_err`, the message and each note on one line (`_traceback_lines`).
+    Python then exits non-zero as it always does (1, or by the signal for
+    KeyboardInterrupt). `tb` is `exc.__traceback__`, which the rendering
+    reads. If the traceback cannot be printed, one line names the type
+    instead: a hook that raised would make Python print the original
+    exception itself, raw."""
+    try:
+        for line in _traceback_lines(exc):
+            _say_err(line)
+    except Exception:
+        with contextlib.suppress(Exception):
+            _say_err(f"wowlab: an uncaught {kind.__name__}; its traceback could not be printed")
+
+
 class _SafeLogFormatter(logging.Formatter):
-    """A library log record as one line, escaped by `_safe`."""
+    """A library log record's message as one line, escaped by `_safe`. A
+    traceback it carries (`_log.exception`) or a stack (`stack_info`)
+    follows, line by line, as `_excepthook` prints one."""
 
     def format(self, record: logging.LogRecord) -> str:
-        return _safe(super().format(record))
+        record.message = record.getMessage()
+        if self.usesTime():
+            record.asctime = self.formatTime(record, self.datefmt)
+        lines = [self.formatMessage(record)]
+        if record.exc_info is not None and record.exc_info[1] is not None:
+            lines.extend(_traceback_lines(record.exc_info[1]))
+        if record.stack_info:
+            lines.extend(record.stack_info.split("\n"))
+        return "\n".join(_safe(line) for line in lines)
 
 
 class _StderrLogHandler(logging.Handler):

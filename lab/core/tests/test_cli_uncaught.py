@@ -1,0 +1,530 @@
+"""Uncaught exceptions and click usage errors print escaped (M11-33).
+
+From the M11-30 security review (finding 3). Typer's pretty exceptions are
+off, and the `wowlab` console script (`wowlab_core.cli:app`) prints an
+exception nothing caught through `cli._excepthook`: Python's traceback, line
+by line through `_say_err`, with the message and each note on one line
+whatever they hold. A click usage error, whose message can hold the user's
+own arguments, prints its usage and help hint as click does and its error on
+one escaped line. A `_log.exception` record prints its message on one line
+and its traceback line by line the same way.
+
+Every input here is `constructed` (L8, hostile-input cases): an exception
+message holding a line feed followed by text that would pass for a line of
+the CLI's own output, U+202E, U+2028 and ESC sequences. The console-script
+tests run `cli.app()` in a child Python process, as the generated `wowlab`
+script does, with the function that fails replaced first. The child never
+reaches an install: the replaced function raises before anything is read,
+`WOWLAB_WOW_ROOT` points into `tmp_path` and the user data directory is
+redirected there.
+
+Characters outside printable ASCII are spelled with `chr` so that none of
+them sits raw in this file.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import logging
+import os
+import subprocess
+import sys
+import traceback
+import unicodedata
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+
+import pytest
+from typer.testing import CliRunner
+
+from wowlab_core import cli, guard, install
+
+LF = chr(0x0A)
+ESC = chr(0x1B)
+BEL = chr(0x07)
+RLO = chr(0x202E)  # RIGHT-TO-LEFT OVERRIDE, Cf
+LSEP = chr(0x2028)  # LINE SEPARATOR, Zl
+
+# The hostile text: every part after the first would pass for a line of the
+# CLI's own output, or reorder, retitle or clear the terminal, if it were
+# printed raw.
+MESSAGE = (
+    f"folder Evil{LF}wowlab: restored 1 file{RLO}elif.gnp{LSEP}wowlab: done"
+    f"{ESC}]0;owned{BEL}{ESC}[2J"
+)
+SHOWN = (
+    "folder Evil\\x0awowlab: restored 1 file\\xe2\\x80\\xaeelif.gnp\\xe2\\x80\\xa8wowlab: done"
+    "\\x1b]0;owned\\x07\\x1b[2J"
+)
+
+CAUSE = "The above exception was the direct cause of the following exception:"
+CONTEXT = "During handling of the above exception, another exception occurred:"
+TRACEBACK = "Traceback (most recent call last):"
+
+UNSAFE_CATEGORIES = ("Cc", "Cf", "Zl", "Zp")
+
+runner = CliRunner()
+
+
+def _unsafe(text: str) -> list[str]:
+    """Every character of `text` a terminal must not get raw, as hex (line
+    feeds included: callers pass one line)."""
+    return [
+        hex(ord(c))
+        for c in text
+        if unicodedata.category(c) in UNSAFE_CATEGORIES or 0xD800 <= ord(c) <= 0xDFFF
+    ]
+
+
+def _lines_are_safe(text: str) -> bool:
+    return all(_unsafe(line) == [] for line in text.split("\n"))
+
+
+def _no_spoofed_line(text: str) -> bool:
+    """No line of `text` starts with a part of `MESSAGE` that follows a line
+    break or a separator in it."""
+    return not any(
+        line.startswith(("wowlab: restored", "wowlab: done")) for line in text.split("\n")
+    )
+
+
+def test_the_hostile_message_holds_what_the_ticket_names() -> None:
+    """The positive control: `MESSAGE` holds a line feed, U+202E, U+2028 and
+    an ESC sequence, so each test below has something to escape."""
+    assert {LF, RLO, LSEP, ESC} <= set(MESSAGE)
+    assert cli._safe(MESSAGE) == SHOWN
+
+
+# ─── the console script, end to end ─────────────────────────────────────────
+
+# Run in a child process as `python -c CHILD <where> <user data dir>`; the
+# generated `wowlab` script is `sys.exit(app())` with `sys.argv` set.
+CHILD = """
+import contextlib
+import sys
+from pathlib import Path
+
+import platformdirs
+
+from wowlab_core import cli
+
+where, userdata = sys.argv[1], Path(sys.argv[2])
+message = MESSAGE
+platformdirs.user_data_path = lambda *args, **kwargs: userdata
+
+
+def boom(*args, **kwargs):
+    exc = RuntimeError(message)
+    exc.add_note("note: " + message)
+    raise exc from ValueError(message)
+
+
+def no_install(*args, **kwargs):
+    raise cli.CliError("constructed: no install is looked for")
+
+
+class Version:
+    def __format__(self, spec):
+        boom()
+
+
+@contextlib.contextmanager
+def fails_on_enter():
+    boom()
+    yield
+
+
+@contextlib.contextmanager
+def fails_on_exit():
+    # The command's own exit (typer.Exit) is thrown in at the yield.
+    try:
+        yield
+    finally:
+        boom()
+
+
+cli._discover = no_install
+if where == "command-body":
+    cli._discover = boom
+    args = ["install", "show"]
+elif where == "main-callback":
+    cli._library_log_on_stderr = fails_on_enter
+    args = ["install", "show"]
+elif where == "main-callback-resource-exit":
+    cli._library_log_on_stderr = fails_on_exit
+    args = ["install", "show"]
+elif where == "version-callback":
+    cli.__version__ = Version()
+    args = ["--version"]
+else:
+    raise SystemExit("unknown case " + where)
+sys.argv = ["wowlab", *args]
+sys.exit(cli.app())
+""".replace("MESSAGE", ascii(MESSAGE))
+
+WHERE = {
+    # an exception `_handled` does not catch, raised in a command body
+    "command-body": [],
+    # the root callback's `ctx.with_resource`, failing as it is entered
+    "main-callback": [],
+    # the same resource failing as the root context closes, after the
+    # command has already printed its own one-line error
+    "main-callback-resource-exit": ["wowlab: constructed: no install is looked for"],
+    # the eager `--version` callback
+    "version-callback": [],
+}
+
+
+@pytest.mark.parametrize("where", [pytest.param(w, id=f"constructed-{w}") for w in WHERE])
+def test_the_console_script_prints_an_uncaught_exception_escaped_constructed(
+    tmp_path: Path, where: str
+) -> None:
+    env = {
+        **os.environ,
+        install.ENV_ROOT: str(tmp_path / "no install"),
+        "PYTHONIOENCODING": "utf-8",
+    }
+    child = subprocess.run(
+        [sys.executable, "-c", CHILD, where, str(tmp_path / "userdata")],
+        capture_output=True,
+        cwd=tmp_path,
+        env=env,
+        timeout=120,
+        check=False,
+    )
+    # Strict decoding: an escape that produced bytes that are not UTF-8
+    # fails here.
+    out = child.stdout.decode("utf-8")
+    err = child.stderr.decode("utf-8")
+    assert child.returncode == 1, (child.returncode, out, err)
+    assert out == ""
+    assert _lines_are_safe(err), _unsafe(err)
+    assert _no_spoofed_line(err), err
+    lines = err.split("\n")
+    before = WHERE[where]
+    # Anything the command printed itself, then the cause (never raised, so
+    # no frames) on one line, then the link to the exception.
+    assert lines[: len(before) + 5] == [*before, f"ValueError: {SHOWN}", "", CAUSE, "", TRACEBACK]
+    frames = lines[len(before) + 5 : -3]
+    assert frames and all(line.startswith("  ") for line in frames), err
+    # The exception itself on one line, its note on one line, and the line
+    # feed that ends the last line.
+    assert lines[-3:] == [f"RuntimeError: {SHOWN}", f"note: {SHOWN}", ""], err
+
+
+# ─── the hook, in process ────────────────────────────────────────────────────
+
+
+def _raise_boom(*args: Any, **kwargs: Any) -> None:
+    raise RuntimeError(MESSAGE)
+
+
+def test_the_app_installs_the_escaping_hook_constructed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Typer's `__call__` puts its own hook in `sys.excepthook` on every
+    call; the app puts `cli._excepthook` back before an exception leaves
+    it, so Python's top level prints through it."""
+    monkeypatch.setattr(sys, "excepthook", sys.__excepthook__)
+    monkeypatch.setattr(cli, "_discover", _raise_boom)
+    with pytest.raises(RuntimeError):
+        cli.app(["install", "show"], prog_name="wowlab")
+    assert sys.excepthook is cli._excepthook
+    assert cli.app.pretty_exceptions_enable is False
+
+
+def _caught(fn: Any) -> BaseException:
+    try:
+        fn()
+    except BaseException as exc:
+        return exc
+    raise AssertionError("expected an exception")
+
+
+def _hook_output(exc: BaseException, capsys: pytest.CaptureFixture[str]) -> list[str]:
+    cli._excepthook(type(exc), exc, exc.__traceback__)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert _lines_are_safe(captured.err), _unsafe(captured.err)
+    assert _no_spoofed_line(captured.err), captured.err
+    lines = captured.err.split("\n")
+    assert lines[-1] == ""
+    return lines[:-1]
+
+
+def _context_chain() -> None:
+    try:
+        raise ValueError(MESSAGE)
+    except ValueError:
+        exc = RuntimeError(MESSAGE)
+        exc.add_note(MESSAGE)
+        exc.add_note("a second note")
+        raise exc  # noqa: B904 (a context, not a cause)
+
+
+def test_the_hook_prints_a_context_chain_escaped_constructed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    lines = _hook_output(_caught(_context_chain), capsys)
+    assert lines[0] == TRACEBACK
+    at = lines.index(f"ValueError: {SHOWN}")
+    assert lines[at + 1 : at + 5] == ["", CONTEXT, "", TRACEBACK]
+    assert lines[-3:] == [f"RuntimeError: {SHOWN}", SHOWN, "a second note"]
+
+
+def test_the_hook_prints_a_cause_and_hides_a_suppressed_context_constructed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def chained() -> None:
+        try:
+            raise KeyError("hidden context")
+        except KeyError:
+            raise LookupError(MESSAGE) from OSError(MESSAGE)
+
+    lines = _hook_output(_caught(chained), capsys)
+    assert lines[:4] == [f"OSError: {SHOWN}", "", CAUSE, ""]
+    assert lines[-1] == f"LookupError: {SHOWN}"
+    assert not any("hidden context" in line for line in lines)
+
+
+def test_the_hook_prints_an_exception_group_escaped_constructed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Each sub-exception is printed, indented, after the group; a
+    sub-exception whose context is the group itself is not printed again."""
+
+    def grouped() -> None:
+        inner = ValueError(MESSAGE)
+        group = ExceptionGroup(MESSAGE, [inner, OSError(MESSAGE)])
+        inner.__context__ = group  # a cycle the renderer must not follow
+        raise group
+
+    lines = _hook_output(_caught(grouped), capsys)
+    at = lines.index(f"ExceptionGroup: {SHOWN} (2 sub-exceptions)")
+    assert lines[at + 1] == "sub-exception 1 of 2:"
+    assert f"  ValueError: {SHOWN}" in lines
+    assert f"  OSError: {SHOWN}" in lines
+    assert lines.count(f"ExceptionGroup: {SHOWN} (2 sub-exceptions)") == 1
+
+
+class _UnprintableError(Exception):
+    def __str__(self) -> str:
+        raise RuntimeError(MESSAGE)
+
+
+def _raise_unprintable() -> None:
+    raise _UnprintableError
+
+
+def test_the_hook_survives_a_message_that_cannot_be_made_constructed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A message or note whose `str()` fails is shown as Python shows it."""
+    exc = _caught(_raise_unprintable)
+    exc.__notes__ = [_UnprintableError()]
+    lines = _hook_output(exc, capsys)
+    name = f"{__name__}._UnprintableError"
+    assert lines[-2:] == [f"{name}: <exception str() failed>", "<note str() failed>"]
+    expected = "".join(traceback.format_exception(exc)).split("\n")[:-1]
+    assert lines == expected, "Python's own words for both"
+
+
+def test_the_hook_falls_back_to_one_line_when_rendering_fails_constructed(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the traceback cannot be rendered, Python would print the original
+    exception itself, raw, once the hook raised; the hook prints one line
+    naming the type instead and returns."""
+
+    def broken(exc: BaseException) -> list[str]:
+        raise RuntimeError(MESSAGE)
+
+    monkeypatch.setattr(cli, "_traceback_lines", broken)
+    exc = RuntimeError(MESSAGE)
+    assert _hook_output(exc, capsys) == [
+        "wowlab: an uncaught RuntimeError; its traceback could not be printed"
+    ]
+
+
+def _plain_chain() -> None:
+    try:
+        raise ValueError("first")
+    except ValueError as first:
+        exc = KeyError("second")
+        exc.add_note("a note")
+        raise exc from first
+
+
+def _plain_context() -> None:
+    try:
+        raise KeyError("missing")
+    except KeyError:
+        raise OSError(2, "no such file")  # noqa: B904 (a context, not a cause)
+
+
+@pytest.mark.parametrize(
+    "fn",
+    [
+        pytest.param(_plain_chain, id="cause-and-note"),
+        pytest.param(_plain_context, id="context"),
+        pytest.param(lambda: int("x"), id="builtin"),
+        pytest.param(lambda: cli._safe(None), id="library-frame"),
+    ],
+)
+def test_the_hook_prints_what_python_prints_when_nothing_needs_escaping(
+    capsys: pytest.CaptureFixture[str], fn: Any
+) -> None:
+    """For text with nothing to escape, the lines are Python's own."""
+    exc = _caught(fn)
+    expected = "".join(traceback.format_exception(exc)).split("\n")[:-1]
+    assert _hook_output(exc, capsys) == expected
+
+
+# ─── click usage errors ──────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("args", "usage", "error"),
+    [
+        pytest.param(
+            ["--" + MESSAGE],
+            "Usage: wowlab [OPTIONS] COMMAND [ARGS]...",
+            "Error: No such option: --" + SHOWN,
+            id="constructed-root-option",
+        ),
+        pytest.param(
+            ["sv", "list", "--" + MESSAGE],
+            "Usage: wowlab sv list [OPTIONS]",
+            "Error: No such option: --" + SHOWN,
+            id="constructed-subcommand-option",
+        ),
+        pytest.param(
+            ["explain", "a", MESSAGE],
+            "Usage: wowlab explain [OPTIONS] {path}",
+            f"Error: Got unexpected extra argument(s) ({SHOWN})",
+            id="constructed-extra-argument",
+        ),
+    ],
+)
+def test_a_usage_error_prints_the_users_argument_escaped_constructed(
+    args: list[str], usage: str, error: str
+) -> None:
+    result = runner.invoke(cli.app, args)
+    assert result.exit_code == cli.EXIT_USAGE, (result.stdout, result.stderr, result.exception)
+    assert result.stdout == ""
+    assert _lines_are_safe(result.stderr), _unsafe(result.stderr)
+    assert _no_spoofed_line(result.stderr), result.stderr
+    command = usage.removeprefix("Usage: ").split(" [OPTIONS]")[0]
+    assert result.stderr.split("\n") == [
+        usage,
+        f"Try '{command} --help' for help.",
+        "",
+        error,
+        "",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        pytest.param(
+            ["--bogus"],
+            "Usage: wowlab [OPTIONS] COMMAND [ARGS]...\nTry 'wowlab --help' for help.\n\n"
+            "Error: No such option: --bogus\n",
+            id="unknown-option",
+        ),
+        pytest.param(
+            ["tre"],
+            "Usage: wowlab [OPTIONS] COMMAND [ARGS]...\nTry 'wowlab --help' for help.\n\n"
+            "Error: No such command 'tre'. Did you mean 'tree'?\n",
+            id="unknown-command",
+        ),
+        pytest.param(
+            ["explain"],
+            "Usage: wowlab explain [OPTIONS] {path}\nTry 'wowlab explain --help' for help.\n\n"
+            "Error: Missing argument 'path'.\n",
+            id="missing-argument",
+        ),
+        pytest.param(
+            ["log", "tail", "-n", "x"],
+            "Usage: wowlab log tail [OPTIONS]\nTry 'wowlab log tail --help' for help.\n\n"
+            "Error: Invalid value for '--lines' / '-n': 'x' is not a valid int range.\n",
+            id="bad-value",
+        ),
+    ],
+)
+def test_a_usage_error_with_nothing_to_escape_prints_as_click_does(
+    args: list[str], expected: str
+) -> None:
+    """The text is the one click printed before M11-33, byte for byte."""
+    result = runner.invoke(cli.app, args)
+    assert result.exit_code == cli.EXIT_USAGE
+    assert result.stdout == ""
+    assert result.stderr == expected
+
+
+@pytest.mark.parametrize("args", [pytest.param([], id="root"), pytest.param(["sv"], id="group")])
+def test_no_arguments_prints_the_help_on_stderr_as_before(args: list[str]) -> None:
+    """`no_args_is_help`: click shows the help instead of an error, on
+    stderr with exit 2; its line breaks are kept."""
+    result = runner.invoke(cli.app, args)
+    helped = runner.invoke(cli.app, [*args, "--help"])
+    assert result.exit_code == cli.EXIT_USAGE
+    assert helped.exit_code == 0
+    assert result.stdout == ""
+    assert result.stderr == helped.stdout
+    assert result.stderr.count("\n") > 5
+
+
+# ─── _log.exception ──────────────────────────────────────────────────────────
+
+
+@contextlib.contextmanager
+def _library_log(capsys: pytest.CaptureFixture[str]) -> Iterator[None]:
+    capsys.readouterr()
+    library = logging.getLogger("wowlab_core")
+    before = (list(library.handlers), library.propagate)
+    with cli._library_log_on_stderr():
+        yield
+    assert (list(library.handlers), library.propagate) == before
+
+
+def test_a_logged_traceback_prints_line_by_line_escaped_constructed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`guard` logs with `_log.exception` when it cannot record a rollback;
+    the record's message is one line, and the traceback it carries follows
+    line by line, as an uncaught exception's is printed."""
+    with _library_log(capsys):
+        try:
+            raise OSError(MESSAGE)
+        except OSError:
+            guard._log.exception("could not record the rollback of %s", MESSAGE)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert _lines_are_safe(captured.err), _unsafe(captured.err)
+    assert _no_spoofed_line(captured.err), captured.err
+    lines = captured.err.split("\n")
+    assert lines[:2] == [f"wowlab: could not record the rollback of {SHOWN}", TRACEBACK]
+    assert lines[-2:] == [f"OSError: {SHOWN}", ""]
+
+
+def test_a_logged_stack_prints_line_by_line_escaped_constructed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with _library_log(capsys):
+        guard._log.warning("leftover temp file left in place: %s", MESSAGE, stack_info=True)
+    captured = capsys.readouterr()
+    assert _lines_are_safe(captured.err), _unsafe(captured.err)
+    lines = captured.err.split("\n")
+    assert lines[:2] == [
+        f"wowlab: leftover temp file left in place: {SHOWN}",
+        "Stack (most recent call last):",
+    ]
+
+
+def test_a_log_record_without_a_traceback_is_one_line_constructed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with _library_log(capsys):
+        guard._log.error("rollback of %r did not finish: %s", "x", MESSAGE)
+    assert capsys.readouterr().err == f"wowlab: rollback of 'x' did not finish: {SHOWN}\n"
