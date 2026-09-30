@@ -617,6 +617,12 @@ Local CASC reading (the install's own `Data/`) is deferred to the wave that
 needs models or textures. `gamedata` exposes a `Source` protocol so a CASC
 source can be added beside the HTTP one without changing callers.
 
+*Amended 2026-09-29 (Wave 3 plan, proposed):* typed columns arrive in Wave 3
+as `wowlab_core.db2lake` (§14.2, ADR-0028), inferred from the build's data
+rather than from WoWDBDefs, and `gamedata.rows` stays untyped. A table the
+build lacks answers `HTTP 400` at wago, which M12-02 maps to
+`TableNotPublished`.
+
 ### 6.7 `process` — is the client running (M10-09)
 
 `running_clients()` → processes whose executable lives under an install root
@@ -1104,6 +1110,10 @@ Later waves add siblings of `core/` under `lab/`. Apps depend on
 `wowlab-core`; `wowlab-core` depends on none of them.
 
 ## 8. Fixtures and scrubbing
+
+*Amended 2026-09-29 (Wave 3 plan, proposed):* a wago.tools recording of a
+large table may be an ID-filtered subset of whole verbatim lines, produced
+byte for byte and recorded as such (§14.6).
 
 `lab/core/tests/fixtures/README.md` is the index and states the rules:
 every file has a provenance row, consent is recorded, a committed fixture is
@@ -2057,3 +2067,259 @@ because they add new files only (`lab/addon/WowLab/`, and recorded wago
 tables plus a new `wowlab_core.looks` module) and touch no CLI command,
 `luadata`, `guard` or other Wave 1 module, so they cannot collide with a
 Wave 1 fix.
+
+## 14. Wave 3 (M12): db2lake, char-planner (talents first), alt-dashboard
+
+Owner pick, 2026-09-29 (ADR-0024): **db2lake**, **char-planner with talents
+first**, and **alt-dashboard**. Decision: ADR-0028 (Proposed). Every other
+choice below is the conductor's proposal, with a default, and §14.5 lists the
+ones the owner may want to overrule when reviewing this PR. L1–L8 apply to
+every ticket. Nothing here writes into an install: all three are data-only,
+like the customization sandbox (§13.2).
+
+### 14.1 What the tables and the captures show (2026-09-29)
+
+Checked by hand with `wowlab db2 head` (one request per table, the polite
+client, nothing from a test) against build 1.60.1.70058, which is the owner's
+installed build, is listed by wago.tools, and is the build of the
+`macos-70058` capture. The tables went into the owner's cache, not into
+fixtures.
+
+- **The talent tables exist and are small.** `TraitTree` 17 rows (533 bytes),
+  `TraitNode` 558 rows (15,719), `TraitNodeEntry` 655 (13,154),
+  `TraitDefinition` 654 (14,907), `TraitNodeXTraitNodeEntry` 561 (14,046),
+  `TraitEdge` 96 (2,453), `TraitCond` 172 (8,965), `TraitCurrency` (147),
+  `TraitTreeXTraitCurrency` (259). Together under 100 KB, so a whole
+  talent dataset fits the repository's 512 KB file limit many times over.
+- **Names need spell tables.** `TraitDefinition.SpellID` names the spell;
+  `SpellName` (`ID`, `Name_lang`) has 31,716 rows, 832,295 bytes (254,495
+  gzipped). `SpellMisc` is 3.0 MB. `CurrencyTypes`, `SkillLine` and
+  `ChrSpecialization` exist at this build (the dashboard's name lookups).
+- **Some tables the retail client has are not there.** `TraitSubTree`,
+  `TraitTreeLoadout`, `TraitTreeLoadoutEntry` and a made-up table name all
+  answered `HTTP 400` at this listed build. `gamedata` reports the bare URL
+  and `HTTP 400` (M12-02). A table is not "not found" (404) here; the answer
+  for an unknown table is 400.
+- **Forever has 17 trees.** `TraitSystemID` is 10 for nine trees (1066, 1083,
+  1091, 1100, 1111, 1112, 1114, 1116, 1117), 45 for four (1118, 1187, 1188,
+  1189) and 0 for four (1058, 1081, 1082, 1089). What each system id means
+  is **[verify]** except where a capture says so: the `macos-70058`
+  capture's class config (type 4) has one tree, 1116, system 10,
+  52 nodes, one node with an active rank, tree currency 3820 (quantity 0,
+  maximum 4, spent 4) and a 36-character export string; its one Legacy
+  candidate (type 3, found by type) has four trees, 1118 with
+  no nodes and 1187 to 1189 with nine each, all at rank 0, all system 45.
+  Those four are exactly the four system-45 trees in `TraitTree`, and 1116 is
+  in the table as system 10, so the addon's records join to wago's tables.
+  Whether system 45 is *the* Legacy system stays **[verify]** (the addon does
+  not record which candidate is Legacy). `TraitCurrency.SourcedMax` for 3820
+  is 51; what that number caps is **[verify]**.
+- **The unnamed columns are a WoWDBDefs gap.** `TraitTree` carries
+  `Field_10_0_0_45697_006` and `_007`: wago names what WoWDBDefs knows and
+  numbers the rest (`docs/DATA_SOURCES.md`). Types are not in the CSV at all.
+- **`looks` has its own coercion.** `wowlab_core.looks` turns cell text into
+  numbers row by row (`_Row.number`). db2lake's typed rows are what a second
+  consumer should use; moving `looks` onto them is not part of this wave.
+
+### 14.2 db2lake
+
+Decision: ADR-0028. The design, so tickets can be graded:
+
+- **Module** `wowlab_core.db2lake`, new; `gamedata` stays the only network
+  client. A `Lake` is opened for one full build string and reads tables
+  through `GameData.table` (so L5 and the cache location rules already hold).
+- **Database.** One SQLite file per build,
+  `<user data>/wowlab/db2lake/<build>.sqlite`, refused inside an install (the
+  same check `gamedata` makes). A table is loaded on demand, in one
+  transaction, from its cached CSV; `_lake_tables` records the table name,
+  the CSV's SHA-256 (from the sidecar) and the row count. A loaded table is
+  never replaced; a second load is a no-op; a source whose hash differs is an
+  error that cites L5. The file is derived: deleting it loses nothing.
+- **Types.** Inferred per column as ADR-0028 says (canonical integer, other
+  finite number, else text; an empty cell is NULL in a numeric column and the
+  empty string in a text column). Names are wago's, unchanged, placeholder
+  names included. A header with a repeated name is `MalformedTable`.
+- **Rows API.** `Lake.rows(name)` yields dicts of `int | float | str | None`;
+  `Lake.schema(name)` gives columns, inferred types and row count. This is
+  the read path the talent model uses.
+- **Cross-build.** `Lake.attach(build)` attaches another build's file
+  read-only under the alias `b<build digits>`; a join across builds is plain
+  SQL. The schema output shows each column's type so a build-to-build type
+  change is visible.
+- **CLI** `wowlab db2 tables [--build V]` (tables the cache holds and whether
+  each is loaded), `db2 schema TABLE`, `db2 sql "SELECT …" [--build V]
+  [--attach V …] [--max-rows N] [--timeout S] [--offline] [--json]`, and
+  `db2 repl` (reads statements from a terminal or a pipe). A table the query
+  names but the lake lacks is fetched and loaded once, unless `--offline`,
+  and the output says so; the name is checked against `gamedata`'s key rule
+  before any request.
+- **SQL safety** (the part that needs adversarial review): one statement,
+  which must begin with `SELECT`, `WITH` or `VALUES` after comments (so
+  `VACUUM INTO 'file'`, which writes a file even from a read-only
+  connection, `PRAGMA`, `ATTACH`, `CREATE`, `INSERT` and the rest are
+  refused by name); a read-only connection; an authorizer as the second
+  layer; extension loading off; `temp_store` in memory; an operation budget
+  and a wall-clock deadline (a progress handler); a row cap with truncation
+  flagged. Text output goes through the CLI's escaping (M11-30), since game
+  strings carry client markup and can carry control characters.
+
+*Amended 2026-09-29:* §6.6's "column typing arrives with whichever wave needs
+it (it requires WoWDBDefs)" is replaced, if ADR-0028 is accepted, by this
+section: Wave 3 types by inference; WoWDBDefs waits for foreign keys.
+
+### 14.3 char-planner, talents first
+
+Class talents only. Legacy talents wait for a level-25+ capture (the owner's
+level-25+ characters come after the beta, decision of 2026-09-29); gear, item
+levels and SimulationCraft export are a later wave. A plan is data: nothing here reaches the game, and the client keeps
+talents on the server, so the owner applies a plan in the game (a loadout
+string, once encoding is possible, §14.5 D6).
+
+- **Tables.** `TraitTree` (trees and systems) → `TraitNode` (`TraitTreeID`,
+  `PosX`, `PosY`, `Type`, `Flags`) → `TraitNodeXTraitNodeEntry` (`TraitNodeID`,
+  `TraitNodeEntryID`, `_Index`) → `TraitNodeEntry` (`TraitDefinitionID`,
+  `MaxRanks`, `NodeEntryType`) → `TraitDefinition` (`SpellID`, the
+  `Override*_lang` texts) → `SpellName` (`Name_lang`); `TraitEdge`
+  (`LeftTraitNodeID`, `RightTraitNodeID`, `Type`); `TraitCond` (`CondType`,
+  `TraitTreeID`, `SpentAmountRequired`, `TraitNodeGroupID`, `TraitCurrencyID`,
+  `RequiredLevel`, …); `TraitCurrency` and `TraitTreeXTraitCurrency` (the
+  point pools). The meaning of every enum column above is community
+  documentation and **[verify]**. A node with several entries is a choice
+  node (entry type **[verify]**).
+- **Which class a tree belongs to** is not a `TraitTree` column in the
+  recording. The model labels a tree by id, system and its root nodes' names,
+  and by class only where the capture says so (`spec.id` →
+  `ChrSpecialization.ClassID`, both real: 1490 in the capture). A tree to
+  class map is **[verify]** and is found in M12-05 or left out.
+- **Model** `wowlab_core.talents`, new: `TalentTree`, `Node`, `Entry`,
+  `Edge`, `Plan` (a name, a tree, the build it was checked against, and per
+  node a rank and the chosen entry) and `check(plan)`, on the `looks`
+  principle (§13.2): **refuse only what the tables decide** (an unknown node
+  or entry, a rank above the entry's `MaxRanks`, an entry that is not on the
+  node, more points spent than the tree currency's `SourcedMax` allows);
+  **note the rest** (a node with no purchased neighbour along an edge, an
+  unmet `TraitCond` gate, a `RequiredLevel`, more points than the character
+  currently holds), each note saying what is unverified. An imported plan
+  with an id the recorded build lacks is "unknown to build V (possibly a
+  hotfix)", not refused.
+- **Import from a character.** `import-char` reads `talents.class` through
+  the M11-04 reader: the tree, and per node `active_rank` (the committed
+  rank; `ranks_purchased` and `current_rank` may include staged changes
+  **[verify]**) and `active_entry`. A character whose class talents are
+  absent gets the addon's reason (exit 1), as `looks import-char` does.
+- **Loadout string.** `wowlab_core.talentstring` decodes the client's export
+  string: the header (a serialization version, the spec id, a tree hash) and
+  one field group per node in tree order, **[verify]** the layout on Forever.
+  It is graded on the strings in the real captures, comparing the decoded
+  ranks with the ranks recorded beside the string in the same file. The
+  capture's string is 36 characters (216 bits); 8 + 16 + 128 header bits and
+  52 node bits is 204, which fits and is a hypothesis to test, not a
+  finding. Encoding needs the tree hash, which the Lab cannot compute; it
+  waits for a capture that shows how (§14.5 D6).
+- **CLI** `wowlab talents trees | tree ID | import-char NAME | save NAME … |
+  show [NAME] | compare A B | decode STRING | page`, mirroring `looks`: plans
+  are `<user data>/wowlab/talents/<name>.json` (`SavedPlan`, format 1, the
+  build and the plan), names follow the profile rule, `save` refuses a taken
+  name unless `--replace`, every data command takes `--json`.
+- **Page** `wowlab talents page [--out PATH]`: one static HTML file
+  (ADR-0027). Version 1 is read-only (§14.5 D3): the tree drawn from
+  `PosX`/`PosY` and the edges, the character's recorded build and saved plans
+  overlaid, a tooltip per node from the tables. Planning is done with `save
+  --rank NODE=RANK`, so every rule stays in graded Python.
+
+### 14.4 alt-dashboard
+
+A static local page over every character's `WowLab.lua`.
+
+- **Reader.** `labaddon.read_all` (M12-09) walks every character folder the
+  layout finds (the digits folder shape and the retail-style twin, both), reads
+  each `WowLab.lua`, and returns per character its label (the folder name),
+  the file's modification time, and either the parsed record or the reason
+  it could not be read. One unreadable file names itself and exits 1 (as
+  `looks show` does) and never blocks the others. `wowlab char list` prints
+  the table.
+- **Page** `wowlab char page [--out PATH] [--anonymize] [--offline]`: one
+  static file (ADR-0027), a card per character: when the client last saved the
+  file (a time from the file, not from the addon, which records none), the
+  client build, spec, equipped gear (item names come from the recorded links'
+  bracketed text, never executed or fetched) and the average item levels, the
+  class-talent points spent against the tree currency, whether a
+  customization record exists, collection counts, currencies and professions
+  with names from `CurrencyTypes` and `SkillLine` when the tables are cached
+  (ids otherwise; `--offline` never fetches), and every section's `absent`
+  reason, so a gap reads as a gap. A comparison table lists one row per
+  character and one column per profession and per currency.
+- **Names.** The character label is the folder name on the owner's disk. The
+  page is personal: it says so in its header, `--anonymize` replaces every
+  label with `Character 1…`, and the label, like every string from the
+  install or the record, is escaped for HTML and for the embedded JSON
+  (a folder named `</script>` must not break out).
+- **Freshness.** The page says that each card is the character's last saved
+  session (SavedVariables are written at logout, `/reload` or a clean exit).
+
+### 14.5 Decisions for the owner
+
+Each has a default and the work is planned on the default. Say so on this PR
+if you want one changed.
+
+- **D1. db2lake engine.** Default: stdlib `sqlite3`, no new dependency
+  (ADR-0028). Alternative: DuckDB, which `docs/LAB_IDEAS.md` names; it is
+  faster on large tables (ours are small), adds a large compiled dependency,
+  and its SQL can read and write files unless external access is disabled.
+- **D2. Column types.** Default: inferred from the build's data. Alternative:
+  WoWDBDefs, which adds foreign keys and exact widths but a second data source
+  to record and keep matching to builds. Wave 3 does not need either.
+- **D3. Talent page.** Default: read-only view; planning through the CLI.
+  Alternative: click-to-allocate in the page. ADR-0027 grades the embedded
+  data and the CSP, not the browser, so allocation rules written in
+  JavaScript would be untested by the repository's own standard.
+- **D4. Large-table recordings.** Default: ID-filtered subsets (§14.6), so
+  the repository holds hundreds of rows of `SpellName`, not 31,716 (the
+  source's terms say do not mirror tables publicly). Alternative: whole
+  tables, gzipped (`SpellName` would be 254 KB).
+- **D5. Names on the dashboard.** Default: folder names shown, `--anonymize`
+  to hide them. Alternative: hidden unless `--names`.
+- **D6. Loadout strings.** Default: decode in this wave, encode later. Encoding
+  needs the tree hash in the header, which comes from the client; a later
+  addon change (a new **[verify]** call, a section that can be switched off,
+  an owner capture) could record it. Alternative: put that addon change in
+  this wave.
+
+### 14.6 Fixtures for Wave 3 (M12-01)
+
+Amends the fixtures rule "small tables only" (`lab/core/tests/fixtures/README.md`).
+A recording of a table that is large or that the repository has no reason to
+hold whole is an **ID-filtered subset**: the header line and the whole,
+verbatim lines whose value in one named column is in a given set, in file
+order. `scripts/wago_subset.py` selects lines byte for byte and never parses
+and re-serializes (the rule the scrub tool follows); it refuses when the
+source's SHA-256 is not the one given, and prints the filter. The provenance
+row has kind `wago-csv-subset` and states the full download's SHA-256 and
+size, the column, where the id set came from, and the counts. The tables the
+talent model reads whole (about 70 KB in all) are recorded whole. The
+recordings are made by hand through `GameData.table` (ADR-0012), never from a
+test.
+
+### 14.7 Order
+
+```
+M12-01 record tables ─┬─ M12-02 gamedata 400
+                      ├─ M12-03 db2lake ──┬─ M12-04 db2 SQL surface
+                      │                   └─ M12-05 talents model ── M12-06 talents CLI ─┬─ M12-07 loadout decode
+                      │                                                                  ├─ M12-08 talents page
+                      │                                                                  └─ M12-11 owner capture (optional)
+                      └─ M12-10 alt-dashboard page ── (also needs) M12-09 all characters + char list
+                                                       all but M12-11 ── M12-12 wave review
+```
+
+M12-01 and M12-09 start first and touch nothing in common (fixtures and a
+script; `labaddon` and the `char` group). M12-03 onward need ADR-0028
+Accepted or amended by the owner; M12-01, M12-02 and M12-09 do not. M12-04,
+M12-06, M12-07, M12-08, M12-09 and M12-10 each add commands to `cli.py`; each
+puts its logic in its own module and its command bodies beside its group, so
+the merges are textual, not semantic, and `pr-shepherd` rebases them. M12-04
+needs M11-30 (the escaping it uses) merged first. M12-05 is where a talent
+rule the tables cannot settle is found; anything it cannot settle becomes a
+note and a **[verify]**, not a refusal, and the owner's capture (M12-11)
+settles it later. The wave was planned at ten development tickets; Wave 2's
+ten became twenty-five, mostly review hardening, so expect growth.
