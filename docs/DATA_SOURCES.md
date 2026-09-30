@@ -92,10 +92,12 @@ marked `@pytest.mark.live`.
     fall-back to another build. `gamedata` turns it into `BuildNotPublished`
     when the builds listing lacks the build and `TableNotPublished` when it
     has it.
-- **Fixtures:** `lab/core/tests/fixtures/wago/`: small tables whole, and a
-  large table (or one the repository has no reason to hold whole) as an
+- **Fixtures:** `lab/core/tests/fixtures/wago/`. A whole recording is a
+  public copy of the table and the terms below say do not mirror, so a
+  table is recorded whole only when it is small and a test reads it whole
+  (`docs/LAB_PLAN.md` §14.5 D4 and §14.6); everything else is an
   ID-filtered subset of whole verbatim lines cut by `scripts/wago_subset.py`
-  (`docs/LAB_PLAN.md` §14.6, the rule in the fixture index). Response
+  (the rule in the fixture index). Response
   headers are not committed (the 404 sets cookies); what the tests need from
   them (status, content type, `Content-Disposition`) is in the index rows.
   The builds listing is stored gzip-compressed because the verbatim body is

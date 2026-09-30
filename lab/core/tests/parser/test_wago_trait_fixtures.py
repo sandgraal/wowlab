@@ -8,6 +8,7 @@ file is, and how the subsets were cut, is in the fixture index rows.
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 from pathlib import Path
 
@@ -25,8 +26,9 @@ CAPTURES_70009 = (
     FIXTURES / "macos" / CHAR.format("Labchard-Labrealmg"),
     FIXTURES / "macos" / CHAR.format("Labcharb-Labrealmf"),
 )
-# The captures the CurrencyTypes, SkillLine and ChrSpecialization subsets were
-# cut for (the index rows): every committed per-character lab-addon file.
+# The captures the SkillLine and ChrSpecialization subsets were cut for, and
+# whose currencies CurrencyTypes must cover (the index rows): every committed
+# per-character lab-addon file.
 CAPTURES = (CAPTURE_70058, *CAPTURES_70009)
 
 TRAIT_TABLES = (
@@ -224,7 +226,6 @@ def _specs() -> set[int]:
 @pytest.mark.parametrize(
     ("table", "ids"),
     [
-        pytest.param("CurrencyTypes", _currency_ids, id="CurrencyTypes"),
         pytest.param("SkillLine", _skill_lines, id="SkillLine"),
         pytest.param("ChrSpecialization", _specs, id="ChrSpecialization"),
     ],
@@ -237,3 +238,20 @@ def test_each_capture_subset_holds_exactly_the_captures_ids(table: str, ids: obj
     assert len(got) == len(set(got))
     assert set(got) == wanted
     assert "ID" in _header(f"{table}.{B70058}.subset.csv")
+
+
+# CurrencyTypes is recorded whole (review round 1): the captures' currency
+# lists are empty, so a capture-cut subset would be the header alone.
+CURRENCY_TYPES_SHA256 = "2152ccebb8ff00bac894b788a4a798b9e87f428b4190336da50602a3efdcda1a"
+
+
+@pytest.mark.parser
+def test_currency_types_is_the_whole_recorded_table() -> None:
+    name = f"CurrencyTypes.{B70058}.csv"
+    data = (WAGO / name).read_bytes()
+    assert hashlib.sha256(data).hexdigest() == CURRENCY_TYPES_SHA256, "the index row's hash"
+    header = _header(name)
+    assert header[:2] == ["ID", "Name_lang"] and len(header) == 25
+    ids = {int(r["ID"]) for r in _rows(name)}
+    assert len(_rows(name)) == len(ids) == 9
+    assert _currency_ids() <= ids, "every currency a committed capture names has its row"
