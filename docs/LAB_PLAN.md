@@ -1110,6 +1110,52 @@ column names and cells are escaped before the CSV is written. `--json`
 output is unaffected (JSON's own escapes, ASCII only). An uncaught
 exception's traceback is not covered yet (a follow-up).
 
+*Amended 2026-09-30 (M11-33):* that follow-up is done. Typer's pretty
+(Rich) exceptions are off, and an exception nothing caught prints through
+`_say_err` like every other line. That covers an exception `_handled` does
+not catch in any command body, the `main()` callback and its
+`ctx.with_resource`, and the eager `--version` callback. The `wowlab`
+console script (`wowlab_core.cli:app`) sets `sys.excepthook` as an
+exception leaves the app, because Typer's own `__call__` replaces the hook
+on every call. A normal exit puts the hook back as it was. The hook prints
+the traceback line by line in Python's layout, with these differences:
+- the exception's message and each of its notes are one line each,
+  whatever they hold, so text from the install never starts a line;
+- a SyntaxError shows its `str()` (message, file, line) instead of the file,
+  source and caret lines;
+- there is no "Did you mean" for a NameError, AttributeError or ImportError;
+- an exception group's sub-exceptions are listed as "sub-exception n of m:"
+  with their lines indented instead of in Python's boxes. Python's limits
+  still apply: 15 per group, then "and N more exceptions", and a group 10
+  deep is one line;
+- an exception is printed once. A cycle through `__cause__` or `__context__`
+  stops where it meets one already printed, as Python's does. A group
+  member already printed elsewhere in the traceback is the one line
+  "[printed elsewhere in this traceback]", where Python prints it again.
+
+Python then exits non-zero as usual (1, or by the signal for
+KeyboardInterrupt). The hook never raises, not even on Ctrl-C while it
+escapes a long message: a hook that raised would make Python print the
+original exception itself, raw. Whatever stops it prints one line naming the
+exception's type instead. Its last guard makes no call, because Python checks
+for a pending signal at a call and a second Ctrl-C could escape it. A
+`SystemExit` whose code is text, which Python prints raw without calling a
+hook, prints as one escaped line and exits 1. Ctrl-C while that line is
+escaped prints nothing more.
+
+A click error (an unknown option, an extra argument, a bad value) prints its
+usage and help hint as click does. Its `Error:` line, which can hold the
+user's own arguments, prints as one escaped line. That holds also for one
+raised as the root context closes. The help that `no_args_is_help` prints is
+unchanged.
+
+A library log record that carries a traceback (`_log.exception`, such as the
+write gate's "could not record the rollback") or a stack prints its message
+as one line and then the traceback line by line, rendered as the hook
+renders it. Before this, the whole record printed on one line with `\x0a`
+escapes. A record that cannot be formatted prints one escaped line naming it
+instead of logging's own error report, which prints the record raw.
+
 ## 7. Repository layout
 
 ```
