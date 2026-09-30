@@ -321,6 +321,11 @@ standard library: Lua 5.1 plus exactly the client globals the addon uses. A
 global it lacks (for example `UnitName`) fails the lint as undefined.
 `tests/addon/test_lab_addon.py` checks the TOC template, the privacy rules,
 and that this file, `wow_client.yml` and the sources list the same APIs.
+No tracked text file may hold a raw bidirectional control character (the
+embeddings, overrides, isolates and marks that can make text read in a
+different order than it runs): `tests/repo/test_bidi_controls.py` checks every
+one, this folder's Lua and YAML included, and ruff's `PLE2502` checks Python
+as well (M11-37).
 
 ## API status
 
@@ -340,20 +345,52 @@ API added later is listed here as **[verify]**, lives in a section
 `/wowlab skip` can switch off, and is trusted only after an owner capture in
 which it ran; `docs/AGENT_WORKFLOW.md` has the rule.
 
-`tests/addon/test_lab_addon.py` checks where each call sits (M11-37). Every
-reference to a client global, and every use of a file-level local that holds
-one, must be in a section's `gather` or `carry` or in a function only they
-call. The references that run outside every section are listed by file,
-function and name, each with its reason, in `SECTIONLESS_API`. In `Core.lua`
-they are the event frame (`CreateFrame`, `RegisterEvent`, `UnregisterEvent`,
-`SetScript`), the timer (`C_Timer.After`), `C_EventUtils.IsEventValid`,
-`GetBuildInfo` for the `client` block and the `/wowlab` registration
-(`SlashCmdList`). The one other is `UnitRace` in the `PLAYER_ENTERING_WORLD`
-race check in `Customization.lua`. It runs only while a carried barber-shop
-record is held, so switching `customization` off stops it too, but it runs
-as the world is entered, not after the 15 s window. A call added anywhere
-else outside a section fails that test until it is put on the list on
-purpose.
+Where a call may sit (M11-37). A call is *switchable* when a `/wowlab skip`
+typed in the session stops it: it sits in a section's `gather`, or in a
+function only gathers call at once. A gather runs on the first on-world pass
+(15 s after entering the world), on its section's change events, on
+`/wowlab save` and at logout, and never for a switched-off section. A `carry`
+is not switchable: it runs at `ADDON_LOADED`, before the world is visible, so
+only a skip saved in an earlier session stops it. Nor is anything run at load
+or from an event handler outside a section. `tests/addon/test_lab_addon.py`
+holds the sources to three rules:
+
+- Every reference to a client global, and every use of a file-level local
+  that holds one, sits in a gather, or is listed in `SECTIONLESS_API` by
+  file, function and name, with the ways it may be used and why. That
+  function must be the only one of its name in its file, and a function
+  holding such a reference is only ever called directly, from the callers
+  pinned in `SECTIONLESS_CALLERS`. In `Core.lua` the list holds the event
+  frame (`CreateFrame`, `RegisterEvent`, `UnregisterEvent`, `SetScript`),
+  the timer (`C_Timer.After`), `C_EventUtils.IsEventValid`, `GetBuildInfo`
+  for the `client` block and the `/wowlab` registration (`SlashCmdList`).
+- A gather hands no function on. Nothing that may be a function (a function
+  literal, an addon function, a client function, `ns.Fn(...)`, or a local
+  that holds one) goes to `ns.On`, a timer, `SetScript`, a hook or any other
+  call that could run it later, into a table or a global, or out as a return
+  value: it would keep running after `/wowlab skip`. The exceptions are
+  listed in `HANDED_ON`, each with its reason. Today there is one:
+  `ItemLocation` as the self of its own `CreateFromEquipmentSlot`, called at
+  once.
+- `ns` is written only as `ns.Name` or `ns:Name`, and `ns.state` is only
+  indexed or assigned where it stands, so neither is reached through an
+  alias.
+
+The one listed call outside `Core.lua` is `UnitRace` in the
+`PLAYER_ENTERING_WORLD` race check in `Customization.lua`. It runs only while
+a carried barber-shop record is held, so switching `customization` off stops
+it from the next check. But it runs on every loading screen (each
+`PLAYER_ENTERING_WORLD`), not after the 15 s window. On a login with a carried
+record and no skip saved in an earlier session, nothing typed in that session
+can stop the first one: if it crashed the client, the crash would repeat until
+the addon is unticked at character select.
+
+Left to review, because the test does not follow them: a function read out
+of a table (a `pairs` loop, a field of what a call returned) or returned by a
+client call, and a way of reaching a client global that the dynamic-lookup
+check does not name (it rejects `_G`, `getfenv`, `debug`, `setmetatable` and
+the others it lists). Anything else outside a gather, or handed on from one,
+fails the test until someone lists it on purpose.
 
 | API | Used for | Status | Baseline |
 |---|---|---|---|

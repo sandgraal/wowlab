@@ -80,6 +80,16 @@ DYNAMIC_LOOKUP = (
     "load",
     "dofile",
     "require",
+    # Added in the M11-37 security review: each reaches a global by name or
+    # through an environment (`debug.getfenv(print).UnitLevel`), and selene's
+    # Lua 5.1 base declares them all.
+    "debug",
+    "setmetatable",
+    "getmetatable",
+    "newproxy",
+    "module",
+    "package",
+    "loadfile",
 )
 # §13.1: the capture records no wall-clock time.
 # `os` covers os.time() and os.date(); `C_Calendar` covers the in-game calendar.
@@ -351,15 +361,39 @@ def test_sources_call_no_forbidden_api(path: Path) -> None:
     assert not bad, bad
 
 
-@pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
-def test_sources_do_no_dynamic_global_lookup(path: Path) -> None:
-    tokens = _tokens(path)
-    bad = [
-        f"{_where(path, t)} {t.text}"
+def _dynamic_lookups(tokens: list[Token]) -> list[Token]:
+    return [
+        t
         for i, t in enumerate(tokens)
         if t.kind == "name" and t.text in DYNAMIC_LOOKUP and not _is_field(tokens, i)
     ]
+
+
+@pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
+def test_sources_do_no_dynamic_global_lookup(path: Path) -> None:
+    bad = [f"{_where(path, t)} {t.text}" for t in _dynamic_lookups(_tokens(path))]
     assert not bad, bad
+
+
+def test_dynamic_lookup_constructed_environment_reads() -> None:
+    """Constructed inputs (boundary cases from the M11-37 security review):
+    each line reaches a client global without `_G` or `getfenv` by name, and
+    passed every test and selene before the names were added."""
+    lines = {
+        "debug": 'local level = debug.getfenv(print).UnitLevel("player")\n',
+        "setmetatable": "local env = setmetatable({}, { __index = {} })\n",
+        "getmetatable": "local meta = getmetatable(string)\n",
+        "newproxy": "local proxy = newproxy(true)\n",
+        "module": "module(...)\n",
+        "package": "local loaded = package.loaded\n",
+        "loadfile": 'local chunk = loadfile("x")\n',
+    }
+    missed = [
+        name
+        for name, line in lines.items()
+        if name not in {t.text for t in _dynamic_lookups(tokenize(line))}
+    ]
+    assert not missed, missed
 
 
 @pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
@@ -2972,43 +3006,64 @@ def test_m11_29_readme_and_plan_say_what_is_confirmed_and_what_stays_verify() ->
 # From the M11-29 reviews: nothing checked where a new client call went, and a
 # `C_BarberShop.GetViewingChrModel` call added at ADDON_LOADED in a copy passed
 # every test. `pcall` catches Lua errors, not client assertions, so a client
-# call must sit in a section `/wowlab skip` can switch off
+# call must sit where a `/wowlab skip` typed in the session stops it
 # (docs/AGENT_WORKFLOW.md; lab/addon/README.md, "API status").
+#
+# *Switchable* means exactly that. A section's gather runs on the first
+# on-world pass (15 s after entering the world), on its section's change
+# events, on `/wowlab save` and at logout, and Core.lua returns before calling
+# it for a switched-off section. A section's carry is not switchable (ruling,
+# M11-37 review): Core.lua runs every carry at ADDON_LOADED, before the world
+# is visible, so only a skip saved in an earlier session stops it, and a crash
+# there repeats until the addon is unticked. Nor is anything run at load or by
+# an event handler outside a section.
 #
 # A *client API reference* is a global name the sources read or write that is
 # neither a Lua 5.1 standard global (`_LUA51_GLOBALS`; `print` counts as Lua)
 # nor one of the addon's own (`OWN_GLOBALS`). selene fails any global that
-# wow_client.yml does not declare, so these are the std's names (the `C_*`
-# namespaces, `CreateFrame`, `GetBuildInfo`, `Enum`, the client constants), and
-# the scan checks that it sees exactly them. A *handle* is a file-level local
-# that is ever bound or assigned a value holding a client global, a handle, or
-# a local that holds either (Core.lua's `frame`, `timerAfter`, `isEventValid`);
-# each use of a handle is a reference too, call or not. A reference is named as
-# written, fields and one method joined: `C_Timer.After`, `frame.RegisterEvent`,
+# wow_client.yml does not declare, so these are the std's names, and the scan
+# checks that it sees exactly them. A *handle* is a file-level local that is
+# ever bound or assigned a value holding a client global, a handle, or a local
+# that holds either (Core.lua's `frame`, `timerAfter`, `isEventValid`); each
+# use of a handle is a reference too. A reference is named as written, fields
+# and one method joined: `C_Timer.After`, `frame.RegisterEvent`,
 # `frame:SetScript`. The sources do no dynamic global lookup and never index a
-# std global or `ns` by brackets (tests above), so every client call is made
-# through a reference.
+# std global or `ns` by brackets (tests above), and rule 3 below keeps `ns`
+# from being aliased, so every client call is made through a reference.
 #
-# *Section code* is what only a section's own gather or carry runs: the
-# `gather` and `carry` of each `ns.Section({ ... })` (a function literal or a
-# local function), and any local function, `ns` function or function literal
-# that section code calls on the spot (`f(...)`, or as the first argument of
-# `pcall` or `ns.Call`) and nothing else refers to, other than its own
-# `gather = f` entry. A function handed on as a value (to `ns.On`,
-# `C_Timer.After`, a field) may run after its section is switched off, so it
-# counts as outside. Core.lua calls a section's gather only in `gather`, which
-# returns first for a switched-off section, and its carry only at
-# ADDON_LOADED for a section that is not off (pinned below), so `/wowlab skip`
-# switches all of it off. Everything else runs outside every section: a file's
-# top level, an `ns.On` handler, the slash command, any other field of a
-# section spec, and a helper that any of them also calls.
+# *Section code* is what only a gather runs: the `gather` of each
+# `ns.Section({ ... })` (a function literal or a local function), and any local
+# function, `ns` function or function literal that section code calls on the
+# spot (`f(...)`, `ns.F(...)`, `ns:F(...)`, or as the first argument of `pcall`
+# or `ns.Call`) and nothing else refers to.
 #
-# Every reference outside section code must match an entry of
-# `SECTIONLESS_API`, keyed (file, innermost enclosing function, reference as
-# written), each with its reason, and every entry must match one. A new call
-# outside a section fails until someone adds it there deliberately. Review
-# only: a client function handed out of section code as a call's return value
-# (`saved = helper()` in a gather, `saved()` in a handler).
+# 1. Every client API reference outside section code matches an entry of
+#    `SECTIONLESS_API`, keyed (file, function, reference as written), which
+#    names the only ways it may be used there, how many references there
+#    are, and why. The function label must name exactly one function in its
+#    file, and the reference must sit in that function. A named function that
+#    holds such a reference is referred to only by direct calls, from the
+#    callers pinned in `SECTIONLESS_CALLERS`.
+# 2. Section code hands no function on (ruling, M11-37 review). A value that
+#    may be a function (a function literal, an addon function, a client global,
+#    `ns.Fn(...)`, or a local that is ever given one) is never passed to a call
+#    other than one that calls or reads it on the spot (`_ON_THE_SPOT`, or a
+#    helper that is itself section code, whose parameter is then followed),
+#    never stored in a table, a field or a global (a function statement such
+#    as `function ns.later()` counts), and never returned. A function handed
+#    to `ns.On`, a timer, `SetScript` or a hook would run after `/wowlab skip`.
+#    Exceptions: `HANDED_ON`, each with its reason.
+# 3. `ns` and `ns.state` are never aliased: every other `ns` is `ns.Name` or
+#    `ns:Name`, and every `ns.state` is indexed or assigned where it stands.
+#
+# Every exception must match, so none goes stale. A new call outside a
+# section, or a function handed on from one, fails until someone adds it to
+# these lists deliberately. Review only: a function read out of a table (a
+# loop over `pairs`, a field of what a call returned) or returned by a client
+# call, which rule 2 does not follow, and a way to reach the client that the
+# dynamic-lookup test above does not name. Raw bidirectional control
+# characters: ruff's PLE2502 for Python, tests/repo/test_bidi_controls.py for
+# every tracked text file (Lua and YAML included).
 
 # The Lua 5.1 standard globals (the `lua51` base of wow_client.yml).
 _LUA51_GLOBALS = frozenset(
@@ -3055,34 +3110,104 @@ _LUA51_GLOBALS = frozenset(
     }
 )
 
-# Client API references that run outside every section, each with its reason.
-SECTIONLESS_API: dict[tuple[str, str, str], str] = {
+# How a SECTIONLESS_API reference may be used:
+#   call   called where it stands (`X(...)`, `X:m(...)`, the first argument of
+#          `pcall` or `ns.Call`);
+#   test   only inspected (inside `type(...)`, compared, under `not`, the left
+#          side of `and`, a whole `if` or `while` condition);
+#   bind   in the value of the file-level local that is its handle;
+#   self   the self argument after its own method: `pcall(H.M, H, ...)`;
+#   store  the target of an assignment.
+_CALL = frozenset({"call"})
+_TEST = frozenset({"test"})
+_TEST_CALL = frozenset({"test", "call"})
+_TEST_BIND = frozenset({"test", "bind"})
+_SELF = frozenset({"self"})
+_STORE = frozenset({"store"})
+
+# Client API references that run outside every section: (uses, how many
+# references there are, reason). A second reference of the same kind in the
+# same place is a new call too, so it fails until the count is raised.
+SECTIONLESS_API: dict[tuple[str, str, str], tuple[frozenset[str], int, str]] = {
     # Core.lua infrastructure: the event frame, the timer, the event check,
     # the `client` block and the slash command.
-    ("Core.lua", _TOP, "CreateFrame"): "the one event frame every section's events arrive on",
-    ("Core.lua", _TOP, "frame:SetScript"): "the frame's OnEvent dispatcher",
-    ("Core.lua", _TOP, "C_Timer"): "timerAfter: tests that the client has C_Timer",
-    ("Core.lua", _TOP, "C_Timer.After"): "timerAfter, bound once: the debounce and the first pass",
-    ("Core.lua", _TOP, "C_EventUtils"): "isEventValid: tests that the client has C_EventUtils",
-    ("Core.lua", _TOP, "C_EventUtils.IsEventValid"): "isEventValid, bound once for ns.On",
-    ("Core.lua", _TOP, "SlashCmdList.WOWLAB"): "registers /wowlab (a field store; no call)",
-    ("Core.lua", "ns.On", "isEventValid"): "an event the client does not know is not registered",
-    ("Core.lua", "ns.On", "frame.RegisterEvent"): "registers an event, through pcall",
-    ("Core.lua", "ns.On", "frame"): "RegisterEvent's self argument",
-    ("Core.lua", "off", "frame.UnregisterEvent"): "unregisters an event with no handler left",
-    ("Core.lua", "off", "frame"): "UnregisterEvent's self argument",
-    ("Core.lua", "schedule", "timerAfter"): "the 2 s change-event debounce",
-    ("Core.lua", "startFirstPass", "timerAfter"): "the 15 s window before the first on-world pass",
-    ("Core.lua", 'ns.On("PLAYER_ENTERING_WORLD")', "timerAfter"): "tests for the timer; no call",
-    ("Core.lua", "clientInfo", "GetBuildInfo"): "the `client` block: version, build, interface",
+    ("Core.lua", _TOP, "CreateFrame"): (_CALL, 1, "the one event frame all events arrive on"),
+    ("Core.lua", _TOP, "frame:SetScript"): (_CALL, 1, "the frame's OnEvent dispatcher"),
+    ("Core.lua", _TOP, "C_Timer"): (_TEST, 1, "timerAfter: tests that the client has C_Timer"),
+    ("Core.lua", _TOP, "C_Timer.After"): (_TEST_BIND, 2, "timerAfter, bound once"),
+    ("Core.lua", _TOP, "C_EventUtils"): (_TEST, 1, "isEventValid: tests for C_EventUtils"),
+    ("Core.lua", _TOP, "C_EventUtils.IsEventValid"): (_TEST_BIND, 2, "isEventValid, bound once"),
+    ("Core.lua", _TOP, "SlashCmdList.WOWLAB"): (_STORE, 1, "registers /wowlab; no call"),
+    ("Core.lua", "ns.On", "isEventValid"): (_TEST_CALL, 2, "an unknown event is not registered"),
+    ("Core.lua", "ns.On", "frame.RegisterEvent"): (_CALL, 1, "registers an event, through pcall"),
+    ("Core.lua", "ns.On", "frame"): (_SELF, 1, "RegisterEvent's self argument"),
+    ("Core.lua", "off", "frame.UnregisterEvent"): (_CALL, 1, "unregisters one, through pcall"),
+    ("Core.lua", "off", "frame"): (_SELF, 1, "UnregisterEvent's self argument"),
+    ("Core.lua", "schedule", "timerAfter"): (_TEST_CALL, 2, "the 2 s change-event debounce"),
+    ("Core.lua", "startFirstPass", "timerAfter"): (_CALL, 1, "the 15 s first-pass window"),
+    ("Core.lua", 'ns.On("PLAYER_ENTERING_WORLD")', "timerAfter"): (
+        _TEST,
+        1,
+        "whether there is a 15 s window; never called here",
+    ),
+    ("Core.lua", "clientInfo", "GetBuildInfo"): (_TEST_CALL, 2, "the `client` block"),
     # The one entry outside Core.lua. It runs only while the customization
     # section holds a carried record, which a switched-off section never does
     # (test_m11_37_the_race_check_calls_the_client_only_for_a_carried_record).
     ("Customization.lua", "raceID", "UnitRace"): (
+        _TEST_CALL,
+        2,
         "the gather's race id, and the PLAYER_ENTERING_WORLD check that drops a carried "
-        "record made for another race"
+        "record made for another race",
     ),
 }
+
+# Each named function that holds a SECTIONLESS_API reference, with the only
+# functions that may refer to it, each time by a direct call.
+SECTIONLESS_CALLERS: dict[tuple[str, str], frozenset[tuple[str, str]]] = {
+    ("Core.lua", "ns.On"): frozenset(
+        {("Core.lua", _TOP), ("Core.lua", "listen"), ("Customization.lua", _TOP)}
+    ),
+    ("Core.lua", "off"): frozenset({("Core.lua", "switchOff")}),
+    ("Core.lua", "schedule"): frozenset(
+        {("Core.lua", "onEvent"), ("Core.lua", 'ns.On("PLAYER_ENTERING_WORLD")')}
+    ),
+    ("Core.lua", "startFirstPass"): frozenset({("Core.lua", 'ns.On("PLAYER_ENTERING_WORLD")')}),
+    ("Core.lua", "clientInfo"): frozenset({("Core.lua", "ns.Write")}),
+    ("Customization.lua", "raceID"): frozenset(
+        {("Customization.lua", "gather"), ("Customization.lua", 'ns.On("PLAYER_ENTERING_WORLD")')}
+    ),
+}
+
+# Callees that call or read a function argument on the spot and keep nothing:
+# the callee as written -> (argument positions, None for all; reason).
+_ON_THE_SPOT: dict[str, tuple[frozenset[int] | None, str]] = {
+    "pcall": (frozenset({0}), "calls its first argument now"),
+    "ns . Call": (frozenset({0}), "pcall on its first argument (pinned below)"),
+    "ns . Fn": (frozenset({0}), "reads one field of its first argument (pinned below)"),
+    "type": (None, "reads the type"),
+    "tostring": (None, "makes a string"),
+    "pairs": (None, "iterates now"),
+    "ipairs": (None, "iterates now"),
+    "next": (None, "reads one entry"),
+    "ns . Number": (None, "keeps a number only (pinned below)"),
+    "ns . String": (None, "keeps a string only (pinned below)"),
+    "ns . Bool": (None, "keeps a boolean only (pinned below)"),
+    "ns . Numbers": (None, "keeps numbers only (pinned below)"),
+    "table . sort": (frozenset({1}), "calls the comparator while it sorts"),
+}
+
+# Values that may be functions, handed on from section code, each with why it
+# still runs on the spot: (file, function, the call as written) -> reason.
+HANDED_ON: dict[tuple[str, str, str], str] = {
+    ("Gear.lua", "itemLevel", "ns . Call ( fromSlot , ItemLocation , slot )"): (
+        "ItemLocation is the mixin's self: this is ItemLocation:CreateFromEquipmentSlot(slot), "
+        "called now through ns.Call"
+    ),
+}
+
+# Operators whose result is a boolean, a number or a string, never a function.
+_VALUE_OPS = _COMPARISON | {"..", "+", "-", "*", "/", "%", "^", "#"}
 
 
 @dataclass(frozen=True)
@@ -3091,18 +3216,33 @@ class _ApiRef:
 
     file: str
     function: str  # the innermost enclosing function's label, or _TOP
+    head: int | None  # that function's head token, None at top level
     api: str  # as written: `C_Timer.After`, `frame:SetScript`
     line: int
     client: bool  # a client global (False: a handle)
     in_section: bool
+    use: str  # call, test, bind, self, store, or value
 
     @property
     def key(self) -> tuple[str, str, str]:
         return (self.file, self.function, self.api)
 
 
-def _api_name(tokens: list[Token], k: int) -> str:
-    """The reference at k as written: its field chain, and a method if one follows."""
+@dataclass(frozen=True)
+class _CallSite:
+    """A call written with parentheses: `f(...)`, `a.b(...)`, `o:m(...)`."""
+
+    file: str
+    open: int  # the `(`
+    start: int  # the callee's first token
+    callee: str  # rendered: `ns . On`, `f : SetScript`
+    method: bool
+    args: list[tuple[int, int]]
+
+
+def _api_span(tokens: list[Token], k: int) -> tuple[str, int]:
+    """The reference at k as written (its field chain, and a method if one
+    follows), and the index after it."""
     name, j = tokens[k].text, k + 1
     while (
         j + 1 < len(tokens)
@@ -3111,18 +3251,18 @@ def _api_name(tokens: list[Token], k: int) -> str:
         and tokens[j + 1].kind == "name"
     ):
         name += tokens[j].text + tokens[j + 1].text
-        if tokens[j].text == ":":
-            break
         j += 2
-    return name
+        if tokens[j - 2].text == ":":
+            break
+    return name, j
 
 
 class _SectionScan:
-    """Section code, and every client API reference in the sources (M11-37)."""
+    """Section code, client API references and handed-on functions (M11-37)."""
 
     def __init__(self, sources: list[Path]) -> None:
         self.flows = {p.name: _Flow(p, _tokens(p)) for p in sources}
-        self.problems: list[str] = []
+        self.failures: list[tuple[str, str]] = []  # (rule, message)
         # The name token of each declaration (local, parameter, loop variable,
         # local function), by id of the _Decl: _Flow records both in one order.
         self.decl_at: dict[str, dict[int, int]] = {}
@@ -3137,11 +3277,31 @@ class _SectionScan:
                 for d, at in zip(ds, ats.get(n, []), strict=True)
             }
         self.declared = {name: set(at.values()) for name, at in self.decl_at.items()}
+        self.ns_heads: dict[str, tuple[str, int]] = {}
+        for name, flow in self.flows.items():
+            for head, label in flow.labels.items():
+                if label.startswith("ns.") and flow.tokens[head + 1].text == "ns":
+                    self.ns_heads[label[3:]] = (name, head)
         self.handles = {name: self._handles(flow) for name, flow in self.flows.items()}
         self.roots = self._roots()
         self.named = self._named()
         self.section = self._solve()
+        self.params = self._params()
+        self.calls = [call for name in self.flows for call in self._calls(name)]
+        self.mf = self._may_be_functions()
         self.refs = [ref for name in self.flows for ref in self._refs(name)]
+        self.handed_on_used: set[tuple[str, str, str]] = set()
+        self._check_sectionless()
+        self._check_callers()
+        self._check_handed_on()
+        self._check_aliases()
+
+    def fail(self, rule: str, message: str) -> None:
+        self.failures.append((rule, message))
+
+    def at(self, file: str, k: int) -> str:
+        flow = self.flows[file]
+        return f"{file}:{flow.tokens[k].line} in {flow.label_at(k)}"
 
     # what is a reference
 
@@ -3207,10 +3367,75 @@ class _SectionScan:
         at = self.decl_at[flow.path.name]
         return {id(d) for d in decls if id(d) in holds and flow.function_at(at[id(d)]) is None}
 
+    def _use(self, flow: _Flow, s: int, e: int) -> str:
+        """How the reference tokens[s:e] is used (see SECTIONLESS_API)."""
+        t = flow.tokens
+        n = len(t)
+        if flow.call_start(e):
+            return "call"
+        if s >= 2 and t[s - 1].kind == "op" and t[s - 1].text == "(" and e < n:
+            callee = _render(t[self._callee_start(flow, s - 2) : s - 1])
+            if t[e].text in {",", ")"} and callee in {"pcall", "ns . Call"}:
+                return "call"
+            if t[e].text == ")" and callee == "type":
+                return "test"
+        if (
+            s >= 6
+            and e < n
+            and t[e].text in {",", ")"}
+            and [x.text for x in t[s - 6 : s - 3]] == ["pcall", "(", t[s].text]
+            and t[s - 3].text == "."
+            and t[s - 1].text == ","
+        ):
+            return "self"
+        if s in flow.skip or (e < n and t[e].kind == "name" and t[e].text == "and"):
+            return "test"
+        if (
+            t[s - 1].kind == "name"
+            and t[s - 1].text in {"if", "elseif", "while"}
+            and e < n
+            and t[e].text in {"then", "do"}
+        ):
+            return "test"
+        if e < n and t[e].kind == "op" and t[e].text == "=" and flow.statement_level(e):
+            return "store"
+        if flow.function_at(s) is None:
+            for decls in flow.decls.values():
+                for d in decls:
+                    if id(d) in self.handles[flow.path.name] and any(
+                        a <= s < b for a, b in d.sources
+                    ):
+                        return "bind"
+        return "value"
+
+    def _refs(self, name: str) -> list[_ApiRef]:
+        flow = self.flows[name]
+        t = flow.tokens
+        out = []
+        for k in range(len(t)):
+            client = self.client(flow, k)
+            if client or self._use_of(flow, k, self.handles[name]):
+                api, end = _api_span(t, k)
+                fn = flow.function_at(k)
+                out.append(
+                    _ApiRef(
+                        name,
+                        flow.label_at(k),
+                        fn.head if fn else None,
+                        api,
+                        t[k].line,
+                        client,
+                        self.inside(name, k),
+                        self._use(flow, k, end),
+                    )
+                )
+        return out
+
     # what is section code
 
     def _roots(self) -> dict[tuple[str, int], set[int]]:
-        """Each section's gather and carry function, with the spec tokens that name it."""
+        """Each section's gather function, with the spec tokens that name it.
+        A carry is not a root: it runs at ADDON_LOADED (ruling above)."""
         roots: dict[tuple[str, int], set[int]] = {}
         call = ["ns", ".", "Section", "(", "{"]
         for name, flow in self.flows.items():
@@ -3219,7 +3444,7 @@ class _SectionScan:
                 if _is_field(t, k) or [x.text for x in t[k : k + 5]] != call:
                     continue
                 for key, s, e in flow.entries(k + 4):
-                    if key not in {"{gather}", "{carry}"}:
+                    if key != "{gather}":
                         continue
                     literal = t[s].kind == "name" and t[s].text == "function"
                     if literal and flow.block_end(s) == e - 1:
@@ -3230,22 +3455,20 @@ class _SectionScan:
                     if decl is not None and decl.function is not None:
                         roots.setdefault((name, decl.function), set()).add(s)
                     else:
-                        self.problems.append(
-                            f"{name}:{t[s].line} {key[1:-1]} is neither a function literal "
-                            "nor a local function"
+                        self.fail(
+                            "outside",
+                            f"{name}:{t[s].line} gather is neither a function literal "
+                            "nor a local function",
                         )
         return roots
 
     def _named(self) -> dict[tuple[str, int], list[tuple[str, int, int]]]:
         """Every reference, as (file, start, end token), to each local function
-        (`f`) and `ns` function (`ns.F`)."""
+        (`f`) and `ns` function (`ns.F`, `ns:F`)."""
         named: dict[tuple[str, int], list[tuple[str, int, int]]] = {}
-        ns_heads: dict[str, tuple[str, int]] = {}
+        for fid in self.ns_heads.values():
+            named[fid] = []
         for name, flow in self.flows.items():
-            for head, label in flow.labels.items():
-                if label.startswith("ns.") and flow.tokens[head + 1].text == "ns":
-                    ns_heads[label[3:]] = (name, head)
-                    named[(name, head)] = []
             for decls in flow.decls.values():
                 for d in decls:
                     if d.function is not None:
@@ -3264,10 +3487,11 @@ class _SectionScan:
                     decl is flow.namespace
                     and not (k > 0 and t[k - 1].text == "function")
                     and k + 2 < len(t)
-                    and t[k + 1].text == "."
-                    and t[k + 2].text in ns_heads
+                    and t[k + 1].kind == "op"
+                    and t[k + 1].text in {".", ":"}
+                    and t[k + 2].text in self.ns_heads
                 ):
-                    named[ns_heads[t[k + 2].text]].append((name, k, k + 3))
+                    named[self.ns_heads[t[k + 2].text]].append((name, k, k + 3))
         return named
 
     def inside(
@@ -3285,23 +3509,10 @@ class _SectionScan:
         fn = max(around, key=lambda b: b.head)
         return (file, fn.head) in (self.section if section is None else section)
 
-    def _solve(self) -> set[tuple[str, int]]:
-        """The largest set of functions that run only as section code."""
-        section = {(name, head) for name, flow in self.flows.items() for head in flow.functions}
-        changed = True
-        while changed:
-            changed = False
-            for fid in sorted(section):
-                if not self._runs_in_section(fid, section):
-                    section.discard(fid)
-                    changed = True
-        return section
-
     def called_here(self, file: str, s: int, e: int) -> bool:
         """Is the function expression tokens[s:e] called where it stands:
         followed by call arguments, or the first argument of `pcall(` or
-        `ns.Call(`? Passed anywhere else (`ns.On`, `C_Timer.After`, a field),
-        it may run after its section is switched off."""
+        `ns.Call(`?"""
         flow = self.flows[file]
         t = flow.tokens
         if flow.call_start(e):
@@ -3315,13 +3526,19 @@ class _SectionScan:
             and t[e].text in {",", ")"}
         ):
             return False
-        if t[s - 2].kind == "name" and t[s - 2].text == "pcall" and not _is_field(t, s - 2):
-            return True
-        return (
-            s >= 4
-            and [x.text for x in t[s - 4 : s - 1]] == ["ns", ".", "Call"]
-            and not _is_field(t, s - 4)
-        )
+        return _render(t[self._callee_start(flow, s - 2) : s - 1]) in {"pcall", "ns . Call"}
+
+    def _solve(self) -> set[tuple[str, int]]:
+        """The largest set of functions that run only as section code."""
+        section = {(name, head) for name, flow in self.flows.items() for head in flow.functions}
+        changed = True
+        while changed:
+            changed = False
+            for fid in sorted(section):
+                if not self._runs_in_section(fid, section):
+                    section.discard(fid)
+                    changed = True
+        return section
 
     def _runs_in_section(self, fid: tuple[str, int], section: set[tuple[str, int]]) -> bool:
         name, head = fid
@@ -3337,24 +3554,418 @@ class _SectionScan:
             return False  # never referenced: fail closed
         return all(self.inside(f, s, section) and self.called_here(f, s, e) for f, s, e in uses)
 
-    def _refs(self, name: str) -> list[_ApiRef]:
+    # calls, and values that may be functions
+
+    @staticmethod
+    def _callee_start(flow: _Flow, k: int) -> int:
+        """The first token of the prefix expression that ends at token k."""
+        t = flow.tokens
+        while k >= 0:
+            if t[k].kind == "name":
+                if k >= 2 and t[k - 1].kind == "op" and t[k - 1].text in {".", ":"}:
+                    k -= 2
+                    continue
+                return k
+            if t[k].kind == "op" and t[k].text in {")", "]"}:
+                o = flow.pair[k]
+                before = t[o - 1] if o >= 1 else None
+                if before is not None and (
+                    (before.kind == "name" and before.text not in _KEYWORDS)
+                    or (before.kind == "op" and before.text in {")", "]"})
+                ):
+                    k = o - 1
+                    continue
+                return o
+            return k
+        return 0
+
+    def _calls(self, name: str) -> list[_CallSite]:
         flow = self.flows[name]
         t = flow.tokens
+        headers = set()
+        for head in flow.functions:
+            paren = head + 1
+            while t[paren].text != "(":
+                paren += 1
+            headers.add(paren)
         out = []
-        for k in range(len(t)):
-            client = self.client(flow, k)
-            if client or self._use_of(flow, k, self.handles[name]):
-                out.append(
-                    _ApiRef(
-                        name,
-                        flow.label_at(k),
-                        _api_name(t, k),
-                        t[k].line,
-                        client,
-                        self.inside(name, k),
-                    )
-                )
+        for o, x in enumerate(t):
+            if not (x.kind == "op" and x.text == "(") or o == 0 or o in headers:
+                continue
+            p = t[o - 1]
+            if not (
+                (p.kind == "name" and p.text not in _KEYWORDS)
+                or (p.kind == "op" and p.text in {")", "]"})
+            ):
+                continue
+            start = self._callee_start(flow, o - 1)
+            method = o >= 2 and t[o - 2].kind == "op" and t[o - 2].text == ":"
+            args = [(a, b) for a, b in flow.exprlist(o + 1) if b <= flow.pair[o]]
+            out.append(_CallSite(name, o, start, _render(t[start:o]), method, args))
         return out
+
+    def _params(self) -> dict[tuple[str, int], list[int | None]]:
+        """Each function's parameters, as decl ids in order (None for `...`)."""
+        out: dict[tuple[str, int], list[int | None]] = {}
+        for name, flow in self.flows.items():
+            t = flow.tokens
+            by_token = {at: d_id for d_id, at in self.decl_at[name].items()}
+            for head in flow.functions:
+                paren = head + 1
+                while t[paren].text != "(":
+                    paren += 1
+                ids: list[int | None] = []
+                for k in range(paren + 1, flow.pair[paren]):
+                    if t[k].kind == "name":
+                        ids.append(by_token.get(k))
+                    elif t[k].text == "...":
+                        ids.append(None)
+                if t[head + 1].text != "(" and any(
+                    t[k].text == ":" for k in range(head + 1, paren)
+                ):
+                    ids.insert(0, None)  # `function a:b()` takes self first
+                out[(name, head)] = ids
+        return out
+
+    def _helper(self, call: _CallSite) -> tuple[str, int] | None:
+        """The section-code function a call calls by name, if it is one."""
+        flow = self.flows[call.file]
+        t = flow.tokens
+        fid = None
+        if call.start == call.open - 1:
+            decl = flow.resolve(t[call.start].text, call.start)
+            if decl is not None and decl.function is not None:
+                fid = (call.file, decl.function)
+        elif (
+            call.open - call.start == 3
+            and t[call.start].text == "ns"
+            and flow.resolve("ns", call.start) is flow.namespace
+            and t[call.start + 2].text in self.ns_heads
+        ):
+            fid = self.ns_heads[t[call.start + 2].text]
+        return fid if fid in self.section else None
+
+    def _split(self, flow: _Flow, s: int, e: int, word: str) -> list[tuple[int, int]]:
+        """tokens[s:e] split at each top-level `word` (`and`, `or`)."""
+        t = flow.tokens
+        parts, a, k = [], s, s
+        while k < e:
+            x = t[k]
+            if x.kind == "op" and x.text in _OPEN:
+                k = flow.pair[k] + 1
+                continue
+            if x.kind == "name" and x.text == "function":
+                k = flow.block_end(k) + 1
+                continue
+            if x.kind == "name" and x.text == word:
+                parts.append((a, k))
+                a = k + 1
+            k += 1
+        parts.append((a, e))
+        return parts
+
+    def _plain(self, flow: _Flow, s: int, e: int) -> bool:
+        """Does tokens[s:e] hold, at its top level, an operator whose result is
+        never a function (a comparison, arithmetic, `..`, `#`, `not`)?"""
+        t = flow.tokens
+        k = s
+        while k < e:
+            x = t[k]
+            if x.kind == "op" and x.text in _OPEN:
+                k = flow.pair[k] + 1
+                continue
+            if x.kind == "name" and x.text == "function":
+                k = flow.block_end(k) + 1
+                continue
+            if (x.kind == "op" and x.text in _VALUE_OPS) or (x.kind == "name" and x.text == "not"):
+                return True
+            k += 1
+        return False
+
+    def may_be_function(self, flow: _Flow, s: int, e: int, mf: set[int]) -> bool:
+        """May the expression tokens[s:e] be a function? (See rule 2.)"""
+        t = flow.tokens
+        if s >= e:
+            return False
+        ors = self._split(flow, s, e, "or")
+        if len(ors) > 1:
+            return any(self.may_be_function(flow, a, b, mf) for a, b in ors)
+        ands = self._split(flow, s, e, "and")
+        if len(ands) > 1:
+            return self.may_be_function(flow, *ands[-1], mf)  # else it is false or nil
+        if self._plain(flow, s, e):
+            return False
+        x = t[s]
+        if x.kind in {"string", "number"} or x.text in {"nil", "true", "false", "..."}:
+            return False
+        if x.kind == "name" and x.text == "function":
+            return True
+        if x.kind == "op" and x.text == "{":
+            return False  # a constructor: its entries are stores (rule 2)
+        if x.kind == "op" and x.text == "(" and flow.pair[s] == e - 1:
+            return self.may_be_function(flow, s + 1, e - 1, mf)
+        if x.kind != "name":
+            return True  # something else: fail closed
+        k, calls, first_call, last_call = s + 1, 0, e, False
+        while k < e:
+            y = t[k]
+            if y.kind == "op" and y.text == "." and k + 1 < e and t[k + 1].kind == "name":
+                k, last_call = k + 2, False
+            elif y.kind == "op" and y.text == "[":
+                k, last_call = flow.pair[k] + 1, False
+            elif y.kind == "op" and y.text == ":" and flow.call_start(k + 2):
+                first_call = min(first_call, k)
+                k = k + 2
+                k = flow.pair[k] + 1 if t[k].kind == "op" else k + 1
+                calls, last_call = calls + 1, True
+            elif flow.call_start(k):
+                first_call = min(first_call, k)
+                k = flow.pair[k] + 1 if t[k].kind == "op" else k + 1
+                calls, last_call = calls + 1, True
+            else:
+                return True  # fail closed
+        if last_call:
+            # Only ns.Fn(...) returns a function (a client call's result is review only).
+            return calls == 1 and _render(t[s:first_call]) == "ns . Fn"
+        if calls:
+            return False  # a field of what a call returned: review only
+        decl = flow.resolve(x.text, s)
+        if decl is None:
+            return x.text not in OWN_GLOBALS  # a client global (or a Lua builtin) as a value
+        if decl is flow.namespace:
+            return s + 2 < e and t[s + 2].text in self.ns_heads
+        if decl.function is not None:
+            return True
+        return id(decl) in mf
+
+    @staticmethod
+    def _loop_variable(flow: _Flow, at: int) -> bool:
+        t = flow.tokens
+        k = at
+        while k >= 2 and t[k - 1].text == "," and t[k - 2].kind == "name":
+            k -= 2
+        return k >= 1 and t[k - 1].kind == "name" and t[k - 1].text == "for"
+
+    def _may_be_functions(self) -> set[int]:
+        """ids of the locals and parameters that may hold a function. A loop
+        variable is not followed (a value read out of a table: review only)."""
+        mf: set[int] = set()
+        changed = True
+        while changed:
+            changed = False
+            for name, flow in self.flows.items():
+                at = self.decl_at[name]
+                for decls in flow.decls.values():
+                    for d in decls:
+                        if id(d) in mf or d.function is not None:
+                            continue
+                        if self._loop_variable(flow, at[id(d)]):
+                            continue
+                        if any(self.may_be_function(flow, s, e, mf) for s, e in d.sources):
+                            mf.add(id(d))
+                            changed = True
+            for call in self.calls:
+                if not self.inside(call.file, call.open) or self._on_the_spot(call) is not None:
+                    continue
+                helper = self._helper(call)
+                if helper is None:
+                    continue
+                params = self.params[helper]
+                offset = 1 if call.method else 0
+                flow = self.flows[call.file]
+                for p, (a, b) in enumerate(call.args):
+                    if p + offset < len(params) and self.may_be_function(flow, a, b, mf):
+                        param = params[p + offset]
+                        if param is not None and param not in mf:
+                            mf.add(param)
+                            changed = True
+        return mf
+
+    def _on_the_spot(self, call: _CallSite) -> frozenset[int] | None:
+        """The argument positions a trusted callee uses on the spot, or None."""
+        entry = _ON_THE_SPOT.get(call.callee)
+        if entry is None:
+            return None
+        if call.callee.startswith("ns "):
+            flow = self.flows[call.file]
+            if flow.resolve("ns", call.start) is not flow.namespace:
+                return None
+        positions = entry[0]
+        return frozenset(range(len(call.args))) if positions is None else positions
+
+    # the checks
+
+    def _head(self, file: str, label: str, rule: str) -> int | None:
+        """The one function `label` names in `file` (None: the top level); a
+        label that names none or several is a failure."""
+        if label == _TOP:
+            return None
+        flow = self.flows.get(file)
+        heads = [h for h, x in flow.labels.items() if x == label] if flow else []
+        if len(heads) != 1:
+            self.fail("label", f"{file}: {label} names {len(heads)} functions ({rule})")
+            return -1
+        return heads[0]
+
+    def _check_sectionless(self) -> None:
+        heads = {
+            (file, label): self._head(file, label, "SECTIONLESS_API")
+            for file, label in {(k[0], k[1]) for k in SECTIONLESS_API}
+        }
+        used: dict[tuple[str, str, str], int] = {}
+        for ref in self.refs:
+            if ref.in_section:
+                continue
+            entry = SECTIONLESS_API.get(ref.key)
+            if entry is None or heads[(ref.file, ref.function)] != ref.head:
+                self.fail(
+                    "outside",
+                    f"{ref.file}:{ref.line} in {ref.function}: `{ref.api}` is outside every "
+                    "section's gather; move it into one, or add it to SECTIONLESS_API "
+                    "with its reason",
+                )
+                continue
+            used[ref.key] = used.get(ref.key, 0) + 1
+            if ref.use not in entry[0]:
+                self.fail(
+                    "use",
+                    f"{ref.file}:{ref.line} in {ref.function}: `{ref.api}` is used as "
+                    f"{ref.use}; SECTIONLESS_API allows {sorted(entry[0])}",
+                )
+        for key, (_, count, _) in sorted(SECTIONLESS_API.items()):
+            if key not in used:
+                self.fail("stale", f"SECTIONLESS_API entry {key} matches no reference")
+            elif used[key] != count:
+                self.fail(
+                    "use",
+                    f"{key[0]} in {key[1]}: `{key[2]}` appears {used[key]} times; "
+                    f"SECTIONLESS_API allows {count}",
+                )
+
+    def _check_callers(self) -> None:
+        holders = {
+            (ref.file, ref.head)
+            for ref in self.refs
+            if not ref.in_section and ref.key in SECTIONLESS_API and ref.head is not None
+        }
+        pinned_seen = set()
+        for file, head in sorted(holders):
+            refs = self.named.get((file, head))
+            if refs is None:
+                continue  # a function literal: registered where it is written
+            label = self.flows[file].labels[head]
+            pinned = SECTIONLESS_CALLERS.get((file, label))
+            if pinned is None:
+                self.fail("callers", f"{file}: {label} calls the client; pin its callers")
+                continue
+            pinned_seen.add((file, label))
+            callers = set()
+            for f, s, e in refs:
+                flow = self.flows[f]
+                if not flow.call_start(e):
+                    self.fail(
+                        "callers",
+                        f"{self.at(f, s)}: {label} is referred to other than by a direct call",
+                    )
+                    continue
+                caller = flow.label_at(s)
+                if caller != _TOP:
+                    self._head(f, caller, f"a caller of {label}")
+                callers.add((f, caller))
+            if callers != pinned:
+                self.fail(
+                    "callers",
+                    f"{file}: {label} is called from {sorted(callers)}; "
+                    f"SECTIONLESS_CALLERS pins {sorted(pinned)}",
+                )
+        for key in sorted(set(SECTIONLESS_CALLERS) - pinned_seen):
+            self.fail("stale", f"SECTIONLESS_CALLERS entry {key} matches no function")
+
+    def _handed_on(self, file: str, k: int, text: str, what: str) -> None:
+        """Report a function handed on in the function around token k (the
+        call's `(`, the constructor's `{`, the store's target, the `return`),
+        unless HANDED_ON lists it."""
+        flow = self.flows[file]
+        key = (file, flow.label_at(k), text)
+        fn = flow.function_at(k)
+        if key in HANDED_ON and self._head(file, key[1], "HANDED_ON") == (fn.head if fn else None):
+            self.handed_on_used.add(key)
+            return
+        self.fail("handed-on", f"{self.at(file, k)}: {what}")
+
+    def _check_handed_on(self) -> None:
+        for call in self.calls:
+            if not self.inside(call.file, call.open):
+                continue
+            flow = self.flows[call.file]
+            t = flow.tokens
+            spot = self._on_the_spot(call)
+            helper = self._helper(call) if spot is None else None
+            params = self.params[helper] if helper is not None else []
+            offset = 1 if call.method else 0
+            text = _render(t[call.start : flow.pair[call.open] + 1])
+            for p, (a, b) in enumerate(call.args):
+                if not self.may_be_function(flow, a, b, self.mf):
+                    continue
+                if (spot is not None and p in spot) or (
+                    p + offset < len(params) and params[p + offset] is not None
+                ):
+                    continue
+                self._handed_on(
+                    call.file,
+                    call.open,
+                    text,
+                    f"`{_render(t[a:b])}` may be a function; handed to `{call.callee}`",
+                )
+        for name, flow in self.flows.items():
+            for store in flow.stores:
+                # A constructor entry's own token may be a function literal's
+                # head; the entry sits in the function around its `{`.
+                k = flow.opener[store.at] if store.text.startswith("{") else store.at
+                if (
+                    k is not None
+                    and self.inside(name, k)
+                    and self.may_be_function(flow, *store.value, self.mf)
+                ):
+                    what = f"`{store.text}` stores what may be a function"
+                    self._handed_on(name, k, store.text, what)
+            t = flow.tokens
+            for head in flow.functions:
+                # `function ns.later()` or `function Later()` written in section
+                # code stores a function where other code can call it later.
+                named_statement = t[head + 1].text != "(" and t[head - 1].text != "local"
+                if named_statement and self.inside(name, head, exclude=head):
+                    text = f"function {flow.labels[head]}"
+                    self._handed_on(name, head - 1, text, f"`{text}` stores a function")
+                if (name, head) not in self.section:
+                    continue
+                for s, e in flow.returns(head):
+                    if self.may_be_function(flow, s, e, self.mf):
+                        text = f"return {_render(flow.tokens[s:e])}"
+                        what = f"`{text}` returns what may be a function"
+                        self._handed_on(name, s - 1, text, what)
+        for key in sorted(set(HANDED_ON) - self.handed_on_used):
+            self.fail("stale", f"HANDED_ON entry {key} matches nothing")
+
+    def _check_aliases(self) -> None:
+        for name, flow in self.flows.items():
+            t = flow.tokens
+            for k in range(len(t)):
+                if t[k].text != "ns" or not self._variable(flow, k):
+                    continue
+                if flow.resolve("ns", k) is not flow.namespace:
+                    continue
+                nxt = t[k + 1] if k + 1 < len(t) else None
+                if nxt is None or nxt.kind != "op" or nxt.text not in {".", ":"}:
+                    self.fail("ns", f"{self.at(name, k)}: `ns` used bare; write ns.Name or ns:Name")
+                    continue
+                if nxt.text == "." and k + 2 < len(t) and t[k + 2].text == "state":
+                    after = t[k + 3] if k + 3 < len(t) else None
+                    if after is None or after.kind != "op" or after.text not in {"[", "="}:
+                        self.fail(
+                            "state",
+                            f"{self.at(name, k)}: `ns.state` used other than indexed or assigned",
+                        )
 
 
 def _section_scan(sources: list[Path] | None = None) -> _SectionScan:
@@ -3366,31 +3977,50 @@ def _section_scan(sources: list[Path] | None = None) -> _SectionScan:
         raise AssertionError(f"the sources could not be analysed: {err!r}") from err
 
 
-def _unlisted(scan: _SectionScan) -> list[_ApiRef]:
-    return [ref for ref in scan.refs if not ref.in_section and ref.key not in SECTIONLESS_API]
+def _failures(scan: _SectionScan, *rules: str) -> list[str]:
+    return [message for rule, message in scan.failures if rule in rules]
 
 
 def test_m11_37_every_client_api_call_is_inside_a_section() -> None:
-    """Every client API reference sits in section code, which `/wowlab skip`
-    switches off, or is one of the named SECTIONLESS_API entries. See the
-    comment above `_LUA51_GLOBALS` for what counts as each."""
+    """Rule 1: every client API reference sits in section code, which a
+    `/wowlab skip` typed in the session stops, or is a SECTIONLESS_API entry
+    in the one function its label names, used only in the ways it lists. See
+    the comment above `_LUA51_GLOBALS`."""
     scan = _section_scan()
-    problems = list(scan.problems)
-    problems += [
-        f"{ref.file}:{ref.line} in {ref.function}: `{ref.api}` is outside every section's "
-        "gather and carry; move it into a section, or add it to SECTIONLESS_API with its reason"
-        for ref in _unlisted(scan)
-    ]
-    assert not problems, problems
+    assert not _failures(scan, "outside", "use", "label"), _failures(
+        scan, "outside", "use", "label"
+    )
 
 
-def test_m11_37_every_sectionless_entry_is_used() -> None:
-    """An entry no reference outside a section matches is stale (its call moved
-    into a section, or away): it fails until it is removed."""
+def test_m11_37_every_exception_is_used() -> None:
+    """An entry of SECTIONLESS_API, SECTIONLESS_CALLERS or HANDED_ON that
+    matches nothing is stale: it fails until it is removed."""
     scan = _section_scan()
-    used = {ref.key for ref in scan.refs if not ref.in_section}
-    stale = sorted(set(SECTIONLESS_API) - used)
-    assert not stale, stale
+    assert not _failures(scan, "stale"), _failures(scan, "stale")
+
+
+def test_m11_37_functions_that_call_the_client_outside_a_section_have_pinned_callers() -> None:
+    """Rule 1: a named function holding a SECTIONLESS_API reference is referred
+    to only by direct calls, from exactly the functions SECTIONLESS_CALLERS
+    pins, so it cannot be handed to a handler or a timer, or called at load."""
+    scan = _section_scan()
+    assert not _failures(scan, "callers", "label"), _failures(scan, "callers", "label")
+
+
+def test_m11_37_section_code_hands_no_function_on() -> None:
+    """Rule 2 (ruling, M11-37 review): a gather hands no function on to
+    something that could run it after `/wowlab skip`: not to ns.On, a timer,
+    SetScript or a hook, not into a table or a global, not as a return value."""
+    scan = _section_scan()
+    assert not _failures(scan, "handed-on"), _failures(scan, "handed-on")
+
+
+def test_m11_37_ns_and_ns_state_are_never_aliased() -> None:
+    """Rule 3: `ns` only as `ns.Name` or `ns:Name`, and `ns.state` only
+    indexed or assigned where it stands, so neither can be reached through a
+    local the scan does not follow."""
+    scan = _section_scan()
+    assert not _failures(scan, "ns", "state"), _failures(scan, "ns", "state")
 
 
 def test_m11_37_the_scan_sees_exactly_the_std_names() -> None:
@@ -3412,8 +4042,9 @@ def test_m11_37_section_code_runs_only_behind_the_off_switch() -> None:
     calls the gather in `gather`, which returns first for a switched-off
     section, tests for one in ns.Write, and tests for and calls the carry at
     ADDON_LOADED only for a section that is not off. No source names either in
-    a string. ns.Call, which the scan takes as calling its first argument on
-    the spot, is `pcall` on it."""
+    a string. The helpers `_ON_THE_SPOT` trusts do what it says: ns.Call is
+    `pcall` on its first argument, ns.Fn reads one field, and the type filters
+    return nothing but their scalar."""
     reads = []
     for path in sorted(ADDON.glob("*.lua")):
         tokens = _tokens(path)
@@ -3440,33 +4071,41 @@ def test_m11_37_section_code_runs_only_behind_the_off_switch() -> None:
         "if section . carry and not section . off then "
         "local ok , record = pcall ( section . carry , WowLabCharDB )"
     ) in _body(core, 'ns.On("ADDON_LOADED")')
-    assert _body(core, "ns.Call").startswith(
-        "function ns . Call ( fn , ... ) local results = ns . Pack ( pcall ( fn , ... ) )"
+    assert _body(core, "ns.Call") == (
+        "function ns . Call ( fn , ... ) local results = ns . Pack ( pcall ( fn , ... ) ) "
+        "if not results [ 1 ] then return nil end return unpack ( results , 2 , results . n ) end"
+    )
+    assert _body(core, "ns.Fn") == (
+        'function ns . Fn ( tbl , key ) if type ( tbl ) == "table" and type ( tbl [ key ] ) == '
+        '"function" then return tbl [ key ] end return nil end'
+    )
+    for name, kind in (("Number", "number"), ("String", "string"), ("Bool", "boolean")):
+        assert _body(core, f"ns.{name}") == (
+            f'function ns . {name} ( value ) if type ( value ) == "{kind}" then return value end '
+            "return nil end"
+        )
+    assert _body(core, "ns.Numbers") == (
+        "function ns . Numbers ( list ) local out = { } "
+        'if type ( list ) == "table" then for _ , value in ipairs ( list ) do '
+        'if type ( value ) == "number" then out [ # out + 1 ] = value end end end return out end'
     )
 
 
 def test_m11_37_the_race_check_calls_the_client_only_for_a_carried_record() -> None:
     """The one SECTIONLESS_API entry outside Core.lua. `raceID` (UnitRace) runs
     from the customization gather and from Customization.lua's
-    PLAYER_ENTERING_WORLD race check, which returns before calling it unless
-    ns.state holds a carried customization record. A switched-off section
-    never holds one: switchOff clears its entry, and ns.state is otherwise
-    written only by `gather` (which refuses an off section), by the carry at
-    ADDON_LOADED (skipped for an off section) and by the race check itself (an
-    absent record). So `/wowlab skip customization` stops this call too. It
-    runs at PLAYER_ENTERING_WORLD itself, not after the 15 s window."""
+    PLAYER_ENTERING_WORLD race check (its callers are pinned in
+    SECTIONLESS_CALLERS, each a direct call). The check returns before calling
+    it unless ns.state holds a carried customization record. A switched-off
+    section never holds one: switchOff clears its entry, and ns.state is
+    otherwise written only by `gather` (which refuses an off section), by the
+    carry at ADDON_LOADED (skipped for an off section) and by the race check
+    itself (an absent record); rule 3 keeps ns.state from being written
+    through an alias. So `/wowlab skip customization` stops this call too. It
+    runs on every PLAYER_ENTERING_WORLD (every loading screen) while a carried
+    record is held, not after the 15 s window."""
     scan = _section_scan()
     flow = scan.flows["Customization.lua"]
-    heads = [d.function for d in flow.decls.get("raceID", []) if d.function is not None]
-    assert len(heads) == 1, heads
-    callers = sorted(
-        {
-            scan.flows[f].label_at(s)
-            for f, s, _ in scan.named[("Customization.lua", heads[0])]
-            if not scan.inside(f, s)
-        }
-    )
-    assert callers == ['ns.On("PLAYER_ENTERING_WORLD")'], callers
     check = _body(flow, 'ns.On("PLAYER_ENTERING_WORLD")')
     assert check.startswith(
         "function ( ) local record = ns . state [ KEY ] "
@@ -3474,7 +4113,11 @@ def test_m11_37_the_race_check_calls_the_client_only_for_a_carried_record() -> N
         'or type ( record . race_id ) ~= "number" then return end '
         "local race = raceID ( )"
     ), check
-    assert check.count("raceID (") == 1, check
+    assert check.count("raceID") == 1, check
+    assert SECTIONLESS_CALLERS[("Customization.lua", "raceID")] == {
+        ("Customization.lua", "gather"),
+        ("Customization.lua", 'ns.On("PLAYER_ENTERING_WORLD")'),
+    }
     stores = sorted(
         (name, f.label_at(store.at), store.text)
         for name, f in scan.flows.items()
@@ -3502,101 +4145,272 @@ def test_m11_37_the_race_check_calls_the_client_only_for_a_carried_record() -> N
 # (file, [(text found once, its replacement), ...]).
 _ADDON_LOADED = "    ns.probe = loadProbe(WowLabCharDB)\n"
 _REFRESH = "function ns.Refresh()\n"
+_CORE_WORLD = "    if timerAfter and not firstPassDone then\n"
+_CORE_ON = "    if not handlers[event] then\n"
 _RACE_CHECK = "    local race = raceID()\n"
 _MODEL_LOOKUP = '        local model = ns.Fn(C_BarberShop, "GetViewingChrModel")\n'
+_CARRY_GUARD = (
+    '        if type(r) ~= "table" or type(r.absent) ~= "nil" or type(r.choices) ~= "table" then\n'
+    "            return nil\n"
+    "        end\n"
+)
+_BARBER_GATHER = "    gather = function(event)\n"
+_KEY = 'local KEY = "customization"\n'
 _PROFESSIONS_GATHER = "    gather = function()\n"
+_PROFESSIONS_SLOTS = "        local slots = ns.Pack(GetProfessions())\n"
+_PROF = "        local prof = GetProfessions\n"
 _GEAR_SLOTS = "        local first, last ="
-# Each leaves this reference outside every section and outside SECTIONLESS_API.
-_M11_37_CASES: dict[str, tuple[str, list[tuple[str, str]], tuple[str, str, str]]] = {
+_GEAR_TOP = "local _, ns = ...\n"
+
+
+def _in_professions(lines: str) -> tuple[str, list[tuple[str, str]]]:
+    return ("Professions.lua", [(_PROFESSIONS_SLOTS, lines + _PROFESSIONS_SLOTS)])
+
+
+# Each must leave a failure of this rule whose message holds this text.
+_M11_37_CASES: dict[str, tuple[tuple[str, list[tuple[str, str]]], tuple[str, str]]] = {
     # The M11-29 review's copy.
     "constructed-model-call-at-addon-loaded": (
-        "Core.lua",
-        [(_ADDON_LOADED, _ADDON_LOADED + _MODEL_LOOKUP[4:] + "    ns.Call(model)\n")],
-        ("Core.lua", 'ns.On("ADDON_LOADED")', "C_BarberShop"),
+        ("Core.lua", [(_ADDON_LOADED, _ADDON_LOADED + _MODEL_LOOKUP[4:] + "    ns.Call(model)\n")]),
+        ("outside", 'in ns.On("ADDON_LOADED"): `C_BarberShop`'),
+    ),
+    # Ruling: a carry runs at ADDON_LOADED, before a skip can be typed.
+    "constructed-model-call-in-the-carry": (
+        (
+            "Customization.lua",
+            [(_CARRY_GUARD, _CARRY_GUARD + _MODEL_LOOKUP + "        pcall(model)\n")],
+        ),
+        ("outside", "in carry: `C_BarberShop`"),
     ),
     "constructed-direct-call-at-file-level": (
-        "Gear.lua",
-        [("local _, ns = ...\n", 'local _, ns = ...\nlocal level = UnitLevel("player")\n')],
-        ("Gear.lua", _TOP, "UnitLevel"),
+        ("Gear.lua", [(_GEAR_TOP, _GEAR_TOP + 'local level = UnitLevel("player")\n')]),
+        ("outside", "in <top level>: `UnitLevel`"),
     ),
     "constructed-section-helper-also-called-by-a-handler": (
-        "Gear.lua",
-        [
-            (
-                "ns.Section({\n",
-                'ns.On("PLAYER_LEVEL_UP", function()\n    itemLevel(1, "")\nend)\n\nns.Section({\n',
-            )
-        ],
-        ("Gear.lua", "itemLevel", "C_Item"),
+        (
+            "Gear.lua",
+            [
+                (
+                    "ns.Section({\n",
+                    'ns.On("PLAYER_LEVEL_UP", function()\n    itemLevel(1, "")\nend)\n\n'
+                    "ns.Section({\n",
+                )
+            ],
+        ),
+        ("outside", "in itemLevel: `C_Item`"),
     ),
     "constructed-ns-helper-called-from-core": (
-        "Core.lua",
-        [(_REFRESH, _REFRESH + "    ns.Spec()\n")],
-        ("Talents.lua", "ns.Spec", "C_SpecializationInfo"),
+        ("Core.lua", [(_REFRESH, _REFRESH + "    ns.Spec()\n")]),
+        ("outside", "in ns.Spec: `C_SpecializationInfo`"),
+    ),
+    "constructed-ns-method-call-from-core": (
+        ("Core.lua", [(_REFRESH, _REFRESH + "    ns:Spec()\n")]),
+        ("outside", "in ns.Spec: `C_SpecializationInfo`"),
+    ),
+    "constructed-ns-alias-in-a-handler": (
+        (
+            "Gear.lua",
+            [
+                (
+                    _GEAR_TOP,
+                    _GEAR_TOP
+                    + 'ns.On("PLAYER_LEVEL_UP", function()\n    local n = ns\n    n.Spec()\nend)\n',
+                )
+            ],
+        ),
+        ("ns", "`ns` used bare"),
     ),
     "constructed-infrastructure-call-in-a-new-place": (
-        "Core.lua",
-        [(_REFRESH, _REFRESH + "    GetBuildInfo()\n")],
-        ("Core.lua", "ns.Refresh", "GetBuildInfo"),
+        ("Core.lua", [(_REFRESH, _REFRESH + "    GetBuildInfo()\n")]),
+        ("outside", "in ns.Refresh: `GetBuildInfo`"),
     ),
     "constructed-new-method-on-the-event-frame": (
-        "Core.lua",
-        [(_ADDON_LOADED, _ADDON_LOADED + "    frame:Hide()\n")],
-        ("Core.lua", 'ns.On("ADDON_LOADED")', "frame:Hide"),
+        ("Core.lua", [(_ADDON_LOADED, _ADDON_LOADED + "    frame:Hide()\n")]),
+        ("outside", 'in ns.On("ADDON_LOADED"): `frame:Hide`'),
+    ),
+    "constructed-alias-of-the-event-frame": (
+        ("Core.lua", [(_CORE_ON, "    local f = frame\n    f:RegisterAllEvents()\n" + _CORE_ON)]),
+        ("use", "in ns.On: `frame` is used as value"),
+    ),
+    "constructed-timer-called-where-only-tested": (
+        ("Core.lua", [(_CORE_WORLD, "    timerAfter(0, ns.Refresh)\n" + _CORE_WORLD)]),
+        ("use", "`timerAfter` is used as call"),
+    ),
+    "constructed-client-block-at-file-load": (
+        ("Core.lua", [("SLASH_WOWLAB1 = ", "clientInfo()\nSLASH_WOWLAB1 = ")]),
+        ("callers", "clientInfo is called from"),
+    ),
+    "constructed-second-function-with-an-allowed-label": (
+        (
+            "Customization.lua",
+            [
+                (
+                    _KEY,
+                    _KEY + 'ns.raceID = function()\n    return select(3, UnitRace("player"))\nend\n'
+                    'ns.On("PLAYER_LEVEL_UP", function()\n    ns.raceID()\nend)\n',
+                )
+            ],
+        ),
+        ("label", "raceID names 2 functions"),
     ),
     "constructed-function-field-beside-gather": (
-        "Professions.lua",
-        [
-            (
-                '    key = "professions",\n',
-                '    key = "professions",\n'
-                "    check = function()\n        return GetProfessions()\n    end,\n",
-            )
-        ],
-        ("Professions.lua", "check", "GetProfessions"),
+        (
+            "Professions.lua",
+            [
+                (
+                    '    key = "professions",\n',
+                    '    key = "professions",\n'
+                    "    check = function()\n        return GetProfessions()\n    end,\n",
+                )
+            ],
+        ),
+        ("outside", "in check: `GetProfessions`"),
     ),
     "constructed-timer-in-the-race-check": (
-        "Customization.lua",
-        [(_RACE_CHECK, "    C_Timer.After(1, raceID)\n" + _RACE_CHECK)],
-        ("Customization.lua", 'ns.On("PLAYER_ENTERING_WORLD")', "C_Timer.After"),
+        ("Customization.lua", [(_RACE_CHECK, "    C_Timer.After(1, raceID)\n" + _RACE_CHECK)]),
+        ("outside", 'in ns.On("PLAYER_ENTERING_WORLD"): `C_Timer.After`'),
     ),
     "constructed-client-function-kept-in-a-file-local": (
-        "Customization.lua",
-        [
-            ('local KEY = "customization"\n', 'local KEY = "customization"\nlocal later = nil\n'),
-            (_MODEL_LOOKUP, _MODEL_LOOKUP + "        later = model\n"),
-            (_RACE_CHECK, "    if later then\n        later()\n    end\n" + _RACE_CHECK),
-        ],
-        ("Customization.lua", 'ns.On("PLAYER_ENTERING_WORLD")', "later"),
+        (
+            "Customization.lua",
+            [
+                (_KEY, _KEY + "local later = nil\n"),
+                (_MODEL_LOOKUP, _MODEL_LOOKUP + "        later = model\n"),
+                (_RACE_CHECK, "    if later then\n        later()\n    end\n" + _RACE_CHECK),
+            ],
+        ),
+        ("outside", 'in ns.On("PLAYER_ENTERING_WORLD"): `later`'),
     ),
+    "constructed-state-through-an-alias": (
+        (
+            "Customization.lua",
+            [
+                (
+                    _KEY,
+                    _KEY + 'ns.On("PLAYER_LEVEL_UP", function()\n    local s = ns.state\n'
+                    "    s.customization = { carried = true, race_id = 0 }\nend)\n",
+                )
+            ],
+        ),
+        ("state", "`ns.state` used other than indexed or assigned"),
+    ),
+    # Rule 2: section code hands no function on.
     "constructed-handler-registered-from-a-gather": (
-        "Professions.lua",
-        [
-            (
-                _PROFESSIONS_GATHER,
-                _PROFESSIONS_GATHER + '        ns.On("SKILL_LINES_CHANGED", function()\n'
-                "            GetProfessions()\n        end)\n",
-            )
-        ],
-        ("Professions.lua", 'ns.On("SKILL_LINES_CHANGED")', "GetProfessions"),
+        (
+            "Professions.lua",
+            [
+                (
+                    _PROFESSIONS_GATHER,
+                    _PROFESSIONS_GATHER + '        ns.On("SKILL_LINES_CHANGED", function()\n'
+                    "            GetProfessions()\n        end)\n",
+                )
+            ],
+        ),
+        ("handed-on", "handed to `ns . On`"),
+    ),
+    "constructed-captured-local-in-a-handler": (
+        _in_professions(
+            _PROF
+            + '        ns.On("PLAYER_LEVEL_UP", function()\n            prof()\n        end)\n'
+        ),
+        ("handed-on", "handed to `ns . On`"),
+    ),
+    "constructed-captured-local-in-a-timer": (
+        _in_professions(
+            _PROF + '        local after = ns.Fn(C_Timer, "After")\n        if after then\n'
+            "            after(1, function()\n                prof()\n            end)\n"
+            "        end\n"
+        ),
+        ("handed-on", "handed to `after`"),
+    ),
+    "constructed-captured-local-in-a-frame-script": (
+        _in_professions(
+            _PROF + '        local f = CreateFrame("Frame")\n'
+            '        f:SetScript("OnEvent", function()\n            prof()\n        end)\n'
+        ),
+        ("handed-on", "handed to `f : SetScript`"),
+    ),
+    "constructed-captured-local-in-a-hook": (
+        _in_professions(
+            _PROF + '        hooksecurefunc("ToggleCharacter", function()\n'
+            "            prof()\n        end)\n"
+        ),
+        ("handed-on", "handed to `hooksecurefunc`"),
+    ),
+    "constructed-client-global-registered-as-a-handler": (
+        _in_professions('        ns.On("PLAYER_TARGET_CHANGED", GetProfessions)\n'),
+        ("handed-on", "`GetProfessions` may be a function; handed to `ns . On`"),
+    ),
+    "constructed-client-function-local-registered-as-a-handler": (
+        _in_professions(_MODEL_LOOKUP.replace("model", "later") + '        ns.On("X", later)\n'),
+        ("handed-on", "`later` may be a function; handed to `ns . On`"),
+    ),
+    "constructed-client-function-local-handed-to-the-timer": (
+        _in_professions(
+            '        local after = ns.Fn(C_Timer, "After")\n'
+            + _MODEL_LOOKUP.replace("model", "later")
+            + "        after(20, later)\n"
+        ),
+        ("handed-on", "`later` may be a function; handed to `after`"),
     ),
     "constructed-section-helper-handed-to-a-timer": (
-        "Gear.lua",
-        [(_GEAR_SLOTS, "        C_Timer.After(1, itemLevel)\n" + _GEAR_SLOTS)],
-        ("Gear.lua", "itemLevel", "C_Item"),
+        ("Gear.lua", [(_GEAR_SLOTS, "        C_Timer.After(1, itemLevel)\n" + _GEAR_SLOTS)]),
+        ("handed-on", "`itemLevel` may be a function; handed to `C_Timer . After`"),
+    ),
+    "constructed-second-call-in-an-allowed-place": (
+        (
+            "Core.lua",
+            [("SLASH_WOWLAB1 = ", 'frame:SetScript("OnUpdate", nil)\nSLASH_WOWLAB1 = ')],
+        ),
+        ("use", "`frame:SetScript` appears 2 times"),
+    ),
+    "constructed-function-statement-in-a-gather": (
+        _in_professions(_PROF + "        function ns.later()\n            prof()\n        end\n"),
+        ("handed-on", "`function ns.later` stores a function"),
+    ),
+    "constructed-client-function-stored-in-ns": (
+        _in_professions("        ns.later = GetProfessions\n"),
+        ("handed-on", "`ns . later = GetProfessions` stores what may be a function"),
+    ),
+    "constructed-client-function-returned-by-a-helper": (
+        (
+            "Gear.lua",
+            [
+                (
+                    "ns.Section({\n",
+                    "local function getter()\n"
+                    '    return ns.Fn(C_Item, "GetCurrentItemLevel")\nend\n\n'
+                    "ns.Section({\n",
+                ),
+                (_GEAR_SLOTS, '        ns.On("X", getter())\n' + _GEAR_SLOTS),
+            ],
+        ),
+        ("handed-on", "returns what may be a function"),
+    ),
+    "constructed-race-check-registered-from-the-gather": (
+        (
+            "Customization.lua",
+            [(_BARBER_GATHER, _BARBER_GATHER + '        ns.On("UNIT_AURA", raceID)\n')],
+        ),
+        ("callers", "raceID is referred to other than by a direct call"),
+    ),
+    "constructed-race-check-handed-to-a-timer": (
+        (
+            "Customization.lua",
+            [
+                (
+                    _BARBER_GATHER,
+                    _BARBER_GATHER + '        local after = ns.Fn(C_Timer, "After")\n'
+                    "        if after then\n            after(1, raceID)\n        end\n",
+                )
+            ],
+        ),
+        ("callers", "raceID is referred to other than by a direct call"),
     ),
 }
-# Controls: calls added inside section code leave nothing unlisted.
+# Controls: calls added inside section code, called on the spot, leave nothing.
 _M11_37_CONTROLS: dict[str, tuple[str, list[tuple[str, str]]]] = {
-    "control-call-in-a-gather": (
-        "Professions.lua",
-        [
-            (
-                _PROFESSIONS_GATHER,
-                _PROFESSIONS_GATHER + '        local level = UnitLevel("player")\n',
-            )
-        ],
-    ),
+    "control-call-in-a-gather": _in_professions('        local level = UnitLevel("player")\n'),
     "control-helper-called-only-by-a-gather": (
         "Gear.lua",
         [
@@ -3607,15 +4421,11 @@ _M11_37_CONTROLS: dict[str, tuple[str, list[tuple[str, str]]]] = {
             (_GEAR_SLOTS, "        average()\n" + _GEAR_SLOTS),
         ],
     ),
-    "control-literal-under-pcall-in-a-gather": (
-        "Professions.lua",
-        [
-            (
-                _PROFESSIONS_GATHER,
-                _PROFESSIONS_GATHER + "        pcall(function()\n"
-                "            return GetProfessions()\n        end)\n",
-            )
-        ],
+    "control-literal-under-pcall-in-a-gather": _in_professions(
+        "        pcall(function()\n            return GetProfessions()\n        end)\n"
+    ),
+    "control-client-function-local-called-on-the-spot": _in_professions(
+        _PROF + "        if prof then\n            ns.Call(prof)\n            prof()\n        end\n"
     ),
 }
 
@@ -3634,23 +4444,24 @@ def _m11_37_edited_scan(name: str, edits: list[tuple[str, str]]) -> _SectionScan
 
 def test_m11_37_a_call_added_outside_a_section_fails() -> None:
     """Constructed inputs (boundary tests of the scan; no fixture argument, so
-    the review probes can call it bare): each edit calls the client outside a
-    section, and the scan must name that reference as unlisted."""
+    the review probes can call it bare): each edit calls the client where a
+    skip typed in the session would not stop it, and the scan must say so
+    under the expected rule."""
     missed = []
-    for tag, (name, edits, expected) in sorted(_M11_37_CASES.items()):
-        unlisted = {ref.key for ref in _unlisted(_m11_37_edited_scan(name, edits))}
-        if expected not in unlisted:
-            missed.append(f"{tag}: expected {expected}, got {sorted(unlisted)}")
+    for tag, ((name, edits), (rule, text)) in sorted(_M11_37_CASES.items()):
+        scan = _m11_37_edited_scan(name, edits)
+        if not any(text in message for message in _failures(scan, rule)):
+            missed.append(f"{tag}: expected {rule} {text!r}, got {scan.failures}")
     assert not missed, missed
 
 
 def test_m11_37_a_call_added_inside_a_section_passes() -> None:
     """Constructed inputs (controls for the test above): a call added to a
-    gather, or to a helper only a gather calls, leaves nothing unlisted."""
+    gather, or to a helper or function only a gather calls on the spot, leaves
+    no failure."""
     wrong = []
     for tag, (name, edits) in sorted(_M11_37_CONTROLS.items()):
         scan = _m11_37_edited_scan(name, edits)
-        unlisted = sorted(ref.key for ref in _unlisted(scan))
-        if unlisted or scan.problems:
-            wrong.append(f"{tag}: {unlisted} {scan.problems}")
+        if scan.failures:
+            wrong.append(f"{tag}: {scan.failures}")
     assert not wrong, wrong
