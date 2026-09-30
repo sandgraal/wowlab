@@ -12,6 +12,7 @@ file.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 from pathlib import Path
@@ -205,12 +206,32 @@ def test_constructed_unknown_character_is_a_usage_error(flavor: Path) -> None:
     assert "no character folder 'Nobody'" in result.stderr
 
 
-def test_constructed_schema_2_capture_is_refused(flavor: Path) -> None:
-    _lab_file(flavor, FIRST).write_bytes(b'\r\nWowLabCharDB = {\r\n["schema"] = 2,\r\n}\r\n')
+def test_constructed_schema_3_capture_is_refused(flavor: Path) -> None:
+    # Schema 2 is known since M11-29, so the first unknown schema is 3.
+    _lab_file(flavor, FIRST).write_bytes(b'\r\nWowLabCharDB = {\r\n["schema"] = 3,\r\n}\r\n')
     result = run("char", "show", "--character", FIRST)
     assert result.exit_code == 1
-    assert "WowLabCharDB is schema 2, and this reader knows schema 1 only" in result.stderr
+    assert "WowLabCharDB is schema 3, and this reader knows schema 1, 2 only" in result.stderr
     assert result.stdout == ""
+
+
+def test_constructed_schema_2_capture_is_shown(flavor: Path) -> None:
+    """M11-29: the real capture with only its schema number changed to 2 reads
+    and prints as schema 1 did (schema 2 adds keys on customization only)."""
+    target = _lab_file(flavor, FIRST)
+    before = run("char", "show", "--character", FIRST)
+    assert before.exit_code == 0
+    data = target.read_bytes()
+    assert data.count(b'["schema"] = 1,') == 1
+    stat = target.stat()
+    target.write_bytes(data.replace(b'["schema"] = 1,', b'["schema"] = 2,'))
+    os.utime(target, ns=(stat.st_atime_ns, stat.st_mtime_ns))  # the time is printed
+    after = run("char", "show", "--character", FIRST)
+    assert after.exit_code == 0, after.stderr
+    assert after.stdout == before.stdout
+    shown = run("char", "show", "--character", FIRST, "--json")
+    assert shown.exit_code == 0
+    assert json.loads(shown.stdout)["record"]["schema"] == 2
 
 
 def test_constructed_tampered_text_is_refused_without_echo(flavor: Path) -> None:

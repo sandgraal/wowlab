@@ -617,3 +617,48 @@ Dated entries, newest last. Each names the fixture that prompted it.
   this session or loaded from an earlier one. The owner reports `/wowlab
   skip professions` then `/wowlab unskip professions` in this session. Not
   an addon defect.
+
+  Follow-up, 2026-09-29 (M11-29, schema 2; `docs/LAB_PLAN.md` §13.1
+  amended the same day). Readings of the two rows above, from the addon's
+  code and the owner's account rather than a new capture. The file shows
+  only that the record's last write came from an open. The owner's account
+  ("no open after the Accept") rules out a second sit, not an open the
+  client fires itself, which the handler sees the same way; and with two
+  sits in that session, the applied event could also have come between the
+  cancelled first visit and the second open. So the first row's "So
+  `BARBER_SHOP_APPEARANCE_APPLIED` did not reach the handler" is one of two
+  readings until a new capture. `events_unregistered = {}` means that neither
+  `C_EventUtils.IsEventValid` (when the client has it) nor an error from
+  `RegisterEvent` refused the event; the addon does not read
+  `RegisterEvent`'s return value. forever-addon-kit's API list for 69893 has
+  `C_EventUtils.IsEventValid`, so the check most likely ran on Forever, but
+  the file does not record whether it did on 70058. Three limits: every
+  section's `events_unregistered` on 70058 is `{}`, so this client has never
+  been seen refusing any name, and "not refused" is not yet evidence that a
+  name is known; a known name means only that it is in the client's event
+  table, and an engine shared across flavors may know events this flavor
+  never fires; only a count of 1 or more shows that an event fires. The
+  addon now writes schema 2 (§13.1: the first format change after M11-04),
+  which adds, on `customization`, `events_received` (each registered event
+  with how many times it reached the section in the session that saved the
+  file) and `chr_model_id_absent` (which outcome the `GetViewingChrModel`
+  call had when the section gathered, not why). `events_received` includes
+  six count-only events, **[verify]**: `BARBER_SHOP_RESULT`,
+  `BARBER_SHOP_CLOSE`, `BARBER_SHOP_FORCE_CUSTOMIZATIONS_UPDATE`,
+  `BARBER_SHOP_COST_UPDATE`, `BARBER_SHOP_SUCCESS`, and the made-up control
+  `WOWLAB_CONTROL_NOT_A_REAL_EVENT`. The control is for this reading: if it
+  has no entry, every other entry, 0 included, is a name this client knows
+  (0 means it did not reach the section in that session), and a missing
+  entry means a name it does not know. If it has an entry at 0, the client
+  accepts any name, and "not refused" proves nothing. The reading holds
+  whether or not `C_EventUtils.IsEventValid` exists, because the control
+  tests the addon's whole gate (that check, then `RegisterEvent`).
+  Registering a name the client does not know is not known to be safe on
+  Forever: the empty `events_unregistered` lists show only that no refusal
+  was seen. It happens at `ADDON_LOADED`, before `/wowlab skip` can be
+  typed, so if it ever crashed the client, untick WowLab at character
+  select, or with the client closed `wowlab undo` the install. Schema 1
+  files, these fixtures included,
+  are still read as before. The cause behind each of the two rows stays open
+  until a capture made after M11-29 (runbook: `lab/addon/README.md`, "M11-29
+  capture step").

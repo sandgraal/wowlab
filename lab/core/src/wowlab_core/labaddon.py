@@ -40,6 +40,12 @@ What the models accept (M11-03 capture, `docs/LAB_FORMATS.md` amendment of
   block, one trait config, a tree's currencies, one currency; plus
   `export_absent` and `last_selected_config_absent` on `talents.class`, and
   `events_unregistered` on a present or an absent section (M11-22).
+- Schema 2 (M11-29) is schema 1 with two keys on `customization`:
+  `chr_model_id_absent` (at most one of it and `chr_model_id`) and
+  `events_received` (event name to a count), on a present or an absent
+  record. Schema 1 files are read exactly as before: `chr_model_id_absent`
+  in one is refused (text in an unknown key), and `events_received` is kept
+  as an unknown key, as it always was.
 - A section the owner switched off (M11-21) is an absent record with the
   addon's reason; `WowLabCharDB.skip` is kept as a list of section keys, and
   a key this reader does not know is kept but ignored (`skip_known`).
@@ -95,13 +101,20 @@ __all__ = [
     "SWITCHED_OFF",
     "AbsentConfig",
     "AbsentCurrency",
+    "AbsentCustomizationV2",
     "AbsentRecord",
     "AbsentSection",
+    "AccountDB",
     "AccountDBV1",
+    "AccountDBV2",
+    "CharDB",
     "CharDBV1",
+    "CharDBV2",
     "ClassTalents",
     "ClippedReason",
+    "Customization",
     "CustomizationImport",
+    "CustomizationV2",
     "LabAddonError",
     "LegacyConfig",
     "LegacyTalents",
@@ -180,6 +193,8 @@ Lst = Annotated[list[_T], BeforeValidator(_empty_list)]
 # no later step formats a number past CPython's 4300-digit limit.
 INT_BOUND = 2**53
 Int = Annotated[int, Field(ge=-INT_BOUND, le=INT_BOUND)]
+# How many times something happened: a whole number from 0.
+Count = Annotated[int, Field(ge=0, le=INT_BOUND)]
 
 # A Lua number: every number is a double in Lua 5.1; `to_python` gives an
 # int for integer spelling and a float otherwise. Never a boolean or text,
@@ -207,6 +222,28 @@ ItemLink = Annotated[
 # client returned an empty string, read as no export (never refused).
 TalentExport = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9+/=]{0,4096}$")]
 EventName = Annotated[str, StringConstraints(pattern=r"^[A-Z][A-Z0-9_]{0,127}$")]
+_EVENT_NAME = re.compile(r"[A-Z][A-Z0-9_]{0,127}")
+
+
+def _event_count_keys(value: Any) -> Any:
+    """`events_received` (M11-29) is the one table read from a file whose keys
+    are data. A refusal names where it happened, and pydantic's location would
+    carry the key itself, so every key is checked here first: a key that is
+    not an event name is refused without echoing it."""
+    if isinstance(value, dict):
+        for key in value:
+            if not (isinstance(key, str) and _EVENT_NAME.fullmatch(key)):
+                words = (
+                    f"a key of {len(key)} characters that is not an event name"
+                    if isinstance(key, str)
+                    else _key_words(key)
+                )
+                raise ValueError(f"the table holds {words}")
+    return value
+
+
+# Event name to how many times it reached a section (M11-29).
+EventCounts = Annotated[dict[EventName, Count], BeforeValidator(_event_count_keys)]
 FoundBy = Annotated[str, StringConstraints(pattern=r"^(type|system):[A-Za-z0-9_.]{1,128}$")]
 SkipKey = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_.]{0,63}$")]
 ClientVersion = Annotated[str, StringConstraints(pattern=r"^[0-9]{1,6}(\.[0-9]{1,6}){0,5}$")]
@@ -669,6 +706,44 @@ class Customization(_Section):
     chr_model_id: Int | None = None
 
 
+class CustomizationV2(Customization):
+    """The customization record in schema 2 (M11-29): schema 1's record plus
+    two keys.
+
+    `chr_model_id_absent`: which outcome the `C_BarberShop.GetViewingChrModel`
+    call had when the section gathered (missing, raised an error, returned
+    nil, returned no number). It says how the call went, not why the client
+    gave no id. At most one of it and `chr_model_id`; `carry` keeps only the
+    number, so a carried record may hold neither.
+
+    `events_received`: each event the section registered in the session that
+    saved the file (change events and count-only events), with how many times
+    it reached the section's handler, 0 included; an event the client refused
+    has no entry. Missing on a switched-off section."""
+
+    reason_fields: ClassVar[tuple[str, ...]] = ("chr_model_id_absent",)
+
+    chr_model_id_absent: Reason | None = None
+    chr_model_id_absent_clipped: ClippedReason | None = None
+    events_received: EventCounts | None = None
+
+    @model_validator(mode="after")
+    def _model_or_reason(self) -> Self:
+        # The addon writes at most one of them (exactly one on a gathered
+        # record; neither on a carried one).
+        if self.chr_model_id is not None and self.chr_model_id_absent is not None:
+            raise ValueError("both chr_model_id and chr_model_id_absent are set")
+        return self
+
+
+class AbsentCustomizationV2(AbsentSection):
+    """The customization section absent with the addon's reason, in schema 2:
+    `events_received` as on `CustomizationV2` (a never-gathered section, or a
+    gather that returned an absent record)."""
+
+    events_received: EventCounts | None = None
+
+
 # ─── collections ─────────────────────────────────────────────────────────────
 
 
@@ -763,12 +838,13 @@ class Professions(_Section):
 # ─── documents ───────────────────────────────────────────────────────────────
 
 
-class CharDBV1(_Record):
-    """`WowLabCharDB`, schema 1. A section the file does not hold is `None`
-    (the addon wrote no record for it, as when a session ended before the
-    addon's write); a section it holds is present or absent with a reason."""
+class _CharDB(_Record):
+    """What every schema of `WowLabCharDB` shares; never validated itself. A
+    schema narrows `schema_` to its number and may narrow a section to a
+    subclass of schema 1's model (a narrowed field keeps its place, so the
+    JSON key order is the same for every schema)."""
 
-    schema_: Literal[1] = Field(alias="schema")
+    schema_: int = Field(alias="schema")
     probe: Probe | None = None
     client: (
         Annotated[Annotated[Client, Tag(_P)] | Annotated[AbsentRecord, Tag(_A)], _SPLIT] | None
@@ -795,6 +871,29 @@ class CharDBV1(_Record):
     ) = None
 
 
+class CharDBV1(_CharDB):
+    """`WowLabCharDB`, schema 1. A section the file does not hold is `None`
+    (the addon wrote no record for it, as when a session ended before the
+    addon's write); a section it holds is present or absent with a reason."""
+
+    schema_: Literal[1] = Field(alias="schema")
+
+
+class CharDBV2(_CharDB):
+    """`WowLabCharDB`, schema 2 (M11-29): schema 1 with two more keys on
+    `customization` (`CustomizationV2`, `AbsentCustomizationV2`). Every other
+    section is read exactly as in schema 1."""
+
+    schema_: Literal[2] = Field(alias="schema")
+    customization: (
+        Annotated[
+            Annotated[CustomizationV2, Tag(_P)] | Annotated[AbsentCustomizationV2, Tag(_A)],
+            _SPLIT,
+        ]
+        | None
+    ) = None
+
+
 class AccountDBV1(_Record):
     """`WowLabDB`, schema 1: holds only `schema` (every section is per
     character in schema 1); anything else is kept as an unknown key."""
@@ -802,8 +901,22 @@ class AccountDBV1(_Record):
     schema_: Literal[1] = Field(alias="schema")
 
 
-CHAR_SCHEMAS: Mapping[int, type[CharDBV1]] = {1: CharDBV1}
-ACCOUNT_SCHEMAS: Mapping[int, type[AccountDBV1]] = {1: AccountDBV1}
+class AccountDBV2(_Record):
+    """`WowLabDB`, schema 2: as schema 1, only the number differs (the addon
+    writes one schema number into both variables)."""
+
+    schema_: Literal[2] = Field(alias="schema")
+
+
+# A character or account document of any schema this reader knows.
+CharDB = CharDBV1 | CharDBV2
+AccountDB = AccountDBV1 | AccountDBV2
+
+CHAR_SCHEMAS: Mapping[int, type[CharDBV1] | type[CharDBV2]] = {1: CharDBV1, 2: CharDBV2}
+ACCOUNT_SCHEMAS: Mapping[int, type[AccountDBV1] | type[AccountDBV2]] = {
+    1: AccountDBV1,
+    2: AccountDBV2,
+}
 
 
 # ─── loading ─────────────────────────────────────────────────────────────────
@@ -864,12 +977,12 @@ def _schema_model[M: BaseModel](variable: str, value: object, schemas: Mapping[i
         ) from None
 
 
-def load_char(value: object) -> CharDBV1:
+def load_char(value: object) -> CharDB:
     """`WowLabCharDB` as `luadata.LuaDocument.to_python` gives it."""
     return _schema_model(CHAR_VARIABLE, value, CHAR_SCHEMAS)
 
 
-def load_account(value: object) -> AccountDBV1:
+def load_account(value: object) -> AccountDB:
     """`WowLabDB` as `luadata.LuaDocument.to_python` gives it."""
     return _schema_model(ACCOUNT_VARIABLE, value, ACCOUNT_SCHEMAS)
 
@@ -891,12 +1004,12 @@ def _variable(data: bytes, variable: str) -> object:
     return value
 
 
-def parse_char(data: bytes) -> CharDBV1:
+def parse_char(data: bytes) -> CharDB:
     """A character's `WowLab.lua`, from its bytes."""
     return load_char(_variable(data, CHAR_VARIABLE))
 
 
-def parse_account(data: bytes) -> AccountDBV1:
+def parse_account(data: bytes) -> AccountDB:
     """The account's `WowLab.lua`, from its bytes."""
     return load_account(_variable(data, ACCOUNT_VARIABLE))
 
@@ -905,12 +1018,12 @@ def _read(path: Path) -> bytes:
     return snapshot.read_regular_file(Path(path), limit=luadata.MAX_FILE_BYTES)
 
 
-def read_char(path: Path) -> CharDBV1:
+def read_char(path: Path) -> CharDB:
     """Read a character's `WowLab.lua` (read-only; writes nothing, L1)."""
     return parse_char(_read(path))
 
 
-def read_account(path: Path) -> AccountDBV1:
+def read_account(path: Path) -> AccountDB:
     """Read the account's `WowLab.lua` (read-only; writes nothing, L1)."""
     return parse_account(_read(path))
 
@@ -918,7 +1031,7 @@ def read_account(path: Path) -> AccountDBV1:
 # ─── derived facts ───────────────────────────────────────────────────────────
 
 
-def skip_known(char: CharDBV1) -> tuple[list[str], list[str]]:
+def skip_known(char: CharDB) -> tuple[list[str], list[str]]:
     """The skip list split into section keys this reader knows and the rest
     (kept in the record, ignored here)."""
     known: list[str] = []
@@ -928,7 +1041,7 @@ def skip_known(char: CharDBV1) -> tuple[list[str], list[str]]:
     return known, ignored
 
 
-def customization_loads_ago(char: CharDBV1) -> int | None:
+def customization_loads_ago(char: CharDB) -> int | None:
     """How many logins or reloads ago the customization record was made:
     `probe.loads` minus `recorded_load`; None when either is missing, when
     the probe was lost on this load (the count restarted at 1), or when the
@@ -978,7 +1091,7 @@ class CustomizationImport(BaseModel):
     client_build: str | None  # "<version>.<build>" from the client block, when both are there
 
 
-def customization_import(char: CharDBV1) -> CustomizationImport:
+def customization_import(char: CharDB) -> CustomizationImport:
     """The customization record as look material, or `NoCustomizationError`
     (with the addon's reason when the section is absent with one). Pure: the
     record is already read."""
@@ -1069,6 +1182,13 @@ MAX_QUANTITY_NOTE = (
     "earned at the character's level (M11-03), not the tree's final cap."
 )
 ALL_EVENTS_REGISTERED = "all its change events registered"
+EVENTS_RECEIVED = (
+    "times each registered event reached the section in the session that saved this file"
+)
+MODEL_OUTCOME_NOTE = (
+    "how the call went when the section gathered, not why no model was named; "
+    "the body type comes from sex"
+)
 
 
 def _count(n: int, noun: str) -> str:
@@ -1103,14 +1223,30 @@ def _reason(text: str, clip: ClippedReason | None) -> str:
     return f"absent ({text}){_clip_words(clip)}"
 
 
+def _received(counts: dict[str, int]) -> str:
+    """`events_received` (schema 2) as `EVENT n` pairs, by event name."""
+    if not counts:
+        return NONE_RECORDED
+    return ", ".join(f"{name} {counts[name]}" for name in sorted(counts))
+
+
 def _absent(record: _Absent, *, events_shown: bool = True) -> str:
     text = _reason(record.absent, record.absent_clipped)
-    events = getattr(record, "events_unregistered", None)
+    # Declared fields only (M11-29 security review): a model keeps an unknown
+    # key and would hand it back as an attribute, so `getattr` would read a
+    # kept `events_unregistered` or `events_received` of any shape, from any
+    # absent record of any schema. `events_unregistered` is declared on
+    # AbsentSection; `events_received` only on schema 2's
+    # AbsentCustomizationV2.
+    events = record.events_unregistered if isinstance(record, AbsentSection) else None
     if events is not None and events_shown:
         if events:
             text += f"; events the client did not know: {', '.join(events)}"
         else:
             text += f"; {ALL_EVENTS_REGISTERED}"
+    received = record.events_received if isinstance(record, AbsentCustomizationV2) else None
+    if received is not None and events_shown:
+        text += f"; {EVENTS_RECEIVED}: {_received(received)}"
     return text
 
 
@@ -1357,7 +1493,7 @@ def _loads_ago_words(ago: int | None) -> str:
     return f"{ago} logins or reloads ago"
 
 
-def _customization(record: Customization, char: CharDBV1) -> list[str]:
+def _customization(record: Customization, char: CharDB) -> list[str]:
     when = _loads_ago_words(customization_loads_ago(char))
     facts = []
     if record.recorded_at is not None:
@@ -1374,6 +1510,10 @@ def _customization(record: Customization, char: CharDBV1) -> list[str]:
     lines = [
         f"Customization: as of the last barber-shop visit with the addon enabled, {when}{tail}"
     ]
+    v2 = record if isinstance(record, CustomizationV2) else None
+    if v2 is not None and v2.chr_model_id is None and v2.chr_model_id_absent is not None:
+        reason = _reason(v2.chr_model_id_absent, v2.chr_model_id_absent_clipped)
+        lines.append(f"  model: {reason}, {MODEL_OUTCOME_NOTE}")
     if not record.choices:
         lines.append(f"  choices: {NONE_RECORDED}")
     for choice in record.choices:
@@ -1382,7 +1522,10 @@ def _customization(record: Customization, char: CharDBV1) -> list[str]:
     if record.recorded_at == "open":
         lines.append(f"  {OPEN_RECORD_NOTE}")
     lines.append(f"  {PAID_CHANGE_NOTE}")
-    return lines + _events(record)
+    lines += _events(record)
+    if v2 is not None and v2.events_received is not None:
+        lines.append(f"  {EVENTS_RECEIVED}: {_received(v2.events_received)}")
+    return lines
 
 
 def _ids(ids: list[int], noun: str) -> str:
@@ -1500,7 +1643,7 @@ def _section(label: str, record: object, present: Any) -> list[str]:
     return lines
 
 
-def describe(char: CharDBV1) -> list[str]:
+def describe(char: CharDB) -> list[str]:
     """The text lines `wowlab char show` prints for a character record."""
     lines: list[str] = []
     client = char.client
@@ -1557,7 +1700,7 @@ def describe(char: CharDBV1) -> list[str]:
     return lines
 
 
-def describe_account(account: AccountDBV1) -> list[str]:
+def describe_account(account: AccountDB) -> list[str]:
     """The text lines for the account's `WowLabDB`."""
     extra = unknown_keys(account)
     if not extra:

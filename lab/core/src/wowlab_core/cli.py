@@ -4435,8 +4435,8 @@ _CHAR_NOTES = [
 
 
 class CharShowReport(_Out):
-    """`wowlab char show --json`: the character's `WowLabCharDB` as the
-    schema-1 model reads it (unknown keys kept), and the account `WowLabDB`."""
+    """`wowlab char show --json`: the character's `WowLabCharDB` as the model
+    for its schema reads it (unknown keys kept), and the account `WowLabDB`."""
 
     flavor_folder: str
     account: str
@@ -4445,8 +4445,8 @@ class CharShowReport(_Out):
     file: str  # relative to the flavor folder
     mtime_ns: int
     account_file: str | None
-    account_record: labaddon.AccountDBV1 | None
-    record: labaddon.CharDBV1
+    account_record: labaddon.AccountDBV1 | labaddon.AccountDBV2 | None
+    record: labaddon.CharDBV1 | labaddon.CharDBV2
     skip_known: list[str]  # section keys in `skip` this reader knows
     skip_ignored: list[str]  # the rest of `skip`, kept in `record` and ignored
     customization_loads_ago: int | None

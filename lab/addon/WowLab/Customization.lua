@@ -19,6 +19,25 @@
 -- `sex` field (Enum.UnitSex 0/1, not UnitSex()'s 2/3), and
 -- C_BarberShop.GetViewingChrModel. The choices cover only the model being
 -- viewed. The name fields that GetCurrentCharacterData returns are never read.
+--
+-- M11-29 (schema 2), from the M11-23 capture (1.60.1.70058;
+-- docs/LAB_FORMATS.md): after one applied change the record's last write
+-- came from an open (recorded_at = "open"), and it had no chr_model_id. The
+-- file could not say why. Every change here is for the next capture to answer
+-- that, not a guess at the cause:
+-- - events_received (Core.lua `listen`): how many times each registered
+--   barber-shop event reached this section's handler in the session. With
+--   recorded_at it tells "the applied event never came" from "an open came
+--   after it".
+-- - count_only events [verify]: counted only, never recorded on, and no
+--   event argument is read. BARBER_SHOP_RESULT, BARBER_SHOP_CLOSE,
+--   BARBER_SHOP_FORCE_CUSTOMIZATIONS_UPDATE and BARBER_SHOP_COST_UPDATE are
+--   Retail names; BARBER_SHOP_SUCCESS is the pre-9.0 name.
+--   WOWLAB_CONTROL_NOT_A_REAL_EVENT is made up on purpose: whether it gets an
+--   entry shows whether this client refuses a name it does not know.
+-- - chr_model_id_absent: which outcome the GetViewingChrModel call had when
+--   the section gathered (missing, an error, nil, or not a number), from a
+--   direct pcall. It says how the call went, not why the client gave no id.
 
 local _, ns = ...
 
@@ -60,6 +79,15 @@ ns.Section({
     key = KEY,
     path = { "customization" },
     events = { "BARBER_SHOP_OPEN", "BARBER_SHOP_APPEARANCE_APPLIED" },
+    -- Counted, never gathered on (M11-29; see the top of this file).
+    count_only = {
+        "BARBER_SHOP_RESULT",
+        "BARBER_SHOP_CLOSE",
+        "BARBER_SHOP_FORCE_CUSTOMIZATIONS_UPDATE",
+        "BARBER_SHOP_COST_UPDATE",
+        "BARBER_SHOP_SUCCESS",
+        "WOWLAB_CONTROL_NOT_A_REAL_EVENT",
+    },
     immediate = true,
     not_gathered = "no barber-shop visit recorded with the addon enabled",
     -- Keeps the last saved record, unless it was itself an absent marker.
@@ -67,7 +95,9 @@ ns.Section({
     -- (each type-checked where it is copied), the two known `recorded_at`
     -- values (written as the addon's own literals) and the addon's own
     -- constants are copied, so nothing else in the saved file (not the saved
-    -- table itself, nor its old events_unregistered) is carried forward.
+    -- table itself, nor its old events_unregistered or events_received, nor
+    -- chr_model_id_absent) is carried forward: a carried record may hold
+    -- neither chr_model_id nor its reason (M11-29).
     -- tests/addon/test_lab_addon.py checks this shape on tokens.
     carry = function(saved)
         local r = type(saved) == "table" and saved.customization or nil
@@ -120,9 +150,24 @@ ns.Section({
         if type(data) == "table" and type(data.sex) == "number" then
             record.sex = data.sex
         end
+        -- Exactly one of chr_model_id and chr_model_id_absent (M11-29): the
+        -- outcome of this call at this gather. It goes through pcall
+        -- directly, not ns.Call, so an error is told apart from nil ("returned
+        -- nil" also covers a call that returned no value at all).
         local model = ns.Fn(C_BarberShop, "GetViewingChrModel")
-        if model then
-            record.chr_model_id = ns.Number(ns.Call(model))
+        if not model then
+            record.chr_model_id_absent = "C_BarberShop.GetViewingChrModel missing"
+        else
+            local ok, id = pcall(model)
+            if not ok then
+                record.chr_model_id_absent = "C_BarberShop.GetViewingChrModel raised an error"
+            elseif type(id) == "number" then
+                record.chr_model_id = id
+            elseif id == nil then
+                record.chr_model_id_absent = "C_BarberShop.GetViewingChrModel returned nil"
+            else
+                record.chr_model_id_absent = "C_BarberShop.GetViewingChrModel returned no number"
+            end
         end
         return record
     end,
