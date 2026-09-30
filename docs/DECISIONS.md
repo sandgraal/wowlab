@@ -239,6 +239,8 @@ The constraints that shape it:
 - Anything that needs a front-end toolchain, or a server that another machine can reach, still needs its own ADR, and the latter also revisits ADR-0019.
 - ADR-0027 carries a "Superseded by (in part)" note.
 
+**Amendment (2026-09-30):** `--yes` marks a command that asks before changing files, not only one that writes into an install. On `main` there are seven: `snap restore`, `undo`, `profile apply`, `addon install`, `addon remove`, `sv merge` and `snap gc`. `snap gc` changes only the Lab's snapshot store; it runs under `guard.store_lock`, not a `guard` transaction. The UI's confirm flow applies to all seven, which is what the decision above intends. "Every write is a CLI write command" means every change the UI causes, to an install or to the store. Found while checking M12-13 against the Click tree. The decision itself is unchanged.
+
 ---
 
 ## ADR-0030 — Languages: one per purpose, each admitted by an ADR
