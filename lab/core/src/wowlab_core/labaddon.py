@@ -1413,8 +1413,9 @@ def survey(
 
     The order is by account, then realm folder, then character folder, each
     compared with case folded and then as spelled: stable across runs and
-    independent of modification times. Read only (L1): each file is read as
-    `read_char` reads it, and nothing is written anywhere."""
+    independent of modification times. Read only (L1): each file is
+    `lstat`ed, opened as `read_char` opens it (checked to be that same file)
+    and parsed by `parse_char`; nothing is written anywhere."""
     walk = lay.wtf_walk()
     folders: dict[tuple[str, str, str], _Folder] = {}
     realms: dict[tuple[str, str], layout.Realm] = {}

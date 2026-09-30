@@ -65,8 +65,11 @@ character whose `WowLab.lua` has the newest modification time. `char list`
 `labaddon.survey`, in every account unless `--account` names one; a file it
 cannot read, and a file or folder it could not look at (a link, a FIFO, a
 folder it cannot list), is listed or noted with the reason, named on stderr,
-and makes the command exit 1 after the others are printed. Both commands
-choose a character's file with `labaddon.choose_lab_file`.
+and makes the command exit 1 after the others are printed (with `--account`
+too, when the account folder itself could not be looked at). Both commands
+choose a character's file by `labaddon.choose_lab_file`, but `char show`
+gives it regular files only, so for a link, FIFO or folder named like the
+file the two can still answer differently.
 """
 
 import base64
@@ -4543,7 +4546,9 @@ def _lab_char_file(
     """The character `WowLab.lua` to read: in the folder `--character` names,
     else in the folder holding the newest file by modification time (ties by
     path, said in the third value). Within the folder the file is the one
-    `labaddon.choose_lab_file` chooses, as `char list` does (M12-09)."""
+    `labaddon.choose_lab_file` chooses (M12-09), the rule `char list` uses;
+    `files` are regular files only, so for a `WowLab.lua` that is a link,
+    FIFO or folder this can still answer differently from `char list`."""
     char_files = [f for f in files if f.scope == "character"]
     how: Literal["--character", "latest"]
     tie = ""
