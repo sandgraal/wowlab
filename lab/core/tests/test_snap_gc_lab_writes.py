@@ -42,6 +42,18 @@ Choices made here where the text leaves room:
 - `--help` is graded on substance, not wording: it names `WowLab.lua` and a
   character, and still names snapshots and the one-hour grace period.
 
+Conductor ruling on M11-31T, round 1 (2026-09-29, from the #141 reviews):
+case-insensitive matching is intended. The kept set is every path the loader
+check's `_character_sv` can return for a character's own lab file, a
+per-character path of seven parts
+(`WTF/Account/<account>/<realm or digits>/<character>/SavedVariables/WowLab.lua`)
+with `WTF`, `Account`, `SavedVariables` and `WowLab.lua` compared case-folded.
+The check falls back to a case-folded name when no `WowLab.lua` is spelled
+exactly, and the journal records the spelling on disk, so a character's
+`wowlab.lua` is kept like `WowLab.lua`. The rule is decided from the journal
+record's path alone. Collection goes through the store's link-safe removal:
+an object gc would now collect never goes through a linked shard.
+
 Real fixtures (L8): the M11-03 capture (`fixtures/macos/forever`) copied into
 `tmp_path` as `test_cli.py` builds it, including both characters'
 `WowLab.lua`, the account-wide `WowLab.lua`, `DBM-Party-Vanilla.lua` and a
@@ -50,7 +62,9 @@ locks) is redirected into `tmp_path` and the process table is a fake.
 Constructed inputs, labelled in the test names: edited copies of those files
 standing for a later session, a `WowLab.lua.bak` made from the real file, a
 snapshot manifest removed by hand, and every store object's mtime set back
-past the gc grace period. Nothing reads or writes a real install.
+past the gc grace period. Round 1 adds the character's real file renamed to
+`wowlab.lua`, and an object shard moved outside the store with a symbolic
+link left in its place. Nothing reads or writes a real install.
 """
 
 # ruff: noqa: F811  (fixtures imported from test_cli are requested by name)
@@ -58,6 +72,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -100,7 +115,7 @@ from test_svmerge import (
 from test_svmerge_loader import _merge_gear_into_wowlab_lua
 
 from wowlab_core import cli, guard, snapshot
-from wowlab_core.snapshot import GcReport
+from wowlab_core.snapshot import GcReport, VerifyReport
 
 REAL_ACCOUNT_LAB = (FIXTURE_FLAVOR / LAB_ACCOUNT).read_bytes()  # WowLabDB, account-wide
 MACROS = f"{ACCT}/1/{CHARACTER}/macros-cache.txt"  # a character folder with no WowLab.lua
@@ -345,3 +360,85 @@ def test_snap_gc_help_says_what_is_kept() -> None:
     assert "character" in text, text
     assert "snapshot" in text, text  # an object a snapshot refers to
     assert "hour" in text, text  # the grace period
+
+
+# ─── round 1 (#141 reviews): a case variant and a linked shard ──────────────
+
+
+LAB_A_FOLDED = f"{LAB_A.removesuffix(LAB)}wowlab.lua"  # constructed: the file renamed
+
+posix_symlinks = pytest.mark.skipif(
+    sys.platform == "win32" or not hasattr(os, "symlink"),
+    reason="POSIX symbolic links (creating them needs privileges on Windows)",
+)
+
+
+def test_gc_keeps_what_a_restore_wrote_into_a_characters_lab_file_spelled_wowlab_lua_constructed(
+    flavor: Path,
+) -> None:
+    """Exists to fail an exact-case keep rule (conductor ruling, M11-31T
+    round 1). When no `WowLab.lua` is spelled exactly, the loader check finds a
+    character's `wowlab.lua` by its case-folded name. The journal records the
+    spelling on disk, so gc must keep that write's `after` too. Green on main,
+    which keeps every `after`."""
+    lab_dir = (flavor / LAB_A).parent
+    (flavor / LAB_A).rename(flavor / LAB_A_FOLDED)
+    assert sorted(p.name for p in lab_dir.iterdir()) == ["wowlab.lua"]
+    written = _restore_from_a_deleted_snapshot(flavor, {LAB_A_FOLDED: _a(5)})
+    assert written == {LAB_A_FOLDED: _sha(REAL_A)}, "the journal records the spelling on disk"
+    store = _store()
+    assert _unreferenced(store) == {_sha(REAL_A)}, "only the journal names it"
+    _age_objects(store)
+
+    assert _json(GcReport, "snap", "gc", "--dry-run").unreferenced == ()
+    assert _json(GcReport, "snap", "gc", "--yes").removed == ()
+    assert store.object_path(_sha(REAL_A)).is_file(), "the loader check compares from it"
+
+    # A session since the restore raised loads to 5 and changed a value. Guard's
+    # snapshot holds 5 too, so only rule 2, from the kept object (4), passes it;
+    # without the object the merge is refused (rule 3).
+    (flavor / LAB_A_FOLDED).write_bytes(_once(_a(5), *_FILTER))
+    assert sorted(p.name for p in lab_dir.iterdir()) == ["wowlab.lua"]
+    _passes(_copy_within("--json"))
+
+
+@posix_symlinks
+@pytest.mark.xfail(strict=True, reason="M11-31 not implemented")
+def test_gc_never_removes_an_object_the_journal_alone_names_through_a_symlinked_shard_constructed(
+    flavor: Path, tmp_path: Path
+) -> None:
+    """Collection goes through the store's link-safe removal (§6.9, M11-15),
+    never a delete of its own. What a restore wrote into the account-wide
+    `WowLab.lua`, from a deleted snapshot, is an object gc now collects. Its
+    shard is moved outside the store with a symbolic link left in its place:
+    gc names the link in `skipped`, and every file behind it, the object among
+    them, is left as it was. With the shard put back, the store verifies and
+    gc collects the object. That last step is what fails on main, which keeps
+    every `after`."""
+    later = _once(REAL_ACCOUNT_LAB, b'["schema"] = 1,', b'["schema"] = 2,')
+    written = _restore_from_a_deleted_snapshot(flavor, {LAB_ACCOUNT: later})
+    digest = written[LAB_ACCOUNT]
+    assert digest == _sha(REAL_ACCOUNT_LAB)
+    store = _store()
+    assert _unreferenced(store) == {digest}, "only the journal names it"
+    _age_objects(store)
+    shard = store.objects_dir / digest[:2]
+    outside = tmp_path / "outside" / digest[:2]
+    outside.parent.mkdir()
+    shard.rename(outside)
+    shard.symlink_to(outside, target_is_directory=True)
+    behind = {p.name: p.read_bytes() for p in outside.iterdir()}
+    assert digest[2:] in behind, "the object sits behind the link"
+
+    report = _json(GcReport, "snap", "gc", "--yes")
+    assert f"objects/{digest[:2]}" in report.skipped, report
+    assert report.removed == ()
+    assert {p.name: p.read_bytes() for p in outside.iterdir()} == behind, "nothing behind it"
+    assert shard.is_symlink(), "the link itself is left as it is"
+
+    shard.unlink()
+    outside.rename(shard)
+    assert _json(VerifyReport, "snap", "verify").ok
+    done = _json(GcReport, "snap", "gc", "--yes")
+    assert done.removed == (digest,)
+    assert not store.object_path(digest).exists()
