@@ -788,7 +788,7 @@ requires-dist = [
     { name = "platformdirs", specifier = ">=4.3" },
     { name = "psutil", specifier = ">=7.0" },
     { name = "pydantic", specifier = ">=2.11" },
-    { name = "typer", specifier = ">=0.16" },
+    { name = "typer", specifier = ">=0.27,<0.28" },
 ]
 
 [[package]]

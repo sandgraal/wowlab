@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from wowlab_core import cli, guard, install
@@ -176,6 +177,12 @@ WHERE = {
 }
 
 
+def _lines_of(output: bytes) -> str:
+    """A child's output as text, strictly UTF-8, with CR LF line breaks
+    (Windows) as LF."""
+    return output.decode("utf-8").replace("\r\n", "\n")
+
+
 @pytest.mark.parametrize("where", [pytest.param(w, id=f"constructed-{w}") for w in WHERE])
 def test_the_console_script_prints_an_uncaught_exception_escaped_constructed(
     tmp_path: Path, where: str
@@ -194,9 +201,13 @@ def test_the_console_script_prints_an_uncaught_exception_escaped_constructed(
         check=False,
     )
     # Strict decoding: an escape that produced bytes that are not UTF-8
-    # fails here.
-    out = child.stdout.decode("utf-8")
-    err = child.stderr.decode("utf-8")
+    # fails here. On Windows Python writes each line break as CR LF; those
+    # pairs become LF, and any CR left over is a raw one (the checks below
+    # count it). Not `text=True`: universal newlines would also turn a lone
+    # raw CR into LF and hide it.
+    out = _lines_of(child.stdout)
+    err = _lines_of(child.stderr)
+    assert "\r" not in out and "\r" not in err
     assert child.returncode == 1, (child.returncode, out, err)
     assert out == ""
     assert _lines_are_safe(err), _unsafe(err)
@@ -230,6 +241,37 @@ def test_the_app_installs_the_escaping_hook_constructed(monkeypatch: pytest.Monk
         cli.app(["install", "show"], prog_name="wowlab")
     assert sys.excepthook is cli._excepthook
     assert cli.app.pretty_exceptions_enable is False
+
+
+def test_a_normal_exit_leaves_the_hook_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every run ends in `SystemExit`; one with an int code is not an
+    uncaught exception, so the process's hook is left as it was."""
+    monkeypatch.setattr(sys, "excepthook", sys.__excepthook__)
+    for args, code in ((["--version"], 0), (["--bogus"], cli.EXIT_USAGE)):
+        with pytest.raises(SystemExit) as exited:
+            cli.app(args, prog_name="wowlab")
+        assert exited.value.code == code
+        assert sys.excepthook is sys.__excepthook__
+
+
+def test_a_system_exit_with_a_text_code_is_one_escaped_line_constructed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """CPython prints a `SystemExit` code that is not an int or None itself,
+    raw, and exits 1; the app prints it through `_say_err` and exits 1."""
+
+    def text_exit(*args: Any, **kwargs: Any) -> None:
+        raise SystemExit(MESSAGE)
+
+    monkeypatch.setattr(sys, "excepthook", sys.__excepthook__)
+    monkeypatch.setattr(cli, "_discover", text_exit)
+    with pytest.raises(SystemExit) as exited:
+        cli.app(["install", "show"], prog_name="wowlab")
+    assert exited.value.code == cli.EXIT_ERROR
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == f"{SHOWN}\n"
+    assert sys.excepthook is sys.__excepthook__
 
 
 def _caught(fn: Any) -> BaseException:
@@ -306,6 +348,41 @@ def test_the_hook_prints_an_exception_group_escaped_constructed(
     assert lines.count(f"ExceptionGroup: {SHOWN} (2 sub-exceptions)") == 1
 
 
+def _python_lines(exc: BaseException) -> list[str]:
+    return "".join(traceback.format_exception(exc)).split("\n")[:-1]
+
+
+def _count(lines: list[str], text: str) -> int:
+    return sum(text in line for line in lines)
+
+
+def test_an_exception_group_is_bounded_as_python_bounds_it_constructed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Python's limits: 15 sub-exceptions of a group, then "and N more
+    exceptions"; a group 10 deep is one line. A group 40 wide prints 15
+    sub-exceptions, and one 5,000 deep prints 10 levels, as Python does,
+    instead of every member (or a RecursionError)."""
+    wide = ExceptionGroup(MESSAGE, [ValueError(MESSAGE) for _ in range(40)])
+    lines = _hook_output(wide, capsys)
+    assert _count(lines, f"ValueError: {SHOWN}") == 15 == _count(_python_lines(wide), "ValueError")
+    assert lines[-1] == "and 25 more exceptions"
+    assert _count(_python_lines(wide), "and 25 more exceptions") == 1
+
+    sixteen = ExceptionGroup("g", [ValueError("v") for _ in range(16)])
+    assert _hook_output(sixteen, capsys)[-1] == "and 1 more exception"
+
+    deep: BaseException = ValueError(MESSAGE)
+    for _ in range(5_000):
+        deep = ExceptionGroup(MESSAGE, [deep])
+    lines = _hook_output(deep, capsys)
+    assert len(lines) < 100
+    assert lines[-1].strip() == "... (max_group_depth is 10)"
+    python = _python_lines(deep)
+    assert _count(lines, "ExceptionGroup: ") == 10 == _count(python, "ExceptionGroup: ")
+    assert _count(python, "... (max_group_depth is 10)") == 1
+
+
 class _UnprintableError(Exception):
     def __str__(self) -> str:
         raise RuntimeError(MESSAGE)
@@ -340,9 +417,53 @@ def test_the_hook_falls_back_to_one_line_when_rendering_fails_constructed(
 
     monkeypatch.setattr(cli, "_traceback_lines", broken)
     exc = RuntimeError(MESSAGE)
+    assert _hook_output(exc, capsys) == ["wowlab: RuntimeError: its traceback could not be printed"]
+
+
+class _InterruptedError(Exception):
+    """Its message cannot be made: Ctrl-C arrives while it is."""
+
+    def __str__(self) -> str:
+        raise KeyboardInterrupt
+
+
+def _raise_interrupted() -> None:
+    exc = _InterruptedError()
+    exc.add_note(MESSAGE)
+    raise exc
+
+
+def test_the_hook_survives_ctrl_c_while_it_renders_constructed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A KeyboardInterrupt out of the hook would make Python print the
+    original exception itself, raw; the hook prints one line instead."""
+    exc = _caught(_raise_interrupted)
     assert _hook_output(exc, capsys) == [
-        "wowlab: an uncaught RuntimeError; its traceback could not be printed"
+        "wowlab: _InterruptedError: its traceback could not be printed"
     ]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [pytest.param(KeyboardInterrupt, id="ctrl-c"), pytest.param(BrokenPipeError, id="broken-pipe")],
+)
+def test_the_hook_survives_a_write_that_fails_constructed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], error: type[BaseException]
+) -> None:
+    """A write to stderr that fails, on the first line or on the fallback
+    line, stops the hook quietly: it returns, and nothing was written raw."""
+    calls: list[str] = []
+
+    def failing(text: str = "") -> None:
+        calls.append(text)
+        raise error
+
+    monkeypatch.setattr(cli, "_say_err", failing)
+    exc = _caught(_context_chain)
+    assert cli._excepthook(type(exc), exc, exc.__traceback__) is None
+    assert len(calls) == 2, "the first line, then the fallback line"
+    assert capsys.readouterr() == ("", "")
 
 
 def _plain_chain() -> None:
@@ -361,6 +482,33 @@ def _plain_context() -> None:
         raise OSError(2, "no such file")  # noqa: B904 (a context, not a cause)
 
 
+def _notes_text() -> None:
+    exc = ValueError("notes that are one string")
+    exc.__notes__ = "a note"  # type: ignore[assignment]
+    raise exc
+
+
+class _NowhereError(Exception):
+    pass
+
+
+_NowhereError.__module__ = None  # type: ignore[assignment]
+
+
+def _nowhere() -> None:
+    raise _NowhereError("a type whose module is None")
+
+
+class _NotesFailError(Exception):
+    @property
+    def __notes__(self) -> list[str]:  # type: ignore[override]
+        raise RuntimeError("no notes")
+
+
+def _notes_fail() -> None:
+    raise _NotesFailError("its notes cannot be read")
+
+
 @pytest.mark.parametrize(
     "fn",
     [
@@ -368,6 +516,9 @@ def _plain_context() -> None:
         pytest.param(_plain_context, id="context"),
         pytest.param(lambda: int("x"), id="builtin"),
         pytest.param(lambda: cli._safe(None), id="library-frame"),
+        pytest.param(_notes_text, id="notes-a-string"),
+        pytest.param(_nowhere, id="module-none"),
+        pytest.param(_notes_fail, id="notes-raise"),
     ],
 )
 def test_the_hook_prints_what_python_prints_when_nothing_needs_escaping(
@@ -375,8 +526,7 @@ def test_the_hook_prints_what_python_prints_when_nothing_needs_escaping(
 ) -> None:
     """For text with nothing to escape, the lines are Python's own."""
     exc = _caught(fn)
-    expected = "".join(traceback.format_exception(exc)).split("\n")[:-1]
-    assert _hook_output(exc, capsys) == expected
+    assert _hook_output(exc, capsys) == _python_lines(exc)
 
 
 # ─── click usage errors ──────────────────────────────────────────────────────
@@ -475,6 +625,37 @@ def test_no_arguments_prints_the_help_on_stderr_as_before(args: list[str]) -> No
     assert result.stderr.count("\n") > 5
 
 
+def _no_install(*args: Any, **kwargs: Any) -> None:
+    raise cli.CliError("constructed: no install is looked for")
+
+
+def test_a_click_error_as_the_root_context_closes_is_escaped_constructed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The root context closes in typer's main loop, outside the root
+    command's `invoke`: a click error raised then (by a resource `main()`
+    registered with `ctx.with_resource`) is printed by `_click_error` too."""
+
+    @contextlib.contextmanager
+    def fails_on_exit() -> Iterator[None]:
+        try:
+            yield
+        finally:
+            raise typer.BadParameter(MESSAGE)
+
+    monkeypatch.setattr(cli, "_library_log_on_stderr", fails_on_exit)
+    monkeypatch.setattr(cli, "_discover", _no_install)
+    result = runner.invoke(cli.app, ["install", "show"])
+    assert result.exit_code == cli.EXIT_USAGE, (result.stdout, result.stderr, result.exception)
+    assert result.stdout == ""
+    assert _lines_are_safe(result.stderr), _unsafe(result.stderr)
+    assert result.stderr.split("\n") == [
+        "wowlab: constructed: no install is looked for",
+        f"Error: Invalid value: {SHOWN}",
+        "",
+    ]
+
+
 # ─── _log.exception ──────────────────────────────────────────────────────────
 
 
@@ -528,3 +709,68 @@ def test_a_log_record_without_a_traceback_is_one_line_constructed(
     with _library_log(capsys):
         guard._log.error("rollback of %r did not finish: %s", "x", MESSAGE)
     assert capsys.readouterr().err == f"wowlab: rollback of 'x' did not finish: {SHOWN}\n"
+
+
+def _logged(capsys: pytest.CaptureFixture[str], exc: BaseException) -> list[str]:
+    """What `guard._log.exception` prints for `exc` while a command runs:
+    every line escaped, and never logging's own error report, which would
+    print the record raw."""
+    with _library_log(capsys):
+        try:
+            raise exc
+        except BaseException:
+            guard._log.exception("could not record the rollback of %s", MESSAGE)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert _lines_are_safe(captured.err), _unsafe(captured.err)
+    assert _no_spoofed_line(captured.err), captured.err
+    assert "Logging error" not in captured.err
+    lines = captured.err.split("\n")
+    assert lines[0] == f"wowlab: could not record the rollback of {SHOWN}"
+    assert lines[-1] == ""
+    return lines[:-1]
+
+
+class _HostileNotesError(Exception):
+    """Reading its notes raises, with the hostile text."""
+
+    @property
+    def __notes__(self) -> list[str]:  # type: ignore[override]
+        raise RuntimeError(MESSAGE)
+
+
+def test_a_logged_exception_whose_notes_raise_is_escaped_constructed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Python's words for notes that cannot be read, on one escaped line."""
+    lines = _logged(capsys, _HostileNotesError(MESSAGE))
+    assert lines[-2:] == [
+        f"{__name__}._HostileNotesError: {SHOWN}",
+        f"Ignored error getting __notes__: {RuntimeError(MESSAGE)!r}",
+    ]
+
+
+def test_a_logged_deep_exception_group_is_bounded_and_escaped_constructed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A group 5,000 deep prints 10 levels, not a RecursionError that
+    logging would report with the record raw."""
+    deep: BaseException = ValueError(MESSAGE)
+    for _ in range(5_000):
+        deep = ExceptionGroup(MESSAGE, [deep])
+    lines = _logged(capsys, deep)
+    assert len(lines) < 100
+    assert lines[-1].strip() == "... (max_group_depth is 10)"
+
+
+def test_a_record_that_cannot_be_formatted_is_one_escaped_line_constructed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A record whose formatting fails reaches the handler's `handleError`,
+    which prints one line naming it instead of logging's report (which
+    prints the record's message, arguments and exception raw)."""
+    with _library_log(capsys):
+        guard._log.error("%s and %s", MESSAGE)  # one argument for two fields
+    assert capsys.readouterr().err == (
+        "wowlab: a log record could not be printed (ERROR, wowlab_core.guard)\n"
+    )

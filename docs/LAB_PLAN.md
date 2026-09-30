@@ -1115,20 +1115,39 @@ exception's traceback is not covered yet (a follow-up).
 `_say_err` like every other line. That covers an exception `_handled` does
 not catch in any command body, the `main()` callback and its
 `ctx.with_resource`, and the eager `--version` callback. The `wowlab`
-console script (`wowlab_core.cli:app`) sets `sys.excepthook` as the
+console script (`wowlab_core.cli:app`) sets `sys.excepthook` as an
 exception leaves the app, because Typer's own `__call__` replaces the hook
-on every call. The hook prints Python's traceback line by line. Frames keep
-Python's layout, and the exception's message and each of its notes are one
-line each, whatever they hold, so text from the install never starts a line.
-Python then exits 1. If the traceback cannot be rendered, one line names the
-exception's type instead. A click usage error (an unknown option, an extra
-argument, a bad value) prints its usage and help hint as click does. Its
-`Error:` line, which can hold the user's own arguments, prints as one
-escaped line. The help that `no_args_is_help` prints is unchanged. A library
-log record that carries a traceback (`_log.exception`, such as the write
-gate's "could not record the rollback") or a stack prints its message as one
-line and then the traceback line by line in the same way. Before this, the
-whole record printed on one line with `\x0a` escapes.
+on every call. A normal exit puts the hook back as it was. The hook prints
+the traceback line by line in Python's layout, with these differences:
+- the exception's message and each of its notes are one line each,
+  whatever they hold, so text from the install never starts a line;
+- a SyntaxError shows its `str()` (message, file, line) instead of the file,
+  source and caret lines;
+- there is no "Did you mean" for a NameError, AttributeError or ImportError;
+- an exception group's sub-exceptions are listed as "sub-exception n of m:"
+  with their lines indented instead of in Python's boxes. Python's limits
+  still apply: 15 per group, then "and N more exceptions", and a group 10
+  deep is one line.
+
+Python then exits non-zero as usual (1, or by the signal for
+KeyboardInterrupt). The hook never raises, not even on Ctrl-C while it
+escapes a long message: a hook that raised would make Python print the
+original exception itself, raw. Whatever stops it prints one line naming the
+exception's type instead. A `SystemExit` whose code is text, which Python
+prints raw without calling a hook, prints as one escaped line and exits 1.
+
+A click error (an unknown option, an extra argument, a bad value) prints its
+usage and help hint as click does. Its `Error:` line, which can hold the
+user's own arguments, prints as one escaped line. That holds also for one
+raised as the root context closes. The help that `no_args_is_help` prints is
+unchanged.
+
+A library log record that carries a traceback (`_log.exception`, such as the
+write gate's "could not record the rollback") or a stack prints its message
+as one line and then the traceback line by line, rendered as the hook
+renders it. Before this, the whole record printed on one line with `\x0a`
+escapes. A record that cannot be formatted prints one escaped line naming it
+instead of logging's own error report, which prints the record raw.
 
 ## 7. Repository layout
 
