@@ -30,8 +30,11 @@ NUL followed by four hex digits); snapshot manifests are written with
 `snapshot.manifest_bytes`, the one canonical encoding. `sv dump --json` is
 flat (each value one row naming its parent) and written compact, row by
 row, so its size grows with the number of values and never with depth.
-Text output escapes every control character but tab (`\\x1b` for ESC), so
-nothing read from an install reaches the terminal as a control sequence.
+Text output escapes every control character, tab and line feed included
+(`\\x1b` for ESC), and every Unicode format and separator character (Cf,
+Zl, Zp, such as U+202E and U+2028, as their UTF-8 bytes), so nothing read
+from an install reaches the terminal as a control sequence or reorders or
+breaks a line (M11-30, §6.11 amendment).
 
 A whole-snapshot `snap restore` leaves alone the files the client manages
 (file-map Edit `no`) unless they are named with `--paths` (owner decision
