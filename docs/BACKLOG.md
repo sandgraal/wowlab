@@ -12,7 +12,7 @@ The backlog holds the current wave only (ADR-0024). Milestone numbers start at `
 
 # M12 — db2lake, char-planner (talents first), alt-dashboard (Wave 3)
 
-Spec: `docs/LAB_PLAN.md` §14. Decision: ADR-0028 (Proposed; M12-03 and later wait for the owner to accept or amend it). Owner pick 2026-09-29. L1–L8 apply to every ticket. Nothing in this wave writes into an install.
+Spec: `docs/LAB_PLAN.md` §14. Decision: ADR-0028 (Accepted by the owner, 2026-09-30, so M12-03 and later are no longer held by it; they still wait on their listed dependencies). Owner pick 2026-09-29. L1–L8 apply to every ticket. Nothing in this wave writes into an install.
 
 The wave is twelve tickets: ten development tickets, one optional owner capture (M12-11) and the review (M12-12). None is a `T` twin, because no ticket changes `luadata.py`, `guard.py`, `svmerge.py` or `profiles.py`; the tickets that run owner-typed SQL or put install-derived strings into HTML nonetheless get `security-reviewer`. The plan's estimate is ten development tickets; Wave 2's ten became twenty-five, so expect growth.
 

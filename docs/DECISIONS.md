@@ -120,6 +120,8 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 **Amendment (2026-09-29, proposed with ADR-0028):** the first wave that needs typed columns is Wave 3 (M12), and ADR-0028 proposes that it types them by inference from the build's own data rather than from WoWDBDefs, because the tables it needs are small and wago's headers already carry the column names. If ADR-0028 is accepted, the last sentence of the Consequences above no longer describes Wave 3; WoWDBDefs typing (foreign keys, exact widths) waits for a wave that needs them. Nothing else in this ADR changes.
 
+**Amendment (2026-09-30):** the owner accepted ADR-0028 on 2026-09-30, so the last sentence of the Consequences above no longer describes Wave 3: it types columns by inference from the build's data, and WoWDBDefs typing waits for a wave that needs foreign keys or exact widths.
+
 ---
 
 ## ADR-0023 — Scope stops at files the client treats as user-editable
@@ -184,7 +186,7 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 ## ADR-0028 — db2lake is SQLite over the cached tables, with column types inferred from the build's data
 
-**Status:** Proposed (2026-09-29)
+**Status:** Accepted (2026-09-30; proposed 2026-09-29) — owner decision; the status edit was made by the conductor on the owner's explicit instruction
 
 **Context:** The owner picked db2lake for Wave 3 (M12, 2026-09-29; `docs/LAB_PLAN.md` §14). `docs/LAB_IDEAS.md` names DuckDB and WoWDBDefs typing, and ADR-0022 says column typing needs WoWDBDefs and arrives with the first wave that needs typed columns. A live check by hand on 2026-09-29 (`wowlab db2 head`, build 1.60.1.70058, §14.1) found the tables Wave 3 needs are small: the whole talent dataset is under 100 KB, and the largest table looked at (`SpellMisc`) is 3 MB. wago's CSV headers already carry column names, including WoWDBDefs placeholder names such as `Field_10_0_0_45697_006`. A SQL prompt runs text typed by the owner, or by a tool acting for the owner, against a database, so the surface must not write files, load code or reach the network (L1, L3, ADR-0019). ADR-0020 keeps the core to the runtime dependencies in `docs/LAB_PLAN.md` §6 and to one language.
 
