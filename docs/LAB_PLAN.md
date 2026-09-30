@@ -1061,6 +1061,7 @@ wowlab profile save|apply|list|show|delete …         # §13.3 (M11-08)
 wowlab addon install|remove lab [--dry-run] [--yes]  # §13.1 (M11-02)
 wowlab looks races|options|save|show|compare|page …  # §13.2 (M11-06, M11-07)
 wowlab char show [--character C] [--json]           # §13.1 (M11-04)
+wowlab char list [--account A] [--json]             # §14.4 (M12-09)
 ```
 
 *Amended 2026-09-28:* the Wave 2 commands above are listed for
@@ -2481,6 +2482,104 @@ A static local page over every character's `WowLab.lua`.
   it could not be read. One unreadable file names itself and exits 1 (as
   `looks show` does) and never blocks the others. `wowlab char list` prints
   the table.
+  *Amended 2026-09-30 (M12-09), the reader as built:* `labaddon.survey(layout,
+  account=None, keep_records=True, budget=MAX_SURVEY_BYTES)` makes one
+  walk of `WTF/` (`Layout.wtf_walk`, which also names the folders, links,
+  read errors and non-regular entries the typed lists leave out) and
+  returns `AllCharacters`: one `CharacterFile` (`label`, `account`,
+  `realm_folder`, `shape`, `file`, `place`, `mtime_ns`, and either
+  `summary`, with `record` unless the caller asked not to keep it, or
+  `error`) per character folder, of either shape, whose `SavedVariables/`
+  holds a `WowLab.lua`, and `not_looked_at` (`path`, `reason`, and the
+  `account` it is in). `read_all` is `survey(...).characters`. A row is a
+  character folder, not proof of a character: a renamed or transferred
+  character (and a deleted one **[verify]**, `docs/LAB_FILE_MAP.md`) keeps
+  its old folder and last save (GLOSSARY, Identity). `shape` says whether
+  the folder above it is a realm name (`realm_name`) or, on Forever, a
+  digits folder (`numeric_folder`), which is not a realm name. A folder
+  without the file (the `<Realm>/<First>/` twin, a character never saved
+  with the addon enabled; a crash writes nothing) is not listed, and
+  `.lua.bak` siblings are never read. The rule for which file is the
+  character's is `labaddon.choose_lab_file`: the whole name `WowLab.lua`
+  exactly, else its one case variant; two with the exact name, or several
+  case variants and no exact one, are refused. `char show` and `looks
+  import-char` choose by the same rule (they used to take the first such
+  file in path order, which changed only for case variants), but they give
+  it regular files only, while `survey` also gives it a link, FIFO or
+  folder of that name and names a `SavedVariables/` folder it cannot list.
+  So there they can still answer differently from `char list`: the client
+  opens the exact name and follows links; on a case-sensitive volume (under
+  Wine, say) `char show` can read a case variant the client does not; and
+  where a character's `SavedVariables/` cannot be listed, `char show
+  --character` says the character has no `WowLab.lua` and gives install
+  advice (exit 1) and `looks import-char` exits 2, while `char list` says it
+  could not look inside that folder (a follow-up makes `char show` take its
+  entry from `survey`). **Whatever wowlab could not look
+  at is named and makes `char list` exit 1:** a `WowLab.lua` it cannot read
+  (the reader's, the parser's or the system's reason, never an absolute
+  path), or that is a link (not followed, as wowlab never follows links), a
+  FIFO or other non-regular entry (never opened) or a folder; and a
+  character folder or its `SavedVariables/` that is a link or cannot be
+  listed (`place` says which). Each gives that character an entry with the
+  reason (`mtime_ns` None when no regular file was looked at). The flavor
+  folder itself when it cannot be listed (named by its own name, so `WTF/`
+  is never found), a link or unlistable folder at `WTF/`, `WTF/Account/`,
+  an account folder or a realm or digits folder, and a walk that hit its
+  bound are in `not_looked_at`. A linked name directly in an account folder
+  counts only where the file map would take it for a realm or digits
+  folder (a linked `config-cache.wtf` hides nothing), and nothing in the
+  account's own `SavedVariables/` counts (a linked `WeakAuras.lua` shared
+  between accounts hides no character). A FIFO or folder counts only where
+  it carries the file's own name. A file over the per-file bound
+  (`luadata.MAX_FILE_BYTES`) is refused on that bound before a byte is read
+  ("the file holds N bytes, more than M") and never charged to the total,
+  so it blocks nothing after it. One run reads at most `MAX_SURVEY_BYTES`
+  (64 MiB) of files in all, and one byte more when a file grows while it is
+  read (the read's limit is what is left, and that byte is how the growth
+  is noticed); each file is charged the bytes actually read. The bound
+  counts bytes, not parse cost: a dense file takes longer and keeps more
+  memory per byte than a real one (charging parse cost is a follow-up).
+  Once a file would pass it, or grows past what is left, that file and
+  every one after it in the order are `not read: the listing's total size
+  bound was reached (wowlab reads at most 64 MiB of WowLab.lua files in one
+  listing, and the files before this one used it up); wowlab char show
+  --account <A> --character <folder> reads this one on its own`. A file
+  already read and parsed in the run (the same device and inode, and an
+  inode other than 0, which some file systems report for every file) is not
+  read again: its row is `the same file as <realm or digits
+  folder>/<character folder> [in account <A>] (a hard link), read once, on
+  that character's row` (`same_as` in `--json`), and it is an error (exit
+  1), since the row cannot vouch that the record is this character's. A
+  link to a file that could not be read or parsed is read on its own and
+  reports its own error. Text output keeps each file's summary, not its
+  parsed record. The order is account, realm or
+  digits folder, character folder, each compared with case folded and then
+  as spelled; it never follows modification times. `char list` covers
+  every account unless `--account` names one (as `sv list` does; `char
+  show` instead needs `--account` when there are several); `--account A`
+  where A is, or is behind, a place wowlab could not look inside names that
+  place and exits 1 instead of "no account folder" (exit 2). Deciding that
+  takes the listing only (`survey(budget=0)` opens no file), and the usage
+  error for an account found nowhere lists the "accounts wowlab could look
+  inside" (every command that takes `--account`). The heading
+  counts character folders (and those wowlab could not look inside); a row
+  is `<realm or digits folder>/<character folder>`, the file's modification
+  time (the client's last save, unless something wrote the file since: a
+  wowlab snap restore, undo or sv merge, or a copy; profiles never hold
+  `WowLab.lua`; "time unknown" when none was read), and the schema, the
+  client that saved it as its full version (`saved by client
+  1.60.1.70009`, which need not be the installed build) and the spec id
+  (`labaddon.summary`), or `not read:` and the reason. On stderr, one line
+  each: `could not read <file>: <reason>`, `could not look inside <folder>
+  (the character folder | the character's SavedVariables folder):
+  <reason>`, `<file> is the same file as … (a hard link), read once, on
+  that character's row`, and `could not look inside <place>: <reason>`; the
+  command exits 1 after
+  printing everything, `--json` (`CharListReport`, with `not_looked_at`)
+  included. The text then says "wowlab could not look inside N place(s)
+  where character folders can be (named on stderr); any character folder
+  inside it (them) is not listed", and with nothing listed it says so
+  instead of giving install advice.
 - **Page** `wowlab char page [--out PATH] [--anonymize] [--offline]`: one
   static file (ADR-0027), a card per character: when the client last saved the
   file (a time from the file, not from the addon, which records none), the

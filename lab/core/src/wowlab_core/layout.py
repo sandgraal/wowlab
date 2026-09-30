@@ -28,7 +28,9 @@ junctions are never followed, whether they point inside the install or out;
 each is reported in `symlinks` with its target text and whether that target
 resolves inside the install, and is left out of the typed lists. Walks are
 bounded in depth and entry count (`Limits`); a walk that hits a bound says so
-in `truncated`. Nothing about a flavor is known here (L6): the folder comes
+in `truncated`. `wtf_walk()` walks `WTF/` alone and also names what the typed
+lists leave out there (folders, FIFOs and other non-regular entries, links,
+read errors), so a reader can say what it could not look at (M12-09). Nothing about a flavor is known here (L6): the folder comes
 from the caller or from discovery.
 
 Strings that come from file names are kept exactly as the operating system
@@ -80,6 +82,7 @@ __all__ = [
     "Unclassified",
     "WalkError",
     "WtfFile",
+    "WtfWalk",
     "classify",
     "layouts",
 ]
@@ -322,6 +325,23 @@ class Inventory(_Model):
     truncated: bool
 
 
+class WtfWalk(_Model):
+    """`Layout.wtf_walk()`: one bounded walk of `WTF/` and nothing else
+    (M12-09), with what the typed lists leave out, so a reader can say what
+    it could not look at. `truncated` is this walk's own bound only."""
+
+    accounts: tuple[Account, ...]
+    saved_variables: tuple[SavedVariablesFile, ...]
+    wtf_files: tuple[WtfFile, ...]
+    folders: tuple[FsText, ...]  # every real folder below `WTF/` the walk met, sorted
+    # Entries that are not a regular file, a folder or a link (FIFOs,
+    # sockets, devices), sorted: named, never opened.
+    not_regular: tuple[FsText, ...]
+    symlinks: tuple[Symlink, ...]  # met at or below `WTF/`, never followed
+    errors: tuple[WalkError, ...]  # folders that could not be listed, entries not `lstat`ed
+    truncated: bool
+
+
 class Classified(_Model):
     """A path and its file-map entry."""
 
@@ -360,6 +380,11 @@ class _Report:
     os_metadata: list[str] = field(default_factory=list)
     truncated: bool = False
     entries: int = 0
+    # Entries that are not a regular file, a folder or a link (FIFOs,
+    # sockets, devices): named here, never opened (M12-09).
+    not_regular: list[str] = field(default_factory=list)
+    # Every real folder the WTF walk met (M12-09).
+    wtf_folders: list[str] = field(default_factory=list)
 
 
 def _rel_text(rel: Iterable[str]) -> str:
@@ -475,7 +500,10 @@ class Layout:
             return _Entry(rel, True, 0, st.st_mtime_ns)
         if stat.S_ISREG(st.st_mode):
             return _Entry(rel, False, st.st_size, st.st_mtime_ns)
-        return None  # FIFOs, sockets, devices: never opened, not inventoried
+        # FIFOs, sockets, devices: never opened, not inventoried; named in
+        # the report for `wtf_walk`.
+        report.not_regular.append(_rel_text(rel))
+        return None
 
     def _list(self, rel: tuple[str, ...], report: _Report) -> list[_Entry]:
         """One folder's entries (no recursion), counted against the bound."""
@@ -552,6 +580,7 @@ class Layout:
             return accounts, svs, wtf_files
         account_root = self._sub(wtf, _ACCOUNT, report)
         entries = [e for e in self._walk(wtf, report) if not self._os_metadata(e, report)]
+        report.wtf_folders.extend(_rel_text(e.rel) for e in entries if e.is_dir)
         by_folder: dict[tuple[str, ...], list[_Entry]] = {}
         for e in entries:
             by_folder.setdefault(e.rel[:-1], []).append(e)
@@ -885,6 +914,24 @@ class Layout:
         """Every regular file under `WTF/` that is not a SavedVariables file."""
         return tuple(self._scan_wtf(_Report())[2])
 
+    def wtf_walk(self) -> WtfWalk:
+        """`accounts()`, `saved_variables()` and `wtf_files()` from one walk
+        of `WTF/` only, with every folder it met, every entry that is not a
+        regular file, folder or link, every symlink (never followed), every
+        read error, and whether the walk hit a bound (M12-09)."""
+        report = _Report()
+        accounts, svs, wtf_files = self._scan_wtf(report)
+        return WtfWalk(
+            accounts=tuple(accounts),
+            saved_variables=tuple(svs),
+            wtf_files=tuple(wtf_files),
+            folders=tuple(sorted(set(report.wtf_folders))),
+            not_regular=tuple(sorted(set(report.not_regular))),
+            symlinks=tuple(sorted({s.path: s for s in report.symlinks}.values(), key=_by_path)),
+            errors=tuple(dict.fromkeys(report.errors)),
+            truncated=report.truncated,
+        )
+
     def addons(self) -> tuple[Addon, ...]:
         """Every folder under `Interface/AddOns/`, with every TOC parsed."""
         return tuple(self._scan_addons(_Report()))
@@ -949,6 +996,10 @@ class Layout:
         p = Path(path)
         absolute = p if p.is_absolute() else self.flavor_path / p
         return _classify(absolute, self.install_root, {self.flavor_folder}, _dir_hint(path, is_dir))
+
+
+def _by_path(link: Symlink) -> str:
+    return link.path
 
 
 def _with_twins(realms: list[Realm]) -> tuple[Realm, ...]:
