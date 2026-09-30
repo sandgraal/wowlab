@@ -28,6 +28,11 @@ on:
         description: Push the result to the wiki (a scheduled run always does)
         type: boolean
         default: false
+  # TEMPORARY (M12-14 dry run, removed before merge): a dispatch needs the file
+  # on the default branch, so the branch runs it on push. `publish` and
+  # `report` never run off main.
+  push:
+    branches: [m12/14-wiki-daily]
 
 permissions:
   contents: read
@@ -48,6 +53,33 @@ env:
   WIKI_MODEL: claude-opus-5-5
 
 jobs:
+  # TEMPORARY (M12-14, removed before merge): can each token push to the
+  # wiki? Asks for the push service's ref advertisement, which needs push
+  # rights and writes nothing. Prints HTTP codes only.
+  probe:
+    name: Probe wiki push rights (temporary)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Probe
+        env:
+          ACTIONS_TOKEN: ${{ github.token }}
+          PAT: ${{ secrets.WIKI_PUSH_TOKEN }}
+        run: |
+          url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.wiki.git/info/refs?service=git-receive-pack"
+          for name in ACTIONS_TOKEN PAT; do
+            tok="${!name}"
+            if [ -z "$tok" ]; then echo "$name: not set"; continue; fi
+            code=$(printf 'user = "x-access-token:%s"\n' "$tok" | curl -s -o /dev/null -w '%{http_code}' -K - "$url")
+            echo "$name: HTTP $code (receive-pack advertisement)"
+            echo "- $name: HTTP $code" >> "$GITHUB_STEP_SUMMARY"
+          done
+          code=$(curl -s -o /dev/null -w '%{http_code}' "$url")
+          echo "no token: HTTP $code"
+
   improve:
     name: Check and improve the wiki
     runs-on: ubuntu-latest
