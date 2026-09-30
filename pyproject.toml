@@ -45,6 +45,7 @@ select = [
   "T20",           # no stray print() in library code
   "ERA",           # no commented-out code
   "DTZ",           # timezone-aware datetimes only (snapshot ids are UTC timestamps)
+  "PLE2502",       # no raw bidirectional Unicode control character in source (M11-37)
 ]
 ignore = [
   "E501",   # line length is handled by the formatter
