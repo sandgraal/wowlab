@@ -68,6 +68,7 @@ import functools
 import hashlib
 import io
 import json
+import logging
 import os
 import re
 import time
@@ -209,22 +210,26 @@ class CliError(Exception):
         self.code = code
 
 
-# What `_safe` escapes: every C0 control but tab (line feed included), DEL,
+# What `_safe` escapes: every C0 control (tab and line feed included), DEL,
 # every C1 control, and the Unicode format and separator characters (Cf, Zl,
 # Zp; U+202E reverses the text after it, U+2028 breaks a line) in the one
-# table printed key paths use (`svmerge._FORMAT_CHARACTERS`, M11-25).
+# table printed key paths use (`svmerge._FORMAT_CHARACTERS`, Unicode 15.0,
+# M11-25). A newer Unicode database is caught by the exhaustive test in
+# `tests/test_cli_terminal_safe.py`, not here.
 _UNSAFE = re.compile(
-    "[\x00-\x08\x0a-\x1f\x7f-\x9f"
+    "[\x00-\x1f\x7f-\x9f"
     + "".join(f"{chr(lo)}-{chr(hi)}" for lo, hi in svmerge._FORMAT_CHARACTERS)
     + "]"
 )
 
 
 def _escape(match: re.Match[str]) -> str:
-    """A C0 or C1 control as `\\xNN` of its code point; a format or separator
-    character as `\\xNN` of each UTF-8 byte that carries it."""
+    """A C0 control or DEL as `\\xNN` of its one byte; a C1 control, format
+    or separator character as `\\xNN` of each UTF-8 byte that carries it
+    (U+0085 is `\\xc2\\x85`), so every `\\xNN` stands for one byte of the
+    name as stored, as M11-25's printed key paths do."""
     char = match.group()
-    if char <= "\x9f":
+    if char < "\x80":
         return f"\\x{ord(char):02x}"
     return "".join(f"\\x{b:02x}" for b in char.encode())
 
@@ -234,12 +239,14 @@ def _safe(text: str) -> str:
 
     Bytes that are not UTF-8 (carried as lone surrogates) are shown as `\\xNN`
     escapes instead of failing the write, and so is every C0 and C1 control
-    character but tab, line feed included: a file name or value from the
+    character, tab and line feed included: a file name or value from the
     install can carry ESC or OSC sequences, which must never reach the
     terminal as control codes. Unicode format and separator characters
     (U+202E, U+2028, U+200B, ...) are shown as their UTF-8 bytes, `\\xNN`
     each, so a name cannot reorder or break the line it is printed on.
-    Letters, accented or not, print as they are."""
+    Letters, accented or not, print as they are. A backslash is not
+    escaped (it would mangle every Windows path), so a name holding the
+    literal text `\\x85` prints like an invalid byte 0x85."""
     try:
         text = text.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
     except UnicodeEncodeError:
@@ -258,28 +265,84 @@ def _say_err(text: str = "") -> None:
     typer.echo(_safe(text), err=True)
 
 
+_FIELD = "{}"
+
+
 def _note(message: str, *values: object) -> None:
     """A message on stderr.
 
     `message` is this module's own text: its line breaks are kept, and every
     other control, format or separator character is escaped. Anything from
-    elsewhere (a path, a folder name, an error text) is never formatted into
-    `message` by the caller: it is passed in `values` and fills the next `{}`
-    of `message` escaped by `_safe`, its line breaks included, so a value
-    can never start a line of its own. With `values`, a literal brace in
-    `message` is written `{{` or `}}`."""
-    text = "\n".join(_safe(line) for line in message.split("\n"))
-    if values:
-        text = text.format(*(_safe(str(v)) for v in values))
-    typer.echo(text, err=True)
+    elsewhere (a path, a folder name, an error text) is never put into
+    `message` by the caller: it is passed in `values`, and each value takes
+    the place of the next `{}` in `message`, escaped by `_safe` with its
+    line breaks, so a value can never start a line of its own. Nothing else
+    in `message` or a value is a field (no `str.format`): a value holding
+    `{}` or `{:>9}` prints as it is. A `message` whose `{}` count differs
+    from the number of values is a bug in this module (ValueError)."""
+    parts = message.split(_FIELD)
+    if len(parts) != len(values) + 1:
+        raise ValueError(
+            f"_note: {len(parts) - 1} {_FIELD} field(s) in the message, {len(values)} value(s)"
+        )
+    out = ["\n".join(_safe(line) for line in parts[0].split("\n"))]
+    for value, part in zip(values, parts[1:], strict=True):
+        out.append(_safe(str(value)))
+        out.append("\n".join(_safe(line) for line in part.split("\n")))
+    typer.echo("".join(out), err=True)
 
 
-def _fail(message: str, code: int) -> NoReturn:
+def _fail(message: str, code: int, exc: BaseException | None = None) -> NoReturn:
     """The error `message` as one line on stderr: it holds values (paths,
     folder names) the library or this module put in it, so every line
-    break in it is escaped."""
+    break in it is escaped. The notes `exc` carries (`add_note`, such as
+    the write gate's "the rollback did not finish") follow, one line each."""
     _note("wowlab: {}", message)
+    for extra in getattr(exc, "__notes__", ()):
+        _note("{}", extra)
     raise typer.Exit(code)
+
+
+class _SafeLogFormatter(logging.Formatter):
+    """A library log record as one line, escaped by `_safe`."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return _safe(super().format(record))
+
+
+class _StderrLogHandler(logging.Handler):
+    """Library log records (the write gate's warnings) on stderr, looked up
+    at each record so it follows the stream the command is writing to."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            typer.echo(self.format(record), err=True)
+        except Exception:
+            self.handleError(record)
+
+
+_LIBRARY_LOGGER = "wowlab_core"
+_LOG_HANDLER = _StderrLogHandler(logging.WARNING)
+_LOG_HANDLER.setFormatter(_SafeLogFormatter("wowlab: %(message)s"))
+
+
+@contextmanager
+def _library_log_on_stderr() -> Iterator[None]:
+    """While a command runs, `wowlab_core` log records go to stderr through
+    `_LOG_HANDLER` and nowhere else (Python's fallback handler would print
+    them raw); the logger is put back as it was afterwards."""
+    logger = logging.getLogger(_LIBRARY_LOGGER)
+    if _LOG_HANDLER in logger.handlers:  # nested: already installed
+        yield
+        return
+    propagate = logger.propagate
+    logger.addHandler(_LOG_HANDLER)
+    logger.propagate = False
+    try:
+        yield
+    finally:
+        logger.removeHandler(_LOG_HANDLER)
+        logger.propagate = propagate
 
 
 _SURROGATE = re.compile("[\ud800-\udfff]")
@@ -339,17 +402,18 @@ def _handled[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
         try:
             return fn(*args, **kwargs)
         except guard.GuardError as exc:
-            _fail(f"refused by the write gate: {exc}", EXIT_REFUSED)
+            _fail(f"refused by the write gate: {exc}", EXIT_REFUSED, exc)
         except CliError as exc:
-            _fail(str(exc), exc.code)
+            _fail(str(exc), exc.code, exc)
         except luadata.LuaLimitError as exc:
             _fail(
                 f"refused: this file is beyond what the SavedVariables parser will hold "
                 f"({exc.message}); nothing was printed",
                 EXIT_ERROR,
+                exc,
             )
         except luadata.LuaDataError as exc:
-            _fail(f"not SavedVariables data the parser accepts: {exc}", EXIT_ERROR)
+            _fail(f"not SavedVariables data the parser accepts: {exc}", EXIT_ERROR, exc)
         except (
             install.InstallError,
             snapshot.SnapshotError,
@@ -360,7 +424,7 @@ def _handled[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
             lookstore.LookStoreError,
             OSError,
         ) as exc:
-            _fail(str(exc), EXIT_ERROR)
+            _fail(str(exc), EXIT_ERROR, exc)
 
     return wrapper
 
@@ -2818,7 +2882,7 @@ def _follow_log(
     """`log tail --follow`: print as the client appends, until Ctrl-C."""
     logs = _logs_dir(lay)
     if newest is None:
-        _note(f"{_NO_LOG}; waiting for one")
+        _note("{}; waiting for one", _NO_LOG)
     while logs is None:
         _follow_sleep(_LOG_POLL)
         logs = _logs_dir(lay)
@@ -3037,10 +3101,14 @@ def db2_head(
     if not got:
         _say("(no rows)")
         return
+    # Text for a terminal: every column name and cell is escaped by `_safe`
+    # before the CSV is written (the rows come from a community-run service
+    # or its cache, ADR-0022); `--json` has the exact values.
+    fields = list(got[0])
     buffer = io.StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=list(got[0]), lineterminator="\n")
-    writer.writeheader()
-    writer.writerows(got)
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow([_safe(name) for name in fields])
+    writer.writerows([_safe(row[name]) for name in fields] for row in got)
     typer.echo(buffer.getvalue(), nl=False)
 
 
@@ -6036,6 +6104,7 @@ def _print_version(value: bool) -> None:
 
 @app.callback()
 def main(
+    ctx: typer.Context,
     version: Annotated[
         bool,
         typer.Option(
@@ -6047,3 +6116,4 @@ def main(
     ] = False,
 ) -> None:
     """Local-only toolchain over a World of Warcraft install."""
+    ctx.with_resource(_library_log_on_stderr())
