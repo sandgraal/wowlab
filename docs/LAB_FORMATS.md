@@ -617,3 +617,21 @@ Dated entries, newest last. Each names the fixture that prompted it.
   this session or loaded from an earlier one. The owner reports `/wowlab
   skip professions` then `/wowlab unskip professions` in this session. Not
   an addon defect.
+
+  Follow-up, 2026-09-29 (M11-29; `docs/LAB_PLAN.md` §13.1 amended the same
+  day). Two readings of the rows above, from the addon's code rather than a
+  new capture. `events_unregistered = {}` means that neither
+  `C_EventUtils.IsEventValid` (when the client has it) nor an error from
+  `RegisterEvent` refused the event; the addon does not read
+  `RegisterEvent`'s return value, so "the client accepted both barber-shop
+  events" is as far as the file goes. And the record cannot tell "the
+  applied event did not arrive" from "an open came after it" except through
+  the owner's account of the session. The addon now writes, on
+  `customization`, `events_received` (each registered event with how many
+  times it reached the section in the session that saved the file,
+  including three count-only events: `BARBER_SHOP_RESULT`,
+  `BARBER_SHOP_CLOSE`, `BARBER_SHOP_FORCE_CUSTOMIZATIONS_UPDATE`,
+  **[verify]**) and `chr_model_id_absent` (why `GetViewingChrModel` gave no
+  number). The cause behind each of the two rows stays open until a capture
+  made after M11-29 (runbook: `lab/addon/README.md`, "M11-29 capture
+  step").

@@ -1505,6 +1505,42 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   additive: the schema stays 1, and the reader treats each as optional
   (the M11-03 fixtures predate them).
 
+  Amended 2026-09-29 (M11-29, from the M11-23 capture on 1.60.1.70058,
+  `docs/LAB_FORMATS.md`): after one applied barber-shop change the
+  customization record read `recorded_at = "open"`, with no `chr_model_id`,
+  and the file could not say why. Confirmed by that capture:
+  `BARBER_SHOP_OPEN` fires and reaches the section;
+  `C_BarberShop.GetAvailableCustomizations`, `GetCurrentCharacterData`
+  (`sex` 0) and `UnitRace` ran; no name field was stored. Still
+  **[verify]**: that `BARBER_SHOP_APPEARANCE_APPLIED` ever reaches the
+  section (the client did not refuse it, yet the record was not rewritten),
+  what `GetViewingChrModel` returns, and `currentChoiceIndex` being 1-based
+  (consistent with the tables, not proven). The addon changes only so that
+  the next capture can say why, not on a guess at the cause. (1) The
+  section writes `events_received`: every event it registered this session,
+  with how many times it reached the section's handler (0 when it never
+  did). With `recorded_at` it tells "the applied event never came" from "an
+  open came after it". It goes on whatever record is written for the
+  section, like `events_unregistered`, and is this session's: `carry` drops
+  it. (2) The section also registers three count-only events,
+  `BARBER_SHOP_RESULT`, `BARBER_SHOP_CLOSE` and
+  `BARBER_SHOP_FORCE_CUSTOMIZATIONS_UPDATE` (Retail names, **[verify]** on
+  Forever). They are counted and nothing else: the record still comes only
+  from `BARBER_SHOP_OPEN` and `BARBER_SHOP_APPEARANCE_APPLIED`, never at
+  close. A count-only event the client refuses has no entry and is not in
+  `events_unregistered`, which stays the list of refused change events.
+  (3) A gathered record holds exactly one of `chr_model_id` and
+  `chr_model_id_absent`, one of `"C_BarberShop.GetViewingChrModel missing"`,
+  `"C_BarberShop.GetViewingChrModel raised an error"`,
+  `"C_BarberShop.GetViewingChrModel returned nil"` and
+  `"C_BarberShop.GetViewingChrModel returned no number"` (the call goes
+  through `pcall` directly, so an error is not taken for nil). `carry` keeps
+  only the number, so a carried record may hold neither. The keys are
+  additive: the schema stays 1, and the reader treats each as optional. Why
+  the applied event did not arrive, and why there was no model id, stays
+  open until the owner's capture in `lab/addon/README.md` ("M11-29 capture
+  step").
+
   Schema 1 may change after M11-03. Edits from the capture land before
   M11-04 starts; after M11-04 merges, any change is schema 2.
 - **Install** `wowlab addon install lab` / `wowlab addon remove lab`: copies
