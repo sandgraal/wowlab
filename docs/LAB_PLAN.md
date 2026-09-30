@@ -1572,12 +1572,24 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   unchanged. Printable ASCII is still the only text that reaches the
   terminal or the JSON unescaped, and the file itself is never changed.
   *Amended 2026-09-29 (M11-32):* the line under the Legacy headline says
-  the addon lists every trait config except the active class talents and
-  the types below, since the addon leaves the active class config out by id
-  whatever its type. That line is used whenever `talents.legacy.configs`
-  lists more than one config, including when every one is absent with a
-  reason. With one config or none, the line still says the Legacy system is
-  inferred by elimination.
+  how the addon found the configs: "the addon lists every trait config it
+  found by type (except the types below) or by a client system id, less the
+  active class talents when the client gave their id; which of these is the
+  Legacy system is not recorded". This replaces both the M11-27 line and
+  the ticket's proposed "except the active class talents and the types
+  below" (changed in review on the conductor's authority), because the
+  addon does less than that wording claims. It leaves the active class
+  config out by id, whatever its type, but only when
+  `C_ClassTalents.GetActiveConfigID` gave an id. `talents.legacy` does not
+  record the id it left out, and `talents.class` is gathered separately, so
+  the reader cannot tell whether the class config was left out. A config
+  found through `C_Traits.GetConfigIDBySystemID` is not type-checked, so
+  it may have one of the types the next line says were not searched. The
+  line is used whenever `talents.legacy.configs` lists more than one
+  config, including when every one is absent with a reason. With one
+  config, the line still says the Legacy system is inferred by
+  elimination; with none, it says "no candidate config listed". Every
+  variant ends with the panel opener clause as computed.
 - **Capture** (owner): install; on each character log in, then log out or
   `/reload` (a crash writes nothing); on at least one character open the
   barber shop and close it without changing anything, then log out. Capture

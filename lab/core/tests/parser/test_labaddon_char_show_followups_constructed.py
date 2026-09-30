@@ -92,9 +92,9 @@ SEVERAL = (
     "Legacy system, so each has its own figures (not added together): "
 )
 SEVERAL_SECOND_LINE = (  # reworded in M11-32 (test_labaddon_legacy_wording.py)
-    "  the addon lists every trait config except the active class talents and the types below; "
-    "which of these is the Legacy system is not recorded; panel opener ToggleLegacySystemUI "
-    "present: yes"
+    "  the addon lists every trait config it found by type (except the types below) or by a "
+    "client system id, less the active class talents when the client gave their id; which of "
+    "these is the Legacy system is not recorded; panel opener ToggleLegacySystemUI present: yes"
 )
 ONE_SECOND_LINE = (
     "  which config is the Legacy system is inferred by elimination; panel opener "

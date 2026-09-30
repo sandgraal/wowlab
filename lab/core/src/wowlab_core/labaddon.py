@@ -621,8 +621,11 @@ class ClassTalents(_Section):
 
 
 class LegacyTalents(_Section):
-    """`talents.legacy`: every trait config that is neither the active class
-    config nor Combat nor Profession, each with `found_by`."""
+    """`talents.legacy`: every trait config the addon found by type (any type
+    but Invalid, Combat and Profession; `skipped_types` names those of them
+    the client's enum has) or by a client system id (not type-checked), less
+    the active class config when the client gave its id, each with
+    `found_by`. The file does not record which id was left out."""
 
     legacy_ui: bool
     player_level: Int | None = None
@@ -1315,16 +1318,20 @@ def _legacy(legacy: LegacyTalents) -> list[str]:
     level = "" if each or legacy.player_level is None else f" (level {legacy.player_level})"
     lines = [f"{legacy_headline(legacy)}{level}"]
     if len(legacy.configs) > 1:
-        # M11-32: the addon also leaves out the active class config by id,
-        # whatever its type, so the types below are not the whole rule; and
-        # with several configs listed, nothing picks one out, even when every
-        # one of them is absent with a reason.
+        # M11-32: with several configs listed, nothing picks one out, even
+        # when every one of them is absent with a reason. A config found by a
+        # client system id is not type-checked, and the active class config
+        # is left out only when the client gave its id; `talents.legacy`
+        # does not record which id that was, so the line cannot say more.
         lines.append(
-            "  the addon lists every trait config except the active class talents and the "
-            f"types below; which of these is the Legacy system is not recorded; {opener}"
+            "  the addon lists every trait config it found by type (except the types below) or "
+            "by a client system id, less the active class talents when the client gave their "
+            f"id; which of these is the Legacy system is not recorded; {opener}"
         )
-    else:
+    elif legacy.configs:
         lines.append(f"  which config is the Legacy system is inferred by elimination; {opener}")
+    else:
+        lines.append(f"  no candidate config listed; {opener}")
     skipped = ", ".join(legacy.skipped_types) or NONE_RECORDED
     lines.append(f"  config types not searched: {skipped}")
     for config in legacy.configs:
