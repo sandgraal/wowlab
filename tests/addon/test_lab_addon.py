@@ -2655,3 +2655,190 @@ def test_readme_and_plan_document_why_a_value_is_missing() -> None:
     assert f'`"{EMPTY_EXPORT}"`' in readme
     assert "export | export_absent" in readme
     assert "headers, headers_collapsed, rows, filter" in readme
+
+
+# M11-29: the barber-shop record after an applied change ---------------------------
+#
+# Source scans on the addon's own tokens (constructed checks; no Lua runs, L3).
+# The M11-23 capture (1.60.1.70058) read `recorded_at = "open"` after one
+# applied change, with no `chr_model_id`, and the file could not say why. The
+# addon changes only so the next capture can: `events_received` counts every
+# event the customization section registered, three count-only events are
+# counted and never gathered on, and `chr_model_id_absent` says why there is
+# no model id. Every value stored here is also held to the stored-value rules
+# above (test_every_stored_value_is_type_checked).
+
+CUSTOMIZATION = ADDON / "Customization.lua"
+BARBER_CHANGE_EVENTS = ("BARBER_SHOP_OPEN", "BARBER_SHOP_APPEARANCE_APPLIED")
+BARBER_COUNT_ONLY = (
+    "BARBER_SHOP_RESULT",
+    "BARBER_SHOP_CLOSE",
+    "BARBER_SHOP_FORCE_CUSTOMIZATIONS_UPDATE",
+)
+MODEL_ABSENT = (
+    "C_BarberShop.GetViewingChrModel missing",
+    "C_BarberShop.GetViewingChrModel raised an error",
+    "C_BarberShop.GetViewingChrModel returned nil",
+    "C_BarberShop.GetViewingChrModel returned no number",
+)
+# The reader's EventName shape (wowlab_core.labaddon): a name it would refuse
+# would make the whole file unreadable.
+_READER_EVENT_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
+
+
+def _literal_list(section: str, field: str) -> tuple[str, ...]:
+    match = re.search(rf"{field} = \{{ ((?:\"[A-Z0-9_]+\" ,? ?)+)\}} ,", section)
+    assert match, f"expected a literal `{field} = {{ ... }}` in the section"
+    return tuple(re.findall(r'"([A-Z0-9_]+)"', match.group(1)))
+
+
+def test_m11_29_customization_counts_three_more_events_and_gathers_on_two() -> None:
+    """The change events are unchanged; the count-only list is a literal of
+    three event names, none of them a change event, each a name the reader
+    accepts and none a private event. No other section has a count-only list."""
+    section = _section_source(CUSTOMIZATION, "customization")
+    assert _literal_list(section, "events") == BARBER_CHANGE_EVENTS
+    assert _literal_list(section, "count_only") == BARBER_COUNT_ONLY
+    assert not set(BARBER_COUNT_ONLY) & set(BARBER_CHANGE_EVENTS)
+    for name in BARBER_CHANGE_EVENTS + BARBER_COUNT_ONLY:
+        assert _READER_EVENT_NAME.match(name), name
+        assert not PRIVATE_EVENT.match(name), name
+    others = [
+        path.name
+        for path in SOURCES
+        if path != CUSTOMIZATION and "count_only =" in _render(_tokens(path))
+    ]
+    assert others == [], others
+
+
+def test_m11_29_count_only_events_are_counted_and_never_gather() -> None:
+    """In `listen`: the count comes before the change-event test, and a
+    count-only event returns before `gather`, `dirty` or `schedule`, so the
+    record still comes only from the two change events (never at close).
+    Every registered event starts at 0; a refused count-only event gets no
+    entry and never reaches events_unregistered."""
+    flow = _core()
+    listen = _body(flow, "listen")
+    assert listen.startswith(
+        "function listen ( section ) local changes = { } "
+        "for _ , event in ipairs ( section . events or { } ) do changes [ event ] = true end "
+        "local counts = nil if section . count_only then counts = { } end"
+    ), listen
+    assert _body(flow, "onEvent") == (
+        f"function onEvent ( fired ) {OFF_GUARD} "
+        "if counts then counts [ fired ] = ( ns . Number ( counts [ fired ] ) or 0 ) + 1 end "
+        "if not changes [ fired ] then return end "
+        "if section . immediate then gather ( section , fired ) "
+        "else section . dirty = true schedule ( ) end end"
+    )
+    assert "section . listener = onEvent section . events_received = counts" in listen
+    assert (
+        "local registered = ns . On ( event , onEvent ) if not registered then "
+        "section . events_unregistered = section . events_unregistered or { } "
+        "local missing = section . events_unregistered missing [ # missing + 1 ] = event "
+        "elseif counts then counts [ event ] = 0 end end"
+    ) in listen
+    count_only_loop = (
+        "for _ , event in ipairs ( section . count_only or { } ) do "
+        "if ns . On ( event , onEvent ) and counts then counts [ event ] = 0 end end"
+    )
+    assert listen.endswith(count_only_loop + " end"), listen
+    # events_received is set in `listen` only; nothing else writes the count.
+    sets = [
+        (path.name, _Flow(path, tokens).label_at(i))
+        for path in SOURCES
+        for tokens in [_tokens(path)]
+        for i in range(len(tokens) - 3)
+        if [t.text for t in tokens[i : i + 4]] == ["section", ".", "events_received", "="]
+    ]
+    assert sets == [("Core.lua", "listen")], sets
+
+
+def test_m11_29_switching_off_removes_the_count_only_handlers() -> None:
+    """`/wowlab skip customization` takes the one handler off the count-only
+    events too, before the listener is forgotten."""
+    body = _body(_core(), "switchOff")
+    assert (
+        "for _ , event in ipairs ( section . events or { } ) do off ( event , section . listener ) end "
+        "for _ , event in ipairs ( section . count_only or { } ) do off ( event , section . listener ) end "
+        "section . listener = nil"
+    ) in body, body
+
+
+def test_m11_29_write_puts_events_received_on_every_record_of_a_listening_section() -> None:
+    """ns.Write attaches the counts to whatever record it placed (gathered,
+    carried or never gathered), only while the section listens; a switched-off
+    section has no listener and keeps its plain owner reason. It is the one
+    place that writes the key, and neither gather nor carry does."""
+    flow = _core()
+    write = _body(flow, "ns.Write")
+    attach = "record . events_received = section . events_received"
+    assert (
+        "place ( db , section . path , record ) "
+        f"if section . listener and section . events_received then {attach} end end putSkip ( db )"
+    ) in write, write
+    rendered = [_render(_tokens(path)) for path in SOURCES]
+    assert sum(text.count("events_received =") for text in rendered) == 2  # listen and here
+    assert sum(text.count(attach) for text in rendered) == 1
+    section = _section_source(CUSTOMIZATION, "customization")
+    assert "events_received" not in section
+
+
+def test_m11_29_model_id_or_the_reason_it_is_missing() -> None:
+    """Exactly one of `chr_model_id` and `chr_model_id_absent` on a gathered
+    record. The call goes through pcall directly, not ns.Call, so an error is
+    told apart from nil; a number is stored only inside its type test."""
+    section = _section_source(CUSTOMIZATION, "customization")
+    missing, error, nil, not_number = MODEL_ABSENT
+    assert (
+        'local model = ns . Fn ( C_BarberShop , "GetViewingChrModel" ) '
+        f'if not model then record . chr_model_id_absent = "{missing}" '
+        "else local ok , id = pcall ( model ) "
+        f'if not ok then record . chr_model_id_absent = "{error}" '
+        'elseif type ( id ) == "number" then record . chr_model_id = id '
+        f'elseif id == nil then record . chr_model_id_absent = "{nil}" '
+        f'else record . chr_model_id_absent = "{not_number}" '
+        "end end return record end"
+    ) in section, section
+    assert section.count("record . chr_model_id =") == 1
+    assert section.count("record . chr_model_id_absent =") == len(MODEL_ABSENT)
+    assert "ns . Call ( model )" not in section
+
+
+def test_m11_29_carry_keeps_the_model_number_but_not_the_reason_or_the_counts() -> None:
+    """The reason and the counts describe one visit or one session: carry
+    rebuilds the record without either (a carried record may hold neither
+    chr_model_id nor its reason), and still copies chr_model_id as a number."""
+    tokens = _tokens(CUSTOMIZATION)
+    start, end = _carry_body(tokens)
+    carry = _render(tokens[start:end])
+    assert 'ipairs ( { "recorded_load" , "race_id" , "sex" , "chr_model_id" } )' in carry
+    for key in ("chr_model_id_absent", "events_received", "events_unregistered"):
+        assert key not in carry, key
+
+
+def test_m11_29_readme_and_plan_say_what_is_confirmed_and_what_stays_verify() -> None:
+    readme = " ".join(README.read_text(encoding="utf-8").split())
+    plan_text = PLAN.read_text(encoding="utf-8")
+    plan = " ".join(plan_text.split("### 13.2")[0].split("### 13.1")[-1].split())
+    formats = " ".join((ROOT / "docs" / "LAB_FORMATS.md").read_text(encoding="utf-8").split())
+    assert "Amended 2026-09-29 (M11-29" in plan
+    assert "Follow-up, 2026-09-29 (M11-29" in formats
+    for text in (readme, plan):
+        for reason in MODEL_ABSENT:
+            assert reason in text, reason
+        for name in BARBER_COUNT_ONLY:
+            assert f"`{name}`" in text, name
+        assert "`events_received`" in text
+        assert "`chr_model_id_absent`" in text
+        assert "Still **[verify]**: that `BARBER_SHOP_APPEARANCE_APPLIED` ever reaches" in text
+        assert "(Retail names, **[verify]** on Forever)" in text
+        assert "`BARBER_SHOP_OPEN` fires and reaches the section" in text
+        assert "M11-29 capture step" in text
+    # The runbook step exists, says to log out in the visit's session, and
+    # says how each result reads.
+    assert "## M11-29 capture step" in README.read_text(encoding="utf-8")
+    assert "No `/reload` between the visit and the logout" in readme
+    assert '`recorded_at = "open"` with `BARBER_SHOP_APPEARANCE_APPLIED` at 0' in readme
+    assert '`recorded_at = "applied"` and `BARBER_SHOP_APPEARANCE_APPLIED` at 1' in readme
+    assert "chr_model_id | chr_model_id_absent, events_received" in readme

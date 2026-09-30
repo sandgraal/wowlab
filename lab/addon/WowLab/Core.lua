@@ -185,6 +185,8 @@ end)
 --   key = "gear",                  -- unique; state key
 --   path = { "gear" },             -- where it goes in WowLabCharDB
 --   events = { "EVENT", ... },     -- change events
+--   count_only = { "EVENT", ... }, -- events only counted, never gathered on (M11-29);
+--                                  -- a section with this list writes events_received
 --   gather = function(event) ... end,  -- returns the record (a table)
 --   on_world = true,               -- gather on entering the world
 --   heavy = true,                  -- on entering the world, only the first time
@@ -278,9 +280,31 @@ end
 -- Registers the section's change events (at ADDON_LOADED, never for a
 -- switched-off section). One handler serves all its events, so switching the
 -- section off later removes exactly that handler.
+--
+-- A section with a `count_only` list (M11-29) registers those events too, on
+-- the same handler, and counts every event it registered as the event reaches
+-- the handler: section.events_received maps each registered event, change
+-- events included, to that count (0 from registration). A count_only event is
+-- counted and nothing else: it never gathers and never marks the section
+-- dirty. One the client refuses has no entry in events_received and is not
+-- added to events_unregistered, which stays the list of refused change events.
 local function listen(section)
+    local changes = {}
+    for _, event in ipairs(section.events or {}) do
+        changes[event] = true
+    end
+    local counts = nil
+    if section.count_only then
+        counts = {}
+    end
     local function onEvent(fired)
         if section.off then
+            return
+        end
+        if counts then
+            counts[fired] = (ns.Number(counts[fired]) or 0) + 1
+        end
+        if not changes[fired] then
             return
         end
         if section.immediate then
@@ -291,12 +315,20 @@ local function listen(section)
         end
     end
     section.listener = onEvent
+    section.events_received = counts
     for _, event in ipairs(section.events or {}) do
         local registered = ns.On(event, onEvent)
         if not registered then
             section.events_unregistered = section.events_unregistered or {}
             local missing = section.events_unregistered
             missing[#missing + 1] = event
+        elseif counts then
+            counts[event] = 0
+        end
+    end
+    for _, event in ipairs(section.count_only or {}) do
+        if ns.On(event, onEvent) and counts then
+            counts[event] = 0
         end
     end
 end
@@ -321,6 +353,9 @@ local function switchOff(section)
     ns.state[section.key] = nil
     if section.listener then
         for _, event in ipairs(section.events or {}) do
+            off(event, section.listener)
+        end
+        for _, event in ipairs(section.count_only or {}) do
             off(event, section.listener)
         end
         section.listener = nil
@@ -428,6 +463,14 @@ function ns.Write()
             end
         end
         place(db, section.path, record)
+        -- M11-29: the counts kept by `listen`, on whatever record is written
+        -- for a section with a count_only list that registered its events
+        -- this session (gathered, carried or never gathered). Set after
+        -- place, on the table place just put into db. A switched-off section
+        -- has no listener, so it keeps the plain owner reason.
+        if section.listener and section.events_received then
+            record.events_received = section.events_received
+        end
     end
     putSkip(db)
     WowLabCharDB = db
