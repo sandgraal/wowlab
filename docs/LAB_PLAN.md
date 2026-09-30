@@ -1571,6 +1571,13 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   one. An empty reason is still refused, and every other string limit is
   unchanged. Printable ASCII is still the only text that reaches the
   terminal or the JSON unescaped, and the file itself is never changed.
+  *Amended 2026-09-29 (M11-32):* the line under the Legacy headline says
+  the addon lists every trait config except the active class talents and
+  the types below, since the addon leaves the active class config out by id
+  whatever its type. That line is used whenever `talents.legacy.configs`
+  lists more than one config, including when every one is absent with a
+  reason. With one config or none, the line still says the Legacy system is
+  inferred by elimination.
 - **Capture** (owner): install; on each character log in, then log out or
   `/reload` (a crash writes nothing); on at least one character open the
   barber shop and close it without changing anything, then log out. Capture

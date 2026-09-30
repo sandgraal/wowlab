@@ -1308,21 +1308,23 @@ def _single_config(legacy: LegacyTalents) -> LegacyConfig | None:
 
 def _legacy(legacy: LegacyTalents) -> list[str]:
     opener = f"panel opener ToggleLegacySystemUI present: {_yes(legacy.legacy_ui)}"
-    several = _single_config(legacy) is None and any(
+    # The headline names the level itself when it gives each config's figures.
+    each = _single_config(legacy) is None and any(
         isinstance(c, LegacyConfig) for c in legacy.configs
     )
-    if several:  # the headline names the level and every config
-        lines = [
-            legacy_headline(legacy),
-            "  the addon lists every trait config it did not rule out (types below); which of "
-            f"these is the Legacy system is not recorded; {opener}",
-        ]
+    level = "" if each or legacy.player_level is None else f" (level {legacy.player_level})"
+    lines = [f"{legacy_headline(legacy)}{level}"]
+    if len(legacy.configs) > 1:
+        # M11-32: the addon also leaves out the active class config by id,
+        # whatever its type, so the types below are not the whole rule; and
+        # with several configs listed, nothing picks one out, even when every
+        # one of them is absent with a reason.
+        lines.append(
+            "  the addon lists every trait config except the active class talents and the "
+            f"types below; which of these is the Legacy system is not recorded; {opener}"
+        )
     else:
-        level = "" if legacy.player_level is None else f" (level {legacy.player_level})"
-        lines = [
-            f"{legacy_headline(legacy)}{level}",
-            f"  which config is the Legacy system is inferred by elimination; {opener}",
-        ]
+        lines.append(f"  which config is the Legacy system is inferred by elimination; {opener}")
     skipped = ", ".join(legacy.skipped_types) or NONE_RECORDED
     lines.append(f"  config types not searched: {skipped}")
     for config in legacy.configs:
