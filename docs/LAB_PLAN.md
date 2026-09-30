@@ -2181,7 +2181,7 @@ Wave 1 fix.
 ## 14. Wave 3 (M12): db2lake, char-planner (talents first), alt-dashboard
 
 Owner pick, 2026-09-29 (ADR-0024): **db2lake**, **char-planner with talents
-first**, and **alt-dashboard**. Decision: ADR-0028 (Proposed). Every other
+first**, and **alt-dashboard**. Decision: ADR-0028 (Accepted by the owner, 2026-09-30). Every other
 choice below is the conductor's proposal, with a default, and §14.5 lists the
 ones the owner may want to overrule when reviewing this PR. L1–L8 apply to
 every ticket. Nothing here writes into an install: all three are data-only,
