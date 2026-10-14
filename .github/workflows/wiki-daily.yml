@@ -294,6 +294,34 @@ jobs:
           } >> "$GITHUB_ENV"
           echo "${GITHUB_WORKSPACE}/repo/.venv/bin" >> "$GITHUB_PATH"
 
+      # With CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 (job env), Claude Code refuses
+      # to start without bubblewrap, which the runner image lacks (run
+      # 38651487016). The action installs it only for allowed_non_write_users,
+      # so it is installed here, the same way (action.yml at the pinned sha:
+      # "Install subprocess isolation dependencies"). Ubuntu 24.04 blocks
+      # unprivileged user namespaces through AppArmor, which bwrap needs
+      # ("setting up uid map: Permission denied"); the restriction is lifted
+      # only when the probe fails, and the step fails if bwrap still cannot
+      # run, so the model never starts without the scrub.
+      - name: Install bubblewrap for the env scrub
+        if: steps.preflight.outputs.available == 'true'
+        run: |
+          for i in 1 2 3; do
+            sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends bubblewrap && break
+            if [ "$i" = 3 ]; then echo "::error::could not install bubblewrap"; exit 1; fi
+            sleep 5
+          done
+          if ! bwrap --ro-bind / / --dev /dev --proc /proc true; then
+            if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+              sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+            fi
+            if ! bwrap --ro-bind / / --dev /dev --proc /proc true; then
+              echo "::error::bubblewrap cannot run for an unprivileged user; the env scrub cannot work"
+              exit 1
+            fi
+          fi
+          bwrap --version
+
       # Tools: read anything the deny list above leaves, edit and create only
       # inside wiki/, and run exactly one command: the gate on the wiki. The
       # rule has no wildcard, so it matches that command string and no other
