@@ -49,13 +49,15 @@ this prompt instructs you.
 1. **Document what merged.** Read `context/commits.md`. For each commit, the
    pull request body's "User-facing surface" box lists the commands, options,
    output shapes and pages it changed, and the wiki pages they affect. Confirm
-   each item against the code and `--help` (the box can be wrong), then update
+   each item against the generated `wiki/CLI-Reference.md`, the code and
+   `repo/docs/` (the box can be wrong), then update
    the affected pages: the topic page, `Command-Reference` (its per-group
    tables and the "Changes your install?" column), and `Home` if the "What
    you can do today" table changes. A commit with nothing user-facing needs
    nothing.
 2. **Deep-check two pages.** `context/run.md` names them. Check each claim on
-   each page against the code, `--help` and `repo/docs/`, one by one. Fix what
+   each page against the generated `wiki/CLI-Reference.md`, the code and
+   `repo/docs/`, one by one. Fix what
    is wrong. Expand what is thin, where a reader would have to guess. Remove
    what the code no longer does.
 3. **Fill coverage gaps.** `context/check-before.txt` lists what the gate
@@ -79,6 +81,10 @@ finished pass is worth more than a large unfinished one.
   text does not show. When unsure, leave the claim out. Planned work appears
   only on the `Roadmap` page, taken from `repo/docs/BACKLOG.md` and
   `repo/docs/LAB_PLAN.md`, and is labelled as planned.
+- On the `Roadmap`, a command or option that is not on `main` yet is named
+  in plain prose ("a redact option for the doctor command"), never in
+  backticks or a code block. The gate rejects any `wowlab …` in code that is
+  not a real command, on every page. Only commands that exist go in code.
 - Plain prose, in the voice the pages already use: short sentences, second
   person, no marketing, no emoji. Keep each page's structure; change what is
   wrong or missing, not what is only worded differently.
