@@ -84,6 +84,7 @@ acceptance:
 files: <list>
 graders activated: <files, or n/a>
 new runtime dependencies: <name + why the standard library does not do, or none>
+user-facing changes: <commands/options/output shapes/pages added or changed + wiki pages affected, or none>
 format-reference contradictions found: <bullets, or none>
 judgment calls / open questions: <bullets, or none>
 harness changes needed: <bullets, or none>

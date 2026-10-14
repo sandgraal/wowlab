@@ -244,7 +244,6 @@ RECLAIMED = [
 ]
 
 
-@pytest.mark.xfail(strict=True, reason="M11-31 not implemented")
 @pytest.mark.parametrize(("target", "original", "later"), RECLAIMED)
 def test_gc_collects_what_a_restore_from_a_deleted_snapshot_wrote_and_keeps_the_characters_wowlab_lua_constructed(
     flavor: Path, target: str, original: bytes, later: bytes
@@ -274,7 +273,6 @@ def test_gc_collects_what_a_restore_from_a_deleted_snapshot_wrote_and_keeps_the_
     _passes(_copy_within("--json"))
 
 
-@pytest.mark.xfail(strict=True, reason="M11-31 not implemented")
 def test_gc_collects_what_a_profile_apply_wrote_from_a_deleted_profile_snapshot_constructed(
     flavor: Path,
 ) -> None:
@@ -353,7 +351,6 @@ def test_gc_keeps_every_sv_merge_of_a_characters_wowlab_lua_not_only_the_latest_
 # ─── --help says what is kept ───────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M11-31 not implemented")
 def test_snap_gc_help_says_what_is_kept() -> None:
     text = " ".join(_plain(ok("snap", "gc", "--help").stdout).split())
     assert "WowLab.lua" in text, text
@@ -435,7 +432,6 @@ def test_gc_keeps_what_a_restore_wrote_into_a_characters_lab_file_under_savedvar
 
 
 @posix_symlinks
-@pytest.mark.xfail(strict=True, reason="M11-31 not implemented")
 def test_gc_never_removes_an_object_the_journal_alone_names_through_a_symlinked_shard_constructed(
     flavor: Path, tmp_path: Path
 ) -> None:

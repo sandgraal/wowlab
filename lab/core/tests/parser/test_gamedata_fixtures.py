@@ -93,3 +93,52 @@ def test_builds_recording_decompresses_to_the_body_its_index_row_describes() -> 
     body = gzip.decompress((FIXTURES / "builds.json.gz").read_bytes())
     assert hashlib.sha256(body).hexdigest() == recorded_sha
     assert len(body) == int(recorded_size)
+
+
+# M12-02: the listing recorded on 2026-09-30, the first committed one that
+# lists 1.60.1.70058, the build of the M12-01 table recordings.
+LISTING_2026_09_30 = "builds.2026-09-30.json.gz"
+BUILD_70058 = "1.60.1.70058"
+
+
+class _ListingSource(_FixtureSource):
+    """`_FixtureSource`, serving another recorded listing."""
+
+    def __init__(self, listing: str) -> None:
+        self._listing = listing
+
+    def fetch_builds(self, dest: BinaryIO) -> str:
+        dest.write(gzip.decompress((FIXTURES / self._listing).read_bytes()))
+        return f"fixture:{self._listing}"
+
+
+@pytest.mark.parser
+def test_the_2026_09_30_listing_decompresses_to_the_body_its_index_row_describes() -> None:
+    index = (FIXTURES.parent / "README.md").read_text(encoding="utf-8")
+    (row,) = [
+        line for line in index.splitlines() if line.startswith(f"| `wago/{LISTING_2026_09_30}`")
+    ]
+    (recorded_sha,) = re.findall(r"sha256 of the decompressed body ([0-9a-f]{64})", row)
+    (recorded_size,) = re.findall(r"body is (\d+) bytes", row)
+
+    body = gzip.decompress((FIXTURES / LISTING_2026_09_30).read_bytes())
+    assert hashlib.sha256(body).hexdigest() == recorded_sha
+    assert len(body) == int(recorded_size)
+
+
+@pytest.mark.parser
+def test_the_2026_09_30_listing_keeps_every_field_and_lists_70058(tmp_path: Path) -> None:
+    expected = json.loads(gzip.decompress((FIXTURES / LISTING_2026_09_30).read_bytes()))
+    data = GameData(_ListingSource(LISTING_2026_09_30), cache_dir=tmp_path / "cache")
+    listing = data.builds()
+
+    assert list(listing) == list(expected), "product order is the source's"
+    for product, builds in expected.items():
+        got = [b.model_dump() for b in listing[product]]
+        assert got == builds, f"{product}: a build or a field was dropped or reordered"
+    assert BUILD_70058 in {b.version for b in listing["wow_classic_beta"]}
+    for older in ("builds.json.gz", "builds.2026-09-28.json.gz"):
+        body = json.loads(gzip.decompress((FIXTURES / older).read_bytes()))
+        assert all(b["version"] != BUILD_70058 for builds in body.values() for b in builds), (
+            f"{older} predates the build; the M12-02 tests need the newer listing"
+        )

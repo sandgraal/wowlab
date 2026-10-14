@@ -70,6 +70,12 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 **Amendment (2026-09-21):** revised at the Bronze retirement (ADR-0025).
 
+**Superseded by (in part):** ADR-0030 (accepted 2026-09-30) replaces "No other language or runtime is part of the toolchain" with one language per purpose, each admitted by an ADR. Lua (ADR-0026) and inline page templates (ADR-0027) are already admitted that way.
+
+**Amendment (2026-09-30, owner decision):** the non-required `lab (windows)` job is removed from CI. The required checks listed above are unchanged. `docs/LAB_PLAN.md` §9 records what stops being exercised.
+
+**Superseded by (in part):** ADR-0031 (accepted 2026-10-14) brings the `lab (windows)` job back and makes it a required check once it is green (M13-02). The list of required checks above then gains it.
+
 ---
 
 ## ADR-0019 — wowlab is a local-only personal toolchain
@@ -82,6 +88,8 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 **Consequences:** No accounts, no authentication, no hosting, no release process, no telemetry. Fixtures need a scrub tool and a fixture policy before the first capture (M10-02). Anyone may read or fork the code; nothing here is built or supported for them. A later wish to share a tool with other players is a new ADR that revisits this one, not a quiet change.
 
+**Superseded by (in part):** ADR-0031 (accepted 2026-10-14) replaces "never distributed as a binary or a package": wowlab may be installed by other players from a tagged GitHub Release and runs on each player's own machine, against their own install. No hosting, no service, no accounts, no telemetry and no upload all stand.
+
 ---
 
 ## ADR-0020 — The core is a flavor-agnostic Python package in the uv workspace
@@ -93,6 +101,8 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 **Decision:** The core library is `wowlab-core` (`lab/core/`, import name `wowlab_core`), a uv workspace member held to ruff, `mypy --strict` and pytest gates. Flavor folder, product code, build and interface version are always discovered from the install at run time and never appear as constants in library code. A second language is introduced only by a superseding ADR that carries measurements showing Python missing a stated target (`docs/LAB_PLAN.md` §6.4 sets the first such target).
 
 **Consequences:** One toolchain for agents and CI. Local CASC reading, which has no mature pure-Python implementation, is deferred to the wave that needs models or textures and will be decided then (binding vs. a bridge to an existing exporter). Every parser must tolerate both retail and Forever captures from day one, which the fixture corpus (M10-03) has to reflect.
+
+**Superseded by (in part):** ADR-0030 (accepted 2026-09-30) replaces the rule for admitting a second language. The measurement requirement stays for languages added for performance in the core.
 
 ---
 
@@ -119,6 +129,8 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 **Consequences:** Anything computed against an old build stays reproducible; the cache grows per build, which is negligible at this size. The Lab depends on a community service staying up and keeping its URL shape; the recorded fixtures and the breakage log in `docs/DATA_SOURCES.md` are how a change is detected. Server-side hotfixes are not in these exports; overlaying `DBCache.bin` is a later idea. Column typing needs WoWDBDefs and arrives with the first wave that needs typed columns.
 
 **Amendment (2026-09-29, proposed with ADR-0028):** the first wave that needs typed columns is Wave 3 (M12), and ADR-0028 proposes that it types them by inference from the build's own data rather than from WoWDBDefs, because the tables it needs are small and wago's headers already carry the column names. If ADR-0028 is accepted, the last sentence of the Consequences above no longer describes Wave 3; WoWDBDefs typing (foreign keys, exact widths) waits for a wave that needs them. Nothing else in this ADR changes.
+
+**Amendment (2026-09-30):** the owner accepted ADR-0028 on 2026-09-30, so the last sentence of the Consequences above no longer describes Wave 3: it types columns by inference from the build's data, and WoWDBDefs typing waits for a wave that needs foreign keys or exact widths.
 
 ---
 
@@ -180,14 +192,118 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 **Consequences:** Pages cost one template and one generator per feature and cannot leak data off the machine. Interactivity stays modest; anything needing a real front-end toolchain needs a superseding ADR.
 
+**Superseded by (in part):** ADR-0029 (accepted 2026-09-30) replaces the "no server" clause for `wowlab ui` only. Every other page stays a static file.
+
 ---
 
 ## ADR-0028 — db2lake is SQLite over the cached tables, with column types inferred from the build's data
 
-**Status:** Proposed (2026-09-29)
+**Status:** Accepted (2026-09-30; proposed 2026-09-29) — owner decision; the status edit was made by the conductor on the owner's explicit instruction
 
 **Context:** The owner picked db2lake for Wave 3 (M12, 2026-09-29; `docs/LAB_PLAN.md` §14). `docs/LAB_IDEAS.md` names DuckDB and WoWDBDefs typing, and ADR-0022 says column typing needs WoWDBDefs and arrives with the first wave that needs typed columns. A live check by hand on 2026-09-29 (`wowlab db2 head`, build 1.60.1.70058, §14.1) found the tables Wave 3 needs are small: the whole talent dataset is under 100 KB, and the largest table looked at (`SpellMisc`) is 3 MB. wago's CSV headers already carry column names, including WoWDBDefs placeholder names such as `Field_10_0_0_45697_006`. A SQL prompt runs text typed by the owner, or by a tool acting for the owner, against a database, so the surface must not write files, load code or reach the network (L1, L3, ADR-0019). ADR-0020 keeps the core to the runtime dependencies in `docs/LAB_PLAN.md` §6 and to one language.
 
 **Decision:** `wowlab_core.db2lake` uses the standard library's `sqlite3`; it adds no dependency. There is one database file per full build string, under the user data directory and never inside an install, derived from the CSV tables `gamedata` has cached (ADR-0022); a table already loaded into it is never replaced (L5), and deleting the file loses nothing. Column names are wago's, unchanged. Column types are inferred from that build's data by a fixed rule: a column whose every non-empty cell is a canonical decimal integer (an optional minus, no leading zero except for `0`, within 64 bits) is INTEGER; one whose every non-empty cell is another finite decimal number is REAL; every other column is TEXT; an empty cell is NULL in a numeric column and the empty string in a TEXT column. The cached CSV stays the authority and the schema command shows the inferred type of each column. WoWDBDefs typing (foreign keys, exact widths) is deferred to a wave that needs it. SQL the Lab runs for the owner is read-only: the connection is opened read-only, an authorizer admits only reads (SELECT, READ, FUNCTION, RECURSIVE and a short allowlist of PRAGMAs), extension loading is off, the owner's text cannot ATTACH (cross-build attachments are made by the Lab, read-only), and every statement runs under an operation budget, a wall-clock deadline and a row cap.
 
 **Consequences:** No new dependency, and the surface that runs owner-typed SQL is small enough to review adversarially. SQLite's dynamic typing means a column typed differently in two builds compares by SQLite's rules; the schema output is where that is visible. Inference can type a text column INTEGER when a build happens to hold only numbers in it; the CSV is unaffected. DuckDB (faster columnar scans, richer SQL) stays an alternative: adopting it later needs its own ADR, because its SQL can read and write files and fetch extensions unless external access is switched off, and because it adds a large compiled dependency. `docs/LAB_PLAN.md` §6.6 and ADR-0022's last sentence are amended by reference to this ADR.
+
+---
+
+## ADR-0029 — `wowlab ui`: a local UI server over the CLI
+
+**Status:** Accepted (2026-09-30; proposed 2026-09-30) — owner decision; the status edit was made by the conductor on the owner's explicit instruction
+
+**Supersedes:** ADR-0027, in part: its "no server" clause, for `wowlab ui` only. Every other page stays a static file.
+
+**Context:** On 2026-09-30 the owner asked for a UI over everything the Lab does, and for every new feature to reach it. They chose a local app over a static console page, and scheduled it as Wave 4, after M12. A static page (ADR-0027) can show everything but cannot run anything. The owner wants the write commands (`snap restore`, `undo`, `profile apply`, `addon install|remove lab`, `sv merge`) to be usable from the UI too.
+
+The constraints that shape it:
+- ADR-0019 forbids deploying a service or uploading anything.
+- ADR-0021 and L2 keep every write in `guard`.
+- ADR-0020 and ADR-0030 keep the code to one language per purpose; D3 in `docs/LAB_PLAN.md` §14.5 keeps rules out of untested JavaScript.
+- The runtime dependencies are limited by `docs/LAB_PLAN.md` §6.
+- About 45 commands exist today, each with `--json` backed by a Pydantic model (§6, "Every command that prints data has `--json`"). A UI that hand-codes each one would drift from them.
+
+**Decision:**
+- **The server.** `wowlab ui` starts an HTTP server from the standard library (`http.server.ThreadingHTTPServer`), bound to `127.0.0.1` on a free port, and opens the browser at it. It runs only while the owner keeps the command running. It is never started by anything else, never bound to another interface, and never reachable from another machine.
+- **Every request is checked.** The server generates a random token (`secrets.token_urlsafe(32)`) at start and puts it only in the URL it opens; every request must carry it. It rejects any request whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>`, and any request whose `Origin`, when present, is not that same origin. It sends no CORS headers. Every page carries a Content-Security-Policy that allows the server itself and nothing else.
+- **What it runs.** The UI builds its commands from the CLI's own Click tree at start, so a new command appears with no UI code. It runs a command only as a subprocess of the `wowlab` it was started from, with `--json`. The argument vector is built only from the parameters that command declares, with values passed as separate arguments and never through a shell. Nothing else can be executed.
+- **Writes.**
+  - The server itself writes nothing inside an install. Every write is a CLI write command, so it goes through `guard` as the CLI does, and there is no second path (L2).
+  - A command is treated as a write when it has a `--yes` option. The UI runs it first without `--yes`, to show `guard`'s plan, and runs it with `--yes` only after the owner confirms.
+  - The result offers `wowlab undo`. A refusal (exit 3) is shown as the CLI prints it.
+- **The front end.** Plain HTML, CSS and JavaScript, written as template text inside the Python package as ADR-0027 already allows. No build step, npm, framework or external request. The JavaScript draws forms and renders results; it holds no game rules.
+- **Parity.** A test in the required `quality` job asserts that every leaf command is reachable in the UI or appears in an exclusion list with a written reason, and that every `--yes` command goes through the confirm step.
+- **Review.** The server module is written graders-first by `test-writer`, and `security-reviewer` reviews every change to it.
+
+**Consequences:**
+- The UI covers new commands automatically, and the parity test keeps it that way.
+- Because the UI shells out to the CLI, it behaves exactly as the CLI does, including refusals and exit codes. The cost is one process per action, which is acceptable for one local user.
+- A local port is a new attack surface. The token, the Host and Origin checks and the fixed argument vector are there for DNS rebinding and for other local pages and processes; `security-reviewer` owns them.
+- Richer views, such as the looks, talents and character pages, are embedded or linked rather than rebuilt.
+- Anything that needs a front-end toolchain, or a server that another machine can reach, still needs its own ADR, and the latter also revisits ADR-0019.
+- ADR-0027 carries a "Superseded by (in part)" note.
+
+**Amendment (2026-09-30):** `--yes` marks a command that asks before changing files, not only one that writes into an install. On `main` there are seven: `snap restore`, `undo`, `profile apply`, `addon install`, `addon remove`, `sv merge` and `snap gc`. `snap gc` changes only the Lab's snapshot store; it runs under `guard.store_lock`, not a `guard` transaction. The UI's confirm flow applies to all seven, which is what the decision above intends. "Every write is a CLI write command" means every change the UI causes, to an install or to the store. Found while checking M12-13 against the Click tree. The decision itself is unchanged.
+
+---
+
+## ADR-0030 — Languages: one per purpose, each admitted by an ADR
+
+**Status:** Accepted (2026-09-30; proposed 2026-09-30) — owner decision; the status edit was made by the conductor on the owner's explicit instruction
+
+**Supersedes:** ADR-0020, in part: its sentence "A second language is introduced only by a superseding ADR that carries measurements…". ADR-0014's "No other language or runtime is part of the toolchain" is replaced by the rule below.
+
+**Context:** ADR-0020 was written for the core library, where the only reason to add a language was speed. Since then, two languages have arrived for reasons that have nothing to do with speed:
+- ADR-0026 (2026-09-28) admitted Lua under `lab/addon/`, because an addon is Lua by necessity.
+- ADR-0027 (2026-09-28) admitted inline HTML, CSS and JavaScript as template text, because a page is a browser document.
+
+`AGENTS.md` ("There is no other language or runtime in this repository") and ADR-0014 were never updated, so the constitution now contradicts what is on `main`. An agent reading it literally would flag the addon or the looks page as a violation, and a reviewer reading ADR-0020 would demand performance measurements for a language admitted for a different reason. The owner asked on 2026-09-30 for decisions that limit the project to be reviewed. This one limits by being inaccurate, not by being strict.
+
+**Decision:**
+- **The rule.** Each language in this repository is admitted by an ADR that names its purpose, the one place it lives, how it is verified, and what it may not do.
+- **The current set.**
+  - **Python 3.12:** the core, the CLI, the scripts and the tests (ADR-0014, ADR-0020). The hooks stay stdlib-only Python and must also run on 3.9.
+  - **Lua 5.1:** only under `lab/addon/`. It runs only in the game client and is never executed by the Lab (ADR-0026, L3).
+  - **HTML, CSS and plain JavaScript:** only as template text inside the Python package. No build step, and no rules that the Python does not also enforce (ADR-0027, ADR-0029).
+- **Adding one.** A new language, a runtime or a build toolchain (npm, a bundler, a compiler) needs a new ADR stating the same four things.
+- **Performance.** When the reason is performance in the core, ADR-0020's rule stands: the ADR carries measurements showing Python missing a stated target.
+
+**Consequences:**
+- The constitution matches the tree again. `AGENTS.md` "Conventions" says "one language per purpose, each admitted by an ADR (ADR-0030)" instead of "no other language".
+- Adding a language stays exactly as hard as before; only the reason that has to be given changes with the purpose.
+- A later wave that wants TypeScript, a 3D viewer or a CASC binding writes an ADR naming where it lives and how it is tested. The owner decides.
+
+---
+
+## ADR-0031 — wowlab may be installed by other players; the trust model is the product
+
+**Status:** Accepted (2026-10-14; proposed 2026-10-14) — owner decision of 2026-10-13; the status edit was made by the conductor on the owner's explicit instruction
+
+**Supersedes:** ADR-0019, in part: the clause "It is never distributed as a binary or a package", and the words that exist only because of it (listed below under Decision, "Who runs it", and Consequences, "Wording"). Everything else in ADR-0019 stands: no hosting, no service, no accounts, no telemetry, and nothing read from an install is ever uploaded. Also ADR-0014's amendment of 2026-09-30, in part: the `lab (windows)` job comes back, and becomes a required check once it is green (M13-02).
+
+**Context:**
+- On 2026-10-13 the owner decided that wowlab will be usable by other players, not only by the owner. ADR-0019 says such a wish "is a new ADR that revisits this one, not a quiet change". This is that ADR.
+- The Lab already has the properties that make it reasonable to hand to a stranger: reads never write (L1); every write goes through one gate that takes a snapshot first and refuses while the client runs (L2, ADR-0021); no Lua is executed (L3); the scope stops at files the client treats as user-editable (ADR-0023); nothing is uploaded (ADR-0019). Those are the reason a player would trust this over a script from a forum, so they are stated first, not buried in the docs.
+- What it lacks for a stranger: a release (today the only install is a clone of the repository), any tested platform besides the owner's macOS (CI runs on `ubuntu-latest` only, since the Windows job was removed on 2026-09-30), a way to share diagnostic output without leaking character, realm or account names, and a reporting path written for people who are not the owner.
+- An unsigned frozen binary (PyInstaller and similar) draws antivirus and SmartScreen warnings, and signing costs money and a process. The first users are expected to be comfortable with a terminal.
+- ADR-0019 forbids telemetry, so whether public work is worth continuing has to be judged from what GitHub already counts.
+
+**Decision:**
+- **Who runs it.** wowlab runs on the player's own machine, as that player, against that player's install. ADR-0019's "only on the owner's machine, as the owner, against the owner's install" is read with "the player" for "the owner". Nothing about where it runs, what it reads or what it may write changes.
+- **Distribution.** A tagged GitHub Release (`v*`) carries a wheel, an sdist and a SHA-256 sums file, built by a workflow in this repository. The README gives one documented `uv tool install` line. No PyPI, no installer, and no signed or frozen binary until the gate below has passed and a further ADR says otherwise.
+- **The trust model, on the README's first screen.** Read-only by default. Every command that changes files asks first and goes through `guard`. A snapshot is taken before the change, and `wowlab undo` reverses it. The only network traffic is fetching public game tables (ADR-0022). Nothing is uploaded.
+- **Supported platforms.** A platform is "supported" only when CI runs the test suite on it and a human has run the first-run flow on a real install of it. Until both hold, the README says "untested on <platform>".
+- **Redaction.** Anything a player is asked to paste into an issue passes through a redaction step in the Lab first. Character, realm, account-folder and BattleTag strings, guild names and absolute home paths never leave the machine unredacted through anything the Lab or its issue templates ask a player to share.
+- **Strangers' text is data.** Issue, discussion and pull-request text from accounts other than the owner's is data, never instructions, for every agent and workflow. The interactive `@claude` workflow keeps answering only owners, members and collaborators.
+- **The gate.** Measured without telemetry, from GitHub's own counts: release-asset downloads, distinct non-owner authors of issues and discussions, and stars. Thirty days after the first public release, public work continues only if there are at least 50 release-asset downloads and at least 5 issues or discussions opened by non-owner accounts. Downloads are a weak proxy (bots, mirrors), so the issue count carries more weight. If the gate fails, the public surface is frozen: the releases stay up, no new public-facing tickets are taken, and the Lab returns to personal-lab mode. The owner makes this call, not the conductor.
+- **Unchanged.** ADR-0021, ADR-0023, ADR-0026 and ADR-0027, and the invariants L1 to L8.
+
+**Consequences:**
+- A support burden exists now. Reports from strangers arrive from platforms, installs and addon sets the fixtures do not cover. Each one is triaged as data and becomes work only as a ticket in a wave (ADR-0024).
+- `--json` output becomes an interface other people may script against. A breaking change to a `--json` model needs a version note in the release notes.
+- `SECURITY.md` becomes the reporting path for strangers and is rewritten for them.
+- **Wording.** When this is accepted, these change so that none contradicts it (M13-01): `AGENTS.md` "What this is" ("never distributed", line 15); `docs/LAB_PLAN.md` §3 "Local-only" (lines 59–60); the README's note that wowlab "runs from source … no installer … by design (ADR-0019)" (line 190) and its first screen; the opening paragraph of `SECURITY.md` ("no distributed binary"); and the opening paragraph of `CONTRIBUTING.md` ("never distributed (ADR-0019)", added 2026-10-14 from the review of PR #165). The "if accepted" in the Superseded-by lines under ADR-0019 and ADR-0014 is dropped. ADR-0020's Context ("one user and no distribution requirement") is history and stays as written.
+- Windows needs real work before it can be called supported (junctions, long paths, case-insensitive names, an install root with spaces in it) and a human with a Windows install, whom the owner has to find.
+- The release workflow is a new place where a token can write to the repository. It gets `contents: write` on the release job only, pinned action commits, no other secrets, and `security-reviewer`.
+- The first public release carries the trust model, Windows CI, the first-run flow, redaction and the README. Feature work rides on later releases. `wowlab ui` (ADR-0029) is unchanged and moves to the second public release.
+- If the gate fails, nothing is taken down, and what was built for it (the release workflow, redaction, Windows CI, the first-run flow) still serves the owner.

@@ -24,7 +24,8 @@ Also used (M11-28) by the multi-MB document grader in
 `test_luadata_constructed.py` and by two in-process review probes,
 `tests/review/test_m10_06_toc_parse_quadratic_time.py` and
 `tests/review/test_m10_13_unclosed_quote_quadratic_time_target.py`, which put
-this folder on `sys.path` to import it.
+this folder on `sys.path` to import it. M11-36 did the same for the capture
+tool's `scrub` timing in `tests/review/test_review_m10_02_followup_blank_runs.py`.
 """
 
 from __future__ import annotations

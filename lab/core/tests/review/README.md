@@ -15,5 +15,5 @@ machine does not fail it; the two M10-04 `*_at_budget_misses_time_target.py`
 probes show how and say why in their docstrings (M11-16T). A probe that
 times the parse in the test process imports `cpu_clock()` from
 `tests/parser/_cpu_clock.py`, as the M10-06 and M10-13 timing probes do
-(M11-28).
+(M11-28), and as the M10-02 follow-up probe does for `scrub` (M11-36).
 Memory probes (`*_memory_target.py`) and all other probes run everywhere.

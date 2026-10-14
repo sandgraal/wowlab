@@ -1,0 +1,466 @@
+"""Render the wiki's command reference from the `wowlab` CLI itself (M12-13).
+
+Walks the Click tree of `wowlab_core.cli:app` (`typer.main.get_command`) and
+writes one Markdown page: every command group and leaf command with its help
+text, its arguments and options (name, type, default, help), whether it asks
+before changing files (it has a `--yes` option), and the Pydantic model its
+`--json` output validates against where its help names one ("JSON: ...").
+
+    uv run python scripts/gen_command_reference.py                  # print the page
+    uv run python scripts/gen_command_reference.py --out PATH       # write it
+    uv run python scripts/gen_command_reference.py --check PATH     # exit 1 with a diff when stale
+
+The page is deterministic: commands in sorted order, no timestamps, no
+version, and nothing taken from the environment. Help text is the raw text
+the code declares, reflowed one paragraph per line, never Click's or Rich's
+terminal formatting, so COLUMNS changes nothing. A default computed at run
+time, taken from an environment variable, or naming an absolute path is
+rendered generically rather than as the value on this machine.
+
+Reads nothing but the package: no install, no network, no user data directory.
+"""
+
+from __future__ import annotations
+
+import argparse
+import difflib
+import importlib
+import re
+import sys
+from collections.abc import Iterator
+from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import Any
+
+import typer
+from pydantic import BaseModel
+
+from wowlab_core import cli
+
+TITLE = "Command Reference"
+PROG = "wowlab"
+GENERATOR = "scripts/gen_command_reference.py"
+
+# The option that makes a command ask before changing files.
+YES_OPT = "--yes"
+
+# "JSON: <sentence>." in a command's help names the model its --json output
+# validates against (the convention stated in wowlab_core.cli's docstring).
+_JSON_SENTENCE = re.compile(r"\bJSON: (.+?)\.(?=\s|$)", re.DOTALL)
+_MODEL_NAME = re.compile(r"\b(?:[a-z_][a-z0-9_]*\.)?[A-Z][A-Za-z0-9_]*")
+
+# Characters that Markdown would read as markup in prose (outside code spans).
+_MD_ESCAPE = re.compile(r"([\\*_<>\[\]|])")
+_BLOCK_START = re.compile(r"^(#|[-+]\s|\d+[.)]\s|>)")
+
+
+# ─── the tree ────────────────────────────────────────────────────────────────
+
+
+def root_command() -> Any:
+    """The Click command of the `wowlab` app."""
+    return typer.main.get_command(cli.app)
+
+
+def _is_group(cmd: Any) -> bool:
+    return isinstance(getattr(cmd, "commands", None), dict)
+
+
+def _children(group: Any) -> list[tuple[str, Any]]:
+    return [
+        (name, group.commands[name])
+        for name in sorted(group.commands)
+        if not getattr(group.commands[name], "hidden", False)
+    ]
+
+
+def iter_groups(cmd: Any, path: tuple[str, ...] = (PROG,)) -> Iterator[tuple[tuple[str, ...], Any]]:
+    """Every group, depth first, its subgroups in sorted order."""
+    yield path, cmd
+    for name, child in _children(cmd):
+        if _is_group(child):
+            yield from iter_groups(child, (*path, name))
+
+
+def iter_leaves(cmd: Any, path: tuple[str, ...] = (PROG,)) -> Iterator[tuple[str, Any]]:
+    """Every leaf command under `cmd`, by full name, in page order."""
+    for group_path, group in iter_groups(cmd, path):
+        for name, child in _children(group):
+            if not _is_group(child):
+                yield " ".join((*group_path, name)), child
+
+
+def asks_first(cmd: Any) -> bool:
+    """Whether the command has a `--yes` option: it asks before changing files."""
+    return any(YES_OPT in _opts(p) for p in _visible_params(cmd) if _is_option(p))
+
+
+def json_models(cmd: Any) -> list[str]:
+    """The Pydantic models the help's "JSON: ..." sentences name, as written there.
+
+    A capitalised word that does not resolve to a model (NAME, a sentence's
+    first word) is prose and is skipped.
+    """
+    names: list[str] = []
+    for sentence in _JSON_SENTENCE.findall(_help_text(cmd)):
+        for name in _MODEL_NAME.findall(sentence):
+            if name not in names and _resolve_model(name) is not None:
+                names.append(name)
+    return names
+
+
+def _resolve_model(name: str) -> type[BaseModel] | None:
+    """A model named in help: a name in `wowlab_core.cli`, or `module.Name`."""
+    obj: object
+    if "." in name:
+        module_name, _, attr = name.partition(".")
+        try:
+            module = importlib.import_module(f"wowlab_core.{module_name}")
+        except ImportError:
+            return None
+        obj = getattr(module, attr, None)
+    else:
+        obj = getattr(cli, name, None)
+    if isinstance(obj, type) and issubclass(obj, BaseModel):
+        return obj
+    return None
+
+
+# ─── parameters ──────────────────────────────────────────────────────────────
+
+
+def _visible_params(cmd: Any) -> list[Any]:
+    return [p for p in cmd.params if not getattr(p, "hidden", False)]
+
+
+def _is_option(param: Any) -> bool:
+    return bool(getattr(param, "param_type_name", "") == "option")
+
+
+def _opts(param: Any) -> list[str]:
+    return [*param.opts, *getattr(param, "secondary_opts", [])]
+
+
+def _context(cmd: Any, name: str) -> Any:
+    """A Click context for `cmd`, built through the command's own context class."""
+    return cmd.context_class(cmd, info_name=name)
+
+
+def _argument_name(param: Any, ctx: Any) -> str:
+    """The argument's name as `--help` lists it under "Arguments"."""
+    try:
+        return str(param.make_metavar(ctx))
+    except TypeError:  # Click before 8.2: make_metavar() takes no context
+        return str(param.make_metavar())
+
+
+def _is_flag(param: Any) -> bool:
+    return bool(getattr(param, "is_flag", False)) and not getattr(param, "count", False)
+
+
+def _render_type(param: Any) -> str:
+    if _is_flag(param):
+        kind = "flag"
+    else:
+        # Classified by class names in the MRO and by `ParamType.name`: both
+        # differ between Click releases and Typer's vendored copy (Typer's
+        # own path type is not a subclass of Click's Path, for one).
+        ptype = param.type
+        classes = {c.__name__ for c in type(ptype).__mro__}
+        name = str(getattr(ptype, "name", "")).lower()
+        choices = getattr(ptype, "choices", None)
+        if choices is not None:
+            kind = "one of " + ", ".join(_code(str(c)) for c in choices)
+        elif "IntParamType" in classes or name in {"integer", "int"}:
+            kind = _render_range(ptype, "integer")
+        elif "FloatParamType" in classes or name == "float":
+            kind = _render_range(ptype, "number")
+        elif classes & {"Path", "File", "TyperPath"} or name in {"path", "file", "filename"}:
+            kind = "path"
+        elif "BoolParamType" in classes:
+            kind = "boolean"
+        else:
+            kind = "text"
+    if getattr(param, "multiple", False) or getattr(param, "nargs", 1) == -1:
+        kind += ", repeatable"
+    return kind
+
+
+def _render_range(ptype: Any, kind: str) -> str:
+    lo, hi = getattr(ptype, "min", None), getattr(ptype, "max", None)
+    lo_open, hi_open = getattr(ptype, "min_open", False), getattr(ptype, "max_open", False)
+    bounds = []
+    if lo is not None:
+        bounds.append(f"more than {lo}" if lo_open else f"at least {lo}")
+    if hi is not None:
+        bounds.append(f"less than {hi}" if hi_open else f"at most {hi}")
+    if lo is not None and hi is not None and not lo_open and not hi_open:
+        return f"{kind}, {lo} to {hi}"
+    return ", ".join([kind, *bounds])
+
+
+def _home() -> str:
+    """The home folder as text, or "" when there is none worth matching (unset, or `/`)."""
+    try:
+        home = str(Path.home())
+    except RuntimeError:
+        return ""
+    return "" if home.strip("/\\") == "" else home.rstrip("/\\")
+
+
+def _machine_specific(value: object) -> bool:
+    """A default naming a place on this machine: absolute, home-relative, or under home.
+
+    A list or tuple is machine-specific when any element is. The home test is
+    a path-prefix test, never a substring one, and is off when home is `/`, so
+    a relative default renders the same on every machine.
+    """
+    if isinstance(value, (list, tuple)):
+        return any(_machine_specific(v) for v in value)
+    if isinstance(value, Path):
+        value = str(value)
+    if not isinstance(value, str) or not value:
+        return False
+    home = _home()
+    return (
+        PurePosixPath(value).is_absolute()
+        or PureWindowsPath(value).is_absolute()
+        or value.startswith("~")
+        or (bool(home) and (value == home or value.startswith((home + "/", home + "\\"))))
+    )
+
+
+def _render_default(param: Any) -> str:
+    if getattr(param, "required", False):
+        return "required"
+    envvar = getattr(param, "envvar", None)
+    prefix = ""
+    if envvar:
+        names = [envvar] if isinstance(envvar, str) else list(envvar)
+        prefix = ", else ".join(f"`${n}`" for n in names) + ", else "
+    shown = getattr(param, "show_default", None)
+    default = param.default
+    if isinstance(shown, str) and shown:
+        text = _cell(shown)
+    elif callable(default):
+        text = "computed at run time"
+    elif _machine_specific(default):
+        text = "depends on the machine"
+    elif _is_flag(param):
+        text = "on" if default else "off"
+    elif default is None or (isinstance(default, (list, tuple)) and not default):
+        text = "none"
+    elif isinstance(default, (list, tuple)):
+        text = ", ".join(_code(str(v)) for v in default)
+    else:
+        text = _code(str(default))
+    return prefix + text
+
+
+# ─── Markdown ────────────────────────────────────────────────────────────────
+
+
+def _code(text: str) -> str:
+    """`text` as a code span, with a fence longer than any backtick run in it."""
+    if text == "":
+        return '`""`'
+    run = max((len(m) for m in re.findall(r"`+", text)), default=0)
+    fence = "`" * (run + 1)
+    pad = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{fence}{pad}{text}{pad}{fence}"
+
+
+def _prose(text: str) -> str:
+    """Help prose as Markdown: code spans kept, markup characters escaped."""
+    out = []
+    for i, part in enumerate(re.split(r"(`[^`]*`)", text)):
+        out.append(part if i % 2 == 1 else _MD_ESCAPE.sub(r"\\\1", part))
+    rendered = "".join(out)
+    if _BLOCK_START.match(rendered):
+        rendered = "\\" + rendered
+    return rendered
+
+
+def _cell(text: str) -> str:
+    """Prose for a table cell: on one line, pipes escaped even inside code spans."""
+    return _table_safe(_prose(" ".join(text.split())))
+
+
+def _help_text(cmd: Any) -> str:
+    """The help the code declares, cut where Click cuts it (form feed)."""
+    text = getattr(cmd, "help", None) or ""
+    return str(text).split("\f", 1)[0].strip()
+
+
+def _paragraphs(text: str) -> list[str]:
+    """Paragraphs separated by blank lines, each reflowed onto one line."""
+    paras: list[str] = []
+    for block in re.split(r"\n\s*\n", text):
+        lines = [ln.strip() for ln in block.splitlines() if ln.strip() and ln.strip() != "\b"]
+        if lines:
+            paras.append(" ".join(lines))
+    return paras
+
+
+def _usage(full_name: str, cmd: Any) -> str:
+    """The usage line as `--help` prints it (Click's own pieces, never wrapped)."""
+    ctx = _context(cmd, full_name.rsplit(" ", 1)[-1])
+    return " ".join([full_name, *cmd.collect_usage_pieces(ctx)])
+
+
+def _table_safe(cell: str) -> str:
+    """One table cell: line breaks become spaces; every unescaped pipe is escaped.
+
+    In a GFM table a `|` ends the cell even inside a code span, and a line
+    break ends the row; GitHub renders `\\|` as `|` in both places.
+    """
+    return re.sub(r"(?<!\\)\|", r"\\|", re.sub(r"[\r\n]+", " ", cell))
+
+
+def _row(cells: list[str]) -> str:
+    return "| " + " | ".join(_table_safe(c) for c in cells) + " |"
+
+
+def _param_tables(cmd: Any) -> list[str]:
+    params = _visible_params(cmd)
+    arguments = [p for p in params if not _is_option(p)]
+    options = [p for p in params if _is_option(p)]
+    lines: list[str] = []
+    if arguments:
+        ctx = _context(cmd, str(getattr(cmd, "name", "") or PROG))
+        lines += ["| Argument | Type | Default | Help |", "|---|---|---|---|"]
+        for p in arguments:
+            lines.append(
+                _row(
+                    [
+                        _code(_argument_name(p, ctx)),
+                        _render_type(p),
+                        _render_default(p),
+                        _cell(getattr(p, "help", None) or ""),
+                    ]
+                )
+            )
+        lines.append("")
+    if options:
+        lines += ["| Option | Type | Default | Help |", "|---|---|---|---|"]
+        for p in options:
+            lines.append(
+                _row(
+                    [
+                        ", ".join(_code(o) for o in _opts(p)),
+                        _render_type(p),
+                        _render_default(p),
+                        _cell(getattr(p, "help", None) or ""),
+                    ]
+                )
+            )
+        lines.append("")
+    return lines
+
+
+def _leaf_section(full_name: str, cmd: Any) -> list[str]:
+    lines = [f"### {full_name}", "", f"Usage: {_code(_usage(full_name, cmd))}", ""]
+    for para in _paragraphs(_help_text(cmd)):
+        lines += [_prose(para), ""]
+    if asks_first(cmd):
+        lines += [
+            "**Asks before changing files.** It shows what it will change and asks first; "
+            "`-y`, `--yes` answers yes. The help above says which files.",
+            "",
+        ]
+    models = json_models(cmd)
+    if models:
+        lines += ["**`--json` output:** " + ", ".join(_code(m) for m in models) + ".", ""]
+    lines += _param_tables(cmd)
+    return lines
+
+
+def render(root: Any | None = None) -> str:
+    """The whole page, as text with LF line ends and one final newline."""
+    root = root_command() if root is None else root
+    lines = [
+        f"# {TITLE}",
+        "",
+        f"<!-- Generated by {GENERATOR} from the wowlab command line. Do not edit by hand. -->",
+        "",
+        f"Every command of `{PROG}`, with its arguments and options, as the code declares "
+        f"them. Run each as `uv run {PROG} …` from the checkout; "
+        f"`{PROG} <group> <command> --help` prints the same help.",
+        "",
+        "A command marked **Asks before changing files** has `-y`, `--yes`: without it, "
+        "the command shows its plan and waits for an answer. What it changes differs by "
+        "command, and its help says which: an install, through the write gate, or the "
+        "Lab's own snapshot store. **`--json` output** names the model the command's "
+        "`--json` output validates against.",
+        "",
+    ]
+    for group_path, group in iter_groups(root):
+        group_name = " ".join(group_path)
+        lines += [f"## {group_name}", ""]
+        for para in _paragraphs(_help_text(group)):
+            lines += [_prose(para), ""]
+        lines += _param_tables(group)
+        for name, child in _children(group):
+            if not _is_group(child):
+                lines += _leaf_section(f"{group_name} {name}", child)
+    while lines and lines[-1] == "":
+        lines.pop()
+    return "\n".join(lines) + "\n"
+
+
+# ─── command line ────────────────────────────────────────────────────────────
+
+
+def check(path: Path, rendered: str) -> tuple[bool, str]:
+    """Whether the page at `path` is `rendered` byte for byte, and a diff if not."""
+    try:
+        current = path.read_bytes().decode("utf-8", errors="replace")
+    except FileNotFoundError:
+        current = ""
+    if current == rendered:
+        return True, ""
+    diff = difflib.unified_diff(
+        current.splitlines(keepends=True),
+        rendered.splitlines(keepends=True),
+        fromfile=f"{path.name} (on disk)",
+        tofile=f"{path.name} (generated)",
+    )
+    return False, "".join(diff)
+
+
+def _write_stdout(text: str) -> None:
+    """UTF-8 bytes with LF line ends, whatever stdout's encoding and newline mode."""
+    sys.stdout.flush()
+    sys.stdout.buffer.write(text.encode("utf-8"))
+    sys.stdout.buffer.flush()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--out", type=Path, metavar="PATH", help="write the page to PATH")
+    mode.add_argument(
+        "--check", type=Path, metavar="PATH", help="exit 1 with a diff if PATH differs"
+    )
+    args = parser.parse_args(argv)
+
+    rendered = render()
+    if args.check is not None:
+        ok, diff = check(args.check, rendered)
+        if ok:
+            print(f"{args.check.name}: up to date")
+            return 0
+        if diff and not diff.endswith("\n"):
+            diff += "\n"
+        _write_stdout(diff)
+        print(f"{args.check.name}: stale; run {GENERATOR} --out {args.check}", file=sys.stderr)
+        return 1
+    if args.out is not None:
+        args.out.write_bytes(rendered.encode("utf-8"))
+        print(f"{args.out.name}: written")
+        return 0
+    _write_stdout(rendered)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

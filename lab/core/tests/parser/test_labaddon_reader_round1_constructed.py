@@ -280,7 +280,7 @@ def _legacy_rows(raw: dict[str, Any]) -> list[dict[str, Any]]:
 def _legacy_headline(raw: dict[str, Any]) -> str:
     talents = _load(raw).talents
     assert talents is not None and isinstance(talents.legacy, labaddon.LegacyTalents)
-    return labaddon.legacy_headline(talents.legacy)
+    return labaddon.legacy_headline(talents.legacy, class_config=None)
 
 
 def test_constructed_legacy_pool_on_three_trees_with_quantity_1_counts_once() -> None:

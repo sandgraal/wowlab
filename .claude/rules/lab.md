@@ -6,7 +6,7 @@ paths:
 
 # Lab code
 
-Spec: `docs/LAB_PLAN.md`. Formats: `docs/LAB_FORMATS.md`. Paths: `docs/LAB_FILE_MAP.md`. ADR-0019 to ADR-0025. This is the working summary of the hard invariants in `AGENTS.md`; that file wins.
+Spec: `docs/LAB_PLAN.md`. Formats: `docs/LAB_FORMATS.md`. Paths: `docs/LAB_FILE_MAP.md`. ADRs: ADR-0019 to ADR-0030. This is the working summary of the hard invariants in `AGENTS.md`; that file wins.
 
 - **Reads never write (L1).** Every module except `guard` opens the install read-only. No temp, cache or lock files inside an install. Caches and the snapshot store live under `platformdirs.user_data_path("wowlab")`.
 - **One write gate (L2, ADR-0021).** Only `wowlab_core/guard.py` writes inside an install. If your ticket seems to need a write anywhere else, stop and report.

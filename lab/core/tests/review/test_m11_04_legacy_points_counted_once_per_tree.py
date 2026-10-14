@@ -43,7 +43,7 @@ def _raw() -> dict[str, Any]:
 def _headline(raw: dict[str, Any]) -> str:
     talents = labaddon.load_char(raw).talents
     assert talents is not None and isinstance(talents.legacy, labaddon.LegacyTalents)
-    return labaddon.legacy_headline(talents.legacy)
+    return labaddon.legacy_headline(talents.legacy, class_config=None)
 
 
 def _listing_trees(raw: dict[str, Any]) -> list[dict[str, Any]]:

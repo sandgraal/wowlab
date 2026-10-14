@@ -2,13 +2,17 @@
 
 **Status:** Wave 1 specified (2026-09-20), revised 2026-09-21 when the Lab
 became the whole repository (ADR-0025). Later waves are chosen by the owner
-after each wave ships (ADR-0024); nothing beyond Wave 1 is specified here on
-purpose.
+after each wave ships (ADR-0024). Each later wave is specified only once the
+owner has picked it, in its own section: Wave 2 in §13, Wave 3 in §14
+(re-scoped 2026-10-14, §14.8) and Wave 4, the first public release, in §15
+(amended 2026-09-30 and 2026-10-14; this line used to say that nothing
+beyond Wave 1 is specified here).
 
 The Lab is the application this repository exists for, not a track beside
-another product. It is a local toolchain for one player's own machine: it
+another product. It is a local toolchain for each player's own machine: it
 reads a World of Warcraft install directly, explains what is in it, snapshots
-it, and lets the owner change things and change them back (ADR-0019).
+it, and lets the player change things and change them back (ADR-0019). Other
+players may install it from a tagged GitHub release (ADR-0031).
 
 Read `AGENTS.md`, then this, then `docs/LAB_FORMATS.md` (file grammars),
 `docs/LAB_FILE_MAP.md` (what every path in an install is), and ADR-0019
@@ -54,9 +58,9 @@ discovery.
 
 ## 3. Trust boundary
 
-- **Local-only.** The Lab runs on the owner's machine, as the owner, against
-  the owner's install. It is never distributed as a binary and never deployed
-  as a service (ADR-0019).
+- **Local-only.** The Lab runs on the player's own machine, as that player,
+  against their own install. Players install it from a tagged GitHub release
+  (ADR-0031); it is never deployed as a service (ADR-0019).
 - **Never uploads anything.** Nothing read from an install leaves the
   machine. The only network traffic is `gamedata` downloading public game
   tables (§6.6), which sends nothing about the install beyond a build string.
@@ -617,7 +621,7 @@ Local CASC reading (the install's own `Data/`) is deferred to the wave that
 needs models or textures. `gamedata` exposes a `Source` protocol so a CASC
 source can be added beside the HTTP one without changing callers.
 
-*Amended 2026-09-29 (Wave 3 plan, proposed):* typed columns arrive in Wave 3
+*Amended 2026-09-29 (Wave 3 plan; ADR-0028 accepted by the owner 2026-09-30):* typed columns arrive in Wave 3
 as `wowlab_core.db2lake` (§14.2, ADR-0028), inferred from the build's data
 rather than from WoWDBDefs, and `gamedata.rows` stays untyped. A table the
 build lacks answers `HTTP 400` at wago, which M12-02 maps to
@@ -1109,6 +1113,52 @@ column names and cells are escaped before the CSV is written. `--json`
 output is unaffected (JSON's own escapes, ASCII only). An uncaught
 exception's traceback is not covered yet (a follow-up).
 
+*Amended 2026-09-30 (M11-33):* that follow-up is done. Typer's pretty
+(Rich) exceptions are off, and an exception nothing caught prints through
+`_say_err` like every other line. That covers an exception `_handled` does
+not catch in any command body, the `main()` callback and its
+`ctx.with_resource`, and the eager `--version` callback. The `wowlab`
+console script (`wowlab_core.cli:app`) sets `sys.excepthook` as an
+exception leaves the app, because Typer's own `__call__` replaces the hook
+on every call. A normal exit puts the hook back as it was. The hook prints
+the traceback line by line in Python's layout, with these differences:
+- the exception's message and each of its notes are one line each,
+  whatever they hold, so text from the install never starts a line;
+- a SyntaxError shows its `str()` (message, file, line) instead of the file,
+  source and caret lines;
+- there is no "Did you mean" for a NameError, AttributeError or ImportError;
+- an exception group's sub-exceptions are listed as "sub-exception n of m:"
+  with their lines indented instead of in Python's boxes. Python's limits
+  still apply: 15 per group, then "and N more exceptions", and a group 10
+  deep is one line;
+- an exception is printed once. A cycle through `__cause__` or `__context__`
+  stops where it meets one already printed, as Python's does. A group
+  member already printed elsewhere in the traceback is the one line
+  "[printed elsewhere in this traceback]", where Python prints it again.
+
+Python then exits non-zero as usual (1, or by the signal for
+KeyboardInterrupt). The hook never raises, not even on Ctrl-C while it
+escapes a long message: a hook that raised would make Python print the
+original exception itself, raw. Whatever stops it prints one line naming the
+exception's type instead. Its last guard makes no call, because Python checks
+for a pending signal at a call and a second Ctrl-C could escape it. A
+`SystemExit` whose code is text, which Python prints raw without calling a
+hook, prints as one escaped line and exits 1. Ctrl-C while that line is
+escaped prints nothing more.
+
+A click error (an unknown option, an extra argument, a bad value) prints its
+usage and help hint as click does. Its `Error:` line, which can hold the
+user's own arguments, prints as one escaped line. That holds also for one
+raised as the root context closes. The help that `no_args_is_help` prints is
+unchanged.
+
+A library log record that carries a traceback (`_log.exception`, such as the
+write gate's "could not record the rollback") or a stack prints its message
+as one line and then the traceback line by line, rendered as the hook
+renders it. Before this, the whole record printed on one line with `\x0a`
+escapes. A record that cannot be formatted prints one escaped line naming it
+instead of logging's own error report, which prints the record raw.
+
 ## 7. Repository layout
 
 ```
@@ -1318,6 +1368,12 @@ yet, and a fixture produced by the thing under test proves nothing).
   platform and at least one CI run on `windows-latest` for the `lab` suite,
   added in M10-01 as a non-required job.
 
+  *Amended 2026-09-30 (owner decision):* the `windows-latest` job is removed.
+  The only install is on macOS. The Windows branches in `guard`, `snapshot`
+  and `process` stay in the code, and their `skipif` tests stay in the suite,
+  but CI no longer runs them. Before the Lab is ever used against a Windows
+  install, the job comes back first; it caught the byte-0 lock bug on PR #59.
+
 ## 10. Wave 1 tickets
 
 `docs/BACKLOG.md`, milestone `M10`. Dependency shape:
@@ -1359,6 +1415,12 @@ game installed. M10-08, M10-09 and M10-10 do not wait on it.
    on retail fixtures and Forever fixtures are added when it is.
 3. Whether the non-required Windows CI job stays (it was added with M10-01)
    or is dropped until `guard` needs it.
+
+*Amended 2026-09-30:* the Wave 1 captures answered 1 and 2 in practice. The
+primary install is on macOS, and the Forever beta client is installed; the
+committed fixture roots are `macos` and `macos-<build>`. Question 3 was
+answered by the owner on 2026-09-30: the Windows job is removed (§9
+amendment).
 4. ~~Accept or reject ADR-0019 through ADR-0025.~~ Answered 2026-09-21: all
    accepted, together with ADR-0013 and ADR-0014.
 
@@ -1692,6 +1754,44 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   config, the line still says the Legacy system is inferred by
   elimination; with none, it says "no candidate config listed". Every
   variant ends with the panel opener clause as computed.
+  *Amended 2026-09-30 (M11-34):* two cases no capture has shown. (1) With
+  one config listed, the reader compares its id with the one
+  `talents.class` records (its config's id, present or absent with a
+  reason). This is the id check the M11-32 amendment deferred, made for the
+  one-config case only; the reader makes it in one place, and the headline
+  and the line under it both use the answer. An id is compared only with an
+  id: a missing id on either side is never a match. On a match, the M11-27
+  one-config
+  headline, which gave the lone listed config's figures as the candidate's,
+  no longer applies: the figures are the class talents', so the headline
+  reads "Legacy candidates: only the active class config listed (config N;
+  its figures are under Class talents)" ("Class talents shows it absent with
+  a reason" when that section's config is absent), with the level after it
+  when the file records one. The line reads "the one config listed is the
+  active class config (config N, as Class talents records it), which the
+  addon did not leave out, so no config is inferred to be the Legacy
+  system". When `talents.class` records no config id (not in the file,
+  absent with a reason, or its config absent without an id), or the listed
+  config has none, the M11-27 headline stays and only the line under it is
+  qualified: "inferred by elimination" gains ", but Class talents records
+  no config id, so the config listed may be the active class config" (or
+  ", but the config listed has no id, so it may be the active class
+  config") " (the addon leaves that out only when the client gave its
+  id)". The several-config, no-config and different-id lines are
+  unchanged: with a different id, the M11-27 headline and "inferred by
+  elimination" stay. (2) The addon leaves `skipped_types` empty when it did
+  not search by type at all (`C_Traits.GetConfigsByType` or
+  `Enum.TraitConfigType` missing), and also when the search ran and the
+  client's enum lists none of Invalid, Combat and Profession. A config
+  found by type shows the search ran, and the line keeps "config types not
+  searched: none recorded". Without one, it reads "none recorded, and no
+  config was found by type, so the type search may not have run (the addon
+  records none when C_Traits.GetConfigsByType or Enum.TraitConfigType is
+  missing, or when the enum has none of Invalid, Combat and Profession)".
+  No line these cases add is longer than the longest `char show` printed
+  before (265 characters, the M11-32 several-config line). Every committed
+  capture lists one config, found by type, that is not the class config,
+  so its output is unchanged.
 - **Capture** (owner): install; on each character log in, then log out or
   `/reload` (a crash writes nothing); on at least one character open the
   barber shop and close it without changing anything, then log out. Capture
@@ -2141,6 +2241,32 @@ them as follows, and M11-09 builds to them.
         the write.
       - **gc keeps them.** `snap gc` keeps every `after` a committed journal
         record names. M11-31 narrows this to what the check can need.
+    - *Amended 2026-09-30 (M11-31, graded by M11-31T, with the conductor
+      ruling on M11-31T of 2026-09-29):* `snap gc` keeps a journal-named
+      object only when it is the `after` of a committed write to a
+      character's `WowLab.lua`: every such write, not only the latest,
+      since the check compares any character's file and walks back over
+      older spans. The kept set is decided from the journal record's
+      `path` alone (gc takes no install and reads none) by one rule: seven
+      parts, `WTF/Account/<account>/<realm or digits>/<character>/SavedVariables/WowLab.lua`,
+      with `WTF`, `Account`, `SavedVariables` and `WowLab.lua` compared
+      case-folded, since the journal records the spelling on disk, and the
+      path split no further than seven separators. That set is a superset
+      of what the check's `_character_sv` can return for a character's own
+      lab file, which is the safe direction: it also keeps the `after` of
+      a few writes the check never reads from (to a path whose realm or
+      character folder is named `SavedVariables`, or that has an empty or
+      `..` part, and a write whose `before` equals its `after`), which
+      costs only space. Every
+      other `after` (the account-wide `WowLab.lua`, a `WowLab.lua.bak`,
+      any other file a `snap restore` or profile apply wrote from a
+      snapshot since deleted) is collected like any object no snapshot
+      refers to, through the same link-safe removal (§6.9, M11-15).
+      `snap gc --help` says what is kept. `put_object` raises any
+      `OSError` on the way (a directory planted at the object's path, for
+      one) as `SnapshotError`, naming the object's path and what is in its
+      place, so `sv merge` stops with "cannot keep the merged … in the
+      snapshot store (…); nothing was written".
   - `--force-loader-check` overrides every refusal.
 - **`--json` is required** (§6.11). It prints `SvMergeReport`, holding at
   least `mode` (`two-way` or `three-way`), `conflicts`, `absent` (with
@@ -2182,7 +2308,7 @@ Wave 1 fix.
 ## 14. Wave 3 (M12): db2lake, char-planner (talents first), alt-dashboard
 
 Owner pick, 2026-09-29 (ADR-0024): **db2lake**, **char-planner with talents
-first**, and **alt-dashboard**. Decision: ADR-0028 (Proposed). Every other
+first**, and **alt-dashboard**. Decision: ADR-0028 (Accepted by the owner, 2026-09-30). Every other
 choice below is the conductor's proposal, with a default, and §14.5 lists the
 ones the owner may want to overrule when reviewing this PR. L1–L8 apply to
 every ticket. Nothing here writes into an install: all three are data-only,
@@ -2231,6 +2357,15 @@ fixtures.
 - **`looks` has its own coercion.** `wowlab_core.looks` turns cell text into
   numbers row by row (`_Row.number`). db2lake's typed rows are what a second
   consumer should use; moving `looks` onto them is not part of this wave.
+
+*Amended 2026-09-30 (M12-02):* `gamedata` no longer reports the bare URL
+and `HTTP 400`. A `400` from the table endpoint is `TableNotPublished` when
+the builds listing lists the build, with a message that names the status and
+the URL and says the table may not exist in this game version, and
+`BuildNotPublished` when it does not, as a `404` is. The status alone
+decides (the body is not read); a `400` is never retried and never cached.
+The committed listing that lists 1.60.1.70058 is
+`wago/builds.2026-09-30.json.gz`.
 
 ### 14.2 db2lake
 
@@ -2541,3 +2676,172 @@ rule the tables cannot settle is found; anything it cannot settle becomes a
 note and a **[verify]**, not a refusal, and the owner's capture (M12-11)
 settles it later. The wave was planned at ten development tickets; Wave 2's
 ten became twenty-five, mostly review hardening, so expect growth.
+
+### 14.8 Re-scope, 2026-10-14 (accepted by the owner, 2026-10-14)
+
+On 2026-10-13 the owner decided that wowlab will be usable by other players
+(ADR-0031, accepted 2026-10-14) and asked for Wave 3 to be re-scoped around that. Most
+of what is left in it builds things players already have elsewhere: Wowhead
+and Forever++ have talent planners, and ForeverGuide and Questie cover
+quests. The owner's rule for db2lake: keep M12-03 and M12-04 only if
+`wowlab macros check` (M13-06) needs a table it cannot get from the
+lab-addon.
+
+| Ticket | State on 2026-10-14 | Recommendation | Why |
+|---|---|---|---|
+| M12-01, M12-02, M12-13 | merged | stay | done |
+| M12-09 `char list` | PR #145, draft, in its last fix round | **keep** | Small, nearly done, and useful to any player with the lab-addon. The owner's message does not name it; keeping it is the conductor's call. |
+| M12-14 `wiki-daily` | PR #159, draft | **keep** | Player documentation is part of shipping. |
+| M12-03 db2lake, M12-04 `db2` SQL | PR #158 (M12-03) draft, checks green, idle since 2026-09-30; M12-04 not started | **defer** | `macros check` needs no table: macro text comes from `macros-cache.txt`, the spellbook and action bars from the lab-addon (M13-05). `binds coach` (M13-08) takes spell names from the combat log itself. PR #158 stays open as a draft and its branch is kept, so the work comes back with a later wave without being redone. |
+| M12-05 to M12-08 talents | not started | **defer** | Incumbents have talent planners. |
+| M12-10 alt-dashboard, M12-11 talent capture | not started | **defer** | M12-10 is a page over M12-09's data for one player's alts; M12-11 only serves the talent tickets. |
+| M12-12 Wave 3 review | — | **keep, smaller** | It now waits on M12-09 and M12-14 only, and records what was deferred. |
+
+The deferred tickets move, word for word, to `docs/handoffs/M12-deferred.md`.
+They return only through a later wave pick (ADR-0024). §14.1 to §14.7 stay
+as the spec for when they do. M11-35 (schema 3, the config id) is folded into
+M13-05 at the owner's instruction, so there is one schema 3, not a schema 4.
+M11-37 (PR #153) and M11-29 are unaffected.
+
+**Waves overlap once.** The remaining M12 tickets finish alongside Wave 4;
+M13 does not wait for M12-12. ADR-0024 normally keeps one wave in the
+backlog at a time; the owner asked for this one on 2026-10-13, as Wave 3
+already carried the owner's wiki requests.
+
+## 15. Wave 4 (M13): the first public release
+
+Owner decision, 2026-10-13. Decision record: ADR-0031 (accepted by the owner,
+2026-10-14, together with the defaults in §14.8 and §15.3). **Nothing in
+this section starts until the owner accepts ADR-0031**: that acceptance is
+M13-01, and every other M13 ticket depends on it. L1–L8 apply to every
+ticket. ADR-0021, ADR-0023, ADR-0026 and ADR-0027 are unchanged; no ticket
+adds telemetry, an account or an upload, and no ticket calls a platform
+supported before M13-02's acceptance holds.
+
+**Numbering.** Wave 4 was the name given on 2026-09-30 to `wowlab ui`
+(ADR-0029). That wave keeps its scope and becomes Wave 5 (M14), aimed at the
+second public release.
+
+### 15.1 Tickets
+
+The owner's working names are kept beside the ticket ids.
+
+| Owner | Ticket | What | Who |
+|---|---|---|---|
+| D-01 | M13-01 | ADR-0031 accepted; the wording that contradicts it | owner, then conductor |
+| D-02 | M13-02 | Windows is a first-class CI target | implementer; owner finds a Windows tester |
+| D-03 | M13-03 | Release pipeline | implementer |
+| D-04 | M13-04 | First-run flow and `docs/INSTALL.md` | implementer |
+| D-05 | M13-05 | lab-addon schema 3: spellbook, action bars, bindings (and M11-35) | implementer; owner capture |
+| D-06 | M13-06 | `wowlab macros check` | implementer |
+| D-07 | M13-07 | `wowlab macros fix`, only after the owner's persistence test | owner test, then implementer |
+| D-08 | M13-08 | `wowlab binds coach` | implementer |
+| D-09 | M13-09 | Redaction for issue reports | implementer |
+| D-10 | M13-10 | Player-facing README | implementer |
+| D-11 | M13-11 | First public release, v0.1 | owner (the tag) |
+| — | M13-12 | Wave 4 review | conductor |
+| — | M13-13 | The 30-day gate (§15.4) | conductor counts, owner decides |
+
+**v0.1** contains M13-02 to M13-04, M13-09 and M13-10, and M13-06 if M13-05
+has landed. M13-08 ships in v0.2 if it has not landed; v0.1 is not held for
+it. M13-07 ships only in the form its owner test allows.
+
+### 15.2 What is known, and what is [verify]
+
+- **Macros** (`docs/LAB_FORMATS.md` §7). `macros-cache.txt` holds `VER 3`
+  headers (version, macro id in hex, name, icon) and a body up to a line that
+  is exactly `END`; account macros live in the account folder, character
+  macros in the character folder. The 255 limit is the client's; whether it
+  counts characters or UTF-8 bytes is **[verify]**, and `macros check`
+  reports which count it used. Whether an explicit rank (`Frostbolt(Rank 3)`)
+  goes stale is **[verify]** (`docs/LAB_IDEAS.md`, macro-doctor), so those
+  macros are reported as "cannot judge" until a capture settles it. Whether
+  an edit to `macros-cache.txt` made with the client closed survives the
+  next login, with `synchronizeMacros` on and off, is unknown; M13-07's
+  first step settles it.
+- **Bindings.** `bindings-cache.wtf` maps keys to binding commands such as
+  `ACTIONBUTTON3`, not to spells, and what sits in an action-bar slot is
+  server state (`docs/LAB_IDEAS.md`, keybind-coach). So spell-to-key needs
+  M13-05's action-bar record, and M13-05's live `GetBindingKey` results
+  cross-check the file.
+- **The addon calls.** forever-addon-kit's API list for build 69893 names
+  `GetActionInfo`, `GetBindingKey`, `GetMacroInfo`, `C_SpellBook` and
+  `GetSpellBookItemInfo`. Presence in the global table does not prove a call
+  works, so each is probed and recorded the way `spec.api` is (§13.1). Reads
+  happen out of combat only; nothing in schema 3 may touch a value that
+  becomes secret in combat (ADR-0026, `docs/GLOSSARY.md`). Action-bar macro
+  slots carry the macro id only, never its name or body: macro text is
+  player-written (ADR-0026's no-names rule).
+- **Cast counts.** `combatlog` has no cast counting today. The player's own
+  casts are picked by the source-flags bits (affiliation "mine", type
+  "player") rather than by a GUID or a name, since the lab-addon stores no
+  GUID (ADR-0026); that this holds for `SPELL_CAST_SUCCESS` in a Forever log,
+  and the field layout of those events in format V22, are **[verify]**
+  against one real log before the rules are written. The player has to turn
+  logging on (`/combatlog`); the command says so.
+- **First run.** `wowlab doctor` asks wago.tools whether each installed
+  version is listed unless `--offline` is given; the first-run text says so.
+  A WTF folder under OneDrive, Dropbox or Syncthing may hold placeholder or
+  conflict files; snapshots never follow a link (M11-18); a sync folder is
+  detected by heuristics and reported as such, never refused.
+- **Redaction.** The scrub rules live in `scripts/lab_capture.py`, which is
+  not part of the wheel. M13-09 moves the shared identifier patterns into the
+  package (default: `wowlab_core.redact`) and the capture tool imports them,
+  with its behaviour and its refusal tests unchanged. Redaction for an issue
+  replaces with placeholders (`<CHARACTER>`, `<REALM>`, `<ACCOUNT>`,
+  `<HOME>`); the capture tool keeps its pseudonyms.
+
+### 15.3 Decisions for the owner
+
+Each has a default and the work is planned on it. *The owner accepted every
+default on 2026-10-14.*
+
+- **E1. Wave 3 re-scope.** Default: §14.8 as recommended (M12-09 and M12-14
+  kept; M12-03 to M12-08, M12-10 and M12-11 deferred).
+- **E2. Linux.** There is no native Linux client, so a Linux install means
+  Wine or Proton, and nobody has run the Lab against one. Default: CI keeps
+  running on `ubuntu-latest`, and the README says "untested on Linux".
+- **E3. macOS.** Default: macOS counts as supported once a macOS CI job runs
+  the suite (today CI runs only on Linux); the owner's own first run covers
+  the human half. Alternative: say "untested" until then. Adding the job is
+  part of M13-02.
+- **E4. The redaction entry point.** Default: `wowlab doctor --redact`, as
+  named. Alternative: a separate `wowlab report` command.
+- **E5. Version and tag.** Default: the tag equals the package version
+  (`v0.1.0` for `wowlab-core` 0.1.0), and the release job fails before
+  publishing when they differ.
+
+### 15.4 The gate
+
+From ADR-0031, measured without telemetry, from GitHub's own counts:
+release-asset downloads (the sum of `download_count` over the releases'
+assets), distinct non-owner authors of issues and discussions (bots
+excluded), and stars (recorded, not part of the threshold). Thirty days after
+v0.1, public work continues only with at least 50 downloads and at least 5
+issues or discussions from non-owner accounts; the issue count carries more
+weight than downloads. The conductor writes the counts and the commands that
+produced them to `docs/handoffs/M13-gate.md`. If the gate fails, the public
+surface is frozen: releases stay up, no new public-facing tickets are taken,
+and the Lab returns to personal-lab mode. **The owner makes the call.**
+
+### 15.5 Order
+
+```
+M13-01 ADR-0031 accepted ─┬─ M13-03 release pipeline ──────────┐
+                          ├─ M13-09 redaction ─────────────────┤
+                          ├─ M13-10 README (needs 03's line) ───┤
+                          ├─ M13-04 first-run ── M13-02 Windows ┼─ M13-11 v0.1 ─┬─ M13-12 review
+                          │                      (human run)    │               └─ M13-13 gate (+30 days)
+                          └─ M13-05 schema 3 (owner capture) ─┬─ M13-06 macros check ─ (v0.1 if ready)
+                                                              ├─ M13-07 macros fix (owner test first)
+                                                              └─ M13-08 binds coach ─ (v0.2 if late)
+```
+
+M13-01 comes first. M13-03, M13-09 and M13-10 run alongside M13-02 and
+M13-04. M13-02's CI work starts at once; its human run needs M13-04. M13-05
+needs an owner capture and is the critical path for the analysis features,
+as M11-03 was in Wave 2, so it starts as soon as M13-01 merges. M13-04 and
+M13-09 both touch `wowlab doctor`; each keeps its logic in its own module and
+`pr-shepherd` rebases the second. If a Windows fix changes what `guard.py`,
+`svmerge.py` or `profiles.py` does, it is split and a `T` grader ticket lands
+first (`AGENTS.md`). Wave 2's ten tickets became twenty-five; expect growth.

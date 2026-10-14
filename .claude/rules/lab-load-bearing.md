@@ -2,11 +2,13 @@
 paths:
   - "lab/core/src/wowlab_core/luadata.py"
   - "lab/core/src/wowlab_core/guard.py"
+  - "lab/core/src/wowlab_core/svmerge.py"
+  - "lab/core/src/wowlab_core/profiles.py"
 ---
 
 # Load-bearing files
 
-Every tool stands on these two: one reads the owner's data, the other is the only thing allowed to change it. They are the whole load-bearing set, and the `[TEST]` / `[IMPL]` separation in `AGENTS.md` is mandatory for both.
+Every tool stands on these. `luadata.py` reads the owner's data, and `guard.py` is the only thing allowed to change it. `svmerge.py` and `profiles.py` decide what `guard` writes back into the owner's files; the owner added them to the set on 2026-09-29. These four are the whole load-bearing set, and the `[TEST]` / `[IMPL]` separation in `AGENTS.md` is mandatory for all of them. The bullets below that name `luadata.py` or `guard.py` apply to those files only.
 
 - **Separation.** Graders are written by `test-writer` and land on `main` first as `xfail(strict=True)`. Activate them by deleting the marker line only. Never edit a grader; if one is wrong, report it.
 - **`luadata.py`: data, never code.** Tables, strings, numbers, booleans, nil. Reject functions, calls, metatables, operators and bare identifiers with a line and column. Bounded depth, size and string length; over a bound raises, never truncates, never lets a `RecursionError` escape.
