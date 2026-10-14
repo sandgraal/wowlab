@@ -26,6 +26,7 @@ spelled with `chr`.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import sys
 import types
@@ -528,12 +529,20 @@ def test_constructed_places_in_another_account_are_left_out_with_account(
 TINY = b'\r\nWowLabCharDB = {\r\n["schema"] = 1,\r\n}\r\n'  # constructed: a valid, tiny file
 
 
+def _on_its_own(who: str, account: str = ACCOUNT) -> str:
+    """The advice ending a refused row, its arguments shell-quoted (the
+    account folder holds `#`)."""
+    command = shlex.join(
+        ["wowlab", "char", "show", "--flavor", FLAVOR, "--account", account, "--character", who]
+    )
+    return f"`{command}` reads this one on its own"
+
+
 def _bound(budget_words: str, who: str, account: str = ACCOUNT) -> str:
     return (
         "the listing's total size bound was reached (wowlab reads at most "
         f"{budget_words} of WowLab.lua files in one listing, and the files before this one "
-        f"used it up); `wowlab char show --account {account} --character {who}` reads this "
-        "one on its own"
+        f"used it up); {_on_its_own(who, account)}"
     )
 
 
@@ -640,8 +649,7 @@ def test_constructed_a_file_over_the_whole_total_bound_between_two_is_refused_al
             False,
             f"the file holds {size} bytes, more than the listing's total size bound "
             f"(wowlab reads at most {budget:,} bytes of WowLab.lua files in one listing); "
-            f"`wowlab char show --account {ACCOUNT} --character {big}` reads this one on "
-            "its own",
+            f"{_on_its_own(big)}",
         ),
         (FIRST, True, None),
     ]

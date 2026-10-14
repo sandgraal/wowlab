@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import sys
 import unicodedata
@@ -697,3 +698,49 @@ def test_constructed_char_show_and_char_list_refuse_the_same_variants(
     shown = run("char", "show", "--character", FIRST)
     assert shown.exit_code == 1
     assert shown.stderr == f"wowlab: {FIRST}: {reason}\n"
+
+
+# ─── the suggested `char show` command (round 5 of the M12-09 review) ───────
+
+QUOTED_REALM = "Kel'Thuzad Argent Dawn"  # constructed: a space and an apostrophe
+SUGGESTED = re.compile(r"`(wowlab char show [^`]*)` reads this one on its own")
+
+
+def _suggested(text: str) -> list[str]:
+    (command,) = SUGGESTED.findall(text)
+    return shlex.split(command)
+
+
+@pytest.mark.parametrize("given_root", [False, True], ids=["env-root", "root-option"])
+def test_constructed_suggested_char_show_is_shell_quoted_and_names_the_flavor(
+    flavor: Path, given_root: bool
+) -> None:
+    """A file over the listing's total bound, in a realm folder holding a
+    space and an apostrophe, under an account folder holding `#` (a shell
+    comment): `shlex.split` of the suggested command gives exactly the
+    intended argv. `--root` is repeated only when it was given (the install
+    folder's own name holds spaces); without it, no absolute path is
+    printed. Pasting the argv then reads that character alone."""
+    who = f"{QUOTED_REALM}/Labcharq"
+    target = _lab_file(flavor, who)
+    target.parent.mkdir(parents=True)
+    with target.open("wb") as fh:  # sparse: no data blocks written
+        fh.truncate(labaddon.MAX_SURVEY_BYTES + 1)
+    root = flavor.parent
+    given = ["--root", str(root)] if given_root else []
+    want = ["wowlab", "char", "show", *given, "--flavor", FLAVOR]
+    want += ["--account", ACCOUNT, "--character", who]
+    text = run("char", "list", *given)
+    assert text.exit_code == 1
+    (row,) = [what for character, what in _rows(text.stdout) if character == who]
+    assert _suggested(row) == want
+    assert _suggested(text.stderr) == want
+    if not given_root:
+        assert str(root) not in text.stdout and str(root) not in text.stderr
+    report = cli.CharListReport.model_validate_json(run("char", "list", "--json", *given).stdout)
+    (entry,) = [e for e in report.characters if e.character == who]
+    assert _suggested(entry.error or "") == want
+    # The command as pasted reads that one character on its own.
+    shutil.copy2(_lab_file(flavor, FIRST), target)
+    shown = ok(*want[1:])
+    assert shown.stdout.startswith(f"Character: {who} in account {ACCOUNT}")

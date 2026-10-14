@@ -79,6 +79,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, NamedTuple, Self, TypeVar
@@ -1234,14 +1235,30 @@ class _Reader:
     """Reads the files one `survey` run chooses, within `budget` bytes for
     all of them together, and each (device, inode) once."""
 
-    def __init__(self, flavor_path: Path, budget: int, keep_records: bool) -> None:
+    def __init__(
+        self, flavor_path: Path, budget: int, keep_records: bool, root: str | None
+    ) -> None:
         self.flavor_path = flavor_path
+        # The start of the `char show` command a refused row suggests: the
+        # caller's --root (only when one was given), then the flavor folder.
+        self.show = ["wowlab", "char", "show"]
+        if root is not None:
+            self.show += ["--root", root]
+        self.show += ["--flavor", flavor_path.name]
         self.budget = budget
         self.left = budget
         self.keep_records = keep_records
         self.full = False
         # (device, inode) of each file read and parsed -> (its account, its character)
         self.seen: dict[tuple[int, int], tuple[str, str]] = {}
+
+    def _on_its_own(self, account: str, who: str) -> str:
+        """The advice ending a refused row: a `char show` command for this
+        one character, every argument shell-quoted (`shlex.join`), so a
+        realm folder such as `Argent Dawn` or `Kel'Thuzad` pastes as one
+        argument."""
+        command = shlex.join([*self.show, "--account", account, "--character", who])
+        return f"`{command}` reads this one on its own"
 
     def _spent(self, account: str, who: str, *, grew: bool = False) -> _Read:
         self.full = True  # every file after this one gets the same answer
@@ -1254,8 +1271,7 @@ class _Reader:
             error=(
                 "the listing's total size bound was reached (wowlab reads at most "
                 f"{_size_words(self.budget)} of {LAB_FILE_NAME} files in one listing, and "
-                f"{why}); `wowlab char show --account {account} --character {who}` reads "
-                "this one on its own"
+                f"{why}); {self._on_its_own(account, who)}"
             )
         )
 
@@ -1267,8 +1283,7 @@ class _Reader:
             error=(
                 f"the file holds {size} bytes, more than the listing's total size bound "
                 f"(wowlab reads at most {_size_words(self.budget)} of {LAB_FILE_NAME} files "
-                f"in one listing); `wowlab char show --account {account} --character {who}` "
-                "reads this one on its own"
+                f"in one listing); {self._on_its_own(account, who)}"
             )
         )
 
@@ -1469,6 +1484,7 @@ def survey(
     account: str | None = None,
     keep_records: bool = True,
     budget: int = MAX_SURVEY_BYTES,
+    root: str | None = None,
 ) -> AllCharacters:
     """Every character `WowLab.lua` in the flavor (§14.4, M12-09), from one
     walk of `WTF/` (`Layout.wtf_walk`).
@@ -1502,8 +1518,14 @@ def survey(
     and blocks nothing after it. Once a file that fits the total would pass
     what is left, or grows past what is left while it is read, that file
     and every one after it in the order below get an error instead of
-    being read; each file is charged the bytes actually read. With `budget` 0 nothing is opened: only the listing
-    (`not_looked_at`) is worth reading then. A file already read and parsed
+    being read; each file is charged the bytes actually read. With `budget`
+    0 nothing is opened: only the listing (`not_looked_at`) is worth reading
+    then. A row refused on a bound ends with the `wowlab char show` command
+    that reads it alone, every argument shell-quoted: `--root` with `root`
+    (the caller's --root as given; None, the default, leaves it out, so the
+    environment or discovery finds the install again and no absolute path
+    is printed), then `--flavor` (the flavor folder's name), `--account` and
+    `--character`. A file already read and parsed
     in this run (the same device and inode, not 0: a hard link) is not read
     again; its entry names the character it was read for (`same_as`). A
     link to a file that could not be read is read on its own. With
@@ -1585,7 +1607,7 @@ def survey(
                 ),
             )
         )
-    reader = _Reader(lay.flavor_path, budget, keep_records)
+    reader = _Reader(lay.flavor_path, budget, keep_records, root)
     entries = []
     for folder in sorted(folders.values(), key=_Folder.key):
         if account is not None and folder.account != account:

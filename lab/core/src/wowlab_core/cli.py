@@ -5065,7 +5065,15 @@ def char_list(
     if hidden is not None:
         unseen = hidden
     else:
-        found = labaddon.survey(lay, account=acct_folder, keep_records=json_out)
+        # A refused row's `char show` advice repeats --root only when it was
+        # given: otherwise $WOWLAB_WOW_ROOT or discovery finds the install
+        # again, and no absolute path lands in text that gets pasted.
+        found = labaddon.survey(
+            lay,
+            account=acct_folder,
+            keep_records=json_out,
+            root=None if root is None else str(root),
+        )
         entries, unseen = found.characters, found.not_looked_at
     report = CharListReport(
         flavor_folder=chosen.folder,
