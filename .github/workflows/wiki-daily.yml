@@ -464,21 +464,23 @@ jobs:
         env:
           BASE: ${{ needs.improve.outputs.wiki_base }}
         run: gitleaks git wiki --log-opts="${BASE}..HEAD" --redact --no-banner --exit-code 1 --config repo/.gitleaks.toml
-      # The token reaches git as an http.extraheader scoped to the wiki's URL,
-      # through GIT_CONFIG_* variables: never in argv, a remote URL or a file.
-      # No force: if the wiki moved, the push fails and the issue says so.
+      # The token reaches git only through a credential helper for this one
+      # push. HELPER is literal text naming $TOKEN; git's helper shell expands
+      # it and hands the token to git over a pipe. No value is derived from
+      # the token, so nothing needs masking, and the token is never in argv,
+      # a remote URL, a file or the log. The empty helper first drops any
+      # helper the runner configured. No force: if the wiki moved, the push
+      # fails and the issue says so.
       - name: Push
         if: steps.commit.outputs.made == 'true'
         env:
           TOKEN: ${{ github.token }}
           BRANCH: ${{ needs.improve.outputs.wiki_branch }}
+          HELPER: '!f() { test "$1" = get || return 0; echo username=x-access-token; printf "password=%s\n" "$TOKEN"; }; f'
+          GIT_TERMINAL_PROMPT: "0"
         run: |
-          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
-          echo "::add-mask::${auth}"
-          export GIT_CONFIG_COUNT=1
-          export GIT_CONFIG_KEY_0="http.${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.wiki.git.extraheader"
-          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${auth}"
-          git -C wiki push --quiet origin "HEAD:refs/heads/${BRANCH}"
+          git -C wiki -c credential.helper= -c "credential.helper=${HELPER}" \
+            push --quiet origin "HEAD:refs/heads/${BRANCH}"
 
   report:
     name: Report a failure
