@@ -42,9 +42,10 @@ wowlab grows in **waves**, and the owner picks each one after reviewing the last
 
 - **Wave 1** is done: explain, doctor, tree, snapshots, undo, SavedVariables / CVar / bindings / macros readers, game tables from wago.tools, the combat-log reader.
 - **Wave 2** is done: the lab-addon and `char show`, the customization sandbox, profiles, and `sv merge`.
-- **Wave 3** has not been picked yet.
+- **Wave 3** was trimmed on 2026-10-14. A clearer error when a game table does not exist in your build is on `main`; so is `wowlab char list`, every character the lab-addon recorded. A daily check of this wiki is in progress. The game-table database, talent planner and alt-dashboard are deferred.
+- **Wave 4 is the first public release**, in progress. wowlab is becoming something other players can install: a tagged GitHub release, Windows tested, a first run that explains itself, redacted output for bug reports, and a macro checker. The safety promises below do not change.
 
-See the **[Roadmap](Roadmap)**.
+Today there is no release yet: wowlab runs from a clone of the repository (see [Getting Started](Getting-Started)). It is developed on macOS and is untested on Windows and Linux. See the **[Roadmap](Roadmap)**.
 
 ## More
 
@@ -56,4 +57,4 @@ See the **[Roadmap](Roadmap)**.
 
 ---
 
-*World of Warcraft and Blizzard Entertainment are trademarks of Blizzard Entertainment, Inc. wowlab is an independent personal project, not affiliated with or endorsed by Blizzard. No game assets or Blizzard code are distributed with it.*
+*World of Warcraft and Blizzard Entertainment are trademarks of Blizzard Entertainment, Inc. wowlab is an independent project, not affiliated with or endorsed by Blizzard. No game assets or Blizzard code are distributed with it.*

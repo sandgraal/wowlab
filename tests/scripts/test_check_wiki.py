@@ -7,9 +7,12 @@ Two kinds of input:
   generated `CLI-Reference.md`), which passes; each test breaks one thing and
   asserts the matching failure. The names in them (`Brakka-Stonewhisper`,
   `/Users/someone`) are invented.
-- `real`: `fixtures/wiki-d4344c8/`, a byte-for-byte copy of every page of
-  https://github.com/sandgraal/wowlab.wiki at commit d4344c8 (2026-09-29, the
-  wiki before this job existed), cloned read-only on 2026-09-30. It is public
+- `real`: `fixtures/wiki-a47a7ee/`, a byte-for-byte copy of every page of
+  https://github.com/sandgraal/wowlab.wiki at commit a47a7ee (2026-10-14, the
+  wiki once `wowlab char list` was documented), cloned read-only on
+  2026-10-14. It replaced the copy of d4344c8 (2026-09-29, the wiki before
+  this job existed) when the CLI outgrew it: the frozen copy follows the
+  CLI, since the gate checks it against the commands on `main`. It is public
   text the owner wrote; the checks it proves are the ones that must not fire
   on real prose (links, personal data, files, commands).
 """
@@ -26,7 +29,7 @@ from types import ModuleType
 import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
-REAL_WIKI = Path(__file__).resolve().parent / "fixtures" / "wiki-d4344c8"
+REAL_WIKI = Path(__file__).resolve().parent / "fixtures" / "wiki-a47a7ee"
 
 
 def _load(name: str) -> ModuleType:

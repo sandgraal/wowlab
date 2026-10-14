@@ -25,7 +25,7 @@ from types import ModuleType
 
 ROOT = Path(__file__).resolve().parents[4]
 SCRIPTS = ROOT / "scripts"
-REAL_WIKI = ROOT / "tests" / "scripts" / "fixtures" / "wiki-d4344c8"
+REAL_WIKI = ROOT / "tests" / "scripts" / "fixtures" / "wiki-a47a7ee"
 
 
 def _load(name: str) -> ModuleType:

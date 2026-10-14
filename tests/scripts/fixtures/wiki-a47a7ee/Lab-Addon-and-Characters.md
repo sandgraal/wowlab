@@ -67,6 +67,18 @@ uv run wowlab char show --json
 
 Because SavedVariables are written at logout, **`char show` always shows the state at the end of your last session**, not the live character.
 
+### Every character at once
+
+```bash
+uv run wowlab char list                    # every character folder with a WowLab.lua, in every account
+uv run wowlab char list --account ACCOUNT  # only one account folder
+uv run wowlab char list --json
+```
+
+`char list` shows, for each character the addon has recorded, when the client last wrote its `WowLab.lua`, the record's schema, the client that saved it and the spec, or why the file could not be read. One unreadable file is named and the others are still listed; the command then exits 1.
+
+To keep a listing quick, wowlab reads at most 64 MiB of `WowLab.lua` files in one listing. A file it skips for that reason comes with a ready-to-paste `wowlab char show …` command that reads it on its own, with every value quoted for your shell.
+
 Related: `wowlab looks import-char` turns the recorded barber-shop choices into a saved look ([Customization Looks](Customization-Looks)), and `wowlab sv merge` uses the addon's load counter as a safety check ([SavedVariables and Merging](SavedVariables-and-Merging#the-loader-check)).
 
 ## What real captures showed on Forever

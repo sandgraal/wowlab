@@ -85,6 +85,7 @@ See [SavedVariables and Merging](SavedVariables-and-Merging).
 | `wowlab addon install lab [--dry-run]` | Copy wowlab's in-game addon into `Interface/AddOns/WowLab/`, with the right `## Interface:` number filled in. | **Via gate** |
 | `wowlab addon remove lab [--dry-run]` | Delete the addon's files. Its saved data (`WowLab.lua`) is never touched. | **Via gate** |
 | `wowlab char show [--character C]` | What the addon recorded for one character, from its `WowLab.lua`. Defaults to the character whose file was written last. | No |
+| `wowlab char list [--account A]` | Every character folder with a `WowLab.lua`: when it was last written, schema, client and spec, or why it could not be read. | No |
 
 See [Lab-Addon and Characters](Lab-Addon-and-Characters).
 
