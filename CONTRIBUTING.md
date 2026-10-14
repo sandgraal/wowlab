@@ -1,8 +1,8 @@
 # Contributing
 
-wowlab is a personal tool: it is built for one player's machine and is
-never distributed (ADR-0019). The repository is public so the work is
-visible and the harness reusable, not because it is looking for users. It is
+wowlab runs on each player's own machine, against their own install, and
+other players may install it from a tagged GitHub release (ADR-0031). It is
+never deployed as a service and never uploads anything (ADR-0019). It is
 built mostly by Claude Code agents under a conductor session. Issues and
 pull requests from people are welcome on the same terms the agents work
 under; read on before spending time on one.

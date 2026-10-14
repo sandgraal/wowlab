@@ -187,7 +187,7 @@ Here is what wowlab becomes as the ideas on [the menu](docs/LAB_IDEAS.md) are bu
 ## 🚀 Try it
 
 > [!NOTE]
-> wowlab is a personal project that runs from source on your own machine. There is no installer, no app store and no hosted version, by design ([ADR-0019](docs/DECISIONS.md)). If you try it, it runs against your install, on your machine, under your control.
+> wowlab runs on your own machine, against your install, under your control, and never uploads anything. Tagged GitHub releases are on the way ([ADR-0031](docs/DECISIONS.md)); until the first one, it runs from source. There is no hosted version. It is developed on macOS; untested on Windows and Linux.
 
 You need [uv](https://docs.astral.sh/uv/) (it brings Python 3.12). A game install is not needed to run the tests.
 
