@@ -622,6 +622,63 @@ def test_constructed_bytes_read_are_charged_not_the_size_seen_first(
     ]
 
 
+def test_constructed_a_file_over_the_whole_total_bound_between_two_is_refused_alone(
+    flavor: Path,
+) -> None:
+    """A file larger than the whole total bound, between two that fit it,
+    names its own reason, is not charged and blocks neither (round 4 of
+    the M12-09 review; the probe plants one first, this pins the words)."""
+    budget = _size(flavor, SECOND) + _size(flavor, FIRST)
+    big = "1/Labcharc-Big"  # sorts between SECOND and FIRST
+    _plant(flavor, big, b"-- pad\n" * (budget // 7 + 1))
+    size = _size(flavor, big)
+    found = labaddon.survey(Layout(flavor), budget=budget)
+    assert _results(found) == [
+        (SECOND, True, None),
+        (
+            big,
+            False,
+            f"the file holds {size} bytes, more than the listing's total size bound "
+            f"(wowlab reads at most {budget:,} bytes of WowLab.lua files in one listing); "
+            f"`wowlab char show --account {ACCOUNT} --character {big}` reads this one on "
+            "its own",
+        ),
+        (FIRST, True, None),
+    ]
+
+
+def test_constructed_a_file_growing_past_what_is_left_names_the_growth(
+    flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first file grows past what is left between its lstat and its
+    read: its own row says it grew (no file before it used anything), and
+    the run stops, as its read may have cost what was left."""
+    grown = _lab_file(flavor, SECOND)
+    budget = _size(flavor, SECOND) + _size(flavor, FIRST)
+    real = snapshot.read_regular_file
+
+    def read(path: Path, **kwargs: Any) -> bytes:
+        if Path(path) == grown and grown.stat().st_size <= budget:
+            with grown.open("ab") as fh:
+                fh.write(b"\r\n" * budget)
+        return real(path, **kwargs)
+
+    monkeypatch.setattr(snapshot, "read_regular_file", read)
+    found = labaddon.survey(Layout(flavor), budget=budget)
+    words = f"{budget:,} bytes"
+    assert _results(found) == [
+        (
+            SECOND,
+            False,
+            _bound(words, SECOND).replace(
+                "the files before this one used it up",
+                "this file grew past what was left as wowlab read it",
+            ),
+        ),
+        (FIRST, False, _bound(words, FIRST)),
+    ]
+
+
 def test_constructed_file_swapped_between_lstat_and_open_is_refused(
     flavor: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -1072,8 +1072,8 @@ _REALM_ENTRIES = frozenset({"realm-folder", "numeric-folder"})
 # it; it bounds what a folder of large or hard-linked copies can cost. It
 # counts bytes, not parse cost: dense files take longer and keep more memory
 # per byte than real ones. Each file is also bounded on its own
-# (`luadata.MAX_FILE_BYTES`), and a file over that bound is refused without
-# charging this one.
+# (`luadata.MAX_FILE_BYTES`); a file over that bound, or over this whole one,
+# is refused on its own without charging this one.
 MAX_SURVEY_BYTES = 64 * 1024 * 1024
 
 NOT_FOLLOWED = "a link, not followed, as wowlab never follows links"
@@ -1243,14 +1243,32 @@ class _Reader:
         # (device, inode) of each file read and parsed -> (its account, its character)
         self.seen: dict[tuple[int, int], tuple[str, str]] = {}
 
-    def _spent(self, account: str, who: str) -> _Read:
+    def _spent(self, account: str, who: str, *, grew: bool = False) -> _Read:
         self.full = True  # every file after this one gets the same answer
+        why = (
+            "this file grew past what was left as wowlab read it"
+            if grew
+            else "the files before this one used it up"
+        )
         return _Read(
             error=(
                 "the listing's total size bound was reached (wowlab reads at most "
-                f"{_size_words(self.budget)} of {LAB_FILE_NAME} files in one listing, and the "
-                f"files before this one used it up); `wowlab char show --account {account} "
-                f"--character {who}` reads this one on its own"
+                f"{_size_words(self.budget)} of {LAB_FILE_NAME} files in one listing, and "
+                f"{why}); `wowlab char show --account {account} --character {who}` reads "
+                "this one on its own"
+            )
+        )
+
+    def _over_total(self, size: int, account: str, who: str) -> _Read:
+        """A file larger than the whole total bound: refused on its own,
+        before a byte is read. Nothing is charged and the run is not marked
+        full, so it never blocks the files after it."""
+        return _Read(
+            error=(
+                f"the file holds {size} bytes, more than the listing's total size bound "
+                f"(wowlab reads at most {_size_words(self.budget)} of {LAB_FILE_NAME} files "
+                f"in one listing); `wowlab char show --account {account} --character {who}` "
+                "reads this one on its own"
             )
         )
 
@@ -1277,14 +1295,18 @@ class _Reader:
                 error=f"the same file as {where} (a hard link), read once, on that character's row",
                 same_as=where,
             )
-        if self.full or self.left <= 0 or st.st_size > self.left:
+        if self.full or self.left <= 0:
+            return self._spent(account, who)
+        if st.st_size > self.budget:
+            return self._over_total(st.st_size, account, who)
+        if st.st_size > self.left:
             return self._spent(account, who)
         limit = min(luadata.MAX_FILE_BYTES, self.left)
         try:
             data = snapshot.read_regular_file(path, limit=limit, expect=st)
         except snapshot.UnsafeReadError as exc:
             if limit < luadata.MAX_FILE_BYTES and _grew_past(path, limit):
-                return self._spent(account, who)  # it grew past what was left
+                return self._spent(account, who, grew=True)
             return _Read(error=_os_error(exc, path))
         except OSError as exc:
             return _Read(error=_os_error(exc, path))
@@ -1475,11 +1497,12 @@ def survey(
     The run reads at most `budget` bytes of files in all (`MAX_SURVEY_BYTES`;
     one byte more when a file grows while it is read, which is how that is
     noticed). The bound counts bytes, not parse cost. A file over the
-    per-file bound (`luadata.MAX_FILE_BYTES`) gets its own reason and is not
-    charged. Once a file would pass the total, or grows past what is left
-    while it is read, that file and every one after it in the order below
-    get an error instead of being read; each file is charged the bytes
-    actually read. With `budget` 0 nothing is opened: only the listing
+    per-file bound (`luadata.MAX_FILE_BYTES`), or by itself over the whole
+    total bound, gets its own reason before a byte is read, is not charged
+    and blocks nothing after it. Once a file that fits the total would pass
+    what is left, or grows past what is left while it is read, that file
+    and every one after it in the order below get an error instead of
+    being read; each file is charged the bytes actually read. With `budget` 0 nothing is opened: only the listing
     (`not_looked_at`) is worth reading then. A file already read and parsed
     in this run (the same device and inode, not 0: a hard link) is not read
     again; its entry names the character it was read for (`same_as`). A

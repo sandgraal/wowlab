@@ -2406,11 +2406,20 @@ A static local page over every character's `WowLab.lua`.
   is noticed); each file is charged the bytes actually read. The bound
   counts bytes, not parse cost: a dense file takes longer and keeps more
   memory per byte than a real one (charging parse cost is a follow-up).
-  Once a file would pass it, or grows past what is left, that file and
-  every one after it in the order are `not read: the listing's total size
-  bound was reached (wowlab reads at most 64 MiB of WowLab.lua files in one
-  listing, and the files before this one used it up); wowlab char show
-  --account <A> --character <folder> reads this one on its own`. A file
+  A file by itself larger than the whole total bound (but under the
+  per-file one) is likewise refused alone before a byte is read, never
+  charged, and blocks nothing after it: `not read: the file holds N bytes,
+  more than the listing's total size bound (wowlab reads at most 64 MiB of
+  WowLab.lua files in one listing); wowlab char show --account <A>
+  --character <folder> reads this one on its own` (round 4 of the review,
+  2026-10-14). Once a file that fits the total would pass what is left,
+  that file and every one after it in the order are `not read: the
+  listing's total size bound was reached (wowlab reads at most 64 MiB of
+  WowLab.lua files in one listing, and the files before this one used it
+  up); wowlab char show --account <A> --character <folder> reads this one
+  on its own`. A file that grows past what is left as it is read stops the
+  run the same way (its read may have cost what was left), its own row
+  saying `and this file grew past what was left as wowlab read it`. A file
   already read and parsed in the run (the same device and inode, and an
   inode other than 0, which some file systems report for every file) is not
   read again: its row is `the same file as <realm or digits
