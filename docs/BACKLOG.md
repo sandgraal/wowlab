@@ -58,7 +58,7 @@ On 2026-09-29 wago answered `400` for `TraitSubTree`, `TraitTreeLoadout`, `Trait
 ---
 
 ## [ ] M12-12 — Wave 3 review
-**Size:** S · **Depends on:** M12-01, M12-02, M12-09, M12-13, M12-14
+**Size:** S · **Depends on:** M12-01, M12-02, M12-09, M12-13, M12-14, M12-15
 
 The conductor writes `docs/handoffs/M12-review.md` per `docs/LAB_PLAN.md` §11 (what shipped, what was learned about the client, which ideas are unblocked, which estimates were wrong, a recommended next wave of at most three ideas), archives the wave's backlog, and stops dispatch until the owner picks Wave 4.
 
