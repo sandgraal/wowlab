@@ -44,7 +44,7 @@ On 2026-09-29 wago answered `400` for `TraitSubTree`, `TraitTreeLoadout`, `Trait
 
 ---
 
-## [ ] M12-09 — Every character: `labaddon.read_all` and `wowlab char list`
+## [x] M12-09 — Every character: `labaddon.read_all` and `wowlab char list`
 **Size:** S · **Depends on:** —
 
 `labaddon.read_all` per §14.4: walk every character folder the layout finds (the digits-folder shape and the retail-style twin, both), read each `WowLab.lua`, return per character its label (the folder name), the file's modification time and either the parsed record or the reason it could not be read. One unreadable file names itself, exits 1 and never blocks the others. `wowlab char list [--account A] [--json]` prints the table (text through `cli._safe`).
@@ -83,7 +83,7 @@ Following the `scripts/gen_file_map.py` pattern: walk the Click tree of `wowlab_
 
 ---
 
-## [ ] M12-14 — `wiki-daily`: a scheduled job that checks and improves the wiki, then pushes it
+## [x] M12-14 — `wiki-daily`: a scheduled job that checks and improves the wiki, then pushes it
 **Size:** M · **Depends on:** M12-13 · **owner** (the `WIKI_PUSH_TOKEN` secret)
 
 Owner decision 2026-09-30: the job pushes to the wiki directly, with no PR. The deterministic gate below is therefore what stands between a bad run and a public page, and it must fail closed.
@@ -95,6 +95,27 @@ Steps: (1) check out `main` and the wiki (`WIKI_PUSH_TOKEN`, a fine-grained toke
 `scripts/check_wiki.py DIR [--base REF]`: every internal wiki link and `_Sidebar` entry resolves; every `wowlab …` invocation on a page names a command that exists in the Click tree (placeholders such as `wowlab <group> <command> --help` and `Usage:` lines are accepted); every leaf command and every public module of `wowlab_core` is linked or named on at least one page; nothing matches an absolute home or install path, a numeric account folder, a `Name-Realm` pair outside the documented placeholders, an email address or a BattleTag; and the diff against `--base` stays under a fixed size cap (so no single run can rewrite the wiki). Exit 1 with one line per failure.
 
 **Acceptance:** `check_wiki.py` has labelled constructed tests, each failing: a broken link, an unknown command, a missing command, `/Users/…`, a `Name-Realm`, an oversized diff; and it passes on a copy of the current wiki (or names what the current wiki is missing, which the first run then fixes). `actionlint` is clean in the `harness` job. A `workflow_dispatch` run on the ticket branch with `push: false` completes and uploads the wiki diff as an artifact; the report pastes its summary. The first pushed run happens after merge, and the conductor reads its diff. The owner adds the secret. Reviewed by `code-reviewer` and `security-reviewer` (workflow permissions, token scope, prompt injection through PR bodies, what the Claude step can reach). `CLAUDE.md` "Models" then names three workflows (the conductor edits it at merge).
+
+*Amended 2026-10-14, at merge (PR #159, 90b50c4):*
+- **The dry run.** `workflow_dispatch` cannot run a workflow that is not yet on the default branch (404). So the dry-run criterion is met by the first `workflow_dispatch` after merge (run 38651487016), made with `push: false` while the `WIKI_DAILY_PUBLISH` variable is unset. The conductor reads its wiki-diff artifact before the owner sets the variable. The push-triggered run 36765760456 (2026-09-30) is the pre-merge evidence.
+- **Deviations accepted in review:**
+  - `--allowedTools` is narrowed to the single `check_wiki` command, so the prompt checks claims against the generated `CLI-Reference.md`, not `--help`;
+  - `vars.WIKI_DAILY_PUBLISH` gates every push;
+  - the push uses the job's `GITHUB_TOKEN` through a credential helper, so no `WIKI_PUSH_TOKEN` is needed;
+  - a separate `previous-report` job with no checkout holds the one `actions: read`, and the job that runs Claude has `contents: read` only.
+- **Planned commands.** On the Roadmap, a planned command is named in prose, never in code, because the gate rejects any `wowlab …` in code that is not on `main`.
+- **The frozen wiki copy** (`tests/scripts/fixtures/wiki-<commit>`) is refreshed whenever a new command lands. The gate requires every leaf command to be named on a hand-written page, so a stale copy fails once main merges into an open PR (as #145 did to #159).
+
+---
+
+## [ ] M12-15 — `check_wiki` tests: a new command must not break the real-wiki baselines
+**Size:** S · **Depends on:** M12-14
+
+Found merging #159 (2026-10-14). The real-wiki baselines in `tests/scripts/test_check_wiki.py` and in the M12-14 review probes run `check_wiki` with the current Click tree against a frozen copy of the wiki (`tests/scripts/fixtures/wiki-a47a7ee`), and expect it to pass. Any PR that adds a leaf command therefore fails CI with "command … is not named or linked on any hand-written page" until someone edits the frozen copy, which then stops being a faithful copy. Wave 4 adds commands (`macros check`, `binds coach`), so this lands on its first feature PR.
+
+Make the baselines independent of commands added after the snapshot, keeping the coverage rule itself unchanged and fully tested by its constructed cases. Default approach: the frozen copy records the command set of its era (a `commands.txt` beside the pages, generated from the Click tree at the snapshot's main commit), and the baselines check coverage against that set. Commands that exist now but are not in it count as "added since the snapshot" and are reported separately, never as a baseline failure. The probes under `lab/core/tests/review/` belong to `code-reviewer`: their baseline lines are changed by `code-reviewer` (or replaced by new probes) in this ticket's review, never by the implementer.
+
+**Acceptance:** a labelled constructed test adds a dummy leaf command to a copy of the Click tree and shows that the baselines still pass while the coverage rule still reports it; every constructed coverage test still fails when its rule is removed; the live `wiki-daily` job is unchanged (it still requires every current command on a hand-written page); `make ci` green; reviewed by `code-reviewer`. The conductor then drops the interim rule in `docs/AGENT_WORKFLOW.md` ("A new command and the wiki").
 
 ---
 
@@ -262,7 +283,7 @@ One schema 3 (§13.1), not a fourth. It carries M11-35 (the config id `talents.l
 ---
 
 ## [ ] M13-06 — `wowlab macros check`
-**Size:** S · **Depends on:** M13-05
+**Size:** S · **Depends on:** M13-05, M12-15
 
 Read-only; writes nothing. Rules (§15.2): a body over 255 (stating whether characters or bytes were counted, **[verify]**); a spell name not in the character's spellbook (M13-05); a macro on no action bar (M13-05); duplicate names or bodies; unbalanced `[` `]`; `#showtooltip` not on the first line. An explicit rank (`Spell(Rank N)`) is reported as "cannot judge" until a capture settles it. Without a schema-3 record for the character, the two lab-addon rules say "cannot judge: no spellbook record" and the others still run. `--json` model `MacrosCheckReport`. Exit codes as the other commands (0 ok, 1 error, 2 usage); findings alone exit 0. Text through `cli._safe`.
 
@@ -280,7 +301,7 @@ The test comes first, run by the owner from a runbook the conductor writes (`doc
 ---
 
 ## [ ] M13-08 — `wowlab binds coach`
-**Size:** M · **Depends on:** M13-05
+**Size:** M · **Depends on:** M13-05, M12-15
 
 Read-only. Adds `combatlog.cast_counts`: the player's own `SPELL_CAST_SUCCESS` events, picked by the source-flags bits (affiliation "mine", type "player"), never by a GUID or a name (§15.2). The format V22 layout of cast events on Forever, and that the flags pick the player, are **[verify]** against one real log before the rules are written; the finding is a dated amendment in `docs/LAB_FORMATS.md`. The command finds the latest log (`combatlog.newest_log`) and says that `/combatlog` must be on. Reports: frequently cast spells on high-cost keys; spells cast with no bind (clicked, or cast from a macro); binds to spells never cast. Key to spell goes through the action bars and bindings of M13-05. "High-cost key" is an opinion: the cost table is an editable data file shipped with defaults, which a player can override from the user config directory, and the output says the table is a default. `--json` model `BindsCoachReport`; writes nothing.
 
