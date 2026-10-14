@@ -13,26 +13,34 @@ Python honours a coding declaration, so `# coding: utf-7` with `"+IC4-"`
 decodes to U+202E and `# coding: cp1255` turns \\xfd and \\xfe into U+200E
 and U+200F (ruff then skips the file and exits 0). So every scanned file
 decodes as UTF-8 with no error, every Python source (a .py, .pyi or .pyw
-suffix, or a python shebang) declares UTF-8 or nothing, and the raw bytes
-and the decoded text are both searched: a NUL or a stray byte elsewhere in a
-file cannot hide a control, it fails the file. Every tracked file name is
-checked too.
+suffix, or a python shebang) declares UTF-8 or nothing, and so does every
+other scanned file whose first or second line holds a PEP 263 coding
+declaration (round 4: a script run as `uv run --script`, or with no shebang
+at all, is Python too). The raw bytes and the decoded text are both
+searched: a NUL or a stray byte elsewhere in a file cannot hide a control,
+it fails the file. Every tracked file name is checked too.
 
 Nothing is skipped for its content or its size: pre-commit keeps every
 tracked file outside the fixtures under 512 KB, so each is read whole. Under
 lab/core/tests/fixtures/ only the real captures are left out, by type
 (`CAPTURE_SUFFIXES`): they are the client's bytes, and a capture may hold a
 control, or a byte that is not UTF-8, legitimately. Anything else there is
-scanned, the fixture index README.md included, and a Python source or a
-Markdown file other than README.md there fails outright: pytest would
-collect the one, and the other is prose written here.
+scanned, the fixture index README.md included, and a Python source, a
+Markdown file other than README.md, or a `test*.txt` file (any case) there
+fails outright: pytest would collect the first and the last (a `test*.txt`
+is a doctest file to it), and the other is prose written here. pytest is
+also kept out of the fixtures (`norecursedirs` in pyproject.toml, round 4);
+the fixture suites live beside it and read it as data.
 """
 
 from __future__ import annotations
 
+import fnmatch
 import io
+import re
 import shutil
 import subprocess
+import sys
 import tokenize
 from pathlib import Path
 
@@ -50,6 +58,8 @@ CAPTURE_SUFFIXES = frozenset(
 )
 PYTHON_SUFFIXES = frozenset({".py", ".pyi", ".pyw"})
 PYTHON_ENCODINGS = frozenset({"utf-8", "utf-8-sig"})
+# PEP 263: a coding declaration on the first or second line.
+CODING = re.compile(rb"^[ \t\f]*#.*?coding[:=][ \t]*([-\w.]+)")
 
 
 def _bidi_in_bytes(data: bytes) -> list[str]:
@@ -75,17 +85,22 @@ def _python(name: str, data: bytes) -> bool:
     return first.startswith(b"#!") and b"python" in first
 
 
+def _declares_coding(data: bytes) -> bool:
+    """Does the first or second line hold a PEP 263 coding declaration?"""
+    return any(CODING.match(line) for line in data.split(b"\n", 2)[:2])
+
+
 def _problems(name: str, data: bytes) -> list[str]:
     """Why a scanned file fails: the controls found in its raw bytes or its
-    decoded text, a decoding error, or a Python coding declaration other
-    than UTF-8."""
+    decoded text, a decoding error, or a coding declaration other than UTF-8
+    (in a Python source, or in any file that declares one)."""
     found = set(_bidi_in_bytes(data))
     out = []
     try:
         found.update(_bidi_in_text(data.decode("utf-8")))
     except UnicodeDecodeError as err:
         out.append(f"not UTF-8 (byte {err.start})")
-    if _python(name, data):
+    if _python(name, data) or _declares_coding(data):
         try:
             encoding = tokenize.detect_encoding(io.BytesIO(data).readline)[0]
         except SyntaxError as err:
@@ -112,11 +127,16 @@ def _scanned(name: str) -> bool:
 
 
 def _misplaced(name: str) -> bool:
-    """Is it a Python source, or Markdown other than the index, under the fixtures?"""
+    """Is it a Python source, Markdown other than the index, or a file pytest
+    reads as doctests (`test*.txt`, any case), under the fixtures?"""
     if not name.startswith(FIXTURES):
         return False
     suffix = Path(name).suffix.lower()
-    return suffix in PYTHON_SUFFIXES or (suffix == ".md" and name != FIXTURE_INDEX)
+    return (
+        suffix in PYTHON_SUFFIXES
+        or (suffix == ".md" and name != FIXTURE_INDEX)
+        or fnmatch.fnmatchcase(Path(name).name.lower(), "test*.txt")
+    )
 
 
 def test_no_tracked_file_holds_a_bidi_control() -> None:
@@ -131,7 +151,7 @@ def test_no_tracked_file_holds_a_bidi_control() -> None:
         if hits := _bidi_in_bytes(raw):
             found[f"file name {raw!r}"] = hits
         if _misplaced(name):
-            found[repr(name)] = ["a Python or Markdown file among the captures"]
+            found[repr(name)] = ["a Python, Markdown or test*.txt file among the captures"]
             continue
         path = ROOT / name
         if _scanned(name) and path.is_file() and (problems := _problems(name, path.read_bytes())):
@@ -200,4 +220,80 @@ def test_constructed_python_shebang_without_suffix_is_python() -> None:
     held to the same coding rule."""
     data = b"#!/usr/bin/env python3\n# coding: utf-7\n"
     assert _problems("scripts/constructed", data) == ["declares the encoding utf-7"]
-    assert _problems("scripts/constructed.sh", b"#!/bin/sh\n# coding: utf-7\n") == []
+    # Round 4: a declaration is checked in any file, a shell script included.
+    sh = b"#!/bin/sh\n# coding: utf-7\n"
+    assert _problems("scripts/constructed.sh", sh) == ["declares the encoding utf-7"]
+    assert _problems("scripts/constructed.sh", b"#!/bin/sh\necho hi\n") == []
+
+
+def test_constructed_uv_script_without_suffix_is_checked() -> None:
+    """Constructed input (security review, round 4): a script with no suffix
+    run by `uv run --script` is Python, and its shebang names no python."""
+    data = b'#!/usr/bin/env -S uv run --script\n# coding: utf-7\nx = "+IC4-"\n'
+    assert not _python("scripts/constructed", data)  # what round 3 missed
+    assert _problems("scripts/constructed", data) == ["declares the encoding utf-7"]
+
+
+def test_constructed_coding_declaration_without_shebang_is_checked() -> None:
+    """Constructed input (security review, round 4): no suffix, no shebang,
+    a coding declaration on the first line."""
+    data = b'# -*- coding: utf-7 -*-\nx = "+IC4-"\n'
+    assert not _python("tools/constructed", data)
+    assert _problems("tools/constructed", data) == ["declares the encoding utf-7"]
+    # A declaration of UTF-8, or none, passes; so does one Python ignores
+    # (on the second line after a line of code).
+    assert _problems("tools/constructed", b"# coding: utf-8\nx = 1\n") == []
+    assert _problems("tools/constructed", b"x = 1\n# coding: utf-7\n") == []
+
+
+def test_constructed_doctest_file_under_the_fixtures_fails() -> None:
+    """Constructed names (security review, round 4): pytest collects
+    `test*.txt` as doctests, so none may sit among the captures."""
+    for name in ("test_x.txt", "wago/test.txt", "TEST_Notes.TXT", "Test_x.txt"):
+        assert _misplaced(FIXTURES + name), name
+    for name in ("SavedVariables/WowLab.txt", "wago/latest.txt", "contest.txt"):
+        assert not _misplaced(FIXTURES + name), name
+    assert not _misplaced("docs/test_x.txt")
+
+
+def test_pytest_never_collects_under_the_fixtures(tmp_path: Path) -> None:
+    """Constructed tree (security review, round 4): a doctest file planted
+    under lab/core/tests/fixtures/ is not collected with the repository's
+    pytest config, and is collected once that directory is allowed (the
+    control), so the config is what keeps it out."""
+    planted = tmp_path / "lab" / "core" / "tests" / "fixtures" / "wago" / "test_planted.txt"
+    planted.parent.mkdir(parents=True)
+    planted.write_text(">>> 1 + 1\n2\n", encoding="utf-8")
+    beside = tmp_path / "lab" / "core" / "tests" / "test_beside.txt"
+    beside.write_text(">>> 2 + 2\n4\n", encoding="utf-8")
+
+    def collected(*extra: str) -> list[str]:
+        done = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "--collect-only",
+                "-q",
+                "-p",
+                "no:cacheprovider",
+                "-c",
+                str(ROOT / "pyproject.toml"),
+                "--rootdir",
+                str(tmp_path),
+                *extra,
+                str(tmp_path / "lab" / "core" / "tests"),
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert done.returncode == 0, done.stdout + done.stderr
+        return [line for line in done.stdout.splitlines() if "test_" in line and ".txt" in line]
+
+    items = collected()
+    assert any("test_beside.txt" in line for line in items), items  # doctests are collected
+    assert not any("fixtures" in line for line in items), items
+    allowed = collected("-o", "norecursedirs=.venv")
+    assert any("fixtures/wago/test_planted.txt" in line for line in allowed), allowed

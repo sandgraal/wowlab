@@ -3024,8 +3024,13 @@ def test_m11_29_readme_and_plan_say_what_is_confirmed_and_what_stays_verify() ->
 # wow_client.yml does not declare, so these are the std's names, and the scan
 # checks that it sees exactly them. A *handle* is a file-level local that is
 # ever bound or assigned a value holding a client global, a handle, or a local
-# that holds either (Core.lua's `frame`, `timerAfter`, `isEventValid`); each
-# use of a handle is a reference too. A reference is named as written, fields
+# or parameter that holds either (Core.lua's `frame`, `timerAfter`,
+# `isEventValid`). Round 4: the hold is followed across functions too, into a
+# followed function's parameter when a direct call passes one, and out of a
+# followed function that returns one (a reference to that function brings it
+# in, under `pcall` too); and a file-level local that section code assigns is
+# a handle whatever the value, since section code is where client objects are
+# made. Each use of a handle is a reference too. A reference is named as written, fields
 # and one method joined: `C_Timer.After`, `frame.RegisterEvent`,
 # `frame:SetScript`. The sources do no dynamic global lookup and never index a
 # std global or `ns` by brackets (tests above), and rule 3 below keeps `ns`
@@ -3387,9 +3392,10 @@ class _SectionScan:
                 self.labels[name][head] = label
             for head, label in self._section_labels(flow).items():
                 self.labels[name][head] = label
-        self.handles = {name: self._handles(flow) for name, flow in self.flows.items()}
         self.roots = self._roots()
         self.named = self._named()
+        # Each reference to a local or `ns` function, by (file, first token).
+        self.named_at = {(f, s): fid for fid, refs in self.named.items() for f, s, _ in refs}
         self.section = self._solve()
         self.params = self._params()
         self.calls = [call for name in self.flows for call in self._calls(name)]
@@ -3401,6 +3407,7 @@ class _SectionScan:
         self.returns_given: set[tuple[str, int]] = set()
         self.followed = self._followed()
         self._solve_given()
+        self.handles = self._solve_handles()
         self.refs = [ref for name in self.flows for ref in self._refs(name)]
         self.handed_on_used: set[tuple[str, str, str]] = set()
         self._check_sectionless()
@@ -3522,24 +3529,90 @@ class _SectionScan:
             return False  # a statement in a function literal inside the constructor
         return t[k - 1].kind == "op" and t[k - 1].text in {"{", ",", ";"}
 
-    def _handles(self, flow: _Flow) -> set[int]:
-        """ids of the handles: file-level locals that ever hold a value with a
-        client global in it, directly or through other locals."""
-        decls = [d for ds in flow.decls.values() for d in ds if d.function is None]
+    def _holds_client(
+        self,
+        flow: _Flow,
+        k: int,
+        holds: set[int],
+        returns: set[tuple[str, int]],
+        varargs: set[tuple[str, int]],
+    ) -> bool:
+        """Does token k bring a client value in: a client global, a local or
+        parameter that holds one, a reference to a followed function that
+        returns one, or `...` in a function a call passes one through?"""
+        x = flow.tokens[k]
+        name = flow.path.name
+        if x.kind == "op" and x.text == "...":
+            fn = flow.function_at(k)
+            return fn is not None and k >= fn.start and (name, fn.head) in varargs
+        if self.client(flow, k) or self._use_of(flow, k, holds):
+            return True
+        return self.named_at.get((name, k)) in returns
+
+    def _solve_handles(self) -> dict[str, set[int]]:
+        """ids of the handles, by file: file-level locals that are ever bound
+        or assigned a value holding a client value, followed through locals,
+        through what a followed function returns and through the parameters a
+        direct call passes one to (round 4), and every file-level local that
+        section code assigns, whatever the value (section code is where the
+        client's objects are made)."""
         holds: set[int] = set()
+        returns: set[tuple[str, int]] = set()
+        varargs: set[tuple[str, int]] = set()
+
+        def brings(flow: _Flow, s: int, e: int) -> bool:
+            return any(self._holds_client(flow, k, holds, returns, varargs) for k in range(s, e))
+
         changed = True
         while changed:
             changed = False
-            for d in decls:
-                if id(d) not in holds and any(
-                    self.client(flow, k) or self._use_of(flow, k, holds)
-                    for s, e in d.sources
-                    for k in range(s, e)
-                ):
-                    holds.add(id(d))
+            for flow in self.flows.values():
+                for decls in flow.decls.values():
+                    for d in decls:
+                        if id(d) in holds or d.function is not None:
+                            continue
+                        if any(brings(flow, s, e) for s, e in d.sources):
+                            holds.add(id(d))
+                            changed = True
+            for call in self.calls:
+                fid = self._named_callee(call.file, call.start, call.open)
+                if fid is None or fid not in self.followed:
+                    continue
+                params = self.params[fid]
+                offset = 1 if call.method else 0
+                flow = self.flows[call.file]
+                for p, (a, b) in enumerate(call.args):
+                    if not brings(flow, a, b):
+                        continue
+                    last = p == len(call.args) - 1
+                    for q in range(p + offset, len(params) if last else p + offset + 1):
+                        param = params[q] if q < len(params) else None
+                        if param is not None and param not in holds:
+                            holds.add(param)
+                            changed = True
+                    if (last or p + offset >= len(params)) and fid not in varargs:
+                        varargs.add(fid)
+                        changed = True
+            for fid in sorted(self.followed - returns):
+                name, head = fid
+                flow = self.flows[name]
+                if any(brings(flow, s, e) for s, e in flow.returns(head)):
+                    returns.add(fid)
                     changed = True
-        at = self.decl_at[flow.path.name]
-        return {id(d) for d in decls if id(d) in holds and flow.function_at(at[id(d)]) is None}
+        out: dict[str, set[int]] = {}
+        for name, flow in self.flows.items():
+            at = self.decl_at[name]
+            out[name] = {
+                id(d)
+                for ds in flow.decls.values()
+                for d in ds
+                if d.function is None
+                and flow.function_at(at[id(d)]) is None
+                and (
+                    id(d) in holds or any(s >= 1 and self.inside(name, s - 1) for s, _ in d.sources)
+                )
+            }
+        return out
 
     def _use(self, flow: _Flow, s: int, e: int) -> str:
         """How the reference tokens[s:e] is used (see SECTIONLESS_API)."""
@@ -4624,6 +4697,11 @@ _DISPATCH = 'frame:SetScript("OnEvent", function(_, event, ...)\n'
 _DISPATCH_WITH_FRAME = 'frame:SetScript("OnEvent", function(f, event, ...)\n'
 _SLASH = "SlashCmdList.WOWLAB = function(message)\n"
 _SLASH_WITH_BOX = "SlashCmdList.WOWLAB = function(message, box)\n"
+_SCANNER = "local scanner = nil\n"
+_NEW_SCANNER = 'local function newScanner()\n    return CreateFrame("GameTooltip")\nend\n'
+_HIDE_SCANNER = (
+    "function ns.HideScanner()\n    if scanner then\n        scanner:Hide()\n    end\nend\n"
+)
 _KEY = 'local KEY = "customization"\n'
 _PROFESSIONS_GATHER = "    gather = function()\n"
 _PROFESSIONS_SLOTS = "        local slots = ns.Pack(GetProfessions())\n"
@@ -5082,6 +5160,64 @@ _M11_37_CASES: dict[str, tuple[tuple[str, list[tuple[str, str]]], tuple[str, str
     "constructed-event-frame-stored-in-a-field": (
         ("Core.lua", [(_DISPATCH, _DISPATCH_WITH_FRAME + "    ns.frame = f\n")]),
         ("outside", "`ns . frame = f` stores a client-given value"),
+    ),
+    # Round 4: a client object reaching a file-level local through a helper.
+    "constructed-helper-returns-the-object-into-a-file-local": (
+        (
+            "Gear.lua",
+            [
+                (_GEAR_TOP, _GEAR_TOP + _SCANNER + _NEW_SCANNER + _HIDE_SCANNER),
+                (_GEAR_SLOTS, "        scanner = scanner or newScanner()\n" + _GEAR_SLOTS),
+            ],
+        ),
+        ("outside", "in ns.HideScanner: `scanner:Hide`"),
+    ),
+    "constructed-helper-stores-its-parameter-in-a-file-local": (
+        (
+            "Gear.lua",
+            [
+                (
+                    _GEAR_TOP,
+                    _GEAR_TOP
+                    + _SCANNER
+                    + "local function keep(made)\n    scanner = made\nend\n"
+                    + _HIDE_SCANNER,
+                ),
+                (_GEAR_SLOTS, '        keep(CreateFrame("GameTooltip"))\n' + _GEAR_SLOTS),
+            ],
+        ),
+        ("outside", "in ns.HideScanner: `scanner:Hide`"),
+    ),
+    "constructed-helper-returns-it-second-into-a-file-local": (
+        (
+            "Gear.lua",
+            [
+                (
+                    _GEAR_TOP,
+                    _GEAR_TOP
+                    + _SCANNER
+                    + 'local function make()\n    return true, CreateFrame("GameTooltip")\nend\n'
+                    + _HIDE_SCANNER,
+                ),
+                (
+                    _GEAR_SLOTS,
+                    "        local ok, made = make()\n        scanner = made\n" + _GEAR_SLOTS,
+                ),
+            ],
+        ),
+        ("outside", "in ns.HideScanner: `scanner:Hide`"),
+    ),
+    # Assigned outside section code: only the return of raceID (UnitRace)
+    # makes `lastRace` a handle.
+    "constructed-pinned-helper-return-kept-in-a-file-local": (
+        (
+            "Customization.lua",
+            [
+                (_KEY, _KEY + "local lastRace = nil\n"),
+                (_RACE_CHECK, "    lastRace = raceID()\n    local race = lastRace\n"),
+            ],
+        ),
+        ("outside", 'in ns.On("PLAYER_ENTERING_WORLD"): `lastRace`'),
     ),
     "constructed-hook-parameter": (
         (

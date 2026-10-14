@@ -88,7 +88,7 @@ pretty = true
 # ─── pytest ──────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
 testpaths = ["lab/core/tests", "tests"]
-norecursedirs = [".claude/worktrees", ".venv"]
+norecursedirs = [".claude/worktrees", ".venv", "lab/core/tests/fixtures"]
 addopts = "-m 'not live' --strict-markers -ra"
 markers = [
   "parser: parser fixture and round-trip suites (make test-parser)",
