@@ -3,14 +3,16 @@
 **Status:** Wave 1 specified (2026-09-20), revised 2026-09-21 when the Lab
 became the whole repository (ADR-0025). Later waves are chosen by the owner
 after each wave ships (ADR-0024). Each later wave is specified only once the
-owner has picked it, in its own section: Wave 2 in §13 and Wave 3 in §14
-(amended 2026-09-30; this line used to say that nothing beyond Wave 1 is
-specified here).
+owner has picked it, in its own section: Wave 2 in §13, Wave 3 in §14
+(re-scoped 2026-10-14, §14.8) and Wave 4, the first public release, in §15
+(amended 2026-09-30 and 2026-10-14; this line used to say that nothing
+beyond Wave 1 is specified here).
 
 The Lab is the application this repository exists for, not a track beside
-another product. It is a local toolchain for one player's own machine: it
+another product. It is a local toolchain for each player's own machine: it
 reads a World of Warcraft install directly, explains what is in it, snapshots
-it, and lets the owner change things and change them back (ADR-0019).
+it, and lets the player change things and change them back (ADR-0019). Other
+players may install it from a tagged GitHub release (ADR-0031).
 
 Read `AGENTS.md`, then this, then `docs/LAB_FORMATS.md` (file grammars),
 `docs/LAB_FILE_MAP.md` (what every path in an install is), and ADR-0019
@@ -56,9 +58,9 @@ discovery.
 
 ## 3. Trust boundary
 
-- **Local-only.** The Lab runs on the owner's machine, as the owner, against
-  the owner's install. It is never distributed as a binary and never deployed
-  as a service (ADR-0019).
+- **Local-only.** The Lab runs on the player's own machine, as that player,
+  against their own install. Players install it from a tagged GitHub release
+  (ADR-0031); it is never deployed as a service (ADR-0019).
 - **Never uploads anything.** Nothing read from an install leaves the
   machine. The only network traffic is `gamedata` downloading public game
   tables (§6.6), which sends nothing about the install beyond a build string.
@@ -2566,3 +2568,172 @@ rule the tables cannot settle is found; anything it cannot settle becomes a
 note and a **[verify]**, not a refusal, and the owner's capture (M12-11)
 settles it later. The wave was planned at ten development tickets; Wave 2's
 ten became twenty-five, mostly review hardening, so expect growth.
+
+### 14.8 Re-scope, 2026-10-14 (accepted by the owner, 2026-10-14)
+
+On 2026-10-13 the owner decided that wowlab will be usable by other players
+(ADR-0031, accepted 2026-10-14) and asked for Wave 3 to be re-scoped around that. Most
+of what is left in it builds things players already have elsewhere: Wowhead
+and Forever++ have talent planners, and ForeverGuide and Questie cover
+quests. The owner's rule for db2lake: keep M12-03 and M12-04 only if
+`wowlab macros check` (M13-06) needs a table it cannot get from the
+lab-addon.
+
+| Ticket | State on 2026-10-14 | Recommendation | Why |
+|---|---|---|---|
+| M12-01, M12-02, M12-13 | merged | stay | done |
+| M12-09 `char list` | PR #145, draft, in its last fix round | **keep** | Small, nearly done, and useful to any player with the lab-addon. The owner's message does not name it; keeping it is the conductor's call. |
+| M12-14 `wiki-daily` | PR #159, draft | **keep** | Player documentation is part of shipping. |
+| M12-03 db2lake, M12-04 `db2` SQL | PR #158 (M12-03) draft, checks green, idle since 2026-09-30; M12-04 not started | **defer** | `macros check` needs no table: macro text comes from `macros-cache.txt`, the spellbook and action bars from the lab-addon (M13-05). `binds coach` (M13-08) takes spell names from the combat log itself. PR #158 stays open as a draft and its branch is kept, so the work comes back with a later wave without being redone. |
+| M12-05 to M12-08 talents | not started | **defer** | Incumbents have talent planners. |
+| M12-10 alt-dashboard, M12-11 talent capture | not started | **defer** | M12-10 is a page over M12-09's data for one player's alts; M12-11 only serves the talent tickets. |
+| M12-12 Wave 3 review | — | **keep, smaller** | It now waits on M12-09 and M12-14 only, and records what was deferred. |
+
+The deferred tickets move, word for word, to `docs/handoffs/M12-deferred.md`.
+They return only through a later wave pick (ADR-0024). §14.1 to §14.7 stay
+as the spec for when they do. M11-35 (schema 3, the config id) is folded into
+M13-05 at the owner's instruction, so there is one schema 3, not a schema 4.
+M11-37 (PR #153) and M11-29 are unaffected.
+
+**Waves overlap once.** The remaining M12 tickets finish alongside Wave 4;
+M13 does not wait for M12-12. ADR-0024 normally keeps one wave in the
+backlog at a time; the owner asked for this one on 2026-10-13, as Wave 3
+already carried the owner's wiki requests.
+
+## 15. Wave 4 (M13): the first public release
+
+Owner decision, 2026-10-13. Decision record: ADR-0031 (accepted by the owner,
+2026-10-14, together with the defaults in §14.8 and §15.3). **Nothing in
+this section starts until the owner accepts ADR-0031**: that acceptance is
+M13-01, and every other M13 ticket depends on it. L1–L8 apply to every
+ticket. ADR-0021, ADR-0023, ADR-0026 and ADR-0027 are unchanged; no ticket
+adds telemetry, an account or an upload, and no ticket calls a platform
+supported before M13-02's acceptance holds.
+
+**Numbering.** Wave 4 was the name given on 2026-09-30 to `wowlab ui`
+(ADR-0029). That wave keeps its scope and becomes Wave 5 (M14), aimed at the
+second public release.
+
+### 15.1 Tickets
+
+The owner's working names are kept beside the ticket ids.
+
+| Owner | Ticket | What | Who |
+|---|---|---|---|
+| D-01 | M13-01 | ADR-0031 accepted; the wording that contradicts it | owner, then conductor |
+| D-02 | M13-02 | Windows is a first-class CI target | implementer; owner finds a Windows tester |
+| D-03 | M13-03 | Release pipeline | implementer |
+| D-04 | M13-04 | First-run flow and `docs/INSTALL.md` | implementer |
+| D-05 | M13-05 | lab-addon schema 3: spellbook, action bars, bindings (and M11-35) | implementer; owner capture |
+| D-06 | M13-06 | `wowlab macros check` | implementer |
+| D-07 | M13-07 | `wowlab macros fix`, only after the owner's persistence test | owner test, then implementer |
+| D-08 | M13-08 | `wowlab binds coach` | implementer |
+| D-09 | M13-09 | Redaction for issue reports | implementer |
+| D-10 | M13-10 | Player-facing README | implementer |
+| D-11 | M13-11 | First public release, v0.1 | owner (the tag) |
+| — | M13-12 | Wave 4 review | conductor |
+| — | M13-13 | The 30-day gate (§15.4) | conductor counts, owner decides |
+
+**v0.1** contains M13-02 to M13-04, M13-09 and M13-10, and M13-06 if M13-05
+has landed. M13-08 ships in v0.2 if it has not landed; v0.1 is not held for
+it. M13-07 ships only in the form its owner test allows.
+
+### 15.2 What is known, and what is [verify]
+
+- **Macros** (`docs/LAB_FORMATS.md` §7). `macros-cache.txt` holds `VER 3`
+  headers (version, macro id in hex, name, icon) and a body up to a line that
+  is exactly `END`; account macros live in the account folder, character
+  macros in the character folder. The 255 limit is the client's; whether it
+  counts characters or UTF-8 bytes is **[verify]**, and `macros check`
+  reports which count it used. Whether an explicit rank (`Frostbolt(Rank 3)`)
+  goes stale is **[verify]** (`docs/LAB_IDEAS.md`, macro-doctor), so those
+  macros are reported as "cannot judge" until a capture settles it. Whether
+  an edit to `macros-cache.txt` made with the client closed survives the
+  next login, with `synchronizeMacros` on and off, is unknown; M13-07's
+  first step settles it.
+- **Bindings.** `bindings-cache.wtf` maps keys to binding commands such as
+  `ACTIONBUTTON3`, not to spells, and what sits in an action-bar slot is
+  server state (`docs/LAB_IDEAS.md`, keybind-coach). So spell-to-key needs
+  M13-05's action-bar record, and M13-05's live `GetBindingKey` results
+  cross-check the file.
+- **The addon calls.** forever-addon-kit's API list for build 69893 names
+  `GetActionInfo`, `GetBindingKey`, `GetMacroInfo`, `C_SpellBook` and
+  `GetSpellBookItemInfo`. Presence in the global table does not prove a call
+  works, so each is probed and recorded the way `spec.api` is (§13.1). Reads
+  happen out of combat only; nothing in schema 3 may touch a value that
+  becomes secret in combat (ADR-0026, `docs/GLOSSARY.md`). Action-bar macro
+  slots carry the macro id only, never its name or body: macro text is
+  player-written (ADR-0026's no-names rule).
+- **Cast counts.** `combatlog` has no cast counting today. The player's own
+  casts are picked by the source-flags bits (affiliation "mine", type
+  "player") rather than by a GUID or a name, since the lab-addon stores no
+  GUID (ADR-0026); that this holds for `SPELL_CAST_SUCCESS` in a Forever log,
+  and the field layout of those events in format V22, are **[verify]**
+  against one real log before the rules are written. The player has to turn
+  logging on (`/combatlog`); the command says so.
+- **First run.** `wowlab doctor` asks wago.tools whether each installed
+  version is listed unless `--offline` is given; the first-run text says so.
+  A WTF folder under OneDrive, Dropbox or Syncthing may hold placeholder or
+  conflict files; snapshots never follow a link (M11-18); a sync folder is
+  detected by heuristics and reported as such, never refused.
+- **Redaction.** The scrub rules live in `scripts/lab_capture.py`, which is
+  not part of the wheel. M13-09 moves the shared identifier patterns into the
+  package (default: `wowlab_core.redact`) and the capture tool imports them,
+  with its behaviour and its refusal tests unchanged. Redaction for an issue
+  replaces with placeholders (`<CHARACTER>`, `<REALM>`, `<ACCOUNT>`,
+  `<HOME>`); the capture tool keeps its pseudonyms.
+
+### 15.3 Decisions for the owner
+
+Each has a default and the work is planned on it. *The owner accepted every
+default on 2026-10-14.*
+
+- **E1. Wave 3 re-scope.** Default: §14.8 as recommended (M12-09 and M12-14
+  kept; M12-03 to M12-08, M12-10 and M12-11 deferred).
+- **E2. Linux.** There is no native Linux client, so a Linux install means
+  Wine or Proton, and nobody has run the Lab against one. Default: CI keeps
+  running on `ubuntu-latest`, and the README says "untested on Linux".
+- **E3. macOS.** Default: macOS counts as supported once a macOS CI job runs
+  the suite (today CI runs only on Linux); the owner's own first run covers
+  the human half. Alternative: say "untested" until then. Adding the job is
+  part of M13-02.
+- **E4. The redaction entry point.** Default: `wowlab doctor --redact`, as
+  named. Alternative: a separate `wowlab report` command.
+- **E5. Version and tag.** Default: the tag equals the package version
+  (`v0.1.0` for `wowlab-core` 0.1.0), and the release job fails before
+  publishing when they differ.
+
+### 15.4 The gate
+
+From ADR-0031, measured without telemetry, from GitHub's own counts:
+release-asset downloads (the sum of `download_count` over the releases'
+assets), distinct non-owner authors of issues and discussions (bots
+excluded), and stars (recorded, not part of the threshold). Thirty days after
+v0.1, public work continues only with at least 50 downloads and at least 5
+issues or discussions from non-owner accounts; the issue count carries more
+weight than downloads. The conductor writes the counts and the commands that
+produced them to `docs/handoffs/M13-gate.md`. If the gate fails, the public
+surface is frozen: releases stay up, no new public-facing tickets are taken,
+and the Lab returns to personal-lab mode. **The owner makes the call.**
+
+### 15.5 Order
+
+```
+M13-01 ADR-0031 accepted ─┬─ M13-03 release pipeline ──────────┐
+                          ├─ M13-09 redaction ─────────────────┤
+                          ├─ M13-10 README (needs 03's line) ───┤
+                          ├─ M13-04 first-run ── M13-02 Windows ┼─ M13-11 v0.1 ─┬─ M13-12 review
+                          │                      (human run)    │               └─ M13-13 gate (+30 days)
+                          └─ M13-05 schema 3 (owner capture) ─┬─ M13-06 macros check ─ (v0.1 if ready)
+                                                              ├─ M13-07 macros fix (owner test first)
+                                                              └─ M13-08 binds coach ─ (v0.2 if late)
+```
+
+M13-01 comes first. M13-03, M13-09 and M13-10 run alongside M13-02 and
+M13-04. M13-02's CI work starts at once; its human run needs M13-04. M13-05
+needs an owner capture and is the critical path for the analysis features,
+as M11-03 was in Wave 2, so it starts as soon as M13-01 merges. M13-04 and
+M13-09 both touch `wowlab doctor`; each keeps its logic in its own module and
+`pr-shepherd` rebases the second. If a Windows fix changes what `guard.py`,
+`svmerge.py` or `profiles.py` does, it is split and a `T` grader ticket lands
+first (`AGENTS.md`). Wave 2's ten tickets became twenty-five; expect growth.

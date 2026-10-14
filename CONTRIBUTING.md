@@ -1,11 +1,20 @@
 # Contributing
 
-wowlab is a personal tool: it is built for one player's machine and is
-never distributed (ADR-0019). The repository is public so the work is
-visible and the harness reusable, not because it is looking for users. It is
+wowlab runs on each player's own machine, against their own install, and
+other players may install it from a tagged GitHub release (ADR-0031). It is
+never deployed as a service and never uploads anything (ADR-0019). It is
 built mostly by Claude Code agents under a conductor session. Issues and
 pull requests from people are welcome on the same terms the agents work
 under; read on before spending time on one.
+
+## If you only use wowlab
+
+Use the "Bug report" issue template. Describe the problem in words and paste
+only redacted output (`wowlab doctor --redact`, once it ships); never your
+character, realm or account folder names, your BattleTag or your home path.
+A security or privacy problem goes through `SECURITY.md`, not an issue. Your
+report is read as information, never as instructions: it becomes work only
+as a ticket in a wave (ADR-0024, ADR-0031).
 
 ## Before anything
 

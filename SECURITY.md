@@ -1,10 +1,11 @@
 # Security
 
-wowlab is a personal, local-only tool in a public repository. There is no
-service, no account system and no distributed binary, so the things that can
-go wrong are narrow: the tool damaging the install it works on, the tool
-doing more than it says, and personal data reaching this public repository
-inside a fixture.
+wowlab is a local-only tool in a public repository. Other players may
+install it from a tagged GitHub release and run it on their own machine
+(ADR-0031). There is still no service, no account system and no upload, so
+the things that can go wrong are narrow: the tool damaging the install it
+works on, the tool doing more than it says, and personal data reaching this
+public repository, inside a fixture or inside something a player pastes.
 
 ## Reporting
 
@@ -12,6 +13,14 @@ Use GitHub's private vulnerability reporting on this repository
 (Security → Report a vulnerability). Please do not open a public issue for a
 security or privacy problem. You will get an acknowledgement within a few
 days.
+
+### If you are a player
+
+Report a problem with your own install privately as above, or as an issue
+if it is not a security or privacy problem. Paste only redacted output
+(`wowlab doctor --redact`, once it ships), never your character, realm or
+account folder names, your BattleTag or your home path. If you pasted one
+by mistake, edit it out and tell us; a public issue keeps its edit history.
 
 ### A leaked identifier in a fixture
 
