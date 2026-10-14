@@ -36,7 +36,8 @@ Claude Code in this repository.
 
 Opus-class work runs on Opus 5.5, pinned by full id: the conductor session
 (`.claude/settings.json`), `implementer`, `test-writer`, `code-reviewer`,
-`domain-reviewer`, `security-reviewer`, and both GitHub workflows. Other
+`domain-reviewer`, `security-reviewer`, and the three GitHub workflows that
+run Claude (`claude.yml`, `claude-review.yml`, `wiki-daily.yml`). Other
 Opus versions and Fable cost more tokens for no gain here and are not used.
 `pr-shepherd` stays on `sonnet`.
 
@@ -50,7 +51,7 @@ by how long a session must hold state:
   frontier, parallel dispatches, agent reports, review routing, merges.
   Compaction mid-wave loses routing state, and that costs more than the
   larger context.
-- **`claude-opus-5-5` (standard): the repo's agents and both workflows.** Each
+- **`claude-opus-5-5` (standard): the repo's agents and the three workflows.** Each
   is scoped to one ticket, review or PR. All of `docs/` is under 40K tokens,
   and each review on #34 used about 30K, so the standard window fits, and
   compacting early keeps later turns cheap. The conductor dispatches only
