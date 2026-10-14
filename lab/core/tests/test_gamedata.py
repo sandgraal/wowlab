@@ -481,6 +481,201 @@ def test_unknown_table_for_a_published_build(make: Callable[..., Harness]) -> No
         h.data.table("NoSuchTable", OTHER_BUILD)
 
 
+# ─── HTTP 400: a table the build lacks (M12-02) ─────────────────────────────
+
+# Recorded on 2026-09-30 (fixture index rows): the 400 wago gives for a table
+# that a listed build lacks (M12-01), and the first committed listing that
+# lists that build (M12-02). The two earlier listings predate it.
+LACKING_TABLE = "TraitSubTree"
+LISTED_BUILD = "1.60.1.70058"
+BAD_REQUEST_BYTES = (FIXTURES / f"{LACKING_TABLE}.{LISTED_BUILD}.400.json").read_bytes()
+BAD_REQUEST_HEADERS = {"content-type": "application/json"}  # the index row: no disposition
+BUILDS_2026_09_30_BYTES = gzip.decompress((FIXTURES / "builds.2026-09-30.json.gz").read_bytes())
+TABLE_LACKED_MESSAGE = (
+    f"table {LACKING_TABLE!r} is not published for build {LISTED_BUILD!r}: wago.tools "
+    f"answered HTTP 400 for https://wago.tools/db2/{LACKING_TABLE}/csv?build={LISTED_BUILD}; "
+    "the table may not exist in this game version"
+)
+
+
+def recorded_2026_09_30(request: httpx.Request) -> httpx.Response:
+    """The service as recorded on 2026-09-30: the listing, and the 400 for
+    `TraitSubTree` at 1.60.1.70058. Anything else is the recorded 404."""
+    if request.url.path == "/api/builds":
+        return httpx.Response(
+            200, headers={"content-type": "application/json"}, content=BUILDS_2026_09_30_BYTES
+        )
+    if (
+        request.url.path == f"/db2/{LACKING_TABLE}/csv"
+        and request.url.params.get("build") == LISTED_BUILD
+    ):
+        return httpx.Response(400, headers=BAD_REQUEST_HEADERS, content=BAD_REQUEST_BYTES)
+    return recorded(request)
+
+
+def _table_requests(h: Harness) -> list[httpx.Request]:
+    return [r for r in h.requests if r.url.path != "/api/builds"]
+
+
+def test_recorded_400_at_a_listed_build_is_table_not_published(
+    make: Callable[..., Harness],
+) -> None:
+    h = make(recorded_2026_09_30)
+    with pytest.raises(TableNotPublished) as caught:
+        h.data.table(LACKING_TABLE, LISTED_BUILD)
+
+    assert (caught.value.table, caught.value.build) == (LACKING_TABLE, LISTED_BUILD)
+    assert str(caught.value) == TABLE_LACKED_MESSAGE
+    assert "Table not found" not in str(caught.value), "nothing from the body is in the message"
+    assert len(_table_requests(h)) == 1, "a 400 is not retried"
+    assert h.sleeps == []
+    assert _tree(h.cache) == {"builds.json", "builds.json.meta.json"}, (
+        "the listing the lookup needed is cached; the 400 is not, and no temp file remains"
+    )
+
+
+def test_recorded_400_is_asked_once_per_call_and_never_remembered(
+    make: Callable[..., Harness],
+) -> None:
+    """Not cached as an answer either: the next call asks the source again,
+    so a table published later is found."""
+    h = make(recorded_2026_09_30)
+    for _ in range(2):
+        with pytest.raises(TableNotPublished):
+            h.data.table(LACKING_TABLE, LISTED_BUILD)
+    assert len(_table_requests(h)) == 2
+    assert not h.data.table_path(LACKING_TABLE, LISTED_BUILD).exists()
+
+
+def test_constructed_400_at_a_build_the_listing_lacks_stays_build_not_published(
+    make: Callable[..., Harness],
+) -> None:
+    """The recorded 400, replayed against the 2026-09-21 listing, which
+    predates 1.60.1.70058: the build is what is missing."""
+
+    def listing_predates_the_build(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/builds":
+            return recorded(request)
+        return httpx.Response(400, headers=BAD_REQUEST_HEADERS, content=BAD_REQUEST_BYTES)
+
+    h = make(listing_predates_the_build)
+    with pytest.raises(BuildNotPublished) as caught:
+        h.data.table(LACKING_TABLE, LISTED_BUILD)
+    assert caught.value.version == LISTED_BUILD
+    assert "may not exist" not in str(caught.value)
+    assert len(_table_requests(h)) == 1
+    assert not [p for p in _tree(h.cache) if p.startswith("tables/")]
+
+
+def test_constructed_400_for_a_build_no_listing_has_stays_build_not_published(
+    make: Callable[..., Harness],
+) -> None:
+    def bad_request(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/builds":
+            return recorded_2026_09_30(request)
+        return httpx.Response(400, headers=BAD_REQUEST_HEADERS, content=BAD_REQUEST_BYTES)
+
+    h = make(bad_request)
+    with pytest.raises(BuildNotPublished) as caught:
+        h.data.table(LACKING_TABLE, UNKNOWN_BUILD)
+    assert caught.value.version == UNKNOWN_BUILD
+    assert len(_table_requests(h)) == 1
+    assert not [p for p in _tree(h.cache) if p.startswith("tables/")]
+
+
+class _MustNotBeRead(httpx.SyncByteStream):
+    """A body the client must never read (constructed)."""
+
+    def __init__(self) -> None:
+        self.read = False
+
+    def __iter__(self) -> Iterator[bytes]:
+        self.read = True
+        yield b"{}"
+
+
+@pytest.mark.parametrize(
+    ("headers", "body"),
+    [
+        pytest.param({"content-type": "text/html; charset=utf-8"}, NOT_FOUND_BYTES, id="html-body"),
+        pytest.param({}, b"", id="empty-body"),
+        pytest.param(
+            {"content-type": "application/json", "content-length": "99999999999"},
+            b"\x1b]0;constructed\x07" * 64,
+            id="hostile-body",
+        ),
+    ],
+)
+def test_constructed_400_with_any_body_is_the_same_answer(
+    make: Callable[..., Harness], headers: dict[str, str], body: bytes
+) -> None:
+    def bad_request(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/builds":
+            return recorded_2026_09_30(request)
+        return httpx.Response(400, headers=headers, content=body)
+
+    h = make(bad_request, max_attempts=4)
+    with pytest.raises(TableNotPublished) as caught:
+        h.data.table(LACKING_TABLE, LISTED_BUILD)
+    assert str(caught.value) == TABLE_LACKED_MESSAGE
+    assert len(_table_requests(h)) == 1, "not retried, though four attempts are allowed"
+    assert h.sleeps == []
+    assert _tree(h.cache) == {"builds.json", "builds.json.meta.json"}
+
+
+def test_constructed_400_body_is_never_read(make: Callable[..., Harness]) -> None:
+    streams: list[_MustNotBeRead] = []
+
+    def unread(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/builds":
+            return recorded_2026_09_30(request)
+        streams.append(_MustNotBeRead())
+        return httpx.Response(400, headers=BAD_REQUEST_HEADERS, stream=streams[-1])
+
+    h = make(unread)
+    with pytest.raises(TableNotPublished):
+        h.data.table(LACKING_TABLE, LISTED_BUILD)
+    assert len(streams) == 1
+    assert not streams[0].read, "the status decides; the body is not read"
+
+
+def test_constructed_400_cookies_are_never_sent_back(make: Callable[..., Harness]) -> None:
+    def sets_cookies(request: httpx.Request) -> httpx.Response:
+        response = recorded_2026_09_30(request)
+        # The recorded 400 set two cookies; their values are not committed.
+        response.headers["set-cookie"] = "wagotools_session=constructed; path=/; secure"
+        return response
+
+    h = make(sets_cookies)
+    for _ in range(2):
+        with pytest.raises(TableNotPublished):
+            h.data.table(LACKING_TABLE, LISTED_BUILD)
+    h.data.builds(refresh=True)
+    assert len(h.requests) == 4  # 400, listing, 400 (listing cached), the refresh
+    assert all("cookie" not in request.headers for request in h.requests)
+
+
+def test_constructed_400_for_the_builds_listing_is_unchanged(
+    make: Callable[..., Harness],
+) -> None:
+    """Only the table endpoint maps 400; the listing's 400 is what it was."""
+    h = make(lambda request: httpx.Response(400, headers=BAD_REQUEST_HEADERS))
+    with pytest.raises(UnexpectedResponse, match="HTTP 400"):
+        h.data.builds()
+    assert len(h.requests) == 1
+    assert h.sleeps == []
+    assert _tree(h.cache) == set()
+
+
+def test_a_404_at_a_listed_build_keeps_its_message(make: Callable[..., Harness]) -> None:
+    """The 404's handling does not change with M12-02: same error, no reason."""
+    h = make()
+    with pytest.raises(TableNotPublished) as caught:
+        h.data.table("NoSuchTable", OTHER_BUILD)
+    assert caught.value.reason is None
+    assert str(caught.value) == f"table 'NoSuchTable' is not published for build {OTHER_BUILD!r}"
+
+
 # ─── rows ────────────────────────────────────────────────────────────────────
 
 

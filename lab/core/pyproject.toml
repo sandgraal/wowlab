@@ -9,7 +9,7 @@ license = "Apache-2.0"
 dependencies = [
   "psutil>=7.0",  # process listing only (ADR-0023); used by wowlab_core.process
   "pydantic>=2.11",
-  "typer>=0.16",
+  "typer>=0.27,<0.28",  # cli.py imports typer._click (typer's vendored click, 0.26+); private, so bounded to the minor it was tested on
   "httpx>=0.28",
   "platformdirs>=4.3",
 ]
