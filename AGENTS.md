@@ -14,9 +14,9 @@ base: the lab-addon, the customization sandbox, profiles and sv-merge in
 Wave 2, and the character list, the generated command reference and the
 daily wiki job in Wave 3 (re-scoped 2026-10-14: db2lake, talents and the
 alt-dashboard deferred). Wave 4 (M13) is the first public release and
-Wave 5 (M14) is `wowlab ui`. Other players may install it from a tagged GitHub release and run it on their own
-machine; it is never deployed as a service and never uploads anything
-(ADR-0019, ADR-0031).
+Wave 5 (M14) is `wowlab ui`. Other players may install it from a tagged
+GitHub release and run it on their own machine; it is never deployed as a
+service and never uploads anything (ADR-0019, ADR-0031).
 
 ## Hard invariants
 

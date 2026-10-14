@@ -16,8 +16,9 @@ the rows below stay as the original descriptions. On 2026-10-14 Wave 3 was
 re-scoped (§14.8): db2lake, char-planner and alt-dashboard are deferred and
 can be picked again. Wave 4 (M13, 2026-10-13): the first public release
 (ADR-0031, §15), with the read-only halves of **macro-doctor**
-(`wowlab macros check`, and `macros fix` only after an owner test) and
-**keybind-coach** (`wowlab binds coach`, no writer). Wave 5 (M14): `wowlab ui`
+(`wowlab macros check`) and **keybind-coach** (`wowlab binds coach`, no
+writer), plus `wowlab macros fix`, whose form (print-only or a `guard`
+writer) waits on an owner test (M13-07). Wave 5 (M14): `wowlab ui`
 (ADR-0029).
 
 Two things from the original brainstorm are deliberately absent: anything

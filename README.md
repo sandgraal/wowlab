@@ -114,14 +114,14 @@ wowlab grows in **waves**: the owner picks each one after reviewing the last. **
 |---|---|---|
 | 📦 | **Releases** | Install a tagged GitHub release with one `uv tool install` line, and check it against published SHA-256 sums. No installer, no app store, no hosted version. |
 | 🪟 | **Windows, tested** | The test suite runs on Windows and macOS in CI, and a person runs the first-run flow on a real install of each before it is called supported. Until then it says "untested". |
-| 👋 | **A first run that explains itself** | `wowlab doctor` finds your install (or says how to point it at one), says plainly what wowlab will and won't do, takes a first snapshot and verifies it. |
+| 👋 | **A first run that explains itself** | `wowlab doctor` finds your install (or says how to point it at one), says plainly what wowlab will and won't do, offers a first snapshot (kept in wowlab's own store, never in your install) and verifies it. |
 | 🙈 | **Bug reports without your names** | `wowlab doctor --redact` prints output that is safe to paste into an issue: no character, realm, account, BattleTag, guild or home path. |
 | 📝 | **macros check** | Finds macros over the length limit, spell names not in your spellbook, macros on no action bar, duplicates, unbalanced `[ ]` and a misplaced `#showtooltip`. Read-only. |
 | ⌨️ | **binds coach** | From your own combat log: spells you cast often on awkward keys, spells you cast with no bind, and binds you never use. Read-only; the "awkward key" table is a default you can edit. May arrive in the second release. |
 
 After that, Wave 5 is `wowlab ui`: a local page over every command, aimed at the second public release. Wave 3 was trimmed on 2026-10-14: its game-table database, talent planner and alt-dashboard are deferred, because players already have good talent planners. The character list and a daily check of the wiki stay.
 
-If, thirty days after the first release, there is little sign of anyone but the owner using it, the public side is frozen (releases stay up, no new public features) and wowlab goes back to being a personal lab. The plan and its tickets: [`docs/LAB_PLAN.md`](docs/LAB_PLAN.md) §15 and [`docs/BACKLOG.md`](docs/BACKLOG.md).
+Thirty days after the first release, the owner checks GitHub's own counts (no telemetry). If they show little use beyond the owner, meaning fewer than 50 downloads or fewer than 5 issues or discussions from other people, the owner may freeze the public side: releases stay up, no new public features are added, and wowlab goes back to being a personal lab. The plan and its tickets: [`docs/LAB_PLAN.md`](docs/LAB_PLAN.md) §15 and [`docs/BACKLOG.md`](docs/BACKLOG.md).
 
 ## 🌌 The full vision
 
