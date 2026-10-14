@@ -344,6 +344,25 @@ jobs:
             --max-turns 60
             --allowedTools "Read,Grep,Glob,Edit(/${{ github.workspace }}/wiki/**),Write(/${{ github.workspace }}/wiki/**),Bash(uv run python repo/scripts/check_wiki.py wiki)"
 
+      # The action logs only a sanitised result line (no result text, no tool
+      # output) unless show_full_output is on, and that prints every message
+      # and tool result to this public log. Run 38653894587 failed with
+      # is_error:true after 16 turns and nothing else to read. This prints a
+      # bounded extract of the action's execution file instead: the result
+      # text and the first tool errors, each through check_wiki's personal-data
+      # matchers (scripts/wiki_diagnose.py). It reads that file only.
+      - name: Diagnose the Claude step (redacted)
+        if: always() && steps.preflight.outputs.available == 'true'
+        continue-on-error: true
+        working-directory: repo
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+        run: |
+          uv run --frozen python scripts/wiki_diagnose.py \
+            "${EXECUTION_FILE:-$RUNNER_TEMP/claude-execution-output.json}" \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --workspace "$GITHUB_WORKSPACE" --temp "$RUNNER_TEMP" --home "$HOME"
+
       - name: Nothing outside the wiki changed
         if: always() && steps.plan.outcome == 'success'
         run: |
