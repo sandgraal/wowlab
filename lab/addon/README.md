@@ -385,7 +385,8 @@ anything run at load or from an event handler outside a section.
   values `talents.legacy` reads out of the client's `Enum.TraitConfigType`
   and `Constants` tables and hands at once to `C_Traits` or `string.find`.
 - Each file binds its `...` once, as `local <name>, ns = ...`, and uses it
-  nowhere else. `ns` is written only as `ns.Name` or `ns:Name`, and
+  nowhere else. `ns` is written only as `ns.Name` (never `ns:Name`, which
+  hands the namespace on as `self`), no function is defined with `:`, and
   `ns.state` is only indexed or assigned where it stands. So neither the
   namespace nor the state the race check reads can be reached under another
   name.
@@ -403,6 +404,8 @@ Left to review, because the test does not follow them:
 
 - a function returned by a call other than `ns.Fn`, `next`, `pairs`,
   `ipairs`, `select` and `unpack` (a client call's result, or a field of it);
+- a client object that a gather stores in a table (`ns.state`, a record) and
+  that code outside a section later reaches through that table;
 - a way of reaching a client global that the dynamic-lookup check does not
   name (it rejects `_G`, `getfenv`, `debug`, `setmetatable` and the others
   it lists);
