@@ -3,14 +3,16 @@
 **Status:** Wave 1 specified (2026-09-20), revised 2026-09-21 when the Lab
 became the whole repository (ADR-0025). Later waves are chosen by the owner
 after each wave ships (ADR-0024). Each later wave is specified only once the
-owner has picked it, in its own section: Wave 2 in §13 and Wave 3 in §14
-(amended 2026-09-30; this line used to say that nothing beyond Wave 1 is
-specified here).
+owner has picked it, in its own section: Wave 2 in §13, Wave 3 in §14
+(re-scoped 2026-10-14, §14.8) and Wave 4, the first public release, in §15
+(amended 2026-09-30 and 2026-10-14; this line used to say that nothing
+beyond Wave 1 is specified here).
 
 The Lab is the application this repository exists for, not a track beside
-another product. It is a local toolchain for one player's own machine: it
+another product. It is a local toolchain for each player's own machine: it
 reads a World of Warcraft install directly, explains what is in it, snapshots
-it, and lets the owner change things and change them back (ADR-0019).
+it, and lets the player change things and change them back (ADR-0019). Other
+players may install it from a tagged GitHub release (ADR-0031).
 
 Read `AGENTS.md`, then this, then `docs/LAB_FORMATS.md` (file grammars),
 `docs/LAB_FILE_MAP.md` (what every path in an install is), and ADR-0019

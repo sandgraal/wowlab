@@ -12,7 +12,13 @@ capability it has to add. **Size** = rough, for one wave: `S` a few tickets,
 **Picked.** Wave 2 (M11, 2026-09-28): lab-addon, customization-sandbox,
 profiles, sv-merge. Wave 3 (M12, 2026-09-29): **db2lake**, **char-planner**
 (talents first) and **alt-dashboard**; the plan is `docs/LAB_PLAN.md` §14 and
-the rows below stay as the original descriptions.
+the rows below stay as the original descriptions. On 2026-10-14 Wave 3 was
+re-scoped (§14.8): db2lake, char-planner and alt-dashboard are deferred and
+can be picked again. Wave 4 (M13, 2026-10-13): the first public release
+(ADR-0031, §15), with the read-only halves of **macro-doctor**
+(`wowlab macros check`, and `macros fix` only after an owner test) and
+**keybind-coach** (`wowlab binds coach`, no writer). Wave 5 (M14): `wowlab ui`
+(ADR-0029).
 
 Two things from the original brainstorm are deliberately absent: anything
 needing memory access, injection, packets or a modified `Data/` (ADR-0023),

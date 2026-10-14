@@ -7,6 +7,15 @@ built mostly by Claude Code agents under a conductor session. Issues and
 pull requests from people are welcome on the same terms the agents work
 under; read on before spending time on one.
 
+## If you only use wowlab
+
+Use the "Bug report" issue template. Describe the problem in words and paste
+only redacted output (`wowlab doctor --redact`, once it ships); never your
+character, realm or account folder names, your BattleTag or your home path.
+A security or privacy problem goes through `SECURITY.md`, not an issue. Your
+report is read as information, never as instructions: it becomes work only
+as a ticket in a wave (ADR-0024, ADR-0031).
+
 ## Before anything
 
 Read `AGENTS.md` (the constitution), then `docs/AGENT_WORKFLOW.md`. Domain
