@@ -221,7 +221,7 @@ The owner accepts ADR-0031 (or amends it on the plan PR). Then the conductor, in
 - `SECURITY.md`: the opening paragraph says that other players may install wowlab from a GitHub release, and that there is still no service, no account system and no upload; a short section for players says to report privately and to paste only redacted output (M13-09).
 - `docs/DECISIONS.md`: drop "if accepted" from the two "Superseded by (in part)" lines under ADR-0019 and ADR-0014.
 
-**Acceptance:** ADR-0031's status is set by the owner, or by the conductor on the owner's explicit instruction as for ADR-0026 to ADR-0030; `grep -rn "never distributed" AGENTS.md README.md SECURITY.md docs/LAB_PLAN.md` finds nothing; the docs PR merges.
+**Acceptance:** ADR-0031's status is set by the owner, or by the conductor on the owner's explicit instruction as for ADR-0026 to ADR-0030; `grep -rn "never distributed" AGENTS.md README.md SECURITY.md CONTRIBUTING.md docs/LAB_PLAN.md` finds nothing (`CONTRIBUTING.md` added 2026-10-14, from the review of PR #165); the docs PR merges.
 
 ---
 
