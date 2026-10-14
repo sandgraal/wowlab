@@ -3031,16 +3031,29 @@ def test_m11_29_readme_and_plan_say_what_is_confirmed_and_what_stays_verify() ->
 # std global or `ns` by brackets (tests above), and rule 3 below keeps `ns`
 # from being aliased, so every client call is made through a reference.
 #
+# A *client-given value* (round 3) is one the client passes in: every
+# parameter, and the `...`, of a function the scan does not follow. It
+# follows a local function or `ns` function referred to only by direct calls,
+# and a section's carry literal (its one caller is pinned below). Every other
+# function (a literal handed to `SetScript`, a timer, `hooksecurefunc` or
+# `ns.On`, one stored in `SlashCmdList` or a table, a global function) may be
+# called by the client, so the event frame, the chat edit box and an event's
+# payload arrive as client-given values. So does a local or loop variable ever
+# given one, a followed function's parameter that a direct call passes one,
+# and what a followed function returning one returns. Each use of one is a
+# reference too, named as written (`f:UnregisterAllEvents`, `event`, `...`).
+#
 # *Section code* is what only a gather runs: the `gather` of each
 # `ns.Section({ ... })` (a function literal or a local function), and any local
 # function, `ns` function or function literal that section code calls on the
 # spot and nothing else refers to. On the spot: `f(...)`, `ns.F(...)`,
-# `ns:F(...)`, or where a callee calls it now (`_CALLS_ON_THE_SPOT`: pcall,
+# or where a callee calls it now (`_CALLS_ON_THE_SPOT`: pcall,
 # xpcall, ns.Call, a table.sort comparator). A function literal written as a
 # field of a section spec is labelled with the section's key:
 # `gather("gear")`, `carry("customization")`.
 #
-# 1. Every client API reference outside section code matches an entry of
+# 1. Every client API reference and every use of a client-given value
+#    outside section code matches an entry of
 #    `SECTIONLESS_API`, keyed (file, function, reference as written), which
 #    pins how many times it is used each way there, and why. The function
 #    label must name exactly one function in its file, and the reference must
@@ -3059,15 +3072,22 @@ def test_m11_29_readme_and_plan_say_what_is_confirmed_and_what_stays_verify() ->
 #    `ns.On`, a timer, `SetScript` or a hook would run after `/wowlab skip`.
 #    Exceptions: `HANDED_ON`, each with its reason.
 # 3. Each file binds its `...` once, as `local <name>, ns = ...`, and uses it
-#    nowhere else; every other `ns` is `ns.Name` or `ns:Name`, and every
-#    `ns.state` is indexed or assigned where it stands. So the namespace is
-#    reached under no other name.
+#    nowhere else; every other `ns` is `ns.Name` (not `ns:Name`, which hands
+#    the namespace on as `self`), and every `ns.state` is indexed or assigned
+#    where it stands. No function is defined with `:` (round 3), so no `self`
+#    is a hidden parameter; a `self` that is not a declared name is a global
+#    and fails rule 1. So the namespace is reached under no other name: no
+#    parameter can hold it, since bare `ns` and `ns:` are both refused.
 #
 # Every exception must match, so none goes stale. A new call outside a
 # section, or a function handed on from one, fails until someone adds it to
 # these lists deliberately. Review only: a function returned by a call other
 # than `ns.Fn`, `next`, `pairs`, `ipairs`, `select` or `unpack` (a client
-# call's result, or a field of it); a way to reach the client that the
+# call's result, or a field of it); a client object that section code stores
+# in a table (ns.state, a record) and code outside a section later reaches
+# through that table (a client call's result is data to the scan, and a
+# client-given value used inside section code is not counted); a way to
+# reach the client that the
 # dynamic-lookup test above does not name; and which addon functions Core.lua's
 # own handlers call (`ns.Refresh()` added to its PLAYER_ENTERING_WORLD handler
 # would gather before the 15 s window). Raw bidirectional control characters:
@@ -3163,6 +3183,40 @@ SECTIONLESS_API: dict[tuple[str, str, str], tuple[dict[str, int], str]] = {
         "whether there is a 15 s window; never called here",
     ),
     ("Core.lua", "clientInfo", "GetBuildInfo"): ({"test": 1, "call": 1}, "the `client` block"),
+    # Client-given values (round 3): what the client passes to a function it
+    # calls, and where Core.lua takes it. The dispatcher's first parameter
+    # (the event frame) and the slash handler's second (the chat edit box)
+    # are not used at all, so any use of either fails.
+    ("Core.lua", 'frame:SetScript("OnEvent")', "event"): (
+        {"value": 2},
+        "the event name: looks up its handlers and is passed to each",
+    ),
+    ("Core.lua", 'frame:SetScript("OnEvent")', "..."): (
+        {"value": 1},
+        "the event's payload, passed on to each handler unread",
+    ),
+    ("Core.lua", "onEvent", "fired"): (
+        {"value": 3, "test": 1},
+        "the event name: a key of the section's counts, tested against its change events, "
+        "passed to gather",
+    ),
+    ("Core.lua", "gather", "event"): (
+        {"value": 1},
+        "the event name, passed through pcall to the section's gather (section code)",
+    ),
+    ("Core.lua", 'ns.On("ADDON_LOADED")', "name"): (
+        {"test": 1},
+        "the loaded addon's name, compared with this addon's",
+    ),
+    ("Core.lua", "SlashCmdList.WOWLAB", "message"): (
+        {"value": 1},
+        "the typed text, read by string.match and never stored",
+    ),
+    # keyList's predicates: keyList calls each with one of ns.sections, not a
+    # client value, but the scan does not follow a function handed to a helper.
+    ("Core.lua", "isSkipped", "section.key"): ({"test": 1}, "a section's key, looked up"),
+    ("Core.lua", "isBackOnAtReload", "section.off"): ({"test": 1}, "whether a section is off"),
+    ("Core.lua", "isBackOnAtReload", "section.key"): ({"test": 1}, "a section's key, looked up"),
     # The one entry outside Core.lua. It runs only while the customization
     # section holds a carried record, which a switched-off section never does
     # (test_m11_37_the_race_check_calls_the_client_only_for_a_carried_record).
@@ -3261,9 +3315,10 @@ class _ApiRef:
     head: int | None  # that function's head token, None at top level
     api: str  # as written: `C_Timer.After`, `frame:SetScript`
     line: int
-    client: bool  # a client global (False: a handle)
+    client: bool  # a client global (False: a handle or a client-given value)
     in_section: bool
     use: str  # call, test, bind, self, store, or value
+    given: bool = False  # a client-given value (a parameter the client fills)
 
     @property
     def key(self) -> tuple[str, str, str]:
@@ -3328,6 +3383,8 @@ class _SectionScan:
         # section spec labelled by its section: `gather("gear")`.
         self.labels = {name: dict(flow.labels) for name, flow in self.flows.items()}
         for name, flow in self.flows.items():
+            for head, label in self._handler_labels(flow).items():
+                self.labels[name][head] = label
             for head, label in self._section_labels(flow).items():
                 self.labels[name][head] = label
         self.handles = {name: self._handles(flow) for name, flow in self.flows.items()}
@@ -3337,6 +3394,13 @@ class _SectionScan:
         self.params = self._params()
         self.calls = [call for name in self.flows for call in self._calls(name)]
         self.mf = self._may_be_functions()
+        # Client-given values (rule 1): decl ids, functions whose `...` is
+        # given, and followed functions that return a given value.
+        self.given: set[int] = set()
+        self.given_varargs: set[tuple[str, int]] = set()
+        self.returns_given: set[tuple[str, int]] = set()
+        self.followed = self._followed()
+        self._solve_given()
         self.refs = [ref for name in self.flows for ref in self._refs(name)]
         self.handed_on_used: set[tuple[str, str, str]] = set()
         self._check_sectionless()
@@ -3385,6 +3449,32 @@ class _SectionScan:
                     out[s] = f'{field[1:-1]}("{key}")'
         return out
 
+    def _handler_labels(self, flow: _Flow) -> dict[int, str]:
+        """Labels for function literals the line-number label would name:
+        `frame:SetScript("OnEvent")` for the literal after a call's first
+        string argument, `SlashCmdList.WOWLAB` for one assigned to a field."""
+        t = flow.tokens
+        out = {}
+        for head in flow.functions:
+            if t[head + 1].text != "(":
+                continue  # a function statement names itself
+            if (
+                flow.labels[head].startswith("function@")
+                and head >= 4
+                and t[head - 1].text == ","
+                and t[head - 2].kind == "string"
+                and t[head - 3].kind == "op"
+                and t[head - 3].text == "("
+            ):
+                start = self._callee_start(flow, head - 4)
+                callee = "".join(x.text for x in t[start : head - 3])
+                out[head] = f'{callee}("{t[head - 2].text}")'
+            elif head >= 3 and t[head - 1].kind == "op" and t[head - 1].text == "=":
+                start = flow.targets(head - 1)
+                if start < head - 2 and flow.resolve(t[start].text, start) is None:
+                    out[head] = "".join(x.text for x in t[start : head - 1])  # a global's field
+        return out
+
     # what is a reference
 
     def _variable(self, flow: _Flow, k: int) -> bool:
@@ -3400,29 +3490,16 @@ class _SectionScan:
         )
 
     def client(self, flow: _Flow, k: int) -> bool:
-        """Is token k a client global: a global name neither Lua's nor the addon's own?"""
+        """Is token k a client global: a global name neither Lua's nor the
+        addon's own? (`self` too: rule 3 allows no method definition, so a
+        `self` is never a receiver.)"""
         text = flow.tokens[k].text
         return (
             self._variable(flow, k)
             and text not in _LUA51_GLOBALS
             and text not in OWN_GLOBALS
             and flow.resolve(text, k) is None
-            and not (text == "self" and self._in_method(flow, k))
         )
-
-    @staticmethod
-    def _in_method(flow: _Flow, k: int) -> bool:
-        """Is token k inside a method definition (`function a:b()`), whose
-        receiver `self` is then a parameter, not a global?"""
-        t = flow.tokens
-        for head, fn in flow.functions.items():
-            if head <= k <= fn.stop and t[head + 1].text != "(":
-                paren = head + 1
-                while t[paren].text != "(":
-                    paren += 1
-                if any(t[j].text == ":" for j in range(head + 1, paren)):
-                    return True
-        return False
 
     def _use_of(self, flow: _Flow, k: int, decls: set[int]) -> bool:
         """Is token k a use of one of `decls` (by id)?"""
@@ -3511,7 +3588,9 @@ class _SectionScan:
         out = []
         for k in range(len(t)):
             client = self.client(flow, k)
-            if client or self._use_of(flow, k, self.handles[name]):
+            handle = not client and self._use_of(flow, k, self.handles[name])
+            given = not client and not handle and self.given_at(flow, k)
+            if client or handle or given:
                 api, end = _api_span(t, k)
                 fn = flow.function_at(k)
                 out.append(
@@ -3524,6 +3603,7 @@ class _SectionScan:
                         client,
                         self.inside(name, k),
                         self._use(flow, k, end),
+                        given,
                     )
                 )
         return out
@@ -3900,6 +3980,180 @@ class _SectionScan:
                             changed = True
         return mf
 
+    # client-given values
+
+    def _followed(self) -> set[tuple[str, int]]:
+        """The functions whose every caller the scan sees: a local function or
+        an `ns` function referred to only by direct calls. Any other function
+        (a literal, one handed to anything, one stored anywhere, a global
+        function) may be called by the client, so it takes client values.
+        A section's carry literal is followed too: its one caller is
+        `pcall(section.carry, WowLabCharDB)` at ADDON_LOADED (pinned by
+        test_m11_37_section_code_runs_only_behind_the_off_switch), and the
+        saved table holds only strings, numbers, booleans and tables."""
+        followed = {
+            fid
+            for fid, refs in self.named.items()
+            if all(self.flows[f].call_start(e) for f, _, e in refs)
+        }
+        for name, flow in self.flows.items():
+            for head, label in self._section_labels(flow).items():
+                if label.startswith('carry("'):
+                    followed.add((name, head))
+        return followed
+
+    def _named_callee(self, file: str, start: int, open_: int) -> tuple[str, int] | None:
+        """The local or `ns` function a call written `f(...)` or `ns.F(...)`
+        calls, if it is one."""
+        flow = self.flows[file]
+        t = flow.tokens
+        if start == open_ - 1:
+            decl = flow.resolve(t[start].text, start)
+            if decl is not None and decl.function is not None:
+                return (file, decl.function)
+        elif (
+            open_ - start == 3
+            and t[start].text == "ns"
+            and flow.resolve("ns", start) is flow.namespace
+            and t[start + 2].text in self.ns_heads
+        ):
+            return self.ns_heads[t[start + 2].text]
+        return None
+
+    def given_at(self, flow: _Flow, k: int) -> bool:
+        """Is token k a client-given value: a use of a given local or
+        parameter, or `...` in a function whose `...` is given?"""
+        x = flow.tokens[k]
+        if x.kind == "op" and x.text == "...":
+            fn = flow.function_at(k)
+            return (
+                fn is not None
+                and k >= fn.start  # not the `...` of its parameter list
+                and (flow.path.name, fn.head) in self.given_varargs
+            )
+        return self._use_of(flow, k, self.given)
+
+    def _holds_given(self, flow: _Flow, s: int, e: int) -> bool:
+        """Is there a given value anywhere in tokens[s:e], outside the bodies
+        of function literals (fail closed)?"""
+        t = flow.tokens
+        k = s
+        while k < e:
+            if t[k].kind == "name" and t[k].text == "function":
+                k = flow.block_end(k) + 1
+                continue
+            if self.given_at(flow, k):
+                return True
+            k += 1
+        return False
+
+    def carries(self, flow: _Flow, s: int, e: int) -> bool:
+        """May the expression tokens[s:e] be, or hold, a client-given value?"""
+        t = flow.tokens
+        if s >= e:
+            return False
+        ors = self._split(flow, s, e, "or")
+        if len(ors) > 1:
+            return any(self.carries(flow, a, b) for a, b in ors)
+        ands = self._split(flow, s, e, "and")
+        if len(ands) > 1:
+            return self.carries(flow, *ands[-1])
+        if self._plain(flow, s, e):
+            return False
+        x = t[s]
+        if e == s + 1 and (x.kind in {"string", "number"} or x.text in {"nil", "true", "false"}):
+            return False
+        if e == s + 1 and x.text == "...":
+            return self.given_at(flow, s)
+        if x.kind == "name" and x.text == "function" and flow.block_end(s) == e - 1:
+            return False  # a closure: its own body is checked where it is
+        if x.kind == "op" and x.text == "(" and flow.pair[s] == e - 1:
+            return self.carries(flow, s + 1, e - 1)
+        if x.kind != "name" or x.text in _KEYWORDS:
+            return self._holds_given(flow, s, e)  # a constructor, or anything else
+        if self.given_at(flow, s):
+            return True
+        k, calls, first_call, last_call = s + 1, 0, e, False
+        while k < e:
+            y = t[k]
+            if y.kind == "op" and y.text == "." and k + 1 < e and t[k + 1].kind == "name":
+                k, last_call = k + 2, False
+            elif y.kind == "op" and y.text == "[":
+                k, last_call = flow.pair[k] + 1, False
+            elif y.kind == "op" and y.text == ":" and flow.call_start(k + 2):
+                first_call = min(first_call, k)
+                k = k + 2
+                k = flow.pair[k] + 1 if t[k].kind == "op" else k + 1
+                calls, last_call = calls + 1, True
+            elif flow.call_start(k):
+                first_call = min(first_call, k)
+                k = flow.pair[k] + 1 if t[k].kind == "op" else k + 1
+                calls, last_call = calls + 1, True
+            else:
+                return self._holds_given(flow, s, e)
+        if not calls:
+            return False  # a local that is not given, or a field of one
+        if t[first_call].text == "(":
+            if self._named_callee(flow.path.name, s, first_call) in self.returns_given:
+                return True
+            callee = _render(t[s:first_call])
+            if (
+                last_call
+                and calls == 1
+                and callee in _RETURN_THEIR_ARGUMENTS
+                and self.trusted(flow.path.name, callee, s)
+            ):
+                return any(self.carries(flow, a, b) for a, b in flow.exprlist(first_call + 1))
+        return False  # what any other call returns: see the review-only note
+
+    def _solve_given(self) -> None:
+        """Every parameter (and the `...`) of a function the scan does not
+        follow is client-given; so is a local or loop variable ever given
+        one, a followed function's parameter a direct call passes one, and
+        what a followed function returning one returns."""
+        for name, flow in self.flows.items():
+            for head in flow.functions:
+                fid = (name, head)
+                if fid not in self.followed:
+                    self.given.update(p for p in self.params[fid] if p is not None)
+                    self.given_varargs.add(fid)
+        changed = True
+        while changed:
+            changed = False
+            for flow in self.flows.values():
+                for decls in flow.decls.values():
+                    for d in decls:
+                        if id(d) in self.given or d.function is not None:
+                            continue
+                        if any(self.carries(flow, s, e) for s, e in d.sources):
+                            self.given.add(id(d))
+                            changed = True
+            for call in self.calls:
+                fid = self._named_callee(call.file, call.start, call.open)
+                if fid is None or fid not in self.followed:
+                    continue
+                params = self.params[fid]
+                offset = 1 if call.method else 0
+                flow = self.flows[call.file]
+                for p, (a, b) in enumerate(call.args):
+                    if not self.carries(flow, a, b):
+                        continue
+                    last = p == len(call.args) - 1
+                    for q in range(p + offset, len(params) if last else p + offset + 1):
+                        param = params[q] if q < len(params) else None
+                        if param is not None and param not in self.given:
+                            self.given.add(param)
+                            changed = True
+                    if (last or p + offset >= len(params)) and fid not in self.given_varargs:
+                        self.given_varargs.add(fid)
+                        changed = True
+            for fid in sorted(self.followed - self.returns_given):
+                name, head = fid
+                flow = self.flows[name]
+                if any(self.carries(flow, s, e) for s, e in flow.returns(head)):
+                    self.returns_given.add(fid)
+                    changed = True
+
     def _on_the_spot(self, call: _CallSite) -> frozenset[int] | None:
         """The argument positions a trusted callee uses on the spot, or None."""
         entry = _ON_THE_SPOT.get(call.callee)
@@ -3923,6 +4177,13 @@ class _SectionScan:
 
     def _outside(self, ref: _ApiRef) -> str:
         where = f"{ref.file}:{ref.line} in {ref.function}: `{ref.api}`"
+        if ref.given:
+            return (
+                f"{where} is a value the client passes in (a parameter of a function the "
+                "client may call, or a local given one), used outside every section's "
+                "gather; use it only inside one, or add the use to SECTIONLESS_API with "
+                "its reason"
+            )
         if ref.head is not None and self.inside(ref.file, ref.head, exclude=ref.head):
             return (
                 f"{where} is in a function a gather hands on instead of calling it there, "
@@ -3951,6 +4212,19 @@ class _SectionScan:
                 continue
             counts = used.setdefault(ref.key, {})
             counts[ref.use] = counts.get(ref.use, 0) + 1
+        # A client-given value is never stored in a field, a table or a
+        # global outside section code: a pinned use swapped for a store would
+        # keep its count and hide the value from the scan.
+        for name, flow in self.flows.items():
+            for store in flow.stores:
+                if store.text.startswith("{") or self.inside(name, store.at):
+                    continue  # a constructor entry goes where its constructor does
+                if self.carries(flow, *store.value):
+                    self.fail(
+                        "outside",
+                        f"{self.at(name, store.at)}: `{store.text}` stores a client-given "
+                        "value outside every section's gather",
+                    )
         for key, (uses, _) in sorted(SECTIONLESS_API.items()):
             if key not in used:
                 self.fail("stale", f"SECTIONLESS_API entry {key} matches no reference")
@@ -3965,7 +4239,10 @@ class _SectionScan:
         holders = {
             (ref.file, ref.head)
             for ref in self.refs
-            if not ref.in_section and ref.key in SECTIONLESS_API and ref.head is not None
+            if not ref.in_section
+            and not ref.given  # its own parameter: who calls it is what makes it given
+            and ref.key in SECTIONLESS_API
+            and ref.head is not None
         }
         pinned_seen = set()
         for file, head in sorted(holders):
@@ -4113,14 +4390,33 @@ class _SectionScan:
                     )
             if bindings > 1:
                 self.fail("vararg", f"{name}: the file's `...` is bound {bindings} times")
+            # No method definition: its hidden `self` is whatever the caller
+            # passes first, a name the scan would not follow.
+            for head in flow.functions:
+                paren = head + 1
+                while t[paren].text != "(":
+                    paren += 1
+                if any(t[j].kind == "op" and t[j].text == ":" for j in range(head + 1, paren)):
+                    self.fail(
+                        "method",
+                        f"{self.at(name, head)}: `function {self.labels[name][head]}` is a "
+                        "method definition; write it with `.` and name its parameters",
+                    )
             for k in range(len(t)):
                 if t[k].text != "ns" or not self._variable(flow, k):
                     continue
                 if flow.resolve("ns", k) is not flow.namespace:
                     continue
                 nxt = t[k + 1] if k + 1 < len(t) else None
-                if nxt is None or nxt.kind != "op" or nxt.text not in {".", ":"}:
-                    self.fail("ns", f"{self.at(name, k)}: `ns` used bare; write ns.Name or ns:Name")
+                if nxt is not None and nxt.kind == "op" and nxt.text == ":":
+                    self.fail(
+                        "ns",
+                        f"{self.at(name, k)}: `ns:` hands the namespace on as `self`; "
+                        "write ns.Name",
+                    )
+                    continue
+                if nxt is None or nxt.kind != "op" or nxt.text != ".":
+                    self.fail("ns", f"{self.at(name, k)}: `ns` used bare; write ns.Name")
                     continue
                 if nxt.text == "." and k + 2 < len(t) and t[k + 2].text == "state":
                     after = t[k + 3] if k + 3 < len(t) else None
@@ -4181,11 +4477,13 @@ def test_m11_37_section_code_hands_no_function_on() -> None:
 def test_m11_37_ns_and_ns_state_are_never_aliased() -> None:
     """Rule 3: each file binds its `...` once, as `local <name>, ns = ...`, and
     uses it nowhere else (no `local _, addon = ...`, no `select(2, ...)`);
-    `ns` appears only as `ns.Name` or `ns:Name`, and `ns.state` only indexed
-    or assigned where it stands. So the namespace, and the state the race
-    check reads, cannot be reached through a name the scan does not follow."""
+    `ns` appears only as `ns.Name` (never `ns:Name`, which passes it as
+    `self`), `ns.state` only indexed or assigned where it stands, and no
+    function is defined with `:`. So the namespace, and the state the race
+    check reads, cannot be reached through a name the scan does not follow,
+    `self` included."""
     scan = _section_scan()
-    rules = ("vararg", "ns", "state")
+    rules = ("vararg", "ns", "state", "method")
     assert not _failures(scan, *rules), _failures(scan, *rules)
 
 
@@ -4322,6 +4620,10 @@ _CARRY_GUARD = (
     "        end\n"
 )
 _BARBER_GATHER = "    gather = function(event)\n"
+_DISPATCH = 'frame:SetScript("OnEvent", function(_, event, ...)\n'
+_DISPATCH_WITH_FRAME = 'frame:SetScript("OnEvent", function(f, event, ...)\n'
+_SLASH = "SlashCmdList.WOWLAB = function(message)\n"
+_SLASH_WITH_BOX = "SlashCmdList.WOWLAB = function(message, box)\n"
 _KEY = 'local KEY = "customization"\n'
 _PROFESSIONS_GATHER = "    gather = function()\n"
 _PROFESSIONS_SLOTS = "        local slots = ns.Pack(GetProfessions())\n"
@@ -4704,6 +5006,109 @@ _M11_37_CASES: dict[str, tuple[tuple[str, list[tuple[str, str]]], tuple[str, str
         ),
         ("use", "`UnitRace` is used as call 2; SECTIONLESS_API allows call 1, test 1"),
     ),
+    # Round 3: `self`, and values the client passes in.
+    "constructed-self-in-an-ns-method": (
+        ("Gear.lua", [(_GEAR_TOP, _GEAR_TOP + "function ns:Later()\n    self.Spec()\nend\n")]),
+        ("method", "`function ns:Later` is a method definition"),
+    ),
+    "constructed-ns-method-call-hands-ns-on": (
+        ("Core.lua", [(_REFRESH, _REFRESH + "    ns:Write()\n")]),
+        ("ns", "`ns:` hands the namespace on as `self`"),
+    ),
+    "constructed-method-on-a-local-table": (
+        (
+            "Gear.lua",
+            [(_GEAR_TOP, _GEAR_TOP + "local M = {}\nfunction M:Go()\n    return self\nend\n")],
+        ),
+        ("method", "`function M:Go` is a method definition"),
+    ),
+    "constructed-method-with-self-called-by-a-gather": (
+        (
+            "Gear.lua",
+            [
+                (
+                    "ns.Section({\n",
+                    'function ns:Level()\n    return self.Number(UnitLevel("player"))\nend\n\n'
+                    "ns.Section({\n",
+                ),
+                (_GEAR_SLOTS, "        ns:Level()\n" + _GEAR_SLOTS),
+            ],
+        ),
+        ("method", "`function ns:Level` is a method definition"),
+    ),
+    "constructed-event-frame-parameter": (
+        ("Core.lua", [(_DISPATCH, _DISPATCH_WITH_FRAME + "    f:UnregisterAllEvents()\n")]),
+        ("outside", 'in frame:SetScript("OnEvent"): `f:UnregisterAllEvents`'),
+    ),
+    "constructed-slash-edit-box-parameter": (
+        (
+            "Core.lua",
+            [(_SLASH, _SLASH_WITH_BOX + '    if box then\n        box:SetText("")\n    end\n')],
+        ),
+        ("outside", "in SlashCmdList.WOWLAB: `box:SetText`"),
+    ),
+    "constructed-event-frame-through-a-local": (
+        ("Core.lua", [(_DISPATCH, _DISPATCH_WITH_FRAME + "    local g = f\n    g:Hide()\n")]),
+        ("outside", 'in frame:SetScript("OnEvent"): `g:Hide`'),
+    ),
+    "constructed-event-frame-handed-to-a-helper": (
+        (
+            "Core.lua",
+            [
+                (
+                    _DISPATCH,
+                    "local function hide(x)\n    x:Hide()\nend\n\n"
+                    + _DISPATCH_WITH_FRAME
+                    + "    hide(f)\n",
+                ),
+            ],
+        ),
+        ("outside", "in hide: `x:Hide`"),
+    ),
+    "constructed-event-frame-returned-by-a-helper": (
+        (
+            "Core.lua",
+            [
+                (
+                    _DISPATCH,
+                    "local function same(x)\n    return x\nend\n\n"
+                    + _DISPATCH_WITH_FRAME
+                    + "    local h = same(f)\n    h:Hide()\n",
+                ),
+            ],
+        ),
+        ("outside", 'in frame:SetScript("OnEvent"): `h:Hide`'),
+    ),
+    "constructed-event-frame-stored-in-a-field": (
+        ("Core.lua", [(_DISPATCH, _DISPATCH_WITH_FRAME + "    ns.frame = f\n")]),
+        ("outside", "`ns . frame = f` stores a client-given value"),
+    ),
+    "constructed-hook-parameter": (
+        (
+            "Gear.lua",
+            [
+                (
+                    _GEAR_TOP,
+                    _GEAR_TOP
+                    + 'hooksecurefunc("ChatEdit_OnShow", function(box)\n    box:Hide()\nend)\n',
+                )
+            ],
+        ),
+        ("outside", 'in hooksecurefunc("ChatEdit_OnShow"): `box:Hide`'),
+    ),
+    "constructed-event-payload-in-an-ns-on-handler": (
+        (
+            "Gear.lua",
+            [
+                (
+                    _GEAR_TOP,
+                    _GEAR_TOP
+                    + 'ns.On("PLAYER_LEVEL_UP", function(_, level)\n    local x = level.x\nend)\n',
+                )
+            ],
+        ),
+        ("outside", 'in ns.On("PLAYER_LEVEL_UP"): `level.x`'),
+    ),
 }
 # Controls: calls added inside section code, called on the spot, leave nothing.
 _M11_37_CONTROLS: dict[str, tuple[str, list[tuple[str, str]]]] = {
@@ -4752,16 +5157,11 @@ _M11_37_CONTROLS: dict[str, tuple[str, list[tuple[str, str]]]] = {
         "        xpcall(function()\n            return GetProfessions()\n        end, function()\n"
         '            return UnitLevel("player")\n        end)\n'
     ),
-    "control-method-with-self-called-by-a-gather": (
-        "Gear.lua",
-        [
-            (
-                "ns.Section({\n",
-                'function ns:Level()\n    return self.Number(UnitLevel("player"))\nend\n\n'
-                "ns.Section({\n",
-            ),
-            (_GEAR_SLOTS, "        ns:Level()\n" + _GEAR_SLOTS),
-        ],
+    # Round 3: a gather's own parameter (it is given) used inside the gather,
+    # and the event frame's handle used where SECTIONLESS_API allows it.
+    "control-given-value-used-inside-a-gather": (
+        "Customization.lua",
+        [(_BARBER_GATHER, _BARBER_GATHER + "        local upper = event and event:upper()\n")],
     ),
 }
 
