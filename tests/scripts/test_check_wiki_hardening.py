@@ -346,6 +346,24 @@ def test_publish_needs_main_the_variable_and_push_or_schedule() -> None:
     )
 
 
+def test_only_the_job_without_the_model_reads_actions() -> None:
+    jobs = _workflow()["jobs"]
+    assert isinstance(jobs, dict)
+    assert jobs["improve"]["permissions"] == {"contents": "read"}
+    prev = jobs["previous-report"]
+    assert prev["permissions"] == {"actions": "read"}
+    assert [n for n, j in jobs.items() if "actions" in j.get("permissions", {})] == [
+        "previous-report"
+    ]
+    # It runs nothing from the repository or the wiki, and pins what it uses.
+    uses = [s["uses"] for s in prev["steps"] if "uses" in s]
+    assert not any(u.startswith("actions/checkout@") for u in uses)
+    assert all(re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", u) for u in uses)
+    runs = " ".join(s.get("run", "") for s in prev["steps"])
+    assert not re.search(r"\buv\b|\bgit\b|\brepo/|\bwiki/", runs)
+    assert "previous-report" in jobs["improve"]["needs"]
+
+
 def test_the_workflow_triggers_are_schedule_and_dispatch_only() -> None:
     data = _workflow()
     triggers = data.get("on", data.get(True))  # YAML 1.1 reads `on` as true

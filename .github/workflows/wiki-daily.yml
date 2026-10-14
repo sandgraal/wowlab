@@ -1,9 +1,13 @@
 name: Wiki daily
 
 # Checks and improves the GitHub wiki once a day, then pushes it with no pull
-# request (owner decision 2026-09-30, ticket M12-14). Three jobs, so that the
+# request (owner decision 2026-09-30, ticket M12-14). Four jobs, so that the
 # model and the push credential never share a runner:
 #
+#   previous-report  on main: finds the last run, and when it failed, hands
+#            its gate report on to improve as an artifact of this run. Runs
+#            nothing from the repository or the wiki. The only job that can
+#            read Actions, so the model's job does not need to.
 #   improve  reads main and a credential-free clone of the wiki, regenerates
 #            CLI-Reference, lets Claude edit the wiki copy (prompt:
 #            .github/prompts/wiki-daily.md), then gates the result with
@@ -26,9 +30,10 @@ name: Wiki daily
 # Needs ANTHROPIC_API_KEY (the Claude step skips cleanly without it, or when
 # the API reports exhausted credit or a rate limit; the rest still runs).
 #
-# Permissions beyond `contents: read`: `actions: read` on improve (it reads
-# the previous run's gate report), `contents: write` on publish, `issues:
-# write` on report. The push uses publish's own GITHUB_TOKEN. Verified on
+# Permissions beyond `contents: read`: `actions: read` on previous-report
+# (and nothing else there), `contents: write` on publish, `issues: write` on
+# report. improve, the job that hands its token to the model, has
+# `contents: read` only. The push uses publish's own GITHUB_TOKEN. Verified on
 # 2026-09-30 (M12-14 dry run, runs 36765448581 and 36765760456): the wiki's
 # push service accepted a `contents: write` GITHUB_TOKEN (HTTP 200 on the
 # receive-pack advertisement) and refused a `contents: read` one (HTTP 403;
@@ -65,13 +70,48 @@ env:
   WIKI_MODEL: claude-opus-5-5
 
 jobs:
+  # So that repeated near misses converge: the report of the last run on
+  # main, when that run failed and kept its report. No checkout; gh is the
+  # runner's own. Never fails the run: a missing report is no report.
+  previous-report:
+    name: Fetch the previous run's gate report
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+    steps:
+      - name: Download the previous run's gate report
+        if: github.ref == 'refs/heads/main'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prev=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow wiki-daily.yml --branch main \
+            --status completed --limit 5 --json databaseId,conclusion \
+            --jq "map(select(.databaseId != ${GITHUB_RUN_ID}))[0] | select(.conclusion == \"failure\") | .databaseId")
+          if [ -n "$prev" ] && gh run download "$prev" --repo "$GITHUB_REPOSITORY" \
+              --name wiki-daily-report --dir "$RUNNER_TEMP/previous"; then
+            mkdir -p previous
+            cp "$RUNNER_TEMP/previous/check.txt" previous/check.txt
+            echo "$prev" > previous/run-id.txt
+          fi
+      - name: Hand it on
+        if: github.ref == 'refs/heads/main'
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wiki-daily-previous-report
+          path: previous/
+          if-no-files-found: ignore
+          retention-days: 1
+
   improve:
     name: Check and improve the wiki
+    needs: previous-report
     runs-on: ubuntu-latest
     timeout-minutes: 75
     permissions:
       contents: read
-      actions: read
     outputs:
       main_sha: ${{ steps.plan.outputs.main }}
       wiki_base: ${{ steps.wiki.outputs.base }}
@@ -130,19 +170,21 @@ jobs:
           # Its lines never quote personal data, so printing them is safe.
           uv run --frozen python scripts/check_wiki.py ../wiki > ../context/check-before.txt || true
           cat ../context/check-before.txt
-      # So that repeated near misses converge: the report of the last run on
-      # main, when that run failed and kept its report.
+      # The previous run's gate report, from previous-report (an artifact of
+      # this run, so no Actions permission). Absent when there is none.
       - name: The previous run's gate report
         if: steps.plan.outcome == 'success' && github.ref == 'refs/heads/main'
         continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: wiki-daily-previous-report
+          path: ${{ runner.temp }}/previous
+      - name: Point the run at the previous report
+        if: steps.plan.outcome == 'success' && github.ref == 'refs/heads/main'
+        continue-on-error: true
         run: |
-          prev=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow wiki-daily.yml --branch main \
-            --status completed --limit 5 --json databaseId,conclusion \
-            --jq "map(select(.databaseId != ${GITHUB_RUN_ID}))[0] | select(.conclusion == \"failure\") | .databaseId")
-          if [ -n "$prev" ] && gh run download "$prev" --repo "$GITHUB_REPOSITORY" \
-              --name wiki-daily-report --dir "$RUNNER_TEMP/previous"; then
+          prev=$(cat "$RUNNER_TEMP/previous/run-id.txt" 2>/dev/null || true)
+          if [[ "$prev" =~ ^[0-9]+$ ]] && [ -f "$RUNNER_TEMP/previous/check.txt" ]; then
             cp "$RUNNER_TEMP/previous/check.txt" context/previous-check.txt
             echo "- The previous run (${prev}) was rejected by the gate; its report is \`context/previous-check.txt\`." >> context/run.md
           fi
