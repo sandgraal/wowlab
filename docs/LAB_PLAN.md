@@ -56,9 +56,9 @@ discovery.
 
 ## 3. Trust boundary
 
-- **Local-only.** The Lab runs on the owner's machine, as the owner, against
-  the owner's install. It is never distributed as a binary and never deployed
-  as a service (ADR-0019).
+- **Local-only.** The Lab runs on the player's own machine, as that player,
+  against their own install. Players install it from a tagged GitHub release
+  (ADR-0031); it is never deployed as a service (ADR-0019).
 - **Never uploads anything.** Nothing read from an install leaves the
   machine. The only network traffic is `gamedata` downloading public game
   tables (§6.6), which sends nothing about the install beyond a build string.
@@ -2567,10 +2567,10 @@ note and a **[verify]**, not a refusal, and the owner's capture (M12-11)
 settles it later. The wave was planned at ten development tickets; Wave 2's
 ten became twenty-five, mostly review hardening, so expect growth.
 
-### 14.8 Re-scope, 2026-10-14 (recommended; the owner decides on this PR)
+### 14.8 Re-scope, 2026-10-14 (accepted by the owner, 2026-10-14)
 
 On 2026-10-13 the owner decided that wowlab will be usable by other players
-(ADR-0031, Proposed) and asked for Wave 3 to be re-scoped around that. Most
+(ADR-0031, accepted 2026-10-14) and asked for Wave 3 to be re-scoped around that. Most
 of what is left in it builds things players already have elsewhere: Wowhead
 and Forever++ have talent planners, and ForeverGuide and Questie cover
 quests. The owner's rule for db2lake: keep M12-03 and M12-04 only if
@@ -2600,7 +2600,8 @@ already carried the owner's wiki requests.
 
 ## 15. Wave 4 (M13): the first public release
 
-Owner decision, 2026-10-13. Decision record: ADR-0031 (Proposed). **Nothing in
+Owner decision, 2026-10-13. Decision record: ADR-0031 (accepted by the owner,
+2026-10-14, together with the defaults in §14.8 and §15.3). **Nothing in
 this section starts until the owner accepts ADR-0031**: that acceptance is
 M13-01, and every other M13 ticket depends on it. L1–L8 apply to every
 ticket. ADR-0021, ADR-0023, ADR-0026 and ADR-0027 are unchanged; no ticket
@@ -2682,8 +2683,8 @@ it. M13-07 ships only in the form its owner test allows.
 
 ### 15.3 Decisions for the owner
 
-Each has a default and the work is planned on it. Say so on this PR to change
-one.
+Each has a default and the work is planned on it. *The owner accepted every
+default on 2026-10-14.*
 
 - **E1. Wave 3 re-scope.** Default: §14.8 as recommended (M12-09 and M12-14
   kept; M12-03 to M12-08, M12-10 and M12-11 deferred).

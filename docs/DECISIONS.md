@@ -74,7 +74,7 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 **Amendment (2026-09-30, owner decision):** the non-required `lab (windows)` job is removed from CI. The required checks listed above are unchanged. `docs/LAB_PLAN.md` §9 records what stops being exercised.
 
-**Superseded by (in part, if accepted):** ADR-0031 (proposed 2026-10-14) brings the `lab (windows)` job back and makes it a required check once it is green (M13-02). The list of required checks above then gains it.
+**Superseded by (in part):** ADR-0031 (accepted 2026-10-14) brings the `lab (windows)` job back and makes it a required check once it is green (M13-02). The list of required checks above then gains it.
 
 ---
 
@@ -88,7 +88,7 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 **Consequences:** No accounts, no authentication, no hosting, no release process, no telemetry. Fixtures need a scrub tool and a fixture policy before the first capture (M10-02). Anyone may read or fork the code; nothing here is built or supported for them. A later wish to share a tool with other players is a new ADR that revisits this one, not a quiet change.
 
-**Superseded by (in part, if accepted):** ADR-0031 (proposed 2026-10-14) replaces "never distributed as a binary or a package": wowlab may be installed by other players from a tagged GitHub Release and runs on each player's own machine, against their own install. No hosting, no service, no accounts, no telemetry and no upload all stand.
+**Superseded by (in part):** ADR-0031 (accepted 2026-10-14) replaces "never distributed as a binary or a package": wowlab may be installed by other players from a tagged GitHub Release and runs on each player's own machine, against their own install. No hosting, no service, no accounts, no telemetry and no upload all stand.
 
 ---
 
@@ -277,7 +277,7 @@ The constraints that shape it:
 
 ## ADR-0031 — wowlab may be installed by other players; the trust model is the product
 
-**Status:** Proposed (2026-10-14) — owner decision of 2026-10-13, drafted by the conductor; only the owner changes this status
+**Status:** Accepted (2026-10-14; proposed 2026-10-14) — owner decision of 2026-10-13; the status edit was made by the conductor on the owner's explicit instruction
 
 **Supersedes:** ADR-0019, in part: the clause "It is never distributed as a binary or a package", and the words that exist only because of it (listed below under Decision, "Who runs it", and Consequences, "Wording"). Everything else in ADR-0019 stands: no hosting, no service, no accounts, no telemetry, and nothing read from an install is ever uploaded. Also ADR-0014's amendment of 2026-09-30, in part: the `lab (windows)` job comes back, and becomes a required check once it is green (M13-02).
 
