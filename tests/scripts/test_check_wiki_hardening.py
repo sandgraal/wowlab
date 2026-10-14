@@ -382,6 +382,39 @@ def test_the_pass_runs_and_publishes_even_when_previous_report_fails() -> None:
     assert set(jobs["report"]["needs"]) == {"improve", "publish"}
 
 
+def test_bubblewrap_is_installed_and_probed_before_the_claude_step_and_the_scrub_stays_on() -> None:
+    # Run 38651487016: with the scrub on and no bwrap, Claude Code would not start.
+    jobs = _workflow()["jobs"]
+    assert isinstance(jobs, dict)
+    improve = jobs["improve"]
+    assert improve["env"]["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"] == "1"
+    steps = improve["steps"]
+    claude = next(
+        i
+        for i, s in enumerate(steps)
+        if s.get("uses", "").startswith("anthropics/claude-code-action@")
+    )
+    assert steps[claude].get("id") == "claude"
+    assert "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB" not in steps[claude].get("env", {})
+    installs = [
+        i
+        for i, s in enumerate(steps)
+        if re.search(r"apt-get install\b[^\n]*\bbubblewrap\b", s.get("run", ""))
+    ]
+    assert len(installs) == 1
+    install = steps[installs[0]]
+    assert installs[0] < claude
+    # It runs whenever the Claude step does, cannot be skipped past on failure,
+    # and probes bwrap as an unprivileged user after installing it.
+    assert install.get("if") == steps[claude].get("if")
+    assert install.get("continue-on-error") is not True
+    run = install["run"]
+    probe = "bwrap --ro-bind / / --dev /dev --proc /proc true"
+    assert run.index("apt-get install") < run.index(probe)
+    # Nothing anywhere turns the scrub off.
+    assert not re.search(r"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB\W+0", WORKFLOW.read_text("utf-8"))
+
+
 def test_the_workflow_triggers_are_schedule_and_dispatch_only() -> None:
     data = _workflow()
     triggers = data.get("on", data.get(True))  # YAML 1.1 reads `on` as true
