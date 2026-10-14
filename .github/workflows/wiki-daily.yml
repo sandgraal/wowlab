@@ -108,6 +108,9 @@ jobs:
   improve:
     name: Check and improve the wiki
     needs: previous-report
+    # Runs whatever happened to previous-report (a missing report is no
+    # report), unless the run was cancelled.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     permissions:
@@ -420,9 +423,12 @@ jobs:
     name: Push the wiki
     needs: improve
     # Never from a branch; never until the owner sets WIKI_DAILY_PUBLISH; and
-    # a dispatch only with push: true.
+    # a dispatch only with push: true. Only after improve succeeded; stated
+    # explicitly because the implicit check would also skip this job when
+    # previous-report, which improve does not depend on for success, failed.
     if: >-
       github.ref == 'refs/heads/main' &&
+      !cancelled() && needs.improve.result == 'success' &&
       vars.WIKI_DAILY_PUBLISH == 'true' &&
       needs.improve.outputs.changed == 'true' &&
       (github.event_name == 'schedule' ||

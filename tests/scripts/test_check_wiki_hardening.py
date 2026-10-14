@@ -364,6 +364,24 @@ def test_only_the_job_without_the_model_reads_actions() -> None:
     assert "previous-report" in jobs["improve"]["needs"]
 
 
+def test_the_pass_runs_and_publishes_even_when_previous_report_fails() -> None:
+    jobs = _workflow()["jobs"]
+    assert isinstance(jobs, dict)
+    # A failed or timed-out previous-report must not skip the pass: improve
+    # runs unless the run was cancelled, and treats a missing report as none.
+    assert jobs["improve"]["if"].replace(" ", "") == "${{!cancelled()}}"
+    for step in jobs["improve"]["steps"]:
+        if step.get("uses", "").startswith("actions/download-artifact@"):
+            assert step.get("continue-on-error") is True
+    # publish's implicit success() would cover previous-report too (an
+    # ancestor through improve); its own check names improve only.
+    cond = " ".join(jobs["publish"]["if"].split())
+    assert "!cancelled() && needs.improve.result == 'success'" in cond
+    assert "always()" not in cond
+    # report still fires on a failed or cancelled improve or publish.
+    assert set(jobs["report"]["needs"]) == {"improve", "publish"}
+
+
 def test_the_workflow_triggers_are_schedule_and_dispatch_only() -> None:
     data = _workflow()
     triggers = data.get("on", data.get(True))  # YAML 1.1 reads `on` as true
