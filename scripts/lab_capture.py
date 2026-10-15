@@ -62,13 +62,16 @@ writer does not emit them: Lua numeric escapes (`\\64` for `@`), URL escapes
 Invariants: the install is opened read-only and nothing is created inside it
 (L1); the only writes are regular files under `--out`, and nothing is ever
 deleted. Flavor folders, product codes and versions are discovered from
-`.flavor.info` and `.build.info`, never named here (L6). Standard library only.
+`.flavor.info` and `.build.info`, never named here (L6). Standard library only:
+the identifier patterns come from `lab/core/src/wowlab_core/redact.py`, which
+is itself standard library only and is loaded from its file (M13-09).
 """
 
 from __future__ import annotations
 
 import argparse
 import bisect
+import importlib.util
 import re
 import secrets
 import sys
@@ -79,26 +82,47 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path, PurePosixPath
+from types import ModuleType
+
+# ─── shared identifier patterns ──────────────────────────────────────────────
+
+# The identifier detectors (email, BattleTag and GUID patterns, the identity
+# CVar deny-list, a realm's spellings, the whole-word length rule) live in the
+# package, `wowlab_core.redact`, which `wowlab doctor --redact` uses too
+# (M13-09, docs/LAB_PLAN.md §15.2). That module imports the standard library
+# only, and is loaded here from its file in this repository, so this tool
+# still runs on the standard library alone, without the package installed.
+REDACT_SOURCE = Path(__file__).resolve().parent.parent / "lab/core/src/wowlab_core/redact.py"
+
+
+def _load_redact() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("_lab_capture_redact", REDACT_SOURCE)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"lab_capture.py: cannot load {REDACT_SOURCE}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_redact = _load_redact()
+
+IDENTITY_CVARS: tuple[str, ...] = _redact.IDENTITY_CVARS
+EMAIL_RE: re.Pattern[bytes] = _redact.EMAIL_RE
+BATTLETAG_RE: re.Pattern[bytes] = _redact.BATTLETAG_RE
+GUID_RE: re.Pattern[bytes] = _redact.GUID_RE
+ACCOUNT_GUID_RE: re.Pattern[bytes] = _redact.ACCOUNT_GUID_RE
+GUILD_GUID_RE: re.Pattern[bytes] = _redact.GUILD_GUID_RE
+CLUB_GUID_RE: re.Pattern[bytes] = _redact.CLUB_GUID_RE
+GUID_NAME_RE: re.Pattern[bytes] = _redact.GUID_NAME_RE
+EMBEDDED_MIN_CHARS: int = _redact.EMBEDDED_MIN_CHARS
+REALM_TRANSFORMS: tuple[Callable[[str], str], ...] = _redact.REALM_TRANSFORMS
+_nfc: Callable[[str], str] = _redact.nfc
+_realm_forms: Callable[[str], list[str]] = _redact.realm_forms
 
 # ─── deny-lists and detectors ────────────────────────────────────────────────
 
-# CVars whose value identifies the account, a character, a community, or the
-# person (operating systems name audio devices after their owner: "Chris's
-# AirPods"). `portal` stays: it is a region, and parsers want a populated
-# line. PROVISIONAL until the M10-03 capture confirms and extends it; the
-# format reference (docs/LAB_FORMATS.md §5) points here.
-IDENTITY_CVARS: tuple[str, ...] = (
-    "accountName",
-    "accountList",
-    "lastCharacterGuid",
-    # [verify] The five below are spelled from reviewer memory, not from a capture.
-    "realmName",
-    "lastSelectedClubId",
-    "Sound_OutputDriverName",
-    "Sound_VoiceChatInputDriverName",
-    "Sound_VoiceChatOutputDriverName",
-)
-# CVar names worth a look by eye when they are not on the list above. Only
+# CVar names worth a look by eye when they are not on IDENTITY_CVARS. Only
 # names are ever printed, never values.
 REVIEW_CVAR_RE = re.compile(
     r"account|character|guid|realmname|drivername|club|guild|bnet|friend", re.IGNORECASE
@@ -146,24 +170,6 @@ CLIENT_VOCABULARY = RESERVED_WORDS | frozenset(
     ]
 )
 
-# Loose on purpose: a false refusal costs one candidate file, a miss is a leak.
-# No top-level domain is required (`user@localhost`); non-ASCII is accepted.
-# Each match is anchored at the start of its run (the lookbehind), so a long
-# unbroken run of letters is walked once, not once per byte.
-EMAIL_RE = re.compile(
-    rb"(?<![A-Za-z0-9._%+\-\x80-\xff])[A-Za-z0-9._%+\-\x80-\xff]+@"
-    rb"[A-Za-z0-9\-\x80-\xff]+(?:\.[A-Za-z0-9\-\x80-\xff]+)*"
-)
-# Name#1234: a name character, '#', four or more digits, whatever follows.
-BATTLETAG_RE = re.compile(rb"[A-Za-z0-9\x80-\xff]#[0-9]{4,}")
-GUID_RE = re.compile(rb"Player-[0-9]+-[0-9A-Fa-f]+", re.IGNORECASE)
-# [verify] These three families are spelled from reviewer memory, not from a
-# capture (M10-03). Any of them refuses the file.
-ACCOUNT_GUID_RE = re.compile(rb"BNetAccount-[0-9]+-[0-9A-Fa-f]+", re.IGNORECASE)
-GUILD_GUID_RE = re.compile(rb"Guild-[0-9]+-[0-9A-Fa-f]+", re.IGNORECASE)
-CLUB_GUID_RE = re.compile(rb"ClubFinder-[0-9]+-[0-9A-Fa-f-]+", re.IGNORECASE)
-# Combat log: a player GUID immediately followed by its quoted unit name.
-GUID_NAME_RE = re.compile(rb'(Player-[0-9]+-[0-9A-Fa-f]+),"([^"\r\n]*)"', re.IGNORECASE)
 # Words that stand next to a realm without being a player: AceDB `factionrealm`
 # keys ("Horde - <realm>"), region tags ("<realm>-US"), DataStore's literal
 # account key ("Default.<realm>.<name>").
@@ -246,9 +252,6 @@ TOC_KEY_RE = re.compile(
     rb"(?:-(?:enUS|enGB|deDE|esES|esMX|frFR|itIT|koKR|ptBR|ptPT|ruRU|zhCN|zhTW"
     rb"|Mainline|Classic|Vanilla|TBC|BCC|Wrath|Cata|Mists))?)[ \t]*+:"
 )
-# A lower- or upper-cased identity string this long is replaced even inside a
-# longer word; shorter ones only as a whole word.
-EMBEDDED_MIN_CHARS = 5
 
 SAVED_VARIABLES_DIR = "SavedVariables"
 ACCOUNT_FILES = ("SavedVariables.lua", "config-cache.wtf", "bindings-cache.wtf", "macros-cache.txt")
@@ -510,66 +513,7 @@ class _TrieNode:
     end: bytes | None = None  # the delimiter rule of the token that ends here
 
 
-def _nfc(text: str) -> str:
-    return unicodedata.normalize("NFC", text)
-
-
-def _slug(text: str) -> str:
-    folded = "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
-    return folded.lower().translate({ord(" "): "-", ord("'"): None, ord("("): None, ord(")"): None})
-
-
-def _strip(chars: str) -> Callable[[str], str]:
-    table = {ord(c): None for c in chars}
-    return lambda text: text.translate(table)
-
-
-# Every spelling a realm might take: the folder's; without spaces, and without
-# spaces and hyphens (what `Name-Realm` strings are reported to use) [verify];
-# and the tool's own guesses, which are NOT client normalisations: apostrophe
-# stripped, the web slug, the underscore variant, the Lua-escaped apostrophe.
-# Each is a function, so the pseudonym's form is derived exactly the way the
-# real name's was and the corpus keeps the relation between the spellings.
-def _split_camel(text: str, *, capitals: bool = True) -> str:
-    """A folder spelling's likely spaced form: `StormRage` -> `Storm Rage`, `Area52` -> `Area 52`.
-
-    A space goes before each capital that follows a lower-case letter (unless
-    `capitals` is off) and before a digit run that follows a letter. `PvE2`
-    gives `Pv E 2`, and with `capitals` off `PvE 2`: both forms are kept.
-    """
-    out: list[str] = []
-    for index, char in enumerate(text):
-        prev = text[index - 1] if index else ""
-        if (capitals and prev.islower() and char.isupper()) or (prev.isalpha() and char.isdigit()):
-            out.append(" ")
-        out.append(char)
-    return "".join(out)
-
-
-REALM_TRANSFORMS: tuple[Callable[[str], str], ...] = (
-    lambda text: text,
-    _strip(" "),
-    _strip(" -"),
-    _strip(" -'"),
-    _slug,
-    lambda text: text.replace(" ", "_"),
-    lambda text: text.replace("'", "\\'"),
-    # A second name known only from a `<First>-<Second>` folder is written with
-    # its spaces dropped; SavedVariables keys may still spell it spaced.
-    _split_camel,
-    lambda text: _split_camel(text, capitals=False),
-)
 PLAIN_TRANSFORMS: tuple[Callable[[str], str], ...] = (lambda text: text,)
-
-
-def _realm_forms(realm: str) -> list[str]:
-    forms: list[str] = []
-    for transform in REALM_TRANSFORMS:
-        for normal in ("NFC", "NFD"):
-            form = unicodedata.normalize(normal, transform(_nfc(realm)))
-            if form and form not in forms:
-                forms.append(form)
-    return forms
 
 
 def _shaped(real: str, stem: str, index: int) -> str:

@@ -147,7 +147,9 @@ the client.
 
 Identity-bearing CVars the scrubber blanks: `accountName`, `accountList`,
 `lastCharacterGuid`. The list is confirmed and extended from the first
-capture **[verify]**; the deny-list lives in `scripts/lab_capture.py`.
+capture **[verify]**; the deny-list lives in `wowlab_core.redact`
+(`IDENTITY_CVARS`, moved there from `scripts/lab_capture.py` on 2026-10-14,
+M13-09), which the scrub tool imports.
 
 ## 6. `bindings-cache.wtf`
 

@@ -17,12 +17,15 @@ body:
     attributes:
       label: Command
       placeholder: wowlab sv dump <file> --json
-  - type: input
-    id: version
+  - type: textarea
+    id: doctor
     attributes:
-      label: Client version and flavor folder
-      description: From `wowlab doctor`, or the version line of `.build.info`.
-      placeholder: 12.1.5.65432, _retail_
+      label: Output of `wowlab doctor --redact`
+      description: |
+        Run `wowlab doctor --redact` and paste what it prints: paste this, nothing else. It replaces your character, realm and account names, BattleTag, email address and home folder with placeholders such as `<CHARACTER>` and `<HOME>`. Your guild's name is not known to wowlab; if it could appear, add `--redact-name "<your guild>"`. Read the output before you paste it.
+      render: text
+    validations:
+      required: true
   - type: input
     id: platform
     attributes:

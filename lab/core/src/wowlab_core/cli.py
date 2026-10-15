@@ -113,6 +113,7 @@ from wowlab_core import (
     __version__,
     addoninstall,
     combatlog,
+    doctorredact,
     gamedata,
     guard,
     install,
@@ -1290,6 +1291,18 @@ def _print_doctor(report: DoctorReport) -> None:
     _say("  (`wowlab snap verify` re-hashes every stored object)")
 
 
+def _doctor_redacted(root: Path | None, offline: bool, names: list[str]) -> DoctorReport:
+    """`_doctor` through `doctorredact` (M13-09): every string redacted before it is printed."""
+    try:
+        extra = doctorredact.check_names(names)
+    except ValueError as exc:
+        raise CliError(str(exc), EXIT_USAGE) from None
+    try:
+        return doctorredact.redacted(lambda: _doctor(root, offline), root, extra)
+    except doctorredact.RedactedError as exc:
+        raise CliError(str(exc)) from None
+
+
 @app.command()
 @_handled
 def doctor(
@@ -1299,9 +1312,27 @@ def doctor(
         typer.Option("--offline", help="Do not ask wago.tools whether each version is listed."),
     ] = False,
     json_out: JsonOpt = False,
+    redact: Annotated[
+        bool,
+        typer.Option(
+            "--redact",
+            help="Output to paste into an issue: character, realm and account names, BattleTags, "
+            "GUIDs, email addresses, your home folder and journal labels become placeholders.",
+        ),
+    ] = False,
+    redact_name: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--redact-name",
+            help="Another name to replace, such as your guild's (repeatable). Implies --redact.",
+        ),
+    ] = None,
 ) -> None:
     """Install, flavors, versions, whether the client runs, store health. JSON: DoctorReport."""
-    report = _doctor(root, offline)
+    if redact or redact_name:
+        report = _doctor_redacted(root, offline, redact_name or [])
+    else:
+        report = _doctor(root, offline)
     if json_out:
         _emit(report)
     else:
