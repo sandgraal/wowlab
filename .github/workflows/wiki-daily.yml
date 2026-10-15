@@ -143,10 +143,13 @@ jobs:
           path: repo
           fetch-depth: 0
           persist-credentials: false
+      # Restores the uv cache, never saves it: a cache saved after the model
+      # ran would be restored in publish, which can write, before its sync.
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
+          save-cache: false
           cache-dependency-glob: repo/uv.lock
       - name: Install
         working-directory: repo
@@ -533,6 +536,19 @@ jobs:
             report/wiki.diff
           if-no-files-found: error
           retention-days: 14
+      # Post steps run after this one whatever the check decided, outside the
+      # sandbox. actions/checkout's post runs git in repo/ (git config,
+      # `submodule foreach ... sh -c`), found through PATH, which still has
+      # repo/.venv/bin, and git reads repo/.git/config (core.fsmonitor). It
+      # returns early when repo/.git/config is gone; with the venv gone too,
+      # no post step finds a tool in repo/. The rest of repo/ stays.
+      - name: Leave nothing in repo/ for the post steps
+        id: leave
+        if: always()
+        shell: /usr/bin/bash --noprofile --norc -eo pipefail {0}
+        run: |
+          export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+          rm -rf -- repo/.git repo/.venv
 
   publish:
     name: Push the wiki

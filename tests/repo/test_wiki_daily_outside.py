@@ -7,6 +7,10 @@ and `__pycache__/`, so a planted `.pth` or `.pyc` would run on the next
 (a sha256 per regular file, symlink targets, directories, executable bits,
 and .git's config and hooks) before the model and compares it straight after,
 and every later step that runs repository code depends on that comparison.
+Round 2 (security review): post steps run whatever the check decided, so the
+job's last step removes repo/.git and repo/.venv (actions/checkout's post
+then runs no git in repo/), and improve never saves the uv cache that
+publish restores.
 
 Static tests read `.github/workflows/wiki-daily.yml` as data. The
 `constructed` tests run the workflow's own step scripts with bash on an
@@ -172,8 +176,8 @@ def test_every_later_step_that_runs_code_depends_on_the_check() -> None:
     later = steps[outside + 1 :]
     assert any(_runs_repo_code(s) for s in later)
     for step in later:
-        if step.get("id") == "gate":
-            continue  # it branches on the check itself (below)
+        if step.get("id") in ("gate", "leave"):
+            continue  # each pinned on its own below
         if "run" in step:
             assert OUTSIDE_OK in _conjuncts(step["if"]), step["name"]
         else:
@@ -196,6 +200,30 @@ def test_the_gate_result_branches_on_the_check_before_running_anything() -> None
     branch = run[: run.index("\nfi\n")]
     assert "git" not in branch.replace("check_wiki", "") and "cat " not in branch
     assert "exit 1" in branch
+
+
+def test_the_last_step_leaves_nothing_in_repo_for_the_post_steps() -> None:
+    # Round 2 (security review): actions/checkout's post has no post-if and
+    # runs git in repo/ through PATH, which has repo/.venv/bin; git reads
+    # repo/.git/config. It returns early when repo/.git/config is gone.
+    steps = _steps()
+    last = steps[-1]
+    assert last["id"] == "leave"
+    assert last["if"] == "always()"
+    assert last.get("continue-on-error") is not True
+    assert last["shell"] == SHELL
+    assert last["run"].splitlines() == [SYSTEM_PATH, "rm -rf -- repo/.git repo/.venv"]
+    # The checkout whose post that is lives in repo/.
+    checkouts = [s for s in steps if s.get("uses", "").startswith("actions/checkout@")]
+    assert [s["with"]["path"] for s in checkouts] == ["repo"]
+
+
+def test_improve_restores_the_uv_cache_but_never_saves_it() -> None:
+    # Round 2 (security review): a cache saved by improve after the model ran
+    # would be restored in publish, which has contents: write, before its sync.
+    setups = [s for s in _steps() if s.get("uses", "").startswith("astral-sh/setup-uv@")]
+    assert len(setups) == 1
+    assert setups[0]["with"]["save-cache"] in (False, "false")
 
 
 def test_publish_runs_only_after_improve_succeeded_and_from_its_own_checkout() -> None:
@@ -438,3 +466,16 @@ def test_constructed_the_gate_result_reports_a_changed_checkout_and_runs_nothing
     assert (ws / "runner" / "output").read_text(encoding="utf-8").split() == ["report=true"]
     assert "the gate did not run" in (ws / "runner" / "summary").read_text(encoding="utf-8")
     assert not _marker(ws).exists()
+
+
+def test_constructed_the_last_step_removes_git_and_the_venv_and_runs_nothing(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path)
+    _plant_tools(ws / "repo" / ".venv" / "bin", _marker(ws))
+    done = _run(ws, "leave", {})
+    assert done.returncode == 0, done.stdout + done.stderr
+    repo = ws / "repo"
+    assert not (repo / ".git").exists() and not (repo / ".venv").exists()
+    # The rest stays: setup-uv's post reads the project.
+    assert (repo / "scripts" / "tool.py").is_file()
