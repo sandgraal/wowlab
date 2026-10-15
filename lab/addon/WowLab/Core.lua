@@ -2,7 +2,7 @@
 --
 -- Runs in the game client only; the Lab never loads or runs this file. It
 -- gathers each section during the session (on entering the world and on the
--- section's change events) and writes the versioned tables (schema 2) into
+-- section's change events) and writes the versioned tables (schema 3) into
 -- its SavedVariables at PLAYER_LOGOUT. `/wowlab save` refreshes the tables in
 -- memory; the client writes the file at the next /reload, logout or clean
 -- exit, and a crash writes nothing. Only three things are carried from one
@@ -32,11 +32,15 @@ local ADDON_NAME, ns = ...
 
 -- Schema 2 (M11-29): schema 1 plus `events_received` and
 -- `chr_model_id_absent` on customization (docs/LAB_PLAN.md §13.1: after
--- M11-04, any change is a new schema). Nothing read back at ADDON_LOADED
--- looks at the schema (the probe, the skip list and the carried customization
--- record are read by key), so a schema-1 file's probe count keeps rising
--- across the change, and the next write is schema 2 for both variables.
-ns.SCHEMA = 2
+-- M11-04, any change is a new schema). Schema 3 (M13-05): schema 2 plus the
+-- config id talents.legacy left out (`left_out_config` or
+-- `left_out_config_absent`, M11-35) and three sections, `spellbook`,
+-- `actionbars` and `bindings` (Actions.lua). Nothing read back at
+-- ADDON_LOADED looks at the schema (the probe, the skip list and the carried
+-- customization record are read by key), so an older file's probe count keeps
+-- rising across the change, and the next write is schema 3 for both
+-- variables.
+ns.SCHEMA = 3
 
 -- Sections, in the order they register (the file order in WowLab.toc).
 ns.sections = {}
@@ -88,6 +92,14 @@ end
 
 function ns.Absent(reason)
     return { absent = ns.String(reason) }
+end
+
+-- What a gather returns when it may not read now (Actions.lua: in combat, or
+-- not known): never stored. `gather` below keeps the section's earlier
+-- record, writes the reason only when nothing was gathered this session, and
+-- leaves the section dirty.
+function ns.Blocked(reason)
+    return { blocked = ns.String(reason) }
 end
 
 -- Returns `tbl[key]` when `tbl` is a table and that field is a function.
@@ -193,7 +205,11 @@ end)
 --   events = { "EVENT", ... },     -- change events
 --   count_only = { "EVENT", ... }, -- events only counted, never gathered on (M11-29);
 --                                  -- a section with this list writes events_received
---   gather = function(event) ... end,  -- returns the record (a table)
+--   retry = { "EVENT", ... },      -- events that gather the section again only while it
+--                                  -- is still dirty (M13-05: PLAYER_REGEN_ENABLED after a
+--                                  -- gather combat blocked); they never mark it dirty
+--   gather = function(event) ... end,  -- returns the record (a table), or
+--                                      -- ns.Blocked(reason) when it may not read now
 --   on_world = true,               -- gather on entering the world
 --   heavy = true,                  -- on entering the world, only the first time
 --   immediate = true,              -- gather on the event itself, not debounced
@@ -226,13 +242,33 @@ local function gather(section, event)
         return
     end
     local ok, record = pcall(section.gather, event)
-    if not ok then
+    -- ns.Blocked (M13-05): the section may not read now. What it gathered
+    -- earlier this session is kept; its reason is written only when nothing
+    -- was; and it stays dirty, so the next pass (its retry event, any
+    -- debounce, PLAYER_LOGOUT) tries again. A section with a retry event
+    -- (Actions.lua's three) keeps its earlier record through an error the
+    -- same way: without issecretvalue a secret value makes its gather raise
+    -- (M13-05 round 3), and that is no reason to drop a good record.
+    local blocked = ok and type(record) == "table" and type(record.blocked) == "string"
+    local kept = blocked or (not ok and section.retry ~= nil)
+    if kept and section.gathered then
+        section.dirty = true
+        return
+    end
+    if blocked then
+        record = ns.Absent(record.blocked)
+    elseif not ok then
         record = ns.Absent("error: " .. tostring(record))
     elseif type(record) ~= "table" then
         record = ns.Absent("the section gathered nothing")
     end
     ns.state[section.key] = record
-    section.dirty = false
+    if blocked then
+        section.dirty = true
+    else
+        section.gathered = true
+        section.dirty = false
+    end
 end
 
 local function gatherDirty()
@@ -293,7 +329,9 @@ end
 -- events included, to that count (0 from registration). A count_only event is
 -- counted and nothing else: it never gathers and never marks the section
 -- dirty. One the client refuses has no entry in events_received and is not
--- added to events_unregistered, which stays the list of refused change events.
+-- added to events_unregistered, which stays the list of refused change events
+-- and (M13-05) refused retry events. A retry event registers on the same
+-- handler and only schedules a pass when the section is still dirty.
 local function listen(section)
     local changes = {}
     for _, event in ipairs(section.events or {}) do
@@ -303,12 +341,24 @@ local function listen(section)
     if section.count_only then
         counts = {}
     end
+    local retries = {}
+    for _, event in ipairs(section.retry or {}) do
+        retries[event] = true
+    end
     local function onEvent(fired)
         if section.off then
             return
         end
         if counts then
             counts[fired] = (ns.Number(counts[fired]) or 0) + 1
+        end
+        if retries[fired] then
+            -- A retry event gathers the section only while it is still
+            -- dirty (a gather was blocked); it never marks it dirty.
+            if section.dirty then
+                schedule()
+            end
+            return
         end
         if not changes[fired] then
             return
@@ -328,6 +378,19 @@ local function listen(section)
             section.events_unregistered = section.events_unregistered or {}
             local missing = section.events_unregistered
             missing[#missing + 1] = event
+        elseif counts then
+            counts[event] = 0
+        end
+    end
+    -- Retry events (M13-05): a refused one is listed in events_unregistered,
+    -- as a refused change event is.
+    for _, event in ipairs(section.retry or {}) do
+        if not ns.On(event, onEvent) then
+            if not section.events_unregistered then
+                section.events_unregistered = {}
+            end
+            local refused = section.events_unregistered
+            refused[#refused + 1] = ns.String(event)
         elseif counts then
             counts[event] = 0
         end
@@ -358,6 +421,9 @@ local function switchOff(section)
     ns.skip[section.key] = true
     ns.state[section.key] = nil
     if section.listener then
+        for _, event in ipairs(section.retry or {}) do
+            off(event, section.listener)
+        end
         for _, event in ipairs(section.events or {}) do
             off(event, section.listener)
         end

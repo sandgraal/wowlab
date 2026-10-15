@@ -1532,7 +1532,8 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   chat line listing the valid keys. Section keys: `gear`, `spec`,
   `talents.class`, `talents.legacy`, `customization`,
   `collections.mounts`, `collections.toys`, `collections.pets`,
-  `collections.appearances`, `currencies`, `professions`. The list is
+  `collections.appearances`, `currencies`, `professions` (and, since schema
+  3, `spellbook`, `actionbars`, `bindings`). The list is
   saved in `WowLabCharDB`, per character, as `skip = { "<section key>", ... }` (strings in
   section order, left out when empty; the reader keeps it as a list of
   strings and ignores a key it does not know) and read at `ADDON_LOADED`,
@@ -1665,9 +1666,73 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   open until the owner's capture in `lab/addon/README.md` ("M11-29 capture
   step").
 
+  Amended 2026-10-14 (M13-05, with M11-35 folded in; §15.2): schema 3.
+  `WowLabCharDB` and `WowLabDB` are written with `schema = 3`, and schema 3
+  is schema 2 plus one pair of keys on `talents.legacy` and three sections.
+  The reader reads schema 1 and 2 files exactly as before and refuses a
+  schema it does not know. (1) `talents.legacy` holds exactly one of
+  `left_out_config`, the active class config id the addon left out of
+  `configs` at that gather (a config with that id is never listed), and
+  `left_out_config_absent`, why no id was left out
+  (`C_ClassTalents.GetActiveConfigID` missing, raised an error, returned
+  nil, or returned no number; called through `pcall` directly). (2)
+  `spellbook`: the player's spellbook (the bank is the client's
+  `Enum.SpellBookSpellBank.Player`), walked by skill line through
+  `C_SpellBook`, future (not yet learned) spells included: per item its
+  slot, skill line, raw item type, action id, spell id, `spell_name` and
+  `subtext` (the subtext is where a rank shows, when the client gives one),
+  and the passive and off-spec flags, plus `item_types`, the client's
+  `Enum.SpellBookItemType` as a name-to-number map, so a reader names each
+  type from the file; skill-line names are not read. Whether a hunter's
+  named pet shows in a spell's name or subtext is **[verify]**. (3)
+  `actionbars`: slots 1 to 180 (the addon's own bound: fifteen runs of
+  twelve, the main bar's pages, the stance and bonus bars and the
+  multi-action bars **[verify]**) through `GetActionInfo`, each filled
+  slot with its type, its id when the id is a number, and its subtype. A
+  macro slot keeps an id only, never the macro's name or body: with no
+  subtype the id is the macro index **[verify]**, with one it is the spell
+  or item id the macro shows now **[verify]**; `GetMacroInfo` is asked only for a macro
+  index (an out-of-range index into a C API is the crash class in
+  `docs/DATA_SOURCES.md`, 2026-09-28), only whether it names a macro (its
+  count is kept, nothing else); an equipment-set slot, whose id is the set's
+  name, keeps no id. (4) `bindings`: per binding command `GetBinding` lists
+  that is a plain upper-case name, the keys `GetBindingKey` returns now (to
+  cross-check `bindings-cache.wtf`), the raw `GetCurrentBindingSet` value,
+  and the client's `ACCOUNT_BINDINGS` and `CHARACTER_BINDINGS` that name it
+  **[verify]**; a command that is not a plain upper-case name (text after
+  the name, as in `MACRO x`, or other characters; `MACRO <name>` holds text
+  the owner typed) is counted, never asked about or stored. Whether
+  `GetBinding` lists a key bound straight to a spell, macro, item or click
+  at all is **[verify]**. The three new sections read only out of combat
+  (ADR-0026, GLOSSARY "Secret value"): each gather asks `InCombatLockdown`
+  first and reads nothing when the player is in combat or the client cannot
+  say. Such a gather is blocked: the section keeps what it gathered earlier
+  in the session, stays dirty, and is written absent with the reason only
+  when nothing was gathered for it in that session; `PLAYER_REGEN_ENABLED`
+  is each section's retry event, re-gathering it only while it is still
+  dirty. Values are read only when `InCombatLockdown` says not in combat;
+  whether these values can be secret outside combat in restricted content
+  is **[verify]**. Where the client has `issecretvalue` (the name is
+  **[verify]**), every value is tested before it is used or stored, and one
+  it calls secret (or cannot say about) is dropped and counted. No
+  `issecretvalue` means values are not tested, not that none are secret; a
+  secret value then makes the gather raise and the section is written as an
+  error, unless it was gathered earlier in the session: a section with a
+  retry event keeps that record through an error as through a block, and
+  stays dirty. `C_Secrets` and `canaccessvalue` (**[verify]**) are looked up,
+  never called; their probes say only whether the client has them.
+  forever-addon-kit lists the other names for 69893 and presence proves
+  nothing, so each of the three records `probes`: per API it asks, whether
+  the function was there and how many calls were made, raised an error and
+  answered, and how many of its values were dropped as secret (the way
+  `spec.api` names the API that answered). Every new call sits in a section
+  `/wowlab skip` switches off (section keys `spellbook`, `actionbars`,
+  `bindings`), and every new API is **[verify]** until the owner's schema-3
+  capture (`docs/handoffs/M13-05.md`).
+
   Schema 1 may change after M11-03. Edits from the capture land before
   M11-04 starts; after M11-04 merges, any change is a new schema (schema 2
-  is M11-29's, above; the next change is schema 3).
+  is M11-29's and schema 3 is M13-05's, above; the next change is schema 4).
 - **Install** `wowlab addon install lab` / `wowlab addon remove lab`: copies
   the addon into `Interface/AddOns/WowLab/` through a `guard` transaction
   (client closed, snapshot first, undoable), filling the TOC's
@@ -1742,7 +1807,7 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   addon does less than that wording claims. It leaves the active class
   config out by id, whatever its type, but only when
   `C_ClassTalents.GetActiveConfigID` gave an id. `talents.legacy` does not
-  record the id it left out. `talents.class` records the active class
+  record the id it left out (schema 3 does: the M13-05 amendment above). `talents.class` records the active class
   config as of its own gather, which may be a different moment, so a class
   config missing from the list proves nothing; one whose id is in the list
   shows the addon did not leave it out, a check the reader does not make
@@ -2871,11 +2936,15 @@ it. M13-07 ships only in the form its owner test allows.
 - **The addon calls.** forever-addon-kit's API list for build 69893 names
   `GetActionInfo`, `GetBindingKey`, `GetMacroInfo`, `C_SpellBook` and
   `GetSpellBookItemInfo`. Presence in the global table does not prove a call
-  works, so each is probed and recorded the way `spec.api` is (§13.1). Reads
-  happen out of combat only; nothing in schema 3 may touch a value that
-  becomes secret in combat (ADR-0026, `docs/GLOSSARY.md`). Action-bar macro
-  slots carry the macro id only, never its name or body: macro text is
-  player-written (ADR-0026's no-names rule).
+  works, so each is probed and recorded the way `spec.api` is (§13.1). Values
+  are read only when `InCombatLockdown` says not in combat (ADR-0026,
+  `docs/GLOSSARY.md`); whether these values can be secret outside combat in
+  restricted content is **[verify]**, so where the client has
+  `issecretvalue` each value is tested before it is used or stored (§13.1,
+  M13-05 amendment). Action-bar macro slots carry an id only, never the
+  macro's name or body: macro text is player-written (ADR-0026's no-names
+  rule). The id is the macro index when the slot has no subtype, and
+  otherwise the spell or item id the macro shows now **[verify]**.
 - **Cast counts.** `combatlog` has no cast counting today. The player's own
   casts are picked by the source-flags bits (affiliation "mine", type
   "player") rather than by a GUID or a name, since the lab-addon stores no

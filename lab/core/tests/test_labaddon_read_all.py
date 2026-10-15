@@ -236,11 +236,11 @@ def test_constructed_damaged_file_is_named_and_the_rest_still_read(flavor: Path)
 
 
 def test_constructed_unknown_schema_gives_the_readers_reason(flavor: Path) -> None:
-    _lab_file(flavor, FIRST).write_bytes(b'\r\nWowLabCharDB = {\r\n["schema"] = 3,\r\n}\r\n')
+    _lab_file(flavor, FIRST).write_bytes(b'\r\nWowLabCharDB = {\r\n["schema"] = 4,\r\n}\r\n')
     by = _by(flavor)
     assert by[FIRST].record is None
     assert by[FIRST].error == (
-        "WowLabCharDB is schema 3, and this reader knows schema 1, 2 only: it was written by "
+        "WowLabCharDB is schema 4, and this reader knows schema 1, 2, 3 only: it was written by "
         "another version of the lab-addon; nothing was read"
     )
     assert by[SECOND].record is not None

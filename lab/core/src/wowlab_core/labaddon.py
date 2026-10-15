@@ -14,7 +14,8 @@ What the models accept (M11-03 capture, `docs/LAB_FORMATS.md` amendment of
 - Exact types. A number field takes a Lua number only (not a boolean, not a
   string), an id or count field an integer only, a boolean field a boolean
   only. Text is accepted only in the fields the addon writes as text: item
-  links, the talent export string, absent reasons, event names, and the
+  links, the talent export string, absent reasons, event names, spell names
+  and subtexts, binding commands and keys, action types, and the
   enum-like fields (`recorded_at`, `as_of`, `item_level_api`, `spec.api`,
   `found_by`, `skipped_types`, the skip list, `client.version`,
   `client.build`), each checked against the shape the addon writes. A
@@ -46,6 +47,13 @@ What the models accept (M11-03 capture, `docs/LAB_FORMATS.md` amendment of
   record. Schema 1 files are read exactly as before: `chr_model_id_absent`
   in one is refused (text in an unknown key), and `events_received` is kept
   as an unknown key, as it always was.
+- Schema 3 (M13-05) is schema 2 plus `left_out_config` or
+  `left_out_config_absent` on `talents.legacy` (M11-35) and three sections
+  read out of combat: `spellbook` (spell ids, the game's spell names and
+  subtexts, flags), `actionbars` (slot to type and id; a macro slot's id
+  only) and `bindings` (binding command to keys), each with `probes`, what
+  each API it asked did. Schema 1 and 2 files are read exactly as before: a
+  new section's key in one is an unknown key (refused when it holds text).
 - A section the owner switched off (M11-21) is an absent record with the
   addon's reason; `WowLabCharDB.skip` is kept as a list of section keys, and
   a key this reader does not know is kept but ignored (`skip_known`).
@@ -85,6 +93,7 @@ from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, NamedTuple, Self, TypeVar
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     BeforeValidator,
     ConfigDict,
@@ -122,15 +131,23 @@ __all__ = [
     "AbsentConfig",
     "AbsentCurrency",
     "AbsentCustomizationV2",
+    "AbsentProbedSection",
     "AbsentRecord",
     "AbsentSection",
     "AccountDB",
     "AccountDBV1",
     "AccountDBV2",
+    "AccountDBV3",
+    "ActionBars",
+    "ActionSlot",
     "AllCharacters",
+    "ApiProbe",
+    "Binding",
+    "Bindings",
     "CharDB",
     "CharDBV1",
     "CharDBV2",
+    "CharDBV3",
     "CharacterFile",
     "ClassTalents",
     "ClippedReason",
@@ -140,9 +157,14 @@ __all__ = [
     "LabAddonError",
     "LegacyConfig",
     "LegacyTalents",
+    "LegacyTalentsV3",
     "NoCustomizationError",
     "NotLookedAt",
     "Place",
+    "Spellbook",
+    "SpellbookItem",
+    "SpellbookLine",
+    "TalentsV3",
     "choose_lab_file",
     "clip_reason",
     "customization_import",
@@ -181,6 +203,10 @@ SECTION_KEYS: tuple[str, ...] = (
     "collections.appearances",
     "currencies",
     "professions",
+    # Schema 3 (M13-05).
+    "spellbook",
+    "actionbars",
+    "bindings",
 )
 
 # The addon's absent reason for a section in the skip list (Core.lua).
@@ -923,6 +949,308 @@ class CharDBV2(_CharDB):
     ) = None
 
 
+# ─── schema 3 (M13-05) ───────────────────────────────────────────────────────
+
+
+class LegacyTalentsV3(LegacyTalents):
+    """`talents.legacy` in schema 3 (M11-35, folded into M13-05): schema 2's
+    record plus exactly one of `left_out_config`, the active class config id
+    the addon left out of `configs` at this gather (a config with that id is
+    never listed), and `left_out_config_absent`, why no id was left out
+    (`C_ClassTalents.GetActiveConfigID` missing, raised an error, returned
+    nil, or returned no number). `talents.class` asks the same function at
+    its own gather, which may be another moment."""
+
+    reason_fields: ClassVar[tuple[str, ...]] = ("left_out_config_absent",)
+
+    left_out_config: Int | None = None
+    left_out_config_absent: Reason | None = None
+    left_out_config_absent_clipped: ClippedReason | None = None
+
+    @model_validator(mode="after")
+    def _left_out_or_reason(self) -> Self:
+        if self.left_out_config is not None and self.left_out_config_absent is not None:
+            raise ValueError("both left_out_config and left_out_config_absent are set")
+        if self.left_out_config is not None and any(
+            config.id == self.left_out_config for config in self.configs
+        ):
+            raise ValueError("left_out_config is the id of a listed config")
+        return self
+
+
+class TalentsV3(Talents):
+    legacy: (
+        Annotated[Annotated[LegacyTalentsV3, Tag(_P)] | Annotated[AbsentSection, Tag(_A)], _SPLIT]
+        | None
+    ) = None
+
+
+# The APIs the schema-3 sections ask, each probed (`probes`): presence in the
+# client proves nothing, so the file says what each call did.
+ProbedApi = Literal[
+    "C_SpellBook.GetNumSpellBookSkillLines",
+    "C_SpellBook.GetSpellBookSkillLineInfo",
+    "C_SpellBook.GetSpellBookItemInfo",
+    "C_SpellBook.GetSpellBookItemName",
+    "GetActionInfo",
+    "GetMacroInfo",
+    "GetCurrentBindingSet",
+    "GetNumBindings",
+    "GetBinding",
+    "GetBindingKey",
+    "issecretvalue",
+    "C_Secrets",
+    "canaccessvalue",
+]
+# Looked up and never called (M13-05 round 3): the probe says only whether
+# the client has it.
+LOOKED_UP: frozenset[str] = frozenset({"C_Secrets", "canaccessvalue"})
+
+
+class ApiProbe(_Record):
+    """One API a schema-3 section asked: whether the function was there,
+    how many calls the gather made, how many raised an error, and how many
+    answered (what "answered" means per API: `lab/addon/README.md`). The rest
+    of the calls answered nothing. The addon counts each call once and as at
+    most one of an error or an answer, and calls nothing that is missing.
+    `secret` counts the values this API gave that the addon dropped because
+    `issecretvalue` called them secret or could not say; a dropped value is
+    not an answer, so a call whose one value was dropped answered nothing.
+    `C_Secrets` and `canaccessvalue` are looked up and never called, so
+    their counts are 0."""
+
+    api: ProbedApi
+    present: bool
+    calls: Count
+    errors: Count
+    answered: Count
+    secret: Count
+
+    @model_validator(mode="after")
+    def _counts_add_up(self) -> Self:
+        if self.errors + self.answered > self.calls:
+            raise ValueError("errors and answered add up to more than calls")
+        if not self.present and self.calls:
+            raise ValueError("calls are counted for a function that was not present")
+        if not self.present and self.secret:
+            raise ValueError("values are counted for a function that was not present")
+        if self.api in LOOKED_UP and (self.calls or self.secret):
+            raise ValueError(f"{self.api} is looked up only, yet calls or values are counted")
+        return self
+
+
+# A spell's name or subtext as the client gives it: 1 to 255 bytes of UTF-8
+# (the addon's `#value <= 255` counts bytes), no control (C0, C1), format
+# (Cf) or line/paragraph separator (Zl, Zp) character, and no "|" (the
+# client's escape character). The addon keeps it only when it has no ASCII
+# control character and no "|".
+SPELL_TEXT_BYTES = 255
+
+
+def _spell_text_bytes(value: str) -> str:
+    size = len(value.encode("utf-8"))
+    if size > SPELL_TEXT_BYTES:
+        raise ValueError(f"the text is {size} bytes of UTF-8, more than {SPELL_TEXT_BYTES}")
+    return value
+
+
+SpellText = Annotated[
+    str,
+    StringConstraints(pattern=r"^[^\x00-\x1f\x7f-\x9f|\p{Cf}\p{Zl}\p{Zp}]{1,255}$"),
+    AfterValidator(_spell_text_bytes),
+]
+# A client word: an action type or subtype ("spell", "macro", "item").
+ActionWord = Annotated[str, StringConstraints(pattern=r"^[A-Za-z]{1,32}$")]
+# A binding command kept by name (ACTIONBUTTON1); the addon keeps no other.
+BindingCommand = Annotated[str, StringConstraints(pattern=r"^[A-Z0-9_]{1,128}$")]
+# A key as the client names it (1, SHIFT-F): printable ASCII, no space.
+BindingKey = Annotated[str, StringConstraints(pattern=r"^[\x21-\x7e]{1,64}$")]
+
+
+# An enum member's name as the client spells it (FutureSpell).
+EnumMember = Annotated[str, StringConstraints(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,63}$")]
+_ENUM_MEMBER = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
+
+
+def _enum_member_keys(value: Any) -> Any:
+    """`item_types` is a table read from a file whose keys are data, like
+    `events_received`: a key that is not an enum member's name is refused
+    without echoing it."""
+    if isinstance(value, dict):
+        for key in value:
+            if not (isinstance(key, str) and _ENUM_MEMBER.fullmatch(key)):
+                words = (
+                    f"a key of {len(key)} characters that is not an enum member's name"
+                    if isinstance(key, str)
+                    else _key_words(key)
+                )
+                raise ValueError(f"the table holds {words}")
+    return value
+
+
+# Enum member name to number, as the client has the enum (M13-05).
+EnumMap = Annotated[dict[EnumMember, Int], BeforeValidator(_enum_member_keys)]
+
+# The absent reasons of a schema-3 section whose gather was blocked by
+# combat, or by not knowing (Actions.lua's combatReason). Since round 2 of
+# M13-05 the addon writes one only when nothing was gathered for the section
+# in that session: a good record from earlier in the session is kept.
+COMBAT_REASON_PREFIXES = ("in combat:", "InCombatLockdown missing", "InCombatLockdown raised")
+COMBAT_NOTE = (
+    "the addon was in combat (or could not tell) at its last gather of this section in the "
+    "session that wrote this file, and had gathered nothing for it earlier in that session"
+)
+
+
+class AbsentProbedSection(AbsentSection):
+    """A schema-3 section absent with the addon's reason. `probes` is there
+    when the reason is a missing function or a call that gave nothing (the
+    probes say what was asked); the combat reasons call nothing and carry
+    none, and are written only when nothing was gathered for the section in
+    that session."""
+
+    probes: Lst[ApiProbe] | None = None
+
+    @model_validator(mode="after")
+    def _combat_calls_nothing(self) -> Self:
+        if self.probes is not None and self.absent.startswith(COMBAT_REASON_PREFIXES):
+            raise ValueError("a combat reason carries probes, yet a blocked gather calls nothing")
+        return self
+
+
+class SpellbookLine(_Record):
+    """One skill line of the player's spellbook: where its items start
+    (`offset`, the slot before its first) and how many there are; the line's
+    name is not recorded."""
+
+    index: Int
+    offset: Int | None = None
+    count: Int | None = None
+    guild: bool | None = None
+    hidden: bool | None = None
+    spec_id: Int | None = None
+    off_spec_id: Int | None = None
+
+
+class SpellbookItem(_Record):
+    """One spellbook item; future (not yet learned) spells are items too.
+    `type` is the client's raw `Enum.SpellBookItemType` number, named by the
+    record's `item_types`; `action_id` and `spell_id` are raw (a flyout's
+    action id is not a spell id). `subtext` is where a rank shows, when the
+    client gives one."""
+
+    slot: Int
+    skill_line: Int
+    type: Int | None = None
+    action_id: Int | None = None
+    spell_id: Int | None = None
+    spell_name: SpellText | None = None
+    subtext: SpellText | None = None
+    passive: bool | None = None
+    off_spec: bool | None = None
+
+
+class Spellbook(_Section):
+    """`spellbook` (schema 3): the player's spellbook, read out of combat.
+    `item_types` is the client's `Enum.SpellBookItemType`, member name to
+    number; missing when the client had no such table."""
+
+    item_types: EnumMap | None = None
+    skill_lines: Lst[SpellbookLine]
+    list_: Lst[SpellbookItem] = Field(alias="list")
+    probes: Lst[ApiProbe]
+
+
+class ActionSlot(_Record):
+    """One filled action slot. `id` only when the client gave a number. A
+    macro slot keeps an id only, never the macro's name or body: with no
+    `sub_type` the id is the macro index **[verify]**; with one, it is the
+    spell or item id the macro shows now **[verify]**. An equipment-set slot has none (its
+    id is the set's name)."""
+
+    slot: Int
+    type: ActionWord | None = None
+    id: Int | None = None
+    sub_type: ActionWord | None = None
+
+
+class ActionBars(_Section):
+    """`actionbars` (schema 3): slots `first_slot` to `last_slot` walked,
+    the filled ones listed, read out of combat."""
+
+    first_slot: Int
+    last_slot: Int
+    slots: Lst[ActionSlot]
+    probes: Lst[ApiProbe]
+
+
+class Binding(_Record):
+    """One binding command and the keys `GetBindingKey` returned for it."""
+
+    command: BindingCommand
+    keys: Lst[BindingKey]
+
+
+class Bindings(_Section):
+    """`bindings` (schema 3), read out of combat: the commands with a key.
+    `commands` counts every command `GetBinding` listed; `commands_left_out`
+    the commands that are not a plain upper-case name (text after the name,
+    as in `MACRO x`, or other characters), never asked about, so the listed
+    commands and the left-out ones add up to at most `commands`. `GetBinding` lists
+    named commands; whether a key bound straight to a spell, macro, item or
+    click is listed at all is **[verify]**, so such keys may be in neither
+    count. `keys_left_out` counts the keys that were not printable ASCII
+    without a space. `binding_set` is `GetCurrentBindingSet`'s raw value;
+    `account_bindings` and `character_bindings` are the client's
+    `ACCOUNT_BINDINGS` and `CHARACTER_BINDINGS`, which name it."""
+
+    binding_set: Int | None = None
+    account_bindings: Int | None = None
+    character_bindings: Int | None = None
+    commands: Count
+    commands_left_out: Count
+    keys_left_out: Count
+    list_: Lst[Binding] = Field(alias="list")
+    probes: Lst[ApiProbe]
+
+    @model_validator(mode="after")
+    def _counts_add_up(self) -> Self:
+        if len(self.list_) + self.commands_left_out > self.commands:
+            raise ValueError(
+                "the listed and left-out commands add up to more than the commands counted"
+            )
+        return self
+
+
+class CharDBV3(_CharDB):
+    """`WowLabCharDB`, schema 3 (M13-05): schema 2 plus `left_out_config`
+    or `left_out_config_absent` on `talents.legacy` (`LegacyTalentsV3`) and
+    three sections, `spellbook`, `actionbars` and `bindings`. Every other
+    section is read exactly as in schema 2."""
+
+    schema_: Literal[3] = Field(alias="schema")
+    talents: TalentsV3 | None = None
+    customization: (
+        Annotated[
+            Annotated[CustomizationV2, Tag(_P)] | Annotated[AbsentCustomizationV2, Tag(_A)],
+            _SPLIT,
+        ]
+        | None
+    ) = None
+    spellbook: (
+        Annotated[Annotated[Spellbook, Tag(_P)] | Annotated[AbsentProbedSection, Tag(_A)], _SPLIT]
+        | None
+    ) = None
+    actionbars: (
+        Annotated[Annotated[ActionBars, Tag(_P)] | Annotated[AbsentProbedSection, Tag(_A)], _SPLIT]
+        | None
+    ) = None
+    bindings: (
+        Annotated[Annotated[Bindings, Tag(_P)] | Annotated[AbsentProbedSection, Tag(_A)], _SPLIT]
+        | None
+    ) = None
+
+
 class AccountDBV1(_Record):
     """`WowLabDB`, schema 1: holds only `schema` (every section is per
     character in schema 1); anything else is kept as an unknown key."""
@@ -937,14 +1265,25 @@ class AccountDBV2(_Record):
     schema_: Literal[2] = Field(alias="schema")
 
 
-# A character or account document of any schema this reader knows.
-CharDB = CharDBV1 | CharDBV2
-AccountDB = AccountDBV1 | AccountDBV2
+class AccountDBV3(_Record):
+    """`WowLabDB`, schema 3: as schema 1, only the number differs."""
 
-CHAR_SCHEMAS: Mapping[int, type[CharDBV1] | type[CharDBV2]] = {1: CharDBV1, 2: CharDBV2}
-ACCOUNT_SCHEMAS: Mapping[int, type[AccountDBV1] | type[AccountDBV2]] = {
+    schema_: Literal[3] = Field(alias="schema")
+
+
+# A character or account document of any schema this reader knows.
+CharDB = CharDBV1 | CharDBV2 | CharDBV3
+AccountDB = AccountDBV1 | AccountDBV2 | AccountDBV3
+
+CHAR_SCHEMAS: Mapping[int, type[CharDBV1] | type[CharDBV2] | type[CharDBV3]] = {
+    1: CharDBV1,
+    2: CharDBV2,
+    3: CharDBV3,
+}
+ACCOUNT_SCHEMAS: Mapping[int, type[AccountDBV1] | type[AccountDBV2] | type[AccountDBV3]] = {
     1: AccountDBV1,
     2: AccountDBV2,
+    3: AccountDBV3,
 }
 
 
@@ -1122,7 +1461,7 @@ class CharacterFile(BaseModel):
     place: Place = "file"
     mtime_ns: int | None
     summary: str | None = None
-    record: CharDBV1 | CharDBV2 | None = None
+    record: CharDBV1 | CharDBV2 | CharDBV3 | None = None
     error: str | None = None
     same_as: FsText | None = None
 
@@ -2133,6 +2472,20 @@ def _skipped_words(legacy: LegacyTalents) -> str:
     )
 
 
+def _left_out_words(legacy: LegacyTalentsV3) -> str:
+    """Schema 3 (M11-35): the id the addon left out of the candidates, as
+    `C_ClassTalents.GetActiveConfigID` gave it at this gather, or why it
+    left none out."""
+    if legacy.left_out_config is not None:
+        return (
+            f"left out as the active class config at this gather: config {legacy.left_out_config}"
+        )
+    if legacy.left_out_config_absent is not None:
+        reason = legacy.left_out_config_absent + _clip_words(legacy.left_out_config_absent_clipped)
+        return f"no config left out as the active class config ({reason})"
+    return "the config left out as the active class config is not in the file"
+
+
 def _legacy(legacy: LegacyTalents, class_config: TraitConfig | AbsentConfig | None) -> list[str]:
     """The Legacy candidates; `class_config` is the config `talents.class`
     records (`_class_config`)."""
@@ -2159,6 +2512,8 @@ def _legacy(legacy: LegacyTalents, class_config: TraitConfig | AbsentConfig | No
     else:
         lines.append(f"  no candidate config listed; {opener}")
     lines.append(f"  config types not searched: {_skipped_words(legacy)}")
+    if isinstance(legacy, LegacyTalentsV3):
+        lines.append(f"  {_left_out_words(legacy)}")
     for config in legacy.configs:
         found = ", ".join(config.found_by) or NONE_RECORDED
         if isinstance(config, AbsentLegacyConfig):
@@ -2304,6 +2659,156 @@ def _professions(record: Professions) -> list[str]:
     return lines + _events(record)
 
 
+def _probe_lines(probes: list[ApiProbe] | None) -> list[str]:
+    """Schema 3: what each API a section asked did (`probes`)."""
+    if probes is None:
+        return []
+    if not probes:
+        return [f"  probes: {NONE_RECORDED}"]
+    lines = []
+    for probe in probes:
+        if probe.api in LOOKED_UP:
+            found = "present" if probe.present else "missing"
+            lines.append(f"  {probe.api}: {found} (looked up only, never called)")
+            continue
+        if not probe.present:
+            lines.append(f"  {probe.api}: missing, not called")
+            continue
+        nothing = probe.calls - probe.errors - probe.answered
+        lines.append(
+            f"  {probe.api}: present, {_count(probe.calls, 'call')}, {probe.errors} raised an "
+            f"error, {probe.answered} answered, {nothing} answered nothing, "
+            f"{_count(probe.secret, 'value')} dropped as secret or untestable (see "
+            "issecretvalue's errors)"
+        )
+    return lines
+
+
+def _skill_line(line: SpellbookLine) -> str:
+    flags = []
+    if line.guild:
+        flags.append("guild")
+    if line.hidden:
+        flags.append("hidden")
+    if line.spec_id is not None:
+        flags.append(f"spec {line.spec_id}")
+    if line.off_spec_id is not None:
+        flags.append(f"off-spec {line.off_spec_id}")
+    tail = f" ({', '.join(flags)})" if flags else ""
+    if line.count is None or line.offset is None:
+        span = f"item count {_num(line.count)}, offset {_num(line.offset)}"
+    elif line.count > 0:
+        span = (
+            f"{_count(line.count, 'item')}, slots {line.offset + 1} to {line.offset + line.count}"
+        )
+    else:
+        span = f"{_count(line.count, 'item')} (offset {line.offset})"
+    return f"  skill line {line.index}: {span}{tail}"
+
+
+def _item_type_words(book: Spellbook) -> str:
+    """Items counted by type, each named from the record's own
+    `item_types` (the client's Enum.SpellBookItemType)."""
+    names: dict[int, list[str]] = {}
+    for name, value in (book.item_types or {}).items():
+        names.setdefault(value, []).append(name)
+    counts: dict[str, int] = {}
+    for item in book.list_:
+        if item.type is None:
+            word = "type not kept"
+        elif item.type in names:
+            word = "/".join(sorted(names[item.type]))
+        else:
+            word = f"type {item.type} (not in item_types)"
+        counts[word] = counts.get(word, 0) + 1
+    words = ", ".join(f"{counts[word]} {word}" for word in sorted(counts)) or NONE_RECORDED
+    if book.item_types is None:
+        return f"by type: {words} (Enum.SpellBookItemType is not in the record)"
+    return f"by type: {words}"
+
+
+def _spellbook(book: Spellbook) -> list[str]:
+    items = book.list_
+    if not items:
+        head = f"Spellbook: {NONE_RECORDED}"
+    else:
+        passive = sum(1 for item in items if item.passive)
+        named = sum(1 for item in items if item.spell_name is not None)
+        subtext = sum(1 for item in items if item.subtext is not None)
+        head = (
+            f"Spellbook: {_count(len(items), 'item')} in "
+            f"{_count(len(book.skill_lines), 'skill line')}, {passive} passive, {named} with a "
+            f"name, {subtext} with a subtext (ids, names and subtexts in --json)"
+        )
+    lines = [f"{head}; read out of combat"]
+    if items:
+        lines.append(f"  {_item_type_words(book)}; future (not yet learned) spells are items too")
+    lines.extend(_skill_line(line) for line in book.skill_lines)
+    return lines + _probe_lines(book.probes) + _events(book)
+
+
+def _action_bars(bars: ActionBars) -> list[str]:
+    kinds: dict[str, int] = {}
+    for slot in bars.slots:
+        kind = slot.type if slot.type is not None else "type not kept"
+        kinds[kind] = kinds.get(kind, 0) + 1
+    words = ", ".join(f"{kinds[kind]} {kind}" for kind in sorted(kinds)) or NONE_RECORDED
+    lines = [
+        f"Action bars: {len(bars.slots)} of slots {bars.first_slot} to {bars.last_slot} filled "
+        f"({words}; slots and ids in --json); read out of combat"
+    ]
+    macros = [slot for slot in bars.slots if slot.type == "macro"]
+    if macros:
+        index = sum(1 for slot in macros if slot.sub_type is None)
+        lines.append(
+            f"  macro slots: {index} with no subtype recorded (the id is the macro index "
+            "[verify]), "
+            f"{len(macros) - index} with one (the id is the spell or item id the macro shows "
+            "now [verify]); a macro's name and body are never recorded"
+        )
+    return lines + _probe_lines(bars.probes) + _events(bars)
+
+
+def _binding_set_words(record: Bindings) -> str:
+    """`binding_set`, named by the client's own ACCOUNT_BINDINGS and
+    CHARACTER_BINDINGS as the record holds them."""
+    which = record.binding_set
+    if which is None:
+        return "not returned"
+    if which == record.character_bindings:
+        return f"{which} (the character's: CHARACTER_BINDINGS is {which})"
+    if which == record.account_bindings:
+        return f"{which} (the account's: ACCOUNT_BINDINGS is {which})"
+    known = ", ".join(
+        f"{name} is {value}"
+        for name, value in (
+            ("ACCOUNT_BINDINGS", record.account_bindings),
+            ("CHARACTER_BINDINGS", record.character_bindings),
+        )
+        if value is not None
+    )
+    if not known:
+        return (
+            f"{which} (the client's raw value; ACCOUNT_BINDINGS and CHARACTER_BINDINGS "
+            "not recorded)"
+        )
+    return f"{which} (the client's raw value, neither set by name: {known})"
+
+
+def _bindings(record: Bindings) -> list[str]:
+    lines = [
+        f"Key bindings: {_count(len(record.list_), 'command')} with a key, of "
+        f"{record.commands} listed (commands and keys in --json); binding set "
+        f"{_binding_set_words(record)}; read out of combat",
+        f"  left out: {_count(record.commands_left_out, 'command')} of those listed not a plain "
+        "upper-case name (text after the name, as in MACRO x, or other characters; never asked "
+        f"about), {_count(record.keys_left_out, 'key')} not printable ASCII",
+        "  a key bound straight to a spell, macro, item or click may not be listed by GetBinding "
+        "at all [verify]",
+    ]
+    return lines + _probe_lines(record.probes) + _events(record)
+
+
 APPEARANCES_EVENTS_NOTE = (
     "  events_unregistered is in the file, though the addon registers no events for this "
     "section (kept in --json)"
@@ -2326,6 +2831,11 @@ def _section(label: str, record: object, present: Any) -> list[str]:
     if record is None:
         return [f"{label}: {NOT_IN_FILE}"]
     if isinstance(record, _Absent):
+        if isinstance(record, AbsentProbedSection):
+            note = ""
+            if record.absent.startswith(COMBAT_REASON_PREFIXES):
+                note = f"{COMBAT_NOTE}: "
+            return [f"{label}: {note}{_absent(record)}", *_probe_lines(record.probes)]
         return [f"{label}: {_absent(record)}"]
     lines: list[str] = present(record)
     return lines
@@ -2386,6 +2896,10 @@ def describe(char: CharDB) -> list[str]:
     lines += _appearances(collections.appearances if collections else None)
     lines += _section("Currencies", char.currencies, _currencies)
     lines += _section("Professions", char.professions, _professions)
+    if isinstance(char, CharDBV3):
+        lines += _section("Spellbook", char.spellbook, _spellbook)
+        lines += _section("Action bars", char.actionbars, _action_bars)
+        lines += _section("Key bindings", char.bindings, _bindings)
     unknown = unknown_keys(char)
     if unknown:
         lines.append("")

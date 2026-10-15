@@ -10,14 +10,15 @@ wrote (M11-04).
 ## WowLab
 
 Records this character's equipped gear, spec, class talents, Legacy-tree candidates,
-barber-shop choices, collections, currencies and professions into
+barber-shop choices, collections, currencies, professions, spellbook, action
+bars and key bindings into
 `WowLabCharDB` (`## SavedVariablesPerCharacter`) as a versioned table
-(`schema = 2` since M11-29), written by the client at logout, `/reload` or a
+(`schema = 3` since M13-05; 2 since M11-29), written by the client at logout, `/reload` or a
 clean exit. `/wowlab save` refreshes the tables in memory only; a crash
 writes nothing.
 `/wowlab skip <section>` and `/wowlab unskip <section>` switch one section
 off and on ("Switching a section off" below).
-`WowLabDB` (`## SavedVariables`) holds only `{ schema = 2 }` until a capture
+`WowLabDB` (`## SavedVariables`) holds only `{ schema = 3 }` until a capture
 shows which data is account-wide. The addon writes one schema number into
 both variables.
 
@@ -34,11 +35,11 @@ both variables.
   interface number or the flavor. A section the client cannot provide is
   `{ absent = "<reason>" }`.
 
-### Table layout (schema 2)
+### Table layout (schema 3)
 
 ```
 WowLabCharDB = {
-  schema = 2,
+  schema = 3,
   probe = { loads = <n>, lost = true? },      -- carried across sessions, with customization; lost: this load only
   skip = { "<section key>", ... },            -- sections the owner switched off; left out when none (M11-21)
   client = { version, build, interface },     -- GetBuildInfo(); its date is not kept
@@ -47,7 +48,7 @@ WowLabCharDB = {
           average = { overall (best items owned, bags included), equipped (GetAverageItemLevel's second value; Forever's character sheet shows none), pvp } },
   talents = {
     class = { config = <config>, export | export_absent, last_selected_config | last_selected_config_absent },
-    legacy = { legacy_ui, player_level, skipped_types, configs = { <config + found_by> } },
+    legacy = { legacy_ui, player_level, skipped_types, left_out_config | left_out_config_absent, configs = { <config + found_by> } },  -- left_out_*: schema 3
   },
   customization = { as_of, recorded_at = "open"|"applied", recorded_load, carried = true?, choices = {…}, race_id, sex, chr_model_id | chr_model_id_absent, events_received }, -- kept across sessions until the next visit; the last two keys are schema 2's
   collections = {
@@ -58,7 +59,13 @@ WowLabCharDB = {
   },
   currencies = { list = { { id, quantity, max_quantity, max_weekly_quantity, earned_this_week, can_earn_per_week, total_earned, use_total_earned_for_max, account_wide } }, filtered = true, headers, headers_collapsed, rows, filter },
   professions = { list = { { position, skill_line, rank, max_rank, modifier } } },
+  -- schema 3 (M13-05), each read only out of combat:
+  spellbook = { item_types = { <name> = <number>, ... }, skill_lines = { { index, offset, count, guild, hidden, spec_id, off_spec_id } },
+                list = { { slot, skill_line, type, action_id, spell_id, spell_name, subtext, passive, off_spec } }, probes },
+  actionbars = { first_slot, last_slot, slots = { { slot, type, id, sub_type } }, probes },
+  bindings = { binding_set, account_bindings, character_bindings, commands, commands_left_out, keys_left_out, list = { { command, keys = { "<key>", ... } } }, probes },
 }
+probes = { { api, present, calls, errors, answered, secret } }  -- one per API the section asks, in a fixed order, then issecretvalue, C_Secrets, canaccessvalue
 <config> = { id, type, trees = { { id, system_id, currencies = { { id, quantity, max_quantity, spent } }, nodes = { { id, ranks_purchased, active_rank, current_rank, max_ranks, is_visible, entries, sub_tree, active_entry, active_entry_rank } } } } }
 choices = { { option, choice_index, choice } }
 ```
@@ -74,6 +81,14 @@ schema it does not know. The first logout with the
 M11-29 addon rewrites a schema-1 file as schema 2; `probe.loads` keeps
 rising across that write, because the addon reads the probe, the skip list
 and the carried customization record back by key, never by schema.
+
+Schema 3 (M13-05) is schema 2 with one pair of keys on `talents.legacy`
+(`left_out_config` or `left_out_config_absent`, from M11-35) and three new
+sections, `spellbook`, `actionbars` and `bindings`; nothing else changed. The
+Lab reads schema 1 and 2 files exactly as before (a new section's key in one
+of them is an unknown key, and refused when it holds text), and refuses a
+schema it does not know. The first logout with the M13-05 addon rewrites the
+file as schema 3, and `probe.loads` keeps rising across that write.
 
 Notes on the fields:
 
@@ -209,6 +224,127 @@ Notes on the fields:
   any client and registers no transmog events (2026-09-28, M11-20).
 - `professions`: whether `GetProfessionInfo`'s rank and maximum are per
   expansion tier or overall on Forever is **[verify]**.
+- `talents.legacy` in schema 3 (M11-35) holds exactly one of
+  `left_out_config`, the active class config id the addon left out of
+  `configs` at this gather (a config with that id is never listed), and
+  `left_out_config_absent`, why no id was left out:
+  - `"C_ClassTalents.GetActiveConfigID missing"`
+  - `"C_ClassTalents.GetActiveConfigID raised an error"`
+  - `"C_ClassTalents.GetActiveConfigID returned nil"`
+  - `"C_ClassTalents.GetActiveConfigID returned no number"`
+
+  The call goes through `pcall` directly, so an error is told apart from nil.
+  `talents.class` asks the same function at its own gather, which may be
+  another moment.
+- `spellbook`, `actionbars` and `bindings` (schema 3, M13-05) are read only
+  out of combat. Each gather asks `InCombatLockdown` first; when it says the
+  player is in combat, or is missing, or raises an error, nothing else is
+  called. The gather is then blocked, not failed: a record gathered earlier
+  in the session is kept as it was, the section stays dirty, and the reason
+  is written as the section's absent record only when nothing was gathered
+  for it in that session (a `/reload` or logout in combat before the first
+  pass ran out of combat). Each of the three has `PLAYER_REGEN_ENABLED`
+  (combat ended) as a retry event: it gathers the section again only while
+  the section is still dirty, so a fight that blocked nothing re-reads
+  nothing. A logout also gathers whatever is still dirty, and keeps the
+  earlier record when combat blocks that too. Values are read only when
+  `InCombatLockdown` says not in combat; whether these values can be secret
+  outside combat in restricted content (`docs/GLOSSARY.md`, "Secret value")
+  is **[verify]**. Where the client has `issecretvalue` (the name is
+  **[verify]**; forever-addon-kit's 69893 list does not have it), every
+  value a call gives, and every field of a table it gives, is tested before
+  it is compared, used or stored. One it calls secret, or raises an error or
+  gives no boolean for, is dropped and counted on its API's probe as
+  `secret`. Without `issecretvalue` every value is kept, and its probe says
+  `present = false`. No `issecretvalue` means values are not tested, not
+  that none are secret; a secret value then makes the gather raise and the
+  section is written as an error, unless it was gathered earlier in the
+  session: a section with a retry event keeps that record through an error
+  as through a block, and stays dirty. `C_Secrets` and `canaccessvalue`
+  (**[verify]**) are looked up, never called; their probes say only whether
+  the client has them. In `Actions.lua` no client function is called but
+  through `pcall`, and every value a `pcall` gives is cleaned, or cleared
+  when the call raised, before anything reads it (`tests/addon` pins this
+  structurally). The reasons:
+  - `"in combat: this section reads only out of combat, and gathers again when combat ends"`
+  - `"InCombatLockdown missing, so whether the player is in combat is not known; nothing was read"`
+  - `"InCombatLockdown raised an error, so whether the player is in combat is not known; nothing was read"`
+- `probes` (schema 3) is written on each of the three, gathered or absent
+  for a missing function (not on the combat reasons above, which call
+  nothing). One entry per API the section asks, in a fixed order with
+  `issecretvalue`, `C_Secrets` and `canaccessvalue` last: `api` (its
+  name), `present` (the function was
+  there), `calls`, `errors` (calls that raised an error), `answered` and
+  `secret` (values it gave that were dropped as secret). Presence proves
+  nothing, so a capture reads what each function did from these counts;
+  `calls − errors − answered` is the calls that answered nothing (a call
+  whose value was dropped as secret answered nothing). What "answered"
+  means:
+  - `C_SpellBook.GetNumSpellBookSkillLines`, `GetCurrentBindingSet`,
+    `GetNumBindings`: returned a number;
+  - `C_SpellBook.GetSpellBookSkillLineInfo`, `C_SpellBook.GetSpellBookItemInfo`:
+    returned a table;
+  - `C_SpellBook.GetSpellBookItemName`, `GetBinding`: returned a string
+    first;
+  - `GetActionInfo`: returned something for the slot (an empty slot answers
+    nothing);
+  - `GetMacroInfo`: returned an icon for the macro index, so the index names
+    a macro;
+  - `GetBindingKey`: returned at least one key;
+  - `issecretvalue`: returned a boolean;
+  - `C_Secrets`, `canaccessvalue`: never called, so `calls`, `errors`,
+    `answered` and `secret` are 0; only `present` says anything.
+- `spellbook`: the player's spellbook only (the bank is the client's
+  `Enum.SpellBookSpellBank.Player`, read, never assumed), walked by skill
+  line from `itemIndexOffset + 1` for `numSpellBookItems` slots. Future
+  spells (shown in the spellbook, not learned yet) are items too. `type` is
+  the client's raw `Enum.SpellBookItemType` number, and `item_types` is that
+  enum as the client has it, member name to number (at most 64 members, each
+  name a letter then letters, digits and `_`), so a reader names each type
+  from the file, never from numbers it assumes; the record has no
+  `item_types` when the client has no such table. `action_id` and `spell_id`
+  are kept raw (a flyout's action id is not a spell id). `spell_name` and
+  `subtext` come from `GetSpellBookItemName` (the subtext is where a rank
+  shows, when the client gives one) and are kept only when they are 1 to 255
+  bytes with no control character and no `|`. Skill-line names are not read.
+  `passive` and `off_spec` are the client's flags. A gather walks at most 64
+  skill lines and 4096 items. Privacy **[verify]**: whether a hunter's named
+  pet shows in a spell's name or subtext (a pet's name is text the owner
+  typed); checklist item 13.
+- `actionbars`: every slot from `first_slot` to `last_slot` (1 to 180, the
+  addon's own bound: fifteen runs of twelve slots, the main bar's pages,
+  the stance and bonus bars and the multi-action bars **[verify]**; no
+  client constant gives it) that answered something. In a vehicle or while
+  skyriding the client fills some slots with temporary actions
+  **[verify]**, so a capture is taken outside both; whether skyriding
+  exists on Forever is not known. `type` and `sub_type` are the client's words (letters
+  only, at most 32); `id` is kept only when it is a number. A macro slot
+  keeps an id only, never the macro's name or body: with no subtype (nil or
+  empty) the id is the macro index **[verify]**; with one, it is the spell
+  or item id the macro shows now **[verify]**. `GetMacroInfo` is asked only for a macro
+  index (never for a subtype's id, nor when the subtype was dropped as
+  secret: an out-of-range index into a C API is the crash class in
+  `docs/DATA_SOURCES.md`, 2026-09-28), only whether the index names a macro,
+  and only its count is kept in `probes`. An equipment-set slot, whose id is
+  the set's name, keeps no id. Whether a slot past the client's own range
+  answers nothing or raises an error is **[verify]**; `probes` shows which.
+- `bindings`: the keys `GetBindingKey` returns now, per binding command, for
+  every command `GetBinding` lists that is a plain upper-case name
+  (`ACTIONBUTTON1`, `MULTIACTIONBAR1BUTTON3`, `MOVEFORWARD`) and has a key.
+  A command that is not a plain upper-case name (text after the name, as in
+  `MACRO x`, or other characters) is counted in `commands_left_out` and
+  never asked about or stored: a macro's name is text the owner typed. `GetBinding` lists the
+  client's named commands; whether a key bound straight to a spell, macro,
+  item or click (a spell dragged onto a key, an action-bar addon's button)
+  is listed at all is **[verify]**, so `commands_left_out` counts only those
+  `GetBinding` listed, and such keys may be in neither count. A key that is
+  not printable ASCII without a space is counted in `keys_left_out`.
+  `commands` is every command `GetBinding` gave. `binding_set` is
+  `GetCurrentBindingSet`'s raw value, and `account_bindings` and
+  `character_bindings` are the client's `ACCOUNT_BINDINGS` and
+  `CHARACTER_BINDINGS` (the names are **[verify]**), so a reader names the
+  set, and so which `bindings-cache.wtf` applies, from the file. A gather
+  walks at most 4096 commands.
 - `probe.lost` is set when `WowLabCharDB` loaded as a table without a probe,
   for that load only; a later load that finds the probe clears it. A first
   load and a file that failed to load both show `loads = 1`.
@@ -228,7 +364,7 @@ saved list. `customization` also gets `events_received` the same way
 session) is written with its plain "switched off by the owner" reason and
 nothing else. `collections.appearances` has no events, so its reason gets
 nothing added. After M11-04, any change to the format is a new schema:
-M11-29's is schema 2, and the next one is schema 3.
+M11-29's is schema 2, M13-05's is schema 3, and the next one is schema 4.
 
 ### Switching a section off
 
@@ -261,6 +397,7 @@ hold several sections:
 - `Collections.lua`: `collections.mounts`, `collections.toys`, `collections.pets`, `collections.appearances`
 - `Currencies.lua`: `currencies`
 - `Professions.lua`: `professions`
+- `Actions.lua`: `spellbook`, `actionbars`, `bindings`
 - `Core.lua` holds no section: events, tables and the slash command.
 
 The list is saved as `WowLabCharDB.skip = { "<section key>", ... }` (section
@@ -474,6 +611,24 @@ on from one, fails the test until someone lists it on purpose.
 | `C_CurrencyInfo.GetCurrencyFilter` | currencies: filter state, recorded | [verify] | yes |
 | `GetProfessions` | professions: indices | [verify] | yes |
 | `GetProfessionInfo` | professions: rank, max, skill line, modifier | [verify] | yes |
+| `InCombatLockdown` | spellbook, actionbars, bindings: nothing is read in combat, or when this cannot say (schema 3) | [verify] | yes |
+| `issecretvalue` | spellbook, actionbars, bindings: each value is tested before it is used or stored; a secret one is dropped and counted (the name itself is [verify]) | [verify] | no |
+| `C_Secrets` | spellbook, actionbars, bindings: looked up, never called; its probe says whether the client has the table | [verify] | no |
+| `canaccessvalue` | spellbook, actionbars, bindings: looked up, never called; its probe says whether the client has it | [verify] | no |
+| `Enum.SpellBookItemType` | spellbook: `item_types`, member name to number, read from the client | [verify] | n/a (table) |
+| `ACCOUNT_BINDINGS` | bindings: the client's value for the account-wide set, recorded beside `binding_set` | [verify] | n/a (constant) |
+| `CHARACTER_BINDINGS` | bindings: the client's value for the character's set, recorded beside `binding_set` | [verify] | n/a (constant) |
+| `C_SpellBook.GetNumSpellBookSkillLines` | spellbook: how many skill lines | [verify] | yes |
+| `C_SpellBook.GetSpellBookSkillLineInfo` | spellbook: each line's item offset and count, guild, hidden and spec flags (the line's `name` is never read) | [verify] | yes |
+| `C_SpellBook.GetSpellBookItemInfo` | spellbook: item type, action and spell id, passive and off-spec flags (its `name` field is never read) | [verify] | yes |
+| `C_SpellBook.GetSpellBookItemName` | spellbook: the spell's name and subtext (a rank where the client gives one) | [verify] | yes |
+| `Enum.SpellBookSpellBank` | spellbook: the `Player` bank value, read, never assumed | [verify] | n/a (table) |
+| `GetActionInfo` | actionbars: type, id and subtype per slot, 1 to 180 | [verify] | yes |
+| `GetMacroInfo` | actionbars: probe only, whether a macro slot's id names a macro, asked only when the slot has no subtype (name and body never stored) | [verify] | yes |
+| `GetCurrentBindingSet` | bindings: which binding set is active, raw | [verify] | yes |
+| `GetNumBindings` | bindings: how many binding commands | [verify] | yes |
+| `GetBinding` | bindings: each command (first return only) | [verify] | yes |
+| `GetBindingKey` | bindings: the keys bound to a command now | [verify] | yes |
 
 Addon-defined globals: `WowLabCharDB`, `WowLabDB`, `SLASH_WOWLAB1`.
 
@@ -488,7 +643,10 @@ they are **[verify]** like every other event: `ACTIVE_COMBAT_CONFIG_CHANGED`, `P
 `BARBER_SHOP_OPEN`, `BARBER_SHOP_APPEARANCE_APPLIED`, `NEW_MOUNT_ADDED`,
 `COMPANION_LEARNED`, `NEW_TOY_ADDED`, `TOYS_UPDATED`, `NEW_PET_ADDED`,
 `PET_JOURNAL_LIST_UPDATE`, `CURRENCY_DISPLAY_UPDATE`,
-`SKILL_LINES_CHANGED`. An event the client does not know is skipped and
+`SKILL_LINES_CHANGED`, and since schema 3 `SPELLS_CHANGED`,
+`ACTIONBAR_SLOT_CHANGED`, `UPDATE_BINDINGS` and `PLAYER_REGEN_ENABLED` (a
+retry event: it re-gathers only a section a blocked gather left dirty). An
+event the client does not know is skipped and
 listed in the section's `events_unregistered` (an empty list when none was
 refused).
 
@@ -593,6 +751,105 @@ Items:
 16. Whether the "recording in 15 s" line was on screen when the world
     appeared, how many seconds were left, and whether
     `LOADING_SCREEN_DISABLED` is a known event on Forever.
+
+## M13-05 [verify] checklist
+
+What the owner's schema-3 capture must settle (the conductor's runbook is
+`docs/handoffs/M13-05.md`). Every API `Actions.lua` asks is **[verify]**
+until a capture shows it ran. Each item ends up confirmed, contradicted (with
+what Forever returned) or still open in the dated `docs/LAB_FORMATS.md`
+amendment that follows the capture.
+
+Capture steps beyond §13.1's: log in out of combat, not in a vehicle and not
+skyriding (both swap the main bar's page), and wait for the "recording in
+15 s" pass; have on an action bar at least one spell, one item, one macro
+whose first line is `#showtooltip <spell>` and one plain-text macro with no
+`#showtooltip`; drag one spell straight onto a key in the key bindings panel
+if the client allows it, and, if an action-bar addon is installed, bind one
+of its buttons to a key; open the key bindings panel once and note whether
+"Character Specific Key Bindings" is ticked; then log out.
+
+Combat steps (optional; each `/reload` writes the file, so copy it aside
+after each one you want to keep):
+
+- `/reload` while fighting a training dummy and keep fighting past the 15 s
+  pass, then `/reload` again still in combat: that file shows the combat
+  reason on all three sections (nothing was gathered in that session).
+- Then end combat, wait at least 3 s (the debounce is 2 s), pull the dummy
+  again and `/reload` in combat. Records present means the retry ran; the
+  combat reason means it did not. Don't use `/wowlab save` in between.
+- Separately: after a clean first pass out of combat, pull the dummy and
+  `/reload` in combat: that file still holds the pre-fight records, not the
+  reason.
+
+Restricted content (optional): in an instance, between pulls (out of
+combat), `/wowlab save` and `/reload`: whether any probe's `secret` count is
+above 0 there.
+
+Items:
+
+1. `schema = 3` in both variables, and `probe.loads` rising across the
+   first schema-3 write.
+2. `probes` on `spellbook`, `actionbars` and `bindings`: for each API,
+   `present`, `calls`, `errors`, `answered` and `secret`. Any `errors` above
+   0, or a function `present = false`, is a finding. `issecretvalue`:
+   whether Forever has it at all (forever-addon-kit's 69893 list does not),
+   and, if it does, `answered` equal to `calls` (it gave a boolean each
+   time). `C_Secrets` and `canaccessvalue`: whether each is `present`
+   (looked up only, never called).
+3. `spellbook` is not absent with `"Enum.SpellBookSpellBank.Player missing"`;
+   its `skill_lines` offsets and counts match the spellbook on screen.
+4. `subtext` and ranks: whether ranks show as text (`"Rank 3"`) and which
+   other subtexts appear (settles part of M13-06's rank question); how a
+   spell with several ranks appears (one item, or one per rank); whether
+   the spellbook has a "show all ranks" toggle and what the file holds with
+   it on and off. `item_types` as the client has it, the `type` numbers
+   seen, and whether a flyout's `action_id` differs from its `spell_id`.
+5. A future spell (shown in the spellbook, not learned yet): its `type`
+   (`FutureSpell` in `item_types`?) and whether it has a `spell_id`.
+6. `actionbars`: whether slots past the client's own range answer nothing
+   or raise an error (`GetActionInfo` `errors`), and the highest filled
+   slot, taken out of a vehicle and not skyriding.
+7. Macro slots: `type = "macro"`; for the `#showtooltip <spell>` macro,
+   whether `sub_type` is set and `id` is the spell's id; for the plain-text
+   macro, no `sub_type` and an `id` that is the macro index. Compare the
+   index with the `VER 3 <id>` of that macro in the account folder's or the
+   character folder's `macros-cache.txt`, and record how account and
+   character indices are numbered **[verify]**. `GetMacroInfo` `calls` equal to the
+   macro slots with no `sub_type`, and `answered` equal to `calls`. No
+   macro name or body anywhere in the file.
+8. `bindings`: `binding_set` against the ticked "Character Specific Key
+   Bindings", with `account_bindings` and `character_bindings` present and
+   naming it, and the keys against the matching `bindings-cache.wtf`
+   (account folder or character folder). Whether the spell dragged onto a
+   key and the action-bar addon's key appear at all: as a counted
+   `commands_left_out`, or nowhere (then `GetBinding` does not list them).
+   `commands_left_out` and `keys_left_out` as counts only; no `MACRO`,
+   `SPELL`, `ITEM` or `CLICK` command stored.
+9. `talents.legacy.left_out_config` equals `talents.class.config.id` when
+   both gathers ran at the same moment; a `left_out_config_absent` reason is
+   a finding.
+10. `events_unregistered` on the three new sections: whether
+    `SPELLS_CHANGED`, `ACTIONBAR_SLOT_CHANGED`, `UPDATE_BINDINGS` and
+    `PLAYER_REGEN_ENABLED` are known.
+11. Combat, if those steps were done: the reason only in the file written
+    while nothing had been gathered; the retry after combat: end combat,
+    wait at least 3 s (the debounce is 2 s), pull the dummy again and
+    `/reload` in combat. Records present means the retry ran; the combat
+    reason means it did not. Don't use `/wowlab save` in between. And the
+    pre-fight records kept through a `/reload` in combat.
+12. Restricted content, if that step was done: any `secret` count above 0
+    in an instance out of combat is a finding (which API, how many).
+13. Privacy, on a hunter with a named pet: grep the capture for the pet's
+    name (and `macros-cache.txt`'s macro names); any match is a finding
+    against the scrub and against this section.
+14. Hitches: whether the first pass stutters, and whether the end of a
+    fight does after a gather was blocked (only then does
+    `PLAYER_REGEN_ENABLED` re-read anything).
+
+If the client crashes at login or within the first pass, untick WowLab or
+`/wowlab skip spellbook` (or `actionbars`, `bindings`) as in
+"Switching a section off", and report the file and line.
 
 ## M11-29 capture step
 

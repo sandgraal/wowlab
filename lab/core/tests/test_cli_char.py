@@ -206,12 +206,12 @@ def test_constructed_unknown_character_is_a_usage_error(flavor: Path) -> None:
     assert "no character folder 'Nobody'" in result.stderr
 
 
-def test_constructed_schema_3_capture_is_refused(flavor: Path) -> None:
-    # Schema 2 is known since M11-29, so the first unknown schema is 3.
-    _lab_file(flavor, FIRST).write_bytes(b'\r\nWowLabCharDB = {\r\n["schema"] = 3,\r\n}\r\n')
+def test_constructed_schema_4_capture_is_refused(flavor: Path) -> None:
+    # Schema 2 is known since M11-29 and 3 since M13-05, so the first unknown is 4.
+    _lab_file(flavor, FIRST).write_bytes(b'\r\nWowLabCharDB = {\r\n["schema"] = 4,\r\n}\r\n')
     result = run("char", "show", "--character", FIRST)
     assert result.exit_code == 1
-    assert "WowLabCharDB is schema 3, and this reader knows schema 1, 2 only" in result.stderr
+    assert "WowLabCharDB is schema 4, and this reader knows schema 1, 2, 3 only" in result.stderr
     assert result.stdout == ""
 
 
@@ -232,6 +232,78 @@ def test_constructed_schema_2_capture_is_shown(flavor: Path) -> None:
     shown = run("char", "show", "--character", FIRST, "--json")
     assert shown.exit_code == 0
     assert json.loads(shown.stdout)["record"]["schema"] == 2
+
+
+_SCHEMA_3_SECTIONS = (
+    b'["spellbook"] = {\r\n["skill_lines"] = {\r\n{\r\n["index"] = 1,\r\n["offset"] = 0,\r\n'
+    b'["count"] = 1,\r\n},\r\n},\r\n["list"] = {\r\n{\r\n["slot"] = 1,\r\n["skill_line"] = 1,\r\n'
+    b'["spell_id"] = 6603,\r\n["spell_name"] = "Auto Attack",\r\n["passive"] = false,\r\n},\r\n'
+    b'},\r\n["probes"] = {\r\n{\r\n["api"] = "C_SpellBook.GetSpellBookItemInfo",\r\n'
+    b'["present"] = true,\r\n["calls"] = 1,\r\n["errors"] = 0,\r\n["answered"] = 1,\r\n'
+    b'["secret"] = 0,\r\n},\r\n'
+    b'},\r\n["events_unregistered"] = {\r\n},\r\n},\r\n'
+    b'["actionbars"] = {\r\n["absent"] = "in combat: this section reads only out of combat, and '
+    b'gathers again when combat ends",\r\n["events_unregistered"] = {\r\n},\r\n},\r\n'
+    b'["bindings"] = {\r\n["commands"] = 2,\r\n["commands_left_out"] = 1,\r\n'
+    b'["keys_left_out"] = 0,\r\n["list"] = {\r\n{\r\n["command"] = "ACTIONBUTTON1",\r\n'
+    b'["keys"] = {\r\n"1",\r\n},\r\n},\r\n},\r\n["probes"] = {\r\n},\r\n},\r\n'
+)
+
+
+def test_constructed_schema_3_capture_is_shown(flavor: Path) -> None:
+    """M13-05: the real capture with its schema number changed to 3 and the
+    three new sections added, as the addon writes them (one absent for
+    combat), prints the schema-1 lines it printed before plus the new ones,
+    and its --json validates as `CharShowReport`."""
+    target = _lab_file(flavor, FIRST)
+    before = ok("char", "show", "--character", FIRST).stdout
+    data = target.read_bytes()
+    head = b"\r\nWowLabCharDB = {\r\n"
+    assert data.startswith(head) and data.count(b'["schema"] = 1,') == 1
+    stat = target.stat()
+    changed = (
+        head
+        + _SCHEMA_3_SECTIONS
+        + data[len(head) :].replace(b'["schema"] = 1,', b'["schema"] = 3,')
+    )
+    target.write_bytes(changed)
+    os.utime(target, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    after = ok("char", "show", "--character", FIRST).stdout
+    added = [line for line in after.splitlines() if line not in before.splitlines()]
+    assert added == [
+        # Under Legacy candidates: this constructed file has no left_out key.
+        "  the config left out as the active class config is not in the file",
+        # After Professions, in the section order.
+        "Spellbook: 1 item in 1 skill line, 0 passive, 1 with a name, 0 with a subtext (ids, "
+        "names and subtexts in --json); read out of combat",
+        "  by type: 1 type not kept (Enum.SpellBookItemType is not in the record); future (not "
+        "yet learned) spells are items too",
+        "  skill line 1: 1 item, slots 1 to 1",
+        "  C_SpellBook.GetSpellBookItemInfo: present, 1 call, 0 raised an error, 1 answered, "
+        "0 answered nothing, 0 values dropped as secret or untestable (see issecretvalue's "
+        "errors)",
+        "  all its change events registered",
+        "Action bars: the addon was in combat (or could not tell) at its last gather of this "
+        "section in the session that wrote this file, and had gathered nothing for it earlier "
+        "in that session: absent (in combat: this section reads only out of combat, and gathers "
+        "again when combat ends); all its change events registered",
+        "Key bindings: 1 command with a key, of 2 listed (commands and keys in --json); binding "
+        "set not returned; read out of combat",
+        "  left out: 1 command of those listed not a plain upper-case name (text after the name, "
+        "as in MACRO x, or other characters; never asked about), 0 keys not printable ASCII",
+        "  a key bound straight to a spell, macro, item or click may not be listed by GetBinding "
+        "at all [verify]",
+        "  probes: none recorded",
+    ], added
+    assert [line for line in after.splitlines() if line in before.splitlines()] == (
+        before.splitlines()
+    )
+    report = cli.CharShowReport.model_validate_json(
+        ok("char", "show", "--character", FIRST, "--json").stdout
+    )
+    assert isinstance(report.record, labaddon.CharDBV3)
+    assert report.record == labaddon.read_char(target)
+    assert report.unknown_keys == []
 
 
 def test_constructed_tampered_text_is_refused_without_echo(flavor: Path) -> None:

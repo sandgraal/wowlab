@@ -1,6 +1,6 @@
 ## Interface: @WOWLAB_INTERFACE@
 ## Title: WowLab
-## Notes: Records this character's gear, talents, appearance choices, collections, currencies and professions for the local wowlab tools. No names, realms or GUIDs.
+## Notes: Records this character's gear, talents, appearance choices, collections, currencies, professions, spellbook, action bars and key bindings for the local wowlab tools. No names, realms or GUIDs.
 ## SavedVariables: WowLabDB
 ## SavedVariablesPerCharacter: WowLabCharDB
 
@@ -15,3 +15,4 @@ Customization.lua
 Collections.lua
 Currencies.lua
 Professions.lua
+Actions.lua

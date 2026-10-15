@@ -5018,8 +5018,8 @@ class CharShowReport(_Out):
     file: str  # relative to the flavor folder
     mtime_ns: int
     account_file: str | None
-    account_record: labaddon.AccountDBV1 | labaddon.AccountDBV2 | None
-    record: labaddon.CharDBV1 | labaddon.CharDBV2
+    account_record: labaddon.AccountDBV1 | labaddon.AccountDBV2 | labaddon.AccountDBV3 | None
+    record: labaddon.CharDBV1 | labaddon.CharDBV2 | labaddon.CharDBV3
     skip_known: list[str]  # section keys in `skip` this reader knows
     skip_ignored: list[str]  # the rest of `skip`, kept in `record` and ignored
     customization_loads_ago: int | None
