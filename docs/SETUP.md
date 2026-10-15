@@ -104,8 +104,9 @@ token has no documented check that spends no usage, so the workflows check
 only that the secret is present. When the token is expired or revoked, or a
 usage limit is reached, the Claude step itself fails: the PR review's check
 goes red and its tracking comment reads "Claude encountered an error", with
-no verdict unless the review had already finished, and a scheduled wiki pass
-pushes nothing and comments on the open `wiki-daily` issue.
+no verdict unless the review had already finished, and a wiki pass on `main`,
+scheduled or run by hand, pushes nothing and comments on the open
+`wiki-daily` issue, or opens one if none is open.
 When the token expires, repeat steps 1 and 2.
 
 ## Claude Code

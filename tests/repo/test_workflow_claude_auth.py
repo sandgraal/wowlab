@@ -6,9 +6,11 @@ a pay-as-you-go API key (wiki-daily run 38659417983 skipped on "credit
 balance too low"). These tests read `.github/workflows/*.yml` as data: no
 workflow names the API-key secret, the Console workspace header, or the old
 API preflight; each Claude step takes the token; each "Check secret" step
-checks the token and skips cleanly without it; and the Claude steps run on
-that check alone, so a usage-limit failure fails the step rather than being
-skipped as a preflight result.
+checks the token and skips cleanly without it (its script is run with bash,
+with and without a token); the token is referenced only by that check and by
+the Claude step, nowhere else in any workflow; and the Claude steps run on
+that check alone, with no `continue-on-error`, so a usage-limit failure fails
+the step rather than being skipped as a preflight result.
 
 A usage-limit failure in the Claude step is reported by the action as
 is_error:true; `test_constructed_a_usage_limit_result_is_diagnosed` in
@@ -17,7 +19,10 @@ is_error:true; `test_constructed_a_usage_limit_result_is_diagnosed` in
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -108,4 +113,119 @@ def test_the_secret_check_checks_the_token_and_gates_the_claude_step(name: str) 
                 # The Claude step runs on the presence check alone (no
                 # preflight), and is never allowed to fail quietly.
                 assert step["if"] == PRESENT
-                assert step.get("continue-on-error") is not True
+                # Absent entirely: `continue-on-error: ${{ true }}` or any
+                # other expression would also let it fail quietly.
+                assert "continue-on-error" not in step
+
+
+# Any spelling of the secret reference: `secrets.X`, `secrets . X`,
+# `secrets['X']`, `secrets[ "X" ]`. GitHub secret names are case-insensitive.
+SECRET_REF = re.compile(
+    r"secrets\s*(?:\.\s*CLAUDE_CODE_OAUTH_TOKEN\b"
+    r"|\[\s*(['\"])\s*CLAUDE_CODE_OAUTH_TOKEN\s*\1\s*\])",
+    re.IGNORECASE,
+)
+
+Where = tuple[Any, ...]
+
+
+def _secret_uses(node: Any, where: Where = ()) -> list[Where]:
+    """Every path in a parsed workflow whose key or string value names the secret."""
+    found: list[Where] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if isinstance(key, str) and SECRET_REF.search(key):
+                found.append((*where, key))
+            found += _secret_uses(value, (*where, key))
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            found += _secret_uses(value, (*where, i))
+    elif isinstance(node, str):
+        found += [where] * len(SECRET_REF.findall(node))
+    return found
+
+
+def _allowed_secret_uses(data: dict[str, Any]) -> list[Where]:
+    allowed: list[Where] = []
+    for job, body in data["jobs"].items():
+        for i, step in enumerate(body.get("steps", [])):
+            if step.get("id") == "secret":
+                allowed.append(("jobs", job, "steps", i, "env", "TOKEN"))
+            if str(step.get("uses", "")).startswith(ACTION):
+                allowed.append(("jobs", job, "steps", i, "with", "claude_code_oauth_token"))
+    return allowed
+
+
+def test_the_secret_pattern_matches_every_spelling() -> None:
+    for spelling in (
+        "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}",
+        "${{secrets . CLAUDE_CODE_OAUTH_TOKEN}}",
+        "${{ secrets['CLAUDE_CODE_OAUTH_TOKEN'] }}",
+        '${{ secrets[ "CLAUDE_CODE_OAUTH_TOKEN" ] }}',
+        "${{ SECRETS.claude_code_oauth_token }}",
+    ):
+        assert SECRET_REF.search(spelling), spelling
+    assert not SECRET_REF.search("CLAUDE_CODE_OAUTH_TOKEN is not set; skipping")
+    assert not SECRET_REF.search("${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_OLD }}")
+
+
+@pytest.mark.parametrize("path", _files(), ids=lambda p: p.name)
+def test_the_secret_appears_only_where_the_claude_steps_need_it(path: Path) -> None:
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(data, dict)
+    uses = _secret_uses(data)
+    if path.name not in CLAUDE_WORKFLOWS:
+        assert uses == []
+        return
+    # Exactly two: the presence check's env.TOKEN and the action's input.
+    # Not in workflow-level or job-level env, and not in any other step.
+    allowed = _allowed_secret_uses(data)
+    assert len(allowed) == 2
+    assert sorted(uses, key=repr) == sorted(allowed, key=repr)
+
+
+def _secret_check_scripts() -> list[tuple[str, str]]:
+    scripts = []
+    for name in CLAUDE_WORKFLOWS:
+        for _, steps in _claude_jobs(WORKFLOWS / name):
+            for step in steps:
+                if step.get("id") == "secret":
+                    scripts.append((name, step["run"]))
+    return scripts
+
+
+def _run_check(script: str, token: str, tmp_path: Path) -> tuple[int, str]:
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash is not on PATH")
+    out = tmp_path / f"github_output_{bool(token)}"
+    out.write_text("", encoding="utf-8")
+    env = {"PATH": os.environ.get("PATH", ""), "TOKEN": token, "GITHUB_OUTPUT": str(out)}
+    # The same shell GitHub uses for `shell: bash`.
+    done = subprocess.run(
+        [bash, "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    return done.returncode, out.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("name", "script"), [pytest.param(n, s, id=n) for n, s in _secret_check_scripts()]
+)
+def test_the_secret_check_really_skips_without_the_token(
+    name: str, script: str, tmp_path: Path
+) -> None:
+    code, output = _run_check(script, "", tmp_path)
+    assert code == 0, name
+    assert output.split() == ["present=false"], name
+    code, output = _run_check(script, "dummy-not-a-token", tmp_path)
+    assert code == 0, name
+    assert output.split() == ["present=true"], name
+
+
+def test_every_claude_workflow_has_a_secret_check_script() -> None:
+    assert sorted(name for name, _ in _secret_check_scripts()) == sorted(CLAUDE_WORKFLOWS)
