@@ -16,6 +16,7 @@ release-notes template are read as they are.
 from __future__ import annotations
 
 import io
+import json
 import re
 import tarfile
 import tomllib
@@ -70,12 +71,24 @@ def test_the_only_trigger_is_a_pushed_v_tag() -> None:
 def test_the_token_is_read_only_except_on_the_release_job() -> None:
     assert _workflow()["permissions"] == {"contents": "read"}
     jobs = _jobs()
-    assert set(jobs) == {"version", "test", "build", "release"}
+    assert set(jobs) == {"version", "test", "build", "smoke", "release"}
     assert {n: j.get("permissions") for n, j in jobs.items()} == {
         "version": None,
         "test": None,
         "build": None,
+        "smoke": None,
         "release": {"contents": "write"},
+    }
+
+
+def test_every_publish_waits_for_the_release_environment() -> None:
+    jobs = _jobs()
+    assert {n: j.get("environment") for n, j in jobs.items()} == {
+        "version": None,
+        "test": None,
+        "build": None,
+        "smoke": None,
+        "release": "release",
     }
 
 
@@ -112,7 +125,7 @@ def test_no_expression_is_spliced_into_a_shell_script() -> None:
 
 def test_the_release_job_runs_no_repository_code() -> None:
     release = _jobs()["release"]
-    assert release["needs"] == ["version", "test", "build"]
+    assert release["needs"] == ["version", "test", "build", "smoke"]
     assert "if" not in release  # the implicit success(): any failure publishes nothing
     uses = [s["uses"].split("@")[0] for s in release["steps"] if "uses" in s]
     assert uses == ["actions/download-artifact"]
@@ -123,8 +136,6 @@ def test_the_release_job_runs_no_repository_code() -> None:
 def test_the_release_publishes_the_three_checked_files() -> None:
     release = _jobs()["release"]
     steps = release["steps"]
-    verify = next(s for s in steps if s.get("name") == "The files are the ones the build checked")
-    assert "sha256sum -c SHA256SUMS" in verify["run"]
     create = next(s for s in steps if s.get("name") == "Create the release")
     run = create["run"]
     assert create["env"] == {"GH_TOKEN": "${{ github.token }}"}
@@ -147,6 +158,8 @@ def test_the_version_check_gates_every_other_job() -> None:
     )
     for name in ("test", "build"):
         assert jobs[name]["needs"] == "version", name
+    assert jobs["smoke"]["needs"] == ["version", "build"]
+    for name in jobs:
         assert "if" not in jobs[name], name
     # The tagged commit is on main: a release is built from reviewed code only.
     runs = [s.get("run", "") for s in version["steps"]]
@@ -155,25 +168,110 @@ def test_the_version_check_gates_every_other_job() -> None:
     assert checkout["with"]["fetch-depth"] == 0
 
 
-def test_the_build_checks_the_files_sums_them_and_runs_the_installed_tool() -> None:
-    steps = _jobs()["build"]["steps"]
+HASHED = {
+    "wheel_sha256": "${{ steps.hashes.outputs.wheel_sha256 }}",
+    "sdist_sha256": "${{ steps.hashes.outputs.sdist_sha256 }}",
+    "notes_sha256": "${{ steps.hashes.outputs.notes_sha256 }}",
+}
+
+
+def test_the_build_hashes_checks_sums_and_uploads_and_never_runs_the_wheel() -> None:
+    build = _jobs()["build"]
+    steps = build["steps"]
     runs = [" ".join(s.get("run", "").split()) for s in steps]
     order = [
         "uv build --package wowlab-core --no-sources --no-create-gitignore "
         "--build-constraints lab/core/build-constraints.txt --require-hashes "
         '--out-dir "$RUNNER_TEMP/dist"',
+        'scripts/release_check.py notes --tag "$TAG" --version "$VERSION"',
+        'echo "wheel_sha256=$(sha256sum -- "$RUNNER_TEMP/dist/$WHEEL" | cut -d\' \' -f1)"',
         'scripts/release_check.py dist --dir "$RUNNER_TEMP/dist" --version "$VERSION"',
         'sha256sum -- "$WHEEL" "$SDIST" > SHA256SUMS',
-        'uv tool install --python "$PYTHON_VERSION" "release/$WHEEL"',
-        'scripts/release_check.py notes --tag "$TAG" --version "$VERSION"',
     ]
     at = [next(i for i, r in enumerate(runs) if needle in r) for needle in order]
     assert at == sorted(at)
+    # The hashes are job outputs, written by one step with an id.
+    hashes = steps[at[2]]
+    assert hashes["id"] == "hashes"
+    for key in HASHED:
+        assert f'echo "{key}=$(sha256sum -- ' in hashes["run"]
+    assert '>> "$GITHUB_OUTPUT"' in hashes["run"]
+    assert build["outputs"] == HASHED
+    # The upload is the last step, and nothing in the job runs what was built.
+    assert steps[-1]["uses"].startswith("actions/upload-artifact@")
+    assert steps[-1]["with"]["path"] == "release/"
     joined = " ".join(runs)
-    assert '"$UV_TOOL_BIN_DIR/wowlab" --version)" = "wowlab $VERSION"' in joined
-    assert '"$UV_TOOL_BIN_DIR/wowlab" doctor --offline --json' in joined
-    upload = next(s for s in steps if s.get("uses", "").startswith("actions/upload-artifact@"))
-    assert upload["with"]["path"] == "release/"
+    assert not re.search(r"\buv tool\b|\bwowlab\b(?!-core)|\bpip install\b", joined)
+
+
+def _verifies_against_build_outputs(job: dict[str, Any]) -> dict[str, Any]:
+    env = job["env"]
+    assert env["WHEEL_SHA256"] == "${{ needs.build.outputs.wheel_sha256 }}"
+    assert env["SDIST_SHA256"] == "${{ needs.build.outputs.sdist_sha256 }}"
+    steps = job["steps"]
+    assert steps[0]["uses"].startswith("actions/download-artifact@")
+    verify = next(s for s in steps if s.get("name") == "The files are the ones the build hashed")
+    run = verify["run"]
+    expected = (
+        'printf \'%s  %s\\n\' "$WHEEL_SHA256" "$WHEEL" "$SDIST_SHA256" "$SDIST" '
+        '> "$RUNNER_TEMP/expected"'
+    )
+    assert expected in run
+    assert 'sha256sum -c "$RUNNER_TEMP/expected"' in run
+    # Not the artifact's own SHA256SUMS: it travels with the files it describes.
+    assert "sha256sum -c SHA256SUMS" not in run
+    assert steps.index(verify) == 1
+    return verify
+
+
+def test_the_smoke_job_checks_the_download_then_installs_and_runs_it() -> None:
+    smoke = _jobs()["smoke"]
+    _verifies_against_build_outputs(smoke)
+    uses = [s["uses"].split("@")[0] for s in smoke["steps"] if "uses" in s]
+    assert "actions/checkout" not in uses  # no repository code, only the wheel
+    runs = " ".join(" ".join(s.get("run", "").split()) for s in smoke["steps"])
+    assert 'uv tool install --python "$PYTHON_VERSION" "release/$WHEEL"' in runs
+    assert '"$UV_TOOL_BIN_DIR/wowlab" --version)" = "wowlab $VERSION"' in runs
+    assert '"$UV_TOOL_BIN_DIR/wowlab" doctor --offline --json' in runs
+
+
+def test_the_release_job_checks_the_download_against_the_build_outputs() -> None:
+    release = _jobs()["release"]
+    verify = _verifies_against_build_outputs(release)
+    assert release["env"]["NOTES_SHA256"] == "${{ needs.build.outputs.notes_sha256 }}"
+    assert 'sha256sum -c "$RUNNER_TEMP/expected-notes"' in verify["run"]
+    assert 'cmp "$RUNNER_TEMP/expected" SHA256SUMS' in verify["run"]
+
+
+def test_the_release_tag_rulesets() -> None:
+    rulesets = ROOT / ".github" / "rulesets"
+    create = json.loads((rulesets / "release-tags-create.json").read_text("utf-8"))
+    immutable = json.loads((rulesets / "release-tags-immutable.json").read_text("utf-8"))
+    for ruleset, name in ((create, "release-tags-create"), (immutable, "release-tags-immutable")):
+        assert ruleset["name"] == name
+        assert ruleset["target"] == "tag"
+        assert ruleset["enforcement"] == "active"
+        assert ruleset["conditions"] == {"ref_name": {"include": ["refs/tags/v*"], "exclude": []}}
+    assert create["rules"] == [{"type": "creation"}]
+    assert create["bypass_actors"] == [
+        {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}
+    ]
+    assert immutable["rules"] == [
+        {"type": "update"},
+        {"type": "deletion"},
+        {"type": "non_fast_forward"},
+    ]
+    assert immutable["bypass_actors"] == []
+
+
+def test_bootstrap_applies_the_rulesets_and_the_release_environment() -> None:
+    text = (ROOT / "scripts" / "bootstrap-github.sh").read_text(encoding="utf-8")
+    assert "for name in main release-tags-create release-tags-immutable; do" in text
+    assert 'gh api -X PUT "repos/$REPO/environments/release"' in text
+    assert '"reviewers":[{"type":"User","id":$owner_id}]' in text
+    assert '"custom_branch_policies":true' in text
+    assert "-f name='v*' -f type=tag" in text
+    assert "gh api -X PUT repos/$REPO/immutable-releases" in text
 
 
 def test_the_build_backend_is_pinned_with_hashes() -> None:
@@ -327,8 +425,14 @@ def test_constructed_a_non_canonical_or_foreign_pyproject_fails(tmp_path: Path) 
         rc.check_tag("v0.1.0", dynamic)
 
 
-def _metadata(name: str, version: str) -> bytes:
-    return f"Metadata-Version: 2.4\nName: {name}\nVersion: {version}\n\nbody\n".encode()
+LICENSE_TEXT = b"Apache License\nVersion 2.0 (constructed stand-in)\n"
+
+
+def _metadata(name: str, version: str, license_file: str | None = "LICENSE") -> bytes:
+    lines = f"Metadata-Version: 2.4\nName: {name}\nVersion: {version}\n"
+    if license_file is not None:
+        lines += f"License-File: {license_file}\n"
+    return f"{lines}\nbody\n".encode()
 
 
 def _dist(
@@ -336,19 +440,30 @@ def _dist(
     version: str = "0.1.0",
     wheel_version: str | None = None,
     sdist_version: str | None = None,
+    license_file: str | None = "LICENSE",
+    wheel_license: bytes | None = LICENSE_TEXT,
+    sdist_license: bytes | None = LICENSE_TEXT,
+    sdist_extra: tuple[str, ...] = (),
 ) -> Path:
     dist = tmp_path / "dist"
     dist.mkdir()
+    info = f"wowlab_core-{version}.dist-info"
     with zipfile.ZipFile(dist / f"wowlab_core-{version}-py3-none-any.whl", "w") as whl:
         whl.writestr(
-            f"wowlab_core-{version}.dist-info/METADATA",
-            _metadata("wowlab-core", wheel_version or version),
+            f"{info}/METADATA",
+            _metadata("wowlab-core", wheel_version or version, license_file),
         )
+        if wheel_license is not None:
+            whl.writestr(f"{info}/licenses/LICENSE", wheel_license)
+    members = {"PKG-INFO": _metadata("wowlab-core", sdist_version or version)}
+    if sdist_license is not None:
+        members["LICENSE"] = sdist_license
+    members.update(dict.fromkeys(sdist_extra, b""))
     with tarfile.open(dist / f"wowlab_core-{version}.tar.gz", "w:gz") as sdist:
-        data = _metadata("wowlab-core", sdist_version or version)
-        info = tarfile.TarInfo(f"wowlab_core-{version}/PKG-INFO")
-        info.size = len(data)
-        sdist.addfile(info, io.BytesIO(data))
+        for name, data in members.items():
+            member = tarfile.TarInfo(f"wowlab_core-{version}/{name}")
+            member.size = len(data)
+            sdist.addfile(member, io.BytesIO(data))
     return dist
 
 
@@ -377,6 +492,34 @@ def test_constructed_metadata_naming_another_version_fails(
     with pytest.raises(rc.ReleaseError, match="states"):
         rc.check_dist(dist, "0.1.0")
     assert rc.main(["dist", "--dir", str(dist), "--version", "0.1.0"]) == 1
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"license_file": None}, r"License-File \[\], not \['LICENSE'\]"),
+        ({"license_file": "COPYING"}, r"License-File \['COPYING'\]"),
+        ({"wheel_license": None}, "has no wowlab_core-0.1.0.dist-info/licenses/LICENSE"),
+        ({"sdist_license": None}, "has no wowlab_core-0.1.0/LICENSE"),
+        ({"sdist_license": b"another text\n"}, "do not carry the same LICENSE"),
+        ({"wheel_license": b"\n", "sdist_license": b"\n"}, "do not carry the same LICENSE"),
+        ({"sdist_extra": ("tests/test_cli.py",)}, "holds the test suite"),
+    ],
+)
+def test_constructed_a_missing_or_different_license_or_a_test_suite_fails(
+    tmp_path: Path, kwargs: dict[str, Any], match: str
+) -> None:
+    dist = _dist(tmp_path, **kwargs)
+    with pytest.raises(rc.ReleaseError, match=match):
+        rc.check_dist(dist, "0.1.0")
+
+
+def test_the_sdist_takes_the_repository_license_and_leaves_the_tests_out() -> None:
+    hatch = tomllib.loads((ROOT / "lab" / "core" / "pyproject.toml").read_text("utf-8"))
+    sdist = hatch["tool"]["hatch"]["build"]["targets"]["sdist"]
+    assert sdist["exclude"] == ["/tests"]
+    assert sdist["force-include"] == {"../../LICENSE": "LICENSE"}
+    assert (ROOT / "LICENSE").read_text("utf-8").lstrip().startswith("Apache License")
 
 
 def test_the_install_line_the_readme_gives() -> None:

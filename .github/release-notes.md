@@ -19,7 +19,7 @@ Then run `wowlab --version` and `wowlab doctor --offline`.
 
 ## Check the download
 
-The wheel, the sdist and `SHA256SUMS` are attached below. Download them into one folder and run `sha256sum -c SHA256SUMS` (on macOS, `shasum -a 256 -c SHA256SUMS`); each file has to print `OK`.
+The wheel, the sdist and `SHA256SUMS` are attached below. Download them into one folder and run `sha256sum -c SHA256SUMS` (on macOS, `shasum -a 256 -c SHA256SUMS`); each file has to print `OK`. On Windows, run `Get-FileHash -Algorithm SHA256 <file>` in PowerShell for each file and compare the hash with its line in `SHA256SUMS` (the case of the letters does not matter).
 
 ## Changes to `--json` output
 

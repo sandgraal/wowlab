@@ -15,8 +15,10 @@ is published as a GitHub pre-release. With `--output` (the job's
 `$GITHUB_OUTPUT`) it appends `version`, `prerelease`, `wheel` and `sdist`.
 
 `dist` fails unless the directory holds exactly the wheel and the sdist that
-version names, and the metadata inside each states that name and version.
-Nothing is extracted; one member of each archive is read.
+version names, the metadata inside each states that name and version, both
+carry the same non-empty LICENSE (the wheel's with a `License-File: LICENSE`
+line), and the sdist holds no test suite. Nothing is extracted; named members
+are read.
 
 `notes` fills the release-notes template: `{{TAG}}`, `{{VERSION}}` and
 `{{INSTALL}}`, the one `uv tool install` line the README gives
@@ -116,46 +118,70 @@ def check_tag(tag: str, pyproject: Path = PYPROJECT) -> Release:
     return release
 
 
-def _metadata(text: bytes, where: str) -> tuple[str, str]:
+def _metadata(text: bytes, where: str) -> tuple[str, str, list[str]]:
     msg = email.parser.BytesHeaderParser().parsebytes(text)
     name, version = msg.get("Name"), msg.get("Version")
     if name is None or version is None:
         raise ReleaseError(f"{where} states no Name or no Version")
-    return str(name), str(version)
+    return str(name), str(version), [str(f) for f in msg.get_all("License-File", [])]
+
+
+def _wheel_member(whl: zipfile.ZipFile, wheel: str, member: str) -> bytes:
+    try:
+        return whl.read(member)
+    except KeyError:
+        raise ReleaseError(f"{wheel} has no {member}") from None
+
+
+def _sdist_member(sdist: tarfile.TarFile, name: str, member: str) -> bytes:
+    try:
+        info = sdist.getmember(member)
+    except KeyError:
+        raise ReleaseError(f"{name} has no {member}") from None
+    fh = sdist.extractfile(info) if info.isfile() else None
+    if fh is None:
+        raise ReleaseError(f"{name}:{member} is not a regular file")
+    with fh:
+        return fh.read()
 
 
 def check_dist(dist: Path, version: str) -> Release:
-    """ReleaseError unless `dist` holds exactly the wheel and sdist of `version`."""
+    """ReleaseError unless `dist` holds exactly the wheel and sdist of `version`.
+
+    Both state that name and version, both carry the same non-empty LICENSE
+    (the wheel as `dist-info/licenses/LICENSE` with a `License-File: LICENSE`
+    line), and the sdist holds no test suite.
+    """
     release = parse_version(version)
     found = sorted(p.name for p in dist.iterdir())
     expected = sorted([release.wheel, release.sdist])
     if found != expected:
         raise ReleaseError(f"{dist} holds {found}, not {expected}")
 
+    info = f"{DIST_NAME}-{version}.dist-info"
     with zipfile.ZipFile(dist / release.wheel) as whl:
-        member = f"{DIST_NAME}-{version}.dist-info/METADATA"
-        try:
-            meta = whl.read(member)
-        except KeyError:
-            raise ReleaseError(f"{release.wheel} has no {member}") from None
-    stated = _metadata(meta, f"{release.wheel}:{member}")
-    if stated != (PROJECT, version):
-        raise ReleaseError(f"{release.wheel} states {stated}, not {(PROJECT, version)}")
+        meta = _wheel_member(whl, release.wheel, f"{info}/METADATA")
+        wheel_license = _wheel_member(whl, release.wheel, f"{info}/licenses/LICENSE")
+    name, stated, license_files = _metadata(meta, f"{release.wheel}:{info}/METADATA")
+    if (name, stated) != (PROJECT, version):
+        raise ReleaseError(f"{release.wheel} states {(name, stated)}, not {(PROJECT, version)}")
+    if license_files != ["LICENSE"]:
+        raise ReleaseError(f"{release.wheel} states License-File {license_files}, not ['LICENSE']")
 
+    top = f"{DIST_NAME}-{version}"
     with tarfile.open(dist / release.sdist, "r:gz") as sdist:
-        member = f"{DIST_NAME}-{version}/PKG-INFO"
-        try:
-            info = sdist.getmember(member)
-        except KeyError:
-            raise ReleaseError(f"{release.sdist} has no {member}") from None
-        fh = sdist.extractfile(info) if info.isfile() else None
-        if fh is None:
-            raise ReleaseError(f"{release.sdist}:{member} is not a regular file")
-        with fh:
-            pkg_info = fh.read()
-    stated = _metadata(pkg_info, f"{release.sdist}:{member}")
-    if stated != (PROJECT, version):
-        raise ReleaseError(f"{release.sdist} states {stated}, not {(PROJECT, version)}")
+        pkg_info = _sdist_member(sdist, release.sdist, f"{top}/PKG-INFO")
+        sdist_license = _sdist_member(sdist, release.sdist, f"{top}/LICENSE")
+        tests = [
+            m for m in sdist.getnames() if m == f"{top}/tests" or m.startswith(f"{top}/tests/")
+        ]
+    name, stated, _ = _metadata(pkg_info, f"{release.sdist}:{top}/PKG-INFO")
+    if (name, stated) != (PROJECT, version):
+        raise ReleaseError(f"{release.sdist} states {(name, stated)}, not {(PROJECT, version)}")
+    if not wheel_license.strip() or wheel_license != sdist_license:
+        raise ReleaseError(f"{release.wheel} and {release.sdist} do not carry the same LICENSE")
+    if tests:
+        raise ReleaseError(f"{release.sdist} holds the test suite ({len(tests)} entries)")
     return release
 
 
