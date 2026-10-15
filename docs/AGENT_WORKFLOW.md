@@ -146,6 +146,15 @@ together with the command set of its era
 command no longer breaks CI. The conductor still documents a new command on
 the wiki at merge, or the next daily pass does.
 
+**Windows after merge (2026-10-15, owner decision).** `lab (windows)` is not
+a required check; it runs in `windows.yml` after each merge to `main`,
+nightly, and on demand for a branch (`gh workflow run windows.yml --ref
+<branch>`). Nothing blocks on it, so the conductor owns noticing it: at the
+start of each `/conduct` session and before writing a wave review, it reads
+the latest runs on `main`, and a red one becomes a ticket at the front of the
+frontier. A ticket that touches path handling, `guard`, `snapshot` or
+`process` runs it on its branch before merge.
+
 **Shared scratchpad (2026-10-15).** Parallel agents share one session
 scratchpad and overwrote each other's `ci.log` and PR-body files. Every agent
 keeps its files in a subfolder named after its ticket or PR

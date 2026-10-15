@@ -255,9 +255,9 @@ The owner accepts ADR-0031 (or amends it on the plan PR). Then the conductor, in
 
 Bring back the `lab (windows)` job on `windows-latest`, running the Lab suite as it did before 2026-09-30 (`docs/LAB_PLAN.md` §9 amendment; it caught the byte-0 lock bug on PR #59). Fix what it finds: junctions, long paths (`\\?\`), case-insensitive name collisions, `WOWLAB_WOW_ROOT` with spaces in it, files the client holds open. Per `docs/LAB_PLAN.md` §15.3 E3, also add a `macos-latest` run of the same suite. Once the Windows job is green on `main`, the conductor adds its exact name to `.github/rulesets/main.json` and an amendment to ADR-0014, and the owner re-applies the ruleset (`scripts/bootstrap-github.sh`). A fix that changes what `guard.py`, `svmerge.py` or `profiles.py` does is split off as a `T` grader ticket that lands first.
 
-*Status 2026-10-15:* the CI part merged as #173; `lab (windows)` is added to the required checks (ADR-0014 amendment; the owner re-applies the ruleset). Long paths became M13-15T/M13-15. Still owed: the human first run on a real Windows install, recorded as `docs/handoffs/M13-02.md`. The ticket stays open until then.
+*Status 2026-10-15:* the CI part merged as #173; `lab (windows)` is added to the required checks (ADR-0014 amendment; the owner re-applies the ruleset). Long paths became M13-15T/M13-15. Still owed: the human first run on a real Windows install, recorded as `docs/handoffs/M13-02.md`. The ticket stays open until then. *Amended 2026-10-15, later (owner decision):* `lab (windows)` is not required after all; it runs in `windows.yml` after each merge to `main`, nightly and on demand (ADR-0014 amendment).
 
-**Acceptance:** the Windows job is required and green on `main`; each fix has a test that runs on `windows-latest`; after M13-04 merges, a human runs the first-run flow on a real Windows install, and the conductor records it, redacted (M13-09), as `docs/handoffs/M13-02.md`; reviewed by `security-reviewer` (workflow, and any change near `guard`) and `code-reviewer`.
+**Acceptance:** the Windows job is green on `main`; each fix has a test that runs on `windows-latest`; after M13-04 merges, a human runs the first-run flow on a real Windows install, and the conductor records it, redacted (M13-09), as `docs/handoffs/M13-02.md`; reviewed by `security-reviewer` (workflow, and any change near `guard`) and `code-reviewer`.
 
 ---
 
@@ -374,14 +374,14 @@ Found in the M13-03 review. `lab/core/pyproject.toml` packaged only `src/wowlab_
 
 Found by M13-02. With `LongPathsEnabled=0`, the default on many player PCs, Windows refuses plain paths longer than 260 characters, so `guard` and `snapshot` cannot reach a file deep in an install. Write `xfail(strict=True)` graders that run on `windows-latest`: a snapshot, a restore and a `guard` write of a file whose path exceeds 260 characters, with the setting off (the CI job can turn it off in a step). Readers open plain paths too (`install` discovery, `doctor`, the format parsers), so cover a read of such a file as well. M13-02's experiment failed while building the deep tree, before any Lab code ran, so which modules fail is not yet shown. `guard.py` is load-bearing, so the graders land first.
 
-**Acceptance:** the graders fail on `main` for the stated reason on the `lab (windows)` job; reviewed by `code-reviewer`.
+**Acceptance:** the graders fail on `main` for the stated reason on the `lab (windows)` job, run on the branch with `gh workflow run windows.yml --ref <branch>` (it is off the PR path since 2026-10-15); reviewed by `code-reviewer`.
 
 ## [ ] M13-15 — Long paths on Windows: `\\?\` where the graders need it
 **Size:** M · **Depends on:** M13-15T
 
 Make the M13-15T graders pass by using extended-length (`\\?\`) paths for the filesystem calls the graders show failing (expected: `guard`, `snapshot` and the readers) on Windows, without changing behaviour on other platforms. Activate the graders by deleting their markers only.
 
-**Acceptance:** the graders pass on `lab (windows)` with the setting off; the full suite passes; reviewed by `code-reviewer` and `security-reviewer` (the write gate).
+**Acceptance:** the graders pass on `lab (windows)` with the setting off, on a run of `windows.yml` on the branch before merge; the full suite passes; reviewed by `code-reviewer` and `security-reviewer` (the write gate).
 
 ---
 

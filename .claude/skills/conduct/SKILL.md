@@ -24,6 +24,13 @@ standing decision, ADR-0013). The only files you edit are harness, docs,
   restricted to M10; explicit ids = those that are on the frontier. An id
   that is not on the frontier is not dispatched — name the open predecessor
   and ask, since the owner may know something the backlog does not.
+- Check Windows. `lab (windows)` runs only after merges, nightly and on
+  demand (`windows.yml`, ADR-0014 amendment of 2026-10-15), so nothing
+  blocks on it and the conductor owns noticing it:
+  `gh run list --workflow windows.yml --branch main -L 3 --json conclusion,headSha,url`.
+  A red finished run on `main` is a bug: file a ticket in the next docs PR
+  (or name the open one), put it first on the frontier, and tell the owner.
+  Check again before writing a wave review; a wave does not close red.
 - Two tickets need the owner, not an agent: M10-03 (capture from the real
   install; runbook in `docs/handoffs/M10-03.md`) and M10-15 (wave review).
   Say so and keep going with the rest. Tell the owner the moment M10-02
