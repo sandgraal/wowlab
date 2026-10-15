@@ -182,18 +182,92 @@ Make the M13-15T graders pass by using extended-length (`\\?\`) paths for the fi
 
 ---
 
-## [ ] M13-16 — wiki-daily: the "nothing outside the wiki changed" check sees ignored paths
+## [x] M13-16 — wiki-daily: the "nothing outside the wiki changed" check sees ignored paths
 **Size:** S · **Depends on:** —
 
 Found in the M12-14 security review of #172. The check uses `git status --porcelain`, which does not list ignored paths such as `.venv/` and `__pycache__/`. A planted `.pth` or `.pyc` would run undetected, though that needs a permission bypass first. Compare those paths too (a listing or hash of `.venv` site-packages and every `__pycache__` before and after the Claude step), and make every step that runs repository code after the model depend on that check.
 
 **Acceptance:** a constructed test or static check pins the comparison and the step order; actionlint clean; `make ci` green; reviewed by `security-reviewer`.
 
+*Status 2026-10-15:* merged as #191 (6d445c5) after four security rounds:
+- **Snapshot:** a sha256 of everything under `repo/`, ignored paths included.
+- **Step order:** later steps depend on the check.
+- **Post steps:** a final step deletes `repo/.git` and `repo/.venv` as root, so the post steps find nothing to run.
+- **PATH:** `repo/.venv/bin` is off GITHUB_PATH.
+- **Cache:** `save-cache: false`.
+- **Tolerance:** only for the empty `.claude/.cc-writes` staging directories that Claude Code itself leaves (conductor ruling).
+
+The in-job limits the reviews found are M13-19.
+
 ---
 
-## [ ] M13-17T — the file-bound memory probe is flaky on macOS runners
+## [x] M13-17T — the file-bound memory probe is flaky on macOS runners
 **Size:** S · **Depends on:** — · **[TEST]** (test-writer only)
 
 Found by M13-02. `lab/core/tests/review/test_m10_04_bounded_document_misses_memory_target.py::test_constructed_top_level_assignments_at_the_file_bound_fit_the_rss_target` projected 1769 MiB against its 1536 MiB target on `macos-latest`, then passed on a rerun with no change. Locally it measures a steady 1105 MiB. The projection multiplies the parse's RSS growth by 64, so runner noise is multiplied too. It grades `luadata.py`, which is load-bearing, so only test-writer may change it. Make the measurement robust (for example, take several samples and use the minimum, or measure a larger fraction of the bound so the multiplier is smaller) without weakening the 1536 MiB target.
 
 **Acceptance:** the probe passes 10 consecutive `lab (macos)` runs and still fails against a constructed parser that holds twice the memory; `make ci` green; reviewed by `code-reviewer`.
+
+*Status 2026-10-15:* merged as #189 (d040dd5).
+- **What changed:** the probe parses 1/16 of the bound, not 1/64, and takes the least of five fresh-interpreter samples. It keeps the input alive while parsing; freeing it had hidden growth and caused the old split. On Linux it reads `VmHWM`, because `ru_maxrss` carries over across `execve` and had measured pytest.
+- **Readings:** macOS runner 1425 MiB against 1536, Linux 1313. The twice-memory stand-in reads 2088 and 1824.
+- **Follow-up:** the same Linux fault in other probes is M13-20T.
+
+---
+
+## [ ] M13-18 — Run the test suite in parallel (pytest-xdist)
+**Size:** S · **Depends on:** —
+
+Owner request, 2026-10-15: CI is too slow. The required "Lint, typecheck, tests" job runs about 6,300 tests serially in 13 to 15 minutes, and each agent's local `make ci` takes about 13 minutes.
+
+A conductor measurement on `main` ran `pytest -n auto`: 6280 passed, 0 failed, in 442 s on the owner's 8-core Mac under load, against about 766 s serially. The slowest tests are about 40 addon review probes (12 to 33 s each).
+
+Add `pytest-xdist` to the root `dev` group, as a dev tool rather than a runtime dependency. Run `make test`, the Linux CI job, the macOS job and `windows.yml` with `-n auto`. Tests that measure RSS or CPU-time budgets, or that load the CPU on purpose, run in a second, serial pass: a marker applied in `conftest.py` by path, so no test file is edited. Memory pressure from other workers makes macOS `ru_maxrss` read low (from the M13-17T review).
+
+**Acceptance:**
+- the two passes together collect exactly the tests one run does;
+- a static test puts every module that uses `ru_maxrss` or `resource.getrusage` in the serial set;
+- the CI duration is pasted next to the last serial run;
+- `make ci` green;
+- reviewed by `code-reviewer`.
+
+*Status 2026-10-15:* dispatched (branch `m13/18-parallel-tests`).
+
+---
+
+## [ ] M13-19 — wiki-daily: post-model gates in their own job
+**Size:** M · **Depends on:** M13-16
+
+From the M13-16 reviews (security-reviewer, and the PR review of #191). Within one job, the gates after the model cannot fully protect themselves from a model that bypasses its permissions.
+
+- A write to the step's `$GITHUB_ENV` can set `BASH_ENV`, which bash reads even with `--noprofile --norc`. It can also set `LD_PRELOAD`, `GIT_*`, `UV_*` or `PYTHONPATH` for every later step, the check included.
+- Files outside `repo/` are not compared:
+  - uv's cache and managed interpreters under `RUNNER_TEMP`;
+  - `/home/runner/work/_actions/**`;
+  - the venv's base interpreter.
+- A process left running defeats a point-in-time snapshot.
+- Passwordless sudo makes the rest of the runner writable.
+
+Move `check_wiki`, gitleaks and the report out of `improve` into a job on a fresh runner. That job takes the pages only as an artifact, as `publish` already does, and runs with no post step that could run anything the model wrote. Until then, start each gate step from an empty environment (`env -i`, passing only what it needs). Add Edit/Write denies on `${RUNNER_TEMP}/**` to the model's settings as defence in depth.
+
+**Acceptance:**
+- a constructed test sets `BASH_ENV` to a script that writes a marker, and the gates never run it;
+- the gates job has no access to the model job's runner state;
+- a dry run passes;
+- actionlint clean;
+- `make ci` green;
+- reviewed by `security-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-20T — child-process memory probes measure pytest on Linux
+**Size:** S · **Depends on:** — · **[TEST]** (test-writer only)
+
+Found by M13-17T and confirmed in its code review. On Linux, `ru_maxrss` carries over across `execve`, so a child that reads its own `RUSAGE_SELF` peak starts at the high-water mark of the pytest process that launched it. M13-17T's probe read a flat 948 MiB until it switched to `VmHWM` from `/proc/self/status`. Two more probes have the same fault, so on Linux they see no growth and pass without testing anything; they are honest only on macOS:
+
+- `lab/core/tests/review/test_m10_04_dense_array_misses_memory_target.py:54-57`
+- `lab/core/tests/test_luadata_budget_constructed.py:139-145` (`…_stays_small`)
+
+Apply M13-17T's fix to every child that measures memory: read `VmHWM` on Linux and keep the input alive, keeping every target. The same file's wide-trivia and empty-tables tests also free their input before parsing, which makes them read low; fix that too. The docstring's `MAX_ENTRIES` figure is already corrected.
+
+**Acceptance:** each probe shows real growth on the Linux CI job (paste the readings) and still fails against a constructed parser that holds twice the memory; `make ci` green; reviewed by `code-reviewer`.
