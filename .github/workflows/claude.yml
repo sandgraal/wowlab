@@ -3,7 +3,9 @@ name: Claude
 # Interactive responder: a collaborator mentions @claude in an issue or PR
 # comment and it answers with the repo's AGENTS.md context loaded. Read-only
 # on the repository; it comments, it does not push. Needs the
-# ANTHROPIC_API_KEY repository secret; the job skips cleanly without it.
+# CLAUDE_CODE_OAUTH_TOKEN repository secret, a token for the owner's Claude
+# subscription (docs/SETUP.md); the job skips cleanly without it. Every run
+# counts against that subscription's usage limits.
 
 on:
   issue_comment:
@@ -28,15 +30,13 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
-    env:
-      ANTHROPIC_CUSTOM_HEADERS: "${{ vars.ANTHROPIC_WORKSPACE_ID != '' && format('anthropic-workspace-id: {0}', vars.ANTHROPIC_WORKSPACE_ID) || '' }}"
     steps:
       - name: Check secret
         id: secret
         env:
-          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
-          if [ -n "$KEY" ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "ANTHROPIC_API_KEY is not set; skipping (see docs/SETUP.md)"; echo "present=false" >> "$GITHUB_OUTPUT"; fi
+          if [ -n "$TOKEN" ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "CLAUDE_CODE_OAUTH_TOKEN is not set; skipping (see docs/SETUP.md)"; echo "present=false" >> "$GITHUB_OUTPUT"; fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.secret.outputs.present == 'true'
         with:
@@ -45,9 +45,8 @@ jobs:
       - uses: anthropics/claude-code-action@1d6de8cb0c237e7c15e9e1bdf973826ebae490cc # v1.0.248
         if: steps.secret.outputs.present == 'true'
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          # Model pinned and workspace header forwarded as in
-          # claude-review.yml; see the comment on its job `env`.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Model pinned by full id, as in claude-review.yml.
           claude_args: |
             --model claude-opus-5-5
             --max-turns 40

@@ -68,8 +68,9 @@ Handle, in order:
   above (formatting, stale lock, rebase artefact): fix, commit, push.
   Otherwise `NEEDS_IMPLEMENTER:` with the run URL. Infra flake (runner
   died, network) → `gh run rerun <id> --failed` once, then treat as real.
-  `claude-review` is *not* required; a failure there (missing secret, fork,
-  exhausted API credit) is informational.
+  `claude-review` is *not* required; it skips without the token (fork,
+  missing secret), and a failure there (subscription usage limit, expired
+  or revoked token) is informational.
 - **Unresolved review threads** (the Claude review workflow, a human, or
   Copilot): read each. Fix is yours under the rule above → fix, commit,
   push. Any other change, including one the plan or an ADR plainly calls
