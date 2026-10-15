@@ -1049,6 +1049,9 @@ wowlab doctor                       # install(s), flavors, builds, client runnin
 wowlab install show [--json]
 wowlab tree [PATH] [--explain]      # inventory; --explain adds the file-map entry per path
 wowlab explain PATH                 # what is this file, who writes it, is it safe to edit
+wowlab tree --install               # §15.6 (M13-22): install root and every flavor
+wowlab filemap gaps [--json]        # §15.6 (M13-22): paths with no file-map row
+wowlab ui                           # §15.6 (M13-24), ADR-0029: local UI, read-only in v0.1
 wowlab sv list [--account A] [--character C]
 wowlab sv dump FILE [--json] [--path 'Var.key[3].name']   # path grammar: §13.4, M11-25 note
 wowlab cvar list|get NAME [--scope global|account|character]
@@ -2905,6 +2908,10 @@ supported before M13-02's acceptance holds.
 **Numbering.** Wave 4 was the name given on 2026-09-30 to `wowlab ui`
 (ADR-0029). That wave keeps its scope and becomes Wave 5 (M14), aimed at the
 second public release.
+*Amended 2026-10-15 (owner decision 2026-10-14):* the read-only first stage
+of `wowlab ui` is pulled forward into this wave and into v0.1. Its first
+view is the install explorer (§15.6, M13-21 to M13-26). Wave 5 keeps the
+confirm flow for the `--yes` commands and the embedded pages.
 
 ### 15.1 Tickets
 
@@ -2925,9 +2932,15 @@ The owner's working names are kept beside the ticket ids.
 | D-11 | M13-11 | First public release, v0.1 | owner (the tag) |
 | — | M13-12 | Wave 4 review | conductor |
 | — | M13-13 | The 30-day gate (§15.4) | conductor counts, owner decides |
+| — | M13-21 | `wowlab_core.verdict`: the safe-to-edit answer in core (§15.6) | implementer |
+| — | M13-22 | The whole install, with file-map gaps (§15.6) | implementer |
+| — | M13-23 | Per-path detail: snapshot facts, views, hints (§15.6) | implementer |
+| — | M13-24T / M13-24 | `wowlab ui` server: graders, then the server (§15.6, ADR-0029) | test-writer, then implementer |
+| — | M13-25 | The explorer view (§15.6) | implementer |
+| — | M13-26 | Generic forms for read commands; the parity test (§15.6) | implementer |
 
-**v0.1** contains M13-02 to M13-04, M13-09 and M13-10, and M13-06 if M13-05
-has landed. M13-08 ships in v0.2 if it has not landed; v0.1 is not held for
+**v0.1** contains M13-02 to M13-04, M13-09 and M13-10, M13-21 to M13-26
+(*amended 2026-10-15*), and M13-06 if M13-05 has landed. M13-08 ships in v0.2 if it has not landed; v0.1 is not held for
 it. M13-07 ships only in the form its owner test allows.
 
 ### 15.2 What is known, and what is [verify]
@@ -3033,3 +3046,87 @@ M13-09 both touch `wowlab doctor`; each keeps its logic in its own module and
 `pr-shepherd` rebases the second. If a Windows fix changes what `guard.py`,
 `svmerge.py` or `profiles.py` does, it is split and a `T` grader ticket lands
 first (`AGENTS.md`). Wave 2's ten tickets became twenty-five; expect growth.
+
+*Amended 2026-10-15:* the explorer and the first `wowlab ui` (§15.6) are
+added to the order:
+
+```
+M13-21 verdict ─┬─ M13-22 whole install + gaps ─┐
+                └─ M13-23 per-path detail ──────┤
+M13-24T graders ── M13-24 ui server ─┬──────────┴─ M13-25 explorer view ─┐
+                                     └─ M13-26 forms + parity ───────────┴─ M13-11 v0.1
+```
+
+M13-21 and M13-24T start at once, alongside the other open M13 work. The
+critical path is M13-24T, M13-24, M13-25.
+
+### 15.6 The install explorer and the first `wowlab ui` (owner decision 2026-10-14)
+
+The owner wants a GUI over the part of the Lab that says what every file in
+an install is and whether it is safe to touch (`wowlab explain`, `wowlab
+tree --explain`, §6.2 and §6.11). They want to use it before deciding how far
+to take it. They chose to pull `wowlab ui` (ADR-0029) forward from Wave 5,
+with the explorer as its first view, and to put it in v0.1. For a stranger,
+"what is this file, and can I touch it" is the trust model of ADR-0031 made
+visible.
+
+**The data flow.** Data goes from core to the CLI's `--json` output, and from
+there to the UI. The UI runs CLI commands as subprocesses, as ADR-0029
+decides. Every fact the explorer shows is a field in a CLI JSON model,
+computed and tested in Python. The JavaScript lays the data out and holds no
+file-map logic or game rules (D3, §14.5).
+
+**What the explorer adds to the CLI.**
+- **The verdict, in core (M13-21).** The safe-to-edit wording now lives in
+  the CLI (`_edit_words`, `_TIER_WORDS`, `_restorable`). It moves to
+  `wowlab_core.verdict` as a model,
+  `Verdict{level: gate | no | not_applicable | unclassified, restorable, words}`.
+  `explain` and `tree --explain` print from that model, and their text output
+  does not change. Every Edit cell in `filemap.toml` maps to exactly one level.
+- **The whole install (M13-22).**
+  - Today `tree` covers one flavor folder. `tree --install` adds the
+    install root (the file map's `root` section) and every flavor folder,
+    and each item carries `base` and `flavor_folder`.
+  - `wowlab filemap gaps` lists the paths with no file-map row. They are
+    grouped under their nearest classified parent and ranked by file count
+    and bytes.
+  - The walk is bounded, read-only (L1), never follows a link, and reports
+    `truncated`. The gap report shows the owner where the map is thin, so
+    they can decide where to extend it.
+- **Per-path detail (M13-23).** `explain --json` gains four fields:
+  - `stat`: size and modification time.
+  - `snapshot`: the latest snapshot holding the path, and whether the live
+    file's hash differs from it.
+  - `views`: the argv of an existing read command that decodes this kind of
+    file. For example, `sv dump` for SavedVariables, `cvar list` for
+    `Config.wtf`, and `binds list`, `macros list` and `addons list` for
+    theirs. A table keyed by file-map entry id supplies these, so no new
+    decoder is written.
+  - `hints`: copyable command text, for example `wowlab snap restore ID
+    --paths P`, which `explain` never runs.
+
+**The UI, first stage.**
+- **The server (M13-24T, M13-24).** It is built exactly as ADR-0029 decides.
+  This stage runs read-only commands only: the seven `--yes` commands are
+  refused, and the ADR-0029 amendment of 2026-10-15 records the staging.
+- **The explorer view (M13-25).**
+  - A tree pane with a verdict badge on every item. It filters by verdict,
+    by "gaps only", or by text.
+  - A detail pane showing what the file is, who writes it, the verdict
+    words, the snapshot facts, and the hints with copy buttons.
+  - A Preview button that runs the entry's first view and draws the JSON as
+    a generic, collapsible, read-only tree.
+  - A gaps tab.
+  - All rendering uses `textContent`, and home paths are shown as `~`.
+- **Generic forms and the parity test (M13-26).** Every other read command
+  gets a form drawn from its declared parameters. A parity test in the
+  required `quality` job asserts that every leaf command is reachable or
+  excluded with a reason.
+
+**Previews show the player's own data** (character names, addon settings) on
+their own machine and nowhere else. Nothing is uploaded (ADR-0019). The
+server is bound to `127.0.0.1` and checks a token on every request.
+
+**What stays in Wave 5 (M14).** The confirm flow for `snap restore`, `undo`,
+`profile apply`, `addon install`, `addon remove`, `sv merge` and `snap gc`,
+and the embedded looks, talents and character pages.

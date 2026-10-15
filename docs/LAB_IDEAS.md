@@ -30,7 +30,7 @@ repository if the owner ever wants it.
 
 | Idea | What it is | Tier | Needs | New | Size |
 |---|---|---|---|---|---|
-| **explorer** | Local static site generated from an install: every file annotated from the file map, with inline decoders (SavedVariables tree view, CVar tables, TOC view, snapshot timeline) | A | layout, luadata, wtfconfig, toc, snapshot | site generator | M |
+| **explorer** *(picked 2026-10-14 as the first view of `wowlab ui`: M13-21 to M13-25, `docs/LAB_PLAN.md` §15.6)* | Local static site generated from an install: every file annotated from the file map, with inline decoders (SavedVariables tree view, CVar tables, TOC view, snapshot timeline) | A | layout, luadata, wtfconfig, toc, snapshot | site generator | M |
 | **wow-as-code** | Desired-state file (YAML) for CVars, binds, macros, enabled addons and chosen addon settings; `plan` / `apply` / `rollback`, drift detection, import current state | A | wtfconfig, luadata serializer, guard | writers for the WTF text formats | M |
 | **profiles** | Named whole-UI states (`raid`, `gamepad`, `clean`) switched with one command; built on snapshots restricted to chosen subtrees | A | snapshot, guard | subtree presets, merge rules | S |
 | **sv-merge** | Three-way structural merge of SavedVariables (copy one addon's settings between characters or machines without clobbering the rest) | A | luadata | merge engine | S |
