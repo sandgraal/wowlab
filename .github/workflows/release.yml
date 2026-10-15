@@ -1,0 +1,243 @@
+name: Release
+
+# Pushing a tag `v*` builds wowlab-core and publishes a GitHub Release with
+# three files: the wheel, the sdist and SHA256SUMS (ADR-0031, M13-03). The
+# tag has to be exactly `v` plus the package version (docs/LAB_PLAN.md §15.3,
+# E5); a PEP 440 pre-release or development version becomes a GitHub
+# pre-release. Nothing is published unless every job before `release`
+# succeeds and the owner approves the `release` environment. No PyPI, no
+# other registry, no secret but the job token. Who may create a `v*` tag, and
+# that a tag never moves, are rulesets (.github/rulesets/release-tags-*.json,
+# applied by scripts/bootstrap-github.sh).
+on:
+  push:
+    tags: ["v*"]
+
+# The token is read-only everywhere except the `release` job, which runs no
+# code from the repository: it downloads the checked files and calls `gh`.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  UV_VERSION: "0.12.12"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  version:
+    name: Tag equals the package version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
+      wheel: ${{ steps.check.outputs.wheel }}
+      sdist: ${{ steps.check.outputs.sdist }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      # A release is built from reviewed code only: the tagged commit has to
+      # be on main.
+      - name: The tagged commit is on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - name: The tag is v plus the version in lab/core/pyproject.toml
+        id: check
+        env:
+          TAG: ${{ github.ref_name }}
+        run: >-
+          uv run --isolated --no-project --python "$PYTHON_VERSION" --
+          python scripts/release_check.py version --tag "$TAG" --output "$GITHUB_OUTPUT"
+
+  test:
+    name: Lab suite
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - name: Install
+        run: uv sync --frozen
+      - name: Generate a decimal-comma locale (serializer determinism graders)
+        run: sudo locale-gen de_DE.UTF-8
+      - name: pytest (every suite but @live, the parser suite included)
+        run: uv run --frozen pytest -q
+
+  # Builds and checks the files, records their SHA-256 as job outputs, and
+  # uploads them. It never runs the built wheel: that happens in `smoke`, so
+  # nothing the wheel does can change the files between hashing and upload.
+  # `smoke` and `release` check what they download against these outputs.
+  build:
+    name: Build the wheel, the sdist and SHA256SUMS
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      wheel_sha256: ${{ steps.hashes.outputs.wheel_sha256 }}
+      sdist_sha256: ${{ steps.hashes.outputs.sdist_sha256 }}
+      notes_sha256: ${{ steps.hashes.outputs.notes_sha256 }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      WHEEL: ${{ needs.version.outputs.wheel }}
+      SDIST: ${{ needs.version.outputs.sdist }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      # The build backend is pinned with hashes (lab/core/build-constraints.txt);
+      # --no-sources builds from the package's own metadata, as a user's
+      # resolver sees it; --no-create-gitignore keeps the folder to the two files.
+      - name: uv build
+        run: >-
+          uv build --package wowlab-core --no-sources --no-create-gitignore
+          --build-constraints lab/core/build-constraints.txt --require-hashes
+          --out-dir "$RUNNER_TEMP/dist"
+      - name: Release notes
+        run: >-
+          uv run --isolated --no-project --python "$PYTHON_VERSION" --
+          python scripts/release_check.py notes --tag "$TAG" --version "$VERSION"
+          --repository "$GITHUB_REPOSITORY" --template .github/release-notes.md
+          --out "$RUNNER_TEMP/notes.md"
+      - name: Record each file's SHA-256
+        id: hashes
+        run: |
+          {
+            echo "wheel_sha256=$(sha256sum -- "$RUNNER_TEMP/dist/$WHEEL" | cut -d' ' -f1)"
+            echo "sdist_sha256=$(sha256sum -- "$RUNNER_TEMP/dist/$SDIST" | cut -d' ' -f1)"
+            echo "notes_sha256=$(sha256sum -- "$RUNNER_TEMP/notes.md" | cut -d' ' -f1)"
+          } >> "$GITHUB_OUTPUT"
+      - name: The built files are the wheel and sdist of the version
+        run: >-
+          uv run --isolated --no-project --python "$PYTHON_VERSION" --
+          python scripts/release_check.py dist --dir "$RUNNER_TEMP/dist" --version "$VERSION"
+      - name: SHA256SUMS
+        run: |
+          mkdir release
+          cp "$RUNNER_TEMP/dist/$WHEEL" "$RUNNER_TEMP/dist/$SDIST" "$RUNNER_TEMP/notes.md" release/
+          cd release
+          sha256sum -- "$WHEEL" "$SDIST" > SHA256SUMS
+          sha256sum -c SHA256SUMS
+          cat SHA256SUMS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release
+          path: release/
+          if-no-files-found: error
+          retention-days: 7
+
+  # The wheel installs the way the README says, into a tool directory of its
+  # own, and its console script runs. Read-only, and nothing it does reaches
+  # what `release` publishes.
+  smoke:
+    name: Install the wheel with uv tool and run it
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      WHEEL: ${{ needs.version.outputs.wheel }}
+      SDIST: ${{ needs.version.outputs.sdist }}
+      WHEEL_SHA256: ${{ needs.build.outputs.wheel_sha256 }}
+      SDIST_SHA256: ${{ needs.build.outputs.sdist_sha256 }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release
+          path: release
+      - name: The files are the ones the build hashed
+        run: |
+          printf '%s  %s\n' "$WHEEL_SHA256" "$WHEEL" "$SDIST_SHA256" "$SDIST" > "$RUNNER_TEMP/expected"
+          test "$(grep -Ecx '[0-9a-f]{64}  [^ ]+' "$RUNNER_TEMP/expected")" -eq 2
+          cd release
+          sha256sum -c "$RUNNER_TEMP/expected"
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - name: uv tool install, wowlab --version, wowlab doctor --offline
+        env:
+          UV_TOOL_DIR: ${{ runner.temp }}/uv-tools
+          UV_TOOL_BIN_DIR: ${{ runner.temp }}/uv-bin
+          WOWLAB_WOW_ROOT: ${{ runner.temp }}/no-install
+        run: |
+          mkdir -p "$WOWLAB_WOW_ROOT"
+          uv tool install --python "$PYTHON_VERSION" "release/$WHEEL"
+          test "$("$UV_TOOL_BIN_DIR/wowlab" --version)" = "wowlab $VERSION"
+          # No install on the runner: doctor reports that and exits 1, with a report.
+          set +e
+          "$UV_TOOL_BIN_DIR/wowlab" doctor --offline --json > "$RUNNER_TEMP/doctor.json"
+          code=$?
+          set -e
+          test "$code" -eq 1
+          python3 -c 'import json, sys; r = json.load(open(sys.argv[1])); assert r["install_root"] is None and r["problems"], r' "$RUNNER_TEMP/doctor.json"
+
+  release:
+    name: Publish the GitHub Release
+    needs: [version, test, build, smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Every publish waits for the owner's approval of this environment
+    # (required reviewer, `v*` tags only; scripts/bootstrap-github.sh).
+    environment: release
+    # The only job that can write: it creates the release and uploads its
+    # three files. It checks out nothing and runs no repository code.
+    permissions:
+      contents: write # gh release create: the release and its three assets
+    env:
+      TAG: ${{ github.ref_name }}
+      WHEEL: ${{ needs.version.outputs.wheel }}
+      SDIST: ${{ needs.version.outputs.sdist }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
+      WHEEL_SHA256: ${{ needs.build.outputs.wheel_sha256 }}
+      SDIST_SHA256: ${{ needs.build.outputs.sdist_sha256 }}
+      NOTES_SHA256: ${{ needs.build.outputs.notes_sha256 }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release
+          path: release
+      # Checked against the build job's outputs, not against the artifact's
+      # own SHA256SUMS, which travels with the files it describes.
+      - name: The files are the ones the build hashed
+        run: |
+          printf '%s  %s\n' "$WHEEL_SHA256" "$WHEEL" "$SDIST_SHA256" "$SDIST" > "$RUNNER_TEMP/expected"
+          printf '%s  %s\n' "$NOTES_SHA256" notes.md > "$RUNNER_TEMP/expected-notes"
+          test "$(grep -Ecx '[0-9a-f]{64}  [^ ]+' "$RUNNER_TEMP/expected")" -eq 2
+          test "$(grep -Ecx '[0-9a-f]{64}  [^ ]+' "$RUNNER_TEMP/expected-notes")" -eq 1
+          cd release
+          sha256sum -c "$RUNNER_TEMP/expected"
+          sha256sum -c "$RUNNER_TEMP/expected-notes"
+          cmp "$RUNNER_TEMP/expected" SHA256SUMS
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=()
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "wowlab $TAG" \
+            --notes-file release/notes.md \
+            --generate-notes \
+            "${flags[@]}" \
+            "release/$WHEEL" "release/$SDIST" release/SHA256SUMS
