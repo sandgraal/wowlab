@@ -238,6 +238,7 @@ jobs:
               disableBypassPermissionsMode: "disable",
               deny: [
                 "WebFetch", "WebSearch", "NotebookEdit", "Task", "Agent",
+                "Read(./.git/config)",
                 "Read(//proc/**)", "Read(//sys/**)", "Read(//etc/**)", "Read(//root/**)",
                 "Read(\($tmp)/**)",
                 "Read(//home/runner/actions-runner/**)", "Read(//home/runner/runners/**)",
