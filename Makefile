@@ -44,8 +44,17 @@ format: ## Apply ruff fixes and formatting
 typecheck: ## mypy only
 	$(UV) run --frozen mypy
 
-test: ## Full pytest suite (excludes @live)
-	$(UV) run --frozen pytest
+# Two passes (M13-18): everything not `serial` across all cores, then the
+# `serial` tests (RSS and CPU-time budgets, marked in conftest.py) alone.
+# A command-line -m replaces the one in addopts, so both keep `not live`.
+# worksteal: a few review probes take 10-40 s, and an idle worker takes
+# queued tests from a busy one instead of waiting at the end.
+PYTEST_PARALLEL := -n auto --dist worksteal -m "not live and not serial"
+PYTEST_SERIAL := -m "serial and not live"
+
+test: ## Full pytest suite (excludes @live): parallel pass, then the serial pass
+	$(UV) run --frozen pytest $(PYTEST_PARALLEL)
+	$(UV) run --frozen pytest $(PYTEST_SERIAL)
 
 test-parser: ## Parser fixtures and round-trip suites — gate for luadata.py and every format parser
 	$(UV) run --frozen pytest -m parser lab/core/tests/parser

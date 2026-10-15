@@ -21,6 +21,7 @@ dev = [
   "ruff==0.17.0",
   "mypy>=1.19",
   "pytest>=8.4",
+  "pytest-xdist>=3.8",  # dev only: `make test` and CI run the suite in parallel (M13-18)
   "pre-commit>=4.3",
   "types-psutil>=7.0",  # psutil ships no py.typed; mypy --strict needs the stubs
 ]
@@ -64,9 +65,15 @@ ignore = [
 [tool.ruff.per-file-target-version]
 ".claude/hooks/*.py" = "py39"
 "tests/harness/*.py" = "py39"
+# The root conftest.py is loaded by the hook tests under 3.9 too (M13-18).
+"conftest.py" = "py39"
 
 [tool.ruff.lint.isort]
 known-first-party = ["wowlab_core"]
+# `from conftest import …` in a suite (tests/scripts) means that suite's own
+# conftest.py, which pytest puts on sys.path. The root conftest.py (M13-18)
+# would otherwise make ruff sort `conftest` as first-party.
+known-third-party = ["conftest"]
 
 # ─── mypy ────────────────────────────────────────────────────────────────────
 [tool.mypy]
@@ -100,4 +107,5 @@ addopts = "-m 'not live' --strict-markers -ra"
 markers = [
   "parser: parser fixture and round-trip suites (make test-parser)",
   "live: hits a live external service; never runs in CI (ADR-0012)",
+  "serial: measures RSS or a CPU-time budget; runs alone after the parallel pass (conftest.py, M13-18)",
 ]
