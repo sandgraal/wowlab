@@ -61,13 +61,22 @@ def test_a_test_is_listed_once() -> None:
         assert file not in conftest.SERIAL_FILES, f"{nodeid}: its whole file is already serial"
 
 
-# What reads the machine. RSS: whoever reads it (a test, a helper, a child
-# script held in a string) needs the whole module serial. CPU clock: a call
-# of `cpu_clock()` (tests/parser/_cpu_clock.py, tests/scripts/test_lab_capture.py)
-# or of `time.process_time()`, or `time.process_time` in a child script string.
+# What reads the machine, wherever it is found (a test, a helper, a child
+# script held in a string). RSS: any read needs the whole module serial.
+# CPU clock: `cpu_clock` (tests/parser/_cpu_clock.py,
+# tests/scripts/test_lab_capture.py) or `time.process_time`, called or not
+# (`clock = time.process_time` is a read), or `time.process_time` in a child
+# script string. Imports count too (round 2, review): `from resource import
+# getrusage as usage` or `from time import process_time as cpu` hides every
+# later use behind another name, so the import itself is the read, and at
+# module level it makes the whole module serial. Two things are not reads:
+# a plain `from _cpu_clock import cpu_clock` (each call of it is found where
+# it is made) and the body of a `def cpu_clock()` (the factory returns a
+# clock; its callers are found).
 RSS_WORDS = ("ru_maxrss", "getrusage", "VmHWM")
-CPU_CALLS = frozenset({"cpu_clock", "process_time"})
+CPU_NAMES = frozenset({"cpu_clock", "process_time"})
 CPU_WORDS = ("time.process_time",)
+CLOCK_FACTORY = "cpu_clock"
 TEST_ROOTS = ("lab/core/tests", "tests")
 HERE = Path(__file__).resolve().relative_to(ROOT).as_posix()  # names the words
 
@@ -87,18 +96,32 @@ def _docstrings(tree: ast.Module) -> set[int]:
     return found
 
 
+def _import_reads(node: ast.Import | ast.ImportFrom) -> tuple[bool, bool]:
+    rss = cpu = False
+    for alias in node.names:
+        base = alias.name.rsplit(".", 1)[-1]
+        rss = rss or base in RSS_WORDS
+        if base in CPU_NAMES and (base != CLOCK_FACTORY or alias.asname not in (None, base)):
+            cpu = True
+    return rss, cpu
+
+
 def _reads(node: ast.AST, docstrings: set[int]) -> tuple[bool, bool]:
     """(reads RSS, reads a CPU clock) anywhere under `node`."""
     rss = cpu = False
-    for sub in ast.walk(node):
-        if (isinstance(sub, ast.Attribute) and sub.attr in RSS_WORDS) or (
-            isinstance(sub, ast.Name) and sub.id in RSS_WORDS
-        ):
-            rss = True
-        elif isinstance(sub, ast.Call):
-            func = sub.func
-            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-            cpu = cpu or name in CPU_CALLS
+    todo = [node]
+    while todo:
+        sub = todo.pop()
+        if isinstance(sub, ast.FunctionDef | ast.AsyncFunctionDef) and sub.name == CLOCK_FACTORY:
+            continue  # the clock factory itself; its callers are found
+        todo.extend(ast.iter_child_nodes(sub))
+        if isinstance(sub, ast.Import | ast.ImportFrom):
+            got_rss, got_cpu = _import_reads(sub)
+            rss, cpu = rss or got_rss, cpu or got_cpu
+        elif isinstance(sub, ast.Attribute | ast.Name):
+            name = sub.attr if isinstance(sub, ast.Attribute) else sub.id
+            rss = rss or name in RSS_WORDS
+            cpu = cpu or name in CPU_NAMES
         elif (
             isinstance(sub, ast.Constant)
             and isinstance(sub.value, str)
