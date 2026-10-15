@@ -1326,10 +1326,12 @@ def _ask(question: str) -> bool:
         return False
 
 
-def _choose_flavor(folders: Sequence[str]) -> int | None:
-    """Which of several flavors to snapshot, by the number the scan printed;
-    an empty answer or end of input is none."""
-    question = f"Snapshot which flavor? Enter 1 to {len(folders)}, or nothing for none"
+def _choose_flavor(labels: Sequence[str]) -> int | None:
+    """Which of several flavors to snapshot: each is listed on stderr with its
+    number, product code and version; an empty answer or end of input is none."""
+    for n, flavor_label in enumerate(labels, 1):
+        _say_err(f"  {n}) {flavor_label}")
+    question = f"Snapshot which flavor? Enter 1 to {len(labels)}, or nothing for none"
     while True:
         try:
             answer = typer.prompt(question, default="", show_default=False, err=True)
@@ -1339,9 +1341,19 @@ def _choose_flavor(folders: Sequence[str]) -> int | None:
         answer = str(answer).strip()
         if not answer:
             return None
-        if answer.isdecimal() and 1 <= int(answer) <= len(folders):
+        if answer.isdecimal() and 1 <= int(answer) <= len(labels):
             return int(answer) - 1
-        _say_err(f"Not a number from 1 to {len(folders)}: {answer}")
+        _say_err(f"Not a number from 1 to {len(labels)}: {answer}")
+
+
+def _client_descriptions(inst: install.Install) -> list[str]:
+    """The client processes `doctor` finds, one short description each."""
+    out: list[str] = []
+    for p in _client_report(inst).processes:
+        what = p.name or (p.exe.name if p.exe else "?")
+        where = f" in {p.flavor_folder}" if p.flavor_folder else ""
+        out.append(f"{what}, pid {p.pid}{where}")
+    return out
 
 
 def _first_run(
@@ -1350,18 +1362,23 @@ def _first_run(
     flavor: str | None,
     yes: bool,
     json_out: bool,
+    say: Callable[[str], None],
 ) -> firstrun.FirstRunReport:
-    """The first-run section of `doctor` (`firstrun.run`): text through `_say`,
-    nothing printed with --json, and a question only when input is a terminal
-    and neither --json nor --yes is given."""
+    """The first-run section of `doctor` (`firstrun.run`): every line through
+    `say` (the same callable the intro used; nothing with --json), and a
+    question only when input is a terminal and neither --json nor --yes is
+    given."""
     chosen = _select_flavor(inst, flavor) if inst is not None and flavor is not None else None
     asking = not json_out and not yes and _interactive()
     if not json_out:
-        _say()
+        say("")
 
     def running(f: install.Flavor) -> bool | None:
         assert inst is not None
         return _client_running(inst, f)
+
+    def names() -> list[str]:
+        return _client_descriptions(inst) if inst is not None else []
 
     return firstrun.run(
         inst,
@@ -1369,10 +1386,15 @@ def _first_run(
         chosen=chosen,
         yes=yes,
         client_running=running,
-        say=(lambda _line: None) if json_out else _say,
+        say=say,
         choose=_choose_flavor if asking else None,
         confirm=_ask if asking else None,
+        clients=names,
     )
+
+
+def _no_text(_line: str) -> None:
+    """`say` with --json: the first-run text is not printed."""
 
 
 @app.command()
@@ -1413,6 +1435,9 @@ def doctor(
     store = snapshot.SnapshotStore()
     found: list[install.Install | None] = []
     first = False
+    # Every line of the first run, intro included, goes through this one
+    # callable, so a later pass (redaction, M13-09) can wrap it in one place.
+    say: Callable[[str], None] = _no_text if json_out else _say
 
     def on_found(inst: install.Install | None) -> None:
         nonlocal first
@@ -1422,18 +1447,19 @@ def doctor(
         first = firstrun.is_first_run(store, inst)
         if first and not json_out:
             for line in firstrun.intro_lines(offline=offline, store_path=store.path):
-                _say(line)
-            _say()
+                say(line)
+            say("")
 
     report = _doctor(root, offline, on_found)
     if not json_out:
         _print_doctor(report)
     if first:
-        result = _first_run(found[0], store, flavor, yes, json_out)
+        result = _first_run(found[0], store, flavor, yes, json_out, say)
         problems = list(report.problems)
         if result.outcome == "failed":
             problems.append(f"first snapshot: {result.error}")
         report = report.model_copy(update={"first_run": result, "problems": problems})
+    # The report is complete here, first run included, before it is printed.
     if json_out:
         _emit(report)
     if report.first_run is not None and report.first_run.refused:

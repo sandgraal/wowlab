@@ -9,8 +9,10 @@ time you run `wowlab doctor`. Machine setup for developing wowlab is in
 
 The first run prints this too, before it does anything else (ADR-0031):
 
-- **It reads your install.** Looking changes nothing there and leaves no
-  temporary, cache or lock file behind.
+- **It reads your install and writes nothing there**: no temporary, cache
+  or lock file. One side effect to know about: if a sync service (OneDrive,
+  Dropbox, iCloud Drive) keeps some of your files online-only, reading one
+  makes the service download it.
 - **Only six commands change files in your install:** `snap restore`,
   `undo`, `profile apply`, `sv merge`, `addon install` and `addon remove`.
   Each one shows what it will change and asks first (unless you pass
@@ -23,11 +25,13 @@ The first run prints this too, before it does anything else (ADR-0031):
   change and downloaded game tables live in wowlab's data folder, never in
   your install. `wowlab doctor` prints where that is.
 - **Nothing is uploaded.** The only network traffic is to
-  [wago.tools](https://wago.tools), a public site of game data.
-  `wowlab doctor` downloads its public list of game versions and looks for
-  your installed versions in it; nothing from your install is sent. Run
-  `wowlab doctor --offline` to skip that. `wowlab db2` and `wowlab looks`
-  download public game tables from the same site.
+  [wago.tools](https://wago.tools), a community-run public site of game
+  data. `wowlab doctor` downloads its public list of game versions and
+  looks for your installed versions in it; nothing from your install is
+  sent. Run `wowlab doctor --offline` to skip that. `wowlab db2` and
+  `wowlab looks` download public game tables from the same site, and to
+  ask for the right ones they send your installed game version string
+  (such as `1.60.1.69913`) in the request.
 
 ## Platforms
 
@@ -60,9 +64,17 @@ below write `wowlab …`.
 ## Pointing wowlab at your install
 
 The install folder is the one that holds `.build.info`, with the flavor
-folders (named like `_name_`, one per game version you have installed)
-inside it. Without help, wowlab looks only where the game installs by
-default:
+folders inside it: one per game product you have installed (retail, a
+Classic, a PTR or a beta…), named like `_name_`. The names are not fixed:
+a beta's folder is renamed when it launches, which is why wowlab reads
+them from the install instead of assuming them.
+
+To find the folder, open the Battle.net launcher, choose the game, open
+its settings menu and pick "Show in Finder" (macOS) or "Show in Explorer"
+(Windows). On a Mac `.build.info` is a hidden file: press Cmd-Shift-. in
+Finder to show hidden files.
+
+Without help, wowlab looks only where the game installs by default:
 
 - macOS: `/Applications/World of Warcraft`
 - Windows: `World of Warcraft` at the top of each drive, then under
@@ -106,16 +118,31 @@ snapshot of this install. It goes like this:
    on the slow side on purpose. Anything unusual is said here, before any
    snapshot is taken (see below).
 4. **The offer.** In a terminal, wowlab asks whether to take the snapshot
-   (the default answer is no). With several flavors installed, it lists
-   them and asks which one; pressing Enter takes none.
-5. **The snapshot**, into wowlab's own store. Nothing is written into your
-   install.
+   (the default answer is no). With several flavors installed, it says
+   first whether the game is running, then lists them with their product
+   code and version and asks which one; pressing Enter takes none. If the
+   game is running, or wowlab cannot tell, it asks yes or no after that
+   too.
+5. **The snapshot**, into wowlab's own store, of one flavor. Nothing is
+   written into your install. If other flavors are installed, wowlab names
+   each with the command that snapshots it
+   (`wowlab snap create --flavor <folder>`).
 6. **The check**: `wowlab snap verify` runs on the store and re-hashes
    every stored file.
 7. **How to undo**, as the last line. The first run changes nothing in your
-   install, so there is nothing to undo yet; the line gives the
-   `wowlab snap restore <id>` that would put your files back as they are
-   now, and reminds you that `wowlab undo` reverses any later change.
+   install, so there is nothing to undo yet. The line names the snapshot
+   and what it holds: `WTF`, `Interface` and `Fonts` as they were on disk,
+   with SavedVariables as of your last logout or `/reload`.
+   `wowlab snap restore <id> --dry-run` shows what restoring it would
+   change. A restore also removes anything added there since, and asks
+   first (unless you pass `--yes`). `wowlab undo` reverses any later change
+   wowlab makes. With server sync on (`wowlab doctor` shows the settings),
+   the server may replace bindings, macros and settings at your next login
+   whatever a restore put back.
+
+The offer is made once per install: as soon as the store holds any
+snapshot of the install, `wowlab doctor` is the plain report again. Use
+`wowlab snap create` for later snapshots.
 
 Options for the first run:
 
@@ -134,27 +161,41 @@ would.
 
 - **A synced WTF folder.** If WTF sits inside OneDrive or Dropbox, or in a
   folder Syncthing syncs, wowlab says so and carries on; it never refuses.
-  It recognises them by folder names (`OneDrive…`, `Dropbox…`) and by the
-  marker files the services leave (`.stfolder`, a `.dropbox` file). A sync
-  service can leave online-only placeholders (reading them for a snapshot
-  makes the service download them) and conflict copies (wowlab lists them
-  and snapshots them like any other file, and never merges them), and it
-  copies whatever a later restore puts back to your other computers.
+  This is a guess from heuristics, not a certainty: it goes by folder
+  names (`OneDrive…`, `Dropbox…`) and by the marker files the services
+  leave (`.stfolder`, a `.dropbox` file). iCloud Drive and Google Drive are
+  not recognised. A sync service can leave online-only placeholders and
+  conflict copies, and it copies whatever a later restore puts back to
+  your other computers.
+  - *Online-only files* are counted. Reading them for a snapshot makes the
+    service download them; the estimate does not include that download,
+    and the snapshot fails for any file the service cannot fetch.
+    Online-only *folders* are named and not listed, since listing one
+    would download it.
+  - *Conflict copies* by Dropbox and Syncthing are listed by name and
+    snapshotted like any other file; wowlab does not merge them. OneDrive's
+    conflict copies cannot be told apart from ordinary files.
 - **Links.** A symlink, or on Windows a junction, in WTF, Interface or Fonts
   is listed with where it points. Snapshots record the link and never
   follow it, so the files behind it are not in the snapshot. If WTF itself
-  is a link, the first run says that your settings and SavedVariables are
-  not in the snapshot.
+  is a link (a common way to sync settings), the first run says that your
+  settings and SavedVariables are not in the snapshot, and to back up the
+  folder it points to yourself.
 - **A large snapshot.** The size and estimated time are always printed
   before the snapshot; a large one (a gigabyte, or a minute or more) is
   called out.
-- **Several flavors.** Each is listed with its own size and estimate, and
-  you choose which to snapshot (`--flavor` with `--yes`).
-- **The game running.** wowlab says so plainly. A snapshot only reads, so
-  it can still be taken, exactly as `wowlab snap create` takes one, but
-  your SavedVariables on disk are from your last logout or `/reload`, and
-  the game writes over them when you next log out, `/reload` or exit.
-  Commands that change files refuse until the game is closed.
+- **Several flavors.** Each is listed with its product code, version,
+  size and estimate, and you choose which to snapshot (`--flavor` with
+  `--yes`).
+- **The game running.** wowlab says so plainly and names the client it
+  found. A snapshot only reads, so it can still be taken, exactly as
+  `wowlab snap create` takes one, but your SavedVariables on disk are from
+  your last logout or `/reload`, and the game writes over them when you
+  next log out, `/reload` or exit. On Windows, a file the game holds open
+  may not be readable; if the snapshot fails, close the game and run it
+  again. wowlab checks again right before the snapshot, so a game started
+  while it waited for your answer is still recorded. Commands that change
+  files refuse until the game is closed.
 
 ## Where wowlab keeps its files
 

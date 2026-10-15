@@ -53,6 +53,7 @@ __all__ = [
     "SyncHint",
     "Unreadable",
     "estimate_seconds",
+    "flavor_label",
     "intro_lines",
     "is_first_run",
     "pointing_lines",
@@ -114,6 +115,10 @@ _CONFLICT_MARKS = ("conflicted copy", ".sync-conflict-")
 # download it, or fails when it cannot.
 _WINDOWS_PLACEHOLDER = 0x1000 | 0x40000 | 0x400000
 _MACOS_DATALESS = 0x40000000
+# A folder a cloud client has not put on the disk: listing it (Windows
+# RECALL_ON_OPEN, RECALL_ON_DATA_ACCESS; macOS SF_DATALESS) makes the client
+# download it, so the scan does not descend into one.
+_WINDOWS_ONLINE_ONLY_DIR = 0x40000 | 0x400000
 
 
 class _Out(BaseModel):
@@ -125,6 +130,7 @@ class SubtreeScan(_Out):
 
     path: str
     present: bool
+    link: bool  # the subtree itself is a link: recorded, never followed
     files: int
     bytes: int
 
@@ -141,8 +147,9 @@ class SyncHint(_Out):
     """Why wowlab thinks a sync service holds the WTF folder."""
 
     service: SyncService
-    path: str  # the folder (or link) that gave it away
+    path: str  # the folder (or link, relative to the flavor folder) that gave it away
     evidence: str  # e.g. 'its name is "Dropbox"', 'it holds .stfolder'
+    link_target: str | None = None  # set when the hint is a link's target text
 
 
 class Unreadable(_Out):
@@ -154,6 +161,7 @@ class FlavorScan(_Out):
     """What a first snapshot of one flavor would hold, before it is taken."""
 
     folder: str
+    product: str
     version: str | None
     subtrees: list[SubtreeScan]
     files: int
@@ -164,6 +172,7 @@ class FlavorScan(_Out):
     sync: list[SyncHint]
     conflict_files: list[str]  # relative to the flavor folder
     placeholders: int  # files whose content a sync service has not put on the disk
+    online_only_folders: list[str]  # folders a sync service keeps online-only; not listed
     unreadable: list[Unreadable]
 
 
@@ -200,6 +209,7 @@ class FirstRunReport(_Out):
     verify: VerifyReport | None
     error: str | None
     refused: bool  # the error is the write gate's refusal (exit 3)
+    not_snapshotted: list[str]  # the other flavor folders, still without a snapshot
     undo: str  # the last line of the text output
 
 
@@ -247,18 +257,19 @@ def intro_lines(*, offline: bool, store_path: Path) -> list[str]:
         )
     return [
         "First run: wowlab has no snapshot of this install yet. What it will and will not do:",
-        "  - It reads your install. Looking changes nothing there and leaves no temporary, "
-        "cache or lock file behind.",
+        "  - It reads your install and writes nothing there: no temporary, cache or lock "
+        "file. If a sync service (OneDrive, Dropbox, iCloud Drive) keeps some of your "
+        "files online-only, reading one makes the service download it.",
         "  - Only snap restore, undo, profile apply, sv merge, addon install and addon remove "
-        "change files in your install. Each one shows what it will change and asks first, "
-        "refuses while the game is running, and takes a snapshot before it writes, so "
-        "`wowlab undo` can put things back.",
+        "change files in your install. Each one shows what it will change and asks first "
+        "(unless you pass --yes), refuses while the game is running, and takes a snapshot "
+        "before it writes, so `wowlab undo` can put things back.",
         "  - It never touches the game's own data (Data/) or its programs, never reads or "
         "changes the game's memory, and never runs code from your files: SavedVariables "
         "are read as data.",
         f"  - Snapshots are kept in wowlab's own store, {store_path}, never in your install.",
-        "  - Nothing is uploaded. The only network traffic is to wago.tools, a public site "
-        "of game data. " + network,
+        "  - Nothing is uploaded. The only network traffic is to wago.tools, a community-run "
+        "public site of game data. " + network,
     ]
 
 
@@ -266,7 +277,10 @@ def pointing_lines() -> list[str]:
     """How to name the install when discovery did not find it."""
     return [
         "  To point wowlab at your install, name the folder that holds .build.info (the "
-        "game's install folder; the flavor folders, named like _name_, are inside it):",
+        "game's install folder; the flavor folders, named like _name_, are inside it). "
+        "The Battle.net launcher shows it: the game's settings menu, Show in Finder or "
+        "Show in Explorer. On a Mac, .build.info is a hidden file (Cmd-Shift-. shows "
+        "hidden files in Finder).",
         '    for one command:  wowlab doctor --root "<that folder>"',
         "    for every command, set WOWLAB_WOW_ROOT to that folder:",
         '      macOS or Linux:  export WOWLAB_WOW_ROOT="<that folder>"',
@@ -296,8 +310,12 @@ def _duration(seconds: int) -> str:
     return f"about {minutes} minute" + ("" if minutes == 1 else "s")
 
 
+def _count(n: int, one: str, many: str) -> str:
+    return f"{n:,} {one if n == 1 else many}"
+
+
 def _files(n: int) -> str:
-    return f"{n:,} file" + ("" if n == 1 else "s")
+    return _count(n, "file", "files")
 
 
 def _listing(names: Sequence[str], limit: int = 10) -> str:
@@ -306,49 +324,97 @@ def _listing(names: Sequence[str], limit: int = 10) -> str:
     return shown + (f", and {more} more" if more > 0 else "")
 
 
+def _and(names: Sequence[str]) -> str:
+    return ", ".join(names[:-1]) + " and " + names[-1] if len(names) > 1 else "".join(names)
+
+
+def flavor_label(folder: str, product: str, version: str | None) -> str:
+    """A flavor folder with its product code and version, as the scan and the
+    flavor prompt show it."""
+    return f"{folder} ({product or 'no product'}, {version or 'no version in .build.info'})"
+
+
+def _sync_lines(scan: FlavorScan, wtf_is_link: bool) -> list[str]:
+    lines: list[str] = []
+    for hint in scan.sync:
+        if hint.link_target is not None:
+            if hint.path.casefold() == _WTF.casefold():
+                behind = "your settings and SavedVariables are"
+            else:
+                behind = "what is behind it is"
+            lines.append(
+                f"  {hint.path} is a link into a folder {hint.service} appears to sync "
+                f"({hint.link_target}). wowlab does not follow it, so {behind} not in this "
+                "snapshot; back up the folder it points to yourself."
+            )
+            continue
+        where = f"The folders above {_WTF}" if wtf_is_link else _WTF
+        verb = "look" if wtf_is_link else "looks"
+        what = (
+            f"{_WTF} itself is a link and is not followed (see below)."
+            if wtf_is_link
+            else "wowlab still reads and snapshots it."
+        )
+        lines.append(
+            f"  {where} {verb} synced by {hint.service}: {hint.path} ({hint.evidence}). "
+            f"{what} A sync service can leave online-only placeholders and conflict copies, "
+            "and it copies to your other computers whatever a later restore puts back."
+        )
+    return lines
+
+
 def scan_lines(scan: FlavorScan, number: int, count: int) -> list[str]:
     """The scan of one flavor as text: size and estimate first, then every
     finding (a large snapshot, a sync service, conflict copies, placeholders,
-    links, folders that could not be listed)."""
+    online-only folders, links, folders that could not be listed)."""
     which = f"Flavor {number} of {count}: " if count > 1 else "Flavor "
-    version = scan.version or "no version in .build.info"
-    paths = [s.path for s in scan.subtrees]
-    names = ", ".join(paths[:-1]) + " and " + paths[-1] if len(paths) > 1 else "".join(paths)
+    names = _and([s.path for s in scan.subtrees])
     lines = [
-        f"{which}{scan.folder} ({version}): a snapshot would hold {names}: "
-        f"{_files(scan.files)}, {_size(scan.bytes)}; estimated time "
+        f"{which}{flavor_label(scan.folder, scan.product, scan.version)}: a snapshot would "
+        f"hold {names}: {_files(scan.files)}, {_size(scan.bytes)}; it is estimated to take "
         f"{_duration(scan.estimated_seconds)}.",
     ]
     for s in scan.subtrees:
-        detail = f"{_files(s.files)}, {_size(s.bytes)}" if s.present else "not there"
+        if s.link:
+            detail = "a link, not followed"
+        elif s.present:
+            detail = f"{_files(s.files)}, {_size(s.bytes)}"
+        else:
+            detail = "not there"
         lines.append(f"  {s.path}: {detail}")
     if scan.large:
         lines.append(
-            f"  This is large: the snapshot will take {_duration(scan.estimated_seconds)} "
-            "and needs room for it in wowlab's store (compressed; a file already stored "
-            "is not stored again)."
+            f"  This is large: the snapshot is estimated to take "
+            f"{_duration(scan.estimated_seconds)} and needs room for it in wowlab's store "
+            "(compressed; a file already stored is not stored again)."
         )
-    for hint in scan.sync:
-        lines.append(
-            f"  {_WTF} looks synced by {hint.service}: {hint.path} ({hint.evidence}). "
-            "wowlab still reads and snapshots it. A sync service can leave online-only "
-            "placeholders and conflict copies, and it copies to your other computers "
-            "whatever a later restore puts back."
-        )
+    wtf_is_link = any(s.link and s.path.casefold() == _WTF.casefold() for s in scan.subtrees)
+    lines.extend(_sync_lines(scan, wtf_is_link))
     if scan.conflict_files:
+        n = len(scan.conflict_files)
         lines.append(
-            f"  {len(scan.conflict_files)} conflict copies left by a sync service "
-            f"(snapshotted like any other file, never merged): {_listing(scan.conflict_files)}"
+            f"  {_count(n, 'conflict copy', 'conflict copies')} left by a sync service "
+            f"(snapshotted like any other file; wowlab does not merge "
+            f"{'it' if n == 1 else 'them'}): {_listing(scan.conflict_files)}"
         )
     if scan.placeholders:
         lines.append(
             f"  {_files(scan.placeholders)} online-only: their content is not on this disk, "
-            "and reading them for a snapshot makes the sync service download them."
+            "and reading them for a snapshot makes the sync service download them. The "
+            "estimate does not include that download, and the snapshot fails for any file "
+            "the service cannot fetch."
+        )
+    if scan.online_only_folders:
+        n = len(scan.online_only_folders)
+        lines.append(
+            f"  {_count(n, 'online-only folder', 'online-only folders')}, not listed (not "
+            "counted above; a snapshot would make the sync service download "
+            f"{'it' if n == 1 else 'them'}): {_listing(scan.online_only_folders)}"
         )
     if scan.links:
         lines.append(
-            f"  {len(scan.links)} link(s), never followed: a snapshot records each link "
-            "and the text of its target, not the files behind it:"
+            f"  {_count(len(scan.links), 'link', 'links')}, never followed: a snapshot "
+            "records each link and the text of its target, not the files behind it:"
         )
         for link in scan.links:
             target = link.target if link.target is not None else "(target unreadable)"
@@ -365,17 +431,19 @@ def scan_lines(scan: FlavorScan, number: int, count: int) -> list[str]:
     return lines
 
 
-def _client_lines(running: bool | None) -> list[str]:
+def _client_lines(running: bool | None, clients: Sequence[str] = ()) -> list[str]:
     stale = (
         "A snapshot only reads, so it can still be taken now, as `wowlab snap create` "
         "takes one, but SavedVariables on disk are from your last logout or /reload, and "
-        "the game writes over them when you next log out, /reload or exit. Commands that "
-        "change files refuse until the game is closed."
+        "the game writes over them when you next log out, /reload or exit. On Windows, a "
+        "file the game holds open may not be readable; if the snapshot fails, close the "
+        "game and run it again. Commands that change files refuse until the game is closed."
     )
+    which = f" ({'; '.join(clients)})" if clients else ""
     if running is True:
-        return [f"The game is running. {stale}"]
+        return [f"The game is running{which}. {stale}"]
     if running is None:
-        return [f"wowlab cannot tell whether the game is running. {stale}"]
+        return [f"wowlab cannot tell whether the game is running{which}. {stale}"]
     return []
 
 
@@ -384,13 +452,17 @@ def undo_line(taken: FirstSnapshot | None) -> str:
     if taken is None:
         return (
             "To undo: this run changed nothing in your install, so there is nothing to "
-            "undo. Every later change asks first and takes a snapshot, and `wowlab undo` "
-            "reverses it."
+            "undo. Every later change asks first (unless you pass --yes) and takes a "
+            "snapshot, and `wowlab undo` reverses it."
         )
+    prefix = taken.flavor_folder + "/"
+    held = _and([s.removeprefix(prefix) for s in taken.subtrees])
     return (
-        "To undo: this run changed nothing in your install. To put these files back as "
-        f"they are now, run `wowlab snap restore {taken.id}`; to reverse a later change "
-        "wowlab makes, run `wowlab undo`."
+        f"To undo: this run changed nothing in your install. Snapshot {taken.id} holds "
+        f"{held} as they were on disk (SavedVariables as of your last logout or /reload). "
+        f"`wowlab snap restore {taken.id} --dry-run` shows what restoring it would change; "
+        "a restore also removes anything added there since, and asks first (unless you "
+        "pass --yes). To reverse a later change wowlab makes, run `wowlab undo`."
     )
 
 
@@ -424,6 +496,13 @@ def _is_placeholder(st: os.stat_result) -> bool:
     return bool(int(getattr(st, "st_flags", 0)) & _MACOS_DATALESS)
 
 
+def _is_online_only_dir(st: os.stat_result) -> bool:
+    """A folder whose listing a sync service has not put on this disk."""
+    if int(getattr(st, "st_file_attributes", 0)) & _WINDOWS_ONLINE_ONLY_DIR:
+        return True
+    return bool(int(getattr(st, "st_flags", 0)) & _MACOS_DATALESS)
+
+
 def _link_target(path: Path) -> str | None:
     try:
         return str(path.readlink())
@@ -443,6 +522,7 @@ class _Walk:
         self.links: list[LinkFound] = []
         self.conflicts: list[str] = []
         self.placeholders = 0
+        self.online_only: list[str] = []
         self.unreadable: list[Unreadable] = []
 
     def link(self, rel: str, path: Path, *, symlink: bool) -> None:
@@ -479,6 +559,9 @@ class _Walk:
                     elif child.is_dir(follow_symlinks=False):
                         if snapshot._is_link_like_dir(child):
                             self.link(child_rel, path, symlink=False)
+                        elif _is_online_only_dir(child.stat(follow_symlinks=False)):
+                            # Listing it would make the sync service download it.
+                            self.online_only.append(child_rel)
                         else:
                             stack.append((child_rel, path))
                     elif child.is_file(follow_symlinks=False):
@@ -543,7 +626,8 @@ def sync_hints(wtf: Path, links: Sequence[LinkFound] = ()) -> list[SyncHint]:
     need not exist): a folder named like a sync client's, at or above it, or
     a sync client's marker file in one; and a link in the snapshot subtrees
     whose target text names such a folder (the target is never looked at).
-    One hint per service, the nearest first. Reads names and `lstat`s only,
+    One hint per service for the folders, the nearest first, then one per
+    link that names such a folder. Reads names and `lstat`s only,
     and never looks inside `wtf` when it is a link."""
     found: dict[SyncService, SyncHint] = {}
     # WTF itself is looked inside only when it is a real folder (not absent,
@@ -560,18 +644,23 @@ def sync_hints(wtf: Path, links: Sequence[LinkFound] = ()) -> list[SyncHint]:
                 found[marker_service] = SyncHint(
                     service=marker_service, path=str(folder), evidence=f"it holds {marker}"
                 )
-    for link in links:
+    hints = list(found.values())
+    for link in links:  # one hint per link, whatever the folders above say
         if link.target is None:
             continue
         for part in PurePath(link.target).parts:
             service = _name_service(part)
-            if service is not None and service not in found:
-                found[service] = SyncHint(
-                    service=service,
-                    path=link.path,
-                    evidence=f'a link whose target passes through "{part}"',
+            if service is not None:
+                hints.append(
+                    SyncHint(
+                        service=service,
+                        path=link.path,
+                        evidence=f'a link whose target passes through "{part}"',
+                        link_target=link.target,
+                    )
                 )
-    return list(found.values())
+                break
+    return hints
 
 
 def scan_flavor(flavor: install.Flavor, lay: layout.Layout) -> FlavorScan:
@@ -586,27 +675,37 @@ def scan_flavor(flavor: install.Flavor, lay: layout.Layout) -> FlavorScan:
         try:
             st = start.lstat()
         except FileNotFoundError:
-            subtrees.append(SubtreeScan(path=name, present=False, files=0, bytes=0))
+            subtrees.append(SubtreeScan(path=name, present=False, link=False, files=0, bytes=0))
             continue
         except OSError as exc:
             walk.unreadable.append(Unreadable(path=name, reason=exc.strerror or str(exc)))
-            subtrees.append(SubtreeScan(path=name, present=True, files=0, bytes=0))
+            subtrees.append(SubtreeScan(path=name, present=True, link=False, files=0, bytes=0))
             continue
-        if stat.S_ISLNK(st.st_mode):
-            walk.link(name, start, symlink=True)
-        elif stat.S_ISDIR(st.st_mode) and snapshot._is_link_like_dir(start):
-            walk.link(name, start, symlink=False)
+        is_link = stat.S_ISLNK(st.st_mode) or (
+            stat.S_ISDIR(st.st_mode) and snapshot._is_link_like_dir(start)
+        )
+        if is_link:
+            walk.link(name, start, symlink=stat.S_ISLNK(st.st_mode))
+        elif stat.S_ISDIR(st.st_mode) and _is_online_only_dir(st):
+            walk.online_only.append(name)
         elif stat.S_ISDIR(st.st_mode):
             walk.tree(name, start)
         elif stat.S_ISREG(st.st_mode):
             walk.file(name, name, st)
         subtrees.append(
-            SubtreeScan(path=name, present=True, files=walk.files - files, bytes=walk.bytes - size)
+            SubtreeScan(
+                path=name,
+                present=True,
+                link=is_link,
+                files=walk.files - files,
+                bytes=walk.bytes - size,
+            )
         )
     wtf = next((s.path for s in subtrees if s.path.casefold() == _WTF.casefold()), _WTF)
     seconds = estimate_seconds(walk.bytes, walk.files)
     return FlavorScan(
         folder=flavor.folder,
+        product=flavor.product,
         version=flavor.version,
         subtrees=subtrees,
         files=walk.files,
@@ -617,6 +716,7 @@ def scan_flavor(flavor: install.Flavor, lay: layout.Layout) -> FlavorScan:
         sync=sync_hints(Path(flavor.path) / wtf, walk.links),
         conflict_files=walk.conflicts,
         placeholders=walk.placeholders,
+        online_only_folders=walk.online_only,
         unreadable=walk.unreadable,
     )
 
@@ -656,12 +756,17 @@ def snapshot_flavor(
         )
 
 
-def _first_snapshot(manifest: snapshot.Manifest, flavor: install.Flavor) -> FirstSnapshot:
+def _first_snapshot(
+    manifest: snapshot.Manifest, flavor: install.Flavor, lay: layout.Layout
+) -> FirstSnapshot:
+    # In the order the scan lists them (WTF first), not the manifest's sorted one.
+    order = [f"{flavor.folder}/{s}" for s in lay.snapshot_subtrees()]
+    ranked = sorted(manifest.subtrees, key=lambda s: order.index(s) if s in order else len(order))
     return FirstSnapshot(
         id=manifest.id,
         label=manifest.label,
         flavor_folder=flavor.folder,
-        subtrees=list(manifest.subtrees),
+        subtrees=ranked,
         files=sum(1 for e in manifest.entries if e.kind == "file"),
         links=sum(1 for e in manifest.entries if e.kind == "symlink"),
         bytes=sum(e.size for e in manifest.entries if e.kind == "file"),
@@ -669,6 +774,15 @@ def _first_snapshot(manifest: snapshot.Manifest, flavor: install.Flavor) -> Firs
 
 
 # ─── the flow ────────────────────────────────────────────────────────────────
+
+
+def _either(states: Sequence[bool | None]) -> bool | None:
+    """Running beats cannot-tell beats not running, as the write gate reads them."""
+    if any(s is True for s in states):
+        return True
+    if any(s is None for s in states):
+        return None
+    return False
 
 
 def run(
@@ -681,15 +795,21 @@ def run(
     say: Callable[[str], None],
     choose: Callable[[Sequence[str]], int | None] | None,
     confirm: Callable[[str], bool] | None,
+    clients: Callable[[], Sequence[str]] = tuple,
 ) -> FirstRunReport:
     """The first-run section of `doctor`, after its report.
 
     `chosen` is the flavor `--flavor` named, if any. `choose` asks the player
-    to pick one of several flavors (it returns an index, or None for none)
-    and `confirm` asks a yes/no question; the command passes None for both
-    when it must not ask (`--json`, input that is not a terminal). `--yes`
-    accepts the offer; with several flavors it still needs `--flavor`.
-    Every line goes through `say`, the undo line last."""
+    to pick one of several flavors (it is given one label per flavor and
+    returns an index, or None for none) and `confirm` asks a yes/no
+    question; the command passes None for both when it must not ask
+    (`--json`, input that is not a terminal). `--yes` accepts the offer;
+    with several flavors it still needs `--flavor`. `client_running` is the
+    probe `snap create` uses; it is asked again right before the snapshot,
+    since a prompt can wait while the game starts. `clients` names the
+    client processes found, for the text. Every line goes through `say`,
+    the undo line last."""
+    others: list[str] = []
 
     def report(
         outcome: Outcome,
@@ -714,6 +834,7 @@ def run(
             verify=verified,
             error=error,
             refused=refused,
+            not_snapshotted=others,
             undo=line,
         )
 
@@ -724,9 +845,16 @@ def run(
         return report("no_flavors")
 
     scans = [scan_flavor(f, layout.Layout.for_flavor(f, inst.root)) for f in inst.flavors]
+    others.extend(f.folder for f in inst.flavors)
     for n, scan in enumerate(scans, 1):
         for line in scan_lines(scan, n, len(scans)):
             say(line)
+
+    def estimate(flavor: install.Flavor) -> str:
+        return _duration(next(s for s in scans if s.folder == flavor.folder).estimated_seconds)
+
+    def label(flavor: install.Flavor) -> str:
+        return flavor_label(flavor.folder, flavor.product, flavor.version)
 
     accepted = yes
     flavor = chosen
@@ -734,34 +862,37 @@ def run(
         flavor = inst.flavors[0]
     if flavor is None:
         folders = [f.folder for f in inst.flavors]
-        if choose is not None:
-            picked = choose(folders)
-            if picked is None:
-                say("No flavor chosen; no snapshot was taken.")
-                return report("declined", scans=scans)
-            flavor = inst.flavors[picked]
-            accepted = True  # choosing a flavor to snapshot is the answer
-        elif yes:
-            say(
-                f"{len(folders)} flavors are installed ({', '.join(folders)}); --yes needs "
-                "--flavor to say which one to snapshot: wowlab doctor --yes --flavor <folder>"
-            )
-            return report("choose_flavor", scans=scans)
-        else:
+        if choose is None:
+            if yes:
+                say(
+                    f"{len(folders)} flavors are installed ({', '.join(folders)}); --yes "
+                    "needs --flavor to say which one to snapshot: wowlab doctor --yes "
+                    "--flavor <folder>"
+                )
+                return report("choose_flavor", scans=scans)
             say(
                 "To take a first snapshot, choose a flavor: wowlab doctor --yes --flavor "
                 "<folder> (or wowlab snap create --flavor <folder>)."
             )
             return report("not_asked", scans=scans)
-
-    running = client_running(flavor)
-    for line in _client_lines(running):
-        say(line)
+        # Said before the question, so the player chooses knowing it.
+        any_running = _either([client_running(f) for f in inst.flavors])
+        for line in _client_lines(any_running, clients()):
+            say(line)
+        picked = choose([label(f) for f in inst.flavors])
+        if picked is None:
+            say("No flavor chosen; no snapshot was taken.")
+            return report("declined", scans=scans)
+        flavor = inst.flavors[picked]
+        # Choosing a flavor is the answer, unless the game runs or may run:
+        # then the yes/no question below is asked too.
+        accepted = yes or any_running is False
+        running = client_running(flavor)
+    else:
+        running = client_running(flavor)
+        for line in _client_lines(running, clients() if running is not False else ()):
+            say(line)
     if not accepted:
-        question = (
-            f"Take a first snapshot of {flavor.folder} into wowlab's store "
-            f"({_duration(next(s for s in scans if s.folder == flavor.folder).estimated_seconds)})?"
-        )
         if confirm is None:
             say(
                 "To take a first snapshot: wowlab doctor --yes"
@@ -769,10 +900,22 @@ def run(
                 + " (or wowlab snap create)."
             )
             return report("not_asked", scans=scans, flavor=flavor, running=running)
+        anyway = " anyway" if running is not False else ""
+        question = (
+            f"Take a first snapshot of {label(flavor)} into wowlab's store{anyway} "
+            f"({estimate(flavor)})?"
+        )
         if not confirm(question):
             say("No snapshot was taken.")
             return report("declined", scans=scans, flavor=flavor, running=running)
 
+    # Asked again right before the capture, as `snap create` asks: a prompt
+    # can wait while the game is started.
+    now = client_running(flavor)
+    if now is not False and running is False:
+        for line in _client_lines(now, clients()):
+            say(line)
+    running = now
     say(f"Taking a snapshot of {flavor.folder} into {store.path} ...")
     lay = layout.Layout.for_flavor(flavor, inst.root)
     try:
@@ -787,10 +930,12 @@ def run(
     except (snapshot.SnapshotError, OSError) as exc:
         say(f"The snapshot could not be taken: {exc}")
         return report("failed", scans=scans, flavor=flavor, running=running, error=str(exc))
-    taken = _first_snapshot(manifest, flavor)
+    taken = _first_snapshot(manifest, flavor, lay)
+    others.remove(flavor.folder)
+    links = f", {_count(taken.links, 'link', 'links')} recorded, not followed"
     say(
         f"Snapshot {taken.id} ({taken.label}): {_files(taken.files)}, {_size(taken.bytes)}"
-        + (f", {taken.links} link(s) recorded, not followed" if taken.links else "")
+        + (links if taken.links else "")
     )
     try:
         verified = store.verify()
@@ -801,6 +946,8 @@ def run(
         )
     for line in _verify_lines(verified):
         say(line)
+    for folder in others:
+        say(f"{folder} has no snapshot yet: wowlab snap create --flavor {folder}")
     return report(
         "taken" if verified.ok else "failed",
         scans=scans,

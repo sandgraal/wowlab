@@ -125,7 +125,10 @@ def test_a_first_run_on_the_fixture_install_ends_with_a_verified_snapshot_and_th
     # The trust model comes first, before the report and its request.
     assert lines[0].startswith("First run: wowlab has no snapshot of this install yet.")
     trust = out[: out.index("Install:")]
-    assert "It reads your install. Looking changes nothing there" in trust
+    assert "It reads your install and writes nothing there" in trust
+    assert "reading one makes the service download it" in trust
+    assert "asks first (unless you pass --yes)" in trust
+    assert "wago.tools, a community-run public site of game data" in trust
     assert "takes a snapshot before it writes, so `wowlab undo` can put things back" in trust
     assert "never runs code from your files" in trust
     assert "Nothing is uploaded." in trust
@@ -134,8 +137,10 @@ def test_a_first_run_on_the_fixture_install_ends_with_a_verified_snapshot_and_th
     assert f"Snapshots are kept in wowlab's own store, {SnapshotStore().path}" in trust
 
     # The size and estimate come before the snapshot.
-    scan_at = out.index(f"Flavor {FLAVOR} (1.60.1.69913): a snapshot would hold WTF, Interface")
-    assert "estimated time about" in out[scan_at:]
+    scan_at = out.index(
+        f"Flavor {FLAVOR} (wow_classic_beta, 1.60.1.69913): a snapshot would hold WTF, Interface"
+    )
+    assert "it is estimated to take about" in out[scan_at:]
     assert scan_at < out.index("Taking a snapshot of")
 
     (manifest,) = _manifests()
@@ -146,7 +151,13 @@ def test_a_first_run_on_the_fixture_install_ends_with_a_verified_snapshot_and_th
     assert "Verified the store (wowlab snap verify): " in out
     assert "  all sound" in out
     assert lines[-1].startswith("To undo: this run changed nothing in your install.")
-    assert f"`wowlab snap restore {manifest.id}`" in lines[-1]
+    assert (
+        f"Snapshot {manifest.id} holds WTF, Interface and Fonts as they were on disk" in lines[-1]
+    )
+    assert "(SavedVariables as of your last logout or /reload)" in lines[-1]
+    assert f"`wowlab snap restore {manifest.id} --dry-run` shows what restoring it" in lines[-1]
+    assert "a restore also removes anything added there since" in lines[-1]
+    assert "asks first (unless you pass --yes)" in lines[-1]
     assert "`wowlab undo`" in lines[-1]
 
     assert _state(root) == before, "the install is only read (L1)"
@@ -207,12 +218,15 @@ def test_interactive_first_run_asks_before_the_snapshot(
 ) -> None:
     _ask_interactively(monkeypatch)
     result = ok("doctor", input=answer)
-    assert f"Take a first snapshot of {FLAVOR} into wowlab's store (about" in result.stderr
+    assert (
+        f"Take a first snapshot of {FLAVOR} (wow_classic_beta, 1.60.1.69913) into "
+        "wowlab's store (about"
+    ) in result.stderr
     assert len(_manifests()) == (1 if taken else 0)
     last = _lines(result.stdout)[-1]
     if taken:
         assert "Verified the store" in result.stdout
-        assert f"`wowlab snap restore {_manifests()[0].id}`" in last
+        assert f"`wowlab snap restore {_manifests()[0].id} --dry-run`" in last
     else:
         assert "No snapshot was taken." in result.stdout
         assert last == firstrun.undo_line(None)
@@ -395,7 +409,15 @@ def test_sync_conflict_copies_are_listed_constructed(root: Path, flavor: Path) -
         "WTF/Config.sync-conflict-20261014-120000-ABCDEFG.wtf",
     ]
     out = ok("doctor").stdout
-    assert "2 conflict copies left by a sync service" in out
+    assert "2 conflict copies left by a sync service (snapshotted like any other file; " in out
+    assert "wowlab does not merge them)" in out
+
+
+def test_one_conflict_copy_is_said_in_the_singular_constructed(root: Path, flavor: Path) -> None:
+    (flavor / "WTF" / "Config.sync-conflict-20261014-120000-ABCDEFG.wtf").write_bytes(b"y\n")
+    out = ok("doctor").stdout
+    assert "  1 conflict copy left by a sync service (snapshotted like any other file; " in out
+    assert "wowlab does not merge it)" in out
 
 
 @pytest.mark.parametrize(
@@ -420,6 +442,40 @@ def test_placeholders_are_counted_and_said_constructed(
     assert scan.placeholders == scan.files > 0
     out = ok("doctor").stdout
     assert f"{scan.files} files online-only: their content is not on this disk" in out
+    assert "The estimate does not include that download, and the snapshot fails for any " in out
+
+
+@pytest.mark.parametrize(
+    ("st", "expected"),
+    [
+        pytest.param(SimpleNamespace(st_file_attributes=0x40000), True, id="constructed-open"),
+        pytest.param(SimpleNamespace(st_file_attributes=0x400000), True, id="constructed-data"),
+        pytest.param(SimpleNamespace(st_flags=0x40000000), True, id="constructed-dataless"),
+        pytest.param(SimpleNamespace(st_file_attributes=0x1010, st_flags=0), False, id="plain"),
+    ],
+)
+def test_online_only_folders_are_recognised_constructed(st: Any, expected: bool) -> None:
+    assert firstrun._is_online_only_dir(st) is expected
+
+
+def test_an_online_only_folder_is_not_listed_and_said_constructed(
+    root: Path, flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real folder stands in for one a sync service keeps online-only: the
+    scan does not descend into it (listing it would download it) and says
+    so (constructed)."""
+    online = flavor / "WTF" / "Online"
+    online.mkdir()
+    (online / "Inside.lua").write_bytes(b"x = 1\n")
+    inode = online.stat().st_ino
+    monkeypatch.setattr(firstrun, "_is_online_only_dir", lambda st: st.st_ino == inode)
+    (scan,) = _first(_report()).flavors
+    assert scan.online_only_folders == ["WTF/Online"]
+    out = ok("doctor").stdout
+    assert (
+        "  1 online-only folder, not listed (not counted above; a snapshot would make the " in out
+    )
+    assert "sync service download it): WTF/Online" in out
 
 
 @needs_symlinks
@@ -454,7 +510,7 @@ def test_links_in_wtf_are_reported_and_never_followed_constructed(
 
     shutil.rmtree(SnapshotStore().path)
     out = ok("doctor").stdout
-    assert "2 link(s), never followed: a snapshot records each link" in out
+    assert "2 links, never followed: a snapshot records each link" in out
     assert f"    WTF/LinkedFolder -> {outside} (symlink)" in out
 
 
@@ -468,7 +524,13 @@ def test_wtf_itself_a_link_is_said_plainly_constructed(
     out = ok("doctor", "--yes").stdout
     assert f"    WTF -> {elsewhere} (symlink)" in out
     assert "WTF itself is a link, so the settings and SavedVariables behind it are not" in out
-    assert 'a link whose target passes through "Dropbox"' in out
+    assert (
+        f"WTF is a link into a folder Dropbox appears to sync ({elsewhere}). wowlab does "
+        "not follow it, so your settings and SavedVariables are not in this snapshot; back "
+        "up the folder it points to yourself."
+    ) in out
+    assert "  WTF: a link, not followed" in out
+    assert "still reads and snapshots it" not in out
     (manifest,) = _manifests()
     wtf = [e for e in manifest.entries if e.path.startswith(f"{FLAVOR}/WTF")]
     assert [(e.path, e.kind) for e in wtf] == [(f"{FLAVOR}/WTF", "symlink")]
@@ -521,7 +583,7 @@ def test_a_very_large_wtf_reports_size_and_time_before_snapshotting_constructed(
     assert wtf.bytes >= firstrun.LARGE_BYTES
     out = ok("doctor").stdout
     assert "  WTF: " in out and " GB" in out.split("  WTF: ", 1)[1].split("\n", 1)[0]
-    assert "This is large: the snapshot will take about" in out
+    assert "This is large: the snapshot is estimated to take about" in out
     assert _manifests() == ()
 
 
@@ -532,7 +594,7 @@ def test_a_large_snapshot_is_announced_before_it_is_taken_constructed(
     monkeypatch.setattr(firstrun, "LARGE_BYTES", 1)
     out = ok("doctor", "--yes").stdout
     assert out.index("This is large") < out.index("Taking a snapshot")
-    assert out.index("estimated time about") < out.index("Taking a snapshot")
+    assert out.index("it is estimated to take about") < out.index("Taking a snapshot")
     assert len(_manifests()) == 1
 
 
@@ -547,8 +609,8 @@ def test_two_flavors_are_each_listed_and_yes_needs_a_choice_constructed(
     assert _manifests() == ()
     result = run("doctor", "--yes")
     assert result.exit_code == 2
-    assert f"Flavor 1 of 2: {FLAVOR} (1.60.1.69913)" in result.stdout
-    assert f"Flavor 2 of 2: {SECOND} (no version in .build.info)" in result.stdout
+    assert f"Flavor 1 of 2: {FLAVOR} (wow_classic_beta, 1.60.1.69913)" in result.stdout
+    assert f"Flavor 2 of 2: {SECOND} (wow_constructed, no version in .build.info)" in result.stdout
     assert "--yes needs --flavor to say which one to snapshot" in result.stdout
     assert _lines(result.stdout)[-1] == firstrun.undo_line(None)
 
@@ -578,6 +640,47 @@ def test_two_flavors_interactively_the_player_chooses_constructed(
         assert manifest.flavor_folder == picked
     if answer.startswith("9"):
         assert "Not a number from 1 to 2: 9" in result.stderr
+    assert f"  1) {FLAVOR} (wow_classic_beta, 1.60.1.69913)" in result.stderr
+    assert f"  2) {SECOND} (wow_constructed, no version in .build.info)" in result.stderr
+    assert "Take a first snapshot" not in result.stderr, "choosing is the answer"
+    if picked is not None:
+        other = SECOND if picked == FLAVOR else FLAVOR
+        line = f"{other} has no snapshot yet: wowlab snap create --flavor {other}"
+        assert line in result.stdout
+        assert result.stdout.index(line) < result.stdout.index("To undo:")
+
+
+def test_after_the_snapshot_the_other_flavors_are_named_constructed(
+    root: Path, flavor: Path
+) -> None:
+    _second_flavor(root, flavor)
+    first = _first(_report("--yes", "--flavor", FLAVOR))
+    assert first.not_snapshotted == [SECOND]
+
+
+@pytest.mark.parametrize(("answer", "taken"), [("1\ny\n", True), ("1\nn\n", False)])
+def test_two_flavors_with_the_game_running_say_so_and_ask_again_constructed(
+    root: Path,
+    flavor: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    answer: str,
+    taken: bool,
+) -> None:
+    """The running client is named before the flavor question, and choosing
+    a flavor is then not enough: a yes/no follows (constructed)."""
+    _second_flavor(root, flavor)
+    _running(monkeypatch, flavor)
+    _ask_interactively(monkeypatch)
+    result = ok("doctor", input=answer)
+    assert f"The game is running (World of Warcraft, pid 7300 in {FLAVOR})." in result.stdout
+    assert "Snapshot which flavor?" in result.stderr
+    assert (
+        f"Take a first snapshot of {FLAVOR} (wow_classic_beta, 1.60.1.69913) into "
+        "wowlab's store anyway"
+    ) in result.stderr
+    assert len(_manifests()) == (1 if taken else 0)
+    if taken:
+        assert _manifests()[0].client_running is True
 
 
 def test_two_flavors_without_a_terminal_say_how_to_choose_constructed(
@@ -595,9 +698,11 @@ def test_a_running_game_is_said_plainly_and_the_snapshot_behaves_as_snap_create_
     _running(monkeypatch, flavor)
     result = ok("doctor", "--yes")
     out = result.stdout
-    assert "The game is running. A snapshot only reads, so it can still be taken now" in out
+    assert "The game is running (World of Warcraft, pid 7300" in out
+    assert "A snapshot only reads, so it can still be taken now" in out
+    assert "On Windows, a file the game holds open may not be readable" in out
     assert "SavedVariables on disk are from your last logout or /reload" in out
-    assert out.index("The game is running.") < out.index("Taking a snapshot")
+    assert out.index("The game is running") < out.index("Taking a snapshot")
     (taken,) = _manifests()
     assert taken.client_running is True
     created = ok("snap", "create")
