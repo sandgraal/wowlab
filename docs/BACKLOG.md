@@ -144,7 +144,7 @@ Contents: M13-02 to M13-04, M13-09, M13-10, M13-21 to M13-26 (the explorer and t
 ## [ ] M13-12 — Wave 4 review
 **Size:** S · **Depends on:** M13-11
 
-The conductor writes `docs/handoffs/M13-review.md` per `docs/LAB_PLAN.md` §11: what shipped, what strangers' reports taught (as data), what slipped to v0.2, and a recommended next wave. Wave 5 is already named (`wowlab ui`, ADR-0029, M14, aimed at v0.2). Its read-only first stage shipped in v0.1 (§15.6), so the review says what M14 still owes: the confirm flow for the seven `--yes` commands and the embedded pages.
+The conductor writes `docs/handoffs/M13-review.md` per `docs/LAB_PLAN.md` §11: what shipped, what strangers' reports taught (as data), what slipped to v0.2, and a recommended next wave. Wave 5 is already named (`wowlab ui`, ADR-0029, M14, aimed at v0.2). Its read-only first stage shipped in v0.1 (§15.6), so the review says what M14 still owes: the confirm flow for the commands that declare `--yes` and the embedded pages.
 
 ---
 
@@ -162,7 +162,14 @@ Spec: `docs/LAB_PLAN.md` §15.6. Decision: ADR-0029 and its amendment of 2026-10
 ## [ ] M13-21 — `wowlab_core.verdict`: the safe-to-edit answer in core
 **Size:** S · **Depends on:** M13-01
 
-Move the verdict wording out of the CLI (`_edit_words`, `_TIER_WORDS`, `_restorable` in `cli.py`) into a core module, `wowlab_core.verdict`. It returns a Pydantic model, `Verdict{level: gate | no | not_applicable | unclassified, restorable: bool, words: str}`, computed from a file-map entry, its base and the path. `Explained` gains `verdict`; the JSON change is additive. `explain` and `tree --explain` print from it.
+Move the verdict wording out of the CLI (`_edit_words`, `_TIER_WORDS`, `_restorable` in `cli.py`) into a core module, `wowlab_core.verdict`. It returns a Pydantic model, `Verdict{level: gate | no | folder | not_applicable | unclassified, restorable: bool, words: str}`, computed from a file-map entry, its base and the path. The mapping from the Edit cell is fixed:
+- `gate` and `gate (…)` map to `gate`;
+- `no` maps to `no`;
+- `—`, a folder row, maps to `folder`;
+- `n/a` maps to `not_applicable`;
+- `unclassified` means only "no file-map row", the set M13-22's `filemap gaps` lists.
+
+`Explained` gains `verdict`; the JSON change is additive. `explain` and `tree --explain` print from it.
 
 **Acceptance:**
 - The text output of `explain` and `tree --explain` is byte-identical before and after, on the fixture installs.
@@ -234,7 +241,7 @@ Expected-failure graders, derived from ADR-0029 and its amendment of 2026-10-15 
   - a value that starts with `-` is passed as a value;
   - no shell is involved.
 - Each run has a timeout and an output cap.
-- The seven `--yes` commands, and `ui` itself, are refused.
+- Every leaf command that declares `--yes` (derived from the Click tree, `doctor` included), and `ui` itself, is refused. A dummy `--yes` command planted in the test is refused with no change to the server.
 
 **Static files.** They are served only from the package's templates, and a traversal path is refused.
 
@@ -298,7 +305,7 @@ The UI's first view, per §15.6.
 
 Every other read command gets a form drawn from its declared parameters, run through M13-24, and its JSON is shown in the generic tree view. A parity test in the required `quality` job asserts:
 - every leaf command is reachable in the UI or appears in an exclusion list with a written reason;
-- the seven `--yes` commands are excluded with "confirm flow: M14", until Wave 5;
+- every command that declares `--yes` (derived from the Click tree, not a count; `doctor` included) is excluded with "confirm flow: M14", until Wave 5;
 - `ui` itself is excluded.
 
 **Acceptance:**

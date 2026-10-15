@@ -3080,9 +3080,12 @@ file-map logic or game rules (D3, §14.5).
 - **The verdict, in core (M13-21).** The safe-to-edit wording now lives in
   the CLI (`_edit_words`, `_TIER_WORDS`, `_restorable`). It moves to
   `wowlab_core.verdict` as a model,
-  `Verdict{level: gate | no | not_applicable | unclassified, restorable, words}`.
+  `Verdict{level: gate | no | folder | not_applicable | unclassified, restorable, words}`.
   `explain` and `tree --explain` print from that model, and their text output
-  does not change. Every Edit cell in `filemap.toml` maps to exactly one level.
+  does not change. Every Edit cell in `filemap.toml` maps to exactly one level:
+  `gate` and `gate (…)` to `gate`, `no` to `no`, `—` (a folder row) to
+  `folder`, `n/a` to `not_applicable`. `unclassified` means only "no file-map
+  row", the set `filemap gaps` lists.
 - **The whole install (M13-22).**
   - Today `tree` covers one flavor folder. `tree --install` adds the
     install root (the file map's `root` section) and every flavor folder,
@@ -3107,8 +3110,11 @@ file-map logic or game rules (D3, §14.5).
 
 **The UI, first stage.**
 - **The server (M13-24T, M13-24).** It is built exactly as ADR-0029 decides.
-  This stage runs read-only commands only: the seven `--yes` commands are
-  refused, and the ADR-0029 amendment of 2026-10-15 records the staging.
+  This stage runs read-only commands only. Every leaf command that declares
+  `--yes` is refused, and the set is derived from the Click tree, not from
+  a count; on 2026-10-15 that is eight, `doctor` included (its `--yes` takes
+  a first snapshot). The ADR-0029 amendment of 2026-10-15 records the
+  staging.
 - **The explorer view (M13-25).**
   - A tree pane with a verdict badge on every item. It filters by verdict,
     by "gaps only", or by text.
@@ -3127,6 +3133,7 @@ file-map logic or game rules (D3, §14.5).
 their own machine and nowhere else. Nothing is uploaded (ADR-0019). The
 server is bound to `127.0.0.1` and checks a token on every request.
 
-**What stays in Wave 5 (M14).** The confirm flow for `snap restore`, `undo`,
-`profile apply`, `addon install`, `addon remove`, `sv merge` and `snap gc`,
-and the embedded looks, talents and character pages.
+**What stays in Wave 5 (M14).** The confirm flow for every command that declares
+`--yes` (`snap restore`, `undo`, `profile apply`, `addon install`, `addon
+remove`, `sv merge`, `snap gc` and `doctor` on 2026-10-15), and the embedded
+looks, talents and character pages.
