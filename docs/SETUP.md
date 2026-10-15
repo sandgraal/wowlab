@@ -77,12 +77,36 @@ Never inside the install and never inside the repository.
 
 ## GitHub Actions secret (owner)
 
-`gh secret set ANTHROPIC_API_KEY --repo sandgraal/wowlab` enables the
-`@claude` responder and the automated PR review; `gh` prompts for the value,
-so the key never goes through a chat or a shell history line. Without it
-both workflows skip with a message. If the key is not scoped to a workspace,
-also set the `ANTHROPIC_WORKSPACE_ID` repository variable
-(`.github/workflows/claude-review.yml` explains why).
+The three workflows that run Claude (the `@claude` responder in
+`claude.yml`, the automated PR review in `claude-review.yml`, and the daily
+wiki pass in `wiki-daily.yml`) authenticate with the owner's Claude
+subscription through the `CLAUDE_CODE_OAUTH_TOKEN` repository secret (owner
+decision, 2026-10-14). Their usage counts against that subscription's
+limits, shared with the owner's own Claude Code sessions; there is no API
+bill.
+
+1. On your own machine, run `claude setup-token`. It opens the browser
+   sign-in, then prints a long-lived token (valid for a year) to the
+   terminal and saves it nowhere.
+2. Run `gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo sandgraal/wowlab` and
+   paste the token at the prompt, so it never goes through a chat or a
+   shell history line.
+3. Delete the old API-key secret:
+   `gh secret delete ANTHROPIC_API_KEY --repo sandgraal/wowlab`. The
+   `ANTHROPIC_WORKSPACE_ID` repository variable is no longer read either;
+   delete it too (`gh variable delete ANTHROPIC_WORKSPACE_ID --repo
+   sandgraal/wowlab`). A key you no longer use can also be revoked in the
+   Claude Console.
+
+Without the token, every Claude step skips with a message and the rest of
+each workflow still runs. There is no API preflight any more: a subscription
+token has no documented check that spends no usage, so the workflows check
+only that the secret is present. When the token is expired or revoked, or a
+usage limit is reached, the Claude step itself fails: the PR review's check
+goes red and its tracking comment reads "Claude encountered an error", with
+no verdict unless the review had already finished, and a scheduled wiki pass
+pushes nothing and comments on the open `wiki-daily` issue.
+When the token expires, repeat steps 1 and 2.
 
 ## Claude Code
 

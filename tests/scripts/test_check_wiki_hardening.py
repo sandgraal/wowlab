@@ -458,7 +458,10 @@ def test_a_redacted_diagnosis_follows_the_claude_step_and_runs_on_failure() -> N
     assert cond == (
         f"${{{{ !cancelled() && {steps[claude]['if']} && steps.claude.outcome != 'success' }}}}"
     )
-    assert steps[claude]["if"] == "steps.preflight.outputs.available == 'true'"
+    # The Claude step runs whenever the subscription token is present (owner
+    # decision 2026-10-14: no API preflight), so a usage-limit failure is
+    # diagnosed too.
+    assert steps[claude]["if"] == "steps.secret.outputs.present == 'true'"
     # Bounded: the text it matches is the model's (round 2: a crafted result
     # took minutes in the default-root search).
     assert step["timeout-minutes"] == 3
