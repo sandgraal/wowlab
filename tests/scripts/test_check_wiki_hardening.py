@@ -452,11 +452,15 @@ def test_a_redacted_diagnosis_follows_the_claude_step_and_runs_on_failure() -> N
     assert isinstance(jobs, dict)
     steps = jobs["improve"]["steps"]
     claude = next(i for i, s in enumerate(steps) if s.get("id") == "claude")
-    step = steps[claude + 1]
+    # M13-16: the check that nothing outside the wiki changed comes first, and
+    # the diagnosis (which runs repository code) only when it passed.
+    assert steps[claude + 1].get("id") == "outside"
+    step = steps[claude + 2]
     # Failure only (round 2): on a cancelled run, never; with no model run, never.
     cond = " ".join(step["if"].split())
     assert cond == (
-        f"${{{{ !cancelled() && {steps[claude]['if']} && steps.claude.outcome != 'success' }}}}"
+        f"${{{{ !cancelled() && {steps[claude]['if']} && steps.claude.outcome != 'success'"
+        " && steps.outside.outcome == 'success' }}"
     )
     # The Claude step runs whenever the subscription token is present (owner
     # decision 2026-10-14: no API preflight), so a usage-limit failure is
