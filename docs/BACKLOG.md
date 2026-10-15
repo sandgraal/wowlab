@@ -368,14 +368,14 @@ Found in the M13-03 review. `lab/core/pyproject.toml` packaged only `src/wowlab_
 ## [ ] M13-15T — Long paths on Windows: graders
 **Size:** S · **Depends on:** M13-02 · **[TEST]** (test-writer only)
 
-Found by M13-02. With `LongPathsEnabled=0`, the default on many player PCs, Windows refuses plain paths longer than 260 characters, so `guard` and `snapshot` cannot reach a file deep in an install. Write `xfail(strict=True)` graders that run on `windows-latest`: a snapshot, a restore and a `guard` write of a file whose path exceeds 260 characters, with the setting off (the CI job can turn it off in a step). `guard.py` is load-bearing, so the graders land first.
+Found by M13-02. With `LongPathsEnabled=0`, the default on many player PCs, Windows refuses plain paths longer than 260 characters, so `guard` and `snapshot` cannot reach a file deep in an install. Write `xfail(strict=True)` graders that run on `windows-latest`: a snapshot, a restore and a `guard` write of a file whose path exceeds 260 characters, with the setting off (the CI job can turn it off in a step). Readers open plain paths too (`install` discovery, `doctor`, the format parsers), so cover a read of such a file as well. M13-02's experiment failed while building the deep tree, before any Lab code ran, so which modules fail is not yet shown. `guard.py` is load-bearing, so the graders land first.
 
 **Acceptance:** the graders fail on `main` for the stated reason on the `lab (windows)` job; reviewed by `code-reviewer`.
 
-## [ ] M13-15 — Long paths on Windows: `\\?\` in guard and snapshot
+## [ ] M13-15 — Long paths on Windows: `\\?\` where the graders need it
 **Size:** M · **Depends on:** M13-15T
 
-Make the M13-15T graders pass by using extended-length (`\\?\`) paths for every filesystem call in `guard` and `snapshot` on Windows, without changing behaviour on other platforms. Activate the graders by deleting their markers only.
+Make the M13-15T graders pass by using extended-length (`\\?\`) paths for the filesystem calls the graders show failing (expected: `guard`, `snapshot` and the readers) on Windows, without changing behaviour on other platforms. Activate the graders by deleting their markers only.
 
 **Acceptance:** the graders pass on `lab (windows)` with the setting off; the full suite passes; reviewed by `code-reviewer` and `security-reviewer` (the write gate).
 
