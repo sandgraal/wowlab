@@ -236,7 +236,7 @@ jobs:
         run: |
           export PATH=/usr/sbin:/usr/bin:/sbin:/bin
           snapshot() {
-            ( cd "$1"
+            ( cd "$1" || exit 1
               list() { find . \( -path ./.git/objects -o -path ./.git/index \) -prune -o "$@" -print0 | LC_ALL=C sort -z; }
               list -type f | xargs -0 -r sha256sum --
               list -type f -perm -100 | while IFS= read -r -d '' p; do printf 'x %q\n' "$p"; done
@@ -371,7 +371,7 @@ jobs:
         run: |
           export PATH=/usr/sbin:/usr/bin:/sbin:/bin
           snapshot() {
-            ( cd "$1"
+            ( cd "$1" || exit 1
               list() { find . \( -path ./.git/objects -o -path ./.git/index \) -prune -o "$@" -print0 | LC_ALL=C sort -z; }
               list -type f | xargs -0 -r sha256sum --
               list -type f -perm -100 | while IFS= read -r -d '' p; do printf 'x %q\n' "$p"; done
