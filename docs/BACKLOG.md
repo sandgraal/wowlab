@@ -268,6 +268,6 @@ Found by M13-17T and confirmed in its code review. On Linux, `ru_maxrss` carries
 - `lab/core/tests/review/test_m10_04_dense_array_misses_memory_target.py:54-57`
 - `lab/core/tests/test_luadata_budget_constructed.py:139-145` (`…_stays_small`)
 
-Apply M13-17T's fix to every child that measures memory: read `VmHWM` on Linux and keep the input alive, keeping every target. The same file's wide-trivia and empty-tables tests also free their input before parsing, which makes them read low; fix that too. The docstring's `MAX_ENTRIES` figure is already corrected.
+Apply M13-17T's fix to every child that measures memory: read `VmHWM` on Linux and keep the input alive, keeping every target. In M13-17T's file, `lab/core/tests/review/test_m10_04_bounded_document_misses_memory_target.py`, two tests still free their input before parsing (the `del body` in `CHILD`), which makes them read low; fix that too. They are `test_constructed_wide_trivia_document_at_the_entry_bound_fits_the_rss_target` and `test_constructed_positive_control_empty_tables_at_the_entry_bound`. That file's `MAX_ENTRIES` docstring is already corrected.
 
 **Acceptance:** each probe shows real growth on the Linux CI job (paste the readings) and still fails against a constructed parser that holds twice the memory; `make ci` green; reviewed by `code-reviewer`.
