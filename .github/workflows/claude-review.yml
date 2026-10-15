@@ -94,17 +94,29 @@ jobs:
           # anyone can comment on a draft PR before it is marked ready. The
           # input matches logins, not author associations.
           include_comments_by_actor: ${{ github.repository_owner }},claude[bot]
-          # Deny rules win over every allow rule. `//` starts an absolute path.
-          # The runner's temp directory is denied whole. The CI log download
-          # tool writes its logs there, so it is denied too: CI results come
-          # from get_ci_status, get_workflow_run_details and `gh pr checks`.
+          # The review is read-only. track_progress puts the action in tag
+          # mode, which grants acceptEdits and a commit path backed by the
+          # action's App token (contents: write). use_commit_signing swaps
+          # shell git (add, commit, rm, the push wrapper) for the action's
+          # file tools, and the deny list below removes those and every edit
+          # tool, so the model can comment and nothing else.
+          use_commit_signing: true
+          # Deny rules win over every allow rule. `//` starts an absolute path;
+          # `./` is the workspace, where the action writes its token into the
+          # checkout's .git/config. The runner's temp directory is denied
+          # whole. The CI log download tool writes its logs there, so it is
+          # denied too: CI results come from get_ci_status,
+          # get_workflow_run_details and `gh pr checks`.
           settings: |
             {
               "permissions": {
                 "disableBypassPermissionsMode": "disable",
                 "deny": [
                   "WebFetch", "WebSearch", "NotebookEdit", "Task", "Agent",
+                  "Edit", "Write", "MultiEdit",
+                  "mcp__github_file_ops__commit_files", "mcp__github_file_ops__delete_files",
                   "mcp__github_ci__download_job_log",
+                  "Read(./.git/config)",
                   "Read(//proc/**)", "Read(//sys/**)", "Read(//etc/**)", "Read(//root/**)",
                   "Read(/${{ runner.temp }}/**)",
                   "Read(//home/runner/actions-runner/**)", "Read(//home/runner/runners/**)",
@@ -160,7 +172,10 @@ jobs:
             comment with the summary: what you read, what you checked, and
             `verdict: CLEAN | FINDINGS(<n>)`. If there are no findings, that
             summary must state exactly what you read to earn it.
+          # No `gh pr view`: its --comments flag would read every comment,
+          # around include_comments_by_actor. Tag mode already puts the PR's
+          # title, body and filtered comments in the prompt.
           claude_args: |
             --model ${{ env.REVIEW_MODEL }}
             --max-turns 30
-            --allowedTools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,mcp__github_comment__update_claude_comment,mcp__github_ci__get_ci_status,mcp__github_ci__get_workflow_run_details,mcp__github_ci__download_job_log,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*)"
+            --allowedTools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,mcp__github_comment__update_claude_comment,mcp__github_ci__get_ci_status,mcp__github_ci__get_workflow_run_details,mcp__github_ci__download_job_log,Bash(gh pr diff:*),Bash(gh pr checks:*)"
