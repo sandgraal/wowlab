@@ -157,7 +157,7 @@ Thirty days after v0.1, the conductor records in `docs/handoffs/M13-gate.md` the
 
 # Owner request, 2026-10-14: the install explorer and the first `wowlab ui`
 
-Spec: `docs/LAB_PLAN.md` §15.6. Decision: ADR-0029 and its amendment of 2026-10-15 (Proposed: v0.1 runs read-only commands only). The owner pulled `wowlab ui` forward from Wave 5 into v0.1, with the explorer as its first view. Every fact the UI shows comes from a CLI `--json` model computed in Python. The JavaScript holds no file-map logic and no game rules (§14.5 D3). User-facing: each ticket's changes reach the wiki's file-map and command pages.
+Spec: `docs/LAB_PLAN.md` §15.6. Decision: ADR-0029 and its amendment of 2026-10-15 (accepted by the owner 2026-10-15: v0.1 runs read-only commands only). The owner pulled `wowlab ui` forward from Wave 5 into v0.1, with the explorer as its first view. Every fact the UI shows comes from a CLI `--json` model computed in Python. The JavaScript holds no file-map logic and no game rules (§14.5 D3). User-facing: each ticket's changes reach the wiki's file-map and command pages.
 
 ## [ ] M13-21 — `wowlab_core.verdict`: the safe-to-edit answer in core
 **Size:** S · **Depends on:** M13-01
