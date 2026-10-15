@@ -162,6 +162,29 @@ def test_the_check_follows_the_model_directly_and_runs_nothing_from_repo() -> No
     assert "-c core.fsmonitor=false status --porcelain" in run
 
 
+CC_WRITES_FINDS = [
+    "/usr/bin/find repo -depth -type d -name .cc-writes -path '*/.claude/.cc-writes'"
+    " -empty -print -delete",
+    "/usr/bin/find repo -depth -type d -name .claude -empty -print -delete",
+]
+
+
+def test_the_check_removes_only_empty_cc_writes_directories_before_its_listing() -> None:
+    # Round 4 (run 38805432999): Claude Code left empty .claude/.cc-writes
+    # staging directories behind. Exactly those, empty, and the .claude they
+    # leave empty; nothing broader, no -L, and only before the after listing.
+    run = _step("outside")["run"]
+    lines = [ln.strip() for ln in run.splitlines()]
+    at = [lines.index(f) for f in CC_WRITES_FINDS]
+    assert at[0] + 1 == at[1]
+    assert run.index(CC_WRITES_FINDS[1]) < run.index("snapshot repo >")
+    assert sum("-delete" in ln for ln in lines) == 2
+    assert not any(re.search(r"\bfind -L\b|\s-L\s", ln) for ln in lines)
+    # The before listing has no such step, and the snapshot is unchanged.
+    assert "-delete" not in _step("before")["run"]
+    assert "-delete" not in _snapshot_function(_step("outside"))
+
+
 def test_the_gate_command_writes_no_bytecode() -> None:
     steps = _steps()
     prompt = _index(steps, "prompt")
@@ -570,3 +593,69 @@ def test_constructed_the_last_step_removes_git_and_the_venv_and_runs_nothing(
     if setup is _symlinked:
         assert (ws / "elsewhere.git" / "config").is_file()
         assert (ws / "elsewhere.venv" / "bin").is_dir()
+
+
+def _scripts(ws: Path) -> Path:
+    return ws / "repo" / "scripts"
+
+
+def _cc_writes_empty(ws: Path) -> None:
+    (_scripts(ws) / ".claude" / ".cc-writes").mkdir(parents=True)
+    # And an empty .claude deeper down, in an ignored path.
+    (_site(ws) / "pkg" / ".claude").mkdir()
+
+
+def _cc_writes_with_file(ws: Path) -> None:
+    (_scripts(ws) / ".claude" / ".cc-writes").mkdir(parents=True)
+    (_scripts(ws) / ".claude" / ".cc-writes" / "tmp.md").write_text("x\n")
+
+
+def _claude_with_file(ws: Path) -> None:
+    (_scripts(ws) / ".claude" / ".cc-writes").mkdir(parents=True)
+    (_scripts(ws) / ".claude" / "settings.json").write_text("{}\n")
+
+
+def _other_name(ws: Path) -> None:
+    (_scripts(ws) / ".claude" / ".cc-other").mkdir(parents=True)
+
+
+def _cc_writes_not_under_claude(ws: Path) -> None:
+    (_scripts(ws) / ".cc-writes").mkdir()
+
+
+def _cc_writes_symlink(ws: Path) -> None:
+    (_scripts(ws) / ".claude").mkdir()
+    (ws / "runner" / "elsewhere").mkdir()
+    (_scripts(ws) / ".claude" / ".cc-writes").symlink_to(ws / "runner" / "elsewhere")
+
+
+@pytest.mark.parametrize(
+    ("plant", "passes"),
+    [
+        pytest.param(_cc_writes_empty, True, id="empty-cc-writes-and-claude"),
+        pytest.param(_cc_writes_with_file, False, id="a-file-in-cc-writes"),
+        pytest.param(_claude_with_file, False, id="a-file-in-claude"),
+        pytest.param(_other_name, False, id="another-empty-name"),
+        pytest.param(_cc_writes_not_under_claude, False, id="cc-writes-not-under-claude"),
+        pytest.param(_cc_writes_symlink, False, id="cc-writes-a-symlink"),
+    ],
+)
+def test_constructed_only_empty_cc_writes_directories_are_tolerated(
+    tmp_path: Path, plant: Callable[[Path], None], passes: bool
+) -> None:
+    ws = _workspace(tmp_path)
+    expected = _before(ws)
+    plant(ws)
+    done = _run(ws, "outside", expected)
+    if passes:
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert "removed 3 empty .claude/.cc-writes or .claude directories" in done.stdout
+        assert not (_scripts(ws) / ".claude").exists()
+        assert not (_site(ws) / "pkg" / ".claude").exists()
+        # Only a count is printed, no path.
+        assert "scripts" not in done.stdout and "site-packages" not in done.stdout
+    else:
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert "::error::the checkout of main changed during the run (a file under repo/" in (
+            done.stdout
+        )

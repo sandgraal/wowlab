@@ -393,6 +393,21 @@ jobs:
             echo "::error::the checkout of main changed during the run ($2); nothing from it runs again and nothing is pushed"
             exit 1
           }
+          # Claude Code stages an atomic write in <dir>/.claude/.cc-writes and
+          # can leave both behind, empty (run 38805432999). Exactly those, and
+          # only while empty, are removed: one holding anything survives and
+          # fails the comparison; a symlink is not -type d. Main has no .claude
+          # directory under repo/ here (the instruction-file step removed
+          # every one before the snapshot), so nothing of main's goes.
+          removed=$(
+            {
+              /usr/bin/find repo -depth -type d -name .cc-writes -path '*/.claude/.cc-writes' -empty -print -delete
+              /usr/bin/find repo -depth -type d -name .claude -empty -print -delete
+            } | wc -l
+          )
+          if [ "$removed" -gt 0 ]; then
+            echo "removed $((removed)) empty .claude/.cc-writes or .claude directories left by Claude Code"
+          fi
           snapshot repo > "$RUNNER_TEMP/repo-tree-after"
           if [ -z "$TREE" ] || [ "$(sha256sum < "$RUNNER_TEMP/repo-tree-after" | cut -c1-64)" != "$TREE" ]; then
             changed tree "a file under repo/, ignored paths included"
