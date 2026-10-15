@@ -27,6 +27,13 @@ jobs:
     env:
       # Pinned so reviews are reproducible across Claude Code releases.
       REVIEW_MODEL: claude-opus-5-5
+      # Claude Code strips credentials, CLAUDE_CODE_OAUTH_TOKEN among them,
+      # from the environment of every command it runs (here `gh pr ...`),
+      # and runs Bash in its own PID namespace so /proc shows no other
+      # process. Without it, `gh ... --jq '$ENV.CLAUDE_CODE_OAUTH_TOKEN'`
+      # reads the token (security review of PR #174, 2026-10-14). GitHub
+      # tokens stay, so `gh` keeps working.
+      CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
     steps:
       # A presence check only (owner decision 2026-10-14). A subscription
       # token has no documented free check: the old preflight sent a 1-token
@@ -50,10 +57,63 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+
+      # With CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 (job env), Claude Code refuses
+      # to start without bubblewrap, which the runner image lacks (run
+      # 38651487016). The action installs it only for allowed_non_write_users,
+      # so it is installed here, the same way (action.yml at the pinned sha:
+      # "Install subprocess isolation dependencies"). Ubuntu 24.04 blocks
+      # unprivileged user namespaces through AppArmor, which bwrap needs
+      # ("setting up uid map: Permission denied"); the restriction is lifted
+      # only when the probe fails, and the step fails if bwrap still cannot
+      # run, so the model never starts without the scrub.
+      - name: Install bubblewrap for the env scrub
+        if: steps.secret.outputs.present == 'true'
+        run: |
+          for i in 1 2 3; do
+            sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends bubblewrap && break
+            if [ "$i" = 3 ]; then echo "::error::could not install bubblewrap"; exit 1; fi
+            sleep 5
+          done
+          if ! bwrap --ro-bind / / --dev /dev --proc /proc true; then
+            if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+              sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+            fi
+            if ! bwrap --ro-bind / / --dev /dev --proc /proc true; then
+              echo "::error::bubblewrap cannot run for an unprivileged user; the env scrub cannot work"
+              exit 1
+            fi
+          fi
+          bwrap --version
+
       - uses: anthropics/claude-code-action@1d6de8cb0c237e7c15e9e1bdf973826ebae490cc # v1.0.248
         if: steps.secret.outputs.present == 'true'
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Only the owner's comments, and the action's own, reach the prompt:
+          # anyone can comment on a draft PR before it is marked ready. The
+          # input matches logins, not author associations.
+          include_comments_by_actor: ${{ github.repository_owner }},claude[bot]
+          # Deny rules win over every allow rule. `//` starts an absolute path.
+          # The runner's temp directory is denied whole. The CI log download
+          # tool writes its logs there, so it is denied too: CI results come
+          # from get_ci_status, get_workflow_run_details and `gh pr checks`.
+          settings: |
+            {
+              "permissions": {
+                "disableBypassPermissionsMode": "disable",
+                "deny": [
+                  "WebFetch", "WebSearch", "NotebookEdit", "Task", "Agent",
+                  "mcp__github_ci__download_job_log",
+                  "Read(//proc/**)", "Read(//sys/**)", "Read(//etc/**)", "Read(//root/**)",
+                  "Read(/${{ runner.temp }}/**)",
+                  "Read(//home/runner/actions-runner/**)", "Read(//home/runner/runners/**)",
+                  "Read(~/.claude.json)", "Read(~/.claude/**)", "Read(~/.config/**)",
+                  "Read(~/.gitconfig)", "Read(~/.git-credentials)", "Read(~/.netrc)",
+                  "Read(~/.ssh/**)", "Read(~/.docker/**)", "Read(~/.npmrc)"
+                ]
+              }
+            }
           # Tracking comment: the reviewer's summary is the final update to
           # it, so "post one summary comment" is always possible.
           track_progress: true

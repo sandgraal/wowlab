@@ -12,6 +12,11 @@ the Claude step, nowhere else in any workflow; and the Claude steps run on
 that check alone, with no `continue-on-error`, so a usage-limit failure fails
 the step rather than being skipped as a preflight result.
 
+Round 2 (security review, 2026-10-14): each Claude job runs with
+CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 after an identical bubblewrap install and
+probe, passes a settings deny list, and the two comment-driven workflows
+admit only the owner's (and the action's own) comments to the prompt.
+
 A usage-limit failure in the Claude step is reported by the action as
 is_error:true; `test_constructed_a_usage_limit_result_is_diagnosed` in
 `tests/scripts/test_wiki_diagnose.py` covers what wiki-daily prints then.
@@ -19,6 +24,7 @@ is_error:true; `test_constructed_a_usage_limit_result_is_diagnosed` in
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -229,3 +235,100 @@ def test_the_secret_check_really_skips_without_the_token(
 
 def test_every_claude_workflow_has_a_secret_check_script() -> None:
     assert sorted(name for name, _ in _secret_check_scripts()) == sorted(CLAUDE_WORKFLOWS)
+
+
+# Round 2 (security review of PR #174): without the scrub, every command the
+# model runs inherits CLAUDE_CODE_OAUTH_TOKEN, and `gh ... --jq '$ENV...'`
+# prints it. The scrub needs bubblewrap, which the runner image lacks.
+BWRAP_PROBE = "bwrap --ro-bind / / --dev /dev --proc /proc true"
+CORE_DENY = ("Read(//proc/**)", "Read(~/.claude/**)", "Read(~/.claude.json)")
+
+
+def _bubblewrap_runs() -> list[str]:
+    runs = []
+    for name in CLAUDE_WORKFLOWS:
+        for _, steps in _claude_jobs(WORKFLOWS / name):
+            for step in steps:
+                if re.search(r"apt-get install\b[^\n]*\bbubblewrap\b", step.get("run", "")):
+                    runs.append(step["run"])
+    return runs
+
+
+@pytest.mark.parametrize("name", CLAUDE_WORKFLOWS)
+def test_the_env_scrub_is_on_with_bubblewrap_before_every_claude_step(name: str) -> None:
+    path = WORKFLOWS / name
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    for job, steps in _claude_jobs(path):
+        env = data["jobs"][job].get("env", {})
+        assert env.get("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB") == "1", job
+        claude = [i for i, s in enumerate(steps) if str(s.get("uses", "")).startswith(ACTION)]
+        for i in claude:
+            # Nothing on the step turns the scrub back off.
+            assert "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB" not in steps[i].get("env", {})
+            installs = [
+                j
+                for j, s in enumerate(steps[:i])
+                if re.search(r"apt-get install\b[^\n]*\bbubblewrap\b", s.get("run", ""))
+            ]
+            assert len(installs) == 1, job
+            install = steps[installs[0]]
+            # Runs whenever the Claude step does, cannot be skipped past, and
+            # probes bwrap as an unprivileged user after installing it.
+            assert install.get("if") == steps[i].get("if")
+            assert install.get("continue-on-error") is not True
+            run = install["run"]
+            assert run.index("apt-get install") < run.index(BWRAP_PROBE)
+    assert not re.search(r"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB\W+0", path.read_text("utf-8"))
+
+
+def test_the_three_bubblewrap_steps_are_identical() -> None:
+    runs = _bubblewrap_runs()
+    assert len(runs) == len(CLAUDE_WORKFLOWS)
+    assert len(set(runs)) == 1
+
+
+@pytest.mark.parametrize("name", CLAUDE_WORKFLOWS)
+def test_every_claude_step_gets_a_deny_list(name: str) -> None:
+    path = WORKFLOWS / name
+    text = path.read_text(encoding="utf-8")
+    for entry in CORE_DENY:
+        assert f'"{entry}"' in text, entry
+    assert '"disableBypassPermissionsMode": "disable"' in text or (
+        'disableBypassPermissionsMode: "disable"' in text
+    )
+    # The runner's temp directory: an expression in the two inline settings,
+    # a jq variable in wiki-daily's generated file.
+    assert '"Read(/${{ runner.temp }}/**)"' in text or '"Read(\\($tmp)/**)"' in text
+    for _, steps in _claude_jobs(path):
+        for step in steps:
+            if str(step.get("uses", "")).startswith(ACTION):
+                assert step["with"].get("settings")
+
+
+@pytest.mark.parametrize("name", ["claude.yml", "claude-review.yml"])
+def test_only_the_owners_comments_reach_the_prompt(name: str) -> None:
+    # Tag mode puts the PR's or issue's comments in the prompt; anyone can
+    # comment on a draft PR. The pinned action filters by login.
+    for _, steps in _claude_jobs(WORKFLOWS / name):
+        for step in steps:
+            if str(step.get("uses", "")).startswith(ACTION):
+                actors = step["with"]["include_comments_by_actor"]
+                assert actors == "${{ github.repository_owner }},claude[bot]"
+
+
+def test_the_responder_commits_only_through_the_actions_file_tools() -> None:
+    for _, steps in _claude_jobs(WORKFLOWS / "claude.yml"):
+        for step in steps:
+            if str(step.get("uses", "")).startswith(ACTION):
+                assert step["with"]["use_commit_signing"] is True
+
+
+@pytest.mark.parametrize("name", ["claude.yml", "claude-review.yml"])
+def test_the_inline_settings_are_valid_json(name: str) -> None:
+    for _, steps in _claude_jobs(WORKFLOWS / name):
+        for step in steps:
+            if str(step.get("uses", "")).startswith(ACTION):
+                raw = step["with"]["settings"].replace("${{ runner.temp }}", "/tmp/x")
+                deny = json.loads(raw)["permissions"]["deny"]
+                assert set(CORE_DENY) <= set(deny)
+                assert "Read(//tmp/x/**)" in deny
