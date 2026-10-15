@@ -78,6 +78,8 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 **Amendment (2026-10-15):** `lab (windows)` was green on `main` with M13-02 (#173), so it is added to the required checks in `.github/rulesets/main.json`; the owner re-applies the ruleset with `scripts/bootstrap-github.sh`. A `lab (macos)` job runs too and is not required (`docs/LAB_PLAN.md` §15.3 E3). The Windows job takes about 20 minutes, which every PR now waits on.
 
+**Amendment (2026-10-15, later, owner decision):** waiting on Windows took too long (15 to 30 minutes per PR, plus queueing for a runner), so `lab (windows)` is not a required check after all and leaves the PR path. It moves to its own workflow, `.github/workflows/windows.yml`, which runs after every merge to `main`, nightly, and on demand for a branch (`gh workflow run windows.yml --ref <branch>`). A red run on `main` is a bug to fix next, filed as a ticket. The required checks are again the seven listed above, without `lab (windows)`; the owner re-applies the ruleset with `scripts/bootstrap-github.sh`. ADR-0031's "Windows, tested" still holds: the suite runs on `windows-latest` in CI, and a human runs the first-run flow on a real Windows install (M13-02).
+
 ---
 
 ## ADR-0019 — wowlab is a local-only personal toolchain

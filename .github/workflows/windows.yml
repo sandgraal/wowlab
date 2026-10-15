@@ -1,0 +1,56 @@
+name: Windows
+
+# The Lab suite on windows-latest (ADR-0031, M13-02). It covers the path
+# behaviour Linux and macOS cannot show: junctions, case-insensitive name
+# collisions, reserved names, `\\?\` long paths, files held open
+# (docs/LAB_PLAN.md §9; the first run caught the byte-0 lock bug on PR #59).
+#
+# Off the PR path (owner decision, ADR-0014 amendment of 2026-10-15): the job
+# took 15 to 30 minutes and every PR waited on it. It runs after each merge to
+# main, nightly, and on demand for a branch:
+#   gh workflow run windows.yml --ref <branch>
+# It is not a required check. A red run on main is a bug to fix next, filed
+# as a ticket, not a reason to revert.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.12.12"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  lab-windows:
+    name: lab (windows)
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - name: Install
+        run: uv sync --frozen
+      - name: Record whether long paths are enabled (test_desktop_paths)
+        shell: pwsh
+        run: |
+          "LongPathsEnabled=" + (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem').LongPathsEnabled
+      - name: pytest lab/core/tests
+        run: uv run --frozen pytest -q lab/core/tests
+      - name: wowlab --version
+        run: uv run --frozen wowlab --version
