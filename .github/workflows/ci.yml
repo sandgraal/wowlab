@@ -94,16 +94,6 @@ jobs:
       - name: Generate a decimal-comma locale (serializer determinism graders)
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         run: sudo locale-gen de_DE.UTF-8
-      - name: TEMPORARY (M13-17T) memory probe diagnostics (linux)
-        run: |
-          uv run --frozen python - <<'EOF'
-          import sys
-          sys.path.insert(0, "lab/core/tests/review")
-          import test_m10_04_bounded_document_misses_memory_target as t
-          for parser in ("luadata", "double"):
-              peak, samples = t._projected_assignments_peak(parser)
-              print("linux 1/16", parser, "least", round(peak / t.MIB), "samples", t._mib(samples))
-          EOF
       - name: pytest
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         run: uv run --frozen pytest -q
@@ -170,31 +160,6 @@ jobs:
       - name: Install
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         run: uv sync --frozen
-      - name: TEMPORARY (M13-17T) memory probe, 10 consecutive runs
-        if: runner.os == 'macOS'
-        run: |
-          for i in $(seq 10); do
-            echo "run $i"
-            uv run --frozen pytest -q "lab/core/tests/review/test_m10_04_bounded_document_misses_memory_target.py::test_constructed_top_level_assignments_at_the_file_bound_fit_the_rss_target" || exit 1
-          done
-      - name: TEMPORARY (M13-17T) memory probe diagnostics
-        if: runner.os == 'macOS'
-        run: |
-          uv run --frozen python - <<'EOF'
-          import subprocess, sys
-          sys.path.insert(0, "lab/core/tests/review")
-          import test_m10_04_bounded_document_misses_memory_target as t
-          from wowlab_core.luadata import MAX_FILE_BYTES
-          for parser in ("luadata", "double"):
-              peak, samples = t._projected_assignments_peak(parser)
-              print("new 1/16", parser, "least", round(peak / t.MIB), "samples", t._mib(samples))
-          old = t.CHILD.replace('body = b"a=1\\n" * count\n    data = b"\\r\\n" + body', 'data = b"\\r\\n" + b"a=1\\n" * count')
-          assert old != t.CHILD
-          for _ in range(5):
-              out = subprocess.run([sys.executable, "-c", old, "assign", str(MAX_FILE_BYTES // 4 // 64), "luadata"], check=True, capture_output=True, text=True).stdout.split()
-              b, a, s = map(int, out)
-              print("old 1/64 projection", round((b + 63 * s + (a - b) * 64) / t.MIB), "before", round(b / t.MIB, 1), "growth", round((a - b) / t.MIB, 2))
-          EOF
       - name: pytest lab/core/tests
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         run: uv run --frozen pytest -q lab/core/tests
