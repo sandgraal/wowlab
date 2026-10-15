@@ -2793,6 +2793,8 @@ def test_m11_29_count_only_events_are_counted_and_never_gather() -> None:
     assert _body(flow, "onEvent") == (
         f"function onEvent ( fired ) {OFF_GUARD} "
         "if counts then counts [ fired ] = ( ns . Number ( counts [ fired ] ) or 0 ) + 1 end "
+        # M13-05: a retry event schedules a still-dirty section and returns.
+        "if retries [ fired ] then if section . dirty then schedule ( ) end return end "
         "if not changes [ fired ] then return end "
         "if section . immediate then gather ( section , fired ) "
         "else section . dirty = true schedule ( ) end end"
@@ -3214,9 +3216,9 @@ SECTIONLESS_API: dict[tuple[str, str, str], tuple[dict[str, int], str]] = {
         "the event's payload, passed on to each handler unread",
     ),
     ("Core.lua", "onEvent", "fired"): (
-        {"value": 3, "test": 1},
-        "the event name: a key of the section's counts, tested against its change events, "
-        "passed to gather",
+        {"value": 4, "test": 1},
+        "the event name: a key of the section's counts, looked up in its retry events "
+        "(M13-05), tested against its change events, passed to gather",
     ),
     ("Core.lua", "gather", "event"): (
         {"value": 1},
@@ -3251,12 +3253,14 @@ SECTIONLESS_API: dict[tuple[str, str, str], tuple[dict[str, int], str]] = {
 SECTIONLESS_CALLERS: dict[tuple[str, str], dict[tuple[str, str], int]] = {
     ("Core.lua", "ns.On"): {
         ("Core.lua", _TOP): 3,  # ADDON_LOADED, PLAYER_ENTERING_WORLD, PLAYER_LOGOUT
-        ("Core.lua", "listen"): 2,  # the change events and the count-only events
+        # the change events, the retry events (M13-05) and the count-only events
+        ("Core.lua", "listen"): 3,
         ("Customization.lua", _TOP): 1,  # the race check
     },
-    ("Core.lua", "off"): {("Core.lua", "switchOff"): 2},
+    # the retry events (M13-05), the change events and the count-only events
+    ("Core.lua", "off"): {("Core.lua", "switchOff"): 3},
     ("Core.lua", "schedule"): {
-        ("Core.lua", "onEvent"): 1,
+        ("Core.lua", "onEvent"): 2,  # a change event, and a retry event (M13-05)
         ("Core.lua", 'ns.On("PLAYER_ENTERING_WORLD")'): 1,
     },
     ("Core.lua", "startFirstPass"): {("Core.lua", 'ns.On("PLAYER_ENTERING_WORLD")'): 1},
@@ -5359,13 +5363,18 @@ def test_m11_37_a_call_added_inside_a_section_passes() -> None:
 # sits in section code that `/wowlab skip` stops (no SECTIONLESS_API entry
 # names the file). These add the second rule of §15.2: nothing in the three
 # sections is read in combat. Each gather asks `combatReason()` as its first
-# statement and returns at once when it gives a reason; every other client
-# reference in the file, and every call of a helper that may reach one, comes
-# after that check.
+# statement and returns `ns.Blocked(reason)` at once when it gives a reason
+# (Core.lua then keeps the earlier record and leaves the section dirty);
+# every other client reference in the file, and every call of a helper that
+# may reach one, comes after that check. PLAYER_REGEN_ENABLED is each
+# section's retry event, never a change event, so the end of a fight
+# re-gathers only a section a blocked gather left dirty.
 
 ACTIONS = ADDON / "Actions.lua"
 M13_05_KEYS = ("spellbook", "actionbars", "bindings")
-COMBAT_CHECK = "local blocked = combatReason ( ) if blocked then return ns . Absent ( blocked ) end"
+COMBAT_CHECK = (
+    "local blocked = combatReason ( ) if blocked then return ns . Blocked ( blocked ) end"
+)
 COMBAT_EVENT = "PLAYER_REGEN_ENABLED"
 
 
@@ -5395,8 +5404,11 @@ def _m13_05_combat_problems(path: Path) -> list[str]:
     for key, entries in _m13_05_sections(flow):
         keys.append(key)
         events_s, events_e = entries.get("{events}", (0, 0))
-        if COMBAT_EVENT not in {x.text for x in t[events_s:events_e] if x.kind == "string"}:
-            problems.append(f"{key}: {COMBAT_EVENT} is not among its events")
+        if COMBAT_EVENT in {x.text for x in t[events_s:events_e] if x.kind == "string"}:
+            problems.append(f"{key}: {COMBAT_EVENT} is a change event (it would re-read)")
+        retry_s, retry_e = entries.get("{retry}", (0, 0))
+        if [x.text for x in t[retry_s:retry_e] if x.kind == "string"] != [COMBAT_EVENT]:
+            problems.append(f"{key}: its retry events are not exactly {COMBAT_EVENT}")
         if "{gather}" not in entries or t[entries["{gather}"][0]].text != "function":
             problems.append(f"{key}: its gather is not a function literal")
             continue
@@ -5490,7 +5502,7 @@ def test_m13_05_the_new_sections_are_switchable_and_need_no_exception() -> None:
 
 
 _M13_05_GATHER = "        local blocked = combatReason()\n"
-_M13_05_RETURN = "        if blocked then\n            return ns.Absent(blocked)\n        end\n"
+_M13_05_RETURN = "        if blocked then\n            return ns.Blocked(blocked)\n        end\n"
 
 # Constructed edits of Actions.lua (boundary tests of the combat scan): each
 # reads the client before, or without, the combat check. The first match of
@@ -5512,8 +5524,12 @@ _M13_05_CASES: dict[str, list[tuple[str, str]]] = {
         (_M13_05_GATHER, "        early()\n" + _M13_05_GATHER),
     ],
     "a file-level read": [("local IN_COMBAT", "local early = GetNumBindings()\nlocal IN_COMBAT")],
-    "combat end not registered": [
-        ('{ "SPELLS_CHANGED", "PLAYER_REGEN_ENABLED" }', '{ "SPELLS_CHANGED" }')
+    "combat end not registered": [('    retry = { "PLAYER_REGEN_ENABLED" },\n', "")],
+    "combat end as a change event": [
+        ('{ "SPELLS_CHANGED" }', '{ "SPELLS_CHANGED", "PLAYER_REGEN_ENABLED" }')
+    ],
+    "the reason written over the record": [
+        ("return ns.Blocked(blocked)", "return ns.Absent(blocked)")
     ],
     "combatReason reads another API": [
         ("    if locked then\n", '    if locked or UnitLevel("player") then\n')
@@ -5593,6 +5609,289 @@ def test_m13_05_bindings_ask_only_plain_commands() -> None:
     assert text.count("getKey ,") == 1
     assert 'string . find ( value , "^[%u%d_]+$" )' in text
     assert "{ command = ns . String ( name ) , keys = kept }" in text
+
+
+# Round 2 of the domain review: a blocked gather keeps the good record ---------
+
+
+def test_m13_05_a_blocked_gather_keeps_the_record_and_stays_dirty() -> None:
+    """Core.lua's `gather`: a section that returns `ns.Blocked(reason)` keeps
+    what it gathered earlier this session (no store at all), and writes the
+    reason as an absent record only when nothing was gathered; either way it
+    stays dirty, so the next pass tries again. Any other result marks the
+    section gathered and clean. `ns.Blocked` builds the sentinel from a
+    checked string and nothing else."""
+    flow = _core()
+    assert _body(flow, "ns.Blocked") == (
+        "function ns . Blocked ( reason ) return { blocked = ns . String ( reason ) } end"
+    )
+    assert _body(flow, "gather") == (
+        f"function gather ( section , event ) {OFF_GUARD} "
+        "local ok , record = pcall ( section . gather , event ) "
+        'local blocked = ok and type ( record ) == "table" and type ( record . blocked ) == "string" '
+        "if blocked and section . gathered then section . dirty = true return end "
+        "if blocked then record = ns . Absent ( record . blocked ) "
+        'elseif not ok then record = ns . Absent ( "error: " .. tostring ( record ) ) '
+        'elseif type ( record ) ~= "table" then '
+        'record = ns . Absent ( "the section gathered nothing" ) end '
+        "ns . state [ section . key ] = record "
+        "if blocked then section . dirty = true "
+        "else section . gathered = true section . dirty = false end end"
+    )
+    # `gathered` is set in `gather` only, so a carried record does not count.
+    sets = [
+        (path.name, _Flow(path, tokens).label_at(i))
+        for path in SOURCES
+        for tokens in [_tokens(path)]
+        for i in range(len(tokens) - 3)
+        if [t.text for t in tokens[i : i + 3]] == ["section", ".", "gathered"]
+        and tokens[i + 3].text == "="
+    ]
+    assert sets == [("Core.lua", "gather")], sets
+    # Only Actions.lua's three gathers return the sentinel.
+    users = [
+        (path.name, i)
+        for path in SOURCES
+        for tokens in [_tokens(path)]
+        for i in range(len(tokens) - 2)
+        if _render(tokens[i : i + 3]) == "ns . Blocked" and tokens[i - 1].text == "return"
+    ]
+    assert [name for name, _ in users] == ["Actions.lua"] * 3, users
+
+
+def test_m13_05_the_retry_event_never_marks_a_section_dirty() -> None:
+    """A retry event (PLAYER_REGEN_ENABLED) schedules a pass only for a
+    section that is still dirty, and returns before the change-event path;
+    it is registered, listed as refused and switched off like a change
+    event."""
+    flow = _core()
+    listen = _body(flow, "listen")
+    assert (
+        "local retries = { } for _ , event in ipairs ( section . retry or { } ) do "
+        "retries [ event ] = true end"
+    ) in listen
+    assert "if retries [ fired ] then if section . dirty then schedule ( ) end return end" in listen
+    assert (
+        "for _ , event in ipairs ( section . retry or { } ) do if not ns . On ( event , onEvent ) "
+        "then if not section . events_unregistered then section . events_unregistered = { } end "
+        "local refused = section . events_unregistered "
+        "refused [ # refused + 1 ] = ns . String ( event ) "
+        "elseif counts then counts [ event ] = 0 end end"
+    ) in listen
+    assert (
+        "for _ , event in ipairs ( section . retry or { } ) do off ( event , section . listener ) end"
+    ) in _body(flow, "switchOff")
+    users = sorted(
+        path.name
+        for path in SOURCES
+        for flow_ in [_Flow(path, _tokens(path))]
+        for key, entries in _m13_05_sections(flow_)
+        if "{retry}" in entries
+    )
+    assert users == ["Actions.lua"] * 3, users
+
+
+# Secret values: every value read from the client goes through `clean` -----
+
+# The client function handles Actions.lua calls, and what each call's value
+# names are. GetMacroInfo is not here: its one value (`icon`) is only
+# compared with nil (test_m13_05_macro_info_binds_neither_name_nor_body), and
+# GetBindingKey's values are read as `keys [ i ]`, checked below.
+_M13_05_HANDLES = frozenset(
+    {
+        "numLines",
+        "lineInfo",
+        "itemInfo",
+        "itemName",
+        "getAction",
+        "getSet",
+        "getCount",
+        "getBinding",
+    }
+)
+_M13_05_CLEAN = (
+    "local function clean ( isSecret , check , entry , value ) "
+    'if type ( value ) == "nil" or not isSecret then return value , false end '
+    "local ok , secret = pcall ( isSecret , value ) "
+    'tally ( check , ok , type ( secret ) == "boolean" ) '
+    "if ok and secret == false then return value , false end "
+    "entry . secret = ( ns . Number ( entry . secret ) or 0 ) + 1 return nil , true end"
+)
+_M13_05_SECRET_BIND = (
+    'local isSecret = type ( issecretvalue ) == "function" and issecretvalue or nil'
+)
+
+
+def _m13_05_enclosing_call(t: list[Token], k: int) -> int | None:
+    """The `(` of the innermost call around token k, or None."""
+    depth = 0
+    for j in range(k - 1, -1, -1):
+        if t[j].text in {")", "}", "]"}:
+            depth += 1
+        elif t[j].text in {"(", "{", "["}:
+            if depth == 0:
+                return j if t[j].text == "(" else None
+            depth -= 1
+    return None
+
+
+def _m13_05_cleaned_last(t: list[Token], start: int, end: int) -> bool:
+    """Tokens start..end-1 are the last argument of a `clean (` call whose
+    first argument is `isSecret`."""
+    j = _m13_05_enclosing_call(t, start)
+    return (
+        j is not None
+        and t[j - 1].text == "clean"
+        and t[j + 1].text == "isSecret"
+        and t[j + 2].text == ","
+        and t[start - 1].text == ","
+        and end < len(t)
+        and t[end].text == ")"
+    )
+
+
+def _m13_05_secret_problems(path: Path) -> list[str]:
+    """Why a value read from the client in `path` (Actions.lua, or an edited
+    copy) may be used or stored before issecretvalue was asked about it."""
+    t = _tokens(path)
+    text = _render(t)
+    problems: list[str] = []
+    if _M13_05_CLEAN not in text:
+        problems.append("clean is not the pinned one")
+    if text.count(_M13_05_SECRET_BIND) != 3:
+        problems.append("a gather does not bind isSecret to issecretvalue")
+    if text.count('probe ( "issecretvalue" , isSecret )') != 3:
+        problems.append("a gather does not probe issecretvalue")
+    bound: set[str] = set()
+    for k, x in enumerate(t):
+        if x.text != "pcall" or t[k + 1].text != "(":
+            continue
+        handle = t[k + 2].text
+        if handle not in _M13_05_HANDLES:
+            continue
+        # `local ok , v1 , v2 = pcall ( handle , ... )`: each v is next seen
+        # as `v = clean (` or `v , w = clean (`.
+        names: list[str] = []
+        j = k - 2
+        while t[j].text != "local":
+            if t[j].kind == "name":
+                names.append(t[j].text)
+            j -= 1
+        values = list(reversed(names))[1:]
+        end, depth = k + 1, 0
+        while True:
+            depth += {"(": 1, ")": -1}.get(t[end].text, 0)
+            if depth == 0:
+                break
+            end += 1
+        for name in values:
+            bound.add(name)
+            nxt = next(
+                (i for i in range(end + 1, len(t)) if t[i].text == name and not _is_field(t, i)),
+                None,
+            )
+            if nxt is None:
+                continue
+            after = [x.text for x in t[nxt + 1 : nxt + 5]]
+            if after[:2] != ["=", "clean"] and not (
+                after[0] == "," and after[2:4] == ["=", "clean"]
+            ):
+                problems.append(f"line {t[nxt].line}: {name} from {handle} is used before clean")
+    # A field of a table the client returned is read only as clean's value.
+    for k, x in enumerate(t):
+        field = x.text in bound and not _is_field(t, k) and t[k + 1].text == "."
+        if field and not _m13_05_cleaned_last(t, k, k + 3):
+            problems.append(f"line {x.line}: {x.text} . {t[k + 2].text} is not cleaned")
+    # GetBindingKey's values; `keys [ 1 ]` is pcall's own success flag.
+    for k, x in enumerate(t):
+        if x.text != "keys" or t[k + 1].text != "[" or _render(t[k : k + 4]) == "keys [ 1 ]":
+            continue
+        if not _m13_05_cleaned_last(t, k, k + 4):
+            problems.append(f"line {x.line}: keys [ ... ] is not cleaned")
+    return problems
+
+
+def test_m13_05_every_client_value_is_asked_about_before_use() -> None:
+    """§15.2 and the round-2 domain review: secret values are not only a
+    combat matter (restricted content may make them too, [verify]). Where
+    the client has issecretvalue, each gather tests every value a client call
+    gave, and every field of a table it gave, before the value is compared,
+    used or stored; one it calls secret, or cannot say about, is dropped and
+    counted on its API's probe as `secret`."""
+    assert _m13_05_secret_problems(ACTIONS) == []
+
+
+_M13_05_SECRET_CASES: dict[str, list[tuple[str, str]]] = {
+    "a field read raw": [
+        (
+            "ns.Number(clean(isSecret, probes.test, probes.item, info.spellID))",
+            "ns.Number(info.spellID)",
+        )
+    ],
+    "a count used raw": [
+        ("            count = clean(isSecret, probes.test, probes.lines, count)\n", "")
+    ],
+    "a binding key read raw": [
+        ("clean(isSecret, secret, key, keys[i])", "keys[i]"),
+    ],
+    "the action type used raw": [
+        ("                kind = clean(isSecret, secret, action, kind)\n", ""),
+    ],
+    "an unknown answer kept": [("if ok and secret == false then", "if ok and not secret then")],
+    "a gather without the test": [
+        (
+            'local isSecret = type(issecretvalue) == "function" and issecretvalue or nil',
+            "local isSecret = nil",
+        )
+    ],
+}
+
+
+def test_m13_05_constructed_secret_edits_fail() -> None:
+    missed = []
+    for tag, edits in sorted(_M13_05_SECRET_CASES.items()):
+        text = ACTIONS.read_text(encoding="utf-8")
+        for found, replacement in edits:
+            assert found in text, found
+            text = text.replace(found, replacement, 1)
+        with tempfile.TemporaryDirectory(prefix="wowlab-m13-05-") as tmp:
+            path = Path(tmp) / ACTIONS.name
+            path.write_text(text, encoding="utf-8")
+            if not _m13_05_secret_problems(path):
+                missed.append(tag)
+    assert not missed, missed
+
+
+def test_m13_05_get_macro_info_only_for_a_macro_index() -> None:
+    """A macro slot's id is the macro's index only when the client gives no
+    subtype (nil or ""); with one it is the spell or item the macro shows
+    [verify]. GetMacroInfo is called only for an index, never with a subtype
+    that was dropped as secret: an out-of-range index into a C API is the
+    crash class in docs/DATA_SOURCES.md (2026-09-28)."""
+    text = _render(_tokens(ACTIONS))
+    assert ("subType , hiddenSubType = clean ( isSecret , secret , action , subType )") in text
+    assert (
+        'local macroIndex = not hiddenSubType and ( subType == nil or subType == "" ) '
+        'if kind == "macro" and macroIndex and type ( id ) == "number" and getMacro then '
+        "local okMacro , _ , icon = pcall ( getMacro , id )"
+    ) in text
+    assert text.count("pcall ( getMacro ,") == 1
+
+
+def test_m13_05_spellbook_records_the_client_item_types() -> None:
+    """`item_types` is Enum.SpellBookItemType as the client has it, name to
+    number, so a reader names each item's `type` without assuming numbers;
+    `bindings` records the client's ACCOUNT_BINDINGS and CHARACTER_BINDINGS
+    for the same reason."""
+    text = _render(_tokens(ACTIONS))
+    assert (
+        'local itemTypes = type ( Enum ) == "table" and Enum . SpellBookItemType or nil'
+    ) in text
+    assert "for name , value in pairs ( itemTypes ) do" in text
+    assert "out [ key ] = ns . Number ( value )" in text
+    assert "item_types = spellbookItemTypes ( )" in text
+    assert "record . account_bindings = ns . Number ( ACCOUNT_BINDINGS )" in text
+    assert "record . character_bindings = ns . Number ( CHARACTER_BINDINGS )" in text
 
 
 def test_m13_05_readme_and_plan_document_schema_3() -> None:

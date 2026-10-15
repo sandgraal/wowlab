@@ -62,12 +62,26 @@ LEFT_OUT_REASONS = tuple(
 NEW_KEYS = ("spellbook", "actionbars", "bindings")
 
 
-def _probe(api: str, calls: int = 0, errors: int = 0, answered: int = 0) -> dict[str, Any]:
-    return {"api": api, "present": True, "calls": calls, "errors": errors, "answered": answered}
+def _probe(
+    api: str, calls: int = 0, errors: int = 0, answered: int = 0, secret: int = 0
+) -> dict[str, Any]:
+    return {
+        "api": api,
+        "present": True,
+        "calls": calls,
+        "errors": errors,
+        "answered": answered,
+        "secret": secret,
+    }
+
+
+def _missing(api: str) -> dict[str, Any]:
+    return {"api": api, "present": False, "calls": 0, "errors": 0, "answered": 0, "secret": 0}
 
 
 def _spellbook() -> dict[str, Any]:
     return {
+        "item_types": {"None": 0, "Spell": 1, "FutureSpell": 2, "PetAction": 3, "Flyout": 4},
         "skill_lines": [
             {"index": 1, "offset": 0, "count": 2, "guild": False, "hidden": False},
             {"index": 2, "offset": 2, "count": 1, "guild": False, "hidden": False, "spec_id": 1486},
@@ -97,7 +111,7 @@ def _spellbook() -> dict[str, Any]:
             {
                 "slot": 3,
                 "skill_line": 2,
-                "type": 1,
+                "type": 2,
                 "action_id": 20375,
                 "spell_id": 20375,
                 "spell_name": "Seal of Command",
@@ -110,6 +124,7 @@ def _spellbook() -> dict[str, Any]:
             _probe("C_SpellBook.GetSpellBookSkillLineInfo", 2, 0, 2),
             _probe("C_SpellBook.GetSpellBookItemInfo", 3, 0, 3),
             _probe("C_SpellBook.GetSpellBookItemName", 3, 0, 3),
+            _missing("issecretvalue"),
         ],
         "events_unregistered": {},
     }
@@ -124,8 +139,13 @@ def _actionbars() -> dict[str, Any]:
             {"slot": 2, "type": "macro", "id": 121},
             {"slot": 3, "type": "item", "id": 6948},
             {"slot": 4, "type": "equipmentset"},
+            {"slot": 5, "type": "macro", "id": 20154, "sub_type": "spell"},
         ],
-        "probes": [_probe("GetActionInfo", 180, 0, 4), _probe("GetMacroInfo", 1, 0, 1)],
+        "probes": [
+            _probe("GetActionInfo", 180, 0, 5),
+            _probe("GetMacroInfo", 1, 0, 1),
+            _probe("issecretvalue", 15, 0, 15),
+        ],
         "events_unregistered": {},
     }
 
@@ -133,6 +153,8 @@ def _actionbars() -> dict[str, Any]:
 def _bindings() -> dict[str, Any]:
     return {
         "binding_set": 2,
+        "account_bindings": 1,
+        "character_bindings": 2,
         "commands": 412,
         "commands_left_out": 1,
         "keys_left_out": 0,
@@ -145,7 +167,8 @@ def _bindings() -> dict[str, Any]:
             _probe("GetCurrentBindingSet", 1, 0, 1),
             _probe("GetNumBindings", 1, 0, 1),
             _probe("GetBinding", 412, 0, 412),
-            _probe("GetBindingKey", 411, 0, 3),
+            _probe("GetBindingKey", 411, 0, 3, 1),
+            _probe("issecretvalue", 830, 0, 830),
         ],
         "events_unregistered": {},
     }
@@ -186,12 +209,15 @@ def test_the_addon_source_lists_what_these_tests_use() -> None:
         "C_SpellBook.GetSpellBookSkillLineInfo",
         "C_SpellBook.GetSpellBookItemInfo",
         "C_SpellBook.GetSpellBookItemName",
+        "issecretvalue",
         "GetActionInfo",
         "GetMacroInfo",
+        "issecretvalue",
         "GetCurrentBindingSet",
         "GetNumBindings",
         "GetBinding",
         "GetBindingKey",
+        "issecretvalue",
     ), PROBED
     assert len(COMBAT_REASONS) == 3, COMBAT_REASONS
     assert len(LEFT_OUT_REASONS) == 4, LEFT_OUT_REASONS
@@ -247,7 +273,14 @@ def test_constructed_schema_3_reads_every_new_section() -> None:
     ]
     assert char.spellbook.list_[1].subtext == "Rank 1"
     assert isinstance(char.actionbars, labaddon.ActionBars)
-    assert [s.id for s in char.actionbars.slots] == [6603, 121, 6948, None]
+    assert [s.id for s in char.actionbars.slots] == [6603, 121, 6948, None, 20154]
+    assert char.spellbook.item_types == {
+        "None": 0,
+        "Spell": 1,
+        "FutureSpell": 2,
+        "PetAction": 3,
+        "Flyout": 4,
+    }
     assert isinstance(char.bindings, labaddon.Bindings)
     assert char.bindings.list_[1].keys == ["W", "UP"]
     assert char.talents is not None
@@ -277,22 +310,34 @@ def test_constructed_schema_3_describes_the_new_sections() -> None:
         "Spellbook: 3 items in 2 skill lines, 1 passive, 3 with a name, 1 with a subtext "
         "(ids, names and subtexts in --json); read out of combat"
     ) in lines
-    assert "  skill line 2: 1 items after slot 2 (spec 1486)" in lines
+    assert "  by type: 1 FutureSpell, 2 Spell; future (not yet learned) spells are items too" in (
+        lines
+    )
+    assert "  skill line 1: 2 items, slots 1 to 2" in lines
+    assert "  skill line 2: 1 item, slots 3 to 3 (spec 1486)" in lines
     assert (
-        "Action bars: 4 of slots 1 to 180 filled (1 equipmentset, 1 item, 1 macro, 1 spell; "
-        "slots and ids in --json; a macro slot keeps the macro id only); read out of combat"
+        "Action bars: 5 of slots 1 to 180 filled (1 equipmentset, 1 item, 2 macro, 1 spell; "
+        "slots and ids in --json); read out of combat"
+    ) in lines
+    assert (
+        "  macro slots: 1 with no subtype (the id is the macro index), 1 with one (the id is "
+        "the spell or item id the macro shows now [verify]); a macro's name and body are never "
+        "recorded"
     ) in lines
     assert (
         "Key bindings: 3 commands with a key, of 412 listed (commands and keys in --json); "
-        "binding set 2 (the client's raw value); read out of combat"
+        "binding set 2 (the character's: CHARACTER_BINDINGS is 2); read out of combat"
     ) in lines
     assert (
-        "  left out: 1 command with text after the name (never asked about), 0 keys not "
-        "printable ASCII"
+        "  left out: 1 command GetBinding listed with text after the name (never asked about), "
+        "0 keys not printable ASCII; a key bound straight to a spell, macro, item or click may "
+        "not be listed by GetBinding at all [verify]"
     ) in lines
     assert (
-        "  GetBindingKey: present, 411 calls, 0 raised an error, 3 answered, 408 answered nothing"
+        "  GetBindingKey: present, 411 calls, 0 raised an error, 3 answered, 408 answered "
+        "nothing, 1 value dropped as secret"
     ) in lines
+    assert "  issecretvalue: missing, not called" in lines
     assert "  left out as the active class config at this gather: config 640511" in lines
     # Every line printable ASCII and no longer than the longest line before (M11-34).
     assert all(re.fullmatch(r"[\x20-\x7e]*", line) for line in lines)
@@ -333,27 +378,97 @@ def test_constructed_combat_reason_reads_as_absent(key: str, reason: str) -> Non
     assert isinstance(record, labaddon.AbsentProbedSection)
     assert record.probes is None
     label = {"spellbook": "Spellbook", "actionbars": "Action bars", "bindings": "Key bindings"}
-    assert f"{label[key]}: absent ({reason}); all its change events registered" in (
-        labaddon.describe(char)
-    )
+    # Since round 2 the addon writes a combat reason only when it gathered
+    # nothing for the section in that session; the line says so.
+    assert (
+        f"{label[key]}: the addon was in combat (or could not tell) at its last gather of this "
+        "section in the session that wrote this file, and had gathered nothing for it earlier "
+        f"in that session: absent ({reason}); all its change events registered"
+    ) in labaddon.describe(char)
+
+
+def test_constructed_other_absent_reason_has_no_combat_note() -> None:
+    raw = _base_v3()
+    raw["bindings"] = {"absent": "GetNumBindings gave no number", "events_unregistered": {}}
+    assert (
+        "Key bindings: absent (GetNumBindings gave no number); all its change events registered"
+    ) in labaddon.describe(_v3(raw))
 
 
 def test_constructed_absent_for_a_missing_function_shows_its_probes() -> None:
     raw = _base_v3()
-    missing = {"api": "GetActionInfo", "present": False, "calls": 0, "errors": 0, "answered": 0}
     raw["actionbars"] = {
         "absent": "GetActionInfo missing",
-        "probes": [missing, _probe("GetMacroInfo")],
+        "probes": [_missing("GetActionInfo"), _probe("GetMacroInfo"), _missing("issecretvalue")],
         "events_unregistered": {},
     }
     lines = labaddon.describe(_v3(raw))
     at = lines.index(
         "Action bars: absent (GetActionInfo missing); all its change events registered"
     )
-    assert lines[at + 1 : at + 3] == [
+    assert lines[at + 1 : at + 4] == [
         "  GetActionInfo: missing, not called",
-        "  GetMacroInfo: present, 0 calls, 0 raised an error, 0 answered, 0 answered nothing",
+        "  GetMacroInfo: present, 0 calls, 0 raised an error, 0 answered, 0 answered nothing, "
+        "0 values dropped as secret",
+        "  issecretvalue: missing, not called",
     ]
+
+
+def test_constructed_item_types_name_each_item() -> None:
+    """`type` is named from the record's own `item_types` (the client's
+    Enum.SpellBookItemType): a number the map lacks, or a record without the
+    map, is said as such, never guessed."""
+    raw = _base_v3()
+    raw["spellbook"]["list"][0]["type"] = 9
+    del raw["spellbook"]["list"][1]["type"]
+    assert (
+        "  by type: 1 FutureSpell, 1 type 9 (not in item_types), 1 type not kept; future (not "
+        "yet learned) spells are items too"
+    ) in labaddon.describe(_v3(raw))
+    raw = _base_v3()
+    del raw["spellbook"]["item_types"]
+    assert (
+        "  by type: 2 type 1 (not in item_types), 1 type 2 (not in item_types) "
+        "(Enum.SpellBookItemType is not in the record); future (not yet learned) spells are "
+        "items too"
+    ) in labaddon.describe(_v3(raw))
+
+
+@pytest.mark.parametrize(
+    ("which", "words"),
+    [
+        (1, "1 (the account's: ACCOUNT_BINDINGS is 1)"),
+        (2, "2 (the character's: CHARACTER_BINDINGS is 2)"),
+        (
+            3,
+            "3 (the client's raw value, neither set by name: ACCOUNT_BINDINGS is 1, "
+            "CHARACTER_BINDINGS is 2)",
+        ),
+    ],
+)
+def test_constructed_binding_set_is_named_by_the_client_values(which: int, words: str) -> None:
+    raw = _with(("bindings", "binding_set"), which)
+    text = _text(_v3(raw))
+    assert f"binding set {words}; read out of combat" in text
+
+
+def test_constructed_binding_set_without_the_client_values() -> None:
+    raw = _base_v3()
+    del raw["bindings"]["account_bindings"]
+    del raw["bindings"]["character_bindings"]
+    assert (
+        "binding set 2 (the client's raw value; ACCOUNT_BINDINGS and CHARACTER_BINDINGS not "
+        "recorded); read out of combat"
+    ) in _text(_v3(raw))
+
+
+def test_constructed_skill_line_without_items_or_offset() -> None:
+    raw = _base_v3()
+    raw["spellbook"]["skill_lines"].append({"index": 3, "offset": 3, "count": 0})
+    raw["spellbook"]["skill_lines"].append({"index": 4})
+    lines = labaddon.describe(_v3(raw))
+    assert "  skill line 3: 0 items (offset 3)" in lines
+    assert "  skill line 4: item count not returned, offset not returned" in lines
 
 
 def test_constructed_skip_keys_include_the_new_sections() -> None:
@@ -398,6 +513,12 @@ def _with(path: tuple[Any, ...], value: Any) -> dict[str, Any]:
         (("bindings", "commands"), -1, "commands"),
         (("bindings", "probes", 0, "api"), "UnitName", "api"),
         (("bindings", "probes", 0, "calls"), True, "calls"),
+        (("bindings", "probes", 0, "secret"), -1, "secret"),
+        (("bindings", "account_bindings"), "1", "account_bindings"),
+        (("spellbook", "item_types"), {"Future Spell": 2}, "not an enum member's name"),
+        (("spellbook", "item_types"), {"Spell|r": 1}, "not an enum member's name"),
+        (("spellbook", "item_types"), {"Spell": "1"}, "item_types"),
+        (("spellbook", "item_types"), {"Spell": True}, "item_types"),
         (("talents", "legacy", "left_out_config"), "640511", "left_out_config"),
     ],
 )
@@ -420,8 +541,15 @@ def test_constructed_probe_counts_that_cannot_happen_are_refused() -> None:
         "calls": 1,
         "errors": 0,
         "answered": 0,
+        "secret": 0,
     }
     _refused(raw, "calls are counted for a function that was not present")
+    raw = _base_v3()
+    raw["actionbars"]["probes"][1] = {**_missing("GetMacroInfo"), "secret": 1}
+    _refused(raw, "values are counted for a function that was not present")
+    raw = _base_v3()
+    del raw["actionbars"]["probes"][0]["secret"]
+    _refused(raw, "secret")
 
 
 def test_constructed_spell_name_in_another_script_reads() -> None:

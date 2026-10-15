@@ -1678,32 +1678,49 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   nil, or returned no number; called through `pcall` directly). (2)
   `spellbook`: the player's spellbook (the bank is the client's
   `Enum.SpellBookSpellBank.Player`), walked by skill line through
-  `C_SpellBook`: per item its slot, skill line, raw item type, action id,
-  spell id, `spell_name` and `subtext` (the subtext is where a rank shows,
-  when the client gives one), and the passive and off-spec flags; skill-line
-  names are not read. (3) `actionbars`: slots 1 to 180 (the addon's own
-  bound: twelve on each of the fifteen bars a Retail client numbers) through
-  `GetActionInfo`, each filled slot with its type, its id when the id is a
-  number, and its subtype; a macro slot keeps the macro id only, never the
-  macro's name or body, and `GetMacroInfo` is asked only whether the id
-  names a macro (its count is kept, nothing else); an equipment-set slot,
-  whose id is the set's name, keeps no id. (4) `bindings`: per binding
-  command `GetBinding` lists that is a plain upper-case name, the keys
-  `GetBindingKey` returns now (to cross-check `bindings-cache.wtf`), and the
-  raw `GetCurrentBindingSet` value **[verify]**; a command with text after
-  the name (`MACRO <name>` holds text the owner typed) is counted, never
-  asked about or stored. The three new sections read only out of combat
+  `C_SpellBook`, future (not yet learned) spells included: per item its
+  slot, skill line, raw item type, action id, spell id, `spell_name` and
+  `subtext` (the subtext is where a rank shows, when the client gives one),
+  and the passive and off-spec flags, plus `item_types`, the client's
+  `Enum.SpellBookItemType` as a name-to-number map, so a reader names each
+  type from the file; skill-line names are not read. Whether a hunter's
+  named pet shows in a spell's name or subtext is **[verify]**. (3)
+  `actionbars`: slots 1 to 180 (the addon's own bound: twelve on each of
+  fifteen action pages **[verify]**) through `GetActionInfo`, each filled
+  slot with its type, its id when the id is a number, and its subtype. A
+  macro slot keeps an id only, never the macro's name or body: with no
+  subtype the id is the macro index, with one it is the spell or item id the
+  macro shows now **[verify]**; `GetMacroInfo` is asked only for a macro
+  index (an out-of-range index into a C API is the crash class in
+  `docs/DATA_SOURCES.md`, 2026-09-28), only whether it names a macro (its
+  count is kept, nothing else); an equipment-set slot, whose id is the set's
+  name, keeps no id. (4) `bindings`: per binding command `GetBinding` lists
+  that is a plain upper-case name, the keys `GetBindingKey` returns now (to
+  cross-check `bindings-cache.wtf`), the raw `GetCurrentBindingSet` value,
+  and the client's `ACCOUNT_BINDINGS` and `CHARACTER_BINDINGS` that name it
+  **[verify]**; a command with text after the name (`MACRO <name>` holds
+  text the owner typed) is counted, never asked about or stored. Whether
+  `GetBinding` lists a key bound straight to a spell, macro, item or click
+  at all is **[verify]**. The three new sections read only out of combat
   (ADR-0026, GLOSSARY "Secret value"): each gather asks `InCombatLockdown`
   first and reads nothing when the player is in combat or the client cannot
-  say, writing the section absent with that reason, and each registers
-  `PLAYER_REGEN_ENABLED` to gather again when combat ends. forever-addon-kit
-  lists the names for 69893 and presence proves nothing, so each of the three
-  records `probes`: per API it asks, whether the function was there and how
-  many calls were made, raised an error and answered (the way `spec.api`
-  names the API that answered). Every new call sits in a section `/wowlab
-  skip` switches off (section keys `spellbook`, `actionbars`, `bindings`),
-  and every new API is **[verify]** until the owner's schema-3 capture
-  (`docs/handoffs/M13-05.md`).
+  say. Such a gather is blocked: the section keeps what it gathered earlier
+  in the session, stays dirty, and is written absent with the reason only
+  when nothing was gathered for it in that session; `PLAYER_REGEN_ENABLED`
+  is each section's retry event, re-gathering it only while it is still
+  dirty. Values are read only when `InCombatLockdown` says not in combat;
+  whether these values can be secret outside combat in restricted content
+  is **[verify]**. Where the client has `issecretvalue` (the name is
+  **[verify]**), every value is tested before it is used or stored, and one
+  it calls secret (or cannot say about) is dropped and counted.
+  forever-addon-kit lists the other names for 69893 and presence proves
+  nothing, so each of the three records `probes`: per API it asks, whether
+  the function was there and how many calls were made, raised an error and
+  answered, and how many of its values were dropped as secret (the way
+  `spec.api` names the API that answered). Every new call sits in a section
+  `/wowlab skip` switches off (section keys `spellbook`, `actionbars`,
+  `bindings`), and every new API is **[verify]** until the owner's schema-3
+  capture (`docs/handoffs/M13-05.md`).
 
   Schema 1 may change after M11-03. Edits from the capture land before
   M11-04 starts; after M11-04 merges, any change is a new schema (schema 2

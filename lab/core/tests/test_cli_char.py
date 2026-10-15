@@ -239,7 +239,8 @@ _SCHEMA_3_SECTIONS = (
     b'["count"] = 1,\r\n},\r\n},\r\n["list"] = {\r\n{\r\n["slot"] = 1,\r\n["skill_line"] = 1,\r\n'
     b'["spell_id"] = 6603,\r\n["spell_name"] = "Auto Attack",\r\n["passive"] = false,\r\n},\r\n'
     b'},\r\n["probes"] = {\r\n{\r\n["api"] = "C_SpellBook.GetSpellBookItemInfo",\r\n'
-    b'["present"] = true,\r\n["calls"] = 1,\r\n["errors"] = 0,\r\n["answered"] = 1,\r\n},\r\n'
+    b'["present"] = true,\r\n["calls"] = 1,\r\n["errors"] = 0,\r\n["answered"] = 1,\r\n'
+    b'["secret"] = 0,\r\n},\r\n'
     b'},\r\n["events_unregistered"] = {\r\n},\r\n},\r\n'
     b'["actionbars"] = {\r\n["absent"] = "in combat: this section reads only out of combat, and '
     b'gathers again when combat ends",\r\n["events_unregistered"] = {\r\n},\r\n},\r\n'
@@ -275,16 +276,21 @@ def test_constructed_schema_3_capture_is_shown(flavor: Path) -> None:
         # After Professions, in the section order.
         "Spellbook: 1 item in 1 skill line, 0 passive, 1 with a name, 0 with a subtext (ids, "
         "names and subtexts in --json); read out of combat",
-        "  skill line 1: 1 items after slot 0",
+        "  by type: 1 type not kept (Enum.SpellBookItemType is not in the record); future (not "
+        "yet learned) spells are items too",
+        "  skill line 1: 1 item, slots 1 to 1",
         "  C_SpellBook.GetSpellBookItemInfo: present, 1 call, 0 raised an error, 1 answered, "
-        "0 answered nothing",
+        "0 answered nothing, 0 values dropped as secret",
         "  all its change events registered",
-        "Action bars: absent (in combat: this section reads only out of combat, and gathers "
+        "Action bars: the addon was in combat (or could not tell) at its last gather of this "
+        "section in the session that wrote this file, and had gathered nothing for it earlier "
+        "in that session: absent (in combat: this section reads only out of combat, and gathers "
         "again when combat ends); all its change events registered",
         "Key bindings: 1 command with a key, of 2 listed (commands and keys in --json); binding "
         "set not returned; read out of combat",
-        "  left out: 1 command with text after the name (never asked about), 0 keys not "
-        "printable ASCII",
+        "  left out: 1 command GetBinding listed with text after the name (never asked about), "
+        "0 keys not printable ASCII; a key bound straight to a spell, macro, item or click may "
+        "not be listed by GetBinding at all [verify]",
         "  probes: none recorded",
     ], added
     assert [line for line in after.splitlines() if line in before.splitlines()] == (

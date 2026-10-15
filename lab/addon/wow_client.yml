@@ -165,6 +165,10 @@ globals:
   # are never stored (tests/addon/test_lab_addon.py pins the one use).
   InCombatLockdown:
     args: []
+  # Where the client has it, every value the three sections read is tested
+  # with issecretvalue before it is used or stored (the name is [verify]).
+  issecretvalue:
+    property: read-only
   C_SpellBook.GetNumSpellBookSkillLines:
     property: read-only
   C_SpellBook.GetSpellBookSkillLineInfo:
@@ -175,11 +179,17 @@ globals:
     property: read-only
   Enum.SpellBookSpellBank:
     any: true
+  Enum.SpellBookItemType:
+    any: true
   GetActionInfo:
     property: read-only
   GetMacroInfo:
     property: read-only
   GetCurrentBindingSet:
+    property: read-only
+  ACCOUNT_BINDINGS:
+    property: read-only
+  CHARACTER_BINDINGS:
     property: read-only
   GetNumBindings:
     property: read-only

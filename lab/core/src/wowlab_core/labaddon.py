@@ -993,6 +993,7 @@ ProbedApi = Literal[
     "GetNumBindings",
     "GetBinding",
     "GetBindingKey",
+    "issecretvalue",
 ]
 
 
@@ -1001,13 +1002,17 @@ class ApiProbe(_Record):
     how many calls the gather made, how many raised an error, and how many
     answered (what "answered" means per API: `lab/addon/README.md`). The rest
     of the calls answered nothing. The addon counts each call once and as at
-    most one of an error or an answer, and calls nothing that is missing."""
+    most one of an error or an answer, and calls nothing that is missing.
+    `secret` counts the values this API gave that the addon dropped because
+    `issecretvalue` called them secret or could not say; a dropped value is
+    not an answer, so a call whose one value was dropped answered nothing."""
 
     api: ProbedApi
     present: bool
     calls: Count
     errors: Count
     answered: Count
+    secret: Count
 
     @model_validator(mode="after")
     def _counts_add_up(self) -> Self:
@@ -1015,6 +1020,8 @@ class ApiProbe(_Record):
             raise ValueError("errors and answered add up to more than calls")
         if not self.present and self.calls:
             raise ValueError("calls are counted for a function that was not present")
+        if not self.present and self.secret:
+            raise ValueError("values are counted for a function that was not present")
         return self
 
 
@@ -1034,11 +1041,47 @@ BindingCommand = Annotated[str, StringConstraints(pattern=r"^[A-Z0-9_]{1,128}$")
 BindingKey = Annotated[str, StringConstraints(pattern=r"^[\x21-\x7e]{1,64}$")]
 
 
+# An enum member's name as the client spells it (FutureSpell).
+EnumMember = Annotated[str, StringConstraints(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,63}$")]
+_ENUM_MEMBER = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
+
+
+def _enum_member_keys(value: Any) -> Any:
+    """`item_types` is a table read from a file whose keys are data, like
+    `events_received`: a key that is not an enum member's name is refused
+    without echoing it."""
+    if isinstance(value, dict):
+        for key in value:
+            if not (isinstance(key, str) and _ENUM_MEMBER.fullmatch(key)):
+                words = (
+                    f"a key of {len(key)} characters that is not an enum member's name"
+                    if isinstance(key, str)
+                    else _key_words(key)
+                )
+                raise ValueError(f"the table holds {words}")
+    return value
+
+
+# Enum member name to number, as the client has the enum (M13-05).
+EnumMap = Annotated[dict[EnumMember, Int], BeforeValidator(_enum_member_keys)]
+
+# The absent reasons of a schema-3 section whose gather was blocked by
+# combat, or by not knowing (Actions.lua's combatReason). Since round 2 of
+# M13-05 the addon writes one only when nothing was gathered for the section
+# in that session: a good record from earlier in the session is kept.
+COMBAT_REASON_PREFIXES = ("in combat:", "InCombatLockdown missing", "InCombatLockdown raised")
+COMBAT_NOTE = (
+    "the addon was in combat (or could not tell) at its last gather of this section in the "
+    "session that wrote this file, and had gathered nothing for it earlier in that session"
+)
+
+
 class AbsentProbedSection(AbsentSection):
     """A schema-3 section absent with the addon's reason. `probes` is there
     when the reason is a missing function or a call that gave nothing (the
     probes say what was asked); the combat reasons call nothing and carry
-    none."""
+    none, and are written only when nothing was gathered for the section in
+    that session."""
 
     probes: Lst[ApiProbe] | None = None
 
@@ -1058,10 +1101,11 @@ class SpellbookLine(_Record):
 
 
 class SpellbookItem(_Record):
-    """One spellbook item. `type` is the client's raw
-    `Enum.SpellBookItemType` number; `action_id` and `spell_id` are raw (a
-    flyout's action id is not a spell id). `subtext` is where a rank shows,
-    when the client gives one."""
+    """One spellbook item; future (not yet learned) spells are items too.
+    `type` is the client's raw `Enum.SpellBookItemType` number, named by the
+    record's `item_types`; `action_id` and `spell_id` are raw (a flyout's
+    action id is not a spell id). `subtext` is where a rank shows, when the
+    client gives one."""
 
     slot: Int
     skill_line: Int
@@ -1075,17 +1119,22 @@ class SpellbookItem(_Record):
 
 
 class Spellbook(_Section):
-    """`spellbook` (schema 3): the player's spellbook, read out of combat."""
+    """`spellbook` (schema 3): the player's spellbook, read out of combat.
+    `item_types` is the client's `Enum.SpellBookItemType`, member name to
+    number; missing when the client had no such table."""
 
+    item_types: EnumMap | None = None
     skill_lines: Lst[SpellbookLine]
     list_: Lst[SpellbookItem] = Field(alias="list")
     probes: Lst[ApiProbe]
 
 
 class ActionSlot(_Record):
-    """One filled action slot. `id` only when the client gave a number: a
-    macro slot's id is the macro's id (never its name or body), and an
-    equipment-set slot has none (its id is the set's name)."""
+    """One filled action slot. `id` only when the client gave a number. A
+    macro slot keeps an id only, never the macro's name or body: with no
+    `sub_type` the id is the macro index; with one, it is the spell or item
+    id the macro shows now **[verify]**. An equipment-set slot has none (its
+    id is the set's name)."""
 
     slot: Int
     type: ActionWord | None = None
@@ -1112,12 +1161,18 @@ class Binding(_Record):
 
 class Bindings(_Section):
     """`bindings` (schema 3), read out of combat: the commands with a key.
-    `commands` counts every command `GetBinding` gave; `commands_left_out`
-    those with text after the name (never asked about); `keys_left_out` the
-    keys that were not printable ASCII without a space. `binding_set` is
-    `GetCurrentBindingSet`'s raw value."""
+    `commands` counts every command `GetBinding` listed; `commands_left_out`
+    those with text after the name (never asked about). `GetBinding` lists
+    named commands; whether a key bound straight to a spell, macro, item or
+    click is listed at all is **[verify]**, so such keys may be in neither
+    count. `keys_left_out` counts the keys that were not printable ASCII
+    without a space. `binding_set` is `GetCurrentBindingSet`'s raw value;
+    `account_bindings` and `character_bindings` are the client's
+    `ACCOUNT_BINDINGS` and `CHARACTER_BINDINGS`, which name it."""
 
     binding_set: Int | None = None
+    account_bindings: Int | None = None
+    character_bindings: Int | None = None
     commands: Count
     commands_left_out: Count
     keys_left_out: Count
@@ -2576,7 +2631,8 @@ def _probe_lines(probes: list[ApiProbe] | None) -> list[str]:
         nothing = probe.calls - probe.errors - probe.answered
         lines.append(
             f"  {probe.api}: present, {_count(probe.calls, 'call')}, {probe.errors} raised an "
-            f"error, {probe.answered} answered, {nothing} answered nothing"
+            f"error, {probe.answered} answered, {nothing} answered nothing, "
+            f"{_count(probe.secret, 'value')} dropped as secret"
         )
     return lines
 
@@ -2592,9 +2648,36 @@ def _skill_line(line: SpellbookLine) -> str:
     if line.off_spec_id is not None:
         flags.append(f"off-spec {line.off_spec_id}")
     tail = f" ({', '.join(flags)})" if flags else ""
-    return (
-        f"  skill line {line.index}: {_num(line.count)} items after slot {_num(line.offset)}{tail}"
-    )
+    if line.count is None or line.offset is None:
+        span = f"item count {_num(line.count)}, offset {_num(line.offset)}"
+    elif line.count > 0:
+        span = (
+            f"{_count(line.count, 'item')}, slots {line.offset + 1} to {line.offset + line.count}"
+        )
+    else:
+        span = f"{_count(line.count, 'item')} (offset {line.offset})"
+    return f"  skill line {line.index}: {span}{tail}"
+
+
+def _item_type_words(book: Spellbook) -> str:
+    """Items counted by type, each named from the record's own
+    `item_types` (the client's Enum.SpellBookItemType)."""
+    names: dict[int, list[str]] = {}
+    for name, value in (book.item_types or {}).items():
+        names.setdefault(value, []).append(name)
+    counts: dict[str, int] = {}
+    for item in book.list_:
+        if item.type is None:
+            word = "type not kept"
+        elif item.type in names:
+            word = "/".join(sorted(names[item.type]))
+        else:
+            word = f"type {item.type} (not in item_types)"
+        counts[word] = counts.get(word, 0) + 1
+    words = ", ".join(f"{counts[word]} {word}" for word in sorted(counts)) or NONE_RECORDED
+    if book.item_types is None:
+        return f"by type: {words} (Enum.SpellBookItemType is not in the record)"
+    return f"by type: {words}"
 
 
 def _spellbook(book: Spellbook) -> list[str]:
@@ -2611,6 +2694,8 @@ def _spellbook(book: Spellbook) -> list[str]:
             f"name, {subtext} with a subtext (ids, names and subtexts in --json)"
         )
     lines = [f"{head}; read out of combat"]
+    if items:
+        lines.append(f"  {_item_type_words(book)}; future (not yet learned) spells are items too")
     lines.extend(_skill_line(line) for line in book.skill_lines)
     return lines + _probe_lines(book.probes) + _events(book)
 
@@ -2623,24 +2708,54 @@ def _action_bars(bars: ActionBars) -> list[str]:
     words = ", ".join(f"{kinds[kind]} {kind}" for kind in sorted(kinds)) or NONE_RECORDED
     lines = [
         f"Action bars: {len(bars.slots)} of slots {bars.first_slot} to {bars.last_slot} filled "
-        f"({words}; slots and ids in --json; a macro slot keeps the macro id only); read out of "
-        "combat"
+        f"({words}; slots and ids in --json); read out of combat"
     ]
+    macros = [slot for slot in bars.slots if slot.type == "macro"]
+    if macros:
+        index = sum(1 for slot in macros if slot.sub_type is None)
+        lines.append(
+            f"  macro slots: {index} with no subtype (the id is the macro index), "
+            f"{len(macros) - index} with one (the id is the spell or item id the macro shows "
+            "now [verify]); a macro's name and body are never recorded"
+        )
     return lines + _probe_lines(bars.probes) + _events(bars)
 
 
-def _bindings(record: Bindings) -> list[str]:
-    which = (
-        "not returned"
-        if record.binding_set is None
-        else f"{record.binding_set} (the client's raw value)"
+def _binding_set_words(record: Bindings) -> str:
+    """`binding_set`, named by the client's own ACCOUNT_BINDINGS and
+    CHARACTER_BINDINGS as the record holds them."""
+    which = record.binding_set
+    if which is None:
+        return "not returned"
+    if which == record.character_bindings:
+        return f"{which} (the character's: CHARACTER_BINDINGS is {which})"
+    if which == record.account_bindings:
+        return f"{which} (the account's: ACCOUNT_BINDINGS is {which})"
+    known = ", ".join(
+        f"{name} is {value}"
+        for name, value in (
+            ("ACCOUNT_BINDINGS", record.account_bindings),
+            ("CHARACTER_BINDINGS", record.character_bindings),
+        )
+        if value is not None
     )
+    if not known:
+        return (
+            f"{which} (the client's raw value; ACCOUNT_BINDINGS and CHARACTER_BINDINGS "
+            "not recorded)"
+        )
+    return f"{which} (the client's raw value, neither set by name: {known})"
+
+
+def _bindings(record: Bindings) -> list[str]:
     lines = [
         f"Key bindings: {_count(len(record.list_), 'command')} with a key, of "
-        f"{record.commands} listed (commands and keys in --json); binding set {which}; read "
-        "out of combat",
-        f"  left out: {_count(record.commands_left_out, 'command')} with text after the name "
-        f"(never asked about), {_count(record.keys_left_out, 'key')} not printable ASCII",
+        f"{record.commands} listed (commands and keys in --json); binding set "
+        f"{_binding_set_words(record)}; read out of combat",
+        f"  left out: {_count(record.commands_left_out, 'command')} GetBinding listed with text "
+        f"after the name (never asked about), {_count(record.keys_left_out, 'key')} not printable "
+        "ASCII; a key bound straight to a spell, macro, item or click may not be listed by "
+        "GetBinding at all [verify]",
     ]
     return lines + _probe_lines(record.probes) + _events(record)
 
@@ -2667,8 +2782,12 @@ def _section(label: str, record: object, present: Any) -> list[str]:
     if record is None:
         return [f"{label}: {NOT_IN_FILE}"]
     if isinstance(record, _Absent):
-        probes = record.probes if isinstance(record, AbsentProbedSection) else None
-        return [f"{label}: {_absent(record)}", *_probe_lines(probes)]
+        if isinstance(record, AbsentProbedSection):
+            note = ""
+            if record.absent.startswith(COMBAT_REASON_PREFIXES):
+                note = f"{COMBAT_NOTE}: "
+            return [f"{label}: {note}{_absent(record)}", *_probe_lines(record.probes)]
+        return [f"{label}: {_absent(record)}"]
     lines: list[str] = present(record)
     return lines
 
