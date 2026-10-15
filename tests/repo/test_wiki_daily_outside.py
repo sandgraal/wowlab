@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -36,6 +37,7 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "wiki-daily.yml"
 SHELL = "/usr/bin/bash --noprofile --norc -eo pipefail {0}"
 SYSTEM_PATH = "export PATH=/usr/sbin:/usr/bin:/sbin:/bin"
+SUDO = "/usr/bin/sudo"
 OUTSIDE_OK = "steps.outside.outcome == 'success'"
 # What runs code from the checkout: uv, a python interpreter, a repo script.
 RUNS_REPO_CODE = re.compile(r"\buv (?:run|sync)\b|\bpython3?\b|scripts/\w+\.py")
@@ -212,10 +214,28 @@ def test_the_last_step_leaves_nothing_in_repo_for_the_post_steps() -> None:
     assert last["if"] == "always()"
     assert last.get("continue-on-error") is not True
     assert last["shell"] == SHELL
-    assert last["run"].splitlines() == [SYSTEM_PATH, "rm -rf -- repo/.git repo/.venv"]
+    # Round 3: as root, so a planted mode-0500 directory keeps nothing,
+    # then a loud check that both are gone (a symlink counts as present).
+    assert last["run"].splitlines() == [
+        SYSTEM_PATH,
+        f"{SUDO} /usr/bin/rm -rf -- repo/.git repo/.venv",
+        "[ ! -e repo/.git ] && [ ! -L repo/.git ] && [ ! -e repo/.venv ] && [ ! -L repo/.venv ]",
+    ]
     # The checkout whose post that is lives in repo/.
     checkouts = [s for s in steps if s.get("uses", "").startswith("actions/checkout@")]
     assert [s["with"]["path"] for s in checkouts] == ["repo"]
+
+
+def test_nothing_in_improve_is_added_to_path() -> None:
+    # Round 3: repo/.venv/bin on PATH made every later step, post steps
+    # included, look its tools up there first. `uv run` finds the venv
+    # through UV_PROJECT.
+    for step in _steps():
+        run = step.get("run", "")
+        assert "GITHUB_PATH" not in run, step.get("name")
+        code = [ln for ln in run.splitlines() if not ln.lstrip().startswith("#")]
+        assert not any(".venv/bin" in ln for ln in code), step.get("name")
+    assert 'echo "UV_PROJECT=${GITHUB_WORKSPACE}/repo"' in _step("prompt")["run"]
 
 
 def test_improve_restores_the_uv_cache_but_never_saves_it() -> None:
@@ -286,7 +306,9 @@ def _workspace(tmp_path: Path) -> Path:
     return ws
 
 
-def _run(ws: Path, step_id: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run(
+    ws: Path, step_id: str, env: dict[str, str], sudo: Path | None = None
+) -> subprocess.CompletedProcess[str]:
     bash = shutil.which("bash", path="/usr/bin:/bin")
     if bash is None:
         pytest.skip("bash is not in /usr/bin or /bin")
@@ -295,8 +317,8 @@ def _run(ws: Path, step_id: str, env: dict[str, str]) -> subprocess.CompletedPro
     for name in ("output", "summary"):
         (ws / "runner" / name).touch()
     full = {
-        # As on the runner, the venv's bin directory early on PATH; planted
-        # tools ahead of it.
+        # Pessimistically, the venv's bin directory early on PATH (the job
+        # no longer adds it) and planted tools ahead of it.
         "PATH": os.pathsep.join(
             [str(ws / "planted"), str(ws / "repo" / ".venv" / "bin"), os.environ.get("PATH", "")]
         ),
@@ -306,9 +328,14 @@ def _run(ws: Path, step_id: str, env: dict[str, str]) -> subprocess.CompletedPro
         "GITHUB_STEP_SUMMARY": str(ws / "runner" / "summary"),
         **env,
     }
+    script = _step(step_id)["run"]
+    if sudo is not None:
+        # Tests never use real sudo: a stub stands in for /usr/bin/sudo.
+        assert script.count(SUDO) == 1
+        script = script.replace(SUDO, shlex.quote(str(sudo)))
     # The same flags as the step's `shell:`.
     done = subprocess.run(
-        [bash, "--noprofile", "--norc", "-eo", "pipefail", "-c", _step(step_id)["run"]],
+        [bash, "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
         cwd=ws,
         env=full,
         capture_output=True,
@@ -468,14 +495,78 @@ def test_constructed_the_gate_result_reports_a_changed_checkout_and_runs_nothing
     assert not _marker(ws).exists()
 
 
+# Stand-ins for /usr/bin/sudo (tests never use real sudo). `root` acts like
+# root, for which directory modes do not matter, by giving the owner rwx
+# first; `user` runs the command as given; `noop` runs nothing. On macOS the
+# step's /usr/bin/rm is /bin/rm.
+_RUN_CMD = 'cmd=$1; shift; [ -x "$cmd" ] || cmd=/bin/$(basename "$cmd"); exec "$cmd" "$@"\n'
+SUDO_STUBS = {
+    "root": (
+        'for p in "$@"; do\n'
+        '  if [ -d "$p" ] && [ ! -L "$p" ]; then /bin/chmod -R u+rwx "$p"; fi\n'
+        "done\n" + _RUN_CMD
+    ),
+    "user": _RUN_CMD,
+    "noop": "exit 0\n",
+}
+
+
+def _sudo(ws: Path, kind: str) -> Path:
+    stub = ws / "runner" / f"sudo-{kind}"
+    stub.write_text("#!/bin/sh\n" + SUDO_STUBS[kind], encoding="utf-8")
+    stub.chmod(0o755)
+    return stub
+
+
+def _read_only(ws: Path) -> None:
+    """Round 3: a planted .git/config and venv tools under mode-0500 directories."""
+    repo = ws / "repo"
+    _plant_tools(repo / ".venv" / "bin", _marker(ws))
+    with (repo / ".git" / "config").open("a", encoding="utf-8") as f:
+        f.write("[core]\n\tfsmonitor = /nonexistent/planted\n")
+    (repo / ".venv" / "bin").chmod(0o500)
+    (repo / ".git").chmod(0o500)
+
+
+def _symlinked(ws: Path) -> None:
+    """.git and .venv as symlinks to directories outside repo/."""
+    repo = ws / "repo"
+    for name in (".git", ".venv"):
+        target = ws / f"elsewhere{name}"
+        (repo / name).rename(target)
+        (repo / name).symlink_to(target, target_is_directory=True)
+
+
+@pytest.mark.parametrize(
+    ("setup", "sudo", "removed"),
+    [
+        pytest.param(None, "root", True, id="plain"),
+        pytest.param(_read_only, "root", True, id="read-only-as-root"),
+        pytest.param(_symlinked, "root", True, id="symlinked"),
+        # Without root the read-only case fails, loudly; and if nothing was
+        # removed, the closing check fails the step.
+        pytest.param(_read_only, "user", False, id="read-only-as-user-fails"),
+        pytest.param(None, "noop", False, id="nothing-removed-fails"),
+    ],
+)
 def test_constructed_the_last_step_removes_git_and_the_venv_and_runs_nothing(
-    tmp_path: Path,
+    tmp_path: Path, setup: Callable[[Path], None] | None, sudo: str, removed: bool
 ) -> None:
     ws = _workspace(tmp_path)
-    _plant_tools(ws / "repo" / ".venv" / "bin", _marker(ws))
-    done = _run(ws, "leave", {})
-    assert done.returncode == 0, done.stdout + done.stderr
+    if setup is not None:
+        setup(ws)
+    done = _run(ws, "leave", {}, sudo=_sudo(ws, sudo))
     repo = ws / "repo"
-    assert not (repo / ".git").exists() and not (repo / ".venv").exists()
-    # The rest stays: setup-uv's post reads the project.
+    left = [n for n in (".git", ".venv") if (repo / n).exists() or (repo / n).is_symlink()]
+    if removed:
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert left == []
+    else:
+        assert done.returncode != 0
+        assert left != []
+    # The rest stays: setup-uv's post reads the project. A symlink's target
+    # outside repo/ is not followed.
     assert (repo / "scripts" / "tool.py").is_file()
+    if setup is _symlinked:
+        assert (ws / "elsewhere.git" / "config").is_file()
+        assert (ws / "elsewhere.venv" / "bin").is_dir()

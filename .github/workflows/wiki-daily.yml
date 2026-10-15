@@ -229,9 +229,10 @@ jobs:
       # hooks and refs, which decide what `git status` runs; not the object
       # store or the index, which git itself rewrites. The hashes of both
       # listings are step outputs, which nothing the model writes can change.
-      # System tools only, from an absolute shell and PATH: the venv's bin
-      # directory is prepended to PATH for later steps. The snapshot function
-      # is identical in both steps (tests/repo/test_wiki_daily_outside.py).
+      # System tools only, from an absolute shell and PATH, so that nothing
+      # added to PATH (by an action, or through $GITHUB_PATH) is looked up
+      # first. The snapshot function is identical in both steps
+      # (tests/repo/test_wiki_daily_outside.py).
       - name: Snapshot the checkout of main
         id: before
         if: steps.plan.outcome == 'success'
@@ -293,9 +294,11 @@ jobs:
           echo "prompt: $(cat repo/.github/prompts/wiki-daily.md context/run.md | wc -c) bytes"
           jq -c . "$RUNNER_TEMP/wiki-daily-settings.json"
           # The gate command runs from the workspace root, offline, never
-          # re-syncing; if its environment loses UV_PROJECT, the venv's
-          # python is still first on PATH. It writes no bytecode either, so
-          # a new .pyc under repo/ after the model is never the gate's own.
+          # re-syncing; `uv run` finds the venv through UV_PROJECT. The venv's
+          # bin directory is not put on PATH: every later step, post steps
+          # included, would look its tools up there first. It writes no
+          # bytecode either, so a new .pyc under repo/ after the model is
+          # never the gate's own.
           {
             echo "UV_PROJECT=${GITHUB_WORKSPACE}/repo"
             echo "UV_FROZEN=1"
@@ -303,7 +306,6 @@ jobs:
             echo "UV_OFFLINE=1"
             echo "PYTHONDONTWRITEBYTECODE=1"
           } >> "$GITHUB_ENV"
-          echo "${GITHUB_WORKSPACE}/repo/.venv/bin" >> "$GITHUB_PATH"
 
       # With CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 (job env), Claude Code refuses
       # to start without bubblewrap, which the runner image lacks (run
@@ -538,17 +540,20 @@ jobs:
           retention-days: 14
       # Post steps run after this one whatever the check decided, outside the
       # sandbox. actions/checkout's post runs git in repo/ (git config,
-      # `submodule foreach ... sh -c`), found through PATH, which still has
-      # repo/.venv/bin, and git reads repo/.git/config (core.fsmonitor). It
-      # returns early when repo/.git/config is gone; with the venv gone too,
-      # no post step finds a tool in repo/. The rest of repo/ stays.
+      # `submodule foreach ... sh -c`), and git reads repo/.git/config
+      # (core.fsmonitor). It returns early when repo/.git/config is gone.
+      # Removed as root, so a planted read-only directory (mode 0500) cannot
+      # keep anything; rm does not follow a symlinked .git or .venv. Then it
+      # asserts both are gone. The rest of repo/ stays: setup-uv's post reads
+      # the project.
       - name: Leave nothing in repo/ for the post steps
         id: leave
         if: always()
         shell: /usr/bin/bash --noprofile --norc -eo pipefail {0}
         run: |
           export PATH=/usr/sbin:/usr/bin:/sbin:/bin
-          rm -rf -- repo/.git repo/.venv
+          /usr/bin/sudo /usr/bin/rm -rf -- repo/.git repo/.venv
+          [ ! -e repo/.git ] && [ ! -L repo/.git ] && [ ! -e repo/.venv ] && [ ! -L repo/.venv ]
 
   publish:
     name: Push the wiki
