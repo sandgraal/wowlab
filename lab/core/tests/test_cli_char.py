@@ -280,7 +280,8 @@ def test_constructed_schema_3_capture_is_shown(flavor: Path) -> None:
         "yet learned) spells are items too",
         "  skill line 1: 1 item, slots 1 to 1",
         "  C_SpellBook.GetSpellBookItemInfo: present, 1 call, 0 raised an error, 1 answered, "
-        "0 answered nothing, 0 values dropped as secret",
+        "0 answered nothing, 0 values dropped as secret or untestable (see issecretvalue's "
+        "errors)",
         "  all its change events registered",
         "Action bars: the addon was in combat (or could not tell) at its last gather of this "
         "section in the session that wrote this file, and had gathered nothing for it earlier "
@@ -288,9 +289,10 @@ def test_constructed_schema_3_capture_is_shown(flavor: Path) -> None:
         "again when combat ends); all its change events registered",
         "Key bindings: 1 command with a key, of 2 listed (commands and keys in --json); binding "
         "set not returned; read out of combat",
-        "  left out: 1 command GetBinding listed with text after the name (never asked about), "
-        "0 keys not printable ASCII; a key bound straight to a spell, macro, item or click may "
-        "not be listed by GetBinding at all [verify]",
+        "  left out: 1 command of those listed not a plain upper-case name (text after the name, "
+        "as in MACRO x, or other characters; never asked about), 0 keys not printable ASCII",
+        "  a key bound straight to a spell, macro, item or click may not be listed by GetBinding "
+        "at all [verify]",
         "  probes: none recorded",
     ], added
     assert [line for line in after.splitlines() if line in before.splitlines()] == (

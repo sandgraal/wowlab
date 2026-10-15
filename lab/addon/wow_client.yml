@@ -169,6 +169,11 @@ globals:
   # with issecretvalue before it is used or stored (the name is [verify]).
   issecretvalue:
     property: read-only
+  # Looked up and never called: whether the client has them ([verify]).
+  C_Secrets:
+    property: read-only
+  canaccessvalue:
+    property: read-only
   C_SpellBook.GetNumSpellBookSkillLines:
     property: read-only
   C_SpellBook.GetSpellBookSkillLineInfo:

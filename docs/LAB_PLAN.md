@@ -1685,12 +1685,13 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   `Enum.SpellBookItemType` as a name-to-number map, so a reader names each
   type from the file; skill-line names are not read. Whether a hunter's
   named pet shows in a spell's name or subtext is **[verify]**. (3)
-  `actionbars`: slots 1 to 180 (the addon's own bound: twelve on each of
-  fifteen action pages **[verify]**) through `GetActionInfo`, each filled
+  `actionbars`: slots 1 to 180 (the addon's own bound: fifteen runs of
+  twelve, the main bar's pages, the stance and bonus bars and the
+  multi-action bars **[verify]**) through `GetActionInfo`, each filled
   slot with its type, its id when the id is a number, and its subtype. A
   macro slot keeps an id only, never the macro's name or body: with no
-  subtype the id is the macro index, with one it is the spell or item id the
-  macro shows now **[verify]**; `GetMacroInfo` is asked only for a macro
+  subtype the id is the macro index **[verify]**, with one it is the spell
+  or item id the macro shows now **[verify]**; `GetMacroInfo` is asked only for a macro
   index (an out-of-range index into a C API is the crash class in
   `docs/DATA_SOURCES.md`, 2026-09-28), only whether it names a macro (its
   count is kept, nothing else); an equipment-set slot, whose id is the set's
@@ -1698,8 +1699,9 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   that is a plain upper-case name, the keys `GetBindingKey` returns now (to
   cross-check `bindings-cache.wtf`), the raw `GetCurrentBindingSet` value,
   and the client's `ACCOUNT_BINDINGS` and `CHARACTER_BINDINGS` that name it
-  **[verify]**; a command with text after the name (`MACRO <name>` holds
-  text the owner typed) is counted, never asked about or stored. Whether
+  **[verify]**; a command that is not a plain upper-case name (text after
+  the name, as in `MACRO x`, or other characters; `MACRO <name>` holds text
+  the owner typed) is counted, never asked about or stored. Whether
   `GetBinding` lists a key bound straight to a spell, macro, item or click
   at all is **[verify]**. The three new sections read only out of combat
   (ADR-0026, GLOSSARY "Secret value"): each gather asks `InCombatLockdown`
@@ -1712,7 +1714,13 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   whether these values can be secret outside combat in restricted content
   is **[verify]**. Where the client has `issecretvalue` (the name is
   **[verify]**), every value is tested before it is used or stored, and one
-  it calls secret (or cannot say about) is dropped and counted.
+  it calls secret (or cannot say about) is dropped and counted. No
+  `issecretvalue` means values are not tested, not that none are secret; a
+  secret value then makes the gather raise and the section is written as an
+  error, unless it was gathered earlier in the session: a section with a
+  retry event keeps that record through an error as through a block, and
+  stays dirty. `C_Secrets` and `canaccessvalue` (**[verify]**) are looked up,
+  never called; their probes say only whether the client has them.
   forever-addon-kit lists the other names for 69893 and presence proves
   nothing, so each of the three records `probes`: per API it asks, whether
   the function was there and how many calls were made, raised an error and

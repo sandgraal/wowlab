@@ -65,7 +65,7 @@ WowLabCharDB = {
   actionbars = { first_slot, last_slot, slots = { { slot, type, id, sub_type } }, probes },
   bindings = { binding_set, account_bindings, character_bindings, commands, commands_left_out, keys_left_out, list = { { command, keys = { "<key>", ... } } }, probes },
 }
-probes = { { api, present, calls, errors, answered, secret } }  -- one per API the section asks, in a fixed order, issecretvalue last
+probes = { { api, present, calls, errors, answered, secret } }  -- one per API the section asks, in a fixed order, then issecretvalue, C_Secrets, canaccessvalue
 <config> = { id, type, trees = { { id, system_id, currencies = { { id, quantity, max_quantity, spent } }, nodes = { { id, ranks_purchased, active_rank, current_rank, max_ranks, is_visible, entries, sub_tree, active_entry, active_entry_rank } } } } }
 choices = { { option, choice_index, choice } }
 ```
@@ -256,14 +256,24 @@ Notes on the fields:
   it is compared, used or stored. One it calls secret, or raises an error or
   gives no boolean for, is dropped and counted on its API's probe as
   `secret`. Without `issecretvalue` every value is kept, and its probe says
-  `present = false`. The reasons:
+  `present = false`. No `issecretvalue` means values are not tested, not
+  that none are secret; a secret value then makes the gather raise and the
+  section is written as an error, unless it was gathered earlier in the
+  session: a section with a retry event keeps that record through an error
+  as through a block, and stays dirty. `C_Secrets` and `canaccessvalue`
+  (**[verify]**) are looked up, never called; their probes say only whether
+  the client has them. In `Actions.lua` no client function is called but
+  through `pcall`, and every value a `pcall` gives is cleaned, or cleared
+  when the call raised, before anything reads it (`tests/addon` pins this
+  structurally). The reasons:
   - `"in combat: this section reads only out of combat, and gathers again when combat ends"`
   - `"InCombatLockdown missing, so whether the player is in combat is not known; nothing was read"`
   - `"InCombatLockdown raised an error, so whether the player is in combat is not known; nothing was read"`
 - `probes` (schema 3) is written on each of the three, gathered or absent
   for a missing function (not on the combat reasons above, which call
   nothing). One entry per API the section asks, in a fixed order with
-  `issecretvalue` last: `api` (its name), `present` (the function was
+  `issecretvalue`, `C_Secrets` and `canaccessvalue` last: `api` (its
+  name), `present` (the function was
   there), `calls`, `errors` (calls that raised an error), `answered` and
   `secret` (values it gave that were dropped as secret). Presence proves
   nothing, so a capture reads what each function did from these counts;
@@ -281,7 +291,9 @@ Notes on the fields:
   - `GetMacroInfo`: returned an icon for the macro index, so the index names
     a macro;
   - `GetBindingKey`: returned at least one key;
-  - `issecretvalue`: returned a boolean.
+  - `issecretvalue`: returned a boolean;
+  - `C_Secrets`, `canaccessvalue`: never called, so `calls`, `errors`,
+    `answered` and `secret` are 0; only `present` says anything.
 - `spellbook`: the player's spellbook only (the bank is the client's
   `Enum.SpellBookSpellBank.Player`, read, never assumed), walked by skill
   line from `itemIndexOffset + 1` for `numSpellBookItems` slots. Future
@@ -300,15 +312,16 @@ Notes on the fields:
   pet shows in a spell's name or subtext (a pet's name is text the owner
   typed); checklist item 13.
 - `actionbars`: every slot from `first_slot` to `last_slot` (1 to 180, the
-  addon's own bound: twelve slots on each of fifteen action pages, the main
-  bar's pages, the stance and bonus pages and the multi-bars **[verify]**;
-  no client constant gives it) that answered something. In a vehicle or
-  while skyriding the client swaps the main bar's page, so a capture is
-  taken outside both. `type` and `sub_type` are the client's words (letters
+  addon's own bound: fifteen runs of twelve slots, the main bar's pages,
+  the stance and bonus bars and the multi-action bars **[verify]**; no
+  client constant gives it) that answered something. In a vehicle or while
+  skyriding the client fills some slots with temporary actions
+  **[verify]**, so a capture is taken outside both; whether skyriding
+  exists on Forever is not known. `type` and `sub_type` are the client's words (letters
   only, at most 32); `id` is kept only when it is a number. A macro slot
   keeps an id only, never the macro's name or body: with no subtype (nil or
-  empty) the id is the macro index; with one, it is the spell or item id the
-  macro shows now **[verify]**. `GetMacroInfo` is asked only for a macro
+  empty) the id is the macro index **[verify]**; with one, it is the spell
+  or item id the macro shows now **[verify]**. `GetMacroInfo` is asked only for a macro
   index (never for a subtype's id, nor when the subtype was dropped as
   secret: an out-of-range index into a C API is the crash class in
   `docs/DATA_SOURCES.md`, 2026-09-28), only whether the index names a macro,
@@ -318,9 +331,9 @@ Notes on the fields:
 - `bindings`: the keys `GetBindingKey` returns now, per binding command, for
   every command `GetBinding` lists that is a plain upper-case name
   (`ACTIONBUTTON1`, `MULTIACTIONBAR1BUTTON3`, `MOVEFORWARD`) and has a key.
-  A command with text after the name (`SPELL x`, `MACRO x`, `ITEM x`,
-  `CLICK x`) is counted in `commands_left_out` and never asked about or
-  stored: a macro's name is text the owner typed. `GetBinding` lists the
+  A command that is not a plain upper-case name (text after the name, as in
+  `MACRO x`, or other characters) is counted in `commands_left_out` and
+  never asked about or stored: a macro's name is text the owner typed. `GetBinding` lists the
   client's named commands; whether a key bound straight to a spell, macro,
   item or click (a spell dragged onto a key, an action-bar addon's button)
   is listed at all is **[verify]**, so `commands_left_out` counts only those
@@ -600,6 +613,8 @@ on from one, fails the test until someone lists it on purpose.
 | `GetProfessionInfo` | professions: rank, max, skill line, modifier | [verify] | yes |
 | `InCombatLockdown` | spellbook, actionbars, bindings: nothing is read in combat, or when this cannot say (schema 3) | [verify] | yes |
 | `issecretvalue` | spellbook, actionbars, bindings: each value is tested before it is used or stored; a secret one is dropped and counted (the name itself is [verify]) | [verify] | no |
+| `C_Secrets` | spellbook, actionbars, bindings: looked up, never called; its probe says whether the client has the table | [verify] | no |
+| `canaccessvalue` | spellbook, actionbars, bindings: looked up, never called; its probe says whether the client has it | [verify] | no |
 | `Enum.SpellBookItemType` | spellbook: `item_types`, member name to number, read from the client | [verify] | n/a (table) |
 | `ACCOUNT_BINDINGS` | bindings: the client's value for the account-wide set, recorded beside `binding_set` | [verify] | n/a (constant) |
 | `CHARACTER_BINDINGS` | bindings: the client's value for the character's set, recorded beside `binding_set` | [verify] | n/a (constant) |
@@ -760,8 +775,9 @@ after each one you want to keep):
 - `/reload` while fighting a training dummy and keep fighting past the 15 s
   pass, then `/reload` again still in combat: that file shows the combat
   reason on all three sections (nothing was gathered in that session).
-- Then end combat, wait 3 s and log out: that file shows the three sections
-  gathered again (the retry after combat).
+- Then end combat, wait at least 3 s (the debounce is 2 s), pull the dummy
+  again and `/reload` in combat. Records present means the retry ran; the
+  combat reason means it did not. Don't use `/wowlab save` in between.
 - Separately: after a clean first pass out of combat, pull the dummy and
   `/reload` in combat: that file still holds the pre-fight records, not the
   reason.
@@ -779,7 +795,8 @@ Items:
    0, or a function `present = false`, is a finding. `issecretvalue`:
    whether Forever has it at all (forever-addon-kit's 69893 list does not),
    and, if it does, `answered` equal to `calls` (it gave a boolean each
-   time).
+   time). `C_Secrets` and `canaccessvalue`: whether each is `present`
+   (looked up only, never called).
 3. `spellbook` is not absent with `"Enum.SpellBookSpellBank.Player missing"`;
    its `skill_lines` offsets and counts match the spellbook on screen.
 4. `subtext` and ranks: whether ranks show as text (`"Rank 3"`) and which
@@ -795,9 +812,10 @@ Items:
    slot, taken out of a vehicle and not skyriding.
 7. Macro slots: `type = "macro"`; for the `#showtooltip <spell>` macro,
    whether `sub_type` is set and `id` is the spell's id; for the plain-text
-   macro, no `sub_type` and an `id` that is the macro index, and whether
-   that index matches the macro's position in `macros-cache.txt` (account
-   macros first, then the character's). `GetMacroInfo` `calls` equal to the
+   macro, no `sub_type` and an `id` that is the macro index. Compare the
+   index with the `VER 3 <id>` of that macro in the account folder's or the
+   character folder's `macros-cache.txt`, and record how account and
+   character indices are numbered **[verify]**. `GetMacroInfo` `calls` equal to the
    macro slots with no `sub_type`, and `answered` equal to `calls`. No
    macro name or body anywhere in the file.
 8. `bindings`: `binding_set` against the ticked "Character Specific Key
@@ -815,8 +833,11 @@ Items:
     `SPELLS_CHANGED`, `ACTIONBAR_SLOT_CHANGED`, `UPDATE_BINDINGS` and
     `PLAYER_REGEN_ENABLED` are known.
 11. Combat, if those steps were done: the reason only in the file written
-    while nothing had been gathered, the re-gather after combat ended, and
-    the pre-fight records kept through a `/reload` in combat.
+    while nothing had been gathered; the retry after combat: end combat,
+    wait at least 3 s (the debounce is 2 s), pull the dummy again and
+    `/reload` in combat. Records present means the retry ran; the combat
+    reason means it did not. Don't use `/wowlab save` in between. And the
+    pre-fight records kept through a `/reload` in combat.
 12. Restricted content, if that step was done: any `secret` count above 0
     in an instance out of combat is a finding (which API, how many).
 13. Privacy, on a hunter with a named pet: grep the capture for the pet's

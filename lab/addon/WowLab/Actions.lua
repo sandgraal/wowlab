@@ -12,17 +12,18 @@
 --               when the id is a number, and its subtype. A macro slot keeps
 --               an id only, never the macro's name or body (they are text
 --               the owner typed, ADR-0026): with no subtype the id is the
---               macro's index; with one it is the spell or item the macro
---               shows now [verify]. An equipment-set slot, whose id is the
---               set's name, keeps no id at all;
+--               macro's index [verify]; with one it is the spell or item the
+--               macro shows now [verify]. An equipment-set slot, whose id is
+--               the set's name, keeps no id at all;
 --   bindings    every binding command GetBinding lists that is a plain
 --               upper-case name, with the keys GetBindingKey returns for it
 --               now, to cross-check bindings-cache.wtf (§15.2). Commands
---               that carry text after the name (`SPELL x`, `MACRO x`,
---               `ITEM x`, `CLICK x`) are counted and never asked about or
---               stored: a macro's name is text the owner typed. GetBinding
---               lists named commands; whether a key bound straight to a
---               spell, macro, item or click (a spell dragged onto a key, an
+--               that are not a plain upper-case name (text after the name,
+--               as in `MACRO x`, or other characters) are counted as
+--               `commands_left_out` and never asked about or stored: a
+--               macro's name is text the owner typed. GetBinding lists
+--               named commands; whether a key bound straight to a spell,
+--               macro, item or click (a spell dragged onto a key, an
 --               action-bar addon's button) is among them at all is
 --               [verify], so `commands_left_out` counts only those it listed.
 --
@@ -37,7 +38,17 @@
 -- (an instance between pulls) is [verify]. Where the client has
 -- `issecretvalue` [verify], each value is tested with it before it is used
 -- or stored, and one it calls secret (or cannot say about) is dropped and
--- counted on its API's probe as `secret`.
+-- counted on its API's probe as `secret`. No `issecretvalue` means values
+-- are not tested, not that none are secret; a secret value then makes the
+-- gather raise and the section is written as an error, unless it was
+-- gathered earlier in the session: Core.lua keeps that record, as for a
+-- block, since each of these sections has a retry event. `C_Secrets` and
+-- `canaccessvalue` [verify] are looked up, never called: their probes say
+-- only whether the client has them.
+--
+-- Every client call in this file is a `pcall` whose values are each passed
+-- through `clean` (or cleared when the call raised) before anything else
+-- reads them; no client function is called directly (tests/addon pins it).
 --
 -- Every API here is [verify]. forever-addon-kit's API list for 69893 has the
 -- names (not issecretvalue), which proves only that they exist, so each
@@ -75,6 +86,14 @@ local function probe(api, fn)
     return { api = ns.String(api), present = fn ~= nil, calls = 0, errors = 0, answered = 0, secret = 0 }
 end
 
+-- The probes looked up and never called (M13-05 round 3): whether the client
+-- has the C_Secrets table and canaccessvalue [verify], next to issecretvalue.
+-- Appended to `list`, last.
+local function lookedUp(list)
+    list[#list + 1] = probe("C_Secrets", type(C_Secrets) == "table" and C_Secrets or nil)
+    list[#list + 1] = probe("canaccessvalue", type(canaccessvalue) == "function" and canaccessvalue or nil)
+end
+
 local function tally(entry, ok, answered)
     entry.calls = (ns.Number(entry.calls) or 0) + 1
     if not ok then
@@ -90,7 +109,10 @@ end
 -- value it calls secret, or one it raised an error or gave no boolean for, is
 -- dropped and counted on `entry` (the probe of the API that gave it) as
 -- `secret`. The test's own calls are counted on `check`. Without
--- issecretvalue every value is kept, and its probe says `present = false`.
+-- issecretvalue every value is kept untested, and its probe says
+-- `present = false`: that means values are not tested, not that none are
+-- secret (a secret value then makes the gather raise, and the section is
+-- written as an error unless an earlier record is kept).
 -- Nothing here compares `value` itself (a secret value may refuse that);
 -- `type` reads only its kind.
 local function clean(isSecret, check, entry, value)
@@ -165,6 +187,8 @@ local function spellbookItem(probes, slot, line, bank, itemInfo, itemName, isSec
     local ok, info = pcall(itemInfo, slot, bank)
     if ok then
         info = clean(isSecret, probes.test, probes.item, info)
+    else
+        info = nil
     end
     tally(probes.item, ok, type(info) == "table")
     local entry = { slot = ns.Number(slot), skill_line = ns.Number(line) }
@@ -180,6 +204,8 @@ local function spellbookItem(probes, slot, line, bank, itemInfo, itemName, isSec
         if okText then
             spellName = clean(isSecret, probes.test, probes.text, spellName)
             subtext = clean(isSecret, probes.test, probes.text, subtext)
+        else
+            spellName, subtext = nil, nil
         end
         tally(probes.text, okText, type(spellName) == "string")
         if okText then
@@ -214,6 +240,7 @@ ns.Section({
             test = probe("issecretvalue", isSecret),
         }
         local list = { probes.lines, probes.line, probes.item, probes.text, probes.test }
+        lookedUp(list)
         local missing = (not numLines and "C_SpellBook.GetNumSpellBookSkillLines")
             or (not lineInfo and "C_SpellBook.GetSpellBookSkillLineInfo")
             or (not itemInfo and "C_SpellBook.GetSpellBookItemInfo")
@@ -230,6 +257,8 @@ ns.Section({
         local okCount, count = pcall(numLines)
         if okCount then
             count = clean(isSecret, probes.test, probes.lines, count)
+        else
+            count = nil
         end
         tally(probes.lines, okCount, type(count) == "number")
         if not okCount or type(count) ~= "number" then
@@ -240,6 +269,8 @@ ns.Section({
             local okLine, info = pcall(lineInfo, line)
             if okLine then
                 info = clean(isSecret, probes.test, probes.line, info)
+            else
+                info = nil
             end
             tally(probes.line, okLine, type(info) == "table")
             if okLine and type(info) == "table" then
@@ -272,13 +303,14 @@ ns.Section({
 
 -- actionbars ------------------------------------------------------------------
 
--- The action slots walked: 1 to 180 is twelve slots on each of fifteen
--- action pages (the main bar's pages, the stance and bonus pages, the
--- multi-bars) [verify]. This is the addon's own bound, not a client constant
--- (none is known); a slot the client does not have is expected to answer
--- nothing [verify], and the record says which range was walked. In a
--- vehicle or while skyriding the client swaps the main bar's page, so a
--- capture is taken outside both.
+-- The action slots walked: 1 to 180 is fifteen runs of twelve slots: the
+-- main bar's pages, the stance and bonus bars, and the multi-action bars
+-- [verify]. This is the addon's own bound, not a client constant (none is
+-- known); a slot the client does not have is expected to answer nothing
+-- [verify], and the record says which range was walked. In a vehicle or
+-- while skyriding the client fills some slots with temporary actions
+-- [verify] (whether skyriding exists on Forever is not known), so a capture
+-- is taken outside both.
 local FIRST_ACTION_SLOT = 1
 local LAST_ACTION_SLOT = 180
 
@@ -300,17 +332,20 @@ ns.Section({
         local macro = probe("GetMacroInfo", getMacro)
         local secret = probe("issecretvalue", isSecret)
         local list = { action, macro, secret }
+        lookedUp(list)
         if not getAction then
             return { absent = "GetActionInfo missing", probes = list }
         end
         local record = { first_slot = FIRST_ACTION_SLOT, last_slot = LAST_ACTION_SLOT, slots = {}, probes = list }
         for slot = FIRST_ACTION_SLOT, LAST_ACTION_SLOT do
-            local ok, kind, id, subType = pcall(getAction, slot)
             local hiddenSubType = false
+            local ok, kind, id, subType = pcall(getAction, slot)
             if ok then
                 kind = clean(isSecret, secret, action, kind)
                 id = clean(isSecret, secret, action, id)
                 subType, hiddenSubType = clean(isSecret, secret, action, subType)
+            else
+                kind, id, subType = nil, nil, nil
             end
             tally(action, ok, ok and kind ~= nil)
             if ok and type(kind) == "string" then
@@ -327,11 +362,18 @@ ns.Section({
                 -- C API (the crash class in docs/DATA_SOURCES.md,
                 -- 2026-09-28). So GetMacroInfo is asked only then, only
                 -- whether the index names a macro. Its first return (the
-                -- name) is bound to `_` and its third (the body) to nothing;
-                -- neither is stored. Only the probe counts are kept.
+                -- name) is bound to `_`, which nothing in this file reads,
+                -- and its third (the body) to nothing; neither is stored.
+                -- `icon` is cleaned, then only compared with nil: only the
+                -- probe counts are kept.
                 local macroIndex = not hiddenSubType and (subType == nil or subType == "")
                 if kind == "macro" and macroIndex and type(id) == "number" and getMacro then
                     local okMacro, _, icon = pcall(getMacro, id)
+                    if okMacro then
+                        icon = clean(isSecret, secret, macro, icon)
+                    else
+                        icon = nil
+                    end
                     tally(macro, okMacro, icon ~= nil)
                 end
             end
@@ -382,6 +424,7 @@ ns.Section({
         local key = probe("GetBindingKey", getKey)
         local secret = probe("issecretvalue", isSecret)
         local list = { set, count, binding, key, secret }
+        lookedUp(list)
         local missing = (not getCount and "GetNumBindings")
             or (not getBinding and "GetBinding")
             or (not getKey and "GetBindingKey")
@@ -398,6 +441,8 @@ ns.Section({
             local okSet, which = pcall(getSet)
             if okSet then
                 which = clean(isSecret, secret, set, which)
+            else
+                which = nil
             end
             tally(set, okSet, type(which) == "number")
             if okSet then
@@ -407,6 +452,8 @@ ns.Section({
         local okCount, total = pcall(getCount)
         if okCount then
             total = clean(isSecret, secret, count, total)
+        else
+            total = nil
         end
         tally(count, okCount, type(total) == "number")
         if not okCount or type(total) ~= "number" then
@@ -419,6 +466,8 @@ ns.Section({
             local okBinding, found = pcall(getBinding, index)
             if okBinding then
                 found = clean(isSecret, secret, binding, found)
+            else
+                found = nil
             end
             tally(binding, okBinding, type(found) == "string")
             if okBinding and type(found) == "string" then

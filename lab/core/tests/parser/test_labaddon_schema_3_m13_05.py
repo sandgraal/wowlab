@@ -79,6 +79,12 @@ def _missing(api: str) -> dict[str, Any]:
     return {"api": api, "present": False, "calls": 0, "errors": 0, "answered": 0, "secret": 0}
 
 
+def _looked_up() -> list[dict[str, Any]]:
+    """The two probes each section appends last, looked up and never called
+    (round 3): here the client has C_Secrets and not canaccessvalue."""
+    return [_probe("C_Secrets"), _missing("canaccessvalue")]
+
+
 def _spellbook() -> dict[str, Any]:
     return {
         "item_types": {"None": 0, "Spell": 1, "FutureSpell": 2, "PetAction": 3, "Flyout": 4},
@@ -125,6 +131,7 @@ def _spellbook() -> dict[str, Any]:
             _probe("C_SpellBook.GetSpellBookItemInfo", 3, 0, 3),
             _probe("C_SpellBook.GetSpellBookItemName", 3, 0, 3),
             _missing("issecretvalue"),
+            *_looked_up(),
         ],
         "events_unregistered": {},
     }
@@ -145,6 +152,7 @@ def _actionbars() -> dict[str, Any]:
             _probe("GetActionInfo", 180, 0, 5),
             _probe("GetMacroInfo", 1, 0, 1),
             _probe("issecretvalue", 15, 0, 15),
+            *_looked_up(),
         ],
         "events_unregistered": {},
     }
@@ -169,6 +177,7 @@ def _bindings() -> dict[str, Any]:
             _probe("GetBinding", 412, 0, 412),
             _probe("GetBindingKey", 411, 0, 3, 1),
             _probe("issecretvalue", 830, 0, 830),
+            *_looked_up(),
         ],
         "events_unregistered": {},
     }
@@ -205,6 +214,8 @@ def _refused(raw: object, *fragments: str) -> str:
 
 def test_the_addon_source_lists_what_these_tests_use() -> None:
     assert PROBED == (
+        "C_Secrets",
+        "canaccessvalue",
         "C_SpellBook.GetNumSpellBookSkillLines",
         "C_SpellBook.GetSpellBookSkillLineInfo",
         "C_SpellBook.GetSpellBookItemInfo",
@@ -320,24 +331,29 @@ def test_constructed_schema_3_describes_the_new_sections() -> None:
         "slots and ids in --json); read out of combat"
     ) in lines
     assert (
-        "  macro slots: 1 with no subtype (the id is the macro index), 1 with one (the id is "
-        "the spell or item id the macro shows now [verify]); a macro's name and body are never "
-        "recorded"
+        "  macro slots: 1 with no subtype recorded (the id is the macro index [verify]), 1 with "
+        "one (the id is the spell or item id the macro shows now [verify]); a macro's name and "
+        "body are never recorded"
     ) in lines
     assert (
         "Key bindings: 3 commands with a key, of 412 listed (commands and keys in --json); "
         "binding set 2 (the character's: CHARACTER_BINDINGS is 2); read out of combat"
     ) in lines
     assert (
-        "  left out: 1 command GetBinding listed with text after the name (never asked about), "
-        "0 keys not printable ASCII; a key bound straight to a spell, macro, item or click may "
-        "not be listed by GetBinding at all [verify]"
+        "  left out: 1 command of those listed not a plain upper-case name (text after the "
+        "name, as in MACRO x, or other characters; never asked about), 0 keys not printable ASCII"
+    ) in lines
+    assert (
+        "  a key bound straight to a spell, macro, item or click may not be listed by GetBinding "
+        "at all [verify]"
     ) in lines
     assert (
         "  GetBindingKey: present, 411 calls, 0 raised an error, 3 answered, 408 answered "
-        "nothing, 1 value dropped as secret"
+        "nothing, 1 value dropped as secret or untestable (see issecretvalue's errors)"
     ) in lines
     assert "  issecretvalue: missing, not called" in lines
+    assert "  C_Secrets: present (looked up only, never called)" in lines
+    assert "  canaccessvalue: missing (looked up only, never called)" in lines
     assert "  left out as the active class config at this gather: config 640511" in lines
     # Every line printable ASCII and no longer than the longest line before (M11-34).
     assert all(re.fullmatch(r"[\x20-\x7e]*", line) for line in lines)
@@ -409,7 +425,7 @@ def test_constructed_absent_for_a_missing_function_shows_its_probes() -> None:
     assert lines[at + 1 : at + 4] == [
         "  GetActionInfo: missing, not called",
         "  GetMacroInfo: present, 0 calls, 0 raised an error, 0 answered, 0 answered nothing, "
-        "0 values dropped as secret",
+        "0 values dropped as secret or untestable (see issecretvalue's errors)",
         "  issecretvalue: missing, not called",
     ]
 
@@ -565,3 +581,57 @@ def test_constructed_unknown_key_in_a_new_section_is_kept() -> None:
     raw["bindings"]["later_count"] = 4
     char = _v3(raw)
     assert labaddon.unknown_keys(char) == ["bindings.later_count"]
+
+
+# ─── round 3: what the addon guarantees, checked (constructed) ───────────────
+
+
+def test_constructed_left_out_config_that_is_listed_is_refused() -> None:
+    """The addon leaves the active config out of `configs`, so the id it
+    records as left out is never a listed config's id."""
+    raw = _base_v3()
+    listed = raw["talents"]["legacy"]["configs"]
+    assert listed, "the M11-23 record lists a Legacy candidate"
+    raw["talents"]["legacy"]["left_out_config"] = listed[0]["id"]
+    _refused(raw, "left_out_config is the id of a listed config")
+
+
+@pytest.mark.parametrize("reason", COMBAT_REASONS)
+def test_constructed_combat_reason_with_probes_is_refused(reason: str) -> None:
+    """A blocked gather calls nothing, so a combat reason carries no probes."""
+    raw = _base_v3()
+    raw["actionbars"] = {"absent": reason, "probes": [_probe("GetActionInfo")]}
+    _refused(raw, "a combat reason carries probes")
+
+
+def test_constructed_binding_counts_that_cannot_happen_are_refused() -> None:
+    """Every listed command and every left-out one was counted in
+    `commands`: together they are at most `commands`."""
+    raw = _with(("bindings", "commands"), 3)
+    _refused(raw, "add up to more than the commands counted")
+    raw = _with(("bindings", "commands"), 4)
+    assert isinstance(_v3(raw).bindings, labaddon.Bindings)
+
+
+@pytest.mark.parametrize("field", ["spell_name", "subtext"])
+def test_constructed_spell_text_is_capped_in_bytes(field: str) -> None:
+    """The addon's `#value <= 255` counts bytes: 255 bytes of UTF-8 read,
+    256 are refused even when they are fewer than 255 characters."""
+    two_bytes = chr(0xE9)
+    at_cap = two_bytes * 127 + "x"
+    assert len(at_cap.encode("utf-8")) == 255
+    char = _v3(_with(("spellbook", "list", 1, field), at_cap))
+    assert isinstance(char.spellbook, labaddon.Spellbook)
+    over = two_bytes * 128
+    assert len(over) < 255 and len(over.encode("utf-8")) == 256
+    message = _refused(_with(("spellbook", "list", 1, field), over), field, "256 bytes")
+    assert over not in message
+
+
+@pytest.mark.parametrize("api", sorted(labaddon.LOOKED_UP))
+def test_constructed_looked_up_probe_with_calls_is_refused(api: str) -> None:
+    """`C_Secrets` and `canaccessvalue` are looked up, never called."""
+    for counts in ({"calls": 1}, {"secret": 1}):
+        raw = _base_v3()
+        raw["bindings"]["probes"][-1] = {**_probe(api), **counts}
+        _refused(raw, "is looked up only")

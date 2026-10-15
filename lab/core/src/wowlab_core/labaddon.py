@@ -93,6 +93,7 @@ from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, NamedTuple, Self, TypeVar
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     BeforeValidator,
     ConfigDict,
@@ -970,6 +971,10 @@ class LegacyTalentsV3(LegacyTalents):
     def _left_out_or_reason(self) -> Self:
         if self.left_out_config is not None and self.left_out_config_absent is not None:
             raise ValueError("both left_out_config and left_out_config_absent are set")
+        if self.left_out_config is not None and any(
+            config.id == self.left_out_config for config in self.configs
+        ):
+            raise ValueError("left_out_config is the id of a listed config")
         return self
 
 
@@ -994,7 +999,12 @@ ProbedApi = Literal[
     "GetBinding",
     "GetBindingKey",
     "issecretvalue",
+    "C_Secrets",
+    "canaccessvalue",
 ]
+# Looked up and never called (M13-05 round 3): the probe says only whether
+# the client has it.
+LOOKED_UP: frozenset[str] = frozenset({"C_Secrets", "canaccessvalue"})
 
 
 class ApiProbe(_Record):
@@ -1005,7 +1015,9 @@ class ApiProbe(_Record):
     most one of an error or an answer, and calls nothing that is missing.
     `secret` counts the values this API gave that the addon dropped because
     `issecretvalue` called them secret or could not say; a dropped value is
-    not an answer, so a call whose one value was dropped answered nothing."""
+    not an answer, so a call whose one value was dropped answered nothing.
+    `C_Secrets` and `canaccessvalue` are looked up and never called, so
+    their counts are 0."""
 
     api: ProbedApi
     present: bool
@@ -1022,16 +1034,30 @@ class ApiProbe(_Record):
             raise ValueError("calls are counted for a function that was not present")
         if not self.present and self.secret:
             raise ValueError("values are counted for a function that was not present")
+        if self.api in LOOKED_UP and (self.calls or self.secret):
+            raise ValueError(f"{self.api} is looked up only, yet calls or values are counted")
         return self
 
 
-# A spell's name or subtext as the client gives it: 1 to 255 characters, no
-# control (C0, C1), format (Cf) or line/paragraph separator (Zl, Zp)
-# character, and no "|" (the client's escape character). The addon keeps it
-# only when it has no ASCII control character and no "|".
+# A spell's name or subtext as the client gives it: 1 to 255 bytes of UTF-8
+# (the addon's `#value <= 255` counts bytes), no control (C0, C1), format
+# (Cf) or line/paragraph separator (Zl, Zp) character, and no "|" (the
+# client's escape character). The addon keeps it only when it has no ASCII
+# control character and no "|".
+SPELL_TEXT_BYTES = 255
+
+
+def _spell_text_bytes(value: str) -> str:
+    size = len(value.encode("utf-8"))
+    if size > SPELL_TEXT_BYTES:
+        raise ValueError(f"the text is {size} bytes of UTF-8, more than {SPELL_TEXT_BYTES}")
+    return value
+
+
 SpellText = Annotated[
     str,
     StringConstraints(pattern=r"^[^\x00-\x1f\x7f-\x9f|\p{Cf}\p{Zl}\p{Zp}]{1,255}$"),
+    AfterValidator(_spell_text_bytes),
 ]
 # A client word: an action type or subtype ("spell", "macro", "item").
 ActionWord = Annotated[str, StringConstraints(pattern=r"^[A-Za-z]{1,32}$")]
@@ -1085,6 +1111,12 @@ class AbsentProbedSection(AbsentSection):
 
     probes: Lst[ApiProbe] | None = None
 
+    @model_validator(mode="after")
+    def _combat_calls_nothing(self) -> Self:
+        if self.probes is not None and self.absent.startswith(COMBAT_REASON_PREFIXES):
+            raise ValueError("a combat reason carries probes, yet a blocked gather calls nothing")
+        return self
+
 
 class SpellbookLine(_Record):
     """One skill line of the player's spellbook: where its items start
@@ -1132,8 +1164,8 @@ class Spellbook(_Section):
 class ActionSlot(_Record):
     """One filled action slot. `id` only when the client gave a number. A
     macro slot keeps an id only, never the macro's name or body: with no
-    `sub_type` the id is the macro index; with one, it is the spell or item
-    id the macro shows now **[verify]**. An equipment-set slot has none (its
+    `sub_type` the id is the macro index **[verify]**; with one, it is the
+    spell or item id the macro shows now **[verify]**. An equipment-set slot has none (its
     id is the set's name)."""
 
     slot: Int
@@ -1162,7 +1194,9 @@ class Binding(_Record):
 class Bindings(_Section):
     """`bindings` (schema 3), read out of combat: the commands with a key.
     `commands` counts every command `GetBinding` listed; `commands_left_out`
-    those with text after the name (never asked about). `GetBinding` lists
+    the commands that are not a plain upper-case name (text after the name,
+    as in `MACRO x`, or other characters), never asked about, so the listed
+    commands and the left-out ones add up to at most `commands`. `GetBinding` lists
     named commands; whether a key bound straight to a spell, macro, item or
     click is listed at all is **[verify]**, so such keys may be in neither
     count. `keys_left_out` counts the keys that were not printable ASCII
@@ -1178,6 +1212,14 @@ class Bindings(_Section):
     keys_left_out: Count
     list_: Lst[Binding] = Field(alias="list")
     probes: Lst[ApiProbe]
+
+    @model_validator(mode="after")
+    def _counts_add_up(self) -> Self:
+        if len(self.list_) + self.commands_left_out > self.commands:
+            raise ValueError(
+                "the listed and left-out commands add up to more than the commands counted"
+            )
+        return self
 
 
 class CharDBV3(_CharDB):
@@ -2625,6 +2667,10 @@ def _probe_lines(probes: list[ApiProbe] | None) -> list[str]:
         return [f"  probes: {NONE_RECORDED}"]
     lines = []
     for probe in probes:
+        if probe.api in LOOKED_UP:
+            found = "present" if probe.present else "missing"
+            lines.append(f"  {probe.api}: {found} (looked up only, never called)")
+            continue
         if not probe.present:
             lines.append(f"  {probe.api}: missing, not called")
             continue
@@ -2632,7 +2678,8 @@ def _probe_lines(probes: list[ApiProbe] | None) -> list[str]:
         lines.append(
             f"  {probe.api}: present, {_count(probe.calls, 'call')}, {probe.errors} raised an "
             f"error, {probe.answered} answered, {nothing} answered nothing, "
-            f"{_count(probe.secret, 'value')} dropped as secret"
+            f"{_count(probe.secret, 'value')} dropped as secret or untestable (see "
+            "issecretvalue's errors)"
         )
     return lines
 
@@ -2714,7 +2761,8 @@ def _action_bars(bars: ActionBars) -> list[str]:
     if macros:
         index = sum(1 for slot in macros if slot.sub_type is None)
         lines.append(
-            f"  macro slots: {index} with no subtype (the id is the macro index), "
+            f"  macro slots: {index} with no subtype recorded (the id is the macro index "
+            "[verify]), "
             f"{len(macros) - index} with one (the id is the spell or item id the macro shows "
             "now [verify]); a macro's name and body are never recorded"
         )
@@ -2752,10 +2800,11 @@ def _bindings(record: Bindings) -> list[str]:
         f"Key bindings: {_count(len(record.list_), 'command')} with a key, of "
         f"{record.commands} listed (commands and keys in --json); binding set "
         f"{_binding_set_words(record)}; read out of combat",
-        f"  left out: {_count(record.commands_left_out, 'command')} GetBinding listed with text "
-        f"after the name (never asked about), {_count(record.keys_left_out, 'key')} not printable "
-        "ASCII; a key bound straight to a spell, macro, item or click may not be listed by "
-        "GetBinding at all [verify]",
+        f"  left out: {_count(record.commands_left_out, 'command')} of those listed not a plain "
+        "upper-case name (text after the name, as in MACRO x, or other characters; never asked "
+        f"about), {_count(record.keys_left_out, 'key')} not printable ASCII",
+        "  a key bound straight to a spell, macro, item or click may not be listed by GetBinding "
+        "at all [verify]",
     ]
     return lines + _probe_lines(record.probes) + _events(record)
 

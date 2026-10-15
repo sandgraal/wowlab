@@ -245,9 +245,13 @@ local function gather(section, event)
     -- ns.Blocked (M13-05): the section may not read now. What it gathered
     -- earlier this session is kept; its reason is written only when nothing
     -- was; and it stays dirty, so the next pass (its retry event, any
-    -- debounce, PLAYER_LOGOUT) tries again.
+    -- debounce, PLAYER_LOGOUT) tries again. A section with a retry event
+    -- (Actions.lua's three) keeps its earlier record through an error the
+    -- same way: without issecretvalue a secret value makes its gather raise
+    -- (M13-05 round 3), and that is no reason to drop a good record.
     local blocked = ok and type(record) == "table" and type(record.blocked) == "string"
-    if blocked and section.gathered then
+    local kept = blocked or (not ok and section.retry ~= nil)
+    if kept and section.gathered then
         section.dirty = true
         return
     end

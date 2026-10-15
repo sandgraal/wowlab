@@ -5376,6 +5376,21 @@ COMBAT_CHECK = (
     "local blocked = combatReason ( ) if blocked then return ns . Blocked ( blocked ) end"
 )
 COMBAT_EVENT = "PLAYER_REGEN_ENABLED"
+COMBAT_CONSTANT = (
+    'local IN_COMBAT = "in combat: this section reads only out of combat, '
+    'and gathers again when combat ends"'
+)
+COMBAT_REASON = (
+    "local function combatReason ( ) "
+    'if type ( InCombatLockdown ) ~= "function" then '
+    'return "InCombatLockdown missing, so whether the player is in combat is not known; '
+    'nothing was read" end '
+    "local ok , locked = pcall ( InCombatLockdown ) "
+    'if not ok then return "InCombatLockdown raised an error, so whether the player is in '
+    'combat is not known; nothing was read" end '
+    "if locked then return IN_COMBAT end "
+    "return nil end"
+)
 
 
 def _m13_05_sections(flow: _Flow) -> list[tuple[str, dict[str, tuple[int, int]]]]:
@@ -5473,15 +5488,17 @@ def _m13_05_combat_problems(path: Path) -> list[str]:
     for name in sorted(set(refs) - after - {"combatReason"}):
         lines = [t[k].line for k in refs[name] if not in_region(k)]
         problems.append(f"{name}: called before or without the combat check (lines {lines})")
+    # combatReason and the reason it gives in combat are pinned whole: any
+    # statement added to either (`locked = false`, an early `return nil`,
+    # IN_COMBAT set to nil) may make every gather read in combat.
     head = defined["combatReason"]
-    reason = _render(t[head : flow.block_end(head) + 1])
-    for part in (
-        'if type ( InCombatLockdown ) ~= "function" then return',
-        "local ok , locked = pcall ( InCombatLockdown ) if not ok then return",
-        "if locked then return IN_COMBAT end return nil end",
-    ):
-        if part not in reason:
-            problems.append(f"combatReason lacks {part!r}")
+    if _render(t[head - 1 : flow.block_end(head) + 1]) != COMBAT_REASON:
+        problems.append("combatReason is not the pinned one")
+    if _render(t).count(COMBAT_CONSTANT) != 1:
+        problems.append("IN_COMBAT is not the pinned constant")
+    for name in ("combatReason", "IN_COMBAT"):
+        if [n for n, _ in flow.assigned].count(name) != 1:
+            problems.append(f"{name} is bound more than once")
     return problems
 
 
@@ -5534,6 +5551,17 @@ _M13_05_CASES: dict[str, list[tuple[str, str]]] = {
     "combatReason reads another API": [
         ("    if locked then\n", '    if locked or UnitLevel("player") then\n')
     ],
+    # Round 3: combatReason and IN_COMBAT are pinned whole.
+    "the lock forced off": [("    if locked then\n", "    locked = false\n    if locked then\n")],
+    "an early return": [
+        (
+            "local function combatReason()\n",
+            "local function combatReason()\n    if InCombatLockdown then\n        return nil\n    end\n",
+        )
+    ],
+    "the in-combat reason cleared": [
+        ("local FIRST_ACTION_SLOT", "IN_COMBAT = nil\nlocal FIRST_ACTION_SLOT")
+    ],
 }
 
 
@@ -5561,40 +5589,104 @@ def test_m13_05_constructed_call_after_the_check_passes() -> None:
     assert _m13_05_edited(edits) == []
 
 
+def _m13_05_underscore_reads(path: Path) -> list[str]:
+    """Where `_` is read in `path`. In Lua `_` is an ordinary local, so a
+    discarded value bound to it (the macro's name) is only discarded while
+    nothing reads it: `_` may be declared, never used."""
+    t = _tokens(path)
+    flow = _Flow(path, t)
+    declared = {at for name, at in flow.assigned if name == "_"}
+    return [
+        f"line {x.line}: _ is read"
+        for k, x in enumerate(t)
+        if x.kind == "name" and x.text == "_" and not _is_field(t, k) and k not in declared
+    ]
+
+
+_M13_05_MACRO = (
+    "local okMacro , _ , icon = pcall ( getMacro , id ) "
+    "if okMacro then icon = clean ( isSecret , secret , macro , icon ) else icon = nil end "
+    "tally ( macro , okMacro , icon ~= nil )"
+)
+
+
+def _m13_05_macro_problems(path: Path) -> list[str]:
+    """Why `path` (Actions.lua, or an edited copy) may keep a macro's name
+    or body."""
+    t = _tokens(path)
+    text = _render(t)
+    problems = _m13_05_underscore_reads(path)
+    if text.count(_M13_05_MACRO) != 1:
+        problems.append("the GetMacroInfo call is not the pinned one")
+    # Every use of the three names is in the pinned statements.
+    for name, uses in (("getMacro", 4), ("okMacro", 3), ("icon", 5)):
+        seen = sum(1 for k, x in enumerate(t) if x.text == name and not _is_field(t, k))
+        if seen != uses:
+            problems.append(f"{name} is used {seen} times, not {uses}")
+    bound = 'local getMacro = type ( GetMacroInfo ) == "function" and GetMacroInfo or nil'
+    if text.count(bound) != 1 or text.count("GetMacroInfo ") != 2:
+        problems.append("GetMacroInfo is used other than bound once")
+    if text.count('probe ( "GetMacroInfo" , getMacro )') != 1:
+        problems.append("getMacro is not probed once")
+    if text.count("and getMacro then") != 1:
+        problems.append("getMacro is not tested once")
+    return problems
+
+
 def test_m13_05_macro_info_binds_neither_name_nor_body() -> None:
     """ADR-0026, §15.2: a macro slot keeps an id only. GetMacroInfo is
     bound once into a handle, and the handle is used only to probe, test and
     call it as `local okMacro, _, icon = pcall(getMacro, id)`: the name goes to
-    `_`, the body to nothing, and `icon` is only compared with nil."""
-    bound = 'local getMacro = type ( GetMacroInfo ) == "function" and GetMacroInfo or nil'
-    problems = []
-    seen = 0
-    for path in SOURCES:
-        tokens = _tokens(path)
-        rendered = _render(tokens)
-        seen += rendered.count("GetMacroInfo ")
-        for i, x in enumerate(tokens):
-            if x.kind != "name" or _is_field(tokens, i):
-                continue
-            if x.text == "GetMacroInfo":
-                if bound not in (_render(tokens[i - 5 : i + 8]), _render(tokens[i - 10 : i + 3])):
-                    problems.append(f"{_where(path, x)} GetMacroInfo used other than bound")
-            elif x.text == "getMacro" and tokens[i - 1].text != "local":
-                around = _render(tokens[i - 9 : i + 4])
-                if not (
-                    _render(tokens[i - 4 : i + 2]) == 'probe ( "GetMacroInfo" , getMacro )'
-                    or _render(tokens[i - 1 : i + 2]) == "and getMacro then"
-                    or around == "local okMacro , _ , icon = pcall ( getMacro , id )"
-                ):
-                    problems.append(f"{_where(path, x)} getMacro used as {around!r}")
-            elif (
-                x.text == "icon"
-                and tokens[i - 1].text != ","
-                and _render(tokens[i : i + 3]) != "icon ~= nil"
-            ):
-                problems.append(f"{_where(path, x)} icon used as {_render(tokens[i : i + 3])!r}")
-    assert seen == 2, seen  # the type test and the handle's value
-    assert not problems, problems
+    `_`, which nothing in the file reads, the body to nothing, and `icon` is
+    cleaned and then only compared with nil. No other source names
+    GetMacroInfo or the handle."""
+    assert _m13_05_macro_problems(ACTIONS) == []
+    others = [
+        _where(path, x)
+        for path in SOURCES
+        if path != ACTIONS
+        for x in _tokens(path)
+        if x.text in {"GetMacroInfo", "getMacro"}
+    ]
+    assert not others, others
+
+
+_M13_05_MACRO_CASES: dict[str, list[tuple[str, str]]] = {
+    "the name stored through _": [
+        (
+            "local okMacro, _, icon = pcall(getMacro, id)\n",
+            "local okMacro, _, icon = pcall(getMacro, id)\nrecord.name = ns.String(_)\n",
+        )
+    ],
+    "the name bound to a name": [
+        (
+            "local okMacro, _, icon = pcall(getMacro, id)",
+            "local okMacro, name, icon = pcall(getMacro, id)",
+        )
+    ],
+    "the body bound": [
+        (
+            "local okMacro, _, icon = pcall(getMacro, id)",
+            "local okMacro, _, icon, body = pcall(getMacro, id)",
+        )
+    ],
+    "icon used raw": [("icon = clean(isSecret, secret, macro, icon)", "icon = icon")],
+}
+
+
+def test_m13_05_constructed_macro_edits_fail() -> None:
+    missed = []
+    for tag, edits in sorted(_M13_05_MACRO_CASES.items()):
+        text = ACTIONS.read_text(encoding="utf-8")
+        for found, replacement in edits:
+            assert found in text, found
+            text = text.replace(found, replacement, 1)
+        with tempfile.TemporaryDirectory(prefix="wowlab-m13-05-") as tmp:
+            path = Path(tmp) / ACTIONS.name
+            path.write_text(text, encoding="utf-8")
+            if not _m13_05_macro_problems(path):
+                missed.append(tag)
+    assert not missed, missed
 
 
 def test_m13_05_bindings_ask_only_plain_commands() -> None:
@@ -5618,9 +5710,12 @@ def test_m13_05_a_blocked_gather_keeps_the_record_and_stays_dirty() -> None:
     """Core.lua's `gather`: a section that returns `ns.Blocked(reason)` keeps
     what it gathered earlier this session (no store at all), and writes the
     reason as an absent record only when nothing was gathered; either way it
-    stays dirty, so the next pass tries again. Any other result marks the
-    section gathered and clean. `ns.Blocked` builds the sentinel from a
-    checked string and nothing else."""
+    stays dirty, so the next pass tries again. A section with a retry event
+    keeps its earlier record through a gather that raised in the same way
+    (round 3: without issecretvalue a secret value raises); with nothing
+    gathered the error is written. Any other result marks the section
+    gathered and clean. `ns.Blocked` builds the sentinel from a checked
+    string and nothing else."""
     flow = _core()
     assert _body(flow, "ns.Blocked") == (
         "function ns . Blocked ( reason ) return { blocked = ns . String ( reason ) } end"
@@ -5629,7 +5724,8 @@ def test_m13_05_a_blocked_gather_keeps_the_record_and_stays_dirty() -> None:
         f"function gather ( section , event ) {OFF_GUARD} "
         "local ok , record = pcall ( section . gather , event ) "
         'local blocked = ok and type ( record ) == "table" and type ( record . blocked ) == "string" '
-        "if blocked and section . gathered then section . dirty = true return end "
+        "local kept = blocked or ( not ok and section . retry ~= nil ) "
+        "if kept and section . gathered then section . dirty = true return end "
         "if blocked then record = ns . Absent ( record . blocked ) "
         'elseif not ok then record = ns . Absent ( "error: " .. tostring ( record ) ) '
         'elseif type ( record ) ~= "table" then '
@@ -5693,22 +5789,35 @@ def test_m13_05_the_retry_event_never_marks_a_section_dirty() -> None:
 
 # Secret values: every value read from the client goes through `clean` -----
 
-# The client function handles Actions.lua calls, and what each call's value
-# names are. GetMacroInfo is not here: its one value (`icon`) is only
-# compared with nil (test_m13_05_macro_info_binds_neither_name_nor_body), and
-# GetBindingKey's values are read as `keys [ i ]`, checked below.
-_M13_05_HANDLES = frozenset(
-    {
-        "numLines",
-        "lineInfo",
-        "itemInfo",
-        "itemName",
-        "getAction",
-        "getSet",
-        "getCount",
-        "getBinding",
-    }
+# What Actions.lua may call directly: its own local functions, these Lua
+# builtins and these `ns` helpers (Core.lua; none of them calls a function
+# it is handed). Every other call is refused, whether of a client global, a
+# handle bound from one, an alias of either, a call through an index or
+# parentheses, or a method call: a client function is reached only as the
+# first argument of `pcall`. Every `pcall` but the two pinned ones (clean's
+# issecretvalue test, combatReason's InCombatLockdown) has one of two shapes:
+#
+#   local ok, v1, ..., vn = pcall(f, ...)
+#   if ok then <vi = clean(isSecret, check, probe, vi), each vi in order>
+#   else v1, ..., vn = nil, ..., nil end
+#
+# so on every path each value is cleaned or cleared before anything reads
+# it (a value bound to `_` is never read at all), and a value read as a
+# table is read only as `type(v)` and as `v.field` handed to clean; or
+#
+#   local keys = ns.Pack(pcall(f, ...))
+#
+# read only as `keys[1]` (pcall's flag), `keys.n` and `keys[i]` handed to
+# clean. None of the names called may be rebound, so a call goes to the
+# function named here.
+_M13_05_BUILTINS = frozenset({"type", "pcall", "pairs", "tostring", "math.min", "string.find"})
+_M13_05_NS = frozenset(
+    {"ns.Section", "ns.Fn", "ns.Blocked", "ns.String", "ns.Number", "ns.Bool", "ns.Pack"}
 )
+_M13_05_PINNED_PCALLS = {
+    "clean": "pcall ( isSecret , value )",
+    "combatReason": "pcall ( InCombatLockdown )",
+}
 _M13_05_CLEAN = (
     "local function clean ( isSecret , check , entry , value ) "
     'if type ( value ) == "nil" or not isSecret then return value , false end '
@@ -5720,6 +5829,8 @@ _M13_05_CLEAN = (
 _M13_05_SECRET_BIND = (
     'local isSecret = type ( issecretvalue ) == "function" and issecretvalue or nil'
 )
+_M13_05_ID = r"[A-Za-z_][A-Za-z0-9_]*"
+_M13_05_ARG = rf"{_M13_05_ID}(?: \. {_M13_05_ID})?"
 
 
 def _m13_05_enclosing_call(t: list[Token], k: int) -> int | None:
@@ -5750,64 +5861,157 @@ def _m13_05_cleaned_last(t: list[Token], start: int, end: int) -> bool:
     )
 
 
+def _m13_05_call_problems(t: list[Token], flow: _Flow, own: set[str]) -> list[str]:
+    """Every call in the file is of a function named in `own`,
+    `_M13_05_BUILTINS` or `_M13_05_NS`, through a name nothing rebinds."""
+    problems: list[str] = []
+    allowed = own | _M13_05_BUILTINS | _M13_05_NS
+    for k in range(1, len(t)):
+        if t[k].kind == "op" and t[k].text == ":":
+            problems.append(f"line {t[k].line}: a method call")
+        if not flow.call_start(k):
+            continue
+        prev = t[k - 1]
+        if prev.kind == "name" and prev.text not in _KEYWORDS:
+            j = k - 1
+            while j >= 2 and t[j - 1].text in {".", ":"}:
+                j -= 2
+            if t[j - 1].text == "function":
+                continue  # a definition
+            callee = _callee(t, k - 1)
+            if callee not in allowed:
+                problems.append(f"line {prev.line}: {callee} is called directly")
+        elif prev.text in {")", "]"} or prev.kind == "string":
+            problems.append(f"line {prev.line}: a call through an expression")
+    bound = [name for name, _ in flow.assigned]
+    for root in sorted({name.split(".")[0] for name in _M13_05_BUILTINS}):
+        if root in bound:
+            problems.append(f"{root} is rebound")
+    for name in [*sorted(own), "ns"]:
+        if bound.count(name) != 1:
+            problems.append(f"{name} is bound {bound.count(name)} times, not once")
+    return problems
+
+
+def _m13_05_uses(flow: _Flow, name: str, after: int) -> list[int]:
+    """The uses from token `after` on of the local `name` visible there."""
+    t = flow.tokens
+    decl = flow.resolve(name, after)
+    if decl is None:
+        return []
+    return [
+        i
+        for i in range(after, len(t))
+        if t[i].kind == "name"
+        and t[i].text == name
+        and not _is_field(t, i)
+        and not _m13_05_constructor_key(flow, i)
+        and flow.resolve(name, i) is decl
+    ]
+
+
+def _m13_05_constructor_key(flow: _Flow, i: int) -> bool:
+    """Token i is a key in a table constructor (`{ keys = kept }`)."""
+    o = flow.opener[i]
+    return o is not None and flow.tokens[o].text == "{" and flow.tokens[i + 1].text == "="
+
+
+def _m13_05_packed_problems(t: list[Token], flow: _Flow, name: str, close: int) -> list[str]:
+    """`local name = ns.Pack(pcall(...))`: read only as `name[1]`, `name.n`
+    and `name[i]` handed to clean."""
+    problems = []
+    for i in _m13_05_uses(flow, name, close + 2):
+        if _render(t[i : i + 4]) == f"{name} [ 1 ]" or _render(t[i : i + 3]) == f"{name} . n":
+            continue
+        if t[i + 1].text == "[" and _m13_05_cleaned_last(t, i, i + 4):
+            continue
+        problems.append(f"line {t[i].line}: {name} from pcall is read before clean")
+    return problems
+
+
+def _m13_05_pcall_problems(t: list[Token], flow: _Flow, k: int) -> list[str]:
+    """Why the `pcall` at token k may hand a value on before clean."""
+    where = f"line {t[k].line}"
+    if t[k + 1].text != "(":
+        return [f"{where}: pcall is used as a value"]
+    close = flow.pair[k + 1]
+    label = flow.label_at(k)
+    if label in _M13_05_PINNED_PCALLS:
+        if _render(t[k : close + 1]) == _M13_05_PINNED_PCALLS[label]:
+            return []
+        return [f"{where}: {label}'s pcall is not the pinned one"]
+    if (
+        k >= 7
+        and _render(t[k - 5 : k]) == "= ns . Pack ("
+        and t[k - 7].text == "local"
+        and t[k - 6].kind == "name"
+        and t[close + 1].text == ")"
+    ):
+        return _m13_05_packed_problems(t, flow, t[k - 6].text, close)
+    # `local ok, v1, ..., vn = pcall(...)`, then the clean-or-clear block.
+    names: list[str] = []
+    j = k - 2
+    while t[k - 1].text == "=" and t[j].kind == "name" and t[j].text not in _KEYWORDS:
+        names.insert(0, t[j].text)
+        if t[j - 1].text != ",":
+            break
+        j -= 2
+    if t[k - 1].text != "=" or t[j - 1].text != "local" or not names:
+        return [f"{where}: pcall's values are not bound by a `local` statement of their own"]
+    ok, values = names[0], [n for n in names[1:] if n != "_"]
+    if not values:
+        return []
+    if t[close + 1].text != "if":
+        return [f"{where}: pcall's values are not cleaned at once"]
+    end = flow.block_end(close + 1)
+
+    def cleaned(v: str) -> str:
+        args = rf"isSecret , {_M13_05_ARG} , {_M13_05_ARG} , {v}"
+        return rf"{v} (?:, {_M13_05_ID} )?= clean \( {args} \)"
+
+    block = (
+        rf"if {ok} then {' '.join(cleaned(v) for v in values)} "
+        rf"else {' , '.join(values)} = {' , '.join(['nil'] * len(values))} end"
+    )
+    if not re.fullmatch(block, _render(t[close + 1 : end + 1])):
+        return [
+            f"{where}: pcall's values {values} are not each cleaned when {ok} and cleared "
+            "otherwise, at once"
+        ]
+    problems = []
+    for v in values:
+        uses = _m13_05_uses(flow, v, end)
+        table = any(t[i + 1].text in {".", "[", ":"} for i in uses)
+        for i in uses:
+            if t[i + 1].text == "." and _m13_05_cleaned_last(t, i, i + 3):
+                continue
+            if t[i + 1].text in {".", "[", ":"}:
+                problems.append(f"line {t[i].line}: a field of {v} is read before clean")
+            elif table and _render(t[i - 2 : i + 2]) != f"type ( {v} )":
+                problems.append(f"line {t[i].line}: the table {v} is handed on")
+    return problems
+
+
 def _m13_05_secret_problems(path: Path) -> list[str]:
     """Why a value read from the client in `path` (Actions.lua, or an edited
-    copy) may be used or stored before issecretvalue was asked about it."""
+    copy) may be compared, used or stored before issecretvalue was asked
+    about it, on any path."""
     t = _tokens(path)
+    flow = _Flow(path, t)
     text = _render(t)
     problems: list[str] = []
-    if _M13_05_CLEAN not in text:
+    if text.count(_M13_05_CLEAN) != 1:
         problems.append("clean is not the pinned one")
     if text.count(_M13_05_SECRET_BIND) != 3:
         problems.append("a gather does not bind isSecret to issecretvalue")
     if text.count('probe ( "issecretvalue" , isSecret )') != 3:
         problems.append("a gather does not probe issecretvalue")
-    bound: set[str] = set()
+    own = {label for head, label in flow.labels.items() if t[head - 1].text == "local"}
+    problems += _m13_05_call_problems(t, flow, own)
+    problems += _m13_05_underscore_reads(path)
     for k, x in enumerate(t):
-        if x.text != "pcall" or t[k + 1].text != "(":
-            continue
-        handle = t[k + 2].text
-        if handle not in _M13_05_HANDLES:
-            continue
-        # `local ok , v1 , v2 = pcall ( handle , ... )`: each v is next seen
-        # as `v = clean (` or `v , w = clean (`.
-        names: list[str] = []
-        j = k - 2
-        while t[j].text != "local":
-            if t[j].kind == "name":
-                names.append(t[j].text)
-            j -= 1
-        values = list(reversed(names))[1:]
-        end, depth = k + 1, 0
-        while True:
-            depth += {"(": 1, ")": -1}.get(t[end].text, 0)
-            if depth == 0:
-                break
-            end += 1
-        for name in values:
-            bound.add(name)
-            nxt = next(
-                (i for i in range(end + 1, len(t)) if t[i].text == name and not _is_field(t, i)),
-                None,
-            )
-            if nxt is None:
-                continue
-            after = [x.text for x in t[nxt + 1 : nxt + 5]]
-            if after[:2] != ["=", "clean"] and not (
-                after[0] == "," and after[2:4] == ["=", "clean"]
-            ):
-                problems.append(f"line {t[nxt].line}: {name} from {handle} is used before clean")
-    # A field of a table the client returned is read only as clean's value.
-    for k, x in enumerate(t):
-        field = x.text in bound and not _is_field(t, k) and t[k + 1].text == "."
-        if field and not _m13_05_cleaned_last(t, k, k + 3):
-            problems.append(f"line {x.line}: {x.text} . {t[k + 2].text} is not cleaned")
-    # GetBindingKey's values; `keys [ 1 ]` is pcall's own success flag.
-    for k, x in enumerate(t):
-        if x.text != "keys" or t[k + 1].text != "[" or _render(t[k : k + 4]) == "keys [ 1 ]":
-            continue
-        if not _m13_05_cleaned_last(t, k, k + 4):
-            problems.append(f"line {x.line}: keys [ ... ] is not cleaned")
+        if x.kind == "name" and x.text == "pcall" and not _is_field(t, k):
+            problems += _m13_05_pcall_problems(t, flow, k)
     return problems
 
 
@@ -5816,8 +6020,11 @@ def test_m13_05_every_client_value_is_asked_about_before_use() -> None:
     combat matter (restricted content may make them too, [verify]). Where
     the client has issecretvalue, each gather tests every value a client call
     gave, and every field of a table it gave, before the value is compared,
-    used or stored; one it calls secret, or cannot say about, is dropped and
-    counted on its API's probe as `secret`."""
+    used or stored, on every path; one it calls secret, or cannot say about,
+    is dropped and counted on its API's probe as `secret`. Round 3: the rule
+    is structural, not a list of handles: no client function is called but
+    through `pcall`, and every `pcall`'s values are cleaned or cleared at
+    once."""
     assert _m13_05_secret_problems(ACTIONS) == []
 
 
@@ -5843,6 +6050,42 @@ _M13_05_SECRET_CASES: dict[str, list[tuple[str, str]]] = {
             'local isSecret = type(issecretvalue) == "function" and issecretvalue or nil',
             "local isSecret = nil",
         )
+    ],
+    # Round 3: the rule is structural. Each of these reads a client value
+    # that no named handle gave, or skips clean on one path.
+    "a handle called directly": [
+        ("local okCount, count = pcall(numLines)", "local okCount, count = true, numLines()")
+    ],
+    "a client global called directly": [
+        (
+            "        local okCount, total = pcall(getCount)\n",
+            "        local total0 = GetNumBindings()\n"
+            + "        local okCount, total = pcall(getCount)\n",
+        )
+    ],
+    "a handle under another name": [
+        (
+            "        local okCount, total = pcall(getCount)\n",
+            "        local n = getCount\n        local okCount, total = pcall(n)\n"
+            "        record.raw = ns.Number(total)\n",
+        )
+    ],
+    "pcall's value taken through select": [
+        (
+            "local okCount, total = pcall(getCount)",
+            "local okCount, total = true, select(2, pcall(getCount))",
+        )
+    ],
+    "clean skipped on one path": [
+        ("            if ok then\n", "            if ok and slot > 1 then\n")
+    ],
+    "the error message kept": [("                kind, id, subType = nil, nil, nil\n", "")],
+    "a table handed on": [
+        ('    tally(probes.item, ok, type(info) == "table")\n', "    local raw = info\n")
+    ],
+    "a builtin rebound": [("local IN_COMBAT", "local tostring = GetActionInfo\nlocal IN_COMBAT")],
+    "a method call": [
+        ("local okCount, total = pcall(getCount)", "local okCount, total = pcall(C_X.Y, C_X:Z())")
     ],
 }
 
