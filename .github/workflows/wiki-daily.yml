@@ -350,9 +350,12 @@ jobs:
       # is_error:true after 16 turns and nothing else to read. This prints a
       # bounded extract of the action's execution file instead: the result
       # text and the first tool errors, each through check_wiki's personal-data
-      # matchers (scripts/wiki_diagnose.py). It reads that file only.
+      # matchers (scripts/wiki_diagnose.py). It reads that file only, runs only
+      # when the Claude step did not succeed, and has a time limit, since the
+      # text it matches is the model's.
       - name: Diagnose the Claude step (redacted)
-        if: always() && steps.preflight.outputs.available == 'true'
+        if: ${{ !cancelled() && steps.preflight.outputs.available == 'true' && steps.claude.outcome != 'success' }}
+        timeout-minutes: 3
         continue-on-error: true
         working-directory: repo
         env:

@@ -18,8 +18,8 @@ go on; this prints a bounded extract instead:
   produced it and the first 300 characters of its content, at most 10.
 
 Every string printed is first put in the form `check_wiki` checks (entities
-decoded, NFKC, format characters removed), its control characters dropped,
-and the runner's own paths (`--workspace`, `--temp`, `--home`) shortened to
+decoded, NFKC, format characters removed), its control characters and lone
+surrogates dropped, and the runner's own paths (`--workspace`, `--temp`, `--home`) shortened to
 labels. It then goes through `check_wiki.personal_kinds`, the matcher the
 gate's report lines use: a word that matches is replaced by the kinds it
 matched; a line that still matches after that is replaced whole. Nothing is
@@ -28,13 +28,15 @@ quoted that the gate would not quote.
 Writes the extract to stdout (every line indented, inside a stop-commands
 block, so no text can start a workflow command) and, with `--summary`,
 appends it to that file as Markdown (each text inside a fence longer than any
-it contains). Reads FILE only. Exit 0 whatever FILE holds, even when it is
-missing or malformed; 2 on a usage error.
+it contains). The block is always closed. Reads FILE only. Exit 0 when FILE
+is missing, malformed, oversized or nested too deeply to read (each is a
+note in the output); 2 on a usage error.
 """
 
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import re
 import secrets
@@ -61,6 +63,8 @@ MAX_FILE_BYTES = 64 * 1024 * 1024
 
 _SUBTYPE = re.compile(r"^[a-z_]{1,40}$")
 _LINE_BREAKS = re.compile(r"\r\n|[\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029]")
+# Control characters and lone surrogates never reach the output.
+_DROPPED = frozenset({"Cc", "Cs"})
 
 
 @dataclass
@@ -84,11 +88,14 @@ class Redactor:
     terms: frozenset[str] = field(default_factory=allowed_terms)
 
     def clean(self, text: str) -> str:
+        # Lone surrogates (Cs) first: Claude Code cuts tool output by UTF-16
+        # position, so half a character can arrive, and it cannot be encoded.
+        text = "".join(ch for ch in text if unicodedata.category(ch) != "Cs")
         text = normalise(_LINE_BREAKS.sub("\n", text))
         for path, label in self.paths:
             text = text.replace(path, label)
         text = text.replace("\t", " ")
-        return "".join(ch for ch in text if ch == "\n" or unicodedata.category(ch) != "Cc")
+        return "".join(ch for ch in text if ch == "\n" or unicodedata.category(ch) not in _DROPPED)
 
     def line(self, line: str) -> str:
         if not personal_kinds(line, self.terms):
@@ -198,6 +205,8 @@ def load(path: Path) -> list[Any] | str:
         data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
     except ValueError:
         return "the execution file is not valid JSON"
+    except RecursionError:
+        return "the execution file is nested too deeply to read"
     if not isinstance(data, list):
         return "the execution file is not a JSON array"
     return data
@@ -251,17 +260,32 @@ def main(argv: list[str] | None = None) -> int:
     paths = [(p.rstrip("/"), label) for p, label in labels if p and p.rstrip("/")]
     redactor = Redactor(paths=sorted(paths, key=lambda pl: -len(pl[0])))
 
+    # Everything that can fail on the file's content happens here, before the
+    # stop-commands block opens.
     loaded = load(args.file)
-    diagnosis = Diagnosis(notes=[loaded]) if isinstance(loaded, str) else diagnose(loaded, redactor)
+    if isinstance(loaded, str):
+        diagnosis = Diagnosis(notes=[loaded])
+    else:
+        try:
+            diagnosis = diagnose(loaded, redactor)
+        except RecursionError:
+            diagnosis = Diagnosis(notes=["the execution file is nested too deeply to read"])
+    log = render_log(diagnosis)
+    summary = render_summary(diagnosis)
 
+    # A second guard: nothing unencodable stops the block from closing.
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(errors="replace")
     token = secrets.token_hex(16)
     print(f"::stop-commands::{token}")
-    for line in render_log(diagnosis):
-        print(line)
-    print(f"::{token}::")
+    try:
+        for line in log:
+            print(line)
+    finally:
+        print(f"::{token}::", flush=True)
     if args.summary is not None:
-        with args.summary.open("a", encoding="utf-8") as fh:
-            fh.write(render_summary(diagnosis))
+        with args.summary.open("a", encoding="utf-8", errors="replace") as fh:
+            fh.write(summary)
     return 0
 
 

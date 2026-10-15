@@ -430,6 +430,22 @@ def test_the_prompt_treats_the_wiki_as_data_and_says_what_max_turns_does() -> No
     assert "short on turns" not in text
 
 
+def test_constructed_the_default_root_window_grants_no_start_of_text() -> None:
+    # The default-root search looks back a bounded window. A path whose
+    # `/path/to` starts exactly at the window's edge, after a character that
+    # is not a boundary, is still a finding: the window is a search position,
+    # not a slice, so `^` does not match at its start.
+    pad = "a" * (cw.DEFAULT_ROOT_WINDOW - 10)
+    edge = f"x/path/to/{pad}/World of Warcraft"
+    assert edge.index("World") - cw.DEFAULT_ROOT_WINDOW == edge.index("/path/to")
+    kind = "an install path other than a documented default location"
+    assert cw.personal_kinds(edge) == [kind]
+    # A placeholder longer than the window is a finding too (fails closed);
+    # within it, a placeholder is not.
+    assert cw.personal_kinds(f" /path/to/{'b' * 600}/World of Warcraft") == [kind]
+    assert cw.personal_kinds(" /path/to/b/World of Warcraft") == []
+
+
 def test_a_redacted_diagnosis_follows_the_claude_step_and_runs_on_failure() -> None:
     # Run 38653894587: is_error:true after 16 turns, and no text to read.
     jobs = _workflow()["jobs"]
@@ -437,8 +453,15 @@ def test_a_redacted_diagnosis_follows_the_claude_step_and_runs_on_failure() -> N
     steps = jobs["improve"]["steps"]
     claude = next(i for i, s in enumerate(steps) if s.get("id") == "claude")
     step = steps[claude + 1]
+    # Failure only (round 2): on a cancelled run, never; with no model run, never.
     cond = " ".join(step["if"].split())
-    assert cond == f"always() && {steps[claude]['if']}"
+    assert cond == (
+        f"${{{{ !cancelled() && {steps[claude]['if']} && steps.claude.outcome != 'success' }}}}"
+    )
+    assert steps[claude]["if"] == "steps.preflight.outputs.available == 'true'"
+    # Bounded: the text it matches is the model's (round 2: a crafted result
+    # took minutes in the default-root search).
+    assert step["timeout-minutes"] == 3
     assert step.get("continue-on-error") is True
     assert step["env"]["EXECUTION_FILE"] == "${{ steps.claude.outputs.execution_file }}"
     run = step["run"]

@@ -183,6 +183,12 @@ def _default_root_pattern() -> re.Pattern[str]:
 
 
 _DEFAULT_ROOT = _default_root_pattern()
+# How far before an install-folder name a documented default may start. The
+# longest default is under 50 characters; a placeholder path longer than the
+# window is a finding. Searching the whole text before every match was
+# quadratic in the text (M12-14 review of the Claude-step diagnosis). The
+# search takes `pos`, not a slice, so `^` never matches at the window's start.
+DEFAULT_ROOT_WINDOW = 512
 
 
 def allowed_terms() -> frozenset[str]:
@@ -224,7 +230,7 @@ def _kinds(text: str, terms: frozenset[str]) -> Iterator[str]:
     for _ in _HOME_PATH.finditer(text):
         yield "an absolute home path"
     for m in _INSTALL_DIR.finditer(text):
-        if not _DEFAULT_ROOT.search(text[: m.end()]):
+        if not _DEFAULT_ROOT.search(text, max(0, m.start() - DEFAULT_ROOT_WINDOW), m.end()):
             yield "an install path other than a documented default location"
     for _ in _ACCOUNT_FOLDER.finditer(text):
         yield "a numeric account folder"

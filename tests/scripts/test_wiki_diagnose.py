@@ -13,13 +13,23 @@ commands, escape sequences, fence breaks, oversized text) are boundary tests.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
-from test_check_wiki import _load, cw
+from test_check_wiki import SCRIPTS, _load, cw
+
+PARSER = Path(__file__).resolve().parents[2] / "lab" / "core" / "tests" / "parser"
+if str(PARSER) not in sys.path:
+    sys.path.insert(0, str(PARSER))
+
+from _cpu_clock import cpu_clock  # noqa: E402
 
 wd = _load("wiki_diagnose")
+SCRIPT = SCRIPTS / "wiki_diagnose.py"
 
 WORKSPACE = "/home/runner/work/wowlab/wowlab"
 TEMP = "/home/runner/work/_temp"
@@ -205,3 +215,105 @@ def test_constructed_unexpected_result_fields_are_not_echoed(tmp_path: Path) -> 
     log, _ = _run(tmp_path, messages)
     assert "subtype: (unexpected)  is_error: (unexpected)  num_turns: (unexpected)" in log
     assert "jane" not in log
+
+
+# ─── round 2: surrogates, a closed block, nesting, bounded time ───────────────
+
+
+def _subprocess(tmp_path: Path, messages: Any) -> tuple[subprocess.CompletedProcess[str], str]:
+    """The script as the job runs it: its own process, stdout a real UTF-8 stream."""
+    file = tmp_path / "claude-execution-output.json"
+    file.write_text(json.dumps(messages), encoding="utf-8")
+    summary = tmp_path / "summary.md"
+    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), str(file), "--summary", str(summary)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        check=False,
+    )
+    return proc, summary.read_text(encoding="utf-8") if summary.exists() else ""
+
+
+@pytest.mark.parametrize(
+    "half",
+    ["\ud83d", "\udc00"],
+    ids=["constructed-lone-high-surrogate", "constructed-lone-low-surrogate"],
+)
+def test_constructed_a_lone_surrogate_is_dropped_and_the_block_closes(
+    tmp_path: Path, half: str
+) -> None:
+    # Claude Code cuts tool output by UTF-16 position: half an emoji can arrive.
+    text = f"before{half}after"
+    proc, summary = _subprocess(tmp_path, [*_tool(1, "Bash", text), _result(result=text)])
+    assert proc.returncode == 0, proc.stderr
+    lines = proc.stdout.splitlines()
+    token = lines[0].removeprefix("::stop-commands::")
+    assert len(token) == 32
+    assert lines[-1] == f"::{token}::"
+    assert proc.stdout.count("beforeafter") == 2
+    assert summary.count("beforeafter") == 2
+
+
+def test_constructed_a_deeply_nested_file_is_a_note_and_the_block_closes(tmp_path: Path) -> None:
+    file = tmp_path / "claude-execution-output.json"
+    file.write_text("[" * 200_000 + "]" * 200_000, encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), str(file)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    lines = proc.stdout.splitlines()
+    assert lines[0].startswith("::stop-commands::")
+    assert lines[-1] == f"::{lines[0].removeprefix('::stop-commands::')}::"
+    assert "note: the execution file is nested too deeply to read" in proc.stdout
+
+
+def test_constructed_the_block_closes_even_when_printing_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    file = tmp_path / "claude-execution-output.json"
+    file.write_text(json.dumps([_result(result="text")]), encoding="utf-8")
+    printed: list[str] = []
+
+    def failing_print(*args: object, **_: object) -> None:
+        line = " ".join(str(a) for a in args)
+        if line.startswith("  ") and len(printed) > 2:
+            raise UnicodeEncodeError("utf-8", "x", 0, 1, "constructed")
+        printed.append(line)
+
+    monkeypatch.setattr("builtins.print", failing_print)
+    with pytest.raises(UnicodeEncodeError):
+        wd.main([str(file)])
+    token = printed[0].removeprefix("::stop-commands::")
+    assert printed[-1] == f"::{token}::"
+
+
+# Constructed, hostile: 21,141 characters of model text shaped for the gate's
+# default-root search, which ran over the whole text before every install-folder
+# match. Through this script before the window: 2.1 s and 1.2 s of CPU on the
+# owner's M1; after it, under 0.1 s each.
+TIMED = {
+    "constructed-many-starts-one-match": (" <a>/x" * 21_141)[: 21_141 - 19] + "'/World of Warcraft",
+    "constructed-many-matches": ("`\\/World of Warcraft<" * 21_141)[:21_141],
+}
+
+
+@pytest.mark.parametrize("text", list(TIMED.values()), ids=list(TIMED))
+def test_constructed_a_crafted_result_is_redacted_in_bounded_time(
+    tmp_path: Path, text: str
+) -> None:
+    assert len(text) == 21_141
+    file = tmp_path / "claude-execution-output.json"
+    file.write_text(json.dumps([*_tool(1, "Bash", text), _result(result=text)]), encoding="utf-8")
+    clock, name = cpu_clock()
+    start = clock()
+    log = _capture([str(file)])
+    elapsed = clock() - start
+    assert "install path other than a documented default location" in log
+    assert elapsed < 1.0, f"{elapsed:.2f} s {name} time for 21,141 characters"
