@@ -20,17 +20,25 @@ What is replaced, and where the names come from:
   install names as such;
 - the login names the process runs as and this machine's network name, as
   `<USER>` and `<HOST>`;
+- the same account, realm and character folders named by the entries of
+  every snapshot in the store that loads, so names from another install, a
+  deleted character or an earlier state are known too;
 - the journal label whole, as `<LABEL>`: it is free text a player or a
   command wrote (a profile name, a snapshot message), so it can hold any
-  name, a guild's included.
+  name, a guild's included;
+- in why a manifest or a journal record does not load, every piece of the
+  record's own text a validation error quotes (`input_value=…`, a value
+  error's message, a key that is not a field), as `<withheld>`; a reason
+  of a shape not recognised is replaced whole.
 
 Each field of the report is treated as `DOCTOR_FIELDS` says (left as it is,
 redacted, replaced whole, or dropped), in the model, before it is printed as
 text or as JSON; a field missing from that table is replaced whole, and a
 test walks the models so none is. The first run (M13-04) is skipped under
-`--redact` and its field dropped: `first_run` is always null. Library log lines (tracebacks included) are redacted
-while the report is built, Python warnings are not shown, and the message of
-an error that stops it is redacted.
+`--redact` and its field dropped: `first_run` is always null. Library log
+lines (tracebacks included) are redacted while the report is built, Python
+warnings are not shown, and the message of an error that stops it is
+redacted.
 
 Read-only, like `doctor` itself (L1).
 """
@@ -40,7 +48,9 @@ from __future__ import annotations
 import getpass
 import logging
 import os
+import re
 import socket
+import typing
 import warnings
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager, suppress
@@ -49,8 +59,9 @@ from pathlib import Path, PurePath
 from typing import Any
 
 from pydantic import BaseModel
+from pydantic_core.core_schema import ErrorType
 
-from wowlab_core import install, layout, redact, wtfconfig
+from wowlab_core import guard, install, layout, redact, snapshot, wtfconfig
 
 # Config values that name the account or a realm (redact.IDENTITY_CVARS has
 # the full deny-list; the others are a GUID, caught by pattern, a club id, and
@@ -61,6 +72,7 @@ _CONFIG_NAMES = frozenset({"config.wtf", "config-cache.wtf"})
 # Host names that name no machine in particular.
 _NOT_A_HOST_NAME = frozenset({"localhost", "localhost.localdomain"})
 _LIBRARY_LOGGER = "wowlab_core"
+_SAVED_VARIABLES = "savedvariables"  # casefolded: an account's or a character's, not a realm
 
 
 class RedactedError(Exception):
@@ -91,9 +103,10 @@ def home_folders() -> list[str]:
 
 def identities(root: Path | None) -> Identities:
     """The names under `WTF/Account/` of every flavor of the install `root`
-    (or the one discovery finds). No install: no names, and the report holds
-    none either."""
+    (or the one discovery finds), and of every snapshot in the store that
+    loads."""
     found = Identities()
+    _store_names(found)
     try:
         inst = install.discover(root)
     except install.InstallError:
@@ -117,6 +130,53 @@ def identities(root: Path | None) -> Identities:
             if f.name.casefold() in _CONFIG_NAMES:
                 _harvest(lay.flavor_path / f.path, found)
     return found
+
+
+def _store_names(found: Identities) -> None:
+    """The account, realm and character folders the entries of every
+    loadable snapshot name, by the rules `layout.Layout.wtf_walk` uses: a
+    snapshot may hold another install, a deleted or transferred character, or
+    an earlier state of this one. A store that cannot be read gives none."""
+    try:
+        manifests = snapshot.SnapshotStore().list_lenient().manifests
+    except (OSError, snapshot.SnapshotError):
+        return
+    seen: set[tuple[str, ...]] = set()
+    named = Identities()
+    for manifest in manifests:
+        for entry in manifest.entries:
+            # The folders above the entry; the entry itself may be a file.
+            folders = tuple(entry.path.split("/")[:-1])
+            if folders in seen:
+                continue
+            seen.add(folders)
+            _account_names(folders, named)
+    found.accounts.update(_names(named.accounts))
+    found.realms.update(_names(named.realms))
+    found.characters.update(_names(named.characters))
+
+
+def _account_names(folders: tuple[str, ...], found: Identities) -> None:
+    folded = [part.casefold() for part in folders]
+    for i in range(len(folders) - 2):
+        if folded[i] != "wtf" or folded[i + 1] != "account":
+            continue
+        below = folders[i + 2 :]
+        found.accounts.add(below[0])
+        if len(below) < 2 or below[1].casefold() == _SAVED_VARIABLES:
+            continue
+        realm = below[1]
+        numeric = realm.isascii() and realm.isdigit()
+        if not numeric:
+            found.realms.add(realm)
+        if len(below) < 3 or below[2].casefold() == _SAVED_VARIABLES:
+            continue
+        first, sep, second = below[2].partition("-")
+        if numeric and sep:
+            found.characters.add(first)
+            found.realms.add(second)
+        else:
+            found.characters.add(below[2])
 
 
 def _harvest(path: Path, found: Identities) -> None:
@@ -193,6 +253,9 @@ def check_names(names: Iterable[str]) -> list[str]:
 AS_IS = "as-is"  # a Literal or enum: it can hold only the values the code names
 REDACT = "redact"  # text: every identifying string in it becomes a placeholder
 DROP = "drop"  # an optional field, of any type: always None in the redacted report
+# Why a manifest or a journal record does not load: the record text a
+# validation error quotes is withheld (`withhold_record_text`), then redacted.
+RECORD_ERROR = "record-error"
 # Any other value is a placeholder from `redact.PLACEHOLDERS`: the field is
 # replaced whole. A field not listed at all is replaced whole with
 # `redact.TEXT` (fail closed); a test walks the models so none is missed.
@@ -228,8 +291,8 @@ DOCTOR_FIELDS: dict[str, Treatment] = {
     "client.error": REDACT,
     "store.path": REDACT,
     "store.damaged.name": REDACT,
-    "store.damaged.reason": REDACT,
-    "store.journal_error": REDACT,
+    "store.damaged.reason": RECORD_ERROR,
+    "store.journal_error": RECORD_ERROR,
     "store.last_transaction.id": REDACT,
     "store.last_transaction.created_at": REDACT,
     # Free text a player or a command wrote (a profile name, a snapshot
@@ -285,7 +348,108 @@ def _text(value: str, treatment: Treatment, replace: redact.Redactor) -> str:
         return value
     if treatment == REDACT:
         return replace(value)
+    if treatment == RECORD_ERROR:
+        return replace(withhold_record_text(value))
     return treatment if treatment in redact.PLACEHOLDERS else redact.TEXT
+
+
+# ─── what a validation error quotes from the record ──────────────────────────
+
+WITHHELD = "<withheld>"
+
+# `str(pydantic.ValidationError)`: a header, then per error an optional
+# location line, a message line ending in `[type=…, input_value=…,
+# input_type=…]`, and an optional link line. The quoted input is a `repr`,
+# so it holds no line break, but it may hold quotes, brackets, escapes and
+# the text `, input_type=…]` itself: the value runs from the first
+# `input_value=` to the last `, input_type=` of its line.
+_HEADER_RE = re.compile(r"(?P<lead>.*?)(?P<count>\d+) validation errors? for (?P<title>\w+)")
+_ERROR_RE = re.compile(
+    r"  (?P<message>.*?) \[type=(?P<type>[a-z_]+), input_value=.*"
+    r", input_type=(?P<input_type>[A-Za-z_][A-Za-z0-9_]*)\]"
+)
+_LINK_RE = re.compile(
+    r"    For further information visit https://errors\.pydantic\.dev/[0-9.]+/v/[a-z_]+"
+)
+# Messages kept as they are: pydantic's own fixed text for these error types,
+# which never quotes the input. A value error's or an assertion's message is
+# the validator's own text and may quote it (`entry path …: 'WTF/Account/…'`).
+_FIXED_MESSAGE_RE = re.compile(
+    r"Field required|Extra inputs are not permitted|Input should be (?:a|an) [a-z ,]+"
+    r"|Invalid JSON: [a-zA-Z ]+(?: at line \d+ column \d+)?"
+    r"|Instance is frozen|Field is frozen"
+)
+_ERROR_TYPES = frozenset(typing.get_args(ErrorType))
+# `carries id '…'` (a manifest), `carries the id '…'` (a journal record):
+# the id read from the record, which did not match its file's name.
+_CARRIES_ID_RE = re.compile(r"(?P<lead>\bcarries (?:the )?id ).*")
+
+
+def _field_names() -> frozenset[str]:
+    """Every field name of the models a manifest or a journal record is
+    validated as: the only words a validation error's location may keep."""
+    names: set[str] = set()
+    todo: list[type[BaseModel]] = [snapshot.Manifest, guard._JournalRecord]
+    while todo:
+        model = todo.pop()
+        for name, info in model.model_fields.items():
+            names.add(name)
+            if info.alias:
+                names.add(info.alias)
+            todo.extend(_models_in(info.annotation))
+    return frozenset(names)
+
+
+def _models_in(kind: Any) -> Iterator[type[BaseModel]]:
+    if isinstance(kind, type) and issubclass(kind, BaseModel):
+        yield kind
+    for arg in typing.get_args(kind):
+        yield from _models_in(arg)
+
+
+def withhold_record_text(reason: str) -> str:
+    """`reason` with every piece of the record's own text a validation error
+    quotes replaced by `<withheld>`: the input value, the message of an error
+    type whose message is not pydantic's fixed text, a location part that is
+    not a field name or an index, and the id of a `carries id` message.
+
+    Fail closed: a reason that holds a validation error, or the text
+    `input_value=`, of a shape not recognised is replaced whole (`<TEXT>`)."""
+    lines = reason.split("\n")
+    header = _HEADER_RE.fullmatch(lines[0])
+    if header is None:
+        if len(lines) > 1 or "input_value=" in reason or "validation error" in reason:
+            return redact.TEXT
+        return _CARRIES_ID_RE.sub(lambda m: m["lead"] + WITHHELD, reason)
+    out = [lines[0]]
+    fields = _field_names()
+    errors = 0
+    for line in lines[1:]:
+        error = _ERROR_RE.fullmatch(line)
+        if error is not None:
+            errors += 1
+            kind = error["type"] if error["type"] in _ERROR_TYPES else WITHHELD
+            message = error["message"]
+            if kind == WITHHELD or not _FIXED_MESSAGE_RE.fullmatch(message):
+                message = WITHHELD
+            out.append(
+                f"  {message} [type={kind}, input_value={WITHHELD}, "
+                f"input_type={error['input_type']}]"
+            )
+        elif _LINK_RE.fullmatch(line):
+            continue  # pydantic's documentation link adds nothing to a report
+        elif line and not line.startswith(" "):
+            out.append(
+                ".".join(
+                    part if part.isdecimal() or part in fields else WITHHELD
+                    for part in line.split(".")
+                )
+            )
+        else:
+            return redact.TEXT
+    if errors != int(header["count"]):
+        return redact.TEXT
+    return "\n".join(out)
 
 
 # ─── while the report is built ───────────────────────────────────────────────

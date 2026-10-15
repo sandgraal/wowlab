@@ -435,6 +435,145 @@ def test_redact_with_yes_or_flavor_is_a_usage_error(
     assert not snapshot.SnapshotStore().path.exists()
 
 
+# ─── record text a validation error quotes (security re-check, M13-09) ──────
+
+# Names nothing in the install holds: a deleted, renamed or transferred
+# character, or another install sharing the store. Only a damaged record
+# in the store, read by the real `guard.history` and store listing, holds them.
+OTHER_ACCOUNT = "OTHERACCT"
+OTHER_REALM = "Stormrage"
+OLD_CHARACTER = "Oldmainchar"
+LABEL_TAIL = "Lanternguild"  # the end of a free-text label
+RECORD_NAMES = (OTHER_ACCOUNT, OTHER_REALM, OLD_CHARACTER, LABEL_TAIL)
+OLD_PATH = f"_x_/WTF/Account/{OTHER_ACCOUNT}/{OTHER_REALM}/{OLD_CHARACTER}"
+
+
+@pytest.fixture
+def damaged_records(root: Path) -> Path:
+    store = snapshot.SnapshotStore()
+    manifests = store.manifests_dir
+    manifests.mkdir(parents=True)
+    # Torn mid-write: pydantic quotes the start and the end of the input.
+    (manifests / "20261014T120000.000000Z-0badf00d.json").write_bytes(
+        b'{"format": 1, "id": "20261014T120000.000000Z-0badf00d", "label": "x", '
+        b'"entries": [{"path": "'
+        + OLD_PATH.encode()
+        + b'/AddOns.txt"}, {"path": "'
+        + OLD_PATH.encode()
+    )
+    # Whole, but invalid: a value error quotes the path in its message, and
+    # a key that is not a field is the error's location.
+    (manifests / "20261014T120001.000000Z-0badf00e.json").write_bytes(
+        json.dumps(
+            {
+                "format": 1,
+                "id": "20261014T120001.000000Z-0badf00e",
+                "entries": [{"path": f"{OLD_PATH}/../SavedVariables/x.lua"}],
+                OLD_CHARACTER: OTHER_REALM,
+            }
+        ).encode()
+    )
+    # A journal record whose label ends in a name: the quoted dict ends there.
+    journal = store.path / "journal"
+    journal.mkdir()
+    (journal / "20261014-0badf00d.json").write_bytes(
+        json.dumps(
+            {"format": 2, "id": "x", "label": f"profile apply {OTHER_REALM} {LABEL_TAIL}"}
+        ).encode()
+    )
+    return root
+
+
+def test_constructed_damaged_records_quote_names_without_redact(damaged_records: Path) -> None:
+    text = _text()
+    raw, report = _json()
+    for name in RECORD_NAMES:
+        assert name in text, name
+        assert name in raw, name
+    assert report.store.journal_error is not None
+    assert len(report.store.damaged) == 2
+
+
+@pytest.mark.parametrize("as_json", [False, True], ids=["text", "json"])
+def test_constructed_damaged_records_name_nobody_with_redact(
+    damaged_records: Path, as_json: bool
+) -> None:
+    if as_json:
+        raw, report = _json("--redact")
+        out = raw
+        assert report.store.journal_error is not None
+        assert len(report.store.damaged) == 2
+        assert all(doctorredact.WITHHELD in d.reason for d in report.store.damaged)
+    else:
+        out = _text("--redact")
+    folded = out.casefold()
+    assert [n for n in RECORD_NAMES if n.casefold() in folded] == []
+    assert _leaks(out) == []
+    assert f"input_value={doctorredact.WITHHELD}" in out
+    assert "type=json_invalid" in out  # what went wrong is still said
+    assert "type=value_error" in out
+    assert "type=extra_forbidden" in out
+
+
+def test_constructed_withholding_fails_closed_on_an_unknown_shape() -> None:
+    lines = (
+        "manifest a.json does not load: 1 validation error for Manifest",
+        f"  something new [type=json_invalid, input_value='{OLD_CHARACTER}' input_type=str]",
+    )
+    assert doctorredact.withhold_record_text("\n".join(lines)) == redact.TEXT
+    assert doctorredact.withhold_record_text(f"x input_value={OLD_CHARACTER}") == redact.TEXT
+    # One error line fewer than the header counts.
+    assert doctorredact.withhold_record_text(lines[0].replace("1 validation", "2 validation") + "\n" + (
+        f"  Field required [type=missing, input_value='{OLD_CHARACTER}', input_type=str]"
+    )) == redact.TEXT  # fmt: skip
+    # The quoted value holds the delimiters themselves: it is cut whole.
+    crafted = (
+        f"  Field required [type=missing, input_value='a, input_type=str] {OLD_CHARACTER} "
+        f"[type=x, input_value=', input_type=str]"
+    )
+    out = doctorredact.withhold_record_text(lines[0] + "\n" + crafted)
+    assert OLD_CHARACTER not in out
+    assert out.endswith(f"[type=missing, input_value={doctorredact.WITHHELD}, input_type=str]")
+    # A message that quotes a fixed type's tag is still not fixed text.
+    crafted = f"  Value error, {OLD_CHARACTER} [type=json_invalid, input_value=1, input_type=int]"
+    assert OLD_CHARACTER not in doctorredact.withhold_record_text(lines[0] + "\n" + crafted)
+    assert (
+        doctorredact.withhold_record_text(f"manifest a.json carries id '{OLD_CHARACTER}'")
+        == f"manifest a.json carries id {doctorredact.WITHHELD}"
+    )
+
+
+def test_constructed_names_in_loadable_snapshots_are_known(
+    root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Another install, snapshotted into the same store; then its names turn
+    # up in this install's text, where only the snapshot can tell they are names.
+    other = tmp_path / "Other WoW"
+    for folder in (
+        f"_x_/WTF/Account/{OTHER_ACCOUNT}/{OTHER_REALM}/{OLD_CHARACTER}",
+        f"_x_/WTF/Account/{OTHER_ACCOUNT}/1403/Altchar-Kazzak",
+        f"_x_/WTF/Account/{OTHER_ACCOUNT}/SavedVariables",
+    ):
+        (other / folder).mkdir(parents=True)
+        (other / folder / "AddOns.txt").write_bytes(b"")
+    snapshot.SnapshotStore().create(other, ["_x_/WTF"])
+    account = root / FLAVOR / "WTF" / "Account" / "NEWACCT9"
+    account.mkdir()
+    (account / "config-cache.wtf").write_bytes(
+        f'SET synchronizeMacros "{OLD_CHARACTER} of {OTHER_REALM}, Altchar of Kazzak, '
+        f'{OTHER_ACCOUNT}"\n'.encode()
+    )
+    plain = _text()
+    assert OLD_CHARACTER in plain and "Kazzak" in plain
+    out = _text("--redact")
+    for name in (OTHER_ACCOUNT, OTHER_REALM, OLD_CHARACTER, "Altchar", "Kazzak"):
+        assert name not in out, name
+    assert f"{redact.CHARACTER} of {redact.REALM}" in out
+    found = doctorredact.identities(None)
+    assert "SavedVariables" not in found.realms | found.characters
+    assert "1403" not in found.realms
+
+
 def test_constructed_a_first_run_report_is_dropped_by_the_field_table(root: Path) -> None:
     # Fail closed: even a report that carries a first run loses it whole.
     _, report = _json("--yes")
@@ -492,6 +631,7 @@ def test_every_text_field_of_the_doctor_report_has_a_declared_treatment() -> Non
             doctorredact.AS_IS,
             doctorredact.REDACT,
             doctorredact.DROP,
+            doctorredact.RECORD_ERROR,
             *redact.PLACEHOLDERS,
         ), path
         if treatment == doctorredact.AS_IS:
