@@ -2886,6 +2886,12 @@ M13 does not wait for M12-12. ADR-0024 normally keeps one wave in the
 backlog at a time; the owner asked for this one on 2026-10-13, as Wave 3
 already carried the owner's wiki requests.
 
+*Closed 2026-10-15 (M12-12):* the review is `docs/handoffs/M12-review.md`,
+and the wave's tickets are archived in `docs/handoffs/M12-backlog.md`.
+M12-03 (db2lake) merged from the owner's account as #158 despite the
+deferral. It is on `main` as a library with no command, and M12-04 stays
+deferred.
+
 ## 15. Wave 4 (M13): the first public release
 
 Owner decision, 2026-10-13. Decision record: ADR-0031 (accepted by the owner,
