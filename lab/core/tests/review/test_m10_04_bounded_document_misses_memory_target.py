@@ -8,10 +8,13 @@ entries, chosen from shapes that cost at most about 330 bytes an entry. A
 hand-edited file (§4.1 allows whitespace and line comments anywhere)
 costs more: every trivia slot that is neither empty nor one byte is its own
 `bytes` object, and every lead that holds a comment is distinct. One line
-per entry, `  [  "k0000001"  ]  =  {  }  ,  -- 0000001`, is 42 bytes, so
-`MAX_ENTRIES` of them is a 126 MiB file, inside `MAX_FILE_BYTES`. Measured
-by hand at full size in a fresh interpreter (reviewer's laptop, M-series,
-16 GB, load average about 7 from other agents):
+per entry, `  [  "k0000001"  ]  =  {  }  ,  -- 0000001`, is 42 bytes. When
+this probe was written `MAX_ENTRIES` was 3,000,000, so that was a 126 MiB
+file inside `MAX_FILE_BYTES`, measured by hand at full size in a fresh
+interpreter (reviewer's laptop, M-series, 16 GB, load average about 7 from
+other agents) as below. Those figures are history: `MAX_ENTRIES` is now
+derived from the `MAX_COST` budget (138,055 when M13-17T was done), so the
+wide-trivia and empty-tables tests below parse 13,805 entries, not 300,000.
 
     wide-trivia-tables  3,000,000 entries  125.9 MiB  parse 16.33 s  peak RSS 2520 MiB
     wide-trivia         3,000,000 entries  143.1 MiB  parse 14.38 s  peak RSS 2355 MiB
@@ -38,15 +41,23 @@ moved it:
 
 - The slice was built as `b"\\r\\n" + body` and `body` freed before the
   parse. `before` is a high-water mark, so it already counted those pages;
-  the parse then reused them, and the growth read low by up to one slice of
-  input (4 MiB, so 256 MiB projected). Locally, with `body` kept alive
-  through the parse, the projection is 1340 MiB at 1/64, 1/32 and 1/16
-  alike; 1105 MiB was this artefact, in the passing direction.
-- On `macos-latest` one run in a few holds a transient a fresh run does not
-  (a block copied rather than grown in place, for example), and the
-  projection multiplies it. At 1/64 the runner read 1762 to 1773 MiB on six
-  of ten runs and 1514 to 1517 MiB on the rest; at 1/16, 1435, 1790 and
-  1435 MiB in a row. The spread seen is all upward of the usual reading.
+  when the parse reused them, the growth read low by one slice of input
+  (4 MiB, so 256 MiB projected). Whether they were reused varied by run:
+  at 1/64 the runner read 1762 to 1774 MiB (growth 23.3 MiB) on some runs
+  and 1514 to 1520 MiB (growth 19.3 MiB) on others, and the two differ by
+  exactly that one 4 MiB slice. The high reading was the honest one, and
+  locally 1105 MiB was the low one. With `body` kept alive through the
+  parse, the local projection is 1340 MiB at 1/64, 1/32 and 1/16 alike.
+- The multiplier also scaled growth that does not grow with the slice. On
+  the runner the honest growth was 23.3 MiB for 1/64 and about 70.7 MiB for
+  1/16, so about 7.5 MiB of it does not scale with the slice. A full-size
+  parse pays it once. A 1/64 projection multiplies it by 64 (about
+  480 MiB), a 1/16 projection by 16 (about 120 MiB). That is why 1/16
+  reads about 1425 MiB on the runner where an honest 1/64 read about 1772.
+  This is not a weakening: the 1/16 projection still overcounts that cost
+  15 times, only less than 1/64 did. At 1/16 single samples still vary
+  upward now and then (1435, 1790 and 1435 MiB in a row once), which the
+  least of several samples absorbs.
 - On Linux `ru_maxrss` is kept across `execve` (getrusage(2)), so a child
   of a large pytest process starts at the parent's high-water mark and a
   parse below it reads as no growth. In the full suite on CI the stand-in
@@ -56,8 +67,8 @@ moved it:
 So the assignment test keeps `body` alive (its `before` then counts one
 unscaled extra slice of input, 16 MiB, which only makes it stricter),
 measures a 1/16 slice (4,194,304 assignments, 16 MiB, under `MAX_COST`) so
-a transient is multiplied by 16 rather than 64, and takes the least of five
-projections, each from a fresh interpreter. The least, not the mean,
+fixed costs and noise are multiplied by 16 rather than 64, and takes the
+least of five projections, each from a fresh interpreter. The least, not the mean,
 because the spread is upward; a parser that truly holds more memory raises
 every sample, the least included. The 1.5 GiB target is unchanged. A
 constructed stand-in parser that keeps a second copy of its result (the last
@@ -179,9 +190,12 @@ def test_constructed_stand_in_holding_twice_the_memory_fails_the_assignment_prob
     """The assignment measurement still catches a parser that holds twice as much.
 
     CONSTRUCTED stand-in, not `luadata`: it parses the same slice twice and
-    keeps both results, so the parse's RSS growth doubles while the input,
-    the interpreter, the slice, the target and the least-of-five rule stay
-    those of the test above. Its projection must miss the target, or the
+    keeps both results, so the memory it keeps after the parse doubles. Its
+    peak growth rises only about 1.5 times (1.49 locally, 1.59 on the macOS
+    runner, 1.51 on Linux), because the first parse's temporaries are freed
+    before the second runs. The input, the interpreter, the slice, the
+    target and the least-of-five rule are those of the test above. Its
+    projection must miss the target (it does by at least 288 MiB), or the
     measurement has stopped being able to see the parser.
     """
     peak, samples = _projected_assignments_peak("double")
