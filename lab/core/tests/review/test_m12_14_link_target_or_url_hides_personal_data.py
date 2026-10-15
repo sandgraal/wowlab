@@ -51,6 +51,7 @@ def _load(name: str) -> ModuleType:
 
 cw = _load("check_wiki")
 gen = _load("gen_command_reference")
+ERA = cw.read_commands(REAL_WIKI.with_name("wiki-a47a7ee.commands.txt"))
 
 SECRETS = ("Thrall", "Stormrage", "someone", "example.org")
 
@@ -68,7 +69,7 @@ def _wiki(tmp_path: Path, extra_line: str | None) -> Path:
 
 
 def _failures(root: Path) -> list[str]:
-    return [str(f) for f in cw.check(root).failures]
+    return [str(f) for f in cw.check(root, commands=ERA).failures]
 
 
 def test_control_baseline_passes(tmp_path: Path) -> None:
