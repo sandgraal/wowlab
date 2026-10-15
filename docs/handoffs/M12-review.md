@@ -83,12 +83,20 @@ The wave's tickets are archived in [`M12-backlog.md`](M12-backlog.md).
 
 ## Estimates
 
-The plan said ten development tickets. Seven shipped, six of them after the
-re-scope, and four more were deferred unstarted. The wiki tickets (M12-13,
-M12-14, M12-15) were estimated as two S and one S follow-up. Together they
-took about twelve PRs, because a job that runs a model on a schedule pulled
-in authentication, sandboxing, billing and privacy gates that the estimate
-did not see.
+The plan said ten development tickets (M12-01 to M12-10).
+- **Four of the ten shipped:** M12-01, 02 and 09, and M12-03 despite its
+  deferral.
+- **The other six were deferred unstarted**, along with the M12-11 capture.
+- **Three tickets the plan did not have were added for the wiki** (M12-13
+  to M12-15).
+- **Three of the seven shipped tickets merged before the re-scope** (M12-01,
+  02 and 13), and **four after it** (M12-09, 14, 15 and 03).
+
+The wiki tickets were estimated at S, M and S. Together they took nine code
+PRs (#155, #159, #170, #172, #174, #180, #181, #186 and #177), plus four docs
+PRs for the rules and ticket fixes (#151, #154, #156, #169). The estimate
+missed that a job running a model on a schedule pulls in authentication,
+sandboxing, billing and privacy gates.
 
 ## Ideas this unblocks
 
