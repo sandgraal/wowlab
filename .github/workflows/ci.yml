@@ -7,11 +7,11 @@ on:
     branches: [main]
 
 # Every job below except `lab (macos)` is a required status check on main,
-# by exact name (see .github/rulesets/main.json). `lab (windows)` and
-# `lab (macos)` came with M13-02 (ADR-0031, docs/LAB_PLAN.md §9 and §15.3
-# E3); `lab (windows)` became required on 2026-10-15 (ADR-0014 amendment),
-# and `lab (macos)` counts toward macOS being supported without being
-# required. Renaming a job means
+# by exact name (see .github/rulesets/main.json). `lab (macos)` came with
+# M13-02 (ADR-0031, docs/LAB_PLAN.md §9 and §15.3 E3) and counts toward
+# macOS being supported without being required. `lab (windows)` lives in
+# windows.yml and is not required (ADR-0014 amendments of 2026-10-15).
+# Renaming a job means
 # changing the ruleset and re-applying it with scripts/bootstrap-github.sh.
 permissions:
   contents: read
@@ -130,13 +130,10 @@ jobs:
         if: needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true'
         run: echo "doc-only PR — parser suite skipped"
 
-  # The Lab suite on the two desktop platforms the client ships for
-  # (ADR-0031, M13-02). Windows covers the path behaviour Linux cannot show:
-  # junctions, case-insensitive name collisions, reserved names, `\\?\` long
-  # paths, files held open (docs/LAB_PLAN.md §9; the first run caught the
-  # byte-0 lock bug on PR #59). macOS is the owner's platform (§15.3 E3).
-  # `lab (windows)` is in .github/rulesets/main.json (required since
-  # 2026-10-15, ADR-0014, ADR-0031); `lab (macos)` stays non-required. The Linux-only lint, Lua lint and locale steps
+  # The Lab suite on macOS, the owner's platform (ADR-0031, M13-02,
+  # docs/LAB_PLAN.md §15.3 E3); not required. Windows runs in windows.yml,
+  # after every merge to main and nightly, off the PR path (ADR-0014
+  # amendment of 2026-10-15). The Linux-only lint, Lua lint and locale steps
   # stay in `quality`.
   lab-desktop:
     name: lab (${{ matrix.name }})
@@ -149,8 +146,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: windows
-            os: windows-latest
           - name: macos
             os: macos-latest
     steps:
@@ -165,11 +160,6 @@ jobs:
       - name: Install
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         run: uv sync --frozen
-      - name: Record whether long paths are enabled (test_desktop_paths)
-        if: runner.os == 'Windows' && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true')
-        shell: pwsh
-        run: |
-          "LongPathsEnabled=" + (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem').LongPathsEnabled
       - name: TEMPORARY (M13-17T) memory probe, 10 consecutive runs
         if: runner.os == 'macOS'
         run: |
