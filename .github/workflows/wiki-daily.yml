@@ -274,13 +274,15 @@ jobs:
       # unprivileged user namespaces through AppArmor, which bwrap needs
       # ("setting up uid map: Permission denied"); the restriction is lifted
       # only when the probe fails, and the step fails if bwrap still cannot
-      # run, so the model never starts without the scrub.
+      # run, so the model never starts without the scrub. The sandbox also
+      # needs socat; without it every Bash call fails, so the model could not
+      # run the gate on its own edits (run 38790491412).
       - name: Install bubblewrap for the env scrub
         if: steps.secret.outputs.present == 'true'
         run: |
           for i in 1 2 3; do
-            sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends bubblewrap && break
-            if [ "$i" = 3 ]; then echo "::error::could not install bubblewrap"; exit 1; fi
+            sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends bubblewrap socat && break
+            if [ "$i" = 3 ]; then echo "::error::could not install bubblewrap and socat"; exit 1; fi
             sleep 5
           done
           if ! bwrap --ro-bind / / --dev /dev --proc /proc true; then
@@ -313,7 +315,7 @@ jobs:
           prompt: ${{ steps.prompt.outputs.text }}
           claude_args: |
             --model ${{ env.WIKI_MODEL }}
-            --max-turns 60
+            --max-turns 90
             --allowedTools "Read,Grep,Glob,Edit(/${{ github.workspace }}/wiki/**),Write(/${{ github.workspace }}/wiki/**),Bash(uv run python repo/scripts/check_wiki.py wiki)"
 
       # The action logs only a sanitised result line (no result text, no tool
