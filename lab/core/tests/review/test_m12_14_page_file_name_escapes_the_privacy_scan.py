@@ -46,7 +46,8 @@ gen = _load("gen_command_reference")
 def _wiki(tmp_path: Path) -> Path:
     root = tmp_path / "wiki"
     shutil.copytree(REAL_WIKI, root)
-    (root / "CLI-Reference.md").write_text(gen.render(), encoding="utf-8")
+    # Bytes, as the generator writes it: `write_text` would make CRLF on Windows.
+    (root / "CLI-Reference.md").write_bytes(gen.render().encode("utf-8"))
     modules = "".join(f"- `wowlab_core.{m}`\n" for m in cw.public_modules())
     (root / "Library.md").write_text(f"# Library\n\n{modules}", encoding="utf-8")
     return root
