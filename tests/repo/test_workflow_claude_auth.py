@@ -17,6 +17,11 @@ CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 after an identical bubblewrap install and
 probe, passes a settings deny list, and the two comment-driven workflows
 admit only the owner's (and the action's own) comments to the prompt.
 
+Follow-ups to #180 (security review): the PR review is read-only, the
+responder skips fork PRs, every Claude workflow denies `./.git/config`, and
+the only gh command any of them allows is `gh pr diff`, which has no
+--jq/--template/--json to read the App token from the environment.
+
 A usage-limit failure in the Claude step is reported by the action as
 is_error:true; `test_constructed_a_usage_limit_result_is_diagnosed` in
 `tests/scripts/test_wiki_diagnose.py` covers what wiki-daily prints then.
@@ -250,7 +255,15 @@ def test_every_claude_workflow_has_a_secret_check_script() -> None:
 # model runs inherits CLAUDE_CODE_OAUTH_TOKEN, and `gh ... --jq '$ENV...'`
 # prints it. The scrub needs bubblewrap, which the runner image lacks.
 BWRAP_PROBE = "bwrap --ro-bind / / --dev /dev --proc /proc true"
-CORE_DENY = ("Read(//proc/**)", "Read(~/.claude/**)", "Read(~/.claude.json)")
+# Follow-up to #180 (security review): `./.git/config` is where the action
+# writes its App token when use_commit_signing is on (claude.yml and
+# claude-review.yml); every Claude workflow denies it.
+CORE_DENY = (
+    "Read(//proc/**)",
+    "Read(~/.claude/**)",
+    "Read(~/.claude.json)",
+    "Read(./.git/config)",
+)
 
 
 def _bubblewrap_runs() -> list[str]:
@@ -347,7 +360,8 @@ def test_the_inline_settings_are_valid_json(name: str) -> None:
 # (track_progress) grants acceptEdits and a commit path backed by the
 # action's App token; use_commit_signing swaps shell git for the action's
 # file tools, and the deny list removes those and every edit tool. The
-# checkout's .git/config, where the action writes its token, is unreadable.
+# checkout's .git/config, where the action writes its token, is unreadable
+# (CORE_DENY, in every Claude workflow).
 REVIEW_DENY = (
     "Edit",
     "Write",
@@ -355,7 +369,6 @@ REVIEW_DENY = (
     "NotebookEdit",
     "mcp__github_file_ops__commit_files",
     "mcp__github_file_ops__delete_files",
-    "Read(./.git/config)",
 )
 
 
@@ -375,7 +388,7 @@ def test_the_review_cannot_edit_commit_or_push() -> None:
     assert with_["use_commit_signing"] is True
     raw = with_["settings"].replace("${{ runner.temp }}", "/tmp/x")
     deny = json.loads(raw)["permissions"]["deny"]
-    for entry in REVIEW_DENY:
+    for entry in (*REVIEW_DENY, *CORE_DENY):
         assert entry in deny, entry
     allowed = re.search(r'--allowedTools "([^"]*)"', with_["claude_args"])
     assert allowed
@@ -388,14 +401,83 @@ def test_the_review_cannot_edit_commit_or_push() -> None:
 
 def test_the_review_cannot_read_comments_around_the_actor_filter() -> None:
     # F2: `gh pr view --comments` would print every comment, around
-    # include_comments_by_actor. The diff and the checks stay.
+    # include_comments_by_actor. The diff stays; CI results come from the
+    # action's get_ci_status and get_workflow_run_details tools.
     with_ = _action_step("claude-review.yml")["with"]
     args = with_["claude_args"]
     assert "gh pr view" not in args
+    assert "gh pr checks" not in args
     assert "Bash(gh pr diff:*)" in args
-    assert "Bash(gh pr checks:*)" in args
+    assert "mcp__github_ci__get_ci_status" in args
+    assert "mcp__github_ci__get_workflow_run_details" in args
     # The prompt does not send the model to a command it no longer has.
     assert "gh pr view" not in with_["prompt"]
+    assert "gh pr checks" not in with_["prompt"]
+    assert "mcp__github_ci__get_ci_status" in with_["prompt"]
+
+
+# Follow-up to #180 (security review): gh's --jq and --template read
+# environment variables (`--jq '$ENV.GH_TOKEN'`), and the env scrub keeps
+# GitHub tokens, the action's App token (contents: write) among them, so a
+# gh command that takes --jq, --template or --json would print it. `gh pr
+# diff` takes none of them (gh 2.97.0 answers "unknown flag" to each); it is
+# the only gh command any Claude workflow allows.
+GH_ALLOWED = {"Bash(gh pr diff:*)"}
+ALLOW_FLAG = re.compile(r"--allowed-?tools\b", re.IGNORECASE)
+
+
+def _allowed_tools(step: dict[str, Any]) -> list[str]:
+    args = str(step["with"].get("claude_args", ""))
+    found = re.findall(r'--allowed-?tools[ =]"([^"]*)"', args, re.IGNORECASE)
+    # Every allow flag has the quoted form, so none escapes the scan.
+    assert len(found) == len(ALLOW_FLAG.findall(args))
+    tools = [tool.strip() for group in found for tool in group.split(",")]
+    settings = str(step["with"].get("settings", ""))
+    if settings.lstrip().startswith("{"):
+        raw = settings.replace("${{ runner.temp }}", "/tmp/x")
+        tools += json.loads(raw)["permissions"].get("allow", [])
+    return tools
+
+
+def _gh_violations(tools: list[str]) -> list[str]:
+    bad = []
+    for tool in tools:
+        # A bare Bash, or a wildcard, would allow every gh command.
+        if tool in ("Bash", "Bash(*)", "Bash(:*)"):
+            bad.append(tool)
+            continue
+        command = re.fullmatch(r"Bash\((.*)\)", tool)
+        # Also a gh run behind an environment assignment (`X=1 gh ...`).
+        runs_gh = bool(command and re.match(r"(?:\S+=\S*\s+)*gh\b", command.group(1)))
+        if runs_gh and tool not in GH_ALLOWED:
+            bad.append(tool)
+    return bad
+
+
+@pytest.mark.parametrize("name", CLAUDE_WORKFLOWS)
+def test_no_claude_workflow_allows_a_gh_command_that_reads_the_environment(name: str) -> None:
+    text = (WORKFLOWS / name).read_text(encoding="utf-8")
+    # No settings allow list anywhere (wiki-daily builds its settings with
+    # jq, so it is checked as text); --allowedTools is the only allow path.
+    assert not re.search(r"""(^|[\s"{,])allow"?\s*:""", text, re.MULTILINE)
+    tools = _allowed_tools(_action_step(name))
+    assert tools
+    assert _gh_violations(tools) == []
+
+
+def test_constructed_the_gh_scan_catches_a_command_that_reads_the_environment() -> None:
+    # Constructed: the scan flags `gh pr checks`, any other gh command, a
+    # bare Bash, and a gh behind an environment assignment.
+    def flagged(allowed: str) -> bool:
+        step = {"with": {"claude_args": f'--allowedTools "Read,{allowed}"'}}
+        return bool(_gh_violations(_allowed_tools(step)))
+
+    assert flagged("Bash(gh pr checks:*)")
+    assert flagged("Bash(gh api:*)")
+    assert flagged("Bash")
+    assert flagged("Bash(GH_PAGER=cat gh pr view:*)")
+    assert not flagged("Bash(gh pr diff:*)")
+    assert not flagged("Bash(uv run python repo/scripts/check_wiki.py wiki)")
 
 
 # F1: claude.yml does not run on a fork's PR.

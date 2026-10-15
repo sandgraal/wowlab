@@ -28,7 +28,7 @@ jobs:
       # Pinned so reviews are reproducible across Claude Code releases.
       REVIEW_MODEL: claude-opus-5-5
       # Claude Code strips credentials, CLAUDE_CODE_OAUTH_TOKEN among them,
-      # from the environment of every command it runs (here `gh pr ...`),
+      # from the environment of every command it runs (here `gh pr diff`),
       # and runs Bash in its own PID namespace so /proc shows no other
       # process. Without it, `gh ... --jq '$ENV.CLAUDE_CODE_OAUTH_TOKEN'`
       # reads the token (security review of PR #174, 2026-10-14). GitHub
@@ -105,8 +105,8 @@ jobs:
           # `./` is the workspace, where the action writes its token into the
           # checkout's .git/config. The runner's temp directory is denied
           # whole. The CI log download tool writes its logs there, so it is
-          # denied too: CI results come from get_ci_status,
-          # get_workflow_run_details and `gh pr checks`.
+          # denied too: CI results come from get_ci_status and
+          # get_workflow_run_details.
           settings: |
             {
               "permissions": {
@@ -143,9 +143,9 @@ jobs:
             down what should be true, then read the diff (`gh pr diff`, and
             the files on disk — the PR branch is checked out). Do not run
             the PR's code; the CI workflow has already run `make ci` on this
-            commit — read its result with `gh pr checks` or the
-            mcp__github_ci__get_ci_status tool and treat a red required
-            check as a finding.
+            commit — read its result with the mcp__github_ci__get_ci_status
+            tool (and mcp__github_ci__get_workflow_run_details for a failed
+            run) and treat a red required check as a finding.
 
             Check every hard invariant, L1 to L8 in AGENTS.md: reads never
             write into an install; every write goes through guard.py (client
@@ -175,7 +175,12 @@ jobs:
           # No `gh pr view`: its --comments flag would read every comment,
           # around include_comments_by_actor. Tag mode already puts the PR's
           # title, body and filtered comments in the prompt.
+          # The only shell command is `gh pr diff`, which takes no --jq,
+          # --template or --json. Those flags read environment variables
+          # (`--jq '$ENV.GH_TOKEN'`), and the scrub keeps the action's App
+          # token (contents: write) in the model's environment, so no gh
+          # command that has them is allowed (`gh pr checks` was one).
           claude_args: |
             --model ${{ env.REVIEW_MODEL }}
             --max-turns 30
-            --allowedTools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,mcp__github_comment__update_claude_comment,mcp__github_ci__get_ci_status,mcp__github_ci__get_workflow_run_details,mcp__github_ci__download_job_log,Bash(gh pr diff:*),Bash(gh pr checks:*)"
+            --allowedTools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,mcp__github_comment__update_claude_comment,mcp__github_ci__get_ci_status,mcp__github_ci__get_workflow_run_details,mcp__github_ci__download_job_log,Bash(gh pr diff:*)"
