@@ -4784,9 +4784,13 @@ def addon_install(
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
 ) -> None:
-    """Copy the lab-addon from this checkout's lab/addon/WowLab/ into the flavor's
-    Interface/AddOns/WowLab/, through the write gate: the client must be closed, a
-    pre-write snapshot is taken first, and `wowlab undo` reverses it.
+    """Copy the lab-addon into the flavor's Interface/AddOns/WowLab/, through the
+    write gate: the client must be closed, a pre-write snapshot is taken first, and
+    `wowlab undo` reverses it.
+
+    The sources are lab/addon/WowLab/ in the wowlab checkout wowlab runs from, else
+    the copy bundled in the installed wowlab package (wowlab_core/_addon/WowLab/),
+    and nothing else; the plan names the folder it read.
 
     The TOC's ## Interface: is filled from the flavor's discovered version by the
     patch-number rule; after a client update that changes the first three parts of

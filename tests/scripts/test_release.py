@@ -8,9 +8,10 @@ standing between a tag and a release. The script tests grade
 `scripts/release_check.py`, which does the checking.
 
 Every archive and `pyproject.toml` built here is `constructed` (L8, boundary
-cases): a wheel or sdist holding only the one metadata member the check
-reads, in `tmp_path`. The real `lab/core/pyproject.toml` and the real
-release-notes template are read as they are.
+cases): a wheel or sdist holding only the members the check reads (the
+metadata, LICENSE and a small stand-in lab-addon), in `tmp_path`. The real
+`lab/core/pyproject.toml` and the real release-notes template are read as
+they are.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from __future__ import annotations
 import io
 import json
 import re
+import stat
 import tarfile
 import tomllib
 import zipfile
@@ -233,6 +235,11 @@ def test_the_smoke_job_checks_the_download_then_installs_and_runs_it() -> None:
     assert 'uv tool install --python "$PYTHON_VERSION" "release/$WHEEL"' in runs
     assert '"$UV_TOOL_BIN_DIR/wowlab" --version)" = "wowlab $VERSION"' in runs
     assert '"$UV_TOOL_BIN_DIR/wowlab" doctor --offline --json' in runs
+    # M13-14: the installed wheel finds its bundled lab-addon, read-only.
+    bundle = next(s for s in smoke["steps"] if "find_source()" in s.get("run", ""))
+    assert smoke["steps"].index(bundle) == len(smoke["steps"]) - 1
+    assert "*/site-packages/wowlab_core/_addon/WowLab) ;;" in bundle["run"]
+    assert not re.search(r"\binstall\(|\bremove\(|guard|addon install", bundle["run"])
 
 
 def test_the_release_job_checks_the_download_against_the_build_outputs() -> None:
@@ -445,6 +452,23 @@ def _metadata(name: str, version: str, license_file: str | None = "LICENSE") -> 
     return f"{lines}\nbody\n".encode()
 
 
+# A stand-in lab-addon (constructed): the TOC's contract line, a comment, a
+# directive, a blank line and two listed files, CRLF on one line.
+ADDON: dict[str, bytes | None] = {
+    "WowLab.toc": (
+        b"## Interface: @WOWLAB_INTERFACE@\n## Title: WowLab\n\n# constructed\n"
+        b"Core.lua\r\nGear.lua\n"
+    ),
+    "Core.lua": b"-- constructed\n",
+    "Gear.lua": b"-- constructed\n",
+}
+"""Name to bytes; None stands for a symlink to `Core.lua`."""
+
+
+def _without(name: str) -> dict[str, bytes | None]:
+    return {k: v for k, v in ADDON.items() if k != name}
+
+
 def _dist(
     tmp_path: Path,
     version: str = "0.1.0",
@@ -454,6 +478,9 @@ def _dist(
     wheel_license: bytes | None = LICENSE_TEXT,
     sdist_license: bytes | None = LICENSE_TEXT,
     sdist_extra: tuple[str, ...] = (),
+    wheel_addon: dict[str, bytes | None] = ADDON,
+    sdist_addon: dict[str, bytes | None] = ADDON,
+    sdist_addon_dir: bool = False,
 ) -> Path:
     dist = tmp_path / "dist"
     dist.mkdir()
@@ -465,15 +492,35 @@ def _dist(
         )
         if wheel_license is not None:
             whl.writestr(f"{info}/licenses/LICENSE", wheel_license)
-    members = {"PKG-INFO": _metadata("wowlab-core", sdist_version or version)}
+        for name, data in wheel_addon.items():
+            entry = zipfile.ZipInfo(f"wowlab_core/_addon/WowLab/{name}")
+            if data is None:  # a symlink entry, as zip records one
+                entry.external_attr = (stat.S_IFLNK | 0o777) << 16
+                whl.writestr(entry, b"Core.lua")
+            else:
+                entry.external_attr = (stat.S_IFREG | 0o644) << 16
+                whl.writestr(entry, data)
+    members: dict[str, bytes | None] = {
+        "PKG-INFO": _metadata("wowlab-core", sdist_version or version)
+    }
     if sdist_license is not None:
         members["LICENSE"] = sdist_license
     members.update(dict.fromkeys(sdist_extra, b""))
+    members.update({f"src/wowlab_core/_addon/WowLab/{n}": d for n, d in sdist_addon.items()})
     with tarfile.open(dist / f"wowlab_core-{version}.tar.gz", "w:gz") as sdist:
+        if sdist_addon_dir:
+            folder = tarfile.TarInfo(f"wowlab_core-{version}/src/wowlab_core/_addon/WowLab")
+            folder.type = tarfile.DIRTYPE
+            sdist.addfile(folder)
         for name, data in members.items():
             member = tarfile.TarInfo(f"wowlab_core-{version}/{name}")
-            member.size = len(data)
-            sdist.addfile(member, io.BytesIO(data))
+            if data is None:
+                member.type = tarfile.SYMTYPE
+                member.linkname = "Core.lua"
+                sdist.addfile(member)
+            else:
+                member.size = len(data)
+                sdist.addfile(member, io.BytesIO(data))
     return dist
 
 
@@ -524,11 +571,91 @@ def test_constructed_a_missing_or_different_license_or_a_test_suite_fails(
         rc.check_dist(dist, "0.1.0")
 
 
+_TOC = ADDON["WowLab.toc"]
+assert _TOC is not None
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"wheel_addon": _without("WowLab.toc")}, "has no wowlab_core/_addon/WowLab/WowLab.toc"),
+        (
+            {"sdist_addon": _without("WowLab.toc")},
+            "has no wowlab_core-0.1.0/src/wowlab_core/_addon/WowLab/WowLab.toc",
+        ),
+        ({"wheel_addon": _without("Gear.lua")}, r"py3-none-any\.whl holds .* not "),
+        ({"sdist_addon": _without("Gear.lua")}, r"tar\.gz holds .* not "),
+        ({"wheel_addon": {**ADDON, "Core.lua.bak": b""}}, r"py3-none-any\.whl holds .* not "),
+        ({"sdist_addon": {**ADDON, "README.md": b""}}, r"tar\.gz holds .* not "),
+        ({"wheel_addon": {**ADDON, "Core.lua": None}}, "Core.lua is not a plain file"),
+        ({"sdist_addon": {**ADDON, "Core.lua": None}}, "Core.lua is not a plain file"),
+        ({"sdist_addon_dir": True}, "_addon/WowLab is not a plain file"),
+        (
+            {"wheel_addon": {**ADDON, "WowLab.toc": _TOC.replace(b"@WOWLAB_INTERFACE@", b"1")}},
+            "holds the line '## Interface: @WOWLAB_INTERFACE@' 0 times",
+        ),
+        (
+            {"sdist_addon": {**ADDON, "WowLab.toc": _TOC + b"## Interface: @WOWLAB_INTERFACE@\n"}},
+            "2 times, not once",
+        ),
+        (
+            {"wheel_addon": {**ADDON, "WowLab.toc": _TOC + b"sub/Extra.lua\n"}},
+            "lists 'sub/Extra.lua', not a .lua file in its own folder",
+        ),
+        (
+            {"wheel_addon": {"WowLab.toc": b"## Interface: @WOWLAB_INTERFACE@\n"}},
+            r"lists \[\], not one or more",
+        ),
+        (
+            {"sdist_addon": {**ADDON, "Gear.lua": b"-- another text\n"}},
+            "do not carry the same lab-addon",
+        ),
+    ],
+    ids=[
+        "wheel-no-toc",
+        "sdist-no-toc",
+        "wheel-listed-lua-missing",
+        "sdist-listed-lua-missing",
+        "wheel-extra-file",
+        "sdist-extra-file",
+        "wheel-link",
+        "sdist-link",
+        "sdist-folder-entry",
+        "no-interface-line",
+        "interface-line-twice",
+        "listed-path-in-a-subfolder",
+        "nothing-listed",
+        "wheel-and-sdist-differ",
+    ],
+)
+def test_constructed_a_lab_addon_that_is_not_exactly_the_toc_and_its_lua_fails(
+    tmp_path: Path, kwargs: dict[str, Any], match: str
+) -> None:
+    """M13-14: both files carry exactly the TOC and the `.lua` it lists, as
+    plain files with the same bytes (security finding 2 on PR #182: the
+    build copies untracked files and turns links into files)."""
+    dist = _dist(tmp_path, **kwargs)
+    with pytest.raises(rc.ReleaseError, match=match):
+        rc.check_dist(dist, "0.1.0")
+    assert rc.main(["dist", "--dir", str(dist), "--version", "0.1.0"]) == 1
+
+
+def test_the_lab_addon_toc_lists_what_the_repository_ships() -> None:
+    """The check's TOC reading agrees with the real lab-addon folder."""
+    folder = ROOT / "lab" / "addon" / "WowLab"
+    listed = rc.addon_listed((folder / "WowLab.toc").read_bytes(), "WowLab.toc")
+    assert sorted(listed) == sorted(p.name for p in folder.glob("*.lua"))
+
+
 def test_the_sdist_takes_the_repository_license_and_leaves_the_tests_out() -> None:
     hatch = tomllib.loads((ROOT / "lab" / "core" / "pyproject.toml").read_text("utf-8"))
     sdist = hatch["tool"]["hatch"]["build"]["targets"]["sdist"]
     assert sdist["exclude"] == ["/tests"]
-    assert sdist["force-include"] == {"../../LICENSE": "LICENSE"}
+    assert sdist["only-include"] == ["src", "pyproject.toml", "build-constraints.txt"]
+    assert sdist["force-include"] == {
+        "../../LICENSE": "LICENSE",
+        "../addon/WowLab": "src/wowlab_core/_addon/WowLab",
+    }
     assert (ROOT / "LICENSE").read_text("utf-8").lstrip().startswith("Apache License")
 
 

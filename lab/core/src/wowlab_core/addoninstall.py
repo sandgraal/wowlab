@@ -34,12 +34,26 @@ every path again. Inside the transaction, with the gate's locks held, the
 folder is listed again and the up-to-date files are read again; any
 difference from the plan raises `AddonChangedError`, so the gate rolls back.
 
-The sources are found from this package: `lab/addon/WowLab/WowLab.toc` in
-the workspace root, the nearest ancestor holding `.git` or a
-`pyproject.toml` that declares the uv workspace, and nowhere else. A link in `lab`, `addon` or `WowLab` is
-refused, and each source file is opened without following a link and
-checked to be the regular file its `lstat` saw. Anywhere else
-`AddonSourceError` says so.
+The sources are found from this package, in this order and nowhere else
+(M11-02, widened by M13-14 so an installed wowlab can install its addon):
+
+1. a checkout: only when this package's resolved folder is exactly
+   `<root>/lab/core/src/wowlab_core` and `<root>` is the workspace root
+   (it holds `.git` or a `pyproject.toml` that declares the uv workspace),
+   `<root>/lab/addon/WowLab/WowLab.toc`;
+2. otherwise the copy bundled in the installed package,
+   `wowlab_core/_addon/WowLab/WowLab.toc` (the sdist copies
+   `lab/addon/WowLab/` there, and the wheel is built from the sdist), used
+   only when the package is a real folder on disk, never a zip import or
+   another non-filesystem loader.
+
+Nothing above the package is searched: an installed wowlab under some other
+git repository or uv workspace, even one holding a `lab/addon/WowLab/`,
+uses its own bundled copy.
+
+A link in `lab`, `addon`, `WowLab` or `_addon` is refused, and each source
+file is opened without following a link and checked to be the regular file
+its `lstat` saw. Anywhere else `AddonSourceError` says so.
 """
 
 from __future__ import annotations
@@ -48,6 +62,8 @@ import os
 import stat
 import tomllib
 from collections.abc import Iterable, Mapping, Sequence
+from importlib import resources
+from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import Protocol
 
@@ -59,6 +75,8 @@ from wowlab_core.toc import parse_toc
 __all__ = [
     "ADDON_FOLDER",
     "ADDON_NAME",
+    "BUNDLE_PARTS",
+    "CHECKOUT_PACKAGE_PARTS",
     "FOLDER_LEFT_NOTE",
     "FOLDER_STAYS_NOTE",
     "INTERFACE_LINE",
@@ -100,6 +118,10 @@ ADDON_FOLDER = f"Interface/AddOns/{ADDON_NAME}"
 TOC_NAME = f"{ADDON_NAME}.toc"
 SOURCE_PARTS = ("lab", "addon", ADDON_NAME)
 """The source folder, relative to the repository root."""
+CHECKOUT_PACKAGE_PARTS = ("lab", "core", "src", "wowlab_core")
+"""This package's folder in a checkout, relative to the repository root."""
+BUNDLE_PARTS = ("_addon", ADDON_NAME)
+"""The copy bundled in an installed package, relative to the `wowlab_core` folder."""
 INTERFACE_PLACEHOLDER = "@WOWLAB_INTERFACE@"
 INTERFACE_LINE = f"## Interface: {INTERFACE_PLACEHOLDER}"
 """The one TOC line install fills (ADR-0026: the repository holds no number)."""
@@ -297,11 +319,12 @@ def _is_workspace_root(folder: Path) -> bool:
     return isinstance(uv, dict) and "workspace" in uv
 
 
-def _candidate(folder: Path) -> Path | None:
-    """`folder/lab/addon/WowLab` if it holds a `WowLab.toc`, refusing a link
-    in any of its components."""
+def _candidate(folder: Path, parts: Sequence[str] = SOURCE_PARTS) -> Path | None:
+    """`folder/<parts>` (default `lab/addon/WowLab`) if it holds a
+    `WowLab.toc`, refusing a link in any of its components and a TOC that
+    is not a regular file."""
     current = folder
-    for part in SOURCE_PARTS:
+    for part in parts:
         current = current / part
         try:
             st = current.lstat()
@@ -312,7 +335,7 @@ def _candidate(folder: Path) -> Path | None:
         if _is_link(current, st):
             raise AddonSourceError(
                 f"{current} is a link (a symlink or junction); the lab-addon's sources are "
-                "read only from a real folder of the checkout"
+                "read only from a real folder"
             )
         if not stat.S_ISDIR(st.st_mode):
             return None
@@ -327,30 +350,73 @@ def _candidate(folder: Path) -> Path | None:
     return current
 
 
-def find_source(start: Path | None = None) -> Path:
-    """The lab-addon's source folder: `lab/addon/WowLab/` in the workspace
-    root, the nearest ancestor of `start` (default: this package's folder)
-    holding `.git` or a `pyproject.toml` that declares the uv workspace. A
-    `lab/addon/WowLab/` in any other folder is never used. Raises
-    `AddonSourceError` when there is no workspace root above `start`, as
-    when wowlab runs from an installed package rather than a checkout, or
-    when the root holds no sources."""
+def _package() -> Traversable:
+    """The installed `wowlab_core` package, as its loader presents it."""
+    return resources.files("wowlab_core")
+
+
+def _checkout_root(package_dir: Path) -> Path | None:
+    """The repository root when `package_dir` (resolved) is exactly
+    `<root>/lab/core/src/wowlab_core` and `<root>` is the workspace root,
+    else None."""
+    n = len(CHECKOUT_PACKAGE_PARTS)
+    if len(package_dir.parts) <= n or package_dir.parts[-n:] != CHECKOUT_PACKAGE_PARTS:
+        return None
+    root = package_dir.parents[n - 1]
+    return root if _is_workspace_root(root) else None
+
+
+def find_source(start: Path | None = None, *, package: Traversable | None = None) -> Path:
+    """The lab-addon's source folder, from a checkout first, else from the
+    copy bundled in the installed package, and from nowhere else.
+
+    `start` is this package's folder (default: the folder of this module).
+    It is a checkout only when, resolved, it is exactly
+    `<root>/lab/core/src/wowlab_core` and `<root>` holds `.git` or a
+    `pyproject.toml` that declares the uv workspace; the sources are then
+    `<root>/lab/addon/WowLab/`. Nothing above the package is searched: a
+    `lab/addon/WowLab/` in any other folder is never used.
+
+    Otherwise, or when that checkout holds no sources, the bundled copy is
+    `_addon/WowLab/` in `package` (default: the installed `wowlab_core`,
+    from `importlib.resources`), used only when `package` is a real folder
+    on disk (a `pathlib.Path`): a zip import or any other loader is refused.
+    The same no-link and regular-file checks apply to it.
+
+    Raises `AddonSourceError` when neither is found."""
     here = (start if start is not None else _HERE).resolve()
-    for folder in (here, *here.parents):
-        if not _is_workspace_root(folder):
-            continue
-        found = _candidate(folder)
-        if found is None:
-            raise AddonSourceError(
-                f"the workspace root {folder} holds no lab-addon sources "
-                f"({'/'.join(SOURCE_PARTS)}/{TOC_NAME}); nothing was changed"
-            )
-        return found
+    root = _checkout_root(here)
+    if root is not None:
+        found = _candidate(root)
+        if found is not None:
+            return found
+        missing = (
+            f"the checkout {root} holds no lab-addon sources ({'/'.join(SOURCE_PARTS)}/{TOC_NAME})"
+        )
+    else:
+        missing = (
+            f"wowlab is not running from a checkout ({here} is not "
+            f"{'/'.join(CHECKOUT_PACKAGE_PARTS)} in a folder holding .git or the uv "
+            "workspace's pyproject.toml)"
+        )
+    pkg = _package() if package is None else package
+    bundle = "/".join(BUNDLE_PARTS)
+    if not isinstance(pkg, Path):
+        raise AddonSourceError(
+            f"{missing}, and the installed wowlab package is not a real folder on disk "
+            f"({type(pkg).__name__}, such as a zip import), so the lab-addon bundled in it "
+            f"({bundle}/{TOC_NAME}) is not used; install wowlab as a regular package; "
+            "nothing was changed"
+        )
+    pkg_dir = pkg.resolve()
+    bundled = _candidate(pkg_dir, BUNDLE_PARTS)
+    if bundled is not None:
+        return bundled
     raise AddonSourceError(
-        f"no workspace root (a folder holding .git or the uv workspace's pyproject.toml) above "
-        f"{here}, so the lab-addon's sources ({'/'.join(SOURCE_PARTS)}/{TOC_NAME}) were not "
-        "found; `wowlab addon install lab` runs from a checkout of the wowlab repository "
-        "(uv run wowlab ...)"
+        f"{missing}, and no copy is bundled in the installed package ({pkg_dir}/{bundle}/"
+        f"{TOC_NAME}), so the lab-addon's sources were not found; `wowlab addon install lab` "
+        "runs from a checkout of the wowlab repository (uv run wowlab ...) or from a wowlab "
+        "release wheel, or one built from the sdist (`uv build`); nothing was changed"
     )
 
 

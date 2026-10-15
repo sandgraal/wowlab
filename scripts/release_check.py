@@ -17,8 +17,14 @@ is published as a GitHub pre-release. With `--output` (the job's
 `dist` fails unless the directory holds exactly the wheel and the sdist that
 version names, the metadata inside each states that name and version, both
 carry the same non-empty LICENSE (the wheel's with a `License-File: LICENSE`
-line), and the sdist holds no test suite. Nothing is extracted; named members
-are read.
+line), and the sdist holds no test suite. Both also carry the lab-addon
+(M13-14) that `wowlab addon install lab` uses outside a checkout: the wheel
+under `wowlab_core/_addon/WowLab/`, the sdist under
+`wowlab_core-<version>/src/wowlab_core/_addon/WowLab/`, each holding exactly
+`WowLab.toc` (with the line `## Interface: @WOWLAB_INTERFACE@` exactly once)
+and the `.lua` files that TOC lists, as plain files with the same bytes in
+both: no other file, no link, no folder entry. Nothing is extracted; named
+members are read.
 
 `notes` fills the release-notes template: `{{TAG}}`, `{{VERSION}}` and
 `{{INSTALL}}`, the one `uv tool install` line the README gives
@@ -34,6 +40,7 @@ from __future__ import annotations
 import argparse
 import email.parser
 import re
+import stat
 import sys
 import tarfile
 import tomllib
@@ -56,6 +63,13 @@ CANONICAL = re.compile(
     rf"(?:\.dev(?P<dev>{_NUM}))?"
 )
 """A PEP 440 public version in canonical form, without an epoch."""
+
+ADDON_DIR = "_addon/WowLab"
+"""The lab-addon inside the package (addoninstall.BUNDLE_PARTS)."""
+ADDON_TOC = "WowLab.toc"
+INTERFACE_LINE = b"## Interface: @WOWLAB_INTERFACE@"
+"""The TOC line `wowlab addon install lab` fills (ADR-0026)."""
+LUA_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\.lua")
 
 REPOSITORY = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9_.-]+")
 PLACEHOLDER = re.compile(r"\{\{[A-Z_]+\}\}")
@@ -145,12 +159,76 @@ def _sdist_member(sdist: tarfile.TarFile, name: str, member: str) -> bytes:
         return fh.read()
 
 
+def addon_listed(toc: bytes, where: str) -> list[str]:
+    """The `.lua` files the lab-addon's TOC lists, in order; ReleaseError
+    unless it holds `INTERFACE_LINE` exactly once and lists at least one
+    file, each a plain `.lua` name in the TOC's own folder, once."""
+    toc = toc.removeprefix(b"\xef\xbb\xbf")
+    lines = [line.removesuffix(b"\r") for line in toc.split(b"\n")]
+    hits = sum(1 for line in lines if line == INTERFACE_LINE)
+    if hits != 1:
+        raise ReleaseError(
+            f"{where} holds the line {INTERFACE_LINE.decode()!r} {hits} times, not once"
+        )
+    listed: list[str] = []
+    for line in lines:
+        path = line.strip(b" \t")
+        if not path or line.startswith(b"#"):
+            continue
+        name = path.decode("utf-8", "replace")
+        if LUA_NAME.fullmatch(name) is None:
+            raise ReleaseError(f"{where} lists {name!r}, not a .lua file in its own folder")
+        listed.append(name)
+    if not listed or len(set(listed)) != len(listed):
+        raise ReleaseError(f"{where} lists {listed}, not one or more .lua files once each")
+    return listed
+
+
+def _wheel_addon(whl: zipfile.ZipFile, wheel: str) -> dict[str, bytes]:
+    """The lab-addon in the wheel: name to bytes, exactly the TOC and what it lists."""
+    prefix = f"{DIST_NAME}/{ADDON_DIR}/"
+    under = [i for i in whl.infolist() if i.filename.startswith(f"{DIST_NAME}/_addon/")]
+    for info in under:
+        kind = stat.S_IFMT(info.external_attr >> 16)
+        if info.is_dir() or kind not in (0, stat.S_IFREG):
+            raise ReleaseError(f"{wheel}:{info.filename} is not a plain file")
+    names = [i.filename for i in under]
+    toc = _wheel_member(whl, wheel, prefix + ADDON_TOC)
+    expected = sorted(prefix + n for n in [ADDON_TOC, *addon_listed(toc, f"{wheel}:{prefix}")])
+    if sorted(names) != expected:
+        raise ReleaseError(
+            f"{wheel} holds {sorted(names)} under {DIST_NAME}/_addon/, not {expected}"
+        )
+    return {n.removeprefix(prefix): whl.read(n) for n in names}
+
+
+def _sdist_addon(sdist: tarfile.TarFile, name: str, top: str) -> dict[str, bytes]:
+    """The lab-addon in the sdist: name to bytes, exactly the TOC and what it lists."""
+    package = f"{top}/src/{DIST_NAME}"
+    prefix = f"{package}/{ADDON_DIR}/"
+    under = [
+        m
+        for m in sdist.getmembers()
+        if m.name == f"{package}/_addon" or m.name.startswith(f"{package}/_addon/")
+    ]
+    for member in under:
+        if not member.isfile():
+            raise ReleaseError(f"{name}:{member.name} is not a plain file")
+    names = [m.name for m in under]
+    toc = _sdist_member(sdist, name, prefix + ADDON_TOC)
+    expected = sorted(prefix + n for n in [ADDON_TOC, *addon_listed(toc, f"{name}:{prefix}")])
+    if sorted(names) != expected:
+        raise ReleaseError(f"{name} holds {sorted(names)} under {package}/_addon/, not {expected}")
+    return {n.removeprefix(prefix): _sdist_member(sdist, name, n) for n in names}
+
+
 def check_dist(dist: Path, version: str) -> Release:
     """ReleaseError unless `dist` holds exactly the wheel and sdist of `version`.
 
     Both state that name and version, both carry the same non-empty LICENSE
     (the wheel as `dist-info/licenses/LICENSE` with a `License-File: LICENSE`
-    line), and the sdist holds no test suite.
+    line), the sdist holds no test suite, and both carry the same lab-addon:
+    exactly its TOC and the `.lua` files it lists, as plain files.
     """
     release = parse_version(version)
     found = sorted(p.name for p in dist.iterdir())
@@ -162,6 +240,7 @@ def check_dist(dist: Path, version: str) -> Release:
     with zipfile.ZipFile(dist / release.wheel) as whl:
         meta = _wheel_member(whl, release.wheel, f"{info}/METADATA")
         wheel_license = _wheel_member(whl, release.wheel, f"{info}/licenses/LICENSE")
+        wheel_addon = _wheel_addon(whl, release.wheel)
     name, stated, license_files = _metadata(meta, f"{release.wheel}:{info}/METADATA")
     if (name, stated) != (PROJECT, version):
         raise ReleaseError(f"{release.wheel} states {(name, stated)}, not {(PROJECT, version)}")
@@ -175,6 +254,7 @@ def check_dist(dist: Path, version: str) -> Release:
         tests = [
             m for m in sdist.getnames() if m == f"{top}/tests" or m.startswith(f"{top}/tests/")
         ]
+        sdist_addon = _sdist_addon(sdist, release.sdist, top)
     name, stated, _ = _metadata(pkg_info, f"{release.sdist}:{top}/PKG-INFO")
     if (name, stated) != (PROJECT, version):
         raise ReleaseError(f"{release.sdist} states {(name, stated)}, not {(PROJECT, version)}")
@@ -182,6 +262,8 @@ def check_dist(dist: Path, version: str) -> Release:
         raise ReleaseError(f"{release.wheel} and {release.sdist} do not carry the same LICENSE")
     if tests:
         raise ReleaseError(f"{release.sdist} holds the test suite ({len(tests)} entries)")
+    if wheel_addon != sdist_addon:
+        raise ReleaseError(f"{release.wheel} and {release.sdist} do not carry the same lab-addon")
     return release
 
 

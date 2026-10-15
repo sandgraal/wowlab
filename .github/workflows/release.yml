@@ -189,6 +189,19 @@ jobs:
           set -e
           test "$code" -eq 1
           python3 -c 'import json, sys; r = json.load(open(sys.argv[1])); assert r["install_root"] is None and r["problems"], r' "$RUNNER_TEMP/doctor.json"
+      # M13-14: the installed wheel finds the lab-addon bundled in it, and its
+      # TOC lists exactly the .lua files beside it. Reads only; nothing is
+      # installed into anything.
+      - name: The installed wheel finds its bundled lab-addon
+        env:
+          UV_TOOL_DIR: ${{ runner.temp }}/uv-tools
+        run: |
+          source="$("$UV_TOOL_DIR/wowlab-core/bin/python" -I -c 'from wowlab_core import addoninstall as a; s = a.find_source(); a.addon_files(10000, s); print(s)')"
+          echo "$source"
+          case "$source" in
+            */site-packages/wowlab_core/_addon/WowLab) ;;
+            *) echo "the lab-addon was not found in the installed wheel: $source" >&2; exit 1 ;;
+          esac
 
   release:
     name: Publish the GitHub Release
