@@ -2833,11 +2833,15 @@ it. M13-07 ships only in the form its owner test allows.
 - **The addon calls.** forever-addon-kit's API list for build 69893 names
   `GetActionInfo`, `GetBindingKey`, `GetMacroInfo`, `C_SpellBook` and
   `GetSpellBookItemInfo`. Presence in the global table does not prove a call
-  works, so each is probed and recorded the way `spec.api` is (§13.1). Reads
-  happen out of combat only; nothing in schema 3 may touch a value that
-  becomes secret in combat (ADR-0026, `docs/GLOSSARY.md`). Action-bar macro
-  slots carry the macro id only, never its name or body: macro text is
-  player-written (ADR-0026's no-names rule).
+  works, so each is probed and recorded the way `spec.api` is (§13.1). Values
+  are read only when `InCombatLockdown` says not in combat (ADR-0026,
+  `docs/GLOSSARY.md`); whether these values can be secret outside combat in
+  restricted content is **[verify]**, so where the client has
+  `issecretvalue` each value is tested before it is used or stored (§13.1,
+  M13-05 amendment). Action-bar macro slots carry an id only, never the
+  macro's name or body: macro text is player-written (ADR-0026's no-names
+  rule). The id is the macro index when the slot has no subtype, and
+  otherwise the spell or item id the macro shows now **[verify]**.
 - **Cast counts.** `combatlog` has no cast counting today. The player's own
   casts are picked by the source-flags bits (affiliation "mine", type
   "player") rather than by a GUID or a name, since the lab-addon stores no

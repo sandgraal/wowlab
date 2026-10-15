@@ -5562,7 +5562,7 @@ def test_m13_05_constructed_call_after_the_check_passes() -> None:
 
 
 def test_m13_05_macro_info_binds_neither_name_nor_body() -> None:
-    """ADR-0026, §15.2: a macro slot keeps the macro id only. GetMacroInfo is
+    """ADR-0026, §15.2: a macro slot keeps an id only. GetMacroInfo is
     bound once into a handle, and the handle is used only to probe, test and
     call it as `local okMacro, _, icon = pcall(getMacro, id)`: the name goes to
     `_`, the body to nothing, and `icon` is only compared with nil."""
