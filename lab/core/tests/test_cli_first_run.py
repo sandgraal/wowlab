@@ -564,8 +564,12 @@ def test_an_online_only_folder_is_not_listed_and_said_constructed(
     online = flavor / "WTF" / "Online"
     online.mkdir()
     (online / "Inside.lua").write_bytes(b"x = 1\n")
-    inode = online.stat().st_ino
-    monkeypatch.setattr(firstrun, "_is_online_only_dir", lambda st: st.st_ino == inode)
+    # The folder is picked out by a stamped modification time, not its inode:
+    # on Windows `os.DirEntry.stat()` always reports st_ino 0 (M13-02). The
+    # value is a multiple of 100 ns, NTFS's resolution, and no other entry has it.
+    stamp = 100_000_012_345_678_900
+    os.utime(online, ns=(stamp, stamp))
+    monkeypatch.setattr(firstrun, "_is_online_only_dir", lambda st: st.st_mtime_ns == stamp)
     (scan,) = _first(_report()).flavors
     assert scan.online_only_folders == ["WTF/Online"]
     out = ok("doctor").stdout
