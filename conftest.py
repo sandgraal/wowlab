@@ -8,8 +8,10 @@ collect exactly what one serial run collects.
 
 A test is `serial` when it measures the machine: an RSS target, a CPU-time
 (or wall-clock) budget around a parse or a scan. Those numbers are calibrated
-on an idle machine; with every core busy, CPU time also rises (a lower clock,
-shared caches), and a budget can fail for the load rather than the code.
+on an idle machine. With every core busy, CPU time also rises (a lower clock,
+shared caches), and a budget can fail for the load rather than the code; and
+the other workers' memory pressure can make the system compress pages, which
+makes `ru_maxrss` read low, so an RSS target can pass when it should fail.
 Tests that only bound allocations with `tracemalloc` stay parallel: that
 counts the test process's own allocations and does not change with load.
 Tests whose clock is a hang guard with a margin of seconds (a deadline that
@@ -21,7 +23,12 @@ review probes (`lab/core/tests/review/`) belong to code-reviewer, and the
 graders of the load-bearing files are never edited by the session that
 implements them (AGENTS.md). `tests/repo/test_serial_marking.py` checks every
 entry below still names a file and a test that exist, so a rename cannot
-quietly move a measurement into the parallel pass.
+quietly move a measurement into the parallel pass. It also reads every test
+module and fails when one measures without being listed: a module that reads
+RSS (`ru_maxrss`, `getrusage`, `VmHWM`) must be in SERIAL_FILES whole; a
+module that reads a CPU clock (`cpu_clock()`, `process_time()`) outside its
+test functions must be in SERIAL_FILES, and a test function that reads one
+must be in SERIAL_TESTS if its file is not.
 
 This file is also loaded by the hook tests under Python 3.9
 (`make hooks-test`), so it keeps to 3.9 syntax and the standard library.
@@ -43,6 +50,10 @@ SERIAL_FILES: frozenset[str] = frozenset(
         # CPU-time budgets on hostile lines (tests/parser/_cpu_clock.py).
         "lab/core/tests/review/test_m10_06_toc_parse_quadratic_time.py",
         "lab/core/tests/review/test_m10_13_unclosed_quote_quadratic_time_target.py",
+        # A module-level CPU clock, read by its scrub timing probe.
+        "lab/core/tests/review/test_review_m10_02_followup_blank_runs.py",
+        # RSS of a child refusing a long line-break run (ru_maxrss).
+        "lab/core/tests/test_luadata_budget_constructed.py",
     }
 )
 
@@ -61,8 +72,6 @@ SERIAL_TESTS: frozenset[str] = frozenset(
         "::test_multi_megabyte_document_parses_whole",
         "lab/core/tests/parser/test_toc_constructed.py"
         "::test_hostile_lines_parse_in_linear_time_constructed",
-        "lab/core/tests/review/test_review_m10_02_followup_blank_runs.py"
-        "::test_constructed_lf_only_file_scrubs_as_fast_as_the_same_file_in_crlf",
         "lab/core/tests/test_snap_gc_keep_rule.py"
         "::test_the_keep_rule_takes_exactly_seven_parts_and_stops_splitting_a_long_path_constructed",
         "tests/scripts/test_lab_capture_followup.py"
@@ -80,9 +89,6 @@ SERIAL_TESTS: frozenset[str] = frozenset(
         # Wall clock against a bare walk of the same tree.
         "lab/core/tests/test_layout.py"
         "::test_400_addon_folders_inventory_under_two_seconds_constructed",
-        # RSS of a child refusing a long line-break run (ru_maxrss).
-        "lab/core/tests/test_luadata_budget_constructed.py"
-        "::test_constructed_refusal_after_a_long_mixed_line_break_run_stays_small",
         # Not a measurement: it calls os.fork(), and an xdist worker has threads
         # (execnet's I/O thread), so Python 3.12 warns that the child may
         # deadlock. Alone, the process forking has one thread.

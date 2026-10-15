@@ -100,7 +100,7 @@ jobs:
       # so both keep `not live`.
       - name: pytest (parallel)
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
-        run: uv run --frozen pytest -q -n auto -m "not live and not serial"
+        run: uv run --frozen pytest -q -n auto --dist worksteal -m "not live and not serial"
       - name: pytest (serial)
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         run: uv run --frozen pytest -q -m "serial and not live"
@@ -169,7 +169,7 @@ jobs:
         run: uv sync --frozen
       - name: pytest lab/core/tests (parallel)
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
-        run: uv run --frozen pytest -q -n auto -m "not live and not serial" lab/core/tests
+        run: uv run --frozen pytest -q -n auto --dist worksteal -m "not live and not serial" lab/core/tests
       - name: pytest lab/core/tests (serial)
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         run: uv run --frozen pytest -q -m "serial and not live" lab/core/tests

@@ -59,7 +59,7 @@ jobs:
       # conftest.py) alone. A command-line -m replaces the one in addopts,
       # so both keep `not live`.
       - name: pytest lab/core/tests (parallel)
-        run: uv run --frozen pytest -q -n auto -m "not live and not serial" lab/core/tests
+        run: uv run --frozen pytest -q -n auto --dist worksteal -m "not live and not serial" lab/core/tests
       - name: pytest lab/core/tests (serial)
         run: uv run --frozen pytest -q -m "serial and not live" lab/core/tests
       - name: wowlab --version
