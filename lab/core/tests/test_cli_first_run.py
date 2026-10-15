@@ -151,13 +151,19 @@ def test_a_first_run_on_the_fixture_install_ends_with_a_verified_snapshot_and_th
     assert "Verified the store (wowlab snap verify): " in out
     assert "  all sound" in out
     assert lines[-1].startswith("To undo: this run changed nothing in your install.")
+    # The captured install has no Fonts folder, so the line names only what was there.
     assert (
-        f"Snapshot {manifest.id} holds WTF, Interface and Fonts as they were on disk" in lines[-1]
+        f"Snapshot {manifest.id} holds WTF and Interface as they were on disk "
+        "(SavedVariables as of your last logout or /reload)." in lines[-1]
     )
-    assert "(SavedVariables as of your last logout or /reload)" in lines[-1]
+    assert "Fonts" not in lines[-1]
     assert f"`wowlab snap restore {manifest.id} --dry-run` shows what restoring it" in lines[-1]
-    assert "a restore also removes anything added there since" in lines[-1]
-    assert "asks first (unless you pass --yes)" in lines[-1]
+    assert (
+        "A restore writes back the files it holds that changed since (client-written backups "
+        "such as .lua.bak are skipped unless named with --paths); it does not remove files "
+        "added since. It asks first (unless you pass --yes)."
+    ) in lines[-1]
+    assert "removes anything added" not in lines[-1]
     assert "`wowlab undo`" in lines[-1]
 
     assert _state(root) == before, "the install is only read (L1)"
@@ -179,7 +185,7 @@ def test_a_first_run_json_validates_and_takes_the_snapshot_with_yes(root: Path) 
     assert first.snapshot.id == manifest.id
     assert first.snapshot.files == sum(1 for e in manifest.entries if e.kind == "file")
     assert first.store_path == str(SnapshotStore().path)
-    assert first.undo == firstrun.undo_line(first.snapshot)
+    assert first.undo == firstrun.undo_line(first.snapshot, first.flavors[0])
     (scan,) = first.flavors
     assert scan.folder == FLAVOR
     assert scan.files == first.snapshot.files
@@ -188,6 +194,97 @@ def test_a_first_run_json_validates_and_takes_the_snapshot_with_yes(root: Path) 
     assert (scan.links, scan.sync, scan.large) == ([], [], False)
     assert report.problems == []
     assert _state(root) == before
+
+
+def test_the_undo_line_says_what_a_plain_restore_does_and_the_restore_does_it_constructed(
+    root: Path, flavor: Path
+) -> None:
+    """The undo line says a restore writes back what the snapshot holds,
+    skips client-written backups, and does not remove files added since. A
+    plain `snap restore --yes` of the first snapshot does exactly that
+    (constructed: one file changed, a backup changed and two files added
+    after the snapshot, on the copy in `tmp_path`)."""
+    last = _lines(ok("doctor", "--yes").stdout)[-1]
+    (manifest,) = _manifests()
+    assert (
+        "A restore writes back the files it holds that changed since (client-written backups "
+        "such as .lua.bak are skipped unless named with --paths); it does not remove files "
+        "added since. It asks first (unless you pass --yes)."
+    ) in last
+
+    config = flavor / "WTF" / "Config.wtf"
+    original = config.read_bytes()
+    config.write_bytes(original + b'SET probeChanged "1"\n')
+    backup = flavor / SV_DIR / "RareScanner.lua.bak"
+    backup.write_bytes(backup.read_bytes() + b"-- changed since\n")
+    changed_backup = backup.read_bytes()
+    added = [flavor / "WTF" / "added-since.txt", flavor / "Interface" / "added-since.txt"]
+    for path in added:
+        path.write_bytes(b"added after the first run\n")
+
+    ok("snap", "restore", manifest.id, "--yes")
+    assert config.read_bytes() == original, "a file it holds that changed is written back"
+    assert backup.read_bytes() == changed_backup, "a client-written backup is skipped"
+    for path in added:
+        assert path.read_bytes() == b"added after the first run\n", "added files stay"
+
+
+def test_the_verify_line_counts_in_words(root: Path) -> None:
+    out = ok("doctor", "--yes").stdout
+    report = SnapshotStore().verify()
+    assert report.manifests_checked == 1
+    assert (
+        f"Verified the store (wowlab snap verify): {report.objects_checked:,} objects and "
+        "1 manifest checked."
+    ) in out
+    assert "(s)" not in out[out.index("Verified the store") :].splitlines()[0]
+
+
+def test_the_undo_line_with_nothing_held_and_without_a_scan_constructed() -> None:
+    """Every subtree absent or a link: the line says the snapshot holds no
+    folder's files; a snapshot without its scan is a caller bug (constructed)."""
+    taken = firstrun.FirstSnapshot(
+        id="20261014T000000Z-abc",
+        label="first run",
+        flavor_folder="_x_",
+        subtrees=["_x_/WTF", "_x_/Interface", "_x_/Fonts"],
+        files=0,
+        links=1,
+        bytes=0,
+    )
+
+    def sub(path: str, *, present: bool, link: bool) -> firstrun.SubtreeScan:
+        return firstrun.SubtreeScan(path=path, present=present, link=link, files=0, bytes=0)
+
+    scan = firstrun.FlavorScan(
+        folder="_x_",
+        product="",
+        version=None,
+        subtrees=[
+            sub("WTF", present=True, link=True),
+            sub("Interface", present=False, link=False),
+            sub("Fonts", present=False, link=False),
+        ],
+        files=0,
+        bytes=0,
+        estimated_seconds=1,
+        large=False,
+        links=[],
+        sync=[],
+        conflict_files=[],
+        placeholders=0,
+        online_only_folders=[],
+        unreadable=[],
+    )
+    line = firstrun.undo_line(taken, scan)
+    assert (
+        f"Snapshot {taken.id} holds no folder's files. WTF is a link (recorded, not followed; "
+        "its settings and SavedVariables are not in this snapshot)."
+    ) in line
+    assert "Interface" not in line and "Fonts" not in line
+    assert "as of your last logout" not in line
+    with pytest.raises(ValueError, match="needs the scan"):
+        firstrun.undo_line(taken)
 
 
 def test_json_never_prompts_and_takes_nothing_without_yes(
@@ -534,6 +631,13 @@ def test_wtf_itself_a_link_is_said_plainly_constructed(
     (manifest,) = _manifests()
     wtf = [e for e in manifest.entries if e.path.startswith(f"{FLAVOR}/WTF")]
     assert [(e.path, e.kind) for e in wtf] == [(f"{FLAVOR}/WTF", "symlink")]
+    last = _lines(out)[-1]
+    assert (
+        f"Snapshot {manifest.id} holds Interface as it was on disk. WTF is a link "
+        "(recorded, not followed; its settings and SavedVariables are not in this snapshot)."
+    ) in last
+    assert "as of your last logout or /reload" not in last
+    assert "holds WTF" not in last and "Fonts" not in last
 
 
 def test_a_junction_in_wtf_is_reported_and_never_followed_constructed(

@@ -68,11 +68,10 @@ __all__ = [
 SNAPSHOT_LABEL = "first run"
 """The label of the snapshot a first run takes, as `snap list` shows it."""
 
-# The estimate is deliberately on the slow side. Measured on the owner's
-# macOS machine (SSD), 2026-10-14: `SnapshotStore.create` of 302 MiB in 3,205
-# constructed files took 6.4 s and `verify` 0.5 s, about 47 MiB/s. A slower
-# disk, an antivirus scan or a cloud-synced folder is slower, so the estimate
-# assumes about half that, plus a fixed cost per file.
+# The estimate is deliberately on the slow side: it assumes 25 MiB/s for
+# `snap create` plus `snap verify` together, plus a fixed cost per file, so a
+# slower disk, an antivirus scan or a cloud-synced folder still tends to
+# finish within it. It is a rule of thumb, not a measurement.
 THROUGHPUT_BYTES = 25 * 1024 * 1024
 """Bytes per second the estimate assumes for hashing, compressing and storing."""
 FILE_SECONDS = 0.001
@@ -447,29 +446,54 @@ def _client_lines(running: bool | None, clients: Sequence[str] = ()) -> list[str
     return []
 
 
-def undo_line(taken: FirstSnapshot | None) -> str:
-    """The last line of a first run: how to undo."""
+def undo_line(taken: FirstSnapshot | None, scan: FlavorScan | None = None) -> str:
+    """The last line of a first run: how to undo.
+
+    With a snapshot, `scan` is the scan of its flavor: the line names only
+    the subtrees the scan found present and not links, says so when WTF is a
+    link, and mentions SavedVariables only when WTF itself is held. The
+    restore sentence says what a whole-snapshot `snap restore` does: it
+    writes back what the snapshot holds and removes nothing added since."""
     if taken is None:
         return (
             "To undo: this run changed nothing in your install, so there is nothing to "
-            "undo. Every later change asks first (unless you pass --yes) and takes a "
-            "snapshot, and `wowlab undo` reverses it."
+            "undo. Every change wowlab makes later asks first (unless you pass --yes) and "
+            "takes a snapshot, and `wowlab undo` reverses it."
         )
-    prefix = taken.flavor_folder + "/"
-    held = _and([s.removeprefix(prefix) for s in taken.subtrees])
+    if scan is None:
+        raise ValueError("the undo line for a snapshot needs the scan of its flavor")
+    held = [s.path for s in scan.subtrees if s.present and not s.link]
+    wtf_link = next(
+        (s.path for s in scan.subtrees if s.link and s.path.casefold() == _WTF.casefold()), None
+    )
+    wtf_held = any(name.casefold() == _WTF.casefold() for name in held)
+    if held:
+        were = "as it was" if len(held) == 1 else "as they were"
+        holds = f"Snapshot {taken.id} holds {_and(held)} {were} on disk" + (
+            " (SavedVariables as of your last logout or /reload)." if wtf_held else "."
+        )
+    else:
+        holds = f"Snapshot {taken.id} holds no folder's files."
+    if wtf_link is not None:
+        holds += (
+            f" {wtf_link} is a link (recorded, not followed; its settings and SavedVariables "
+            "are not in this snapshot)."
+        )
     return (
-        f"To undo: this run changed nothing in your install. Snapshot {taken.id} holds "
-        f"{held} as they were on disk (SavedVariables as of your last logout or /reload). "
-        f"`wowlab snap restore {taken.id} --dry-run` shows what restoring it would change; "
-        "a restore also removes anything added there since, and asks first (unless you "
-        "pass --yes). To reverse a later change wowlab makes, run `wowlab undo`."
+        f"To undo: this run changed nothing in your install. {holds} "
+        f"`wowlab snap restore {taken.id} --dry-run` shows what restoring it would change. "
+        "A restore writes back the files it holds that changed since (client-written "
+        "backups such as .lua.bak are skipped unless named with --paths); it does not "
+        "remove files added since. It asks first (unless you pass --yes). To reverse a "
+        "later change wowlab makes, run `wowlab undo`."
     )
 
 
 def _verify_lines(report: snapshot.VerifyReport) -> list[str]:
     lines = [
-        f"Verified the store (wowlab snap verify): {report.objects_checked} object(s) "
-        f"and {report.manifests_checked} manifest(s) checked."
+        "Verified the store (wowlab snap verify): "
+        f"{_count(report.objects_checked, 'object', 'objects')} and "
+        f"{_count(report.manifests_checked, 'manifest', 'manifests')} checked."
     ]
     lines.extend(f"  corrupt object: {name}" for name in report.corrupt_objects)
     lines.extend(
@@ -822,7 +846,10 @@ def run(
         error: str | None = None,
         refused: bool = False,
     ) -> FirstRunReport:
-        line = undo_line(taken)
+        scanned = None
+        if flavor is not None:
+            scanned = next((s for s in scans if s.folder == flavor.folder), None)
+        line = undo_line(taken, scanned)
         say(line)
         return FirstRunReport(
             store_path=str(store.path),

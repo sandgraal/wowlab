@@ -118,11 +118,11 @@ snapshot of this install. It goes like this:
    on the slow side on purpose. Anything unusual is said here, before any
    snapshot is taken (see below).
 4. **The offer.** In a terminal, wowlab asks whether to take the snapshot
-   (the default answer is no). With several flavors installed, it says
-   first whether the game is running, then lists them with their product
-   code and version and asks which one; pressing Enter takes none. If the
-   game is running, or wowlab cannot tell, it asks yes or no after that
-   too.
+   (the default answer is no). With several flavors installed, if the
+   game is running, or wowlab cannot tell, it says so first; then it lists
+   the flavors with their product code and version and asks which one;
+   pressing Enter takes none. If the game is running, or wowlab cannot
+   tell, it asks yes or no after that too.
 5. **The snapshot**, into wowlab's own store, of one flavor. Nothing is
    written into your install. If other flavors are installed, wowlab names
    each with the command that snapshots it
@@ -131,17 +131,22 @@ snapshot of this install. It goes like this:
    every stored file.
 7. **How to undo**, as the last line. The first run changes nothing in your
    install, so there is nothing to undo yet. The line names the snapshot
-   and what it holds: `WTF`, `Interface` and `Fonts` as they were on disk,
-   with SavedVariables as of your last logout or `/reload`.
+   and what it holds: only those of `WTF`, `Interface` and `Fonts` that
+   were there as folders, as they were on disk, with SavedVariables (as of
+   your last logout or `/reload`) when `WTF` is one of them. If `WTF` is a
+   link, the line says so: the link is recorded, not followed, and its
+   settings and SavedVariables are not in the snapshot.
    `wowlab snap restore <id> --dry-run` shows what restoring it would
-   change. A restore also removes anything added there since, and asks
-   first (unless you pass `--yes`). `wowlab undo` reverses any later change
+   change. A restore writes back the files it holds that changed since
+   (client-written backups such as `.lua.bak` are skipped unless named
+   with `--paths`); it does not remove files added since. It asks first
+   (unless you pass `--yes`). `wowlab undo` reverses any later change
    wowlab makes. With server sync on (`wowlab doctor` shows the settings),
    the server may replace bindings, macros and settings at your next login
    whatever a restore put back.
 
-The offer is made once per install: as soon as the store holds any
-snapshot of the install, `wowlab doctor` is the plain report again. Use
+The offer is made on every run until the store holds a snapshot of this
+install; from then on, `wowlab doctor` is the plain report again. Use
 `wowlab snap create` for later snapshots.
 
 Options for the first run:
