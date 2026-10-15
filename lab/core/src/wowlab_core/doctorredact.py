@@ -25,9 +25,10 @@ What is replaced, and where the names come from:
   name, a guild's included.
 
 Each field of the report is treated as `DOCTOR_FIELDS` says (left as it is,
-redacted, or replaced whole), in the model, before it is printed as text or
-as JSON; a field missing from that table is replaced whole, and a test walks
-the models so none is. Library log lines (tracebacks included) are redacted
+redacted, replaced whole, or dropped), in the model, before it is printed as
+text or as JSON; a field missing from that table is replaced whole, and a
+test walks the models so none is. The first run (M13-04) is skipped under
+`--redact` and its field dropped: `first_run` is always null. Library log lines (tracebacks included) are redacted
 while the report is built, Python warnings are not shown, and the message of
 an error that stops it is redacted.
 
@@ -191,6 +192,7 @@ def check_names(names: Iterable[str]) -> list[str]:
 
 AS_IS = "as-is"  # a Literal or enum: it can hold only the values the code names
 REDACT = "redact"  # text: every identifying string in it becomes a placeholder
+DROP = "drop"  # an optional field, of any type: always None in the redacted report
 # Any other value is a placeholder from `redact.PLACEHOLDERS`: the field is
 # replaced whole. A field not listed at all is replaced whole with
 # `redact.TEXT` (fail closed); a test walks the models so none is missed.
@@ -235,6 +237,10 @@ DOCTOR_FIELDS: dict[str, Treatment] = {
     "store.last_transaction.label": redact.LABEL,
     "store.last_transaction.state": REDACT,
     "problems": REDACT,
+    # The first run (M13-04) is skipped under --redact (conductor decision,
+    # M13-09): no scan, no question, no snapshot. Dropped here as well, so
+    # a first-run report can never reach a redacted one.
+    "first_run": DROP,
 }
 
 
@@ -249,10 +255,15 @@ def redact_model[M: BaseModel](
 
 def _walk(value: Any, path: str, replace: redact.Redactor, fields: Mapping[str, Treatment]) -> Any:
     if isinstance(value, BaseModel):
-        return {
-            name: _walk(getattr(value, name), f"{path}.{name}" if path else name, replace, fields)
-            for name in type(value).model_fields
-        }
+        out: dict[str, Any] = {}
+        for name in type(value).model_fields:
+            child = f"{path}.{name}" if path else name
+            out[name] = (
+                None
+                if fields.get(child) == DROP
+                else _walk(getattr(value, name), child, replace, fields)
+            )
+        return out
     if isinstance(value, Enum):
         treatment = fields.get(path, redact.TEXT)
         return value if treatment == AS_IS else _text(str(value.value), treatment, replace)

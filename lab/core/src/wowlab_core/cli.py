@@ -9,6 +9,11 @@ the plan and ask before writing unless `--yes` is given. Nothing here writes a f
 snapshot store, the game-data cache and saved looks are written by `snapshot`,
 `gamedata` and `lookstore`, under the user data directory (L1).
 
+`doctor` on a first run (the store holds no snapshot of the install found)
+says what wowlab will and will not do, offers a first snapshot into the
+store and verifies it (`firstrun`, §15.2, M13-04): it asks only when input
+is a terminal, `--yes` accepts, and `--json` never asks.
+
 Exit codes: 0 ok, 1 error, 2 usage (including "more than one flavor, pick
 one with --flavor"), 3 refused by the write gate (any `guard.GuardError`:
 client running or unknown, a path outside the allowlist, the store busy, a
@@ -114,6 +119,7 @@ from wowlab_core import (
     addoninstall,
     combatlog,
     doctorredact,
+    firstrun,
     gamedata,
     guard,
     install,
@@ -1012,6 +1018,9 @@ class DoctorReport(_Out):
     client: ClientReport | None
     store: StoreReport
     problems: list[str]
+    # Present on a first run only: the store held no snapshot of this install
+    # (M13-04, `wowlab_core.firstrun`).
+    first_run: firstrun.FirstRunReport | None = None
 
 
 # The CVars that decide whether the server may replace local binds, macros
@@ -1141,7 +1150,13 @@ def _store_report() -> StoreReport:
     )
 
 
-def _doctor(root: Path | None, offline: bool) -> DoctorReport:
+def _doctor(
+    root: Path | None,
+    offline: bool,
+    on_found: Callable[[install.Install | None], None] | None = None,
+) -> DoctorReport:
+    """The doctor report. `on_found` is called once discovery has finished
+    (with None when no install was found), before any network request."""
     problems: list[str] = []
     inst: install.Install | None = None
     found_by: str | None = None
@@ -1166,6 +1181,8 @@ def _doctor(root: Path | None, offline: bool) -> DoctorReport:
     except install.InstallError as exc:
         install_error = str(exc)
         problems.append(install_error)
+    if on_found is not None:
+        on_found(inst)
 
     flavors: list[DoctorFlavor] = []
     client: ClientReport | None = None
@@ -1236,6 +1253,8 @@ def _print_doctor(report: DoctorReport) -> None:
             for unchecked in report.locations.could_not_check:
                 _say(f"  could not check: {unchecked.location} ({unchecked.reason})")
             _say(f"  Pass --root, or set {install.ENV_ROOT}, to name the install folder.")
+        for line in firstrun.pointing_lines():
+            _say(line)
     for f in report.flavors:
         version = f.version or "no version in .build.info"
         _say(f"Flavor {f.folder}: product {f.product or '(none)'}, version {version}")
@@ -1305,6 +1324,94 @@ def _doctor_redacted(root: Path | None, offline: bool, names: list[str]) -> Doct
         raise CliError(str(exc)) from None
 
 
+def _interactive() -> bool:
+    """True when a first run may ask: input is a terminal. Tests replace it."""
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except (OSError, ValueError):
+        return False
+
+
+def _ask(question: str) -> bool:
+    """A yes/no question on stderr; no answer (end of input) is a no."""
+    try:
+        return typer.confirm(_safe(question), default=False, err=True)
+    except typer.Abort:
+        _note("")
+        return False
+
+
+def _choose_flavor(labels: Sequence[str]) -> int | None:
+    """Which of several flavors to snapshot: each is listed on stderr with its
+    number, product code and version; an empty answer or end of input is none."""
+    for n, flavor_label in enumerate(labels, 1):
+        _say_err(f"  {n}) {flavor_label}")
+    question = f"Snapshot which flavor? Enter 1 to {len(labels)}, or nothing for none"
+    while True:
+        try:
+            answer = typer.prompt(question, default="", show_default=False, err=True)
+        except typer.Abort:
+            _note("")
+            return None
+        answer = str(answer).strip()
+        if not answer:
+            return None
+        if answer.isdecimal() and 1 <= int(answer) <= len(labels):
+            return int(answer) - 1
+        _say_err(f"Not a number from 1 to {len(labels)}: {answer}")
+
+
+def _client_descriptions(inst: install.Install) -> list[str]:
+    """The client processes `doctor` finds, one short description each."""
+    out: list[str] = []
+    for p in _client_report(inst).processes:
+        what = p.name or (p.exe.name if p.exe else "?")
+        where = f" in {p.flavor_folder}" if p.flavor_folder else ""
+        out.append(f"{what}, pid {p.pid}{where}")
+    return out
+
+
+def _first_run(
+    inst: install.Install | None,
+    store: snapshot.SnapshotStore,
+    flavor: str | None,
+    yes: bool,
+    json_out: bool,
+    say: Callable[[str], None],
+) -> firstrun.FirstRunReport:
+    """The first-run section of `doctor` (`firstrun.run`): every line through
+    `say` (the same callable the intro used; nothing with --json), and a
+    question only when input is a terminal and neither --json nor --yes is
+    given."""
+    chosen = _select_flavor(inst, flavor) if inst is not None and flavor is not None else None
+    asking = not json_out and not yes and _interactive()
+    if not json_out:
+        say("")
+
+    def running(f: install.Flavor) -> bool | None:
+        assert inst is not None
+        return _client_running(inst, f)
+
+    def names() -> list[str]:
+        return _client_descriptions(inst) if inst is not None else []
+
+    return firstrun.run(
+        inst,
+        store=store,
+        chosen=chosen,
+        yes=yes,
+        client_running=running,
+        say=say,
+        choose=_choose_flavor if asking else None,
+        confirm=_ask if asking else None,
+        clients=names,
+    )
+
+
+def _no_text(_line: str) -> None:
+    """`say` with --json: the first-run text is not printed."""
+
+
 @app.command()
 @_handled
 def doctor(
@@ -1313,6 +1420,23 @@ def doctor(
         bool,
         typer.Option("--offline", help="Do not ask wago.tools whether each version is listed."),
     ] = False,
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "--yes",
+            "-y",
+            help="On a first run, take the offered first snapshot without asking "
+            "(with several flavors, name one with --flavor).",
+        ),
+    ] = False,
+    flavor: Annotated[
+        str | None,
+        typer.Option(
+            "--flavor",
+            help="On a first run, the flavor folder to snapshot. Implied when the "
+            "install has only one.",
+        ),
+    ] = None,
     json_out: JsonOpt = False,
     redact: Annotated[
         bool,
@@ -1331,17 +1455,69 @@ def doctor(
         ),
     ] = None,
 ) -> None:
-    """Install, flavors, versions, whether the client runs, store health. JSON: DoctorReport."""
+    """Install, flavors, versions, whether the client runs, store health. JSON: DoctorReport.
+
+    On a first run (the snapshot store holds no snapshot of this install) it
+    also says what wowlab will and will not do, shows what a first snapshot
+    would hold (size, an estimated time, links, sync folders), offers one
+    (asking when input is a terminal; --yes accepts; --json never asks),
+    takes it into wowlab's own store, never into the install, verifies the
+    store, and ends with how to undo.
+
+    With --redact (or --redact-name) the first run is skipped: no intro, no
+    scan, no question, no snapshot, and `first_run` is null; --yes and
+    --flavor are refused with it (M13-09)."""
     if redact or redact_name:
+        if yes or flavor is not None:
+            raise CliError(
+                "--redact skips the first run, so --yes and --flavor do nothing with it; "
+                "run `wowlab doctor` without --redact to take a first snapshot",
+                EXIT_USAGE,
+            )
         report = _doctor_redacted(root, offline, redact_name or [])
-    else:
-        report = _doctor(root, offline)
+        if json_out:
+            _emit(report)
+        else:
+            _print_doctor(report)
+        if report.problems:
+            raise typer.Exit(EXIT_ERROR)
+        return
+    store = snapshot.SnapshotStore()
+    found: list[install.Install | None] = []
+    first = False
+    # Every line of the first run, intro included, goes through this one
+    # callable. --redact never reaches here: it skips the first run (above).
+    say: Callable[[str], None] = _no_text if json_out else _say
+
+    def on_found(inst: install.Install | None) -> None:
+        nonlocal first
+        found.append(inst)
+        if inst is not None and flavor is not None:
+            _select_flavor(inst, flavor)  # a bad --flavor fails before any request
+        first = firstrun.is_first_run(store, inst)
+        if first and not json_out:
+            for line in firstrun.intro_lines(offline=offline, store_path=store.path):
+                say(line)
+            say("")
+
+    report = _doctor(root, offline, on_found)
+    if not json_out:
+        _print_doctor(report)
+    if first:
+        result = _first_run(found[0], store, flavor, yes, json_out, say)
+        problems = list(report.problems)
+        if result.outcome == "failed":
+            problems.append(f"first snapshot: {result.error}")
+        report = report.model_copy(update={"first_run": result, "problems": problems})
+    # The report is complete here, first run included, before it is printed.
     if json_out:
         _emit(report)
-    else:
-        _print_doctor(report)
+    if report.first_run is not None and report.first_run.refused:
+        raise typer.Exit(EXIT_REFUSED)
     if report.problems:
         raise typer.Exit(EXIT_ERROR)
+    if report.first_run is not None and report.first_run.outcome == "choose_flavor":
+        raise typer.Exit(EXIT_USAGE)
 
 
 # ─── install show ────────────────────────────────────────────────────────────
@@ -3584,24 +3760,20 @@ def snap_create(
             EXIT_USAGE,
         )
     inst, chosen, lay = _open(root, flavor)
-    subtrees = [f"{chosen.folder}/{s}" for s in lay.snapshot_subtrees(screenshots=screenshots)]
     running = _client_running(inst, chosen)
-    store = snapshot.SnapshotStore()
-    # A store that is an ancestor of the install is outside every install, so
-    # the gate would create it and its `lock` before `create` refused the
-    # overlap (exit 1). Refuse it first, with nothing created (M10-19).
-    store.refuse_holding(Path(inst.root))
-    # The first create makes the store; guard refuses one inside any install
-    # before creating anything (L1), then holds its lock like every later one.
-    with guard.store_lock(store.path, create=True):
-        manifest = store.create(
-            Path(inst.root),
-            subtrees,
-            label=message,
-            flavor_folder=chosen.folder,
-            flavor_version=chosen.version,
-            client_running=running,
-        )
+    # The one sequence a first run of `doctor` uses too (M13-04): refuse a
+    # store that holds the install with nothing created (M10-19), then take
+    # the store lock, which refuses a store inside any install before
+    # creating anything (L1), then capture.
+    manifest = firstrun.snapshot_flavor(
+        snapshot.SnapshotStore(),
+        inst,
+        chosen,
+        lay,
+        label=message,
+        screenshots=screenshots,
+        client_running=running,
+    )
     if running is not False:
         _note(
             "wowlab could not confirm the client was closed: SavedVariables on disk are as of "

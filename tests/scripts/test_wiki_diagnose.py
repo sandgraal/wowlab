@@ -80,7 +80,7 @@ def test_constructed_the_result_and_counts_are_printed(tmp_path: Path) -> None:
         {
             "type": "system",
             "subtype": "init",
-            "apiKeySource": "ANTHROPIC_API_KEY",
+            "apiKeySource": "OAUTH_SOURCE_MARKER",
             "cwd": WORKSPACE,
         },
         _result(result="API Error: 400 prompt is too long"),
@@ -91,7 +91,19 @@ def test_constructed_the_result_and_counts_are_printed(tmp_path: Path) -> None:
     assert "API Error: 400 prompt is too long" in summary
     assert "subtype `success`, is_error `true`, num_turns `16`" in summary
     # Only the extract: nothing from the init message.
-    assert "apiKeySource" not in log + summary and "ANTHROPIC" not in log + summary
+    assert "apiKeySource" not in log + summary and "OAUTH_SOURCE_MARKER" not in log + summary
+
+
+def test_constructed_a_usage_limit_result_is_diagnosed(tmp_path: Path) -> None:
+    # Owner decision 2026-10-14: with the subscription token and no API
+    # preflight, a usage limit ends the Claude step with is_error:true and the
+    # limit message as its result text (Claude Code's error reference, "You've
+    # hit your session limit"). The diagnosis must name it.
+    text = "You've hit your session limit · resets 3:45pm"
+    log, summary = _run(tmp_path, [_result(result=text, num_turns=1)])
+    assert "is_error: true" in log
+    assert text in log
+    assert text in summary
 
 
 def test_constructed_an_error_subtype_prints_its_errors(tmp_path: Path) -> None:

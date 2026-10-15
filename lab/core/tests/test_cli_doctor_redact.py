@@ -47,7 +47,7 @@ from test_cli import (
     run,
 )
 
-from wowlab_core import cli, doctorredact, guard, install, redact, snapshot
+from wowlab_core import cli, doctorredact, firstrun, guard, install, redact, snapshot
 
 PLANTED_ACCOUNT = "PROUDMOORE1"
 PLANTED_REALM = "Area 52"
@@ -372,12 +372,90 @@ def test_constructed_log_tracebacks_and_warnings_are_redacted(
     assert [str(w.message) for w in shown if PLANTED_CHARACTER in str(w.message)] == []
 
 
+# ─── the first run is skipped under --redact (conductor decision, M13-09) ────
+
+FIRST_RUN_TEXT = ("First run:", "first snapshot", "wowlab's own store", "`wowlab undo`")
+
+
+def _no_first_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A terminal that could be asked, and a first run that fails loudly if
+    any part of it is reached."""
+
+    def reached(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("the first run was reached under --redact")
+
+    monkeypatch.setattr(cli, "_interactive", lambda: True)
+    for name in ("is_first_run", "intro_lines", "scan_flavor", "run"):
+        monkeypatch.setattr(firstrun, name, reached)
+    monkeypatch.setattr(cli.typer, "confirm", reached)
+    monkeypatch.setattr(cli.typer, "prompt", reached)
+
+
+def test_a_fresh_store_is_a_first_run_without_redact(root: Path) -> None:
+    # The fixture install with an empty store: without --redact, `doctor`
+    # runs the first run, so its absence below proves something.
+    assert "First run:" in _text()
+    _, report = _json()
+    assert report.first_run is not None
+
+
+def test_redact_on_a_fresh_store_skips_the_first_run(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _no_first_run(monkeypatch)
+    text = _text("--redact")
+    for phrase in FIRST_RUN_TEXT:
+        assert phrase not in text, phrase
+    assert f"WTF/Account/{redact.ACCOUNT}/config-cache.wtf" in text  # the report itself
+    raw, report = _json("--redact")
+    assert report.first_run is None
+    assert json.loads(raw)["first_run"] is None
+    assert not snapshot.SnapshotStore().path.exists(), "no snapshot, not even the store"
+
+
+def test_redact_name_alone_skips_the_first_run(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _no_first_run(monkeypatch)
+    _, report = _json("--redact-name", NAMED_GUILD)
+    assert report.first_run is None
+    assert not snapshot.SnapshotStore().path.exists()
+
+
+@pytest.mark.parametrize(
+    "extra", [("--redact", "--yes"), ("--redact", "-y"), ("--redact", "--flavor", FLAVOR),
+              ("--redact-name", NAMED_GUILD, "--yes")]
+)  # fmt: skip
+def test_redact_with_yes_or_flavor_is_a_usage_error(
+    root: Path, monkeypatch: pytest.MonkeyPatch, extra: tuple[str, ...]
+) -> None:
+    _no_first_run(monkeypatch)
+    result = run("doctor", "--offline", *extra)
+    assert result.exit_code == cli.EXIT_USAGE, (result.stdout, result.stderr)
+    assert "--redact skips the first run" in _plain(result.stderr)
+    assert result.stdout == ""
+    assert not snapshot.SnapshotStore().path.exists()
+
+
+def test_constructed_a_first_run_report_is_dropped_by_the_field_table(root: Path) -> None:
+    # Fail closed: even a report that carries a first run loses it whole.
+    _, report = _json("--yes")
+    assert report.first_run is not None and report.first_run.snapshot is not None
+    out = doctorredact.redact_model(report, redact.Redactor(), doctorredact.DOCTOR_FIELDS)
+    assert out.first_run is None
+
+
 def _string_fields(model: type[BaseModel], prefix: str = "") -> dict[str, bool]:
     """Every field of `model`, recursively, that can hold text: its dotted
     path, and whether it can hold only values the code names (Literal, enum)."""
     out: dict[str, bool] = {}
     for name, info in model.model_fields.items():
-        _annotation(info.annotation, f"{prefix}{name}", out)
+        path = f"{prefix}{name}"
+        if doctorredact.DOCTOR_FIELDS.get(path) == doctorredact.DROP:
+            # Dropped whole (None in the redacted report): what is inside
+            # it needs no treatment, but the field must accept None.
+            assert type(None) in typing.get_args(info.annotation), f"{path}: cannot be None"
+            out[path] = False
+            continue
+        _annotation(info.annotation, path, out)
     return out
 
 
@@ -410,7 +488,12 @@ def test_every_text_field_of_the_doctor_report_has_a_declared_treatment() -> Non
     )
     for path, closed in fields.items():
         treatment = doctorredact.DOCTOR_FIELDS[path]
-        assert treatment in (doctorredact.AS_IS, doctorredact.REDACT, *redact.PLACEHOLDERS), path
+        assert treatment in (
+            doctorredact.AS_IS,
+            doctorredact.REDACT,
+            doctorredact.DROP,
+            *redact.PLACEHOLDERS,
+        ), path
         if treatment == doctorredact.AS_IS:
             assert closed, f"{path}: only a Literal or enum field may be printed as it is"
 
