@@ -118,6 +118,7 @@ from wowlab_core import (
     __version__,
     addoninstall,
     combatlog,
+    doctorredact,
     firstrun,
     gamedata,
     guard,
@@ -1309,6 +1310,20 @@ def _print_doctor(report: DoctorReport) -> None:
     _say("  (`wowlab snap verify` re-hashes every stored object)")
 
 
+def _doctor_redacted(root: Path | None, offline: bool, names: list[str]) -> DoctorReport:
+    """`_doctor` through `doctorredact` (M13-09): every string redacted before it is printed."""
+    try:
+        extra = doctorredact.check_names(names)
+    except ValueError as exc:
+        raise CliError(str(exc), EXIT_USAGE) from None
+    try:
+        return doctorredact.redacted(
+            lambda: _doctor(root, offline), root, extra, doctorredact.DOCTOR_FIELDS
+        )
+    except doctorredact.RedactedError as exc:
+        raise CliError(str(exc)) from None
+
+
 def _interactive() -> bool:
     """True when a first run may ask: input is a terminal. Tests replace it."""
     try:
@@ -1423,6 +1438,22 @@ def doctor(
         ),
     ] = None,
     json_out: JsonOpt = False,
+    redact: Annotated[
+        bool,
+        typer.Option(
+            "--redact",
+            help="Output to paste into an issue: character, realm and account names, BattleTags, "
+            "GUIDs, email addresses, your login and computer names, your home folder and journal "
+            "labels become placeholders.",
+        ),
+    ] = False,
+    redact_name: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--redact-name",
+            help="Another name to replace, such as your guild's (repeatable). Implies --redact.",
+        ),
+    ] = None,
 ) -> None:
     """Install, flavors, versions, whether the client runs, store health. JSON: DoctorReport.
 
@@ -1431,12 +1462,31 @@ def doctor(
     would hold (size, an estimated time, links, sync folders), offers one
     (asking when input is a terminal; --yes accepts; --json never asks),
     takes it into wowlab's own store, never into the install, verifies the
-    store, and ends with how to undo."""
+    store, and ends with how to undo.
+
+    With --redact (or --redact-name) the first run is skipped: no intro, no
+    scan, no question, no snapshot, and `first_run` is null; --yes and
+    --flavor are refused with it (M13-09)."""
+    if redact or redact_name:
+        if yes or flavor is not None:
+            raise CliError(
+                "--redact skips the first run, so --yes and --flavor do nothing with it; "
+                "run `wowlab doctor` without --redact to take a first snapshot",
+                EXIT_USAGE,
+            )
+        report = _doctor_redacted(root, offline, redact_name or [])
+        if json_out:
+            _emit(report)
+        else:
+            _print_doctor(report)
+        if report.problems:
+            raise typer.Exit(EXIT_ERROR)
+        return
     store = snapshot.SnapshotStore()
     found: list[install.Install | None] = []
     first = False
     # Every line of the first run, intro included, goes through this one
-    # callable, so a later pass (redaction, M13-09) can wrap it in one place.
+    # callable. --redact never reaches here: it skips the first run (above).
     say: Callable[[str], None] = _no_text if json_out else _say
 
     def on_found(inst: install.Install | None) -> None:
