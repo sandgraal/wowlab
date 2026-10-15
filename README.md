@@ -1,8 +1,4 @@
 <p align="center">
-  <img src="docs/assets/wowlab-hero.svg" alt="wowlab: your Warcraft install, understood. Explain, snapshot, undo, local only." width="100%">
-</p>
-
-<p align="center">
   <a href="https://github.com/sandgraal/wowlab/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/sandgraal/wowlab/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python 3.12" src="https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white">
   <img alt="Local only, uploads nothing" src="https://img.shields.io/badge/local--only-uploads%20nothing-2ea44f">
