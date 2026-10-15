@@ -8,6 +8,9 @@ Blocks, with an explanation the agent can act on:
     `--force-with-lease` is allowed
   * any push whose destination is main (`main`, `HEAD:main`, `x:main`,
     `refs/heads/main`, `--all`), deleting main, refspecs containing variables
+  * any push of a tag (`--tags`, `--follow-tags`, `refs/tags/…`, a `v<digit>…`
+    refspec) and `gh release create|edit|upload|delete|delete-asset`: a public
+    release is the owner's action (ADR-0031, M13-11), added 2026-10-15
   * `gh pr merge --admin`; `gh api` with a mutating method (`-X PUT`, `-XPUT`,
     `--method=DELETE`) or a GraphQL mutation other than the two review-thread ones
   * recursive+force `rm`, `find -delete`, `git clean -x` outside scratch dirs
@@ -51,6 +54,16 @@ from _common import (
 
 EVENT = "PreToolUse"
 _ALLOWED_MUTATIONS = ("addPullRequestReviewThreadReply", "resolveReviewThread")
+_RELEASE_SUBCOMMANDS = ("create", "edit", "upload", "delete", "delete-asset")
+_RELEASE_ONLY_OWNER = (
+    "publishing a release (pushing a tag or `gh release …`) is the owner's action "
+    "(ADR-0031, M13-11); ask the owner to run it."
+)
+
+
+def _is_tag_ref(dst: str) -> bool:
+    """A push destination that names a tag: refs/tags/… or a release-shaped v<digit>…."""
+    return dst.startswith("refs/tags/") or (len(dst) > 1 and dst[0] == "v" and dst[1].isdigit())
 
 
 def _refspec_dst(spec: str) -> tuple[str, bool]:
@@ -85,6 +98,8 @@ def _check_git(seg: list[str]) -> str | None:
             return (
                 "git push --all/--mirror can publish main; push the one branch you are working on."
             )
+        if "--tags" in args or "--follow-tags" in args:
+            return _RELEASE_ONLY_OWNER
         positional = [a for a in args if not a.startswith("-")]
         if ("--delete" in args or short_flag_present(args, "d")) and "main" in positional:
             return "refusing to delete main."
@@ -92,6 +107,8 @@ def _check_git(seg: list[str]) -> str | None:
             if "$" in spec:
                 return "variables in a push refspec cannot be checked; use literal refspecs."
             dst, force = _refspec_dst(spec)
+            if _is_tag_ref(dst) or _is_tag_ref(spec.lstrip("+").split(":", 1)[0]):
+                return _RELEASE_ONLY_OWNER
             if force:
                 return "'+refspec' is a force-push; use --force-with-lease."
             if dst == "main":
@@ -112,6 +129,8 @@ def _check_gh(seg: list[str]) -> str | None:
     if i is None:
         return None
     args = seg[i + 1 :]
+    if args[:1] == ["release"] and len(args) > 1 and args[1] in _RELEASE_SUBCOMMANDS:
+        return _RELEASE_ONLY_OWNER
     if args[:2] == ["pr", "merge"] and "--admin" in args:
         return "--admin bypasses branch protection; satisfy the required checks and threads."
     if args[:1] == ["api"]:
