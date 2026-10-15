@@ -249,6 +249,12 @@ The constraints that shape it:
 
 **Amendment (2026-09-30):** `--yes` marks a command that asks before changing files, not only one that writes into an install. On `main` there are seven: `snap restore`, `undo`, `profile apply`, `addon install`, `addon remove`, `sv merge` and `snap gc`. `snap gc` changes only the Lab's snapshot store; it runs under `guard.store_lock`, not a `guard` transaction. The UI's confirm flow applies to all seven, which is what the decision above intends. "Every write is a CLI write command" means every change the UI causes, to an install or to the store. Found while checking M12-13 against the Click tree. The decision itself is unchanged.
 
+**Amendment (2026-10-15, Accepted 2026-10-15 — owner decision; the status edit was made by the conductor on the owner's explicit instruction):** On 2026-10-14 the owner pulled `wowlab ui` forward from Wave 5 (M14) into Wave 4 (M13) and put it in v0.1. Its first view is the install explorer (`docs/LAB_PLAN.md` §15.6). The UI ships in two stages:
+- **v0.1 (M13-21 to M13-26):** read-only commands only. The server, the token, Host and Origin checks, the fixed argument vector and the parity test are as decided above. Every leaf command that declares `--yes`, and `ui` itself, sits in the parity test's exclusion list, with the reason "confirm flow: M14" for the `--yes` commands. The set is derived from the Click tree, not from a count. On 2026-10-15 it holds eight commands: the seven named in the amendment above and `doctor`, whose `--yes` (from M13-04) takes a first snapshot into the store. While they are excluded, the server refuses to run them.
+- **Wave 5 (M14):** the confirm flow for those `--yes` commands, after which they leave the exclusion list, plus the embedded looks, talents and character pages.
+
+The decision itself is unchanged. This amendment only stages it, so that the first public build of a localhost server has no path that changes files.
+
 ---
 
 ## ADR-0030 — Languages: one per purpose, each admitted by an ADR

@@ -126,16 +126,16 @@ Read-only. Adds `combatlog.cast_counts`: the player's own `SPELL_CAST_SUCCESS` e
 ## [ ] M13-10 — Player-facing README
 **Size:** S · **Depends on:** M13-03
 
-The README's first screen: what wowlab is in three sentences; the trust model of ADR-0031; one install line (the one M13-03 tested, word for word); the three commands worth running first; a link to the wiki. Platform status stated by ADR-0031's rule: "untested on <platform>" until M13-02's acceptance holds for it. The rest of the README may move to the wiki.
+The README's first screen: what wowlab is in three sentences; the trust model of ADR-0031; one install line (the one M13-03 tested, word for word); the three commands worth running first; a link to the wiki. *Amended 2026-10-15:* once M13-25 has merged, one of those three is `wowlab ui`, the explorer being the way in for a player. Platform status stated by ADR-0031's rule: "untested on <platform>" until M13-02's acceptance holds for it. The rest of the README may move to the wiki.
 
 **Acceptance:** the install line is byte-identical to the one M13-03's acceptance ran; every platform claim matches CI and the recorded human runs; every command named exists in the Click tree; reviewed by `domain-reviewer` (claims about the game and its files) and `code-reviewer`. User-facing: the wiki's Home follows.
 
 ---
 
 ## [ ] M13-11 — First public release, v0.1
-**Size:** S · **Depends on:** M13-02, M13-03, M13-04, M13-09, M13-10, M13-14 · **owner** (pushes the tag)
+**Size:** S · **Depends on:** M13-02, M13-03, M13-04, M13-09, M13-10, M13-14, M13-21, M13-22, M13-23, M13-24, M13-25, M13-26 · **owner** (pushes the tag)
 
-Contents: M13-02 to M13-04, M13-09, M13-10, and M13-06 if M13-05 has landed. Not held for M13-08. The conductor drafts the release notes (what is in it, the trust model, platform status, the `--json` models); the owner pushes the tag.
+Contents: M13-02 to M13-04, M13-09, M13-10, M13-21 to M13-26 (the explorer and the first `wowlab ui`; *amended 2026-10-15*, owner decision 2026-10-14), and M13-06 if M13-05 has landed. Not held for M13-08. The conductor drafts the release notes (what is in it, the trust model, platform status, the `--json` models); the owner pushes the tag.
 
 **Acceptance:** the release has the wheel, the sdist and `SHA256SUMS`; the README's install line installs it; the release date is recorded in `docs/handoffs/M13-gate.md` for M13-13.
 
@@ -144,7 +144,7 @@ Contents: M13-02 to M13-04, M13-09, M13-10, and M13-06 if M13-05 has landed. Not
 ## [ ] M13-12 — Wave 4 review
 **Size:** S · **Depends on:** M13-11
 
-The conductor writes `docs/handoffs/M13-review.md` per `docs/LAB_PLAN.md` §11: what shipped, what strangers' reports taught (as data), what slipped to v0.2, and a recommended next wave. Wave 5 is already named (`wowlab ui`, ADR-0029, M14, aimed at v0.2).
+The conductor writes `docs/handoffs/M13-review.md` per `docs/LAB_PLAN.md` §11: what shipped, what strangers' reports taught (as data), what slipped to v0.2, and a recommended next wave. Wave 5 is already named (`wowlab ui`, ADR-0029, M14, aimed at v0.2). Its read-only first stage shipped in v0.1 (§15.6), so the review says what M14 still owes: the confirm flow for the commands that declare `--yes` and the embedded pages.
 
 ---
 
@@ -152,6 +152,166 @@ The conductor writes `docs/handoffs/M13-review.md` per `docs/LAB_PLAN.md` §11: 
 **Size:** S · **Depends on:** M13-11 · **owner** (the decision)
 
 Thirty days after v0.1, the conductor records in `docs/handoffs/M13-gate.md` the counts of `docs/LAB_PLAN.md` §15.4 and the commands that produced them: release-asset downloads, distinct non-owner authors of issues and discussions (bots excluded), and stars. The owner decides: continue public work (at least 50 downloads and at least 5 non-owner issues or discussions, the issue count weighing more) or freeze the public surface and return to personal-lab mode. The conductor does not make the call.
+
+---
+
+# Owner request, 2026-10-14: the install explorer and the first `wowlab ui`
+
+Spec: `docs/LAB_PLAN.md` §15.6. Decision: ADR-0029 and its amendment of 2026-10-15 (accepted by the owner 2026-10-15: v0.1 runs read-only commands only). The owner pulled `wowlab ui` forward from Wave 5 into v0.1, with the explorer as its first view. Every fact the UI shows comes from a CLI `--json` model computed in Python. The JavaScript holds no file-map logic and no game rules (§14.5 D3). User-facing: each ticket's changes reach the wiki's file-map and command pages.
+
+## [ ] M13-21 — `wowlab_core.verdict`: the safe-to-edit answer in core
+**Size:** S · **Depends on:** M13-01
+
+Move the verdict wording out of the CLI (`_edit_words`, `_TIER_WORDS`, `_restorable` in `cli.py`) into a core module, `wowlab_core.verdict`. It returns a Pydantic model, `Verdict{level: gate | no | folder | not_applicable | unclassified, restorable: bool, words: str}`, computed from a file-map entry, its base and the path. The mapping from the Edit cell is fixed:
+- `gate` and `gate (…)` map to `gate`;
+- `no` maps to `no`;
+- `—`, a folder row, maps to `folder`;
+- `n/a` maps to `not_applicable`;
+- `unclassified` means only "no file-map row", the set M13-22's `filemap gaps` lists.
+
+`Explained` gains `verdict`; the JSON change is additive. `explain` and `tree --explain` print from it.
+
+**Acceptance:**
+- The text output of `explain` and `tree --explain` is byte-identical before and after, on the fixture installs.
+- Every `edit` cell in `filemap.toml` maps to exactly one level, and a test fails on a new cell that does not.
+- `--json` validates against the models.
+- `make ci` green.
+- Reviewed by `domain-reviewer` (the wording) and `code-reviewer`.
+
+---
+
+## [ ] M13-22 — The whole install, with file-map gaps
+**Size:** M · **Depends on:** M13-21
+
+`wowlab tree --install` covers the install root (the file map's `root` section) and every flavor folder, not only one. Each item carries `base` and `flavor_folder`.
+
+New `wowlab filemap gaps [--json]` lists every path with no file-map row:
+- grouped under its nearest classified parent;
+- with file counts and bytes;
+- ranked.
+
+The walk is bounded, read-only (L1), never follows a link, and reports `truncated`. A path it cannot read is reported, not fatal. Flavor folders come from discovery (L6).
+
+**Acceptance:**
+- The fixture installs give a stable, committed gap report.
+- Labelled constructed tests cover an unreadable folder, a link, and the bound being hit.
+- `--json` validates against its model.
+- `make ci` green.
+- Reviewed by `domain-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-23 — Per-path detail: snapshot facts, views and hints
+**Size:** S–M · **Depends on:** M13-21
+
+`wowlab explain PATH --json` gains four fields:
+- `stat`: size and modification time.
+- `snapshot`: the latest snapshot holding the path, and whether the live file's hash differs from it. This is read-only, and only the named path is hashed.
+- `views`: the argv of an existing read command that decodes this kind of file (`sv dump …`, `cvar list`, `binds list`, `macros list`, `addons list`). The argv comes from a Python table keyed by file-map entry id; no new decoder is written.
+- `hints`: copyable command text, for example `wowlab snap restore ID --paths P`, which `explain` never runs.
+
+The text output gains a short "In the latest snapshot" line and the hints.
+
+**Acceptance:**
+- Every file-map entry that an existing command decodes has a view.
+- A test checks every view's argv against the Click tree.
+- No hint names a path outside the install, and hints print through `cli._safe`.
+- `make ci` green.
+- Reviewed by `domain-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-24T — `wowlab ui` server: graders
+**Size:** S · **Depends on:** M13-01 · **[TEST]** (test-writer only)
+
+Expected-failure graders, derived from ADR-0029 and its amendment of 2026-10-15 and never from an implementation.
+
+**Binding and request checks.**
+- The server binds `127.0.0.1` only, on a free port.
+- Every request without the token is refused, and the token never appears in a log line.
+- A `Host` other than `127.0.0.1:<port>` or `localhost:<port>` is refused.
+- A cross-origin `Origin` is refused.
+- No CORS header is sent.
+- Every response carries a CSP that allows only the server itself.
+
+**Running commands.**
+- Only leaf commands from the Click tree run.
+- The argv is built only from parameters the command declares:
+  - an unknown parameter is refused;
+  - a value that starts with `-` is passed as a value;
+  - no shell is involved.
+- Each run has a timeout and an output cap.
+- Every leaf command that declares `--yes` (derived from the Click tree, `doctor` included), and `ui` itself, is refused. A dummy `--yes` command planted in the test is refused with no change to the server.
+
+**Static files.** They are served only from the package's templates, and a traversal path is refused.
+
+**Acceptance:** the graders are `xfail(strict=True)` and fail on `main` for the stated reason; reviewed by `security-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-24 — `wowlab_core.ui`: the server, and `wowlab ui`
+**Size:** M · **Depends on:** M13-24T
+
+- `http.server.ThreadingHTTPServer` on `127.0.0.1` at a free port.
+- It opens the browser at the token URL and runs only while the command runs.
+- A JSON endpoint lists the commands, built from the Click tree at start.
+- An endpoint runs one command as a subprocess of the same `wowlab`, with `--json`.
+- The server writes nothing itself.
+- The page shell (HTML, CSS and JavaScript template text, ADR-0027 and ADR-0030) is served from the package.
+
+**Acceptance:**
+- The M13-24T graders are activated by marker deletion only.
+- `make ci` green on Linux, macOS and Windows.
+- Reviewed by `security-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-25 — The explorer view
+**Size:** M · **Depends on:** M13-21, M13-22, M13-23, M13-24
+
+The UI's first view, per §15.6.
+
+**Tree pane.** It is drawn from `tree --install --explain --json`. Every item has a verdict badge whose level and words come from Python. It filters by verdict, by "gaps only", or by text.
+
+**Detail pane.** It is drawn from `explain --json` and shows:
+- what the file is and who writes it, and when;
+- the verdict words and the snapshot facts;
+- the hints, each with a copy button;
+- a Preview button that runs the entry's first view and draws the JSON as a generic, collapsible, read-only tree.
+
+**Gaps tab.** It is drawn from `filemap gaps --json`.
+
+**Rules.**
+- All rendering uses `textContent`.
+- Home paths are shown as `~`.
+- No external request is made.
+
+**Acceptance:**
+- A Python test serves the view and checks the CSP and that no external URL appears.
+- A labelled constructed install holds file and folder names with `</script>`, `<img onerror=…>`, U+2028 and U+202E; they render inert, and the JSON passed through is escaped.
+- The owner's end-to-end check, reported in the PR:
+  - browse;
+  - filter to "no" and to gaps;
+  - preview `Config.wtf` and one SavedVariables file;
+  - copy a hint;
+  - a request without the token is refused.
+- `make ci` green.
+- Reviewed by `security-reviewer`, `domain-reviewer` (the wording a player reads) and `code-reviewer`.
+
+---
+
+## [ ] M13-26 — Generic forms for read commands, and the parity test
+**Size:** S–M · **Depends on:** M13-24
+
+Every other read command gets a form drawn from its declared parameters, run through M13-24, and its JSON is shown in the generic tree view. A parity test in the required `quality` job asserts:
+- every leaf command is reachable in the UI or appears in an exclusion list with a written reason;
+- every command that declares `--yes` (derived from the Click tree, not a count; `doctor` included) is excluded with "confirm flow: M14", until Wave 5;
+- `ui` itself is excluded.
+
+**Acceptance:**
+- A dummy command added in the test appears in the UI with no UI code.
+- `make ci` green.
+- Reviewed by `security-reviewer` and `code-reviewer`.
 
 ---
 
