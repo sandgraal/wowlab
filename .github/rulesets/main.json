@@ -30,7 +30,8 @@
           { "context": "Agent harness (hooks on 3.9 and 3.12, lockfile, workflows) (3.12)" },
           { "context": "Secret scan (gitleaks)" },
           { "context": "SAST (semgrep)" },
-          { "context": "Dependency and config scan (trivy)" }
+          { "context": "Dependency and config scan (trivy)" },
+          { "context": "lab (windows)" }
         ]
       }
     }

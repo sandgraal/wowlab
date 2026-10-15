@@ -6,11 +6,12 @@ on:
   push:
     branches: [main]
 
-# Every job below except `lab (windows)` and `lab (macos)` is a required
-# status check on main, by exact name (see .github/rulesets/main.json). Both
-# came with M13-02 (ADR-0031, docs/LAB_PLAN.md §9 and §15.3 E3); `lab
-# (windows)` becomes required once green on main, and `lab (macos)` counts
-# toward macOS being supported without being required. Renaming a job means
+# Every job below except `lab (macos)` is a required status check on main,
+# by exact name (see .github/rulesets/main.json). `lab (windows)` and
+# `lab (macos)` came with M13-02 (ADR-0031, docs/LAB_PLAN.md §9 and §15.3
+# E3); `lab (windows)` became required on 2026-10-15 (ADR-0014 amendment),
+# and `lab (macos)` counts toward macOS being supported without being
+# required. Renaming a job means
 # changing the ruleset and re-applying it with scripts/bootstrap-github.sh.
 permissions:
   contents: read
@@ -134,9 +135,8 @@ jobs:
   # junctions, case-insensitive name collisions, reserved names, `\\?\` long
   # paths, files held open (docs/LAB_PLAN.md §9; the first run caught the
   # byte-0 lock bug on PR #59). macOS is the owner's platform (§15.3 E3).
-  # Neither is in .github/rulesets/main.json yet: the conductor adds `lab
-  # (windows)` once it is green on main (ADR-0014, ADR-0031); `lab (macos)`
-  # stays non-required. The Linux-only lint, Lua lint and locale steps
+  # `lab (windows)` is in .github/rulesets/main.json (required since
+  # 2026-10-15, ADR-0014, ADR-0031); `lab (macos)` stays non-required. The Linux-only lint, Lua lint and locale steps
   # stay in `quality`.
   lab-desktop:
     name: lab (${{ matrix.name }})

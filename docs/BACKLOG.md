@@ -112,7 +112,7 @@ Steps: (1) check out `main` and the wiki (`WIKI_PUSH_TOKEN`, a fine-grained toke
 
 ---
 
-## [ ] M12-15 — `check_wiki` tests: a new command must not break the real-wiki baselines
+## [x] M12-15 — `check_wiki` tests: a new command must not break the real-wiki baselines
 **Size:** S · **Depends on:** M12-14
 
 Found merging #159 (2026-10-14). The real-wiki baselines in `tests/scripts/test_check_wiki.py` and in the M12-14 review probes run `check_wiki` with the current Click tree against a frozen copy of the wiki (`tests/scripts/fixtures/wiki-a47a7ee`), and expect it to pass. Any PR that adds a leaf command therefore fails CI with "command … is not named or linked on any hand-written page" until someone edits the frozen copy, which then stops being a faithful copy. Wave 4 adds commands (`macros check`, `binds coach`), so this lands on its first feature PR.
@@ -255,6 +255,8 @@ The owner accepts ADR-0031 (or amends it on the plan PR). Then the conductor, in
 
 Bring back the `lab (windows)` job on `windows-latest`, running the Lab suite as it did before 2026-09-30 (`docs/LAB_PLAN.md` §9 amendment; it caught the byte-0 lock bug on PR #59). Fix what it finds: junctions, long paths (`\\?\`), case-insensitive name collisions, `WOWLAB_WOW_ROOT` with spaces in it, files the client holds open. Per `docs/LAB_PLAN.md` §15.3 E3, also add a `macos-latest` run of the same suite. Once the Windows job is green on `main`, the conductor adds its exact name to `.github/rulesets/main.json` and an amendment to ADR-0014, and the owner re-applies the ruleset (`scripts/bootstrap-github.sh`). A fix that changes what `guard.py`, `svmerge.py` or `profiles.py` does is split off as a `T` grader ticket that lands first.
 
+*Status 2026-10-15:* the CI part merged as #173; `lab (windows)` is added to the required checks (ADR-0014 amendment; the owner re-applies the ruleset). Long paths became M13-15T/M13-15. Still owed: the human first run on a real Windows install, recorded as `docs/handoffs/M13-02.md`. The ticket stays open until then.
+
 **Acceptance:** the Windows job is required and green on `main`; each fix has a test that runs on `windows-latest`; after M13-04 merges, a human runs the first-run flow on a real Windows install, and the conductor records it, redacted (M13-09), as `docs/handoffs/M13-02.md`; reviewed by `security-reviewer` (workflow, and any change near `guard`) and `code-reviewer`.
 
 ---
@@ -266,9 +268,11 @@ Bring back the `lab (windows)` job on `windows-latest`, running the Lab suite as
 
 **Acceptance:** a dry run on a pre-release tag produces the release with all three files; `sha256sum -c SHA256SUMS` passes on the downloads; on a clean machine (no clone, a fresh user), the `uv tool install` line that M13-10 will print installs that release, and `wowlab --version` and `wowlab doctor --offline` run; a tag that does not match the version publishes nothing; reviewed by `security-reviewer` (signs off on the permissions and the token's reach) and `code-reviewer`.
 
+*Status 2026-10-15:* the workflow merged as #175, reviewed clean by `security-reviewer` and `code-reviewer`, with a `release` environment (owner approval, no admin bypass) and tag rulesets. #182 added the bundled-addon check to `release_check.py dist`. Still owed, by the owner: run `scripts/bootstrap-github.sh` (rulesets, environment) and `gh api -X PUT repos/sandgraal/wowlab/immutable-releases`, then the pre-release dry run and the clean-machine install. Tag rulesets make a `v*` tag permanent, so pick the dry-run tag name knowing that. Agents can no longer push tags or create releases (#183). The ticket stays open until the dry run.
+
 ---
 
-## [ ] M13-04 — First-run flow
+## [x] M13-04 — First-run flow
 **Size:** M · **Depends on:** M13-01
 
 `docs/INSTALL.md`, and a first-run path in `wowlab doctor` (§15.2): it finds the install, or says exactly how to point it at one (`--root`, `WOWLAB_WOW_ROOT`); it says in plain language what wowlab will and will not do (the trust model of ADR-0031, and that `doctor` asks wago.tools about versions unless `--offline`); it offers a first snapshot, and runs `snap verify` on it. Offering asks when interactive; `--yes` accepts; `--json` never prompts. The snapshot goes to the Lab's store, never into the install. The last line tells the player how to undo. Edge cases the tests must cover: a WTF folder under OneDrive, Dropbox or Syncthing (reported, never refused); a WTF holding symlinks or junctions (never followed, reported); a very large WTF (size and an estimated time are reported before snapshotting); two flavors installed (each listed, the player chooses); the game running (said plainly, behaving as `snap create` does today).
@@ -313,7 +317,7 @@ Read-only. Adds `combatlog.cast_counts`: the player's own `SPELL_CAST_SUCCESS` e
 
 ---
 
-## [ ] M13-09 — Redaction for issue reports
+## [x] M13-09 — Redaction for issue reports
 **Size:** S · **Depends on:** M13-01
 
 `wowlab doctor --redact` prints output safe to paste into an issue: no character, realm, account folder, BattleTag, guild name or absolute home path. The identifier patterns the scrub tool uses move into the package (default `wowlab_core.redact`, §15.2) and `scripts/lab_capture.py` imports them, its behaviour and its refusal tests unchanged. `.github/ISSUE_TEMPLATE/bug.yml` asks for the output of `wowlab doctor --redact` and says "paste this, nothing else".
@@ -356,7 +360,7 @@ Thirty days after v0.1, the conductor records in `docs/handoffs/M13-gate.md` the
 
 # M13 follow-ups found in review (filed 2026-10-15)
 
-## [ ] M13-14 — The lab-addon ships in the wheel
+## [x] M13-14 — The lab-addon ships in the wheel
 **Size:** S · **Depends on:** M13-03
 
 Found in the M13-03 review. `lab/core/pyproject.toml` packaged only `src/wowlab_core`, and `addoninstall.find_source` looked for `lab/addon/WowLab` only in a repository checkout, so `wowlab addon install lab` failed from a release install. Bundle the addon into the package: an sdist force-include into `wowlab_core/_addon/WowLab`, which the wheel built from the sdist carries. `find_source` then uses the checkout first, and otherwise the bundled copy: a real on-disk path only, through the same `_candidate` checks. This changes M11-02's "a checkout and nowhere else" to "a checkout, else the copy bundled in the installed package, nothing else". `scripts/release_check.py dist` asserts that the bundled TOC is in the wheel.
@@ -387,3 +391,12 @@ Make the M13-15T graders pass by using extended-length (`\\?\`) paths for the fi
 Found in the M12-14 security review of #172. The check uses `git status --porcelain`, which does not list ignored paths such as `.venv/` and `__pycache__/`. A planted `.pth` or `.pyc` would run undetected, though that needs a permission bypass first. Compare those paths too (a listing or hash of `.venv` site-packages and every `__pycache__` before and after the Claude step), and make every step that runs repository code after the model depend on that check.
 
 **Acceptance:** a constructed test or static check pins the comparison and the step order; actionlint clean; `make ci` green; reviewed by `security-reviewer`.
+
+---
+
+## [ ] M13-17T — the file-bound memory probe is flaky on macOS runners
+**Size:** S · **Depends on:** — · **[TEST]** (test-writer only)
+
+Found by M13-02. `lab/core/tests/review/test_m10_04_bounded_document_misses_memory_target.py::test_constructed_top_level_assignments_at_the_file_bound_fit_the_rss_target` projected 1769 MiB against its 1536 MiB target on `macos-latest`, then passed on a rerun with no change. Locally it measures a steady 1105 MiB. The projection multiplies the parse's RSS growth by 64, so runner noise is multiplied too. It grades `luadata.py`, which is load-bearing, so only test-writer may change it. Make the measurement robust (for example, take several samples and use the minimum, or measure a larger fraction of the bound so the multiplier is smaller) without weakening the 1536 MiB target.
+
+**Acceptance:** the probe passes 10 consecutive `lab (macos)` runs and still fails against a constructed parser that holds twice the memory; `make ci` green; reviewed by `code-reviewer`.

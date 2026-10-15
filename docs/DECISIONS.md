@@ -76,6 +76,8 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 **Superseded by (in part):** ADR-0031 (accepted 2026-10-14) brings the `lab (windows)` job back and makes it a required check once it is green (M13-02). The list of required checks above then gains it.
 
+**Amendment (2026-10-15):** `lab (windows)` was green on `main` with M13-02 (#173), so it is added to the required checks in `.github/rulesets/main.json`; the owner re-applies the ruleset with `scripts/bootstrap-github.sh`. A `lab (macos)` job runs too and is not required (`docs/LAB_PLAN.md` §15.3 E3). The Windows job takes about 20 minutes, which every PR now waits on.
+
 ---
 
 ## ADR-0019 — wowlab is a local-only personal toolchain
