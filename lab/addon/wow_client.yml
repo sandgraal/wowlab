@@ -158,3 +158,32 @@ globals:
   GetProfessionInfo:
     args:
       - type: number
+
+  # --- Spellbook, action bars, bindings (schema 3, M13-05) --------------------
+  # Each is asked only out of combat (InCombatLockdown first). GetMacroInfo is
+  # asked only whether an action slot's id names a macro: its name and body
+  # are never stored (tests/addon/test_lab_addon.py pins the one use).
+  InCombatLockdown:
+    args: []
+  C_SpellBook.GetNumSpellBookSkillLines:
+    property: read-only
+  C_SpellBook.GetSpellBookSkillLineInfo:
+    property: read-only
+  C_SpellBook.GetSpellBookItemInfo:
+    property: read-only
+  C_SpellBook.GetSpellBookItemName:
+    property: read-only
+  Enum.SpellBookSpellBank:
+    any: true
+  GetActionInfo:
+    property: read-only
+  GetMacroInfo:
+    property: read-only
+  GetCurrentBindingSet:
+    property: read-only
+  GetNumBindings:
+    property: read-only
+  GetBinding:
+    property: read-only
+  GetBindingKey:
+    property: read-only

@@ -1532,7 +1532,8 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   chat line listing the valid keys. Section keys: `gear`, `spec`,
   `talents.class`, `talents.legacy`, `customization`,
   `collections.mounts`, `collections.toys`, `collections.pets`,
-  `collections.appearances`, `currencies`, `professions`. The list is
+  `collections.appearances`, `currencies`, `professions` (and, since schema
+  3, `spellbook`, `actionbars`, `bindings`). The list is
   saved in `WowLabCharDB`, per character, as `skip = { "<section key>", ... }` (strings in
   section order, left out when empty; the reader keeps it as a list of
   strings and ignores a key it does not know) and read at `ADDON_LOADED`,
@@ -1665,9 +1666,48 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   open until the owner's capture in `lab/addon/README.md` ("M11-29 capture
   step").
 
+  Amended 2026-10-14 (M13-05, with M11-35 folded in; §15.2): schema 3.
+  `WowLabCharDB` and `WowLabDB` are written with `schema = 3`, and schema 3
+  is schema 2 plus one pair of keys on `talents.legacy` and three sections.
+  The reader reads schema 1 and 2 files exactly as before and refuses a
+  schema it does not know. (1) `talents.legacy` holds exactly one of
+  `left_out_config`, the active class config id the addon left out of
+  `configs` at that gather (a config with that id is never listed), and
+  `left_out_config_absent`, why no id was left out
+  (`C_ClassTalents.GetActiveConfigID` missing, raised an error, returned
+  nil, or returned no number; called through `pcall` directly). (2)
+  `spellbook`: the player's spellbook (the bank is the client's
+  `Enum.SpellBookSpellBank.Player`), walked by skill line through
+  `C_SpellBook`: per item its slot, skill line, raw item type, action id,
+  spell id, `spell_name` and `subtext` (the subtext is where a rank shows,
+  when the client gives one), and the passive and off-spec flags; skill-line
+  names are not read. (3) `actionbars`: slots 1 to 180 (the addon's own
+  bound: twelve on each of the fifteen bars a Retail client numbers) through
+  `GetActionInfo`, each filled slot with its type, its id when the id is a
+  number, and its subtype; a macro slot keeps the macro id only, never the
+  macro's name or body, and `GetMacroInfo` is asked only whether the id
+  names a macro (its count is kept, nothing else); an equipment-set slot,
+  whose id is the set's name, keeps no id. (4) `bindings`: per binding
+  command `GetBinding` lists that is a plain upper-case name, the keys
+  `GetBindingKey` returns now (to cross-check `bindings-cache.wtf`), and the
+  raw `GetCurrentBindingSet` value **[verify]**; a command with text after
+  the name (`MACRO <name>` holds text the owner typed) is counted, never
+  asked about or stored. The three new sections read only out of combat
+  (ADR-0026, GLOSSARY "Secret value"): each gather asks `InCombatLockdown`
+  first and reads nothing when the player is in combat or the client cannot
+  say, writing the section absent with that reason, and each registers
+  `PLAYER_REGEN_ENABLED` to gather again when combat ends. forever-addon-kit
+  lists the names for 69893 and presence proves nothing, so each of the three
+  records `probes`: per API it asks, whether the function was there and how
+  many calls were made, raised an error and answered (the way `spec.api`
+  names the API that answered). Every new call sits in a section `/wowlab
+  skip` switches off (section keys `spellbook`, `actionbars`, `bindings`),
+  and every new API is **[verify]** until the owner's schema-3 capture
+  (`docs/handoffs/M13-05.md`).
+
   Schema 1 may change after M11-03. Edits from the capture land before
   M11-04 starts; after M11-04 merges, any change is a new schema (schema 2
-  is M11-29's, above; the next change is schema 3).
+  is M11-29's and schema 3 is M13-05's, above; the next change is schema 4).
 - **Install** `wowlab addon install lab` / `wowlab addon remove lab`: copies
   the addon into `Interface/AddOns/WowLab/` through a `guard` transaction
   (client closed, snapshot first, undoable), filling the TOC's
@@ -1742,7 +1782,7 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   addon does less than that wording claims. It leaves the active class
   config out by id, whatever its type, but only when
   `C_ClassTalents.GetActiveConfigID` gave an id. `talents.legacy` does not
-  record the id it left out. `talents.class` records the active class
+  record the id it left out (schema 3 does: the M13-05 amendment above). `talents.class` records the active class
   config as of its own gather, which may be a different moment, so a class
   config missing from the list proves nothing; one whose id is in the list
   shows the addon did not leave it out, a check the reader does not make

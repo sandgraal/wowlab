@@ -2,7 +2,7 @@
 --
 -- Runs in the game client only; the Lab never loads or runs this file. It
 -- gathers each section during the session (on entering the world and on the
--- section's change events) and writes the versioned tables (schema 2) into
+-- section's change events) and writes the versioned tables (schema 3) into
 -- its SavedVariables at PLAYER_LOGOUT. `/wowlab save` refreshes the tables in
 -- memory; the client writes the file at the next /reload, logout or clean
 -- exit, and a crash writes nothing. Only three things are carried from one
@@ -32,11 +32,15 @@ local ADDON_NAME, ns = ...
 
 -- Schema 2 (M11-29): schema 1 plus `events_received` and
 -- `chr_model_id_absent` on customization (docs/LAB_PLAN.md §13.1: after
--- M11-04, any change is a new schema). Nothing read back at ADDON_LOADED
--- looks at the schema (the probe, the skip list and the carried customization
--- record are read by key), so a schema-1 file's probe count keeps rising
--- across the change, and the next write is schema 2 for both variables.
-ns.SCHEMA = 2
+-- M11-04, any change is a new schema). Schema 3 (M13-05): schema 2 plus the
+-- config id talents.legacy left out (`left_out_config` or
+-- `left_out_config_absent`, M11-35) and three sections, `spellbook`,
+-- `actionbars` and `bindings` (Actions.lua). Nothing read back at
+-- ADDON_LOADED looks at the schema (the probe, the skip list and the carried
+-- customization record are read by key), so an older file's probe count keeps
+-- rising across the change, and the next write is schema 3 for both
+-- variables.
+ns.SCHEMA = 3
 
 -- Sections, in the order they register (the file order in WowLab.toc).
 ns.sections = {}

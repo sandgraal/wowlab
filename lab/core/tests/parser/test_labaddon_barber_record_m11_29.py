@@ -199,21 +199,21 @@ def test_constructed_real_capture_relabelled_schema_2_reads_the_same(name: str) 
 # ─── schema numbers ──────────────────────────────────────────────────────────
 
 
-def test_constructed_schema_3_is_refused_as_another_version() -> None:
+def test_constructed_schema_4_is_refused_as_another_version() -> None:
     raw = _base_v2()
-    raw["schema"] = 3
+    raw["schema"] = 4  # schema 3 is known since M13-05
     _refused(
         raw,
-        "WowLabCharDB is schema 3, and this reader knows schema 1, 2 only: it was written by "
+        "WowLabCharDB is schema 4, and this reader knows schema 1, 2, 3 only: it was written by "
         "another version of the lab-addon; nothing was read",
     )
 
 
-def test_constructed_account_schema_2_reads_and_3_is_refused() -> None:
+def test_constructed_account_schema_2_reads_and_4_is_refused() -> None:
     assert type(labaddon.load_account({"schema": 2})) is labaddon.AccountDBV2
     with pytest.raises(labaddon.LabAddonError) as info:
-        labaddon.load_account({"schema": 3})
-    assert "WowLabDB is schema 3, and this reader knows schema 1, 2 only" in str(info.value)
+        labaddon.load_account({"schema": 4})
+    assert "WowLabDB is schema 4, and this reader knows schema 1, 2, 3 only" in str(info.value)
 
 
 def test_constructed_schema_2_file_from_lua_text() -> None:

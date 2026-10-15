@@ -109,7 +109,15 @@ STD_PRIVACY = re.compile(
     r"Name|Realm|GUID|Guild|^BN|C_BattleNet|C_Club|C_FriendList|C_ChatInfo|CVar|Macro|C_EquipmentSet"
 )
 # Names that match STD_PRIVACY but are not identity APIs, each with its reason.
-STD_PRIVACY_ALLOW: dict[str, str] = {}
+STD_PRIVACY_ALLOW: dict[str, str] = {
+    # M13-05: a spellbook item's name and subtext (a rank where the client
+    # gives one) are the game's text for a spell, not anyone's name.
+    "C_SpellBook.GetSpellBookItemName": "the game's name and subtext of a spell",
+    # M13-05: asked only whether an action slot's id names a macro; the name
+    # is bound to `_`, the body to nothing, and neither is stored
+    # (test_m13_05_macro_info_binds_neither_name_nor_body pins the one use).
+    "GetMacroInfo": "probe only: the name and body are never bound to a used name or stored",
+}
 # Events that would deliver chat, guild, community, Battle.net or friends data.
 PRIVATE_EVENT = re.compile(r"^(CHAT_MSG_|GUILD_|CLUB_|BN_|FRIENDLIST_)")
 # The one place a stored item link may come from (Gear.lua).
@@ -2266,6 +2274,10 @@ def test_skip_section_keys_are_the_plan_keys() -> None:
         "collections.appearances",
         "currencies",
         "professions",
+        # Schema 3 (M13-05).
+        "spellbook",
+        "actionbars",
+        "bindings",
     }
 
 
@@ -2879,7 +2891,8 @@ def test_m11_29_schema_2_and_the_probe_survives_the_bump() -> None:
     `probe.loads` keeps rising across the bump."""
     flow = _core()
     rendered = _render(flow.tokens)
-    assert "ns . SCHEMA = 2" in rendered
+    # Schema 3 since M13-05; the bump keeps every check below.
+    assert "ns . SCHEMA = 3" in rendered
     assert rendered.count("ns . SCHEMA =") == 1
     assert "local db = { schema = ns . SCHEMA , probe = copyProbe ( ) ," in _body(flow, "ns.Write")
     assert "WowLabDB = { schema = ns . SCHEMA }" in _body(flow, "ns.Write")
@@ -2918,9 +2931,9 @@ def test_m11_29_readme_and_plan_say_what_is_confirmed_and_what_stays_verify() ->
         assert "M11-29 capture step" in text
         assert "schema 2" in text
         assert "the schema stays 1" not in text.split("(M11-29")[-1]
-    # Schema 2 in the README's layout, and schema 1 still read.
-    assert "### Table layout (schema 2)" in raw_readme
-    assert "  schema = 2," in raw_readme
+    # The README's layout is schema 3's since M13-05, and schema 1 is still read.
+    assert "### Table layout (schema 3)" in raw_readme
+    assert "  schema = 3," in raw_readme
     assert "The Lab still reads schema 1 files" in readme
     # M4: the file shows only that the last write came from an open.
     for text in (readme, plan, formats):
@@ -5337,3 +5350,258 @@ def test_m11_37_a_call_added_inside_a_section_passes() -> None:
         if scan.failures:
             wrong.append(f"{tag}: {scan.failures}")
     assert not wrong, wrong
+
+
+# M13-05: schema 3's spellbook, actionbars and bindings -------------------------
+#
+# Source scans of Actions.lua, constructed checks; nothing here runs Lua (L3).
+# The M11-37 scan above already proves that every client call in Actions.lua
+# sits in section code that `/wowlab skip` stops (no SECTIONLESS_API entry
+# names the file). These add the second rule of §15.2: nothing in the three
+# sections is read in combat. Each gather asks `combatReason()` as its first
+# statement and returns at once when it gives a reason; every other client
+# reference in the file, and every call of a helper that may reach one, comes
+# after that check.
+
+ACTIONS = ADDON / "Actions.lua"
+M13_05_KEYS = ("spellbook", "actionbars", "bindings")
+COMBAT_CHECK = "local blocked = combatReason ( ) if blocked then return ns . Absent ( blocked ) end"
+COMBAT_EVENT = "PLAYER_REGEN_ENABLED"
+
+
+def _m13_05_sections(flow: _Flow) -> list[tuple[str, dict[str, tuple[int, int]]]]:
+    """(key, entries) of each `ns.Section({ ... })` spec in one file."""
+    t = flow.tokens
+    out = []
+    for k in range(len(t) - 4):
+        if [x.text for x in t[k : k + 5]] != ["ns", ".", "Section", "(", "{"]:
+            continue
+        entries = {key: (s, e) for key, s, e in flow.entries(k + 4)}
+        key_s = entries.get("{key}", (k, k))[0]
+        out.append((t[key_s].text if t[key_s].kind == "string" else "?", entries))
+    return out
+
+
+def _m13_05_combat_problems(path: Path) -> list[str]:
+    """Why `path` (Actions.lua, or an edited copy) may read in combat."""
+    t = _tokens(path)
+    flow = _Flow(path, t)
+    problems: list[str] = []
+    n_check = len(COMBAT_CHECK.split(" "))
+    regions: list[tuple[int, int]] = []  # (after the check, end of the gather)
+    gathers: set[int] = set()
+    checks: list[int] = []
+    keys: list[str] = []
+    for key, entries in _m13_05_sections(flow):
+        keys.append(key)
+        events_s, events_e = entries.get("{events}", (0, 0))
+        if COMBAT_EVENT not in {x.text for x in t[events_s:events_e] if x.kind == "string"}:
+            problems.append(f"{key}: {COMBAT_EVENT} is not among its events")
+        if "{gather}" not in entries or t[entries["{gather}"][0]].text != "function":
+            problems.append(f"{key}: its gather is not a function literal")
+            continue
+        head = entries["{gather}"][0]
+        gathers.add(head)
+        body = flow.pair[head + 1] + 1
+        if _render(t[body : body + n_check]) != COMBAT_CHECK:
+            problems.append(f"{key}: the gather does not start with the combat check")
+            continue
+        checks.append(body + 3)  # the `combatReason` token
+        regions.append((body + n_check, flow.block_end(head)))
+    if tuple(keys) != M13_05_KEYS:
+        problems.append(f"sections {keys}, expected {list(M13_05_KEYS)}")
+
+    def in_region(k: int) -> bool:
+        return any(s <= k < e for s, e in regions)
+
+    # Every function that is not a gather, and where each is referred to.
+    defined: dict[str, int] = {}
+    for head, label in flow.labels.items():
+        if head in gathers:
+            continue
+        if not _NAME.fullmatch(label) or t[head - 1].text != "local":
+            problems.append(f"{label}: Actions.lua defines a function other than a local one")
+        defined[label] = head
+    refs: dict[str, list[int]] = {name: [] for name in defined}
+    for k, x in enumerate(t):
+        if x.kind == "name" and x.text in refs and not _is_field(t, k):
+            if t[k - 1].text == "function":
+                continue  # the definition itself
+            refs[x.text].append(k)
+    if "combatReason" not in defined:
+        return [*problems, "no combatReason function"]
+    if sorted(refs["combatReason"]) != sorted(checks):
+        problems.append(
+            "combatReason is referred to other than as the first statement of each gather: "
+            f"lines {[t[k].line for k in refs['combatReason']]}"
+        )
+    # A helper runs after the check when every reference to it does.
+    after: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for name, at in refs.items():
+            if name in after or name == "combatReason":
+                continue
+            if all(in_region(k) or flow.label_at(k) in after for k in at):
+                after.add(name)
+                changed = True
+    std = _std_top_level()
+    for k, x in enumerate(t):
+        if x.kind != "name" or x.text not in std or _is_field(t, k):
+            continue
+        label = flow.label_at(k)
+        if label == "combatReason":
+            if x.text != "InCombatLockdown":
+                problems.append(f"line {x.line}: combatReason reads {x.text}")
+            continue
+        if in_region(k) or label in after:
+            continue
+        problems.append(f"line {x.line}: {x.text} is reached before or without the combat check")
+    for name in sorted(set(refs) - after - {"combatReason"}):
+        lines = [t[k].line for k in refs[name] if not in_region(k)]
+        problems.append(f"{name}: called before or without the combat check (lines {lines})")
+    head = defined["combatReason"]
+    reason = _render(t[head : flow.block_end(head) + 1])
+    for part in (
+        'if type ( InCombatLockdown ) ~= "function" then return',
+        "local ok , locked = pcall ( InCombatLockdown ) if not ok then return",
+        "if locked then return IN_COMBAT end return nil end",
+    ):
+        if part not in reason:
+            problems.append(f"combatReason lacks {part!r}")
+    return problems
+
+
+def test_m13_05_the_new_sections_read_nothing_in_combat() -> None:
+    """Every client call of spellbook, actionbars and bindings comes after
+    the gather's combat check, which reads nothing in combat or when it
+    cannot tell, and each section gathers again when combat ends."""
+    assert _m13_05_combat_problems(ACTIONS) == []
+
+
+def test_m13_05_the_new_sections_are_switchable_and_need_no_exception() -> None:
+    """The M11-37 rules hold for Actions.lua with no listed exception: every
+    call sits in section code that `/wowlab skip` stops."""
+    scan = _section_scan()
+    assert not [f for f in scan.failures if "Actions.lua" in f], scan.failures
+    for table in (SECTIONLESS_API, SECTIONLESS_CALLERS, HANDED_ON):
+        assert not [key for key in table if key[0] == "Actions.lua"], table
+
+
+_M13_05_GATHER = "        local blocked = combatReason()\n"
+_M13_05_RETURN = "        if blocked then\n            return ns.Absent(blocked)\n        end\n"
+
+# Constructed edits of Actions.lua (boundary tests of the combat scan): each
+# reads the client before, or without, the combat check. The first match of
+# an edit is the spellbook gather's.
+_M13_05_CASES: dict[str, list[tuple[str, str]]] = {
+    "a call before the check": [
+        (
+            _M13_05_GATHER,
+            '        local early = ns.Fn(C_SpellBook, "GetNumSpellBookSkillLines")\n'
+            + _M13_05_GATHER,
+        )
+    ],
+    "the check removed": [(_M13_05_GATHER + _M13_05_RETURN, "")],
+    "a helper called before the check": [
+        (
+            "local IN_COMBAT",
+            "local function early()\n    return GetActionInfo(1)\nend\n\nlocal IN_COMBAT",
+        ),
+        (_M13_05_GATHER, "        early()\n" + _M13_05_GATHER),
+    ],
+    "a file-level read": [("local IN_COMBAT", "local early = GetNumBindings()\nlocal IN_COMBAT")],
+    "combat end not registered": [
+        ('{ "SPELLS_CHANGED", "PLAYER_REGEN_ENABLED" }', '{ "SPELLS_CHANGED" }')
+    ],
+    "combatReason reads another API": [
+        ("    if locked then\n", '    if locked or UnitLevel("player") then\n')
+    ],
+}
+
+
+def _m13_05_edited(edits: list[tuple[str, str]]) -> list[str]:
+    text = ACTIONS.read_text(encoding="utf-8")
+    for found, replacement in edits:
+        assert found in text, found
+        text = text.replace(found, replacement, 1)
+    with tempfile.TemporaryDirectory(prefix="wowlab-m13-05-") as tmp:
+        path = Path(tmp) / ACTIONS.name
+        path.write_text(text, encoding="utf-8")
+        return _m13_05_combat_problems(path)
+
+
+@pytest.mark.parametrize("tag", sorted(_M13_05_CASES))
+def test_m13_05_constructed_combat_edits_fail(tag: str) -> None:
+    assert _m13_05_edited(_M13_05_CASES[tag]), tag
+
+
+def test_m13_05_constructed_call_after_the_check_passes() -> None:
+    """Control: the same call added after the check is accepted."""
+    late = '        local late = ns.Fn(C_SpellBook, "GetNumSpellBookSkillLines")\n'
+    edits = [(_M13_05_GATHER + _M13_05_RETURN, _M13_05_GATHER + _M13_05_RETURN + late)]
+    assert _m13_05_edited(edits) == []
+
+
+def test_m13_05_macro_info_binds_neither_name_nor_body() -> None:
+    """ADR-0026, §15.2: a macro slot keeps the macro id only. GetMacroInfo is
+    bound once into a handle, and the handle is used only to probe, test and
+    call it as `local okMacro, _, icon = pcall(getMacro, id)`: the name goes to
+    `_`, the body to nothing, and `icon` is only compared with nil."""
+    bound = 'local getMacro = type ( GetMacroInfo ) == "function" and GetMacroInfo or nil'
+    problems = []
+    seen = 0
+    for path in SOURCES:
+        tokens = _tokens(path)
+        rendered = _render(tokens)
+        seen += rendered.count("GetMacroInfo ")
+        for i, x in enumerate(tokens):
+            if x.kind != "name" or _is_field(tokens, i):
+                continue
+            if x.text == "GetMacroInfo":
+                if bound not in (_render(tokens[i - 5 : i + 8]), _render(tokens[i - 10 : i + 3])):
+                    problems.append(f"{_where(path, x)} GetMacroInfo used other than bound")
+            elif x.text == "getMacro" and tokens[i - 1].text != "local":
+                around = _render(tokens[i - 9 : i + 4])
+                if not (
+                    _render(tokens[i - 4 : i + 2]) == 'probe ( "GetMacroInfo" , getMacro )'
+                    or _render(tokens[i - 1 : i + 2]) == "and getMacro then"
+                    or around == "local okMacro , _ , icon = pcall ( getMacro , id )"
+                ):
+                    problems.append(f"{_where(path, x)} getMacro used as {around!r}")
+            elif (
+                x.text == "icon"
+                and tokens[i - 1].text != ","
+                and _render(tokens[i : i + 3]) != "icon ~= nil"
+            ):
+                problems.append(f"{_where(path, x)} icon used as {_render(tokens[i : i + 3])!r}")
+    assert seen == 2, seen  # the type test and the handle's value
+    assert not problems, problems
+
+
+def test_m13_05_bindings_ask_only_plain_commands() -> None:
+    """A binding command with text after the name (`MACRO <name>` holds text
+    the owner typed) is never handed to GetBindingKey or stored: GetBinding's
+    first return goes through `command()`, which keeps upper-case letters,
+    digits and `_` only, and only that is asked about."""
+    text = _render(_tokens(ACTIONS))
+    assert "local okBinding , found = pcall ( getBinding , index )" in text
+    assert "local name = command ( found )" in text
+    assert "ns . Pack ( pcall ( getKey , name ) )" in text
+    assert text.count("getKey ,") == 1
+    assert 'string . find ( value , "^[%u%d_]+$" )' in text
+    assert "{ command = ns . String ( name ) , keys = kept }" in text
+
+
+def test_m13_05_readme_and_plan_document_schema_3() -> None:
+    readme = " ".join(README.read_text(encoding="utf-8").split())
+    plan = " ".join(PLAN.read_text(encoding="utf-8").split("### 13.2")[0].split())
+    for text in (readme, plan):
+        assert "schema 3" in text
+        for key in M13_05_KEYS:
+            assert f"`{key}`" in text, key
+        assert "`left_out_config`" in text
+        assert "`left_out_config_absent`" in text
+        assert "`probes`" in text
+        assert "out of combat" in text

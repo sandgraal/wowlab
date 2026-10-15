@@ -5,7 +5,13 @@
 -- missing:
 --   talents.class   the class talents active now, the last selected saved
 --                   loadout's config id, and the loadout export string;
---   talents.legacy  Legacy-tree candidates: every non-Combat, non-Profession trait config (the panel ToggleLegacySystemUI opens, unlocked at level 25); empty below that level.
+--   talents.legacy  Legacy-tree candidates (the panel ToggleLegacySystemUI
+--                   opens, unlocked at level 25): every trait config found by
+--                   type (any type but Invalid, Combat and Profession) or by
+--                   a client system id (not type-checked, so it may have one
+--                   of those types), less the active class config when the
+--                   client gave its id; the id left out, or why there was
+--                   none, is recorded (schema 3, M11-35).
 -- No loadout names: C_Traits.GetConfigInfo's `name` is text the owner typed
 -- and is never read.
 --
@@ -168,13 +174,25 @@ local function dumpConfig(configID)
 end
 
 -- C_ClassTalents.GetActiveConfigID: confirmed by forever-addon-kit on 69893,
--- re-verify in M11-03.
+-- re-verify in M11-03. Returns the active class config id, or nil and why
+-- there is none (schema 3, M11-35: talents.legacy records it). Called
+-- through pcall directly, not ns.Call, so an error is told apart from nil.
 local function activeClassConfig()
     local fn = ns.Fn(C_ClassTalents, "GetActiveConfigID")
     if not fn then
-        return nil
+        return nil, "C_ClassTalents.GetActiveConfigID missing"
     end
-    return ns.Call(fn)
+    local ok, configID = pcall(fn)
+    if not ok then
+        return nil, "C_ClassTalents.GetActiveConfigID raised an error"
+    end
+    if type(configID) == "number" then
+        return configID, nil
+    end
+    if configID == nil then
+        return nil, "C_ClassTalents.GetActiveConfigID returned nil"
+    end
+    return nil, "C_ClassTalents.GetActiveConfigID returned no number"
 end
 
 -- talents.class ---------------------------------------------------------------
@@ -276,10 +294,13 @@ ns.Section({
 -- C_Traits.GetConfigsByType, C_Traits.GetConfigIDBySystemID and
 -- Enum.TraitConfigType: called by forever-addon-kit's walker on 69893; which
 -- call found the Legacy config is not recorded: [verify] in M11-03.
--- talents.legacy holds every trait config the client lists that is neither
--- the active class config nor of type Combat or Profession, each with
--- `found_by`; which of them is the Legacy system is decided from the M11-03
--- capture.
+-- talents.legacy holds every trait config the type search found (any type
+-- but Invalid, Combat and Profession) or the system-id search found (not
+-- type-checked: such a config may be of any type), each with `found_by`,
+-- less the active class config when C_ClassTalents.GetActiveConfigID gave
+-- its id. Since schema 3 (M11-35) the record says which id that was
+-- (`left_out_config`) or why there was none (`left_out_config_absent`).
+-- Which of the configs is the Legacy system is not recorded.
 local function legacyConfigs(classConfig)
     local foundBy, order = {}, {}
     local function add(configID, how)
@@ -357,7 +378,8 @@ ns.Section({
         if reason then
             return ns.Absent(reason)
         end
-        local order, foundBy, skipped = legacyConfigs(activeClassConfig())
+        local classConfig, noClassConfig = activeClassConfig()
+        local order, foundBy, skipped = legacyConfigs(classConfig)
         if not order then
             -- On failure the second return is the reason.
             return ns.Absent(foundBy)
@@ -373,6 +395,13 @@ ns.Section({
             skipped_types = skipped,
             configs = {},
         }
+        -- Exactly one of them (schema 3, M11-35): the id left out of
+        -- `configs`, or why no id was left out.
+        if type(classConfig) == "number" then
+            record.left_out_config = classConfig
+        else
+            record.left_out_config_absent = ns.String(noClassConfig)
+        end
         for _, configID in ipairs(order) do
             local config = dumpConfig(configID)
             config.found_by = foundBy[configID]
