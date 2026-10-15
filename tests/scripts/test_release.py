@@ -274,6 +274,16 @@ def test_bootstrap_applies_the_rulesets_and_the_release_environment() -> None:
     assert "gh api -X PUT repos/$REPO/immutable-releases" in text
 
 
+def test_the_release_environment_allows_no_admin_bypass() -> None:
+    # can_admins_bypass defaults to true: an admin could start the release job unapproved.
+    text = (ROOT / "scripts" / "bootstrap-github.sh").read_text(encoding="utf-8")
+    body = re.search(r'environments/release" --silent --input - <<JSON\n(.*?)\nJSON\n', text, re.S)
+    assert body is not None
+    env = json.loads(body.group(1).replace("$owner_id", "1"))
+    assert env["can_admins_bypass"] is False
+    assert env["reviewers"] == [{"type": "User", "id": 1}]
+
+
 def test_the_build_backend_is_pinned_with_hashes() -> None:
     text = (ROOT / "lab" / "core" / "build-constraints.txt").read_text(encoding="utf-8")
     lines = [line for line in text.splitlines() if line and not line.startswith("#")]

@@ -48,7 +48,7 @@ echo "→ environment 'release': $OWNER approves every publish; v* tags only"
 owner_id=$(gh api "users/$OWNER" --jq .id)
 case "$owner_id" in '' | *[!0-9]*) echo "no numeric user id for $OWNER" >&2; exit 1 ;; esac
 gh api -X PUT "repos/$REPO/environments/release" --silent --input - <<JSON
-{"wait_timer":0,"prevent_self_review":false,"reviewers":[{"type":"User","id":$owner_id}],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}
+{"wait_timer":0,"prevent_self_review":false,"can_admins_bypass":false,"reviewers":[{"type":"User","id":$owner_id}],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}
 JSON
 policy=$(gh api "repos/$REPO/environments/release/deployment-branch-policies" \
   --jq '.branch_policies[] | select(.name=="v*" and .type=="tag") | .id')
