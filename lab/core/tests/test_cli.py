@@ -36,10 +36,11 @@ import pytest
 from pydantic import BaseModel
 from typer.testing import CliRunner
 
-from wowlab_core import cli, guard, install, luadata, snapshot
+from wowlab_core import cli, filemap, guard, install, luadata, snapshot
 from wowlab_core.gamedata import GameData, WagoSource
 from wowlab_core.install import Install
 from wowlab_core.snapshot import GcReport, Manifest, SnapshotStore, VerifyReport
+from wowlab_core.verdict import verdict_of
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 CAPTURE = FIXTURES / "macos"
@@ -424,6 +425,48 @@ def test_explain_a_path_with_no_row(root: Path) -> None:
     assert "no file-map row" in result.stdout
     report = _json(cli.ExplainReport, "explain", "unknown-constructed.txt")
     assert report.result.status == "unclassified"
+    assert report.verdict.level == "unclassified"
+    assert report.verdict.words == "no file-map row"
+
+
+VERDICT_CASES = [
+    ("WTF/Config.wtf", "gate", True),
+    (f"WTF/Account/{ACCOUNT}/config-cache.wtf", "gate", True),
+    (f"{SV_DIR}/RareScanner.lua.bak", "no", True),
+    (".build.info", "no", False),
+    ("WTF/", "folder", True),
+    (f"{FLAVOR}/Screenshots/WoWScrnShot_092726_120000.jpg", "not_applicable", False),
+]
+
+
+@pytest.mark.parametrize(
+    ("path", "level", "restorable"), VERDICT_CASES, ids=[c[0] for c in VERDICT_CASES]
+)
+def test_explain_json_carries_the_verdict_it_prints(
+    root: Path, path: str, level: str, restorable: bool
+) -> None:
+    """M13-21: the verdict is in `--json`, and the text prints its words."""
+    report = _json(cli.ExplainReport, "explain", path)
+    assert report.verdict.level == level
+    assert report.verdict.restorable is restorable
+    assert f"  edit:         {report.verdict.words}\n" in ok("explain", path).stdout
+
+
+def test_tree_explain_json_carries_the_verdict_it_prints(root: Path) -> None:
+    report = _json(cli.TreeReport, "tree", "--explain")
+    text = ok("tree", "--explain").stdout
+    explained = [i for i in report.items if i.explained is not None]
+    assert explained
+    for item in explained:
+        assert item.explained is not None
+        v = item.explained.verdict
+        entry = filemap.load().entry(item.explained.entry_id)
+        assert v == verdict_of(entry, "flavor", item.path)
+        assert f"      edit: {v.words}\n" in text
+    levels = {i.path: i.explained.verdict.level for i in explained if i.explained is not None}
+    assert levels["WTF/Config.wtf"] == "gate"
+    assert levels[f"{SV_DIR}/RareScanner.lua.bak"] == "no"
+    assert levels["WTF"] == "folder"
 
 
 # ─── sv ──────────────────────────────────────────────────────────────────────
