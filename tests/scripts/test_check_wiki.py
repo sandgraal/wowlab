@@ -11,10 +11,16 @@ Two kinds of input:
   https://github.com/sandgraal/wowlab.wiki at commit a47a7ee (2026-10-14, the
   wiki once `wowlab char list` was documented), cloned read-only on
   2026-10-14. It replaced the copy of d4344c8 (2026-09-29, the wiki before
-  this job existed) when the CLI outgrew it: the frozen copy follows the
-  CLI, since the gate checks it against the commands on `main`. It is public
-  text the owner wrote; the checks it proves are the ones that must not fire
-  on real prose (links, personal data, files, commands).
+  this job existed) when the CLI outgrew it. It is public text the owner
+  wrote; the checks it proves are the ones that must not fire on real prose
+  (links, personal data, files, commands).
+
+  Since M12-15 the copy no longer follows the CLI. Beside it,
+  `fixtures/wiki-a47a7ee.commands.txt` records the leaf commands of its era
+  (the Click tree at main 90b50c4), and the real-wiki baselines check
+  coverage against that set: a command added to the CLI later is listed in
+  `Checker.added_since`, never a baseline failure. The program, and so the
+  daily job, still requires every current command (the constructed cases).
 """
 
 from __future__ import annotations
@@ -27,9 +33,11 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+import typer
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 REAL_WIKI = Path(__file__).resolve().parent / "fixtures" / "wiki-a47a7ee"
+REAL_WIKI_COMMANDS = REAL_WIKI.with_name(REAL_WIKI.name + ".commands.txt")
 
 
 def _load(name: str) -> ModuleType:
@@ -45,6 +53,7 @@ def _load(name: str) -> ModuleType:
 
 cw = _load("check_wiki")
 gen = _load("gen_command_reference")
+ERA = cw.read_commands(REAL_WIKI_COMMANDS)
 
 
 # ─── a constructed wiki that passes ──────────────────────────────────────────
@@ -221,6 +230,35 @@ def test_constructed_a_module_named_by_its_file_counts(tmp_path: Path) -> None:
     root = _build(tmp_path / "wiki", Extra="# Extra\n\nThe write gate is `guard.py`.\n")
     (root / "Index.md").write_text(_index_page(skip_module="guard"), encoding="utf-8")
     assert _failures(root) == []
+
+
+def test_constructed_a_command_set_still_requires_every_command_in_it(tmp_path: Path) -> None:
+    """constructed: narrowing coverage to a command set keeps the rule for the set."""
+    root = _build(tmp_path / "wiki")
+    (root / "Index.md").write_text(_index_page(skip_command="wowlab snap gc"), encoding="utf-8")
+    checker = cw.check(root, commands=frozenset(_leaves()))
+    assert [str(f) for f in checker.failures] == [
+        "command `wowlab snap gc` is not named or linked on any hand-written page"
+    ]
+    assert checker.added_since == []
+
+
+def test_constructed_a_command_outside_the_set_is_listed_not_failed(tmp_path: Path) -> None:
+    """constructed: a leaf the set does not hold is `added_since`, not a failure."""
+    root = _build(tmp_path / "wiki")
+    (root / "Index.md").write_text(_index_page(skip_command="wowlab snap gc"), encoding="utf-8")
+    checker = cw.check(root, commands=frozenset(_leaves()) - {"wowlab snap gc"})
+    assert checker.failures == []
+    assert checker.added_since == ["wowlab snap gc"]
+    # The program has no command set: the same wiki fails there.
+    assert cw.check(root).added_since == []
+    assert cw.main([str(root)]) == cw.EXIT_FAILURES
+
+
+def test_constructed_command_set_file_comments_and_spacing(tmp_path: Path) -> None:
+    path = tmp_path / "commands.txt"
+    path.write_text("# era\n\nwowlab  snap gc  # spaced\nwowlab undo\nwowlab undo\n", "utf-8")
+    assert cw.read_commands(path) == frozenset({"wowlab snap gc", "wowlab undo"})
 
 
 # ─── the generated page and the file set ─────────────────────────────────────
@@ -426,36 +464,99 @@ def _real_copy(tmp_path: Path) -> Path:
     return root
 
 
-def test_real_wiki_links_personal_data_files_and_commands_are_clean(tmp_path: Path) -> None:
-    """real: on the wiki as it was, only coverage and the missing generated page fail.
+MISSING_GENERATED = (
+    "CLI-Reference.md: missing; the job writes it with scripts/gen_command_reference.py"
+)
 
-    The copy predates this job: it has no CLI-Reference and names no module
-    of the library, which the first run fixes. Everything else must not fire
-    on real prose.
-    """
-    out = _failures(_real_copy(tmp_path))
-    rest = [
-        f
-        for f in out
-        if not f.startswith("module `wowlab_core.")
-        and not (f.startswith("command `") and "is not named or linked" in f)
-        and f
-        != "CLI-Reference.md: missing; the job writes it with scripts/gen_command_reference.py"
+
+def _not_covered(command: str) -> str:
+    return f"command `{command}` is not named or linked on any hand-written page"
+
+
+def _first_run(root: Path, tree: object = None) -> None:
+    """What the first run adds: the generated page and a page naming the modules."""
+    (root / "CLI-Reference.md").write_text(gen.render(tree), encoding="utf-8")
+    modules = "".join(f"- `wowlab_core.{m}`\n" for m in cw.public_modules())
+    (root / "Library.md").write_text(f"# Library\n\n{modules}", encoding="utf-8")
+
+
+def test_real_wiki_command_set_is_its_era() -> None:
+    """real: the era file holds the 40 leaves of 90b50c4, one full name per line."""
+    names = [
+        line
+        for line in REAL_WIKI_COMMANDS.read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
     ]
+    assert len(names) == len(set(names)) == len(ERA) == 40
+    assert all(n.startswith("wowlab ") for n in names)
+    assert "wowlab char list" in ERA  # the last command the copy documents
+
+
+def test_real_wiki_links_personal_data_files_and_commands_are_clean(tmp_path: Path) -> None:
+    """real: on the wiki as it was, only module coverage and the missing generated page fail.
+
+    The copy names every command of its era, and predates this job: it has
+    no CLI-Reference and names no module of the library, which the first run
+    fixes. Everything else must not fire on real prose. A command added to
+    the CLI since is listed, never failed.
+    """
+    checker = cw.check(_real_copy(tmp_path), commands=ERA)
+    out = [str(f) for f in checker.failures]
+    rest = [f for f in out if not f.startswith("module `wowlab_core.") and f != MISSING_GENERATED]
     assert rest == []
-    assert (
-        "CLI-Reference.md: missing; the job writes it with scripts/gen_command_reference.py" in out
-    )
+    assert MISSING_GENERATED in out
+    assert checker.added_since == [c for c in _leaves() if c not in ERA]
 
 
 def test_real_wiki_passes_once_the_first_run_adds_what_it_lacks(tmp_path: Path) -> None:
     """real, plus what the first run adds: the generated page and a page naming the modules."""
     root = _real_copy(tmp_path)
     base = _commit_all(root)
-    (root / "CLI-Reference.md").write_text(gen.render(), encoding="utf-8")
-    modules = "".join(f"- `wowlab_core.{m}`\n" for m in cw.public_modules())
-    commands = "".join(f"- `{c}`\n" for c in _leaves())
-    (root / "Library.md").write_text(f"# Library\n\n{modules}\n{commands}", encoding="utf-8")
-    checker = cw.check(root, base)
+    _first_run(root)
+    checker = cw.check(root, base, commands=ERA)
     assert [str(f) for f in checker.failures] == []
     assert 0 < checker.changed_lines <= cw.MAX_CHANGED_LINES
+
+
+def _tree_with_a_new_command(group: str | None) -> tuple[object, str]:
+    """constructed: a fresh copy of the Click tree plus one invented leaf command."""
+    app = typer.Typer(add_completion=False)
+
+    @app.command()
+    def constructed() -> None:
+        """Constructed: a command added to the CLI after the wiki snapshot."""
+
+    tree = gen.root_command()
+    parent = tree if group is None else tree.commands[group]
+    parent.add_command(typer.main.get_command(app), "constructed-new")
+    name = " ".join(p for p in ("wowlab", group, "constructed-new") if p)
+    return tree, name
+
+
+@pytest.mark.parametrize("group", ["macros", None], ids=["under-a-group", "top-level"])
+def test_constructed_a_new_command_keeps_the_real_baseline_and_the_rule_reports_it(
+    tmp_path: Path, group: str | None
+) -> None:
+    """constructed: a later PR adds a leaf command (as Wave 4 adds `macros check`).
+
+    The real-wiki baseline, which checks coverage against its era's command
+    set, still passes and lists the command as added since the snapshot. The
+    coverage rule as the program and the daily job run it (no command set)
+    still reports it.
+    """
+    tree, name = _tree_with_a_new_command(group)
+    assert name in cw.leaf_commands(tree)
+    assert name not in cw.leaf_commands() and name not in ERA  # a copy; the app is untouched
+
+    root = _real_copy(tmp_path)
+    base = _commit_all(root)
+    _first_run(root, tree)
+
+    baseline = cw.check(root, base, commands=ERA, tree=tree)
+    assert [str(f) for f in baseline.failures] == []
+    assert name in baseline.added_since
+    assert set(baseline.added_since) == set(cw.leaf_commands(tree)) - ERA
+
+    live = [str(f) for f in cw.check(root, base, tree=tree).failures]
+    assert _not_covered(name) in live
+    assert set(live) <= {_not_covered(c) for c in baseline.added_since}
