@@ -5,24 +5,26 @@ body:
   - type: markdown
     attributes:
       value: |
-        **Do not attach or paste raw files from your `WTF/` folder.** They carry your account name and your characters' names. Describe the shape of the problem, or reduce it to a few lines with names replaced. If you found personal data in a committed fixture, do not open an issue: follow SECURITY.md.
+        **Paste no output except that of `wowlab doctor --redact`, and attach no files from your `WTF/` folder.** Other output and those files carry your account name, your characters' names and your home folder. Describe the problem in words, and write any name or path as a placeholder (`<CHARACTER>`, `<REALM>`, `<ACCOUNT>`, `<HOME>`). If you found personal data in a committed fixture, do not open an issue: follow SECURITY.md.
   - type: textarea
     id: what
     attributes:
       label: What happened, and what did you expect?
+      description: In your own words. Write names and paths as placeholders (`<CHARACTER>`, `<REALM>`, `<ACCOUNT>`, `<HOME>`); do not paste the command's output.
     validations:
       required: true
   - type: input
     id: command
     attributes:
       label: Command
-      placeholder: wowlab sv dump <file> --json
+      description: The command you ran, with any name or path in it written as a placeholder.
+      placeholder: wowlab sv dump <HOME>/.../SavedVariables/<addon>.lua --json
   - type: textarea
     id: doctor
     attributes:
       label: Output of `wowlab doctor --redact`
       description: |
-        Run `wowlab doctor --redact` and paste what it prints: paste this, nothing else. It replaces your character, realm and account names, BattleTag, email address and home folder with placeholders such as `<CHARACTER>` and `<HOME>`. Your guild's name is not known to wowlab; if it could appear, add `--redact-name "<your guild>"`. Read the output before you paste it.
+        Run `wowlab doctor --redact` and paste what it prints: paste this, nothing else. It replaces your character, realm and account names, BattleTag, email address, login and computer names and home folder with placeholders such as `<CHARACTER>` and `<HOME>`. Your guild's name is not known to wowlab; if it could appear, add `--redact-name "<your guild>"`. Read the output before you paste it.
       render: text
     validations:
       required: true
@@ -31,8 +33,3 @@ body:
     attributes:
       label: Platform
       placeholder: macOS 15 / Windows 11 / Linux + Wine
-  - type: textarea
-    id: excerpt
-    attributes:
-      label: Minimal excerpt (optional, names replaced)
-      render: text

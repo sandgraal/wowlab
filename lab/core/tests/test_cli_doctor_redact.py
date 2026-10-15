@@ -13,21 +13,29 @@ and a character folder, its `config-cache.wtf` whose sync CVar values carry
 a BattleTag, GUIDs, an email address, guild names and home paths in macOS,
 Windows and Linux forms, `realmName` and `accountName` in `Config.wtf`, a
 journal label naming a guild, a damaged manifest named after a character,
-and a client whose executable lives under the home folder. Each test first
+a client whose executable lives under the home folder, and the login and
+host names the process would see. Each test first
 shows that the plant reaches the unredacted output, so its absence from the
 redacted output proves something.
 """
 
 from __future__ import annotations
 
+import getpass
 import json
 import logging
 import shutil
-from pathlib import Path
+import socket
+import types
+import typing
+import warnings
+from enum import Enum
+from pathlib import Path, PurePath
 from typing import Any
 
 import platformdirs
 import pytest
+from pydantic import BaseModel
 from test_cli import (
     ACCOUNT,
     CAPTURE,
@@ -39,7 +47,7 @@ from test_cli import (
     run,
 )
 
-from wowlab_core import cli, guard, install, redact, snapshot
+from wowlab_core import cli, doctorredact, guard, install, redact, snapshot
 
 PLANTED_ACCOUNT = "PROUDMOORE1"
 PLANTED_REALM = "Area 52"
@@ -60,7 +68,12 @@ FIXTURE_NAMES = ("90000001#6", "Labrealmb Partb Partc Partd", "Labcharb", "Labre
 REDACTED_ROOT = str(Path(redact.HOME) / "Games" / "World of Warcraft")
 
 # What must never appear in redacted output, compared with case folded.
+LOGIN = "jprdmr"
+HOST = "stormwind-pc.example.lan"
+
 FORBIDDEN = (
+    LOGIN,
+    "stormwind",
     "Jaina",
     "Proudmoore",
     PLANTED_ACCOUNT,
@@ -91,6 +104,11 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    # The login and host names this machine would give, planted too.
+    for variable in ("USER", "USERNAME", "LOGNAME"):
+        monkeypatch.setenv(variable, LOGIN)
+    monkeypatch.setattr(getpass, "getuser", lambda: LOGIN)
+    monkeypatch.setattr(socket, "gethostname", lambda: HOST)
     return home
 
 
@@ -125,7 +143,7 @@ def planted(root: Path, user_data: Path, monkeypatch: pytest.MonkeyPatch) -> Pat
     names = (
         f"{PLANTED_CHARACTER}-Area52 of {PLANTED_REALM} (area-52), thrallina, {HARVESTED_REALM} "
         f"{BATTLETAG} {PLAYER_GUID} {GUILD_GUID} {EMAIL} {NAMED_GUILD} "
-        "Labcharb-Labrealmd and Labrealmb Partb Partc Partd"
+        f"Labcharb-Labrealmd and Labrealmb Partb Partc Partd, {LOGIN} on stormwind-pc"
     )
     paths = f"{WINDOWS_HOME} {LINUX_HOME}"
     (account / "config-cache.wtf").write_bytes(
@@ -306,3 +324,110 @@ def test_doctor_redact_keeps_an_account_folder_that_is_not_planted_out(root: Pat
     text = _text("--redact")
     assert ACCOUNT not in text
     assert f"WTF/Account/{redact.ACCOUNT}/config-cache.wtf" in text
+
+
+def test_constructed_windows_oserror_in_the_report_is_redacted(
+    planted: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # str(OSError) writes its file name with repr(): every backslash doubled.
+    error = PermissionError(13, "Access is denied", WINDOWS_HOME + r"\WTF\Config.wtf")
+    assert "\\\\Users\\\\" in str(error)
+
+    def broken(_lay: object) -> list[object]:
+        raise error
+
+    monkeypatch.setattr(cli, "_sync_cvars", broken)
+    assert "Proudmoore" in _text("--json")
+    for args in (("--redact",), ("--redact", "--json")):
+        assert _leaks(_text(*args)) == [], args
+
+
+def test_constructed_log_tracebacks_and_warnings_are_redacted(
+    planted: Path, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = cli._store_report
+
+    def noisy_store_report() -> Any:
+        try:
+            raise OSError(f"cannot open {home}/{PLANTED_CHARACTER}")
+        except OSError:
+            logging.getLogger("wowlab_core.snapshot").warning(
+                "store trouble", exc_info=True, stack_info=True
+            )
+        warnings.warn(f"{PLANTED_CHARACTER} under {home}", UserWarning, stacklevel=1)
+        return real()
+
+    monkeypatch.setattr(cli, "_store_report", noisy_store_report)
+    with warnings.catch_warnings(record=True) as shown:
+        warnings.simplefilter("always")
+        plain = run("doctor", "--offline")
+    assert PLANTED_CHARACTER in plain.stderr  # the traceback reaches stderr unredacted
+    assert any(PLANTED_CHARACTER in str(w.message) for w in shown)
+    with warnings.catch_warnings(record=True) as shown:
+        warnings.simplefilter("always")
+        result = run("doctor", "--offline", "--redact")
+    assert _leaks(result.stderr) == []
+    assert "store trouble" in result.stderr
+    assert "Traceback" in result.stderr
+    assert [str(w.message) for w in shown if PLANTED_CHARACTER in str(w.message)] == []
+
+
+def _string_fields(model: type[BaseModel], prefix: str = "") -> dict[str, bool]:
+    """Every field of `model`, recursively, that can hold text: its dotted
+    path, and whether it can hold only values the code names (Literal, enum)."""
+    out: dict[str, bool] = {}
+    for name, info in model.model_fields.items():
+        _annotation(info.annotation, f"{prefix}{name}", out)
+    return out
+
+
+def _annotation(kind: Any, path: str, out: dict[str, bool]) -> None:
+    origin = typing.get_origin(kind)
+    if isinstance(kind, type) and issubclass(kind, BaseModel):
+        out.update(_string_fields(kind, path + "."))
+    elif origin is typing.Literal:
+        out[path] = True  # only the values the annotation names
+    elif origin in (list, tuple, set, frozenset, typing.Union, types.UnionType, dict):
+        for arg in typing.get_args(kind):
+            if arg is not Ellipsis:
+                _annotation(arg, path, out)
+    elif isinstance(kind, type) and issubclass(kind, Enum):
+        out[path] = True
+    elif isinstance(kind, type) and issubclass(kind, str | PurePath):
+        out[path] = False
+    elif kind in (int, float, bool, type(None)):
+        pass
+    else:
+        raise AssertionError(f"{path}: a field type this walk does not know: {kind!r}")
+
+
+def test_every_text_field_of_the_doctor_report_has_a_declared_treatment() -> None:
+    """Fail closed: a field added to DoctorReport (M13-04's first run, ...)
+    must be declared printed as-is, redacted, or replaced whole."""
+    fields = _string_fields(cli.DoctorReport)
+    assert set(fields) == set(doctorredact.DOCTOR_FIELDS), set(fields) ^ set(
+        doctorredact.DOCTOR_FIELDS
+    )
+    for path, closed in fields.items():
+        treatment = doctorredact.DOCTOR_FIELDS[path]
+        assert treatment in (doctorredact.AS_IS, doctorredact.REDACT, *redact.PLACEHOLDERS), path
+        if treatment == doctorredact.AS_IS:
+            assert closed, f"{path}: only a Literal or enum field may be printed as it is"
+
+
+class _Free(BaseModel):
+    counts: dict[str, int]
+    note: str
+    listed: str
+
+
+def test_constructed_dict_keys_are_redacted_and_an_unlisted_field_is_replaced_whole() -> None:
+    replace = redact.Redactor(characters=[PLANTED_CHARACTER])
+    out = doctorredact.redact_model(
+        _Free(counts={PLANTED_CHARACTER: 1}, note=PLANTED_CHARACTER, listed=PLANTED_CHARACTER),
+        replace,
+        {"counts": doctorredact.REDACT, "listed": doctorredact.REDACT},
+    )
+    assert out.counts == {redact.CHARACTER: 1}
+    assert out.note == redact.TEXT
+    assert out.listed == redact.CHARACTER

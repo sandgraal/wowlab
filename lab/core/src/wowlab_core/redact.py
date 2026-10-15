@@ -135,6 +135,9 @@ EMAIL = "<EMAIL>"
 GUID = "<GUID>"
 NAME = "<NAME>"  # a name the player asked to have replaced (`--redact-name`)
 LABEL = "<LABEL>"  # free text a player or a command wrote, replaced whole
+TEXT = "<TEXT>"  # any other text replaced whole
+USER = "<USER>"  # the login name the process runs as
+HOST = "<HOST>"  # the machine's network name
 PLACEHOLDERS: tuple[str, ...] = (
     CHARACTER,
     REALM,
@@ -145,6 +148,9 @@ PLACEHOLDERS: tuple[str, ...] = (
     GUID,
     NAME,
     LABEL,
+    TEXT,
+    USER,
+    HOST,
 )
 _PLACEHOLDER_RE = re.compile("|".join(re.escape(p) for p in PLACEHOLDERS))
 
@@ -156,12 +162,16 @@ _GUID_RES = (GUID_RE, ACCOUNT_GUID_RE, GUILD_GUID_RE, CLUB_GUID_RE)
 # A home folder named by its shape rather than by this machine's home: macOS
 # `/Users/<name>`, Linux `/home/<name>` (and `/var/home/<name>`), Windows
 # `C:\Users\<name>` (and `\\?\C:\Users\...`, and XP's `Documents and
-# Settings`), Wine's `drive_c/users/<name>`. The name is one path component,
-# spaces included, so the match runs to the next separator, quote or line
-# end: a home folder that ends a sentence takes the rest of that line with it,
-# which costs readability and leaks nothing.
+# Settings`), Wine's `drive_c/users/<name>`. A run of separators counts as
+# one: `str(OSError)` names its file with `repr()`, which doubles every
+# backslash (`'C:\\\\Users\\\\Sean'`). The name is one path component, spaces
+# included, and an apostrophe followed by a letter (`O'Brien`), so the match
+# runs to the next separator, quote or line end: a home folder that ends a
+# sentence takes the rest of that line with it, which costs readability and
+# leaks nothing.
 _HOME_SHAPE_RE = re.compile(
-    r"(?:[A-Za-z]:)?[\\/](?:Users|home|Documents and Settings)[\\/][^\\/\r\n\t\"'<>|]+",
+    r"(?:[A-Za-z]:)?[\\/]+(?:Users|home|Documents and Settings)[\\/]+"
+    r"(?:[^\\/\r\n\t\"'<>|]|'(?=\w))+",
     re.IGNORECASE,
 )
 # What may not follow a known home folder for it to be that folder rather than
@@ -179,11 +189,13 @@ def _clean(names: Iterable[str]) -> list[str]:
 
 
 def home_forms(home: str) -> list[str]:
-    """The spellings a home folder takes in text: as given, and with either
-    separator, without a trailing one. Empty for a filesystem or drive root,
-    which names nobody."""
+    """The spellings a home folder takes in text: as given, with either
+    separator, and with backslashes doubled (as `repr()`, and so
+    `str(OSError)`, writes them), without a trailing separator. Empty for a
+    filesystem or drive root, which names nobody."""
     forms: list[str] = []
-    for form in (home, home.replace("\\", "/"), home.replace("/", "\\")):
+    backslashed = home.replace("/", "\\")
+    for form in (home, home.replace("\\", "/"), backslashed, backslashed.replace("\\", "\\\\")):
         trimmed = form.rstrip("\\/")
         parts = [p for p in re.split(r"[\\/]", trimmed) if p and not re.fullmatch(r"[A-Za-z]:", p)]
         if parts and trimmed not in forms:
@@ -197,8 +209,9 @@ class Redactor:
     In order: home folders (the known ones, then any by shape), email
     addresses, BattleTags, player, account, guild and community GUIDs, then
     the names given (account folders, characters, realms in every spelling
-    of `realm_forms`, and any other name), longest first, in any casing and
-    either Unicode normal form. A name of `EMBEDDED_MIN_CHARS` or more is
+    of `realm_forms`, any other name, the login user and the host name),
+    longest first, in any casing and either Unicode normal form. A name of
+    `EMBEDDED_MIN_CHARS` or more is
     replaced inside longer words too; a shorter one only as a whole word.
     Text already turned into a placeholder is never matched again.
     """
@@ -210,6 +223,8 @@ class Redactor:
         characters: Iterable[str] = (),
         realms: Iterable[str] = (),
         names: Iterable[str] = (),
+        users: Iterable[str] = (),
+        hosts: Iterable[str] = (),
         homes: Iterable[str] = (),
     ) -> None:
         self._passes: list[Callable[[str], str]] = []
@@ -234,6 +249,8 @@ class Redactor:
             (CHARACTER, characters, _plain_forms),
             (REALM, realms, realm_forms),
             (NAME, names, _plain_forms),
+            (USER, users, _plain_forms),
+            (HOST, hosts, _plain_forms),
         ):
             for value in _clean(values):
                 for form in forms_of(value):

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import re
 import sys
 import unicodedata
 from pathlib import Path
@@ -17,7 +18,18 @@ from pathlib import Path
 import pytest
 
 from wowlab_core import redact
-from wowlab_core.redact import ACCOUNT, BATTLETAG, CHARACTER, EMAIL, GUID, HOME, NAME, REALM
+from wowlab_core.redact import (
+    ACCOUNT,
+    BATTLETAG,
+    CHARACTER,
+    EMAIL,
+    GUID,
+    HOME,
+    HOST,
+    NAME,
+    REALM,
+    USER,
+)
 
 REPO = Path(__file__).resolve().parents[3]
 SCRIPT = REPO / "scripts" / "lab_capture.py"
@@ -133,6 +145,64 @@ def test_constructed_placeholders_are_never_matched_again() -> None:
 def test_constructed_bytes_that_were_not_utf8_survive() -> None:
     lone = "folder-" + chr(0xDC80) + " Proudfoot#2468"  # surrogateescape of byte 0x80
     assert redact.Redactor()(lone) == "folder-" + chr(0xDC80) + f" {BATTLETAG}"
+
+
+@pytest.mark.parametrize("known", [True, False])
+def test_constructed_windows_oserror_text_doubles_backslashes_and_is_still_redacted(
+    known: bool,
+) -> None:
+    home = r"C:\Users\Sean O'Brien"
+    error = PermissionError(13, "Access is denied", home + r"\Games\WoW\WTF\Config.wtf")
+    text = str(error)
+    assert "C:\\\\Users\\\\Sean O'Brien\\\\Games" in text  # what repr() writes
+    out = redact.Redactor(homes=[home] if known else [])(text)
+    assert "Sean" not in out and "Brien" not in out, out
+    # repr() quotes with " when the text holds a ', as this name does.
+    assert out == f'[Errno 13] Access is denied: "{HOME}\\\\Games\\\\WoW\\\\WTF\\\\Config.wtf"'
+
+
+def test_constructed_an_apostrophe_in_a_home_folder_name_stays_inside_it() -> None:
+    replace = redact.Redactor()
+    assert replace(r"C:\Users\Sean O'Brien\Games") == rf"{HOME}\Games"
+    assert replace("/home/d'arcy/wow") == f"{HOME}/wow"
+    # A quote that closes the path is not part of the name.
+    assert replace("'/home/darcy' and more") == f"'{HOME}' and more"
+
+
+def test_constructed_login_and_host_names_follow_the_whole_word_rule() -> None:
+    replace = redact.Redactor(users=["jp", "jprdmr"], hosts=["stormwind-pc"])
+    assert replace("jp ran jprdmr on stormwind-pc; jpg xjprdmrx") == (
+        f"{USER} ran {USER} on {HOST}; jpg x{USER}x"
+    )
+
+
+def test_redact_passes_the_scrub_tools_source_checks() -> None:
+    """The checks `test_script_is_standard_library_only_and_names_no_flavor`
+    makes of scripts/lab_capture.py, made of the file it loads (M13-09)."""
+    source = SOURCE.read_text(encoding="utf-8")
+    imported: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module.split(".")[0])
+    assert not imported & {"os", "shutil", "tempfile", "subprocess", "socket", "urllib", "http"}
+    for constant in ("_retail_", "_classic", "wow_classic", "wowt"):  # L6
+        assert constant not in source
+    assert re.findall(r"\bopen\(([^)]*)\)", source) in ([], ['"rb"'])
+    for forbidden in (
+        "write_text",
+        "write_bytes",
+        "unlink",
+        "rmtree",
+        "rmdir",
+        ".rename(",
+        "touch(",
+        "symlink_to",
+        ".mkdir(",
+    ):
+        assert forbidden not in source, forbidden
+    assert not re.findall(r"\.replace\(\s*[^,()]+\)", source)
 
 
 def test_redact_imports_the_standard_library_only() -> None:

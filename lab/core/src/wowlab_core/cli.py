@@ -1298,7 +1298,9 @@ def _doctor_redacted(root: Path | None, offline: bool, names: list[str]) -> Doct
     except ValueError as exc:
         raise CliError(str(exc), EXIT_USAGE) from None
     try:
-        return doctorredact.redacted(lambda: _doctor(root, offline), root, extra)
+        return doctorredact.redacted(
+            lambda: _doctor(root, offline), root, extra, doctorredact.DOCTOR_FIELDS
+        )
     except doctorredact.RedactedError as exc:
         raise CliError(str(exc)) from None
 
@@ -1317,7 +1319,8 @@ def doctor(
         typer.Option(
             "--redact",
             help="Output to paste into an issue: character, realm and account names, BattleTags, "
-            "GUIDs, email addresses, your home folder and journal labels become placeholders.",
+            "GUIDs, email addresses, your login and computer names, your home folder and journal "
+            "labels become placeholders.",
         ),
     ] = False,
     redact_name: Annotated[

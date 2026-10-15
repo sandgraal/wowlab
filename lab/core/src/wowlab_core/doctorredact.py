@@ -18,24 +18,33 @@ What is replaced, and where the names come from:
 - each name given with `--redact-name`, as `<NAME>`: a guild name, or a
   player's own name in a folder outside their home, which nothing in the
   install names as such;
-- a journal label (`label`) whole, as `<LABEL>`: it is free text a player or
-  a command wrote (a profile name, a snapshot message), so it can hold any
+- the login names the process runs as and this machine's network name, as
+  `<USER>` and `<HOST>`;
+- the journal label whole, as `<LABEL>`: it is free text a player or a
+  command wrote (a profile name, a snapshot message), so it can hold any
   name, a guild's included.
 
-Every string of the report is redacted, in the model, before it is printed
-as text or as JSON; so are library log lines while the report is built, and
-the message of an error that stops it.
+Each field of the report is treated as `DOCTOR_FIELDS` says (left as it is,
+redacted, or replaced whole), in the model, before it is printed as text or
+as JSON; a field missing from that table is replaced whole, and a test walks
+the models so none is. Library log lines (tracebacks included) are redacted
+while the report is built, Python warnings are not shown, and the message of
+an error that stops it is redacted.
 
 Read-only, like `doctor` itself (L1).
 """
 
 from __future__ import annotations
 
+import getpass
 import logging
 import os
-from collections.abc import Callable, Iterable, Iterator
+import socket
+import warnings
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager, suppress
-from pathlib import Path
+from enum import Enum
+from pathlib import Path, PurePath
 from typing import Any
 
 from pydantic import BaseModel
@@ -48,8 +57,8 @@ from wowlab_core import install, layout, redact, wtfconfig
 _REALM_CVARS = ("realmName",)
 _ACCOUNT_CVARS = ("accountName", "accountList")
 _CONFIG_NAMES = frozenset({"config.wtf", "config-cache.wtf"})
-# Fields replaced whole (see the module docstring).
-_FREE_TEXT_FIELDS = frozenset({"label"})
+# Host names that name no machine in particular.
+_NOT_A_HOST_NAME = frozenset({"localhost", "localhost.localdomain"})
 _LIBRARY_LOGGER = "wowlab_core"
 
 
@@ -131,13 +140,37 @@ def _names(values: Iterable[str]) -> Iterator[str]:
             yield text
 
 
+def machine_names() -> tuple[list[str], list[str]]:
+    """The login names the process runs as, and this machine's network name
+    (whole and up to its first dot). Each is matched by the same rule as any
+    other name: whole words only when shorter than `EMBEDDED_MIN_CHARS`."""
+    users: list[str] = []
+    with suppress(Exception):  # getuser raises when no name can be found
+        users.append(getpass.getuser())
+    for variable in ("USER", "USERNAME", "LOGNAME"):
+        value = os.environ.get(variable)
+        if value:
+            users.append(value)
+    hosts: list[str] = []
+    with suppress(OSError):
+        host = socket.gethostname()
+        hosts.extend((host, host.split(".", 1)[0]))
+    return (
+        list(_names(users)),
+        [h for h in _names(hosts) if h.casefold() not in _NOT_A_HOST_NAME],
+    )
+
+
 def redactor(root: Path | None, names: Iterable[str] = ()) -> redact.Redactor:
     found = identities(root)
+    users, hosts = machine_names()
     return redact.Redactor(
         accounts=found.accounts,
         characters=found.characters,
         realms=found.realms,
         names=names,
+        users=users,
+        hosts=hosts,
         homes=home_folders(),
     )
 
@@ -154,37 +187,128 @@ def check_names(names: Iterable[str]) -> list[str]:
     return out
 
 
-def redact_model[M: BaseModel](model: M, replace: redact.Redactor) -> M:
-    """`model` with every string in it redacted, validated back into its type."""
-    data = _walk(model.model_dump(mode="json"), replace, None)
+# ─── what each field of the report gets ──────────────────────────────────────
+
+AS_IS = "as-is"  # a Literal or enum: it can hold only the values the code names
+REDACT = "redact"  # text: every identifying string in it becomes a placeholder
+# Any other value is a placeholder from `redact.PLACEHOLDERS`: the field is
+# replaced whole. A field not listed at all is replaced whole with
+# `redact.TEXT` (fail closed); a test walks the models so none is missed.
+type Treatment = str
+
+DOCTOR_FIELDS: dict[str, Treatment] = {
+    "install_root": REDACT,
+    "found_by": REDACT,
+    "install_error": REDACT,
+    "locations.searched": REDACT,
+    "locations.could_not_check.location": REDACT,
+    "locations.could_not_check.reason": REDACT,
+    "flavors.folder": REDACT,
+    "flavors.product": REDACT,
+    "flavors.version": REDACT,
+    "flavors.game_data.status": AS_IS,
+    "flavors.game_data.version": REDACT,
+    "flavors.game_data.detail": REDACT,
+    "flavors.sync_cvars.file": REDACT,
+    "flavors.sync_cvars.account": REDACT,
+    "flavors.sync_cvars.name": REDACT,
+    "flavors.sync_cvars.value": REDACT,
+    "other_dirs": REDACT,
+    "client.state": AS_IS,
+    "client.processes.state": AS_IS,
+    "client.processes.matched_by": AS_IS,
+    "client.processes.exe_source": AS_IS,
+    "client.processes.name": REDACT,
+    "client.processes.exe": REDACT,
+    "client.processes.install_root": REDACT,
+    "client.processes.flavor_folder": REDACT,
+    "client.processes.status": REDACT,
+    "client.error": REDACT,
+    "store.path": REDACT,
+    "store.damaged.name": REDACT,
+    "store.damaged.reason": REDACT,
+    "store.journal_error": REDACT,
+    "store.last_transaction.id": REDACT,
+    "store.last_transaction.created_at": REDACT,
+    # Free text a player or a command wrote (a profile name, a snapshot
+    # message, restored paths): it can hold any name, a guild's included.
+    "store.last_transaction.label": redact.LABEL,
+    "store.last_transaction.state": REDACT,
+    "problems": REDACT,
+}
+
+
+def redact_model[M: BaseModel](
+    model: M, replace: redact.Redactor, fields: Mapping[str, Treatment]
+) -> M:
+    """`model` with every string in it, dict keys included, treated as
+    `fields` says, validated back into its type."""
+    data = _walk(model, "", replace, fields)
     return type(model).model_validate(data)
 
 
-def _walk(value: Any, replace: redact.Redactor, key: str | None) -> Any:
-    if isinstance(value, str):
-        return redact.LABEL if key in _FREE_TEXT_FIELDS else replace(value)
-    if isinstance(value, list):
-        return [_walk(v, replace, None) for v in value]
+def _walk(value: Any, path: str, replace: redact.Redactor, fields: Mapping[str, Treatment]) -> Any:
+    if isinstance(value, BaseModel):
+        return {
+            name: _walk(getattr(value, name), f"{path}.{name}" if path else name, replace, fields)
+            for name in type(value).model_fields
+        }
+    if isinstance(value, Enum):
+        treatment = fields.get(path, redact.TEXT)
+        return value if treatment == AS_IS else _text(str(value.value), treatment, replace)
+    if isinstance(value, str | PurePath):
+        return _text(str(value), fields.get(path, redact.TEXT), replace)
+    if isinstance(value, list | tuple | set | frozenset):
+        return [_walk(v, path, replace, fields) for v in value]
     if isinstance(value, dict):
-        return {k: _walk(v, replace, k) for k, v in value.items()}
+        key = fields.get(path, redact.TEXT)
+        return {
+            (_text(k, key, replace) if isinstance(k, str) else k): _walk(v, path, replace, fields)
+            for k, v in value.items()
+        }
     return value
 
 
+def _text(value: str, treatment: Treatment, replace: redact.Redactor) -> str:
+    if treatment == AS_IS:
+        return value
+    if treatment == REDACT:
+        return replace(value)
+    return treatment if treatment in redact.PLACEHOLDERS else redact.TEXT
+
+
+# ─── while the report is built ───────────────────────────────────────────────
+
+
 class _RedactingFilter(logging.Filter):
+    """Folds a record's traceback and stack into its message, redacts it, and
+    drops them, so no handler formats an unredacted one."""
+
     def __init__(self, replace: redact.Redactor) -> None:
         super().__init__()
         self._replace = replace
 
     def filter(self, record: logging.LogRecord) -> bool:
-        record.msg = self._replace(record.getMessage())
+        parts = [record.getMessage()]
+        if record.exc_info:
+            parts.append(logging.Formatter().formatException(record.exc_info))
+        elif record.exc_text:
+            parts.append(record.exc_text)
+        if record.stack_info:
+            parts.append(record.stack_info)
+        record.msg = self._replace("\n".join(parts))
         record.args = None
+        record.exc_info = None
+        record.exc_text = None
+        record.stack_info = None
         return True
 
 
 @contextmanager
 def redacting(replace: redact.Redactor) -> Iterator[None]:
-    """While the report is built: library log lines are redacted, and an
-    error that stops it becomes a `RedactedError` whose message is."""
+    """While the report is built: library log lines are redacted, Python
+    warnings (which print a file path and a source line) are not shown, and
+    an error that stops it becomes a `RedactedError` whose message is."""
     logger = logging.getLogger(_LIBRARY_LOGGER)
     log_filter = _RedactingFilter(replace)
     # A logger's own filters see only records logged on it, not those of its
@@ -193,7 +317,9 @@ def redacting(replace: redact.Redactor) -> Iterator[None]:
     for target in filtered:
         target.addFilter(log_filter)
     try:
-        yield
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            yield
     except Exception as exc:
         message = str(exc) or type(exc).__name__
         raise RedactedError(replace(f"{type(exc).__name__}: {message}")) from None
@@ -202,8 +328,13 @@ def redacting(replace: redact.Redactor) -> Iterator[None]:
             target.removeFilter(log_filter)
 
 
-def redacted[M: BaseModel](build: Callable[[], M], root: Path | None, names: Iterable[str]) -> M:
-    """The report `build` makes, with every string in it redacted.
+def redacted[M: BaseModel](
+    build: Callable[[], M],
+    root: Path | None,
+    names: Iterable[str],
+    fields: Mapping[str, Treatment],
+) -> M:
+    """The report `build` makes, treated field by field as `fields` says.
 
     The names are found first. If finding them fails, the error is redacted
     with what is known without them (the home folder, the patterns, `names`),
@@ -213,4 +344,4 @@ def redacted[M: BaseModel](build: Callable[[], M], root: Path | None, names: Ite
     with redacting(floor):
         replace = redactor(root, names)
     with redacting(replace):
-        return redact_model(build(), replace)
+        return redact_model(build(), replace, fields)
