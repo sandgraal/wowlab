@@ -75,7 +75,8 @@ python_version = "3.12"
 # Scripts held to the library's standard: the scrub tool (the repository's privacy
 # boundary), the subset tool (M12-01; makes fixtures the same byte-for-byte way),
 # the command-reference generator (M12-13; its page is published to the wiki), and
-# the daily wiki job's gate and state tool (M12-14; nothing reaches the wiki past them).
+# the daily wiki job's gate and state tool (M12-14; nothing reaches the wiki past them),
+# and its diagnosis of the Claude step (M12-14; it prints model text to a public log).
 files = [
   "lab/core/src",
   "scripts/lab_capture.py",
@@ -83,6 +84,7 @@ files = [
   "scripts/gen_command_reference.py",
   "scripts/check_wiki.py",
   "scripts/wiki_state.py",
+  "scripts/wiki_diagnose.py",
 ]
 exclude = ["\\.claude/worktrees", "\\.venv"]
 warn_unreachable = true
