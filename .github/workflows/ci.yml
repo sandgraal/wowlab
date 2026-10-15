@@ -171,14 +171,6 @@ jobs:
       - name: pytest lab/core/tests
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         run: uv run --frozen pytest -q lab/core/tests
-      - name: "EXPERIMENT (M13-02, removed before review): long paths with LongPathsEnabled=0"
-        if: runner.os == 'Windows' && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true')
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -Value 0
-          "LongPathsEnabled=" + (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem').LongPathsEnabled
-          uv run --frozen pytest -q -p no:cacheprovider lab/core/tests/test_desktop_paths.py
       - name: wowlab --version
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         run: uv run --frozen wowlab --version

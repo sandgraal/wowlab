@@ -135,13 +135,39 @@ def test_constructed_location_root_with_spaces_and_parentheses_round_trips(
     _round_trip(root)
 
 
+def _windows_long_paths_off() -> bool:
+    """True on Windows when `LongPathsEnabled` is not 1 (the default on many
+    player machines; GitHub's runner image sets it to 1)."""
+    if sys.platform != "win32":
+        return False
+    import winreg  # Windows only
+
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\FileSystem"
+        ) as key:
+            value, _ = winreg.QueryValueEx(key, "LongPathsEnabled")
+    except OSError:
+        return True
+    return bool(value != 1)
+
+
+@pytest.mark.skipif(
+    _windows_long_paths_off(),
+    reason=(
+        "LongPathsEnabled is off: Windows refuses paths past MAX_PATH without a "
+        "\\\\?\\ prefix, which the Lab does not add (M13-02 finding); this machine "
+        "cannot even build the tree"
+    ),
+)
 def test_constructed_location_root_past_max_path_round_trips(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Every file under the root is past `MAX_PATH`, and so is the root
-    itself; each component stays short. On Windows this holds where long
-    paths are enabled for the process (`LongPathsEnabled`, and Python's
-    `longPathAware` manifest); the CI job records which."""
+    itself; each component stays short. On Windows this holds only where
+    long paths are enabled for the process (`LongPathsEnabled` = 1, and
+    Python's `longPathAware` manifest); the CI job prints the setting. With
+    it off, the Lab passes plain paths and Windows refuses them (M13-02)."""
     deep = tmp_path.joinpath(*(f"games-library-{n:02d}-" + "x" * 40 for n in range(5)))
     root = deep / "World of Warcraft"
     assert len(str(root)) > MAX_PATH
