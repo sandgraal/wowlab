@@ -5532,9 +5532,10 @@ def _m13_05_edited(edits: list[tuple[str, str]]) -> list[str]:
         return _m13_05_combat_problems(path)
 
 
-@pytest.mark.parametrize("tag", sorted(_M13_05_CASES))
-def test_m13_05_constructed_combat_edits_fail(tag: str) -> None:
-    assert _m13_05_edited(_M13_05_CASES[tag]), tag
+def test_m13_05_constructed_combat_edits_fail() -> None:
+    # No fixture argument: the review probes call every test here bare.
+    missed = [tag for tag, edits in sorted(_M13_05_CASES.items()) if not _m13_05_edited(edits)]
+    assert not missed, missed
 
 
 def test_m13_05_constructed_call_after_the_check_passes() -> None:

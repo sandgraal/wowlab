@@ -694,6 +694,60 @@ Items:
     appeared, how many seconds were left, and whether
     `LOADING_SCREEN_DISABLED` is a known event on Forever.
 
+## M13-05 [verify] checklist
+
+What the owner's schema-3 capture must settle (the conductor's runbook is
+`docs/handoffs/M13-05.md`). Every API `Actions.lua` asks is **[verify]**
+until a capture shows it ran. Each item ends up confirmed, contradicted (with
+what Forever returned) or still open in the dated `docs/LAB_FORMATS.md`
+amendment that follows the capture.
+
+Capture steps beyond §13.1's: log in out of combat and wait for the
+"recording in 15 s" pass; have at least one macro, one spell and one item on
+an action bar; open the key bindings panel once and note whether "Character
+Specific Key Bindings" is ticked; then log out. Optional: `/reload` in
+combat, then fight nothing until the capture, to see the combat reason (a
+second plain logout afterwards shows the re-gather).
+
+Items:
+
+1. `schema = 3` in both variables, and `probe.loads` rising across the
+   first schema-3 write.
+2. `probes` on `spellbook`, `actionbars` and `bindings`: for each of the ten
+   APIs, `present`, `calls`, `errors` and `answered`. Any `errors` above 0,
+   or a function `present = false`, is a finding.
+3. `spellbook` is not absent with `"Enum.SpellBookSpellBank.Player missing"`;
+   its `skill_lines` offsets and counts match the spellbook on screen.
+4. `subtext`: whether ranks show as text (`"Rank 3"`) and which other
+   subtexts appear (settles part of M13-06's rank question); `type`
+   numbers seen, and whether a flyout's `action_id` differs from its
+   `spell_id`.
+5. `actionbars`: whether slots past the client's own range answer nothing
+   or raise an error (`GetActionInfo` `errors`), and the highest filled slot.
+6. Macro slots: `type = "macro"`, the `id` (a macro index, or a spell id),
+   any `sub_type`, and `GetMacroInfo` `answered` equal to the number of macro
+   slots (each id names a macro). No macro name or body anywhere in the file.
+7. `bindings`: `binding_set` against the ticked "Character Specific Key
+   Bindings" (on Retail 2 is the character's set), and the keys against the
+   matching `bindings-cache.wtf` (account folder or character folder).
+   `commands_left_out` and `keys_left_out` as counts only; no `MACRO`,
+   `SPELL`, `ITEM` or `CLICK` command stored.
+8. `talents.legacy.left_out_config` equals `talents.class.config.id` when
+   both gathers ran at the same moment; a `left_out_config_absent` reason is
+   a finding.
+9. `events_unregistered` on the three new sections: whether
+   `SPELLS_CHANGED`, `ACTIONBAR_SLOT_CHANGED`, `UPDATE_BINDINGS` and
+   `PLAYER_REGEN_ENABLED` are known.
+10. Combat, if the optional step was done: the section absent with
+    `"in combat: ..."` after a `/reload` in combat, and gathered again after
+    combat ended.
+11. Hitches: whether the first pass or the end of a fight stutters (the
+    three sections re-gather on `PLAYER_REGEN_ENABLED`).
+
+If the client crashes at login or within the first pass, untick WowLab or
+`/wowlab skip spellbook` (or `actionbars`, `bindings`) as in
+"Switching a section off", and report the file and line.
+
 ## M11-29 capture step
 
 One applied barber-shop change, for checklist items 11, 12 and 14: why, in
