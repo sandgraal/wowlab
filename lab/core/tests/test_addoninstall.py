@@ -167,9 +167,17 @@ def test_find_source_is_the_repository_addon_folder() -> None:
     assert addoninstall.find_source() == SOURCE.resolve()
 
 
+def _empty_package(tmp_path: Path) -> Path:
+    """Constructed: an installed `wowlab_core` with no bundled copy, so a
+    test never depends on which `wowlab_core` this run imported."""
+    package = tmp_path / "empty-install" / "wowlab_core"
+    package.mkdir(parents=True, exist_ok=True)
+    return package
+
+
 def test_find_source_outside_a_checkout_says_so(tmp_path: Path) -> None:
-    with pytest.raises(addoninstall.AddonSourceError, match="checkout"):
-        addoninstall.find_source(tmp_path)
+    with pytest.raises(addoninstall.AddonSourceError, match="not running from a checkout"):
+        addoninstall.find_source(tmp_path, package=_empty_package(tmp_path))
 
 
 def _source_copy(tmp_path: Path) -> Path:
@@ -468,6 +476,7 @@ def test_install_outside_a_checkout_fails_clearly(
     root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(addoninstall, "_HERE", tmp_path / "site-packages" / "wowlab_core")
+    monkeypatch.setattr(addoninstall, "_package", lambda: _empty_package(tmp_path))
     before = _tree(root)
     result = run("addon", "install", "lab", "--yes")
     assert result.exit_code == 1
@@ -651,24 +660,50 @@ def test_a_link_in_the_source_path_is_refused_constructed(tmp_path: Path, compon
     (leaf / "WowLab.toc").write_bytes((SOURCE / "WowLab.toc").read_bytes())
     ws.joinpath(*parts[: cut + 1]).symlink_to(real / component, target_is_directory=True)
     with pytest.raises(addoninstall.AddonSourceError, match="is a link"):
-        addoninstall.find_source(ws)
+        addoninstall._candidate(ws)
+    if component == "lab":
+        return  # the package's own folder would resolve through the link
+    package = ws.joinpath(*addoninstall.CHECKOUT_PACKAGE_PARTS)
+    package.mkdir(parents=True)
+    with pytest.raises(addoninstall.AddonSourceError, match="is a link"):
+        addoninstall.find_source(package, package=_empty_package(tmp_path))
 
 
-@pytest.mark.parametrize("marker", ["git", "pyproject"])
-def test_the_source_walk_stops_at_the_workspace_root_constructed(
+def _root_marker(folder: Path, marker: str) -> None:
+    """Constructed: make `folder` a workspace root by `.git` (an empty folder,
+    or a worktree's file) or by a uv-workspace `pyproject.toml`."""
+    folder.mkdir(parents=True, exist_ok=True)
+    if marker == "git":
+        (folder / ".git").mkdir()
+    elif marker == "git-file":
+        (folder / ".git").write_text("gitdir: elsewhere\n")
+    else:
+        (folder / "pyproject.toml").write_text('[tool.uv.workspace]\nmembers = ["lab/*"]\n')
+
+
+def _sources_in(root: Path) -> Path:
+    """Constructed: a `lab/addon/WowLab/` under `root` that is a plausible
+    lab-addon (the repository's TOC) plus a file that must never be installed."""
+    folder = root.joinpath(*addoninstall.SOURCE_PARTS)
+    folder.mkdir(parents=True)
+    (folder / "WowLab.toc").write_bytes((SOURCE / "WowLab.toc").read_bytes())
+    (folder / "Evil.lua").write_bytes(b"-- constructed, must never be installed\n")
+    return folder
+
+
+@pytest.mark.parametrize("marker", ["git", "git-file", "pyproject"])
+def test_a_package_outside_the_checkout_layout_never_uses_a_root_above_it_constructed(
     tmp_path: Path, marker: str
 ) -> None:
-    above = tmp_path.joinpath(*addoninstall.SOURCE_PARTS)
-    above.mkdir(parents=True)
-    (above / "WowLab.toc").write_bytes((SOURCE / "WowLab.toc").read_bytes())
+    """A workspace root right above the package holds `lab/addon/WowLab/`,
+    but the package is not that root's `lab/core/src/wowlab_core`: it is
+    not a checkout, and with no bundle the sources are not found."""
     ws = tmp_path / "ws"
-    (ws / "pkg").mkdir(parents=True)
-    if marker == "git":
-        (ws / ".git").write_text("gitdir: elsewhere\n")
-    else:
-        (ws / "pyproject.toml").write_text('[tool.uv.workspace]\nmembers = ["pkg"]\n')
-    with pytest.raises(addoninstall.AddonSourceError, match="holds no lab-addon sources"):
-        addoninstall.find_source(ws / "pkg")
+    _root_marker(ws, marker)
+    _sources_in(ws)
+    (ws / "pkg").mkdir()
+    with pytest.raises(addoninstall.AddonSourceError, match="not running from a checkout"):
+        addoninstall.find_source(ws / "pkg", package=_empty_package(tmp_path))
 
 
 def test_an_installed_package_never_uses_a_lab_folder_above_it_constructed(
@@ -685,7 +720,7 @@ def test_an_installed_package_never_uses_a_lab_folder_above_it_constructed(
     (hostile / "Evil.lua").write_bytes(b"-- constructed, must never be installed\n")
     package = _site_packages(tmp_path)
     package.mkdir(parents=True)
-    with pytest.raises(addoninstall.AddonSourceError, match="no workspace root"):
+    with pytest.raises(addoninstall.AddonSourceError, match="not running from a checkout"):
         addoninstall.find_source(package, package=package)
 
 
@@ -738,8 +773,8 @@ def test_an_installed_package_uses_its_bundled_copy_constructed(tmp_path: Path) 
 def test_a_workspace_root_without_sources_falls_back_to_the_bundle_constructed(
     tmp_path: Path,
 ) -> None:
-    """A venv inside some other git repository: the root holds no sources, so
-    the bundled copy is used; the walk still never goes past that root."""
+    """A venv inside some other git repository: not a checkout, so the
+    bundled copy is used; nothing above the package is searched."""
     hostile = tmp_path.joinpath(*addoninstall.SOURCE_PARTS)
     hostile.mkdir(parents=True)
     (hostile / "WowLab.toc").write_bytes((SOURCE / "WowLab.toc").read_bytes())
@@ -751,14 +786,72 @@ def test_a_workspace_root_without_sources_falls_back_to_the_bundle_constructed(
     )
 
 
-def test_the_checkout_wins_over_the_bundled_copy_constructed(tmp_path: Path) -> None:
+@pytest.mark.parametrize("marker", ["git", "git-file", "pyproject"])
+def test_an_installed_package_under_a_root_with_sources_uses_its_bundle_constructed(
+    tmp_path: Path, marker: str
+) -> None:
+    """Security finding 1 on PR #182: an installed wowlab inside any folder
+    holding `.git` (even an empty one) or a uv-workspace `pyproject.toml`,
+    and `lab/addon/WowLab/` beside it. That folder's Lua is never used; the
+    package's bundled copy is."""
+    project = tmp_path / "project"
+    _root_marker(project, marker)
+    _sources_in(project)
+    package = _bundled_package(project)
+    bundle = package.resolve().joinpath(*addoninstall.BUNDLE_PARTS)
+    assert addoninstall.find_source(package, package=package) == bundle
+    files = addoninstall.addon_files(INTERFACE, bundle)
+    assert not any(rel.endswith("/Evil.lua") for rel in files)
+
+
+def test_a_lab_folder_in_a_second_root_further_up_is_ignored_constructed(
+    tmp_path: Path,
+) -> None:
+    """Two roots: the near one holds the package in the checkout layout but
+    no sources, the far one holds `lab/addon/WowLab/`. The far one is never
+    used; the package's bundled copy is."""
+    outer = tmp_path / "outer"
+    _root_marker(outer, "git")
+    _sources_in(outer)
+    inner = outer / "inner"
+    _root_marker(inner, "git")
+    package = inner.joinpath(*addoninstall.CHECKOUT_PACKAGE_PARTS)
+    bundle = package.joinpath(*addoninstall.BUNDLE_PARTS)
+    bundle.mkdir(parents=True)
+    for p in SOURCE.iterdir():
+        if p.name == "WowLab.toc" or p.suffix == ".lua":
+            (bundle / p.name).write_bytes(p.read_bytes())
+    assert addoninstall.find_source(package, package=package) == bundle.resolve()
+    with pytest.raises(addoninstall.AddonSourceError, match=r"checkout .* holds no lab-addon"):
+        addoninstall.find_source(package, package=_empty_package(tmp_path))
+
+
+@pytest.mark.parametrize("marker", ["git", "git-file", "pyproject"])
+def test_the_checkout_wins_over_the_bundled_copy_constructed(tmp_path: Path, marker: str) -> None:
+    """The real checkout layout: the package's folder is exactly
+    `<root>/lab/core/src/wowlab_core` and `<root>` is the workspace root, so
+    `<root>/lab/addon/WowLab/` is used even when a bundled copy exists."""
     ws = tmp_path / "ws"
+    _root_marker(ws, marker)
     checkout = ws.joinpath(*addoninstall.SOURCE_PARTS)
     checkout.mkdir(parents=True)
-    (ws / ".git").mkdir()
     (checkout / "WowLab.toc").write_bytes((SOURCE / "WowLab.toc").read_bytes())
-    package = _bundled_package(ws)
+    package = ws.joinpath(*addoninstall.CHECKOUT_PACKAGE_PARTS)
+    package.joinpath(*addoninstall.BUNDLE_PARTS).mkdir(parents=True)
+    (package.joinpath(*addoninstall.BUNDLE_PARTS) / "WowLab.toc").write_bytes(
+        (SOURCE / "WowLab.toc").read_bytes()
+    )
     assert addoninstall.find_source(package, package=package) == checkout.resolve()
+
+
+def test_the_checkout_layout_needs_a_workspace_root_constructed(tmp_path: Path) -> None:
+    """`lab/core/src/wowlab_core` under a folder with no `.git` and no
+    uv-workspace `pyproject.toml` is not a checkout."""
+    _sources_in(tmp_path / "ws")
+    package = (tmp_path / "ws").joinpath(*addoninstall.CHECKOUT_PACKAGE_PARTS)
+    package.mkdir(parents=True)
+    with pytest.raises(addoninstall.AddonSourceError, match="not running from a checkout"):
+        addoninstall.find_source(package, package=_empty_package(tmp_path))
 
 
 def test_a_zip_imported_package_is_refused_constructed(
@@ -831,9 +924,10 @@ def test_a_member_pyproject_is_not_the_workspace_root_constructed(tmp_path: Path
     (found / "WowLab.toc").write_bytes((SOURCE / "WowLab.toc").read_bytes())
     (tmp_path / ".git").mkdir()
     member = tmp_path / "lab" / "core"
-    member.mkdir(parents=True)
+    package = tmp_path.joinpath(*addoninstall.CHECKOUT_PACKAGE_PARTS)
+    package.mkdir(parents=True)
     (member / "pyproject.toml").write_text('[project]\nname = "x"\n')
-    assert addoninstall.find_source(member) == found
+    assert addoninstall.find_source(package, package=_empty_package(tmp_path)) == found
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="symlinks need a privilege on Windows")

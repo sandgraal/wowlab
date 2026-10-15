@@ -24,15 +24,18 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/wowlab_core"]
 
-# The release sdist (M13-03): the package and the repository's LICENSE, no test
-# suite. The wheel is built from this sdist, where hatchling's default
-# license-files glob finds LICENSE, so the wheel carries it as
-# dist-info/licenses/LICENSE with a License-File line in METADATA.
-# The lab-addon ships inside the package (M13-14): the sdist carries a copy of
+# The release sdist (M13-03, M13-14): the package, its build files and the
+# repository's LICENSE, no test suite and nothing else in the folder (an
+# untracked file under tests/ never ships). The wheel is built from this sdist,
+# where hatchling's default license-files glob finds LICENSE, so the wheel
+# carries it as dist-info/licenses/LICENSE with a License-File line in
+# METADATA. The lab-addon ships inside the package: the sdist carries a copy of
 # lab/addon/WowLab/ under the package, and the wheel built from the sdist picks
-# it up through the `packages` rule above. addoninstall.find_source uses it only
-# when wowlab is not running from a checkout.
+# it up through the `packages` rule above. addoninstall.find_source uses it
+# whenever wowlab is not running from a checkout. scripts/release_check.py
+# `dist` checks that both hold exactly the TOC and the .lua files it lists.
 [tool.hatch.build.targets.sdist]
+only-include = ["src", "pyproject.toml", "build-constraints.txt"]
 exclude = ["/tests"]
 
 [tool.hatch.build.targets.sdist.force-include]
