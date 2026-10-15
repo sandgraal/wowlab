@@ -10,7 +10,9 @@ name: Windows
 # main, nightly, and on demand for a branch:
 #   gh workflow run windows.yml --ref <branch>
 # It is not a required check. A red run on main is a bug to fix next, filed
-# as a ticket, not a reason to revert.
+# as a ticket, not a reason to revert. The conductor checks the latest runs
+# on main at the start of each /conduct session and before a wave review
+# (.claude/skills/conduct/SKILL.md, docs/AGENT_WORKFLOW.md).
 
 on:
   push:
@@ -22,9 +24,11 @@ on:
 permissions:
   contents: read
 
+# Runs on main queue rather than cancel, so each merge gets its own verdict;
+# a superseded on-demand branch run is cancelled.
 concurrency:
   group: windows-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   UV_VERSION: "0.12.12"

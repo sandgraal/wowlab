@@ -1374,6 +1374,15 @@ yet, and a fixture produced by the thing under test proves nothing).
   but CI no longer runs them. Before the Lab is ever used against a Windows
   install, the job comes back first; it caught the byte-0 lock bug on PR #59.
 
+  *Amended 2026-10-15 (ADR-0031, M13-02; owner decision):* the job is back.
+  It ran on every PR as a required check from #173 until later the same day,
+  when the owner took it off the PR path because every PR waited 15 to 30
+  minutes on it. It now runs in `.github/workflows/windows.yml` after each
+  merge to `main`, nightly, and on demand for a branch, and is not required
+  (ADR-0014 amendment). The `skipif` tests run there, so a Windows regression
+  is found after merge, not before; the conductor checks the latest runs
+  (`docs/AGENT_WORKFLOW.md`).
+
 ## 10. Wave 1 tickets
 
 `docs/BACKLOG.md`, milestone `M10`. Dependency shape:
