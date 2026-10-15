@@ -15,7 +15,11 @@ from them beyond the repository's own TOC template.
 # ruff: noqa: F811  (fixtures imported from test_cli are requested by name)
 from __future__ import annotations
 
+import importlib
 import sys
+import tomllib
+import zipfile
+from importlib import resources
 from pathlib import Path
 
 import pytest
@@ -670,16 +674,155 @@ def test_the_source_walk_stops_at_the_workspace_root_constructed(
 def test_an_installed_package_never_uses_a_lab_folder_above_it_constructed(
     tmp_path: Path,
 ) -> None:
-    """A package under site-packages with no workspace root above it, and a
-    hostile `lab/addon/WowLab/` higher up: refused, never used."""
+    """A package under site-packages with no workspace root above it, no copy
+    bundled in it, and a hostile `lab/addon/WowLab/` higher up: refused, never
+    used. (M13-14 changed the rule from M11-02's "a checkout and nowhere else"
+    to "a checkout, else the copy bundled in the installed package, nothing
+    else"; this package bundles nothing, so it is still refused.)"""
     hostile = tmp_path.joinpath(*addoninstall.SOURCE_PARTS)
     hostile.mkdir(parents=True)
     (hostile / "WowLab.toc").write_bytes(b"## Interface: @WOWLAB_INTERFACE@\n")
     (hostile / "Evil.lua").write_bytes(b"-- constructed, must never be installed\n")
-    package = tmp_path / "venv" / "lib" / "python3.12" / "site-packages" / "wowlab_core"
+    package = _site_packages(tmp_path)
     package.mkdir(parents=True)
     with pytest.raises(addoninstall.AddonSourceError, match="no workspace root"):
-        addoninstall.find_source(package)
+        addoninstall.find_source(package, package=package)
+
+
+# ─── the copy bundled in an installed package (M13-14) ───────────────────────
+
+
+def _site_packages(tmp_path: Path) -> Path:
+    return tmp_path / "venv" / "lib" / "python3.12" / "site-packages" / "wowlab_core"
+
+
+def _bundled_package(tmp_path: Path) -> Path:
+    """Constructed: an installed `wowlab_core` laid out as the wheel lays it
+    out, with the repository's TOC and `.lua` files under `_addon/WowLab/`."""
+    package = _site_packages(tmp_path)
+    bundle = package.joinpath(*addoninstall.BUNDLE_PARTS)
+    bundle.mkdir(parents=True)
+    (package / "__init__.py").write_bytes(b"")
+    for p in SOURCE.iterdir():
+        if p.name == "WowLab.toc" or p.suffix == ".lua":
+            (bundle / p.name).write_bytes(p.read_bytes())
+    return package
+
+
+def _files_from(package: Path) -> dict[str, bytes]:
+    return addoninstall.addon_files(INTERFACE, addoninstall.find_source(package, package=package))
+
+
+def test_the_sdist_bundles_the_addon_where_find_source_looks() -> None:
+    """The build copies `lab/addon/WowLab/` to the folder `BUNDLE_PARTS` names."""
+    config = tomllib.loads((REPO / "lab" / "core" / "pyproject.toml").read_text("utf-8"))
+    build = config["tool"]["hatch"]["build"]["targets"]
+    assert build["wheel"]["packages"] == ["src/wowlab_core"]
+    target = "src/wowlab_core/" + "/".join(addoninstall.BUNDLE_PARTS)
+    assert build["sdist"]["force-include"]["../addon/WowLab"] == target
+    assert "force-include" not in build["wheel"]
+
+
+def test_an_installed_package_uses_its_bundled_copy_constructed(tmp_path: Path) -> None:
+    """No workspace root above the package, a hostile `lab/addon/WowLab/` higher
+    up: the bundled copy is used, the hostile folder never is."""
+    hostile = tmp_path.joinpath(*addoninstall.SOURCE_PARTS)
+    hostile.mkdir(parents=True)
+    (hostile / "WowLab.toc").write_bytes((SOURCE / "WowLab.toc").read_bytes())
+    package = _bundled_package(tmp_path)
+    found = addoninstall.find_source(package, package=package)
+    assert found == package.resolve().joinpath(*addoninstall.BUNDLE_PARTS)
+    assert addoninstall.addon_files(INTERFACE, found) == addoninstall.addon_files(INTERFACE)
+
+
+def test_a_workspace_root_without_sources_falls_back_to_the_bundle_constructed(
+    tmp_path: Path,
+) -> None:
+    """A venv inside some other git repository: the root holds no sources, so
+    the bundled copy is used; the walk still never goes past that root."""
+    hostile = tmp_path.joinpath(*addoninstall.SOURCE_PARTS)
+    hostile.mkdir(parents=True)
+    (hostile / "WowLab.toc").write_bytes((SOURCE / "WowLab.toc").read_bytes())
+    project = tmp_path / "project"
+    (project / ".git").mkdir(parents=True)
+    package = _bundled_package(project)
+    assert addoninstall.find_source(package, package=package) == package.resolve().joinpath(
+        *addoninstall.BUNDLE_PARTS
+    )
+
+
+def test_the_checkout_wins_over_the_bundled_copy_constructed(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    checkout = ws.joinpath(*addoninstall.SOURCE_PARTS)
+    checkout.mkdir(parents=True)
+    (ws / ".git").mkdir()
+    (checkout / "WowLab.toc").write_bytes((SOURCE / "WowLab.toc").read_bytes())
+    package = _bundled_package(ws)
+    assert addoninstall.find_source(package, package=package) == checkout.resolve()
+
+
+def test_a_zip_imported_package_is_refused_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real zipimport: `importlib.resources` hands back a traversable that is
+    not a folder on disk, and its bundled copy is never read."""
+    archive = tmp_path / "zipped.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("zipped_wowlab/__init__.py", "")
+        zf.writestr("zipped_wowlab/_addon/WowLab/WowLab.toc", (SOURCE / "WowLab.toc").read_bytes())
+    monkeypatch.syspath_prepend(str(archive))
+    monkeypatch.delitem(sys.modules, "zipped_wowlab", raising=False)
+    importlib.import_module("zipped_wowlab")
+    try:
+        package = resources.files("zipped_wowlab")
+        assert not isinstance(package, Path)
+        with pytest.raises(addoninstall.AddonSourceError, match="not a real folder on disk"):
+            addoninstall.find_source(tmp_path / "elsewhere", package=package)
+    finally:
+        sys.modules.pop("zipped_wowlab", None)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need a privilege on Windows")
+@pytest.mark.parametrize(
+    ("linked", "match"),
+    [
+        ("_addon", "is a link"),
+        ("_addon/WowLab", "is a link"),
+        ("_addon/WowLab/WowLab.toc", "not a regular file"),
+        ("_addon/WowLab/Core.lua", "not a regular file"),
+    ],
+    ids=["addon-folder", "wowlab-folder", "toc", "lua"],
+)
+def test_a_link_in_the_bundled_copy_is_refused_constructed(
+    tmp_path: Path, linked: str, match: str
+) -> None:
+    package = _bundled_package(tmp_path / "inst")
+    target = package / linked
+    moved = tmp_path / "elsewhere" / target.name
+    moved.parent.mkdir()
+    target.rename(moved)
+    target.symlink_to(moved, target_is_directory=moved.is_dir())
+    with pytest.raises(addoninstall.AddonSourceError, match=match):
+        _files_from(package)
+
+
+def test_install_from_an_installed_package_uses_the_bundled_copy_constructed(
+    root: Path, flavor: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CLI end to end, wowlab running from a constructed installed package."""
+    package = _bundled_package(tmp_path / "inst")
+    monkeypatch.setattr(addoninstall, "_HERE", package)
+    monkeypatch.setattr(addoninstall, "_package", lambda: package)
+    bundle = package.resolve().joinpath(*addoninstall.BUNDLE_PARTS)
+    report = _json_of(cli.AddonInstallReport, "addon", "install", "lab", "--yes")
+    assert report.applied and report.source == str(bundle)
+    assert sorted(p.name for p in (flavor / LAB).iterdir()) == sorted(
+        ["WowLab.toc", *_source_lua()]
+    )
+    for name in _source_lua():
+        assert (flavor / LAB / name).read_bytes() == (SOURCE / name).read_bytes()
+    ok("addon", "remove", "lab", "--yes")
+    assert list((flavor / LAB).iterdir()) == []
 
 
 def test_a_member_pyproject_is_not_the_workspace_root_constructed(tmp_path: Path) -> None:

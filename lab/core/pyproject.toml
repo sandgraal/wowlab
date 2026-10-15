@@ -23,3 +23,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/wowlab_core"]
+
+# The lab-addon ships inside the package (M13-14): the sdist carries a copy of
+# lab/addon/WowLab/ under the package, and `uv build` builds the wheel from the
+# sdist, so the `packages` rule above picks it up. addoninstall.find_source
+# uses it only when wowlab does not run from a checkout.
+[tool.hatch.build.targets.sdist.force-include]
+"../addon/WowLab" = "src/wowlab_core/_addon/WowLab"
