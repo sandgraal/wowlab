@@ -83,6 +83,8 @@ Following the `scripts/gen_file_map.py` pattern: walk the Click tree of `wowlab_
 
 ---
 
+*Note 2026-10-15:* M12-03 (db2lake, deferred by the re-scope) was merged from the owner's account as #158; its text stays in `docs/handoffs/M12-deferred.md`, and M12-04 remains deferred.
+
 ## [x] M12-14 — `wiki-daily`: a scheduled job that checks and improves the wiki, then pushes it
 **Size:** M · **Depends on:** M12-13 · **owner** (the `WIKI_PUSH_TOKEN` secret)
 
@@ -104,7 +106,9 @@ Steps: (1) check out `main` and the wiki (`WIKI_PUSH_TOKEN`, a fine-grained toke
   - the push uses the job's `GITHUB_TOKEN` through a credential helper, so no `WIKI_PUSH_TOKEN` is needed;
   - a separate `previous-report` job with no checkout holds the one `actions: read`, and the job that runs Claude has `contents: read` only.
 - **Planned commands.** On the Roadmap, a planned command is named in prose, never in code, because the gate rejects any `wowlab …` in code that is not on `main`.
-- **The frozen wiki copy** (`tests/scripts/fixtures/wiki-<commit>`) is refreshed whenever a new command lands. The gate requires every leaf command to be named on a hand-written page, so a stale copy fails once main merges into an open PR (as #145 did to #159).
+- **The frozen wiki copy** (`tests/scripts/fixtures/wiki-<commit>`) is refreshed whenever a new command lands. The gate requires every leaf command to be named on a hand-written page, so a stale copy fails once main merges into an open PR (as #145 did to #159). M12-15 removed that coupling.
+
+*Amended 2026-10-15 (#174, #180):* the job authenticates with the owner's subscription token (`CLAUDE_CODE_OAUTH_TOKEN`), not an API key. The API preflight and the workspace header described above are gone (a token cannot be checked without spending usage), and the job sets `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` with bubblewrap.
 
 ---
 
@@ -328,7 +332,7 @@ The README's first screen: what wowlab is in three sentences; the trust model of
 ---
 
 ## [ ] M13-11 — First public release, v0.1
-**Size:** S · **Depends on:** M13-02, M13-03, M13-04, M13-09, M13-10 · **owner** (pushes the tag)
+**Size:** S · **Depends on:** M13-02, M13-03, M13-04, M13-09, M13-10, M13-14 · **owner** (pushes the tag)
 
 Contents: M13-02 to M13-04, M13-09, M13-10, and M13-06 if M13-05 has landed. Not held for M13-08. The conductor drafts the release notes (what is in it, the trust model, platform status, the `--json` models); the owner pushes the tag.
 
@@ -347,3 +351,39 @@ The conductor writes `docs/handoffs/M13-review.md` per `docs/LAB_PLAN.md` §11: 
 **Size:** S · **Depends on:** M13-11 · **owner** (the decision)
 
 Thirty days after v0.1, the conductor records in `docs/handoffs/M13-gate.md` the counts of `docs/LAB_PLAN.md` §15.4 and the commands that produced them: release-asset downloads, distinct non-owner authors of issues and discussions (bots excluded), and stars. The owner decides: continue public work (at least 50 downloads and at least 5 non-owner issues or discussions, the issue count weighing more) or freeze the public surface and return to personal-lab mode. The conductor does not make the call.
+
+---
+
+# M13 follow-ups found in review (filed 2026-10-15)
+
+## [ ] M13-14 — The lab-addon ships in the wheel
+**Size:** S · **Depends on:** M13-03
+
+Found in the M13-03 review. `lab/core/pyproject.toml` packaged only `src/wowlab_core`, and `addoninstall.find_source` looked for `lab/addon/WowLab` only in a repository checkout, so `wowlab addon install lab` failed from a release install. Bundle the addon into the package: an sdist force-include into `wowlab_core/_addon/WowLab`, which the wheel built from the sdist carries. `find_source` then uses the checkout first, and otherwise the bundled copy: a real on-disk path only, through the same `_candidate` checks. This changes M11-02's "a checkout and nowhere else" to "a checkout, else the copy bundled in the installed package, nothing else". `scripts/release_check.py dist` asserts that the bundled TOC is in the wheel.
+
+**Acceptance:** from an installed wheel, `addon install lab --dry-run`, then `--yes`, then `addon remove lab --yes` work against a copy of a fixture install; constructed tests for the bundle, a zip install refused, links refused, checkout-first; `make ci` green; reviewed by `code-reviewer` and `security-reviewer`.
+
+---
+
+## [ ] M13-15T — Long paths on Windows: graders
+**Size:** S · **Depends on:** M13-02 · **[TEST]** (test-writer only)
+
+Found by M13-02. With `LongPathsEnabled=0`, the default on many player PCs, Windows refuses plain paths longer than 260 characters, so `guard` and `snapshot` cannot reach a file deep in an install. Write `xfail(strict=True)` graders that run on `windows-latest`: a snapshot, a restore and a `guard` write of a file whose path exceeds 260 characters, with the setting off (the CI job can turn it off in a step). Readers open plain paths too (`install` discovery, `doctor`, the format parsers), so cover a read of such a file as well. M13-02's experiment failed while building the deep tree, before any Lab code ran, so which modules fail is not yet shown. `guard.py` is load-bearing, so the graders land first.
+
+**Acceptance:** the graders fail on `main` for the stated reason on the `lab (windows)` job; reviewed by `code-reviewer`.
+
+## [ ] M13-15 — Long paths on Windows: `\\?\` where the graders need it
+**Size:** M · **Depends on:** M13-15T
+
+Make the M13-15T graders pass by using extended-length (`\\?\`) paths for the filesystem calls the graders show failing (expected: `guard`, `snapshot` and the readers) on Windows, without changing behaviour on other platforms. Activate the graders by deleting their markers only.
+
+**Acceptance:** the graders pass on `lab (windows)` with the setting off; the full suite passes; reviewed by `code-reviewer` and `security-reviewer` (the write gate).
+
+---
+
+## [ ] M13-16 — wiki-daily: the "nothing outside the wiki changed" check sees ignored paths
+**Size:** S · **Depends on:** —
+
+Found in the M12-14 security review of #172. The check uses `git status --porcelain`, which does not list ignored paths such as `.venv/` and `__pycache__/`. A planted `.pth` or `.pyc` would run undetected, though that needs a permission bypass first. Compare those paths too (a listing or hash of `.venv` site-packages and every `__pycache__` before and after the Claude step), and make every step that runs repository code after the model depend on that check.
+
+**Acceptance:** a constructed test or static check pins the comparison and the step order; actionlint clean; `make ci` green; reviewed by `security-reviewer`.

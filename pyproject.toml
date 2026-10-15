@@ -76,7 +76,8 @@ python_version = "3.12"
 # boundary), the subset tool (M12-01; makes fixtures the same byte-for-byte way),
 # the command-reference generator (M12-13; its page is published to the wiki), and
 # the daily wiki job's gate and state tool (M12-14; nothing reaches the wiki past them),
-# and its diagnosis of the Claude step (M12-14; it prints model text to a public log).
+# and its diagnosis of the Claude step (M12-14; it prints model text to a public log),
+# and the release checks (M13-03; nothing is published past them).
 files = [
   "lab/core/src",
   "scripts/lab_capture.py",
@@ -85,6 +86,7 @@ files = [
   "scripts/check_wiki.py",
   "scripts/wiki_state.py",
   "scripts/wiki_diagnose.py",
+  "scripts/release_check.py",
 ]
 exclude = ["\\.claude/worktrees", "\\.venv"]
 warn_unreachable = true
