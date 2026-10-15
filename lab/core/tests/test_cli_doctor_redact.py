@@ -24,6 +24,7 @@ from __future__ import annotations
 import getpass
 import json
 import logging
+import os
 import shutil
 import socket
 import types
@@ -66,6 +67,9 @@ LINUX_HOME = "/home/jaina/Games/wow"
 FIXTURE_NAMES = ("90000001#6", "Labrealmb Partb Partc Partd", "Labcharb", "Labrealmd")
 
 REDACTED_ROOT = str(Path(redact.HOME) / "Games" / "World of Warcraft")
+# How the fake home's `Users` folder is spelled on this platform: `/Users/` on
+# macOS and Linux, `\Users\` on Windows, where `tmp_path` is a drive path.
+NATIVE_USERS = f"{os.sep}Users{os.sep}"
 
 # What must never appear in redacted output, compared with case folded.
 LOGIN = "jprdmr"
@@ -208,8 +212,12 @@ def test_constructed_plants_reach_the_unredacted_doctor_output(planted: Path, ho
     text = _text()
     raw, _ = _json()
     values = "\n".join(_strings(json.loads(raw)))
-    # Each plant is printed somewhere without --redact, so its absence below means something.
-    for word in FORBIDDEN:
+    # Each plant is printed somewhere without --redact, so its absence below
+    # means something. `/Users/` is planted by the fake home alone, so the
+    # control looks for the home's own spelling; WINDOWS_HOME and LINUX_HOME
+    # plant `\Users\` and `/home/` on every platform.
+    assert NATIVE_USERS in str(home)
+    for word in (NATIVE_USERS if w == "/Users/" else w for w in FORBIDDEN):
         assert word.casefold() in (text + values).casefold(), word
     assert str(home) in text
     assert str(home) in values
