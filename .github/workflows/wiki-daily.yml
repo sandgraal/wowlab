@@ -27,8 +27,11 @@ name: Wiki daily
 # when the gate found no personal data and gitleaks found nothing, the pages
 # and the wiki diff as artifacts.
 #
-# Needs ANTHROPIC_API_KEY (the Claude step skips cleanly without it, or when
-# the API reports exhausted credit or a rate limit; the rest still runs).
+# Needs CLAUDE_CODE_OAUTH_TOKEN, a token for the owner's Claude subscription
+# (docs/SETUP.md); every run counts against that subscription's usage limits.
+# Without it the Claude step skips cleanly and the rest still runs. When the
+# token is rejected or a usage limit is hit, the Claude step fails: improve
+# fails, nothing is pushed, and report comments on the wiki-daily issue.
 #
 # Permissions beyond `contents: read`: `actions: read` on previous-report
 # (and nothing else there), `contents: write` on publish, `issues: write` on
@@ -123,9 +126,6 @@ jobs:
       claude_ran: ${{ steps.claude.outcome == 'success' }}
       changed: ${{ steps.gate.outputs.changed }}
     env:
-      # The workspace header, forwarded as in claude-review.yml (see the
-      # comment on its job `env`).
-      ANTHROPIC_CUSTOM_HEADERS: "${{ vars.ANTHROPIC_WORKSPACE_ID != '' && format('anthropic-workspace-id: {0}', vars.ANTHROPIC_WORKSPACE_ID) || '' }}"
       # Claude Code strips credentials from the environment of every command
       # it runs (the only one it may run is the gate on the wiki).
       CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
@@ -192,46 +192,17 @@ jobs:
             echo "- The previous run (${prev}) was rejected by the gate; its report is \`context/previous-check.txt\`." >> context/run.md
           fi
 
+      # A presence check only, as in claude-review.yml (see the comment there):
+      # a subscription token has no documented check that spends no usage. A
+      # rejected token or a usage limit fails the Claude step (is_error:true);
+      # the diagnosis step below prints the limit message, improve fails, and
+      # publish does not run.
       - name: Check secret
         id: secret
         env:
-          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
-          if [ -n "$KEY" ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "ANTHROPIC_API_KEY is not set; skipping the Claude step (see docs/SETUP.md)"; echo "present=false" >> "$GITHUB_OUTPUT"; fi
-      # Copied from claude-review.yml: one 1-token request surfaces the API's
-      # real error; exhausted credit, a rate limit or an overloaded API skips
-      # the Claude step cleanly, and a bad key, model or workspace fails.
-      - name: Check API access for the model
-        id: preflight
-        if: steps.secret.outputs.present == 'true'
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          body=$(jq -nc --arg m "$WIKI_MODEL" '{model: $m, max_tokens: 1, messages: [{role: "user", content: "ok"}]}')
-          # Headers go in on stdin so the key never sits in curl's argv;
-          # ANTHROPIC_CUSTOM_HEADERS (the workspace header, when set) rides along.
-          status=$({ printf 'x-api-key: %s\n' "$ANTHROPIC_API_KEY"; [ -n "$ANTHROPIC_CUSTOM_HEADERS" ] && printf '%s\n' "$ANTHROPIC_CUSTOM_HEADERS"; true; } | curl -sS -o "$RUNNER_TEMP/preflight.json" -w '%{http_code}' \
-            https://api.anthropic.com/v1/messages \
-            -H @- \
-            -H "anthropic-version: 2023-06-01" \
-            -H "content-type: application/json" \
-            -d "$body")
-          if [ "$status" != "200" ]; then
-            # Escape %, CR and LF so the message cannot start a new workflow command.
-            detail=$(jq -r '((.error.type // "unknown") + ": " + (.error.message // "no message")) | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A")' "$RUNNER_TEMP/preflight.json" 2>/dev/null || echo "unparseable response")
-            case "$status:$detail" in
-              429:*|529:*|*:rate_limit_error:*|*:overloaded_error:*|*"specified API usage limits"*|*"credit balance is too low"*)
-                echo "::warning title=Claude step skipped::HTTP ${status} ${detail}"
-                echo "Claude step skipped: HTTP ${status} ${detail}" >> "$GITHUB_STEP_SUMMARY"
-                echo "available=false" >> "$GITHUB_OUTPUT"
-                exit 0
-                ;;
-            esac
-            echo "::error title=Anthropic API rejected ${WIKI_MODEL}::HTTP ${status} ${detail}"
-            exit 1
-          fi
-          echo "API key can call ${WIKI_MODEL}"
-          echo "available=true" >> "$GITHUB_OUTPUT"
+          if [ -n "$TOKEN" ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "CLAUDE_CODE_OAUTH_TOKEN is not set; skipping the Claude step (see docs/SETUP.md)"; echo "present=false" >> "$GITHUB_OUTPUT"; fi
 
       # Claude Code reads CLAUDE.md files (and a .claude folder's settings and
       # rules) as instructions. Neither the pinned action nor the CLI has an
@@ -267,6 +238,7 @@ jobs:
               disableBypassPermissionsMode: "disable",
               deny: [
                 "WebFetch", "WebSearch", "NotebookEdit", "Task", "Agent",
+                "Read(./.git/config)",
                 "Read(//proc/**)", "Read(//sys/**)", "Read(//etc/**)", "Read(//root/**)",
                 "Read(\($tmp)/**)",
                 "Read(//home/runner/actions-runner/**)", "Read(//home/runner/runners/**)",
@@ -304,7 +276,7 @@ jobs:
       # only when the probe fails, and the step fails if bwrap still cannot
       # run, so the model never starts without the scrub.
       - name: Install bubblewrap for the env scrub
-        if: steps.preflight.outputs.available == 'true'
+        if: steps.secret.outputs.present == 'true'
         run: |
           for i in 1 2 3; do
             sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends bubblewrap && break
@@ -330,10 +302,10 @@ jobs:
       # push happen in `publish`, from page text only.
       - name: Improve the wiki (Claude)
         id: claude
-        if: steps.preflight.outputs.available == 'true'
+        if: steps.secret.outputs.present == 'true'
         uses: anthropics/claude-code-action@1d6de8cb0c237e7c15e9e1bdf973826ebae490cc # v1.0.248
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Agent mode takes a token instead of minting one through OIDC, so
           # the job needs no id-token permission; this one can only read.
           github_token: ${{ github.token }}
@@ -354,7 +326,7 @@ jobs:
       # when the Claude step did not succeed, and has a time limit, since the
       # text it matches is the model's.
       - name: Diagnose the Claude step (redacted)
-        if: ${{ !cancelled() && steps.preflight.outputs.available == 'true' && steps.claude.outcome != 'success' }}
+        if: ${{ !cancelled() && steps.secret.outputs.present == 'true' && steps.claude.outcome != 'success' }}
         timeout-minutes: 3
         continue-on-error: true
         working-directory: repo

@@ -1,0 +1,58 @@
+# The leaf commands of `wowlab_core.cli:app` in the era of the frozen wiki
+# copy `wiki-a47a7ee/` beside this file (M12-15). The real-wiki baselines
+# require these, and only these, to be named on a hand-written page; a
+# command added to the CLI later is reported as added since the snapshot,
+# never as a baseline failure. The file sits beside the folder, not in it,
+# because the folder is a copy of a wiki checkout and the gate rejects any
+# file there that is not a page.
+#
+# Generated from the Click tree at main 90b50c4 (PR #159, which brought this
+# copy in). Its CLI is identical to 7817820 (PR #145, which added
+# `wowlab char list`, the last command the wiki at a47a7ee documents): no file
+# under lab/core/src changed between the two. Regenerate only together with
+# a new frozen copy, from that copy's main commit:
+#
+#   git archive <commit> lab/core/src scripts | tar -x -C <dir>
+#   uv run python -I -c "import sys; sys.path[:0] = ['<dir>/lab/core/src',
+#     '<dir>/scripts']; import gen_command_reference as g;
+#     print(*(n for n, _ in g.iter_leaves(g.root_command())), sep='\n')"
+wowlab doctor
+wowlab explain
+wowlab tree
+wowlab undo
+wowlab addon install
+wowlab addon remove
+wowlab addons list
+wowlab binds list
+wowlab char list
+wowlab char show
+wowlab cvar get
+wowlab cvar list
+wowlab db2 builds
+wowlab db2 fetch
+wowlab db2 head
+wowlab install show
+wowlab log tail
+wowlab looks compare
+wowlab looks import-char
+wowlab looks options
+wowlab looks page
+wowlab looks races
+wowlab looks save
+wowlab looks show
+wowlab macros list
+wowlab profile apply
+wowlab profile delete
+wowlab profile list
+wowlab profile save
+wowlab profile show
+wowlab snap create
+wowlab snap diff
+wowlab snap gc
+wowlab snap list
+wowlab snap restore
+wowlab snap show
+wowlab snap verify
+wowlab sv dump
+wowlab sv list
+wowlab sv merge

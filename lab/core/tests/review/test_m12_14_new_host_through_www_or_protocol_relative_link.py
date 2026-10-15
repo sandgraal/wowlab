@@ -49,6 +49,7 @@ def _load(name: str) -> ModuleType:
 
 cw = _load("check_wiki")
 gen = _load("gen_command_reference")
+ERA = cw.read_commands(REAL_WIKI.with_name("wiki-a47a7ee.commands.txt"))
 
 
 def _git(root: Path, *args: str) -> None:
@@ -75,11 +76,15 @@ def _wiki_with(tmp_path: Path, line: str | None) -> Path:
 
 
 def _host_failures(root: Path) -> list[str]:
-    return [str(f) for f in cw.check(root, "HEAD").failures if "evil.example" in f.message]
+    return [
+        str(f) for f in cw.check(root, "HEAD", commands=ERA).failures if "evil.example" in f.message
+    ]
 
 
 def test_control_baseline_passes(tmp_path: Path) -> None:
-    assert [str(f) for f in cw.check(_wiki_with(tmp_path, None), "HEAD").failures] == []
+    assert [
+        str(f) for f in cw.check(_wiki_with(tmp_path, None), "HEAD", commands=ERA).failures
+    ] == []
 
 
 def test_control_an_https_link_to_a_new_host_fails(tmp_path: Path) -> None:
