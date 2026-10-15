@@ -47,4 +47,4 @@ echo "→ read-back"
 gh api "repos/$REPO/rulesets" --jq '.[] | "   ruleset \(.name) enforcement=\(.enforcement)"'
 gh repo view "$REPO" --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed,deleteBranchOnMerge \
   --jq '"   squash=\(.squashMergeAllowed) merge=\(.mergeCommitAllowed) rebase=\(.rebaseMergeAllowed) deleteOnMerge=\(.deleteBranchOnMerge)"'
-echo "done. Remaining owner steps: add the ANTHROPIC_API_KEY secret (gh secret set ANTHROPIC_API_KEY)."
+echo "done. Remaining owner steps: run 'claude setup-token', then add the CLAUDE_CODE_OAUTH_TOKEN secret (gh secret set CLAUDE_CODE_OAUTH_TOKEN; see docs/SETUP.md)."

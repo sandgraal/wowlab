@@ -247,5 +247,6 @@ in a PR you merge yourself.
 4. Write a backlog in the `## [ ] ID — Title` / `**Depends on:**` format;
    the frontier logic and SessionStart hook work unchanged.
 5. Run `scripts/bootstrap-github.sh` (edit `REPO` and the required check
-   names in `.github/rulesets/main.json`), add `ANTHROPIC_API_KEY`, and start
-   with `/conduct next`.
+   names in `.github/rulesets/main.json`), add the `CLAUDE_CODE_OAUTH_TOKEN`
+   secret from `claude setup-token` (`docs/SETUP.md`; CI usage then counts
+   against that subscription's limits), and start with `/conduct next`.

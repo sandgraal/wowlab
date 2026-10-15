@@ -41,6 +41,7 @@ def _load(name: str) -> ModuleType:
 
 cw = _load("check_wiki")
 gen = _load("gen_command_reference")
+ERA = cw.read_commands(REAL_WIKI.with_name("wiki-a47a7ee.commands.txt"))
 
 
 def _wiki(tmp_path: Path) -> Path:
@@ -58,13 +59,13 @@ def _append(path: Path, text: str) -> None:
 
 
 def test_control_baseline_passes(tmp_path: Path) -> None:
-    assert [str(f) for f in cw.check(_wiki(tmp_path)).failures] == []
+    assert [str(f) for f in cw.check(_wiki(tmp_path), commands=ERA).failures] == []
 
 
 def test_control_the_pair_in_prose_is_flagged(tmp_path: Path) -> None:
     root = _wiki(tmp_path)
     _append(root / "FAQ.md", "\nThrall-Stormrage is my main.\n")
-    out = [str(f) for f in cw.check(root).failures]
+    out = [str(f) for f in cw.check(root, commands=ERA).failures]
     assert out == ["FAQ.md:67: a Name-Realm pair (not quoted here; the log is public)"]
 
 
@@ -74,10 +75,10 @@ def test_a_page_named_after_a_name_realm_pair_is_flagged(tmp_path: Path) -> None
         "# Notes\n\nThrall-Stormrage is my main.\n", encoding="utf-8"
     )
     _append(root / "_Sidebar.md", "\n[Thrall-Stormrage](Thrall-Stormrage)\n")
-    assert cw.check(root).failures != []
+    assert cw.check(root, commands=ERA).failures != []
 
 
 def test_a_page_named_after_an_email_address_is_flagged(tmp_path: Path) -> None:
     root = _wiki(tmp_path)
     (root / "someone@example.org.md").write_text("# Notes\n\nHello.\n", encoding="utf-8")
-    assert cw.check(root).failures != []
+    assert cw.check(root, commands=ERA).failures != []
