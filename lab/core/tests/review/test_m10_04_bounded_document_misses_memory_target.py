@@ -33,31 +33,35 @@ asserted; timing on a CI runner is not the owner's laptop.
 
 The assignment projection was flaky on `macos-latest` (M13-17T): from a
 1/64 slice it read a steady 1105 MiB locally, then 1754 to 1772 MiB on four
-of fourteen macOS runs. Two things in the measurement, not the parser, moved
-it, and the projection multiplied both by 64:
+of fourteen macOS runs. Three things in the measurement, not the parser,
+moved it:
 
 - The slice was built as `b"\\r\\n" + body` and `body` freed before the
   parse. `before` is a high-water mark, so it already counted those pages;
   the parse then reused them, and the growth read low by up to one slice of
-  input (4 MiB, so 256 MiB projected). Whether the allocator hands them back
-  is not fixed, which is one source of the spread. Locally, with `body` kept
-  alive through the parse, the projection is 1340 MiB at 1/64, 1/32 and
-  1/16 alike; 1105 MiB was this artefact, in the passing direction.
-- Allocator transients (a block copied rather than grown in place, an arena
-  touched early) are a few MiB whatever the slice size. At 1/128 the same
-  machine read 1401 and 1575 MiB on consecutive runs.
+  input (4 MiB, so 256 MiB projected). Locally, with `body` kept alive
+  through the parse, the projection is 1340 MiB at 1/64, 1/32 and 1/16
+  alike; 1105 MiB was this artefact, in the passing direction.
+- On `macos-latest` one run in a few holds a transient a fresh run does not
+  (a block copied rather than grown in place, for example), and the
+  projection multiplies it. At 1/64 the runner read 1762 to 1773 MiB on six
+  of ten runs and 1514 to 1517 MiB on the rest; at 1/16, 1435, 1790 and
+  1435 MiB in a row. The spread seen is all upward of the usual reading.
+- On Linux `ru_maxrss` is kept across `execve` (getrusage(2)), so a child
+  of a large pytest process starts at the parent's high-water mark and a
+  parse below it reads as no growth. In the full suite on CI the stand-in
+  below projected 948 MiB: the probe saw the parent, not the parser. The
+  child now reads its own `VmHWM` from `/proc/self/status` on Linux.
 
-So the assignment test now keeps `body` alive (its `before` then counts one
+So the assignment test keeps `body` alive (its `before` then counts one
 unscaled extra slice of input, 16 MiB, which only makes it stricter),
 measures a 1/16 slice (4,194,304 assignments, 16 MiB, under `MAX_COST`) so
-a fixed transient is multiplied by 16 rather than 64, and takes the least of
-three projections from fresh interpreters. The least, not the mean: every
-source of spread seen adds memory the parse at full size would not hold, so
-the smallest sample is the closest to the parse alone, and a parser that
-truly holds more memory raises every sample, the smallest included. The
-1.5 GiB target is unchanged. A constructed stand-in parser that keeps a
-second copy of its result (the last test) shows the probe still fails such
-a parser.
+a transient is multiplied by 16 rather than 64, and takes the least of five
+projections, each from a fresh interpreter. The least, not the mean,
+because the spread is upward; a parser that truly holds more memory raises
+every sample, the least included. The 1.5 GiB target is unchanged. A
+constructed stand-in parser that keeps a second copy of its result (the last
+test) shows the same measurement still fails such a parser.
 """
 
 from __future__ import annotations
@@ -78,7 +82,7 @@ MIB = 1024 * 1024
 LIMIT_BYTES = 1.5 * 1024 * MIB  # 1.5 GB read as GiB, the generous reading
 FRACTION = 10
 ASSIGN_FRACTION = 16  # of MAX_FILE_BYTES; a 1/10 slice is over MAX_COST
-ASSIGN_SAMPLES = 3
+ASSIGN_SAMPLES = 5
 
 CHILD = r"""
 import resource, sys
@@ -104,10 +108,22 @@ else:
 if shape != "assign":
     data = b"\r\nCONSTRUCTED_DB = {\r\n" + body + b"}\r\n"
     del body
-scale = 1 if sys.platform == "darwin" else 1024
-before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * scale
+def peak():
+    # This process's peak RSS in bytes. On Linux `ru_maxrss` is kept across
+    # execve (getrusage(2)), so a child of a large pytest process starts at
+    # the parent's high-water mark and a parse below it reads as no growth.
+    # VmHWM is this process's own address space, new at exec.
+    if sys.platform.startswith("linux"):
+        with open("/proc/self/status") as status:
+            for line in status:
+                if line.startswith("VmHWM:"):
+                    return int(line.split()[1]) * 1024
+        raise SystemExit("no VmHWM in /proc/self/status")
+    scale = 1 if sys.platform == "darwin" else 1024
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * scale
+before = peak()
 doc = parse(data)
-after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * scale
+after = peak()
 print(before, after, len(data))
 """
 
@@ -164,7 +180,7 @@ def test_constructed_stand_in_holding_twice_the_memory_fails_the_assignment_prob
 
     CONSTRUCTED stand-in, not `luadata`: it parses the same slice twice and
     keeps both results, so the parse's RSS growth doubles while the input,
-    the interpreter, the slice, the target and the least-of-three rule stay
+    the interpreter, the slice, the target and the least-of-five rule stay
     those of the test above. Its projection must miss the target, or the
     measurement has stopped being able to see the parser.
     """

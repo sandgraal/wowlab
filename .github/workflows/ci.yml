@@ -94,6 +94,16 @@ jobs:
       - name: Generate a decimal-comma locale (serializer determinism graders)
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         run: sudo locale-gen de_DE.UTF-8
+      - name: TEMPORARY (M13-17T) memory probe diagnostics (linux)
+        run: |
+          uv run --frozen python - <<'EOF'
+          import sys
+          sys.path.insert(0, "lab/core/tests/review")
+          import test_m10_04_bounded_document_misses_memory_target as t
+          for parser in ("luadata", "double"):
+              peak, samples = t._projected_assignments_peak(parser)
+              print("linux 1/16", parser, "least", round(peak / t.MIB), "samples", t._mib(samples))
+          EOF
       - name: pytest
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         run: uv run --frozen pytest -q
