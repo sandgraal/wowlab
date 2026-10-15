@@ -10,8 +10,10 @@ name: Wiki daily
 #            read Actions, so the model's job does not need to.
 #   improve  reads main and a credential-free clone of the wiki, regenerates
 #            CLI-Reference, lets Claude edit the wiki copy (prompt:
-#            .github/prompts/wiki-daily.md), then gates the result with
-#            scripts/check_wiki.py and gitleaks. Read-only token only.
+#            .github/prompts/wiki-daily.md), checks that nothing under repo/
+#            changed (ignored paths included) before running anything from it
+#            again, then gates the result with scripts/check_wiki.py and
+#            gitleaks. Read-only token only.
 #   publish  on main only, and only when the repository variable
 #            WIKI_DAILY_PUBLISH is `true`: a scheduled run, or a dispatch with
 #            push: true. Takes the pages from `improve` as data, rebuilds the
@@ -207,16 +209,48 @@ jobs:
       # Claude Code reads CLAUDE.md files (and a .claude folder's settings and
       # rules) as instructions. Neither the pinned action nor the CLI has an
       # input that turns that off for folders below the working directory, so
-      # they are removed from both checkouts before the model starts. The
-      # checkout's state after this is what "Nothing outside the wiki
-      # changed" compares against.
+      # they are removed from both checkouts before the model starts.
       - name: Keep instruction files out of the model's reach
         if: steps.plan.outcome == 'success'
         run: |
           find repo wiki \( -path repo/.git -o -path wiki/.git \) -prune -o \
             \( -iname CLAUDE.md -o -iname CLAUDE.local.md -o \( -type d -name .claude \) \) -print0 \
             | xargs -0 -r rm -rf --
-          git -C repo status --porcelain > "$RUNNER_TEMP/repo-status-before"
+      # What "Nothing outside the wiki changed" compares against, taken after
+      # the last step before the model that runs repository code. `git status`
+      # does not list ignored paths, and a .pth file in the venv or a .pyc in
+      # any __pycache__ runs on the next `uv run`, so the snapshot covers every
+      # path under repo/: a sha256 of each regular file (a content hash, so
+      # resetting an mtime hides nothing), each symlink's target, each
+      # directory, and the executable bits. Under .git it covers config,
+      # hooks and refs, which decide what `git status` runs; not the object
+      # store or the index, which git itself rewrites. The hashes of both
+      # listings are step outputs, which nothing the model writes can change.
+      # System tools only, from an absolute shell and PATH: the venv's bin
+      # directory is prepended to PATH for later steps. The snapshot function
+      # is identical in both steps (tests/repo/test_wiki_daily_outside.py).
+      - name: Snapshot the checkout of main
+        id: before
+        if: steps.plan.outcome == 'success'
+        shell: /usr/bin/bash --noprofile --norc -eo pipefail {0}
+        run: |
+          export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+          snapshot() {
+            ( cd "$1"
+              list() { find . \( -path ./.git/objects -o -path ./.git/index \) -prune -o "$@" -print0 | LC_ALL=C sort -z; }
+              list -type f | xargs -0 -r sha256sum --
+              list -type f -perm -100 | while IFS= read -r -d '' p; do printf 'x %q\n' "$p"; done
+              list -type l | while IFS= read -r -d '' p; do printf 'l %q %q\n' "$p" "$(readlink -- "$p")"; done
+              list -type d | while IFS= read -r -d '' p; do printf 'd %q\n' "$p"; done
+              list ! -type f ! -type d ! -type l | while IFS= read -r -d '' p; do printf 'o %q\n' "$p"; done
+            )
+          }
+          status() { GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -C "$1" -c core.fsmonitor=false status --porcelain; }
+          snapshot repo > "$RUNNER_TEMP/repo-tree-before"
+          status repo > "$RUNNER_TEMP/repo-status-before"
+          echo "tree=$(sha256sum < "$RUNNER_TEMP/repo-tree-before" | cut -c1-64)" >> "$GITHUB_OUTPUT"
+          echo "status=$(sha256sum < "$RUNNER_TEMP/repo-status-before" | cut -c1-64)" >> "$GITHUB_OUTPUT"
+          echo "$(wc -l < "$RUNNER_TEMP/repo-tree-before") entries under repo/"
       # Runs even when the Claude step will not, so a skipped run still
       # proves the prompt and the settings are well-formed.
       - name: Build the prompt and the permission settings
@@ -257,12 +291,14 @@ jobs:
           jq -c . "$RUNNER_TEMP/wiki-daily-settings.json"
           # The gate command runs from the workspace root, offline, never
           # re-syncing; if its environment loses UV_PROJECT, the venv's
-          # python is still first on PATH.
+          # python is still first on PATH. It writes no bytecode either, so
+          # a new .pyc under repo/ after the model is never the gate's own.
           {
             echo "UV_PROJECT=${GITHUB_WORKSPACE}/repo"
             echo "UV_FROZEN=1"
             echo "UV_NO_SYNC=1"
             echo "UV_OFFLINE=1"
+            echo "PYTHONDONTWRITEBYTECODE=1"
           } >> "$GITHUB_ENV"
           echo "${GITHUB_WORKSPACE}/repo/.venv/bin" >> "$GITHUB_PATH"
 
@@ -318,6 +354,50 @@ jobs:
             --max-turns 90
             --allowedTools "Read,Grep,Glob,Edit(/${{ github.workspace }}/wiki/**),Write(/${{ github.workspace }}/wiki/**),Bash(uv run python repo/scripts/check_wiki.py wiki)"
 
+      # Straight after the model, before anything runs repository code again:
+      # every later step that does depends on this one, so when it fails
+      # nothing from repo/ runs and nothing is pushed. It runs nothing from
+      # repo/ itself: an absolute shell, the system PATH, and `git status`
+      # only once the listing (which covers .git/config and hooks) matched,
+      # with no global or system config and no fsmonitor. Its outcome is
+      # never ignored (no continue-on-error), so improve fails with it.
+      - name: Nothing outside the wiki changed
+        id: outside
+        if: always() && steps.plan.outcome == 'success'
+        shell: /usr/bin/bash --noprofile --norc -eo pipefail {0}
+        env:
+          TREE: ${{ steps.before.outputs.tree }}
+          STATUS: ${{ steps.before.outputs.status }}
+        run: |
+          export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+          snapshot() {
+            ( cd "$1"
+              list() { find . \( -path ./.git/objects -o -path ./.git/index \) -prune -o "$@" -print0 | LC_ALL=C sort -z; }
+              list -type f | xargs -0 -r sha256sum --
+              list -type f -perm -100 | while IFS= read -r -d '' p; do printf 'x %q\n' "$p"; done
+              list -type l | while IFS= read -r -d '' p; do printf 'l %q %q\n' "$p" "$(readlink -- "$p")"; done
+              list -type d | while IFS= read -r -d '' p; do printf 'd %q\n' "$p"; done
+              list ! -type f ! -type d ! -type l | while IFS= read -r -d '' p; do printf 'o %q\n' "$p"; done
+            )
+          }
+          status() { GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -C "$1" -c core.fsmonitor=false status --porcelain; }
+          changed() {
+            # The before listing is for reading only; the decision above used
+            # the step output.
+            diff "$RUNNER_TEMP/repo-$1-before" "$RUNNER_TEMP/repo-$1-after" | grep '^[<>]' | head -n 100 || true
+            echo "::error::the checkout of main changed during the run ($2); nothing from it runs again and nothing is pushed"
+            exit 1
+          }
+          snapshot repo > "$RUNNER_TEMP/repo-tree-after"
+          if [ -z "$TREE" ] || [ "$(sha256sum < "$RUNNER_TEMP/repo-tree-after" | cut -c1-64)" != "$TREE" ]; then
+            changed tree "a file under repo/, ignored paths included"
+          fi
+          status repo > "$RUNNER_TEMP/repo-status-after"
+          if [ -z "$STATUS" ] || [ "$(sha256sum < "$RUNNER_TEMP/repo-status-after" | cut -c1-64)" != "$STATUS" ]; then
+            changed status "git status"
+          fi
+          echo "repo/ is as it was before the model ran"
+
       # The action logs only a sanitised result line (no result text, no tool
       # output) unless show_full_output is on, and that prints every message
       # and tool result to this public log. Run 38653894587 failed with
@@ -326,9 +406,9 @@ jobs:
       # text and the first tool errors, each through check_wiki's personal-data
       # matchers (scripts/wiki_diagnose.py). It reads that file only, runs only
       # when the Claude step did not succeed, and has a time limit, since the
-      # text it matches is the model's.
+      # text it matches is the model's. Only when repo/ is unchanged.
       - name: Diagnose the Claude step (redacted)
-        if: ${{ !cancelled() && steps.secret.outputs.present == 'true' && steps.claude.outcome != 'success' }}
+        if: ${{ !cancelled() && steps.secret.outputs.present == 'true' && steps.claude.outcome != 'success' && steps.outside.outcome == 'success' }}
         timeout-minutes: 3
         continue-on-error: true
         working-directory: repo
@@ -340,17 +420,8 @@ jobs:
             --summary "$GITHUB_STEP_SUMMARY" \
             --workspace "$GITHUB_WORKSPACE" --temp "$RUNNER_TEMP" --home "$HOME"
 
-      - name: Nothing outside the wiki changed
-        if: always() && steps.plan.outcome == 'success'
-        run: |
-          git -C repo status --porcelain > "$RUNNER_TEMP/repo-status-after"
-          if ! cmp -s "$RUNNER_TEMP/repo-status-before" "$RUNNER_TEMP/repo-status-after"; then
-            diff "$RUNNER_TEMP/repo-status-before" "$RUNNER_TEMP/repo-status-after" || true
-            echo "::error::the checkout of main changed during the run; nothing is pushed"
-            exit 1
-          fi
       - name: Record the pass in .lab/state.json
-        if: steps.claude.outcome == 'success'
+        if: steps.claude.outcome == 'success' && steps.outside.outcome == 'success'
         working-directory: repo
         env:
           MAIN: ${{ steps.plan.outputs.main }}
@@ -361,7 +432,7 @@ jobs:
       # including personal data, 2 error. Only 0 and 1 let artifacts out.
       - name: Gate - check_wiki
         id: check
-        if: always() && steps.plan.outcome == 'success'
+        if: always() && steps.plan.outcome == 'success' && steps.outside.outcome == 'success'
         working-directory: repo
         env:
           BASE: ${{ steps.wiki.outputs.base }}
@@ -371,7 +442,7 @@ jobs:
           cat ../report/check.txt
           echo "code=$code" >> "$GITHUB_OUTPUT"
       - name: Install gitleaks
-        if: always() && steps.plan.outcome == 'success'
+        if: always() && steps.plan.outcome == 'success' && steps.outside.outcome == 'success'
         run: |
           curl -sSfL -o "$RUNNER_TEMP/gitleaks.tar.gz" \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
@@ -382,7 +453,7 @@ jobs:
       # top-level pages (the `:(glob)` pathspec does not descend).
       - name: Gate - gitleaks on the wiki diff
         id: gitleaks
-        if: always() && steps.plan.outcome == 'success'
+        if: always() && steps.plan.outcome == 'success' && steps.outside.outcome == 'success'
         continue-on-error: true
         env:
           BASE: ${{ steps.wiki.outputs.base }}
@@ -391,15 +462,35 @@ jobs:
           git -C wiki diff --cached "$BASE" > "$RUNNER_TEMP/wiki-full.diff"
           git -C wiki diff --cached "$BASE" -- ':(glob)*.md' > report/wiki.diff
           gitleaks stdin --redact --no-banner --exit-code 1 --config repo/.gitleaks.toml < "$RUNNER_TEMP/wiki-full.diff"
+      # Runs when repo/ changed too, so it takes the same care as that check:
+      # an absolute shell and the system PATH. In that case it runs nothing
+      # else: it writes a fixed reason as the gate report (the issue quotes
+      # it) and fails.
       - name: Gate result
         id: gate
         if: always() && steps.plan.outcome == 'success'
+        shell: /usr/bin/bash --noprofile --norc -eo pipefail {0}
         env:
+          OUTSIDE: ${{ steps.outside.outcome }}
           CODE: ${{ steps.check.outputs.code }}
           LEAKS: ${{ steps.gitleaks.outcome }}
           CLAUDE: ${{ steps.claude.outcome }}
           BASE: ${{ steps.wiki.outputs.base }}
         run: |
+          export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+          if [ "$OUTSIDE" != success ]; then
+            rm -f report/check.txt
+            echo "check_wiki did not run: the checkout of main changed outside the wiki during the run (step \"Nothing outside the wiki changed\": ${OUTSIDE:-not run}). No later step ran repository code, and nothing is pushed." > report/check.txt
+            echo "report=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Wiki daily"
+              echo
+              echo "- Claude step: ${CLAUDE:-skipped}"
+              echo "- the checkout of main changed outside the wiki; the gate did not run"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::the checkout of main changed outside the wiki; nothing is pushed"
+            exit 1
+          fi
           # The report leaves only when check_wiki found no personal data; the
           # pages and the diff only when, besides, gitleaks found nothing.
           if [ "$CODE" = 0 ] || [ "$CODE" = 1 ]; then
