@@ -37,6 +37,8 @@ ASKS_FIRST = {
     "wowlab addon remove",
     "wowlab sv merge",
     "wowlab snap gc",
+    # On a first run it offers a first snapshot into the Lab's store (M13-04).
+    "wowlab doctor",
 }
 
 ASKS_MARKER = "**Asks before changing files.**"
