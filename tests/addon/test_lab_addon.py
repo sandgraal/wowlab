@@ -5802,14 +5802,22 @@ def test_m13_05_the_retry_event_never_marks_a_section_dirty() -> None:
 #   else v1, ..., vn = nil, ..., nil end
 #
 # so on every path each value is cleaned or cleared before anything reads
-# it (a value bound to `_` is never read at all), and a value read as a
-# table is read only as `type(v)` and as `v.field` handed to clean; or
+# it (a value bound to `_` is never read at all); or
 #
 #   local keys = ns.Pack(pcall(f, ...))
 #
 # read only as `keys[1]` (pcall's flag), `keys.n` and `keys[i]` handed to
 # clean. None of the names called may be rebound, so a call goes to the
-# function named here.
+# function named here. Round 4: `isSecret` is always one of the three pinned
+# binds (or a parameter each caller hands one of them bare), and a cleaned
+# value is never copied to another name or handed to a function that could
+# read a field of it (`_m13_05_sink_problems`).
+#
+# What this does not pin: `clean` tests a table as a whole, so a field is
+# tested only where the source reads it through clean; values read from the
+# client's static tables and constants (Enum.*, ACCOUNT_BINDINGS,
+# CHARACTER_BINDINGS) are not call results and are not tested; and nothing
+# here proves issecretvalue exists or answers truthfully ([verify]).
 _M13_05_BUILTINS = frozenset({"type", "pcall", "pairs", "tostring", "math.min", "string.find"})
 _M13_05_NS = frozenset(
     {"ns.Section", "ns.Fn", "ns.Blocked", "ns.String", "ns.Number", "ns.Bool", "ns.Pack"}
@@ -5929,8 +5937,79 @@ def _m13_05_packed_problems(t: list[Token], flow: _Flow, name: str, close: int) 
     return problems
 
 
-def _m13_05_pcall_problems(t: list[Token], flow: _Flow, k: int) -> list[str]:
-    """Why the `pcall` at token k may hand a value on before clean."""
+# The file's own functions a cleaned value may be handed to: each takes one
+# value, reads only its type, length and pattern match, and returns it only
+# as a checked string (never a table), so nothing reads a field of it.
+_M13_05_SANITIZERS = {
+    "plainText": (
+        "local function plainText ( value ) "
+        'if type ( value ) == "string" and # value > 0 and # value <= 255 '
+        'and not string . find ( value , "[%c|]" ) then return value end return nil end'
+    ),
+    "word": (
+        "local function word ( value ) "
+        'if type ( value ) == "string" and # value <= 32 '
+        'and string . find ( value , "^%a+$" ) then return value end return nil end'
+    ),
+    "command": (
+        "local function command ( value ) "
+        'if type ( value ) == "string" and # value <= 128 '
+        'and string . find ( value , "^[%u%d_]+$" ) then return value end return nil end'
+    ),
+    "keyName": (
+        "local function keyName ( value ) "
+        'if type ( value ) == "string" and # value <= 64 '
+        'and string . find ( value , "^[%w%p]+$" ) then return value end return nil end'
+    ),
+}
+_M13_05_STORES = ("ns . Number (", "ns . String (", "ns . Bool (")
+_M13_05_COMPARE = frozenset({"==", "~=", "<", "<=", ">", ">="})
+
+
+def _m13_05_sink_problems(t: list[Token], flow: _Flow, v: str, uses: list[int]) -> list[str]:
+    """A cleaned value `v` (a pcall's, or a local bound from `clean`) is
+    read only where it cannot be copied or read as a table later: `type(v)`,
+    `v.field` as clean's last argument, the one argument of `ns.Number`,
+    `ns.String`, `ns.Bool` or a pinned sanitizer, an operand of a comparison
+    or of `+`/`-`, the first argument of `math.min`, or an argument of a
+    `pcall` of anything but the file's own functions (the client takes it).
+    Never assigned to another name, returned, put in a table, or handed to
+    any other function, so no alias can read a field of it."""
+    own = {label for head, label in flow.labels.items() if t[head - 1].text == "local"}
+    problems = []
+    for i in uses:
+        nxt, prev = t[i + 1].text, t[i - 1].text
+        if nxt in {".", "[", ":"}:
+            if not (nxt == "." and _m13_05_cleaned_last(t, i, i + 3)):
+                problems.append(f"line {t[i].line}: a field of {v} is read before clean")
+            continue
+        sole = prev == "(" and nxt == ")"
+        if sole and _render(t[i - 2 : i + 2]) == f"type ( {v} )":
+            continue
+        if sole and _render(t[i - 4 : i]) in _M13_05_STORES:
+            continue
+        if sole and t[i - 2].text in _M13_05_SANITIZERS and not _is_field(t, i - 2):
+            continue
+        if nxt in _M13_05_COMPARE | {"+", "-"} or prev in _M13_05_COMPARE | {"+", "-"}:
+            continue
+        if _render(t[i - 4 : i + 2]) == f"math . min ( {v} ,":
+            continue
+        j = _m13_05_enclosing_call(t, i)
+        if (
+            j is not None
+            and t[j - 1].text == "pcall"
+            and t[j + 1].text not in own
+            and prev == ","
+            and nxt in {",", ")"}
+        ):
+            continue
+        problems.append(f"line {t[i].line}: {v} is handed on (copied, stored or passed)")
+    return problems
+
+
+def _m13_05_pcall_problems(t: list[Token], flow: _Flow, k: int, blessed: set[int]) -> list[str]:
+    """Why the `pcall` at token k may hand a value on before clean. The
+    `clean` calls of a valid clean-or-clear block go into `blessed`."""
     where = f"line {t[k].line}"
     if t[k + 1].text != "(":
         return [f"{where}: pcall is used as a value"]
@@ -5978,17 +6057,103 @@ def _m13_05_pcall_problems(t: list[Token], flow: _Flow, k: int) -> list[str]:
             f"{where}: pcall's values {values} are not each cleaned when {ok} and cleared "
             "otherwise, at once"
         ]
+    blessed.update(i for i in range(close + 1, end) if t[i].text == "clean")
     problems = []
     for v in values:
-        uses = _m13_05_uses(flow, v, end)
-        table = any(t[i + 1].text in {".", "[", ":"} for i in uses)
-        for i in uses:
-            if t[i + 1].text == "." and _m13_05_cleaned_last(t, i, i + 3):
+        problems += _m13_05_sink_problems(t, flow, v, _m13_05_uses(flow, v, end))
+    return problems
+
+
+def _m13_05_clean_problems(t: list[Token], flow: _Flow, blessed: set[int]) -> list[str]:
+    """Every value `clean` gives is either a pcall's value in its
+    clean-or-clear block (`blessed`), the one argument of `ns.Number`,
+    `ns.String` or `ns.Bool`, or bound by `local x = clean(...)`, and then
+    read only as `_m13_05_sink_problems` allows."""
+    problems = []
+    for k, x in enumerate(t):
+        if x.text != "clean" or _is_field(t, k) or t[k - 1].text == "function":
+            continue
+        if flow.label_at(k) == "clean" or k in blessed:
+            continue
+        close = flow.pair[k + 1]
+        if _render(t[k - 4 : k]) in _M13_05_STORES and t[close + 1].text == ")":
+            continue
+        if t[k - 1].text == "=" and t[k - 3].text == "local" and t[k - 2].kind == "name":
+            v = t[k - 2].text
+            problems += _m13_05_sink_problems(t, flow, v, _m13_05_uses(flow, v, close + 1))
+            continue
+        problems.append(f"line {x.line}: clean's value is not stored, checked or bound locally")
+    return problems
+
+
+def _m13_05_is_secret_problems(t: list[Token], flow: _Flow) -> list[str]:
+    """`isSecret` is one of the three pinned bindings to issecretvalue, or a
+    parameter of the file's own function that each caller hands one of them
+    bare. It is never assigned or shadowed, and read only as a bare argument
+    (and inside the pinned `clean`), so no edit can turn the test off."""
+    problems: list[str] = []
+    n_bind = len(_M13_05_SECRET_BIND.split(" "))
+    binds = {
+        id(flow.resolve("isSecret", k + n_bind))
+        for k in range(len(t))
+        if _render(t[k : k + n_bind]) == _M13_05_SECRET_BIND
+    }
+    params: dict[str, tuple[int, int]] = {}  # function -> (its param decl, position)
+    for head, label in flow.labels.items():
+        opening = next(p for p in range(head, len(t)) if t[p].text == "(")
+        names = [x.text for x in t[opening + 1 : flow.pair[opening]] if x.kind == "name"]
+        if "isSecret" in names:
+            decl = flow.resolve("isSecret", flow.functions[head].start)
+            params[label] = (id(decl), names.index("isSecret"))
+    allowed = binds | {decl for decl, _ in params.values()}
+    declared = [at for name, at in flow.assigned if name == "isSecret"]
+    if len(declared) != len(binds) + len(params) or len(binds) != 3:
+        problems.append(
+            f"isSecret is bound {len(declared)} times, not only by the three pinned binds and "
+            f"the parameters of {sorted(params)}"
+        )
+    for i, x in enumerate(t):
+        if x.text != "isSecret" or _is_field(t, i) or i in declared:
+            continue
+        if flow.label_at(i) == "clean":
+            continue  # pinned whole
+        decl = flow.resolve("isSecret", i)
+        if decl is None or id(decl) not in allowed:
+            problems.append(f"line {x.line}: isSecret is not a pinned binding here")
+        if not (t[i - 1].text in {"(", ","} and t[i + 1].text in {")", ","}):
+            problems.append(f"line {x.line}: isSecret is used other than as a bare argument")
+            continue
+        j = _m13_05_enclosing_call(t, i)
+        if j is None:
+            problems.append(f"line {x.line}: isSecret is not an argument")
+            continue
+        callee = t[j - 1].text
+        if callee in params:
+            position = sum(1 for p in range(j + 1, i) if t[p].text == "," and flow.opener[p] == j)
+            if position != params[callee][1]:
+                problems.append(f"line {x.line}: isSecret is handed to {callee} out of place")
+    # Every caller of a function taking isSecret hands it on bare, in place.
+    for label, (_, position) in params.items():
+        for k, x in enumerate(t):
+            if x.text != label or _is_field(t, k) or t[k + 1].text != "(":
                 continue
-            if t[i + 1].text in {".", "[", ":"}:
-                problems.append(f"line {t[i].line}: a field of {v} is read before clean")
-            elif table and _render(t[i - 2 : i + 2]) != f"type ( {v} )":
-                problems.append(f"line {t[i].line}: the table {v} is handed on")
+            if t[k - 1].text == "function":
+                continue
+            j = k + 1
+            args = [
+                p for p in range(j + 1, flow.pair[j]) if t[p].text == "," and flow.opener[p] == j
+            ]
+            bounds = [j, *args, flow.pair[j]]
+            if len(bounds) - 1 <= position:
+                problems.append(f"line {x.line}: {label} is called without isSecret")
+                continue
+            arg = t[bounds[position] + 1 : bounds[position + 1]]
+            if _render(arg) != "isSecret":
+                problems.append(f"line {x.line}: {label} is handed {_render(arg)!r}, not isSecret")
+    for label, body in _M13_05_SANITIZERS.items():
+        heads = [h for h, name in flow.labels.items() if name == label]
+        if len(heads) != 1 or _render(t[heads[0] - 1 : flow.block_end(heads[0]) + 1]) != body:
+            problems.append(f"{label} is not the pinned sanitizer")
     return problems
 
 
@@ -6009,9 +6174,12 @@ def _m13_05_secret_problems(path: Path) -> list[str]:
     own = {label for head, label in flow.labels.items() if t[head - 1].text == "local"}
     problems += _m13_05_call_problems(t, flow, own)
     problems += _m13_05_underscore_reads(path)
+    problems += _m13_05_is_secret_problems(t, flow)
+    blessed: set[int] = set()
     for k, x in enumerate(t):
         if x.kind == "name" and x.text == "pcall" and not _is_field(t, k):
-            problems += _m13_05_pcall_problems(t, flow, k)
+            problems += _m13_05_pcall_problems(t, flow, k, blessed)
+    problems += _m13_05_clean_problems(t, flow, blessed)
     return problems
 
 
@@ -6084,6 +6252,38 @@ _M13_05_SECRET_CASES: dict[str, list[tuple[str, str]]] = {
         ('    tally(probes.item, ok, type(info) == "table")\n', "    local raw = info\n")
     ],
     "a builtin rebound": [("local IN_COMBAT", "local tostring = GetActionInfo\nlocal IN_COMBAT")],
+    # Round 4: isSecret is only ever a pinned bind, and a cleaned value is
+    # never copied or handed to a function that could read its fields.
+    "isSecret cleared after the bind": [
+        ("        local action = probe(", "        isSecret = nil\n        local action = probe(")
+    ],
+    "isSecret shadowed": [
+        (
+            "        for index = 1, math.min(total, MAX_BINDINGS) do\n",
+            "        local isSecret = false\n        for index = 1, math.min(total, MAX_BINDINGS) do\n",
+        )
+    ],
+    "isSecret passed through an expression": [
+        (
+            "line, bank, itemInfo, itemName, isSecret)",
+            "line, bank, itemInfo, itemName, isSecret and nil)",
+        )
+    ],
+    "a cleaned value copied": [
+        (
+            "        record.commands = commands\n",
+            "        local alias = total\n        record.raw = ns.Number(alias.x)\n",
+        )
+    ],
+    "a cleaned value handed to a helper": [
+        ("        record.commands = commands\n", "        record.raw = ns.Number(probe(total))\n")
+    ],
+    "a sanitizer that reads a field": [
+        (
+            "local function word(value)\n",
+            'local function word(value)\n    local _ = type(value) == "table" and value.x\n',
+        )
+    ],
     "a method call": [
         ("local okCount, total = pcall(getCount)", "local okCount, total = pcall(C_X.Y, C_X:Z())")
     ],

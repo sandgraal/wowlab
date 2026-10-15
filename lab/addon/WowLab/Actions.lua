@@ -183,7 +183,7 @@ local function spellbookItemTypes()
     return out
 end
 
-local function spellbookItem(probes, slot, line, bank, itemInfo, itemName, isSecret)
+local function spellbookItem(probes, slot, skillLine, bank, itemInfo, itemName, isSecret)
     local ok, info = pcall(itemInfo, slot, bank)
     if ok then
         info = clean(isSecret, probes.test, probes.item, info)
@@ -191,7 +191,7 @@ local function spellbookItem(probes, slot, line, bank, itemInfo, itemName, isSec
         info = nil
     end
     tally(probes.item, ok, type(info) == "table")
-    local entry = { slot = ns.Number(slot), skill_line = ns.Number(line) }
+    local entry = { slot = ns.Number(slot), skill_line = ns.Number(skillLine) }
     if ok and type(info) == "table" then
         entry.type = ns.Number(clean(isSecret, probes.test, probes.item, info.itemType))
         entry.action_id = ns.Number(clean(isSecret, probes.test, probes.item, info.actionID))
