@@ -462,7 +462,7 @@ def test_tree_explain_json_carries_the_verdict_it_prints(root: Path) -> None:
         assert item.explained is not None
         v = item.explained.verdict
         entry = filemap.load().entry(item.explained.entry_id)
-        assert v == verdict_of(entry, "flavor", item.path)
+        assert v == verdict_of(entry, "flavor", item.path, folder=item.kind == "folder")
         assert f"      edit: {v.words}\n" in text
     levels = {i.path: i.explained.verdict.level for i in explained if i.explained is not None}
     assert levels["WTF/Config.wtf"] == "gate"
@@ -486,6 +486,44 @@ def test_tree_items_always_carry_a_verdict(root: Path, flavor: Path) -> None:
         assert unknown.verdict.level == "unclassified"
         assert unknown.verdict.restorable is False
         assert "wowlab does not know what this file is" in unknown.verdict.words
+        for folder in ("WTF", "Interface", "Logs", "Interface/AddOns/DBM-Brawlers"):
+            assert by_path[folder].verdict.restorable is None, folder
+
+
+def test_explain_a_folder_has_no_restorable_answer(root: Path, flavor: Path) -> None:
+    """Spelled with or without the trailing slash, a real folder is a folder."""
+    (flavor / "WTF" / "Weird-constructed").mkdir()
+    for path in ("Logs", "Logs/", "Interface/AddOns/DBM-Brawlers", "WTF/Weird-constructed"):
+        assert _json(cli.ExplainReport, "explain", path).verdict.restorable is None, path
+    weird = _json(cli.ExplainReport, "explain", "WTF/Weird-constructed").verdict
+    assert weird.words == "no file-map row; wowlab does not know what this folder is"
+
+
+@pytest.mark.parametrize("with_flavor", [True, False], ids=["--flavor", "implied"])
+def test_every_spelling_of_an_unclassified_flavor_path_agrees(
+    root: Path, flavor: Path, with_flavor: bool
+) -> None:
+    """Domain review of PR #195: a flavor-relative path with no row anywhere
+    was read at the install root and called not restorable."""
+    (flavor / "WTF" / "Weird-constructed").mkdir()
+    (flavor / "WTF" / "Weird-constructed" / "x.txt").write_bytes(b"x")
+    rel = "WTF/Weird-constructed/x.txt"
+    opts = ("--flavor", FLAVOR) if with_flavor else ()
+    spellings = [rel, f"{FLAVOR}/{rel}", str(flavor / rel)]
+    verdicts = [_json(cli.ExplainReport, "explain", *opts, p).verdict for p in spellings]
+    for v in verdicts:
+        assert v.level == "unclassified"
+        assert v.restorable is True
+    assert verdicts[0] == verdicts[1] == verdicts[2]
+    report = _json(cli.ExplainReport, "explain", *opts, rel)
+    assert report.result.base == "flavor"
+    assert report.result.path == rel
+    tree = {i.path: i for i in _json(cli.TreeReport, "tree", "--explain", *opts).items}
+    assert rel in tree
+    assert tree[rel].verdict == verdicts[0]
+    # The text is what it was: the install-root lookup, named as before.
+    text = ok("explain", *opts, rel).stdout
+    assert text == f"{rel}: no file-map row: no file-map row matches\n"
 
 
 # ─── sv ──────────────────────────────────────────────────────────────────────

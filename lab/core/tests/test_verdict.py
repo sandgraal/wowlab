@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from wowlab_core import filemap, guard
+from wowlab_core import filemap, guard, verdict
 from wowlab_core.filemap import FileMapEntry
 from wowlab_core.verdict import Verdict, edit_level, restorable, tier_words, verdict_of
 
@@ -221,6 +221,43 @@ GATE_PATHS = [
 ]
 
 
+def _from_guard_tables() -> list[str]:
+    """Cases generated from guard's own tables when this module loads, so a
+    suffix, reserved name or forbidden character guard gains is exercised
+    even when no hand-written path above has it."""
+    shared = set(guard._EXECUTABLE_SUFFIXES) & set(verdict._EXECUTABLE_SUFFIXES)
+    out: list[str] = []
+    for suffix in guard._EXECUTABLE_SUFFIXES:
+        out.append(f"Interface/AddOns/Foo/media/a b{suffix}")
+        # Other letter cases for the suffixes both copies list: the gate
+        # compares case-insensitively. A suffix only guard has is caught by
+        # its lowercase case above (and by the table-equality test below).
+        if suffix in shared:
+            out.append(f"Interface/AddOns/Foo/media/a b{suffix.upper()}")
+            out.append(f"Interface/AddOns/Foo/{suffix[1:].capitalize()}{suffix.title()}/x.lua")
+    for name in sorted(guard._RESERVED_NAMES):
+        out.append(f"WTF/{name}")
+        out.append(f"WTF/{name.upper()}.txt")
+        out.append(f"Interface/AddOns/Foo/{name}.lua")
+    for char in sorted(guard._FORBIDDEN_CHARACTERS):
+        out.append(f"WTF/a{char}b")
+    return out
+
+
+GATE_PATHS = list(dict.fromkeys([*GATE_PATHS, *_from_guard_tables()]))
+
+
+def test_the_copied_tables_equal_guards() -> None:
+    assert verdict._ROOTS == guard._ROOTS
+    assert verdict._ADDONS == guard._ADDONS
+    assert verdict._EXECUTABLE_SUFFIXES == guard._EXECUTABLE_SUFFIXES
+    assert verdict._VERSIONED_SHARED_LIBRARY.pattern == guard._VERSIONED_SHARED_LIBRARY.pattern
+    assert verdict._VERSIONED_SHARED_LIBRARY.flags == guard._VERSIONED_SHARED_LIBRARY.flags
+    assert verdict._RESERVED_NAMES == guard._RESERVED_NAMES
+    assert verdict._FORBIDDEN_CHARACTERS == guard._FORBIDDEN_CHARACTERS
+    assert verdict._MAX_NAME_BYTES == guard._MAX_NAME_BYTES
+
+
 @pytest.mark.parametrize("path", GATE_PATHS, ids=lambda p: f"constructed-{p!r}")
 def test_restorable_agrees_with_the_write_gate(path: str) -> None:
     try:
@@ -241,6 +278,25 @@ def test_a_no_file_the_gate_refuses_is_never_written() -> None:
     v = verdict_of(entry, "flavor", "wtf/Account/A/SavedVariables/X.lua.bak")
     assert v.restorable is False
     assert v.words == "no; wowlab never writes it"
+
+
+def test_every_folder_has_no_restorable_answer() -> None:
+    """A folder is judged by the files under it, whatever its row's level."""
+    addon = verdict_of(_entry("addon"), "flavor", "Interface/AddOns/Foo", folder=True)
+    assert addon.level == "gate"
+    assert addon.restorable is None
+    logs = verdict_of(_entry("logs-other"), "flavor", "Logs", folder=True)
+    assert logs.level == "no"
+    assert logs.restorable is None
+    fonts = verdict_of(_entry("fonts"), "flavor", "Fonts", folder=True)
+    assert fonts.restorable is None
+    unknown = verdict_of(None, "flavor", "WTF/Weird-constructed", folder=True)
+    assert unknown == Verdict(
+        level="unclassified",
+        restorable=None,
+        server_may_replace=False,
+        words="no file-map row; wowlab does not know what this folder is",
+    )
 
 
 def test_tier_words_keep_an_unknown_tier_as_it_is() -> None:
