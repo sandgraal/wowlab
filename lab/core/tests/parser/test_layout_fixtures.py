@@ -48,14 +48,30 @@ def _index() -> dict[str, dict[str, str]]:
 INDEX_ROWS = _index()
 INSTALL_FILES = sorted(p for p in INDEX_ROWS if p.split("/", 1)[0] not in NOT_INSTALL)
 PLATFORMS = sorted({p.split("/", 1)[0] for p in INSTALL_FILES})
-# A run committed without its `.build.info` and `.flavor.info` (M13-05,
-# `macos-70425/`: the run's `.build.info` was left out because its tags cell
-# was not safe to publish) is no install root, so it is not read in place.
-# The end-to-end test classifies its files inside an install root borrowed
-# from `BORROWED_ROOT`, whose flavor-kind folders it must share.
+# A run committed without its `.build.info` and `.flavor.info` is no install
+# root, so it is not read in place. The end-to-end test classifies its files
+# inside an install root borrowed from `BORROWED_ROOT`, whose flavor-kind
+# folders it must share. Each such run is declared here with its reason, so
+# a run that loses its root files fails instead of being exempted silently
+# (fixtures/README.md, Rules, amendment of 2026-10-16).
+FILES_ONLY_RUNS: dict[str, str] = {
+    "macos-70425": (
+        "M13-05: only the two WowLab.lua files committed; the run's .build.info "
+        "tags cell was not safe to publish, and .flavor.info alone is no root"
+    ),
+}
 INSTALL_ROOTS = sorted(p for p in PLATFORMS if (FIXTURES / p / ".build.info").is_file())
-FILES_ONLY_RUNS = sorted(set(PLATFORMS) - set(INSTALL_ROOTS))
 BORROWED_ROOT = "macos"
+
+
+@pytest.mark.parser
+def test_files_only_runs_are_exactly_the_declared_ones() -> None:
+    assert set(PLATFORMS) - set(INSTALL_ROOTS) == set(FILES_ONLY_RUNS)
+    for run in FILES_ONLY_RUNS:
+        assert not (FIXTURES / run / ".build.info").exists(), run
+        assert not list((FIXTURES / run).glob("*/.flavor.info")), run
+        kinds = {INDEX_ROWS[p]["kind"] for p in INSTALL_FILES if p.startswith(run + "/")}
+        assert kinds == {"savedvariables"}, (run, kinds)
 
 
 def _flavor_dirs(platform: str) -> list[Path]:

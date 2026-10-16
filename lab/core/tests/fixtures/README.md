@@ -30,6 +30,23 @@ the test that uses them, and are labelled `constructed` (invariant L8).
   file whose path an earlier run already holds never replaces it. Earlier
   runs are never overwritten. The `platform` column stays the platform
   (`macos`), not the folder name.
+  *Amended 2026-10-16 (M13-05), files-only runs.* A run folder may hold
+  only the files a ticket needs, with no `.build.info` and no
+  `.flavor.info`. It is then not an install root.
+  - It must be declared, with its reason, in `FILES_ONLY_RUNS` in
+    `tests/parser/test_layout_fixtures.py`. A test fails on an undeclared
+    one.
+  - It may hold SavedVariables files only.
+  - Its `client_version` column comes from the capture run.
+  - Its files are classified inside an install root borrowed from
+    `macos/`.
+
+  The first is `macos-70425/`, two `WowLab.lua` files. Its `.build.info`
+  was left out for privacy: the tags cell carries a geo-IP country tag
+  that `scripts/lab_capture.py` does not scrub (scrub rule: M13-34). Its
+  `.flavor.info` was left out too. The staged copy is byte-identical to
+  the committed `macos/forever/.flavor.info` (checked with `cmp`), so it
+  adds nothing, and on its own it is no install root.
 - **Immutability.** Never edit a committed fixture. A new client version is
   a new file.
 - **Not fixtures.** Blizzard's exported interface code and art are never

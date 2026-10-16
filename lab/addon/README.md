@@ -218,16 +218,21 @@ Notes on the fields:
   hair-colour change gave `OPEN` 2, `APPLIED` 1, `CLOSE` 2, `RESULT` 1,
   `COST_UPDATE` 0 and `FORCE_CUSTOMIZATIONS_UPDATE` 0, with
   `recorded_at = "open"` holding the new look. Confirmed:
-  `BARBER_SHOP_APPEARANCE_APPLIED` fires and reaches the section, but the
-  client then opens the shop again on its own, and that open's record
-  replaces the applied one. So on this build an applied change ends as
-  `"open"` with the new look, never as `"applied"`. Also confirmed:
-  `currentChoiceIndex` is 1-based, and the shop lists swatches in
-  `OrderIndex` order, left to right, then top to bottom (hair colour).
+  `BARBER_SHOP_APPEARANCE_APPLIED` fires and reaches the section. The
+  client then fired `BARBER_SHOP_OPEN` again, after the Accept, and that
+  open's record replaced the applied one. Whether the shop actually
+  reopens, and why, is **[verify]**: the owner saw it close by itself. So in
+  this capture the applied change ended as `"open"`; one capture does not
+  show that it always will. Also confirmed: `currentChoiceIndex` is 1-based,
+  on this record and on the 70058 one, which holds the old swatch 7 as
+  index 7, choice 962. Counting left to right, then top to bottom, matches
+  the table's order for hair colour. `OrderIndex` and `UiOrderIndex` are
+  identical for these choices, so this does not tell which column the shop
+  uses.
   The control and `BARBER_SHOP_SUCCESS` have no entry: this client refuses
   a name it does not know, and `BARBER_SHOP_SUCCESS` is not one.
   `BARBER_SHOP_CLOSE` came twice for one sit. `GetViewingChrModel`
-  returned nil; why is still **[verify]**.
+  returned nil. M11-29's other question, why, is still **[verify]**.
 - `collections.appearances` is always
   `{ absent = "not gathered: asking the client for the appearance collection crashed the Forever client once (M11-03); the addon no longer asks" }`.
   On the first M11-03 login (build 1.60.1.70009), one call,
@@ -266,8 +271,10 @@ Notes on the fields:
   `InCombatLockdown` says not in combat; whether these values can be secret
   outside combat in restricted content (`docs/GLOSSARY.md`, "Secret value")
   is **[verify]**. Where the client has `issecretvalue` (forever-addon-kit's
-  69893 list does not have it; present on 70425 and answering a boolean on
-  every call, M13-05 capture of 2026-10-16), every
+  69893 list does not have it. On 70425 a global function by that name was
+  present and answered a boolean on every call, M13-05 capture of
+  2026-10-16. The probe cannot tell the client's function from an addon's,
+  so where it comes from is **[verify]**), every
   value a call gives, and every field of a table it gives, is tested before
   it is compared, used or stored. One it calls secret, or raises an error or
   gives no boolean for, is dropped and counted on its API's probe as
@@ -326,8 +333,9 @@ Notes on the fields:
   `passive` and `off_spec` are the client's flags. A gather walks at most 64
   skill lines and 4096 items. Privacy **[verify]**: whether a hunter's named
   pet shows in a spell's name or subtext (a pet's name is text the owner
-  typed); checklist item 13. On 70425 a warlock with a summoned, named demon
-  had no `PetAction` item and no string that could be a name. On 70425 a
+  typed); checklist item 13. A warlock is no test of this: the addon never
+  reads the pet spellbook, and a warlock demon's name is generated, not
+  typed. On 70425 a
   spell with several ranks is one item per rank, each with its own spell id
   and a `Rank n` subtext, and the spellbook has no "show all ranks" toggle.
   A flyout has an `action_id` and no `spell_id`.
@@ -369,12 +377,16 @@ Notes on the fields:
   `character_bindings` are the client's `ACCOUNT_BINDINGS` and
   `CHARACTER_BINDINGS`, so a reader names the set, and so which
   `bindings-cache.wtf` applies, from the file. **Contradicted on 70425**:
-  neither constant is a number there, so neither key is written, and
-  `binding_set` 2 (with "Character Specific Key Bindings" ticked) cannot be
-  named from the file. On 70425 the keys matched both `bindings-cache.wtf`
-  files line for line. A spell dragged onto a key was not in either cache,
-  and one command was counted in `commands_left_out`, so whether that
-  command is the dragged spell stays **[verify]**. A gather walks at most
+  neither constant was a number at the last gather (nil or another type;
+  the file cannot say which), so neither key is written, and `binding_set`
+  2 (with "Character Specific Key Bindings" ticked) cannot be named from
+  the file. `Enum.BindingSet` is a **[verify]** candidate for a later
+  schema. On 70425 the eight lines of both (identical) `bindings-cache.wtf`
+  files matched the live keys. The other 118 bound commands are
+  unexplained. A spell dragged onto a key and the owner's `/say` macro were
+  in neither cache, so the caches may predate the session **[verify]**. One
+  command was counted in `commands_left_out`; whether it is the dragged
+  spell stays **[verify]**. A gather walks at most
   4096 commands.
 - `probe.lost` is set when `WowLabCharDB` loaded as a table without a probe,
   for that load only; a later load that finds the probe clears it. A first
@@ -643,12 +655,12 @@ on from one, fails the test until someone lists it on purpose.
 | `GetProfessions` | professions: indices | [verify] | yes |
 | `GetProfessionInfo` | professions: rank, max, skill line, modifier | [verify] | yes |
 | `InCombatLockdown` | spellbook, actionbars, bindings: nothing is read in combat, or when this cannot say (schema 3) | ran on 70425 (M13-05 capture: all three sections gathered out of combat); its answer in combat: [verify] | yes |
-| `issecretvalue` | spellbook, actionbars, bindings: each value is tested before it is used or stored; a secret one is dropped and counted | ran on 70425 (M13-05 capture: present, a boolean on every call, 0 secret); restricted content: [verify] | no |
+| `issecretvalue` | spellbook, actionbars, bindings: each value is tested before it is used or stored; a secret one is dropped and counted | ran on 70425 (M13-05 capture: a global function present, a boolean on every call, 0 secret); whether it is the client's or an addon's, and restricted content: [verify] | no |
 | `C_Secrets` | spellbook, actionbars, bindings: looked up, never called; its probe says whether the client has the table | present on 70425 (M13-05 capture); what it does: [verify] | no |
 | `canaccessvalue` | spellbook, actionbars, bindings: looked up, never called; its probe says whether the client has it | present on 70425 (M13-05 capture); what it does: [verify] | no |
 | `Enum.SpellBookItemType` | spellbook: `item_types`, member name to number, read from the client | ran on 70425 (M13-05 capture: `None` 0, `Spell` 1, `FutureSpell` 2, `PetAction` 3, `Flyout` 4); a future-spell item not yet seen: [verify] | n/a (table) |
-| `ACCOUNT_BINDINGS` | bindings: the client's value for the account-wide set, recorded beside `binding_set` | [verify]: not a number on 70425 (M13-05 capture), so not recorded | n/a (constant) |
-| `CHARACTER_BINDINGS` | bindings: the client's value for the character's set, recorded beside `binding_set` | [verify]: not a number on 70425 (M13-05 capture), so not recorded | n/a (constant) |
+| `ACCOUNT_BINDINGS` | bindings: the client's value for the account-wide set, recorded beside `binding_set` | [verify]: not a number at the last gather on 70425 (nil or another type; M13-05 capture), so not recorded; `Enum.BindingSet` is a candidate | n/a (constant) |
+| `CHARACTER_BINDINGS` | bindings: the client's value for the character's set, recorded beside `binding_set` | [verify]: not a number at the last gather on 70425 (nil or another type; M13-05 capture), so not recorded; `Enum.BindingSet` is a candidate | n/a (constant) |
 | `C_SpellBook.GetNumSpellBookSkillLines` | spellbook: how many skill lines | ran on 70425 (M13-05 capture: 4); other builds: [verify] | yes |
 | `C_SpellBook.GetSpellBookSkillLineInfo` | spellbook: each line's item offset and count, guild, hidden and spec flags (the line's `name` is never read) | ran on 70425 (M13-05 capture: 4 of 4 answered); other builds: [verify] | yes |
 | `C_SpellBook.GetSpellBookItemInfo` | spellbook: item type, action and spell id, passive and off-spec flags (its `name` field is never read) | ran on 70425 (M13-05 capture: 28 of 28 answered); other builds: [verify] | yes |
@@ -659,7 +671,7 @@ on from one, fails the test until someone lists it on purpose.
 | `GetCurrentBindingSet` | bindings: which binding set is active, raw | ran on 70425 (M13-05 capture: 2, with "Character Specific Key Bindings" ticked); other builds: [verify] | yes |
 | `GetNumBindings` | bindings: how many binding commands | ran on 70425 (M13-05 capture: 299); other builds: [verify] | yes |
 | `GetBinding` | bindings: each command (first return only) | ran on 70425 (M13-05 capture: 299 of 299 answered); whether it lists a spell dragged onto a key: [verify] | yes |
-| `GetBindingKey` | bindings: the keys bound to a command now | ran on 70425 (M13-05 capture: 124 of 298 with a key, matching `bindings-cache.wtf`); other builds: [verify] | yes |
+| `GetBindingKey` | bindings: the keys bound to a command now | ran on 70425 (M13-05 capture: 124 of 298 with a key; the 8 `bindings-cache.wtf` lines match, the other bound commands are unexplained); other builds: [verify] | yes |
 
 Addon-defined globals: `WowLabCharDB`, `WowLabDB`, `SLASH_WOWLAB1`.
 
@@ -795,9 +807,10 @@ Read on 2026-10-16 (capture on 1.60.1.70425, fixtures under
 `lab/core/tests/fixtures/macos-70425/`; `docs/LAB_FORMATS.md`, amendment
 of that date). Items 2, 3, 4, 6, 9 and 10 are confirmed. Item 7 is
 contradicted in part: a `#showtooltip` macro slot has no subtype, and the
-macro numbering is still open. Item 8 is contradicted in part:
-`ACCOUNT_BINDINGS` and `CHARACTER_BINDINGS` are not numbers on Forever, and
-a spell dragged onto a key is still open. Item 1 is confirmed for `schema`;
+macro numbering is still open. Item 8 is confirmed for the eight cache lines
+only, and contradicted in part: `ACCOUNT_BINDINGS` and `CHARACTER_BINDINGS`
+were not numbers at the last gather. The other 118 bound commands and a
+spell dragged onto a key are still open. Item 1 is confirmed for `schema`;
 `probe.loads` rising is still open, since the file was a first load. Items
 5, 11, 12 and 14 are still open. Item 13's macro check is confirmed; the
 hunter-pet check is still open.
@@ -906,11 +919,14 @@ Read on 2026-10-16 (capture on 1.60.1.70425; `docs/LAB_FORMATS.md`,
 amendment of that date). The row that fits is "`recorded_at = "open"`,
 `APPLIED` at 1 or more, `OPEN` at 2 or more, and you sat once", with the
 changed option at the new position. The applied event fires and reaches the
-section. The client then opens the shop again on its own, and that open's
-record, holding the new look, is the one saved: this is why the record is
-not `"applied"`. Item 11 (1-based) and the swatch order are confirmed.
-Item 12 is settled as that reason. In item 14, `GetViewingChrModel`
-returned nil; why stays open. The four Retail count-only names are names
+section. The client then fired `BARBER_SHOP_OPEN` again after the Accept,
+and that open's record, holding the new look, is the one saved. This is why
+the record ended as `"open"` in this capture. Whether the shop actually
+reopens, and why, is **[verify]**: the owner saw it close. Item 11
+(1-based) is confirmed, here and on the 70058 record. The swatch order is
+consistent with the table. Item 12 is settled as that reason. In item 14,
+`GetViewingChrModel` returned nil; M11-29's other question, why, stays
+**[verify]**. The four Retail count-only names are names
 the client knows. `BARBER_SHOP_SUCCESS` and the control have no entry.
 
 Before you start:
@@ -944,7 +960,7 @@ Steps:
 3. Sit in a barber chair once and change one colour (hair colour is
    enough). Before changing it, note the position of the current swatch and
    of the one you pick, counting from 1, left to right, then top to bottom
-   (the order the shop lists them, confirmed for hair colour on 70425), for example
+   (consistent with the table's order for hair colour on 70425), for example
    "hair colour: 7th, then 3rd". If the barber shop does not open, log out,
    capture anyway and report it; do not redo.
 4. Click Accept once. Do not cancel and do not sit down again. Note whether
@@ -1022,8 +1038,8 @@ the client refused that name (a refused change event is also in
   - neither noted position: report both; item 11 stays open.
 - **`recorded_at = "open"`, `APPLIED` at 1 or more, `OPEN` at 2 or more, and
   you sat once**: the client fired the second open itself, for example to
-  refresh after the Accept (seen on 70425, 2026-10-16, with the new look:
-  why the client opens again stays **[verify]**). An open reached the section after
+  refresh after the Accept (a second `BARBER_SHOP_OPEN` was seen on 70425,
+  2026-10-16; whether the shop reopens, and why, stays **[verify]**). An open reached the section after
   the applied event. Compare the changed option's `choice_index` with step
   3: at the new position, the choices are the new look; at the old position
   the last open saw the old look: both opens came before the Accept, or the
