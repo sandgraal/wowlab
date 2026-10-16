@@ -33,9 +33,16 @@ _LINK_WORDS = (
     "and a restore does not put it back"
 )
 _TIER_B_WORDS = "; unsupported by Blizzard, a patch can reset it"
-_PLACEHOLDER_WORDS = (
-    "; a cloud placeholder or deduplicated file, or inside one: "
-    "wowlab's write gate does not write through these"
+_REPARSE_NOT_LINK = (
+    "a Windows reparse point that is not a link (for example a cloud placeholder, "
+    "a deduplicated or a compressed file), or inside one"
+)
+_PLACEHOLDER_WORDS = f"; {_REPARSE_NOT_LINK}: wowlab's write gate does not write through these"
+# At the gate level the usual words open with "yes"; under such a reparse
+# point they open with this instead, and keep their other suffixes.
+_PLACEHOLDER_GATE_WORDS = (
+    "no, not here: the file map says it goes through wowlab's write gate, but that gate "
+    f"does not write through {_REPARSE_NOT_LINK}"
 )
 _UNCLASSIFIED_RESTORED = (
     "; a whole snapshot restore puts it back like any file here (it skips only Edit `no` files)"
@@ -165,7 +172,9 @@ class Verdict(BaseModel):
     last word on a `server_may_replace` file: the server may replace it again
     at the next login. `None` for every folder, whatever its level: a folder
     is judged by the files under it. `None` for a symlink or junction too, which
-    a snapshot never captures.
+    a snapshot never captures. `False` for a file at or under a Windows
+    reparse point that is not a link (a cloud placeholder, a deduplicated or
+    compressed file): the gate refuses to write through any reparse point.
 
     `server_may_replace`: the Edit cell is `gate (server may replace)`, so a
     reader never has to parse `words` for it.
@@ -258,11 +267,13 @@ def verdict_of(
         # The words as for a path the gate never writes (base None), the
         # level and whether `restorable` has an answer as for this one.
         plain = verdict_of(entry, base, path, folder=folder)
+        words = verdict_of(entry, None, path, folder=folder).words
+        if words.startswith(_GATE_WORDS):
+            words = _PLACEHOLDER_GATE_WORDS + words[len(_GATE_WORDS) :]
+        else:
+            words += _PLACEHOLDER_WORDS
         return plain.model_copy(
-            update={
-                "restorable": None if plain.restorable is None else False,
-                "words": verdict_of(entry, None, path, folder=folder).words + _PLACEHOLDER_WORDS,
-            }
+            update={"restorable": None if plain.restorable is None else False, "words": words}
         )
     can_restore = restorable(base, path)
     if link:

@@ -383,35 +383,75 @@ class _Stat:
             self.st_reparse_tag = tag
 
 
-@pytest.mark.parametrize(
-    "st",
-    [
-        pytest.param(_Stat(0o100644), id="constructed-plain-file"),
-        pytest.param(_Stat(0o040755), id="constructed-plain-folder"),
-        pytest.param(_Stat(0o120777), id="constructed-symlink"),
-        pytest.param(_Stat(0o040755, 0x10), id="constructed-windows-folder"),
-        pytest.param(_Stat(0o040755, 0x410, 0x9000001A), id="constructed-cloud-placeholder"),
-        pytest.param(_Stat(0o100644, 0x420, 0x80000013), id="constructed-deduplicated"),
-        pytest.param(_Stat(0o040755, 0x410, 0xA0000003), id="constructed-junction"),
-        pytest.param(_Stat(0o040755, 0x410), id="constructed-reparse-without-tag"),
-    ],
+_MODES = (0o100644, 0o040755, 0o120777, 0o020644, 0o010644, 0o140755)  # file dir link chr fifo sock
+_ATTRIBUTES = (None, 0, *(1 << bit for bit in range(32)), 0x410, 0x420, 0x1400)
+_TAGS = (
+    None,
+    0,
+    0x9000001A,  # IO_REPARSE_TAG_CLOUD_A: not a name surrogate
+    0x80000013,  # IO_REPARSE_TAG_DEDUP
+    0x80000017,  # IO_REPARSE_TAG_WOF (compact /EXE)
+    0xA0000003,  # IO_REPARSE_TAG_MOUNT_POINT, a junction: name surrogate
+    0xA000000C,  # IO_REPARSE_TAG_SYMLINK
+    0x20000000,  # the name-surrogate bit alone
 )
-def test_gate_refuses_stat_agrees_with_the_write_gate(st: _Stat) -> None:
-    """`verdict.gate_refuses_stat` is a copy of `guard._is_link`; this fails
-    when the two drift apart."""
-    assert verdict.gate_refuses_stat(st) is guard._is_link(st)  # type: ignore[arg-type]
+
+
+def test_gate_refuses_stat_agrees_with_the_write_gate_constructed() -> None:
+    """`verdict.gate_refuses_stat` is a copy of `guard._is_link` (guard.py is
+    load-bearing and its private rule is copied, as `_gate_writes` is). Every
+    file type, every single `st_file_attributes` bit and a set of reparse
+    tags, name surrogates and not: a drift in any of them fails here."""
+    differ = [
+        (oct(mode), attributes, tag)
+        for mode in _MODES
+        for attributes in _ATTRIBUTES
+        for tag in _TAGS
+        if verdict.gate_refuses_stat(st := _Stat(mode, attributes, tag))  # type: ignore[arg-type]
+        is not guard._is_link(st)  # type: ignore[arg-type]
+    ]
+    assert differ == []
+
+
+_REFUSED = "wowlab's write gate does not write through these"
+_NOT_HERE = (
+    "no, not here: the file map says it goes through wowlab's write gate, but that gate does "
+    "not write through a Windows reparse point that is not a link (for example a cloud "
+    "placeholder, a deduplicated or a compressed file), or inside one"
+)
 
 
 def test_a_placeholder_is_never_restorable() -> None:
     """M13-32. Under a reparse point the gate refuses, a file is never
-    `restorable`, the words carry the placeholder clause, and a folder
-    still has no answer."""
+    `restorable`, the words never open with yes, and a folder still has no
+    answer."""
     entry = _entry("savedvariables-backup")
     v = verdict_of(None, "flavor", "WTF/Config.wtf", placeholder=True)
     assert v.restorable is False
-    assert v.words.endswith("wowlab's write gate does not write through these")
+    assert v.words.endswith(_REFUSED)
     assert "a whole snapshot restore puts it back" not in v.words
     folder = verdict_of(None, "flavor", "WTF/Account", folder=True, placeholder=True)
     assert folder.restorable is None
     linked = verdict_of(entry, "flavor", "WTF/x.bak", link=True, placeholder=True)
     assert linked == verdict_of(entry, "flavor", "WTF/x.bak", link=True)
+
+
+def test_a_gate_row_under_a_placeholder_says_no_and_keeps_its_suffixes() -> None:
+    """M13-32, domain review W1: at the gate level, plain, `gate (server may
+    replace)` and tier B, the words lead with a no and keep the rest."""
+    for entry in filemap.load().entries:
+        if not entry.edit.startswith("gate") or entry.base != "flavor":
+            continue
+        plain = verdict_of(entry, "flavor", "WTF/x")
+        under = verdict_of(entry, "flavor", "WTF/x", placeholder=True)
+        assert under.level == plain.level == "gate"
+        assert under.server_may_replace is plain.server_may_replace
+        assert under.restorable is (None if plain.restorable is None else False)
+        assert not under.words.startswith("yes"), entry.id
+        assert under.words == _NOT_HERE + plain.words.removeprefix(_GATE), entry.id
+        if entry.edit == "gate (server may replace)":
+            assert under.words.endswith(
+                "; the server may replace it at login (sync settings: wowlab doctor)"
+            )
+        if entry.tier == "B":
+            assert under.words.endswith("; unsupported by Blizzard, a patch can reset it")

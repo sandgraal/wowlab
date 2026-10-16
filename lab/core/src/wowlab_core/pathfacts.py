@@ -262,7 +262,9 @@ class _Volume:
             return False
         if _nfc(a) == _nfc(b):
             return self._folds(pa, "normalization")
-        if a.lower() == b.lower():
+        if len(a) == len(b) and a == _nfc(a) and b == _nfc(b) and a.lower() == b.lower():
+            # Case only, letter for letter, both already NFC: a Kelvin sign
+            # or U+0130 is no plain case difference (NTFS keeps them apart).
             return self._folds(pa, "case")
         if _nfc(a).lower() == _nfc(b).lower():
             # They differ in both: one name only where the volume folds both
@@ -280,8 +282,9 @@ class _Volume:
         """Whether this volume folds `difference` (upper and lower case, or
         Unicode normalization), judged at the nearest existing folder above
         `parts` that has another spelling to try. On Windows and Linux case
-        sensitivity can be set per folder, and this check reads the folder
-        above the file, not the one that holds it."""
+        sensitivity can be set per folder, and this check respells a folder's
+        name, so it reads the folder that lists that name: at best the
+        file's grandparent, never the folder that holds the file."""
         for i in range(len(parts) - 1, 0, -1):
             folder = parts[:i]
             ident = self._id(folder)
