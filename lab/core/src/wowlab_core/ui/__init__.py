@@ -27,9 +27,12 @@ arguments after `--`, flags given or not, never through a shell. Refused
 (403 `excluded`, ADR-0029 amendment and owner rulings of 2026-10-15): every
 leaf that declares `--yes` (read from the tree), `ui` itself, `log tail` with
 `follow` (a run must end) and `looks page` with `out` (it can create a file
-anywhere outside an install). Each run has a timeout and an output cap, read
-as a stream; at either, or when the server closes, the run's whole process
-tree is killed, grandchildren included.
+anywhere outside an install). At most `MAX_CONCURRENT_RUNS` run at once (503
+`busy` past that). Each run has a timeout and an output cap, read as a stream
+and counted on the encoded response; at either, or when the server closes,
+the run's whole process tree is killed, grandchildren included, by the OS and
+without listing processes: its process group on POSIX, its Job Object on
+Windows (`_Tree`). No process other than a run is ever opened or signalled.
 
 The run is `[sys.executable, "-P", "-m", "wowlab_core", ...]`: the running
 interpreter by absolute path, never a PATH lookup, with the working
@@ -39,6 +42,7 @@ directory kept off its import path.
 from __future__ import annotations
 
 import base64
+import codecs
 import contextlib
 import functools
 import hashlib
@@ -61,12 +65,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any, override
 
-import psutil
+from wowlab_core.ui import _winjob
 
 __all__ = [
     "DEFAULT_OUTPUT_CAP_BYTES",
     "DEFAULT_TIMEOUT_S",
     "MAX_BODY_BYTES",
+    "MAX_CONCURRENT_RUNS",
     "UiServer",
     "make_server",
     "static_files",
@@ -80,6 +85,9 @@ DEFAULT_OUTPUT_CAP_BYTES: int = 16 * 1024 * 1024
 
 MAX_BODY_BYTES: int = 64 * 1024
 """The largest POST body the server reads."""
+
+MAX_CONCURRENT_RUNS: int = 4
+"""Runs in progress at once; one more is refused with 503 `busy`."""
 
 _LOOPBACK = "127.0.0.1"
 _READ_CHUNK = 64 * 1024
@@ -331,124 +339,135 @@ def _build_argv(leaf: _Leaf, params: Mapping[str, object]) -> list[str]:
 # ─── running one command ─────────────────────────────────────────────────────
 
 
+def _json_text(text: str) -> bytes:
+    """`text` as the inside of a JSON string, UTF-8 (`ensure_ascii=False`):
+    what it costs in the response body."""
+    return json.dumps(text, ensure_ascii=False)[1:-1].encode("utf-8")
+
+
 class _Capture:
-    """stdout and stderr of one run, read as streams, at most `cap` bytes
-    together. Past the cap, reading stops and `full` is set."""
+    """stdout and stderr of one run, read as streams and kept already encoded
+    as the inside of JSON strings: at most `cap` bytes of response body,
+    both together. A byte that is not UTF-8 becomes U+FFFD (3 bytes), and an
+    escaped character costs its escape. Past the cap, reading stops and
+    `full` is set; memory stays near the cap."""
 
     def __init__(self, cap: int) -> None:
         self.cap = cap
         self.lock = threading.Lock()
-        self.data = {"stdout": bytearray(), "stderr": bytearray()}
+        self.pieces: dict[str, list[bytes]] = {"stdout": [], "stderr": []}
         self.used = 0
         self.truncated = False
         self.full = threading.Event()
 
+    def _keep(self, name: str, text: str) -> bool:
+        """Keep what fits of `text`; False once the cap is reached."""
+        if not text:
+            return True
+        encoded = _json_text(text)
+        with self.lock:
+            room = self.cap - self.used
+            if len(encoded) <= room:
+                self.pieces[name].append(encoded)
+                self.used += len(encoded)
+                return True
+            # The longest prefix that fits, cut between characters.
+            low, high = 0, len(text)
+            while low < high:
+                mid = (low + high + 1) // 2
+                if len(_json_text(text[:mid])) <= room:
+                    low = mid
+                else:
+                    high = mid - 1
+            fitted = _json_text(text[:low])
+            self.pieces[name].append(fitted)
+            self.used += len(fitted)
+            self.truncated = True
+            self.full.set()
+            return False
+
     def pump(self, stream: IO[bytes], name: str) -> None:
         read = getattr(stream, "read1", stream.read)
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         try:
             while True:
                 chunk = read(_READ_CHUNK)
+                if not self._keep(name, decoder.decode(chunk, final=not chunk)):
+                    return
                 if not chunk:
                     return
-                with self.lock:
-                    room = self.cap - self.used
-                    if len(chunk) > room:
-                        self.data[name] += chunk[:room]
-                        self.used = self.cap
-                        self.truncated = True
-                        self.full.set()
-                        return
-                    self.data[name] += chunk
-                    self.used += len(chunk)
         except (OSError, ValueError):
             return
 
-    def text(self, name: str) -> str:
+    def body(self, name: str) -> list[bytes]:
         with self.lock:
-            data = bytes(self.data[name])
-        if self.truncated:
-            # A cut may split a character: drop the partial tail, so the
-            # text is never longer in UTF-8 than what was kept.
-            for back in range(4):
-                try:
-                    return data[: len(data) - back].decode("utf-8")
-                except UnicodeDecodeError:
-                    continue
-        return data.decode("utf-8", errors="replace")
-
-
-_KILL = getattr(signal, "SIGKILL", signal.SIGTERM)
-
-
-def _kill(process: psutil.Process) -> None:
-    """Kill one listed process, if it is still the one listed (psutil
-    compares its creation time, so a reused pid is left alone)."""
-    try:
-        if process.is_running():
-            os.kill(process.pid, _KILL)
-    except (OSError, psutil.Error):
-        pass
-
-
-def _descendants(processes: Iterable[psutil.Process]) -> list[psutil.Process]:
-    found: list[psutil.Process] = []
-    for process in processes:
-        try:
-            found.extend(process.children(recursive=True))
-        except psutil.Error:
-            continue
-    return found
-
-
-def _kill_tree(pid: int) -> None:
-    """Kill a run that has not been reaped, and everything it started.
-
-    The descendants are listed while the run is alive, so a grandchild is
-    found even after its parent dies; the listing repeats until it finds
-    nothing new. On POSIX the run leads its own process group
-    (`start_new_session`), which is killed whole as well."""
-    try:
-        root = psutil.Process(pid)
-    except psutil.Error:
-        return
-    seen: dict[int, psutil.Process] = {}
-    for _ in range(5):
-        new = [p for p in _descendants([root, *seen.values()]) if p.pid not in seen]
-        for process in new:
-            seen[process.pid] = process
-        if os.name == "posix":
-            with contextlib.suppress(OSError):
-                os.killpg(pid, _KILL)
-        for process in [root, *seen.values()]:
-            _kill(process)
-        if not new:
-            return
-
-
-def _kill_stragglers(pid: int, started: float) -> None:
-    """Processes the run started that still hold its output open after it
-    ended. On POSIX they are in its process group, which still exists while
-    they do; on Windows they still name it as their parent."""
-    if os.name == "posix":
-        with contextlib.suppress(OSError):
-            os.killpg(pid, _KILL)
-        return
-    orphans: list[psutil.Process] = []
-    for process in psutil.process_iter(["ppid", "create_time"]):
-        info = process.info
-        if info.get("ppid") == pid and (info.get("create_time") or 0) >= started - 1:
-            orphans.append(process)
-    for process in [*orphans, *_descendants(orphans)]:
-        _kill(process)
+            return list(self.pieces[name])
 
 
 @dataclass
 class _Run:
     exit_code: int
-    stdout: str
-    stderr: str
+    stdout: list[bytes]  # the inside of a JSON string, UTF-8
+    stderr: list[bytes]
     timed_out: bool
     truncated: bool
+
+    def response(self) -> list[bytes]:
+        """The JSON body, in pieces, never joined into one copy."""
+        head = (
+            f'{{"exit_code": {self.exit_code}, "timed_out": {json.dumps(self.timed_out)}, '
+            f'"truncated": {json.dumps(self.truncated)}, "stdout": "'
+        )
+        return [head.encode("ascii"), *self.stdout, b'", "stderr": "', *self.stderr, b'"}']
+
+
+_KILL = getattr(signal, "SIGKILL", signal.SIGTERM)
+
+
+class _Tree:
+    """How a run is started so that it and everything it starts can be
+    killed together, without listing processes.
+
+    POSIX: the run leads a new session and process group
+    (`start_new_session`); `kill` signals the group, and is only ever called
+    before the run is reaped, while its pid still holds the group id. A
+    descendant that calls `setsid` itself leaves the group and is not
+    killed; the `wowlab` CLI never forks. After a normal exit nothing is
+    signalled (the group id is no longer reserved).
+
+    Windows: the run is created suspended and resumed inside a Job Object
+    (`_winjob`) that kills everything in it when terminated or closed;
+    `end` closes it after every run, so nothing the run started outlives
+    it."""
+
+    def __init__(self) -> None:
+        self.job: _winjob.Job | None = None
+
+    def popen_kwargs(self) -> dict[str, Any]:
+        if os.name == "posix":
+            return {"start_new_session": True}
+        self.job = _winjob.Job()
+        flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | _winjob.CREATE_SUSPENDED
+        return {"creationflags": flags}
+
+    def started(self, process: subprocess.Popen[bytes]) -> None:
+        if self.job is not None:
+            self.job.adopt(process)
+
+    def kill(self, process: subprocess.Popen[bytes]) -> None:
+        """Kill the run and its descendants. Call only before it is reaped."""
+        if self.job is not None:
+            self.job.terminate()
+        elif sys.platform != "win32" and process.returncode is None:
+            with contextlib.suppress(OSError):
+                os.killpg(process.pid, _KILL)
+        with contextlib.suppress(OSError):
+            process.kill()
+
+    def end(self) -> None:
+        if self.job is not None:
+            self.job.close()
+            self.job = None
 
 
 # ─── the server ──────────────────────────────────────────────────────────────
@@ -496,6 +515,7 @@ class UiServer(http.server.ThreadingHTTPServer):
         self._runs: set[int] = set()
         self._closing = threading.Event()
         self._idle = threading.Condition(self._runs_lock)
+        self._slots = threading.BoundedSemaphore(MAX_CONCURRENT_RUNS)
         super().__init__((_LOOPBACK, 0), _Handler)
         self.port = int(self.server_address[1])
         self.url = f"http://{_LOOPBACK}:{self.port}/?token={self.token}"
@@ -530,36 +550,43 @@ class UiServer(http.server.ThreadingHTTPServer):
 
     def run(self, argv: list[str]) -> _Run:
         """One run of `wowlab` with `argv`, bounded in time and output."""
+        if not self._slots.acquire(blocking=False):
+            raise _RefusedError(503, "busy")
+        try:
+            return self._start(argv)
+        finally:
+            self._slots.release()
+
+    def _start(self, argv: list[str]) -> _Run:
         capture = _Capture(self.output_cap_bytes)
-        kwargs: dict[str, Any] = {}
-        if os.name == "posix":
-            kwargs["start_new_session"] = True
-        else:
-            kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        tree = _Tree()
         env = dict(os.environ)
         env["PYTHONIOENCODING"] = "utf-8"
-        with self._runs_lock:
-            if self._closing.is_set():
-                raise _RefusedError(503, "closing")
-            started = time.time()
-            process = subprocess.Popen(
-                [*self.wowlab_argv, *argv],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=env,
-                shell=False,
-                **kwargs,
-            )
-            self._runs.add(process.pid)
         try:
-            return self._watch(process, capture, started)
+            with self._runs_lock:
+                if self._closing.is_set():
+                    raise _RefusedError(503, "closing")
+                process = subprocess.Popen(
+                    [*self.wowlab_argv, *argv],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=env,
+                    shell=False,
+                    **tree.popen_kwargs(),
+                )
+                self._runs.add(process.pid)
+            try:
+                tree.started(process)
+                return self._watch(process, tree, capture)
+            finally:
+                with self._idle:
+                    self._runs.discard(process.pid)
+                    self._idle.notify_all()
         finally:
-            with self._idle:
-                self._runs.discard(process.pid)
-                self._idle.notify_all()
+            tree.end()
 
-    def _watch(self, process: subprocess.Popen[bytes], capture: _Capture, started: float) -> _Run:
+    def _watch(self, process: subprocess.Popen[bytes], tree: _Tree, capture: _Capture) -> _Run:
         assert process.stdout is not None and process.stderr is not None
         readers = [
             threading.Thread(target=capture.pump, args=(process.stdout, "stdout"), daemon=True),
@@ -584,21 +611,22 @@ class UiServer(http.server.ThreadingHTTPServer):
                 break
         if not ended:
             # Not reaped yet, so its pid and process group are still its own.
-            _kill_tree(process.pid)
+            tree.kill(process)
             process.wait()
+        # Windows: whatever the run left behind dies with its job here.
+        tree.end()
         for reader in readers:
             reader.join(_DRAIN_GRACE_S)
-        if any(reader.is_alive() for reader in readers):
-            _kill_stragglers(process.pid, started)
-            for reader in readers:
-                reader.join(_DRAIN_GRACE_S)
         if not any(reader.is_alive() for reader in readers):
             process.stdout.close()
             process.stderr.close()
+        # A reader still alive here is held open by a descendant outside the
+        # run's process group (POSIX, after `setsid`); it is abandoned, and it
+        # stops reading at the cap.
         return _Run(
             exit_code=int(process.returncode),
-            stdout=capture.text("stdout"),
-            stderr=capture.text("stderr"),
+            stdout=capture.body("stdout"),
+            stderr=capture.body("stderr"),
             timed_out=timed_out,
             truncated=capture.truncated,
         )
@@ -737,9 +765,22 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._error(400, "bad_request")
             return
         try:
-            self._json(200, self._run(request))
+            run = self._run(request)
         except _RefusedError as refused:
             self._error(refused.status, refused.code)
+            return
+        except OSError:
+            self._error(500, "run_failed")
+            return
+        pieces = run.response()
+        self.close_connection = True
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(sum(len(piece) for piece in pieces)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        for piece in pieces:
+            self.wfile.write(piece)
 
     def _body(self) -> bytes | None:
         """The POST body, read only once it is known to be small enough."""
@@ -761,7 +802,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return None
         return body
 
-    def _run(self, request: object) -> dict[str, Any]:
+    def _run(self, request: object) -> _Run:
         if not isinstance(request, dict):
             raise _RefusedError(400, "bad_request")
         command = request.get("command")
@@ -773,14 +814,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         leaf = self.server.leaves.get(tuple(command))
         if leaf is None:
             raise _RefusedError(403, "not_a_command")
-        run = self.server.run(_build_argv(leaf, params))
-        return {
-            "exit_code": run.exit_code,
-            "stdout": run.stdout,
-            "stderr": run.stderr,
-            "timed_out": run.timed_out,
-            "truncated": run.truncated,
-        }
+        return self.server.run(_build_argv(leaf, params))
 
 
 # ─── the entry point ─────────────────────────────────────────────────────────

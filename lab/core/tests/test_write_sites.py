@@ -100,8 +100,17 @@ _BROWSER = (
     "`wowlab ui` (ADR-0029, M13-24): webbrowser.open takes a URL, not a file mode; it "
     "opens the owner's browser at the server's loopback URL and writes no file"
 )
+_WINJOB = "lab/core/src/wowlab_core/ui/_winjob.py"
+_JOB = (
+    "`wowlab ui` (ADR-0029, M13-24, fix round 1): Windows only, a Job Object around the "
+    "server's own run (kernel32 CreateJobObjectW, SetInformationJobObject, "
+    "AssignProcessToJobObject, TerminateJobObject, CloseHandle; ntdll NtResumeProcess), "
+    "all on handles the module created; it opens no other process and writes no file (L7)"
+)
 ALLOWED: dict[tuple[str, str], str] = {
     (_UI, "import subprocess"): _UI_RUN,
+    (_WINJOB, "import ctypes"): _JOB,
+    (_WINJOB, "from ctypes import wintypes"): _JOB,
     (_CLI, "opened = bool(webbrowser.open(server.url))"): _BROWSER,
     (_DB2LAKE, "import sqlite3"): _LAKE_DIR,
     (_DB2LAKE, "path.mkdir(parents=True, exist_ok=True)"): _LAKE_DIR,

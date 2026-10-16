@@ -114,8 +114,9 @@ wowlab grows in **waves**: the owner picks each one after reviewing the last. **
 | 🙈 | **Bug reports without your names** | `wowlab doctor --redact` prints output that is safe to paste into an issue: no character, realm, account, BattleTag, guild or home path. |
 | 📝 | **macros check** | Finds macros over the length limit, spell names not in your spellbook, macros on no action bar, duplicates, unbalanced `[ ]` and a misplaced `#showtooltip`. Read-only. |
 | ⌨️ | **binds coach** | From your own combat log: spells you cast often on awkward keys, spells you cast with no bind, and binds you never use. Read-only; the "awkward key" table is a default you can edit. May arrive in the second release. |
+| 🖥️ | **`wowlab ui`** | A local page in your browser, served only to this machine, that runs wowlab's read commands. Its first view is an install explorer: what every file is, and whether it is safe to touch. In this release it offers no command that changes files. |
 
-After that, Wave 5 is `wowlab ui`: a local page over every command, aimed at the second public release. Wave 3 was trimmed on 2026-10-14: its game-table database, talent planner and alt-dashboard are deferred, because players already have good talent planners. The character list and a daily check of the wiki stay.
+After that, Wave 5 adds to `wowlab ui` the commands that change files, each behind the same confirm step as the CLI, and is aimed at the second public release. Wave 3 was trimmed on 2026-10-14: its game-table database, talent planner and alt-dashboard are deferred, because players already have good talent planners. The character list and a daily check of the wiki stay.
 
 Thirty days after the first release, the owner checks GitHub's own counts (no telemetry). If they show little use beyond the owner, meaning fewer than 50 downloads or fewer than 5 issues or discussions from other people, the owner may freeze the public side: releases stay up, no new public features are added, and wowlab goes back to being a personal lab. The plan and its tickets: [`docs/LAB_PLAN.md`](docs/LAB_PLAN.md) §15 and [`docs/BACKLOG.md`](docs/BACKLOG.md).
 
