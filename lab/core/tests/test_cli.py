@@ -426,7 +426,7 @@ def test_explain_a_path_with_no_row(root: Path) -> None:
     report = _json(cli.ExplainReport, "explain", "unknown-constructed.txt")
     assert report.result.status == "unclassified"
     assert report.verdict.level == "unclassified"
-    assert report.verdict.words == "no file-map row"
+    assert report.verdict.words == "no file-map row; wowlab does not know what this file is"
 
 
 VERDICT_CASES = [
@@ -434,7 +434,8 @@ VERDICT_CASES = [
     (f"WTF/Account/{ACCOUNT}/config-cache.wtf", "gate", True),
     (f"{SV_DIR}/RareScanner.lua.bak", "no", True),
     (".build.info", "no", False),
-    ("WTF/", "folder", True),
+    ("WTF/", "folder", None),
+    (".", "folder", None),
     (f"{FLAVOR}/Screenshots/WoWScrnShot_092726_120000.jpg", "not_applicable", False),
 ]
 
@@ -443,7 +444,7 @@ VERDICT_CASES = [
     ("path", "level", "restorable"), VERDICT_CASES, ids=[c[0] for c in VERDICT_CASES]
 )
 def test_explain_json_carries_the_verdict_it_prints(
-    root: Path, path: str, level: str, restorable: bool
+    root: Path, path: str, level: str, restorable: bool | None
 ) -> None:
     """M13-21: the verdict is in `--json`, and the text prints its words."""
     report = _json(cli.ExplainReport, "explain", path)
@@ -467,6 +468,24 @@ def test_tree_explain_json_carries_the_verdict_it_prints(root: Path) -> None:
     assert levels["WTF/Config.wtf"] == "gate"
     assert levels[f"{SV_DIR}/RareScanner.lua.bak"] == "no"
     assert levels["WTF"] == "folder"
+    for item in report.items:
+        assert item.explained is None or item.verdict == item.explained.verdict
+
+
+def test_tree_items_always_carry_a_verdict(root: Path, flavor: Path) -> None:
+    """M13-21, amended 2026-10-15: `TreeItem.verdict` with or without
+    `--explain`, `unclassified` for a path with no file-map row."""
+    (flavor / "unknown-constructed.txt").write_bytes(b"x")
+    for args in (("tree",), ("tree", "--explain")):
+        by_path = {i.path: i for i in _json(cli.TreeReport, *args).items}
+        assert by_path["WTF/Config.wtf"].verdict.level == "gate"
+        assert by_path["WTF"].verdict.level == "folder"
+        assert by_path["WTF"].verdict.restorable is None
+        unknown = by_path["unknown-constructed.txt"]
+        assert unknown.explained is None
+        assert unknown.verdict.level == "unclassified"
+        assert unknown.verdict.restorable is False
+        assert "wowlab does not know what this file is" in unknown.verdict.words
 
 
 # ─── sv ──────────────────────────────────────────────────────────────────────

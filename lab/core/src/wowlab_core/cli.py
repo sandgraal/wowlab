@@ -1580,6 +1580,8 @@ class TreeItem(_Out):
     kind: Literal["file", "folder", "symlink"]
     size: int | None
     note: str | None
+    # M13-21, amended 2026-10-15: always present; "unclassified" with no file-map row
+    verdict: Verdict
     explained: Explained | None
 
 
@@ -1612,7 +1614,16 @@ def _tree_items(lay: layout.Layout, inv: layout.Inventory) -> dict[str, TreeItem
         path: str, kind: Literal["file", "folder", "symlink"], size: int | None, note: str | None
     ) -> None:
         if path and path not in items:
-            items[path] = TreeItem(path=path, kind=kind, size=size, note=note, explained=None)
+            found = lay.classify(path, is_dir=kind == "folder" or None)
+            entry = found.entry if isinstance(found, layout.Classified) else None
+            items[path] = TreeItem(
+                path=path,
+                kind=kind,
+                size=size,
+                note=note,
+                verdict=verdict_of(entry, found.base, found.path),
+                explained=None,
+            )
 
     try:
         with os.scandir(lay.flavor_path) as it:

@@ -11,6 +11,9 @@ new cell in `filemap.toml` fails the test that maps every cell.
 
 from __future__ import annotations
 
+import os
+import re
+import unicodedata
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -22,9 +25,10 @@ Level = Literal["gate", "no", "folder", "not_applicable", "unclassified"]
 _GATE = "gate"
 _GATE_WORDS = "yes, through wowlab's write gate only, with the client closed"
 _SERVER_MAY_REPLACE = "(server may replace)"
-_UNCLASSIFIED_WORDS = "no file-map row"
-# The subtrees the write gate may write, spelled as the client spells them.
-_GATE_AREAS = frozenset({"wtf", "interface", "fonts"})
+_UNCLASSIFIED_WORDS = "no file-map row; wowlab does not know what this file is"
+_UNCLASSIFIED_RESTORED = (
+    "; a whole snapshot restore puts it back like any file here (it skips only Edit `no` files)"
+)
 _TIER_WORDS = {
     "A": "A: ordinary addon-user behaviour",
     "A (read)": "A (read): reading it is ordinary addon-user behaviour",
@@ -34,19 +38,116 @@ _TIER_WORDS = {
 }
 
 
+# ─── the write gate's path rule, copied ──────────────────────────────────────
+# A copy of `guard._check_rel` for a file path with executables refused, so
+# `restorable` says exactly what the gate would write. `guard.py` is
+# load-bearing; its private rule is copied here rather than imported, and
+# `test_verdict.py::test_restorable_agrees_with_the_write_gate` fails when
+# the two drift apart.
+
+_ROOTS = ("WTF", "Interface", "Fonts")
+_ADDONS = "AddOns"
+_EXECUTABLE_SUFFIXES = (
+    ".exe",
+    ".dll",
+    ".dylib",
+    ".so",
+    ".scr",
+    ".com",
+    ".bat",
+    ".cmd",
+    ".ps1",
+    ".sh",
+    ".command",
+    ".app",
+    ".bundle",
+    ".plugin",
+    ".framework",
+    ".vbs",
+    ".js",
+    ".wsf",
+    ".hta",
+    ".msi",
+    ".lnk",
+    ".cpl",
+    ".jar",
+)
+_VERSIONED_SHARED_LIBRARY = re.compile(r"\.so(\.\d+)+\Z", re.IGNORECASE)
+_RESERVED_NAMES = frozenset(
+    {"con", "prn", "aux", "nul", "conin$", "conout$"}
+    | {f"{device}{n}" for device in ("com", "lpt") for n in (*"0123456789", "¹", "²", "³")}
+)
+_FORBIDDEN_CHARACTERS = frozenset('<>:"|?*\\\x7f') | frozenset(chr(n) for n in range(32))
+_MAX_NAME_BYTES = 255
+
+
+def _fold(text: str) -> str:
+    return unicodedata.normalize("NFC", unicodedata.normalize("NFC", text).casefold())
+
+
+def _is_executable(name: str) -> bool:
+    folded = name.casefold()
+    return folded.endswith(_EXECUTABLE_SUFFIXES) or bool(_VERSIONED_SHARED_LIBRARY.search(name))
+
+
+def _gate_writes(rel: str) -> bool:
+    """Whether the gate accepts `rel` (flavor-relative, `/`-separated) as a
+    file it may write: `guard._check_rel(rel)` returns instead of raising."""
+    if rel == "" or rel.startswith("/"):
+        return False
+    if any(c in _FORBIDDEN_CHARACTERS for c in rel):
+        return False
+    try:
+        os.fsencode(rel)
+    except UnicodeError:
+        return False
+    parts = tuple(rel.split("/"))
+    for part in parts:
+        if part in ("", ".", ".."):
+            return False
+        if part != part.rstrip(". "):
+            return False
+        if part.split(".", 1)[0].rstrip(" ").casefold() in _RESERVED_NAMES:
+            return False
+        if len(part.encode("utf-8", "surrogateescape")) > _MAX_NAME_BYTES:
+            return False
+        if _is_executable(part):
+            return False
+    if parts[0] not in _ROOTS:
+        return False
+    if parts[0] == "Interface" and len(parts) > 1:
+        if parts[1] != _ADDONS and _fold(parts[1]) == _fold(_ADDONS):
+            return False
+        if parts[1] == _ADDONS and len(parts) < 3:
+            return False
+    return len(parts) >= 2
+
+
+# ─── the verdict ─────────────────────────────────────────────────────────────
+
+
 class Verdict(BaseModel):
     """Whether wowlab may edit a path, in a level and in words.
 
-    `restorable`: the path lies in a flavor folder's `WTF/`, `Interface/` or
-    `Fonts/`, the subtrees the write gate writes, so a restore could put it
-    back. For a `no` file that means a restore leaves it alone unless it is
-    named with `--paths` (owner decision 2026-09-27).
+    `restorable`: the write gate would accept the path as a file to write, so
+    a snapshot restore could put it back. It is the gate's own lexical rule:
+    inside a flavor folder's `WTF/`, `Interface/AddOns/` or `Fonts/`, spelled
+    as the client spells them, with no executable, reserved or unplain name.
+    A `no` file there is still left alone by a whole restore unless it is
+    named with `--paths` (owner decision 2026-09-27). A restore is not the
+    last word on a `server_may_replace` file: the server may replace it again
+    at the next login. `None` for a folder, which is judged by the files
+    under it.
+
+    `server_may_replace`: the Edit cell is `gate (server may replace)`, so a
+    reader never has to parse `words` for it.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     level: Level
-    restorable: bool
+    restorable: bool | None
+    server_may_replace: bool
     words: str
 
 
@@ -65,9 +166,9 @@ def edit_level(edit: str) -> Level:
 
 
 def restorable(base: str | None, path: str) -> bool:
-    """Whether a path relative to `base` lies where the write gate could put
-    it back when named (a flavor folder's `WTF/`, `Interface/`, `Fonts/`)."""
-    return base == "flavor" and path.split("/", 1)[0].casefold() in _GATE_AREAS
+    """Whether the write gate would write `path` (relative to `base`) as a
+    file, so a restore could put it back. Only flavor paths qualify."""
+    return base == "flavor" and _gate_writes(path)
 
 
 def tier_words(tier: str) -> str:
@@ -104,7 +205,14 @@ def verdict_of(entry: FileMapEntry | None, base: str | None, path: str) -> Verdi
     as `entry`; `None` is a path with no file-map row."""
     can_restore = restorable(base, path)
     if entry is None:
-        return Verdict(level="unclassified", restorable=can_restore, words=_UNCLASSIFIED_WORDS)
+        words = _UNCLASSIFIED_WORDS + (_UNCLASSIFIED_RESTORED if can_restore else "")
+        return Verdict(
+            level="unclassified", restorable=can_restore, server_may_replace=False, words=words
+        )
     level = edit_level(entry.edit)
-    words = _edit_words(entry.edit, level, entry.tier, restorable=can_restore)
-    return Verdict(level=level, restorable=can_restore, words=words)
+    return Verdict(
+        level=level,
+        restorable=None if level == "folder" else can_restore,
+        server_may_replace=entry.edit == f"{_GATE} {_SERVER_MAY_REPLACE}",
+        words=_edit_words(entry.edit, level, entry.tier, restorable=can_restore),
+    )
