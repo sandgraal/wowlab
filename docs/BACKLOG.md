@@ -126,7 +126,7 @@ Read-only. Adds `combatlog.cast_counts`: the player's own `SPELL_CAST_SUCCESS` e
 ## [ ] M13-10 — Player-facing README
 **Size:** S · **Depends on:** M13-03
 
-The README's first screen: what wowlab is in three sentences; the trust model of ADR-0031; one install line (the one M13-03 tested, word for word); the three commands worth running first; a link to the wiki. *Amended 2026-10-15:* once M13-25 has merged, one of those three is `wowlab ui`, the explorer being the way in for a player. Platform status stated by ADR-0031's rule: "untested on <platform>" until M13-02's acceptance holds for it. The rest of the README may move to the wiki.
+The README's first screen: what wowlab is in three sentences; the trust model of ADR-0031; one install line (the one M13-03 tested, word for word); the three commands worth running first; a link to the wiki. *Amended 2026-10-15:* once M13-25 has merged, one of those three is `wowlab ui`, the explorer being the way in for a player. Platform status stated by ADR-0031's rule: "untested on <platform>" until M13-02's acceptance holds for it. *Amended 2026-10-16 (owner ruling under ADR-0029):* the README must also say that on a shared Linux machine, other accounts can briefly see the `wowlab ui` token URL in their process listing while the browser opens. The rest of the README may move to the wiki.
 
 **Acceptance:** the install line is byte-identical to the one M13-03's acceptance ran; every platform claim matches CI and the recorded human runs; every command named exists in the Click tree; reviewed by `domain-reviewer` (claims about the game and its files) and `code-reviewer`. User-facing: the wiki's Home follows.
 
@@ -305,6 +305,12 @@ Commands that write only to wowlab's own store or user data directory are allowe
 - Home paths are shown as `~`.
 - No external request is made.
 - No file-map logic lives in the JavaScript (§14.5 D3).
+
+**Look and first view (owner, 2026-10-16).**
+- **Full WoW style.** Dark panels with gold trim, a parchment-toned detail pane, and badge colours that read like item quality: gold for `gate`, red for `no`, grey for `unclassified`, and muted for `folder` and `not_applicable`.
+- **Assets.** Everything is inline CSS, plus inline SVG or CSS gradients for the art. No external fonts or images (the CSP forbids them), no Blizzard art and no copied game assets. A serif system font stack gives the game-like feel.
+- **Readability comes first.** Body text meets WCAG AA contrast, and a light scheme follows `prefers-color-scheme`.
+- **First view.** The tree opens on the flavor folder with `WTF/` and `Interface/AddOns/` expanded.
 
 **Acceptance:**
 - A Python test serves the view and checks the CSP and that no external URL appears.

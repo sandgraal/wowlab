@@ -266,6 +266,11 @@ The decision itself is unchanged. This amendment only stages it, so that the fir
   - `log tail --follow` is refused in v0.1, because a run must end;
   - the subprocess is the running interpreter, `sys.executable -m wowlab_core.cli` or an equivalent absolute path, never a PATH lookup.
 
+**Owner rulings (2026-10-16), from the M13-24 reviews; the conductor recorded them on the owner's instruction:**
+- **One permitted FFI site.** `lab/core/src/wowlab_core/ui/_winjob.py` may use `ctypes` on Windows. It may do so only to put the server's own child runs in a Job Object, resume them and terminate them. It calls only on the job handle it creates and on the run's own process handle. It never opens another process, never touches memory and never aims at the client. This is the only FFI in the Lab. Any other site, or any widening of this one, needs a new owner decision. ADR-0023 stands: no FFI aimed at the client. The two enforcers name this file only. `lab/core/tests/test_write_sites.py`, the L2 write-site scanner and not a `ui` grader, gets an allowlist row for it with a reason; M13-24 added that row, and both reviewers accepted it. `.claude/agents/code-reviewer.md` names the exception.
+- **The token on Linux.** When `wowlab ui` opens the browser on Linux, `xdg-open` and a newly started browser carry the token URL in their command line for a while. Other accounts on the same machine can read it. This is accepted for v0.1 as a known risk on shared Linux machines. The README states it, as an acceptance criterion of M13-10. macOS and Windows are not affected. A single-use opened link remains an option for a later release.
+- **Recorded residual.** On POSIX, a process that a run started outlives a run that exits on its own. A run's process group is killed only at a timeout, at the output cap, or when the server closes. None of the commands the UI offers starts a process.
+
 ---
 
 ## ADR-0030 — Languages: one per purpose, each admitted by an ADR
