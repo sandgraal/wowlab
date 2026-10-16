@@ -14,7 +14,8 @@ base: the lab-addon, the customization sandbox, profiles and sv-merge in
 Wave 2, and the character list, the generated command reference and the
 daily wiki job in Wave 3 (re-scoped 2026-10-14: db2lake, talents and the
 alt-dashboard deferred). Wave 4 (M13) is the first public release and
-Wave 5 (M14) is `wowlab ui`. Other players may install it from a tagged
+its v0.1 includes the read-only first stage of `wowlab ui` (ADR-0029,
+amended 2026-10-15); Wave 5 (M14) finishes it. Other players may install it from a tagged
 GitHub release and run it on their own machine; it is never deployed as a
 service and never uploads anything (ADR-0019, ADR-0031).
 
@@ -101,7 +102,8 @@ required checks are green, threads are resolved, and reviews are clean.
 - Test-writer / implementer separation is mandatory for the load-bearing
   files, which rewrite the owner's data: `luadata.py`, `guard.py`, `svmerge.py`
   and `profiles.py` under `lab/core/src/wowlab_core/` (widened by the owner,
-  2026-09-29): a `[TEST]` ticket lands graders before the `[IMPL]` ticket
+  2026-09-29), and `wowlab_core.ui`, the local server that runs commands for
+  the browser (`ui.py` or `ui/`; added by the owner, 2026-10-15): a `[TEST]` ticket lands graders before the `[IMPL]` ticket
   creates the file or changes what it does. The session that writes the code never
   writes, edits, or weakens the tests that grade it.
 - Work runs in owner-selected waves (ADR-0024). One wave is one milestone.
