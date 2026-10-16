@@ -533,7 +533,7 @@ Found in the domain review of #195 (M13-21), on 2026-10-15. `snap create --scree
 ## [ ] M13-31 — The `0,`-list CPU probe fails on loaded macOS runners
 **Size:** S · **Depends on:** M13-01
 
-Found on 2026-10-16. In `lab/core/tests/review/test_m10_04_semicolon_list_at_budget_misses_time_target.py`, `test_constructed_control_zeros_at_the_budget_are_inside_the_target` failed on `lab (macos)` in two unrelated PRs: #204 at 10.16 CPU s and #206 at 10.74 CPU s. Neither PR touches `luadata.py`, and both passed when re-run.
+Found on 2026-10-16. The same flake hit a sibling probe, `test_m10_04_escaped_key_list_at_budget_misses_time_target.py`, on #204 (10.04 CPU s), so this ticket covers every M10-04 CPU-budget probe under `lab/core/tests/review/`, not only the one named next. In `lab/core/tests/review/test_m10_04_semicolon_list_at_budget_misses_time_target.py`, `test_constructed_control_zeros_at_the_budget_are_inside_the_target` failed on `lab (macos)` in two unrelated PRs: #204 at 10.16 CPU s and #206 at 10.74 CPU s. Neither PR touches `luadata.py`, and both passed when re-run.
 
 The probe already measures child CPU time and keeps the better of two runs. The runner is simply loaded. The sibling case `test_constructed_semicolon_list_at_the_budget_is_inside_the_target` uses the same measurement and target, and its expected time is similar, so it is just as exposed.
 
@@ -552,3 +552,20 @@ The probe already measures child CPU time and keeps the better of two runs. The 
 - The probe still fails against a constructed parser that is twice as slow.
 - `make ci` green.
 - Reviewed by `code-reviewer`.
+
+---
+
+## [ ] M13-32 — `explain` detail: the four leftovers from M13-23's final review
+**Size:** S · **Depends on:** M13-23
+
+The owner ruled on 2026-10-16 that what M13-23's last fix round left, if it was not security, merges and is filed here. This ticket must land before M13-27 shows snapshot facts in the explorer. The four items come from the domain review of #204 at d744b11:
+1. **`_Volume._folds` tests only upper and lower case** (pathfacts.py). The gate's fold is broader: it treats "Straße" and "STRASSE" as one name, and it ignores normalization even when case also differs. A name that differs in both can therefore be confirmed wrongly, for example on NTFS. Run the case test only when `_nfc(a).lower() == _nfc(b).lower()`; otherwise answer unknown (None).
+2. **Wording of the unconfirmed clause** (cli.py `_snapshot_line`). Change it to "neither name is on disk, and nothing on this drive shows whether it treats the two names as one".
+3. **"the latest snapshot that holds it is X" can name an older snapshot whose match was never confirmed** (snapshot_facts). Either require a confirmed match there, or carry the flag and reuse the caveat.
+4. **Docstring.** On Windows and Linux, case sensitivity can be set per folder. The check reads the folder above the file. Say so in one sentence.
+
+**Acceptance:**
+- A labelled constructed test for each of items 1 and 3.
+- The old text stays an exact prefix, and the JSON stays additive.
+- `make ci` green.
+- Reviewed by `domain-reviewer` and `code-reviewer`.
