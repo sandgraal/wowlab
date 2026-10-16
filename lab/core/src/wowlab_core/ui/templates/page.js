@@ -166,11 +166,13 @@
     return typeof value; // "object", "string", "number" or "boolean"
   }
 
-  // Bidi controls (U+202A-U+202E, U+2066-U+2069) and zero-width characters
-  // (U+200B-U+200D, U+2060, U+FEFF) could reorder or hide what a key or
-  // value says; they are shown escaped. JSON.stringify already escapes
-  // control characters and lone surrogates.
-  const JT_HIDDEN = /[\u200B-\u200D\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/g;
+  // Shown escaped, because they could reorder or hide what a key or value
+  // says: the bidi marks and controls U+061C, U+200E, U+200F, U+202A-U+202E
+  // and U+2066-U+2069; the zero-width characters U+200B-U+200D, U+2060 and
+  // U+FEFF; and the separators U+2028 and U+2029. JSON.stringify already
+  // escapes control characters and lone surrogates.
+  const JT_HIDDEN =
+    /[\u061C\u200B-\u200F\u2028-\u202E\u2060\u2066-\u2069\uFEFF]/g;
 
   function jtQuote(text) {
     return JSON.stringify(text).replace(
