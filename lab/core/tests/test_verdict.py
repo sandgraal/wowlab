@@ -366,3 +366,52 @@ def test_a_linked_server_may_replace_row_keeps_the_fact() -> None:
 def test_tier_words_keep_an_unknown_tier_as_it_is() -> None:
     assert tier_words("B") == "B: works, but Blizzard does not support it and a patch can reset it"
     assert tier_words("Z-constructed") == "Z-constructed"
+
+
+# ─── M13-32: the gate's link rule ────────────────────────────────────────────
+
+
+class _Stat:
+    """A constructed `lstat` result: a mode, and Windows attributes and a
+    reparse tag where given."""
+
+    def __init__(self, mode: int, attributes: int | None = None, tag: int | None = None) -> None:
+        self.st_mode = mode
+        if attributes is not None:
+            self.st_file_attributes = attributes
+        if tag is not None:
+            self.st_reparse_tag = tag
+
+
+@pytest.mark.parametrize(
+    "st",
+    [
+        pytest.param(_Stat(0o100644), id="constructed-plain-file"),
+        pytest.param(_Stat(0o040755), id="constructed-plain-folder"),
+        pytest.param(_Stat(0o120777), id="constructed-symlink"),
+        pytest.param(_Stat(0o040755, 0x10), id="constructed-windows-folder"),
+        pytest.param(_Stat(0o040755, 0x410, 0x9000001A), id="constructed-cloud-placeholder"),
+        pytest.param(_Stat(0o100644, 0x420, 0x80000013), id="constructed-deduplicated"),
+        pytest.param(_Stat(0o040755, 0x410, 0xA0000003), id="constructed-junction"),
+        pytest.param(_Stat(0o040755, 0x410), id="constructed-reparse-without-tag"),
+    ],
+)
+def test_gate_refuses_stat_agrees_with_the_write_gate(st: _Stat) -> None:
+    """`verdict.gate_refuses_stat` is a copy of `guard._is_link`; this fails
+    when the two drift apart."""
+    assert verdict.gate_refuses_stat(st) is guard._is_link(st)  # type: ignore[arg-type]
+
+
+def test_a_placeholder_is_never_restorable() -> None:
+    """M13-32. Under a reparse point the gate refuses, a file is never
+    `restorable`, the words carry the placeholder clause, and a folder
+    still has no answer."""
+    entry = _entry("savedvariables-backup")
+    v = verdict_of(None, "flavor", "WTF/Config.wtf", placeholder=True)
+    assert v.restorable is False
+    assert v.words.endswith("wowlab's write gate does not write through these")
+    assert "a whole snapshot restore puts it back" not in v.words
+    folder = verdict_of(None, "flavor", "WTF/Account", folder=True, placeholder=True)
+    assert folder.restorable is None
+    linked = verdict_of(entry, "flavor", "WTF/x.bak", link=True, placeholder=True)
+    assert linked == verdict_of(entry, "flavor", "WTF/x.bak", link=True)

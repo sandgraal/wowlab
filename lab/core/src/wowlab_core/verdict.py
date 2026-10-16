@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import unicodedata
 from typing import Literal
 
@@ -32,6 +33,10 @@ _LINK_WORDS = (
     "and a restore does not put it back"
 )
 _TIER_B_WORDS = "; unsupported by Blizzard, a patch can reset it"
+_PLACEHOLDER_WORDS = (
+    "; a cloud placeholder or deduplicated file, or inside one: "
+    "wowlab's write gate does not write through these"
+)
 _UNCLASSIFIED_RESTORED = (
     "; a whole snapshot restore puts it back like any file here (it skips only Edit `no` files)"
 )
@@ -129,6 +134,22 @@ def _gate_writes(rel: str) -> bool:
     return len(parts) >= 2
 
 
+# ─── the write gate's link rule, copied ──────────────────────────────────────
+# A copy of `guard._is_link`, for the same reason as the path rule above:
+# `test_verdict.py::test_gate_refuses_stat_agrees_with_the_write_gate` fails
+# when the two drift apart. The gate refuses every Windows reparse point,
+# while `snapshot` and `gaps` call only a name surrogate a link; the ones in
+# between (cloud placeholders, deduplicated files) are walked and described
+# but never written.
+
+
+def gate_refuses_stat(st: os.stat_result) -> bool:
+    """Whether the write gate refuses a path whose `lstat` is `st` (or a
+    path under it) as a link: `guard._is_link(st)`."""
+    attributes = int(getattr(st, "st_file_attributes", 0))
+    return stat.S_ISLNK(st.st_mode) or bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+
 # ─── the verdict ─────────────────────────────────────────────────────────────
 
 
@@ -221,13 +242,28 @@ def verdict_of(
     *,
     folder: bool = False,
     link: bool = False,
+    placeholder: bool = False,
 ) -> Verdict:
     """The verdict for `path` (relative to `base`, `/`-separated), classified
     as `entry`; `None` is a path with no file-map row. `folder`: the path is
     a folder (a row at level `folder` is one whatever the caller says).
     `link`: the path is a symlink or junction, or lies inside one. The gate
     refuses any path through a link and a snapshot never captures one, so
-    the words are the link words at every level (with the tier suffix)."""
+    the words are the link words at every level (with the tier suffix).
+    `placeholder` (M13-32): the path is, or lies under, a reparse point that
+    is no link (`gate_refuses_stat` but not a name surrogate): the words are
+    the usual ones plus a clause saying the gate does not write through it,
+    and a file is not `restorable`."""
+    if placeholder and not link:
+        # The words as for a path the gate never writes (base None), the
+        # level and whether `restorable` has an answer as for this one.
+        plain = verdict_of(entry, base, path, folder=folder)
+        return plain.model_copy(
+            update={
+                "restorable": None if plain.restorable is None else False,
+                "words": verdict_of(entry, None, path, folder=folder).words + _PLACEHOLDER_WORDS,
+            }
+        )
     can_restore = restorable(base, path)
     if link:
         tier = entry.tier if entry is not None else ""

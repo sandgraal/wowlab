@@ -147,7 +147,7 @@ from wowlab_core import (
     wtfconfig,
 )
 from wowlab_core.filemap import FileMapEntry
-from wowlab_core.verdict import Verdict, tier_words, verdict_of
+from wowlab_core.verdict import Verdict, gate_refuses_stat, tier_words, verdict_of
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -2401,8 +2401,11 @@ def _snapshot_line(facts: pathfacts.SnapshotFacts, captured: str) -> str:
 
 def _path_kind(
     install_root: Path | str, result: layout.Classified | layout.Unclassified, query: str
-) -> tuple[bool, bool]:
-    """`(folder, link)` for `explain`'s path. `link`: some component from
+) -> tuple[bool, bool, bool]:
+    """`(folder, link, placeholder)` for `explain`'s path. `placeholder`
+    (M13-32): some component on the way is a reparse point that is no link
+    (a cloud placeholder, a deduplicated file) but that the write gate
+    refuses all the same (`verdict.gate_refuses_stat`). `link`: some component from
     the install root down is a symlink, a junction or another Windows
     reparse point that names another path (`gaps.is_link`, snapshot's
     name-surrogate rule; a cloud placeholder or deduplicated file is not a
@@ -2411,21 +2414,23 @@ def _path_kind(
     separator."""
     slash = query.endswith(("/", os.sep))
     if result.base is None:
-        return slash, False
+        return slash, False, False
     under = [result.flavor_folder] if result.base == "flavor" and result.flavor_folder else []
     current = Path(install_root)
     st: os.stat_result | None = None
+    placeholder = False
     for part in [*under, *[p for p in result.path.split("/") if p]]:
         current = current / part
         try:
             st = current.lstat()
         except OSError:
-            return slash, False  # absent from here down: nothing to follow
+            return slash, False, placeholder  # absent from here down: nothing to follow
         if gaps.is_link(current, st):
-            return False, True
+            return False, True, False
+        placeholder = placeholder or gate_refuses_stat(st)
     if st is None:  # the install root itself; how it is reached is the owner's choice
-        return True, False
-    return slash or stat.S_ISDIR(st.st_mode), False
+        return True, False, False
+    return slash or stat.S_ISDIR(st.st_mode), False, placeholder
 
 
 def _is_inside(path: Path, root: Path) -> bool:
@@ -2471,7 +2476,7 @@ def explain(
                 judged = in_flavor
     if judged is None:
         judged = result
-    folder, link = _path_kind(inst.root, judged, path)
+    folder, link, placeholder = _path_kind(inst.root, judged, path)
     # M13-23: the verdict judges the file as it is spelled on disk (a volume
     # that folds case or normalization opens it under any spelling); `query`
     # and `result` stay as typed. A path typed as stored is judged as before.
@@ -2482,6 +2487,7 @@ def explain(
         "/".join(parts) if parts is not None else judged.path,
         folder=folder,
         link=link,
+        placeholder=placeholder,
     )
     lay = _flavor_layout(inst, judged)
     stat_, facts, views, note, hints = _detail(

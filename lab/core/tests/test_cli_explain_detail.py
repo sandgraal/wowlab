@@ -1100,16 +1100,53 @@ def test_only_a_name_surrogate_reparse_point_is_a_link(
         return _ReparseStat(st, tag) if self == account else st
 
     monkeypatch.setattr(Path, "lstat", lstat)
-    folder, is_link = cli._path_kind(
+    folder, is_link, placeholder = cli._path_kind(
         root,
         cli.layout.Layout.for_flavor(install.discover(root).flavors[0], root).classify(SYNDICATOR),
         SYNDICATOR,
     )
-    assert (folder, is_link) == (False, link)
+    assert (folder, is_link, placeholder) == (False, link, not link)
     report = explained(SYNDICATOR)
     if link:
         assert report.verdict.restorable is None
         assert report.stat is None
     else:
-        assert report.verdict.restorable is True
+        # Walked and described, but the write gate refuses every reparse
+        # point, so nothing promises a write (coordinator ruling on #215).
+        assert report.verdict.restorable is False
         assert report.stat is not None and report.stat.kind == "file"
+
+
+def test_a_file_under_a_onedrive_placeholder_promises_no_write(
+    root: Path, flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M13-32, the ruling on #215. Constructed: the account folder is a
+    OneDrive cloud placeholder (attributes stood in, so this runs on any
+    system), and `Syndicator.lua` differs from the snapshot's copy. It gets
+    the usual words with the placeholder clause, `restorable` False and no
+    `snap restore` or `snap create` hint, because `guard` refuses to write
+    through any reparse point."""
+    ok("snap", "create")
+    data = bytearray((flavor / SYNDICATOR).read_bytes())
+    data[0] ^= 1
+    (flavor / SYNDICATOR).write_bytes(bytes(data))
+    account = flavor / "WTF" / "Account" / ACCOUNT
+    real_lstat = Path.lstat
+
+    def lstat(self: Path) -> Any:
+        st = real_lstat(self)
+        return _ReparseStat(st, CLOUD_PLACEHOLDER) if self == account else st
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+    report = explained(SYNDICATOR)
+    assert report.verdict.level == "gate"
+    assert report.verdict.restorable is False
+    assert report.verdict.words == (
+        "yes, through wowlab's write gate only, with the client closed; a cloud placeholder "
+        "or deduplicated file, or inside one: wowlab's write gate does not write through these"
+    )
+    assert report.snapshot is not None and report.snapshot.live == "differs"
+    assert not any(h.argv[:1] == ["snap"] for h in report.hints), [h.command for h in report.hints]
+    text = ok("explain", SYNDICATOR).stdout
+    assert f"  edit:         {report.verdict.words}\n" in text
+    assert "snap restore" not in text
