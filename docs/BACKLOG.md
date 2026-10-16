@@ -291,6 +291,8 @@ Commands that write only to wowlab's own store or user data directory are allowe
 ## [ ] M13-25 — The explorer view, first stage: tree, badges, detail
 **Size:** S–M · **Depends on:** M13-21, M13-24
 
+*Owner ruling, 2026-10-16:* M13-25 is exempt from graders-first, on the terms recorded under M13-26. The implementer writes `test_ui_explorer.py`, and a `test-writer` audits it and takes it over.
+
 *Split 2026-10-15 (owner: "get there sooner"):* the explorer lands in two stages, so the owner can use it as soon as the server merges. This stage uses only what exists once M13-21 has merged. M13-27 adds the rest.
 
 **Tree pane.** It is drawn from `tree --explain --json`, one flavor folder at a time, with a flavor picker when there are several. Every item has a verdict badge whose level and words come from Python. It filters by verdict level or by text.
@@ -355,7 +357,7 @@ This builds on M13-25's view, per §15.6.
 ## [ ] M13-26 — Generic forms for read commands, and the parity test
 **Size:** S–M · **Depends on:** M13-24
 
-*Owner ruling, 2026-10-16:* M13-26 was filed on 2026-10-15, before `wowlab_core.ui` joined the load-bearing set (#199). It is therefore exempt from the graders-first rule, and the implementer's parity test stands. In exchange, a `test-writer` audits `test_ui_parity.py`, strengthens it where it falls short of the spec, and takes ownership of it. The exemption covers M13-26 only. Every later `ui` ticket is graders-first.
+*Owner ruling, 2026-10-16:* M13-26 was filed on 2026-10-15, before `wowlab_core.ui` joined the load-bearing set (#199). It is therefore exempt from the graders-first rule, and the implementer's parity test stands. In exchange, a `test-writer` audits `test_ui_parity.py`, strengthens it where it falls short of the spec, and takes ownership of it. The exemption covers M13-26, and was extended to M13-25 on 2026-10-16 on the same terms: a `test-writer` audits and takes over `test_ui_explorer.py`. M13-25 was also filed before #199. Every later `ui` ticket, M13-27 included, is graders-first.
 
 Every other read command gets a form drawn from its declared parameters, run through M13-24, and its JSON is shown in the generic tree view. A parity test in the required `quality` job asserts:
 - every leaf command is reachable in the UI or appears in an exclusion list with a written reason;
