@@ -37,8 +37,12 @@ What the audit added:
   escaped like a run's output.
 - The look the owner set: a light scheme, a serif system stack, badge
   colours that read like item quality, and WCAG AA contrast for the text.
-  Badge words are not pinned: the owner's player words will come from a new
-  `label` on `Verdict` in core.
+  Badge words are never written here: a badge says `Verdict.label` (and
+  `server_label`), whatever core makes them.
+- Round 1 (2026-10-16): badges from `label` and `server_label`, a badge on
+  every folder (`ancestors`, `flavor_folder_verdict`), the detail pane's
+  file-map text from `plain` with no Markdown, and the whole
+  `/api/commands` body escaped.
 """
 
 from __future__ import annotations
@@ -520,7 +524,8 @@ const ids = {};
 for (const id of ["status", "flavor-box", "flavor", "level-filter", "text-filter",
   "explorer-status", "tree-root", "tree", "explain-title", "explain-path", "explain-verdict",
   "explain-facts", "explain-status", "tab-explorer", "tab-commands", "explorer-view",
-  "commands-view", "commands", "title", "help", "fields", "run", "stdout", "stderr"]) ids[id] = new El("x");
+  "commands-view", "commands", "title", "help", "fields", "run", "stdout", "stderr",
+  "result-tree", "result-raw"]) ids[id] = new El("x");
 ids["flavor-box"].hidden = true;
 ids["commands-view"].hidden = true;
 const all = new El("option"); all.value = ""; ids["level-filter"].appendChild(all);
@@ -551,11 +556,11 @@ function rows() {
   return ids.tree.all().filter((e) => e.attrs.role === "treeitem").map((li) => {
     const row = rowOf(li) || li;
     const name = row.children.find((c) => c.className.split(" ").includes("name"));
-    const badge = row.children.find((c) => c.className.split(" ").includes("badge"));
+    const marks = row.children.filter((c) => c.className.split(" ").includes("badge"))
+      .map((b) => ({ text: b.textContent, title: b.title, cls: b.className }));
     return { path: row.dataset.path, name: name ? name.textContent : null,
       nameTitle: name ? name.title : null, expanded: li.getAttribute("aria-expanded"),
-      text: row.textContent,
-      badge: badge ? { text: badge.textContent, title: badge.title, cls: badge.className } : null };
+      text: row.textContent, badge: marks.length ? marks[0] : null, badges: marks };
   });
 }
 function liOf(path) {
@@ -564,7 +569,8 @@ function liOf(path) {
 function snap() {
   return { rows: rows(), treeRoot: ids["tree-root"].textContent, status: ids["explorer-status"].textContent,
     flavorBoxHidden: ids["flavor-box"].hidden, explorerHidden: ids["explorer-view"].hidden,
-    levels: ids["level-filter"].options.map((o) => o.value) };
+    levels: ids["level-filter"].options.map((o) => o.value),
+    levelTexts: ids["level-filter"].options.map((o) => o.textContent) };
 }
 function detail() {
   const badge = ids["explain-verdict"].all().find((e) => e.className.split(" ").includes("badge"));
@@ -723,25 +729,44 @@ def test_the_first_view_opens_wtf_and_addons(server: Any, install: Path, tmp_pat
 def test_every_item_drawn_has_a_badge_from_python(
     server: Any, install: Path, tmp_path: Path
 ) -> None:
-    """A badge on every listed item, carrying the verdict Python computed.
-    The badge's own text is not pinned: the owner's player words will come
-    from a `label` on `Verdict`. The verdict's words reach the player on the
-    row, and each level gets its own class, which the colours hang on."""
+    """A badge on every row drawn: each item, each folder above them
+    (`ancestors`) and the flavor folder (`flavor_folder_verdict`). The badge
+    says the verdict's `label`, Python's player words, and carries its
+    `words`; a file the server may replace gets a second marker saying
+    `server_label`, and no other row does. Each level gets its own class,
+    which the colours hang on. No label is written into the script (D3)."""
     scenario, first = _scenario(server, [], [{"open_all": True}])
     out = _drive(tmp_path / "node", scenario)
-    drawn = {r["path"]: r for r in out["steps"][0]["rows"]}
-    items = {i["path"]: i for i in first["items"]}
-    assert set(items) <= set(drawn), sorted(set(items) - set(drawn))[:5]
+    rows = out["steps"][0]["rows"]
+    drawn = {r["path"]: r for r in rows}
+    listed = {i["path"]: i for i in [*first["items"], *first["ancestors"]]}
+    assert first["ancestors"], "the capture has folders above its items"
+    assert set(listed) <= set(drawn), sorted(set(listed) - set(drawn))[:5]
+    verdicts = {p: i["verdict"] for p, i in listed.items()}
+    verdicts[""] = first["flavor_folder_verdict"]
+    assert set(drawn) <= set(verdicts), sorted(set(drawn) - set(verdicts))[:5]
     by_level: dict[str, set[str]] = {}
-    for path, item in items.items():
-        badge = drawn[path]["badge"]
+    for path, row in drawn.items():
+        verdict = verdicts[path]
+        badge = row["badge"]
         assert badge is not None, path
-        words = item["verdict"]["words"]
-        assert words in badge["text"] + "\n" + badge["title"], (path, badge)
-        by_level.setdefault(item["verdict"]["level"], set()).add(badge["cls"])
+        assert verdict["label"], path
+        assert badge["text"].startswith(verdict["label"]), (path, badge)
+        assert verdict["words"] in badge["text"] + "\n" + badge["title"], (path, badge)
+        by_level.setdefault(verdict["level"], set()).add(badge["cls"])
+        extra = [b["text"] for b in row["badges"][1:]]
+        assert extra == ([verdict["server_label"]] if verdict["server_label"] else []), path
+    assert any(v["server_label"] for v in verdicts.values()), "the capture has one to mark"
     for level, classes in by_level.items():
         assert len(classes) == 1, (level, classes)
     assert len({min(c) for c in by_level.values()}) == len(by_level), by_level
+    # As a string literal: "folder" is also the tree item's `kind`.
+    script = _script().replace('item.kind === "folder"', "")
+    for verdict in verdicts.values():
+        for said in (verdict["label"], verdict["server_label"]):
+            if said:
+                for quote in ('"', "'", "`"):
+                    assert quote + said + quote not in script, said
 
 
 def test_filter_to_no_and_by_text(server: Any, install: Path, tmp_path: Path) -> None:
@@ -750,10 +775,14 @@ def test_filter_to_no_and_by_text(server: Any, install: Path, tmp_path: Path) ->
     steps: list[dict[str, Any]] = [{"level": "no"}, {"level": ""}, {"text": "config.wtf"}]
     scenario, first = _scenario(server, [], steps)
     out = _drive(tmp_path / "node", scenario)
-    items = {i["path"]: i for i in first["items"]}
-    levels = {i["verdict"]["level"] for i in items.values()}
+    items = {i["path"]: i for i in [*first["items"], *first["ancestors"]]}
+    levels = {i["verdict"]["level"]: i["verdict"]["label"] for i in items.values()}
     assert out["first"]["levels"][0] == ""
-    assert set(out["first"]["levels"][1:]) == levels
+    assert set(out["first"]["levels"][1:]) == set(levels)
+    # Each choice reads as Python's label for its level.
+    for value, text in zip(out["first"]["levels"], out["first"]["levelTexts"], strict=True):
+        if value:
+            assert text == levels[value], (value, text)
 
     def check(view: dict[str, Any], keep: Any) -> set[str]:
         hits = {r["path"] for r in view["rows"] if r["path"] in items and keep(items[r["path"]])}
@@ -777,13 +806,29 @@ def test_the_detail_pane_shows_what_who_and_the_verdict(
 ) -> None:
     """The owner's check: open `Config.wtf` and one SavedVariables file. The
     pane shows what the file is, who writes it and when, and the verdict's
-    words, all from `explain --json`; the home folder never appears."""
-    rels = ["WTF/Config.wtf", SV_FILE]
+    label and words, all from `explain --json`; the home folder never
+    appears. The file-map text is the `plain` form Python makes (domain
+    review, finding 5 on #206), so no Markdown reaches the player: a row
+    whose cells hold backticks or `**` is opened too."""
+    tree = json.loads(_stdout(server, ["tree"], {"explain": True, "flavor": FLAVOR}))
+    marked = sorted(
+        i["path"]
+        for i in tree["items"]
+        if i["kind"] == "file"
+        and i["explained"]
+        and any(m in i["explained"][k] for m in ("`", "**") for k in ("what", "written_by"))
+    )
+    assert marked, "the capture has a file whose file-map row holds Markdown"
+    server_side = sorted(
+        i["path"] for i in tree["items"] if i["kind"] == "file" and i["verdict"]["server_label"]
+    )
+    assert server_side, "the capture has a file the server may replace"
+    rels = ["WTF/Config.wtf", SV_FILE, marked[0], server_side[0]]
     steps: list[dict[str, Any]] = [{"open_all": True}, *({"click": r} for r in rels)]
     scenario, first = _scenario(server, rels, steps)
     out = _drive(tmp_path / "node", scenario)
     explains = _asked(out, ["explain"])
-    assert len(explains) == 2
+    assert len(explains) == len(rels)
     for rel, pane, params in zip(rels, out["steps"][1:], explains, strict=True):
         assert "missing" not in pane, pane
         target = first["install_root"] + os.sep + first["flavor_folder"] + "/" + rel
@@ -794,9 +839,16 @@ def test_the_detail_pane_shows_what_who_and_the_verdict(
         }
         report = json.loads(scenario["explains"][target])
         entry = report["result"]["entry"]
-        assert entry["what"] in pane["facts"], rel
-        assert entry["written_by"] in pane["facts"], rel
-        assert report["verdict"]["words"] in pane["verdict"], rel
+        plain = report.get("plain") or entry
+        assert plain["what"] in pane["facts"], rel
+        assert plain["written_by"] in pane["facts"], rel
+        for mark in ("`", "**", "[verify"):
+            assert mark not in pane["facts"], (rel, mark)
+        verdict = report["verdict"]
+        assert verdict["words"] in pane["verdict"], rel
+        assert verdict["label"] in pane["verdict"], rel
+        if verdict["server_label"]:
+            assert verdict["server_label"] in pane["verdict"], rel
         assert pane["verdictBadge"], "the verdict level is drawn as a badge"
         assert rel.rsplit("/", 1)[-1] in pane["title"]
         assert pane["status"] == ""
@@ -998,6 +1050,36 @@ def test_a_hostile_home_is_escaped_in_the_command_list_constructed(
     assert reply.json()["home"] == str(folder)
     for raw in ("<", ">", "&", LSEP, chr(0x2029)):
         assert raw.encode("utf-8") not in reply.body, repr(raw)
+
+
+def test_the_whole_command_list_is_escaped_constructed() -> None:
+    """Every string in `/api/commands` is escaped, not only `home`: a help
+    text with markup reaches the page decoded and unchanged, and the body
+    holds no `< > &`."""
+    app = typer.Typer()
+    helped = "Shows </script><img src=x onerror=alert(1)> & more."
+
+    @app.command("emit", help=helped)
+    def emit(json_out: bool = typer.Option(False, "--json")) -> None:
+        pass
+
+    @app.command("other")
+    def other(json_out: bool = typer.Option(False, "--json")) -> None:
+        """Keeps `emit` a subcommand."""
+
+    served = ui.make_server(command=typer.main.get_command(app))
+    thread = threading.Thread(target=served.serve_forever, args=(0.05,), daemon=True)
+    thread.start()
+    try:
+        reply = _send(served, "GET", "/api/commands")
+    finally:
+        served.shutdown()
+        served.server_close()
+        thread.join(10)
+    for raw in ("<", ">", "&"):
+        assert raw.encode("utf-8") not in reply.body, repr(raw)
+    helps = [c["help"] for c in reply.json()["commands"] if c["path"] == ["emit"]]
+    assert helps and helped in helps[0], helps
 
 
 # ─── the look the owner set (2026-10-16) ─────────────────────────────────────
