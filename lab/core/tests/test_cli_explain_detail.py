@@ -636,6 +636,7 @@ def test_an_unreadable_store_is_said_not_guessed(
         label=None,
         holds=None,
         path=None,
+        confirmed=None,
         live=None,
         differs=None,
         last_held=None,
@@ -831,3 +832,70 @@ def test_another_unicode_normalization_names_the_same_file(root: Path, flavor: P
     [hint] = _restore_hints(report)
     assert hint.argv[-2:] == ["--paths", stored]
     assert not any(h.argv[:2] == ["snap", "create"] for h in report.hints)
+
+
+def test_a_deleted_file_typed_in_another_case_is_still_held(root: Path, flavor: Path) -> None:
+    """Domain review round 3, item 1: neither spelling exists, so the folder
+    above decides. Constructed: a lower-case query of a deleted file; skipped
+    where the temporary volume is case-sensitive."""
+    if not (flavor / SYNDICATOR.lower()).exists():
+        pytest.skip("the temporary volume is case-sensitive")
+    ok("snap", "create")
+    (flavor / SYNDICATOR).unlink()
+    typed = f"WTF/Account/{ACCOUNT}/SavedVariables/syndicator.lua"
+    report = explained(typed)
+    assert report.snapshot is not None
+    assert (report.snapshot.holds, report.snapshot.confirmed, report.snapshot.live) == (
+        True,
+        True,
+        "missing",
+    )
+    assert report.snapshot.path == SYNDICATOR
+    [hint] = _restore_hints(report)
+    assert hint.argv[-2:] == ["--paths", SYNDICATOR]
+    assert not any(h.argv[:2] == ["snap", "create"] for h in report.hints)
+    plan = ok(*hint.argv, "--dry-run", "--json").stdout
+    assert SYNDICATOR in plan
+
+
+def test_an_unknown_folding_is_said_and_offers_nothing(tmp_path: Path) -> None:
+    """Domain review round 3, item 1. Constructed: folders whose names have
+    no letters, so none on the way can show whether the volume folds case."""
+    (tmp_path / "1" / "2").mkdir(parents=True)
+    volume = pathfacts._Volume(tmp_path)
+    assert volume.same("1/2/abc.lua", "1/2/ABC.lua") is None
+    assert volume.same("1/2/abc.lua", "1/2/abd.lua") is False
+    facts = pathfacts.SnapshotFacts(
+        snapshot_id="20261016T000000.000000Z-00000000",
+        created_at="2026-10-16T00:00:00.000000Z",
+        label="",
+        holds=True,
+        path="WTF/ABC.lua",
+        confirmed=False,
+        live="missing",
+        differs=True,
+        last_held=None,
+        captured=True,
+        damaged=0,
+        damaged_newer=False,
+        error=None,
+    )
+    line = cli._snapshot_line(facts, "WTF/")
+    assert "it holds WTF/ABC.lua, which could not be confirmed to be this file" in line
+    verdict = cli.verdict_of(filemap.load().entry("config-wtf"), "flavor", "WTF/Config.wtf")
+    hints = cli._hints(verdict, facts, FLAVOR, None, [])
+    assert hints == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="links")
+def test_a_spelling_through_a_folder_link_is_never_the_same_entry(tmp_path: Path) -> None:
+    """Code review round 3, item 2. Constructed: a real folder and a link to
+    it under another case spelling; skipped where the volume folds case."""
+    (tmp_path / "real").mkdir()
+    (tmp_path / "real" / "f.lua").write_bytes(b"x")
+    if (tmp_path / "REAL").exists():
+        pytest.skip("the temporary volume folds case")
+    (tmp_path / "REAL").symlink_to("real")
+    volume = pathfacts._Volume(tmp_path)
+    assert volume.same("real/f.lua", "REAL/f.lua") is False
+    assert volume.same("REAL/f.lua", "real/f.lua") is False

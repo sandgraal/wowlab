@@ -2011,6 +2011,7 @@ def _hints(
             and facts.holds
             and facts.path is not None
             and facts.live in ("differs", "missing")
+            and facts.confirmed is True
             and not facts.damaged_newer
         ):
             does = (
@@ -2093,6 +2094,12 @@ def _snapshot_line(facts: pathfacts.SnapshotFacts, captured: str) -> str:
         "missing": "the file on disk is missing",
         "unreadable": "the file on disk could not be read",
     }[facts.live or "unreadable"]
+    if facts.confirmed is False:
+        return (
+            f"{head} ({_snap_name(latest)}): it holds {facts.path}, which could not be "
+            "confirmed to be this file (neither spelling exists, and no folder on the way "
+            f"shows whether this volume folds the difference); {on_disk}{damaged}"
+        )
     return f"{head} ({_snap_name(latest)}): {on_disk}{damaged}"
 
 

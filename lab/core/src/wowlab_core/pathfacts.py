@@ -17,6 +17,7 @@ import hashlib
 import os
 import re
 import stat
+import unicodedata
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -72,7 +73,10 @@ class SnapshotFacts(BaseModel):
     holds the file; None when no readable snapshot covers it. `holds`:
     whether that snapshot holds it as a file (None without one). When it
     does, `path` is the file's spelling in that snapshot (relative to the
-    flavor folder, what `snap restore --paths` takes) and `live` compares the
+    flavor folder, what `snap restore --paths` takes), `confirmed` says
+    whether that spelling is known to name this file (False: it differs from
+    the path in case or normalization, neither spelling exists, and no folder
+    on the way shows whether this volume folds that), and `live` compares the
     file on disk with that copy by SHA-256:
     `missing` means the file is gone from the install, `unreadable` that it
     could not be opened as a regular file; `differs` is `live` as a yes or
@@ -98,6 +102,7 @@ class SnapshotFacts(BaseModel):
     label: str | None
     holds: bool | None
     path: str | None
+    confirmed: bool | None
     live: Live | None
     differs: bool | None
     last_held: SnapshotRef | None
@@ -185,39 +190,100 @@ def _same_root(recorded: str, root: Path) -> bool:
         return False
 
 
+_LINK = "link"
+
+
 class _Volume:
     """Whether two spellings (relative to the install root) name one entry
-    on this volume: equal, or equal after the gate's fold and `lstat` to the
-    same device and inode. Each path is `lstat`-ed at most once."""
+    on this volume.
+
+    Equal spellings do. Spellings that differ after the gate's fold never do.
+    Otherwise: when both exist, they are one entry if both `lstat` to the
+    same device and inode, each part `lstat`-ed in turn so that no folder
+    link is followed; a spelling reached through a link is never the same
+    entry. When one does not exist, the nearest existing folder on the way
+    decides: if another spelling of it, differing as the two do (in case, or
+    in Unicode normalization), names the same folder, this volume folds that
+    difference and they are one entry; if it names nothing, they are two.
+    When no folder on the way can tell, the answer is None: unknown.
+    Each path is `lstat`-ed at most once."""
 
     def __init__(self, root: Path) -> None:
         self.root = root
-        self.seen: dict[str, tuple[int, int] | None] = {}
+        self.seen: dict[tuple[str, ...], tuple[int, int] | str | None] = {}
 
-    def _id(self, rel: str) -> tuple[int, int] | None:
-        if rel not in self.seen:
+    def _id(self, parts: tuple[str, ...]) -> tuple[int, int] | str | None:
+        """The entry's (device, inode); `_LINK` when a folder on the way is
+        a link or not a folder; None when it does not exist."""
+        if parts not in self.seen:
+            self.seen[parts] = self._walk(parts)
+        return self.seen[parts]
+
+    def _walk(self, parts: tuple[str, ...]) -> tuple[int, int] | str | None:
+        if parts[:-1]:
+            above = self._id(parts[:-1])
+            if above is None or above == _LINK:
+                return above
             try:
-                st = self.root.joinpath(*rel.split("/")).lstat()
+                st_above = self.root.joinpath(*parts[:-1]).lstat()
             except OSError:
-                self.seen[rel] = None
-            else:
-                self.seen[rel] = (st.st_dev, st.st_ino)
-        return self.seen[rel]
+                return None
+            # A symbolic link, or on Windows a junction: the store's own rule.
+            if snapshot._is_link_stat(st_above) or not stat.S_ISDIR(st_above.st_mode):
+                return _LINK
+        try:
+            st = self.root.joinpath(*parts).lstat()
+        except OSError:
+            return None
+        return (st.st_dev, st.st_ino)
 
-    def same(self, a: str, b: str) -> bool:
+    def same(self, a: str, b: str) -> bool | None:
         if a == b:
             return True
         if _fold(a) != _fold(b):
             return False
-        ident = self._id(a)
-        return ident is not None and ident == self._id(b)
+        pa, pb = tuple(a.split("/")), tuple(b.split("/"))
+        ia, ib = self._id(pa), self._id(pb)
+        if _LINK in (ia, ib):
+            return False
+        if ia is not None and ib is not None:
+            return ia == ib
+        if ia is not None or ib is not None:
+            # One exists and the other spelling does not name it: on a volume
+            # that folds this difference, it would.
+            return False
+        return self._folds(pa, normalization_only=_nfc(a) == _nfc(b))
+
+    def _folds(self, parts: tuple[str, ...], *, normalization_only: bool) -> bool | None:
+        """Whether this volume folds the difference, judged at the nearest
+        existing folder above `parts` that has another spelling to try."""
+        for i in range(len(parts) - 1, 0, -1):
+            folder = parts[:i]
+            ident = self._id(folder)
+            if ident is None:
+                continue
+            if ident == _LINK:
+                return None
+            name = folder[-1]
+            if normalization_only:
+                variants = {unicodedata.normalize(f, name) for f in ("NFC", "NFD")} - {name}
+            else:
+                variants = {name.swapcase()} - {name}
+            for variant in variants:
+                other = self._id((*folder[:-1], variant))
+                return other == ident
+        return None
 
     def under(self, path: str, ancestor: str) -> bool:
-        """`path` is `ancestor` or below it."""
+        """`path` is `ancestor` or below it (an unknown answer counts)."""
         if ancestor == ".":
             return True
         head = path.split("/")[: len(ancestor.split("/"))]
-        return self.same("/".join(head), ancestor)
+        return self.same("/".join(head), ancestor) is not False
+
+
+def _nfc(text: str) -> str:
+    return unicodedata.normalize("NFC", text)
 
 
 def _covers(manifest: snapshot.Manifest, held: str, volume: _Volume) -> bool:
@@ -226,16 +292,25 @@ def _covers(manifest: snapshot.Manifest, held: str, volume: _Volume) -> bool:
     )
 
 
-def _file_entry(manifest: snapshot.Manifest, held: str, volume: _Volume) -> snapshot.Entry | None:
-    """The file `held` in `manifest`: by its exact spelling, else the one
-    entry the volume says is the same file."""
+def _file_entry(
+    manifest: snapshot.Manifest, held: str, volume: _Volume
+) -> tuple[snapshot.Entry, bool] | None:
+    """The file `held` in `manifest` and whether its spelling is confirmed
+    to name the same file: by its exact spelling (confirmed), else the one
+    entry the volume says is, or may be, the same file."""
     entry = manifest.entry(held)
+    confirmed = True
     if entry is None:
         alike = [e for e in manifest.entries if _fold(e.path) == _fold(held)]
-        entry = alike[0] if len(alike) == 1 and volume.same(held, alike[0].path) else None
-    if entry is None or entry.kind != "file" or entry.sha256 is None:
+        if len(alike) != 1:
+            return None
+        same = volume.same(held, alike[0].path)
+        if same is False:
+            return None
+        entry, confirmed = alike[0], same is True
+    if entry.kind != "file" or entry.sha256 is None:
         return None
-    return entry
+    return entry, confirmed
 
 
 def _newer(name: str, snapshot_id: str | None) -> bool:
@@ -273,6 +348,7 @@ def snapshot_facts(
             label=None,
             holds=None,
             path=None,
+            confirmed=None,
             live=None,
             differs=None,
             last_held=None,
@@ -302,6 +378,7 @@ def snapshot_facts(
             label=None,
             holds=None,
             path=None,
+            confirmed=None,
             live=None,
             differs=None,
             last_held=None,
@@ -311,8 +388,8 @@ def snapshot_facts(
             error=None,
         )
     latest = covering[-1]
-    entry = _file_entry(latest, held, volume)
-    if entry is None:
+    found = _file_entry(latest, held, volume)
+    if found is None:
         last = next(
             (m for m in reversed(covering) if _file_entry(m, held, volume) is not None), None
         )
@@ -322,6 +399,7 @@ def snapshot_facts(
             label=latest.label,
             holds=False,
             path=None,
+            confirmed=None,
             live=None,
             differs=None,
             last_held=_ref(last) if last is not None else None,
@@ -330,6 +408,7 @@ def snapshot_facts(
             damaged_newer=damaged_newer,
             error=None,
         )
+    entry, confirmed = found
     live = _compare(install_root / flavor_folder / rel, entry)
     return SnapshotFacts(
         snapshot_id=latest.id,
@@ -337,6 +416,7 @@ def snapshot_facts(
         label=latest.label,
         holds=True,
         path=entry.path.removeprefix(flavor_folder + "/"),
+        confirmed=confirmed,
         live=live,
         differs=None if live == "unreadable" else live != "same",
         last_held=None,
