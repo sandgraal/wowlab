@@ -10,14 +10,12 @@ checks the graders' own reading of a Content-Security-Policy on both sides.
 
 The graders were checked against a throwaway sketch of the seam below (never
 committed): each passes with it, and each fails when the sketch is broken in
-the way the grader names (a logged token, a missing Host or Origin check, a
-CORS header, an `'unsafe-inline'` CSP, a `--yes` leaf or `ui` let through,
-no `--` before an argument, a shell, no timeout, no cap, a file served from
-the package directory, a bind to every interface, a group run as a leaf).
+the way the grader names.
 
-Every expectation comes from ADR-0029 and its amendment of 2026-10-15
-(accepted), `docs/LAB_PLAN.md` §15.6 and the M13-24T / M13-24 tickets in
-`docs/BACKLOG.md`. Nothing here was read from an implementation.
+Every expectation comes from ADR-0029, its amendment of 2026-10-15 and the
+owner rulings of 2026-10-15 under it, `docs/LAB_PLAN.md` §15.6, and the
+M13-24T (as amended 2026-10-15 after the security review of #197) and M13-24
+tickets in `docs/BACKLOG.md`. Nothing here was read from an implementation.
 
 The seam (the docs leave these names open; M13-24 builds to them)
 -----------------------------------------------------------------
@@ -35,44 +33,81 @@ The seam (the docs leave these names open; M13-24 builds to them)
     Tests pass a planted Typer tree here, which is how "a new command appears
     with no UI code" and "a dummy ``--yes`` command is refused with no change
     to the server" are graded.
-  - ``wowlab_argv``: the argv prefix that starts "the same ``wowlab``"
-    (``None`` means the implementer's default). Every test here passes a
-    recorder script, so no test runs the real CLI or touches an install.
+  - ``wowlab_argv``: the argv prefix that starts "the same ``wowlab``".
+    ``None`` means the running interpreter: ``server.wowlab_argv[0]`` is
+    ``sys.executable`` (absolute, never a name looked up on PATH), and
+    ``[*server.wowlab_argv, "--version"]`` prints ``wowlab <version>``
+    (for example ``[sys.executable, "-m", "wowlab_core.cli"]``). Every test
+    that runs a command passes a recorder script instead, so no test runs a
+    real command through the server or touches an install.
   - ``timeout_s`` (finite, > 0) and ``output_cap_bytes`` (> 0): per run.
     ``None``, zero, negative or non-finite values raise ``ValueError`` or
     ``TypeError``: there is no way to turn either off.
 
-- The server object has ``token: str`` (``secrets.token_urlsafe(32)``) and
+- The server object has ``token: str`` (``secrets.token_urlsafe(32)``),
   ``url: str``, exactly ``http://127.0.0.1:<port>/?token=<token>``, the URL
-  ``wowlab ui`` opens.
-- ``DEFAULT_TIMEOUT_S: float`` and ``DEFAULT_OUTPUT_CAP_BYTES: int``.
+  ``wowlab ui`` opens, and ``wowlab_argv: Sequence[str]``, the resolved prefix.
+- A run is stopped with its whole process tree (grandchildren included) when
+  it passes ``timeout_s``, when its output passes ``output_cap_bytes`` (read
+  as a stream: the cap bounds memory, and the process is killed there), and
+  when ``server_close()`` is called while it is in progress.
+- ``DEFAULT_TIMEOUT_S: float``, ``DEFAULT_OUTPUT_CAP_BYTES: int`` and
+  ``MAX_BODY_BYTES: int`` (at most 1 MiB), the largest POST body read.
 - ``static_files() -> Mapping[str, bytes]``: every URL path the server serves
-  as a static file (``"/"``, the page shell, among them), with its exact
-  bytes, all from template text inside the package.
+  as a static file, with its exact bytes, all template text inside the
+  package. Its keys are ``"/"`` (the page shell) and paths ending ``.html``,
+  ``.css`` or ``.js``; it does not depend on the working directory or HOME.
+
+``wowlab ui`` (in ``wowlab_core.cli``) calls ``wowlab_core.ui.make_server()``
+with no arguments, looked up on the module at run time; calls
+``webbrowser.open(server.url)``, looked up on the ``webbrowser`` module at
+run time; then ``server.serve_forever()``. When ``webbrowser.open`` returns
+False or raises ``webbrowser.Error``, it prints ``server.url`` once on its
+own stdout (owner ruling 2026-10-15), and never through logging, a file, or
+a child's argv or environment; when the browser opens, the token is printed
+nowhere. Ctrl-C (``KeyboardInterrupt`` from ``serve_forever``) ends it with
+exit 0, as ``log tail --follow`` does, after ``server_close()``.
 
 The HTTP surface:
 
-- The token travels as the query parameter ``token`` on every request.
+- The token travels as the query parameter ``token`` on every request. It
+  appears in no response body or header, no response sets a cookie, and no
+  run gets it in its argv or environment.
+- ``Host`` must be ``127.0.0.1:<port>`` or ``localhost:<port>``. An
+  ``Origin``, when present, must equal ``"http://" + Host``.
 - ``GET /api/commands`` returns ``{"commands": [{"path": [str, ...], ...}]}``.
 - ``POST /api/run`` takes the JSON body
   ``{"command": [str, ...], "params": {<Click parameter name>: value}}``.
-  Values are ``str``, ``int`` or, for a flag, ``bool`` (true: the flag is
-  given; false: it is not). The server adds ``--json`` itself. A run that
-  happened answers 200 with
+  Host, Origin and the token are checked before the body is read, and a
+  ``Content-Length`` over ``MAX_BODY_BYTES`` answers 413
+  ``{"error": "too_large"}`` without reading it. A value is a ``str`` or an
+  ``int`` for a valued parameter, a ``bool`` for a flag (true: the flag is
+  given; false: it is not), or a list of ``str``/``int`` for a repeatable
+  option, each element passed as a value. The server adds ``--json`` itself.
+  A run that happened answers 200 with
   ``{"exit_code": int, "stdout": str, "stderr": str, "timed_out": bool,
   "truncated": bool}``, whatever the exit code.
 - A refusal answers 403 with the JSON body ``{"error": <code>}``:
   ``"token"``, ``"host"``, ``"origin"`` for the request checks;
   ``"not_a_command"`` when ``command`` is not the path of a leaf of the tree;
-  ``"excluded"`` for a leaf that declares ``--yes`` and for ``ui``;
-  ``"unknown_parameter"`` for a key the leaf does not declare.
+  ``"excluded"`` for a leaf that declares ``--yes``, for ``ui``, for
+  ``log tail`` with ``follow`` true (a run must end), and for ``looks page``
+  with an ``out`` parameter of any value (it can create a file anywhere
+  outside an install; review of #198);
+  ``"unknown_parameter"`` for a key the leaf does not declare;
+  ``"bad_value"`` for a value of another type (null, float, object, a list
+  for a single-valued parameter, a bool for a valued one, a non-bool for a
+  flag, a list holding anything but str or int).
 - A path that is neither ``/api/...`` nor a key of ``static_files()`` answers
   404; a traversal path answers 400, 403 or 404, and never with a file.
 - Every response, refusals and 404s included, carries one or more
-  ``Content-Security-Policy`` headers whose ``default-src`` is ``'self'`` or
-  ``'none'`` and whose every source, in every directive, is ``'self'``,
-  ``'none'`` or a ``'sha256-…'``/``'sha384-…'``/``'sha512-…'`` hash. No host,
-  scheme, ``*``, ``'unsafe-…'`` keyword, nonce or report endpoint.
+  ``Content-Security-Policy`` headers. In each, no directive appears twice
+  (a browser enforces the first); ``default-src`` is ``'self'`` or
+  ``'none'``; ``frame-ancestors`` is ``'none'``; ``base-uri`` and
+  ``form-action`` are each ``'self'`` or ``'none'``; and every source, in
+  every directive, is ``'self'``, ``'none'`` or a
+  ``'sha256-…'``/``'sha384-…'``/``'sha512-…'`` hash. No host, scheme, ``*``,
+  ``'unsafe-…'`` keyword, nonce or report endpoint.
 - No response carries an ``Access-Control-*`` header.
 
 Inputs are constructed (labelled): the planted Typer tree, the recorder
@@ -82,6 +117,7 @@ surface, not an external format (L8). Nothing reads or writes an install.
 
 from __future__ import annotations
 
+import contextlib
 import http.client
 import http.server
 import importlib
@@ -95,6 +131,7 @@ import subprocess
 import sys
 import threading
 import time
+import tracemalloc
 import urllib.parse
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -110,7 +147,6 @@ from typer._click import Context
 # How long a request may take before the test calls it a hang. A run with
 # `timeout_s=1` must answer well inside this.
 _HANG = 30.0
-_FLOOD_BYTES = 4 * 1024 * 1024
 
 
 def _ui() -> Any:
@@ -163,17 +199,26 @@ def _planted_tree() -> Any:
         name: Annotated[str | None, typer.Option("--name")] = None,
         count: Annotated[int, typer.Option("--count")] = 1,
         dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+        tag: Annotated[list[str] | None, typer.Option("--tag")] = None,
         json_out: _JsonOpt = False,
     ) -> None:
-        """Takes an argument, two valued options and a flag."""
+        """Takes an argument, two valued options, a flag and a repeatable option."""
 
     @app.command("sleep")
     def sleep(json_out: _JsonOpt = False) -> None:
-        """The recorder sleeps for two minutes."""
+        """The recorder starts a grandchild that shares its pipes, then sleeps."""
+
+    @app.command("nap")
+    def nap(json_out: _JsonOpt = False) -> None:
+        """The recorder starts a grandchild on DEVNULL, then sleeps."""
 
     @app.command("flood")
     def flood(json_out: _JsonOpt = False) -> None:
-        """The recorder writes 4 MiB to stdout and to stderr."""
+        """The recorder writes to stdout without end."""
+
+    @app.command("spew")
+    def spew(json_out: _JsonOpt = False) -> None:
+        """The recorder writes to stderr without end."""
 
     @app.command("danger")
     def danger(
@@ -197,25 +242,40 @@ def _planted_tree() -> Any:
 
 
 _PLANTED_YES = [("danger",), ("grp", "danger2")]
-_PLANTED_RUNNABLE = [("echo",), ("sleep",), ("flood",), ("grp", "inner")]
+_PLANTED_RUNNABLE = [("echo",), ("sleep",), ("nap",), ("flood",), ("spew",), ("grp", "inner")]
 
 
 # ─── the recorder: the `wowlab` the server starts in these tests ─────────────
 
 _RECORDER = """\
-import json, os, sys, time
+import json, os, subprocess, sys, time
 argv = sys.argv[1:]
 with open({calls!r}, "a", encoding="utf-8") as f:
     f.write(json.dumps({{"argv": argv, "env": dict(os.environ)}}) + "\\n")
-if argv[:1] == ["sleep"]:
-    with open({pid!r}, "w", encoding="utf-8") as f:
-        f.write(str(os.getpid()))
+
+def pids(*more):
+    tmp = {pid!r} + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(" ".join(str(p) for p in (os.getpid(), *more)))
+    os.replace(tmp, {pid!r})
+
+if argv[:1] in (["sleep"], ["nap"]):
+    shared = argv[:1] == ["sleep"]
+    grandchild = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(120)"],
+        stdin=subprocess.DEVNULL,
+        stdout=None if shared else subprocess.DEVNULL,
+        stderr=None if shared else subprocess.DEVNULL,
+    )
+    pids(grandchild.pid)
     time.sleep(120)
-elif argv[:1] == ["flood"]:
-    sys.stdout.write("x" * {flood})
-    sys.stdout.flush()
-    sys.stderr.write("y" * {flood})
-    sys.stderr.flush()
+elif argv[:1] in (["flood"], ["spew"]):
+    pids()
+    stream = sys.stdout if argv[:1] == ["flood"] else sys.stderr
+    chunk = "x" * 65536
+    while True:
+        stream.write(chunk)
+        stream.flush()
 else:
     sys.stdout.write(json.dumps({{"argv": argv}}))
 """
@@ -227,6 +287,14 @@ class Recorder:
     calls_file: Path
     pid_file: Path
 
+    def pids(self, within: float = 20.0) -> list[int]:
+        """The pids the recorder wrote: its own, then any grandchild's."""
+        deadline = time.monotonic() + within
+        while not self.pid_file.exists():
+            assert time.monotonic() < deadline, "the recorder never started"
+            time.sleep(0.05)
+        return [int(p) for p in self.pid_file.read_text(encoding="utf-8").split()]
+
     def calls(self) -> list[dict[str, Any]]:
         if not self.calls_file.exists():
             return []
@@ -237,11 +305,9 @@ class Recorder:
 @pytest.fixture
 def recorder(tmp_path: Path) -> Recorder:
     calls = tmp_path / "calls.jsonl"
-    pid = tmp_path / "sleep.pid"
+    pid = tmp_path / "recorder.pid"
     script = tmp_path / "fake_wowlab_constructed.py"
-    script.write_text(
-        _RECORDER.format(calls=str(calls), pid=str(pid), flood=_FLOOD_BYTES), encoding="utf-8"
-    )
+    script.write_text(_RECORDER.format(calls=str(calls), pid=str(pid)), encoding="utf-8")
     return Recorder([sys.executable, str(script)], calls, pid)
 
 
@@ -405,6 +471,26 @@ def test_binds_loopback_only_on_a_free_port(recorder: Recorder) -> None:
     assert not params & {"host", "address", "bind", "port", "interface", "server_address"}
 
 
+@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
+def test_the_default_wowlab_is_this_interpreter_by_absolute_path() -> None:
+    """Review of #197, M1, and the owner rulings of 2026-10-15: never a name
+    looked up on PATH (on Windows a `.cmd` shim would re-parse the argv)."""
+    server = _ui().make_server()
+    try:
+        argv = list(server.wowlab_argv)
+        assert argv[0] == sys.executable
+        assert Path(argv[0]).is_absolute()
+        assert Path(argv[0]).suffix.lower() not in (".bat", ".cmd", ".ps1", ".sh")
+        version = subprocess.run(
+            [*argv, "--version"], capture_output=True, text=True, timeout=60, check=False
+        )
+        assert version.returncode == 0, version.stderr
+        assert version.stdout.startswith("wowlab "), version.stdout
+        assert server.server_address[0] == "127.0.0.1"
+    finally:
+        server.server_close()
+
+
 def _non_loopback_ipv4() -> str | None:
     """This machine's address on its default route, if it has one. A UDP
     `connect` sends nothing."""
@@ -526,6 +612,33 @@ def test_the_token_never_appears_in_a_log_line(
     assert not any(token in key or token in value for key, value in call["env"].items())
 
 
+@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
+def test_the_token_reaches_no_child(planted: Any, real: Any, recorder: Recorder) -> None:
+    """ADR-0029 owner rulings 2026-10-15: the token is never in a child's argv
+    or environment. The recorder writes both down for every run."""
+    for server in (planted, real):
+        token = server.token
+        before = len(recorder.calls())
+        runs: list[tuple[list[str], dict[str, Any]]] = [
+            (["snap", "list"], {}),
+            (["explain"], {"path": "x"}),
+            (["profile", "save"], {"name": "n", "preset": ["a"]}),
+        ]
+        if server is planted:
+            runs = [
+                (["echo"], {"path": "x", "name": "y", "tag": ["a", "b"], "dry_run": True}),
+                (["grp", "inner"], {}),
+            ]
+        for command, params in runs:
+            _ran(_run(server, command, params))
+        calls = recorder.calls()[before:]
+        assert len(calls) == len(runs)
+        for call in calls:
+            assert not any(token in arg for arg in call["argv"]), call["argv"]
+            for key, value in call["env"].items():
+                assert token not in key and token not in value, key
+
+
 # ─── Host and Origin ─────────────────────────────────────────────────────────
 
 
@@ -555,7 +668,7 @@ def _bad_hosts(port: int) -> list[str | None]:
 def test_a_foreign_host_is_refused(planted: Any, recorder: Recorder) -> None:
     port = _port(planted)
     for host in _bad_hosts(port):
-        for path in ("/", "/api/commands"):
+        for path in ("/", "/api/commands", *_ui().static_files()):
             reply = _send(planted, "GET", _target(planted, path), host=host)
             assert (reply.status, reply.error()) == (403, "host"), (host, path)
         reply = _run(planted, ["echo"], {"path": "x"}, host=host)
@@ -603,6 +716,23 @@ def test_a_cross_origin_request_is_refused(planted: Any, recorder: Recorder) -> 
     assert reply.status == 200
 
 
+@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
+def test_an_origin_must_name_the_host_the_request_used(planted: Any, recorder: Recorder) -> None:
+    """Owner rulings 2026-10-15: an Origin, when present, equals "http://" + Host.
+    Both loopback names are accepted as Host, but not mixed with the other."""
+    port = _port(planted)
+    loop, local = f"127.0.0.1:{port}", f"localhost:{port}"
+    for host, origin in ((loop, f"http://{local}"), (local, f"http://{loop}")):
+        reply = _send(planted, "GET", _target(planted, "/"), host=host, origin=origin)
+        assert (reply.status, reply.error()) == (403, "origin"), (host, origin)
+        reply = _run(planted, ["echo"], {"path": "x"}, host=host, origin=origin)
+        assert (reply.status, reply.error()) == (403, "origin"), (host, origin)
+    assert recorder.calls() == []
+    for host in (loop, local):
+        reply = _run(planted, ["echo"], {"path": "x"}, host=host, origin=f"http://{host}")
+        assert _argv_of(reply)[0] == "echo"
+
+
 # ─── headers on every response ───────────────────────────────────────────────
 
 
@@ -621,6 +751,8 @@ def _assorted_replies(server: Any) -> list[tuple[str, Reply]]:
         ("excluded", _run(server, ["danger"], {})),
         ("not a command", _run(server, ["grp"], {})),
         ("unknown parameter", _run(server, ["echo"], {"bogus": "x"})),
+        ("bad value", _run(server, ["echo"], {"path": None})),
+        ("bad body", _send(server, "POST", _target(server, "/api/run"), body=b"{not json")),
         (
             "preflight",
             _send(
@@ -659,7 +791,86 @@ def test_no_cors_header_on_any_response(planted: Any) -> None:
         assert cors == [], (what, cors)
 
 
-_HASH_SOURCE = re.compile(r"'sha(256|384|512)-[A-Za-z0-9+/]+={0,2}'")
+@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
+def test_the_token_is_in_no_response(planted: Any) -> None:
+    """A DNS-rebinding page is same-origin with a refusal it provokes, so a
+    refusal that echoes the request would hand it the token (security review
+    of #197, M4). A cookie would make the token ambient."""
+    token = planted.token
+    port = _port(planted)
+    replies = _assorted_replies(planted)
+    for host in _bad_hosts(port):
+        replies.append((f"host {host!r}", _send(planted, "GET", _target(planted, "/"), host=host)))
+    for origin in _bad_origins(port):
+        reply = _send(planted, "GET", _target(planted, "/"), origin=origin)
+        replies.append((f"origin {origin!r}", reply))
+    for wrong in _wrong_tokens(token):
+        reply = _send(planted, "GET", _target(planted, "/api/commands", wrong))
+        replies.append((f"token {wrong!r}", reply))
+        replies.append(
+            (
+                f"token {wrong!r} + real",
+                _send(planted, "GET", f"/?{urllib.parse.urlencode({'t': token, 'token': wrong})}"),
+            )
+        )
+    for what, reply in replies:
+        assert token.encode() not in reply.body, what
+        for name, value in reply.headers:
+            assert token not in name and token not in value, (what, name)
+        assert reply.all("Set-Cookie") == [], what
+
+
+def _post_headers_only(
+    server: Any, target: str, length: int, *, host: object = _DEFAULT, origin: str | None = None
+) -> Reply:
+    """A POST that announces `length` body bytes and sends none: a server
+    that reads the body before refusing never answers."""
+    conn = http.client.HTTPConnection("127.0.0.1", _port(server), timeout=10)
+    try:
+        conn.putrequest("POST", target, skip_host=True, skip_accept_encoding=True)
+        conn.putheader("Host", f"127.0.0.1:{_port(server)}" if host is _DEFAULT else str(host))
+        if origin is not None:
+            conn.putheader("Origin", origin)
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("Content-Length", str(length))
+        conn.endheaders()
+        response = conn.getresponse()
+        return Reply(response.status, response.getheaders(), response.read())
+    finally:
+        conn.close()
+
+
+@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
+def test_a_refused_post_is_refused_before_its_body_is_read(
+    planted: Any, recorder: Recorder
+) -> None:
+    """Review of #197, M4: Host, Origin and the token come first, and a body
+    over MAX_BODY_BYTES is refused unread."""
+    ui = _ui()
+    assert isinstance(ui.MAX_BODY_BYTES, int)
+    assert 0 < ui.MAX_BODY_BYTES <= 1024 * 1024
+    run = "/api/run"
+    cases = [
+        ("token", _post_headers_only(planted, _target(planted, run, None), 1000)),
+        ("token", _post_headers_only(planted, _target(planted, run, "wrong"), 1000)),
+        ("host", _post_headers_only(planted, _target(planted, run), 1000, host="evil.example")),
+        (
+            "origin",
+            _post_headers_only(planted, _target(planted, run), 1000, origin="http://evil.example"),
+        ),
+    ]
+    for expected, reply in cases:
+        assert (reply.status, reply.error()) == (403, expected)
+    reply = _post_headers_only(planted, _target(planted, run), ui.MAX_BODY_BYTES + 1)
+    assert (reply.status, reply.error()) == (413, "too_large")
+    reply = _post_headers_only(planted, _target(planted, run), 2**40)
+    assert (reply.status, reply.error()) == (413, "too_large")
+    assert recorder.calls() == []
+    # Positive control: a body under the cap is read and run.
+    assert _argv_of(_run(planted, ["echo"], {"path": "x"}))[0] == "echo"
+
+
+_HASH_SOURCE = re.compile(r"'sha(256|384|512)-[a-z0-9+/]+={0,2}'")
 
 
 def _csp_problems(value: str) -> list[str]:
@@ -667,30 +878,54 @@ def _csp_problems(value: str) -> list[str]:
     directives: dict[str, list[str]] = {}
     for part in value.split(";"):
         words = part.split()
-        if words:
-            directives[words[0].lower()] = words[1:]
+        if not words:
+            continue
+        name = words[0].lower()
+        if name in directives:
+            # A browser enforces the first and ignores the rest.
+            problems.append(f"{name} appears twice")
+            continue
+        directives[name] = [w.lower() for w in words[1:]]
     if directives.get("default-src") not in (["'self'"], ["'none'"]):
         problems.append(f"default-src is {directives.get('default-src')}")
+    # These three do not fall back to default-src.
+    if directives.get("frame-ancestors") != ["'none'"]:
+        problems.append(f"frame-ancestors is {directives.get('frame-ancestors')}")
+    for name in ("base-uri", "form-action"):
+        if directives.get(name) not in (["'self'"], ["'none'"]):
+            problems.append(f"{name} is {directives.get(name)}")
     for name, sources in directives.items():
         for source in sources:
-            if source.lower() not in ("'self'", "'none'") and not _HASH_SOURCE.fullmatch(source):
+            if source not in ("'self'", "'none'") and not _HASH_SOURCE.fullmatch(source):
                 problems.append(f"{name} allows {source}")
     return problems
+
+
+_FRAME = "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 
 
 @pytest.mark.parametrize(
     ("value", "ok"),
     [
-        ("default-src 'self'", True),
-        ("default-src 'none'; script-src 'self'; connect-src 'self'", True),
-        ("default-src 'none'; style-src 'sha256-AbC+/9=';", True),
-        ("default-src 'self' https://cdn.example", False),
-        ("default-src 'self'; script-src 'self' 'unsafe-inline'", False),
-        ("default-src 'self'; img-src data:", False),
-        ("default-src *", False),
-        ("script-src 'self'", False),
-        ("default-src 'self'; report-uri /csp", False),
-        ("default-src 'self'; connect-src http://127.0.0.1:1", False),
+        (f"default-src 'self'; {_FRAME}", True),
+        (f"default-src 'none'; script-src 'self'; connect-src 'self'; {_FRAME}", True),
+        (f"default-src 'none'; style-src 'sha256-AbC+/9=';{_FRAME};", True),
+        ("DEFAULT-SRC 'SELF'; frame-ancestors 'none'; base-uri 'self'; form-action 'none'", True),
+        (f"default-src 'self' https://cdn.example; {_FRAME}", False),
+        (f"default-src 'self'; script-src 'self' 'unsafe-inline'; {_FRAME}", False),
+        (f"default-src 'self'; img-src data:; {_FRAME}", False),
+        (f"default-src *; {_FRAME}", False),
+        (f"script-src 'self'; {_FRAME}", False),
+        (f"default-src 'self'; report-uri /csp; {_FRAME}", False),
+        (f"default-src 'self'; connect-src http://127.0.0.1:1; {_FRAME}", False),
+        (f"default-src *; default-src 'self'; {_FRAME}", False),
+        (f"default-src 'self'; frame-ancestors *; {_FRAME}", False),
+        ("default-src 'self'", False),
+        ("default-src 'self'; base-uri 'none'; form-action 'none'", False),
+        ("default-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'", False),
+        ("default-src 'self'; frame-ancestors 'none'; form-action 'none'", False),
+        ("default-src 'self'; frame-ancestors 'none'; base-uri 'none'", False),
+        ("default-src 'self'; frame-ancestors 'none'; base-uri *; form-action 'none'", False),
     ],
 )
 def test_the_csp_reading_used_by_the_graders_constructed(value: str, ok: bool) -> None:
@@ -838,6 +1073,111 @@ def test_a_value_is_passed_as_a_value(
 
 
 @pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"path": None},
+        {"path": 1.5},
+        {"path": {"a": "b"}},
+        {"path": ["a", "--dry-run"]},
+        {"path": True},
+        {"path": "x", "name": None},
+        {"path": "x", "name": 1.5},
+        {"path": "x", "name": {"a": "b"}},
+        {"path": "x", "name": ["a", "--dry-run"]},
+        {"path": "x", "name": []},
+        {"path": "x", "name": False},
+        {"path": "x", "count": 1.5},
+        {"path": "x", "count": True},
+        {"path": "x", "count": [1]},
+        {"path": "x", "dry_run": "yes"},
+        {"path": "x", "dry_run": "true"},
+        {"path": "x", "dry_run": 1},
+        {"path": "x", "dry_run": None},
+        {"path": "x", "dry_run": [True]},
+        {"path": "x", "tag": [1.5]},
+        {"path": "x", "tag": [None]},
+        {"path": "x", "tag": [["a"]]},
+        {"path": "x", "tag": [{"a": "b"}]},
+        {"path": "x", "tag": {"a": "b"}},
+        {"path": "x", "tag": None},
+    ],
+    ids=repr,
+)
+def test_a_value_of_another_type_is_refused(
+    planted: Any, recorder: Recorder, params: dict[str, Any]
+) -> None:
+    """Security review of #197, M5: a list spread into the argv, or a value
+    whose type the parameter does not take, is refused before anything runs."""
+    reply = _run(planted, ["echo"], params)
+    assert (reply.status, reply.error()) == (403, "bad_value"), reply.body[:300]
+    assert recorder.calls() == []
+
+
+@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
+@pytest.mark.parametrize(
+    ("tags", "expected"),
+    [
+        (["a", "--dry-run"], ["a", "--dry-run"]),
+        (["--yes", "-x", "--", "--count=9"], ["--yes", "-x", "--", "--count=9"]),
+        (["-"], ["-"]),
+        ([1, "b"], ["1", "b"]),
+    ],
+    ids=repr,
+)
+def test_every_list_element_is_passed_as_a_value(
+    planted: Any, tags: list[Any], expected: list[str]
+) -> None:
+    argv = _argv_of(_run(planted, ["echo"], {"path": "x", "tag": tags}))
+    parsed = _parsed(_planted_tree(), ["echo"], argv)
+    assert list(parsed["tag"]) == expected, argv
+    assert (parsed["dry_run"], parsed["count"], parsed["path"]) == (False, 1, "x"), argv
+
+
+@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
+def test_a_real_repeatable_option_takes_each_element_as_a_value(real: Any) -> None:
+    """`profile save --preset` and `looks save --choice` repeat on main."""
+    tree = _real_tree()
+    presets = ["--yes", "-x", "--json"]
+    argv = _argv_of(_run(real, ["profile", "save"], {"name": "n", "preset": presets}))
+    parsed = _parsed(tree, ["profile", "save"], argv)
+    assert (list(parsed["preset"]), parsed["name"]) == (presets, "n"), argv
+    choices = ["1=2", "--race=3"]
+    params = {"name": "-n", "race": "--choice", "sex": "-s", "choice": choices}
+    argv = _argv_of(_run(real, ["looks", "save"], params))
+    parsed = _parsed(tree, ["looks", "save"], argv)
+    assert list(parsed["choice"]) == choices, argv
+    assert (parsed["name"], parsed["race"], parsed["sex"]) == ("-n", "--choice", "-s"), argv
+
+
+@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
+def test_log_tail_follow_is_refused(real: Any, recorder: Recorder) -> None:
+    """Owner rulings 2026-10-15: a run must end, so `--follow` is refused."""
+    reply = _run(real, ["log", "tail"], {"follow": True})
+    assert (reply.status, reply.error()) == (403, "excluded")
+    assert recorder.calls() == []
+    for params in ({}, {"follow": False}, {"lines": 5}):
+        argv = _argv_of(_run(real, ["log", "tail"], params))
+        assert _parsed(_real_tree(), ["log", "tail"], argv)["follow"] is False, argv
+
+
+@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
+@pytest.mark.parametrize("out", ["page.html", "-", "/tmp/x.html", ""])
+def test_looks_page_out_is_refused(real: Any, recorder: Recorder, out: str) -> None:
+    """Review of #198: `--out` can create a file anywhere outside an install,
+    so v0.1 refuses it; `looks page` without it runs."""
+    reply = _run(real, ["looks", "page"], {"out": out})
+    assert (reply.status, reply.error()) == (403, "excluded"), reply.body[:300]
+    reply = _run(real, ["looks", "page"], {"out": out, "build": "1.2.3.4"})
+    assert (reply.status, reply.error()) == (403, "excluded"), reply.body[:300]
+    assert recorder.calls() == []
+    for params in ({}, {"build": "1.2.3.4"}):
+        argv = _argv_of(_run(real, ["looks", "page"], params))
+        assert _parsed(_real_tree(), ["looks", "page"], argv)["out"] is None, argv
+    assert len(recorder.calls()) == 2
+
+
+@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_no_shell_is_involved(
     planted: Any, recorder: Recorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -889,30 +1229,84 @@ def _gone(pid: int, within: float = 10.0) -> bool:
 
 
 @pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
-def test_a_run_past_its_timeout_is_stopped(recorder: Recorder) -> None:
-    with _serving(command=_planted_tree(), wowlab_argv=recorder.argv, timeout_s=1.0) as server:
+@pytest.mark.parametrize("command", ["sleep", "nap"])
+def test_a_run_past_its_timeout_is_stopped_with_its_whole_tree(
+    recorder: Recorder, command: str
+) -> None:
+    """`sleep`'s grandchild holds the run's pipes open; `nap`'s does not.
+    Either way the whole tree dies and the reply arrives (review of #197, M2)."""
+    with _serving(command=_planted_tree(), wowlab_argv=recorder.argv, timeout_s=5.0) as server:
         started = time.monotonic()
-        result = _ran(_run(server, ["sleep"], {}))
+        result = _ran(_run(server, [command], {}))
         assert time.monotonic() - started < _HANG / 2
         assert result["timed_out"] is True
-        pid = int(recorder.pid_file.read_text(encoding="utf-8"))
-        assert _gone(pid), "the timed-out process is killed, not left running"
+        child, grandchild = recorder.pids()
+        assert _gone(child), "the timed-out process is killed, not left running"
+        assert _gone(grandchild), "and so is every process it started"
         # The server is still answering afterwards.
         assert _argv_of(_run(server, ["echo"], {"path": "x"}))[0] == "echo"
 
 
 @pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
-def test_output_past_the_cap_is_cut(recorder: Recorder) -> None:
+def test_closing_the_server_stops_a_run_in_progress(recorder: Recorder) -> None:
+    """`wowlab ui` ending must not leave a run behind (review of #197, M2)."""
+    server = _ui().make_server(command=_planted_tree(), wowlab_argv=recorder.argv, timeout_s=600.0)
+    serving = threading.Thread(target=server.serve_forever, args=(0.05,), daemon=True)
+    serving.start()
+
+    def request() -> None:
+        with contextlib.suppress(OSError, http.client.HTTPException):
+            _run(server, ["sleep"], {})
+
+    running = threading.Thread(target=request, daemon=True)
+    running.start()
+    child, grandchild = recorder.pids()
+
+    def close() -> None:
+        server.shutdown()
+        server.server_close()
+
+    closing = threading.Thread(target=close, daemon=True)
+    closing.start()
+    closing.join(_HANG / 2)
+    assert not closing.is_alive(), "shutdown() and server_close() return"
+    assert _gone(child)
+    assert _gone(grandchild)
+    running.join(_HANG / 2)
+    assert not running.is_alive()
+
+
+@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
+@pytest.mark.parametrize(("command", "stream"), [("flood", "stdout"), ("spew", "stderr")])
+def test_an_endless_writer_is_cut_at_the_cap(recorder: Recorder, command: str, stream: str) -> None:
+    """The cap is read as a stream: the process is killed at the cap, long
+    before its timeout, and memory stays near the cap (review of #197, M3).
+    `tracemalloc` counts every Python allocation in this process, the
+    server's threads included."""
     cap = 64 * 1024
     with _serving(
-        command=_planted_tree(), wowlab_argv=recorder.argv, output_cap_bytes=cap
+        command=_planted_tree(),
+        wowlab_argv=recorder.argv,
+        timeout_s=_HANG * 2,
+        output_cap_bytes=cap,
     ) as server:
-        started = time.monotonic()
-        result = _ran(_run(server, ["flood"], {}))
-        assert time.monotonic() - started < _HANG / 2
+        tracemalloc.start()
+        try:
+            started = time.monotonic()
+            result = _ran(_run(server, [command], {}))
+            elapsed = time.monotonic() - started
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        assert elapsed < _HANG / 2, "cut at the cap, not at the timeout"
         assert result["truncated"] is True
-        assert 0 < len(result["stdout"].encode("utf-8")) <= cap
+        assert result["timed_out"] is False
+        assert 0 < len(result[stream].encode("utf-8")) <= cap
+        assert len(result["stdout"].encode("utf-8")) <= cap
         assert len(result["stderr"].encode("utf-8")) <= cap
+        assert peak < 16 * 1024 * 1024, f"peak Python allocation {peak} bytes"
+        (child,) = recorder.pids()
+        assert _gone(child), "the writer is killed at the cap"
         small = _ran(_run(server, ["echo"], {"path": "x"}))
         assert small["truncated"] is False
 
@@ -994,12 +1388,31 @@ def _package_files() -> list[Path]:
 
 
 @pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
+def test_static_files_vouch_only_for_templates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review of #197, L2: the mapping cannot list a package source file, and
+    reads nothing from the working directory or the user's home."""
+    files = dict(_ui().static_files())
+    for path, content in files.items():
+        assert path == "/" or path.endswith((".html", ".css", ".js")), path
+        for file in _package_files():
+            if file.suffix in (".py", ".toml"):
+                head = file.read_bytes()[:64]
+                if len(head) >= 32:
+                    assert head not in content, (path, file.name)
+    (tmp_path / "index.html").write_bytes(b"<!DOCTYPE html>planted")
+    (tmp_path / "app.js").write_bytes(b"planted()")
+    monkeypatch.chdir(tmp_path)
+    for name in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_DATA_HOME"):
+        monkeypatch.setenv(name, str(tmp_path))
+    assert dict(_ui().static_files()) == files
+
+
+@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_a_package_file_that_is_not_a_template_is_not_served(planted: Any) -> None:
-    served = _ui().static_files()
     for file in _package_files():
         for path in (f"/{file.name}", f"/static/{file.name}", f"/templates/{file.name}"):
-            if path in served:
-                continue
             reply = _send(planted, "GET", _target(planted, path))
             assert reply.status == 404, path
             head = file.read_bytes()[:200]
@@ -1047,3 +1460,110 @@ def test_a_traversal_path_is_refused_constructed(planted: Any, path: str) -> Non
     assert b"[fonts]" not in reply.body
     assert b"PRIVATE KEY" not in reply.body
     assert reply.body not in list(_ui().static_files().values())
+
+
+# ─── `wowlab ui` itself ──────────────────────────────────────────────────────
+
+
+@dataclass
+class UiRun:
+    made: list[tuple[tuple[Any, ...], dict[str, Any], Any]]
+    opened: list[str]
+    result: Any
+
+
+def _invoke_ui(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, browser: str) -> UiRun:
+    """`wowlab ui` through CliRunner, with the server's loop replaced by a
+    Ctrl-C and the browser by a recorder. `browser` is "opens", "false" or
+    "raises". The working directory and home are `tmp_path`."""
+    import webbrowser
+
+    import platformdirs
+    from typer.testing import CliRunner
+
+    from wowlab_core import cli
+
+    ui = _ui()
+    real_make = ui.make_server
+    made: list[tuple[tuple[Any, ...], dict[str, Any], Any]] = []
+    opened: list[str] = []
+
+    def make(*args: Any, **kwargs: Any) -> Any:
+        server = real_make(*args, **kwargs)
+        made.append((args, kwargs, server))
+
+        def ctrl_c(*_: Any, **__: Any) -> None:
+            raise KeyboardInterrupt
+
+        server.serve_forever = ctrl_c
+        return server
+
+    def open_(url: str, *args: Any, **kwargs: Any) -> bool:
+        opened.append(url)
+        if browser == "raises":
+            raise webbrowser.Error("no browser")
+        return browser == "opens"
+
+    monkeypatch.setattr(ui, "make_server", make)
+    monkeypatch.setattr(webbrowser, "open", open_)
+    monkeypatch.chdir(tmp_path)
+    for name in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_DATA_HOME"):
+        monkeypatch.setenv(name, str(tmp_path))
+    monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: tmp_path / "userdata")
+    try:
+        result = CliRunner().invoke(cli.app, ["ui"], prog_name="wowlab")
+    except KeyboardInterrupt:
+        pytest.fail("Ctrl-C escaped `wowlab ui`")
+    return UiRun(made, opened, result)
+
+
+def _files_holding(root: Path, token: str) -> list[Path]:
+    return [f for f in root.rglob("*") if f.is_file() and token.encode() in f.read_bytes()]
+
+
+@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
+def test_ui_serves_make_server_defaults_opens_its_url_and_stops_on_ctrl_c(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Review of #197, H1: the entry point the owner runs is tied to the
+    server graded above."""
+    caplog.set_level(logging.DEBUG)
+    run = _invoke_ui(monkeypatch, tmp_path, "opens")
+    assert len(run.made) == 1, "one server, from make_server"
+    args, kwargs, server = run.made[0]
+    assert (args, kwargs) == ((), {}), "make_server with its defaults"
+    assert server.server_address[0] == "127.0.0.1"
+    assert run.opened == [server.url]
+    assert run.result.exit_code == 0, (run.result.output, run.result.exception)
+    assert "Traceback" not in run.result.output
+    assert server.socket.fileno() == -1, "server_close() ran"
+    # The browser opened, so the token is printed nowhere.
+    assert server.token not in run.result.stdout
+    assert server.token not in run.result.stderr
+    assert not any(server.token in r.getMessage() for r in caplog.records)
+    assert _files_holding(tmp_path, server.token) == []
+
+
+@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
+@pytest.mark.parametrize("browser", ["false", "raises"])
+def test_ui_prints_the_url_once_when_no_browser_opens(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    browser: str,
+) -> None:
+    """Owner ruling 2026-10-15: once, on stdout, and through no logger or file."""
+    caplog.set_level(logging.DEBUG)
+    run = _invoke_ui(monkeypatch, tmp_path, browser)
+    ((_, _, server),) = run.made
+    assert run.opened == [server.url]
+    assert run.result.stdout.count(server.url) == 1, run.result.stdout
+    assert run.result.stdout.count(server.token) == 1
+    assert server.token not in run.result.stderr
+    assert not any(server.token in r.getMessage() for r in caplog.records)
+    assert not any(server.token in str(r.args) for r in caplog.records)
+    assert _files_holding(tmp_path, server.token) == []
+    assert run.result.exit_code == 0, (run.result.output, run.result.exception)
+    assert server.socket.fileno() == -1, "server_close() ran"
