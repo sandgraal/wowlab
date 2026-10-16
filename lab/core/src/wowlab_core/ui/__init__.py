@@ -106,7 +106,9 @@ _DRAIN_GRACE_S = 2.0
 _CLOSE_WAIT_S = 10.0
 _POLL_S = 0.05
 
-_EXCLUDED_YES = "it changes files and asks first (--yes); the confirm flow comes in M14"
+# The reason ADR-0029's 2026-10-15 amendment gives, word for word; the parity
+# test (M13-26) holds it to that.
+_EXCLUDED_YES = "confirm flow: M14"
 _EXCLUDED_UI = "the UI itself"
 # Parameters refused on a leaf that otherwise runs, by leaf path: whether
 # only a true value is refused (else any value is), and why. Owner rulings
