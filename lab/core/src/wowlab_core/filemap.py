@@ -164,6 +164,24 @@ class FileMap(BaseModel):
         found = self.matches(parts, base, kind)
         return found[0] if found else None
 
+    def covers(self, parts: Sequence[str], base: Literal["root", "flavor"]) -> bool:
+        """Whether every path strictly below the folder `parts` has a row,
+        whatever its name, depth or kind, so a walk looking for paths with
+        no row need not look inside (M13-22).
+
+        Conservative: True only when one entry has a match pattern that
+        ends in `/**`, whose other segments hold no `**` and match the
+        folder's first segments, and none of whose `exclude` patterns could
+        match the folder or anything below it.
+        """
+        folder = tuple(parts)
+        return any(
+            e.base in (base, "any")
+            and not any(_may_reach(_segments(x), folder) for x in e.exclude)
+            and any(_covers_below(_segments(p), folder) for p in e.match if p != _SELF)
+            for e in self.entries
+        )
+
 
 def _segments(pattern: str) -> tuple[str, ...]:
     if pattern == _SELF:
@@ -199,6 +217,31 @@ def _match(segments: tuple[str, ...], parts: tuple[str, ...]) -> bool:
     if head == _ANY_DEPTH:
         return any(_match(rest, parts[i:]) for i in range(len(parts) + 1))
     return bool(parts) and _segment(head, parts[0]) and _match(rest, parts[1:])
+
+
+def _covers_below(segments: tuple[str, ...], folder: tuple[str, ...]) -> bool:
+    """Whether the pattern matches every path strictly below `folder`: it
+    ends in `**`, and the segments before that, none of them `**`, match the
+    folder's first segments (the `**` then takes whatever follows)."""
+    if not segments or segments[-1] != _ANY_DEPTH:
+        return False
+    head = segments[:-1]
+    if _ANY_DEPTH in head or len(head) > len(folder):
+        return False
+    return all(_segment(p, n) for p, n in zip(head, folder, strict=False))
+
+
+def _may_reach(segments: tuple[str, ...], folder: tuple[str, ...]) -> bool:
+    """Whether the pattern could match `folder` or some path below it.
+    Conservative: a `**` met before the folder's segments run out is a yes."""
+    for i, name in enumerate(folder):
+        if i == len(segments):
+            return False
+        if segments[i] == _ANY_DEPTH:
+            return True
+        if not _segment(segments[i], name):
+            return False
+    return True
 
 
 def parse(text: str) -> FileMap:

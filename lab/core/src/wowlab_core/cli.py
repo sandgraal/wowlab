@@ -122,6 +122,7 @@ from wowlab_core import (
     doctorredact,
     firstrun,
     gamedata,
+    gaps,
     guard,
     install,
     labaddon,
@@ -273,7 +274,11 @@ profile_app = typer.Typer(
     "The lab-addon is never in a profile. " + profiles.SERVER_SIDE_NOTE,
     no_args_is_help=True,
 )
+filemap_app = typer.Typer(
+    help="The file map: what every path in an install is.", no_args_is_help=True
+)
 app.add_typer(install_app, name="install")
+app.add_typer(filemap_app, name="filemap")
 app.add_typer(sv_app, name="sv")
 app.add_typer(cvar_app, name="cvar")
 app.add_typer(binds_app, name="binds")
@@ -1577,13 +1582,16 @@ class Explained(_Out):
 
 
 class TreeItem(_Out):
-    path: str  # relative to the flavor folder
+    path: str  # relative to `base`: the flavor folder, or with --install perhaps the install root
     kind: Literal["file", "folder", "symlink"]
     size: int | None
     note: str | None
     # M13-21, amended 2026-10-15: always present; "unclassified" with no file-map row
     verdict: Verdict
     explained: Explained | None
+    # M13-22: what `path` is relative to; "" with base "flavor" is the flavor folder itself
+    base: Literal["root", "flavor"]
+    flavor_folder: str | None  # set when `base` is "flavor"
 
 
 class TreeReport(_Out):
@@ -1594,6 +1602,19 @@ class TreeReport(_Out):
     items: list[TreeItem]
     truncated: bool
     errors: list[str]
+
+
+class InstallTreeReport(_Out):
+    """`wowlab tree --install --json` (M13-22): the install root's own
+    entries (one level, the file map's `root` section), each flavor folder
+    as an item (`base` "flavor", `path` ""), then each flavor's inventory as
+    `tree` lists it."""
+
+    install_root: str
+    flavor_folders: list[str]  # as discovery reported them
+    items: list[TreeItem]  # the root's entries in name order, then each flavor's
+    truncated: bool
+    errors: list[str]  # paths relative to the install root
 
 
 def _explained(entry: FileMapEntry, verdict: Verdict) -> Explained:
@@ -1609,6 +1630,8 @@ def _explained(entry: FileMapEntry, verdict: Verdict) -> Explained:
 
 
 def _tree_items(lay: layout.Layout, inv: layout.Inventory) -> dict[str, TreeItem]:
+    flavor_folder = lay.flavor_folder
+
     items: dict[str, TreeItem] = {}
 
     def add(
@@ -1626,6 +1649,8 @@ def _tree_items(lay: layout.Layout, inv: layout.Inventory) -> dict[str, TreeItem
                     entry, found.base, found.path, folder=kind == "folder", link=kind == "symlink"
                 ),
                 explained=None,
+                base="flavor",
+                flavor_folder=flavor_folder,
             )
 
     try:
@@ -1694,40 +1719,40 @@ def _in_scope(path: str, prefix: str) -> bool:
 @_handled
 def tree(
     path: Annotated[
-        str | None, typer.Argument(help="Only this path under the flavor folder.")
+        str | None,
+        typer.Argument(
+            help="Only this path under the flavor folder (with --install, under the install root)."
+        ),
     ] = None,
     explain: Annotated[
         bool, typer.Option("--explain", help="Add each path's file-map entry.")
+    ] = False,
+    whole_install: Annotated[
+        bool,
+        typer.Option(
+            "--install",
+            help="The whole install: the install root's own entries and every flavor folder.",
+        ),
     ] = False,
     root: RootOpt = None,
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
 ) -> None:
     """Inventory of a flavor folder: WTF files, SavedVariables, addons, overrides,
-    areas (counted, not listed). JSON: TreeReport."""
+    areas (counted, not listed). JSON: TreeReport. With --install, the install
+    root's own entries (one level) and every flavor folder's inventory; each
+    item names its base and flavor folder. JSON: InstallTreeReport."""
+    if whole_install:
+        if flavor is not None:
+            raise CliError("--install covers every flavor folder; leave out --flavor", EXIT_USAGE)
+        _tree_install(path, explain, root, json_out)
+        return
     inst, chosen, lay = _open(root, flavor)
     inv = lay.inventory()
-    prefix = ""
-    if path:
-        given = Path(path)
-        if given.is_absolute():
-            try:
-                prefix = given.relative_to(lay.flavor_path).as_posix()
-            except ValueError:
-                raise CliError(f"{path} is not inside {lay.flavor_path}", EXIT_USAGE) from None
-        else:
-            prefix = given.as_posix().strip("/")
-        if prefix == ".":
-            prefix = ""
+    prefix = _tree_prefix(path, lay.flavor_path)
     items = [i for p, i in sorted(_tree_items(lay, inv).items()) if _in_scope(p, prefix)]
     if explain:
-        explained = []
-        for item in items:
-            found = lay.classify(item.path, is_dir=item.kind == "folder" or None)
-            if isinstance(found, layout.Classified):
-                item = item.model_copy(update={"explained": _explained(found.entry, item.verdict)})
-            explained.append(item)
-        items = explained
+        items = _with_explained(lay, items)
     errors = [f"{e.path}: {e.error}" for e in inv.errors]
     report = TreeReport(
         install_root=str(inst.root),
@@ -1741,22 +1766,224 @@ def tree(
         return
     _say(f"{chosen.folder} in {inst.root}")
     for item in items:
-        slash = "/" if item.kind == "folder" else ""
-        size = f"  {_bytes(item.size)}" if item.size is not None and item.kind == "file" else ""
-        note = f"  ({item.note})" if item.note else ""
-        _say(f"  {item.path}{slash}{size}{note}")
-        if explain:
-            if item.explained is None:
-                _say("      no file-map row")
-            else:
-                e = item.explained
-                _say(f"      [{e.entry_id}] {_plain(e.what)}")
-                _say(f"      written by: {_plain(e.written_by)}")
-                _say(f"      edit: {e.verdict.words}")
+        _say_tree_item(item.path, item, explain)
     if inv.truncated:
         _note("The walk hit a bound; the listing is incomplete.")
     for err in errors:
         _note("could not read {}", err)
+
+
+def _tree_prefix(path: str | None, base: Path) -> str:
+    """`tree`'s PATH argument, relative to `base` and `/`-separated."""
+    if not path:
+        return ""
+    given = Path(path)
+    if given.is_absolute():
+        try:
+            prefix = given.relative_to(base).as_posix()
+        except ValueError:
+            raise CliError(f"{path} is not inside {base}", EXIT_USAGE) from None
+    else:
+        prefix = given.as_posix().strip("/")
+    return "" if prefix == "." else prefix
+
+
+def _with_explained(lay: layout.Layout, items: list[TreeItem]) -> list[TreeItem]:
+    explained = []
+    for item in items:
+        found = lay.classify(item.path, is_dir=item.kind == "folder" or None)
+        if isinstance(found, layout.Classified):
+            item = item.model_copy(update={"explained": _explained(found.entry, item.verdict)})
+        explained.append(item)
+    return explained
+
+
+def _say_tree_item(shown: str, item: TreeItem, explain: bool) -> None:
+    slash = "/" if item.kind == "folder" else ""
+    size = f"  {_bytes(item.size)}" if item.size is not None and item.kind == "file" else ""
+    note = f"  ({item.note})" if item.note else ""
+    _say(f"  {shown}{slash}{size}{note}")
+    if explain:
+        if item.explained is None:
+            _say("      no file-map row")
+        else:
+            e = item.explained
+            _say(f"      [{e.entry_id}] {_plain(e.what)}")
+            _say(f"      written by: {_plain(e.written_by)}")
+            _say(f"      edit: {e.verdict.words}")
+
+
+def _install_path(item: TreeItem) -> str:
+    """An item's path relative to the install root."""
+    if item.base == "root" or item.flavor_folder is None:
+        return item.path
+    return f"{item.flavor_folder}/{item.path}" if item.path else item.flavor_folder
+
+
+def _root_items(inst: install.Install, errors: list[str]) -> list[TreeItem]:
+    """The install root's own entries, one level, in name order. A flavor
+    folder is an item of base "flavor" and path "" (L6: by discovery's
+    name only); a link is named, never followed."""
+    flavors = {f.folder for f in inst.flavors}
+    root = Path(inst.root)
+    try:
+        with os.scandir(root) as it:
+            entries = sorted(it, key=lambda e: e.name)
+    except OSError as exc:
+        errors.append(f"{root}: {exc.strerror or exc}")
+        return []
+    items = []
+    for e in entries:
+        try:
+            st = e.stat(follow_symlinks=False)
+        except OSError as exc:
+            errors.append(f"{e.name}: {exc.strerror or exc}")
+            continue
+        link = _is_link_stat(Path(e.path), st)
+        folder = not link and stat.S_ISDIR(st.st_mode)
+        kind: Literal["file", "folder", "symlink"] = (
+            "symlink" if link else "folder" if folder else "file"
+        )
+        found = layout.classify(e.name, inst, is_dir=folder or None)
+        entry = found.entry if isinstance(found, layout.Classified) else None
+        note: str | None = None
+        if link:
+            try:
+                target = os.readlink(e.path)  # noqa: PTH115
+                note = f"link to {target}, not followed"
+            except (OSError, ValueError):
+                note = "link, not followed"
+        elif folder and e.name in flavors:
+            note = "flavor folder"
+        elif folder and e.name in inst.other_dirs:
+            note = "named like a flavor folder, but holds no .flavor.info"
+        items.append(
+            TreeItem(
+                path=found.path,
+                kind=kind,
+                size=st.st_size if kind == "file" else None,
+                note=note,
+                verdict=verdict_of(entry, found.base, found.path, folder=folder, link=link),
+                explained=None,
+                base="flavor" if found.base == "flavor" else "root",
+                flavor_folder=found.flavor_folder,
+            )
+        )
+    return items
+
+
+def _tree_install(path: str | None, explain: bool, root: Path | None, json_out: bool) -> None:
+    inst, _ = _discover(root)
+    prefix = _tree_prefix(path, Path(inst.root))
+    errors: list[str] = []
+    items = _root_items(inst, errors)
+    if explain:
+        explained = []
+        for item in items:
+            found = layout.classify(_install_path(item), inst, is_dir=item.kind == "folder" or None)
+            if isinstance(found, layout.Classified):
+                item = item.model_copy(update={"explained": _explained(found.entry, item.verdict)})
+            explained.append(item)
+        items = explained
+    truncated = False
+    for f in inst.flavors:
+        lay = layout.Layout.for_flavor(f, inst.root)
+        inv = lay.inventory()
+        listed = [i for _, i in sorted(_tree_items(lay, inv).items())]
+        items.extend(_with_explained(lay, listed) if explain else listed)
+        truncated = truncated or inv.truncated
+        errors.extend(f"{f.folder}/{e.path}: {e.error}" for e in inv.errors)
+    items = [i for i in items if _in_scope(_install_path(i), prefix)]
+    report = InstallTreeReport(
+        install_root=str(inst.root),
+        flavor_folders=[f.folder for f in inst.flavors],
+        items=items,
+        truncated=truncated,
+        errors=errors,
+    )
+    if json_out:
+        _emit(report)
+        return
+    _say(f"Install root {inst.root}")
+    for item in items:
+        if item.base == "root" or not item.path:
+            _say_tree_item(_install_path(item), item, explain)
+    for folder in report.flavor_folders:
+        inside = [i for i in items if i.flavor_folder == folder and i.path]
+        if inside:
+            _say(f"{folder} in {inst.root}")
+        for item in inside:
+            _say_tree_item(item.path, item, explain)
+    if truncated:
+        _note("The walk hit a bound; the listing is incomplete.")
+    for err in errors:
+        _note("could not read {}", err)
+
+
+# ─── filemap gaps ────────────────────────────────────────────────────────────
+
+
+@filemap_app.command("gaps")
+@_handled
+def filemap_gaps(root: RootOpt = None, json_out: JsonOpt = False) -> None:
+    """Paths in the install with no file-map row, grouped under their nearest
+    classified folder and ranked by file count, then bytes. The walk covers
+    the install root and every flavor folder, reads only, never follows a
+    link, is bounded, and names what it could not read. JSON: gaps.GapReport."""
+    inst, _ = _discover(root)
+    report = gaps.find_gaps(inst)
+    if json_out:
+        _emit(report)
+    else:
+        _print_gaps(report)
+    if report.truncated:
+        _note("The walk hit a bound; there may be gaps it did not reach.")
+    for err in report.errors:
+        _note("could not read {}: {}", err.path or ".", err.error)
+
+
+def _files(n: int) -> str:
+    return f"{n:,} file" + ("" if n == 1 else "s")
+
+
+def _gap_counts(gap: gaps.Gap) -> str:
+    if gap.kind == "file":
+        return _bytes(gap.bytes)
+    if gap.kind == "link":
+        return "link, not followed"
+    if gap.kind == "other":
+        return "not a file, folder or link; never opened"
+    parts = [_files(gap.files), _bytes(gap.bytes)]
+    if gap.folders:
+        parts.append(f"{gap.folders:,} folder" + ("" if gap.folders == 1 else "s"))
+    if gap.links:
+        parts.append(f"{gap.links:,} link" + ("" if gap.links == 1 else "s") + " not followed")
+    if gap.other:
+        parts.append(f"{gap.other:,} other")
+    return ", ".join(parts)
+
+
+def _print_gaps(report: gaps.GapReport) -> None:
+    _say(f"File-map gaps in {report.install_root}")
+    if not report.groups:
+        _say("  none: every path the walk reached has a file-map row")
+    else:
+        _say(
+            f"  {_files(report.files)}, {_bytes(report.bytes)}, "
+            f"under {len(report.groups)} parent folder" + ("" if len(report.groups) == 1 else "s")
+        )
+    for group in report.groups:
+        if group.base == "flavor" and group.flavor_folder is not None:
+            where = "/".join(p for p in (group.flavor_folder, group.parent) if p) + "/"
+        else:
+            where = f"{group.parent}/" if group.parent else "(install root)"
+        row = f"  [{group.entry_id}]" if group.entry_id else ""
+        _say(f"{where}{row}  {_files(group.files)}, {_bytes(group.bytes)}")
+        for gap in group.gaps:
+            slash = "/" if gap.kind == "folder" else ""
+            _say(f"  {gap.path.rsplit('/', 1)[-1]}{slash}  {_gap_counts(gap)}")
+    if report.links:
+        _say(f"Links met and not followed: {len(report.links):,}")
 
 
 def _plain(markdown: str) -> str:

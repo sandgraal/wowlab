@@ -24,6 +24,13 @@ edit the rows between the `filemap:begin` / `filemap:end` markers by hand.
 `lab/core/tests/test_filemap.py` fails when the doc and the data drift.
 Prose outside the markers is written by hand.
 
+**Where the map is thin (M13-22, 2026-10-16):** `wowlab filemap gaps` walks
+an install (the root and every flavor folder, read only, links never
+followed, bounded) and lists every path no row below matches, grouped under
+its nearest classified folder and ranked by file count, then bytes. The
+install root itself has no row and is not a gap. A gap is where a new row
+may belong; the owner decides whether to add one.
+
 ## Install root
 
 <!-- filemap:begin root -->
