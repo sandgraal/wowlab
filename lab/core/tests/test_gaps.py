@@ -19,9 +19,10 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import platformdirs
 import pytest
@@ -476,6 +477,70 @@ def test_a_catch_all_folder_holding_only_described_files_is_quiet_constructed(
 ) -> None:
     _write(flavor / "Cache" / "WDB" / "enUS" / "creaturecache.wdb", b"x")
     assert _find(root).catch_all == []
+
+
+# ─── Windows reparse points ──────────────────────────────────────────────────
+
+CLOUD_PLACEHOLDER = 0x9000001A  # IO_REPARSE_TAG_CLOUD_A: no name-surrogate bit
+MOUNT_POINT = 0xA0000003  # IO_REPARSE_TAG_MOUNT_POINT, a junction: name surrogate
+
+
+class _ReparseStat:
+    """An `lstat` result as Windows gives it for a reparse point: the real
+    entry's mode and size, with `st_file_attributes` and `st_reparse_tag`."""
+
+    def __init__(self, real: os.stat_result, tag: int) -> None:
+        self.st_mode = real.st_mode
+        self.st_size = real.st_size
+        self.st_mtime_ns = real.st_mtime_ns
+        self.st_file_attributes = stat.FILE_ATTRIBUTE_REPARSE_POINT
+        self.st_reparse_tag = tag
+
+
+def _reparse_points(monkeypatch: pytest.MonkeyPatch, tags: dict[str, int]) -> None:
+    """Entries named in `tags` look like Windows reparse points with that tag."""
+    real = gaps.lstat_entry
+
+    def fake(entry: os.DirEntry[str]) -> os.stat_result:
+        st = real(entry)
+        tag = tags.get(entry.name)
+        return st if tag is None else cast(os.stat_result, _ReparseStat(st, tag))
+
+    monkeypatch.setattr(gaps, "lstat_entry", fake)
+
+
+def test_a_cloud_placeholder_is_walked_and_a_junction_is_not_constructed(
+    root: Path, flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An install in a OneDrive-synced folder: the flavor folder and `WTF/`
+    are cloud placeholders (a reparse point without the name-surrogate
+    bit), which hold real content and are walked, as discovery takes them
+    (M13-04). A junction (name surrogate) is never followed. Constructed:
+    the attributes are stood in, so this runs on any system."""
+    _write(flavor / "WTF" / "Account" / ACCOUNT / "strange-constructed.txt", b"zz")
+    _write(flavor / "Junction-constructed" / "inside.txt", b"never counted")
+    _write(root / "RootJunction-constructed" / "inside.txt", b"never counted")
+    _reparse_points(
+        monkeypatch,
+        {
+            FLAVOR: CLOUD_PLACEHOLDER,
+            "WTF": CLOUD_PLACEHOLDER,
+            "Junction-constructed": MOUNT_POINT,
+            "RootJunction-constructed": MOUNT_POINT,
+        },
+    )
+    report = _find(root)
+    assert report.links == ["RootJunction-constructed", f"{FLAVOR}/Junction-constructed"]
+    assert _summary(report.groups) == [
+        ("account-folder", "strange-constructed.txt", "file", 1, 1, 2),
+        ("flavor-folder", "Junction-constructed", "link", 1, 0, 0),
+        (None, "RootJunction-constructed", "link", 1, 0, 0),
+    ]
+    tree = _json(cli.InstallTreeReport, "tree", "--install")
+    kinds = {(i.base, i.path): i.kind for i in tree.items}
+    assert kinds[("flavor", "")] == "folder"  # the placeholder flavor folder
+    assert kinds[("root", "RootJunction-constructed")] == "symlink"
+    assert ("flavor", "WTF/Config.wtf") in kinds
 
 
 # ─── links, unreadable folders, the bound ────────────────────────────────────

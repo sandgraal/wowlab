@@ -1835,11 +1835,11 @@ def _root_items(inst: install.Install, errors: list[str]) -> list[TreeItem]:
     items = []
     for e in entries:
         try:
-            st = e.stat(follow_symlinks=False)
+            st = gaps.lstat_entry(e)
         except OSError as exc:
             errors.append(f"{e.name}: {exc.strerror or exc}")
             continue
-        link = _is_link_stat(Path(e.path), st)
+        link = gaps.is_link(Path(e.path), st)
         folder = not link and stat.S_ISDIR(st.st_mode)
         kind: Literal["file", "folder", "symlink"] = (
             "symlink" if link else "folder" if folder else "file"

@@ -55,6 +55,7 @@ from pydantic import BaseModel, ConfigDict
 from wowlab_core import filemap as _filemap
 from wowlab_core.install import Install
 from wowlab_core.layout import FsText, Limits
+from wowlab_core.snapshot import _is_link_stat as _snapshot_link
 
 __all__ = [
     "NOT_A_FLAVOR",
@@ -65,6 +66,8 @@ __all__ = [
     "GapReport",
     "NotEntered",
     "find_gaps",
+    "is_link",
+    "lstat_entry",
 ]
 
 Base = Literal["root", "flavor"]
@@ -239,10 +242,20 @@ class _Found:
         return place
 
 
-def _is_link(path: Path, st: os.stat_result) -> bool:
-    """A symlink, or any Windows reparse point (junctions included)."""
-    attributes = int(getattr(st, "st_file_attributes", 0))
-    if stat.S_ISLNK(st.st_mode) or attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+def lstat_entry(entry: os.DirEntry[str]) -> os.stat_result:
+    """`lstat` of one listed entry: never follows a link. One place, so a
+    test can stand in Windows reparse-point attributes on any system."""
+    return entry.stat(follow_symlinks=False)
+
+
+def is_link(path: Path, st: os.stat_result) -> bool:
+    """A link the walk never follows: a symlink, a junction, or a Windows
+    reparse point with the name-surrogate bit (a reparse point that names
+    another path), the rule `snapshot` uses (`snapshot._is_link_stat`).
+    Other reparse points (OneDrive cloud placeholders, deduplicated files)
+    hold real content and are walked, as discovery and `layout` take them
+    (M13-04: an install under OneDrive is reported, never refused)."""
+    if _snapshot_link(st):
         return True
     try:
         return path.is_junction()
@@ -251,7 +264,7 @@ def _is_link(path: Path, st: os.stat_result) -> bool:
 
 
 def _kind(path: Path, st: os.stat_result) -> GapKind:
-    if _is_link(path, st):
+    if is_link(path, st):
         return "link"
     if stat.S_ISDIR(st.st_mode):
         return "folder"
@@ -365,7 +378,7 @@ def find_gaps(install: Install, limits: Limits | None = None) -> GapReport:
             entries += 1
             base, flavor, rel = frame.base, frame.flavor_folder, (*frame.rel, child.name)
             try:
-                st = child.stat(follow_symlinks=False)
+                st = lstat_entry(child)
             except OSError as exc:
                 errors.append(GapError(path=_install_rel(base, flavor, rel), error=_error(exc)))
                 continue
