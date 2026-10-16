@@ -899,3 +899,255 @@ def test_a_spelling_through_a_folder_link_is_never_the_same_entry(tmp_path: Path
     volume = pathfacts._Volume(tmp_path)
     assert volume.same("real/f.lua", "REAL/f.lua") is False
     assert volume.same("REAL/f.lua", "real/f.lua") is False
+
+
+# ─── M13-32: the leftovers from M13-23's final review ───────────────────────
+
+
+def test_a_fold_wider_than_case_is_unknown_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M13-32 item 1. Constructed: the gate's fold takes "Straße" for
+    "STRASSE", which no upper/lower-case probe can show a volume does. Even
+    on a volume that folds every case and normalization difference (stood in
+    here, so this runs on any system), the answer is unknown."""
+    (tmp_path / "Ab").mkdir()
+    monkeypatch.setattr(pathfacts._Volume, "_folds", lambda self, parts, difference: True)
+    volume = pathfacts._Volume(tmp_path)
+    assert volume.same("Ab/Straße.lua", "Ab/STRASSE.lua") is None
+    assert volume.same("Ab/straße.lua", "Ab/Strasse.lua") is None
+    # Differences the probes can show are still answered.
+    assert volume.same("Ab/abc.lua", "Ab/ABC.lua") is True
+    assert volume.same("Ab/é.lua", "Ab/é.lua") is True
+
+
+@pytest.mark.parametrize(
+    ("case", "normalization", "expected"),
+    [
+        pytest.param(True, False, False, id="constructed-ntfs-folds-case-only"),
+        pytest.param(False, True, False, id="constructed-folds-normalization-only"),
+        pytest.param(True, True, True, id="constructed-apfs-folds-both"),
+        pytest.param(True, None, None, id="constructed-normalization-unknown"),
+        pytest.param(None, None, None, id="constructed-both-unknown"),
+    ],
+)
+def test_case_and_normalization_both_differing_need_both_folded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: bool | None,
+    normalization: bool | None,
+    expected: bool | None,
+) -> None:
+    """M13-32 item 1. Constructed: "É" (NFC) against "e" + U+0301 (NFD,
+    lower case) differ in case and in normalization. A volume that folds
+    case but keeps normalization apart (NTFS) holds them as two names, so
+    the case probe alone never confirms them. The volume's answers are stood
+    in, so this runs on any system."""
+    (tmp_path / "Ab").mkdir()
+    answers = {"case": case, "normalization": normalization}
+    asked: list[str] = []
+
+    def folds(self: pathfacts._Volume, parts: tuple[str, ...], difference: str) -> bool | None:
+        asked.append(difference)
+        return answers[difference]
+
+    monkeypatch.setattr(pathfacts._Volume, "_folds", folds)
+    volume = pathfacts._Volume(tmp_path)
+    upper_nfc = unicodedata.normalize("NFC", "Ab/É.lua")
+    lower_nfd = unicodedata.normalize("NFD", "Ab/é.lua")
+    assert volume.same(upper_nfc, lower_nfd) is expected
+    assert sorted(asked) == ["case", "normalization"]
+
+
+def test_a_case_variant_never_changes_length() -> None:
+    """M13-32 item 1. Constructed names: the case probe tries a spelling that
+    differs letter for letter, never "SS" for "ß"."""
+    assert pathfacts._case_variant("Ab") == "aB"
+    assert pathfacts._case_variant("ß") is None
+    assert pathfacts._case_variant("Straße") == "straße"
+    assert pathfacts._case_variant("12") is None
+
+
+def _manifest(root: Path, sid: str, entries: tuple[snapshot.Entry, ...]) -> snapshot.Manifest:
+    return snapshot.Manifest(
+        id=sid,
+        created_at=f"{sid[:4]}-{sid[4:6]}-{sid[6:8]}T00:00:00.000000Z",
+        install_root=str(root),
+        flavor_folder="0",
+        subtrees=("0/1",),
+        entries=entries,
+    )
+
+
+class _Listed:
+    """A store that lists the given manifests (constructed)."""
+
+    def __init__(self, manifests: tuple[snapshot.Manifest, ...]) -> None:
+        self.manifests = manifests
+
+    def list_lenient(self) -> snapshot.SnapshotListing:
+        return snapshot.SnapshotListing(manifests=self.manifests, invalid=())
+
+
+def test_an_older_snapshot_named_for_an_unconfirmed_match_says_so(tmp_path: Path) -> None:
+    """M13-32 item 3. Constructed: an older snapshot holds `ABC.lua`, the
+    latest holds nothing there, and `abc.lua` is asked about. Neither name is
+    on disk and every folder on the way is named in digits, so nothing shows
+    whether the drive treats the two as one. The older snapshot is still
+    named, with its spelling and the same caveat the held case carries."""
+    (tmp_path / "0" / "1" / "2").mkdir(parents=True)
+    held = snapshot.Entry(path="0/1/2/ABC.lua", sha256="0" * 64, size=1)
+    older = _manifest(tmp_path, "20261001T000000.000000Z-00000001", (held,))
+    latest = _manifest(tmp_path, "20261002T000000.000000Z-00000002", ())
+    store = _Listed((older, latest))
+    facts = pathfacts.snapshot_facts(
+        store,  # type: ignore[arg-type]
+        tmp_path,
+        "0",
+        "1/2/abc.lua",
+        ["1"],
+    )
+    assert (facts.snapshot_id, facts.holds) == (latest.id, False)
+    assert facts.last_held is not None and facts.last_held.id == older.id
+    assert (facts.last_held_path, facts.last_held_confirmed) == ("1/2/ABC.lua", False)
+    line = cli._snapshot_line(facts, "WTF/")
+    assert line.endswith(
+        f"the latest snapshot that holds it is {older.id}, {older.created_at}, as 1/2/ABC.lua, "
+        "which could not be confirmed to be this file (neither name is on disk, and nothing "
+        "on this drive shows whether it treats the two names as one)"
+    )
+    # Its exact spelling is confirmed, and the line is the one from before.
+    exact = pathfacts.snapshot_facts(
+        store,  # type: ignore[arg-type]
+        tmp_path,
+        "0",
+        "1/2/ABC.lua",
+        ["1"],
+    )
+    assert (exact.last_held_path, exact.last_held_confirmed) == ("1/2/ABC.lua", True)
+    assert cli._snapshot_line(exact, "WTF/").endswith(
+        f"the latest snapshot that holds it is {older.id}, {older.created_at}"
+    )
+
+
+def test_the_unconfirmed_clause_reads_as_the_review_asked() -> None:
+    """M13-32 item 2. Constructed facts: the wording of the clause M13-23
+    added, and only that clause."""
+    facts = pathfacts.SnapshotFacts(
+        snapshot_id="20261016T000000.000000Z-00000000",
+        created_at="2026-10-16T00:00:00.000000Z",
+        label="",
+        holds=True,
+        path="WTF/ABC.lua",
+        confirmed=False,
+        live="missing",
+        differs=True,
+        last_held=None,
+        captured=True,
+        damaged=0,
+        damaged_newer=False,
+        error=None,
+    )
+    assert cli._snapshot_line(facts, "WTF/") == (
+        "In the latest snapshot (20261016T000000.000000Z-00000000, "
+        "2026-10-16T00:00:00.000000Z): it holds WTF/ABC.lua, which could not be confirmed "
+        "to be this file (neither name is on disk, and nothing on this drive shows whether "
+        "it treats the two names as one); the file on disk is missing"
+    )
+
+
+CLOUD_PLACEHOLDER = 0x9000001A  # IO_REPARSE_TAG_CLOUD_A: no name-surrogate bit
+DEDUPLICATED = 0x80000013  # IO_REPARSE_TAG_DEDUP: no name-surrogate bit
+MOUNT_POINT = 0xA0000003  # IO_REPARSE_TAG_MOUNT_POINT, a junction: name surrogate
+
+
+class _ReparseStat:
+    """An `lstat` result as Windows gives it for a reparse point: the real
+    entry's mode, size and identity, with the reparse attribute and tag."""
+
+    def __init__(self, real: os.stat_result, tag: int) -> None:
+        self.st_mode = real.st_mode
+        self.st_size = real.st_size
+        self.st_mtime_ns = real.st_mtime_ns
+        self.st_mtime = real.st_mtime
+        self.st_dev = real.st_dev
+        self.st_ino = real.st_ino
+        self.st_file_attributes = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT
+        self.st_reparse_tag = tag
+
+
+@pytest.mark.parametrize(
+    ("tag", "link"),
+    [
+        pytest.param(CLOUD_PLACEHOLDER, False, id="constructed-onedrive-placeholder"),
+        pytest.param(DEDUPLICATED, False, id="constructed-deduplicated"),
+        pytest.param(MOUNT_POINT, True, id="constructed-junction"),
+    ],
+)
+def test_only_a_name_surrogate_reparse_point_is_a_link(
+    root: Path, flavor: Path, monkeypatch: pytest.MonkeyPatch, tag: int, link: bool
+) -> None:
+    """M13-32 item 5. Constructed: the account folder on the way to
+    `Syndicator.lua` is a Windows reparse point, its attributes stood in so
+    this runs on any system. A cloud placeholder or a deduplicated file holds
+    real content and is no link; a junction (name surrogate) is one, as
+    snapshot, `gaps` and `tree --install` count them."""
+    account = flavor / "WTF" / "Account" / ACCOUNT
+    real_lstat = Path.lstat
+
+    def lstat(self: Path) -> Any:
+        st = real_lstat(self)
+        return _ReparseStat(st, tag) if self == account else st
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+    folder, is_link, placeholder = cli._path_kind(
+        root,
+        cli.layout.Layout.for_flavor(install.discover(root).flavors[0], root).classify(SYNDICATOR),
+        SYNDICATOR,
+    )
+    assert (folder, is_link, placeholder) == (False, link, not link)
+    report = explained(SYNDICATOR)
+    if link:
+        assert report.verdict.restorable is None
+        assert report.stat is None
+    else:
+        # Walked and described, but the write gate refuses every reparse
+        # point, so nothing promises a write (coordinator ruling on #215).
+        assert report.verdict.restorable is False
+        assert report.stat is not None and report.stat.kind == "file"
+
+
+def test_a_file_under_a_onedrive_placeholder_promises_no_write(
+    root: Path, flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M13-32, the ruling on #215. Constructed: the account folder is a
+    OneDrive cloud placeholder (attributes stood in, so this runs on any
+    system), and `Syndicator.lua` differs from the snapshot's copy. It gets
+    the usual words with the placeholder clause, `restorable` False and no
+    `snap restore` or `snap create` hint, because `guard` refuses to write
+    through any reparse point."""
+    ok("snap", "create")
+    data = bytearray((flavor / SYNDICATOR).read_bytes())
+    data[0] ^= 1
+    (flavor / SYNDICATOR).write_bytes(bytes(data))
+    account = flavor / "WTF" / "Account" / ACCOUNT
+    real_lstat = Path.lstat
+
+    def lstat(self: Path) -> Any:
+        st = real_lstat(self)
+        return _ReparseStat(st, CLOUD_PLACEHOLDER) if self == account else st
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+    report = explained(SYNDICATOR)
+    assert report.verdict.level == "gate"
+    assert report.verdict.restorable is False
+    assert report.verdict.words == (
+        "no, not here: the file map says it goes through wowlab's write gate, but that gate "
+        "does not write through a Windows reparse point that is not a link (for example a "
+        "cloud placeholder, a deduplicated or a compressed file), or inside one"
+    )
+    assert report.snapshot is not None and report.snapshot.live == "differs"
+    assert not any(h.argv[:1] == ["snap"] for h in report.hints), [h.command for h in report.hints]
+    text = ok("explain", SYNDICATOR).stdout
+    assert f"  edit:         {report.verdict.words}\n" in text
+    assert "snap restore" not in text

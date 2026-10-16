@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import unicodedata
 from typing import Any, Literal
 
@@ -49,6 +50,17 @@ _LINK_WORDS = (
     "and a restore does not put it back"
 )
 _TIER_B_WORDS = "; unsupported by Blizzard, a patch can reset it"
+_REPARSE_NOT_LINK = (
+    "a Windows reparse point that is not a link (for example a cloud placeholder, "
+    "a deduplicated or a compressed file), or inside one"
+)
+_PLACEHOLDER_WORDS = f"; {_REPARSE_NOT_LINK}: wowlab's write gate does not write through these"
+# At the gate level the usual words open with "yes"; under such a reparse
+# point they open with this instead, and keep their other suffixes.
+_PLACEHOLDER_GATE_WORDS = (
+    "no, not here: the file map says it goes through wowlab's write gate, but that gate "
+    f"does not write through {_REPARSE_NOT_LINK}"
+)
 _UNCLASSIFIED_RESTORED = (
     "; a whole snapshot restore puts it back like any file here (it skips only Edit `no` files)"
 )
@@ -146,6 +158,22 @@ def _gate_writes(rel: str) -> bool:
     return len(parts) >= 2
 
 
+# ─── the write gate's link rule, copied ──────────────────────────────────────
+# A copy of `guard._is_link`, for the same reason as the path rule above:
+# `test_verdict.py::test_gate_refuses_stat_agrees_with_the_write_gate` fails
+# when the two drift apart. The gate refuses every Windows reparse point,
+# while `snapshot` and `gaps` call only a name surrogate a link; the ones in
+# between (cloud placeholders, deduplicated files) are walked and described
+# but never written.
+
+
+def gate_refuses_stat(st: os.stat_result) -> bool:
+    """Whether the write gate refuses a path whose `lstat` is `st` (or a
+    path under it) as a link: `guard._is_link(st)`."""
+    attributes = int(getattr(st, "st_file_attributes", 0))
+    return stat.S_ISLNK(st.st_mode) or bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+
 # ─── the verdict ─────────────────────────────────────────────────────────────
 
 
@@ -161,7 +189,9 @@ class Verdict(BaseModel):
     last word on a `server_may_replace` file: the server may replace it again
     at the next login. `None` for every folder, whatever its level: a folder
     is judged by the files under it. `None` for a symlink or junction too, which
-    a snapshot never captures.
+    a snapshot never captures. `False` for a file at or under a Windows
+    reparse point that is not a link (a cloud placeholder, a deduplicated or
+    compressed file): the gate refuses to write through any reparse point.
 
     `server_may_replace`: the Edit cell is `gate (server may replace)`, so a
     reader never has to parse `words` for it.
@@ -174,6 +204,11 @@ class Verdict(BaseModel):
     `link`: the path is a symlink or junction, or lies inside one. The level
     stays the row's, but the label is `LINK_LABEL`: wowlab never follows it
     or writes through it.
+
+    `placeholder` (M13-32): the path is, or lies under, a Windows reparse
+    point that is not a link (a cloud placeholder, a deduplicated or
+    compressed file). The level stays the row's, but the gate refuses to
+    write through it, so the label is the `no` label. `link` wins.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -185,6 +220,7 @@ class Verdict(BaseModel):
     label: str = ""
     server_label: str | None = None
     link: bool = False
+    placeholder: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -194,6 +230,8 @@ class Verdict(BaseModel):
             level = data.get("level")
             if data.get("link") is True:
                 data.setdefault("label", LINK_LABEL)
+            elif data.get("placeholder") is True:
+                data.setdefault("label", LABELS["no"])
             elif isinstance(level, str) and level in LABELS:
                 data.setdefault("label", LABELS[level])
             data.setdefault(
@@ -203,10 +241,16 @@ class Verdict(BaseModel):
 
     @model_validator(mode="after")
     def _check_labels(self) -> Verdict:
-        expected = LINK_LABEL if self.link else LABELS[self.level]
+        if self.link:
+            expected = LINK_LABEL
+        elif self.placeholder:
+            expected = LABELS["no"]
+        else:
+            expected = LABELS[self.level]
         if self.label != expected:
             raise ValueError(
-                f"label {self.label!r} is not the label of level {self.level!r} (link: {self.link})"
+                f"label {self.label!r} is not the label of level {self.level!r} "
+                f"(link: {self.link}, placeholder: {self.placeholder})"
             )
         if self.server_label != (SERVER_LABEL if self.server_may_replace else None):
             raise ValueError(
@@ -276,13 +320,34 @@ def verdict_of(
     *,
     folder: bool = False,
     link: bool = False,
+    placeholder: bool = False,
 ) -> Verdict:
     """The verdict for `path` (relative to `base`, `/`-separated), classified
     as `entry`; `None` is a path with no file-map row. `folder`: the path is
     a folder (a row at level `folder` is one whatever the caller says).
     `link`: the path is a symlink or junction, or lies inside one. The gate
     refuses any path through a link and a snapshot never captures one, so
-    the words are the link words at every level (with the tier suffix)."""
+    the words are the link words at every level (with the tier suffix).
+    `placeholder` (M13-32): the path is, or lies under, a reparse point that
+    is no link (`gate_refuses_stat` but not a name surrogate): the words are
+    the usual ones plus a clause saying the gate does not write through it,
+    and a file is not `restorable`."""
+    if placeholder and not link:
+        # The words as for a path the gate never writes (base None), the
+        # level and whether `restorable` has an answer as for this one.
+        plain = verdict_of(entry, base, path, folder=folder)
+        words = verdict_of(entry, None, path, folder=folder).words
+        if words.startswith(_GATE_WORDS):
+            words = _PLACEHOLDER_GATE_WORDS + words[len(_GATE_WORDS) :]
+        else:
+            words += _PLACEHOLDER_WORDS
+        fields = plain.model_dump(exclude={"label"})
+        fields.update(
+            restorable=None if plain.restorable is None else False,
+            words=words,
+            placeholder=True,
+        )
+        return Verdict(**fields)
     can_restore = restorable(base, path)
     if link:
         tier = entry.tier if entry is not None else ""
