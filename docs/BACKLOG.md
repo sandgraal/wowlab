@@ -340,6 +340,7 @@ Cover these:
 - **Detail pane, hints.** Each hint has a copy button. The copied text is exactly `hint.command`, and the page says which shell syntax it uses (`hint.shell`).
 - **Preview.** It runs only the entry's `views[0]` through `/api/run`, with exactly its `command` and `params`. No view means no Preview button. A refused command (`--yes`, `looks page --out`, `log tail --follow`) is never offered.
 - **Rendering.** Everything is drawn with textContent only, including hostile names in gaps, hints and previews. No external request is made.
+- **Placeholder badge.** A verdict with `placeholder: true` (M13-32) gets a badge class of its own, the way `link` gets `.badge-link`. Its colour then matches its "wowlab won't touch" label rather than the row's level, in both the tree and the detail pane.
 
 **Acceptance:**
 - The graders fail on `main` for the stated reason.
@@ -349,7 +350,7 @@ Cover these:
 ---
 
 ## [ ] M13-27 — The explorer view, second stage: whole install, gaps, snapshot facts, previews
-**Size:** M · **Depends on:** M13-22, M13-23, M13-25, M13-27T, M13-32
+**Size:** M · **Depends on:** M13-22, M13-23, M13-25, M13-27T, M13-32, M13-33
 
 This builds on M13-25's view, per §15.6.
 
@@ -589,5 +590,23 @@ The owner ruled on 2026-10-16 that what M13-23's last fix round left, if it was 
 **Acceptance:**
 - A labelled constructed test for each of items 1 and 3.
 - The `explain` text from before M13-23 stays an exact prefix, and the JSON stays additive. Item 2 changes only the clause M13-23 added.
+- `make ci` green.
+- Reviewed by `domain-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-33 — `tree --explain`: a path under a non-link reparse point is not restorable
+**Size:** S · **Depends on:** M13-32
+
+Found while building M13-32 (#215), 2026-10-16. `explain` judges a path at or under a Windows reparse point that is not a link (a OneDrive cloud placeholder, a deduplicated file, a file compressed with `compact /EXE`) the way the write gate does: `restorable` is False, the label is "wowlab won't touch", and the words say the gate does not write through these. `tree --explain` and `tree --install --explain` still judge such a path from its name alone, so they mark it restorable.
+
+Carry each entry's reparse status through the inventory walk, the way `gaps` carries link status. Then pass `placeholder=True` to `verdict_of` for the entry and for everything under it. Use the same `verdict.gate_refuses_stat` that M13-32 checks against `guard._is_link`; guard.py does not change. Nothing is read through a link.
+
+M13-27 shows `tree` verdicts in the explorer, so this must land before it.
+
+**Acceptance:**
+- A constructed test that fakes the reparse tags, so it runs on any OS. A placeholder folder and a file inside it get `restorable` False and the placeholder label in `tree --explain --json` and in `tree --install --explain --json`, matching `explain` for the same path.
+- A junction or symlink is unchanged.
+- The text output of paths with no reparse point stays byte-identical.
 - `make ci` green.
 - Reviewed by `domain-reviewer` and `code-reviewer`.
