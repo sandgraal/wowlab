@@ -527,3 +527,16 @@ Found in the domain review of #195 (M13-21), on 2026-10-15. `snap create --scree
 - `--json` validates against the restore plan model.
 - `make ci` green.
 - Reviewed by `domain-reviewer`, `security-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-31 — The `0,`-list CPU probe fails on loaded macOS runners
+**Size:** S · **Depends on:** M13-01
+
+Found on 2026-10-16. `lab/core/tests/review/test_m10_04_semicolon_list_at_budget_misses_time_target.py::test_constructed_control_zeros_at_the_budget_are_inside_the_target` failed on `lab (macos)` in two unrelated PRs: #204 (10.16 CPU s) and #206 (10.74 CPU s). Neither PR touches `luadata.py`, and both passed when re-run. The control's CPU budget does not allow for a loaded runner. Apply the same treatment M11-28 and M13-17T gave the other timing probes: a bound that scales with a calibration run, or a looser limit for the control only. Keep the defect case strict. `luadata.py` is load-bearing, but this is a review probe, not a grader. Do not edit any grader.
+
+**Acceptance:**
+- 20 consecutive runs on `lab (macos)` pass.
+- The probe still fails against a constructed parser that is twice as slow.
+- `make ci` green.
+- Reviewed by `code-reviewer`.
