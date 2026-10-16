@@ -66,6 +66,13 @@ does it fall back to a saved look's build or the one fully cached build.
 HTML file (`lookspage`), under the user data directory or at `--out`, never in
 an install: every verdict on the page is computed here and only shown there.
 
+`explain` (M13-23, §15.6) also reports a path's size and modification time,
+the latest snapshot holding it and whether the live file differs (only that
+one file is hashed), the read commands that decode it (`views`, argv from
+`_VIEWS`, keyed by file-map entry id), and copyable command text (`hints`)
+that it never runs. A link, or a path inside one, gets no stat, no snapshot
+facts, no views and no restore hint; a folder gets no restore hint.
+
 `char show` (§13.1, M11-04) reads one character's `WowLab.lua`, written by
 the lab-addon, through `wowlab_core.labaddon`, and the account's
 `WowLab.lua` beside it; read only. Without `--character` it takes the
@@ -94,6 +101,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import stat
 import sys
 import time
@@ -130,6 +138,7 @@ from wowlab_core import (
     lookspage,
     lookstore,
     luadata,
+    pathfacts,
     process,
     profiles,
     snapshot,
@@ -1764,12 +1773,205 @@ def _plain(markdown: str) -> str:
     return markdown.replace("**", "")
 
 
+class ExplainView(_Out):
+    """An existing read command that decodes this kind of file (M13-23).
+
+    `command` is the leaf's path in the command tree and `params` its Click
+    parameter names with their values, the shape `wowlab ui` runs; `argv` is
+    the same run as `wowlab` arguments. Neither carries `--json`: a caller
+    adds it. No view names a command that declares `--yes`, `log tail
+    --follow` or `looks page --out`."""
+
+    command: list[str]
+    params: dict[str, str]
+    argv: list[str]
+
+
+class ExplainHint(_Out):
+    """Command text to copy (M13-23); `explain` never runs it. `command` is
+    shell-quoted (`shlex.join`); every path in it is inside the install."""
+
+    command: str
+    does: str
+
+
 class ExplainReport(_Out):
     """`wowlab explain --json`."""
 
     query: str
     result: Annotated[layout.Classified | layout.Unclassified, Field(discriminator="status")]
     verdict: Verdict  # M13-21; level "unclassified" when there is no file-map row
+    # M13-23. None: absent, a link or inside one, or not inside the install.
+    stat: pathfacts.PathStat | None
+    # M13-23. None: not a file in a flavor folder (a folder, a link, an
+    # install-root path); else the latest snapshot holding it, if any.
+    snapshot: pathfacts.SnapshotFacts | None
+    views: list[ExplainView]  # M13-23; [] for a link or a path with no file-map row
+    hints: list[ExplainHint]  # M13-23
+
+
+# The option each view parameter is spelled with; `file` is `sv dump`'s
+# positional argument. A test parses every view's argv with the Click tree.
+_VIEW_OPTIONS = {
+    "scope": "--scope",
+    "account": "--account",
+    "character": "--character",
+    "root": "--root",
+    "flavor": "--flavor",
+}
+
+
+class _At(NamedTuple):
+    """Where a classified path is, for the view table."""
+
+    parts: tuple[str, ...]  # relative to its base
+    absolute: str  # the path itself, inside the install
+    flavor: str | None  # the flavor folder, for a flavor path
+
+
+_ViewSpec = tuple[tuple[str, ...], dict[str, str]]
+
+
+def _account(at: _At) -> dict[str, str]:
+    """`--account` for a path under `WTF/Account/<ACCOUNT>/`."""
+    return {"account": at.parts[2]}
+
+
+def _character(at: _At) -> dict[str, str]:
+    """`--account` and `--character <realm folder>/<character folder>` for a
+    path under `WTF/Account/<ACCOUNT>/<Realm>/<Character>/`."""
+    return {"account": at.parts[2], "character": f"{at.parts[3]}/{at.parts[4]}"}
+
+
+def _flavor(at: _At) -> dict[str, str]:
+    return {"flavor": at.flavor} if at.flavor is not None else {}
+
+
+def _install_show(at: _At) -> list[_ViewSpec]:
+    return [(("install", "show"), {})]
+
+
+def _sv_dump(at: _At) -> list[_ViewSpec]:
+    return [(("sv", "dump"), {"file": at.absolute})]
+
+
+def _addons_list(at: _At) -> list[_ViewSpec]:
+    return [(("addons", "list"), _flavor(at))]
+
+
+def _character_wtf(at: _At) -> list[_ViewSpec]:
+    name = at.parts[-1].casefold()
+    who = _flavor(at) | _character(at)
+    if name == "config-cache.wtf":
+        return [(("cvar", "list"), {"scope": "character"} | who)]
+    if name == "bindings-cache.wtf":
+        return [(("binds", "list"), who)]
+    if name == "macros-cache.txt":
+        return [(("macros", "list"), who)]
+    return []
+
+
+# File-map entry id -> the existing read commands that decode such a file
+# (§15.6). No decoder is written for a view: an entry no command reads has
+# none. `log tail` decodes the newest combat log, which a `combat-log` file
+# may not be; it never follows.
+_VIEWS: dict[str, Callable[[_At], list[_ViewSpec]]] = {
+    "build-info": _install_show,
+    "flavor-folder": _install_show,
+    "flavor-info": _install_show,
+    "config-wtf": lambda at: [(("cvar", "list"), _flavor(at))],
+    "account-blizzard-savedvariables": _sv_dump,
+    "account-savedvariables": _sv_dump,
+    "character-savedvariables": _sv_dump,
+    "savedvariables-backup": _sv_dump,
+    "account-config-cache": lambda at: [
+        (("cvar", "list"), {"scope": "account"} | _flavor(at) | _account(at))
+    ],
+    "account-bindings-cache": lambda at: [(("binds", "list"), _flavor(at) | _account(at))],
+    "account-macros-cache": lambda at: [(("macros", "list"), _flavor(at) | _account(at))],
+    "character-wtf-config": _character_wtf,
+    "addons-folder": _addons_list,
+    "addon": _addons_list,
+    "blizzard-addon-export": _addons_list,
+    "combat-log": lambda at: [(("log", "tail"), _flavor(at))],
+}
+
+
+def _view(command: tuple[str, ...], params: dict[str, str]) -> ExplainView:
+    argv = list(command)
+    if "file" in params:
+        argv.append(params["file"])
+    for name, option in _VIEW_OPTIONS.items():
+        if name in params:
+            argv += [option, params[name]]
+    return ExplainView(command=list(command), params=params, argv=argv)
+
+
+def _views(entry_id: str, at: _At, root: str | None) -> list[ExplainView]:
+    """The views of a path classified as `entry_id`. `root`: the install
+    root, when `explain` was given `--root`, so each view reads the same
+    install."""
+    build = _VIEWS.get(entry_id)
+    if build is None:
+        return []
+    with_root = {"root": root} if root is not None else {}
+    return [_view(command, params | with_root) for command, params in build(at)]
+
+
+def _hint(argv: Sequence[str], does: str) -> ExplainHint:
+    return ExplainHint(command=shlex.join(["wowlab", *argv]), does=does)
+
+
+def _hints(
+    verdict: Verdict,
+    facts: pathfacts.SnapshotFacts | None,
+    rel: str,
+    flavor: str | None,
+    root: str | None,
+    views: Sequence[ExplainView],
+) -> list[ExplainHint]:
+    """Copyable commands for one path. A restore hint only for a file the
+    write gate would write (`restorable` is True: never a folder or a link)
+    whose latest snapshot copy differs from the live file or is all that is
+    left of it; a first-snapshot hint for such a file no snapshot holds."""
+    hints: list[ExplainHint] = []
+    with_root = ["--root", root] if root is not None else []
+    if verdict.restorable is True and facts is not None and facts.error is None:
+        if facts.snapshot_id is not None and facts.live in ("differs", "missing"):
+            does = (
+                f"put back the copy in snapshot {facts.snapshot_id}; it shows the plan and asks "
+                "first, and `wowlab undo` reverses it"
+            )
+            if verdict.server_may_replace:
+                does += "; the server may replace it again at the next login"
+            hints.append(
+                _hint(["snap", "restore", facts.snapshot_id, "--paths", rel, *with_root], does)
+            )
+        elif facts.snapshot_id is None and flavor is not None:
+            hints.append(
+                _hint(
+                    ["snap", "create", "--flavor", flavor, *with_root],
+                    "take a snapshot, so a later change to this file can be put back",
+                )
+            )
+    hints.extend(_hint(v.argv, "decode it") for v in views)
+    return hints
+
+
+def _snapshot_line(facts: pathfacts.SnapshotFacts) -> str:
+    if facts.error is not None:
+        return (
+            f"In the latest snapshot: unknown, the snapshot store could not be read ({facts.error})"
+        )
+    if facts.snapshot_id is None:
+        return "In the latest snapshot: not held; no snapshot of this flavor folder holds it"
+    live = {
+        "same": "the live file is the same",
+        "differs": "the live file differs",
+        "missing": "the live file is missing",
+        "unreadable": "the live file could not be read",
+    }[facts.live or "unreadable"]
+    return f"In the latest snapshot ({facts.snapshot_id}, {facts.created_at}): {live}"
 
 
 def _path_kind(
@@ -1855,16 +2057,22 @@ def explain(
     if judged is None:
         judged = result
     folder, link = _path_kind(inst.root, judged, path)
+    verdict = verdict_of(
+        judged.entry if isinstance(judged, layout.Classified) else None,
+        judged.base,
+        judged.path,
+        folder=folder,
+        link=link,
+    )
+    stat_, facts, views, hints = _detail(inst, judged, verdict, root, folder=folder, link=link)
     report = ExplainReport(
         query=path,
         result=result,
-        verdict=verdict_of(
-            judged.entry if isinstance(judged, layout.Classified) else None,
-            judged.base,
-            judged.path,
-            folder=folder,
-            link=link,
-        ),
+        verdict=verdict,
+        stat=stat_,
+        snapshot=facts,
+        views=views,
+        hints=hints,
     )
     if json_out:
         _emit(report)
@@ -1874,6 +2082,7 @@ def explain(
         _say(f"{path}: no file-map row{where}: {result.reason}")
         if len(inst.flavors) > 1 and flavor is None and not given.is_absolute():
             _say("  (with several flavors, pass --flavor to read PATH inside one of them)")
+        _say_detail(report)
         return
     e = result.entry
     base = f"in flavor folder {result.flavor_folder}" if result.base == "flavor" else "install root"
@@ -1884,6 +2093,49 @@ def explain(
     _say(f"  tier:         {tier_words(e.tier)}")
     _say(f"  read by:      {e.module}")
     _say(f"  file-map row: {e.id} ({e.doc_path})")
+    _say_detail(report)
+
+
+def _say_detail(report: ExplainReport) -> None:
+    """The lines M13-23 adds after the ones `explain` printed before it."""
+    if report.snapshot is not None:
+        _say(f"  {_snapshot_line(report.snapshot)}")
+    for h in report.hints:
+        _say(f"  hint: {h.command}  # {h.does}")
+
+
+def _detail(
+    inst: install.Install,
+    judged: layout.Classified | layout.Unclassified,
+    verdict: Verdict,
+    root: Path | None,
+    *,
+    folder: bool,
+    link: bool,
+) -> tuple[
+    pathfacts.PathStat | None, pathfacts.SnapshotFacts | None, list[ExplainView], list[ExplainHint]
+]:
+    """`explain`'s stat, snapshot facts, views and hints for `judged`. Nothing
+    for a path outside the install or reached through a link: no `lstat`
+    through it, no hash, no decoder pointed at it, no restore hint."""
+    if judged.base is None or link:
+        return None, None, [], []
+    under = [judged.flavor_folder] if judged.base == "flavor" and judged.flavor_folder else []
+    parts = tuple(p for p in judged.path.split("/") if p)
+    target = Path(inst.root).joinpath(*under, *parts)
+    given_root = str(inst.root) if root is not None and str(root) != "" else None
+    stat_ = pathfacts.path_stat(target)
+    facts: pathfacts.SnapshotFacts | None = None
+    if judged.base == "flavor" and judged.flavor_folder and parts and not folder:
+        facts = pathfacts.snapshot_facts(
+            snapshot.SnapshotStore(), Path(inst.root), judged.flavor_folder, "/".join(parts)
+        )
+    views: list[ExplainView] = []
+    if isinstance(judged, layout.Classified):
+        at = _At(parts=parts, absolute=str(target), flavor=judged.flavor_folder)
+        views = _views(judged.entry.id, at, given_root)
+    hints = _hints(verdict, facts, "/".join(parts), judged.flavor_folder, given_root, views)
+    return stat_, facts, views, hints
 
 
 # ─── sv ──────────────────────────────────────────────────────────────────────
