@@ -3,17 +3,27 @@
 The first test walks the packaged `filemap.toml`, so a new Edit cell outside
 the fixed mapping fails it. The rest use rows from the packaged map. The
 constructed inputs are Edit cells that are not in it and path strings held
-to the write gate's rule (no filesystem), labelled `constructed`.
+to the write gate's rule (no filesystem), labelled `constructed`. The
+link tests (M13-25 round 2) copy the captured tree (`fixtures/macos/`) into
+`tmp_path` and add constructed symlinks; nothing touches a real install.
 """
 
 from __future__ import annotations
 
-import pytest
+import json
+import shutil
+from pathlib import Path
+from typing import Any
 
-from wowlab_core import filemap, guard, verdict
+import pytest
+from typer.testing import CliRunner
+
+from wowlab_core import cli, filemap, guard, verdict
 from wowlab_core.filemap import FileMapEntry
 from wowlab_core.verdict import Verdict, edit_level, restorable, tier_words, verdict_of
 
+_CAPTURE = Path(__file__).resolve().parent / "fixtures" / "macos"
+_FLAVOR = "_classic_beta_"  # the provenance row's flavor folder; tests may name it (L6)
 _GATE = "yes, through wowlab's write gate only, with the client closed"
 _UNKNOWN = "no file-map row; wowlab does not know what this file is"
 _UNKNOWN_RESTORED = (
@@ -360,7 +370,31 @@ def test_a_linked_server_may_replace_row_keeps_the_fact() -> None:
     entry = next(e for e in filemap.load().entries if e.edit == "gate (server may replace)")
     v = verdict_of(entry, "flavor", "WTF/x", link=True)
     assert v.server_may_replace is True
-    assert v.words == _LINK
+    # Review of #206 round 3: the words keep the sync caveat the badge shows.
+    assert v.words == _LINK + _SERVER
+
+
+_SERVER = "; the server may replace it at login (sync settings: wowlab doctor)"
+
+
+@pytest.mark.parametrize(
+    "entry_id",
+    [e.id for e in filemap.load().entries if e.edit == "gate (server may replace)"],
+)
+def test_a_linked_server_row_says_the_server_may_replace_it(entry_id: str) -> None:
+    """Every `gate (server may replace)` row, linked: the link words, then the
+    server caveat, then the tier-B suffix when the row is tier B."""
+    entry = _entry(entry_id)
+    linked = verdict_of(entry, "flavor", "WTF/Account/A/x", link=True)
+    tier_b = "; unsupported by Blizzard, a patch can reset it" if entry.tier == "B" else ""
+    assert linked.words == _LINK + _SERVER + tier_b
+    assert linked.server_label == "server may overwrite"
+    unlinked = verdict_of(entry, "flavor", "WTF/Account/A/x")
+    assert unlinked.words.endswith(_SERVER + tier_b)
+    assert unlinked.words.count(_SERVER) == 1
+    # A linked row without the caveat gets no server words.
+    plain = verdict_of(_entry("config-wtf"), "flavor", "WTF/Config.wtf", link=True)
+    assert _SERVER not in plain.words
 
 
 def test_tier_words_keep_an_unknown_tier_as_it_is() -> None:
@@ -455,3 +489,139 @@ def test_a_gate_row_under_a_placeholder_says_no_and_keeps_its_suffixes() -> None
             )
         if entry.tier == "B":
             assert under.words.endswith("; unsupported by Blizzard, a patch can reset it")
+
+
+# ─── the badge label (M13-25, owner 2026-10-16) ──────────────────────────────
+
+_OWNER_LABELS = {
+    "gate": "wowlab can edit",
+    "no": "wowlab won't touch",
+    "folder": "folder",
+    "not_applicable": "not used",
+    "unclassified": "unknown",
+}
+
+
+def test_every_level_has_the_owners_label() -> None:
+    assert verdict.LABELS == _OWNER_LABELS
+    assert verdict.SERVER_LABEL == "server may overwrite"
+
+
+def test_every_row_and_no_row_carry_their_label() -> None:
+    for entry in filemap.load().entries:
+        for folder in (False, True):
+            found = verdict_of(entry, entry.base, "WTF/x", folder=folder)
+            assert found.label == _OWNER_LABELS[found.level], entry.id
+            expected = "server may overwrite" if found.server_may_replace else None
+            assert found.server_label == expected, entry.id
+    unknown = verdict_of(None, "flavor", "WTF/x")
+    assert (unknown.label, unknown.server_label, unknown.link) == ("unknown", None, False)
+    linked = verdict_of(None, "flavor", "WTF/x", link=True)
+    assert (linked.label, linked.server_label, linked.link) == (_LINK_LABEL, None, True)
+
+
+# ─── a link's label (M13-25 round 2) ─────────────────────────────────────────
+
+_LINK_LABEL = "a link; wowlab won't follow it"
+
+
+def test_a_link_gets_the_link_label_at_every_row() -> None:
+    """A link keeps its row's level but never reads as editable: the gate
+    refuses any path through a link, whatever the row says."""
+    assert verdict.LINK_LABEL == _LINK_LABEL
+    for entry in filemap.load().entries:
+        for folder in (False, True):
+            v = verdict_of(entry, "flavor", "Interface/AddOns/X", folder=folder, link=True)
+            assert v.link is True, entry.id
+            assert v.label == _LINK_LABEL, entry.id
+            assert v.level == edit_level(entry.edit), entry.id
+            assert "wowlab can edit" not in (v.label, v.server_label), entry.id
+            plain = verdict_of(entry, "flavor", "Interface/AddOns/X", folder=folder)
+            assert plain.link is False and plain.label == _OWNER_LABELS[plain.level], entry.id
+
+
+def _linked_install(tmp_path: Path) -> Path:
+    """The captured tree (`fixtures/macos/`) with a symlinked addon folder
+    under `Interface/AddOns/` and a linked folder holding a file under
+    `WTF/` (both constructed)."""
+    root = tmp_path / "wow"
+    root.mkdir()
+    shutil.copy2(_CAPTURE / ".build.info", root / ".build.info")
+    flavor = root / _FLAVOR
+    shutil.copytree(_CAPTURE / "forever", flavor)
+    outside = tmp_path / "outside-constructed"
+    (outside / "LinkedAddon").mkdir(parents=True)
+    (outside / "LinkedAddon" / "LinkedAddon.toc").write_text("## Interface: 1\n", encoding="utf-8")
+    (outside / "LinkedWTF").mkdir()
+    (outside / "LinkedWTF" / "Config.wtf").write_text('SET a "1"\n', encoding="utf-8")
+    try:
+        (flavor / "Interface" / "AddOns" / "LinkedAddon").symlink_to(
+            outside / "LinkedAddon", target_is_directory=True
+        )
+        (flavor / "WTF" / "Linked").symlink_to(outside / "LinkedWTF", target_is_directory=True)
+    except OSError:
+        pytest.skip("this system does not let the test create a symlink")
+    return root
+
+
+def _cli_json(*args: str) -> Any:
+    result = CliRunner().invoke(cli.app, [*args, "--json"])
+    assert result.exit_code == 0, result.output
+    return json.loads(result.stdout)
+
+
+def test_a_symlinked_addon_is_drawn_as_a_link_constructed(tmp_path: Path) -> None:
+    root = _linked_install(tmp_path)
+    items = {i["path"]: i for i in _cli_json("tree", "--root", str(root), "--explain")["items"]}
+    linked = items["Interface/AddOns/LinkedAddon"]
+    assert linked["kind"] == "symlink"
+    assert linked["verdict"]["link"] is True
+    assert linked["verdict"]["label"] == _LINK_LABEL
+    assert linked["verdict"]["words"].startswith("a link, or inside one")
+    assert items["Interface/AddOns/DBM-Brawlers"]["verdict"]["link"] is False
+    report = _cli_json("explain", "--root", str(root), f"{_FLAVOR}/Interface/AddOns/LinkedAddon")
+    assert (report["verdict"]["link"], report["verdict"]["label"]) == (True, _LINK_LABEL)
+
+
+def test_a_file_inside_a_linked_folder_is_a_link_constructed(tmp_path: Path) -> None:
+    root = _linked_install(tmp_path)
+    report = _cli_json("explain", "--root", str(root), f"{_FLAVOR}/WTF/Linked/Config.wtf")
+    assert report["verdict"]["link"] is True
+    assert report["verdict"]["label"] == _LINK_LABEL
+    assert report["verdict"]["restorable"] is None
+    direct = _cli_json("explain", "--root", str(root), f"{_FLAVOR}/WTF/Config.wtf")
+    assert (direct["verdict"]["link"], direct["verdict"]["label"]) == (False, "wowlab can edit")
+
+
+def test_the_label_is_additive_and_keeps_the_words() -> None:
+    found = verdict_of(filemap.load().entry("config-wtf"), "flavor", "WTF/Config.wtf")
+    assert list(found.model_dump()) == [
+        "level",
+        "restorable",
+        "server_may_replace",
+        "words",
+        "label",
+        "server_label",
+        "link",
+    ]
+    assert found.words == _GATE
+    assert found.link is False
+    assert Verdict.model_validate_json(found.model_dump_json()) == found
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"level": "gate", "label": "wowlab won't touch"},
+        {"level": "no", "label": "wowlab can edit"},
+        {"level": "gate", "server_may_replace": False, "server_label": "server may overwrite"},
+        {"level": "gate", "server_may_replace": True, "server_label": None},
+        {"level": "gate", "link": True, "label": "wowlab can edit"},
+        {"level": "gate", "link": False, "label": "a link; wowlab won't follow it"},
+    ],
+)
+def test_a_label_that_disagrees_is_refused_constructed(fields: dict[str, object]) -> None:
+    data: dict[str, object] = {"restorable": True, "server_may_replace": False, "words": "w"}
+    data.update(fields)
+    with pytest.raises(ValueError):
+        Verdict.model_validate(data)

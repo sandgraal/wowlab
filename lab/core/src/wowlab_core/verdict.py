@@ -15,17 +15,34 @@ import os
 import re
 import stat
 import unicodedata
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from wowlab_core.filemap import FileMapEntry
 
 Level = Literal["gate", "no", "folder", "not_applicable", "unclassified"]
 
+LABELS: dict[str, str] = {
+    "gate": "wowlab can edit",
+    "no": "wowlab won't touch",
+    "folder": "folder",
+    "not_applicable": "not used",
+    "unclassified": "unknown",
+}
+"""Each level in a player's words, for a badge (owner, 2026-10-16)."""
+
+LINK_LABEL = "a link; wowlab won't follow it"
+"""The label of a symlink or junction, or a path inside one, at any level:
+the gate refuses it whatever its row says (M13-25 round 2)."""
+
+SERVER_LABEL = "server may overwrite"
+"""The second marker on a file the server may replace at login."""
+
 _GATE = "gate"
 _GATE_WORDS = "yes, through wowlab's write gate only, with the client closed"
 _SERVER_MAY_REPLACE = "(server may replace)"
+_SERVER_WORDS = "; the server may replace it at login (sync settings: wowlab doctor)"
 _UNCLASSIFIED_WORDS = "no file-map row; wowlab does not know what this file is"
 _UNCLASSIFIED_FOLDER_WORDS = "no file-map row; wowlab does not know what this folder is"
 _LINK_WORDS = (
@@ -178,6 +195,15 @@ class Verdict(BaseModel):
 
     `server_may_replace`: the Edit cell is `gate (server may replace)`, so a
     reader never has to parse `words` for it.
+
+    `label`: the level in a player's words, for a badge (M13-25, owner
+    2026-10-16). `server_label`: the words for a second marker when
+    `server_may_replace`, else `None`. Both follow from the fields above and
+    are filled in when not given; a value that disagrees is refused.
+
+    `link`: the path is a symlink or junction, or lies inside one. The level
+    stays the row's, but the label is `LINK_LABEL`: wowlab never follows it
+    or writes through it.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -186,6 +212,37 @@ class Verdict(BaseModel):
     restorable: bool | None
     server_may_replace: bool
     words: str
+    label: str = ""
+    server_label: str | None = None
+    link: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fill_labels(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data = dict(data)
+            level = data.get("level")
+            if data.get("link") is True:
+                data.setdefault("label", LINK_LABEL)
+            elif isinstance(level, str) and level in LABELS:
+                data.setdefault("label", LABELS[level])
+            data.setdefault(
+                "server_label", SERVER_LABEL if data.get("server_may_replace") else None
+            )
+        return data
+
+    @model_validator(mode="after")
+    def _check_labels(self) -> Verdict:
+        expected = LINK_LABEL if self.link else LABELS[self.level]
+        if self.label != expected:
+            raise ValueError(
+                f"label {self.label!r} is not the label of level {self.level!r} (link: {self.link})"
+            )
+        if self.server_label != (SERVER_LABEL if self.server_may_replace else None):
+            raise ValueError(
+                f"server_label {self.server_label!r} disagrees with server_may_replace"
+            )
+        return self
 
 
 def edit_level(edit: str) -> Level:
@@ -217,9 +274,7 @@ def _edit_words(edit: str, level: Level, tier: str, *, restorable: bool, folder:
     if level == "gate":
         rest = edit[len(_GATE) :].strip()
         if rest == _SERVER_MAY_REPLACE:
-            words = (
-                f"{_GATE_WORDS}; the server may replace it at login (sync settings: wowlab doctor)"
-            )
+            words = _GATE_WORDS + _SERVER_WORDS
         else:
             words = _GATE_WORDS + (f" {rest}" if rest else "")
     elif level == "no":
@@ -278,13 +333,16 @@ def verdict_of(
     can_restore = restorable(base, path)
     if link:
         tier = entry.tier if entry is not None else ""
+        server = entry is not None and entry.edit == f"{_GATE} {_SERVER_MAY_REPLACE}"
         return Verdict(
             level="unclassified" if entry is None else edit_level(entry.edit),
             restorable=None,
-            server_may_replace=entry is not None and entry.edit == f"{_GATE} {_SERVER_MAY_REPLACE}",
+            server_may_replace=server,
             words=("no file-map row; " if entry is None else "")
             + _LINK_WORDS
+            + (_SERVER_WORDS if server else "")
             + (_TIER_B_WORDS if tier == "B" else ""),
+            link=True,
         )
     if entry is None:
         if folder:
