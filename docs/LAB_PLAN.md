@@ -2938,7 +2938,7 @@ The owner's working names are kept beside the ticket ids.
 | — | M13-24T / M13-24 | `wowlab ui` server: graders, then the server (§15.6, ADR-0029) | test-writer, then implementer |
 | — | M13-25 | The explorer view, first stage: tree, badges, detail (§15.6) | implementer |
 | — | M13-26 | Generic forms for read commands; the parity test (§15.6) | implementer |
-| — | M13-27 | The explorer view, second stage: whole install, gaps, snapshot facts, previews (§15.6) | implementer |
+| — | M13-27T / M13-27 | The explorer view, second stage: whole install, gaps, snapshot facts, previews (§15.6) | test-writer, then implementer |
 
 **v0.1** contains M13-02 to M13-04, M13-09 and M13-10, M13-21 to M13-27
 (*amended 2026-10-15*), and M13-06 if M13-05 has landed. M13-08 ships in v0.2 if it has not landed; v0.1 is not held for

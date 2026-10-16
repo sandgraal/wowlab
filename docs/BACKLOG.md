@@ -328,7 +328,7 @@ Commands that write only to wowlab's own store or user data directory are allowe
 ---
 
 ## [ ] M13-27T — The explorer view, second stage: graders
-**Size:** S–M · **Depends on:** M13-22, M13-23, M13-25 · **[TEST]** (test-writer only)
+**Size:** S–M · **Depends on:** M13-22, M13-23, M13-25, M13-32 · **[TEST]** (test-writer only)
 
 Filed on 2026-10-16. `wowlab_core.ui` is load-bearing, so M13-27 is graders-first. Write expected-failure graders for M13-27's spec, derived from this backlog, §15.6, ADR-0029 with its rulings, and the JSON that M13-22 and M13-23 merged. Extend `test_ui_explorer.py`, which test-writer owns, or add a sibling file. Mark each new grader `xfail(strict=True, reason="M13-27 not implemented")`.
 
