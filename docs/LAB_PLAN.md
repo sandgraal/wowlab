@@ -2943,6 +2943,9 @@ The owner's working names are kept beside the ticket ids.
 **v0.1** contains M13-02 to M13-04, M13-09 and M13-10, M13-21 to M13-27
 (*amended 2026-10-15*), and M13-06 if M13-05 has landed. M13-08 ships in v0.2 if it has not landed; v0.1 is not held for
 it. M13-07 ships only in the form its owner test allows.
+*Amended 2026-10-16 (owner):* v0.1 does not wait for M13-02's human
+Windows run. It ships with Windows marked untested (ADR-0031's platform rule),
+and the CI job stays on.
 
 ### 15.2 What is known, and what is [verify]
 
