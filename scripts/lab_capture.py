@@ -43,10 +43,11 @@ install and scrubs identity from it per `docs/LAB_PLAN.md` §8:
   `WoWCombatLog[-MMDDYY_HHMMSS].txt` is captured, and a compressed, NUL-holding
   or non-UTF-8 log is refused. `--combat-log NAME` (repeatable) captures only
   the named logs instead of the newest;
-- in `.build.info`, the geoip country in the `Tags` cell (`geoip-<CC>?`, where
-  the client was when it last updated) becomes `ZZ`; the region token and the
-  `Branch` column stay. A `geoip` anywhere else, or in a token of another
-  shape, refuses the file (M13-34);
+- in `.build.info`, two country tokens of the `Tags` cell lose their letters:
+  the geoip country (`geoip-<CC>?`, where the client was when it last
+  updated) becomes `ZZ` and the account country (`acct-<CCC>?`) `ZZZ`; the
+  region token and the `Branch` column stay. A `geoip` or `acct` anywhere
+  else, or in a token of another shape, refuses the file (M13-34);
 - a file whose scrubbed bytes or output path still contain an email address,
   a BattleTag, an unmapped player, account, guild or community GUID, a
   surviving identity string in any casing or embedding (CVar names included),
@@ -445,8 +446,8 @@ class Edit:
     offset: int
     old: bytes
     new: bytes
-    # "cvar" | "guid" | "other-guid" | "unit-guid" | "timestamp" | "geoip" | "other-name"
-    # | "identity"
+    # "cvar" | "guid" | "other-guid" | "unit-guid" | "timestamp" | "geoip" | "acct"
+    # | "other-name" | "identity"
     reason: str
     embedded: bool = False  # a word character touched it: review by eye
 
@@ -826,7 +827,7 @@ class Identity:
         others: OtherUnits | None = None,
         unit_guids: Sequence[tuple[int, int, bytes]] = (),
         timestamps: Sequence[tuple[int, int, bytes]] = (),
-        geoip: Sequence[tuple[int, int, bytes]] = (),
+        country_tags: Sequence[tuple[int, int, bytes, str]] = (),
     ) -> ScrubResult:
         """Return `data` with identity replaced, plus every edit and any reason to refuse.
 
@@ -837,8 +838,9 @@ class Identity:
         the owner's GUIDs and before any identity string. `unit_guids` are a
         combat log's non-player unit GUIDs with their invented replacements
         (UnitGuids), and `timestamps` its shifted timestamps (TimeShift); both are
-        claimed with the player GUIDs. `geoip` is `.build.info`'s geoip country
-        replaced by its placeholder (geoip_scan), claimed in the same pass.
+        claimed with the player GUIDs. `country_tags` are `.build.info`'s geoip and
+        account countries replaced by placeholders (country_scan), claimed in the
+        same pass.
         """
         # Three passes over the ORIGINAL bytes, highest priority first. Matches
         # within a pass never overlap each other; a match that overlaps a
@@ -878,8 +880,8 @@ class Identity:
             claim(start, end, new, "unit-guid")
         for start, end, new in timestamps:
             claim(start, end, new, "timestamp")
-        for start, end, new in geoip:
-            claim(start, end, new, "geoip")
+        for start, end, new, reason in country_tags:
+            claim(start, end, new, reason)
         close_pass()
         if others is not None:
             for start, end, new in others.edits:
@@ -1897,29 +1899,54 @@ def _shifted_dest(dest: PurePosixPath, kind: str, shift: TimeShift | None) -> Pu
     return None if name is None else dest.with_name(name)
 
 
-# ─── the geoip country in .build.info (always) ───────────────────────────────
+# ─── the country tags in .build.info (always) ────────────────────────────────
+
 
 # The `Tags` cell of `.build.info` holds space-separated tokens in `:`-separated
-# groups (docs/LAB_FORMATS.md section 1). One of them, `geoip-<CC>?`, is the
-# country the client was in when it last updated: where the player is, not
-# which game region they play (that is the separate region token and the
-# `Branch` column, both kept). Seen on the macOS captures of 2026-09-22 and
-# 2026-09-29 (M13-34): two upper-case letters and a literal `?`.
-GEOIP_TOKEN_RE = re.compile(rb"geoip-([A-Z]{2})\?")
-GEOIP_HUNT_RE = re.compile(rb"geoip", re.IGNORECASE)
-# Same shape as a real country code; ZZ is ISO 3166 user-assigned, never a country.
+# groups (docs/LAB_FORMATS.md section 1). Two of them name a country of the
+# player's: `geoip-<CC>?`, where the client was when it last updated, and
+# `acct-<CCC>?`, the account's country. Neither is the game region they play
+# (that is the separate region token and the `Branch` column, both kept).
+# Seen on the macOS captures of 2026-09-22 and 2026-09-29 (M13-34): two and
+# three upper-case letters, then a literal `?`.
+@dataclass(frozen=True)
+class CountryTag:
+    """One `<key>-<letters>?` token of the Tags cell whose letters are replaced."""
+
+    key: bytes
+    width: int
+    placeholder: bytes  # same shape as a real code; ISO 3166 user-assigned, never a country
+    reason: str  # the Edit reason
+    label: str  # the refusal label, followed by a count only
+
+    @property
+    def token_re(self) -> re.Pattern[bytes]:
+        return re.compile(re.escape(self.key) + rb"-([A-Z]{%d})\?" % self.width)
+
+    @property
+    def hunt_re(self) -> re.Pattern[bytes]:
+        return re.compile(re.escape(self.key), re.IGNORECASE)
+
+
 GEOIP_PLACEHOLDER = b"ZZ"
 GEOIP_UNPLACED_LABEL = "geoip tag in .build.info the tool cannot place"
+ACCT_PLACEHOLDER = b"ZZZ"
+ACCT_UNPLACED_LABEL = "acct tag in .build.info the tool cannot place"
+COUNTRY_TAGS: tuple[CountryTag, ...] = (
+    CountryTag(b"geoip", 2, GEOIP_PLACEHOLDER, "geoip", GEOIP_UNPLACED_LABEL),
+    CountryTag(b"acct", 3, ACCT_PLACEHOLDER, "acct", ACCT_UNPLACED_LABEL),
+)
 _BUILD_INFO_TAGS = b"Tags"
 _TAG_SEPARATORS = re.compile(rb"[ :]")
 
 
 @dataclass(frozen=True)
-class GeoipScan:
-    """What the geoip rule found in one `.build.info`. Holds no real bytes."""
+class CountryScan:
+    """What the country-tag rules found in one `.build.info`. Holds no real bytes."""
 
-    edits: tuple[tuple[int, int, bytes], ...]  # (start, end, placeholder) in the original
-    unplaced: int  # `geoip` occurrences that are not a whole token of a Tags cell
+    edits: tuple[tuple[int, int, bytes, str], ...]  # (start, end, placeholder, reason)
+    # (refusal label, count) of key occurrences that are not a whole token of a Tags cell
+    unplaced: tuple[tuple[str, int], ...]
 
 
 def _lines_with_offsets(data: bytes) -> Iterator[tuple[int, bytes]]:
@@ -1953,31 +1980,43 @@ def _tags_cells(data: bytes) -> list[Span]:
     return spans
 
 
-def geoip_scan(data: bytes) -> GeoipScan:
-    """The geoip country of every `geoip-<CC>?` token, replaced by GEOIP_PLACEHOLDER.
-
-    Byte-level: each edit replaces the two country letters in place, and
-    nothing else in the file is touched. A token is placed only when it is a
-    whole token (bounded by the cell's edges, a space or a `:`) of the Tags
-    cell of a row that lines up with the header. Every other occurrence of
-    `geoip`, in any casing, anywhere in the file, is counted as unplaced and
-    refuses the file.
-    """
-    edits: list[tuple[int, int, bytes]] = []
-    placed: set[int] = set()
+def _tag_tokens(data: bytes) -> Iterator[Span]:
+    """Every whole token of every Tags cell: bounded by the cell's edges, a space or `:`."""
     for low, high in _tags_cells(data):
         cell = data[low:high]
         token_start = 0
         for separator in [*_TAG_SEPARATORS.finditer(cell), None]:
             token_end = separator.start() if separator is not None else len(cell)
-            token = GEOIP_TOKEN_RE.fullmatch(cell, token_start, token_end)
-            if token is not None:
-                placed.add(low + token_start)
-                edits.append((low + token.start(1), low + token.end(1), GEOIP_PLACEHOLDER))
+            yield low + token_start, low + token_end
             if separator is not None:
                 token_start = separator.end()
-    unplaced = sum(1 for m in GEOIP_HUNT_RE.finditer(data) if m.start() not in placed)
-    return GeoipScan(tuple(edits), unplaced)
+
+
+def country_scan(data: bytes) -> CountryScan:
+    """The letters of every whole `geoip-<CC>?` and `acct-<CCC>?` Tags token, as placeholders.
+
+    Byte-level: each edit replaces the country letters in place, and nothing
+    else in the file is touched. A token is placed only when it is a whole
+    token of the Tags cell of a row that lines up with the header. Every other
+    occurrence of a key (`geoip`, `acct`), in any casing, anywhere in the
+    file, is counted as unplaced and refuses the file.
+    """
+    tokens = list(_tag_tokens(data))
+    edits: list[tuple[int, int, bytes, str]] = []
+    unplaced: list[tuple[str, int]] = []
+    for tag in COUNTRY_TAGS:
+        pattern = tag.token_re
+        placed: set[int] = set()
+        for start, end in tokens:
+            token = pattern.fullmatch(data, start, end)
+            if token is not None:
+                placed.add(start)
+                edits.append((token.start(1), token.end(1), tag.placeholder, tag.reason))
+        count = sum(1 for m in tag.hunt_re.finditer(data) if m.start() not in placed)
+        if count:
+            unplaced.append((tag.label, count))
+    edits.sort()
+    return CountryScan(tuple(edits), tuple(unplaced))
 
 
 # ─── reading the install (read-only) ─────────────────────────────────────────
@@ -2864,7 +2903,7 @@ def process(
     units = others.units(original, identity) if others is not None and kind == "combatlog" else None
     located = (locations or UnitGuids()).scan(original) if kind == "combatlog" else None
     stamped = shift.scan(original) if shift is not None and kind == "combatlog" else None
-    geoip = geoip_scan(original) if kind == "build-info" else None
+    countries = country_scan(original) if kind == "build-info" else None
     result = identity.scrub(
         original,
         blank_cvars=config,
@@ -2873,7 +2912,7 @@ def process(
         others=units,
         unit_guids=located.edits if located is not None else (),
         timestamps=stamped.edits if stamped is not None else (),
-        geoip=geoip.edits if geoip is not None else (),
+        country_tags=countries.edits if countries is not None else (),
     )
     kept_whole: list[str] = []  # files an identity match refuses rather than rewrites
     if result.edits and (_third_party(item.rel) or kind == "addons-txt"):
@@ -2915,9 +2954,9 @@ def process(
                 kept_whole.append(f"{OTHER_NAME_LABEL} x{leaked}")
             if uncheckable:
                 kept_whole.append(f"{OTHER_UNCHECKABLE_LABEL} x{uncheckable}")
-    if geoip is not None and geoip.unplaced:
-        # Count only: an offset would point at the country.
-        kept_whole.append(f"{GEOIP_UNPLACED_LABEL} x{geoip.unplaced}")
+    if countries is not None:
+        # Counts only: an offset would point at the country.
+        kept_whole.extend(f"{label} x{count}" for label, count in countries.unplaced)
     path_problems = [*path_problems, *_path_refusals(item.rel, dest)]
     if kinds and dest.parts[0] in kinds:
         # The index files fixtures under <platform>/<flavor-kind>/, not the folder name.
@@ -2969,6 +3008,7 @@ def provenance_row(outcome: Outcome, platform: str, captured_by: str, consent: s
             ("guid", "guids-rewritten"),
             ("unit-guid", "unit-guids-rewritten"),
             ("geoip", "geoip-country-replaced"),
+            ("acct", "acct-country-replaced"),
         )
         if result.count(reason)
     ]
