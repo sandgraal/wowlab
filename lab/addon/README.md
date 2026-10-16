@@ -223,9 +223,12 @@ Notes on the fields:
   open's record replaced the applied one. Whether the shop actually
   reopens, and why, is **[verify]**: the owner saw it close by itself. So in
   this capture the applied change ended as `"open"`; one capture does not
-  show that it always will. Also confirmed: `currentChoiceIndex` is 1-based,
-  on this record and on the 70058 one, which holds the old swatch 7 as
-  index 7, choice 962. Counting left to right, then top to bottom, matches
+  show that it always will. `currentChoiceIndex` is consistent with
+  1-based. The new swatch 1 is index 1, and the 70058 record reports index 7
+  for option 61, which has 7 choices in the 70009 table, so a 0-based client
+  could not report it. The addon takes `choice` from `choices[index].id`, so
+  the choice ids are no evidence of the base. That the client's list has the
+  table's 7 choices is **[verify]**. Counting left to right, then top to bottom, matches
   the table's order for hair colour. `OrderIndex` and `UiOrderIndex` are
   identical for these choices, so this does not tell which column the shop
   uses.
@@ -335,7 +338,7 @@ Notes on the fields:
   pet shows in a spell's name or subtext (a pet's name is text the owner
   typed); checklist item 13. A warlock is no test of this: the addon never
   reads the pet spellbook, and a warlock demon's name is generated, not
-  typed. On 70425 a
+  typed (from memory, **[verify]**). On 70425 a
   spell with several ranks is one item per rank, each with its own spell id
   and a `Rank n` subtext, and the spellbook has no "show all ranks" toggle.
   A flyout has an `action_id` and no `spell_id`.
@@ -922,8 +925,10 @@ changed option at the new position. The applied event fires and reaches the
 section. The client then fired `BARBER_SHOP_OPEN` again after the Accept,
 and that open's record, holding the new look, is the one saved. This is why
 the record ended as `"open"` in this capture. Whether the shop actually
-reopens, and why, is **[verify]**: the owner saw it close. Item 11
-(1-based) is confirmed, here and on the 70058 record. The swatch order is
+reopens, and why, is **[verify]**: the owner saw it close. Item 11 is
+consistent with 1-based: the 70058 record's index 7 for an option with 7
+choices could not come from a 0-based client. That the client's list has
+the table's 7 choices is **[verify]**. The swatch order is
 consistent with the table. Item 12 is settled as that reason. In item 14,
 `GetViewingChrModel` returned nil; M11-29's other question, why, stays
 **[verify]**. The four Retail count-only names are names

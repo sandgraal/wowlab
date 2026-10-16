@@ -1788,7 +1788,9 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   the applied one. Whether the shop actually reopens, and why, is
   **[verify]**: the owner saw it close. So in this capture the applied
   change ended as `recorded_at = "open"` (M11-29's "reason it cannot").
-  `currentChoiceIndex` is 1-based on this record and the 70058 one.
+  `currentChoiceIndex` is consistent with 1-based: the 70058 record's index
+  7, for an option with 7 choices, could not come from a 0-based client.
+  That the client's list has the table's 7 choices is **[verify]**.
   `GetViewingChrModel` returned nil. M11-29's other question, why, stays
   **[verify]**. The format does not change: the next change is still
   schema 4.
