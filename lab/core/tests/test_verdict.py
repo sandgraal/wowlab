@@ -366,3 +366,61 @@ def test_a_linked_server_may_replace_row_keeps_the_fact() -> None:
 def test_tier_words_keep_an_unknown_tier_as_it_is() -> None:
     assert tier_words("B") == "B: works, but Blizzard does not support it and a patch can reset it"
     assert tier_words("Z-constructed") == "Z-constructed"
+
+
+# ─── the badge label (M13-25, owner 2026-10-16) ──────────────────────────────
+
+_OWNER_LABELS = {
+    "gate": "wowlab can edit",
+    "no": "wowlab won't touch",
+    "folder": "folder",
+    "not_applicable": "not used",
+    "unclassified": "unknown",
+}
+
+
+def test_every_level_has_the_owners_label() -> None:
+    assert verdict.LABELS == _OWNER_LABELS
+    assert verdict.SERVER_LABEL == "server may overwrite"
+
+
+def test_every_row_and_no_row_carry_their_label() -> None:
+    for entry in filemap.load().entries:
+        for folder in (False, True):
+            found = verdict_of(entry, entry.base, "WTF/x", folder=folder)
+            assert found.label == _OWNER_LABELS[found.level], entry.id
+            expected = "server may overwrite" if found.server_may_replace else None
+            assert found.server_label == expected, entry.id
+    for link in (False, True):
+        unknown = verdict_of(None, "flavor", "WTF/x", link=link)
+        assert (unknown.label, unknown.server_label) == ("unknown", None)
+
+
+def test_the_label_is_additive_and_keeps_the_words() -> None:
+    found = verdict_of(filemap.load().entry("config-wtf"), "flavor", "WTF/Config.wtf")
+    assert list(found.model_dump()) == [
+        "level",
+        "restorable",
+        "server_may_replace",
+        "words",
+        "label",
+        "server_label",
+    ]
+    assert found.words == _GATE
+    assert Verdict.model_validate_json(found.model_dump_json()) == found
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"level": "gate", "label": "wowlab won't touch"},
+        {"level": "no", "label": "wowlab can edit"},
+        {"level": "gate", "server_may_replace": False, "server_label": "server may overwrite"},
+        {"level": "gate", "server_may_replace": True, "server_label": None},
+    ],
+)
+def test_a_label_that_disagrees_is_refused_constructed(fields: dict[str, object]) -> None:
+    data: dict[str, object] = {"restorable": True, "server_may_replace": False, "words": "w"}
+    data.update(fields)
+    with pytest.raises(ValueError):
+        Verdict.model_validate(data)

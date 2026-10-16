@@ -56,15 +56,42 @@
     return visible(shortHome(text));
   }
 
-  // The verdict level as a badge. The level and its words are Python's; the
-  // class only picks a colour.
-  function badge(verdict) {
-    const level = verdict && typeof verdict.level === "string" ? verdict.level : "";
-    const node = make("span", level.split("_").join(" "));
+  // The words of a verdict's badge: Python's label, or the level when an
+  // older wowlab sent none.
+  function labelOf(verdict) {
+    if (verdict && typeof verdict.label === "string" && verdict.label) return verdict.label;
+    return verdict && typeof verdict.level === "string" ? verdict.level : "";
+  }
+
+  // Text a screen reader reads and the eye does not see.
+  function unseen(text) {
+    const node = make("span", text);
+    node.className = "unseen";
+    return node;
+  }
+
+  // The verdict as a badge, plus a second marker when the server may replace
+  // the file. The label, the words and the marker's text are Python's; the
+  // level only picks a colour. The words are in the badge for a screen
+  // reader and in `title` for a pointer; the detail pane shows them too.
+  function badges(verdict) {
+    const out = [];
+    if (!verdict) return out;
+    const level = typeof verdict.level === "string" ? verdict.level : "";
+    const node = make("span", labelOf(verdict));
     node.className = "badge";
     if (/^[a-z_]+$/.test(level)) node.classList.add("badge-" + level);
-    if (verdict && typeof verdict.words === "string") node.title = verdict.words;
-    return node;
+    if (typeof verdict.words === "string" && verdict.words) {
+      node.title = verdict.words;
+      node.appendChild(unseen(": " + verdict.words));
+    }
+    out.push(node);
+    if (typeof verdict.server_label === "string" && verdict.server_label) {
+      const server = make("span", verdict.server_label);
+      server.className = "badge badge-server";
+      out.push(server);
+    }
+    return out;
   }
 
   // ─── running one command ───
@@ -122,12 +149,25 @@
     node.classList.toggle("error", Boolean(isError));
   }
 
-  // The flat item list as a tree of path segments. A folder that holds
-  // listed paths but is not listed itself gets a node with no item: no
-  // badge, its verdict comes from `explain` when it is picked.
+  // The listed paths of a TreeReport: its items and the folders above them
+  // (`ancestors`), each with its verdict from Python.
+  function listedOf(report) {
+    const ancestors = Array.isArray(report.ancestors) ? report.ancestors : [];
+    return report.items.concat(ancestors);
+  }
+
+  // The listed paths as a tree of path segments. The flavor folder itself
+  // takes `flavor_folder_verdict`. A node no listed path names (only an
+  // older wowlab leaves one) has no item and no badge; `explain` gives its
+  // verdict when it is picked.
   function buildTree(report) {
-    const root = { name: report.flavor_folder, path: "", item: null, children: [], index: new Map() };
-    for (const item of report.items) {
+    const top = report.flavor_folder_verdict
+      ? { kind: "folder", note: null, verdict: report.flavor_folder_verdict }
+      : null;
+    const root = { name: report.flavor_folder, path: "", item: top, children: [], index: new Map() };
+    const listed = listedOf(report).slice();
+    listed.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    for (const item of listed) {
       if (typeof item.path !== "string" || item.path === "") continue;
       let node = root;
       let path = "";
@@ -173,7 +213,7 @@
     let matched = 0;
     function walk(node) {
       const hit = !active || matches(node, filter);
-      if (hit && node.item) matched += 1;
+      if (hit && node.item && node.path !== "") matched += 1;
       let any = hit;
       for (const child of node.children) {
         if (walk(child)) any = true;
@@ -221,7 +261,7 @@
     name.addEventListener("click", () => select(node));
     row.appendChild(name);
     if (node.item) {
-      row.appendChild(badge(node.item.verdict));
+      for (const mark of badges(node.item.verdict)) row.appendChild(mark);
       if (node.item.note) {
         const note = make("span", shown(node.item.note));
         note.className = "note";
@@ -249,7 +289,7 @@
       return;
     }
     tree.appendChild(drawNode(explorer.root, view, 1));
-    const total = explorer.report.items.length;
+    const total = listedOf(explorer.report).length;
     explorerSay(view.active ? view.matched + " of " + total + " paths match." : total + " paths.", false);
   }
 
@@ -265,13 +305,17 @@
     const select = byId("level-filter");
     const chosen = select.value;
     const levels = [];
-    for (const item of report.items) {
+    const labels = new Map();
+    for (const item of listedOf(report)) {
       const level = item.verdict && item.verdict.level;
-      if (typeof level === "string" && !levels.includes(level)) levels.push(level);
+      if (typeof level === "string" && !levels.includes(level)) {
+        levels.push(level);
+        labels.set(level, labelOf(item.verdict));
+      }
     }
     while (select.options.length > 1) select.remove(1);
     for (const level of levels) {
-      const option = make("option", level.split("_").join(" "));
+      const option = make("option", labels.get(level));
       option.value = level;
       select.appendChild(option);
     }
@@ -280,7 +324,9 @@
 
   function clearDetail() {
     explorer.selected = null;
-    byId("explain-title").textContent = "Pick a file";
+    // A reply to an earlier pick (another flavor folder's file) is dropped.
+    explorer.explainSeq += 1;
+    byId("explain-title").textContent = "Pick a file or folder";
     byId("explain-path").textContent = "";
     byId("explain-verdict").replaceChildren();
     byId("explain-facts").replaceChildren();
@@ -367,17 +413,22 @@
     const result = data.result || {};
     const verdict = byId("explain-verdict");
     if (data.verdict) {
-      verdict.appendChild(badge(data.verdict));
+      const marks = make("div");
+      marks.className = "marks";
+      for (const mark of badges(data.verdict)) marks.appendChild(mark);
+      verdict.appendChild(marks);
       verdict.appendChild(make("p", shown(data.verdict.words)));
     }
     const facts = byId("explain-facts");
     const entry = result.entry;
+    // `plain` is the row's text without Markdown; an older wowlab sends none.
+    const plain = data.plain || entry || {};
     if (entry) {
-      fact(facts, "What it is", entry.what);
-      fact(facts, "Who writes it, and when", entry.written_by);
+      fact(facts, "What it is", plain.what);
+      fact(facts, "Who writes it, and when", plain.written_by);
       fact(facts, "File-map row", entry.id);
     } else {
-      fact(facts, "Not in the file map", result.reason);
+      fact(facts, "Why it is unknown", result.reason);
     }
     explainSay("", false);
   }

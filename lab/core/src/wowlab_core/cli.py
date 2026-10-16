@@ -1564,6 +1564,31 @@ def install_show(root: RootOpt = None, json_out: JsonOpt = False) -> None:
 # ─── tree and explain ────────────────────────────────────────────────────────
 
 
+class PlainText(_Out):
+    """A file-map row's `what` and `written_by` as plain text for a reader
+    who does not see Markdown (M13-25): code spans lose their backticks,
+    `**[verify]**` reads "(not yet confirmed)", other bold markers go."""
+
+    what: str
+    written_by: str
+
+
+_VERIFY_MARK = re.compile(r"\*\*\[verify(?: ([^\]]*))?\]\*\*")
+
+
+def _player_text(markdown: str) -> str:
+    """A file-map cell without Markdown, for `PlainText`."""
+    text = _VERIFY_MARK.sub(
+        lambda m: f"({m.group(1)} not yet confirmed)" if m.group(1) else "(not yet confirmed)",
+        markdown,
+    )
+    return text.replace("**", "").replace("`", "")
+
+
+def _plain_text(entry: FileMapEntry) -> PlainText:
+    return PlainText(what=_player_text(entry.what), written_by=_player_text(entry.written_by))
+
+
 class Explained(_Out):
     """A file-map entry, as `explain` and `tree --explain` show it."""
 
@@ -1574,6 +1599,7 @@ class Explained(_Out):
     tier: str
     module: str
     verdict: Verdict  # M13-21: the Edit cell as a level and in words
+    plain: PlainText  # M13-25: `what` and `written_by` without Markdown
 
 
 class TreeItem(_Out):
@@ -1587,13 +1613,21 @@ class TreeItem(_Out):
 
 
 class TreeReport(_Out):
-    """`wowlab tree --json`."""
+    """`wowlab tree --json`.
+
+    `ancestors` (M13-25, JSON only): every folder above a listed item that
+    is not listed itself, such as `Interface/AddOns` or `WTF/Account`, with
+    its own verdict, so a viewer drawing the items as a tree never draws a
+    folder without one. `flavor_folder_verdict`: the verdict of the flavor
+    folder itself."""
 
     install_root: str
     flavor_folder: str
     items: list[TreeItem]
     truncated: bool
     errors: list[str]
+    ancestors: list[TreeItem]
+    flavor_folder_verdict: Verdict
 
 
 def _explained(entry: FileMapEntry, verdict: Verdict) -> Explained:
@@ -1605,6 +1639,7 @@ def _explained(entry: FileMapEntry, verdict: Verdict) -> Explained:
         tier=entry.tier,
         module=entry.module,
         verdict=verdict,
+        plain=_plain_text(entry),
     )
 
 
@@ -1690,6 +1725,44 @@ def _in_scope(path: str, prefix: str) -> bool:
     return not prefix or path == prefix or path.startswith(prefix + "/")
 
 
+def _folder_verdict(lay: layout.Layout, path: str) -> Verdict:
+    found = lay.classify(path, is_dir=True)
+    entry = found.entry if isinstance(found, layout.Classified) else None
+    return verdict_of(entry, found.base, found.path, folder=True)
+
+
+def _ancestors(lay: layout.Layout, items: list[TreeItem], prefix: str) -> list[TreeItem]:
+    """The folders above `items` that are not items themselves, in scope,
+    sorted, each with its verdict. They are read from the item paths, never
+    from the disk: a folder above a listed path is a folder."""
+    listed = {item.path for item in items}
+    above: set[str] = set()
+    for item in items:
+        parts = item.path.split("/")
+        for n in range(1, len(parts)):
+            path = "/".join(parts[:n])
+            if path not in listed and _in_scope(path, prefix):
+                above.add(path)
+    return [
+        TreeItem(
+            path=path,
+            kind="folder",
+            size=None,
+            note=None,
+            verdict=_folder_verdict(lay, path),
+            explained=None,
+        )
+        for path in sorted(above)
+    ]
+
+
+def _with_explained(lay: layout.Layout, item: TreeItem) -> TreeItem:
+    found = lay.classify(item.path, is_dir=item.kind == "folder" or None)
+    if isinstance(found, layout.Classified):
+        return item.model_copy(update={"explained": _explained(found.entry, item.verdict)})
+    return item
+
+
 @app.command()
 @_handled
 def tree(
@@ -1720,14 +1793,10 @@ def tree(
         if prefix == ".":
             prefix = ""
     items = [i for p, i in sorted(_tree_items(lay, inv).items()) if _in_scope(p, prefix)]
+    ancestors = _ancestors(lay, items, prefix)
     if explain:
-        explained = []
-        for item in items:
-            found = lay.classify(item.path, is_dir=item.kind == "folder" or None)
-            if isinstance(found, layout.Classified):
-                item = item.model_copy(update={"explained": _explained(found.entry, item.verdict)})
-            explained.append(item)
-        items = explained
+        items = [_with_explained(lay, item) for item in items]
+        ancestors = [_with_explained(lay, item) for item in ancestors]
     errors = [f"{e.path}: {e.error}" for e in inv.errors]
     report = TreeReport(
         install_root=str(inst.root),
@@ -1735,6 +1804,8 @@ def tree(
         items=items,
         truncated=inv.truncated,
         errors=errors,
+        ancestors=ancestors,
+        flavor_folder_verdict=_folder_verdict(lay, ""),
     )
     if json_out:
         _emit(report)
@@ -1770,6 +1841,7 @@ class ExplainReport(_Out):
     query: str
     result: Annotated[layout.Classified | layout.Unclassified, Field(discriminator="status")]
     verdict: Verdict  # M13-21; level "unclassified" when there is no file-map row
+    plain: PlainText | None = None  # M13-25: the row's text without Markdown
 
 
 def _path_kind(
@@ -1865,6 +1937,7 @@ def explain(
             folder=folder,
             link=link,
         ),
+        plain=_plain_text(result.entry) if isinstance(result, layout.Classified) else None,
     )
     if json_out:
         _emit(report)

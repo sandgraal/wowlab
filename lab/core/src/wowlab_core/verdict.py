@@ -14,13 +14,25 @@ from __future__ import annotations
 import os
 import re
 import unicodedata
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from wowlab_core.filemap import FileMapEntry
 
 Level = Literal["gate", "no", "folder", "not_applicable", "unclassified"]
+
+LABELS: dict[str, str] = {
+    "gate": "wowlab can edit",
+    "no": "wowlab won't touch",
+    "folder": "folder",
+    "not_applicable": "not used",
+    "unclassified": "unknown",
+}
+"""Each level in a player's words, for a badge (owner, 2026-10-16)."""
+
+SERVER_LABEL = "server may overwrite"
+"""The second marker on a file the server may replace at login."""
 
 _GATE = "gate"
 _GATE_WORDS = "yes, through wowlab's write gate only, with the client closed"
@@ -148,6 +160,11 @@ class Verdict(BaseModel):
 
     `server_may_replace`: the Edit cell is `gate (server may replace)`, so a
     reader never has to parse `words` for it.
+
+    `label`: the level in a player's words, for a badge (M13-25, owner
+    2026-10-16). `server_label`: the words for a second marker when
+    `server_may_replace`, else `None`. Both follow from the fields above and
+    are filled in when not given; a value that disagrees is refused.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -156,6 +173,31 @@ class Verdict(BaseModel):
     restorable: bool | None
     server_may_replace: bool
     words: str
+    label: str = ""
+    server_label: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fill_labels(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data = dict(data)
+            level = data.get("level")
+            if isinstance(level, str) and level in LABELS:
+                data.setdefault("label", LABELS[level])
+            data.setdefault(
+                "server_label", SERVER_LABEL if data.get("server_may_replace") else None
+            )
+        return data
+
+    @model_validator(mode="after")
+    def _check_labels(self) -> Verdict:
+        if self.label != LABELS[self.level]:
+            raise ValueError(f"label {self.label!r} is not the label of level {self.level!r}")
+        if self.server_label != (SERVER_LABEL if self.server_may_replace else None):
+            raise ValueError(
+                f"server_label {self.server_label!r} disagrees with server_may_replace"
+            )
+        return self
 
 
 def edit_level(edit: str) -> Level:
