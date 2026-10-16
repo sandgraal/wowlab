@@ -503,11 +503,62 @@ def test_tree_a_linked_addon_folder_is_not_restorable(
         item = by_path["Interface/AddOns/MyAddon-dev"]
         assert item.kind == "symlink"
         assert item.verdict.restorable is None
-        assert "puts it back" not in item.verdict.words
+        assert item.verdict.words.startswith(LINK_WORDS)
+        assert "yes" not in item.verdict.words
         if item.explained is not None:
             assert item.explained.verdict == item.verdict
     explained = _json(cli.ExplainReport, "explain", "Interface/AddOns/MyAddon-dev").verdict
     assert explained.restorable is None
+    assert explained.words == LINK_WORDS
+
+
+LINK_WORDS = (
+    "a link, or inside one; wowlab never follows it or writes through it, "
+    "and a restore does not put it back"
+)
+
+
+@pytest.mark.parametrize(
+    "inside",
+    ["MyAddon.toc", "media/icon.tga", "media/"],
+    ids=["constructed-toc", "constructed-nested-file", "constructed-nested-folder"],
+)
+def test_explain_a_path_inside_a_linked_folder_is_behind_a_link(
+    root: Path, flavor: Path, tmp_path: Path, inside: str
+) -> None:
+    """Every component from the install root down is checked with lstat; the
+    first link stops the walk (domain review of #195, round 4)."""
+    work = tmp_path / "work-constructed"
+    (work / "media").mkdir(parents=True)
+    (work / "MyAddon.toc").write_bytes(b"## Interface: 1\n")
+    (work / "media" / "icon.tga").write_bytes(b"x")
+    (flavor / "Interface" / "AddOns" / "MyAddon-dev").symlink_to(work)
+    rel = f"Interface/AddOns/MyAddon-dev/{inside}"
+    spellings = [rel, f"{FLAVOR}/{rel}", str(flavor / rel) + ("/" if inside.endswith("/") else "")]
+    for p in spellings:
+        report = _json(cli.ExplainReport, "explain", p)
+        assert report.verdict.restorable is None, p
+        assert report.verdict.words == LINK_WORDS, p
+        assert report.verdict.level == "gate", p  # the `addon` row still matches
+    # The control: the same tree as a real folder is a file the gate writes.
+    (flavor / "Interface" / "AddOns" / "MyAddon-dev").unlink()
+    shutil.copytree(work, flavor / "Interface" / "AddOns" / "MyAddon-dev")
+    plain = _json(cli.ExplainReport, "explain", rel).verdict
+    assert plain.words.startswith("yes, through wowlab's write gate")
+    assert plain.restorable is (None if inside.endswith("/") else True)
+
+
+def test_explain_a_path_inside_a_linked_wtf_folder_is_behind_a_link(
+    root: Path, flavor: Path, tmp_path: Path
+) -> None:
+    """A whole `WTF` that is a link, constructed: Config.wtf is behind it."""
+    moved = tmp_path / "wtf-constructed"
+    shutil.move(flavor / "WTF", moved)
+    (flavor / "WTF").symlink_to(moved)
+    wtf = _json(cli.ExplainReport, "explain", "WTF").verdict
+    assert (wtf.level, wtf.restorable, wtf.words) == ("folder", None, LINK_WORDS)
+    config = _json(cli.ExplainReport, "explain", "WTF/Config.wtf").verdict
+    assert (config.level, config.restorable, config.words) == ("gate", None, LINK_WORDS)
 
 
 def test_explain_a_folder_has_no_restorable_answer(root: Path, flavor: Path) -> None:

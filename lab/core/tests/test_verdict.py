@@ -316,18 +316,51 @@ def test_a_no_folder_names_files_for_paths() -> None:
     assert outside.words == "no; wowlab never writes it"
 
 
-def test_a_link_is_never_restorable() -> None:
-    """A snapshot never captures a symlink or junction."""
-    unknown = verdict_of(None, "flavor", "WTF/Linked-constructed", folder=True, link=True)
-    assert unknown.restorable is None
-    assert "puts it back" not in unknown.words
-    assert unknown.words == (
-        "no file-map row; a link, wowlab never follows it, and a restore does not put it back"
-    )
-    addon = verdict_of(_entry("addon"), "flavor", "Interface/AddOns/Linked-constructed", link=True)
-    assert addon.restorable is None
-    bak = verdict_of(_entry("savedvariables-backup"), "flavor", "WTF/x.lua.bak", link=True)
-    assert bak.words == "no; wowlab never writes it"
+_LINK = (
+    "a link, or inside one; wowlab never follows it or writes through it, "
+    "and a restore does not put it back"
+)
+
+
+@pytest.mark.parametrize(
+    ("entry_id", "path", "folder", "level", "words"),
+    [
+        ("addon", "Interface/AddOns/Linked-constructed", True, "gate", _LINK),
+        ("addon", "Interface/AddOns/Linked-constructed/x.toc", False, "gate", _LINK),
+        ("wtf-folder", "WTF", True, "folder", _LINK),
+        ("savedvariables-backup", "WTF/A/SavedVariables/x.lua.bak", False, "no", _LINK),
+        ("blizzard-addon-export", "Interface/AddOns/Blizzard_Foo", True, "no", _LINK),
+        ("screenshots", "Screenshots", True, "not_applicable", _LINK),
+        (
+            "fonts",
+            "Fonts/FRIZQT__.TTF",
+            False,
+            "gate",
+            _LINK + "; unsupported by Blizzard, a patch can reset it",
+        ),
+        (None, "WTF/Linked-constructed", True, "unclassified", "no file-map row; " + _LINK),
+        (None, "WTF/Linked-constructed/x.txt", False, "unclassified", "no file-map row; " + _LINK),
+    ],
+    ids=lambda v: v if isinstance(v, str) else None,
+)
+def test_a_link_has_link_words_at_every_level(
+    entry_id: str | None, path: str, folder: bool, level: str, words: str
+) -> None:
+    """The gate refuses any path through a link, a snapshot never captures
+    one, and tree never enters one: no level's own words apply."""
+    entry = _entry(entry_id) if entry_id is not None else None
+    v = verdict_of(entry, "flavor", path, folder=folder, link=True)
+    assert v.level == level
+    assert v.restorable is None
+    assert v.words == words
+    assert "puts it back" not in v.words and "yes" not in v.words
+
+
+def test_a_linked_server_may_replace_row_keeps_the_fact() -> None:
+    entry = next(e for e in filemap.load().entries if e.edit == "gate (server may replace)")
+    v = verdict_of(entry, "flavor", "WTF/x", link=True)
+    assert v.server_may_replace is True
+    assert v.words == _LINK
 
 
 def test_tier_words_keep_an_unknown_tier_as_it_is() -> None:

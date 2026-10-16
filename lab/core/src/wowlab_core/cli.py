@@ -1775,21 +1775,40 @@ class ExplainReport(_Out):
 def _path_kind(
     install_root: Path | str, result: layout.Classified | layout.Unclassified, query: str
 ) -> tuple[bool, bool]:
-    """`(folder, link)` for `explain`'s path, from `lstat` (a link is never
-    followed): a real folder, or one written with a trailing separator; a
-    symlink or junction, which a snapshot never captures."""
+    """`(folder, link)` for `explain`'s path. `link`: some component from
+    the install root down is a symlink, junction or other reparse point, so
+    the path is a link or lies inside one; the walk stops there and never
+    follows it. `folder`: a real folder, or one written with a trailing
+    separator."""
     slash = query.endswith(("/", os.sep))
     if result.base is None:
         return slash, False
     under = [result.flavor_folder] if result.base == "flavor" and result.flavor_folder else []
-    target = Path(install_root, *under, *[p for p in result.path.split("/") if p])
-    try:
-        st = target.lstat()
-    except OSError:
-        return slash, False
-    if stat.S_ISLNK(st.st_mode) or target.is_junction():
-        return False, True
+    current = Path(install_root)
+    st: os.stat_result | None = None
+    for part in [*under, *[p for p in result.path.split("/") if p]]:
+        current = current / part
+        try:
+            st = current.lstat()
+        except OSError:
+            return slash, False  # absent from here down: nothing to follow
+        if _is_link_stat(current, st):
+            return False, True
+    if st is None:  # the install root itself; how it is reached is the owner's choice
+        return True, False
     return slash or stat.S_ISDIR(st.st_mode), False
+
+
+def _is_link_stat(path: Path, st: os.stat_result) -> bool:
+    """A symbolic link, or on Windows any reparse point (junctions included:
+    `S_ISLNK` is false for those), as the write gate counts them."""
+    attributes = int(getattr(st, "st_file_attributes", 0))
+    if stat.S_ISLNK(st.st_mode) or attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+        return True
+    try:
+        return path.is_junction()
+    except OSError:
+        return False
 
 
 def _is_inside(path: Path, root: Path) -> bool:
