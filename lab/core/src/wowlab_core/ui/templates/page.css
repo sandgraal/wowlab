@@ -21,6 +21,10 @@
   --ink: #2a1c0c;
   --ink-muted: #5a4527;
   --error: #ff8f80;
+  --jt-key: #a9b8ff;
+  --jt-string: #97d99b;
+  --jt-number: #f2b066;
+  --jt-literal: #e3a3e3;
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, Cambria, "Times New Roman", serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   color-scheme: dark;
@@ -41,6 +45,10 @@
     --hover: #f1e6cc;
     --selected: #ead9b0;
     --error: #9b1c12;
+    --jt-key: #3a3a8c;
+    --jt-string: #1c6b2a;
+    --jt-number: #8a4b00;
+    --jt-literal: #6b1c6b;
     color-scheme: light;
   }
 }
@@ -163,3 +171,18 @@ pre { background: var(--field); color: var(--field-text); border: 1px solid var(
 pre:empty { display: none; }
 #stderr { color: var(--error); }
 [hidden] { display: none !important; }
+/* the result: a generic JSON tree (M13-26), on the theme's colours */
+.field-refused { color: var(--muted); font-size: 0.85rem; font-style: italic; }
+.jt { color: var(--field-text); background: var(--field); border: 1px solid var(--gold-deep); padding: 0.5rem; overflow: auto; max-height: 60vh; font-family: var(--mono); font-size: 0.85rem; }
+.jt-children { padding-left: 1.25rem; border-left: 1px dotted var(--gold-deep); margin-left: 0.3rem; }
+.jt-node > summary { cursor: pointer; }
+.jt-leaf { padding-left: 0.95rem; }
+.jt-key { unicode-bidi: isolate; color: var(--jt-key); margin-right: 0.5rem; }
+.jt-key::after { content: ":"; }
+.jt-value { unicode-bidi: isolate; white-space: pre-wrap; word-break: break-word; }
+.jt-count { color: var(--muted); }
+.jt-string { color: var(--jt-string); }
+.jt-number { color: var(--jt-number); }
+.jt-boolean, .jt-null { color: var(--jt-literal); }
+.jt-more { font: inherit; font-size: 0.8rem; margin: 0.2rem 0; }
+.jt-raw > summary { cursor: pointer; color: var(--muted); font-size: 0.85rem; margin-top: 0.5rem; }
