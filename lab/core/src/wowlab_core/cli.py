@@ -6888,6 +6888,78 @@ def looks_page(
         raise typer.Exit(EXIT_ERROR)
 
 
+# ─── ui ──────────────────────────────────────────────────────────────────────
+
+
+# How long `wowlab ui` waits for `webbrowser.open` before it starts serving.
+_BROWSER_WAIT_S = 1.0
+
+
+@app.command("ui")
+def ui_command() -> None:
+    """Open the local UI in your browser and serve it until Ctrl-C (ADR-0029).
+
+    The server listens on 127.0.0.1 only, at a port the system picks, and
+    answers only requests that carry the random token in the URL it opens.
+    It runs this wowlab's commands with --json. Commands that save only to
+    wowlab's own data (snapshots, profiles, saved looks, the db2 cache,
+    pages) are offered; some of them overwrite what they saved before (for
+    example looks import-char --replace), and none of them touches the game
+    folder. Commands that change your game files, or that ask before
+    changing anything (--yes), are not offered in this version. If no
+    browser opens, the
+    URL is printed once on stdout."""
+    # The browser is opened on a thread: `webbrowser` waits for a browser it
+    # runs in the foreground (a text browser, or a `BROWSER` program), and
+    # that browser's request must find the server already serving. What it
+    # returned is announced as soon as it returns: here if within
+    # `_BROWSER_WAIT_S`, else by the thread itself.
+    import threading
+    import webbrowser
+
+    from wowlab_core import ui
+
+    server = ui.make_server()
+
+    def announce(opened: bool) -> None:
+        if opened:
+            _say_err(f"wowlab ui: serving on http://127.0.0.1:{server.port}/; Ctrl-C to stop")
+        else:
+            _say_err("wowlab ui: no browser opened; open this URL (it carries the access token):")
+            typer.echo(server.url)
+
+    lock = threading.Lock()
+    outcome: list[bool] = []
+    late: list[bool] = []
+
+    def open_browser() -> None:
+        try:
+            opened = bool(webbrowser.open(server.url))
+        except webbrowser.Error:
+            opened = False
+        with lock:
+            outcome.append(opened)
+            announce_here = bool(late)
+        if announce_here:
+            announce(opened)
+
+    try:
+        opener = threading.Thread(target=open_browser, name="wowlab-ui-browser", daemon=True)
+        opener.start()
+        opener.join(_BROWSER_WAIT_S)
+        with lock:
+            returned = list(outcome)
+            if not returned:
+                late.append(True)
+        if returned:
+            announce(returned[0])
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
 # ─── version ─────────────────────────────────────────────────────────────────
 
 

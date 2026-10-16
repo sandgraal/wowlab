@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wowlab</title>
+<style><!--wowlab:style--></style>
+</head>
+<body>
+<header>
+<h1>wowlab</h1>
+<p>Runs the commands of the <code>wowlab</code> you started, on this machine only. Commands that save only to wowlab's own data (snapshots, profiles, saved looks, the db2 cache, pages) are offered, and none of them touches the game folder. Commands that change your game files, or that ask before changing anything (<code>--yes</code>), are not offered in this version.</p>
+</header>
+<main>
+<nav id="commands" aria-label="Commands"></nav>
+<section id="detail" aria-live="polite">
+<h2 id="title">Pick a command</h2>
+<p id="help"></p>
+<div id="fields"></div>
+<button id="run" type="button" disabled>Run</button>
+<p id="status"></p>
+<pre id="stdout"></pre>
+<pre id="stderr"></pre>
+</section>
+</main>
+<script><!--wowlab:script--></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+body { font-family: system-ui, sans-serif; margin: 0; color: #1d1d1f; background: #fafafa; }
+header { padding: 0.75rem 1.25rem; border-bottom: 1px solid #ddd; background: #fff; }
+header h1 { margin: 0; font-size: 1.25rem; }
+header p { margin: 0.25rem 0 0; color: #555; font-size: 0.9rem; }
+main { display: flex; gap: 1rem; padding: 1rem 1.25rem; align-items: flex-start; }
+nav { display: flex; flex-direction: column; gap: 0.15rem; min-width: 14rem; max-height: 85vh; overflow-y: auto; }
+nav button { text-align: left; font: inherit; font-size: 0.9rem; padding: 0.2rem 0.5rem; border: 1px solid transparent; background: none; cursor: pointer; border-radius: 4px; }
+nav button:hover:enabled, nav button[aria-pressed="true"] { background: #e8eefc; border-color: #c5d3f5; }
+nav button:disabled { color: #999; cursor: not-allowed; }
+section { flex: 1; min-width: 0; }
+.field { margin: 0.5rem 0; }
+.field label { display: block; font-weight: 600; font-size: 0.9rem; }
+.field small { display: block; color: #666; }
+.field input[type="text"], .field textarea { width: 100%; max-width: 40rem; box-sizing: border-box; font: inherit; }
+pre { background: #fff; border: 1px solid #ddd; padding: 0.5rem; overflow: auto; max-height: 60vh; white-space: pre-wrap; word-break: break-word; }
+pre:empty { display: none; }
+#stderr { color: #8a1c1c; }
