@@ -255,6 +255,8 @@ The constraints that shape it:
 
 The decision itself is unchanged. This amendment only stages it, so that the first public build of a localhost server has no path that changes files.
 
+*Note (2026-10-15, later):* the explorer view was split in two (owner: "get there sooner"), so v0.1 is now M13-21 to M13-27. M13-27 is read-only too, and nothing above changes.
+
 ---
 
 ## ADR-0030 — Languages: one per purpose, each admitted by an ADR

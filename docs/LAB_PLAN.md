@@ -3061,7 +3061,8 @@ M13-25, M13-26, M13-27 ─── M13-11 v0.1
 ```
 
 M13-21 and M13-24T start at once, alongside the other open M13 work. The
-critical path is M13-24T, M13-24, M13-25. *Amended 2026-10-15 (owner):* the
+critical path to the owner's first use is M13-24T, M13-24, M13-25; to v0.1 it
+continues through M13-27. *Amended 2026-10-15 (owner):* the
 explorer is split so the owner can use it sooner. M13-25 (tree, badges, detail)
 needs only M13-21 and the server; M13-27 adds the whole install, gaps,
 snapshot facts, hints and previews.

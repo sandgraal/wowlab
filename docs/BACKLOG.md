@@ -169,7 +169,7 @@ Move the verdict wording out of the CLI (`_edit_words`, `_TIER_WORDS`, `_restora
 - `n/a` maps to `not_applicable`;
 - `unclassified` means only "no file-map row", the set M13-22's `filemap gaps` lists.
 
-`Explained` gains `verdict`; the JSON change is additive. `explain` and `tree --explain` print from it.
+`Explained` gains `verdict`; the JSON change is additive. `explain` and `tree --explain` print from it. *Amended 2026-10-15 (review of #196):* `TreeItem` and `ExplainReport` also carry a `verdict` that is always present, `unclassified` when the path has no file-map row. That way the explorer never has to invent a level or words for such a path (§14.5 D3).
 
 **Acceptance:**
 - The text output of `explain` and `tree --explain` is byte-identical before and after, on the fixture installs.
