@@ -204,6 +204,11 @@ class Verdict(BaseModel):
     `link`: the path is a symlink or junction, or lies inside one. The level
     stays the row's, but the label is `LINK_LABEL`: wowlab never follows it
     or writes through it.
+
+    `placeholder` (M13-32): the path is, or lies under, a Windows reparse
+    point that is not a link (a cloud placeholder, a deduplicated or
+    compressed file). The level stays the row's, but the gate refuses to
+    write through it, so the label is the `no` label. `link` wins.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -215,6 +220,7 @@ class Verdict(BaseModel):
     label: str = ""
     server_label: str | None = None
     link: bool = False
+    placeholder: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -224,6 +230,8 @@ class Verdict(BaseModel):
             level = data.get("level")
             if data.get("link") is True:
                 data.setdefault("label", LINK_LABEL)
+            elif data.get("placeholder") is True:
+                data.setdefault("label", LABELS["no"])
             elif isinstance(level, str) and level in LABELS:
                 data.setdefault("label", LABELS[level])
             data.setdefault(
@@ -233,10 +241,16 @@ class Verdict(BaseModel):
 
     @model_validator(mode="after")
     def _check_labels(self) -> Verdict:
-        expected = LINK_LABEL if self.link else LABELS[self.level]
+        if self.link:
+            expected = LINK_LABEL
+        elif self.placeholder:
+            expected = LABELS["no"]
+        else:
+            expected = LABELS[self.level]
         if self.label != expected:
             raise ValueError(
-                f"label {self.label!r} is not the label of level {self.level!r} (link: {self.link})"
+                f"label {self.label!r} is not the label of level {self.level!r} "
+                f"(link: {self.link}, placeholder: {self.placeholder})"
             )
         if self.server_label != (SERVER_LABEL if self.server_may_replace else None):
             raise ValueError(
@@ -327,9 +341,13 @@ def verdict_of(
             words = _PLACEHOLDER_GATE_WORDS + words[len(_GATE_WORDS) :]
         else:
             words += _PLACEHOLDER_WORDS
-        return plain.model_copy(
-            update={"restorable": None if plain.restorable is None else False, "words": words}
+        fields = plain.model_dump(exclude={"label"})
+        fields.update(
+            restorable=None if plain.restorable is None else False,
+            words=words,
+            placeholder=True,
         )
+        return Verdict(**fields)
     can_restore = restorable(base, path)
     if link:
         tier = entry.tier if entry is not None else ""

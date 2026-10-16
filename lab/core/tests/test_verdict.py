@@ -603,6 +603,7 @@ def test_the_label_is_additive_and_keeps_the_words() -> None:
         "label",
         "server_label",
         "link",
+        "placeholder",  # M13-32, last: the JSON only grows
     ]
     assert found.words == _GATE
     assert found.link is False
@@ -625,3 +626,46 @@ def test_a_label_that_disagrees_is_refused_constructed(fields: dict[str, object]
     data.update(fields)
     with pytest.raises(ValueError):
         Verdict.model_validate(data)
+
+
+# ─── M13-32: the label under a placeholder (conductor ruling on #215) ────────
+
+
+def test_every_gate_row_under_a_placeholder_gets_the_no_label() -> None:
+    """The badge never promises an edit the gate refuses: under a reparse
+    point that is not a link, every gate row reads "wowlab won't touch",
+    while `level` stays the row's."""
+    rows = [e for e in filemap.load().entries if e.edit.startswith("gate")]
+    assert rows
+    for entry in rows:
+        for folder in (False, True):
+            v = verdict_of(entry, entry.base, "WTF/x", folder=folder, placeholder=True)
+            assert v.level == "gate", entry.id
+            assert (v.label, v.placeholder, v.link) == ("wowlab won't touch", True, False)
+            expected = "server may overwrite" if v.server_may_replace else None
+            assert v.server_label == expected, entry.id
+    plain = verdict_of(rows[0], rows[0].base, "WTF/x")
+    assert (plain.label, plain.placeholder) == ("wowlab can edit", False)
+
+
+def test_a_placeholder_with_the_gate_label_is_refused_constructed() -> None:
+    """Constructed: a verdict that claims a placeholder and the gate's label."""
+    data = verdict_of(_entry("account-config-cache"), "flavor", "WTF/x", placeholder=True)
+    fields = data.model_dump()
+    assert fields["label"] == "wowlab won't touch"
+    fields["label"] = "wowlab can edit"
+    with pytest.raises(ValueError):
+        Verdict.model_validate(fields)
+    fields.pop("label")
+    assert Verdict.model_validate(fields).label == "wowlab won't touch"
+
+
+def test_a_link_under_a_placeholder_keeps_the_link_label() -> None:
+    """`link` wins over `placeholder`."""
+    for entry in [*filemap.load().entries, None]:
+        v = verdict_of(entry, "flavor", "WTF/x", link=True, placeholder=True)
+        assert (v.label, v.link, v.placeholder) == (_LINK_LABEL, True, False)
+        assert v.restorable is None
+    data = verdict_of(None, "flavor", "WTF/x", link=True).model_dump()
+    data.update(placeholder=True)
+    assert Verdict.model_validate(data).label == _LINK_LABEL
