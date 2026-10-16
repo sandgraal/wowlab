@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 import shlex
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -128,7 +129,7 @@ SAMPLES: dict[str, tuple[str, str, filemap.Kind]] = {
     ),
     "addons-folder": ("flavor", "Interface/AddOns", "dir"),
     "addon": ("flavor", "Interface/AddOns/DBM-Brawlers/DBM-Brawlers.toc", "file"),
-    "blizzard-addon-export": ("flavor", "Interface/AddOns/Blizzard_Foo/x.lua", "file"),
+    "blizzard-addon-export": ("flavor", "Interface/AddOns/Blizzard_Foo/Blizzard_Foo.toc", "file"),
     "combat-log": ("flavor", "Logs/WoWCombatLog-040126_021630.txt", "file"),
 }
 CHARACTER_WTF = ("config-cache.wtf", "bindings-cache.wtf", "macros-cache.txt")
@@ -166,9 +167,13 @@ def _all_views(root: str | None) -> list[tuple[str, cli.ExplainView]]:
                 parts=sample,
                 absolute="/" + "/".join(("install", FLAVOR, *sample)),
                 flavor=FLAVOR if base == "flavor" else None,
+                folder=kind == "dir",
+                newest_log=sample[-1] if entry_id == "combat-log" else None,
             )
-            views = cli._views(entry_id, at, root)
+            views, note = cli._views(entry_id, at, root)
             assert views, (entry_id, sample)
+            assert note is None
+            assert all(v.does and v.does != "decode it" for v in views)
             found.extend((entry_id, v) for v in views)
     return found
 
@@ -266,14 +271,21 @@ def _restore_hints(report: cli.ExplainReport) -> list[cli.ExplainHint]:
     return [h for h in report.hints if h.command.startswith("wowlab snap restore ")]
 
 
-def test_snapshot_facts_follow_the_live_file(root: Path, flavor: Path) -> None:
+def test_snapshot_facts_follow_the_file_on_disk(root: Path, flavor: Path) -> None:
     before = explained(SYNDICATOR)
     assert before.snapshot is not None
-    assert before.snapshot.snapshot_id is None
-    assert before.snapshot.error is None
+    assert (before.snapshot.snapshot_id, before.snapshot.holds, before.snapshot.error) == (
+        None,
+        None,
+        None,
+    )
+    assert before.snapshot.captured is True
     assert not _restore_hints(before)
     assert any(h.command == f"wowlab snap create --flavor {FLAVOR}" for h in before.hints)
-    assert "In the latest snapshot: not held" in ok("explain", SYNDICATOR).stdout
+    assert (
+        "  In the latest snapshot: none; no snapshot of this flavor folder has been taken\n"
+        in ok("explain", SYNDICATOR).stdout
+    )
 
     ok("snap", "create", "-m", "older")
     first = snapshot.SnapshotStore().list()[-1]
@@ -284,7 +296,12 @@ def test_snapshot_facts_follow_the_live_file(root: Path, flavor: Path) -> None:
 
     same = explained(SYNDICATOR)
     assert same.snapshot is not None
-    assert (same.snapshot.snapshot_id, same.snapshot.label) == (latest.id, "newer")
+    assert (same.snapshot.snapshot_id, same.snapshot.created_at, same.snapshot.label) == (
+        latest.id,
+        latest.created_at,
+        "newer",
+    )
+    assert (same.snapshot.holds, same.snapshot.path) == (True, SYNDICATOR)
     assert (same.snapshot.live, same.snapshot.differs) == ("same", False)
     assert not _restore_hints(same)
     assert not any(h.command.startswith("wowlab snap create") for h in same.hints)
@@ -297,16 +314,20 @@ def test_snapshot_facts_follow_the_live_file(root: Path, flavor: Path) -> None:
     assert differs.snapshot is not None
     assert (differs.snapshot.live, differs.snapshot.differs) == ("differs", True)
     [hint] = _restore_hints(differs)
+    assert hint.argv == ["snap", "restore", latest.id, "--paths", SYNDICATOR]
     assert hint.command == f"wowlab snap restore {latest.id} --paths {shlex.quote(SYNDICATOR)}"
+    assert hint.shell == "posix"
     text = ok("explain", SYNDICATOR).stdout
     assert (
-        f"  In the latest snapshot ({latest.id}, {latest.created_at}): the live file differs\n"
-        in text
+        f'  In the latest snapshot ({latest.id}, {latest.created_at}, "newer"): '
+        "the file on disk differs\n" in text
     )
     assert f"  hint: {hint.command}  # {hint.does}\n" in text
+    size = (flavor / SYNDICATOR).stat().st_size
+    assert f"  on disk:      {size:,} bytes, modified " in text
 
     # The hint is a command the CLI takes as it is.
-    plan = ok(*shlex.split(hint.command)[1:], "--dry-run", "--json").stdout
+    plan = ok(*hint.argv, "--dry-run", "--json").stdout
     assert SYNDICATOR in plan
 
     (flavor / SYNDICATOR).unlink()
@@ -316,12 +337,124 @@ def test_snapshot_facts_follow_the_live_file(root: Path, flavor: Path) -> None:
     assert _restore_hints(missing)
 
 
-def test_a_server_may_replace_file_says_so_in_its_restore_hint(root: Path, flavor: Path) -> None:
-    rel = f"WTF/Account/{ACCOUNT}/config-cache.wtf"
+def test_a_file_the_latest_snapshot_lacks_gets_no_restore_hint(root: Path, flavor: Path) -> None:
+    """Domain review 4: the file was deleted and a snapshot taken since."""
+    ok("snap", "create", "-m", "with it")
+    held = snapshot.SnapshotStore().list()[-1]
+    (flavor / SYNDICATOR).unlink()
+    ok("snap", "create", "-m", "without it")
+    latest = snapshot.SnapshotStore().list()[-1]
+    report = explained(SYNDICATOR)
+    assert report.snapshot is not None
+    assert (report.snapshot.snapshot_id, report.snapshot.holds) == (latest.id, False)
+    assert report.snapshot.last_held is not None
+    assert report.snapshot.last_held.id == held.id
+    assert not _restore_hints(report)
+    assert not any(h.command.startswith("wowlab snap ") for h in report.hints)
+    text = ok("explain", SYNDICATOR).stdout
+    assert "not held, the file was not there when it was taken" in text
+    assert f"the latest snapshot that holds it is {held.id}" in text
+
+
+def test_a_file_snapshots_never_capture_says_so(root: Path, flavor: Path) -> None:
+    """Domain review 11: `Logs/` is outside what `snap create` captures."""
     ok("snap", "create")
-    (flavor / rel).write_bytes((flavor / rel).read_bytes() + b"\n")
-    [hint] = _restore_hints(explained(rel))
-    assert "the server may replace it again at the next login" in hint.does
+    log = "Logs/WoWCombatLog-040126_021630.txt"
+    report = explained(log)
+    assert report.snapshot is not None
+    assert (report.snapshot.captured, report.snapshot.snapshot_id) == (False, None)
+    text = ok("explain", log).stdout
+    assert (
+        "  In the latest snapshot: not held; snapshots capture WTF/, Interface/, Fonts/ "
+        "(Screenshots/ with --screenshots) only\n" in text
+    )
+
+
+def test_a_damaged_manifest_is_said_not_skipped(root: Path, flavor: Path) -> None:
+    """Domain review 1. Constructed: a manifest file cut short."""
+    ok("snap", "create")
+    manifests = snapshot.SnapshotStore().manifests_dir
+    [good] = list(manifests.iterdir())
+    damaged = manifests / ("20200101T000000.000000Z-00000000" + good.suffix)
+    damaged.write_bytes(good.read_bytes()[:40])
+    # Not held anywhere readable: never "no snapshot holds it", no snap create.
+    rel = f"WTF/Account/{ACCOUNT}/new-constructed.txt"
+    (flavor / rel).write_bytes(b"x")
+    report = explained(rel)
+    assert report.snapshot is not None
+    assert (report.snapshot.holds, report.snapshot.damaged) == (False, 1)
+    assert not any(h.command.startswith("wowlab snap ") for h in report.hints)
+    text = ok("explain", rel).stdout
+    assert "no snapshot of this flavor folder holds it" not in text
+    assert "no readable snapshot holds it; 1 snapshot manifest(s) could not be read" in text
+    assert "so this may be incomplete" in ok("explain", SYNDICATOR).stdout
+
+
+def test_restore_hints_carry_the_caveats_of_the_row(root: Path, flavor: Path) -> None:
+    server = f"WTF/Account/{ACCOUNT}/config-cache.wtf"
+    bak = f"{SV_DIR}/RareScanner.lua.bak"
+    ok("snap", "create")
+    for rel in (server, bak, SYNDICATOR):
+        (flavor / rel).write_bytes((flavor / rel).read_bytes() + b"\n")
+    [hint] = _restore_hints(explained(server))
+    assert hint.does.endswith(
+        "; the server may replace it at the next login (sync settings: wowlab doctor)"
+    )
+    assert "again" not in hint.does
+    [hint] = _restore_hints(explained(bak))
+    assert hint.does.endswith("; the client writes this file and replaces it at its next save")
+    [hint] = _restore_hints(explained(SYNDICATOR))
+    assert "server" not in hint.does and "client writes" not in hint.does
+
+
+def test_a_combat_log_gets_log_tail_only_when_it_is_the_newest(root: Path, flavor: Path) -> None:
+    """Domain review 3. Constructed: a second, newer combat log."""
+    old = "Logs/WoWCombatLog-040126_021630.txt"
+    assert explained(old).views[0].command == ["log", "tail"]
+    new = flavor / "Logs" / "WoWCombatLog-050126_010101.txt"
+    shutil.copy2(flavor / old, new)
+    later = (flavor / old).stat().st_mtime_ns + 10**9
+    os.utime(new, ns=(later, later))
+    report = explained(old)
+    assert report.views == []
+    assert report.views_note == (
+        "`wowlab log tail` reads only the newest combat log (WoWCombatLog-050126_010101.txt), "
+        "not this one"
+    )
+    assert f"  views:        {report.views_note}\n" in ok("explain", old).stdout
+    assert explained(f"Logs/{new.name}").views[0].command == ["log", "tail"]
+
+
+def test_a_file_no_command_reads_says_so(root: Path) -> None:
+    """Domain review 6 and 12: AddOns.txt, and a file in an addon that is not
+    a TOC, get no view and a note."""
+    addons_txt = f"WTF/Account/{ACCOUNT}/Labrealmb Partb Partc Partd/Labchard/AddOns.txt"
+    report = explained(addons_txt)
+    assert isinstance(report.result, cli.layout.Classified)
+    assert report.result.entry.id == "character-addons-txt"
+    assert (report.views, report.views_note) == ([], "no wowlab command reads this file")
+    assert "  views:        no wowlab command reads this file\n" in ok("explain", addons_txt).stdout
+    lua = explained("Interface/AddOns/DBM-Brawlers/DBM-Brawlers.lua-constructed")
+    assert lua.views == []
+    assert lua.views_note is not None
+    assert lua.views_note.startswith("no wowlab command reads this file")
+    assert explained("Interface/AddOns/DBM-Brawlers/").views_note is None
+
+
+def test_hints_are_quoted_for_the_shell_of_the_machine(
+    root: Path, flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Domain review 7: Windows quoting is the C runtime's, `list2cmdline`."""
+    hostile = ["a b", 'say "hi"', "back\\slash\\", 'q\\"x', "", "Kel'Thuzad", "#6", "\t"]
+    assert cli._windows_join(hostile) == subprocess.list2cmdline(hostile)
+    ok("snap", "create")
+    (flavor / SYNDICATOR).write_bytes((flavor / SYNDICATOR).read_bytes() + b"\n")
+    monkeypatch.setattr(cli, "_shell", lambda: "windows")
+    report = explained(SYNDICATOR, "--root", str(root))
+    assert report.hints
+    for hint in report.hints:
+        assert hint.shell == "windows"
+        assert hint.command == subprocess.list2cmdline(["wowlab", *hint.argv])
 
 
 def test_explain_hashes_only_the_named_path_and_writes_nothing(
@@ -413,8 +546,13 @@ def test_an_unreadable_store_is_said_not_guessed(
         snapshot_id=None,
         created_at=None,
         label=None,
+        holds=None,
+        path=None,
         live=None,
         differs=None,
+        last_held=None,
+        captured=True,
+        damaged=0,
         error="constructed: the store is a link",
     )
     assert not any(h.command.startswith("wowlab snap ") for h in report.hints)
@@ -430,7 +568,8 @@ def _inside(path: Path, root: Path) -> bool:
 
 
 def _paths_in(hint: cli.ExplainHint, flavor: Path) -> list[Path]:
-    argv = shlex.split(hint.command)
+    argv = hint.argv
+    assert shlex.split(hint.command) == ["wowlab", *argv]
     found = [Path(a) for a in argv if Path(a).is_absolute()]
     found += [flavor / argv[i + 1] for i, a in enumerate(argv[:-1]) if a == "--paths"]
     return found
@@ -524,7 +663,35 @@ def test_text_keeps_every_line_it_had_and_adds_only_the_new_ones(
     old = [cli._safe(line) for line in _old_text(report)]
     assert lines[: len(old)] == old
     new = lines[len(old) :]
-    expected = ([f"  {cli._snapshot_line(report.snapshot)}"] if report.snapshot else []) + [
-        f"  hint: {h.command}  # {h.does}" for h in report.hints
-    ]
+    expected: list[str] = []
+    if report.stat is not None:
+        size = report.stat.size
+        what = f"{size:,} byte" + ("" if size == 1 else "s") if size is not None else "a folder"
+        expected.append(f"  on disk:      {what}, modified {report.stat.mtime}")
+    if report.snapshot is not None:
+        captured = "WTF/, Interface/, Fonts/ (Screenshots/ with --screenshots)"
+        expected.append(f"  {cli._snapshot_line(report.snapshot, captured)}")
+    if report.views_note is not None:
+        expected.append(f"  views:        {report.views_note}")
+    expected += [f"  hint: {h.command}  # {h.does}" for h in report.hints]
     assert new == [cli._safe(line) for line in expected]
+
+
+def test_another_case_spelling_reads_the_file_as_spelled_on_disk(root: Path, flavor: Path) -> None:
+    """Domain review 2. Constructed: queries spelled in another case; skipped
+    where the temporary volume is case-sensitive."""
+    if not (flavor / SYNDICATOR.lower()).exists():
+        pytest.skip("the temporary volume is case-sensitive")
+    ok("snap", "create")
+    (flavor / SYNDICATOR).write_bytes((flavor / SYNDICATOR).read_bytes() + b"\n")
+    typed = f"WTF/account/{ACCOUNT}/savedvariables/syndicator.lua"
+    report = explained(typed)
+    assert report.snapshot is not None
+    assert (report.snapshot.live, report.snapshot.path) == ("differs", SYNDICATOR)
+    [hint] = _restore_hints(report)
+    assert hint.argv[-2:] == ["--paths", SYNDICATOR]  # the spelling the snapshot holds
+    assert report.views[0].params["file"] == str(flavor / SYNDICATOR)
+    macros = explained(f"WTF/account/{ACCOUNT}/{CHARACTER.lower()}/MACROS-CACHE.TXT")
+    [view] = macros.views
+    assert view.params["character"] == CHARACTER
+    ok(*view.argv, "--json")

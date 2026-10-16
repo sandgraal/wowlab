@@ -596,7 +596,7 @@ def test_every_spelling_of_an_unclassified_flavor_path_agrees(
     # M13-23's snapshot line and hints follow it.
     text = ok("explain", *opts, rel).stdout.splitlines()
     assert text[0] == f"{rel}: no file-map row: no file-map row matches"
-    assert all(line.startswith(("  In the latest snapshot", "  hint: ")) for line in text[1:])
+    assert all(line.startswith(_NEW_EXPLAIN_LINES) for line in text[1:])
 
 
 # ─── sv ──────────────────────────────────────────────────────────────────────
@@ -1672,6 +1672,15 @@ def test_control_characters_never_reach_the_terminal_constructed(
     assert "\x9b" not in undo and "csi\\xc2\\x9b31m.txt" in undo
 
 
+# The lines M13-23 adds after the ones `explain` printed before it.
+_NEW_EXPLAIN_LINES = (
+    "  on disk:      ",
+    "  In the latest snapshot",
+    "  views:        ",
+    "  hint: ",
+)
+
+
 def test_explain_words_for_edit_and_tier(root: Path) -> None:
     bak = ok("explain", BAK).stdout
     assert (
@@ -1684,9 +1693,7 @@ def test_explain_words_for_edit_and_tier(root: Path) -> None:
     lines = bak.splitlines()
     row = next(i for i, line in enumerate(lines) if line.startswith("  file-map row: "))
     assert lines[row].startswith("  file-map row: savedvariables-backup")
-    assert all(
-        line.startswith(("  In the latest snapshot", "  hint: ")) for line in lines[row + 1 :]
-    )
+    assert all(line.startswith(_NEW_EXPLAIN_LINES) for line in lines[row + 1 :])
     build = ok("explain", ".build.info").stdout
     assert "edit:         no; wowlab never writes it" in build
     cache = ok("explain", f"WTF/Account/{ACCOUNT}/config-cache.wtf").stdout
