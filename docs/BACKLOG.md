@@ -58,7 +58,7 @@ Bring back the `lab (windows)` job on `windows-latest`, running the Lab suite as
 
 ---
 
-## [ ] M13-03 — Release pipeline
+## [x] M13-03 — Release pipeline
 **Size:** S · **Depends on:** M13-01
 
 `.github/workflows/release.yml`, triggered by pushing a tag `v*`: run the Lab suite; build the wheel and sdist of `wowlab-core` (`uv build`); fail before publishing when the tag is not `v` plus the package version exactly; write `SHA256SUMS`; create the GitHub Release with the three files attached (a pre-release for a PEP 440 pre-release version). Top-level `permissions: contents: read`; `contents: write` on the release job only; action commits pinned; no other secrets. The release notes template has a section for changes to `--json` models (ADR-0031). The workflow passes `actionlint` in the `harness` job.
@@ -66,6 +66,8 @@ Bring back the `lab (windows)` job on `windows-latest`, running the Lab suite as
 **Acceptance:** a dry run on a pre-release tag produces the release with all three files; `sha256sum -c SHA256SUMS` passes on the downloads; on a clean machine (no clone, a fresh user), the `uv tool install` line that M13-10 will print installs that release, and `wowlab --version` and `wowlab doctor --offline` run; a tag that does not match the version publishes nothing; reviewed by `security-reviewer` (signs off on the permissions and the token's reach) and `code-reviewer`.
 
 *Status 2026-10-15:* the workflow merged as #175, reviewed clean by `security-reviewer` and `code-reviewer`, with a `release` environment (owner approval, no admin bypass) and tag rulesets. #182 added the bundled-addon check to `release_check.py dist`. Still owed, by the owner: run `scripts/bootstrap-github.sh` (rulesets, environment) and `gh api -X PUT repos/sandgraal/wowlab/immutable-releases`, then the pre-release dry run and the clean-machine install. Tag rulesets make a `v*` tag permanent, so pick the dry-run tag name knowing that. Agents can no longer push tags or create releases (#183). The ticket stays open until the dry run.
+
+*Done 2026-10-16:* the owner ran the dry run on `v0.1.0rc1`. The release was published with all three files, the checksums verified, and the clean install ran `--version` and `doctor --offline`. Record: `docs/handoffs/M13-03.md`.
 
 ---
 
