@@ -41,6 +41,7 @@ SERVER_LABEL = "server may overwrite"
 _GATE = "gate"
 _GATE_WORDS = "yes, through wowlab's write gate only, with the client closed"
 _SERVER_MAY_REPLACE = "(server may replace)"
+_SERVER_WORDS = "; the server may replace it at login (sync settings: wowlab doctor)"
 _UNCLASSIFIED_WORDS = "no file-map row; wowlab does not know what this file is"
 _UNCLASSIFIED_FOLDER_WORDS = "no file-map row; wowlab does not know what this folder is"
 _LINK_WORDS = (
@@ -243,9 +244,7 @@ def _edit_words(edit: str, level: Level, tier: str, *, restorable: bool, folder:
     if level == "gate":
         rest = edit[len(_GATE) :].strip()
         if rest == _SERVER_MAY_REPLACE:
-            words = (
-                f"{_GATE_WORDS}; the server may replace it at login (sync settings: wowlab doctor)"
-            )
+            words = _GATE_WORDS + _SERVER_WORDS
         else:
             words = _GATE_WORDS + (f" {rest}" if rest else "")
     elif level == "no":
@@ -287,12 +286,14 @@ def verdict_of(
     can_restore = restorable(base, path)
     if link:
         tier = entry.tier if entry is not None else ""
+        server = entry is not None and entry.edit == f"{_GATE} {_SERVER_MAY_REPLACE}"
         return Verdict(
             level="unclassified" if entry is None else edit_level(entry.edit),
             restorable=None,
-            server_may_replace=entry is not None and entry.edit == f"{_GATE} {_SERVER_MAY_REPLACE}",
+            server_may_replace=server,
             words=("no file-map row; " if entry is None else "")
             + _LINK_WORDS
+            + (_SERVER_WORDS if server else "")
             + (_TIER_B_WORDS if tier == "B" else ""),
             link=True,
         )

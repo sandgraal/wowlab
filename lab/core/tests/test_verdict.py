@@ -370,7 +370,31 @@ def test_a_linked_server_may_replace_row_keeps_the_fact() -> None:
     entry = next(e for e in filemap.load().entries if e.edit == "gate (server may replace)")
     v = verdict_of(entry, "flavor", "WTF/x", link=True)
     assert v.server_may_replace is True
-    assert v.words == _LINK
+    # Review of #206 round 3: the words keep the sync caveat the badge shows.
+    assert v.words == _LINK + _SERVER
+
+
+_SERVER = "; the server may replace it at login (sync settings: wowlab doctor)"
+
+
+@pytest.mark.parametrize(
+    "entry_id",
+    [e.id for e in filemap.load().entries if e.edit == "gate (server may replace)"],
+)
+def test_a_linked_server_row_says_the_server_may_replace_it(entry_id: str) -> None:
+    """Every `gate (server may replace)` row, linked: the link words, then the
+    server caveat, then the tier-B suffix when the row is tier B."""
+    entry = _entry(entry_id)
+    linked = verdict_of(entry, "flavor", "WTF/Account/A/x", link=True)
+    tier_b = "; unsupported by Blizzard, a patch can reset it" if entry.tier == "B" else ""
+    assert linked.words == _LINK + _SERVER + tier_b
+    assert linked.server_label == "server may overwrite"
+    unlinked = verdict_of(entry, "flavor", "WTF/Account/A/x")
+    assert unlinked.words.endswith(_SERVER + tier_b)
+    assert unlinked.words.count(_SERVER) == 1
+    # A linked row without the caveat gets no server words.
+    plain = verdict_of(_entry("config-wtf"), "flavor", "WTF/Config.wtf", link=True)
+    assert _SERVER not in plain.words
 
 
 def test_tier_words_keep_an_unknown_tier_as_it_is() -> None:
