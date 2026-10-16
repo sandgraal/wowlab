@@ -562,6 +562,7 @@ The owner ruled on 2026-10-16 that what M13-23's last fix round left, if it was 
 1. **`_Volume._folds` tests only upper and lower case** (pathfacts.py). The gate's fold is broader: it treats "Straße" and "STRASSE" as one name, and it ignores normalization even when case also differs. A name that differs in both can therefore be confirmed wrongly, for example on NTFS. Run the case test only when `_nfc(a).lower() == _nfc(b).lower()`; otherwise answer unknown (None).
 2. **Wording of the unconfirmed clause** (cli.py `_snapshot_line`). Change it to "neither name is on disk, and nothing on this drive shows whether it treats the two names as one".
 3. **"the latest snapshot that holds it is X" can name an older snapshot whose match was never confirmed** (snapshot_facts). Either require a confirmed match there, or carry the flag and reuse the caveat.
+5. **`cli._is_link_stat` counts every Windows reparse point as a link** (used by `explain`'s `_path_kind`, from M13-21). A OneDrive cloud placeholder or a deduplicated file is therefore called "a link" and gets `restorable=None`. M13-22 moved `gaps` and `tree --install` to snapshot's name-surrogate rule (#203). Use the same rule here, with a constructed test that fakes the reparse tags.
 4. **Docstring.** On Windows and Linux, case sensitivity can be set per folder. The check reads the folder above the file. Say so in one sentence.
 
 **Acceptance:**
