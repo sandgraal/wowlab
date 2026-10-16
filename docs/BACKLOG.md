@@ -126,7 +126,7 @@ Read-only. Adds `combatlog.cast_counts`: the player's own `SPELL_CAST_SUCCESS` e
 ## [ ] M13-10 — Player-facing README
 **Size:** S · **Depends on:** M13-03
 
-The README's first screen: what wowlab is in three sentences; the trust model of ADR-0031; one install line (the one M13-03 tested, word for word); the three commands worth running first; a link to the wiki. *Amended 2026-10-15:* once M13-25 has merged, one of those three is `wowlab ui`, the explorer being the way in for a player. Platform status stated by ADR-0031's rule: "untested on <platform>" until M13-02's acceptance holds for it. The rest of the README may move to the wiki.
+The README's first screen: what wowlab is in three sentences; the trust model of ADR-0031; one install line (the one M13-03 tested, word for word); the three commands worth running first; a link to the wiki. *Amended 2026-10-15:* once M13-25 has merged, one of those three is `wowlab ui`, the explorer being the way in for a player. Platform status stated by ADR-0031's rule: "untested on <platform>" until M13-02's acceptance holds for it. *Amended 2026-10-16 (owner ruling under ADR-0029):* the README must also say that on a shared Linux machine, other accounts can briefly see the `wowlab ui` token URL in their process listing while the browser opens. The rest of the README may move to the wiki.
 
 **Acceptance:** the install line is byte-identical to the one M13-03's acceptance ran; every platform claim matches CI and the recorded human runs; every command named exists in the Click tree; reviewed by `domain-reviewer` (claims about the game and its files) and `code-reviewer`. User-facing: the wiki's Home follows.
 

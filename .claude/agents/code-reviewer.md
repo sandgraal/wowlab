@@ -49,7 +49,9 @@ own internal consistency.
   2026-09-21 has the full rule, including the `cmdline` shadow around
   `exe()`); only `process.py` touches psutil, and production callers use
   its default probe; no
-  `ctypes`/FFI; nothing that reads memory, injects, sniffs or automates
+  `ctypes`/FFI, except the one owner-permitted site `ui/_winjob.py` (a
+  Windows Job Object for the server's own child runs; ADR-0029 ruling of
+  2026-10-16), which must stay within that ruling; nothing that reads memory, injects, sniffs or automates
   input; nothing that touches `Data/` or an executable.
 - **L8.** Parsers are graded on real fixtures with index rows; constructed
   inputs are labelled and limited to hostile and boundary cases. Nothing
