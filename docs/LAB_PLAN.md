@@ -1484,7 +1484,9 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   - customization choices (option id to choice id, mapped from the barber
     shop's choice index to the choice's `id`) for the model the barber shop
     was showing (`chr_model_id`), recorded only at `BARBER_SHOP_OPEN` and
-    after an applied change (`BARBER_SHOP_APPEARANCE_APPLIED` **[verify]**),
+    after an applied change (`BARBER_SHOP_APPEARANCE_APPLIED`; on 70425 a
+    later open of the client's own replaces that record with the same new
+    look, amendment of 2026-10-16 below),
     never at close after a cancelled preview. Appearance changes only in the
     barber shop or through a paid service at character select, so the last
     record is kept from session to session and describes the character
@@ -1741,6 +1743,43 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   `/wowlab skip` switches off (section keys `spellbook`, `actionbars`,
   `bindings`), and every new API is **[verify]** until the owner's schema-3
   capture (`docs/handoffs/M13-05.md`).
+
+  Amended 2026-10-16 (M13-05 and M11-29, from the owner's capture on
+  1.60.1.70425, fixtures under `lab/core/tests/fixtures/macos-70425/`;
+  `docs/LAB_FORMATS.md`, amendment of that date). The reader reads it as
+  schema 3 with no unknown key, and the schema-1 captures read as before.
+
+  Confirmed on that build:
+  - every API the three sections ask is present and ran with no error and
+    no secret value, out of combat;
+  - `issecretvalue` exists (the kit's 69893 list lacks it) and answered
+    every call; `C_Secrets` and `canaccessvalue` exist;
+  - ranks show as `Rank n` subtexts, one spellbook item per rank, each with
+    its own spell id, and there is no "show all ranks" toggle;
+  - a flyout has an action id and no spell id;
+  - every action slot up to 180 answers nothing or a value, never an error;
+  - live `GetBindingKey` keys match `bindings-cache.wtf`;
+  - `left_out_config` is the active class config;
+  - the new sections' change events are names the client knows;
+  - no macro name or body is stored.
+
+  Contradicted:
+  - a `#showtooltip` macro slot has no subtype, so its id is not the spell's;
+  - `ACCOUNT_BINDINGS` and `CHARACTER_BINDINGS` are not numbers, so
+    `binding_set` (2 with character bindings ticked) is not named from the
+    file.
+
+  Still **[verify]**: how macro indices are numbered, whether `GetBinding`
+  lists a spell dragged onto a key, future spells, a hunter's named pet,
+  combat, restricted content and hitches.
+
+  For `customization`, `BARBER_SHOP_APPEARANCE_APPLIED` fires and reaches
+  the section. With one sit, though, the client opens the shop a second time
+  after the Accept, and that open's record, holding the new look, replaces
+  the applied one. So an applied change is saved as `recorded_at = "open"`,
+  not `"applied"` (M11-29's "reason it cannot"). `currentChoiceIndex` is
+  1-based. `GetViewingChrModel` returned nil; why stays **[verify]**. The
+  format does not change: the next change is still schema 4.
 
   Schema 1 may change after M11-03. Edits from the capture land before
   M11-04 starts; after M11-04 merges, any change is a new schema (schema 2
