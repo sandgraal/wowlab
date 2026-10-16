@@ -105,7 +105,10 @@ required checks are green, threads are resolved, and reviews are clean.
   2026-09-29), and `wowlab_core.ui`, the local server that runs commands for
   the browser (`ui.py` or `ui/`; added by the owner, 2026-10-15): a `[TEST]` ticket lands graders before the `[IMPL]` ticket
   creates the file or changes what it does. The session that writes the code never
-  writes, edits, or weakens the tests that grade it.
+  writes, edits, or weakens the tests that grade it. *Owner exceptions
+  (2026-10-16):* M13-25 and M13-26 were filed before `ui` joined the set and
+  are exempt, on condition that a `test-writer` audits their tests and takes
+  them over (`docs/BACKLOG.md`, under M13-26). No other ticket is exempt.
 - Work runs in owner-selected waves (ADR-0024). One wave is one milestone.
   When a wave's review ticket is the only one left, the conductor writes
   `docs/handoffs/M<n>-review.md` and stops dispatch until the owner picks
