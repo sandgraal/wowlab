@@ -24,12 +24,11 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from test_check_wiki import _load
-from test_release import INSTALL_V010
 
-cw = _load("check_wiki")
-gen = _load("gen_command_reference")
-rc = _load("release_check")
+# The modules those test files already loaded: loading them again would replace
+# them in sys.modules and break identity checks elsewhere (test_wiki_diagnose).
+from test_check_wiki import cw, gen
+from test_release import INSTALL_V010, rc
 
 ROOT = Path(__file__).resolve().parents[2]
 README = ROOT / "README.md"
