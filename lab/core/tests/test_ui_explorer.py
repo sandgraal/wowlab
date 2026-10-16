@@ -984,7 +984,6 @@ def test_a_root_home_is_not_offered_for_tilde_constructed(
     assert listed["sep"] == os.sep
 
 
-@pytest.mark.xfail(strict=True, reason="M13-25 fix round")
 @pytest.mark.skipif(os.name == "nt", reason="Windows forbids < and > in file names")
 def test_a_hostile_home_is_escaped_in_the_command_list_constructed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

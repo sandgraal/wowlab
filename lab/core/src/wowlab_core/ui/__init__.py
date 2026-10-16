@@ -559,14 +559,21 @@ class UiServer(http.server.ThreadingHTTPServer):
         self.port = int(self.server_address[1])
         self.url = f"http://{_LOOPBACK}:{self.port}/?token={self.token}"
         self.hosts = frozenset({f"{_LOOPBACK}:{self.port}", f"localhost:{self.port}"})
-        self.commands_body = json.dumps(
-            {
-                "commands": [_describe(leaf) for leaf in leaves.values()],
-                "home": _home(),
-                "sep": os.sep,
-            },
-            ensure_ascii=True,
-        ).encode("ascii")
+        # The home folder is data from the machine, like a file name: escaped
+        # as a run's output is. `<`, `>` and `&` occur only inside JSON
+        # strings, so translating the whole document is safe.
+        self.commands_body = (
+            json.dumps(
+                {
+                    "commands": [_describe(leaf) for leaf in leaves.values()],
+                    "home": _home(),
+                    "sep": os.sep,
+                },
+                ensure_ascii=True,
+            )
+            .translate(_JSON_EXTRA_ESCAPES)
+            .encode("ascii")
+        )
 
     @override
     def server_bind(self) -> None:
