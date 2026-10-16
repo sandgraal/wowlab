@@ -27,6 +27,9 @@ _GATE_WORDS = "yes, through wowlab's write gate only, with the client closed"
 _SERVER_MAY_REPLACE = "(server may replace)"
 _UNCLASSIFIED_WORDS = "no file-map row; wowlab does not know what this file is"
 _UNCLASSIFIED_FOLDER_WORDS = "no file-map row; wowlab does not know what this folder is"
+_UNCLASSIFIED_LINK_WORDS = (
+    "no file-map row; a link, wowlab never follows it, and a restore does not put it back"
+)
 _UNCLASSIFIED_RESTORED = (
     "; a whole snapshot restore puts it back like any file here (it skips only Edit `no` files)"
 )
@@ -138,7 +141,8 @@ class Verdict(BaseModel):
     named with `--paths` (owner decision 2026-09-27). A restore is not the
     last word on a `server_may_replace` file: the server may replace it again
     at the next login. `None` for every folder, whatever its level: a folder
-    is judged by the files under it.
+    is judged by the files under it. `None` for a symlink or junction too, which
+    a snapshot never captures.
 
     `server_may_replace`: the Edit cell is `gate (server may replace)`, so a
     reader never has to parse `words` for it.
@@ -177,7 +181,7 @@ def tier_words(tier: str) -> str:
     return _TIER_WORDS.get(tier, tier)
 
 
-def _edit_words(edit: str, level: Level, tier: str, *, restorable: bool) -> str:
+def _edit_words(edit: str, level: Level, tier: str, *, restorable: bool, folder: bool) -> str:
     if level == "gate":
         rest = edit[len(_GATE) :].strip()
         if rest == _SERVER_MAY_REPLACE:
@@ -187,11 +191,18 @@ def _edit_words(edit: str, level: Level, tier: str, *, restorable: bool) -> str:
         else:
             words = _GATE_WORDS + (f" {rest}" if rest else "")
     elif level == "no":
-        words = (
-            "no; wowlab leaves it alone (a restore writes it only if you name it with --paths)"
-            if restorable
-            else "no; wowlab never writes it"
-        )
+        if not restorable:
+            words = "no; wowlab never writes it"
+        elif folder:
+            # `snap restore --paths` takes file paths; naming a folder is refused.
+            words = (
+                "no; wowlab leaves the files in it alone "
+                "(a restore writes one only if you name that file with --paths)"
+            )
+        else:
+            words = (
+                "no; wowlab leaves it alone (a restore writes it only if you name it with --paths)"
+            )
     elif level == "not_applicable":
         words = "n/a; not a file wowlab touches"
     else:  # folder
@@ -202,27 +213,43 @@ def _edit_words(edit: str, level: Level, tier: str, *, restorable: bool) -> str:
 
 
 def verdict_of(
-    entry: FileMapEntry | None, base: str | None, path: str, *, folder: bool = False
+    entry: FileMapEntry | None,
+    base: str | None,
+    path: str,
+    *,
+    folder: bool = False,
+    link: bool = False,
 ) -> Verdict:
     """The verdict for `path` (relative to `base`, `/`-separated), classified
     as `entry`; `None` is a path with no file-map row. `folder`: the path is
-    a folder (a row at level `folder` is one whatever the caller says)."""
-    can_restore = restorable(base, path)
+    a folder (a row at level `folder` is one whatever the caller says).
+    `link`: the path is a symlink or junction, which a snapshot never
+    captures, so a restore never puts it back."""
+    folder = folder and not link
+    can_restore = restorable(base, path) and not link
     if entry is None:
-        if folder:
+        if link:
+            words = _UNCLASSIFIED_LINK_WORDS
+        elif folder:
             words = _UNCLASSIFIED_FOLDER_WORDS
         else:
             words = _UNCLASSIFIED_WORDS + (_UNCLASSIFIED_RESTORED if can_restore else "")
         return Verdict(
             level="unclassified",
-            restorable=None if folder else can_restore,
+            restorable=None if folder or link else can_restore,
             server_may_replace=False,
             words=words,
         )
     level = edit_level(entry.edit)
     return Verdict(
         level=level,
-        restorable=None if folder or level == "folder" else can_restore,
+        restorable=None if folder or link or level == "folder" else can_restore,
         server_may_replace=entry.edit == f"{_GATE} {_SERVER_MAY_REPLACE}",
-        words=_edit_words(entry.edit, level, entry.tier, restorable=can_restore),
+        words=_edit_words(
+            entry.edit,
+            level,
+            entry.tier,
+            restorable=can_restore,
+            folder=folder or level == "folder",
+        ),
     )

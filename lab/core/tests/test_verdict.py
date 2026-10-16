@@ -299,6 +299,37 @@ def test_every_folder_has_no_restorable_answer() -> None:
     )
 
 
+def test_a_no_folder_names_files_for_paths() -> None:
+    """`snap restore --paths` takes file paths: a `no` folder in the gate's
+    area points at the files in it, not at itself (domain review, #195)."""
+    entry = _entry("blizzard-addon-export")
+    assert entry.edit == "no"
+    v = verdict_of(entry, "flavor", "Interface/AddOns/Blizzard_Foo", folder=True)
+    assert v == Verdict(
+        level="no",
+        restorable=None,
+        server_may_replace=False,
+        words="no; wowlab leaves the files in it alone "
+        "(a restore writes one only if you name that file with --paths)",
+    )
+    outside = verdict_of(_entry("logs-other"), "flavor", "Logs", folder=True)
+    assert outside.words == "no; wowlab never writes it"
+
+
+def test_a_link_is_never_restorable() -> None:
+    """A snapshot never captures a symlink or junction."""
+    unknown = verdict_of(None, "flavor", "WTF/Linked-constructed", folder=True, link=True)
+    assert unknown.restorable is None
+    assert "puts it back" not in unknown.words
+    assert unknown.words == (
+        "no file-map row; a link, wowlab never follows it, and a restore does not put it back"
+    )
+    addon = verdict_of(_entry("addon"), "flavor", "Interface/AddOns/Linked-constructed", link=True)
+    assert addon.restorable is None
+    bak = verdict_of(_entry("savedvariables-backup"), "flavor", "WTF/x.lua.bak", link=True)
+    assert bak.words == "no; wowlab never writes it"
+
+
 def test_tier_words_keep_an_unknown_tier_as_it_is() -> None:
     assert tier_words("B") == "B: works, but Blizzard does not support it and a patch can reset it"
     assert tier_words("Z-constructed") == "Z-constructed"

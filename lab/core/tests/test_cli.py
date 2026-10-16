@@ -490,6 +490,26 @@ def test_tree_items_always_carry_a_verdict(root: Path, flavor: Path) -> None:
             assert by_path[folder].verdict.restorable is None, folder
 
 
+def test_tree_a_linked_addon_folder_is_not_restorable(
+    root: Path, flavor: Path, tmp_path: Path
+) -> None:
+    """An addon author's working copy linked into AddOns: a snapshot never
+    captures a link, so no restore puts it back (CI review of #195)."""
+    (tmp_path / "work-constructed").mkdir()
+    link = flavor / "Interface" / "AddOns" / "MyAddon-dev"
+    link.symlink_to(tmp_path / "work-constructed")
+    for args in (("tree",), ("tree", "--explain")):
+        by_path = {i.path: i for i in _json(cli.TreeReport, *args).items}
+        item = by_path["Interface/AddOns/MyAddon-dev"]
+        assert item.kind == "symlink"
+        assert item.verdict.restorable is None
+        assert "puts it back" not in item.verdict.words
+        if item.explained is not None:
+            assert item.explained.verdict == item.verdict
+    explained = _json(cli.ExplainReport, "explain", "Interface/AddOns/MyAddon-dev").verdict
+    assert explained.restorable is None
+
+
 def test_explain_a_folder_has_no_restorable_answer(root: Path, flavor: Path) -> None:
     """Spelled with or without the trailing slash, a real folder is a folder."""
     (flavor / "WTF" / "Weird-constructed").mkdir()
@@ -516,8 +536,8 @@ def test_every_spelling_of_an_unclassified_flavor_path_agrees(
         assert v.restorable is True
     assert verdicts[0] == verdicts[1] == verdicts[2]
     report = _json(cli.ExplainReport, "explain", *opts, rel)
-    assert report.result.base == "flavor"
-    assert report.result.path == rel
+    # `result` is main's install-root lookup (the JSON change is additive).
+    assert (report.result.base, report.result.flavor_folder) == ("root", None)
     tree = {i.path: i for i in _json(cli.TreeReport, "tree", "--explain", *opts).items}
     assert rel in tree
     assert tree[rel].verdict == verdicts[0]

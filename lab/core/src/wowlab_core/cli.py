@@ -1596,7 +1596,7 @@ class TreeReport(_Out):
     errors: list[str]
 
 
-def _explained(entry: FileMapEntry, base: str, path: str, *, folder: bool) -> Explained:
+def _explained(entry: FileMapEntry, verdict: Verdict) -> Explained:
     return Explained(
         entry_id=entry.id,
         what=entry.what,
@@ -1604,7 +1604,7 @@ def _explained(entry: FileMapEntry, base: str, path: str, *, folder: bool) -> Ex
         edit=entry.edit,
         tier=entry.tier,
         module=entry.module,
-        verdict=verdict_of(entry, base, path, folder=folder),
+        verdict=verdict,
     )
 
 
@@ -1622,7 +1622,9 @@ def _tree_items(lay: layout.Layout, inv: layout.Inventory) -> dict[str, TreeItem
                 kind=kind,
                 size=size,
                 note=note,
-                verdict=verdict_of(entry, found.base, found.path, folder=kind == "folder"),
+                verdict=verdict_of(
+                    entry, found.base, found.path, folder=kind == "folder", link=kind == "symlink"
+                ),
                 explained=None,
             )
 
@@ -1723,13 +1725,7 @@ def tree(
         for item in items:
             found = lay.classify(item.path, is_dir=item.kind == "folder" or None)
             if isinstance(found, layout.Classified):
-                item = item.model_copy(
-                    update={
-                        "explained": _explained(
-                            found.entry, found.base, found.path, folder=item.kind == "folder"
-                        )
-                    }
-                )
+                item = item.model_copy(update={"explained": _explained(found.entry, item.verdict)})
             explained.append(item)
         items = explained
     errors = [f"{e.path}: {e.error}" for e in inv.errors]
@@ -1776,22 +1772,24 @@ class ExplainReport(_Out):
     verdict: Verdict  # M13-21; level "unclassified" when there is no file-map row
 
 
-def _is_folder(
+def _path_kind(
     install_root: Path | str, result: layout.Classified | layout.Unclassified, query: str
-) -> bool:
-    """Whether `explain`'s path is a folder: written with a trailing
-    separator, or a real folder on disk (never through a link)."""
-    if query.endswith(("/", os.sep)):
-        return True
+) -> tuple[bool, bool]:
+    """`(folder, link)` for `explain`'s path, from `lstat` (a link is never
+    followed): a real folder, or one written with a trailing separator; a
+    symlink or junction, which a snapshot never captures."""
+    slash = query.endswith(("/", os.sep))
     if result.base is None:
-        return False
+        return slash, False
     under = [result.flavor_folder] if result.base == "flavor" and result.flavor_folder else []
     target = Path(install_root, *under, *[p for p in result.path.split("/") if p])
     try:
         st = target.lstat()
     except OSError:
-        return False
-    return stat.S_ISDIR(st.st_mode) and not target.is_junction()
+        return slash, False
+    if stat.S_ISLNK(st.st_mode) or target.is_junction():
+        return False, True
+    return slash or stat.S_ISDIR(st.st_mode), False
 
 
 def _is_inside(path: Path, root: Path) -> bool:
@@ -1817,7 +1815,7 @@ def explain(
     inst, _ = _discover(root)
     given = Path(path)
     result: layout.Classified | layout.Unclassified
-    root_lookup: layout.Unclassified | None = None
+    judged: layout.Classified | layout.Unclassified | None = None
     here = Path.cwd() / given
     if given.is_absolute():
         result = layout.classify(path, inst)
@@ -1831,28 +1829,30 @@ def explain(
             if isinstance(in_flavor, layout.Classified):
                 result = in_flavor
             elif result.base == "root" and result.path and in_flavor.base == "flavor":
-                # No row either way: the path is read inside the chosen flavor,
-                # so every spelling of a flavor path gets the same verdict. The
-                # text keeps naming the install-root lookup, as it always has.
-                root_lookup = result
-                result = in_flavor
+                # No row either way: the verdict reads the path inside the
+                # chosen flavor, so every spelling of a flavor path gets the
+                # same one. `result` stays the install-root lookup, as on main.
+                judged = in_flavor
+    if judged is None:
+        judged = result
+    folder, link = _path_kind(inst.root, judged, path)
     report = ExplainReport(
         query=path,
         result=result,
         verdict=verdict_of(
-            result.entry if isinstance(result, layout.Classified) else None,
-            result.base,
-            result.path,
-            folder=_is_folder(inst.root, result, path),
+            judged.entry if isinstance(judged, layout.Classified) else None,
+            judged.base,
+            judged.path,
+            folder=folder,
+            link=link,
         ),
     )
     if json_out:
         _emit(report)
         return
     if isinstance(result, layout.Unclassified):
-        shown = root_lookup if root_lookup is not None else result
-        where = f" ({shown.flavor_folder})" if shown.flavor_folder else ""
-        _say(f"{path}: no file-map row{where}: {shown.reason}")
+        where = f" ({result.flavor_folder})" if result.flavor_folder else ""
+        _say(f"{path}: no file-map row{where}: {result.reason}")
         if len(inst.flavors) > 1 and flavor is None and not given.is_absolute():
             _say("  (with several flavors, pass --flavor to read PATH inside one of them)")
         return
