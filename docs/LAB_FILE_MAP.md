@@ -24,6 +24,22 @@ edit the rows between the `filemap:begin` / `filemap:end` markers by hand.
 `lab/core/tests/test_filemap.py` fails when the doc and the data drift.
 Prose outside the markers is written by hand.
 
+**Where the map is thin (M13-22, 2026-10-16):** `wowlab filemap gaps` walks
+an install (the root and every flavor folder, read only, links never
+followed, bounded). It lists every path no row below matches, and every
+path only a catch-all row matches (`catch_all = true` in `filemap.toml`:
+`Cache/` and `Logs/` leftovers, "not described here yet"). Both are grouped
+by the parent folder's row and the path's own name, so one unknown file in
+every character folder is one group, and ranked by file count, then bytes.
+The install root itself has no row and is not a gap. Folders a row covers
+whole (a `…/**` row: `Data/`, each `Interface/AddOns/<Addon>/`, the rest of
+`Interface/`) are labelled by that row and not checked inside; the report
+lists them as not entered. So an addon zip extracted one folder too deep
+(`Interface/AddOns/Foo-main/Foo/Foo.toc`) still reads as an addon, and
+stray files under `Interface/` (`Interface/Backup/`) still read as
+overrides. A gap is where a new row may belong; the owner decides whether
+to add one.
+
 ## Install root
 
 <!-- filemap:begin root -->
