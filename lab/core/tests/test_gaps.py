@@ -108,25 +108,45 @@ def _find(root: Path, limits: Limits | None = None) -> gaps.GapReport:
     return gaps.find_gaps(install.discover(root), limits)
 
 
-def _group(report: gaps.GapReport, flavor_folder: str | None, parent: str) -> gaps.GapGroup:
-    (found,) = [g for g in report.groups if g.flavor_folder == flavor_folder and g.parent == parent]
-    return found
+def _summary(groups: list[gaps.GapGroup]) -> list[tuple[Any, ...]]:
+    return [(g.parent_entry_id, g.name, g.kind, g.places, g.files, g.bytes) for g in groups]
+
+
+def _places(groups: list[gaps.GapGroup]) -> list[str]:
+    return [_where(p) for g in groups for p in g.gaps]
+
+
+def _where(place: gaps.GapPlace) -> str:
+    return "/".join(p for p in (place.flavor_folder, place.path) if p)
 
 
 # ─── the fixture installs: a stable, committed gap report ────────────────────
 
+_ADDONS = [
+    {
+        "base": "flavor",
+        "flavor_folder": FLAVOR,
+        "path": f"Interface/AddOns/{name}",
+        "entry_id": "addon",
+    }
+    for name in ("DBM-Brawlers", "DBM-Challenges")
+]
 # `wowlab filemap gaps --json` on each fixture install, `install_root` left
-# out (it is the test's temporary folder). Both captures have a row for every
-# path they hold; `entries` counts what the walk `lstat`ed.
-COMMITTED = {
+# out (it is the test's temporary folder). Both captures have a describing
+# row for every path they hold; `entries` counts what the walk `lstat`ed.
+COMMITTED: dict[str, dict[str, Any]] = {
     "macos": {
         "flavor_folders": [FLAVOR],
         "groups": [],
         "files": 0,
         "bytes": 0,
+        "catch_all": [],
+        "catch_all_files": 0,
+        "catch_all_bytes": 0,
+        "not_entered": _ADDONS,
         "links": [],
         "errors": [],
-        "entries": 47,
+        "entries": 48,
         "truncated": False,
     },
     "macos-70058": {
@@ -134,16 +154,28 @@ COMMITTED = {
         "groups": [],
         "files": 0,
         "bytes": 0,
+        "catch_all": [],
+        "catch_all_files": 0,
+        "catch_all_bytes": 0,
+        "not_entered": [],
         "links": [],
         "errors": [],
         "entries": 10,
         "truncated": False,
     },
 }
-COMMITTED_TEXT = [
-    "File-map gaps in {root}",
-    "  none: every path the walk reached has a file-map row",
-]
+COMMITTED_TEXT = {
+    "macos": [
+        "File-map gaps in {root}",
+        "Paths with no file-map row: none; every path the walk reached has a row",
+        "Not entered, labelled by a row that covers everything inside:",
+        "  [addon] 2 folders",
+    ],
+    "macos-70058": [
+        "File-map gaps in {root}",
+        "Paths with no file-map row: none; every path the walk reached has a row",
+    ],
+}
 
 
 @pytest.mark.parametrize("capture", sorted(COMMITTED))
@@ -160,28 +192,29 @@ def test_fixture_install_gap_report_is_the_committed_one(
         del payload["install_root"]
         assert payload == COMMITTED[capture]
         text = ok("filemap", "gaps").stdout
-        assert text.splitlines() == [line.format(root=root) for line in COMMITTED_TEXT]
+        assert text.splitlines() == [line.format(root=root) for line in COMMITTED_TEXT[capture]]
     assert _state(root) == before
 
 
 def test_every_fixture_path_has_a_row_by_classify(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The committed empty reports agree with `classify` on every path."""
+    """The committed empty reports agree with `classify` on every path, and
+    no path there is matched by a catch-all row first."""
     for capture in sorted(COMMITTED):
         root = _install_from(capture, tmp_path / capture, monkeypatch)
         inst = install.discover(root)
         for p in root.rglob("*"):
             found = cli.layout.classify(p, inst)
-            assert found.status == "classified", p
+            assert isinstance(found, cli.layout.Classified), p
+            if p.is_file():  # `Logs/` itself is named by its catch-all row
+                assert not found.entry.catch_all, p
 
 
 # ─── grouping and ranking ────────────────────────────────────────────────────
 
 
-def test_gaps_are_grouped_under_the_nearest_classified_parent_constructed(
-    root: Path, flavor: Path
-) -> None:
+def test_gaps_are_grouped_by_parent_row_and_name_constructed(root: Path, flavor: Path) -> None:
     _write(root / "notes-constructed.txt", b"abc")
     _write(root / "_nope_" / "a" / "x.txt", b"12345")  # `_*_` without .flavor.info
     _write(flavor / "Unknown-constructed" / "deep" / "y.bin", b"1234567")
@@ -191,38 +224,69 @@ def test_gaps_are_grouped_under_the_nearest_classified_parent_constructed(
     _write(flavor / "stray-constructed.txt", b"0123456789")
     report = _find(root)
 
-    assert [(g.flavor_folder, g.parent) for g in report.groups] == [
-        (FLAVOR, ""),
-        (None, ""),
-        (FLAVOR, f"WTF/Account/{ACCOUNT}"),
+    assert _summary(report.groups) == [
+        ("flavor-folder", "Unknown-constructed", "folder", 1, 2, 8),
+        ("flavor-folder", "stray-constructed.txt", "file", 1, 1, 10),
+        (None, "_nope_", "folder", 1, 1, 5),
+        (None, "notes-constructed.txt", "file", 1, 1, 3),
+        ("account-folder", "strange-constructed.txt", "file", 1, 1, 2),
     ]
-    top = _group(report, FLAVOR, "")
-    assert (top.base, top.entry_id, top.files, top.bytes) == ("flavor", "flavor-folder", 3, 18)
-    assert [(g.path, g.kind, g.files, g.bytes, g.folders) for g in top.gaps] == [
-        ("Unknown-constructed", "folder", 2, 8, 1),
-        ("stray-constructed.txt", "file", 1, 10, 0),
-    ]
-    at_root = _group(report, None, "")
-    assert (at_root.base, at_root.entry_id) == ("root", None)
-    assert [(g.path, g.kind, g.files, g.bytes) for g in at_root.gaps] == [
-        ("_nope_", "folder", 1, 5),
-        ("notes-constructed.txt", "file", 1, 3),
-    ]
-    account = _group(report, FLAVOR, f"WTF/Account/{ACCOUNT}")
-    assert account.entry_id == "account-folder"
-    assert [g.path for g in account.gaps] == [f"WTF/Account/{ACCOUNT}/strange-constructed.txt"]
+    unknown = report.groups[0]
+    assert (unknown.base, unknown.folders, unknown.entry_id, unknown.note) == (
+        "flavor",
+        1,
+        None,
+        None,
+    )
+    (place,) = unknown.gaps
+    assert (place.flavor_folder, place.parent, place.path) == (FLAVOR, "", "Unknown-constructed")
+    # in walk order: a folder's files before what is in its sub-folders
+    assert place.examples == ["Unknown-constructed/z.bin", "Unknown-constructed/deep/y.bin"]
+    nope = report.groups[2]
+    assert (nope.base, nope.note) == ("root", gaps.NOT_A_FLAVOR)
+    assert nope.gaps[0].flavor_folder is None
+    (strange,) = report.groups[4].gaps
+    assert strange.parent == f"WTF/Account/{ACCOUNT}"
     assert (report.files, report.bytes) == (6, 28)
     assert report.errors == [] and report.links == [] and not report.truncated
+    assert report.catch_all == []
 
 
-def test_ranking_is_by_files_then_bytes_then_path_constructed(root: Path, flavor: Path) -> None:
+def test_one_unknown_file_in_every_character_folder_is_one_group_constructed(
+    root: Path, flavor: Path
+) -> None:
+    """A row is a pattern, so a gap that recurs across characters is one
+    row's worth of work: one group, ranked by its total, and the text names
+    no account, realm or character folder."""
+    chars = [p for p in (flavor / "WTF" / "Account" / ACCOUNT / "1").iterdir() if p.is_dir()]
+    assert len(chars) == 3
+    for c in chars:
+        _write(c / "new-cache-constructed.txt", b"abcd")
+    _write(flavor / "single-constructed.bin", b"x" * 10)
+    report = _find(root)
+    assert _summary(report.groups) == [
+        ("second-name-character-folder", "new-cache-constructed.txt", "file", 3, 3, 12),
+        ("flavor-folder", "single-constructed.bin", "file", 1, 1, 10),
+    ]
+    assert sorted(p.parent for p in report.groups[0].gaps) == sorted(
+        f"WTF/Account/{ACCOUNT}/1/{c.name}" for c in chars
+    )
+    text = ok("filemap", "gaps").stdout
+    assert (
+        "  [second-name-character-folder] new-cache-constructed.txt  12 bytes, in 3 places\n"
+        in text
+    )
+    for name in (ACCOUNT, *(c.name for c in chars)):
+        assert name not in text
+
+
+def test_ranking_is_by_files_then_bytes_then_name_constructed(root: Path, flavor: Path) -> None:
     _write(flavor / "b-constructed.bin", b"xx")
     _write(flavor / "a-constructed.bin", b"xx")
     _write(flavor / "big-constructed.bin", b"x" * 100)
     _write(flavor / "many-constructed" / "1", b"")
     _write(flavor / "many-constructed" / "2", b"")
-    (top,) = _find(root).groups
-    assert [g.path for g in top.gaps] == [
+    assert [g.name for g in _find(root).groups] == [
         "many-constructed",
         "big-constructed.bin",
         "a-constructed.bin",
@@ -231,10 +295,9 @@ def test_ranking_is_by_files_then_bytes_then_path_constructed(root: Path, flavor
 
 
 def test_a_row_inside_a_gap_starts_a_group_of_its_own_constructed(root: Path, flavor: Path) -> None:
-    """`Interface/<x>/` has a row (interface-override); an unknown folder
-    above a classified one is not counted through it."""
+    """`Interface/<x>/` has a row (interface-override); `Data/**` covers."""
     _write(flavor / "Interface" / "Over-constructed" / "a.blp", b"a")
-    _write(root / "Data" / "extra-constructed.bin", b"a")  # Data/** has a row
+    _write(root / "Data" / "extra-constructed.bin", b"a")
     assert _find(root).groups == []
 
 
@@ -243,32 +306,101 @@ def test_the_install_root_and_outside_are_never_gaps_constructed(
 ) -> None:
     _write(tmp_path / "outside-constructed.txt", b"x")
     report = _find(root)
-    assert report.groups == []
-    for g in report.groups:
-        for gap in g.gaps:
-            assert gap.path
+    assert report.groups == [] and report.catch_all == []
 
 
 def test_flavor_folders_come_from_discovery_constructed(root: Path) -> None:
     """A second `_*_` folder with a `.flavor.info` is a flavor (its unknown
-    file groups under it); one without is an unknown root folder (L6)."""
+    file groups under its flavor-folder row); one without is an unknown root
+    folder with the note (L6)."""
     second = root / "_second_constructed_"
     _write(second / ".flavor.info", (root / FLAVOR / ".flavor.info").read_bytes())
     _write(second / "odd-constructed.txt", b"x")
     _write(root / "_third_constructed_" / "odd.txt", b"y")
     report = _find(root)
     assert report.flavor_folders == sorted([FLAVOR, "_second_constructed_"])
-    assert _group(report, "_second_constructed_", "").gaps[0].path == "odd-constructed.txt"
-    assert _group(report, None, "").gaps[0].path == "_third_constructed_"
+    assert _places(report.groups) == [  # equal counts: by name
+        "_third_constructed_",
+        "_second_constructed_/odd-constructed.txt",
+    ]
+    assert [g.note for g in report.groups] == [gaps.NOT_A_FLAVOR, None]
+    assert report.groups[1].parent_entry_id == "flavor-folder"
+    text = ok("filemap", "gaps").stdout
+    assert f"  (install root) _third_constructed_/  1 file, 1 byte, {gaps.NOT_A_FLAVOR}\n" in text
 
 
-def test_a_covered_folder_is_not_walked_constructed(root: Path) -> None:
-    before = _find(root).entries
+@SYMLINKS
+def test_a_symlinked_flavor_folder_gets_the_note_constructed(root: Path, tmp_path: Path) -> None:
+    elsewhere = tmp_path / "elsewhere-constructed"
+    shutil.copytree(root / FLAVOR, elsewhere)
+    (root / "_linked_constructed_").symlink_to(elsewhere, target_is_directory=True)
+    report = _find(root)
+    (group,) = report.groups
+    assert (group.name, group.kind, group.note) == (
+        "_linked_constructed_",
+        "link",
+        gaps.NOT_A_FLAVOR,
+    )
+    note = {i.path: i.note for i in _json(cli.InstallTreeReport, "tree", "--install").items}
+    assert (note["_linked_constructed_"] or "").endswith(f"; {gaps.NOT_A_FLAVOR}")
+
+
+def test_a_covered_folder_is_not_entered_and_named_constructed(root: Path) -> None:
+    before = _find(root)
     for i in range(20):
         _write(root / "Data" / "data" / f"data.{i:03}", b"x")
     report = _find(root)
-    assert report.entries == before + 1  # `Data` itself, not what is in it
+    assert report.entries == before.entries + 1  # `Data` itself, not what is in it
     assert report.groups == []
+    assert report.not_entered[0] == gaps.NotEntered(
+        base="root", flavor_folder=None, path="Data", entry_id="data-other"
+    )
+    assert "  [data-other] Data/\n" in ok("filemap", "gaps").stdout
+
+
+# ─── catch-all rows ──────────────────────────────────────────────────────────
+
+
+def test_catch_all_rows_are_marked() -> None:
+    """The rows that say they do not describe what they match are exactly
+    the ones marked `catch_all`."""
+    fm = filemap.load()
+    marked = {e.id for e in fm.entries if e.catch_all}
+    said = {e.id for e in fm.entries if "not described here yet" in e.what}
+    assert marked == said == {"cache-other", "logs-other"}
+
+
+def test_paths_only_a_catch_all_row_matches_are_their_own_section_constructed(
+    root: Path, flavor: Path
+) -> None:
+    _write(flavor / "Cache" / "ADB" / "enUS" / "DBCache.bin", b"described")
+    _write(flavor / "Cache" / "ADB" / "enUS" / "odd-constructed.bin", b"123")
+    _write(flavor / "Cache" / "New-constructed" / "x.dat", b"12345")
+    _write(flavor / "Logs" / "odd-constructed.txt", b"1")
+    report = _find(root)
+    assert report.groups == []
+    assert [
+        (g.parent_entry_id, g.name, g.kind, g.entry_id, g.files, g.bytes) for g in report.catch_all
+    ] == [
+        ("flavor-folder", "Cache", "folder", "cache-other", 2, 8),
+        ("flavor-folder", "Logs", "folder", "logs-other", 1, 1),
+    ]
+    assert report.catch_all[0].gaps[0].examples == [
+        "Cache/ADB/enUS/odd-constructed.bin",
+        "Cache/New-constructed/x.dat",
+    ]
+    assert (report.catch_all_files, report.catch_all_bytes) == (3, 9)
+    assert not any(n.path in ("Cache", "Logs") for n in report.not_entered)
+    text = ok("filemap", "gaps").stdout
+    assert "Described only by a catch-all row: 3 files, 9 bytes\n" in text
+    assert "  [flavor-folder] Cache/  2 files, 8 bytes, 3 folders, row cache-other\n" in text
+
+
+def test_a_catch_all_folder_holding_only_described_files_is_quiet_constructed(
+    root: Path, flavor: Path
+) -> None:
+    _write(flavor / "Cache" / "WDB" / "enUS" / "creaturecache.wdb", b"x")
+    assert _find(root).catch_all == []
 
 
 # ─── links, unreadable folders, the bound ────────────────────────────────────
@@ -293,19 +425,37 @@ def test_a_link_is_never_followed_constructed(root: Path, flavor: Path, tmp_path
         f"{FLAVOR}/Unknown-constructed/inner-link",
         "root-link-constructed",
     ]
-    top = _group(report, FLAVOR, "")
-    assert [(g.path, g.kind, g.files, g.bytes, g.links) for g in top.gaps] == [
+    assert [(g.name, g.kind, g.files, g.bytes, g.links) for g in report.groups] == [
         ("Unknown-constructed", "folder", 1, 1, 1),
         ("Linked-constructed", "link", 0, 0, 1),
-    ]
-    assert [(g.path, g.kind) for g in _group(report, None, "").gaps] == [
-        ("root-link-constructed", "link")
+        ("root-link-constructed", "link", 0, 0, 1),
     ]
     assert report.files == 1  # nothing behind a link is counted
     text = ok("filemap", "gaps").stdout
-    assert "  Linked-constructed  link, not followed\n" in text
-    assert "Links met and not followed: 4\n" in text
+    assert "  [flavor-folder] Linked-constructed  link, not followed\n" in text
+    assert "Links met and not followed:\n" in text
+    for link in report.links:
+        assert f"\n  {link}\n" in text
     assert _state(root) == before
+
+
+@SYMLINKS
+def test_a_linked_wtf_says_it_was_not_checked_constructed(
+    root: Path, flavor: Path, tmp_path: Path
+) -> None:
+    """A synced `WTF/` linked in has a row (wtf-folder), so it is no gap;
+    the "none" line must not read as "everything was looked at"."""
+    shutil.move(flavor / "WTF", tmp_path / "synced-WTF-constructed")
+    (flavor / "WTF").symlink_to(tmp_path / "synced-WTF-constructed", target_is_directory=True)
+    report = _find(root)
+    assert report.groups == [] and report.links == [f"{FLAVOR}/WTF"]
+    lines = ok("filemap", "gaps").stdout.splitlines()
+    assert lines[1] == (
+        "Paths with no file-map row: none; every path the walk reached has a row; "
+        "1 link met and not followed (listed below), so what they point at, "
+        "a linked WTF/ for one, was not checked"
+    )
+    assert lines[-2:] == ["Links met and not followed:", f"  {FLAVOR}/WTF"]
 
 
 @POSIX_PERMISSIONS
@@ -328,8 +478,7 @@ def test_an_unreadable_folder_is_reported_not_fatal_constructed(root: Path, flav
         f"{FLAVOR}/WTF/Account/{ACCOUNT}/SavedVariables",
     }
     assert all(e.error for e in report.errors)
-    top = _group(report, FLAVOR, "")
-    assert [(g.path, g.kind, g.files) for g in top.gaps] == [
+    assert [(g.name, g.kind, g.files) for g in report.groups] == [
         ("after-constructed.txt", "file", 1),
         ("Locked-constructed", "folder", 0),
     ]
@@ -345,20 +494,20 @@ def test_the_entry_bound_truncates_constructed(root: Path, flavor: Path) -> None
         _write(flavor / "zz-constructed" / f"{i}.txt", b"x")
     full = _find(root)
     assert not full.truncated
-    assert _group(full, FLAVOR, "").gaps[0].files == 10
+    assert full.groups[0].files == 10
     cut = _find(root, Limits(max_entries=full.entries - 3))
     assert cut.truncated
     assert cut.entries == full.entries - 3
-    assert _group(cut, FLAVOR, "").gaps[0].files == 7
+    assert cut.groups[0].files == 7
 
 
 def test_the_depth_bound_truncates_constructed(root: Path, flavor: Path) -> None:
     _write(flavor / "a-constructed" / "b" / "c" / "d" / "e.txt", b"x")
-    assert _group(_find(root), FLAVOR, "").gaps[0].files == 1
+    assert _find(root).groups[0].files == 1
     cut = _find(root, Limits(max_depth=3))  # root/flavor/a/b listed; b/c is not
     assert cut.truncated
-    (gap,) = _group(cut, FLAVOR, "").gaps
-    assert (gap.path, gap.files, gap.folders) == ("a-constructed", 0, 2)
+    (group,) = cut.groups
+    assert (group.name, group.files, group.folders) == ("a-constructed", 0, 2)
 
 
 def test_the_cli_says_when_the_bound_is_hit_constructed(
@@ -379,11 +528,13 @@ def test_gaps_json_keeps_undecodable_file_names_constructed(root: Path, flavor: 
     except (OSError, UnicodeEncodeError):
         pytest.skip("this volume refuses a file name that is not UTF-8")
     report = _json(gaps.GapReport, "filemap", "gaps")
-    assert _group(report, FLAVOR, "").gaps[0].path == name
+    assert report.groups[0].name == name
+    assert report.groups[0].gaps[0].path == name
 
 
 def test_gaps_reads_only_constructed(root: Path, flavor: Path) -> None:
     _write(flavor / "Unknown-constructed" / "a.txt", b"a")
+    _write(flavor / "Cache" / "x-constructed.bin", b"a")
     before = _state(root)
     ok("filemap", "gaps")
     ok("filemap", "gaps", "--json")
@@ -397,13 +548,13 @@ COVERED = [
     ("root", ("Data",)),
     ("root", ("Data", "data")),
     ("root", ("World of Warcraft Launcher.app",)),
-    ("flavor", ("Cache",)),
-    ("flavor", ("Logs", "x")),
     ("flavor", ("Interface", "AddOns", "SomeAddon")),
     ("flavor", ("Interface", "AddOns", "Blizzard_Foo")),
     ("flavor", ("World of Warcraft Classic.app",)),
 ]
 NOT_COVERED = [
+    ("flavor", ("Cache",)),  # catch-all rows never cover
+    ("flavor", ("Logs", "x")),
     ("root", ()),
     ("root", ("Interface",)),
     ("flavor", ()),

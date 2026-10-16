@@ -97,6 +97,10 @@ class FileMapEntry(BaseModel):
     module: str
     match: tuple[str, ...]
     exclude: tuple[str, ...] = ()
+    # A row for whatever else a folder holds, which it does not describe
+    # ("not described here yet"); `filemap gaps` reports what only such a
+    # row matches (M13-22).
+    catch_all: bool = False
 
     @field_validator("doc_path", "what", "written_by", "edit", "tier", "module")
     @classmethod
@@ -169,16 +173,24 @@ class FileMap(BaseModel):
         whatever its name, depth or kind, so a walk looking for paths with
         no row need not look inside (M13-22).
 
-        Conservative: True only when one entry has a match pattern that
-        ends in `/**`, whose other segments hold no `**` and match the
-        folder's first segments, and none of whose `exclude` patterns could
-        match the folder or anything below it.
+        Conservative: True only when one entry that is not a catch-all has
+        a match pattern that ends in `/**` (any kind; `/**/` matches folders
+        only and is skipped), whose other segments hold no `**` and match
+        the folder's first segments, and none of whose `exclude` patterns
+        could match the folder or anything below it. A catch-all row
+        (`catch_all`) never covers: what only it matches is a thin spot the
+        walk must see.
         """
         folder = tuple(parts)
         return any(
             e.base in (base, "any")
+            and not e.catch_all
             and not any(_may_reach(_segments(x), folder) for x in e.exclude)
-            and any(_covers_below(_segments(p), folder) for p in e.match if p != _SELF)
+            and any(
+                _covers_below(_segments(p), folder)
+                for p in e.match
+                if p != _SELF and not p.endswith("/")
+            )
             for e in self.entries
         )
 

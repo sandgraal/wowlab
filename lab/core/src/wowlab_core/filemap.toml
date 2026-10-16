@@ -12,6 +12,9 @@
 # Each `[[entry]]` is one table row. The display columns (`doc_path`, `what`,
 # `written_by`, `edit`, `tier`, `module`) are Markdown, rendered verbatim.
 # `match` and `exclude` are what `classify()` uses; they are never rendered.
+# `catch_all = true` marks a row that names a folder's leftovers without
+# describing them ("not described here yet"): `filemap gaps` lists what only
+# such a row matches as a thin spot of the map (M13-22). Never rendered.
 #
 # Patterns are `/`-separated segments relative to `base`:
 #   base = "root"    the install root (the folder holding `.build.info`)
@@ -624,6 +627,7 @@ written_by = "Client"
 edit = "no"
 tier = "—"
 module = "none"
+catch_all = true
 match = ["Cache/", "Cache/**"]
 
 [[entry]]
@@ -660,6 +664,7 @@ written_by = "Client"
 edit = "no"
 tier = "—"
 module = "none"
+catch_all = true
 match = ["Logs/", "Logs/**"]
 
 [[entry]]

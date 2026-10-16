@@ -1830,7 +1830,7 @@ def _root_items(inst: install.Install, errors: list[str]) -> list[TreeItem]:
         with os.scandir(root) as it:
             entries = sorted(it, key=lambda e: e.name)
     except OSError as exc:
-        errors.append(f"{root}: {exc.strerror or exc}")
+        errors.append(f".: {exc.strerror or exc}")
         return []
     items = []
     for e in entries:
@@ -1853,10 +1853,12 @@ def _root_items(inst: install.Install, errors: list[str]) -> list[TreeItem]:
                 note = f"link to {target}, not followed"
             except (OSError, ValueError):
                 note = "link, not followed"
+            if e.name in inst.other_dirs:
+                note += f"; {gaps.NOT_A_FLAVOR}"
         elif folder and e.name in flavors:
             note = "flavor folder"
         elif folder and e.name in inst.other_dirs:
-            note = "named like a flavor folder, but holds no .flavor.info"
+            note = gaps.NOT_A_FLAVOR
         items.append(
             TreeItem(
                 path=found.path,
@@ -1926,10 +1928,16 @@ def _tree_install(path: str | None, explain: bool, root: Path | None, json_out: 
 @filemap_app.command("gaps")
 @_handled
 def filemap_gaps(root: RootOpt = None, json_out: JsonOpt = False) -> None:
-    """Paths in the install with no file-map row, grouped under their nearest
-    classified folder and ranked by file count, then bytes. The walk covers
-    the install root and every flavor folder, reads only, never follows a
-    link, is bounded, and names what it could not read. JSON: gaps.GapReport."""
+    """Where the file map is thin: paths with no file-map row, and paths only
+    a catch-all row ("not described here yet") matches. They are grouped by
+    the parent folder's row and their own name, and ranked by file count,
+    then bytes. The walk covers the install root and every flavor folder,
+    reads only, never follows a link, is bounded, and names what it could
+    not read. A folder a row covers whole (`Data/`, each
+    `Interface/AddOns/<Addon>/`, the rest of `Interface/`) is labelled by that
+    row and not looked inside, so an addon unpacked one folder too deep, or
+    stray files under Interface/, are not reported; the folders not entered
+    are listed. JSON: gaps.GapReport."""
     inst, _ = _discover(root)
     report = gaps.find_gaps(inst)
     if json_out:
@@ -1939,51 +1947,83 @@ def filemap_gaps(root: RootOpt = None, json_out: JsonOpt = False) -> None:
     if report.truncated:
         _note("The walk hit a bound; there may be gaps it did not reach.")
     for err in report.errors:
-        _note("could not read {}: {}", err.path or ".", err.error)
+        _note("could not read {}: {}", err.path, err.error)
 
 
-def _files(n: int) -> str:
-    return f"{n:,} file" + ("" if n == 1 else "s")
+def _count(n: int, word: str) -> str:
+    return f"{n:,} {word}" + ("" if n == 1 else "s")
 
 
-def _gap_counts(gap: gaps.Gap) -> str:
-    if gap.kind == "file":
-        return _bytes(gap.bytes)
-    if gap.kind == "link":
-        return "link, not followed"
-    if gap.kind == "other":
-        return "not a file, folder or link; never opened"
-    parts = [_files(gap.files), _bytes(gap.bytes)]
-    if gap.folders:
-        parts.append(f"{gap.folders:,} folder" + ("" if gap.folders == 1 else "s"))
-    if gap.links:
-        parts.append(f"{gap.links:,} link" + ("" if gap.links == 1 else "s") + " not followed")
-    if gap.other:
-        parts.append(f"{gap.other:,} other")
+def _group_counts(group: gaps.GapGroup) -> str:
+    if group.kind == "file":
+        parts = [_bytes(group.bytes)]
+    elif group.kind == "link":
+        parts = ["link, not followed"]
+    elif group.kind == "other":
+        parts = ["not a file, folder or link; never opened"]
+    else:
+        parts = [_count(group.files, "file"), _bytes(group.bytes)]
+        if group.folders:
+            parts.append(_count(group.folders, "folder"))
+        if group.links:
+            parts.append(_count(group.links, "link") + " not followed")
+        if group.other:
+            parts.append(f"{group.other:,} other")
+    if group.places > 1:
+        parts.append(f"in {group.places:,} places")
+    if group.entry_id:
+        parts.append(f"row {group.entry_id}")
+    if group.note:
+        parts.append(group.note)
     return ", ".join(parts)
+
+
+def _say_gap_groups(groups: list[gaps.GapGroup]) -> None:
+    """One line per group: the parent's row and the name, never the parent's
+    own path (an account, realm or character folder name)."""
+    for group in groups:
+        parent = f"[{group.parent_entry_id}]" if group.parent_entry_id else "(install root)"
+        slash = "/" if group.kind == "folder" else ""
+        _say(f"  {parent} {group.name}{slash}  {_group_counts(group)}")
 
 
 def _print_gaps(report: gaps.GapReport) -> None:
     _say(f"File-map gaps in {report.install_root}")
-    if not report.groups:
-        _say("  none: every path the walk reached has a file-map row")
-    else:
+    if report.groups:
         _say(
-            f"  {_files(report.files)}, {_bytes(report.bytes)}, "
-            f"under {len(report.groups)} parent folder" + ("" if len(report.groups) == 1 else "s")
+            f"Paths with no file-map row: {_count(report.files, 'file')}, "
+            f"{_bytes(report.bytes)}, in {_count(len(report.groups), 'group')}"
         )
-    for group in report.groups:
-        if group.base == "flavor" and group.flavor_folder is not None:
-            where = "/".join(p for p in (group.flavor_folder, group.parent) if p) + "/"
-        else:
-            where = f"{group.parent}/" if group.parent else "(install root)"
-        row = f"  [{group.entry_id}]" if group.entry_id else ""
-        _say(f"{where}{row}  {_files(group.files)}, {_bytes(group.bytes)}")
-        for gap in group.gaps:
-            slash = "/" if gap.kind == "folder" else ""
-            _say(f"  {gap.path.rsplit('/', 1)[-1]}{slash}  {_gap_counts(gap)}")
+        _say_gap_groups(report.groups)
+    else:
+        none = "Paths with no file-map row: none; every path the walk reached has a row"
+        if report.links:
+            none += (
+                f"; {_count(len(report.links), 'link')} met and not followed (listed below), "
+                "so what they point at, a linked WTF/ for one, was not checked"
+            )
+        _say(none)
+    if report.catch_all:
+        _say(
+            f"Described only by a catch-all row: {_count(report.catch_all_files, 'file')}, "
+            f"{_bytes(report.catch_all_bytes)}"
+        )
+        _say_gap_groups(report.catch_all)
+    if report.not_entered:
+        _say("Not entered, labelled by a row that covers everything inside:")
+        by_row: dict[str, list[gaps.NotEntered]] = {}
+        for item in report.not_entered:
+            by_row.setdefault(item.entry_id, []).append(item)
+        for entry_id, items in by_row.items():
+            if len(items) == 1:
+                where = "/".join(p for p in (items[0].flavor_folder, items[0].path) if p)
+                _say(f"  [{entry_id}] {where}/")
+            else:
+                _say(f"  [{entry_id}] {_count(len(items), 'folder')}")
     if report.links:
-        _say(f"Links met and not followed: {len(report.links):,}")
+        _say("Links met and not followed:")
+        for link in report.links:
+            _say(f"  {link}")
 
 
 def _plain(markdown: str) -> str:

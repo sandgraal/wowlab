@@ -1,29 +1,42 @@
-"""gaps: the paths in an install that have no file-map row (M13-22,
+"""gaps: where the file map is thin in an install (M13-22,
 `docs/LAB_PLAN.md` §15.6).
 
 `find_gaps()` walks the install root and every flavor folder discovery
 reported, classifies each path with the file map (`wowlab_core.filemap`),
-and gathers the ones no row matches. A path with no row is grouped under its
-nearest classified parent folder (the install root, which has no row of its
-own, groups what sits directly in it). Inside a group, a folder with no row
-is one gap that counts the files, folders and bytes below it; the paths in
-it are not listed one by one, unless a row matches one of them again
-(`**/.DS_Store` does), which then becomes a parent of its own. Groups, and
-the gaps inside each, are ranked by file count, then bytes.
+and gathers two kinds of thin spot:
+
+- a **gap**: a path no row matches;
+- a path **described only by a catch-all row** (`FileMapEntry.catch_all`,
+  such as `Cache/**` "not described here yet"): a row names it, but says
+  nothing about what it is.
+
+Each thin spot is a *place*: the topmost such path below its nearest parent
+folder that a describing row matches (the install root, which has no row of
+its own, is the parent of what sits directly in it). A folder that is a
+place counts the files, folders, links and bytes below it rather than
+listing them; a describing row matching again further down (`**/.DS_Store`
+does) starts a place of its own there. Places are grouped by the parent's
+row and the place's own name and kind, so one unknown file found in every
+character folder is one group with a count, and the text output never needs
+an account, realm or character folder name. Groups are ranked by file
+count, then bytes. The JSON keeps every place, with its parent's path.
 
 The install root itself is not a gap (no row describes it, and none is
 meant to), and nothing outside it is looked at. A flavor folder is
-recognised only by the name discovery reported (L6).
+recognised only by the name discovery reported (L6); a root folder named
+like one that discovery did not take carries a note saying so.
 
 Reads only (L1): folders are listed and entries `lstat`ed; no file is
 opened, and nothing is created anywhere. A symlink, a Windows junction or
-any other reparse point is never followed: it is named in `links`, and, if
-its own location has no row, it is a gap of kind `link`. A folder whose
-every descendant a row already covers (`FileMap.covers`, `Data/**` for
-one) is not walked. The walk is bounded (`layout.Limits`: depth and entry
-count) and says so in `truncated`. A folder that cannot be listed, or an
-entry that cannot be `lstat`ed, is named in `errors`, and the walk carries
-on.
+any other reparse point is never followed: it is named in `links`, and,
+if its own location has no row, it is a gap of kind `link`. A folder whose
+every descendant a describing row covers (`FileMap.covers`: `Data/**`,
+`Interface/AddOns/<Addon>/**`) is not entered: it is named in
+`not_entered` with that row, and what is inside it is labelled by the row,
+not checked against it. The walk is bounded (`layout.Limits`: depth and
+entry count) and says so in `truncated`. A folder that cannot be listed, or
+an entry that cannot be `lstat`ed, is named in `errors`, and the walk
+carries on.
 
 Paths from file names keep their bytes: lone surrogates are escaped in
 JSON as `layout` does (`layout.FsText`).
@@ -43,50 +56,83 @@ from wowlab_core import filemap as _filemap
 from wowlab_core.install import Install
 from wowlab_core.layout import FsText, Limits
 
-__all__ = ["Gap", "GapError", "GapGroup", "GapReport", "find_gaps"]
+__all__ = [
+    "NOT_A_FLAVOR",
+    "GapError",
+    "GapGroup",
+    "GapPlace",
+    "GapReport",
+    "NotEntered",
+    "find_gaps",
+]
 
 Base = Literal["root", "flavor"]
 GapKind = Literal["file", "folder", "link", "other"]
+
+# The note on a root folder (or link) named `_..._` that discovery did not
+# take as a flavor folder (`Install.other_dirs`): its `.flavor.info` is
+# missing, is not a regular file, or the folder itself is a link.
+NOT_A_FLAVOR = "not taken as a flavor folder (no regular .flavor.info file)"
+# Paths of files below a folder place kept as examples in the JSON.
+EXAMPLES = 5
 
 
 class _Model(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
-class Gap(_Model):
-    """One path with no file-map row, and what lies below it."""
+class GapPlace(_Model):
+    """One thin spot: a path and what lies below it."""
 
-    path: FsText  # relative to the group's base, `/`-separated
-    # `other`: a FIFO, socket or device, never opened.
-    kind: GapKind
-    # Below a folder (the path itself for a file): regular files with no
-    # row, their bytes, folders with no row, links, and other entries.
+    flavor_folder: FsText | None  # set when the group's base is "flavor"
+    parent: FsText  # relative to the base; "" is the install root or the flavor folder
+    path: FsText  # relative to the base, `/`-separated
+    # Below a folder (the path itself for a file): regular files of this
+    # kind of thin spot, their bytes, folders, links and other entries
+    # (FIFOs, sockets, devices; never opened).
     files: int
     bytes: int
     folders: int
     links: int
     other: int
+    # Up to `EXAMPLES` of the files counted below a folder, relative to the
+    # base, in walk order; empty for a place that is not a folder.
+    examples: list[FsText]
 
 
 class GapGroup(_Model):
-    """The gaps whose nearest classified parent is one folder."""
+    """The places with the same parent row, name and kind."""
 
     base: Base
-    flavor_folder: FsText | None  # set when `base` is "flavor"
-    # The parent, relative to `base`: "" is the install root (base "root")
-    # or the flavor folder itself (base "flavor").
-    parent: FsText
-    # The parent's file-map row; None only for the install root, which has none.
+    # The parent folder's row; None for the install root, which has none.
+    parent_entry_id: str | None
+    name: FsText  # the place's own file or folder name
+    kind: GapKind
+    # In `catch_all`: the catch-all row that matches these places; None in `groups`.
     entry_id: str | None
+    note: str | None  # e.g. NOT_A_FLAVOR
+    places: int
     files: int
     bytes: int
-    gaps: list[Gap]  # ranked: most files first, then most bytes, then path
+    folders: int
+    links: int
+    other: int
+    gaps: list[GapPlace]  # ranked: most files first, then bytes, then path
+
+
+class NotEntered(_Model):
+    """A folder a describing row covers whole: labelled by it, not looked inside."""
+
+    base: Base
+    flavor_folder: FsText | None
+    path: FsText  # relative to the base
+    entry_id: str
 
 
 class GapError(_Model):
     """A folder that could not be listed, or an entry not `lstat`ed."""
 
-    path: FsText  # relative to the install root, `/`-separated
+    path: FsText  # relative to the install root, `/`-separated; "." is the root
     error: str
 
 
@@ -95,22 +141,30 @@ class GapReport(_Model):
 
     install_root: FsText
     flavor_folders: list[FsText]  # as discovery reported them
-    groups: list[GapGroup]  # ranked: most files first, then most bytes, then parent
-    files: int  # regular files with no row, in every group
+    # Paths with no row. Ranked: most files first, then bytes, then places, then name.
+    groups: list[GapGroup]
+    files: int  # regular files with no row
     bytes: int
+    # Paths only a catch-all row matches, ranked the same way.
+    catch_all: list[GapGroup]
+    catch_all_files: int
+    catch_all_bytes: int
+    not_entered: list[NotEntered]  # in walk order
     # Every link met (symlink, junction, reparse point), relative to the
     # install root, sorted: never followed, whatever its row.
     links: list[FsText]
     errors: list[GapError]  # sorted by path
     entries: int  # entries `lstat`ed, counted against `limits.max_entries`
-    truncated: bool  # a bound was hit: there may be gaps the walk did not reach
+    truncated: bool  # a bound was hit: there may be thin spots the walk did not reach
 
 
 # ─── the walk ────────────────────────────────────────────────────────────────
 
 
 @dataclass
-class _Gap:
+class _Place:
+    flavor_folder: str | None
+    parent: str
     path: str
     kind: GapKind
     files: int = 0
@@ -118,15 +172,28 @@ class _Gap:
     folders: int = 0
     links: int = 0
     other: int = 0
+    examples: list[str] = field(default_factory=list)
+
+    def add(self, kind: GapKind, size: int, rel: str) -> None:
+        if kind == "file":
+            self.files += 1
+            self.bytes += size
+            if len(self.examples) < EXAMPLES:
+                self.examples.append(rel)
+        elif kind == "folder":
+            self.folders += 1
+        elif kind == "link":
+            self.links += 1
+        else:
+            self.other += 1
 
 
 @dataclass
-class _Group:
+class _Parent:
     base: Base
     flavor_folder: str | None
-    parent: str
+    rel: tuple[str, ...]
     entry_id: str | None
-    gaps: list[_Gap] = field(default_factory=list)
 
 
 @dataclass
@@ -136,8 +203,29 @@ class _Frame:
     flavor_folder: str | None
     rel: tuple[str, ...]  # relative to the base
     depth: int  # folders below the install root
-    group: tuple[Base, str | None, tuple[str, ...]]
-    gap: _Gap | None  # the gap this folder lies in, if it has no row
+    parent: _Parent  # nearest folder a describing row matches
+    gap: _Place | None  # the gap this folder lies in
+    loose: _Place | None  # the catch-all-only place this folder lies in
+
+
+_GroupKey = tuple[Base, str | None, str, GapKind, str | None]
+
+
+@dataclass
+class _Found:
+    places: dict[_GroupKey, list[_Place]] = field(default_factory=dict)
+
+    def start(
+        self, parent: _Parent, name: str, kind: GapKind, entry_id: str | None, size: int
+    ) -> _Place:
+        place = _Place(parent.flavor_folder, "/".join(parent.rel), "", kind)
+        place.path = "/".join((*parent.rel, name))
+        if kind != "folder":
+            place.add(kind, size, place.path)
+            place.examples = []
+        key = (parent.base, parent.entry_id, name, kind, entry_id)
+        self.places.setdefault(key, []).append(place)
+        return place
 
 
 def _is_link(path: Path, st: os.stat_result) -> bool:
@@ -169,55 +257,90 @@ _MAP_KIND: dict[GapKind, _filemap.Kind] = {
 }
 
 
-def _install_rel(frame_base: Base, flavor: str | None, rel: tuple[str, ...]) -> str:
-    parts = (flavor, *rel) if frame_base == "flavor" and flavor is not None else rel
-    return "/".join(parts)
-
-
-def _parent_text(group: GapGroup) -> str:
-    """The group's parent relative to the install root, for ordering."""
-    rel = tuple(group.parent.split("/")) if group.parent else ()
-    return _install_rel(group.base, group.flavor_folder, rel)
+def _install_rel(base: Base, flavor: str | None, rel: tuple[str, ...]) -> str:
+    parts = (flavor, *rel) if base == "flavor" and flavor is not None else rel
+    return "/".join(parts) or "."
 
 
 def _error(exc: OSError) -> str:
     return exc.strerror or str(exc)
 
 
-def _rank(files: int, size: int, path: str) -> tuple[int, int, str]:
-    return (-files, -size, path)
+def _reported(place: _Place, catch_all: bool) -> bool:
+    """A catch-all folder place matters only for what is counted below it."""
+    if not catch_all or place.kind != "folder":
+        return True
+    return bool(place.files or place.links or place.other)
+
+
+def _groups(found: _Found, *, catch_all: bool, other_dirs: set[str]) -> list[GapGroup]:
+    out = []
+    for (base, parent_entry, name, kind, entry_id), places in found.places.items():
+        kept = sorted(
+            (p for p in places if _reported(p, catch_all)),
+            key=lambda p: (-p.files, -p.bytes, p.flavor_folder or "", p.path),
+        )
+        if not kept:
+            continue
+        at_root = base == "root" and parent_entry is None
+        out.append(
+            GapGroup(
+                base=base,
+                parent_entry_id=parent_entry,
+                name=name,
+                kind=kind,
+                entry_id=entry_id,
+                note=NOT_A_FLAVOR if at_root and name in other_dirs else None,
+                places=len(kept),
+                files=sum(p.files for p in kept),
+                bytes=sum(p.bytes for p in kept),
+                folders=sum(p.folders for p in kept),
+                links=sum(p.links for p in kept),
+                other=sum(p.other for p in kept),
+                gaps=[
+                    GapPlace(
+                        flavor_folder=p.flavor_folder,
+                        parent=p.parent,
+                        path=p.path,
+                        files=p.files,
+                        bytes=p.bytes,
+                        folders=p.folders,
+                        links=p.links,
+                        other=p.other,
+                        examples=p.examples,
+                    )
+                    for p in kept
+                ],
+            )
+        )
+    out.sort(key=lambda g: (-g.files, -g.bytes, -g.places, g.name, g.parent_entry_id or ""))
+    return out
 
 
 def find_gaps(install: Install, limits: Limits | None = None) -> GapReport:
-    """Every path under `install`'s root with no file-map row, grouped and
-    ranked (see the module docstring). Reads only; never raises for a path
-    it cannot read."""
+    """Every thin spot under `install`'s root, grouped and ranked (see the
+    module docstring). Reads only; never raises for a path it cannot read."""
     bounds = limits if limits is not None else Limits()
     fm = _filemap.load()
     root = Path(install.root)
     flavors = {f.folder for f in install.flavors}
-    root_key: tuple[Base, str | None, tuple[str, ...]] = ("root", None, ())
-    groups: dict[tuple[Base, str | None, tuple[str, ...]], _Group] = {
-        root_key: _Group("root", None, "", None)
-    }
+    gaps, loose = _Found(), _Found()
+    not_entered: list[NotEntered] = []
     links: list[str] = []
     errors: list[GapError] = []
     entries = 0
     truncated = False
 
-    stack = [_Frame(root, "root", None, (), 0, root_key, None)]
+    top = _Parent("root", None, (), None)
+    stack = [_Frame(root, "root", None, (), 0, top, None, None)]
     while stack:
         frame = stack.pop()
         try:
             with os.scandir(frame.path) as it:
                 children = sorted(it, key=lambda e: e.name)
         except OSError as exc:
-            errors.append(
-                GapError(
-                    path=_install_rel(frame.base, frame.flavor_folder, frame.rel),
-                    error=_error(exc),
-                )
-            )
+            where = _install_rel(frame.base, frame.flavor_folder, frame.rel)
+            errors.append(GapError(path=where, error=_error(exc)))
             continue
         below: list[_Frame] = []
         for child in children:
@@ -237,69 +360,54 @@ def find_gaps(install: Install, limits: Limits | None = None) -> GapReport:
                 base, flavor, rel = "flavor", child.name, ()
             if kind == "link":
                 links.append(_install_rel(base, flavor, rel))
-            entry = fm.classify(rel, base, _MAP_KIND[kind])
+            matched = fm.matches(rel, base, _MAP_KIND[kind])
+            describing = next((e for e in matched if not e.catch_all), None)
             size = st.st_size if kind == "file" else 0
-            gap = frame.gap
-            group = frame.group
-            if entry is not None:
-                gap = None
+            text = "/".join(rel)
+            parent, gap, rest = frame.parent, frame.gap, frame.loose
+            if describing is not None:
+                gap = rest = None
                 if kind == "folder":
                     if fm.covers(rel, base):
-                        continue  # a row covers everything below: no gap there
-                    group = (base, flavor, rel)
-                    groups.setdefault(group, _Group(base, flavor, "/".join(rel), entry.id))
-            elif gap is None:
-                gap = _Gap("/".join(rel), kind, files=int(kind == "file"), bytes=size)
-                gap.links = int(kind == "link")
-                gap.other = int(kind == "other")
-                groups[group].gaps.append(gap)
+                        not_entered.append(
+                            NotEntered(
+                                base=base, flavor_folder=flavor, path=text, entry_id=describing.id
+                            )
+                        )
+                        continue
+                    parent = _Parent(base, flavor, rel, describing.id)
+            elif not matched:
+                rest = None
+                if gap is None:
+                    gap = gaps.start(parent, child.name, kind, None, size)
+                else:
+                    gap.add(kind, size, text)
             else:
-                gap.files += kind == "file"
-                gap.bytes += size
-                gap.folders += kind == "folder"
-                gap.links += kind == "link"
-                gap.other += kind == "other"
+                gap = None
+                if rest is None:
+                    rest = loose.start(parent, child.name, kind, matched[0].id, size)
+                else:
+                    rest.add(kind, size, text)
             if kind == "folder":
-                below.append(_Frame(path, base, flavor, rel, frame.depth + 1, group, gap))
+                below.append(_Frame(path, base, flavor, rel, frame.depth + 1, parent, gap, rest))
         if below and frame.depth >= bounds.max_depth:
             truncated = True
             continue
         stack.extend(reversed(below))
 
-    ranked = []
-    for g in groups.values():
-        if not g.gaps:
-            continue
-        gaps = sorted(g.gaps, key=lambda x: _rank(x.files, x.bytes, x.path))
-        ranked.append(
-            GapGroup(
-                base=g.base,
-                flavor_folder=g.flavor_folder,
-                parent=g.parent,
-                entry_id=g.entry_id,
-                files=sum(x.files for x in gaps),
-                bytes=sum(x.bytes for x in gaps),
-                gaps=[
-                    Gap(
-                        path=x.path,
-                        kind=x.kind,
-                        files=x.files,
-                        bytes=x.bytes,
-                        folders=x.folders,
-                        links=x.links,
-                        other=x.other,
-                    )
-                    for x in gaps
-                ],
-            )
-        )
-    ranked.sort(key=lambda g: _rank(g.files, g.bytes, _parent_text(g)))
+    other_dirs = set(install.other_dirs)
+    groups = _groups(gaps, catch_all=False, other_dirs=other_dirs)
+    catch_all = _groups(loose, catch_all=True, other_dirs=other_dirs)
     return GapReport(
         install_root=str(root),
         flavor_folders=[f.folder for f in install.flavors],
-        groups=ranked,
-        files=sum(g.files for g in ranked),
-        bytes=sum(g.bytes for g in ranked),
+        groups=groups,
+        files=sum(g.files for g in groups),
+        bytes=sum(g.bytes for g in groups),
+        catch_all=catch_all,
+        catch_all_files=sum(g.files for g in catch_all),
+        catch_all_bytes=sum(g.bytes for g in catch_all),
+        not_entered=not_entered,
         links=sorted(links),
         errors=sorted(errors, key=lambda e: e.path),
         entries=entries,
