@@ -6901,7 +6901,9 @@ def ui_command() -> None:
 
     The server listens on 127.0.0.1 only, at a port the system picks, and
     answers only requests that carry the random token in the URL it opens.
-    It runs this wowlab's commands with --json. Commands that save only to
+    It opens on the explorer: a flavor folder's files, each with whether
+    wowlab may edit it, and what a picked file is and who writes it. A
+    second tab runs this wowlab's commands with --json. Commands that save only to
     wowlab's own data (snapshots, profiles, saved looks, the db2 cache,
     pages) are offered; some of them overwrite what they saved before (for
     example looks import-char --replace), and none of them touches the game

@@ -4,17 +4,53 @@
 <meta charset="utf-8">
 <meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
 <title>wowlab</title>
 <style><!--wowlab:style--></style>
 </head>
 <body>
-<header>
+<header class="banner">
+<svg class="crest" viewBox="0 0 40 48" width="40" height="48" aria-hidden="true" focusable="false">
+<path d="M20 2 L37 9 V24 C37 35 29 42 20 46 C11 42 3 35 3 24 V9 Z" fill="#2a2116" stroke="#d4a838" stroke-width="2.5"/>
+<path d="M20 9 L30 13.5 V24 C30 31 25.5 36 20 39 C14.5 36 10 31 10 24 V13.5 Z" fill="none" stroke="#8c6a1c" stroke-width="1.5"/>
+<path d="M20 13 L22.6 21.4 L31 24 L22.6 26.6 L20 35 L17.4 26.6 L9 24 L17.4 21.4 Z" fill="#f0cf6a"/>
+</svg>
+<div class="banner-text">
 <h1>wowlab</h1>
-<p>Runs the commands of the <code>wowlab</code> you started, on this machine only. Commands that save only to wowlab's own data (snapshots, profiles, saved looks, the db2 cache, pages) are offered, and none of them touches the game folder. Commands that change your game files, or that ask before changing anything (<code>--yes</code>), are not offered in this version.</p>
+<p>What every file in your game folder is, who writes it, and whether wowlab may change it. Read-only: nothing here changes your game files.</p>
+</div>
+<nav class="tabs" role="tablist" aria-label="Views">
+<button id="tab-explorer" class="tab" type="button" role="tab" aria-selected="true" aria-controls="explorer-view">Explorer</button>
+<button id="tab-commands" class="tab" type="button" role="tab" aria-selected="false" aria-controls="commands-view">Commands</button>
+</nav>
 </header>
 <main>
-<nav id="commands" aria-label="Commands"></nav>
-<section id="detail" aria-live="polite">
+<section id="explorer-view" role="tabpanel" aria-labelledby="tab-explorer">
+<div class="toolbar panel">
+<label id="flavor-box" hidden>Flavor folder <select id="flavor"></select></label>
+<label>Verdict <select id="level-filter"><option value="">All</option></select></label>
+<label>Find <input id="text-filter" type="search" placeholder="part of a path" autocomplete="off" spellcheck="false"></label>
+<p id="explorer-status" role="status"></p>
+</div>
+<div class="panes">
+<div class="panel tree-panel">
+<p id="tree-root" class="tree-root"></p>
+<ul id="tree" class="tree" role="tree" aria-label="Files in the flavor folder"></ul>
+</div>
+<aside id="explain" class="parchment" aria-live="polite">
+<h2 id="explain-title">Pick a file</h2>
+<p id="explain-path" class="path"></p>
+<div id="explain-verdict" class="verdict"></div>
+<dl id="explain-facts"></dl>
+<p id="explain-status"></p>
+</aside>
+</div>
+</section>
+<section id="commands-view" role="tabpanel" aria-labelledby="tab-commands" hidden>
+<p class="intro">Runs the commands of the <code>wowlab</code> you started, on this machine only. Commands that save only to wowlab's own data (snapshots, profiles, saved looks, the db2 cache, pages) are offered, and none of them touches the game folder. Commands that change your game files, or that ask before changing anything (<code>--yes</code>), are not offered in this version.</p>
+<div class="commands-body">
+<nav id="commands" class="panel" aria-label="Commands"></nav>
+<section id="detail" class="panel" aria-live="polite">
 <h2 id="title">Pick a command</h2>
 <p id="help"></p>
 <div id="fields"></div>
@@ -22,6 +58,8 @@
 <p id="status"></p>
 <pre id="stdout"></pre>
 <pre id="stderr"></pre>
+</section>
+</div>
 </section>
 </main>
 <script><!--wowlab:script--></script>

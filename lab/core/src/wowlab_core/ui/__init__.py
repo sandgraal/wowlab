@@ -20,7 +20,8 @@ inline script and style by hash, and nothing else, and no CORS header. The
 page shell is template text in this package (`templates/`), assembled into
 one document: a `<script src>` would be a request without the token.
 
-`GET /api/commands` lists the leaves of the Click tree read at start. `POST
+`GET /api/commands` lists the leaves of the Click tree read at start, with
+the home folder and path separator so the page can show home as `~`. `POST
 /api/run` runs one leaf. Its argv is built only from the parameters the leaf
 declares: options as `--name=value`, so a value is never read as an option,
 arguments after `--`, flags given or not, never through a shell. Refused
@@ -247,6 +248,16 @@ def _read_tree(root: Any) -> dict[tuple[str, ...], _Leaf]:
     return leaves
 
 
+def _home() -> str:
+    """The home folder, so the page can show it as `~` (§15.6); "" when it
+    cannot be read or is the file system root."""
+    try:
+        home = str(Path.home())
+    except (RuntimeError, KeyError, OSError):
+        return ""
+    return "" if home in ("", os.sep) else home
+
+
 def _describe(leaf: _Leaf) -> dict[str, Any]:
     refused = _REFUSED_PARAMS.get(leaf.path, {})
     return {
@@ -345,10 +356,25 @@ def _build_argv(leaf: _Leaf, params: Mapping[str, object]) -> list[str]:
 # ─── running one command ─────────────────────────────────────────────────────
 
 
+# Characters escaped in a run's output even though JSON allows them raw: the
+# HTML-significant ones and the two line separators that end a JavaScript
+# line (M13-25), so the body never holds `</script>` or a raw U+2028.
+_JSON_EXTRA_ESCAPES = str.maketrans(
+    {
+        "<": "\\u003c",
+        ">": "\\u003e",
+        "&": "\\u0026",
+        chr(0x2028): "\\u2028",
+        chr(0x2029): "\\u2029",
+    }
+)
+
+
 def _json_text(text: str) -> bytes:
-    """`text` as the inside of a JSON string, UTF-8 (`ensure_ascii=False`):
-    what it costs in the response body."""
-    return json.dumps(text, ensure_ascii=False)[1:-1].encode("utf-8")
+    """`text` as the inside of a JSON string, UTF-8 (`ensure_ascii=False`,
+    plus `_JSON_EXTRA_ESCAPES`): what it costs in the response body."""
+    inside = json.dumps(text, ensure_ascii=False)[1:-1]
+    return inside.translate(_JSON_EXTRA_ESCAPES).encode("utf-8")
 
 
 class _Capture:
@@ -534,7 +560,12 @@ class UiServer(http.server.ThreadingHTTPServer):
         self.url = f"http://{_LOOPBACK}:{self.port}/?token={self.token}"
         self.hosts = frozenset({f"{_LOOPBACK}:{self.port}", f"localhost:{self.port}"})
         self.commands_body = json.dumps(
-            {"commands": [_describe(leaf) for leaf in leaves.values()]}, ensure_ascii=True
+            {
+                "commands": [_describe(leaf) for leaf in leaves.values()],
+                "home": _home(),
+                "sep": os.sep,
+            },
+            ensure_ascii=True,
         ).encode("ascii")
 
     @override
