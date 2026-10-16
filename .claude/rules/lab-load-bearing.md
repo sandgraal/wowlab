@@ -4,15 +4,18 @@ paths:
   - "lab/core/src/wowlab_core/guard.py"
   - "lab/core/src/wowlab_core/svmerge.py"
   - "lab/core/src/wowlab_core/profiles.py"
+  - "lab/core/src/wowlab_core/ui/**"
+  - "lab/core/src/wowlab_core/ui.py"
 ---
 
 # Load-bearing files
 
-Every tool stands on these. `luadata.py` reads the owner's data, and `guard.py` is the only thing allowed to change it. `svmerge.py` and `profiles.py` decide what `guard` writes back into the owner's files; the owner added them to the set on 2026-09-29. These four are the whole load-bearing set, and the `[TEST]` / `[IMPL]` separation in `AGENTS.md` is mandatory for all of them. The bullets below that name `luadata.py` or `guard.py` apply to those files only.
+Every tool stands on these. `luadata.py` reads the owner's data, and `guard.py` is the only thing allowed to change it. `svmerge.py` and `profiles.py` decide what `guard` writes back into the owner's files; the owner added them to the set on 2026-09-29. `wowlab_core.ui` (the `wowlab ui` server, ADR-0029, whether `ui.py` or a `ui/` package) opens a local port and runs CLI commands for the browser; the owner added it on 2026-10-15. These five are the whole load-bearing set, and the `[TEST]` / `[IMPL]` separation in `AGENTS.md` is mandatory for all of them. The bullets below that name `luadata.py` or `guard.py` apply to those files only.
 
 - **Separation.** Graders are written by `test-writer` and land on `main` first as `xfail(strict=True)`. Activate them by deleting the marker line only. Never edit a grader; if one is wrong, report it.
 - **`luadata.py`: data, never code.** Tables, strings, numbers, booleans, nil. Reject functions, calls, metatables, operators and bare identifiers with a line and column. Bounded depth, size and string length; over a bound raises, never truncates, never lets a `RecursionError` escape.
 - **`luadata.py`: fidelity.** Key order, key style, raw number text and trailing comments survive a parse. The serializer reproduces an unmodified real fixture byte for byte and is deterministic across platforms and locales. A fixture that cannot round-trip is a document-model finding, not a special case.
 - **`guard.py`: no bypass.** Client closed or the write is refused; unknown counts as running. Allowlisted subtrees only. Snapshot first. Journal before and after hashes. Atomic replace. Roll back on any exception. No parameter, environment variable or private helper skips any of these.
 - **`guard.py`: path handling.** Resolve before checking. Refuse traversal, absolute paths, symlink escapes, case-variant matches of forbidden paths, anything at the install root, `Data/`, executables, `.build.info`, `.flavor.info`.
-- **Gate.** `make test-parser` green before you push a `luadata.py` change; the full suite (`make ci`) green before you push a `guard.py` change. `security-reviewer` reviews every `guard.py` diff.
+- **Gate.** `make test-parser` green before you push a `luadata.py` change; the full suite (`make ci`) green before you push a `guard.py` change. `security-reviewer` reviews every `guard.py` diff and every `ui` diff.
+- **`ui`: the local server (ADR-0029 and its 2026-10-15 amendment).** Bound to `127.0.0.1` only; the token on every request and never in a log, body, header, file, or a child's argv or environment; Host and Origin checked before a body is read; no CORS; a CSP that allows only the server, with `frame-ancestors 'none'`; only Click-tree leaves run, argv built from declared parameters, never through a shell; every `--yes` command, `ui` itself and `looks page --out` refused; a timeout that kills the whole process tree, and an output cap that bounds memory. The server writes nothing itself.

@@ -7,7 +7,7 @@ model: claude-opus-5-5
 
 You write tests that grade a behaviour *before* it exists. The rule in
 `AGENTS.md` is that the session which writes a load-bearing file
-(`luadata.py`, `guard.py`, `svmerge.py`, `profiles.py`) must not write the
+(`luadata.py`, `guard.py`, `svmerge.py`, `profiles.py`, `wowlab_core.ui`) must not write the
 tests that grade it. You are
 the other side of that line. Never read or wait for an implementation
 branch; derive every expectation from `docs/LAB_PLAN.md`,

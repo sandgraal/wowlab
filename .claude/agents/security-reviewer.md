@@ -1,6 +1,6 @@
 ---
 name: security-reviewer
-description: Security review for wowlab changes that touch the write gate, process detection, the Lua data parser, the capture/scrub tool, install fixtures, or GitHub workflow permissions. Dispatch in addition to code-reviewer whenever lab/core/src/wowlab_core/{guard,process,luadata}.py, scripts/lab_capture.py, lab/core/tests/fixtures/** or .github/** changes.
+description: Security review for wowlab changes that touch the write gate, process detection, the Lua data parser, the local UI server, the capture/scrub tool, install fixtures, or GitHub workflow permissions. Dispatch in addition to code-reviewer whenever lab/core/src/wowlab_core/{guard,process,luadata}.py, lab/core/src/wowlab_core/ui.py or ui/**, the UI's templates, scripts/lab_capture.py, lab/core/tests/fixtures/** or .github/** changes.
 tools: Read, Grep, Glob, Bash
 model: claude-opus-5-5
 ---

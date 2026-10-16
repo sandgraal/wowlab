@@ -101,7 +101,8 @@ required checks are green, threads are resolved, and reviews are clean.
 - Test-writer / implementer separation is mandatory for the load-bearing
   files, which rewrite the owner's data: `luadata.py`, `guard.py`, `svmerge.py`
   and `profiles.py` under `lab/core/src/wowlab_core/` (widened by the owner,
-  2026-09-29): a `[TEST]` ticket lands graders before the `[IMPL]` ticket
+  2026-09-29), and `wowlab_core.ui`, the local server that runs commands for
+  the browser (`ui.py` or `ui/`; added by the owner, 2026-10-15): a `[TEST]` ticket lands graders before the `[IMPL]` ticket
   creates the file or changes what it does. The session that writes the code never
   writes, edits, or weakens the tests that grade it.
 - Work runs in owner-selected waves (ADR-0024). One wave is one milestone.
