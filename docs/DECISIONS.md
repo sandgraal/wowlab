@@ -257,6 +257,15 @@ The decision itself is unchanged. This amendment only stages it, so that the fir
 
 *Note (2026-10-15, later):* the explorer view was split in two (owner: "get there sooner"), so v0.1 is now M13-21 to M13-27. M13-27 is read-only too, and nothing above changes.
 
+**Owner rulings (2026-10-15), from the M13-24T review; the conductor recorded them on the owner's instruction:**
+- **What "read-only" means for v0.1.** v0.1 keeps out every command that declares `--yes`, and anything that writes into an install. It may run commands that write only to wowlab's own store or user data directory, such as `snap create`, `profile save` and `profile delete`, `looks save` and `looks import-char`, `looks page` to its default place under the data directory's `pages/`, and `db2 fetch` (the cache). `looks page --out` can create a file anywhere outside an install, so the UI refuses `--out` in v0.1. "No path that changes files" above therefore reads "no path that changes the game's files". The parity test and the server keep the `--yes` set exactly as stated.
+- **The token in the terminal.** When the browser cannot be opened, `wowlab ui` may print the token URL once, on its own stdout. It is never written through logging, never into a file, and never into a child's argv or environment. Everywhere else, "only in the URL it opens" stands.
+- **Settled with the security review, not new decisions:**
+  - every page sends `frame-ancestors 'none'`;
+  - an `Origin`, when present, must equal `http://` plus the request's `Host`;
+  - `log tail --follow` is refused in v0.1, because a run must end;
+  - the subprocess is the running interpreter, `sys.executable -m wowlab_core.cli` or an equivalent absolute path, never a PATH lookup.
+
 ---
 
 ## ADR-0030 — Languages: one per purpose, each admitted by an ADR

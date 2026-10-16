@@ -245,6 +245,28 @@ Expected-failure graders, derived from ADR-0029 and its amendment of 2026-10-15 
 
 **Static files.** They are served only from the package's templates, and a traversal path is refused.
 
+*Amended 2026-10-15, after the security review of #197 and the owner's rulings under ADR-0029:*
+- **The `wowlab ui` command itself** is graded:
+  - the server comes from `make_server` with its defaults, bound to `127.0.0.1`;
+  - the URL opened equals `server.url`;
+  - it shuts down cleanly on Ctrl-C;
+  - when the browser cannot open, the token URL is printed once to stdout and through no logger;
+  - the token appears in no child's argv or environment, checked with a recording runner that captures both.
+- **The default subprocess** is the running interpreter, given as an absolute path, never a PATH lookup.
+- **A timeout kills the whole process tree**, grandchildren included, and so does shutting down the server.
+- **The output cap bounds memory** against an endless writer.
+- **The token never leaks:**
+  - it appears in no response body and no header;
+  - no `Set-Cookie` is sent;
+  - Host, Origin and the token are checked before a POST body is read, and the body's size is capped.
+- **Parameter values** of a type other than str, int, bool, or a list of those are refused. Every list element is passed as a value.
+- **`log tail --follow` is refused.**
+- **The CSP's first directive is the one enforced**, and every page carries `frame-ancestors 'none'`.
+- **An `Origin`**, when present, must equal `http://` plus the request's `Host`.
+- **`static_files()`** cannot list a file from outside the templates folder.
+
+Commands that write only to wowlab's own store or user data directory are allowed (owner ruling). The refused set stays every `--yes` command plus `ui`, plus the `--out` option of `looks page`, which can create a file anywhere outside an install.
+
 **Acceptance:** the graders are `xfail(strict=True)` and fail on `main` for the stated reason; reviewed by `security-reviewer` and `code-reviewer`.
 
 ---
@@ -455,3 +477,29 @@ Found by M13-17T and confirmed in its code review. On Linux, `ru_maxrss` carries
 Apply M13-17T's fix to every child that measures memory: read `VmHWM` on Linux and keep the input alive, keeping every target. In M13-17T's file, `lab/core/tests/review/test_m10_04_bounded_document_misses_memory_target.py`, two tests still free their input before parsing (the `del body` in `CHILD`), which makes them read low; fix that too. They are `test_constructed_wide_trivia_document_at_the_entry_bound_fits_the_rss_target` and `test_constructed_positive_control_empty_tables_at_the_entry_bound`. That file's `MAX_ENTRIES` docstring is already corrected.
 
 **Acceptance:** each probe shows real growth on the Linux CI job (paste the readings) and still fails against a constructed parser that holds twice the memory; `make ci` green; reviewed by `code-reviewer`.
+
+---
+
+## [ ] M13-28 — File map: executables inside an addon folder are "no"
+**Size:** S · **Depends on:** M13-21
+
+Found in the domain review of #195 (M13-21). A file such as `Interface/AddOns/Foo/bin/helper.exe` or `run.bat` matches the `addon` row, so `explain` calls it editable "through wowlab's write gate". The gate never writes an executable (L7, `guard`'s allowlist). Add a file-map row before `addon`, with Edit `no`, for executables and scripts under `Interface/AddOns/`. The row must classify exactly the paths `guard._is_executable` refuses. That predicate checks every path component (for example `Helper.app/Contents/MacOS/x` and `lib.bundle/y`), versioned shared libraries (`libfoo.so.1`) and its full suffix list (`.js`, `.sh`, `.ps1`, `.command`, `.app`, `.framework` and more). A test runs both over a broad table of paths and compares them. Regenerate `docs/LAB_FILE_MAP.md`.
+
+**Acceptance:**
+- `explain` on a labelled constructed `.exe`, `.bat`, `.cmd`, `.dll` and `.dylib` under an addon folder says "no".
+- A test fails if the row and `guard._is_executable` ever disagree on a path under `Interface/AddOns/`.
+- `make ci` green.
+- Reviewed by `domain-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-29 — `classify`: a path that does not exist is not a folder
+**Size:** S · **Depends on:** M13-21
+
+Found in the domain review of #195. `classify` on a path that does not exist, with no `is_dir` given, matches the folder-only `realm-folder` row, so `explain` reports a folder. A missing path should be classified from its shape only where a row says so. Otherwise it should be reported as not found, with a verdict of `unclassified` and plain words.
+
+**Acceptance:**
+- `explain` on a labelled constructed missing path, at each depth under `WTF/Account/`, gives either the right row or "not found", never a folder row by accident.
+- The text output for paths that exist is byte-identical.
+- `make ci` green.
+- Reviewed by `domain-reviewer` and `code-reviewer`.
