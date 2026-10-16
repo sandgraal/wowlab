@@ -3042,6 +3042,8 @@ M13-01 ADR-0031 accepted ─┬─ M13-03 release pipeline ───────
                                                               └─ M13-08 binds coach ─ (v0.2 if late)
 ```
 
+*Amended 2026-10-16 (owner):* in the graph above, M13-02's human Windows run no longer gates M13-11. v0.1 ships with Windows untested (§15.1), and M13-02 stays open for a later release.
+
 M13-01 comes first. M13-03, M13-09 and M13-10 run alongside M13-02 and
 M13-04. M13-02's CI work starts at once; its human run needs M13-04. M13-05
 needs an owner capture and is the critical path for the analysis features,
