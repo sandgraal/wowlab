@@ -6,10 +6,10 @@ reads out of combat: `spellbook`, `actionbars` and `bindings`, each with
 `probes` (what each API it asked did). Schema 1 and 2 files are read exactly
 as before.
 
-The real captures are schema 1 and are read unchanged. No capture holds
-schema 3 yet: the owner's capture after M13-05 merges is the first
-(`docs/handoffs/M13-05.md`). So the schema-3 cases are constructed (L8:
-boundary and hostile cases, `constructed` in the test id). Each starts from
+The real schema-1 captures are read unchanged. The first real schema-3
+capture (1.60.1.70425, 2026-10-16) is graded in
+`test_labaddon_schema_3_capture_m13_05.py`. The cases here are
+constructed (L8: boundary and hostile cases, `constructed` in the test id). Each starts from
 the real M11-23 record (1.60.1.70058, index row in `fixtures/README.md`),
 with `schema` set to 3 and keys added in the shape the addon's own source
 writes. The reasons and the probed API names are read from

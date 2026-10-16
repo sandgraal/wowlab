@@ -11,7 +11,9 @@ without breaking them.
 
 The fixture tree is read in place (reads only). The one end-to-end test
 copies it into `tmp_path` with each flavor folder named as its provenance
-row says, because discovery only reports `_*_` folders.
+row says, because discovery only reports `_*_` folders. A run committed
+without its own `.build.info` (`FILES_ONLY_RUNS`) is classified only there,
+inside an install root borrowed from another run.
 """
 
 from __future__ import annotations
@@ -46,6 +48,14 @@ def _index() -> dict[str, dict[str, str]]:
 INDEX_ROWS = _index()
 INSTALL_FILES = sorted(p for p in INDEX_ROWS if p.split("/", 1)[0] not in NOT_INSTALL)
 PLATFORMS = sorted({p.split("/", 1)[0] for p in INSTALL_FILES})
+# A run committed without its `.build.info` and `.flavor.info` (M13-05,
+# `macos-70425/`: the run's `.build.info` was left out because its tags cell
+# was not safe to publish) is no install root, so it is not read in place.
+# The end-to-end test classifies its files inside an install root borrowed
+# from `BORROWED_ROOT`, whose flavor-kind folders it must share.
+INSTALL_ROOTS = sorted(p for p in PLATFORMS if (FIXTURES / p / ".build.info").is_file())
+FILES_ONLY_RUNS = sorted(set(PLATFORMS) - set(INSTALL_ROOTS))
+BORROWED_ROOT = "macos"
 
 
 def _flavor_dirs(platform: str) -> list[Path]:
@@ -72,7 +82,7 @@ def _with_ancestors(paths: list[str]) -> list[str]:
     return sorted(out)
 
 
-CAPTURED_PATHS = _with_ancestors(INSTALL_FILES)
+CAPTURED_PATHS = _with_ancestors([p for p in INSTALL_FILES if p.split("/", 1)[0] in INSTALL_ROOTS])
 
 # Every path of the Forever beta capture (2026-09-22) and its file-map row.
 F = "macos/forever"
@@ -150,14 +160,23 @@ def test_end_to_end_through_discovery(platform: str, tmp_path: Path) -> None:
     `classify(path, install)`, relative and absolute."""
     root = tmp_path / "World of Warcraft"
     captured_as: dict[Path, str] = {}  # copied path -> its path under fixtures/
-    for rel in (p for p in INSTALL_FILES if p.startswith(platform + "/")):
-        captured = rel.split("/")
+    # (source under fixtures/, path as captured): the same, except for a
+    # files-only run's borrowed root files (see FILES_ONLY_RUNS).
+    files = [(p, p) for p in INSTALL_FILES if p.startswith(platform + "/")]
+    shape = platform  # whose folders say which top folder is a flavor folder
+    if platform in FILES_ONLY_RUNS:
+        shape = BORROWED_ROOT
+        kinds = sorted({p.split("/")[1] for p, _ in files})
+        borrowed = [".build.info"] + [f"{kind}/.flavor.info" for kind in kinds]
+        files = [(f"{BORROWED_ROOT}/{b}", f"{platform}/{b}") for b in borrowed] + files
+    for source, as_captured in files:
+        captured = as_captured.split("/")
         parts = captured[1:]
-        if (FIXTURES / platform / parts[0] / ".flavor.info").is_file():
-            parts[0] = INDEX_ROWS[rel]["flavor"]
+        if (FIXTURES / shape / parts[0] / ".flavor.info").is_file():
+            parts[0] = INDEX_ROWS[source]["flavor"]
         dest = root.joinpath(*parts)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(FIXTURES / rel, dest)
+        shutil.copyfile(FIXTURES / source, dest)
         for depth in range(1, len(parts) + 1):  # the file and every folder above it
             captured_as[root.joinpath(*parts[:depth])] = "/".join(captured[: depth + 1])
     install = read_install(root)
