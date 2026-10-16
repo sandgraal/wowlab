@@ -37,7 +37,9 @@ The seam (the docs leave these names open; M13-24 builds to them)
     ``None`` means the running interpreter: ``server.wowlab_argv[0]`` is
     ``sys.executable`` (absolute, never a name looked up on PATH), and
     ``[*server.wowlab_argv, "--version"]`` prints ``wowlab <version>``
-    (for example ``[sys.executable, "-m", "wowlab_core.cli"]``). Every test
+    (for example ``[sys.executable, "-P", "-m", "wowlab_core.cli"]``), and
+    its working directory is not on its import path (``-P``, or ``-I``), so a
+    module planted in the current directory is never imported. Every test
     that runs a command passes a recorder script instead, so no test runs a
     real command through the server or touches an install.
   - ``timeout_s`` (finite, > 0) and ``output_cap_bytes`` (> 0): per run.
@@ -145,7 +147,7 @@ import typer
 from typer._click import Context
 
 # How long a request may take before the test calls it a hang. A run with
-# `timeout_s=1` must answer well inside this.
+# `timeout_s=5` must answer well inside this.
 _HANG = 30.0
 
 
@@ -472,7 +474,7 @@ def test_binds_loopback_only_on_a_free_port(recorder: Recorder) -> None:
 
 
 @pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
-def test_the_default_wowlab_is_this_interpreter_by_absolute_path() -> None:
+def test_the_default_wowlab_is_this_interpreter_by_absolute_path(tmp_path: Path) -> None:
     """Review of #197, M1, and the owner rulings of 2026-10-15: never a name
     looked up on PATH (on Windows a `.cmd` shim would re-parse the argv)."""
     server = _ui().make_server()
@@ -484,6 +486,24 @@ def test_the_default_wowlab_is_this_interpreter_by_absolute_path() -> None:
         version = subprocess.run(
             [*argv, "--version"], capture_output=True, text=True, timeout=60, check=False
         )
+        assert version.returncode == 0, version.stderr
+        assert version.stdout.startswith("wowlab "), version.stdout
+        # The run's working directory is not on its import path: a planted
+        # module there is never imported (security re-review of #197).
+        planted = tmp_path / "planted"
+        (planted / "wowlab_core").mkdir(parents=True)
+        bomb = "import sys; print('PLANTED'); sys.exit(7)\n"
+        for name in ("typer.py", "pydantic.py", "platformdirs.py", "wowlab_core/__init__.py"):
+            (planted / name).write_text(bomb, encoding="utf-8")
+        version = subprocess.run(
+            [*argv, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+            cwd=planted,
+        )
+        assert "PLANTED" not in version.stdout + version.stderr
         assert version.returncode == 0, version.stderr
         assert version.stdout.startswith("wowlab "), version.stdout
         assert server.server_address[0] == "127.0.0.1"
@@ -1465,20 +1485,48 @@ def test_a_traversal_path_is_refused_constructed(planted: Any, path: str) -> Non
 # ─── `wowlab ui` itself ──────────────────────────────────────────────────────
 
 
+def _listing(root: Path) -> dict[str, tuple[int, int]]:
+    """Every path under `root` with its size and modification time."""
+    return {
+        str(path.relative_to(root)): (path.lstat().st_size, path.lstat().st_mtime_ns)
+        for path in sorted(root.rglob("*"))
+    }
+
+
+def _stand_in_dirs(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
+    """`root` stands in for the working directory, HOME, the temp folder and
+    the user data directory."""
+    import tempfile
+
+    import platformdirs
+
+    monkeypatch.chdir(root)
+    for name in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_DATA_HOME"):
+        monkeypatch.setenv(name, str(root))
+    for name in ("TMPDIR", "TEMP", "TMP"):
+        monkeypatch.setenv(name, str(root))
+    monkeypatch.setattr(tempfile, "tempdir", str(root))
+    monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: root / "userdata")
+
+
 @dataclass
 class UiRun:
     made: list[tuple[tuple[Any, ...], dict[str, Any], Any]]
     opened: list[str]
     result: Any
+    before: dict[str, tuple[int, int]]
+    after: dict[str, tuple[int, int]]
 
 
 def _invoke_ui(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, browser: str) -> UiRun:
-    """`wowlab ui` through CliRunner, with the server's loop replaced by a
-    Ctrl-C and the browser by a recorder. `browser` is "opens", "false" or
-    "raises". The working directory and home are `tmp_path`."""
+    """`wowlab ui` through CliRunner. Ctrl-C is raised from inside the real
+    `serve_forever` loop (its `service_actions` hook), so a `ui` that calls
+    `shutdown()` afterwards returns as it would in real use; the browser is a
+    recorder. `browser` is "opens", "false" or "raises". `tmp_path` stands in
+    for the working directory, HOME, the temp folder and the user data
+    directory, and its listing is taken before and after."""
     import webbrowser
 
-    import platformdirs
     from typer.testing import CliRunner
 
     from wowlab_core import cli
@@ -1495,7 +1543,7 @@ def _invoke_ui(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, browser: str) ->
         def ctrl_c(*_: Any, **__: Any) -> None:
             raise KeyboardInterrupt
 
-        server.serve_forever = ctrl_c
+        server.service_actions = ctrl_c
         return server
 
     def open_(url: str, *args: Any, **kwargs: Any) -> bool:
@@ -1506,15 +1554,13 @@ def _invoke_ui(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, browser: str) ->
 
     monkeypatch.setattr(ui, "make_server", make)
     monkeypatch.setattr(webbrowser, "open", open_)
-    monkeypatch.chdir(tmp_path)
-    for name in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_DATA_HOME"):
-        monkeypatch.setenv(name, str(tmp_path))
-    monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: tmp_path / "userdata")
+    _stand_in_dirs(monkeypatch, tmp_path)
+    before = _listing(tmp_path)
     try:
         result = CliRunner().invoke(cli.app, ["ui"], prog_name="wowlab")
     except KeyboardInterrupt:
         pytest.fail("Ctrl-C escaped `wowlab ui`")
-    return UiRun(made, opened, result)
+    return UiRun(made, opened, result, before, _listing(tmp_path))
 
 
 def _files_holding(root: Path, token: str) -> list[Path]:
@@ -1544,6 +1590,7 @@ def test_ui_serves_make_server_defaults_opens_its_url_and_stops_on_ctrl_c(
     assert server.token not in run.result.stderr
     assert not any(server.token in r.getMessage() for r in caplog.records)
     assert _files_holding(tmp_path, server.token) == []
+    assert run.after == run.before, "`wowlab ui` writes no file"
 
 
 @pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
@@ -1567,3 +1614,25 @@ def test_ui_prints_the_url_once_when_no_browser_opens(
     assert _files_holding(tmp_path, server.token) == []
     assert run.result.exit_code == 0, (run.result.output, run.result.exception)
     assert server.socket.fileno() == -1, "server_close() ran"
+    assert run.after == run.before, "`wowlab ui` writes no file"
+
+
+@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
+def test_serving_and_running_write_no_file(
+    recorder: Recorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-0029: the server writes nothing itself (review of #197). The
+    recorder's own files live outside the stand-in folder."""
+    root = tmp_path / "stand-in"
+    root.mkdir()
+    (root / "existing.txt").write_text("kept", encoding="utf-8")
+    _stand_in_dirs(monkeypatch, root)
+    before = _listing(root)
+    with _serving(command=_planted_tree(), wowlab_argv=recorder.argv) as server:
+        assert _send(server, "GET", _target(server, "/")).status == 200
+        assert _send(server, "GET", _target(server, "/api/commands")).status == 200
+        assert _argv_of(_run(server, ["echo"], {"path": "x", "tag": ["a"]}))[0] == "echo"
+        assert _run(server, ["danger"], {}).status == 403
+        assert _send(server, "GET", "/").status == 403
+        assert _send(server, "GET", _target(server, "/../cli.py")).status in (400, 403, 404)
+    assert _listing(root) == before
