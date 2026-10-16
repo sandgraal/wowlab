@@ -1,16 +1,16 @@
-# Probe from review of m13/24-ui-server-tests; reproduces the `wowlab ui` Ctrl-C
-# fake in `_invoke_ui` hanging forever on an implementation that calls
-# `server.shutdown()` after `serve_forever()` raises KeyboardInterrupt.
+# Probe from review of m13/24-ui-server-tests; a regression guard against the
+# old `wowlab ui` Ctrl-C fake in `_invoke_ui`, which hung an implementation that
+# calls `server.shutdown()` after `serve_forever()` raises KeyboardInterrupt.
 """CONSTRUCTED `wowlab_core.ui` stand-in and `ui` command (L8: our own seam).
 
-`tests/test_ui_server.py::_invoke_ui` fakes Ctrl-C by replacing
-`server.serve_forever` with a function that raises KeyboardInterrupt. The real
+`tests/test_ui_server.py::_invoke_ui` once faked Ctrl-C by replacing
+`server.serve_forever` with a function that raised KeyboardInterrupt. The real
 `socketserver.BaseServer.serve_forever` sets its internal "is shut down" event
 in a `finally:`, so a `shutdown()` called after it returns (a common
-`finally: server.shutdown(); server.server_close()`) returns at once. The fake
-never sets that event, so the same `shutdown()` waits forever. The graders
-have no per-test timeout (no pytest-timeout), so the run hangs rather than
-fails; the seam in the module docstring does not forbid `shutdown()`.
+`finally: server.shutdown(); server.server_close()`) returns at once. The old
+fake never set that event, so the same `shutdown()` waited forever. The graders
+have no per-test timeout (no pytest-timeout), so the run hung rather than
+failed; the seam in the module docstring does not forbid `shutdown()`.
 
 Cases:
 - control 1: a `ui` that does not call `shutdown()` finishes through
@@ -18,11 +18,11 @@ Cases:
 - control 2: with the real `serve_forever`, interrupted from inside its loop
   (`service_actions` raises KeyboardInterrupt), a `ui` that calls
   `shutdown()` finishes: the pattern is correct in real use;
-- the defect: the same `ui` through `_invoke_ui` does not finish.
+- the guard: the same `ui` through `_invoke_ui` finishes.
 
-The fix is in the grader: raise KeyboardInterrupt from
-`server.service_actions` (inside the real loop) instead of replacing
-`serve_forever`.
+`_invoke_ui` now raises KeyboardInterrupt from `server.service_actions`
+(inside the real loop) instead of replacing `serve_forever`; the guard fails
+if a change brings the old fake back.
 """
 
 from __future__ import annotations
@@ -172,7 +172,7 @@ def test_control_shutdown_after_a_real_interrupted_serve_forever_returns() -> No
     if thread.is_alive():
         server._BaseServer__is_shut_down.set()  # type: ignore[attr-defined]
         thread.join(_BOUND)
-    assert done.is_set(), "shutdown() after a real serve_forever returned at once"
+    assert done.is_set(), "shutdown() after a real interrupted serve_forever did not return"
 
 
 def test_ui_that_calls_shutdown_after_ctrl_c_finishes_under_the_grader_fake(
