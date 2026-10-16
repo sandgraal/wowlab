@@ -2,16 +2,50 @@
   <a href="https://github.com/sandgraal/wowlab/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/sandgraal/wowlab/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python 3.12" src="https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white">
   <img alt="Local only, uploads nothing" src="https://img.shields.io/badge/local--only-uploads%20nothing-2ea44f">
-  <img alt="Waves 1 and 2 done, first public release in progress" src="https://img.shields.io/badge/status-Waves%201%20and%202%20done%20%C2%B7%20first%20public%20release%20in%20progress-f3c969">
+  <img alt="First public release, v0.1, on the way" src="https://img.shields.io/badge/status-first%20public%20release%20(v0.1)%20on%20the%20way-f3c969">
   <a href="LICENSE"><img alt="License Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
 </p>
 
-<p align="center">
-  <b>Ever wondered what all those files in your WoW folder actually are?</b><br>
-  wowlab reads your World of Warcraft install, tells you what every file is and whether it is safe to touch,<br>
-  snapshots your whole setup, and lets you change things and change them back.<br>
-  It runs on your own machine, never touches the game while it runs, and never uploads anything.
-</p>
+<p align="center"><b>Ever wondered what all those files in your WoW folder actually are?</b></p>
+
+**wowlab** reads your World of Warcraft install and tells you what every file in it is, who writes it, and whether it is safe to touch. It snapshots your whole setup (settings, keybinds, macros, addons and their saved data), lets you switch UI profiles or merge addon settings, and puts everything back with `wowlab undo`. It is a command-line tool with a local browser view, and it runs only on your own machine, against your own install.
+
+**🛡️ What it will and will not do** ([ADR-0031](docs/DECISIONS.md)):
+
+- **Read-only by default.** Looking at your install never writes to it: no temp, cache or lock file.
+- **Every command that changes files in your install asks first** (unless you pass `--yes`), refuses while the game is running, and goes through one write gate that takes a snapshot before it writes. `wowlab undo` reverses the change.
+- **Nothing is uploaded.** The only network traffic is to [wago.tools](https://wago.tools) for public game data: a list of game versions (`wowlab doctor --offline` skips it) and game tables. Nothing from your install is sent except your game's version number, to ask for the matching tables.
+- **It never touches the game itself:** no game memory, no `Data/` or program files, no key presses. Addon data is read as data, never run.
+
+**📦 Install** (you need [uv](https://docs.astral.sh/uv/); it brings Python 3.12):
+
+```bash
+uv tool install --python 3.12 https://github.com/sandgraal/wowlab/releases/download/v0.1.0/wowlab_core-0.1.0-py3-none-any.whl
+```
+
+Until v0.1.0 is published, install from source ([`docs/INSTALL.md`](docs/INSTALL.md)).
+
+**⚔️ The first three commands:**
+
+```bash
+wowlab doctor        # finds your install, says what wowlab will do, offers a first snapshot
+wowlab ui            # the install explorer in your browser: every file, and whether it is safe to touch
+wowlab snap create   # snapshot your setup before you experiment
+```
+
+`wowlab ui` never changes game files. It offers only the commands that save to wowlab's own data (snapshots, profiles, saved looks, the game-table cache, pages), and no command that asks before changing anything (`--yes`). It listens only on this machine, behind a random token in the link it opens. **On a shared Linux machine**, other accounts can briefly see that link, token included, in their process listing while the browser opens.
+
+**🗺️ Platforms:**
+
+| | Status |
+|---|---|
+| macOS | **Supported.** CI runs the test suite on macOS, and the owner runs wowlab on a real Mac install. |
+| Windows | **Untested.** CI runs the test suite on Windows, but nobody has yet run the first-run flow on a real Windows install. |
+| Linux | **Untested.** CI runs the test suite on Linux, but there is no native Linux client (Wine or Proton) and nobody has run wowlab against one. |
+
+**📖 The guide:** [the wiki](https://github.com/sandgraal/wowlab/wiki) has a page for every command, the safety rules in plain words and the first run step by step.
+
+<!-- The first screen ends here (M13-10; tests/scripts/test_readme.py). -->
 
 ---
 
@@ -29,7 +63,8 @@
 | | Feature | Command |
 |---|---|---|
 | 🔍 | **Explain any file.** Every path in your install mapped: what it is, who writes it, when, and whether wowlab may edit it. | `wowlab explain PATH` · `wowlab tree --explain` |
-| 🩺 | **Health check.** Finds your install, its flavors and versions, whether the game is running, and your server-sync settings. | `wowlab doctor` |
+| 🖥️ | **The explorer in your browser.** A local page, served only to this machine, that shows a flavor folder's files with whether each is safe to touch, and runs wowlab's read commands. | `wowlab ui` |
+| 🩺 | **Health check and first run.** Finds your install, its flavors and versions, whether the game is running, and your server-sync settings. On a first run it says what wowlab will and won't do and offers a first snapshot. `--redact` prints output safe to paste into an issue. | `wowlab doctor` · `wowlab doctor --redact` |
 | 📸 | **Snapshots.** Save your whole setup (settings, keybinds, macros, addons and their saved data) and compare any two snapshots, down to the individual addon setting. | `wowlab snap create` · `snap diff A B` |
 | ↩️ | **Undo, for real.** Put a snapshot back, or undo the last change. You see the plan first, and it refuses while the game is running. | `wowlab snap restore` · `wowlab undo` |
 | 📜 | **Read your saved data.** Addon SavedVariables, CVars, keybinds, macros and your addon list, as readable text or JSON. | `wowlab sv dump` · `cvar` · `binds` · `macros` · `addons` |
@@ -102,21 +137,19 @@ Flavor folders, product codes and build numbers are **discovered from your insta
 
 ## 🧭 Where it is now
 
-wowlab grows in **waves**: the owner picks each one after reviewing the last. **Waves 1 and 2 are done**: everything in the table above.
+wowlab grows in **waves**: the owner picks each one after reviewing the last. **Waves 1 to 3 are done**: everything in the table above, plus the character list and a daily check that keeps [the wiki](https://github.com/sandgraal/wowlab/wiki) in step with the code. Wave 3 was trimmed on 2026-10-14: its game-table database, talent planner and alt-dashboard are deferred, because players already have good talent planners.
 
-**wowlab is becoming something other players can install** (owner decision, 2026-10-13; [ADR-0031](docs/DECISIONS.md)). The promise does not change: reading never writes, every change asks first, a snapshot comes before it and `wowlab undo` reverses it, and nothing is uploaded. **Wave 4, the first public release, is in progress:**
+**Wave 4 is the first public release, v0.1** (owner decision, 2026-10-13; [ADR-0031](docs/DECISIONS.md)). The promise does not change: reading never writes, every change asks first, a snapshot comes before it and `wowlab undo` reverses it, and nothing is uploaded. Already on `main`: the release pipeline, the first run in `wowlab doctor`, `wowlab doctor --redact`, the lab-addon inside the package, and the first stage of `wowlab ui`. Still to come:
 
 | | Feature | What you'll be able to do |
 |---|---|---|
-| 📦 | **Releases** | Install a tagged GitHub release with one `uv tool install` line, and check it against published SHA-256 sums. No installer, no app store, no hosted version. |
-| 🪟 | **Windows, tested** | The test suite runs on Windows and macOS in CI, and a person runs the first-run flow on a real install of each before it is called supported. Until then it says "untested". |
-| 👋 | **A first run that explains itself** | `wowlab doctor` finds your install (or says how to point it at one), says plainly what wowlab will and won't do, offers a first snapshot (kept in wowlab's own store, never in your install) and verifies it. |
-| 🙈 | **Bug reports without your names** | `wowlab doctor --redact` prints output that is safe to paste into an issue: no character, realm, account, BattleTag, guild or home path. |
+| 📦 | **The v0.1.0 release** | Install it with the one `uv tool install` line above, and check it against published SHA-256 sums. No installer, no app store, no hosted version. |
+| 🗂️ | **The explorer, second stage** | The whole install in `wowlab ui`, not one flavor folder, with the files the file map does not know yet, snapshot facts and previews. |
+| 🪟 | **Windows, tested** | CI already runs the test suite on Windows. Windows is called supported once a person has run the first run on a real Windows install; v0.1 ships with it untested. |
 | 📝 | **macros check** | Finds macros over the length limit, spell names not in your spellbook, macros on no action bar, duplicates, unbalanced `[ ]` and a misplaced `#showtooltip`. Read-only. |
 | ⌨️ | **binds coach** | From your own combat log: spells you cast often on awkward keys, spells you cast with no bind, and binds you never use. Read-only; the "awkward key" table is a default you can edit. May arrive in the second release. |
-| 🖥️ | **`wowlab ui`** | A local page in your browser, served only to this machine, that runs wowlab's commands. Its first view is an install explorer: what every file is, and whether it is safe to touch. In this release it offers the commands that save only to wowlab's own data (snapshots, profiles, saved looks, the db2 cache, pages). Some of these overwrite what they saved before, such as `looks import-char --replace`, and none of them touches the game folder. It offers no command that changes your game files or that asks before changing anything (`--yes`). |
 
-After that, Wave 5 adds to `wowlab ui` the commands that ask before changing anything (`--yes`), each behind the same confirm step as the CLI, and is aimed at the second public release. Wave 3 was trimmed on 2026-10-14: its game-table database, talent planner and alt-dashboard are deferred, because players already have good talent planners. The character list and a daily check of the wiki stay.
+After that, Wave 5 adds to `wowlab ui` the commands that ask before changing anything (`--yes`), each behind the same confirm step as the CLI, and is aimed at the second public release.
 
 Thirty days after the first release, the owner checks GitHub's own counts (no telemetry). If they show little use beyond the owner, meaning fewer than 50 downloads or fewer than 5 issues or discussions from other people, the owner may freeze the public side: releases stay up, no new public features are added, and wowlab goes back to being a personal lab. The plan and its tickets: [`docs/LAB_PLAN.md`](docs/LAB_PLAN.md) §15 and [`docs/BACKLOG.md`](docs/BACKLOG.md).
 
@@ -189,10 +222,10 @@ Here is what wowlab becomes as the ideas on [the menu](docs/LAB_IDEAS.md) are bu
 
 </details>
 
-## 🚀 Try it
+## 🚀 Running it from source
 
 > [!NOTE]
-> wowlab runs on your own machine, against your install, under your control, and never uploads anything. Tagged GitHub releases are on the way ([ADR-0031](docs/DECISIONS.md)); until the first one, it runs from source. There is no hosted version. It is developed on macOS; untested on Windows and Linux.
+> Players install a release with the one `uv tool install` line at the top of this page. Running from source is for trying `main` or working on wowlab. There is no hosted version, and nothing is uploaded either way.
 
 You need [uv](https://docs.astral.sh/uv/) (it brings Python 3.12). A game install is not needed to run the tests.
 
@@ -203,10 +236,10 @@ uv run wowlab doctor        # finds your install and checks everything
 uv run wowlab --help        # every command
 ```
 
-Set `WOWLAB_WOW_ROOT` if your install is not in a default location ([`.env.example`](.env.example)). Machine setup without a package manager: [`docs/SETUP.md`](docs/SETUP.md).
+Set `WOWLAB_WOW_ROOT` if your install is not in a default location ([`docs/INSTALL.md`](docs/INSTALL.md), [`.env.example`](.env.example)). Machine setup without a package manager: [`docs/SETUP.md`](docs/SETUP.md).
 
 > [!TIP]
-> Exit codes: `0` ok, `1` error, `2` usage, `3` refused by the write gate. Only these commands change your install: `snap restore`, `undo`, `profile apply`, `sv merge` and `addon install` / `addon remove`. Every one goes through the write gate and shows the plan and asks first unless you pass `--yes`; most of them also take `--dry-run`.
+> Exit codes: `0` ok, `1` error, `2` usage, `3` refused by the write gate. Only these six commands change your install: `snap restore`, `undo`, `profile apply`, `sv merge` and `addon install` / `addon remove`. Every one goes through the write gate and shows the plan and asks first unless you pass `--yes`; most of them also take `--dry-run`.
 
 <details>
 <summary><b>Developer commands</b></summary>
