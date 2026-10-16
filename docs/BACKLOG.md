@@ -328,7 +328,7 @@ Commands that write only to wowlab's own store or user data directory are allowe
 ---
 
 ## [ ] M13-27 — The explorer view, second stage: whole install, gaps, snapshot facts, previews
-**Size:** M · **Depends on:** M13-22, M13-23, M13-25
+**Size:** M · **Depends on:** M13-22, M13-23, M13-25, M13-32
 
 This builds on M13-25's view, per §15.6.
 
@@ -530,25 +530,25 @@ Found in the domain review of #195 (M13-21), on 2026-10-15. `snap create --scree
 
 ---
 
-## [ ] M13-31 — The `0,`-list CPU probe fails on loaded macOS runners
+## [ ] M13-31 — M10-04 CPU-budget probes fail on loaded macOS runners
 **Size:** S · **Depends on:** M13-01
 
 Found on 2026-10-16. The same flake hit a sibling probe, `test_m10_04_escaped_key_list_at_budget_misses_time_target.py`, on #204 (10.04 CPU s), so this ticket covers every M10-04 CPU-budget probe under `lab/core/tests/review/`, not only the one named next. In `lab/core/tests/review/test_m10_04_semicolon_list_at_budget_misses_time_target.py`, `test_constructed_control_zeros_at_the_budget_are_inside_the_target` failed on `lab (macos)` in two unrelated PRs: #204 at 10.16 CPU s and #206 at 10.74 CPU s. Neither PR touches `luadata.py`, and both passed when re-run.
 
 The probe already measures child CPU time and keeps the better of two runs. The runner is simply loaded. The sibling case `test_constructed_semicolon_list_at_the_budget_is_inside_the_target` uses the same measurement and target, and its expected time is similar, so it is just as exposed.
 
-**What to do.** Make both cases robust to a loaded runner without loosening §6.4's 10 s target.
+**What to do.** Make every case in both M10-04 time-target probes (four in total) robust to a loaded runner without loosening §6.4's 10 s target.
 - Choose one of these:
   - more samples, taking the minimum;
   - a threshold scaled from an in-run calibration parse, where the 10 s target is the threshold on an idle machine;
   - running these probes serially once M13-18's serial pass for CPU-budget tests exists.
-- Report the measured margins of both cases on the macOS runner.
+- Report the measured margins of all four cases on the macOS runner.
 - If either case still misses 10 s on an idle runner, stop and report. That is a missed performance target (AGENTS.md "Stop and ask"), not something to loosen.
 
 `luadata.py` is load-bearing. This is a review probe, not a grader, so do not edit any grader.
 
 **Acceptance:**
-- 20 consecutive `lab (macos)` runs pass both cases. If M13-18 lands first, measure after it.
+- 20 consecutive `lab (macos)` runs pass all four cases. If M13-18 lands first, measure after it.
 - The probe still fails against a constructed parser that is twice as slow.
 - `make ci` green.
 - Reviewed by `code-reviewer`.
@@ -567,6 +567,6 @@ The owner ruled on 2026-10-16 that what M13-23's last fix round left, if it was 
 
 **Acceptance:**
 - A labelled constructed test for each of items 1 and 3.
-- The old text stays an exact prefix, and the JSON stays additive.
+- The `explain` text from before M13-23 stays an exact prefix, and the JSON stays additive. Item 2 changes only the clause M13-23 added.
 - `make ci` green.
 - Reviewed by `domain-reviewer` and `code-reviewer`.
