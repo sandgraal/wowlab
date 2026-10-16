@@ -327,8 +327,29 @@ Commands that write only to wowlab's own store or user data directory are allowe
 
 ---
 
+## [ ] M13-27T — The explorer view, second stage: graders
+**Size:** S–M · **Depends on:** M13-22, M13-23, M13-25, M13-32 · **[TEST]** (test-writer only)
+
+Filed on 2026-10-16. `wowlab_core.ui` is load-bearing, so M13-27 is graders-first. Write expected-failure graders for M13-27's spec, derived from this backlog, §15.6, ADR-0029 with its rulings, and the JSON that M13-22 and M13-23 merged. Extend `test_ui_explorer.py`, which test-writer owns, or add a sibling file. Mark each new grader `xfail(strict=True, reason="M13-27 not implemented")`.
+
+Cover these:
+- **Install tree.** The tree pane uses `tree --install --explain --json` and shows the install root and every flavor folder.
+- **"gaps only" filter.** It shows exactly the paths `filemap gaps --json` reports, plus their ancestors.
+- **Gaps tab.** It draws `filemap gaps --json`: groups, catch-all-only groups, not-entered folders and links. No account, realm or character name appears in a group header.
+- **Detail pane, snapshot facts.** It shows `snapshot` from `explain --json`, including the "could not be confirmed" case.
+- **Detail pane, hints.** Each hint has a copy button. The copied text is exactly `hint.command`, and the page says which shell syntax it uses (`hint.shell`).
+- **Preview.** It runs only the entry's `views[0]` through `/api/run`, with exactly its `command` and `params`. No view means no Preview button. A refused command (`--yes`, `looks page --out`, `log tail --follow`) is never offered.
+- **Rendering.** Everything is drawn with textContent only, including hostile names in gaps, hints and previews. No external request is made.
+
+**Acceptance:**
+- The graders fail on `main` for the stated reason.
+- Each grader is mutation-checked against at least one broken stand-in page.
+- Reviewed by `security-reviewer` and `code-reviewer`.
+
+---
+
 ## [ ] M13-27 — The explorer view, second stage: whole install, gaps, snapshot facts, previews
-**Size:** M · **Depends on:** M13-22, M13-23, M13-25, M13-32
+**Size:** M · **Depends on:** M13-22, M13-23, M13-25, M13-27T, M13-32
 
 This builds on M13-25's view, per §15.6.
 
