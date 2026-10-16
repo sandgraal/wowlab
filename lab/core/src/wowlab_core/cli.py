@@ -1854,7 +1854,7 @@ def _root_items(inst: install.Install, errors: list[str]) -> list[TreeItem]:
             except (OSError, ValueError):
                 note = "link, not followed"
             if e.name in inst.other_dirs:
-                note += f"; {gaps.NOT_A_FLAVOR}"
+                note += f"; {gaps.NOT_A_FLAVOR_LINK}"
         elif folder and e.name in flavors:
             note = "flavor folder"
         elif folder and e.name in inst.other_dirs:
@@ -1985,6 +1985,24 @@ def _say_gap_groups(groups: list[gaps.GapGroup]) -> None:
         parent = f"[{group.parent_entry_id}]" if group.parent_entry_id else "(install root)"
         slash = "/" if group.kind == "folder" else ""
         _say(f"  {parent} {group.name}{slash}  {_group_counts(group)}")
+        for example in _gap_examples(group):
+            _say(f"      {example}")
+
+
+def _gap_examples(group: gaps.GapGroup) -> list[str]:
+    """Up to `gaps.EXAMPLES` files under a folder group, each relative to
+    its place's parent folder, so the line starts at the place's own name
+    and never shows an account, realm or character folder."""
+    out: list[str] = []
+    for place in group.gaps:
+        cut = len(place.parent) + 1 if place.parent else 0
+        for example in place.examples:
+            shown = example[cut:]
+            if shown not in out:
+                out.append(shown)
+            if len(out) == gaps.EXAMPLES:
+                return out
+    return out
 
 
 def _print_gaps(report: gaps.GapReport) -> None:

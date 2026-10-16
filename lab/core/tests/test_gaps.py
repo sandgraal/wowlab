@@ -330,19 +330,94 @@ def test_flavor_folders_come_from_discovery_constructed(root: Path) -> None:
 
 
 @SYMLINKS
-def test_a_symlinked_flavor_folder_gets_the_note_constructed(root: Path, tmp_path: Path) -> None:
+def test_a_symlinked_flavor_folder_gets_the_link_note_constructed(
+    root: Path, tmp_path: Path
+) -> None:
+    """A `_*_` link to a folder with a regular `.flavor.info`: discovery
+    refuses it because it is a link, so the note must not say a file is
+    missing (domain review round 2 of #203)."""
     elsewhere = tmp_path / "elsewhere-constructed"
     shutil.copytree(root / FLAVOR, elsewhere)
+    assert (elsewhere / ".flavor.info").is_file()
     (root / "_linked_constructed_").symlink_to(elsewhere, target_is_directory=True)
     report = _find(root)
     (group,) = report.groups
     assert (group.name, group.kind, group.note) == (
         "_linked_constructed_",
         "link",
-        gaps.NOT_A_FLAVOR,
+        gaps.NOT_A_FLAVOR_LINK,
     )
+    text = ok("filemap", "gaps").stdout
+    assert (
+        f"(install root) _linked_constructed_  link, not followed, {gaps.NOT_A_FLAVOR_LINK}\n"
+        in text
+    )
+    assert gaps.NOT_A_FLAVOR not in text
     note = {i.path: i.note for i in _json(cli.InstallTreeReport, "tree", "--install").items}
-    assert (note["_linked_constructed_"] or "").endswith(f"; {gaps.NOT_A_FLAVOR}")
+    assert (note["_linked_constructed_"] or "").endswith(f"; {gaps.NOT_A_FLAVOR_LINK}")
+    assert gaps.NOT_A_FLAVOR not in (note["_linked_constructed_"] or "")
+
+
+def test_folder_groups_print_their_examples_constructed(root: Path, flavor: Path) -> None:
+    """Text names the files a folder group counts, relative to the place's
+    parent, so a gap in a character folder shows no account or character."""
+    char = flavor / "WTF" / "Account" / ACCOUNT / "1" / "Labcharb-Labrealmd"
+    _write(char / "NewFolder-constructed" / "a.txt", b"a")
+    _write(char / "NewFolder-constructed" / "sub" / "b.txt", b"b")
+    _write(flavor / "Cache" / "Odd-constructed" / "c.bin", b"c")
+    text = ok("filemap", "gaps").stdout.splitlines()
+    i = text.index(
+        "  [second-name-character-folder] NewFolder-constructed/  2 files, 2 bytes, 1 folder"
+    )
+    assert text[i + 1 : i + 3] == [
+        "      NewFolder-constructed/a.txt",
+        "      NewFolder-constructed/sub/b.txt",
+    ]
+    j = text.index("  [flavor-folder] Cache/  1 file, 1 byte, 1 folder, row cache-other")
+    assert text[j + 1] == "      Cache/Odd-constructed/c.bin"
+    for name in (ACCOUNT, "Labcharb", "Labrealmd"):
+        assert not any(name in line for line in text[1:])
+
+
+def test_a_place_deeper_than_its_parent_keeps_its_own_path_constructed(
+    root: Path, flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A catch-all-only path inside a gap folder (no row in the shipped map
+    produces this): its place keeps its real path and name, and the nearest
+    describing parent."""
+    fm = filemap.load()
+    extra = filemap.FileMapEntry(
+        id="deep-catch-all",
+        section="flavor",
+        base="flavor",
+        doc_path="x",
+        what="x, not described here yet",
+        written_by="x",
+        edit="no",
+        tier="—",
+        module="none",
+        match=("Unknown-constructed/Inner/", "Unknown-constructed/Inner/**"),
+        catch_all=True,
+    )
+    patched = filemap.FileMap(sections=fm.sections, entries=(*fm.entries, extra))
+    monkeypatch.setattr(filemap, "load", lambda: patched)
+    _write(flavor / "Unknown-constructed" / "Inner" / "x.bin", b"xyz")
+    _write(flavor / "Unknown-constructed" / "y.bin", b"1")
+    report = _find(root)
+    (gap,) = report.groups
+    assert (gap.name, gap.files) == ("Unknown-constructed", 1)
+    (loose,) = report.catch_all
+    assert (loose.parent_entry_id, loose.name, loose.entry_id) == (
+        "flavor-folder",
+        "Inner",
+        "deep-catch-all",
+    )
+    (place,) = loose.gaps
+    assert (place.parent, place.path, place.examples) == (
+        "",
+        "Unknown-constructed/Inner",
+        ["Unknown-constructed/Inner/x.bin"],
+    )
 
 
 def test_a_covered_folder_is_not_entered_and_named_constructed(root: Path) -> None:

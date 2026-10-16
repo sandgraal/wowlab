@@ -58,6 +58,7 @@ from wowlab_core.layout import FsText, Limits
 
 __all__ = [
     "NOT_A_FLAVOR",
+    "NOT_A_FLAVOR_LINK",
     "GapError",
     "GapGroup",
     "GapPlace",
@@ -73,6 +74,9 @@ GapKind = Literal["file", "folder", "link", "other"]
 # take as a flavor folder (`Install.other_dirs`): its `.flavor.info` is
 # missing, is not a regular file, or the folder itself is a link.
 NOT_A_FLAVOR = "not taken as a flavor folder (no regular .flavor.info file)"
+# The same, for a root link named `_..._`: discovery never takes a link,
+# whatever it points at.
+NOT_A_FLAVOR_LINK = "not taken as a flavor folder (a link; links are not followed)"
 # Paths of files below a folder place kept as examples in the JSON.
 EXAMPLES = 5
 
@@ -110,7 +114,7 @@ class GapGroup(_Model):
     kind: GapKind
     # In `catch_all`: the catch-all row that matches these places; None in `groups`.
     entry_id: str | None
-    note: str | None  # e.g. NOT_A_FLAVOR
+    note: str | None  # NOT_A_FLAVOR or NOT_A_FLAVOR_LINK
     places: int
     files: int
     bytes: int
@@ -216,14 +220,21 @@ class _Found:
     places: dict[_GroupKey, list[_Place]] = field(default_factory=dict)
 
     def start(
-        self, parent: _Parent, name: str, kind: GapKind, entry_id: str | None, size: int
+        self,
+        parent: _Parent,
+        rel: tuple[str, ...],
+        kind: GapKind,
+        entry_id: str | None,
+        size: int,
     ) -> _Place:
-        place = _Place(parent.flavor_folder, "/".join(parent.rel), "", kind)
-        place.path = "/".join((*parent.rel, name))
+        """A new place at `rel` (relative to the base). `rel` is usually a
+        child of `parent`, but may lie deeper: a catch-all-only path inside
+        a gap folder, or the reverse, keeps the nearest describing parent."""
+        place = _Place(parent.flavor_folder, "/".join(parent.rel), "/".join(rel), kind)
         if kind != "folder":
             place.add(kind, size, place.path)
             place.examples = []
-        key = (parent.base, parent.entry_id, name, kind, entry_id)
+        key = (parent.base, parent.entry_id, rel[-1], kind, entry_id)
         self.places.setdefault(key, []).append(place)
         return place
 
@@ -290,7 +301,11 @@ def _groups(found: _Found, *, catch_all: bool, other_dirs: set[str]) -> list[Gap
                 name=name,
                 kind=kind,
                 entry_id=entry_id,
-                note=NOT_A_FLAVOR if at_root and name in other_dirs else None,
+                note=(
+                    (NOT_A_FLAVOR_LINK if kind == "link" else NOT_A_FLAVOR)
+                    if at_root and name in other_dirs
+                    else None
+                ),
                 places=len(kept),
                 files=sum(p.files for p in kept),
                 bytes=sum(p.bytes for p in kept),
@@ -379,13 +394,13 @@ def find_gaps(install: Install, limits: Limits | None = None) -> GapReport:
             elif not matched:
                 rest = None
                 if gap is None:
-                    gap = gaps.start(parent, child.name, kind, None, size)
+                    gap = gaps.start(parent, rel, kind, None, size)
                 else:
                     gap.add(kind, size, text)
             else:
                 gap = None
                 if rest is None:
-                    rest = loose.start(parent, child.name, kind, matched[0].id, size)
+                    rest = loose.start(parent, rel, kind, matched[0].id, size)
                 else:
                     rest.add(kind, size, text)
             if kind == "folder":
