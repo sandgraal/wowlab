@@ -135,7 +135,7 @@ The README's first screen: what wowlab is in three sentences; the trust model of
 ## [ ] M13-11 — First public release, v0.1
 **Size:** S · **Depends on:** M13-02, M13-03, M13-04, M13-09, M13-10, M13-14, M13-21, M13-22, M13-23, M13-24, M13-25, M13-26, M13-27 · **owner** (pushes the tag)
 
-Contents: M13-02 to M13-04, M13-09, M13-10, M13-21 to M13-27 (the explorer and the first `wowlab ui`; *amended 2026-10-15*, owner decision 2026-10-14), and M13-06 if M13-05 has landed. Not held for M13-08. *Amended 2026-10-16:* when the owner tags v0.1.0, the conductor's release PR also (a) removes the README's note under the install line that the release is not published yet (M13-10), (b) updates `docs/INSTALL.md`, which still says "No release has been published yet", and (c) sets the version back to `0.1.0` (`docs/handoffs/M13-03.md`). The conductor drafts the release notes (what is in it, the trust model, platform status, the `--json` models); the owner pushes the tag.
+Contents: M13-02 to M13-04, M13-09, M13-10, M13-21 to M13-27 (the explorer and the first `wowlab ui`; *amended 2026-10-15*, owner decision 2026-10-14), and M13-06 if M13-05 has landed. Not held for M13-08. *Amended 2026-10-16:* when the owner tags v0.1.0, the conductor's release PR also (a) removes the README's note under the install line that the release is not published yet (M13-10), (b) updates `docs/INSTALL.md`, which still says "No release has been published yet", and (c) sets the version back to `0.1.0` in `lab/core/pyproject.toml` and `uv.lock` (`docs/handoffs/M13-03.md`, merged with #216). The conductor drafts the release notes (what is in it, the trust model, platform status, the `--json` models); the owner pushes the tag.
 
 **Acceptance:** the release has the wheel, the sdist and `SHA256SUMS`; the README's install line installs it; the release date is recorded in `docs/handoffs/M13-gate.md` for M13-13.
 
@@ -597,7 +597,7 @@ The owner ruled on 2026-10-16 that what M13-23's last fix round left, if it was 
 ## [ ] M13-34 — `lab_capture.py`: scrub the geoip country in `.build.info`
 **Size:** S · **Depends on:** M13-01
 
-Found in the security review of #221 on 2026-10-16. The `Tags` cell of `.build.info` carries two country tokens. One is the game region, which matches the `Branch` column. The other is a geoip country: where the client was when it last updated. `scripts/lab_capture.py` stages `.build.info` on every capture (around line 3197) and leaves that tag as it is.
+Found in the security review of #221 on 2026-10-16. The `Tags` cell of `.build.info` carries three country tokens. One is the game region (`US?` style), which matches the `Branch` column. The second is the account country (`acct-AAA?`), a property of the Battle.net account. The third is the geoip country (`geoip-AA?`): where the client was when it last updated. `.build.info` has one row per product, and each row has its own `Tags` cell. `scripts/lab_capture.py` stages `.build.info` on every capture (around line 3197) and leaves that tag as it is.
 
 Two fixtures already on `main` hold one:
 - `lab/core/tests/fixtures/macos/.build.info` (#35, 2026-09-22);
@@ -605,10 +605,10 @@ Two fixtures already on `main` hold one:
 
 *Owner decision 2026-10-16:* accept the existing exposure (country level only). Leave those two files and the history as they are, and stop future captures from carrying it.
 
-Add a byte-level rule to the scrub tool. It never parses and re-serializes the file (AGENTS.md, scrub anti-pattern). The rule replaces the geoip country token with a fixed placeholder of the same shape, and refuses the file if the tag cannot be located safely. It never touches the region token or the `Branch` column.
+Add a byte-level rule to the scrub tool. It never parses and re-serializes the file (AGENTS.md, scrub anti-pattern). The rule replaces the geoip country and the account country with fixed placeholders of the same shape, in every row's `Tags` cell, and refuses the file if a tag cannot be located safely. It never touches the region token or the `Branch` column.
 
 **Acceptance:**
-- A labelled constructed `.build.info` with a region and a different geoip country: after capture, the region is kept, the geoip country is the placeholder, and every other byte is unchanged.
+- A labelled constructed `.build.info` with at least two rows, each with a region, an account country and a different geoip country. After capture, every row keeps its region, both country tokens in every row are placeholders, and every other byte is unchanged.
 - A tag the tool cannot place refuses the file.
 - `make ci` green.
 - Reviewed by `security-reviewer` (scrub tool) and `code-reviewer`.
