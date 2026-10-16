@@ -170,7 +170,7 @@
   // (U+200B-U+200D, U+2060, U+FEFF) could reorder or hide what a key or
   // value says; they are shown escaped. JSON.stringify already escapes
   // control characters and lone surrogates.
-  const JT_HIDDEN = /[​-‍‪-‮⁠⁦-⁩﻿]/g;
+  const JT_HIDDEN = /[\u200B-\u200D\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/g;
 
   function jtQuote(text) {
     return JSON.stringify(text).replace(
