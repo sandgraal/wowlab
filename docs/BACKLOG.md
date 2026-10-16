@@ -340,6 +340,7 @@ Cover these:
 - **Detail pane, hints.** Each hint has a copy button. The copied text is exactly `hint.command`, and the page says which shell syntax it uses (`hint.shell`).
 - **Preview.** It runs only the entry's `views[0]` through `/api/run`, with exactly its `command` and `params`. No view means no Preview button. A refused command (`--yes`, `looks page --out`, `log tail --follow`) is never offered.
 - **Rendering.** Everything is drawn with textContent only, including hostile names in gaps, hints and previews. No external request is made.
+- **Placeholder badge.** A verdict with `placeholder: true` (M13-32) gets a badge class of its own, the way `link` gets `.badge-link`. Its colour then matches its "wowlab won't touch" label rather than the row's level, in both the tree and the detail pane.
 
 **Acceptance:**
 - The graders fail on `main` for the stated reason.
