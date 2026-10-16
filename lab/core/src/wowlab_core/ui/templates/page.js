@@ -60,10 +60,16 @@
     const fields = byId("fields");
     fields.replaceChildren();
     for (const param of command.params) {
-      if (!param.refused) fields.appendChild(field(param));
+      if (!param.refused) {
+        fields.appendChild(field(param));
+      } else {
+        const note = make("p", param.label + " is not offered here: " + param.refused);
+        note.className = "field-refused";
+        fields.appendChild(note);
+      }
     }
     byId("run").disabled = false;
-    byId("stdout").textContent = "";
+    showResult(null);
     byId("stderr").textContent = "";
     say("");
   }
@@ -88,7 +94,7 @@
     const button = byId("run");
     button.disabled = true;
     say("Running wowlab " + current.path.join(" ") + "…");
-    byId("stdout").textContent = "";
+    showResult(null);
     byId("stderr").textContent = "";
     try {
       const reply = await fetch(api("/api/run"), {
@@ -103,13 +109,7 @@
         say("Refused: " + (result.error || reply.status));
         return;
       }
-      let out = result.stdout;
-      try {
-        out = JSON.stringify(JSON.parse(out), null, 2);
-      } catch (_) {
-        // Not one JSON document: shown as printed.
-      }
-      byId("stdout").textContent = out;
+      showResult(result.stdout);
       byId("stderr").textContent = result.stderr;
       const notes = [];
       if (result.timed_out) notes.push("stopped at its time limit");
@@ -142,13 +142,118 @@
       button.setAttribute("aria-pressed", "false");
       if (command.excluded) {
         button.disabled = true;
-        button.title = "Not offered: " + command.excluded;
+        button.title = "Not offered in this version: " + command.excluded;
       } else {
         button.title = command.help || "";
         button.addEventListener("click", () => pick(command, button));
       }
       list.appendChild(button);
     }
+  }
+
+  // ─── the result: a generic JSON tree (M13-26) ─────────────────────────────
+  // One run's stdout, when it is one JSON document, drawn as a collapsible,
+  // read-only tree: an object or array is a <details> whose children are
+  // drawn the first time it opens, at most JT_BATCH at a time. Every key and
+  // value goes in through textContent. The output as printed stays one click
+  // away, exact, because JSON.parse rounds integers past 2^53.
+
+  const JT_BATCH = 200;
+
+  function jtKind(value) {
+    if (value === null) return "null";
+    if (Array.isArray(value)) return "array";
+    return typeof value; // "object", "string", "number" or "boolean"
+  }
+
+  function jtKey(key) {
+    const span = make("span", key);
+    span.className = "jt-key";
+    return span;
+  }
+
+  function jtScalar(value) {
+    const kind = jtKind(value);
+    const span = make("span", kind === "string" ? JSON.stringify(value) : String(value));
+    span.className = "jt-value jt-" + kind;
+    return span;
+  }
+
+  function jtFill(box, entries, from) {
+    const end = Math.min(entries.length, from + JT_BATCH);
+    for (let i = from; i < end; i++) {
+      box.appendChild(jtNode(entries[i][0], entries[i][1]));
+    }
+    if (end < entries.length) {
+      const more = make("button", "Show more (" + (entries.length - end) + " left)");
+      more.type = "button";
+      more.className = "jt-more";
+      more.addEventListener("click", () => {
+        more.remove();
+        jtFill(box, entries, end);
+      });
+      box.appendChild(more);
+    }
+  }
+
+  function jtNode(key, value) {
+    const kind = jtKind(value);
+    if (kind !== "object" && kind !== "array") {
+      const row = make("div");
+      row.className = "jt-leaf";
+      if (key !== null) row.appendChild(jtKey(key));
+      row.appendChild(jtScalar(value));
+      return row;
+    }
+    const entries =
+      kind === "array" ? value.map((item, i) => [String(i), item]) : Object.entries(value);
+    const node = make("details");
+    node.className = "jt-node";
+    const summary = make("summary");
+    if (key !== null) summary.appendChild(jtKey(key));
+    const open = kind === "array" ? "[" : "{";
+    const close = kind === "array" ? "]" : "}";
+    const count = make("span", open + entries.length + close);
+    count.className = "jt-count";
+    summary.appendChild(count);
+    node.appendChild(summary);
+    const box = make("div");
+    box.className = "jt-children";
+    node.appendChild(box);
+    let drawn = false;
+    node.addEventListener("toggle", () => {
+      if (node.open && !drawn) {
+        drawn = true;
+        jtFill(box, entries, 0);
+      }
+    });
+    return node;
+  }
+
+  // Shows one run's stdout: a tree when it is one JSON document, else the
+  // text as printed. null clears the result.
+  function showResult(stdout) {
+    const tree = byId("result-tree");
+    const raw = byId("result-raw");
+    tree.replaceChildren();
+    tree.hidden = true;
+    raw.hidden = true;
+    raw.open = false;
+    byId("stdout").textContent = stdout || "";
+    if (!stdout) return;
+    let value;
+    try {
+      value = JSON.parse(stdout);
+    } catch (_) {
+      raw.hidden = false;
+      raw.open = true;
+      return;
+    }
+    const root = jtNode(null, value);
+    tree.appendChild(root);
+    if (root.tagName === "DETAILS") root.open = true;
+    tree.hidden = false;
+    raw.hidden = false;
   }
 
   byId("run").addEventListener("click", run);

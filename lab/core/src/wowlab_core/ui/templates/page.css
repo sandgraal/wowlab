@@ -15,3 +15,18 @@ section { flex: 1; min-width: 0; }
 pre { background: #fff; border: 1px solid #ddd; padding: 0.5rem; overflow: auto; max-height: 60vh; white-space: pre-wrap; word-break: break-word; }
 pre:empty { display: none; }
 #stderr { color: #8a1c1c; }
+/* the result: a generic JSON tree (M13-26) */
+.field-refused { color: #666; font-size: 0.85rem; font-style: italic; }
+.jt { background: #fff; border: 1px solid #ddd; padding: 0.5rem; overflow: auto; max-height: 60vh; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.85rem; }
+.jt-children { padding-left: 1.25rem; border-left: 1px dotted #ccc; margin-left: 0.3rem; }
+.jt-node > summary { cursor: pointer; }
+.jt-leaf { padding-left: 0.95rem; }
+.jt-key { unicode-bidi: isolate; color: #3a3a8c; margin-right: 0.5rem; }
+.jt-key::after { content: ":"; }
+.jt-value { unicode-bidi: isolate; white-space: pre-wrap; word-break: break-word; }
+.jt-count { color: #777; }
+.jt-string { color: #1c6b2a; }
+.jt-number { color: #8a4b00; }
+.jt-boolean, .jt-null { color: #6b1c6b; }
+.jt-more { font: inherit; font-size: 0.8rem; margin: 0.2rem 0; }
+.jt-raw > summary { cursor: pointer; color: #555; font-size: 0.85rem; margin-top: 0.5rem; }
