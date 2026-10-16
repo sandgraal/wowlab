@@ -133,9 +133,9 @@ The README's first screen: what wowlab is in three sentences; the trust model of
 ---
 
 ## [ ] M13-11 — First public release, v0.1
-**Size:** S · **Depends on:** M13-02, M13-03, M13-04, M13-09, M13-10, M13-14, M13-21, M13-22, M13-23, M13-24, M13-25, M13-26 · **owner** (pushes the tag)
+**Size:** S · **Depends on:** M13-02, M13-03, M13-04, M13-09, M13-10, M13-14, M13-21, M13-22, M13-23, M13-24, M13-25, M13-26, M13-27 · **owner** (pushes the tag)
 
-Contents: M13-02 to M13-04, M13-09, M13-10, M13-21 to M13-26 (the explorer and the first `wowlab ui`; *amended 2026-10-15*, owner decision 2026-10-14), and M13-06 if M13-05 has landed. Not held for M13-08. The conductor drafts the release notes (what is in it, the trust model, platform status, the `--json` models); the owner pushes the tag.
+Contents: M13-02 to M13-04, M13-09, M13-10, M13-21 to M13-27 (the explorer and the first `wowlab ui`; *amended 2026-10-15*, owner decision 2026-10-14), and M13-06 if M13-05 has landed. Not held for M13-08. The conductor drafts the release notes (what is in it, the trust model, platform status, the `--json` models); the owner pushes the tag.
 
 **Acceptance:** the release has the wheel, the sdist and `SHA256SUMS`; the README's install line installs it; the release date is recorded in `docs/handoffs/M13-gate.md` for M13-13.
 
@@ -169,7 +169,7 @@ Move the verdict wording out of the CLI (`_edit_words`, `_TIER_WORDS`, `_restora
 - `n/a` maps to `not_applicable`;
 - `unclassified` means only "no file-map row", the set M13-22's `filemap gaps` lists.
 
-`Explained` gains `verdict`; the JSON change is additive. `explain` and `tree --explain` print from it.
+`Explained` gains `verdict`; the JSON change is additive. `explain` and `tree --explain` print from it. *Amended 2026-10-15 (review of #196):* `TreeItem` and `ExplainReport` also carry a `verdict` that is always present, `unclassified` when the path has no file-map row. That way the explorer never has to invent a level or words for such a path (§14.5 D3).
 
 **Acceptance:**
 - The text output of `explain` and `tree --explain` is byte-identical before and after, on the fixture installs.
@@ -266,37 +266,61 @@ Expected-failure graders, derived from ADR-0029 and its amendment of 2026-10-15 
 
 ---
 
-## [ ] M13-25 — The explorer view
-**Size:** M · **Depends on:** M13-21, M13-22, M13-23, M13-24
+## [ ] M13-25 — The explorer view, first stage: tree, badges, detail
+**Size:** S–M · **Depends on:** M13-21, M13-24
 
-The UI's first view, per §15.6.
+*Split 2026-10-15 (owner: "get there sooner"):* the explorer lands in two stages, so the owner can use it as soon as the server merges. This stage uses only what exists once M13-21 has merged. M13-27 adds the rest.
 
-**Tree pane.** It is drawn from `tree --install --explain --json`. Every item has a verdict badge whose level and words come from Python. It filters by verdict, by "gaps only", or by text.
+**Tree pane.** It is drawn from `tree --explain --json`, one flavor folder at a time, with a flavor picker when there are several. Every item has a verdict badge whose level and words come from Python. It filters by verdict level or by text.
 
 **Detail pane.** It is drawn from `explain --json` and shows:
-- what the file is and who writes it, and when;
-- the verdict words and the snapshot facts;
-- the hints, each with a copy button;
-- a Preview button that runs the entry's first view and draws the JSON as a generic, collapsible, read-only tree.
-
-**Gaps tab.** It is drawn from `filemap gaps --json`.
+- what the file is;
+- who writes it, and when;
+- the verdict's level and words.
 
 **Rules.**
 - All rendering uses `textContent`.
 - Home paths are shown as `~`.
 - No external request is made.
+- No file-map logic lives in the JavaScript (§14.5 D3).
 
 **Acceptance:**
 - A Python test serves the view and checks the CSP and that no external URL appears.
-- A labelled constructed install holds file and folder names with `</script>`, `<img onerror=…>`, U+2028 and U+202E; they render inert, and the JSON passed through is escaped.
+- A labelled constructed install holds file and folder names with `</script>`, `<img onerror=…>`, U+2028 and U+202E. They render inert, and the JSON passed through is escaped.
 - The owner's end-to-end check, reported in the PR:
   - browse;
-  - filter to "no" and to gaps;
-  - preview `Config.wtf` and one SavedVariables file;
-  - copy a hint;
+  - filter to "no";
+  - open `Config.wtf` and one SavedVariables file in the detail pane;
   - a request without the token is refused.
 - `make ci` green.
 - Reviewed by `security-reviewer`, `domain-reviewer` (the wording a player reads) and `code-reviewer`.
+
+---
+
+## [ ] M13-27 — The explorer view, second stage: whole install, gaps, snapshot facts, previews
+**Size:** M · **Depends on:** M13-22, M13-23, M13-25
+
+This builds on M13-25's view, per §15.6.
+
+**Tree pane.**
+- It switches to `tree --install --explain --json`, covering the install root and every flavor folder.
+- It gains a "gaps only" filter.
+
+**Detail pane.** It gains three things from M13-23:
+- the snapshot facts;
+- the hints, each with a copy button;
+- a Preview button, which runs the entry's first view and draws the JSON as a generic, collapsible, read-only tree.
+
+**Gaps tab.** A new tab, drawn from `filemap gaps --json`.
+
+**Acceptance:**
+- M13-25's rendering and escaping tests extend to the new panes.
+- The owner's end-to-end check, reported in the PR:
+  - filter to gaps;
+  - preview `Config.wtf` and one SavedVariables file;
+  - copy a hint.
+- `make ci` green.
+- Reviewed by `security-reviewer`, `domain-reviewer` and `code-reviewer`.
 
 ---
 

@@ -2910,7 +2910,7 @@ supported before M13-02's acceptance holds.
 second public release.
 *Amended 2026-10-15 (owner decision 2026-10-14):* the read-only first stage
 of `wowlab ui` is pulled forward into this wave and into v0.1. Its first
-view is the install explorer (§15.6, M13-21 to M13-26). Wave 5 keeps the
+view is the install explorer (§15.6, M13-21 to M13-27). Wave 5 keeps the
 confirm flow for the `--yes` commands and the embedded pages.
 
 ### 15.1 Tickets
@@ -2936,10 +2936,11 @@ The owner's working names are kept beside the ticket ids.
 | — | M13-22 | The whole install, with file-map gaps (§15.6) | implementer |
 | — | M13-23 | Per-path detail: snapshot facts, views, hints (§15.6) | implementer |
 | — | M13-24T / M13-24 | `wowlab ui` server: graders, then the server (§15.6, ADR-0029) | test-writer, then implementer |
-| — | M13-25 | The explorer view (§15.6) | implementer |
+| — | M13-25 | The explorer view, first stage: tree, badges, detail (§15.6) | implementer |
 | — | M13-26 | Generic forms for read commands; the parity test (§15.6) | implementer |
+| — | M13-27 | The explorer view, second stage: whole install, gaps, snapshot facts, previews (§15.6) | implementer |
 
-**v0.1** contains M13-02 to M13-04, M13-09 and M13-10, M13-21 to M13-26
+**v0.1** contains M13-02 to M13-04, M13-09 and M13-10, M13-21 to M13-27
 (*amended 2026-10-15*), and M13-06 if M13-05 has landed. M13-08 ships in v0.2 if it has not landed; v0.1 is not held for
 it. M13-07 ships only in the form its owner test allows.
 
@@ -3051,14 +3052,20 @@ first (`AGENTS.md`). Wave 2's ten tickets became twenty-five; expect growth.
 added to the order:
 
 ```
-M13-21 verdict ─┬─ M13-22 whole install + gaps ─┐
-                └─ M13-23 per-path detail ──────┤
-M13-24T graders ── M13-24 ui server ─┬──────────┴─ M13-25 explorer view ─┐
-                                     └─ M13-26 forms + parity ───────────┴─ M13-11 v0.1
+M13-21 verdict  ─┬─ M13-22 whole install + gaps
+                 └─ M13-23 per-path detail
+M13-24T graders ─── M13-24 ui server ─┬─ M13-26 forms + parity
+                                      └─ M13-25 explorer, first stage   (needs M13-21, M13-24)
+                                           └─ M13-27 explorer, second stage (needs M13-22, M13-23, M13-25)
+M13-25, M13-26, M13-27 ─── M13-11 v0.1
 ```
 
 M13-21 and M13-24T start at once, alongside the other open M13 work. The
-critical path is M13-24T, M13-24, M13-25.
+critical path to the owner's first use is M13-24T, M13-24, M13-25; to v0.1 it
+continues through M13-27. *Amended 2026-10-15 (owner):* the
+explorer is split so the owner can use it sooner. M13-25 (tree, badges, detail)
+needs only M13-21 and the server; M13-27 adds the whole install, gaps,
+snapshot facts, hints and previews.
 
 ### 15.6 The install explorer and the first `wowlab ui` (owner decision 2026-10-14)
 
@@ -3115,7 +3122,9 @@ file-map logic or game rules (D3, §14.5).
   a count; on 2026-10-15 that is eight, `doctor` included (its `--yes` takes
   a first snapshot). The ADR-0029 amendment of 2026-10-15 records the
   staging.
-- **The explorer view (M13-25).**
+- **The explorer view (M13-25, then M13-27).** M13-25 ships the tree,
+  the badges and the detail pane on one flavor folder; M13-27 adds the rest
+  below.
   - A tree pane with a verdict badge on every item. It filters by verdict,
     by "gaps only", or by text.
   - A detail pane showing what the file is, who writes it, the verdict
