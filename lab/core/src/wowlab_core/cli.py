@@ -139,6 +139,7 @@ from wowlab_core import (
     lookspage,
     lookstore,
     luadata,
+    macrocheck,
     pathfacts,
     process,
     profiles,
@@ -4143,6 +4144,186 @@ def macros_list(
     if report.unknown_lines:
         _say(f"  {report.unknown_lines} line(s) outside any macro are not shown")
     _say(_MACRO_SYNC)
+
+
+# The largest macros-cache.txt `macros check` reads: far above any real one (a
+# full set of macros at the limit is a few hundred KiB), so a planted giant
+# is refused before it is read.
+_MACROS_LIMIT = 16 * 1024 * 1024
+
+_MACROS_CHECK_NOTES = [
+    "macros-cache.txt is what the client last wrote; the server can replace it at login when "
+    "macro sync is on, and a macro made in the session in progress may not be in it yet.",
+    "The spellbook and action bars are the lab-addon's record as of its last save "
+    "(logout or /reload), not the session in progress. It reads the player's spellbook "
+    "only, so a pet spell or an item name after /cast reads as not in the spellbook.",
+]
+
+
+class MacrosFile(_Out):
+    scope: macrocheck.MacroScope
+    file: str | None  # relative to the flavor folder; None when there is no such file
+    macros: int
+    unknown_lines: int  # lines outside any macro, not checked
+
+
+class MacrosCheckReport(_Out):
+    """`wowlab macros check --json`. Findings alone leave the exit code at 0."""
+
+    flavor_folder: str
+    account: str
+    character: str | None  # "<realm folder>/<character folder>"; None: account macros only
+    files: list[MacrosFile]
+    record_file: str | None  # the character's WowLab.lua the spellbook and bars come from
+    record_schema: int | None
+    record_error: str | None  # why the WowLab.lua could not be read
+    length_limit: int
+    length_unit: str  # what the length rule counted
+    macros: list[macrocheck.CheckedMacro]
+    findings: list[macrocheck.Finding]
+    cannot_judge: list[macrocheck.CannotJudge]
+    on_no_bar_at_least: int | None
+    notes: list[str]
+
+
+def _check_record(
+    lay: layout.Layout, acct: layout.Account, character: str | None
+) -> tuple[str | None, labaddon.CharDB | None, str | None]:
+    """The character's WowLab.lua: its path, its record, or why it has none."""
+    if character is None:
+        return None, None, None
+    char = _select_character(acct, character)
+    mine = [
+        f
+        for f in lay.saved_variables()
+        if f.account == acct.folder
+        and f.scope == "character"
+        and f.realm_folder == char.realm_folder
+        and f.character_folder == char.folder
+        and _is_lab_file(f)
+    ]
+    if not mine:
+        return None, None, None
+    target = _chosen_lab_file(mine)
+    try:
+        return target.path, labaddon.read_char(lay.flavor_path / target.path), None
+    except (labaddon.LabAddonError, luadata.LuaDataError, OSError) as exc:
+        return target.path, None, str(exc)
+
+
+@macros_app.command("check")
+@_handled
+def macros_check(
+    account: AccountOpt = None,
+    character: CharacterOpt = None,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+) -> None:
+    """Check the account's macros, and one character's with --character, for
+    a body over 255, a spell not in the spellbook, a macro on no action bar,
+    duplicate names or bodies, unbalanced [ ] and a #showtooltip that is not
+    the first line. The spellbook and action bars come from the character's
+    lab-addon record (schema 3); without it those two rules say "cannot
+    judge". Reads only. JSON: MacrosCheckReport."""
+    _, chosen, lay = _open(root, flavor)
+    acct = _select_account(lay, account)
+    scopes: list[macrocheck.MacroScope] = (
+        ["account"] if character is None else ["account", "character"]
+    )
+    files: list[MacrosFile] = []
+    macros: list[macrocheck.SourceMacro] = []
+    target: _Target | None = None
+    for scope in scopes:
+        target, found = _wtf_file(lay, "macros-cache.txt", scope, acct.folder, character)
+        if found is None:
+            files.append(MacrosFile(scope=scope, file=None, macros=0, unknown_lines=0))
+            continue
+        data = snapshot.read_regular_file(lay.flavor_path / found.path, limit=_MACROS_LIMIT)
+        doc = wtfconfig.parse_macros(data)
+        files.append(
+            MacrosFile(
+                scope=scope,
+                file=found.path,
+                macros=len(doc.macros),
+                unknown_lines=len(doc.unknown_lines()),
+            )
+        )
+        macros.extend(
+            macrocheck.SourceMacro(scope=scope, file=found.path, macro=m) for m in doc.macros
+        )
+    record_file, record, record_error = _check_record(lay, acct, character)
+    result = macrocheck.check(macros, record)
+    cannot_judge = list(result.cannot_judge)
+    if record_error is not None:
+        cannot_judge = [
+            c.model_copy(update={"reason": f"{c.reason}: {record_file} was not read"})
+            if c.macro is None and c.rule in ("spell-not-in-spellbook", "not-on-action-bar")
+            else c
+            for c in cannot_judge
+        ]
+    elif character is None:
+        cannot_judge = [
+            c.model_copy(update={"reason": f"{c.reason} (no character chosen; use --character)"})
+            if c.macro is None
+            else c
+            for c in cannot_judge
+        ]
+    report = MacrosCheckReport(
+        flavor_folder=chosen.folder,
+        account=acct.folder,
+        character=target.character if target is not None and character is not None else None,
+        files=files,
+        record_file=record_file,
+        record_schema=record.schema_ if record is not None else None,
+        record_error=record_error,
+        length_limit=macrocheck.LENGTH_LIMIT,
+        length_unit=macrocheck.LENGTH_UNIT,
+        macros=result.macros,
+        findings=result.findings,
+        cannot_judge=cannot_judge,
+        on_no_bar_at_least=result.on_no_bar_at_least,
+        notes=_MACROS_CHECK_NOTES,
+    )
+    if json_out:
+        _emit(report)
+        return
+    for f in report.files:
+        if f.file is None:
+            _say(f"{f.scope.capitalize()} macros: no macros-cache.txt")
+        else:
+            extra = f", {f.unknown_lines} line(s) outside any macro not checked"
+            _say(
+                f"{f.scope.capitalize()} macros: {_plural(f.macros, 'macro')} in {f.file}"
+                + (extra if f.unknown_lines else "")
+            )
+    if report.record_file is None:
+        _say("Spellbook and action bars: no lab-addon record")
+    elif report.record_error is not None:
+        _say(f"Spellbook and action bars: {report.record_file} not read ({report.record_error})")
+    else:
+        _say(f"Spellbook and action bars: {report.record_file} (schema {report.record_schema})")
+    _say(
+        f"Length: counted in {report.length_unit}; the client's limit is "
+        f"{report.length_limit}, and whether it counts characters or bytes is [verify]"
+    )
+    _say(f"Findings: {len(report.findings)}")
+    for finding in report.findings:
+        _say(
+            f"  {finding.rule}: {finding.macro.scope} macro {finding.macro.id} "
+            f'"{finding.name}" (line {finding.line}): {finding.detail}'
+        )
+    _say(f"Cannot judge: {len(report.cannot_judge)}")
+    for c in report.cannot_judge:
+        if c.macro is None:
+            _say(f"  {c.rule}: {c.reason}")
+        else:
+            _say(
+                f"  {c.rule}: {c.macro.scope} macro {c.macro.id} "
+                f'"{c.name}" (line {c.line}): {c.reason}'
+            )
+    for note in report.notes:
+        _say(note)
 
 
 # ─── addons ──────────────────────────────────────────────────────────────────
