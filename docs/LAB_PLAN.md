@@ -1348,6 +1348,21 @@ never edited. Every capture passes through `scripts/lab_capture.py`, which
 > a captured log. A spawn UID or a real timestamp can tie the log to another
 > player's published log of the same fight, and that log names the owner.
 
+> **Amendment 2026-10-16 (M13-34).** In `.build.info`, each row (one per
+> installed product) has its own `Tags` cell, and each holds two country
+> tokens: `geoip-<CC>?`, the country the client was in when it last updated,
+> and `acct-<CCC>?`, the account's country. In every row, the tool replaces
+> the geoip letters with `ZZ` and the account letters with `ZZZ` (ISO 3166
+> user-assigned codes, so each token keeps its shape). It leaves the region
+> token and the `Branch` column as they are. A token is placed by the
+> header's `Tags` column, in rows with as many cells as the header, as a
+> whole token bounded by the cell's edges, a space or a `:`. Any other
+> `geoip` or `acct`, in any casing or shape and in any row, refuses the whole
+> file with a count only. The provenance row records
+> `geoip-country-replaced: N` and `acct-country-replaced: N`. The two
+> `.build.info` fixtures committed before this rule keep their real tokens
+> (owner decision, 2026-10-16).
+
 Structure, key order, number text, escapes, line endings and everything else
 stay byte-for-byte. The scrubber works at the byte level with targeted
 replacements; it does not parse and re-serialize (the parser does not exist
