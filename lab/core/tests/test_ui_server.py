@@ -454,7 +454,6 @@ def test_the_tree_has_yes_leaves_and_doctor_is_one() -> None:
 # ─── binding ─────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_binds_loopback_only_on_a_free_port(recorder: Recorder) -> None:
     ui = _ui()
     with (
@@ -473,7 +472,6 @@ def test_binds_loopback_only_on_a_free_port(recorder: Recorder) -> None:
     assert not params & {"host", "address", "bind", "port", "interface", "server_address"}
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_the_default_wowlab_is_this_interpreter_by_absolute_path(tmp_path: Path) -> None:
     """Review of #197, M1, and the owner rulings of 2026-10-15: never a name
     looked up on PATH (on Windows a `.cmd` shim would re-parse the argv)."""
@@ -525,7 +523,6 @@ def _non_loopback_ipv4() -> str | None:
     return None if address.startswith("127.") or address == "0.0.0.0" else address
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_not_reachable_on_another_interface(planted: Any) -> None:
     address = _non_loopback_ipv4()
     if address is not None:
@@ -534,7 +531,6 @@ def test_not_reachable_on_another_interface(planted: Any) -> None:
     assert planted.server_address[0] == "127.0.0.1"
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_ui_is_a_leaf_with_no_way_to_bind_elsewhere() -> None:
     leaves = dict(_leaves(_real_tree()))
     assert ("ui",) in leaves, "`wowlab ui` is a command of the CLI"
@@ -545,7 +541,6 @@ def test_ui_is_a_leaf_with_no_way_to_bind_elsewhere() -> None:
 # ─── the token ───────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_token_is_random_urlsafe_and_only_in_the_url(recorder: Recorder) -> None:
     with (
         _serving(wowlab_argv=recorder.argv) as one,
@@ -566,7 +561,6 @@ _NO_TOKEN_PATHS = [
 ]
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 @pytest.mark.parametrize(("method", "path"), _NO_TOKEN_PATHS)
 def test_a_request_without_the_token_is_refused(
     planted: Any, recorder: Recorder, method: str, path: str
@@ -584,7 +578,6 @@ def _wrong_tokens(token: str) -> list[str]:
     return ["", "x", flipped, token[:-1], token + "x", token.upper(), f" {token}"]
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_a_wrong_token_is_refused_on_every_path(planted: Any, recorder: Recorder) -> None:
     paths = ["/", "/api/commands", *_ui().static_files()]
     for wrong in _wrong_tokens(planted.token):
@@ -601,7 +594,6 @@ def test_a_wrong_token_is_refused_on_every_path(planted: Any, recorder: Recorder
     assert _send(planted, "GET", _target(planted, "/")).status == 200
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_the_token_never_appears_in_a_log_line(
     planted: Any,
     recorder: Recorder,
@@ -632,7 +624,6 @@ def test_the_token_never_appears_in_a_log_line(
     assert not any(token in key or token in value for key, value in call["env"].items())
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_the_token_reaches_no_child(planted: Any, real: Any, recorder: Recorder) -> None:
     """ADR-0029 owner rulings 2026-10-15: the token is never in a child's argv
     or environment. The recorder writes both down for every run."""
@@ -684,7 +675,6 @@ def _bad_hosts(port: int) -> list[str | None]:
     ]
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_a_foreign_host_is_refused(planted: Any, recorder: Recorder) -> None:
     port = _port(planted)
     for host in _bad_hosts(port):
@@ -716,7 +706,6 @@ def _bad_origins(port: int) -> list[str]:
     ]
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_a_cross_origin_request_is_refused(planted: Any, recorder: Recorder) -> None:
     port = _port(planted)
     for origin in _bad_origins(port):
@@ -736,7 +725,6 @@ def test_a_cross_origin_request_is_refused(planted: Any, recorder: Recorder) -> 
     assert reply.status == 200
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_an_origin_must_name_the_host_the_request_used(planted: Any, recorder: Recorder) -> None:
     """Owner rulings 2026-10-15: an Origin, when present, equals "http://" + Host.
     Both loopback names are accepted as Host, but not mixed with the other."""
@@ -804,14 +792,12 @@ def _assorted_replies(server: Any) -> list[tuple[str, Reply]]:
     return replies
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_no_cors_header_on_any_response(planted: Any) -> None:
     for what, reply in _assorted_replies(planted):
         cors = [k for k, _ in reply.headers if k.lower().startswith("access-control-")]
         assert cors == [], (what, cors)
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_the_token_is_in_no_response(planted: Any) -> None:
     """A DNS-rebinding page is same-origin with a refusal it provokes, so a
     refusal that echoes the request would hand it the token (security review
@@ -860,7 +846,6 @@ def _post_headers_only(
         conn.close()
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_a_refused_post_is_refused_before_its_body_is_read(
     planted: Any, recorder: Recorder
 ) -> None:
@@ -953,7 +938,6 @@ def test_the_csp_reading_used_by_the_graders_constructed(value: str, ok: bool) -
     assert (_csp_problems(value) == []) is ok
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_every_response_has_a_csp_allowing_only_the_server(planted: Any) -> None:
     for what, reply in _assorted_replies(planted):
         values = reply.all("Content-Security-Policy")
@@ -965,7 +949,6 @@ def test_every_response_has_a_csp_allowing_only_the_server(planted: Any) -> None
 # ─── what runs: leaves of the tree only ──────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_the_command_list_is_the_planted_tree(planted: Any) -> None:
     reply = _send(planted, "GET", _target(planted, "/api/commands"))
     assert reply.status == 200
@@ -976,7 +959,6 @@ def test_the_command_list_is_the_planted_tree(planted: Any) -> None:
     assert ("grp",) not in listed
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 @pytest.mark.parametrize(
     "command",
     [
@@ -1001,7 +983,6 @@ def test_only_a_leaf_of_the_tree_runs(planted: Any, recorder: Recorder, command:
     assert recorder.calls() == []
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_a_leaf_runs_with_json_and_nothing_else(planted: Any, recorder: Recorder) -> None:
     for path in [("grp", "inner"), ("echo",)]:
         params = {"path": "x"} if path == ("echo",) else {}
@@ -1017,7 +998,6 @@ def test_a_leaf_runs_with_json_and_nothing_else(planted: Any, recorder: Recorder
     assert len(recorder.calls()) == 3
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_a_real_read_command_runs_with_json(real: Any, recorder: Recorder) -> None:
     argv = _argv_of(_run(real, ["snap", "list"], {}))
     assert [a for a in argv if a != "--"] == ["snap", "list", "--json"], argv
@@ -1030,7 +1010,6 @@ def test_a_real_read_command_runs_with_json(real: Any, recorder: Recorder) -> No
 # ─── the argument vector ─────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 @pytest.mark.parametrize(
     "params",
     [
@@ -1053,14 +1032,12 @@ def test_an_undeclared_parameter_is_refused(
     assert recorder.calls() == []
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_another_commands_parameter_is_unknown_here(planted: Any, recorder: Recorder) -> None:
     reply = _run(planted, ["grp", "inner"], {"name": "y"})
     assert (reply.status, reply.error()) == (403, "unknown_parameter")
     assert recorder.calls() == []
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 @pytest.mark.parametrize(
     ("params", "expected"),
     [
@@ -1092,7 +1069,6 @@ def test_a_value_is_passed_as_a_value(
     assert parsed["json_out"] is True
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 @pytest.mark.parametrize(
     "params",
     [
@@ -1134,7 +1110,6 @@ def test_a_value_of_another_type_is_refused(
     assert recorder.calls() == []
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 @pytest.mark.parametrize(
     ("tags", "expected"),
     [
@@ -1154,7 +1129,6 @@ def test_every_list_element_is_passed_as_a_value(
     assert (parsed["dry_run"], parsed["count"], parsed["path"]) == (False, 1, "x"), argv
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_a_real_repeatable_option_takes_each_element_as_a_value(real: Any) -> None:
     """`profile save --preset` and `looks save --choice` repeat on main."""
     tree = _real_tree()
@@ -1170,7 +1144,6 @@ def test_a_real_repeatable_option_takes_each_element_as_a_value(real: Any) -> No
     assert (parsed["name"], parsed["race"], parsed["sex"]) == ("-n", "--choice", "-s"), argv
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_log_tail_follow_is_refused(real: Any, recorder: Recorder) -> None:
     """Owner rulings 2026-10-15: a run must end, so `--follow` is refused."""
     reply = _run(real, ["log", "tail"], {"follow": True})
@@ -1181,7 +1154,6 @@ def test_log_tail_follow_is_refused(real: Any, recorder: Recorder) -> None:
         assert _parsed(_real_tree(), ["log", "tail"], argv)["follow"] is False, argv
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 @pytest.mark.parametrize("out", ["page.html", "-", "/tmp/x.html", ""])
 def test_looks_page_out_is_refused(real: Any, recorder: Recorder, out: str) -> None:
     """Review of #198: `--out` can create a file anywhere outside an install,
@@ -1197,7 +1169,6 @@ def test_looks_page_out_is_refused(real: Any, recorder: Recorder, out: str) -> N
     assert len(recorder.calls()) == 2
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_no_shell_is_involved(
     planted: Any, recorder: Recorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1248,7 +1219,6 @@ def _gone(pid: int, within: float = 10.0) -> bool:
     return False
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 @pytest.mark.parametrize("command", ["sleep", "nap"])
 def test_a_run_past_its_timeout_is_stopped_with_its_whole_tree(
     recorder: Recorder, command: str
@@ -1267,7 +1237,6 @@ def test_a_run_past_its_timeout_is_stopped_with_its_whole_tree(
         assert _argv_of(_run(server, ["echo"], {"path": "x"}))[0] == "echo"
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_closing_the_server_stops_a_run_in_progress(recorder: Recorder) -> None:
     """`wowlab ui` ending must not leave a run behind (review of #197, M2)."""
     server = _ui().make_server(command=_planted_tree(), wowlab_argv=recorder.argv, timeout_s=600.0)
@@ -1296,7 +1265,6 @@ def test_closing_the_server_stops_a_run_in_progress(recorder: Recorder) -> None:
     assert not running.is_alive()
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 @pytest.mark.parametrize(("command", "stream"), [("flood", "stdout"), ("spew", "stderr")])
 def test_an_endless_writer_is_cut_at_the_cap(recorder: Recorder, command: str, stream: str) -> None:
     """The cap is read as a stream: the process is killed at the cap, long
@@ -1331,7 +1299,6 @@ def test_an_endless_writer_is_cut_at_the_cap(recorder: Recorder, command: str, s
         assert small["truncated"] is False
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_every_run_has_a_timeout_and_a_cap_that_cannot_be_turned_off(
     recorder: Recorder,
 ) -> None:
@@ -1350,7 +1317,6 @@ def test_every_run_has_a_timeout_and_a_cap_that_cannot_be_turned_off(
 # ─── refused commands: every `--yes` leaf, and `ui` ──────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_every_yes_leaf_of_the_real_tree_and_ui_are_refused(real: Any, recorder: Recorder) -> None:
     leaves = dict(_leaves(_real_tree()))
     refused = sorted(path for path, cmd in leaves.items() if _declares_yes(cmd))
@@ -1367,7 +1333,6 @@ def test_every_yes_leaf_of_the_real_tree_and_ui_are_refused(real: Any, recorder:
     assert _argv_of(_run(real, ["snap", "list"], {}))[:2] == ["snap", "list"]
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 @pytest.mark.parametrize("path", _PLANTED_YES, ids=" ".join)
 def test_a_planted_yes_command_is_refused_constructed(
     planted: Any, recorder: Recorder, path: tuple[str, ...]
@@ -1386,7 +1351,6 @@ def test_a_planted_yes_command_is_refused_constructed(
 # ─── static files ────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_static_files_are_the_package_templates(planted: Any) -> None:
     files = _ui().static_files()
     assert "/" in files
@@ -1407,7 +1371,6 @@ def _package_files() -> list[Path]:
     return sorted(p for p in package.iterdir() if p.is_file())
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_static_files_vouch_only_for_templates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1429,7 +1392,6 @@ def test_static_files_vouch_only_for_templates(
     assert dict(_ui().static_files()) == files
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_a_package_file_that_is_not_a_template_is_not_served(planted: Any) -> None:
     for file in _package_files():
         for path in (f"/{file.name}", f"/static/{file.name}", f"/templates/{file.name}"):
@@ -1467,7 +1429,6 @@ _TRAVERSALS = [
 ]
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 @pytest.mark.parametrize("path", _TRAVERSALS)
 def test_a_traversal_path_is_refused_constructed(planted: Any, path: str) -> None:
     reply = _send(planted, "GET", _target(planted, path))
@@ -1567,7 +1528,6 @@ def _files_holding(root: Path, token: str) -> list[Path]:
     return [f for f in root.rglob("*") if f.is_file() and token.encode() in f.read_bytes()]
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_ui_serves_make_server_defaults_opens_its_url_and_stops_on_ctrl_c(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1593,7 +1553,6 @@ def test_ui_serves_make_server_defaults_opens_its_url_and_stops_on_ctrl_c(
     assert run.after == run.before, "`wowlab ui` writes no file"
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 @pytest.mark.parametrize("browser", ["false", "raises"])
 def test_ui_prints_the_url_once_when_no_browser_opens(
     monkeypatch: pytest.MonkeyPatch,
@@ -1617,7 +1576,6 @@ def test_ui_prints_the_url_once_when_no_browser_opens(
     assert run.after == run.before, "`wowlab ui` writes no file"
 
 
-@pytest.mark.xfail(strict=True, reason="M13-24 not implemented")
 def test_serving_and_running_write_no_file(
     recorder: Recorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

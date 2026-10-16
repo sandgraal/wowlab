@@ -6866,6 +6866,40 @@ def looks_page(
         raise typer.Exit(EXIT_ERROR)
 
 
+# ─── ui ──────────────────────────────────────────────────────────────────────
+
+
+@app.command("ui")
+def ui_command() -> None:
+    """Open the local UI in your browser and serve it until Ctrl-C (ADR-0029).
+
+    The server listens on 127.0.0.1 only, at a port the system picks, and
+    answers only requests that carry the random token in the URL it opens.
+    It runs the read commands of this wowlab with --json; commands that
+    change files are not offered in this version. If no browser opens, the
+    URL is printed once on stdout."""
+    import webbrowser
+
+    from wowlab_core import ui
+
+    server = ui.make_server()
+    try:
+        try:
+            opened = bool(webbrowser.open(server.url))
+        except webbrowser.Error:
+            opened = False
+        if opened:
+            _say_err(f"wowlab ui: serving on http://127.0.0.1:{server.port}/; Ctrl-C to stop")
+        else:
+            _say_err("wowlab ui: no browser opened; open this URL (it carries the access token):")
+            typer.echo(server.url)
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
 # ─── version ─────────────────────────────────────────────────────────────────
 
 

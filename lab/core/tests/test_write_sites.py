@@ -87,7 +87,22 @@ _LAKE_DIR = (
     "DETACH and PRAGMA but the module's own (table_info aside), so no statement run "
     "through the lake opens another file; another build's file is attached read-only (mode=ro)"
 )
+_UI = "lab/core/src/wowlab_core/ui/__init__.py"
+_UI_RUN = (
+    "`wowlab ui` (ADR-0029, M13-24): starts only the same `wowlab` (this interpreter by "
+    "absolute path, `-P -m wowlab_core`) with an argv list and no shell, built from the "
+    "Click leaf's declared parameters; every leaf that declares --yes, `ui`, `log tail "
+    "--follow` and `looks page --out` are refused, so the child writes only what the CLI "
+    "itself writes, never into an install outside the gate; the server writes no file"
+)
+_CLI = "lab/core/src/wowlab_core/cli.py"
+_BROWSER = (
+    "`wowlab ui` (ADR-0029, M13-24): webbrowser.open takes a URL, not a file mode; it "
+    "opens the owner's browser at the server's loopback URL and writes no file"
+)
 ALLOWED: dict[tuple[str, str], str] = {
+    (_UI, "import subprocess"): _UI_RUN,
+    (_CLI, "opened = bool(webbrowser.open(server.url))"): _BROWSER,
     (_DB2LAKE, "import sqlite3"): _LAKE_DIR,
     (_DB2LAKE, "path.mkdir(parents=True, exist_ok=True)"): _LAKE_DIR,
     (_LOOKSTORE, "self._root.mkdir(parents=True, exist_ok=True)"): _LOOKS_DIR,
