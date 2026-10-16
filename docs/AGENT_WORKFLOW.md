@@ -19,9 +19,10 @@ project can copy the setup — see the last section.
 | **Automated review** | `.github/workflows/claude-review.yml` | PR comments | `AGENTS.md`, diff |
 
 Every writer is graded by someone who did not write the thing. For the
-load-bearing files, the ones that rewrite the owner's data
-(`luadata.py`, `guard.py`, `svmerge.py` and `profiles.py` under
-`lab/core/src/wowlab_core/`; the last two added by the owner on 2026-09-29),
+load-bearing files, the ones that rewrite the owner's data or run commands
+for the browser (`luadata.py`, `guard.py`, `svmerge.py`, `profiles.py` and the
+`ui` server, `ui.py` or `ui/`, under `lab/core/src/wowlab_core/`; `svmerge.py`
+and `profiles.py` added by the owner on 2026-09-29, `ui` on 2026-10-15),
 that separation is enforced at the ticket level: a `[TEST]` ticket lands
 graders on `main` as `pytest.mark.xfail(strict=True)` before the `[IMPL]`
 ticket starts.
@@ -79,8 +80,8 @@ and is not trusted until an owner capture shows it ran; that capture gets a
 runbook step, as M11-03 did.
 
 **New tests on a load-bearing file come from an independent session**
-(added 2026-09-29). In a fix round on `luadata.py`, `guard.py`, `svmerge.py`
-or `profiles.py`, the conductor never asks the implementer for a new test: a
+(added 2026-09-29). In a fix round on `luadata.py`, `guard.py`, `svmerge.py`,
+`profiles.py` or `ui`, the conductor never asks the implementer for a new test: a
 gap goes to a reviewer's probe (a new file under `tests/review/`) or to a
 test-writer. Reviewers may only add probe files, so changing or deleting an
 existing probe is a test-writer's job. Fix messages quote every reviewer's

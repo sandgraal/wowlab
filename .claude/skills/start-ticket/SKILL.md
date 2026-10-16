@@ -17,7 +17,7 @@ Start work on ticket `$ARGUMENTS`.
    ADRs in `docs/DECISIONS.md`, the `.claude/rules/` file for the area, and
    `docs/handoffs/$ARGUMENTS.md` if it exists.
 3. If the ticket touches a load-bearing file (`luadata.py`, `guard.py`,
-   `svmerge.py`, `profiles.py`),
+   `svmerge.py`, `profiles.py`, or the `ui` server, `ui.py` or `ui/`),
    confirm which side of the test-writer / implementer separation this
    session is on, and that the graders are already on `main` (for an [IMPL]
    ticket).
