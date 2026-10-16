@@ -94,6 +94,7 @@ import json
 import logging
 import os
 import re
+import stat
 import sys
 import time
 import traceback
@@ -136,6 +137,7 @@ from wowlab_core import (
     wtfconfig,
 )
 from wowlab_core.filemap import FileMapEntry
+from wowlab_core.verdict import Verdict, tier_words, verdict_of
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -1571,6 +1573,7 @@ class Explained(_Out):
     edit: str
     tier: str
     module: str
+    verdict: Verdict  # M13-21: the Edit cell as a level and in words
 
 
 class TreeItem(_Out):
@@ -1578,6 +1581,8 @@ class TreeItem(_Out):
     kind: Literal["file", "folder", "symlink"]
     size: int | None
     note: str | None
+    # M13-21, amended 2026-10-15: always present; "unclassified" with no file-map row
+    verdict: Verdict
     explained: Explained | None
 
 
@@ -1591,7 +1596,7 @@ class TreeReport(_Out):
     errors: list[str]
 
 
-def _explained(entry: FileMapEntry) -> Explained:
+def _explained(entry: FileMapEntry, verdict: Verdict) -> Explained:
     return Explained(
         entry_id=entry.id,
         what=entry.what,
@@ -1599,6 +1604,7 @@ def _explained(entry: FileMapEntry) -> Explained:
         edit=entry.edit,
         tier=entry.tier,
         module=entry.module,
+        verdict=verdict,
     )
 
 
@@ -1609,7 +1615,18 @@ def _tree_items(lay: layout.Layout, inv: layout.Inventory) -> dict[str, TreeItem
         path: str, kind: Literal["file", "folder", "symlink"], size: int | None, note: str | None
     ) -> None:
         if path and path not in items:
-            items[path] = TreeItem(path=path, kind=kind, size=size, note=note, explained=None)
+            found = lay.classify(path, is_dir=kind == "folder" or None)
+            entry = found.entry if isinstance(found, layout.Classified) else None
+            items[path] = TreeItem(
+                path=path,
+                kind=kind,
+                size=size,
+                note=note,
+                verdict=verdict_of(
+                    entry, found.base, found.path, folder=kind == "folder", link=kind == "symlink"
+                ),
+                explained=None,
+            )
 
     try:
         with os.scandir(lay.flavor_path) as it:
@@ -1708,7 +1725,7 @@ def tree(
         for item in items:
             found = lay.classify(item.path, is_dir=item.kind == "folder" or None)
             if isinstance(found, layout.Classified):
-                item = item.model_copy(update={"explained": _explained(found.entry)})
+                item = item.model_copy(update={"explained": _explained(found.entry, item.verdict)})
             explained.append(item)
         items = explained
     errors = [f"{e.path}: {e.error}" for e in inv.errors]
@@ -1733,10 +1750,9 @@ def tree(
                 _say("      no file-map row")
             else:
                 e = item.explained
-                edit = _edit_words(e.edit, e.tier, restorable=_restorable("flavor", item.path))
                 _say(f"      [{e.entry_id}] {_plain(e.what)}")
                 _say(f"      written by: {_plain(e.written_by)}")
-                _say(f"      edit: {edit}")
+                _say(f"      edit: {e.verdict.words}")
     if inv.truncated:
         _note("The walk hit a bound; the listing is incomplete.")
     for err in errors:
@@ -1748,63 +1764,51 @@ def _plain(markdown: str) -> str:
     return markdown.replace("**", "")
 
 
-_GATE_WORDS = "yes, through wowlab's write gate only, with the client closed"
-_SERVER_MAY_REPLACE = "(server may replace)"
-_TIER_WORDS = {
-    "A": "A: ordinary addon-user behaviour",
-    "A (read)": "A (read): reading it is ordinary addon-user behaviour",
-    "A (read, later wave)": "A (read, later wave): reading it is ordinary; wowlab does not read it yet",
-    "B": "B: works, but Blizzard does not support it and a patch can reset it",
-    "—": "—: nothing wowlab does with it",
-}
-# The subtrees the write gate may write, spelled as the client spells them.
-_GATE_AREAS = frozenset({"wtf", "interface", "fonts"})
-
-
-def _restorable(base: str | None, path: str) -> bool:
-    """Whether a flavor path lies where the write gate could put it back when
-    named (`WTF/`, `Interface/`, `Fonts/`)."""
-    return base == "flavor" and path.split("/", 1)[0].casefold() in _GATE_AREAS
-
-
-def _edit_words(edit: str, tier: str = "", *, restorable: bool = False) -> str:
-    """The file map's Edit cell in words. `restorable`: the path is inside the
-    subtrees the gate writes, so a `no` file is one a restore leaves alone
-    unless it is named (owner decision 2026-09-27)."""
-    if edit.startswith("gate"):
-        rest = edit[len("gate") :].strip()
-        if rest == _SERVER_MAY_REPLACE:
-            words = (
-                f"{_GATE_WORDS}; the server may replace it at login (sync settings: wowlab doctor)"
-            )
-        else:
-            words = _GATE_WORDS + (f" {rest}" if rest else "")
-    elif edit == "no":
-        words = (
-            "no; wowlab leaves it alone (a restore writes it only if you name it with --paths)"
-            if restorable
-            else "no; wowlab never writes it"
-        )
-    elif edit == "n/a":
-        words = "n/a; not a file wowlab touches"
-    elif edit == "—":
-        words = "—; a folder, see the files in it"
-    else:
-        words = edit
-    if tier == "B":
-        words += "; unsupported by Blizzard, a patch can reset it"
-    return words
-
-
-def _tier_words(tier: str) -> str:
-    return _TIER_WORDS.get(tier, tier)
-
-
 class ExplainReport(_Out):
     """`wowlab explain --json`."""
 
     query: str
     result: Annotated[layout.Classified | layout.Unclassified, Field(discriminator="status")]
+    verdict: Verdict  # M13-21; level "unclassified" when there is no file-map row
+
+
+def _path_kind(
+    install_root: Path | str, result: layout.Classified | layout.Unclassified, query: str
+) -> tuple[bool, bool]:
+    """`(folder, link)` for `explain`'s path. `link`: some component from
+    the install root down is a symlink, junction or other reparse point, so
+    the path is a link or lies inside one; the walk stops there and never
+    follows it. `folder`: a real folder, or one written with a trailing
+    separator."""
+    slash = query.endswith(("/", os.sep))
+    if result.base is None:
+        return slash, False
+    under = [result.flavor_folder] if result.base == "flavor" and result.flavor_folder else []
+    current = Path(install_root)
+    st: os.stat_result | None = None
+    for part in [*under, *[p for p in result.path.split("/") if p]]:
+        current = current / part
+        try:
+            st = current.lstat()
+        except OSError:
+            return slash, False  # absent from here down: nothing to follow
+        if _is_link_stat(current, st):
+            return False, True
+    if st is None:  # the install root itself; how it is reached is the owner's choice
+        return True, False
+    return slash or stat.S_ISDIR(st.st_mode), False
+
+
+def _is_link_stat(path: Path, st: os.stat_result) -> bool:
+    """A symbolic link, or on Windows any reparse point (junctions included:
+    `S_ISLNK` is false for those), as the write gate counts them."""
+    attributes = int(getattr(st, "st_file_attributes", 0))
+    if stat.S_ISLNK(st.st_mode) or attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+        return True
+    try:
+        return path.is_junction()
+    except OSError:
+        return False
 
 
 def _is_inside(path: Path, root: Path) -> bool:
@@ -1830,6 +1834,7 @@ def explain(
     inst, _ = _discover(root)
     given = Path(path)
     result: layout.Classified | layout.Unclassified
+    judged: layout.Classified | layout.Unclassified | None = None
     here = Path.cwd() / given
     if given.is_absolute():
         result = layout.classify(path, inst)
@@ -1837,12 +1842,30 @@ def explain(
         result = layout.classify(str(here) + ("/" if path.endswith("/") else ""), inst)
     else:
         result = layout.classify(path, inst)
-        if not isinstance(result, layout.Classified) and (flavor or len(inst.flavors) == 1):
+        if isinstance(result, layout.Unclassified) and (flavor or len(inst.flavors) == 1):
             chosen = _select_flavor(inst, flavor)
             in_flavor = layout.Layout.for_flavor(chosen, inst.root).classify(path)
             if isinstance(in_flavor, layout.Classified):
                 result = in_flavor
-    report = ExplainReport(query=path, result=result)
+            elif result.base == "root" and result.path and in_flavor.base == "flavor":
+                # No row either way: the verdict reads the path inside the
+                # chosen flavor, so every spelling of a flavor path gets the
+                # same one. `result` stays the install-root lookup, as on main.
+                judged = in_flavor
+    if judged is None:
+        judged = result
+    folder, link = _path_kind(inst.root, judged, path)
+    report = ExplainReport(
+        query=path,
+        result=result,
+        verdict=verdict_of(
+            judged.entry if isinstance(judged, layout.Classified) else None,
+            judged.base,
+            judged.path,
+            folder=folder,
+            link=link,
+        ),
+    )
     if json_out:
         _emit(report)
         return
@@ -1854,12 +1877,11 @@ def explain(
         return
     e = result.entry
     base = f"in flavor folder {result.flavor_folder}" if result.base == "flavor" else "install root"
-    edit = _edit_words(e.edit, e.tier, restorable=_restorable(result.base, result.path))
     _say(f"{result.path or '.'} ({base})")
     _say(f"  what:         {_plain(e.what)}")
     _say(f"  written by:   {_plain(e.written_by)}")
-    _say(f"  edit:         {edit}")
-    _say(f"  tier:         {_tier_words(e.tier)}")
+    _say(f"  edit:         {report.verdict.words}")
+    _say(f"  tier:         {tier_words(e.tier)}")
     _say(f"  read by:      {e.module}")
     _say(f"  file-map row: {e.id} ({e.doc_path})")
 

@@ -36,10 +36,11 @@ import pytest
 from pydantic import BaseModel
 from typer.testing import CliRunner
 
-from wowlab_core import cli, guard, install, luadata, snapshot
+from wowlab_core import cli, filemap, guard, install, luadata, snapshot
 from wowlab_core.gamedata import GameData, WagoSource
 from wowlab_core.install import Install
 from wowlab_core.snapshot import GcReport, Manifest, SnapshotStore, VerifyReport
+from wowlab_core.verdict import verdict_of
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 CAPTURE = FIXTURES / "macos"
@@ -424,6 +425,176 @@ def test_explain_a_path_with_no_row(root: Path) -> None:
     assert "no file-map row" in result.stdout
     report = _json(cli.ExplainReport, "explain", "unknown-constructed.txt")
     assert report.result.status == "unclassified"
+    assert report.verdict.level == "unclassified"
+    assert report.verdict.words == "no file-map row; wowlab does not know what this file is"
+
+
+VERDICT_CASES = [
+    ("WTF/Config.wtf", "gate", True),
+    (f"WTF/Account/{ACCOUNT}/config-cache.wtf", "gate", True),
+    (f"{SV_DIR}/RareScanner.lua.bak", "no", True),
+    (".build.info", "no", False),
+    ("WTF/", "folder", None),
+    (".", "folder", None),
+    (f"{FLAVOR}/Screenshots/WoWScrnShot_092726_120000.jpg", "not_applicable", False),
+]
+
+
+@pytest.mark.parametrize(
+    ("path", "level", "restorable"), VERDICT_CASES, ids=[c[0] for c in VERDICT_CASES]
+)
+def test_explain_json_carries_the_verdict_it_prints(
+    root: Path, path: str, level: str, restorable: bool | None
+) -> None:
+    """M13-21: the verdict is in `--json`, and the text prints its words."""
+    report = _json(cli.ExplainReport, "explain", path)
+    assert report.verdict.level == level
+    assert report.verdict.restorable is restorable
+    assert f"  edit:         {report.verdict.words}\n" in ok("explain", path).stdout
+
+
+def test_tree_explain_json_carries_the_verdict_it_prints(root: Path) -> None:
+    report = _json(cli.TreeReport, "tree", "--explain")
+    text = ok("tree", "--explain").stdout
+    explained = [i for i in report.items if i.explained is not None]
+    assert explained
+    for item in explained:
+        assert item.explained is not None
+        v = item.explained.verdict
+        entry = filemap.load().entry(item.explained.entry_id)
+        assert v == verdict_of(entry, "flavor", item.path, folder=item.kind == "folder")
+        assert f"      edit: {v.words}\n" in text
+    levels = {i.path: i.explained.verdict.level for i in explained if i.explained is not None}
+    assert levels["WTF/Config.wtf"] == "gate"
+    assert levels[f"{SV_DIR}/RareScanner.lua.bak"] == "no"
+    assert levels["WTF"] == "folder"
+    for item in report.items:
+        assert item.explained is None or item.verdict == item.explained.verdict
+
+
+def test_tree_items_always_carry_a_verdict(root: Path, flavor: Path) -> None:
+    """M13-21, amended 2026-10-15: `TreeItem.verdict` with or without
+    `--explain`, `unclassified` for a path with no file-map row."""
+    (flavor / "unknown-constructed.txt").write_bytes(b"x")
+    for args in (("tree",), ("tree", "--explain")):
+        by_path = {i.path: i for i in _json(cli.TreeReport, *args).items}
+        assert by_path["WTF/Config.wtf"].verdict.level == "gate"
+        assert by_path["WTF"].verdict.level == "folder"
+        assert by_path["WTF"].verdict.restorable is None
+        unknown = by_path["unknown-constructed.txt"]
+        assert unknown.explained is None
+        assert unknown.verdict.level == "unclassified"
+        assert unknown.verdict.restorable is False
+        assert "wowlab does not know what this file is" in unknown.verdict.words
+        for folder in ("WTF", "Interface", "Logs", "Interface/AddOns/DBM-Brawlers"):
+            assert by_path[folder].verdict.restorable is None, folder
+
+
+def test_tree_a_linked_addon_folder_is_not_restorable(
+    root: Path, flavor: Path, tmp_path: Path
+) -> None:
+    """An addon author's working copy linked into AddOns: a snapshot never
+    captures a link, so no restore puts it back (CI review of #195)."""
+    (tmp_path / "work-constructed").mkdir()
+    link = flavor / "Interface" / "AddOns" / "MyAddon-dev"
+    link.symlink_to(tmp_path / "work-constructed")
+    for args in (("tree",), ("tree", "--explain")):
+        by_path = {i.path: i for i in _json(cli.TreeReport, *args).items}
+        item = by_path["Interface/AddOns/MyAddon-dev"]
+        assert item.kind == "symlink"
+        assert item.verdict.restorable is None
+        assert item.verdict.words.startswith(LINK_WORDS)
+        assert "yes" not in item.verdict.words
+        if item.explained is not None:
+            assert item.explained.verdict == item.verdict
+    explained = _json(cli.ExplainReport, "explain", "Interface/AddOns/MyAddon-dev").verdict
+    assert explained.restorable is None
+    assert explained.words == LINK_WORDS
+
+
+LINK_WORDS = (
+    "a link, or inside one; wowlab never follows it or writes through it, "
+    "and a restore does not put it back"
+)
+
+
+@pytest.mark.parametrize(
+    "inside",
+    ["MyAddon.toc", "media/icon.tga", "media/"],
+    ids=["constructed-toc", "constructed-nested-file", "constructed-nested-folder"],
+)
+def test_explain_a_path_inside_a_linked_folder_is_behind_a_link(
+    root: Path, flavor: Path, tmp_path: Path, inside: str
+) -> None:
+    """Every component from the install root down is checked with lstat; the
+    first link stops the walk (domain review of #195, round 4)."""
+    work = tmp_path / "work-constructed"
+    (work / "media").mkdir(parents=True)
+    (work / "MyAddon.toc").write_bytes(b"## Interface: 1\n")
+    (work / "media" / "icon.tga").write_bytes(b"x")
+    (flavor / "Interface" / "AddOns" / "MyAddon-dev").symlink_to(work)
+    rel = f"Interface/AddOns/MyAddon-dev/{inside}"
+    spellings = [rel, f"{FLAVOR}/{rel}", str(flavor / rel) + ("/" if inside.endswith("/") else "")]
+    for p in spellings:
+        report = _json(cli.ExplainReport, "explain", p)
+        assert report.verdict.restorable is None, p
+        assert report.verdict.words == LINK_WORDS, p
+        assert report.verdict.level == "gate", p  # the `addon` row still matches
+    # The control: the same tree as a real folder is a file the gate writes.
+    (flavor / "Interface" / "AddOns" / "MyAddon-dev").unlink()
+    shutil.copytree(work, flavor / "Interface" / "AddOns" / "MyAddon-dev")
+    plain = _json(cli.ExplainReport, "explain", rel).verdict
+    assert plain.words.startswith("yes, through wowlab's write gate")
+    assert plain.restorable is (None if inside.endswith("/") else True)
+
+
+def test_explain_a_path_inside_a_linked_wtf_folder_is_behind_a_link(
+    root: Path, flavor: Path, tmp_path: Path
+) -> None:
+    """A whole `WTF` that is a link, constructed: Config.wtf is behind it."""
+    moved = tmp_path / "wtf-constructed"
+    shutil.move(flavor / "WTF", moved)
+    (flavor / "WTF").symlink_to(moved)
+    wtf = _json(cli.ExplainReport, "explain", "WTF").verdict
+    assert (wtf.level, wtf.restorable, wtf.words) == ("folder", None, LINK_WORDS)
+    config = _json(cli.ExplainReport, "explain", "WTF/Config.wtf").verdict
+    assert (config.level, config.restorable, config.words) == ("gate", None, LINK_WORDS)
+
+
+def test_explain_a_folder_has_no_restorable_answer(root: Path, flavor: Path) -> None:
+    """Spelled with or without the trailing slash, a real folder is a folder."""
+    (flavor / "WTF" / "Weird-constructed").mkdir()
+    for path in ("Logs", "Logs/", "Interface/AddOns/DBM-Brawlers", "WTF/Weird-constructed"):
+        assert _json(cli.ExplainReport, "explain", path).verdict.restorable is None, path
+    weird = _json(cli.ExplainReport, "explain", "WTF/Weird-constructed").verdict
+    assert weird.words == "no file-map row; wowlab does not know what this folder is"
+
+
+@pytest.mark.parametrize("with_flavor", [True, False], ids=["--flavor", "implied"])
+def test_every_spelling_of_an_unclassified_flavor_path_agrees(
+    root: Path, flavor: Path, with_flavor: bool
+) -> None:
+    """Domain review of PR #195: a flavor-relative path with no row anywhere
+    was read at the install root and called not restorable."""
+    (flavor / "WTF" / "Weird-constructed").mkdir()
+    (flavor / "WTF" / "Weird-constructed" / "x.txt").write_bytes(b"x")
+    rel = "WTF/Weird-constructed/x.txt"
+    opts = ("--flavor", FLAVOR) if with_flavor else ()
+    spellings = [rel, f"{FLAVOR}/{rel}", str(flavor / rel)]
+    verdicts = [_json(cli.ExplainReport, "explain", *opts, p).verdict for p in spellings]
+    for v in verdicts:
+        assert v.level == "unclassified"
+        assert v.restorable is True
+    assert verdicts[0] == verdicts[1] == verdicts[2]
+    report = _json(cli.ExplainReport, "explain", *opts, rel)
+    # `result` is main's install-root lookup (the JSON change is additive).
+    assert (report.result.base, report.result.flavor_folder) == ("root", None)
+    tree = {i.path: i for i in _json(cli.TreeReport, "tree", "--explain", *opts).items}
+    assert rel in tree
+    assert tree[rel].verdict == verdicts[0]
+    # The text is what it was: the install-root lookup, named as before.
+    text = ok("explain", *opts, rel).stdout
+    assert text == f"{rel}: no file-map row: no file-map row matches\n"
 
 
 # ─── sv ──────────────────────────────────────────────────────────────────────
