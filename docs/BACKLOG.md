@@ -69,6 +69,10 @@ Bring back the `lab (windows)` job on `windows-latest`, running the Lab suite as
 
 *Done 2026-10-16:* the owner ran the dry run on `v0.1.0rc1`. The release was published with all three files, the checksums verified, and the clean install ran `--version` and `doctor --offline`. Record: `docs/handoffs/M13-03.md`.
 
+Two criteria were met by close equivalents, not literally:
+- **"A fresh user"** was a throwaway `HOME` on the owner's Mac, not a separate account.
+- **"A tag that does not match publishes nothing"** is shown by `release_check.py` and `tests/scripts/test_release.py`, not by pushing a wrong tag. Under the rulesets a tag is permanent.
+
 ---
 
 ## [x] M13-04 — First-run flow
