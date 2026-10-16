@@ -70,18 +70,19 @@
     return node;
   }
 
-  // The verdict as a badge, plus a second marker when the server may replace
-  // the file. The label, the words and the marker's text are Python's; the
-  // level only picks a colour. The words are in the badge for a screen
-  // reader and in `title` for a pointer; the detail pane shows them too.
-  function badges(verdict) {
+  // The verdict as a badge, plus a second marker when `server_label` is set
+  // (the server may overwrite the file). The label, the words and the
+  // marker's text are Python's; the level only picks a colour. In the tree
+  // (`describe`), the words are in the badge for a screen reader and in
+  // `title` for a pointer; the detail pane shows them as text.
+  function badges(verdict, describe) {
     const out = [];
     if (!verdict) return out;
     const level = typeof verdict.level === "string" ? verdict.level : "";
     const node = make("span", labelOf(verdict));
     node.className = "badge";
     if (/^[a-z_]+$/.test(level)) node.classList.add("badge-" + level);
-    if (typeof verdict.words === "string" && verdict.words) {
+    if (describe && typeof verdict.words === "string" && verdict.words) {
       node.title = verdict.words;
       node.appendChild(unseen(": " + verdict.words));
     }
@@ -162,7 +163,7 @@
   // verdict when it is picked.
   function buildTree(report) {
     const top = report.flavor_folder_verdict
-      ? { kind: "folder", note: null, verdict: report.flavor_folder_verdict }
+      ? { note: null, verdict: report.flavor_folder_verdict }
       : null;
     const root = { name: report.flavor_folder, path: "", item: top, children: [], index: new Map() };
     const listed = listedOf(report).slice();
@@ -261,7 +262,7 @@
     name.addEventListener("click", () => select(node));
     row.appendChild(name);
     if (node.item) {
-      for (const mark of badges(node.item.verdict)) row.appendChild(mark);
+      for (const mark of badges(node.item.verdict, true)) row.appendChild(mark);
       if (node.item.note) {
         const note = make("span", shown(node.item.note));
         note.className = "note";
@@ -415,7 +416,7 @@
     if (data.verdict) {
       const marks = make("div");
       marks.className = "marks";
-      for (const mark of badges(data.verdict)) marks.appendChild(mark);
+      for (const mark of badges(data.verdict, false)) marks.appendChild(mark);
       verdict.appendChild(marks);
       verdict.appendChild(make("p", shown(data.verdict.words)));
     }
