@@ -533,10 +533,22 @@ Found in the domain review of #195 (M13-21), on 2026-10-15. `snap create --scree
 ## [ ] M13-31 — The `0,`-list CPU probe fails on loaded macOS runners
 **Size:** S · **Depends on:** M13-01
 
-Found on 2026-10-16. `lab/core/tests/review/test_m10_04_semicolon_list_at_budget_misses_time_target.py::test_constructed_control_zeros_at_the_budget_are_inside_the_target` failed on `lab (macos)` in two unrelated PRs: #204 (10.16 CPU s) and #206 (10.74 CPU s). Neither PR touches `luadata.py`, and both passed when re-run. The control's CPU budget does not allow for a loaded runner. Apply the same treatment M11-28 and M13-17T gave the other timing probes: a bound that scales with a calibration run, or a looser limit for the control only. Keep the defect case strict. `luadata.py` is load-bearing, but this is a review probe, not a grader. Do not edit any grader.
+Found on 2026-10-16. In `lab/core/tests/review/test_m10_04_semicolon_list_at_budget_misses_time_target.py`, `test_constructed_control_zeros_at_the_budget_are_inside_the_target` failed on `lab (macos)` in two unrelated PRs: #204 at 10.16 CPU s and #206 at 10.74 CPU s. Neither PR touches `luadata.py`, and both passed when re-run.
+
+The probe already measures child CPU time and keeps the better of two runs. The runner is simply loaded. The sibling case `test_constructed_semicolon_list_at_the_budget_is_inside_the_target` uses the same measurement and target, and its expected time is similar, so it is just as exposed.
+
+**What to do.** Make both cases robust to a loaded runner without loosening §6.4's 10 s target.
+- Choose one of these:
+  - more samples, taking the minimum;
+  - a threshold scaled from an in-run calibration parse, where the 10 s target is the threshold on an idle machine;
+  - running these probes serially once M13-18's serial pass for CPU-budget tests exists.
+- Report the measured margins of both cases on the macOS runner.
+- If either case still misses 10 s on an idle runner, stop and report. That is a missed performance target (AGENTS.md "Stop and ask"), not something to loosen.
+
+`luadata.py` is load-bearing. This is a review probe, not a grader, so do not edit any grader.
 
 **Acceptance:**
-- 20 consecutive runs on `lab (macos)` pass.
+- 20 consecutive `lab (macos)` runs pass both cases. If M13-18 lands first, measure after it.
 - The probe still fails against a constructed parser that is twice as slow.
 - `make ci` green.
 - Reviewed by `code-reviewer`.
