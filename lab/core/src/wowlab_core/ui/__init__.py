@@ -29,10 +29,16 @@ leaf that declares `--yes` (read from the tree), `ui` itself, `log tail` with
 `follow` (a run must end) and `looks page` with `out` (it can create a file
 anywhere outside an install). At most `MAX_CONCURRENT_RUNS` run at once (503
 `busy` past that). Each run has a timeout and an output cap, read as a stream
-and counted on the encoded response; at either, or when the server closes,
-the run's whole process tree is killed, grandchildren included, by the OS and
-without listing processes: its process group on POSIX, its Job Object on
-Windows (`_Tree`). No process other than a run is ever opened or signalled.
+and counted on the encoded response. The run's whole process tree,
+grandchildren included, is killed at exactly three points: when the run
+passes its timeout, when its output reaches the cap, and when the server
+closes while the run is in progress. The kill uses the OS and lists no
+processes: the run's process group on POSIX, its Job Object on Windows
+(`_Tree`). No process other than a run is ever opened or signalled. A run
+that exits on its own is not killed. On POSIX, anything it started and left
+running outlives it. On Windows, its job is closed after every run, which
+kills whatever is left. None of the commands the server offers starts a
+process.
 
 The run is `[sys.executable, "-P", "-m", "wowlab_core", ...]`: the running
 interpreter by absolute path, never a PATH lookup, with the working
@@ -428,12 +434,19 @@ class _Tree:
     """How a run is started so that it and everything it starts can be
     killed together, without listing processes.
 
+    `kill` is called at exactly three points: when the run passes its
+    timeout, when its output reaches the cap, and when the server closes
+    while the run is in progress. It is always called before the run is
+    reaped.
+
     POSIX: the run leads a new session and process group
-    (`start_new_session`); `kill` signals the group, and is only ever called
-    before the run is reaped, while its pid still holds the group id. A
-    descendant that calls `setsid` itself leaves the group and is not
-    killed; the `wowlab` CLI never forks. After a normal exit nothing is
-    signalled (the group id is no longer reserved).
+    (`start_new_session`). `kill` signals that group while the run's
+    unreaped pid still holds the group id. A descendant that calls `setsid`
+    itself leaves the group and is not killed. After a run exits on its own,
+    nothing is signalled, because the group id is no longer reserved. Any
+    descendant still running then outlives the run, and that is a known
+    residual. The `wowlab` CLI never forks, and none of the offered commands
+    starts a process.
 
     Windows: the run is created suspended and resumed inside a Job Object
     (`_winjob`) that kills everything in it when terminated or closed;
@@ -620,9 +633,10 @@ class UiServer(http.server.ThreadingHTTPServer):
         if not any(reader.is_alive() for reader in readers):
             process.stdout.close()
             process.stderr.close()
-        # A reader still alive here is held open by a descendant outside the
-        # run's process group (POSIX, after `setsid`); it is abandoned, and it
-        # stops reading at the cap.
+        # A reader still alive here means a descendant still holds the pipe
+        # (POSIX: one left behind by a run that exited on its own, or one
+        # that called `setsid`). The reader is abandoned and stops reading
+        # at the cap.
         return _Run(
             exit_code=int(process.returncode),
             stdout=capture.body("stdout"),
