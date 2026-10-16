@@ -75,13 +75,15 @@ class SnapshotFacts(BaseModel):
     does, `path` is the file's spelling in that snapshot (relative to the
     flavor folder, what `snap restore --paths` takes), `confirmed` says
     whether that spelling is known to name this file (False: it differs from
-    the path in case or normalization, neither spelling exists, and no folder
-    on the way shows whether this volume folds that), and `live` compares the
-    file on disk with that copy by SHA-256:
+    the path, by the write gate's fold, neither name is on disk, and nothing
+    on this drive shows whether it treats the two names as one), and `live`
+    compares the file on disk with that copy by SHA-256:
     `missing` means the file is gone from the install, `unreadable` that it
     could not be opened as a regular file; `differs` is `live` as a yes or
     no, None when it could not be told. When that snapshot does not hold it,
-    `last_held` is the newest snapshot that does, if any.
+    `last_held` is the newest snapshot that does, if any, with
+    `last_held_path` and `last_held_confirmed` saying of its copy what `path`
+    and `confirmed` say (all three None without one).
 
     `captured`: the path is under the subtrees `snap create` captures; a
     file outside them is in no snapshot `snap create` takes. `damaged`: how
@@ -110,6 +112,9 @@ class SnapshotFacts(BaseModel):
     damaged: int
     damaged_newer: bool
     error: str | None
+    # M13-32, after the fields above so the JSON only grows.
+    last_held_path: str | None = None
+    last_held_confirmed: bool | None = None
 
 
 def disk_spelling(base: Path, parts: Sequence[str]) -> tuple[str, ...]:
@@ -191,6 +196,7 @@ def _same_root(recorded: str, root: Path) -> bool:
 
 
 _LINK = "link"
+_Difference = Literal["case", "normalization"]
 
 
 class _Volume:
@@ -203,9 +209,11 @@ class _Volume:
     link is followed; a spelling reached through a link is never the same
     entry. When one does not exist, the nearest existing folder on the way
     decides: if another spelling of it, differing as the two do (in case, or
-    in Unicode normalization), names the same folder, this volume folds that
-    difference and they are one entry; if it names nothing, they are two.
-    When no folder on the way can tell, the answer is None: unknown.
+    in Unicode normalization, or each in turn when they differ in both),
+    names the same folder, this volume folds that difference and they are
+    one entry; if it names nothing, they are two. When no folder on the way
+    can tell, or the two differ in more than case and normalization (the
+    gate's fold takes "Straße" for "STRASSE"), the answer is None: unknown.
     Each path is `lstat`-ed at most once."""
 
     def __init__(self, root: Path) -> None:
@@ -252,11 +260,28 @@ class _Volume:
             # One exists and the other spelling does not name it: on a volume
             # that folds this difference, it would.
             return False
-        return self._folds(pa, normalization_only=_nfc(a) == _nfc(b))
+        if _nfc(a) == _nfc(b):
+            return self._folds(pa, "normalization")
+        if a.lower() == b.lower():
+            return self._folds(pa, "case")
+        if _nfc(a).lower() == _nfc(b).lower():
+            # They differ in both: one name only where the volume folds both
+            # (NTFS folds case and keeps normalization apart).
+            case = self._folds(pa, "case")
+            norm = self._folds(pa, "normalization")
+            if case is False or norm is False:
+                return False
+            return True if case is True and norm is True else None
+        # The gate's fold reaches further than upper and lower case ("Straße"
+        # and "STRASSE" are one name to it); no volume is probed for that.
+        return None
 
-    def _folds(self, parts: tuple[str, ...], *, normalization_only: bool) -> bool | None:
-        """Whether this volume folds the difference, judged at the nearest
-        existing folder above `parts` that has another spelling to try."""
+    def _folds(self, parts: tuple[str, ...], difference: _Difference) -> bool | None:
+        """Whether this volume folds `difference` (upper and lower case, or
+        Unicode normalization), judged at the nearest existing folder above
+        `parts` that has another spelling to try. On Windows and Linux case
+        sensitivity can be set per folder, and this check reads the folder
+        above the file, not the one that holds it."""
         for i in range(len(parts) - 1, 0, -1):
             folder = parts[:i]
             ident = self._id(folder)
@@ -265,10 +290,10 @@ class _Volume:
             if ident == _LINK:
                 return None
             name = folder[-1]
-            if normalization_only:
-                variants = {unicodedata.normalize(f, name) for f in ("NFC", "NFD")} - {name}
+            if difference == "normalization":
+                variants = sorted({unicodedata.normalize(f, name) for f in ("NFC", "NFD")} - {name})
             else:
-                variants = {name.swapcase()} - {name}
+                variants = [v for v in [_case_variant(name)] if v is not None]
             for variant in variants:
                 other = self._id((*folder[:-1], variant))
                 return other == ident
@@ -280,6 +305,15 @@ class _Volume:
             return True
         head = path.split("/")[: len(ancestor.split("/"))]
         return self.same("/".join(head), ancestor) is not False
+
+
+def _case_variant(name: str) -> str | None:
+    """Another spelling of `name` that differs from it in upper and lower
+    case only, letter for letter (never "SS" for "ß"); None when it has none."""
+    for variant in (name.swapcase(), name.upper(), name.lower()):
+        if variant != name and len(variant) == len(name) and variant.lower() == name.lower():
+            return variant
+    return None
 
 
 def _nfc(text: str) -> str:
@@ -391,7 +425,12 @@ def snapshot_facts(
     found = _file_entry(latest, held, volume)
     if found is None:
         last = next(
-            (m for m in reversed(covering) if _file_entry(m, held, volume) is not None), None
+            (
+                (m, hit)
+                for m in reversed(covering)
+                if (hit := _file_entry(m, held, volume)) is not None
+            ),
+            None,
         )
         return SnapshotFacts(
             snapshot_id=latest.id,
@@ -402,11 +441,15 @@ def snapshot_facts(
             confirmed=None,
             live=None,
             differs=None,
-            last_held=_ref(last) if last is not None else None,
+            last_held=_ref(last[0]) if last is not None else None,
             captured=captured,
             damaged=damaged,
             damaged_newer=damaged_newer,
             error=None,
+            last_held_path=(
+                last[1][0].path.removeprefix(flavor_folder + "/") if last is not None else None
+            ),
+            last_held_confirmed=last[1][1] if last is not None else None,
         )
     entry, confirmed = found
     live = _compare(install_root / flavor_folder / rel, entry)

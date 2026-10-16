@@ -2333,6 +2333,12 @@ def _snap_name(ref: pathfacts.SnapshotRef) -> str:
     return f"{ref.id}, {ref.created_at}{label}"
 
 
+_UNCONFIRMED = (
+    "neither name is on disk, and nothing on this drive shows whether it treats the two "
+    "names as one"
+)
+
+
 def _snapshot_line(facts: pathfacts.SnapshotFacts, captured: str) -> str:
     """The "In the latest snapshot" line. `captured`: the subtrees `snap
     create` captures, in words."""
@@ -2360,10 +2366,16 @@ def _snapshot_line(facts: pathfacts.SnapshotFacts, captured: str) -> str:
         return f"{head}: none; no snapshot of this flavor folder has been taken in this install"
     if not facts.holds:
         if facts.last_held is not None:
+            unconfirmed = (
+                f", as {facts.last_held_path}, which could not be confirmed to be this file "
+                f"({_UNCONFIRMED})"
+                if facts.last_held_confirmed is False
+                else ""
+            )
             return (
                 f"{head} ({_snap_name(latest)}): not held, the file was not there when it was "
                 f"taken; the latest snapshot that holds it is {_snap_name(facts.last_held)}"
-                f"{damaged}"
+                f"{unconfirmed}{damaged}"
             )
         if facts.damaged:
             return (
@@ -2382,8 +2394,7 @@ def _snapshot_line(facts: pathfacts.SnapshotFacts, captured: str) -> str:
     if facts.confirmed is False:
         return (
             f"{head} ({_snap_name(latest)}): it holds {facts.path}, which could not be "
-            "confirmed to be this file (neither spelling exists, and no folder on the way "
-            f"shows whether this volume folds the difference); {on_disk}{damaged}"
+            f"confirmed to be this file ({_UNCONFIRMED}); {on_disk}{damaged}"
         )
     return f"{head} ({_snap_name(latest)}): {on_disk}{damaged}"
 
@@ -2392,9 +2403,11 @@ def _path_kind(
     install_root: Path | str, result: layout.Classified | layout.Unclassified, query: str
 ) -> tuple[bool, bool]:
     """`(folder, link)` for `explain`'s path. `link`: some component from
-    the install root down is a symlink, junction or other reparse point, so
-    the path is a link or lies inside one; the walk stops there and never
-    follows it. `folder`: a real folder, or one written with a trailing
+    the install root down is a symlink, a junction or another Windows
+    reparse point that names another path (`gaps.is_link`, snapshot's
+    name-surrogate rule; a cloud placeholder or deduplicated file is not a
+    link), so the path is a link or lies inside one; the walk stops there and
+    never follows it. `folder`: a real folder, or one written with a trailing
     separator."""
     slash = query.endswith(("/", os.sep))
     if result.base is None:
@@ -2408,23 +2421,11 @@ def _path_kind(
             st = current.lstat()
         except OSError:
             return slash, False  # absent from here down: nothing to follow
-        if _is_link_stat(current, st):
+        if gaps.is_link(current, st):
             return False, True
     if st is None:  # the install root itself; how it is reached is the owner's choice
         return True, False
     return slash or stat.S_ISDIR(st.st_mode), False
-
-
-def _is_link_stat(path: Path, st: os.stat_result) -> bool:
-    """A symbolic link, or on Windows any reparse point (junctions included:
-    `S_ISLNK` is false for those), as the write gate counts them."""
-    attributes = int(getattr(st, "st_file_attributes", 0))
-    if stat.S_ISLNK(st.st_mode) or attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
-        return True
-    try:
-        return path.is_junction()
-    except OSError:
-        return False
 
 
 def _is_inside(path: Path, root: Path) -> bool:
