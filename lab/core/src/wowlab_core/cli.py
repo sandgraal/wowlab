@@ -1792,13 +1792,14 @@ class ExplainView(_Out):
 class ExplainHint(_Out):
     """Command text to copy (M13-23); `explain` never runs it. `argv` is the
     command's arguments after `wowlab`; `command` is the whole line quoted
-    for `shell`: `posix` (`shlex.join`) or `windows` (the Microsoft C
-    runtime's rules, as `subprocess.list2cmdline`), whichever this machine
-    is. Every path in it is inside the install."""
+    for `shell`, the default shell of this machine: `posix` (`shlex.join`,
+    for sh, bash and zsh) or `powershell` (single quotes, a quote doubled;
+    Windows Terminal's default; not cmd.exe). A copy button should use
+    `argv`. Every path in it is inside the install."""
 
     command: str
     argv: list[str]
-    shell: Literal["posix", "windows"]
+    shell: Literal["posix", "powershell"]
     does: str
 
 
@@ -1829,7 +1830,7 @@ _VIEW_OPTIONS = {
     "root": "--root",
     "flavor": "--flavor",
 }
-_NO_READER = "no wowlab command reads this file"
+_NO_READER = "no wowlab command shows this file's contents"
 
 
 class _At(NamedTuple):
@@ -1958,40 +1959,34 @@ def _views(entry_id: str, at: _At, root: str | None) -> tuple[list[ExplainView],
     return [_view(command, params | with_root, does) for command, params, does in built], None
 
 
-def _shell() -> Literal["posix", "windows"]:
-    return "windows" if os.name == "nt" else "posix"
+def _shell() -> Literal["posix", "powershell"]:
+    return "powershell" if os.name == "nt" else "posix"
 
 
-def _windows_join(argv: Sequence[str]) -> str:
-    """`argv` as one command line by the Microsoft C runtime's rules, the
-    rules `subprocess.list2cmdline` follows (this module imports no
-    `subprocess`: L2's write-site scanner refuses it)."""
+# Characters an argument may hold and still be left bare in either shell.
+_BARE = re.compile(r"[A-Za-z0-9_./:=+@%\\-]+")
+# PowerShell takes each of these as a single quote, inside a quoted string too.
+_PS_QUOTES = "'\u2018\u2019\u201a\u201b"
+
+
+def _powershell_join(argv: Sequence[str]) -> str:
+    """`argv` as one PowerShell command line: an argument of plain characters
+    bare, any other in single quotes, where nothing is special but a quote
+    character, which is doubled. Windows Terminal opens PowerShell by default."""
     out: list[str] = []
     for arg in argv:
-        quoted = not arg or " " in arg or "\t" in arg
-        text = ['"'] if quoted else []
-        slashes = 0
-        for c in arg:
-            if c == "\\":
-                slashes += 1
-            elif c == '"':
-                text.append("\\" * (slashes * 2 + 1) + '"')
-                slashes = 0
-            else:
-                text.append("\\" * slashes + c)
-                slashes = 0
-        # Backslashes before the closing quote are doubled; elsewhere literal.
-        text.append("\\" * (slashes * 2 if quoted else slashes))
-        if quoted:
-            text.append('"')
-        out.append("".join(text))
+        if _BARE.fullmatch(arg) and not arg.startswith("@"):
+            out.append(arg)
+            continue
+        doubled = "".join(c * 2 if c in _PS_QUOTES else c for c in arg)
+        out.append(f"'{doubled}'")
     return " ".join(out)
 
 
 def _hint(argv: Sequence[str], does: str) -> ExplainHint:
     shell = _shell()
     line = ["wowlab", *argv]
-    command = _windows_join(line) if shell == "windows" else shlex.join(line)
+    command = _powershell_join(line) if shell == "powershell" else shlex.join(line)
     return ExplainHint(command=command, argv=list(argv), shell=shell, does=does)
 
 
@@ -2016,6 +2011,7 @@ def _hints(
             and facts.holds
             and facts.path is not None
             and facts.live in ("differs", "missing")
+            and not facts.damaged_newer
         ):
             does = (
                 f"put back the copy in snapshot {latest}; it shows the plan and asks "
@@ -2054,7 +2050,7 @@ def _snap_name(ref: pathfacts.SnapshotRef) -> str:
 def _snapshot_line(facts: pathfacts.SnapshotFacts, captured: str) -> str:
     """The "In the latest snapshot" line. `captured`: the subtrees `snap
     create` captures, in words."""
-    head = "In the latest snapshot"
+    head = "In the latest readable snapshot" if facts.damaged else "In the latest snapshot"
     if facts.error is not None:
         return f"{head}: unknown; the snapshot store could not be read ({facts.error})"
     damaged = ""
@@ -2075,7 +2071,7 @@ def _snapshot_line(facts: pathfacts.SnapshotFacts, captured: str) -> str:
             return f"{head}: not held; snapshots capture {captured} only{damaged}"
         if facts.damaged:
             return f"{head}: no readable snapshot of this flavor folder covers it{damaged}"
-        return f"{head}: none; no snapshot of this flavor folder has been taken"
+        return f"{head}: none; no snapshot of this flavor folder has been taken in this install"
     if not facts.holds:
         if facts.last_held is not None:
             return (
@@ -2088,7 +2084,8 @@ def _snapshot_line(facts: pathfacts.SnapshotFacts, captured: str) -> str:
                 f"{head} ({_snap_name(latest)}): not held; no readable snapshot holds it{damaged}"
             )
         return (
-            f"{head} ({_snap_name(latest)}): not held; no snapshot of this flavor folder holds it"
+            f"{head} ({_snap_name(latest)}): not held; no snapshot of this flavor folder in "
+            "this install holds it"
         )
     on_disk = {
         "same": "the file on disk is the same",
@@ -2182,16 +2179,20 @@ def explain(
     if judged is None:
         judged = result
     folder, link = _path_kind(inst.root, judged, path)
+    # M13-23: the verdict judges the file as it is spelled on disk (a volume
+    # that folds case or normalization opens it under any spelling); `query`
+    # and `result` stay as typed. A path typed as stored is judged as before.
+    parts = _disk_parts(inst, judged) if judged.base is not None and not link else None
     verdict = verdict_of(
         judged.entry if isinstance(judged, layout.Classified) else None,
         judged.base,
-        judged.path,
+        "/".join(parts) if parts is not None else judged.path,
         folder=folder,
         link=link,
     )
     lay = _flavor_layout(inst, judged)
     stat_, facts, views, note, hints = _detail(
-        inst, judged, verdict, root, lay, folder=folder, link=link
+        inst, judged, parts or (), verdict, root, lay, folder=folder, link=link
     )
     report = ExplainReport(
         query=path,
@@ -2261,9 +2262,19 @@ def _flavor_layout(
     return layout.Layout.for_flavor(match[0], inst.root) if match else None
 
 
+def _disk_parts(
+    inst: install.Install, judged: layout.Classified | layout.Unclassified
+) -> tuple[str, ...]:
+    """`judged.path`'s parts, spelled as on disk (`pathfacts.disk_spelling`)."""
+    under = [judged.flavor_folder] if judged.base == "flavor" and judged.flavor_folder else []
+    base = Path(inst.root).joinpath(*under)
+    return pathfacts.disk_spelling(base, [p for p in judged.path.split("/") if p])
+
+
 def _detail(
     inst: install.Install,
     judged: layout.Classified | layout.Unclassified,
+    parts: tuple[str, ...],
     verdict: Verdict,
     root: Path | None,
     lay: layout.Layout | None,
@@ -2285,9 +2296,7 @@ def _detail(
     if judged.base is None or link:
         return None, None, [], None, []
     under = [judged.flavor_folder] if judged.base == "flavor" and judged.flavor_folder else []
-    base = Path(inst.root).joinpath(*under)
-    parts = pathfacts.disk_spelling(base, [p for p in judged.path.split("/") if p])
-    target = base.joinpath(*parts)
+    target = Path(inst.root).joinpath(*under, *parts)
     given_root = str(inst.root) if root is not None and str(root) != "" else None
     stat_ = pathfacts.path_stat(target)
     facts: pathfacts.SnapshotFacts | None = None

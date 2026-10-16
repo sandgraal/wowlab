@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import stat
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
@@ -24,6 +25,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from wowlab_core import snapshot
+from wowlab_core.verdict import _fold  # the write gate's fold: NFC, casefold, NFC
 
 __all__ = [
     "PathStat",
@@ -35,6 +37,8 @@ __all__ = [
 ]
 
 _CHUNK = 1 << 20
+# A manifest file's name: its snapshot id, which sorts by creation time.
+_MANIFEST_NAME = re.compile(r"\A(\d{8}T\d{6}\.\d{6}Z-[0-9a-f]{8})\.json\Z")
 
 Live = Literal["same", "differs", "missing", "unreadable"]
 
@@ -78,7 +82,14 @@ class SnapshotFacts(BaseModel):
     `captured`: the path is under the subtrees `snap create` captures; a
     file outside them is in no snapshot `snap create` takes. `damaged`: how
     many manifest files could not be read; when it is not 0 the answer may be
-    incomplete. `error`: the store could not be listed at all."""
+    incomplete and `snapshot_id` is the latest readable one. `damaged_newer`:
+    one of those may be newer than `snapshot_id` (its name says so, or does
+    not say). `error`: the store could not be listed at all.
+
+    A spelling that differs from the snapshot's by case or Unicode
+    normalization names the same file only when the volume says so: both
+    spellings `lstat` to the same file. On a case-sensitive volume two such
+    names are two files."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -92,6 +103,7 @@ class SnapshotFacts(BaseModel):
     last_held: SnapshotRef | None
     captured: bool
     damaged: int
+    damaged_newer: bool
     error: str | None
 
 
@@ -99,9 +111,11 @@ def disk_spelling(base: Path, parts: Sequence[str]) -> tuple[str, ...]:
     """`parts` (relative to `base`) as the names are spelled on disk.
 
     A part is respelled only when the typed spelling names an entry (`lstat`
-    succeeds: the volume folds case) and the folder's listing holds that
-    entry under another spelling. From the first part that names nothing,
-    or that is a link, the rest stay as typed: no link is entered."""
+    succeeds: the volume folds case or Unicode normalization) and the
+    folder's listing holds that same entry (same device and inode) under a
+    spelling equal to it after the write gate's fold. From the first part
+    that names nothing, or that is a link, the rest stay as typed: no link
+    is entered."""
     out: list[str] = []
     current = base
     for i, part in enumerate(parts):
@@ -116,14 +130,22 @@ def disk_spelling(base: Path, parts: Sequence[str]) -> tuple[str, ...]:
         except OSError:
             names = []
         if part not in names:
-            folded = [n for n in names if n.casefold() == part.casefold()]
-            if len(folded) == 1:
+            folded = [n for n in names if _fold(n) == _fold(part)]
+            if len(folded) == 1 and _same_entry(current / folded[0], st):
                 name = folded[0]
         out.append(name)
         current = current / name
         if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
             return (*out, *parts[i + 1 :])
     return tuple(out)
+
+
+def _same_entry(path: Path, st: os.stat_result) -> bool:
+    try:
+        other = path.lstat()
+    except OSError:
+        return False
+    return (other.st_dev, other.st_ino) == (st.st_dev, st.st_ino)
 
 
 def path_stat(path: Path) -> PathStat | None:
@@ -163,29 +185,64 @@ def _same_root(recorded: str, root: Path) -> bool:
         return False
 
 
-def _under(path: str, ancestor: str) -> bool:
-    """`path` is `ancestor` or below it, case folded: a volume that folds
-    case holds one file under every spelling."""
-    p, a = path.casefold(), ancestor.casefold()
-    return a == "." or p == a or p.startswith(a + "/")
+class _Volume:
+    """Whether two spellings (relative to the install root) name one entry
+    on this volume: equal, or equal after the gate's fold and `lstat` to the
+    same device and inode. Each path is `lstat`-ed at most once."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.seen: dict[str, tuple[int, int] | None] = {}
+
+    def _id(self, rel: str) -> tuple[int, int] | None:
+        if rel not in self.seen:
+            try:
+                st = self.root.joinpath(*rel.split("/")).lstat()
+            except OSError:
+                self.seen[rel] = None
+            else:
+                self.seen[rel] = (st.st_dev, st.st_ino)
+        return self.seen[rel]
+
+    def same(self, a: str, b: str) -> bool:
+        if a == b:
+            return True
+        if _fold(a) != _fold(b):
+            return False
+        ident = self._id(a)
+        return ident is not None and ident == self._id(b)
+
+    def under(self, path: str, ancestor: str) -> bool:
+        """`path` is `ancestor` or below it."""
+        if ancestor == ".":
+            return True
+        head = path.split("/")[: len(ancestor.split("/"))]
+        return self.same("/".join(head), ancestor)
 
 
-def _covers(manifest: snapshot.Manifest, held: str) -> bool:
-    return any(_under(held, s) for s in manifest.subtrees) and not any(
-        _under(held, x) for x in manifest.excluded
+def _covers(manifest: snapshot.Manifest, held: str, volume: _Volume) -> bool:
+    return any(volume.under(held, s) for s in manifest.subtrees) and not any(
+        volume.under(held, x) for x in manifest.excluded
     )
 
 
-def _file_entry(manifest: snapshot.Manifest, held: str) -> snapshot.Entry | None:
+def _file_entry(manifest: snapshot.Manifest, held: str, volume: _Volume) -> snapshot.Entry | None:
     """The file `held` in `manifest`: by its exact spelling, else the one
-    entry spelled the same with case folded."""
+    entry the volume says is the same file."""
     entry = manifest.entry(held)
     if entry is None:
-        folded = [e for e in manifest.entries if e.path.casefold() == held.casefold()]
-        entry = folded[0] if len(folded) == 1 else None
+        alike = [e for e in manifest.entries if _fold(e.path) == _fold(held)]
+        entry = alike[0] if len(alike) == 1 and volume.same(held, alike[0].path) else None
     if entry is None or entry.kind != "file" or entry.sha256 is None:
         return None
     return entry
+
+
+def _newer(name: str, snapshot_id: str | None) -> bool:
+    """Whether the unreadable manifest file `name` may be newer than
+    `snapshot_id`: its name is a later id, or no id at all."""
+    m = _MANIFEST_NAME.match(name)
+    return snapshot_id is None or m is None or m.group(1) > snapshot_id
 
 
 def _ref(m: snapshot.Manifest) -> SnapshotRef:
@@ -203,7 +260,10 @@ def snapshot_facts(
     `rel` (relative to the flavor folder, spelled as on disk).
     `captured_subtrees`: what `snap create` captures, relative to the flavor
     folder."""
-    captured = any(_under(rel, s) for s in captured_subtrees)
+    captured = any(
+        _fold(rel) == _fold(s) or _fold(rel).startswith(_fold(s) + "/") for s in captured_subtrees
+    )
+    volume = _Volume(install_root)
     try:
         listing = store.list_lenient()
     except (snapshot.SnapshotError, OSError) as exc:
@@ -218,6 +278,7 @@ def snapshot_facts(
             last_held=None,
             captured=captured,
             damaged=0,
+            damaged_newer=False,
             error=str(exc) or type(exc).__name__,
         )
     held = f"{flavor_folder}/{rel}"
@@ -227,11 +288,13 @@ def snapshot_facts(
             for m in listing.manifests
             if m.flavor_folder == flavor_folder
             and _same_root(m.install_root, install_root)
-            and _covers(m, held)
+            and _covers(m, held, volume)
         ),
         key=lambda m: (m.created_at, m.id),
     )
     damaged = len(listing.invalid)
+    latest_id = covering[-1].id if covering else None
+    damaged_newer = any(_newer(bad.name, latest_id) for bad in listing.invalid)
     if not covering:
         return SnapshotFacts(
             snapshot_id=None,
@@ -244,12 +307,15 @@ def snapshot_facts(
             last_held=None,
             captured=captured,
             damaged=damaged,
+            damaged_newer=damaged_newer,
             error=None,
         )
     latest = covering[-1]
-    entry = _file_entry(latest, held)
+    entry = _file_entry(latest, held, volume)
     if entry is None:
-        last = next((m for m in reversed(covering) if _file_entry(m, held) is not None), None)
+        last = next(
+            (m for m in reversed(covering) if _file_entry(m, held, volume) is not None), None
+        )
         return SnapshotFacts(
             snapshot_id=latest.id,
             created_at=latest.created_at,
@@ -261,6 +327,7 @@ def snapshot_facts(
             last_held=_ref(last) if last is not None else None,
             captured=captured,
             damaged=damaged,
+            damaged_newer=damaged_newer,
             error=None,
         )
     live = _compare(install_root / flavor_folder / rel, entry)
@@ -275,6 +342,7 @@ def snapshot_facts(
         last_held=None,
         captured=captured,
         damaged=damaged,
+        damaged_newer=damaged_newer,
         error=None,
     )
 

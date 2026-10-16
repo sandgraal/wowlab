@@ -18,9 +18,10 @@ cannot be read.
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
-import subprocess
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -283,8 +284,8 @@ def test_snapshot_facts_follow_the_file_on_disk(root: Path, flavor: Path) -> Non
     assert not _restore_hints(before)
     assert any(h.command == f"wowlab snap create --flavor {FLAVOR}" for h in before.hints)
     assert (
-        "  In the latest snapshot: none; no snapshot of this flavor folder has been taken\n"
-        in ok("explain", SYNDICATOR).stdout
+        "  In the latest snapshot: none; no snapshot of this flavor folder has been taken "
+        "in this install\n" in ok("explain", SYNDICATOR).stdout
     )
 
     ok("snap", "create", "-m", "older")
@@ -385,9 +386,22 @@ def test_a_damaged_manifest_is_said_not_skipped(root: Path, flavor: Path) -> Non
     assert (report.snapshot.holds, report.snapshot.damaged) == (False, 1)
     assert not any(h.command.startswith("wowlab snap ") for h in report.hints)
     text = ok("explain", rel).stdout
-    assert "no snapshot of this flavor folder holds it" not in text
+    assert "no snapshot of this flavor folder in this install holds it" not in text
     assert "no readable snapshot holds it; 1 snapshot manifest(s) could not be read" in text
+    assert "In the latest readable snapshot (" in text
     assert "so this may be incomplete" in ok("explain", SYNDICATOR).stdout
+    # An older damaged manifest leaves the restore hint; a newer one withholds it.
+    (flavor / SYNDICATOR).write_bytes((flavor / SYNDICATOR).read_bytes() + b"\n")
+    older = explained(SYNDICATOR)
+    assert older.snapshot is not None
+    assert older.snapshot.damaged_newer is False
+    assert _restore_hints(older)
+    damaged.rename(manifests / ("29990101T000000.000000Z-00000000" + good.suffix))
+    newer = explained(SYNDICATOR)
+    assert newer.snapshot is not None
+    assert (newer.snapshot.damaged, newer.snapshot.damaged_newer) == (1, True)
+    assert newer.snapshot.live == "differs"
+    assert not _restore_hints(newer)
 
 
 def test_restore_hints_carry_the_caveats_of_the_row(root: Path, flavor: Path) -> None:
@@ -432,29 +446,103 @@ def test_a_file_no_command_reads_says_so(root: Path) -> None:
     report = explained(addons_txt)
     assert isinstance(report.result, cli.layout.Classified)
     assert report.result.entry.id == "character-addons-txt"
-    assert (report.views, report.views_note) == ([], "no wowlab command reads this file")
-    assert "  views:        no wowlab command reads this file\n" in ok("explain", addons_txt).stdout
+    assert (report.views, report.views_note) == ([], "no wowlab command shows this file's contents")
+    assert (
+        "  views:        no wowlab command shows this file's contents\n"
+        in ok("explain", addons_txt).stdout
+    )
     lua = explained("Interface/AddOns/DBM-Brawlers/DBM-Brawlers.lua-constructed")
     assert lua.views == []
     assert lua.views_note is not None
-    assert lua.views_note.startswith("no wowlab command reads this file")
+    assert lua.views_note.startswith("no wowlab command shows this file's contents")
     assert explained("Interface/AddOns/DBM-Brawlers/").views_note is None
+
+
+def _powershell_split(line: str) -> list[str]:
+    """The arguments PowerShell makes of `line`, for the subset
+    `_powershell_join` writes: bare words of safe characters, and single-
+    quoted strings in which a doubled quote character stands for one."""
+    quotes = "\u0027\u2018\u2019\u201a\u201b"
+    out: list[str] = []
+    i = 0
+    while i < len(line):
+        if line[i] == " ":
+            i += 1
+            continue
+        if line[i] in quotes:
+            i += 1
+            text = []
+            while True:
+                c = line[i]
+                if c in quotes:
+                    if i + 1 < len(line) and line[i + 1] in quotes:
+                        text.append(line[i + 1])
+                        i += 2
+                        continue
+                    i += 1
+                    break
+                text.append(c)
+                i += 1
+            out.append("".join(text))
+        else:
+            j = line.find(" ", i)
+            j = len(line) if j < 0 else j
+            word = line[i:j]
+            assert re.fullmatch(r"[A-Za-z0-9_./:=+@%\\-]+", word), word
+            assert not word.startswith("@"), word
+            out.append(word)
+            i = j
+    return out
+
+
+HOSTILE = [
+    "a b",
+    "Kel'Thuzad",
+    "Kel\u2019Thuzad",
+    "a&b",
+    "a;b",
+    "a,b",
+    "$env:x",
+    "`n",
+    "(x)",
+    "{x}",
+    "#6",
+    "@x",
+    "",
+    "C:\\World of Warcraft\\_retail_",
+    'say "hi"',
+    "--paths",
+    "WTF/Account/1#1/SavedVariables/A.lua",
+]
+
+
+def test_powershell_quoting_keeps_every_argument_whole() -> None:
+    """Domain review round 2, item 3: anything outside a safe set is single-
+    quoted, a quote character doubled, so PowerShell (Windows Terminal's
+    default) reads back the argv. Constructed hostile arguments."""
+    line = cli._powershell_join(HOSTILE)
+    assert _powershell_split(line) == HOSTILE
+    for word in ("--paths", "WTF/Account/x/A.lua", "C:\\x"):
+        assert cli._powershell_join([word]) == word
+    assert cli._powershell_join(["Kel'Thuzad"]) == "'Kel''Thuzad'"
 
 
 def test_hints_are_quoted_for_the_shell_of_the_machine(
     root: Path, flavor: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Domain review 7: Windows quoting is the C runtime's, `list2cmdline`."""
-    hostile = ["a b", 'say "hi"', "back\\slash\\", 'q\\"x', "", "Kel'Thuzad", "#6", "\t"]
-    assert cli._windows_join(hostile) == subprocess.list2cmdline(hostile)
     ok("snap", "create")
     (flavor / SYNDICATOR).write_bytes((flavor / SYNDICATOR).read_bytes() + b"\n")
-    monkeypatch.setattr(cli, "_shell", lambda: "windows")
+    posix = explained(SYNDICATOR, "--root", str(root))
+    assert posix.hints
+    for hint in posix.hints:
+        assert hint.shell == "posix"
+        assert shlex.split(hint.command) == ["wowlab", *hint.argv]
+    monkeypatch.setattr(cli, "_shell", lambda: "powershell")
     report = explained(SYNDICATOR, "--root", str(root))
     assert report.hints
     for hint in report.hints:
-        assert hint.shell == "windows"
-        assert hint.command == subprocess.list2cmdline(["wowlab", *hint.argv])
+        assert hint.shell == "powershell"
+        assert _powershell_split(hint.command) == ["wowlab", *hint.argv]
 
 
 def test_explain_hashes_only_the_named_path_and_writes_nothing(
@@ -553,6 +641,7 @@ def test_an_unreadable_store_is_said_not_guessed(
         last_held=None,
         captured=True,
         damaged=0,
+        damaged_newer=False,
         error="constructed: the store is a link",
     )
     assert not any(h.command.startswith("wowlab snap ") for h in report.hints)
@@ -695,3 +784,50 @@ def test_another_case_spelling_reads_the_file_as_spelled_on_disk(root: Path, fla
     [view] = macros.views
     assert view.params["character"] == CHARACTER
     ok(*view.argv, "--json")
+
+
+def test_the_verdict_judges_the_spelling_on_disk(root: Path, flavor: Path) -> None:
+    """Domain review round 2, item 2: one file, one answer, however typed;
+    `query` and `result` stay as typed. Constructed: a lower-case spelling;
+    skipped where the temporary volume is case-sensitive."""
+    bak = f"{SV_DIR}/RareScanner.lua.bak"
+    if not (flavor / bak.lower()).exists():
+        pytest.skip("the temporary volume is case-sensitive")
+    exact = explained(bak)
+    typed = explained(bak.lower())
+    assert typed.query == bak.lower()
+    assert typed.result.path == bak.lower()
+    assert typed.verdict == exact.verdict
+    assert typed.verdict.restorable is True
+    ok("snap", "create")
+    (flavor / bak).write_bytes((flavor / bak).read_bytes() + b"\n")
+    [hint] = _restore_hints(explained(bak.lower()))
+    assert hint.argv[-2:] == ["--paths", bak]
+
+
+def test_another_unicode_normalization_names_the_same_file(root: Path, flavor: Path) -> None:
+    """Domain review round 2, item 1. Constructed: a character folder stored
+    in NFD (as macOS volumes may hand back) typed in NFC; skipped where the
+    temporary volume does not fold normalization."""
+    nfd = unicodedata.normalize("NFD", "Ëlfé")
+    nfc = unicodedata.normalize("NFC", "Ëlfé")
+    char = flavor / "WTF" / "Account" / ACCOUNT / "1" / nfd / "SavedVariables"
+    char.mkdir(parents=True)
+    shutil.copy2(flavor / SYNDICATOR, char / "Syndicator.lua")
+    if nfd not in [e.name for e in char.parent.parent.iterdir()]:
+        pytest.skip("the temporary volume normalizes names when it stores them")
+    if not (char.parent.parent / nfc).exists():
+        pytest.skip("the temporary volume does not fold Unicode normalization")
+    ok("snap", "create")
+    (char / "Syndicator.lua").write_bytes((char / "Syndicator.lua").read_bytes() + b"\n")
+    stored = f"WTF/Account/{ACCOUNT}/1/{nfd}/SavedVariables/Syndicator.lua"
+    report = explained(f"WTF/Account/{ACCOUNT}/1/{nfc}/SavedVariables/Syndicator.lua")
+    assert report.snapshot is not None
+    assert (report.snapshot.holds, report.snapshot.live, report.snapshot.path) == (
+        True,
+        "differs",
+        stored,
+    )
+    [hint] = _restore_hints(report)
+    assert hint.argv[-2:] == ["--paths", stored]
+    assert not any(h.argv[:2] == ["snap", "create"] for h in report.hints)
