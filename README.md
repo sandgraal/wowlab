@@ -94,9 +94,13 @@ DBT_AllPersistentOptions["Default"]["DBM"]["HugeBarsEnabled"] = true
 …
 
 $ wowlab doctor --offline
+Install: /Applications/World of Warcraft (found by a default location)
 Flavor _classic_beta_: product wow_classic_beta, version 1.60.1.69913
+  Game data: not checked (--offline)
+…
 Client: not running
 Snapshot store: ~/Library/Application Support/wowlab/store (not created yet)
+…
 ```
 
 </details>
