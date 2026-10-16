@@ -306,6 +306,12 @@ Commands that write only to wowlab's own store or user data directory are allowe
 - No external request is made.
 - No file-map logic lives in the JavaScript (§14.5 D3).
 
+**Look and first view (owner, 2026-10-16).**
+- **Full WoW style.** Dark panels with gold trim, a parchment-toned detail pane, and badge colours that read like item quality: gold for `gate`, red for `no`, grey for `unclassified`, and muted for `folder` and `not_applicable`.
+- **Assets.** Everything is inline CSS, plus inline SVG or CSS gradients for the art. No external fonts or images (the CSP forbids them), no Blizzard art and no copied game assets. A serif system font stack gives the game-like feel.
+- **Readability comes first.** Body text meets WCAG AA contrast, and a light scheme follows `prefers-color-scheme`.
+- **First view.** The tree opens on the flavor folder with `WTF/` and `Interface/AddOns/` expanded.
+
 **Acceptance:**
 - A Python test serves the view and checks the CSP and that no external URL appears.
 - A labelled constructed install holds file and folder names with `</script>`, `<img onerror=…>`, U+2028 and U+202E. They render inert, and the JSON passed through is escaped.
