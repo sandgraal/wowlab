@@ -108,20 +108,35 @@ def _through_invoke_ui(
 
     monkeypatch.setattr(cli, "app", _app(call_shutdown=call_shutdown))
     done = threading.Event()
+    escaped: list[BaseException] = []
 
     def go() -> None:
-        graders._invoke_ui(monkeypatch, tmp_path, "opens")
-        done.set()
+        try:
+            graders._invoke_ui(monkeypatch, tmp_path, "opens")
+            done.set()
+        except BaseException as exc:  # reported below, never lost in the thread
+            escaped.append(exc)
 
     thread = threading.Thread(target=go, daemon=True)
     thread.start()
-    finished = done.wait(10)
-    if not finished:
-        # Release the stuck shutdown() so no thread is left behind.
+    # Generous: a loaded macOS runner took over 10 s (run 38837453238).
+    thread.join(_BOUND)
+    finished = done.is_set()
+    if thread.is_alive():
+        # Release a stuck loop or shutdown() so no thread is left behind
+        # inside CliRunner.invoke (it swaps sys.stdout for the next test).
         for server in made:
+            server._BaseServer__shutdown_request = True
             server._BaseServer__is_shut_down.set()
-        thread.join(10)
+        thread.join(_BOUND)
+    assert not thread.is_alive(), "the `ui` thread outlived the test"
+    assert escaped == [], escaped
     return finished, made
+
+
+# How long a `ui` run may take before it counts as hung. A correct run takes
+# well under a second; the margin is for loaded CI runners.
+_BOUND = 120.0
 
 
 def test_control_ui_without_shutdown_finishes(
@@ -151,8 +166,13 @@ def test_control_shutdown_after_a_real_interrupted_serve_forever_returns() -> No
             server.server_close()
         done.set()
 
-    threading.Thread(target=go, daemon=True).start()
-    assert done.wait(10), "shutdown() after a real serve_forever returned at once"
+    thread = threading.Thread(target=go, daemon=True)
+    thread.start()
+    thread.join(_BOUND)
+    if thread.is_alive():
+        server._BaseServer__is_shut_down.set()  # type: ignore[attr-defined]
+        thread.join(_BOUND)
+    assert done.is_set(), "shutdown() after a real serve_forever returned at once"
 
 
 def test_ui_that_calls_shutdown_after_ctrl_c_finishes_under_the_grader_fake(
