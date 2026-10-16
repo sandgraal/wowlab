@@ -26,7 +26,10 @@ Reads only (L1): directories are listed, files are `lstat`ed, and TOC files
 are opened for reading. Nothing is created anywhere. Symlinks and Windows
 junctions are never followed, whether they point inside the install or out;
 each is reported in `symlinks` with its target text and whether that target
-resolves inside the install, and is left out of the typed lists. Walks are
+resolves inside the install, and is left out of the typed lists. Any other
+Windows reparse point (a cloud placeholder, a deduplicated file) is walked
+like a plain entry and named in `reparse_points`, because the write gate
+refuses it all the same (M13-33). Walks are
 bounded in depth and entry count (`Limits`); a walk that hits a bound says so
 in `truncated`. `wtf_walk()` walks `WTF/` alone and also names what the typed
 lists leave out there (folders, FIFOs and other non-regular entries, links,
@@ -62,7 +65,9 @@ from pydantic import (
 from wowlab_core import filemap as _filemap
 from wowlab_core.filemap import FileMapEntry
 from wowlab_core.install import Flavor, Install
+from wowlab_core.snapshot import _is_link_stat as _snapshot_link
 from wowlab_core.toc import MAX_TOC_BYTES, TocDocument, TocTooLargeError, read_toc
+from wowlab_core.verdict import gate_refuses_stat
 
 __all__ = [
     "Account",
@@ -172,6 +177,18 @@ class Symlink(_Model):
     target: FsText | None  # the link text as stored; None if it cannot be read
     inside_install: bool  # whether the target resolves inside the install root
     entry_id: str | None  # file-map entry for the link's own location
+
+
+class ReparsePoint(_Model):
+    """A Windows reparse point the walk went into (M13-33): not a symlink
+    or junction, so `layout` lists it and what is under it, but the write
+    gate refuses it and everything under it (`verdict.gate_refuses_stat`).
+    `name_surrogate`: it names another path (snapshot's and `gaps`' link
+    rule; `explain` calls it a link). Otherwise it holds real content: a
+    cloud placeholder, a deduplicated or a compressed file."""
+
+    path: FsText  # relative to the flavor folder, `/`-separated
+    name_surrogate: bool
 
 
 class WalkError(_Model):
@@ -318,6 +335,9 @@ class Inventory(_Model):
     wtf_files: tuple[WtfFile, ...]
     other: Other
     symlinks: tuple[Symlink, ...]
+    # M13-33: every entry the walk went into whose `lstat` the write gate
+    # refuses as a link, sorted by path. Empty off Windows.
+    reparse_points: tuple[ReparsePoint, ...] = ()
     # Files the file map classifies `os-metadata` (`.DS_Store`, `._*`, …):
     # listed here and kept out of every other list and count.
     os_metadata: tuple[FsText, ...]
@@ -385,10 +405,18 @@ class _Report:
     not_regular: list[str] = field(default_factory=list)
     # Every real folder the WTF walk met (M12-09).
     wtf_folders: list[str] = field(default_factory=list)
+    # M13-33: entries walked although the write gate refuses them.
+    reparse_points: list[ReparsePoint] = field(default_factory=list)
 
 
 def _rel_text(rel: Iterable[str]) -> str:
     return "/".join(rel)
+
+
+def lstat_entry(entry: os.DirEntry[str]) -> os.stat_result:
+    """`lstat` of one listed entry: never follows a link. One place, so a
+    test can stand in Windows reparse-point attributes on any system."""
+    return entry.stat(follow_symlinks=False)
 
 
 def _is_link(path: Path, st: os.stat_result) -> bool:
@@ -489,13 +517,14 @@ class Layout:
     ) -> _Entry | None:
         """`lstat` one entry; symlinks and junctions are reported and dropped."""
         try:
-            st = entry.stat(follow_symlinks=False)
+            st = lstat_entry(entry)
         except OSError as exc:
             report.errors.append(WalkError(path=_rel_text(rel), error=exc.strerror or str(exc)))
             return None
         if _is_link(Path(entry.path), st):
             report.symlinks.append(self._symlink(rel))
             return None
+        self._note_reparse(rel, st, report)
         if stat.S_ISDIR(st.st_mode):
             return _Entry(rel, True, 0, st.st_mtime_ns)
         if stat.S_ISREG(st.st_mode):
@@ -554,7 +583,16 @@ class Layout:
         if _is_link(path, st):
             report.symlinks.append(self._symlink((*rel, found)))
             return None
+        self._note_reparse((*rel, found), st, report)
         return (*rel, found) if stat.S_ISDIR(st.st_mode) else None
+
+    @staticmethod
+    def _note_reparse(rel: tuple[str, ...], st: os.stat_result, report: _Report) -> None:
+        """Record `rel` when the write gate refuses its `lstat` (M13-33)."""
+        if gate_refuses_stat(st):
+            report.reparse_points.append(
+                ReparsePoint(path=_rel_text(rel), name_surrogate=_snapshot_link(st))
+            )
 
     def _entry_id(self, rel: tuple[str, ...], is_dir: bool) -> str | None:
         found = self._filemap.classify(rel, "flavor", "dir" if is_dir else "file")
@@ -857,6 +895,7 @@ class Layout:
                         overrides.append(self._override(e, "fonts"))
             report.entries = sub_report.entries
             report.symlinks.extend(sub_report.symlinks)
+            report.reparse_points.extend(sub_report.reparse_points)
             report.os_metadata.extend(sub_report.os_metadata)
             report.errors.extend(sub_report.errors)
             report.truncated = report.truncated or sub_report.truncated
@@ -966,6 +1005,9 @@ class Layout:
             wtf_files=tuple(wtf_files),
             other=other,
             symlinks=tuple(sorted(symlinks, key=lambda s: s.path)),
+            reparse_points=tuple(
+                sorted({r.path: r for r in report.reparse_points}.values(), key=lambda r: r.path)
+            ),
             os_metadata=tuple(sorted(set(report.os_metadata))),
             errors=tuple(report.errors),
             truncated=report.truncated,
