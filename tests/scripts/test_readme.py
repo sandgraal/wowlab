@@ -9,8 +9,10 @@ The first screen is everything above the marker comment the README carries
 - every `wowlab ...` invocation anywhere in the README names a command, and
   options, that exist in the Click tree (the wiki checker's own walk), and the
   three first commands are leaves of it;
-- the platform claims match the CI workflows: a macOS and a Windows job run
-  the Lab suite, and Linux runs it in `ci.yml`;
+- the platform claims match the CI workflows, read from the runners of the
+  jobs that run pytest (macOS and Linux in `ci.yml`, Windows in
+  `windows.yml`), and macOS is called "Supported" only while its recorded
+  first run on a real install (`MACOS_RECORD`) exists and is linked;
 - the statements ADR-0029's and ADR-0031's owner rulings ask for are there.
 
 Reads README.md and the workflow files; writes only a copy of the README
@@ -36,6 +38,15 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 FIRST_SCREEN_END = "<!-- The first screen ends here"
 WIKI = "https://github.com/sandgraal/wowlab/wiki"
 FIRST_COMMANDS = ("wowlab doctor", "wowlab ui", "wowlab snap create")
+# ADR-0031's human half for macOS: the owner's recorded first run on a real install.
+MACOS_RECORD = ROOT / "docs" / "handoffs" / "M13-10-macos.md"
+# What `wowlab ui` runs (ui/__init__.py and ADR-0029's owner rulings of 2026-10-15).
+UI_RUNS = (
+    "It runs every wowlab command except those that take `--yes`, `ui` itself, "
+    "`log tail --follow` and `looks page --out`: the commands that read, and the ones "
+    "that save only to wowlab's own data (snapshots, profiles, saved looks, the "
+    "game-table cache, pages), never to game files."
+)
 
 
 def _readme() -> str:
@@ -97,9 +108,21 @@ def _jobs(name: str) -> dict[str, Any]:
     return jobs
 
 
-def _runners(name: str) -> set[str]:
+def _runs_the_lab_suite(job: dict[str, Any]) -> bool:
+    """A step runs pytest over the Lab suite: no path (the whole suite) or lab/core/tests."""
+    for step in job.get("steps", []):
+        run = str(step.get("run", ""))
+        if re.search(r"\bpytest\b", run) and "tests/harness" not in run:
+            return True
+    return False
+
+
+def _suite_runners(name: str) -> set[str]:
+    """The runners of the jobs in workflow `name` that run the Lab suite, not of every job."""
     found: set[str] = set()
     for job in _jobs(name).values():
+        if not _runs_the_lab_suite(job):
+            continue
         runs_on = job.get("runs-on", "")
         if "matrix.os" in str(runs_on):
             found |= {row["os"] for row in job["strategy"]["matrix"]["include"]}
@@ -113,14 +136,27 @@ def test_the_platform_claims_match_ci() -> None:
     assert "| macOS | **Supported.** CI runs the test suite on macOS" in screen
     assert "| Windows | **Untested.** CI runs the test suite on Windows" in screen
     assert "| Linux | **Untested.** CI runs the test suite on Linux" in screen
-    assert {"macos-latest", "ubuntu-latest"} <= _runners("ci.yml")
-    assert _runners("windows.yml") == {"windows-latest"}
+    assert _suite_runners("ci.yml") == {"macos-latest", "ubuntu-latest"}
+    assert _suite_runners("windows.yml") == {"windows-latest"}
+
+
+def test_macos_is_supported_only_with_a_recorded_first_run() -> None:
+    """ADR-0031: supported needs CI and a recorded human first run on a real install."""
+    screen = _first_screen()
+    if "| macOS | **Supported.**" in screen:
+        assert MACOS_RECORD.is_file(), "macOS is called supported with no recorded first run"
+        assert f"]({MACOS_RECORD.relative_to(ROOT).as_posix()})" in screen
 
 
 def test_the_ui_statements_the_owner_rulings_require() -> None:
     screen = _first_screen()
     assert "`wowlab ui` never changes game files." in screen
-    assert "no command that asks before changing anything (`--yes`)" in screen
+    assert UI_RUNS in screen
+    # One description of what the UI runs, used everywhere it is described.
+    assert _readme().count(UI_RUNS) == 2
     # ADR-0029, owner ruling of 2026-10-16: the token URL on shared Linux.
     assert "On a shared Linux machine" in screen
-    assert "process listing while the browser opens" in screen
+    assert (
+        "in their process listing for a while "
+        "(a newly started browser can keep it in its command line)" in screen
+    )

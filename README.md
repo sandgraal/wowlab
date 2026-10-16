@@ -14,7 +14,7 @@
 
 - **Read-only by default.** Looking at your install never writes to it: no temp, cache or lock file.
 - **Every command that changes files in your install asks first** (unless you pass `--yes`), refuses while the game is running, and goes through one write gate that takes a snapshot before it writes. `wowlab undo` reverses the change.
-- **Nothing is uploaded.** The only network traffic is to [wago.tools](https://wago.tools) for public game data: a list of game versions (`wowlab doctor --offline` skips it) and game tables. Nothing from your install is sent except your game's version number, to ask for the matching tables.
+- **Nothing is uploaded.** The only network traffic is to [wago.tools](https://wago.tools), for public game data. `wowlab doctor` downloads its list of game versions (`wowlab doctor --offline` skips that). `db2` and `looks` download game tables, sending your game's version number to ask for the matching ones; they have no `--offline`. Nothing else from your install is sent, and commands that use no game data make no request.
 - **It never touches the game itself:** no game memory, no `Data/` or program files, no key presses. Addon data is read as data, never run.
 
 **📦 Install** (you need [uv](https://docs.astral.sh/uv/); it brings Python 3.12):
@@ -28,18 +28,18 @@ Until v0.1.0 is published, install from source ([`docs/INSTALL.md`](docs/INSTALL
 **⚔️ The first three commands:**
 
 ```bash
-wowlab doctor        # finds your install, says what wowlab will do, offers a first snapshot
-wowlab ui            # the install explorer in your browser: every file, and whether it is safe to touch
+wowlab doctor        # finds your install; on a first run, says what wowlab will do and offers a first snapshot
+wowlab ui            # the explorer in your browser: every file in a flavor folder, and whether it is safe to touch
 wowlab snap create   # snapshot your setup before you experiment
 ```
 
-`wowlab ui` never changes game files. It offers only the commands that save to wowlab's own data (snapshots, profiles, saved looks, the game-table cache, pages), and no command that asks before changing anything (`--yes`). It listens only on this machine, behind a random token in the link it opens. **On a shared Linux machine**, other accounts can briefly see that link, token included, in their process listing while the browser opens.
+`wowlab ui` never changes game files. It runs every wowlab command except those that take `--yes`, `ui` itself, `log tail --follow` and `looks page --out`: the commands that read, and the ones that save only to wowlab's own data (snapshots, profiles, saved looks, the game-table cache, pages), never to game files. It listens only on this machine, behind a random token in the link it opens. **On a shared Linux machine**, other accounts can see that link, token included, in their process listing for a while (a newly started browser can keep it in its command line).
 
 **🗺️ Platforms:**
 
 | | Status |
 |---|---|
-| macOS | **Supported.** CI runs the test suite on macOS, and the owner runs wowlab on a real Mac install. |
+| macOS | **Supported.** CI runs the test suite on macOS, and a first run on a real Mac install is recorded in [`docs/handoffs/M13-10-macos.md`](docs/handoffs/M13-10-macos.md). |
 | Windows | **Untested.** CI runs the test suite on Windows, but nobody has yet run the first-run flow on a real Windows install. |
 | Linux | **Untested.** CI runs the test suite on Linux, but there is no native Linux client (Wine or Proton) and nobody has run wowlab against one. |
 
@@ -63,7 +63,7 @@ wowlab snap create   # snapshot your setup before you experiment
 | | Feature | Command |
 |---|---|---|
 | 🔍 | **Explain any file.** Every path in your install mapped: what it is, who writes it, when, and whether wowlab may edit it. | `wowlab explain PATH` · `wowlab tree --explain` |
-| 🖥️ | **The explorer in your browser.** A local page, served only to this machine, that shows a flavor folder's files with whether each is safe to touch, and runs wowlab's read commands. | `wowlab ui` |
+| 🖥️ | **The explorer in your browser.** A local page, served only to this machine, that shows a flavor folder's files, one folder at a time, with whether each is safe to touch. It runs every wowlab command except those that take `--yes`, `ui` itself, `log tail --follow` and `looks page --out`: the commands that read, and the ones that save only to wowlab's own data (snapshots, profiles, saved looks, the game-table cache, pages), never to game files. | `wowlab ui` |
 | 🩺 | **Health check and first run.** Finds your install, its flavors and versions, whether the game is running, and your server-sync settings. On a first run it says what wowlab will and won't do and offers a first snapshot. `--redact` prints output safe to paste into an issue. | `wowlab doctor` · `wowlab doctor --redact` |
 | 📸 | **Snapshots.** Save your whole setup (settings, keybinds, macros, addons and their saved data) and compare any two snapshots, down to the individual addon setting. | `wowlab snap create` · `snap diff A B` |
 | ↩️ | **Undo, for real.** Put a snapshot back, or undo the last change. You see the plan first, and it refuses while the game is running. | `wowlab snap restore` · `wowlab undo` |
@@ -72,7 +72,7 @@ wowlab snap create   # snapshot your setup before you experiment
 | ⚔️ | **Combat log.** A streaming combat-log reader and a live `tail` that follows the game as it writes, even across new log files. | `wowlab log tail --follow` |
 | 🎛️ | **Profiles.** Save named UI setups (`raid`, `clean`, `gamepad`) and switch between them with one command. You see the plan first, applying one also deletes files created since it was saved, and `wowlab undo` reverses it. | `wowlab profile save` · `profile apply` |
 | 🔀 | **Merge addon settings.** Copy one addon's settings between characters, or from a snapshot, without clobbering the rest. Conflicts are listed and never guessed, and it first checks that the client has been loading saved data correctly. | `wowlab sv merge` |
-| 🧩 | **The lab-addon and your characters.** wowlab's own small in-game addon records a character's gear, talents, customization, collections, currencies and professions (never a name) when you log out, and reads them back offline. | `wowlab addon install lab` · `wowlab char show` |
+| 🧩 | **The lab-addon and your characters.** wowlab's own small in-game addon records a character's gear, talents, customization, collections, currencies and professions (never a name) when you log out or `/reload`, and reads them back offline. | `wowlab addon install lab` · `wowlab char show` |
 | 🎨 | **Customization looks.** Browse every race's customization options from the game's own tables, save and compare looks, import one from a character, and open it all as a local web page. Data only: it never touches the game. | `wowlab looks races` · `save` · `compare` · `page` |
 
 <details>
@@ -96,7 +96,7 @@ DBT_AllPersistentOptions["Default"]["DBM"]["HugeBarsEnabled"] = true
 $ wowlab doctor --offline
 Flavor _classic_beta_: product wow_classic_beta, version 1.60.1.69913
 Client: not running
-Snapshot store: ~/.local/share/wowlab/store (not created yet)
+Snapshot store: ~/Library/Application Support/wowlab/store (not created yet)
 ```
 
 </details>
@@ -110,7 +110,7 @@ Snapshot store: ~/.local/share/wowlab/store (not created yet)
 - **One door for every change.** Anything wowlab writes goes through a single *write gate*. The gate refuses while the game is running, takes a snapshot first, records what it did, and replaces files atomically. There is no "force" switch that skips any of that.
 - **No Lua is ever run.** Addon data is read as data by a strict parser. Functions or code in a saved file are refused, never executed.
 - **Nothing is lost.** The parsers keep every byte they don't understand. An unedited file comes back byte for byte.
-- **Stays on your machine.** No accounts, no server, no uploads. The only network access is downloading public game tables from wago.tools, and you can skip it with `--offline`.
+- **Stays on your machine.** No accounts, no server, no uploads. The only network access is to wago.tools, for public game data: the version list `wowlab doctor` checks (`--offline` skips it) and the game tables `db2` and `looks` download, which send your game's version number.
 - **Clearly out of bounds, permanently.** No memory reading, no injection, no packet tampering, no input automation, no touching game `Data/` or executables, no bypassing integrity checks ([ADR-0023](docs/DECISIONS.md)). wowlab only changes what the game itself treats as your settings.
 
 ## ⚙️ How it works
@@ -137,9 +137,9 @@ Flavor folders, product codes and build numbers are **discovered from your insta
 
 ## 🧭 Where it is now
 
-wowlab grows in **waves**: the owner picks each one after reviewing the last. **Waves 1 to 3 are done**: everything in the table above, plus the character list and a daily check that keeps [the wiki](https://github.com/sandgraal/wowlab/wiki) in step with the code. Wave 3 was trimmed on 2026-10-14: its game-table database, talent planner and alt-dashboard are deferred, because players already have good talent planners.
+wowlab grows in **waves**: the owner picks each one after reviewing the last. **Waves 1 to 3 are done**: everything in the table above except `wowlab ui`, the first run and `doctor --redact`, which are Wave 4's, plus the character list and a daily check that keeps [the wiki](https://github.com/sandgraal/wowlab/wiki) in step with the code. Wave 3 was trimmed on 2026-10-14: its game-table database, talent planner and alt-dashboard are deferred, because players already have good talent planners.
 
-**Wave 4 is the first public release, v0.1** (owner decision, 2026-10-13; [ADR-0031](docs/DECISIONS.md)). The promise does not change: reading never writes, every change asks first, a snapshot comes before it and `wowlab undo` reverses it, and nothing is uploaded. Already on `main`: the release pipeline, the first run in `wowlab doctor`, `wowlab doctor --redact`, the lab-addon inside the package, and the first stage of `wowlab ui`. Still to come:
+**Wave 4 is the first public release, v0.1** (owner decision, 2026-10-13; [ADR-0031](docs/DECISIONS.md)). The promise does not change: reading never writes, every change to your install asks first, a snapshot comes before it and `wowlab undo` reverses it, and nothing is uploaded. Already on `main`: the release pipeline, the first run in `wowlab doctor`, `wowlab doctor --redact`, the lab-addon inside the package, and the first stage of `wowlab ui`. Still to come:
 
 | | Feature | What you'll be able to do |
 |---|---|---|

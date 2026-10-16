@@ -25,15 +25,18 @@ env:
   PYTHON_VERSION: "3.12"
 
 jobs:
-  # Detects a docs-only PR (docs/**/*.md or root *.md) so the required jobs
-  # can run a trivial, genuinely successful step instead of the full suite.
+  # Detects a docs-only PR (docs/**/*.md and the root *.md files listed below)
+  # so the required jobs can run a trivial, genuinely successful step instead
+  # of the full suite.
   # This is deliberately NOT an `on.pull_request.paths` filter: that would
   # stop the workflow from triggering, leaving every required check stuck at
   # "Expected". Every downstream job carries `if: ${{ !cancelled() }}` so a
   # failure *here* runs the full suite rather than skipping it (a skipped
   # required job reports as passing). `.claude/**`, `.github/**`, AGENTS.md
   # and CLAUDE.md are never docs-only: they are agent instructions and the
-  # harness, and changes to them must be validated.
+  # harness, and changes to them must be validated. README.md is not
+  # docs-only either: tests/scripts/test_readme.py grades its first screen
+  # (M13-10), so a README-only PR runs the suite.
   changes:
     name: Detect doc-only changes
     runs-on: ubuntu-latest
@@ -55,7 +58,6 @@ jobs:
             non_docs:
               - '**'
               - '!docs/**/*.md'
-              - '!README.md'
               - '!CONTRIBUTING.md'
               - '!SECURITY.md'
               - '!CODE_OF_CONDUCT.md'
