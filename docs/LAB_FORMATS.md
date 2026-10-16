@@ -663,4 +663,65 @@ Dated entries, newest last. Each names the fixture that prompted it.
   files, these fixtures included,
   are still read as before. The cause behind each of the two rows stays open
   until a capture made after M11-29 (runbook: `lab/addon/README.md`, "M11-29
-  capture step").
+  capture step"). Settled for 70425 by the entry of 2026-10-16 below.
+- **2026-10-16, lab-addon schema 3 and the barber-shop record after an
+  applied change, Forever beta 1.60.1.70425 (interface 16001), macOS
+  (M13-05, M11-29; fixtures
+  `macos-70425/forever/WTF/Account/90000001#6/SavedVariables/WowLab.lua`
+  and `…/1/Labchard-Labrealme/SavedVariables/WowLab.lua`).** Written by the
+  schema-3 addon (#176) in one session, on one level-15 warlock with a
+  summoned, named demon. Owner's notes:
+  - logged in out of combat and saw the "recording in 15 s" pass;
+  - put on the action bars one spell, one item, a `#showtooltip <spell>` +
+    `/cast` macro and a plain `/say` macro;
+  - "Character Specific Key Bindings" was ticked, and dragging a spell
+    straight onto a key worked;
+  - the spellbook has no "show all ranks" toggle; ranks show as text
+    ("Rank 1"); no greyed-out future spell was visible;
+  - barber shop: hair colour moved from swatch 7 to swatch 1 (counting left
+    to right, then top to bottom), Accept clicked once; the window closed by
+    itself and the new colour showed; no `/reload`, then a logout and an
+    exit.
+
+  Grammar as §4.2 amended (CRLF, leading blank line, no indentation, ASCII
+  only). The account file is `WowLabDB = { ["schema"] = 3, }`. The run's
+  `macros-cache.txt` and `bindings-cache.wtf` were read for items 7 and 8
+  but not committed. Items are those of `lab/addon/README.md`, "M13-05
+  [verify] checklist":
+
+  | Item | Result | What Forever 1.60.1.70425 returned |
+  |---|---|---|
+  | 1. `schema = 3`; `probe.loads` rising | schema **confirmed**; rising **still open** | both variables hold `schema = 3`. `probe.loads` is 1 with no `probe.lost`: a first load (or a file that failed to load). No earlier file of this character was seen, so the counter was not seen rising across the first schema-3 write |
+  | 2. `probes` | **confirmed**: every API present, no error, nothing secret | `present = true`, `errors` 0 and `secret` 0 on every probe of all three sections. A global `issecretvalue` function **was present** (forever-addon-kit's 69893 list lacks it) and answered a boolean on every call (spellbook 244 of 244, actionbars 76 of 76, bindings 432 of 432). The probe sees a global function, not where it came from: an addon could define one. `C_Secrets` and `canaccessvalue` are present too (looked up only), which makes an addon shim less likely. The run's character `AddOns.txt` lists 7 addons: 2 Blizzard modules enabled and 5 third-party addons disabled. An addon it does not list (WowLab among them) is at the client's default, so the file does not prove that no other addon ran. Where the client's function comes from stays **[verify]** |
+  | 3. `spellbook` read; skill lines | **confirmed** in the file; on-screen counts not reported | not absent. Four skill lines, offsets 0, 9, 16, 23 and counts 9, 7, 7, 5, tiling items 1 to 28. No guild or hidden line, no spec ids. The owner did not report per-tab counts to compare |
+  | 4. Subtexts and ranks | ranks as text **confirmed**; one item per rank; no toggle | subtexts seen: `Rank 1` to `Rank 3`, `Racial`, `Passive`, `Racial Passive`, `Summon`, and none (5 items). A spell with several ranks is **one item per rank**, each with its own spell id (Shadow Bolt 686, 695, 705 as `Rank 1`–`3`; Demon Skin, Curse of Weakness and Immolate as ranks 1–2). The spellbook has no "show all ranks" toggle, so there is no on/off pair. `item_types` is `None` 0, `Spell` 1, `FutureSpell` 2, `PetAction` 3, `Flyout` 4. Types seen: 1 (27 items) and 4 (1). The flyout (Summon Demon) has `action_id` 259 and **no `spell_id`**, so its action id is not a spell id. No `PetAction` item. The addon reads the player's bank only, never the pet spellbook, so that says nothing about pet spells |
+  | 5. A future spell | **still open** | none visible in game and no type-2 item in the file. `FutureSpell` exists in the client's enum |
+  | 6. `actionbars` range | slots past the filled ones **answer nothing, no error** | `GetActionInfo`: 180 calls, 0 errors, 26 answered. Highest filled slot 72; slots filled are 1–12, 49–50 and 61–72. Whether 180 is the client's own bound stays **[verify]** |
+  | 7. Macro slots | type **confirmed**; `sub_type` **contradicted**; numbering **still open** | two slots with `type = "macro"`, ids 149 and 140, **neither with a `sub_type`**, the `#showtooltip <spell>` macro included, so on Forever a `#showtooltip` macro slot gives no spell id. `GetMacroInfo`: 2 calls, 2 answered, equal to the macro slots with no subtype, so both ids name a macro. The character `macros-cache.txt` lists 29 macros, `VER 3 0100000000000001` to `…1D`, each named a single space, each a `#showtooltip` line and a `/cast` line. The account `macros-cache.txt` is 0 bytes, and **no plain `/say` macro is in either file** although the owner put one on a bar. If character macro *n* were index 120 + *n* (Retail's numbering, from memory), the slots would be macros 20 and 29, both `#showtooltip` macros, and the plain macro's slot would not be identified. So how account and character indices are numbered, and whether `macros-cache.txt` is rewritten at logout on Forever, stay **[verify]**. No macro name or body is in the file (item 13) |
+  | 8. `bindings` | the 8 cache lines **confirmed** against the live keys; the other bound commands **unexplained**; set names **contradicted**; a dragged spell **still open** | `binding_set` 2 with "Character Specific Key Bindings" ticked. `account_bindings` and `character_bindings` are **absent**: `ACCOUNT_BINDINGS` and `CHARACTER_BINDINGS` were not numbers at the last bindings gather, and the file cannot say whether they were nil or another type. So the file cannot name the set (2 is Retail's character set, from memory, **[verify]**). `Enum.BindingSet` (Account, Character; from memory) is a **[verify]** candidate for a later schema. The account and character `bindings-cache.wtf` are byte-identical: eight `bind` lines, CRLF. Each of its six bound commands has exactly that key in the live read, and its two `NONE` lines (`-`, `=`) match keys no command holds. That is all the comparison confirms. The other 118 commands with a key are not in either cache and stay unexplained: client defaults left out of a cache that holds only changes is one reading (from memory, **[verify]**). The owner's `/say` macro (item 7) and the spell dragged onto a key are missing from both caches too, so these caches may predate the session; whether and when the client rewrites them on Forever is **[verify]**. `GetBinding` listed 299 commands, 1 of them not a plain upper-case name (`commands_left_out` 1, never stored), and `GetBindingKey` was asked about the other 298, 124 with a key. `keys_left_out` 0; no `MACRO`, `SPELL`, `ITEM` or `CLICK` command stored. The dragged spell may be the one left-out command; the file cannot say. No action-bar addon was installed |
+  | 9. `left_out_config` | **confirmed** | `talents.legacy.left_out_config` 640511 equals `talents.class.config.id`; no `left_out_config_absent` |
+  | 10. `events_unregistered` on the new sections | **confirmed**: the four names are known | `[]` on `spellbook`, `actionbars` and `bindings`. On this build the barber-shop control `WOWLAB_CONTROL_NOT_A_REAL_EVENT` has no entry, so the addon's gate refuses a name the client does not know. An empty list therefore means `SPELLS_CHANGED`, `ACTIONBAR_SLOT_CHANGED`, `UPDATE_BINDINGS` and `PLAYER_REGEN_ENABLED` are names this client knows. That they fire is not shown: only `customization` counts events |
+  | 11. Combat | **still open** | the combat steps were not done |
+  | 12. Restricted content | **still open** | not done; outside it, every `secret` count is 0 |
+  | 13. Privacy | macro check **confirmed**; hunter pet **still open** | no line of either macro file's bodies, no `#showtooltip`, `/cast` or `/say`, and no macro name in the file. The capture tool noted 27 Name-Realm-shaped strings; every one is a modifier-key chord in `bindings` (`SHIFT-PAGEDOWN`, `CTRL-F1`, …). Every distinct string in the file is a game string (spell, item, binding command or key, API name) or a fixed reason of the addon. This is no evidence about pet names. The addon never reads the pet spellbook, and a warlock demon's name is generated by the game, not typed by the owner (from memory, **[verify]**). That is why the checklist asks for a hunter, and a hunter with a named pet was not tried |
+  | 14. Hitches | **still open** | not reported |
+
+  The M11-29 barber-shop check (`lab/addon/README.md`, "M11-29 capture
+  step"; items 11, 12 and 14 of the M11-03 checklist). The first row of the
+  reading table that fits is "`recorded_at = "open"`, `APPLIED` at 1 or
+  more, `OPEN` at 2 or more, and you sat once":
+
+  | Item | Result | What Forever 1.60.1.70425 returned |
+  |---|---|---|
+  | `BARBER_SHOP_APPEARANCE_APPLIED` reaches the section (M11-03 item 12) | **confirmed: it fires and reaches the section**. "An applied change gives `recorded_at = "applied"`" is **contradicted** | `events_received`: `BARBER_SHOP_OPEN` 2, `BARBER_SHOP_APPEARANCE_APPLIED` 1, `BARBER_SHOP_CLOSE` 2, `BARBER_SHOP_RESULT` 1, `BARBER_SHOP_COST_UPDATE` 0, `BARBER_SHOP_FORCE_CUSTOMIZATIONS_UPDATE` 0. `recorded_at = "open"`, `recorded_load` 1 (this session), not carried. With one sit (the runbook's step) and one Accept, a second `BARBER_SHOP_OPEN` reached the section after the applied event, and its gather replaced the applied record. The client fired `BARBER_SHOP_OPEN` again after the Accept. Whether the shop actually reopened, and why, is **[verify]**: the owner saw the window close by itself and did not report a reopen. The counts do not record the order of the events. This is why the applied change ended as `"open"` in this capture. One capture does not show that it always will |
+  | Which look the saved record holds | **the new look** | option 61 (Hair Color in the 70009 `ChrCustomizationOption` table) is at `choice_index` 1, `choice` 956: the swatch the owner picked. The applied record was overwritten before it was saved, so what it held is not known |
+  | `currentChoiceIndex` base (M11-03 item 11) | **consistent with 1-based**; the counting order **consistent** for hair colour | the owner picked swatch 1, and the record has `choice_index` 1. The addon takes `choice` from `choices[index].id` (`Customization.lua`), so the ids match the index by construction and are no evidence of the base. The identity-free argument comes from the M11-23 record on 70058: it reports `choice_index` 7 for option 61, which has 7 choices (956–962) in the 70009 table, and a 0-based client could not report 7. That the client's list for option 61 has the table's 7 choices is **[verify]**. That record matches this one on all six other options and differs only on option 61, the swatch the owner calls the old 7th today. This is the strongest sign that the two runs are one character (pseudonyms of two runs still prove nothing). If they are, the second open on 70058 came after the Accept too, and M11-23's first row reads the other way. For choices 956–962, `OrderIndex` and `UiOrderIndex` are identical (0–6), so this does not tell which column the shop lists swatches by. The race-mismatch drop stays untested |
+  | `sex`, `chr_model_id`, no name (M11-03 item 14) | `sex` 0; no name **confirmed**; model id: the call **returned nil** | `chr_model_id_absent = "C_BarberShop.GetViewingChrModel returned nil"`: the function exists and named no model at the last gather. M11-29's other question, why it returns nil, stays **[verify]** (the alternate-form hypothesis is untested); the Lab keeps taking the body type from `sex` |
+  | Count-only events and the control | **settled for this build** | the control has no entry, so the client refuses unknown names, and every entry is a name it knows. `BARBER_SHOP_SUCCESS` has no entry: not a name on Forever. `BARBER_SHOP_CLOSE` came **2** times for one sit, not the 1 expected from Retail. `BARBER_SHOP_RESULT` came once, for the one Accept. `BARBER_SHOP_COST_UPDATE` stayed 0 although a colour was previewed and bought. `BARBER_SHOP_FORCE_CUSTOMIZATIONS_UPDATE` stayed 0 |
+
+  Nothing in the addon changes for M11-29: its acceptance allows "the reason
+  it cannot". The reason here is the second `BARBER_SHOP_OPEN` after the
+  Accept. A later
+  ticket could keep an applied record through a following open, which would
+  be schema 4 with its own capture. `looks import-char` keeps saying "as of
+  the last barber-shop open", which is still true.
