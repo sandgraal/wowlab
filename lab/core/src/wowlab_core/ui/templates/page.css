@@ -129,6 +129,7 @@ main { padding: 1rem 1.25rem 2rem; }
 .badge-no { color: #ff9a8c; background: linear-gradient(180deg, #4a120d, #2c0907); border-color: #c4392b; }
 .badge-unclassified { color: #dcdcdc; background: #333333; border-color: #8a8a8a; }
 .badge-folder, .badge-not_applicable { color: #c4b9a3; background: #26221b; border-color: #5e5546; }
+.badge.badge-link { color: #cfd6e6; background: #1f2431; border-color: #6b7894; border-style: dotted; }
 .badge-server { color: #ffc58a; background: #3d2408; border-color: #c27a2c; border-style: dashed; }
 .unseen { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 .marks { display: inline-flex; flex-wrap: wrap; gap: 0.3rem; flex: none; }

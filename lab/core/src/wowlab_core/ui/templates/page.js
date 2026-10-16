@@ -82,6 +82,8 @@
     const node = make("span", labelOf(verdict));
     node.className = "badge";
     if (/^[a-z_]+$/.test(level)) node.classList.add("badge-" + level);
+    // A link keeps its row's level class; `badge-link` overrides its colour.
+    if (verdict.link === true) node.classList.add("badge-link");
     if (describe && typeof verdict.words === "string" && verdict.words) {
       node.title = verdict.words;
       node.appendChild(unseen(": " + verdict.words));
@@ -198,9 +200,17 @@
     };
   }
 
+  // What the Verdict filter groups by: the level, except that links (any
+  // level) form their own group, as their badge does.
+  function filterKey(verdict) {
+    if (!verdict) return "";
+    if (verdict.link === true) return "link";
+    return typeof verdict.level === "string" ? verdict.level : "";
+  }
+
   function matches(node, filter) {
     if (filter.level) {
-      if (!node.item || !node.item.verdict || node.item.verdict.level !== filter.level) return false;
+      if (!node.item || filterKey(node.item.verdict) !== filter.level) return false;
     }
     if (filter.text && !node.path.toLowerCase().includes(filter.text)) return false;
     return true;
@@ -308,8 +318,8 @@
     const levels = [];
     const labels = new Map();
     for (const item of listedOf(report)) {
-      const level = item.verdict && item.verdict.level;
-      if (typeof level === "string" && !levels.includes(level)) {
+      const level = filterKey(item.verdict);
+      if (level && !levels.includes(level)) {
         levels.push(level);
         labels.set(level, labelOf(item.verdict));
       }
