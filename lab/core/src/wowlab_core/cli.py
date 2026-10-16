@@ -1578,6 +1578,31 @@ def install_show(root: RootOpt = None, json_out: JsonOpt = False) -> None:
 # ─── tree and explain ────────────────────────────────────────────────────────
 
 
+class PlainText(_Out):
+    """A file-map row's `what` and `written_by` as plain text for a reader
+    who does not see Markdown (M13-25): code spans lose their backticks,
+    `**[verify]**` reads "(not yet confirmed)", other bold markers go."""
+
+    what: str
+    written_by: str
+
+
+_VERIFY_MARK = re.compile(r"\*\*\[verify(?: ([^\]]*))?\]\*\*")
+
+
+def _player_text(markdown: str) -> str:
+    """A file-map cell without Markdown, for `PlainText`."""
+    text = _VERIFY_MARK.sub(
+        lambda m: f"({m.group(1)} not yet confirmed)" if m.group(1) else "(not yet confirmed)",
+        markdown,
+    )
+    return text.replace("**", "").replace("`", "")
+
+
+def _plain_text(entry: FileMapEntry) -> PlainText:
+    return PlainText(what=_player_text(entry.what), written_by=_player_text(entry.written_by))
+
+
 class Explained(_Out):
     """A file-map entry, as `explain` and `tree --explain` show it."""
 
@@ -1588,6 +1613,7 @@ class Explained(_Out):
     tier: str
     module: str
     verdict: Verdict  # M13-21: the Edit cell as a level and in words
+    plain: PlainText  # M13-25: `what` and `written_by` without Markdown
 
 
 class TreeItem(_Out):
@@ -1604,13 +1630,21 @@ class TreeItem(_Out):
 
 
 class TreeReport(_Out):
-    """`wowlab tree --json`."""
+    """`wowlab tree --json`.
+
+    `ancestors` (M13-25, JSON only): every folder above a listed item that
+    is not listed itself, such as `Interface/AddOns` or `WTF/Account`, with
+    its own verdict, so a viewer drawing the items as a tree never draws a
+    folder without one. `flavor_folder_verdict`: the verdict of the flavor
+    folder itself."""
 
     install_root: str
     flavor_folder: str
     items: list[TreeItem]
     truncated: bool
     errors: list[str]
+    ancestors: list[TreeItem]
+    flavor_folder_verdict: Verdict
 
 
 class InstallTreeReport(_Out):
@@ -1635,6 +1669,7 @@ def _explained(entry: FileMapEntry, verdict: Verdict) -> Explained:
         tier=entry.tier,
         module=entry.module,
         verdict=verdict,
+        plain=_plain_text(entry),
     )
 
 
@@ -1724,6 +1759,39 @@ def _in_scope(path: str, prefix: str) -> bool:
     return not prefix or path == prefix or path.startswith(prefix + "/")
 
 
+def _folder_verdict(lay: layout.Layout, path: str) -> Verdict:
+    found = lay.classify(path, is_dir=True)
+    entry = found.entry if isinstance(found, layout.Classified) else None
+    return verdict_of(entry, found.base, found.path, folder=True)
+
+
+def _ancestors(lay: layout.Layout, items: list[TreeItem], prefix: str) -> list[TreeItem]:
+    """The folders above `items` that are not items themselves, in scope,
+    sorted, each with its verdict. They are read from the item paths, never
+    from the disk: a folder above a listed path is a folder."""
+    listed = {item.path for item in items}
+    above: set[str] = set()
+    for item in items:
+        parts = item.path.split("/")
+        for n in range(1, len(parts)):
+            path = "/".join(parts[:n])
+            if path not in listed and _in_scope(path, prefix):
+                above.add(path)
+    return [
+        TreeItem(
+            path=path,
+            kind="folder",
+            size=None,
+            note=None,
+            verdict=_folder_verdict(lay, path),
+            explained=None,
+            base="flavor",
+            flavor_folder=lay.flavor_folder,
+        )
+        for path in sorted(above)
+    ]
+
+
 @app.command()
 @_handled
 def tree(
@@ -1760,8 +1828,10 @@ def tree(
     inv = lay.inventory()
     prefix = _tree_prefix(path, lay.flavor_path)
     items = [i for p, i in sorted(_tree_items(lay, inv).items()) if _in_scope(p, prefix)]
+    ancestors = _ancestors(lay, items, prefix)
     if explain:
         items = _with_explained(lay, items)
+        ancestors = _with_explained(lay, ancestors)
     errors = [f"{e.path}: {e.error}" for e in inv.errors]
     report = TreeReport(
         install_root=str(inst.root),
@@ -1769,6 +1839,8 @@ def tree(
         items=items,
         truncated=inv.truncated,
         errors=errors,
+        ancestors=ancestors,
+        flavor_folder_verdict=_folder_verdict(lay, ""),
     )
     if json_out:
         _emit(report)
@@ -2104,6 +2176,7 @@ class ExplainReport(_Out):
     # `log tail` reads another log); None otherwise.
     views_note: str | None
     hints: list[ExplainHint]  # M13-23
+    plain: PlainText | None = None  # M13-25: the row's text without Markdown
 
 
 # The option each view parameter is spelled with; `file` is `sv dump`'s
@@ -2495,6 +2568,7 @@ def explain(
         views=views,
         views_note=note,
         hints=hints,
+        plain=_plain_text(result.entry) if isinstance(result, layout.Classified) else None,
     )
     captured = _captured_words(lay)
     if json_out:
@@ -7635,7 +7709,9 @@ def ui_command() -> None:
 
     The server listens on 127.0.0.1 only, at a port the system picks, and
     answers only requests that carry the random token in the URL it opens.
-    It runs this wowlab's commands with --json. Commands that save only to
+    It opens on the explorer: a flavor folder's files, each with whether
+    wowlab may edit it, and what a picked file is and who writes it. A
+    second tab runs this wowlab's commands with --json. Commands that save only to
     wowlab's own data (snapshots, profiles, saved looks, the db2 cache,
     pages) are offered; some of them overwrite what they saved before (for
     example looks import-char --replace), and none of them touches the game
