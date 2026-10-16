@@ -16,6 +16,29 @@ What a browser does with the page is checked by reading the page: the CSP
 hashes, no external URL, text written through `textContent` only, and no
 file-map facts in the script (§14.5 D3). The owner's end-to-end check in a
 real browser is reported in the PR.
+
+Owner of this file: test-writer, since the audit of 2026-10-16 (M13-25 was
+exempted from graders-first; the terms were a test-writer audit and
+takeover). The implementer does not edit it; a grader that is wrong is
+reported.
+
+What the audit added:
+- The page's behaviour, driven under Node with a stand-in DOM whose HTML
+  sinks throw, fed the real CLI's JSON for the captured install (and for the
+  constructed hostile one): the first view, a badge on every item, the
+  filters, the detail pane, the flavor picker, `~` for home, hostile names
+  drawn as inert text. Skipped when `node` is not on PATH. The stale-reply
+  case after a flavor change is the code-reviewer's probe in `review/` and
+  is not repeated here.
+- The output cap counts the extra escapes (each `< > & U+2028 U+2029` costs
+  six bytes), exactly at the boundary, on stdout and stderr; stand-in
+  `wowlab` scripts, constructed.
+- `/api/commands`: `home` empty when it would turn every path into `~`, and
+  escaped like a run's output.
+- The look the owner set: a light scheme, a serif system stack, badge
+  colours that read like item quality, and WCAG AA contrast for the text.
+  Badge words are not pinned: the owner's player words will come from a new
+  `label` on `Verdict` in core.
 """
 
 from __future__ import annotations
@@ -27,12 +50,16 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import sys
 import threading
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 import pytest
+import typer
 
 from wowlab_core import filemap, ui
 
@@ -438,3 +465,674 @@ def test_the_json_escape_keeps_the_text_constructed() -> None:
     encoded = ui._json_text(text)
     assert json.loads(b'"' + encoded + b'"') == text
     assert b"<" not in encoded and b">" not in encoded and b"&" not in encoded
+
+
+# ═══ audit, 2026-10-16 (test-writer) ═════════════════════════════════════════
+#
+# ─── the page's behaviour, under Node ────────────────────────────────────────
+#
+# page.js runs in a `vm` context with a stand-in DOM. Writing `innerHTML`,
+# `outerHTML` or `insertAdjacentHTML` throws, so a page that draws through
+# an HTML sink fails here rather than drawing. `fetch` answers from what the
+# real CLI printed for the install under test, collected through the real
+# server first; every request is logged. The harness then performs the
+# scenario's steps and prints what the panes hold.
+
+_HARNESS = r"""
+"use strict";
+const fs = require("fs");
+const vm = require("vm");
+const scenario = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+class El {
+  constructor(tag) {
+    this.tagName = tag; this.children = []; this.parentElement = null; this._text = "";
+    this.attrs = {}; this.dataset = {}; this.listeners = {}; this.className = "";
+    this.hidden = false; this.disabled = false; this.value = ""; this.title = "";
+    const self = this;
+    this.classList = {
+      add(c) { const s = new Set(self.className.split(" ").filter(Boolean)); s.add(c); self.className = [...s].join(" "); },
+      remove(c) { self.className = self.className.split(" ").filter((x) => x && x !== c).join(" "); },
+      contains(c) { return self.className.split(" ").includes(c); },
+      toggle(c, on) { if (on === undefined) on = !this.contains(c); if (on) this.add(c); else this.remove(c); return on; },
+    };
+  }
+  get textContent() { return this._text + this.children.map((c) => c.textContent).join(""); }
+  set textContent(t) { this._text = String(t); this.children = []; }
+  set innerHTML(_) { throw new Error("HTML sink: innerHTML"); }
+  set outerHTML(_) { throw new Error("HTML sink: outerHTML"); }
+  insertAdjacentHTML() { throw new Error("HTML sink: insertAdjacentHTML"); }
+  appendChild(c) { c.parentElement = this; this.children.push(c); return c; }
+  append(...cs) { for (const c of cs) this.appendChild(typeof c === "string" ? Object.assign(new El("#text"), { _text: c }) : c); }
+  replaceChildren(...cs) { this.children = []; this._text = ""; for (const c of cs) this.appendChild(c); }
+  setAttribute(k, v) { this.attrs[k] = String(v); }
+  getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
+  addEventListener(ev, fn) { (this.listeners[ev] = this.listeners[ev] || []).push(fn); }
+  fire(ev) { for (const fn of this.listeners[ev] || []) fn({ target: this, preventDefault() {} }); }
+  all() { const o = []; for (const c of this.children) { o.push(c, ...c.all()); } return o; }
+  querySelectorAll(sel) {
+    if (sel.startsWith(".")) return this.all().filter((e) => e.className.split(" ").includes(sel.slice(1)));
+    return this.all().filter((e) => e.tagName === sel);
+  }
+  get options() { return this.children.filter((c) => c.tagName === "option"); }
+  remove(i) { if (i === undefined) return; const o = this.options[i]; this.children.splice(this.children.indexOf(o), 1); }
+}
+const ids = {};
+for (const id of ["status", "flavor-box", "flavor", "level-filter", "text-filter",
+  "explorer-status", "tree-root", "tree", "explain-title", "explain-path", "explain-verdict",
+  "explain-facts", "explain-status", "tab-explorer", "tab-commands", "explorer-view",
+  "commands-view", "commands", "title", "help", "fields", "run", "stdout", "stderr"]) ids[id] = new El("x");
+ids["flavor-box"].hidden = true;
+ids["commands-view"].hidden = true;
+const all = new El("option"); all.value = ""; ids["level-filter"].appendChild(all);
+const requests = [];
+const answer = (obj, ok) => ({ ok: ok !== false, status: ok === false ? 403 : 200, json: async () => obj });
+const fetchStub = async (url, opts) => {
+  const body = opts && opts.body ? JSON.parse(opts.body) : null;
+  requests.push({ url: String(url), body: body });
+  if (String(url).startsWith("/api/commands?")) return answer(scenario.commands);
+  if (!String(url).startsWith("/api/run?")) return answer({ error: "unknown" }, false);
+  const key = body.command.join(" ");
+  let stdout = null;
+  if (key === "install show") stdout = scenario.install_show;
+  else if (key === "tree") stdout = scenario.trees[body.params.flavor || scenario.first_flavor];
+  else if (key === "explain") stdout = scenario.explains[body.params.path];
+  if (typeof stdout !== "string") {
+    return answer({ exit_code: 2, timed_out: false, truncated: false, stdout: "", stderr: "harness: no reply for " + key });
+  }
+  return answer({ exit_code: 0, timed_out: false, truncated: false, stdout: stdout, stderr: "" });
+};
+const ctx = { window: { location: { search: "?token=t" } },
+  document: { getElementById: (id) => ids[id], createElement: (t) => new El(t) },
+  URLSearchParams, fetch: fetchStub, console, Set, Map, Promise, JSON, Error };
+vm.createContext(ctx);
+const tick = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
+const rowOf = (li) => li.children.find((c) => c.className.split(" ").includes("row"));
+function rows() {
+  return ids.tree.all().filter((e) => e.attrs.role === "treeitem").map((li) => {
+    const row = rowOf(li) || li;
+    const name = row.children.find((c) => c.className.split(" ").includes("name"));
+    const badge = row.children.find((c) => c.className.split(" ").includes("badge"));
+    return { path: row.dataset.path, name: name ? name.textContent : null,
+      nameTitle: name ? name.title : null, expanded: li.getAttribute("aria-expanded"),
+      text: row.textContent,
+      badge: badge ? { text: badge.textContent, title: badge.title, cls: badge.className } : null };
+  });
+}
+function liOf(path) {
+  return ids.tree.all().find((e) => e.attrs.role === "treeitem" && rowOf(e) && rowOf(e).dataset.path === path);
+}
+function snap() {
+  return { rows: rows(), treeRoot: ids["tree-root"].textContent, status: ids["explorer-status"].textContent,
+    flavorBoxHidden: ids["flavor-box"].hidden, explorerHidden: ids["explorer-view"].hidden,
+    levels: ids["level-filter"].options.map((o) => o.value) };
+}
+function detail() {
+  const badge = ids["explain-verdict"].all().find((e) => e.className.split(" ").includes("badge"));
+  return { title: ids["explain-title"].textContent, path: ids["explain-path"].textContent,
+    verdict: ids["explain-verdict"].textContent, verdictBadge: badge ? badge.className : "",
+    facts: ids["explain-facts"].textContent, status: ids["explain-status"].textContent };
+}
+(async () => {
+  const out = { steps: [] };
+  try {
+    vm.runInContext(fs.readFileSync(process.argv[2], "utf8"), ctx);
+    await tick();
+    out.first = snap();
+    for (const step of scenario.steps) {
+      if (step.open_all) {
+        for (let n = 0; n < 500; n++) {
+          const closed = ids.tree.all().find((e) => e.attrs.role === "treeitem" && e.getAttribute("aria-expanded") === "false");
+          if (!closed) break;
+          const row = rowOf(closed);
+          const twisty = row.children.find((c) => c.tagName === "button" && !c.className.split(" ").includes("name"));
+          twisty.fire("click");
+          await tick();
+        }
+        out.steps.push(snap());
+      } else if (step.click !== undefined) {
+        const li = liOf(step.click);
+        if (!li) { out.steps.push({ missing: step.click }); continue; }
+        rowOf(li).children.find((c) => c.className.split(" ").includes("name")).fire("click");
+        await tick();
+        out.steps.push(detail());
+      } else if (step.level !== undefined) {
+        ids["level-filter"].value = step.level; ids["level-filter"].fire("change"); await tick();
+        out.steps.push(snap());
+      } else if (step.text !== undefined) {
+        ids["text-filter"].value = step.text; ids["text-filter"].fire("input"); await tick();
+        out.steps.push(snap());
+      } else if (step.flavor !== undefined) {
+        ids.flavor.value = step.flavor; ids.flavor.fire("change"); await tick();
+        out.steps.push(snap());
+      }
+    }
+  } catch (error) {
+    out.error = String((error && error.stack) || error);
+  }
+  out.requests = requests;
+  process.stdout.write(JSON.stringify(out));
+})();
+"""
+
+
+def _node() -> str:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not on PATH: the page's behaviour is graded under Node")
+    return node
+
+
+def _drive(folder: Path, scenario: dict[str, Any]) -> dict[str, Any]:
+    folder.mkdir(parents=True, exist_ok=True)
+    harness = folder / "m13-25-harness.js"
+    harness.write_text(_HARNESS, encoding="utf-8")
+    data = folder / "m13-25-scenario.json"
+    data.write_text(json.dumps(scenario), encoding="utf-8")
+    done = subprocess.run(
+        [_node(), str(harness), str(_TEMPLATES / "page.js"), str(data)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    out: dict[str, Any] = json.loads(done.stdout)
+    assert "error" not in out, out["error"]
+    return out
+
+
+def _stdout(server: Any, command: list[str], params: dict[str, Any]) -> str:
+    reply = _run(server, command, params)
+    assert reply.status == 200, reply.body[:300]
+    result = reply.json()
+    assert result["exit_code"] == 0, result["stderr"]
+    text: str = result["stdout"]
+    return text
+
+
+def _scenario(
+    server: Any, explain: list[str], steps: list[dict[str, Any]]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """What the real CLI prints for the install under test, in the shape the
+    harness serves: the command list, `install show`, a tree per flavor
+    folder, and an explain for each path in `explain`, keyed by the absolute
+    path the page asks for. Returns the scenario and the parsed first tree."""
+    listed = _send(server, "GET", "/api/commands").json()
+    shown_text = _stdout(server, ["install", "show"], {})
+    flavors = [f["folder"] for f in json.loads(shown_text)["flavors"]]
+    trees = {f: _stdout(server, ["tree"], {"explain": True, "flavor": f}) for f in flavors}
+    first = json.loads(trees[flavors[0]])
+    base = first["install_root"] + os.sep + first["flavor_folder"]
+    explains = {}
+    for rel in explain:
+        target = base + "/" + rel
+        params = {"path": target, "root": first["install_root"], "flavor": first["flavor_folder"]}
+        explains[target] = _stdout(server, ["explain"], params)
+    scenario = {
+        "commands": listed,
+        "install_show": shown_text,
+        "first_flavor": flavors[0],
+        "trees": trees,
+        "explains": explains,
+        "steps": steps,
+    }
+    return scenario, first
+
+
+def _asked(out: dict[str, Any], command: list[str]) -> list[dict[str, Any]]:
+    return [
+        r["body"]["params"]
+        for r in out["requests"]
+        if r["body"] is not None and r["body"]["command"] == command
+    ]
+
+
+def _ancestors(path: str) -> set[str]:
+    parts = path.split("/")
+    return {""} | {"/".join(parts[:i]) for i in range(1, len(parts))}
+
+
+def test_the_first_view_opens_wtf_and_addons(server: Any, install: Path, tmp_path: Path) -> None:
+    """Owner, 2026-10-16: the tree opens on the flavor folder with `WTF/` and
+    `Interface/AddOns/` expanded. The explorer, not the commands, is shown."""
+    scenario, first = _scenario(server, [], [])
+    out = _drive(tmp_path / "node", scenario)
+    view = out["first"]
+    assert view["explorerHidden"] is False
+    rows = {r["path"]: r for r in view["rows"]}
+    assert rows[""]["expanded"] == "true", "the flavor folder is the open root"
+    for open_folder in ("WTF", "Interface", "Interface/AddOns"):
+        assert rows[open_folder]["expanded"] == "true", open_folder
+    assert "WTF/Config.wtf" in rows
+    assert "Interface/AddOns/DBM-Brawlers" in rows
+    # Only those: every other folder with something under it starts closed,
+    # so nothing below it is drawn.
+    others = [p for p, r in rows.items() if r["expanded"] is not None]
+    others = [p for p in others if p not in ("", "WTF", "Interface", "Interface/AddOns")]
+    assert "WTF/Account" in others, "the capture has a folder to keep closed"
+    for path in others:
+        assert rows[path]["expanded"] == "false", path
+        assert not any(p.startswith(path + "/") for p in rows), path
+    # The page asked for the first flavor folder's tree, with the explain flag.
+    trees = _asked(out, ["tree"])
+    assert trees and trees[0]["explain"] is True
+    assert trees[0].get("flavor", first["flavor_folder"]) == first["flavor_folder"]
+
+
+def test_every_item_drawn_has_a_badge_from_python(
+    server: Any, install: Path, tmp_path: Path
+) -> None:
+    """A badge on every listed item, carrying the verdict Python computed.
+    The badge's own text is not pinned: the owner's player words will come
+    from a `label` on `Verdict`. The verdict's words reach the player on the
+    row, and each level gets its own class, which the colours hang on."""
+    scenario, first = _scenario(server, [], [{"open_all": True}])
+    out = _drive(tmp_path / "node", scenario)
+    drawn = {r["path"]: r for r in out["steps"][0]["rows"]}
+    items = {i["path"]: i for i in first["items"]}
+    assert set(items) <= set(drawn), sorted(set(items) - set(drawn))[:5]
+    by_level: dict[str, set[str]] = {}
+    for path, item in items.items():
+        badge = drawn[path]["badge"]
+        assert badge is not None, path
+        words = item["verdict"]["words"]
+        assert words in badge["text"] + "\n" + badge["title"], (path, badge)
+        by_level.setdefault(item["verdict"]["level"], set()).add(badge["cls"])
+    for level, classes in by_level.items():
+        assert len(classes) == 1, (level, classes)
+    assert len({min(c) for c in by_level.values()}) == len(by_level), by_level
+
+
+def test_filter_to_no_and_by_text(server: Any, install: Path, tmp_path: Path) -> None:
+    """The owner's check, "filter to no": only `no` items stay, with the
+    folders that lead to them. The level choices come from the data (D3)."""
+    steps: list[dict[str, Any]] = [{"level": "no"}, {"level": ""}, {"text": "config.wtf"}]
+    scenario, first = _scenario(server, [], steps)
+    out = _drive(tmp_path / "node", scenario)
+    items = {i["path"]: i for i in first["items"]}
+    levels = {i["verdict"]["level"] for i in items.values()}
+    assert out["first"]["levels"][0] == ""
+    assert set(out["first"]["levels"][1:]) == levels
+
+    def check(view: dict[str, Any], keep: Any) -> set[str]:
+        hits = {r["path"] for r in view["rows"] if r["path"] in items and keep(items[r["path"]])}
+        assert hits, view["status"]
+        allowed = hits.union(*(_ancestors(p) for p in hits))
+        for row in view["rows"]:
+            assert row["path"] in allowed, row["path"]
+        return hits
+
+    no_rows = check(out["steps"][0], lambda i: i["verdict"]["level"] == "no")
+    assert no_rows == {p for p, i in items.items() if i["verdict"]["level"] == "no"}
+    # Clearing the filter draws the first view again.
+    first_paths = [r["path"] for r in out["first"]["rows"]]
+    assert [r["path"] for r in out["steps"][1]["rows"]] == first_paths
+    found = check(out["steps"][2], lambda i: "config.wtf" in i["path"].lower())
+    assert "WTF/Config.wtf" in found
+
+
+def test_the_detail_pane_shows_what_who_and_the_verdict(
+    server: Any, install: Path, home: Path, tmp_path: Path
+) -> None:
+    """The owner's check: open `Config.wtf` and one SavedVariables file. The
+    pane shows what the file is, who writes it and when, and the verdict's
+    words, all from `explain --json`; the home folder never appears."""
+    rels = ["WTF/Config.wtf", SV_FILE]
+    steps: list[dict[str, Any]] = [{"open_all": True}, *({"click": r} for r in rels)]
+    scenario, first = _scenario(server, rels, steps)
+    out = _drive(tmp_path / "node", scenario)
+    explains = _asked(out, ["explain"])
+    assert len(explains) == 2
+    for rel, pane, params in zip(rels, out["steps"][1:], explains, strict=True):
+        assert "missing" not in pane, pane
+        target = first["install_root"] + os.sep + first["flavor_folder"] + "/" + rel
+        assert params == {
+            "path": target,
+            "root": first["install_root"],
+            "flavor": first["flavor_folder"],
+        }
+        report = json.loads(scenario["explains"][target])
+        entry = report["result"]["entry"]
+        assert entry["what"] in pane["facts"], rel
+        assert entry["written_by"] in pane["facts"], rel
+        assert report["verdict"]["words"] in pane["verdict"], rel
+        assert pane["verdictBadge"], "the verdict level is drawn as a badge"
+        assert rel.rsplit("/", 1)[-1] in pane["title"]
+        assert pane["status"] == ""
+        for text in pane.values():
+            assert str(home) not in text, rel
+
+
+def test_home_is_shown_as_tilde(server: Any, install: Path, home: Path, tmp_path: Path) -> None:
+    scenario, first = _scenario(server, [], [])
+    assert first["install_root"].startswith(str(home) + os.sep)
+    root = _drive(tmp_path / "node", scenario)["first"]["treeRoot"]
+    assert root.startswith("~"), root
+    assert str(home) not in root
+    assert root.endswith(first["flavor_folder"])
+
+
+def test_the_flavor_picker_shows_with_two_folders_constructed(
+    server: Any, install: Path, tmp_path: Path
+) -> None:
+    """Hidden with one flavor folder, shown with two; picking one loads its
+    tree. The second folder is a copy of the capture's (constructed)."""
+    single, _ = _scenario(server, [], [])
+    assert _drive(tmp_path / "one", single)["first"]["flavorBoxHidden"] is True
+    second = "_ptr_"  # tests may name a flavor (L6); the library discovers it
+    shutil.copytree(install / FLAVOR, install / second)
+    scenario, first = _scenario(server, [], [])
+    flavors = [f["folder"] for f in json.loads(scenario["install_show"])["flavors"]]
+    assert sorted(flavors) == sorted([FLAVOR, second])
+    other = next(f for f in flavors if f != first["flavor_folder"])
+    scenario["steps"] = [{"flavor": other}]
+    out = _drive(tmp_path / "two", scenario)
+    assert out["first"]["flavorBoxHidden"] is False
+    assert out["first"]["treeRoot"].endswith(first["flavor_folder"])
+    assert out["steps"][0]["treeRoot"].endswith(other)
+    assert _asked(out, ["tree"])[-1]["flavor"] == other
+
+
+def test_hostile_names_draw_as_inert_text_constructed(
+    server: Any, hostile: Path, tmp_path: Path
+) -> None:
+    """Names with `</script>`, `<img onerror=…>`, U+2028 and U+202E, drawn by
+    the page: markup stays text (the stand-in DOM throws on an HTML sink),
+    and the two invisible characters are shown, never applied."""
+    saved = "WTF/Account/90000001#6/SavedVariables/"
+    picked = [saved + SCRIPT_CLOSE + ".lua", saved + RLO + "aul.exe.lua"]
+    steps: list[dict[str, Any]] = [{"open_all": True}, *({"click": p} for p in picked)]
+    scenario, _ = _scenario(server, picked, steps)
+    out = _drive(tmp_path / "node", scenario)
+    rows = {r["path"]: r for r in out["steps"][0]["rows"]}
+    hostile_paths = [saved + SCRIPT_CLOSE + ".lua"]
+    hostile_paths += [saved + n for n in HOSTILE_SV if n != "<"]
+    hostile_paths += ["Interface/AddOns/" + n for n in HOSTILE_ADDONS]
+    for path in hostile_paths:
+        assert path in rows, repr(path)
+        row = rows[path]
+        assert row["badge"] is not None, repr(path)
+        for text in (row["name"], row["nameTitle"], row["text"]):
+            assert LSEP not in text and RLO not in text, repr(text)
+        if LSEP in path:
+            assert "2028" in row["name"], row["name"]
+        if RLO in path:
+            assert "202E" in row["name"].upper(), row["name"]
+    assert IMG in rows["Interface/AddOns/" + IMG]["name"], "markup is drawn as its own text"
+    assert "script>.lua" in rows[saved + SCRIPT_CLOSE + ".lua"]["name"]
+    for pane in out["steps"][1:]:
+        assert "missing" not in pane, pane
+        for text in pane.values():
+            assert LSEP not in text and RLO not in text, repr(text)
+    assert "script>.lua" in out["steps"][1]["title"]
+    assert "202E" in out["steps"][2]["title"].upper()
+
+
+# ─── the cap counts the escapes (stand-in `wowlab`, constructed) ─────────────
+
+
+def _stand_in_tree() -> Any:
+    app = typer.Typer()
+
+    @app.command("emit")
+    def emit(json_out: bool = typer.Option(False, "--json")) -> None:
+        """Prints what the test's script prints."""
+
+    @app.command("other")
+    def other(json_out: bool = typer.Option(False, "--json")) -> None:
+        """Keeps `emit` a subcommand."""
+
+    return typer.main.get_command(app)
+
+
+@contextmanager
+def _stand_in(tmp_path: Path, source: str, cap: int) -> Iterator[Any]:
+    script = tmp_path / "m13-25-emit_constructed.py"
+    script.write_text(source, encoding="utf-8")
+    served = ui.make_server(
+        command=_stand_in_tree(),
+        wowlab_argv=[sys.executable, "-I", str(script)],
+        output_cap_bytes=cap,
+    )
+    thread = threading.Thread(target=served.serve_forever, args=(0.05,), daemon=True)
+    thread.start()
+    try:
+        yield served
+    finally:
+        served.shutdown()
+        served.server_close()
+        thread.join(10)
+
+
+_EMIT = "import sys\nsys.{stream}.buffer.write({data!r})\nsys.{stream}.flush()\n"
+_ESCAPED = ["<", ">", "&", LSEP, chr(0x2029)]
+_FIXED = 200  # the JSON around the two strings, generously
+
+
+@pytest.mark.parametrize("char", _ESCAPED, ids=["lt", "gt", "amp", "u2028", "u2029"])
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_the_cap_counts_six_bytes_per_escape_constructed(
+    tmp_path: Path, char: str, stream: str
+) -> None:
+    """Each of `< > & U+2028 U+2029` costs its six-byte escape against the
+    cap: n of them fit a cap of 6n exactly, and a cap of 6n - 1 keeps n - 1,
+    whole, with `truncated` set. The body never holds the raw character."""
+    n = 1000
+    source = _EMIT.format(stream=stream, data=(char * n).encode("utf-8"))
+    for cap, kept, cut in ((6 * n, n, False), (6 * n - 1, n - 1, True)):
+        with _stand_in(tmp_path, source, cap) as served:
+            reply = _run(served, ["emit"], {})
+        assert reply.status == 200
+        assert char.encode("utf-8") not in reply.body
+        result = reply.json()
+        assert result["truncated"] is cut, (cap, result["truncated"])
+        assert result[stream] == char * kept, (cap, len(result[stream]))
+        assert len(reply.body) <= cap + _FIXED
+
+
+def test_the_escapes_hold_on_stdout_and_stderr_constructed(tmp_path: Path) -> None:
+    text = SCRIPT_CLOSE + IMG + "&" + LSEP + chr(0x2029) + RLO
+    data = text.encode("utf-8")
+    source = _EMIT.format(stream="stdout", data=data) + _EMIT.format(stream="stderr", data=data)
+    with _stand_in(tmp_path, source, ui.DEFAULT_OUTPUT_CAP_BYTES) as served:
+        reply = _run(served, ["emit"], {})
+    for raw in ("<", ">", "&", LSEP, chr(0x2029)):
+        assert raw.encode("utf-8") not in reply.body, repr(raw)
+    result = reply.json()
+    assert result["stdout"] == text and result["stderr"] == text
+    assert result["truncated"] is False
+
+
+def test_a_hostile_name_in_an_error_stays_escaped_constructed(server: Any, hostile: Path) -> None:
+    """A run on a hostile path that is not there: whatever it prints, the
+    body holds no markup and no raw separator."""
+    root = str(hostile)
+    missing = root + os.sep + FLAVOR + "/WTF/" + IMG + LSEP + "missing" + SCRIPT_CLOSE
+    reply = _run(server, ["explain"], {"path": missing, "root": root, "flavor": FLAVOR})
+    assert reply.status == 200
+    for raw in ("<", ">", "&", LSEP, chr(0x2029)):
+        assert raw.encode("utf-8") not in reply.body, repr(raw)
+    result = reply.json()
+    assert "missing" in result["stdout"] + result["stderr"]
+
+
+# ─── /api/commands: home and sep ─────────────────────────────────────────────
+
+
+def _commands_with_home(monkeypatch: pytest.MonkeyPatch, value: str) -> _Reply:
+    for name in ("HOME", "USERPROFILE"):
+        monkeypatch.setenv(name, value)
+    served = ui.make_server(command=_stand_in_tree())
+    thread = threading.Thread(target=served.serve_forever, args=(0.05,), daemon=True)
+    thread.start()
+    try:
+        return _send(served, "GET", "/api/commands")
+    finally:
+        served.shutdown()
+        served.server_close()
+        thread.join(10)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="a POSIX root folder")
+def test_a_root_home_is_not_offered_for_tilde_constructed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Home at the file-system root would turn every path into `~`."""
+    listed = _commands_with_home(monkeypatch, os.sep).json()
+    assert listed["home"] == ""
+    assert listed["sep"] == os.sep
+
+
+@pytest.mark.xfail(strict=True, reason="M13-25 fix round")
+@pytest.mark.skipif(os.name == "nt", reason="Windows forbids < and > in file names")
+def test_a_hostile_home_is_escaped_in_the_command_list_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The home folder is data from the machine, like a file name, and it
+    reaches the page in `/api/commands`. It is escaped as a run's output is:
+    no `< > &` and no raw U+2028 or U+2029 in the body, and the decoded value
+    is unchanged."""
+    folder = tmp_path / ("h<script>&" + LSEP + chr(0x2029))
+    folder.mkdir()
+    reply = _commands_with_home(monkeypatch, str(folder))
+    assert reply.json()["home"] == str(folder)
+    for raw in ("<", ">", "&", LSEP, chr(0x2029)):
+        assert raw.encode("utf-8") not in reply.body, repr(raw)
+
+
+# ─── the look the owner set (2026-10-16) ─────────────────────────────────────
+
+
+def _css() -> str:
+    return re.sub(
+        r"/\*.*?\*/", "", (_TEMPLATES / "page.css").read_text(encoding="utf-8"), flags=re.DOTALL
+    )
+
+
+def _block(css: str, start: int) -> str:
+    """The text inside the braces that open at or after `start`."""
+    opened = css.index("{", start)
+    depth = 0
+    for at in range(opened, len(css)):
+        if css[at] == "{":
+            depth += 1
+        elif css[at] == "}":
+            depth -= 1
+            if depth == 0:
+                return css[opened + 1 : at]
+    raise AssertionError("unbalanced CSS")
+
+
+_VAR = r"(--[\w-]+)\s*:\s*(#[0-9a-fA-F]{6})\b"
+_COLOUR = r"(?<![-\w])color:\s*(#[0-9a-fA-F]{6})\b"
+
+
+def _palettes() -> dict[str, dict[str, str]]:
+    css = _css()
+    dark = dict(re.findall(_VAR, _block(css, css.index(":root"))))
+    media = re.search(r"@media\s*\(\s*prefers-color-scheme\s*:\s*light\s*\)", css)
+    assert media is not None, "a light scheme follows prefers-color-scheme"
+    light = dict(re.findall(_VAR, _block(css, media.start())))
+    assert light, "the light scheme sets its own colours"
+    return {"dark": dark, "light": {**dark, **light}}
+
+
+def _luminance(colour: str) -> float:
+    def channel(c: float) -> float:
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (int(colour[i : i + 2], 16) / 255 for i in (1, 3, 5))
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+
+
+def _contrast(a: str, b: str) -> float:
+    high, low = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+# Text colours on the backgrounds they are drawn on, by the palette's own
+# names. If the palette is renamed, the test-writer updates this list.
+_TEXT_PAIRS = [
+    (fg, bg)
+    for fg in ("--text", "--muted", "--gold", "--error", "--field-text")
+    for bg in ("--page", "--panel", "--panel-edge", "--selected", "--hover", "--field")
+] + [(fg, bg) for fg in ("--ink", "--ink-muted") for bg in ("--parchment-hi", "--parchment-lo")]
+
+
+@pytest.mark.parametrize("scheme", ["dark", "light"])
+def test_text_meets_wcag_aa_in_both_schemes(scheme: str) -> None:
+    palette = _palettes()[scheme]
+    for fg, bg in _TEXT_PAIRS:
+        ratio = _contrast(palette[fg], palette[bg])
+        assert ratio >= 4.5, (scheme, fg, bg, round(ratio, 2))
+    # Literal text colours on the parchment.
+    rules = re.findall(r"(?:\.parchment|#explain-status)[^{}]*\{[^}]*\}", _css())
+    assert rules
+    for rule in rules:
+        for colour in re.findall(_COLOUR, rule):
+            for bg in ("--parchment-hi", "--parchment-lo"):
+                assert _contrast(colour, palette[bg]) >= 4.5, (colour, bg)
+
+
+def _hue_sat(colour: str) -> tuple[float, float]:
+    r, g, b = (int(colour[i : i + 2], 16) / 255 for i in (1, 3, 5))
+    high, low = max(r, g, b), min(r, g, b)
+    light = (high + low) / 2
+    if high == low:
+        return 0.0, 0.0
+    sat = (high - low) / (2 - high - low if light > 0.5 else high + low)
+    if high == r:
+        hue = ((g - b) / (high - low)) % 6
+    elif high == g:
+        hue = (b - r) / (high - low) + 2
+    else:
+        hue = (r - g) / (high - low) + 4
+    return hue * 60, sat
+
+
+def test_badges_read_like_item_quality() -> None:
+    """Gold for `gate`, red for `no`, grey for `unclassified`, muted for
+    `folder` and `not_applicable`; each badge's text meets AA on every stop
+    of its own background."""
+    css = _css()
+    text: dict[str, str] = {}
+    for level in ("gate", "no", "unclassified", "folder", "not_applicable"):
+        match = re.search(rf"[^{{}}]*\.badge-{level}(?![\w-])[^{{}}]*\{{([^}}]*)\}}", css)
+        assert match is not None, f"no badge colour for {level}"
+        rule = match.group(1)
+        colour = re.search(_COLOUR, rule)
+        assert colour is not None, level
+        text[level] = colour.group(1)
+        background = re.search(r"background[^:]*:([^;]*)", rule)
+        assert background is not None, level
+        stops = re.findall(r"#[0-9a-fA-F]{6}\b", background.group(1))
+        assert stops, level
+        for stop in stops:
+            assert _contrast(text[level], stop) >= 4.5, (level, stop)
+    hue, sat = _hue_sat(text["gate"])
+    assert 35 <= hue <= 60 and sat > 0.5, ("gate reads gold", hue, sat)
+    hue, sat = _hue_sat(text["no"])
+    assert (hue <= 15 or hue >= 345) and sat > 0.5, ("no reads red", hue, sat)
+    assert _hue_sat(text["unclassified"])[1] < 0.1, "unclassified reads grey"
+    for level in ("folder", "not_applicable"):
+        assert _hue_sat(text[level])[1] < 0.35, f"{level} reads muted"
+        assert text[level] not in (text["gate"], text["no"], text["unclassified"]), level
+
+
+def test_a_serif_system_font_and_no_art_from_outside() -> None:
+    css = _css()
+    stacks = re.findall(r"(?:font-family|--serif)\s*:\s*([^;]+);", css)
+    assert any(s.strip().endswith("serif") and "sans-serif" not in s for s in stacks), stacks
+    for marker in ("@font-face", "url(", "@import", "image-set("):
+        assert marker not in css, marker
+
+
+def test_the_level_choices_are_not_written_into_the_page(server: Any) -> None:
+    """The verdict filter starts with "All" only; the levels come from the
+    data (§14.5 D3)."""
+    body = _page(server).body.decode("utf-8")
+    select = re.search(r'<select id="level-filter">(.*?)</select>', body, flags=re.DOTALL)
+    assert select is not None
+    assert re.findall(r"<option\b", select.group(1)) == ["<option"]
+    assert 'value=""' in select.group(1)
