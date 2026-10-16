@@ -166,15 +166,29 @@
     return typeof value; // "object", "string", "number" or "boolean"
   }
 
+  // Bidi controls (U+202A-U+202E, U+2066-U+2069) and zero-width characters
+  // (U+200B-U+200D, U+2060, U+FEFF) could reorder or hide what a key or
+  // value says; they are shown escaped. JSON.stringify already escapes
+  // control characters and lone surrogates.
+  const JT_HIDDEN = /[​-‍‪-‮⁠⁦-⁩﻿]/g;
+
+  function jtQuote(text) {
+    return JSON.stringify(text).replace(
+      JT_HIDDEN,
+      (ch) => "\\u" + ch.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0"),
+    );
+  }
+
+  // An object's key in JSON form; an array's index (a number) as it is.
   function jtKey(key) {
-    const span = make("span", key);
+    const span = make("span", typeof key === "number" ? String(key) : jtQuote(key));
     span.className = "jt-key";
     return span;
   }
 
   function jtScalar(value) {
     const kind = jtKind(value);
-    const span = make("span", kind === "string" ? JSON.stringify(value) : String(value));
+    const span = make("span", kind === "string" ? jtQuote(value) : String(value));
     span.className = "jt-value jt-" + kind;
     return span;
   }
@@ -206,7 +220,7 @@
       return row;
     }
     const entries =
-      kind === "array" ? value.map((item, i) => [String(i), item]) : Object.entries(value);
+      kind === "array" ? value.map((item, i) => [i, item]) : Object.entries(value);
     const node = make("details");
     node.className = "jt-node";
     const summary = make("summary");
