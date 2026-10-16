@@ -43,6 +43,9 @@ What the audit added:
   every folder (`ancestors`, `flavor_folder_verdict`), the detail pane's
   file-map text from `plain` with no Markdown, and the whole
   `/api/commands` body escaped.
+- Round 2 (2026-10-16): a symlinked addon (constructed) has the link label,
+  `badge-link`, its own filter choice "link" (never under the gate label),
+  and the link's words in the detail pane.
 """
 
 from __future__ import annotations
@@ -694,6 +697,12 @@ def _asked(out: dict[str, Any], command: list[str]) -> list[dict[str, Any]]:
     ]
 
 
+def _group(verdict: dict[str, Any]) -> str:
+    """The Verdict filter's group: the level, except that a link, at any
+    level, is its own group "link" (round 2 on #206)."""
+    return "link" if verdict.get("link") is True else str(verdict["level"])
+
+
 def _ancestors(path: str) -> set[str]:
     parts = path.split("/")
     return {""} | {"/".join(parts[:i]) for i in range(1, len(parts))}
@@ -753,7 +762,7 @@ def test_every_item_drawn_has_a_badge_from_python(
         assert verdict["label"], path
         assert badge["text"].startswith(verdict["label"]), (path, badge)
         assert verdict["words"] in badge["text"] + "\n" + badge["title"], (path, badge)
-        by_level.setdefault(verdict["level"], set()).add(badge["cls"])
+        by_level.setdefault(_group(verdict), set()).add(badge["cls"])
         extra = [b["text"] for b in row["badges"][1:]]
         assert extra == ([verdict["server_label"]] if verdict["server_label"] else []), path
     assert any(v["server_label"] for v in verdicts.values()), "the capture has one to mark"
@@ -776,7 +785,7 @@ def test_filter_to_no_and_by_text(server: Any, install: Path, tmp_path: Path) ->
     scenario, first = _scenario(server, [], steps)
     out = _drive(tmp_path / "node", scenario)
     items = {i["path"]: i for i in [*first["items"], *first["ancestors"]]}
-    levels = {i["verdict"]["level"]: i["verdict"]["label"] for i in items.values()}
+    levels = {_group(i["verdict"]): i["verdict"]["label"] for i in items.values()}
     assert out["first"]["levels"][0] == ""
     assert set(out["first"]["levels"][1:]) == set(levels)
     # Each choice reads as Python's label for its level.
@@ -792,8 +801,8 @@ def test_filter_to_no_and_by_text(server: Any, install: Path, tmp_path: Path) ->
             assert row["path"] in allowed, row["path"]
         return hits
 
-    no_rows = check(out["steps"][0], lambda i: i["verdict"]["level"] == "no")
-    assert no_rows == {p for p, i in items.items() if i["verdict"]["level"] == "no"}
+    no_rows = check(out["steps"][0], lambda i: _group(i["verdict"]) == "no")
+    assert no_rows == {p for p, i in items.items() if _group(i["verdict"]) == "no"}
     # Clearing the filter draws the first view again.
     first_paths = [r["path"] for r in out["first"]["rows"]]
     assert [r["path"] for r in out["steps"][1]["rows"]] == first_paths
@@ -919,6 +928,88 @@ def test_hostile_names_draw_as_inert_text_constructed(
             assert LSEP not in text and RLO not in text, repr(text)
     assert "script>.lua" in out["steps"][1]["title"]
     assert "202E" in out["steps"][2]["title"].upper()
+
+
+@pytest.fixture
+def linked(install: Path, tmp_path: Path) -> str:
+    """An addon folder that is a symlink to a folder outside the install
+    (constructed: no capture holds one). Returns its path in the flavor
+    folder."""
+    target = tmp_path / "elsewhere_constructed" / "LinkedAddon"
+    target.mkdir(parents=True)
+    (target / "LinkedAddon.toc").write_text("## Interface: 1\n", encoding="utf-8")
+    link = install / FLAVOR / "Interface" / "AddOns" / "LinkedAddon"
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError as error:  # Windows without the symlink privilege
+        pytest.skip(f"cannot make a symlink here: {error}")
+    return "Interface/AddOns/LinkedAddon"
+
+
+def test_a_linked_addon_has_its_own_badge_group_and_words_constructed(
+    server: Any, install: Path, linked: str, tmp_path: Path
+) -> None:
+    """Round 2 on #206: a symlinked addon is marked as a link. Its badge says
+    Python's link label with the `badge-link` class on top of its level's;
+    the Verdict filter lists links as their own choice "link", never under
+    the gate label, and the gate choice leaves the link out; the detail pane
+    shows the link's label and words."""
+    from wowlab_core import verdict as verdict_module
+
+    steps: list[dict[str, Any]] = [
+        {"open_all": True},
+        {"level": "link"},
+        {"level": "gate"},
+        {"level": ""},
+        {"click": linked},
+    ]
+    scenario, first = _scenario(server, [linked], steps)
+    listed = {i["path"]: i for i in [*first["items"], *first["ancestors"]]}
+    assert linked in listed, "tree lists the link"
+    link_verdict = listed[linked]["verdict"]
+    assert link_verdict["link"] is True
+    assert link_verdict["label"] == verdict_module.LINK_LABEL
+    gate_labels = {v["label"] for v in (i["verdict"] for i in listed.values()) if not v["link"]}
+    assert link_verdict["label"] not in gate_labels
+    out = _drive(tmp_path / "node", scenario)
+
+    # The badge.
+    row = {r["path"]: r for r in out["steps"][0]["rows"]}[linked]
+    badge = row["badge"]
+    assert badge is not None
+    assert badge["text"].startswith(link_verdict["label"]), badge
+    classes = badge["cls"].split()
+    assert "badge-link" in classes and "badge" in classes, classes
+    assert f"badge-{link_verdict['level']}" in classes, classes
+    assert link_verdict["words"] in badge["text"] + "\n" + badge["title"]
+
+    # The filter: "link" is its own choice, read as the link label.
+    choices = dict(zip(out["first"]["levels"], out["first"]["levelTexts"], strict=True))
+    assert choices.get("link") == link_verdict["label"], choices
+    assert "gate" in choices and choices["gate"] == verdict_module.LABELS["gate"], choices
+    links = {p for p, i in listed.items() if i["verdict"]["link"]}
+    shown_link = {r["path"] for r in out["steps"][1]["rows"]} - {""}
+    assert linked in shown_link
+    for path in shown_link:
+        assert path in links or any(q.startswith(path + "/") for q in links), path
+    shown_gate = {r["path"] for r in out["steps"][2]["rows"]}
+    assert shown_gate, "the capture has gate files"
+    assert not shown_gate & links, sorted(shown_gate & links)
+    for path in shown_gate & set(listed):
+        verdict = listed[path]["verdict"]
+        is_way_in = any(
+            q.startswith(path + "/") and _group(listed[q]["verdict"]) == "gate" for q in listed
+        )
+        assert _group(verdict) == "gate" or is_way_in, path
+
+    # The detail pane.
+    pane = out["steps"][4]
+    assert "missing" not in pane, pane
+    report = json.loads(scenario["explains"][next(iter(scenario["explains"]))])
+    assert report["verdict"]["link"] is True
+    assert report["verdict"]["label"] in pane["verdict"], pane
+    assert report["verdict"]["words"] in pane["verdict"], pane
+    assert "badge-link" in pane["verdictBadge"].split(), pane
 
 
 # ─── the cap counts the escapes (stand-in `wowlab`, constructed) ─────────────
