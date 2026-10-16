@@ -1348,6 +1348,21 @@ never edited. Every capture passes through `scripts/lab_capture.py`, which
 > a captured log. A spawn UID or a real timestamp can tie the log to another
 > player's published log of the same fight, and that log names the owner.
 
+> **Amendment 2026-10-16 (M13-34).** In `.build.info`, each row (one per
+> installed product) has its own `Tags` cell, and each holds two country
+> tokens: `geoip-<CC>?`, the country the client was in when it last updated,
+> and `acct-<CCC>?`, the account's country. In every row, the tool replaces
+> the geoip letters with `ZZ` and the account letters with `ZZZ` (ISO 3166
+> user-assigned codes, so each token keeps its shape). It leaves the region
+> token and the `Branch` column as they are. A token is placed by the
+> header's `Tags` column, in rows with as many cells as the header, as a
+> whole token bounded by the cell's edges, a space or a `:`. Any other
+> `geoip` or `acct`, in any casing or shape and in any row, refuses the whole
+> file with a count only. The provenance row records
+> `geoip-country-replaced: N` and `acct-country-replaced: N`. The two
+> `.build.info` fixtures committed before this rule keep their real tokens
+> (owner decision, 2026-10-16).
+
 Structure, key order, number text, escapes, line endings and everything else
 stay byte-for-byte. The scrubber works at the byte level with targeted
 replacements; it does not parse and re-serialize (the parser does not exist
@@ -1484,7 +1499,9 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   - customization choices (option id to choice id, mapped from the barber
     shop's choice index to the choice's `id`) for the model the barber shop
     was showing (`chr_model_id`), recorded only at `BARBER_SHOP_OPEN` and
-    after an applied change (`BARBER_SHOP_APPEARANCE_APPLIED` **[verify]**),
+    after an applied change (`BARBER_SHOP_APPEARANCE_APPLIED`; in the 70425
+    capture a later `BARBER_SHOP_OPEN` replaced that record, amendment of
+    2026-10-16 below),
     never at close after a cancelled preview. Appearance changes only in the
     barber shop or through a paid service at character select, so the last
     record is kept from session to session and describes the character
@@ -1741,6 +1758,57 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   `/wowlab skip` switches off (section keys `spellbook`, `actionbars`,
   `bindings`), and every new API is **[verify]** until the owner's schema-3
   capture (`docs/handoffs/M13-05.md`).
+
+  Amended 2026-10-16 (M13-05 and M11-29, from the owner's capture on
+  1.60.1.70425, fixtures under `lab/core/tests/fixtures/macos-70425/`;
+  `docs/LAB_FORMATS.md`, amendment of that date). The reader reads it as
+  schema 3 with no unknown key, and the schema-1 captures read as before.
+
+  Confirmed on that build:
+  - every API the three sections ask is present and ran with no error and
+    no secret value, out of combat;
+  - a global `issecretvalue` function was present (the kit's 69893 list
+    lacks it) and answered every call. The probe cannot tell the client's
+    function from an addon's, so where it comes from is **[verify]**.
+    `C_Secrets` and `canaccessvalue` were present too;
+  - ranks show as `Rank n` subtexts, one spellbook item per rank, each with
+    its own spell id, and there is no "show all ranks" toggle;
+  - a flyout has an action id and no spell id;
+  - every action slot up to 180 answers nothing or a value, never an error;
+  - the eight lines of `bindings-cache.wtf` match the live `GetBindingKey`
+    keys. The other 118 bound commands are unexplained;
+  - `left_out_config` is the active class config;
+  - the new sections' change events are names the client knows;
+  - no macro name or body is stored.
+
+  Contradicted:
+  - a `#showtooltip` macro slot has no subtype, so its id is not the spell's;
+  - `ACCOUNT_BINDINGS` and `CHARACTER_BINDINGS` were not numbers at the
+    last gather (nil or another type; the file cannot say which). So
+    `binding_set` (2 with character bindings ticked) is not named from the
+    file. `Enum.BindingSet` is a **[verify]** candidate for a later schema.
+
+  Still **[verify]**:
+  - how macro indices are numbered;
+  - whether `GetBinding` lists a spell dragged onto a key;
+  - whether the client rewrites `macros-cache.txt` and `bindings-cache.wtf`
+    at logout on Forever. The owner's `/say` macro and the dragged spell
+    are in neither, so the caches may predate the session;
+  - future spells, a hunter's named pet, combat, restricted content and
+    hitches.
+
+  For `customization`, `BARBER_SHOP_APPEARANCE_APPLIED` fires and reaches
+  the section. With one sit, though, a second `BARBER_SHOP_OPEN` reached it
+  after the Accept, and that open's record, holding the new look, replaced
+  the applied one. Whether the shop actually reopens, and why, is
+  **[verify]**: the owner saw it close. So in this capture the applied
+  change ended as `recorded_at = "open"` (M11-29's "reason it cannot").
+  `currentChoiceIndex` is consistent with 1-based: the 70058 record's index
+  7, for an option with 7 choices, could not come from a 0-based client.
+  That the client's list has the table's 7 choices is **[verify]**.
+  `GetViewingChrModel` returned nil. M11-29's other question, why, stays
+  **[verify]**. The format does not change: the next change is still
+  schema 4.
 
   Schema 1 may change after M11-03. Edits from the capture land before
   M11-04 starts; after M11-04 merges, any change is a new schema (schema 2
@@ -2943,6 +3011,9 @@ The owner's working names are kept beside the ticket ids.
 **v0.1** contains M13-02 to M13-04, M13-09 and M13-10, M13-21 to M13-27
 (*amended 2026-10-15*), and M13-06 if M13-05 has landed. M13-08 ships in v0.2 if it has not landed; v0.1 is not held for
 it. M13-07 ships only in the form its owner test allows.
+*Amended 2026-10-16 (owner):* v0.1 does not wait for M13-02's human
+Windows run. It ships with Windows marked untested (ADR-0031's platform rule),
+and the CI job stays on.
 
 ### 15.2 What is known, and what is [verify]
 
@@ -3038,6 +3109,8 @@ M13-01 ADR-0031 accepted ─┬─ M13-03 release pipeline ───────
                                                               ├─ M13-07 macros fix (owner test first)
                                                               └─ M13-08 binds coach ─ (v0.2 if late)
 ```
+
+*Amended 2026-10-16 (owner):* in the graph above, M13-02's human Windows run no longer gates M13-11. v0.1 ships with Windows untested (§15.1), and M13-02 stays open for a later release.
 
 M13-01 comes first. M13-03, M13-09 and M13-10 run alongside M13-02 and
 M13-04. M13-02's CI work starts at once; its human run needs M13-04. M13-05

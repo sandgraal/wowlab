@@ -30,6 +30,23 @@ the test that uses them, and are labelled `constructed` (invariant L8).
   file whose path an earlier run already holds never replaces it. Earlier
   runs are never overwritten. The `platform` column stays the platform
   (`macos`), not the folder name.
+  *Amended 2026-10-16 (M13-05), files-only runs.* A run folder may hold
+  only the files a ticket needs, with no `.build.info` and no
+  `.flavor.info`. It is then not an install root.
+  - It must be declared, with its reason, in `FILES_ONLY_RUNS` in
+    `tests/parser/test_layout_fixtures.py`. A test fails on an undeclared
+    one.
+  - It may hold SavedVariables files only.
+  - Its `client_version` column comes from the capture run.
+  - Its files are classified inside an install root borrowed from
+    `macos/`.
+
+  The first is `macos-70425/`, two `WowLab.lua` files. Its `.build.info`
+  was left out for privacy: the tags cell carries a geo-IP country tag
+  that `scripts/lab_capture.py` does not scrub (scrub rule: M13-34). Its
+  `.flavor.info` was left out too. The staged copy is byte-identical to
+  the committed `macos/forever/.flavor.info` (checked with `cmp`), so it
+  adds nothing, and on its own it is no install root.
 - **Immutability.** Never edit a committed fixture. A new client version is
   a new file.
 - **Not fixtures.** Blizzard's exported interface code and art are never
@@ -118,6 +135,14 @@ the client:
   The capture notes say it is the same character after a barber-shop
   visit. Pseudonyms from different runs still prove nothing, so no test
   relies on the two files being one character.
+  The M13-05 capture (build 70425, 2026-10-16) is a sixth run, kept in its
+  own folder `macos-70425/`. It is the first schema-3 lab-addon capture,
+  and the M11-29 barber-shop check rode along in the same session. Only its
+  two `WowLab.lua` files are committed (conductor's ruling): no
+  `.build.info` or `.flavor.info`, so `macos-70425/` is not an install
+  root, and the install-discovery tests do not list it. Its character
+  folder `1/Labchard-Labrealme` is this run's pseudonym. It is not proven
+  to be M11-03's or M11-23's `Labchard`.
 - Combat logs from part 3 on are captured with shifted timestamps (M10-02
   follow-up 5, `timestamps-shifted`): every stamp and the file name moved by
   one secret offset per log, format kept, so neither the date nor the time
@@ -223,3 +248,5 @@ the client:
 | `macos-70058/.build.info` | build-info | (install root) | 1.60.1.70058 | macos | owner | owner | none | M11-23 capture run, 2026-09-29, its own install root (`<platform>-<build>`, see Rules). LF; header and one row. Same 15 cells in the same order as `macos/.build.info`: only `Build Key`, `CDN Key` and `Version` differ (checked cell by cell before commit); no account or region token beyond what `macos/.build.info` already holds |
 | `macos-70058/forever/.flavor.info` | flavor-info | _classic_beta_ | 1.60.1.70058 | macos | owner | owner | none | LF; byte-identical to `macos/forever/.flavor.info` (`wow_classic_beta`) |
 | `macos-70058/forever/WTF/Account/90000001#6/1/Labchard-Labrealmg/SavedVariables/WowLab.lua` | savedvariables | _classic_beta_ | 1.60.1.70058 | macos | owner | owner | identity-rewritten: path only | requested with `--sv`; first fixture with a lab-addon customization record (M11-23): `WowLabCharDB` (schema 1) after the owner opened the barber shop in Orgrimmar twice in one session (first cancelled; then changed hair colour and clicked Accept, with no open after it), with no Lua error. 23204 bytes, 1318 lines, nesting depth 10, CRLF, leading blank line, no indentation, ASCII only, 0 scrub edits. `probe.loads` = 8; `client` 1.60.1 / `"70058"` / interface 16001. `customization`: `recorded_at = "open"` (not rewritten to `"applied"` although `BARBER_SHOP_APPEARANCE_APPLIED` registered: `events_unregistered = {}`), `recorded_load` = 8 (same session), no `carried`, `race_id` 5, `sex` 0, no `chr_model_id`, no name field, 7 choices (options 58, 59, 60, 61, 563, 62, 534, each with `choice_index` and `choice`). `currencies` present and empty (`rows` 0, `headers` 0, `filter` 1), the M11-22 keys present (`events_unregistered` on every gathered section, `last_selected_config_absent`, `rows`/`headers`); `professions` absent "switched off by the owner" with no `skip` list in the file; `collections.appearances` absent by M11-20; nine item links, none with a crafter. No `Player-` string and no Name-Realm-shaped text (checked by grep before commit). The account `WowLab.lua` of the same run is byte-identical to the committed `macos/…/SavedVariables/WowLab.lua` and is not committed again; nothing else from the run is committed |
+| `macos-70425/forever/WTF/Account/90000001#6/SavedVariables/WowLab.lua` | savedvariables | _classic_beta_ | 1.60.1.70425 | macos | owner | owner | identity-rewritten: path only | M13-05 capture run, 2026-10-16 (`--sv WowLab.lua`, `--kind _classic_beta_=forever`). The account-wide `WowLabDB` written by the schema-3 addon (#176) holds only `["schema"] = 3`: 36 bytes, 4 lines, CRLF, leading blank line. It differs from the committed schema-1 account file only in that digit. It is the account half of checklist item 1 (`lab/addon/README.md`, "M13-05 [verify] checklist") |
+| `macos-70425/forever/WTF/Account/90000001#6/1/Labchard-Labrealme/SavedVariables/WowLab.lua` | savedvariables | _classic_beta_ | 1.60.1.70425 | macos | owner | owner | identity-rewritten: path only | requested with `--sv`. First schema-3 `WowLabCharDB` (M13-05) and the M11-29 barber-shop capture, from one session on a level-15 warlock (spec 1490) on 2026-10-16. 44200 bytes, 2795 lines, CRLF, leading blank line, no indentation, no comments, ASCII only. Its only `--` is the key `CTRL--`. `probe.loads` = 1, with no `probe.lost`; `client` 1.60.1 / `"70425"` / interface 16001; no `skip` list. New sections, all gathered out of combat: `spellbook` (28 items in 4 skill lines, `item_types` with `FutureSpell` = 2 but no item of that type, a `Flyout` with no `spell_id`, `Rank n` subtexts), `actionbars` (26 of slots 1 to 180, 2 macro slots with no `sub_type`), and `bindings` (124 of 299 commands, `binding_set` 2, no `account_bindings` or `character_bindings`, `commands_left_out` 1). All three hold `probes`, each with 0 errors and 0 secret. `talents.legacy.left_out_config` = 640511, the active class config. `customization`: `recorded_at = "open"`, `recorded_load` 1, `chr_model_id_absent` `"C_BarberShop.GetViewingChrModel returned nil"`, and `events_received` `BARBER_SHOP_OPEN` 2, `_APPLIED` 1, `_CLOSE` 2, `_RESULT` 1, `_COST_UPDATE` 0, `_FORCE_CUSTOMIZATIONS_UPDATE` 0. `BARBER_SHOP_SUCCESS` and the control `WOWLAB_CONTROL_NOT_A_REAL_EVENT` have no entry. Eleven item links, one with `crafter_removed`, no `Player-` anywhere. Privacy, checked before commit: the tool noted 27 Name-Realm-shaped strings, each checked one by one; all are modifier-key chords in `bindings` (`SHIFT-PAGEDOWN`, `CTRL-F1`, …). Every distinct string in the file is a game string (spell, item, binding command or key, API name) or one of the addon's fixed reasons. The file has no pet-name field. No line of a macro body from the same run's `macros-cache.txt` appears, and that cache's macro names are all a single space. Nothing else from the run is committed |

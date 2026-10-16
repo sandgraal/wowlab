@@ -54,11 +54,13 @@ Bring back the `lab (windows)` job on `windows-latest`, running the Lab suite as
 
 *Status 2026-10-15:* the CI part merged as #173; `lab (windows)` is added to the required checks (ADR-0014 amendment; the owner re-applies the ruleset). Long paths became M13-15T/M13-15. Still owed: the human first run on a real Windows install, recorded as `docs/handoffs/M13-02.md`. The ticket stays open until then. *Amended 2026-10-15, later (owner decision):* `lab (windows)` is not required after all; it runs in `windows.yml` after each merge to `main`, nightly and on demand (ADR-0014 amendment).
 
+*Amended 2026-10-16 (owner decision):* the human run on a real Windows install is deferred. It no longer gates v0.1 (M13-11). The ticket stays open for a later release, and until it closes, the README and release notes say Windows is untested.
+
 **Acceptance:** the Windows job is green on `main`; each fix has a test that runs on `windows-latest`; after M13-04 merges, a human runs the first-run flow on a real Windows install, and the conductor records it, redacted (M13-09), as `docs/handoffs/M13-02.md`; reviewed by `security-reviewer` (workflow, and any change near `guard`) and `code-reviewer`.
 
 ---
 
-## [ ] M13-03 — Release pipeline
+## [x] M13-03 — Release pipeline
 **Size:** S · **Depends on:** M13-01
 
 `.github/workflows/release.yml`, triggered by pushing a tag `v*`: run the Lab suite; build the wheel and sdist of `wowlab-core` (`uv build`); fail before publishing when the tag is not `v` plus the package version exactly; write `SHA256SUMS`; create the GitHub Release with the three files attached (a pre-release for a PEP 440 pre-release version). Top-level `permissions: contents: read`; `contents: write` on the release job only; action commits pinned; no other secrets. The release notes template has a section for changes to `--json` models (ADR-0031). The workflow passes `actionlint` in the `harness` job.
@@ -66,6 +68,12 @@ Bring back the `lab (windows)` job on `windows-latest`, running the Lab suite as
 **Acceptance:** a dry run on a pre-release tag produces the release with all three files; `sha256sum -c SHA256SUMS` passes on the downloads; on a clean machine (no clone, a fresh user), the `uv tool install` line that M13-10 will print installs that release, and `wowlab --version` and `wowlab doctor --offline` run; a tag that does not match the version publishes nothing; reviewed by `security-reviewer` (signs off on the permissions and the token's reach) and `code-reviewer`.
 
 *Status 2026-10-15:* the workflow merged as #175, reviewed clean by `security-reviewer` and `code-reviewer`, with a `release` environment (owner approval, no admin bypass) and tag rulesets. #182 added the bundled-addon check to `release_check.py dist`. Still owed, by the owner: run `scripts/bootstrap-github.sh` (rulesets, environment) and `gh api -X PUT repos/sandgraal/wowlab/immutable-releases`, then the pre-release dry run and the clean-machine install. Tag rulesets make a `v*` tag permanent, so pick the dry-run tag name knowing that. Agents can no longer push tags or create releases (#183). The ticket stays open until the dry run.
+
+*Done 2026-10-16:* the owner ran the dry run on `v0.1.0rc1`. The release was published with all three files, the checksums verified, and the clean install ran `--version` and `doctor --offline`. Record: `docs/handoffs/M13-03.md`.
+
+Two criteria were met by close equivalents, not literally:
+- **"A fresh user"** was a throwaway `HOME` on the owner's Mac, not a separate account.
+- **"A tag that does not match publishes nothing"** is shown by `release_check.py` and `tests/scripts/test_release.py`, not by pushing a wrong tag. Under the rulesets a tag is permanent.
 
 ---
 
@@ -133,9 +141,9 @@ The README's first screen: what wowlab is in three sentences; the trust model of
 ---
 
 ## [ ] M13-11 — First public release, v0.1
-**Size:** S · **Depends on:** M13-02, M13-03, M13-04, M13-09, M13-10, M13-14, M13-21, M13-22, M13-23, M13-24, M13-25, M13-26, M13-27 · **owner** (pushes the tag)
+**Size:** S · **Depends on:** M13-03, M13-04, M13-09, M13-10, M13-14, M13-21, M13-22, M13-23, M13-24, M13-25, M13-26, M13-27 · **owner** (pushes the tag)
 
-Contents: M13-02 to M13-04, M13-09, M13-10, M13-21 to M13-27 (the explorer and the first `wowlab ui`; *amended 2026-10-15*, owner decision 2026-10-14), and M13-06 if M13-05 has landed. Not held for M13-08. The conductor drafts the release notes (what is in it, the trust model, platform status, the `--json` models); the owner pushes the tag.
+Contents: M13-02 to M13-04, M13-09, M13-10, M13-21 to M13-27 (the explorer and the first `wowlab ui`; *amended 2026-10-15*, owner decision 2026-10-14), and M13-06 if M13-05 has landed. Not held for M13-08. *Amended 2026-10-16:* when the owner tags v0.1.0, the conductor's release PR also (a) removes the README's note under the install line that the release is not published yet (M13-10), (b) updates `docs/INSTALL.md`, which still says "No release has been published yet", and (c) sets the version back to `0.1.0` in `lab/core/pyproject.toml` and `uv.lock` (`docs/handoffs/M13-03.md`, merged with #216). *Amended 2026-10-16 (owner):* not held for M13-02's human Windows run either. v0.1 ships with Windows marked "untested" in the README and the release notes, by ADR-0031's platform rule. The Windows CI job (`windows.yml`) still runs, but no person has tried a real Windows install yet. The conductor drafts the release notes (what is in it, the trust model, platform status, the `--json` models); the owner pushes the tag.
 
 **Acceptance:** the release has the wheel, the sdist and `SHA256SUMS`; the README's install line installs it; the release date is recorded in `docs/handoffs/M13-gate.md` for M13-13.
 
@@ -340,6 +348,7 @@ Cover these:
 - **Detail pane, hints.** Each hint has a copy button. The copied text is exactly `hint.command`, and the page says which shell syntax it uses (`hint.shell`).
 - **Preview.** It runs only the entry's `views[0]` through `/api/run`, with exactly its `command` and `params`. No view means no Preview button. A refused command (`--yes`, `looks page --out`, `log tail --follow`) is never offered.
 - **Rendering.** Everything is drawn with textContent only, including hostile names in gaps, hints and previews. No external request is made.
+- **Placeholder badge.** A verdict with `placeholder: true` (M13-32) gets a badge class of its own, the way `link` gets `.badge-link`. Its colour then matches its "wowlab won't touch" label rather than the row's level, in both the tree and the detail pane.
 
 **Acceptance:**
 - The graders fail on `main` for the stated reason.
@@ -349,7 +358,7 @@ Cover these:
 ---
 
 ## [ ] M13-27 — The explorer view, second stage: whole install, gaps, snapshot facts, previews
-**Size:** M · **Depends on:** M13-22, M13-23, M13-25, M13-27T, M13-32
+**Size:** M · **Depends on:** M13-22, M13-23, M13-25, M13-27T, M13-32, M13-33
 
 This builds on M13-25's view, per §15.6.
 
@@ -591,3 +600,42 @@ The owner ruled on 2026-10-16 that what M13-23's last fix round left, if it was 
 - The `explain` text from before M13-23 stays an exact prefix, and the JSON stays additive. Item 2 changes only the clause M13-23 added.
 - `make ci` green.
 - Reviewed by `domain-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-33 — `tree --explain`: a path under a non-link reparse point is not restorable
+**Size:** S · **Depends on:** M13-32
+
+Found while building M13-32 (#215), 2026-10-16. `explain` judges a path at or under a Windows reparse point that is not a link (a OneDrive cloud placeholder, a deduplicated file, a file compressed with `compact /EXE`) the way the write gate does: `restorable` is False, the label is "wowlab won't touch", and the words say the gate does not write through these. `tree --explain` and `tree --install --explain` still judge such a path from its name alone, so they mark it restorable.
+
+Carry each entry's reparse status through the inventory walk, the way `gaps` carries link status. Then pass `placeholder=True` to `verdict_of` for the entry and for everything under it. Use the same `verdict.gate_refuses_stat` that M13-32 checks against `guard._is_link`; guard.py does not change. Nothing is read through a link.
+
+M13-27 shows `tree` verdicts in the explorer, so this must land before it.
+
+**Acceptance:**
+- A constructed test that fakes the reparse tags, so it runs on any OS. A placeholder folder and a file inside it get `restorable` False and the placeholder label in `tree --explain --json` and in `tree --install --explain --json`, matching `explain` for the same path.
+- A junction or symlink is unchanged.
+- The text output of paths with no reparse point stays byte-identical.
+- `make ci` green.
+- Reviewed by `domain-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-34 — `lab_capture.py`: scrub the geoip country in `.build.info`
+**Size:** S · **Depends on:** M13-01
+
+Found in the security review of #221 on 2026-10-16. The `Tags` cell of `.build.info` carries three country tokens. One is the game region (`US?` style), which matches the `Branch` column. The second is the account country (`acct-AAA?`), a property of the Battle.net account. The third is the geoip country (`geoip-AA?`): where the client was when it last updated. `.build.info` has one row per product, and each row has its own `Tags` cell. `scripts/lab_capture.py` stages `.build.info` on every capture (around line 3197) and leaves that tag as it is.
+
+Two fixtures already on `main` hold one:
+- `lab/core/tests/fixtures/macos/.build.info` (#35, 2026-09-22);
+- `lab/core/tests/fixtures/macos-70058/.build.info` (#132, 2026-09-29).
+
+*Owner decision 2026-10-16:* accept the existing exposure (country level only). Leave those two files and the history as they are, and stop future captures from carrying it.
+
+Add a byte-level rule to the scrub tool. It never parses and re-serializes the file (AGENTS.md, scrub anti-pattern). The rule replaces the geoip country and the account country with fixed placeholders of the same shape, in every row's `Tags` cell, and refuses the file if a tag cannot be located safely. It never touches the region token or the `Branch` column.
+
+**Acceptance:**
+- A labelled constructed `.build.info` with at least two rows, each with a region, an account country and a different geoip country. After capture, every row keeps its region, both country tokens in every row are placeholders, and every other byte is unchanged.
+- A tag the tool cannot place refuses the file.
+- `make ci` green.
+- Reviewed by `security-reviewer` (scrub tool) and `code-reviewer`.

@@ -402,6 +402,95 @@ def test_tier_words_keep_an_unknown_tier_as_it_is() -> None:
     assert tier_words("Z-constructed") == "Z-constructed"
 
 
+# ─── M13-32: the gate's link rule ────────────────────────────────────────────
+
+
+class _Stat:
+    """A constructed `lstat` result: a mode, and Windows attributes and a
+    reparse tag where given."""
+
+    def __init__(self, mode: int, attributes: int | None = None, tag: int | None = None) -> None:
+        self.st_mode = mode
+        if attributes is not None:
+            self.st_file_attributes = attributes
+        if tag is not None:
+            self.st_reparse_tag = tag
+
+
+_MODES = (0o100644, 0o040755, 0o120777, 0o020644, 0o010644, 0o140755)  # file dir link chr fifo sock
+_ATTRIBUTES = (None, 0, *(1 << bit for bit in range(32)), 0x410, 0x420, 0x1400)
+_TAGS = (
+    None,
+    0,
+    0x9000001A,  # IO_REPARSE_TAG_CLOUD_A: not a name surrogate
+    0x80000013,  # IO_REPARSE_TAG_DEDUP
+    0x80000017,  # IO_REPARSE_TAG_WOF (compact /EXE)
+    0xA0000003,  # IO_REPARSE_TAG_MOUNT_POINT, a junction: name surrogate
+    0xA000000C,  # IO_REPARSE_TAG_SYMLINK
+    0x20000000,  # the name-surrogate bit alone
+)
+
+
+def test_gate_refuses_stat_agrees_with_the_write_gate_constructed() -> None:
+    """`verdict.gate_refuses_stat` is a copy of `guard._is_link` (guard.py is
+    load-bearing and its private rule is copied, as `_gate_writes` is). Every
+    file type, every single `st_file_attributes` bit and a set of reparse
+    tags, name surrogates and not: a drift in any of them fails here."""
+    differ = [
+        (oct(mode), attributes, tag)
+        for mode in _MODES
+        for attributes in _ATTRIBUTES
+        for tag in _TAGS
+        if verdict.gate_refuses_stat(st := _Stat(mode, attributes, tag))  # type: ignore[arg-type]
+        is not guard._is_link(st)  # type: ignore[arg-type]
+    ]
+    assert differ == []
+
+
+_REFUSED = "wowlab's write gate does not write through these"
+_NOT_HERE = (
+    "no, not here: the file map says it goes through wowlab's write gate, but that gate does "
+    "not write through a Windows reparse point that is not a link (for example a cloud "
+    "placeholder, a deduplicated or a compressed file), or inside one"
+)
+
+
+def test_a_placeholder_is_never_restorable() -> None:
+    """M13-32. Under a reparse point the gate refuses, a file is never
+    `restorable`, the words never open with yes, and a folder still has no
+    answer."""
+    entry = _entry("savedvariables-backup")
+    v = verdict_of(None, "flavor", "WTF/Config.wtf", placeholder=True)
+    assert v.restorable is False
+    assert v.words.endswith(_REFUSED)
+    assert "a whole snapshot restore puts it back" not in v.words
+    folder = verdict_of(None, "flavor", "WTF/Account", folder=True, placeholder=True)
+    assert folder.restorable is None
+    linked = verdict_of(entry, "flavor", "WTF/x.bak", link=True, placeholder=True)
+    assert linked == verdict_of(entry, "flavor", "WTF/x.bak", link=True)
+
+
+def test_a_gate_row_under_a_placeholder_says_no_and_keeps_its_suffixes() -> None:
+    """M13-32, domain review W1: at the gate level, plain, `gate (server may
+    replace)` and tier B, the words lead with a no and keep the rest."""
+    for entry in filemap.load().entries:
+        if not entry.edit.startswith("gate") or entry.base != "flavor":
+            continue
+        plain = verdict_of(entry, "flavor", "WTF/x")
+        under = verdict_of(entry, "flavor", "WTF/x", placeholder=True)
+        assert under.level == plain.level == "gate"
+        assert under.server_may_replace is plain.server_may_replace
+        assert under.restorable is (None if plain.restorable is None else False)
+        assert not under.words.startswith("yes"), entry.id
+        assert under.words == _NOT_HERE + plain.words.removeprefix(_GATE), entry.id
+        if entry.edit == "gate (server may replace)":
+            assert under.words.endswith(
+                "; the server may replace it at login (sync settings: wowlab doctor)"
+            )
+        if entry.tier == "B":
+            assert under.words.endswith("; unsupported by Blizzard, a patch can reset it")
+
+
 # ─── the badge label (M13-25, owner 2026-10-16) ──────────────────────────────
 
 _OWNER_LABELS = {
@@ -514,6 +603,7 @@ def test_the_label_is_additive_and_keeps_the_words() -> None:
         "label",
         "server_label",
         "link",
+        "placeholder",  # M13-32, last: the JSON only grows
     ]
     assert found.words == _GATE
     assert found.link is False
@@ -536,3 +626,46 @@ def test_a_label_that_disagrees_is_refused_constructed(fields: dict[str, object]
     data.update(fields)
     with pytest.raises(ValueError):
         Verdict.model_validate(data)
+
+
+# ─── M13-32: the label under a placeholder (conductor ruling on #215) ────────
+
+
+def test_every_gate_row_under_a_placeholder_gets_the_no_label() -> None:
+    """The badge never promises an edit the gate refuses: under a reparse
+    point that is not a link, every gate row reads "wowlab won't touch",
+    while `level` stays the row's."""
+    rows = [e for e in filemap.load().entries if e.edit.startswith("gate")]
+    assert rows
+    for entry in rows:
+        for folder in (False, True):
+            v = verdict_of(entry, entry.base, "WTF/x", folder=folder, placeholder=True)
+            assert v.level == "gate", entry.id
+            assert (v.label, v.placeholder, v.link) == ("wowlab won't touch", True, False)
+            expected = "server may overwrite" if v.server_may_replace else None
+            assert v.server_label == expected, entry.id
+    plain = verdict_of(rows[0], rows[0].base, "WTF/x")
+    assert (plain.label, plain.placeholder) == ("wowlab can edit", False)
+
+
+def test_a_placeholder_with_the_gate_label_is_refused_constructed() -> None:
+    """Constructed: a verdict that claims a placeholder and the gate's label."""
+    data = verdict_of(_entry("account-config-cache"), "flavor", "WTF/x", placeholder=True)
+    fields = data.model_dump()
+    assert fields["label"] == "wowlab won't touch"
+    fields["label"] = "wowlab can edit"
+    with pytest.raises(ValueError):
+        Verdict.model_validate(fields)
+    fields.pop("label")
+    assert Verdict.model_validate(fields).label == "wowlab won't touch"
+
+
+def test_a_link_under_a_placeholder_keeps_the_link_label() -> None:
+    """`link` wins over `placeholder`."""
+    for entry in [*filemap.load().entries, None]:
+        v = verdict_of(entry, "flavor", "WTF/x", link=True, placeholder=True)
+        assert (v.label, v.link, v.placeholder) == (_LINK_LABEL, True, False)
+        assert v.restorable is None
+    data = verdict_of(None, "flavor", "WTF/x", link=True).model_dump()
+    data.update(placeholder=True)
+    assert Verdict.model_validate(data).label == _LINK_LABEL
