@@ -54,6 +54,8 @@ Bring back the `lab (windows)` job on `windows-latest`, running the Lab suite as
 
 *Status 2026-10-15:* the CI part merged as #173; `lab (windows)` is added to the required checks (ADR-0014 amendment; the owner re-applies the ruleset). Long paths became M13-15T/M13-15. Still owed: the human first run on a real Windows install, recorded as `docs/handoffs/M13-02.md`. The ticket stays open until then. *Amended 2026-10-15, later (owner decision):* `lab (windows)` is not required after all; it runs in `windows.yml` after each merge to `main`, nightly and on demand (ADR-0014 amendment).
 
+*Amended 2026-10-16 (owner decision):* the human run on a real Windows install is deferred. It no longer gates v0.1 (M13-11). The ticket stays open for a later release, and until it closes, the README and release notes say Windows is untested.
+
 **Acceptance:** the Windows job is green on `main`; each fix has a test that runs on `windows-latest`; after M13-04 merges, a human runs the first-run flow on a real Windows install, and the conductor records it, redacted (M13-09), as `docs/handoffs/M13-02.md`; reviewed by `security-reviewer` (workflow, and any change near `guard`) and `code-reviewer`.
 
 ---
@@ -133,9 +135,9 @@ The README's first screen: what wowlab is in three sentences; the trust model of
 ---
 
 ## [ ] M13-11 — First public release, v0.1
-**Size:** S · **Depends on:** M13-02, M13-03, M13-04, M13-09, M13-10, M13-14, M13-21, M13-22, M13-23, M13-24, M13-25, M13-26, M13-27 · **owner** (pushes the tag)
+**Size:** S · **Depends on:** M13-03, M13-04, M13-09, M13-10, M13-14, M13-21, M13-22, M13-23, M13-24, M13-25, M13-26, M13-27 · **owner** (pushes the tag)
 
-Contents: M13-02 to M13-04, M13-09, M13-10, M13-21 to M13-27 (the explorer and the first `wowlab ui`; *amended 2026-10-15*, owner decision 2026-10-14), and M13-06 if M13-05 has landed. Not held for M13-08. The conductor drafts the release notes (what is in it, the trust model, platform status, the `--json` models); the owner pushes the tag.
+Contents: M13-02 to M13-04, M13-09, M13-10, M13-21 to M13-27 (the explorer and the first `wowlab ui`; *amended 2026-10-15*, owner decision 2026-10-14), and M13-06 if M13-05 has landed. Not held for M13-08. *Amended 2026-10-16 (owner):* not held for M13-02's human Windows run either. v0.1 ships with Windows marked "untested" in the README and the release notes, by ADR-0031's platform rule. The Windows CI job (`windows.yml`) still runs, but no person has tried a real Windows install yet. The conductor drafts the release notes (what is in it, the trust model, platform status, the `--json` models); the owner pushes the tag.
 
 **Acceptance:** the release has the wheel, the sdist and `SHA256SUMS`; the README's install line installs it; the release date is recorded in `docs/handoffs/M13-gate.md` for M13-13.
 
