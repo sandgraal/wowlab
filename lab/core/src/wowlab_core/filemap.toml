@@ -24,6 +24,11 @@
 #   **         zero or more segments
 #   <digits>   a segment made only of ASCII digits
 #   <name>     a segment that is not made only of ASCII digits
+#   <executable>  a segment the write gate refuses as an executable: a name
+#              ending, in any letter case, in one of `guard`'s executable
+#              suffixes, or a versioned shared library (`libfoo.so.1`).
+#              `filemap.py` holds a copy of `guard`'s rule; a test fails when
+#              the two drift (M13-28)
 #   .          the base folder itself (only as the whole pattern)
 # A match pattern ending in `/` matches directories only; one ending in `**`
 # matches anything; any other matches files only. `exclude` patterns match
@@ -527,6 +532,18 @@ edit = "—"
 tier = "—"
 module = "`layout`"
 match = ["Interface/AddOns/"]
+
+[[entry]]
+id = "addon-executable"
+section = "flavor"
+base = "flavor"
+doc_path = "`Interface/AddOns/…/*.exe`, `*.bat`, `*.dll`, `*.dylib`, `*.app/`, … (any part of the path)"
+what = "An executable, script, shortcut, shared library or app bundle inside an addon folder, and everything inside such a bundle: any part of the path whose name ends, in any letter case, in `.exe`, `.dll`, `.dylib`, `.so` (or `.so.<n>`, as in `libfoo.so.1`), `.scr`, `.com`, `.bat`, `.cmd`, `.ps1`, `.sh`, `.command`, `.app`, `.bundle`, `.plugin`, `.framework`, `.vbs`, `.js`, `.wsf`, `.hta`, `.msi`, `.lnk`, `.cpl` or `.jar`. wowlab's write gate never writes an executable (LAB_PLAN L7)"
+written_by = "You, or an addon manager"
+edit = "no"
+tier = "—"
+module = "none"
+match = ["Interface/AddOns/**/<executable>/**"]
 
 [[entry]]
 id = "addon"
