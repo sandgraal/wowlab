@@ -2310,6 +2310,10 @@ class ExplainReport(_Out):
     views_note: str | None
     hints: list[ExplainHint]  # M13-23
     plain: PlainText | None = None  # M13-25: the row's text without Markdown
+    # M13-29: nothing is on disk at the path under any reading of it (for a
+    # relative path: at the install root and in every flavor folder); never
+    # True behind a link. `stat` is None then too.
+    absent: bool = False
 
 
 # The option each view parameter is spelled with; `file` is `sv dump`'s
@@ -2504,6 +2508,8 @@ def _hints(
     flavor: str | None,
     root: str | None,
     views: Sequence[ExplainView],
+    *,
+    absent: bool = False,
 ) -> list[ExplainHint]:
     """Copyable commands for one path. A restore hint only for a file the
     write gate would write (`restorable` is True: never a folder or a link)
@@ -2544,11 +2550,21 @@ def _hints(
             hints.append(
                 _hint(
                     ["snap", "create", "--flavor", flavor, *with_root],
-                    "take a snapshot, so a later change to this file can be put back",
+                    _FIRST_SNAPSHOT_ABSENT if absent else _FIRST_SNAPSHOT,
                 )
             )
     hints.extend(_hint(v.argv, v.does) for v in views)
     return hints
+
+
+_FIRST_SNAPSHOT = "take a snapshot, so a later change to this file can be put back"
+# M13-29: a named path a snapshot covers but does not hold is deleted by
+# `snap restore --paths`.
+_FIRST_SNAPSHOT_ABSENT = (
+    "take a snapshot, so a file created here later can be removed with "
+    "`snap restore --paths` naming it"
+)
+_ABSENT_VIEWS = "nothing is at this path, so no wowlab command can show it"
 
 
 def _snap_name(ref: pathfacts.SnapshotRef) -> str:
@@ -2656,6 +2672,65 @@ def _path_kind(
     return slash or stat.S_ISDIR(st.st_mode), False, placeholder
 
 
+def _nowhere(
+    inst: install.Install,
+    given: Path,
+    judged: layout.Classified | layout.Unclassified,
+    *,
+    relative: bool,
+    chosen: str | None,
+) -> bool:
+    """Whether nothing is on disk at `explain`'s path under every reading of
+    it (M13-29). A path typed relative to the install is read at the install
+    root and in the chosen flavor folder (`--flavor`, or the only one), or,
+    with several flavors and none chosen, in every one of them, so a file in
+    any of those is there; an absolute path, or one relative to the current
+    folder, is read once. `layout.absent` never looks behind a link, so a
+    path with a link on the way is never "not found"."""
+    if judged.base is None:
+        return False
+    if relative:
+        base = Path(inst.root)
+        folders = [chosen] if chosen is not None else [f.folder for f in inst.flavors]
+        readings = [base / given, *(base / folder / given for folder in folders)]
+    else:
+        under = [judged.flavor_folder] if judged.base == "flavor" and judged.flavor_folder else []
+        readings = [Path(inst.root).joinpath(*under, *[p for p in judged.path.split("/") if p])]
+    return all(layout.absent(r, inst.root) for r in readings)
+
+
+# Rows the client writes at logout or `/reload` (their Written-by cell);
+# a test pins this set to the file map.
+WRITTEN_AT_LOGOUT = frozenset(
+    {"account-blizzard-savedvariables", "account-savedvariables", "character-savedvariables"}
+)
+
+
+def _absent_line(result: layout.Classified, folder: bool) -> str:
+    """The "on disk" words for a path a row describes that is not there: a
+    folder when written as one or when the row describes only folders; "a
+    file or folder" when the path is exactly the fixed part of a `**` row
+    (`Fonts`, `Interface/AddOns/<x>`); else a file."""
+    e = result.entry
+    parts = tuple(p for p in result.path.split("/") if p)
+    if folder or not e.matches(parts, "file"):
+        noun = "folder"
+    elif e.heads_a_subtree(parts):
+        noun = "file or folder"
+    else:
+        noun = "file"
+    line = f"nothing at this path; this is what a {noun} here would be"
+    if e.id in WRITTEN_AT_LOGOUT:
+        line += "; the client writes it at logout or /reload"
+    return line
+
+
+_NOT_FOUND_AT_ROOT = (
+    f"{layout.NOT_FOUND}, and no file-map row matches it at the install root; "
+    "pass --flavor to see what it would be inside a flavor folder"
+)
+
+
 def _is_inside(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 
@@ -2681,14 +2756,20 @@ def explain(
     result: layout.Classified | layout.Unclassified
     judged: layout.Classified | layout.Unclassified | None = None
     here = Path.cwd() / given
+    relative = False
+    # The flavor folder a relative path is read in (M13-29): `--flavor`, or
+    # the only one; None with several and none chosen.
+    chosen_folder = inst.flavors[0].folder if len(inst.flavors) == 1 else None
     if given.is_absolute():
         result = layout.classify(path, inst)
     elif os.path.lexists(here) and _is_inside(here.absolute(), Path(inst.root).absolute()):
         result = layout.classify(str(here) + ("/" if path.endswith("/") else ""), inst)
     else:
+        relative = True
         result = layout.classify(path, inst)
         if isinstance(result, layout.Unclassified) and (flavor or len(inst.flavors) == 1):
             chosen = _select_flavor(inst, flavor)
+            chosen_folder = chosen.folder
             in_flavor = layout.Layout.for_flavor(chosen, inst.root).classify(path)
             if isinstance(in_flavor, layout.Classified):
                 result = in_flavor
@@ -2700,6 +2781,23 @@ def explain(
     if judged is None:
         judged = result
     folder, link, placeholder = _path_kind(inst.root, judged, path)
+    # M13-29: "not found" only when nothing is there under any reading of
+    # the path; else the words are main's, whatever one reading found.
+    nowhere = not link and _nowhere(inst, given, judged, relative=relative, chosen=chosen_folder)
+    # Several flavors, none chosen: the path was looked up at the install
+    # root only, and is in none of the flavor folders.
+    unchosen = relative and chosen_folder is None and len(inst.flavors) > 1
+    if isinstance(result, layout.Unclassified) and result.base is not None:
+        if not nowhere and result.reason.startswith(layout.NOT_FOUND):
+            result = result.model_copy(update={"reason": layout.NO_ROW})
+        elif nowhere and unchosen and result.base == "root":
+            result = result.model_copy(update={"reason": _NOT_FOUND_AT_ROOT})
+        elif (
+            nowhere
+            and isinstance(judged, layout.Unclassified)
+            and judged.reason.startswith(layout.NOT_FOUND)
+        ):
+            result = result.model_copy(update={"reason": judged.reason})
     # M13-23: the verdict judges the file as it is spelled on disk (a volume
     # that folds case or normalization opens it under any spelling); `query`
     # and `result` stay as typed. A path typed as stored is judged as before.
@@ -2711,10 +2809,11 @@ def explain(
         folder=folder,
         link=link,
         placeholder=placeholder,
+        missing=nowhere,
     )
     lay = _flavor_layout(inst, judged)
     stat_, facts, views, note, hints = _detail(
-        inst, judged, parts or (), verdict, root, lay, folder=folder, link=link
+        inst, judged, parts or (), verdict, root, lay, folder=folder, link=link, absent=nowhere
     )
     captured = _captured_words(lay)
     if facts is not None:
@@ -2731,14 +2830,20 @@ def explain(
         views_note=note,
         hints=hints,
         plain=_plain_text(result.entry) if isinstance(result, layout.Classified) else None,
+        absent=nowhere,
     )
     if json_out:
         _emit(report)
         return
     if isinstance(result, layout.Unclassified):
         where = f" ({result.flavor_folder})" if result.flavor_folder else ""
-        _say(f"{path}: no file-map row{where}: {result.reason}")
-        if len(inst.flavors) > 1 and flavor is None and not given.is_absolute():
+        if nowhere and result.reason.startswith(layout.NOT_FOUND):
+            # M13-29: what is (not) there first, then what the map says.
+            _say(f"{path}{where}: {layout.NOT_FOUND}")
+            _say(f"  {result.reason.removeprefix(layout.NOT_FOUND + ', and ')}")
+        else:
+            _say(f"{path}: no file-map row{where}: {result.reason}")
+        if len(inst.flavors) > 1 and flavor is None and not given.is_absolute() and not nowhere:
             _say("  (with several flavors, pass --flavor to read PATH inside one of them)")
         _say_detail(report, captured)
         return
@@ -2751,6 +2856,8 @@ def explain(
     _say(f"  tier:         {tier_words(e.tier)}")
     _say(f"  read by:      {e.module}")
     _say(f"  file-map row: {e.id} ({e.doc_path})")
+    if nowhere:
+        _say(f"  on disk:      {_absent_line(result, folder)}")
     _say_detail(report, captured)
 
 
@@ -2808,6 +2915,7 @@ def _detail(
     *,
     folder: bool,
     link: bool,
+    absent: bool = False,
 ) -> tuple[
     pathfacts.PathStat | None,
     pathfacts.SnapshotFacts | None,
@@ -2819,7 +2927,9 @@ def _detail(
     for a path outside the install or reached through a link: no `lstat`
     through it, no hash, no decoder pointed at it, no restore hint. The path
     is respelled as it is on disk first, so a volume that folds case gives
-    every spelling the same answer."""
+    every spelling the same answer. `absent` (M13-29): nothing is at the
+    path, so no view (each would fail on it) and the first-snapshot hint
+    says what a snapshot does for a file created there later."""
     if judged.base is None or link:
         return None, None, [], None, []
     under = [judged.flavor_folder] if judged.base == "flavor" and judged.flavor_folder else []
@@ -2837,7 +2947,9 @@ def _detail(
         )
     views: list[ExplainView] = []
     note: str | None = None
-    if isinstance(judged, layout.Classified):
+    if isinstance(judged, layout.Classified) and absent:
+        note = _ABSENT_VIEWS
+    elif isinstance(judged, layout.Classified):
         newest: str | None = None
         if judged.entry.id == "combat-log" and lay is not None:
             logs = _logs_dir(lay)
@@ -2851,7 +2963,7 @@ def _detail(
             newest_log=newest,
         )
         views, note = _views(judged.entry.id, at, given_root)
-    hints = _hints(verdict, facts, judged.flavor_folder, given_root, views)
+    hints = _hints(verdict, facts, judged.flavor_folder, given_root, views, absent=absent)
     return stat_, facts, views, note, hints
 
 

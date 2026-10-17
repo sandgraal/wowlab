@@ -421,6 +421,9 @@ def test_explain_an_absolute_path_and_one_relative_to_the_current_folder(
 
 
 def test_explain_a_path_with_no_row(root: Path) -> None:
+    # On disk: a path that is not there is "not found" (M13-29,
+    # test_classify_missing.py).
+    (root / "unknown-constructed.txt").write_bytes(b"")
     result = ok("explain", "unknown-constructed.txt")
     assert "no file-map row" in result.stdout
     report = _json(cli.ExplainReport, "explain", "unknown-constructed.txt")

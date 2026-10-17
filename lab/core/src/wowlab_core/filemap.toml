@@ -32,8 +32,9 @@
 #   .          the base folder itself (only as the whole pattern)
 # A match pattern ending in `/` matches directories only; one ending in `**`
 # matches anything; any other matches files only. `exclude` patterns match
-# regardless of kind. Nothing here names a flavor, product, interface or
-# build (L6).
+# regardless of kind. A path that is not on disk is matched as a file unless
+# it is written with a trailing `/` (M13-29): a folder row describes a folder
+# that is there. Nothing here names a flavor, product, interface or build (L6).
 
 [[section]]
 id = "root"
