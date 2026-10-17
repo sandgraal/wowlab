@@ -136,6 +136,7 @@ from wowlab_core import (
     install,
     labaddon,
     layout,
+    longpath,
     looks,
     lookspage,
     lookstore,
@@ -944,21 +945,21 @@ def _client_names(flavor_dir: Path) -> list[str]:
     than checking with no names.
     """
     names: list[str] = []
-    for child in sorted(flavor_dir.iterdir()):
+    for child in sorted(longpath.iterdir(flavor_dir)):
         folded = child.name.casefold()
         if folded.endswith(".exe"):
             names.append(child.name)
         elif folded.endswith(".app"):
             names.append(child.name[: -len(".app")])
             with contextlib.suppress(OSError):
-                names.extend(p.name for p in (child / "Contents" / "MacOS").iterdir())
+                names.extend(p.name for p in longpath.iterdir(child / "Contents" / "MacOS"))
     return names
 
 
 def _roots(inst: install.Install) -> list[Path]:
     roots = [Path(inst.root)]
     try:
-        resolved = Path(inst.root).resolve()
+        resolved = longpath.resolve(inst.root)
     except (OSError, RuntimeError):
         return roots
     if resolved != roots[0]:

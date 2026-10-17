@@ -87,9 +87,11 @@ import sys
 import time
 from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
-from typing import Annotated, BinaryIO, Literal, cast
+from typing import Annotated, BinaryIO, Literal
 
 from pydantic import BaseModel, ConfigDict, Discriminator
+
+from wowlab_core import longpath
 
 __all__ = [
     "MAX_DEPTH",
@@ -508,7 +510,7 @@ def _open_log(path: Path) -> BinaryIO:
     returns at once. Raises :class:`NotARegularFileError` for anything but a
     regular file."""
     if sys.platform == "win32":
-        f = cast(BinaryIO, path.open("rb"))
+        f = longpath.open_read(path)  # extended-length past the plain limit (M13-15)
     else:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
         try:

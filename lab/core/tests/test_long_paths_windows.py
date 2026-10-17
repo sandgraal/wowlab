@@ -592,14 +592,19 @@ def _is_grader(test: object) -> bool:
 def test_every_layout_a_grader_uses_is_built_by_an_unmarked_test() -> None:
     """An xfail marker also swallows a failure in setup, so a grader whose
     tree cannot be built would pass as expected-to-fail. Every layout a grader
-    uses is therefore built by an unmarked test too, which fails the run."""
+    uses is therefore built by an unmarked test too, which fails the run.
+
+    M13-15 deleted the graders' markers, so the module may have none; the
+    check stays armed for any marker added later. That it is not vacuous is
+    shown by the layouts the unmarked tests build: every layout the M13-15
+    graders were written over is found among them."""
     tests = [f for name, f in sorted(globals().items()) if name.startswith("test_")]
     graders = [f for f in tests if _is_grader(f)]
-    assert graders, "the module has graders"
     for grader in graders:
         assert _layouts(grader), f"{grader.__name__} names its layouts in a parametrize"
     graded = set().union(*(_layouts(f) for f in graders))
     built = set().union(*(_layouts(f) for f in tests if not _is_grader(f)))
+    assert {*LONG_ANYWHERE, "at-limit"} <= built, f"the unmarked tests build {sorted(built)}"
     assert graded <= built, f"graded but built by no unmarked test: {sorted(graded - built)}"
 
 
@@ -712,7 +717,6 @@ def test_constructed_snapshot_of_an_extended_length_root_captures_everything(
     _check_snapshot(tree, store, _x(tree.root))
 
 
-@pytest.mark.xfail(strict=True, reason="M13-15 not implemented")
 @pytest.mark.parametrize("tree", ["deep-dir"], indirect=True)
 def test_constructed_guard_never_writes_what_it_cannot_undo_through_an_extended_length_flavor(
     tree: Tree, store: Path
@@ -764,7 +768,6 @@ def test_constructed_guard_never_writes_what_it_cannot_undo_through_an_extended_
 # ─── the graders ─────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M13-15 not implemented")
 @pytest.mark.parametrize("tree", LONG_ANYWHERE, indirect=True)
 def test_constructed_snapshot_captures_a_file_past_max_path(tree: Tree, store: Path) -> None:
     """`snap create` (`SnapshotStore.create`) captures the file past
@@ -774,7 +777,6 @@ def test_constructed_snapshot_captures_a_file_past_max_path(tree: Tree, store: P
     _check_snapshot(tree, store)
 
 
-@pytest.mark.xfail(strict=True, reason="M13-15 not implemented")
 @pytest.mark.parametrize("tree", ["deep-dir"], indirect=True)
 def test_constructed_snapshot_of_a_relative_root_captures_the_file_past_max_path(
     tree: Tree, store: Path, monkeypatch: pytest.MonkeyPatch
@@ -787,7 +789,6 @@ def test_constructed_snapshot_of_a_relative_root_captures_the_file_past_max_path
     assert manifest.install_root == str(tree.root)
 
 
-@pytest.mark.xfail(strict=True, reason="M13-15 not implemented")
 @pytest.mark.parametrize("tree", [*LONG, "at-limit"], indirect=True)
 def test_constructed_guard_restores_the_deep_file_from_a_snapshot(tree: Tree, store: Path) -> None:
     """`snap restore` (`tx.restore`) puts the deep file's snapshot bytes back,
@@ -796,7 +797,6 @@ def test_constructed_guard_restores_the_deep_file_from_a_snapshot(tree: Tree, st
     _check_restore(tree, store)
 
 
-@pytest.mark.xfail(strict=True, reason="M13-15 not implemented")
 @pytest.mark.parametrize("tree", [*LONG, "at-limit"], indirect=True)
 def test_constructed_guard_writes_and_undoes_the_deep_file(tree: Tree, store: Path) -> None:
     """A gate write of the deep file: snapshot first, journaled, atomically
@@ -804,7 +804,6 @@ def test_constructed_guard_writes_and_undoes_the_deep_file(tree: Tree, store: Pa
     _check_write_and_undo(tree, store)
 
 
-@pytest.mark.xfail(strict=True, raises=install.NotAnInstallError, reason="M13-15 not implemented")
 @pytest.mark.parametrize(
     ("layout", "source"), [("deep-root", "argument"), ("deep-root", "environment")]
 )
@@ -818,7 +817,6 @@ def test_constructed_discovery_reads_an_install_rooted_past_max_path(
     _check_discovery(build(layout), short, source)
 
 
-@pytest.mark.xfail(strict=True, reason="M13-15 not implemented")
 @pytest.mark.parametrize("layout", ["deep-root"])
 def test_constructed_doctor_reports_an_install_rooted_past_max_path(
     build: Callable[[str], Tree], monkeypatch: pytest.MonkeyPatch, layout: str
@@ -829,7 +827,6 @@ def test_constructed_doctor_reports_an_install_rooted_past_max_path(
     _check_doctor(build(layout), short, monkeypatch)
 
 
-@pytest.mark.xfail(strict=True, raises=FileNotFoundError, reason="M13-15 not implemented")
 @pytest.mark.parametrize(
     ("layout", "reader"),
     [

@@ -50,6 +50,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from wowlab_core import longpath
+
 __all__ = [
     "KNOWN_DIRECTIVES",
     "KNOWN_DIRECTIVE_PREFIXES",
@@ -396,9 +398,10 @@ def read_toc(path: Path | str, *, max_bytes: int = MAX_TOC_BYTES) -> TocDocument
     """Read and parse one TOC file, opened read-only (L1).
 
     Raises `TocTooLargeError` for a file over `max_bytes` and `OSError` when
-    it cannot be read; the caller reports either.
+    it cannot be read; the caller reports either. A path past Windows' plain
+    limit is opened by its extended-length spelling (`longpath`, M13-15).
     """
-    with Path(path).open("rb") as handle:
+    with longpath.open_read(path) as handle:
         data = handle.read(max_bytes + 1)
     if len(data) > max_bytes:
         raise TocTooLargeError(f"{path}: larger than {max_bytes} bytes")

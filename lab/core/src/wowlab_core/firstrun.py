@@ -36,7 +36,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from wowlab_core import guard, install, layout, snapshot
+from wowlab_core import guard, install, layout, longpath, snapshot
 from wowlab_core.snapshot import VerifyReport
 
 __all__ = [
@@ -220,7 +220,7 @@ def _same_root(recorded: str, root: Path) -> bool:
     if candidate == root.absolute():
         return True
     try:
-        return candidate.samefile(root)
+        return longpath.samefile(candidate, root)
     except (OSError, ValueError):
         return False
 
@@ -529,7 +529,7 @@ def _is_online_only_dir(st: os.stat_result) -> bool:
 
 def _link_target(path: Path) -> str | None:
     try:
-        return str(path.readlink())
+        return str(longpath.readlink(path))
     except (OSError, ValueError):
         return None
 
@@ -567,8 +567,7 @@ class _Walk:
         while stack:
             rel_dir, abs_dir = stack.pop()
             try:
-                with os.scandir(abs_dir) as it:
-                    children = sorted(it, key=lambda d: d.name)
+                children = sorted(longpath.entries(abs_dir), key=lambda d: d.name)
             except FileNotFoundError:
                 continue  # removed while we looked
             except OSError as exc:
@@ -576,7 +575,7 @@ class _Walk:
                 continue
             for child in children:
                 child_rel = f"{rel_dir}/{child.name}"
-                path = Path(child.path)
+                path = abs_dir / child.name  # `child.path` may be extended-length (M13-15)
                 try:
                     if child.is_symlink():
                         self.link(child_rel, path, symlink=True)
@@ -603,7 +602,7 @@ def _spellings(path: Path) -> list[Path]:
     `path` itself is never resolved, so a link there is not followed."""
     given = path.absolute()
     try:
-        resolved = given.parent.resolve() / given.name
+        resolved = longpath.resolve(given.parent) / given.name
     except (OSError, RuntimeError):
         return [given]
     return [given] if resolved == given else [given, resolved]
@@ -630,7 +629,7 @@ def _name_service(name: str) -> SyncService | None:
 
 def _has_entry(folder: Path, name: str, *, regular: bool) -> bool:
     try:
-        st = (folder / name).lstat()
+        st = longpath.lstat(folder / name)
     except (OSError, ValueError):
         return False
     return stat.S_ISREG(st.st_mode) or not regular
@@ -639,7 +638,7 @@ def _has_entry(folder: Path, name: str, *, regular: bool) -> bool:
 def _is_real_dir(path: Path) -> bool:
     """A directory that is not a link or junction: one it is safe to look inside."""
     try:
-        st = path.lstat()
+        st = longpath.lstat(path)
     except (OSError, ValueError):
         return False
     return stat.S_ISDIR(st.st_mode) and not snapshot._is_link_like_dir(path)
@@ -697,7 +696,7 @@ def scan_flavor(flavor: install.Flavor, lay: layout.Layout) -> FlavorScan:
         start = Path(flavor.path) / name
         files, size = walk.files, walk.bytes
         try:
-            st = start.lstat()
+            st = longpath.lstat(start)
         except FileNotFoundError:
             subtrees.append(SubtreeScan(path=name, present=False, link=False, files=0, bytes=0))
             continue
