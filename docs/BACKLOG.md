@@ -12,9 +12,9 @@ The backlog holds the current wave only (ADR-0024). Milestone numbers start at `
 
 ---
 
-# Carried forward from Wave 2 (M11), still open
+# Carried forward from Wave 2 (M11)
 
-Archived with Wave 3 on 2026-10-15 except this one, which waits on the owner's in-game capture. Its milestone stays M11.
+Archived with Wave 3 on 2026-10-15 except this one, which waited on the owner's in-game capture. Its milestone stays M11. *Closed 2026-10-16* by the M13-05 capture (#221).
 
 ## [x] M11-29 — lab-addon: the barber-shop record after an applied change
 **Size:** S · **Depends on:** M11-23 · **owner** (a short in-game check)
@@ -23,7 +23,9 @@ From the M11-23 capture (1.60.1.70058; `docs/LAB_FORMATS.md`, M11-23 follow-up t
 
 **Acceptance:** static addon tests (labelled source scans) for the change; the README and §13.1 say what is confirmed and what stays [verify]; an owner capture after one applied change shows `recorded_at = "applied"` (or the reason it cannot); reviewed by `code-reviewer` and `domain-reviewer`.
 
-*Status 2026-09-30:* the code merged (#143, `5784422`): the addon now records which barber-shop events reach the section and why the model id is missing, and its saved format is **schema 2** (§13.1: any change after M11-04). The ticket stays **open** until the owner's capture is read: the runbook is `docs/handoffs/M11-29.md` (the reading table is in `lab/addon/README.md`, "M11-29 capture step"). Later tickets, only if the capture shows none of the watched events marks the Accept: record an event's payload (`BARBER_SHOP_RESULT`'s success argument) or a `hooksecurefunc` post-hook on `C_BarberShop.ApplyCustomizationChoices`, each **[verify]** with its own runbook step and capture.
+*Status 2026-09-30:* the code merged (#143, `5784422`): the addon now records which barber-shop events reach the section and why the model id is missing, and its saved format is **schema 2** (§13.1: any change after M11-04). The ticket stayed open until the owner's capture was read: the runbook is `docs/handoffs/M11-29.md` (the reading table is in `lab/addon/README.md`, "M11-29 capture step"). Later tickets, only if the capture shows none of the watched events marks the Accept: record an event's payload (`BARBER_SHOP_RESULT`'s success argument) or a `hooksecurefunc` post-hook on `C_BarberShop.ApplyCustomizationChoices`, each **[verify]** with its own runbook step and capture.
+
+*Closed 2026-10-16 (#221):* the capture on 1.60.1.70425 was read. `BARBER_SHOP_APPEARANCE_APPLIED` fires. The client then opens the shop again by itself, and the record from that open, which holds the new look, replaces the applied one. So `recorded_at` reads `"open"`, and the acceptance's "or the reason it cannot" is met (`lab/addon/README.md`; `docs/LAB_PLAN.md` §13.1, amendment of 2026-10-16). Keeping the applied record through a later open would need schema 4 and its own capture; that is not filed.
 
 ---
 
