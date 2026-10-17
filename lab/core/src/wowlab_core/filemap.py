@@ -177,6 +177,22 @@ class FileMapEntry(BaseModel):
             return False
         return any(_matches_pattern(p, path, kind) for p in self.match)
 
+    def heads_a_subtree(self, parts: Sequence[str]) -> bool:
+        """Whether the path is exactly the fixed part of one of this entry's
+        `**` patterns (`Fonts` for `Fonts/**`): the folder the pattern's
+        subtree hangs from, or a file by that name (M13-29)."""
+        path = tuple(parts)
+        if any(_match(_segments(p), path) for p in self.exclude):
+            return False
+        for pattern in self.match:
+            segments = _segments(pattern)
+            if pattern.endswith("/") or not segments or segments[-1] != _ANY_DEPTH:
+                continue
+            head = segments[:-1]
+            if _ANY_DEPTH not in head and _match(head, path):
+                return True
+        return False
+
 
 class FileMap(BaseModel):
     """Every section and entry, in file order."""

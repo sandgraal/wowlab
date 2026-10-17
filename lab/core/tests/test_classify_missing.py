@@ -319,26 +319,60 @@ def test_with_several_flavors_an_existing_path_keeps_mains_words(two: Path) -> N
     assert not report.verdict.words.startswith("not found")
 
 
-def test_a_path_in_another_flavor_only_is_not_not_found_constructed(two: Path) -> None:
-    for args in (["--flavor", FLAVOR], []):
-        report = explain_json("WTF/OnlySecond-constructed.txt", *args)
-        assert report.absent is False, args
-        assert isinstance(report.result, layout.Unclassified)
-        assert report.result.reason == NO_ROW, args
-        text = ok("explain", "WTF/OnlySecond-constructed.txt", *args).stdout
-        assert NOT_FOUND not in text, text
+def test_a_path_in_another_flavor_only_constructed(two: Path) -> None:
+    """With no flavor chosen the path is read in every flavor folder, so a
+    file in one of them is there (main's words). With `--flavor` it is read
+    in that flavor only, where nothing is (review round 2 of #242)."""
+    report = explain_json("WTF/OnlySecond-constructed.txt")
+    assert report.absent is False
+    assert isinstance(report.result, layout.Unclassified)
+    assert report.result.reason == NO_ROW
+    text = ok("explain", "WTF/OnlySecond-constructed.txt").stdout
+    assert NOT_FOUND not in text, text
+    assert "(with several flavors, pass --flavor" in text
+
+    chosen = explain_json("WTF/OnlySecond-constructed.txt", "--flavor", FLAVOR)
+    assert chosen.absent is True
+    assert isinstance(chosen.result, layout.Unclassified)
+    assert chosen.result.reason.startswith(NOT_FOUND_REASON)
+    assert chosen.verdict.words.startswith(NOT_FOUND_WORDS)
+    text = ok("explain", "WTF/OnlySecond-constructed.txt", "--flavor", FLAVOR).stdout
+    assert text.startswith(f"WTF/OnlySecond-constructed.txt: {NOT_FOUND}\n"), text
+
+
+def test_with_flavor_a_row_described_path_in_another_flavor_only_constructed(two: Path) -> None:
+    """A path a row describes, present only in the flavor not chosen: the
+    chosen one has nothing there, so it says so and offers no view."""
+    rel = f"WTF/Account/{ACCOUNT}/macros-cache.txt"
+    (two / FLAVOR / rel).unlink()
+    report = explain_json(rel, "--flavor", FLAVOR)
+    assert isinstance(report.result, layout.Classified)
+    assert report.result.flavor_folder == FLAVOR
+    assert report.absent is True and report.stat is None
+    assert report.views == []
+    assert all(h.argv[0] == "snap" for h in report.hints), report.hints
+    text = ok("explain", rel, "--flavor", FLAVOR).stdout
+    assert "  on disk:      nothing at this path; this is what a file here would be\n" in text
 
 
 def test_with_several_flavors_a_path_missing_everywhere_is_not_found_constructed(
     two: Path,
 ) -> None:
-    report = explain_json("WTF/zz-missing-constructed.txt")
-    assert report.absent is True
-    assert isinstance(report.result, layout.Unclassified)
-    assert report.result.reason.startswith(NOT_FOUND_REASON)
-    assert report.verdict.words.startswith(NOT_FOUND_WORDS)
-    text = ok("explain", "WTF/zz-missing-constructed.txt").stdout
-    assert text.startswith(f"WTF/zz-missing-constructed.txt: {NOT_FOUND}\n"), text
+    at_root = (
+        f"{NOT_FOUND}, and no file-map row matches it at the install root; "
+        "pass --flavor to see what it would be inside a flavor folder"
+    )
+    # A flavor row would match this one; it was looked up at the root only.
+    for rel in ("WTF/zz-missing-constructed.txt", f"{A}/SavedVariables/Nope-constructed.lua"):
+        report = explain_json(rel)
+        assert report.absent is True
+        assert isinstance(report.result, layout.Unclassified)
+        assert report.result.reason == at_root
+        assert report.verdict.words.startswith(NOT_FOUND_WORDS)
+        text = ok("explain", rel).stdout
+        assert text.startswith(f"{rel}: {at_root.replace(', and ', chr(10) + '  ', 1)}\n"), text
+        # Nothing in any flavor: no note sending the reader to one.
+        assert "(with several flavors" not in text, text
 
 
 # ─── links (review of #242) ──────────────────────────────────────────────────
@@ -398,10 +432,27 @@ def test_a_missing_savedvariables_file_says_when_the_client_writes_it_constructe
 def test_a_missing_path_a_any_depth_row_names_is_a_file_or_folder_constructed(
     flavor: Path,
 ) -> None:
-    report = explain_json("Interface/AddOns/NoSuchAddon-constructed")
-    assert isinstance(report.result, layout.Classified)
-    text = ok("explain", "Interface/AddOns/NoSuchAddon-constructed").stdout
-    assert "this is what a file or folder here would be" in text, text
+    for rel in ("Interface/AddOns/NoSuchAddon-constructed", "Fonts"):
+        if (flavor / rel).exists():
+            continue
+        report = explain_json(rel)
+        assert isinstance(report.result, layout.Classified), rel
+        text = ok("explain", rel).stdout
+        assert "this is what a file or folder here would be" in text, text
+    # Deeper than the `**` row's fixed part: a file.
+    for rel in ("Interface/AddOns/NoSuchAddon-constructed/x.lua", "Fonts/FRIZQT__-constructed.TTF"):
+        report = explain_json(rel)
+        assert isinstance(report.result, layout.Classified), rel
+        text = ok("explain", rel).stdout
+        assert "  on disk:      nothing at this path; this is what a file here would be" in text, (
+            text
+        )
+
+
+def test_the_logout_clause_rows_are_the_rows_the_client_writes_at_logout() -> None:
+    """The clause is keyed on row ids; this pins them to the Written-by cells."""
+    at_logout = {e.id for e in filemap.load().entries if "logout" in e.written_by.casefold()}
+    assert set(cli.WRITTEN_AT_LOGOUT) == at_logout
 
 
 def test_the_first_snapshot_hint_for_a_missing_path_constructed(flavor: Path) -> None:

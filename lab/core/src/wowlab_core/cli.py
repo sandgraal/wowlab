@@ -2678,34 +2678,57 @@ def _nowhere(
     judged: layout.Classified | layout.Unclassified,
     *,
     relative: bool,
+    chosen: str | None,
 ) -> bool:
     """Whether nothing is on disk at `explain`'s path under every reading of
     it (M13-29). A path typed relative to the install is read at the install
-    root and in every discovered flavor folder, so a file in any one of them
-    is there; an absolute path, or one relative to the current folder, is
-    read once. `layout.absent` never looks behind a link, so a path with a
-    link on the way is never "not found"."""
+    root and in the chosen flavor folder (`--flavor`, or the only one), or,
+    with several flavors and none chosen, in every one of them, so a file in
+    any of those is there; an absolute path, or one relative to the current
+    folder, is read once. `layout.absent` never looks behind a link, so a
+    path with a link on the way is never "not found"."""
     if judged.base is None:
         return False
     if relative:
         base = Path(inst.root)
-        readings = [base / given, *(base / f.folder / given for f in inst.flavors)]
+        folders = [chosen] if chosen is not None else [f.folder for f in inst.flavors]
+        readings = [base / given, *(base / folder / given for folder in folders)]
     else:
         under = [judged.flavor_folder] if judged.base == "flavor" and judged.flavor_folder else []
         readings = [Path(inst.root).joinpath(*under, *[p for p in judged.path.split("/") if p])]
     return all(layout.absent(r, inst.root) for r in readings)
 
 
+# Rows the client writes at logout or `/reload` (their Written-by cell);
+# a test pins this set to the file map.
+WRITTEN_AT_LOGOUT = frozenset(
+    {"account-blizzard-savedvariables", "account-savedvariables", "character-savedvariables"}
+)
+
+
 def _absent_line(result: layout.Classified, folder: bool) -> str:
-    """The "on disk" words for a path a row describes that is not there."""
+    """The "on disk" words for a path a row describes that is not there: a
+    folder when written as one or when the row describes only folders; "a
+    file or folder" when the path is exactly the fixed part of a `**` row
+    (`Fonts`, `Interface/AddOns/<x>`); else a file."""
     e = result.entry
     parts = tuple(p for p in result.path.split("/") if p)
-    as_file, as_folder = e.matches(parts, "file"), e.matches(parts, "dir")
-    noun = "folder" if folder or not as_file else "file or folder" if as_folder else "file"
+    if folder or not e.matches(parts, "file"):
+        noun = "folder"
+    elif e.heads_a_subtree(parts):
+        noun = "file or folder"
+    else:
+        noun = "file"
     line = f"nothing at this path; this is what a {noun} here would be"
-    if "logout" in e.written_by:
+    if e.id in WRITTEN_AT_LOGOUT:
         line += "; the client writes it at logout or /reload"
     return line
+
+
+_NOT_FOUND_AT_ROOT = (
+    f"{layout.NOT_FOUND}, and no file-map row matches it at the install root; "
+    "pass --flavor to see what it would be inside a flavor folder"
+)
 
 
 def _is_inside(path: Path, root: Path) -> bool:
@@ -2734,6 +2757,9 @@ def explain(
     judged: layout.Classified | layout.Unclassified | None = None
     here = Path.cwd() / given
     relative = False
+    # The flavor folder a relative path is read in (M13-29): `--flavor`, or
+    # the only one; None with several and none chosen.
+    chosen_folder = inst.flavors[0].folder if len(inst.flavors) == 1 else None
     if given.is_absolute():
         result = layout.classify(path, inst)
     elif os.path.lexists(here) and _is_inside(here.absolute(), Path(inst.root).absolute()):
@@ -2743,6 +2769,7 @@ def explain(
         result = layout.classify(path, inst)
         if isinstance(result, layout.Unclassified) and (flavor or len(inst.flavors) == 1):
             chosen = _select_flavor(inst, flavor)
+            chosen_folder = chosen.folder
             in_flavor = layout.Layout.for_flavor(chosen, inst.root).classify(path)
             if isinstance(in_flavor, layout.Classified):
                 result = in_flavor
@@ -2756,10 +2783,15 @@ def explain(
     folder, link, placeholder = _path_kind(inst.root, judged, path)
     # M13-29: "not found" only when nothing is there under any reading of
     # the path; else the words are main's, whatever one reading found.
-    nowhere = not link and _nowhere(inst, given, judged, relative=relative)
+    nowhere = not link and _nowhere(inst, given, judged, relative=relative, chosen=chosen_folder)
+    # Several flavors, none chosen: the path was looked up at the install
+    # root only, and is in none of the flavor folders.
+    unchosen = relative and chosen_folder is None and len(inst.flavors) > 1
     if isinstance(result, layout.Unclassified) and result.base is not None:
         if not nowhere and result.reason.startswith(layout.NOT_FOUND):
             result = result.model_copy(update={"reason": layout.NO_ROW})
+        elif nowhere and unchosen and result.base == "root":
+            result = result.model_copy(update={"reason": _NOT_FOUND_AT_ROOT})
         elif (
             nowhere
             and isinstance(judged, layout.Unclassified)
@@ -2811,7 +2843,7 @@ def explain(
             _say(f"  {result.reason.removeprefix(layout.NOT_FOUND + ', and ')}")
         else:
             _say(f"{path}: no file-map row{where}: {result.reason}")
-        if len(inst.flavors) > 1 and flavor is None and not given.is_absolute():
+        if len(inst.flavors) > 1 and flavor is None and not given.is_absolute() and not nowhere:
             _say("  (with several flavors, pass --flavor to read PATH inside one of them)")
         _say_detail(report, captured)
         return
