@@ -56,6 +56,8 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 **Amendment (2026-09-21):** revised at the Bronze retirement (ADR-0025).
 
+**Amendment (2026-10-17, owner decision):** six guardrails loosened after a review of what each had cost. (1) The load-bearing set returns to the two files this ADR names, `luadata.py` and `guard.py`; the widening to `svmerge.py` and `profiles.py` (2026-09-29) and `wowlab_core.ui` (2026-10-15) is withdrawn, because it doubled every `ui` ticket, needed owner exemptions for M13-25 and M13-26, and blocked M13-28 over a one-field change in a report. Graders already on `main` for those files stay and are activated by marker deletion. (2) The conductor may make an XS fix directly on a branch when it touches only tests, workflow YAML, scripts or docs, nothing under `lab/*/src/` and no grader of a load-bearing file; `code-reviewer` still grades it before merge. (3) The `make lint` commit hook is unregistered; pre-commit's ruff hook and CI's `make lint` are the gate. (4) The `main` ruleset no longer requires review-thread resolution; the automated review's threads stay visible and the independent `code-reviewer` verdict is the gate. (5) Shell writes into `docs/BACKLOG.md` and `docs/DECISIONS.md` are blocked for subagents only; `.claude/`, `AGENTS.md` and `CLAUDE.md` stay shell-blocked for everyone (ADR-0031). (6) `domain-reviewer` is dispatched for format, file-map and discovery changes, not for CLI wording alone, and `security-reviewer` for fixtures only when `scripts/lab_capture.py` changes in the same PR; a ticket's own reviewer line still wins. Everything else in this ADR stands.
+
 ---
 
 ## ADR-0014 — Toolchain: uv workspace, ruff, mypy strict, pytest; required CI checks

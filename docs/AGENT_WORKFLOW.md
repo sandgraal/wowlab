@@ -18,14 +18,18 @@ project can copy the setup — see the last section.
 | **pr-shepherd** | `.claude/agents/pr-shepherd.md` | PR text, thread replies, comment-level fixes, rebases, lock regeneration | PR state, checks, threads |
 | **Automated review** | `.github/workflows/claude-review.yml` | PR comments | `AGENTS.md`, diff |
 
-Every writer is graded by someone who did not write the thing. For the
-load-bearing files, the ones that rewrite the owner's data or run commands
-for the browser (`luadata.py`, `guard.py`, `svmerge.py`, `profiles.py` and the
-`ui` server, `ui.py` or `ui/`, under `lab/core/src/wowlab_core/`; `svmerge.py`
-and `profiles.py` added by the owner on 2026-09-29, `ui` on 2026-10-15),
-that separation is enforced at the ticket level: a `[TEST]` ticket lands
-graders on `main` as `pytest.mark.xfail(strict=True)` before the `[IMPL]`
-ticket starts.
+Every writer is graded by someone who did not write the thing. For the two
+load-bearing files, the ones that rewrite the owner's data (`luadata.py` and
+`guard.py` under `lab/core/src/wowlab_core/`), that separation is enforced
+at the ticket level: a `[TEST]` ticket lands graders on `main` as
+`pytest.mark.xfail(strict=True)` before the `[IMPL]` ticket starts.
+`svmerge.py`, `profiles.py` and the `ui` server were in the set from
+2026-09-29 and 2026-10-15 until 2026-10-17, when the owner narrowed it back
+to ADR-0013's two: the rule had doubled every `ui` ticket, needed owner
+exemptions twice, and blocked M13-28 over a one-field change in a report.
+Their tests are now written by the implementer and graded by the reviewers,
+like every other file; `security-reviewer` still reviews every `guard.py`
+and `ui` diff.
 
 ## Ticket lifecycle
 
@@ -80,8 +84,8 @@ and is not trusted until an owner capture shows it ran; that capture gets a
 runbook step, as M11-03 did.
 
 **New tests on a load-bearing file come from an independent session**
-(added 2026-09-29). In a fix round on `luadata.py`, `guard.py`, `svmerge.py`,
-`profiles.py` or `ui`, the conductor never asks the implementer for a new test: a
+(added 2026-09-29; narrowed to `luadata.py` and `guard.py` on 2026-10-17).
+In a fix round on either file, the conductor never asks the implementer for a new test: a
 gap goes to a reviewer's probe (a new file under `tests/review/`) or to a
 test-writer. Reviewers may only add probe files, so changing or deleting an
 existing probe is a test-writer's job. Fix messages quote every reviewer's
@@ -207,8 +211,8 @@ and 3.12 because hooks execute on the system interpreter):
 
 | Hook | Event | Enforces |
 |---|---|---|
-| `guard_bash.py` | PreToolUse Bash | no `--no-verify`, no bare force-push, no push to main, no `--admin`, no tag push or `gh release` writes (the owner publishes, ADR-0031), no `rm -rf` outside scratch, no shell writes or deletes touching the harness, ADRs, the backlog or LICENSE |
-| `precommit_gate.py` | PreToolUse Bash (`git commit`) | `make lint` passes in the committing worktree |
+| `guard_bash.py` | PreToolUse Bash | no `--no-verify`, no bare force-push, no push to main, no `--admin`, no tag push or `gh release` writes (the owner publishes, ADR-0031), no `rm -rf` outside scratch, no shell writes or deletes touching `.claude/`, `AGENTS.md`, `CLAUDE.md` or LICENSE; subagents also cannot shell-write the ADRs or the backlog (the conductor may, since 2026-10-17) |
+| `precommit_gate.py` | not registered since 2026-10-17 | was `make lint` before every `git commit`; pre-commit's ruff hook and CI's `make lint` are the gate now. On disk until the owner deletes it |
 | `protect_paths.py` | PreToolUse Edit/Write | LICENSE read-only; subagents cannot edit harness, ADRs, backlog; `code-reviewer` confined to new files under `tests/review/` (in practice `lab/core/tests/review/`) |
 | `format_python.py` | PostToolUse Edit/Write | ruff format + fix on `.py` |
 | `session_start.py` | SessionStart | prints branch state and the frontier |

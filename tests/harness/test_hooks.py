@@ -196,19 +196,15 @@ def test_guard_bash_allows_ordinary_git_and_gh(command: str) -> None:
         ("echo x >| AGENTS.md", "shell write"),
         ("echo x > agents.md", "shell write"),
         ("cat foo >> AGENTS.md", "shell write"),
-        ("printf 'a' | tee docs/DECISIONS.md", "shell write"),
         ("timeout 5 tee .claude/settings.json", "shell write"),
         ("sed -i '' 's/a/b/' CLAUDE.md", "shell write"),
         ("sed --in-place 's/a/b/' AGENTS.md", "shell write"),
         ("cp /tmp/x .claude/agents/implementer.md", "shell write"),
-        ("cp /tmp/BACKLOG.md docs/", "shell write"),
         ("cp x .claude", "shell write"),
         ("mv AGENTS.md AGENTS.old.md", "shell write"),
         ("rm AGENTS.md", "shell write"),
-        ("rm -f docs/BACKLOG.md", "shell write"),
         ("git rm -r .claude", "shell write"),
         ("git checkout origin/evil -- .claude/hooks/guard_bash.py", "shell write"),
-        ("git checkout --theirs docs/BACKLOG.md", "shell write"),
         ("git restore --source=HEAD~2 .claude/settings.json", "shell write"),
         ("dd if=/dev/zero of=AGENTS.md", "shell write"),
         ("ln -sf /tmp/x .claude/settings.json", "shell write"),
@@ -218,7 +214,6 @@ def test_guard_bash_allows_ordinary_git_and_gh(command: str) -> None:
         ('echo x > "$CLAUDE_PROJECT_DIR"/.claude/settings.json', "shell write"),
         ("echo x > $UNKNOWN_VAR/AGENTS.md", "cannot resolve"),
         ("bash -c 'echo x > .claude/settings.json'", "shell write"),
-        ("cd docs && echo x > BACKLOG.md", "shell write"),
         ("cd .claude/agents && cat > implementer.md <<'EOF'\nx\nEOF", "shell write"),
         ("cat > AGENTS.md <<'EOF'\nIt's a file\nEOF", "shell write"),
         ("echo x > LICENSE", "fixed"),
@@ -227,6 +222,39 @@ def test_guard_bash_allows_ordinary_git_and_gh(command: str) -> None:
 )
 def test_guard_bash_blocks_destructive_and_shell_writes(command: str, needle: str) -> None:
     assert_blocked(run_hook("guard_bash.py", bash(command)), needle)
+
+
+# The backlog and the ADRs are conductor-only, but the conductor may write
+# them from the shell (a heredoc, tee, cp): they land through a reviewed PR.
+# Subagents may not (owner decision, 2026-10-17). The harness proper stays
+# shell-blocked for everyone; see the parametrisation above.
+CONDUCTOR_DOC_WRITES = [
+    "printf 'a' | tee docs/DECISIONS.md",
+    "cp /tmp/BACKLOG.md docs/",
+    "rm -f docs/BACKLOG.md",
+    "git checkout --theirs docs/BACKLOG.md",
+    "cd docs && echo x > BACKLOG.md",
+    "cat >> docs/BACKLOG.md <<'EOF'\n## [ ] M99-01 — x\nEOF",
+]
+
+
+@pytest.mark.parametrize("command", CONDUCTOR_DOC_WRITES)
+def test_guard_bash_lets_the_conductor_shell_write_backlog_and_adrs(command: str) -> None:
+    assert_allowed(run_hook("guard_bash.py", bash(command)))
+
+
+@pytest.mark.parametrize("command", CONDUCTOR_DOC_WRITES)
+@pytest.mark.parametrize("agent", ["implementer", "test-writer", "code-reviewer", "pr-shepherd"])
+def test_guard_bash_blocks_subagent_shell_writes_to_backlog_and_adrs(
+    command: str, agent: str
+) -> None:
+    assert_blocked(run_hook("guard_bash.py", bash(command, agent=agent)), "conductor-only")
+
+
+@pytest.mark.parametrize("agent", [None, "implementer"])
+def test_guard_bash_blocks_everyone_from_shell_writing_the_harness(agent: str | None) -> None:
+    for command in ("echo x > .claude/settings.json", "cat >> AGENTS.md <<'EOF'\nx\nEOF"):
+        assert_blocked(run_hook("guard_bash.py", bash(command, agent=agent)), "shell write")
 
 
 @pytest.mark.parametrize(

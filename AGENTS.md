@@ -97,18 +97,26 @@ required checks are green, threads are resolved, and reviews are clean.
 - The conductor's only source edits are harness (`.claude/`), docs, backlog
   ticks, and handoffs. Everything else goes to an agent, including fixes for
   review comments (`SendMessage` to the implementer that has the context).
+  *One lane added by the owner on 2026-10-17 (ADR-0013 amendment):* an XS
+  fix that touches only tests, workflow YAML, scripts or docs, and no file
+  under `lab/*/src/`, may be made by the conductor directly on a branch. It
+  is still graded by `code-reviewer` before it merges, and it never touches
+  a grader of a load-bearing file.
 - Parallel is the default. Dispatch every independent eligible ticket at
   once; holding one back needs a named file or interface collision.
-- Test-writer / implementer separation is mandatory for the load-bearing
-  files, which rewrite the owner's data: `luadata.py`, `guard.py`, `svmerge.py`
-  and `profiles.py` under `lab/core/src/wowlab_core/` (widened by the owner,
-  2026-09-29), and `wowlab_core.ui`, the local server that runs commands for
-  the browser (`ui.py` or `ui/`; added by the owner, 2026-10-15): a `[TEST]` ticket lands graders before the `[IMPL]` ticket
-  creates the file or changes what it does. The session that writes the code never
-  writes, edits, or weakens the tests that grade it. *Owner exceptions
-  (2026-10-16):* M13-25 and M13-26 were filed before `ui` joined the set and
-  are exempt, on condition that a `test-writer` audits their tests and takes
-  them over (`docs/BACKLOG.md`, under M13-26). No other ticket is exempt.
+- Test-writer / implementer separation is mandatory for the two load-bearing
+  files, which rewrite the owner's data: `luadata.py` and `guard.py` under
+  `lab/core/src/wowlab_core/` (ADR-0013): a `[TEST]` ticket lands graders
+  before the `[IMPL]` ticket creates the file or changes what it does. The
+  session that writes the code never writes, edits, or weakens the tests
+  that grade it. *History:* the owner widened the set to `svmerge.py` and
+  `profiles.py` on 2026-09-29 and to `wowlab_core.ui` on 2026-10-15, and
+  narrowed it back to the two on 2026-10-17: the wider rule doubled every
+  `ui` ticket, needed exemptions for M13-25 and M13-26, and blocked M13-28
+  over a one-field change in a report. Tests for those three files are now
+  the implementer's, graded by the reviewers like any other file; the
+  graders already on `main` for them stay and are activated by marker
+  deletion as before.
 - Work runs in owner-selected waves (ADR-0024). One wave is one milestone.
   When a wave's review ticket is the only one left, the conductor writes
   `docs/handoffs/M<n>-review.md` and stops dispatch until the owner picks
