@@ -63,8 +63,6 @@ from typing import Literal, Protocol
 import psutil
 from pydantic import BaseModel, ConfigDict
 
-from wowlab_core import longpath
-
 __all__ = [
     "KNOWN_CLIENT_NAMES",
     "ClientProcess",
@@ -287,7 +285,7 @@ def _root_spellings(root: Path) -> tuple[Path, ...]:
     absolute = root.absolute()
     if len(absolute.parts) < 2:
         raise ValueError(f"not an install root: {root!s}")
-    resolved = longpath.resolve(absolute)  # a root past MAX_PATH too (M13-15)
+    resolved = absolute.resolve()
     return (absolute,) if resolved == absolute else (absolute, resolved)
 
 
