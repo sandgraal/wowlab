@@ -277,6 +277,27 @@ override and TOC lists and out of area counts.
 tables are generated from it by `scripts/gen_file_map.py`, and a test fails
 when the two drift.
 
+*Amended 2026-10-17 (M13-29, #242):* **a path that does not exist is not a
+folder.** `classify` with no `is_dir` given probes the disk with `lstat`
+(never through a link: the probe walks down from the install root one part
+at a time and stops at any symlink, junction or name-surrogate reparse
+point, treating the rest as unknown). A missing path is classified from its
+shape only where a row says so: file rows (a name of a known shape, such as
+`SavedVariables/<x>.lua`) and `**` rows still answer for a missing path;
+folder-only rows (`realm-folder`, `numeric-folder` and the like) answer
+only when the path ends in a separator or `is_dir=True`. Otherwise the
+result is `Unclassified` with the reason "not found; nothing is at this
+path", and `explain` says so in plain words and adds "end it with / to see
+what a folder by this name would be". "Not found" is said only when nothing
+is on disk under every reading of the path: for a path given relative to
+the install, at the install root and in the chosen flavor (`--flavor`, or
+the only one), or in every flavor folder when several exist and none was
+chosen; when any reading finds something, the output is unchanged.
+`ExplainReport` gains `absent`; `layout.absent()` is public. A missing path
+that a row does describe keeps its row and gets an "on disk: nothing at
+this path" line; views are not offered for it. Callers that pass `is_dir`
+(`profiles`, the tree builders, `snap restore`) are unaffected.
+
 ### 6.3 `toc` — addon manifest parser (M10-06)
 
 Per `docs/LAB_FORMATS.md` §3. Output keeps directive order, unknown
