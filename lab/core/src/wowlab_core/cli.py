@@ -1681,42 +1681,38 @@ def _explained(entry: FileMapEntry, verdict: Verdict) -> Explained:
 
 @dataclass(frozen=True)
 class _Reparse:
-    """Where a flavor's paths meet a reparse point that is not a symlink or
-    junction (M13-33), so `tree` judges them as `explain` does. `whole`: the
-    flavor folder itself is one, so every path in it is a placeholder.
-    `placeholders` and `links`: paths relative to the flavor folder whose
-    own `lstat` the write gate refuses; `links` name another path (a name
-    surrogate, which `explain` calls a link), `placeholders` do not."""
+    """Where a flavor's paths meet a reparse point that is no link (M13-33),
+    so `tree` judges them as `explain` does. `whole`: the flavor folder
+    itself is one, so every path in it is a placeholder. `placeholders`:
+    paths relative to the flavor folder whose own `lstat` the write gate
+    refuses. A link (`layout.is_link`) is never among them: the walk lists
+    it in `Inventory.symlinks` and never goes into it (M13-35)."""
 
     whole: bool = False
     placeholders: frozenset[str] = frozenset()
-    links: frozenset[str] = frozenset()
 
     @classmethod
     def of(cls, inv: layout.Inventory, *, whole: bool) -> "_Reparse":
-        return cls(
-            whole=whole,
-            placeholders=frozenset(r.path for r in inv.reparse_points if not r.name_surrogate),
-            links=frozenset(r.path for r in inv.reparse_points if r.name_surrogate),
-        )
+        return cls(whole=whole, placeholders=frozenset(r.path for r in inv.reparse_points))
 
-    def judge(self, path: str) -> tuple[bool, bool]:
-        """`(link, placeholder)` for `path`: it, or a folder above it, is one."""
+    def judge(self, path: str) -> bool:
+        """Whether `path` is a placeholder: it, or a folder above it, is one."""
         parts = path.split("/") if path else []
         above = {"/".join(parts[:n]) for n in range(1, len(parts) + 1)}
-        link = not above.isdisjoint(self.links)
-        return link, not link and (self.whole or not above.isdisjoint(self.placeholders))
+        return self.whole or not above.isdisjoint(self.placeholders)
 
 
-def _flavor_is_placeholder(lay: layout.Layout) -> bool:
-    """Whether the flavor folder itself is a reparse point the write gate
-    refuses that is no link, as `explain` walks it (M13-32). A flavor folder
-    that is a link is judged as before."""
+def _flavor_reparse(lay: layout.Layout) -> tuple[bool, bool]:
+    """`(link, placeholder)` for the flavor folder itself, as `explain`'s
+    component walk judges it: a link by `gaps.is_link` (M13-35), else a
+    reparse point the write gate refuses that is no link (M13-32)."""
     try:
         st = lay.flavor_path.lstat()
     except OSError:
-        return False
-    return gate_refuses_stat(st) and not gaps.is_link(lay.flavor_path, st)
+        return False, False
+    if gaps.is_link(lay.flavor_path, st):
+        return True, False
+    return False, gate_refuses_stat(st)
 
 
 def _tree_items(
@@ -1733,7 +1729,6 @@ def _tree_items(
         if path and path not in items:
             found = lay.classify(path, is_dir=kind == "folder" or None)
             entry = found.entry if isinstance(found, layout.Classified) else None
-            link, placeholder = marks.judge(path)
             items[path] = TreeItem(
                 path=path,
                 kind=kind,
@@ -1744,8 +1739,8 @@ def _tree_items(
                     found.base,
                     found.path,
                     folder=kind == "folder",
-                    link=link or kind == "symlink",
-                    placeholder=placeholder,
+                    link=kind == "symlink",
+                    placeholder=marks.judge(path),
                 ),
                 explained=None,
                 base="flavor",
@@ -1758,9 +1753,13 @@ def _tree_items(
     except OSError:
         top = []
     for e in top:
-        if e.is_symlink():
-            continue  # reported with its target below
-        add(e.name, "folder" if e.is_dir(follow_symlinks=False) else "file", None, None)
+        try:
+            st = layout.lstat_entry(e)
+        except OSError:
+            continue  # the walk names the error
+        if gaps.is_link(Path(e.path), st):
+            continue  # the walk reports it, with its target, below (M13-35)
+        add(e.name, "folder" if stat.S_ISDIR(st.st_mode) else "file", None, None)
     for acct in inv.accounts:
         add(acct.path, "folder", None, "account folder")
         for realm in acct.realms:
@@ -1792,12 +1791,10 @@ def _tree_items(
             )
     for link in inv.symlinks:
         where = "inside" if link.inside_install else "outside"
-        add(
-            link.path,
-            "symlink",
-            None,
-            f"link to {link.target} ({where} the install), not followed",
-        )
+        # No target text: a reparse point `os.readlink` cannot read, such as
+        # a WCI link or a WSL symlink on Windows (M13-35).
+        to = f" to {link.target}" if link.target is not None else ""
+        add(link.path, "symlink", None, f"link{to} ({where} the install), not followed")
     for meta in inv.os_metadata:
         add(meta, "file", None, "operating-system folder metadata")
     return items
@@ -1817,10 +1814,16 @@ def _in_scope(path: str, prefix: str) -> bool:
 def _folder_verdict(lay: layout.Layout, path: str, reparse: _Reparse | None = None) -> Verdict:
     found = lay.classify(path, is_dir=True)
     entry = found.entry if isinstance(found, layout.Classified) else None
-    link, placeholder = reparse.judge(path) if reparse is not None else (False, False)
-    return verdict_of(
-        entry, found.base, found.path, folder=True, link=link, placeholder=placeholder
-    )
+    placeholder = reparse.judge(path) if reparse is not None else False
+    return verdict_of(entry, found.base, found.path, folder=True, placeholder=placeholder)
+
+
+def _link_verdict(lay: layout.Layout, path: str) -> Verdict:
+    """The verdict of a link in a flavor folder, as `tree` gives a listed
+    link and `explain` gives it: classified by its own name, never followed."""
+    found = lay.classify(path)
+    entry = found.entry if isinstance(found, layout.Classified) else None
+    return verdict_of(entry, found.base, found.path, link=True)
 
 
 def _ancestors(
@@ -1886,31 +1889,47 @@ def tree(
         _tree_install(path, explain, root, json_out)
         return
     inst, chosen, lay = _open(root, flavor)
-    inv = lay.inventory()
-    reparse = _Reparse.of(inv, whole=_flavor_is_placeholder(lay))
     prefix = _tree_prefix(path, lay.flavor_path)
-    items = [i for p, i in sorted(_tree_items(lay, inv, reparse).items()) if _in_scope(p, prefix)]
-    ancestors = _ancestors(lay, items, prefix, reparse)
-    if explain:
-        items = _with_explained(lay, items)
-        ancestors = _with_explained(lay, ancestors)
-    errors = [f"{e.path}: {e.error}" for e in inv.errors]
+    flavor_link, flavor_placeholder = _flavor_reparse(lay)
+    items: list[TreeItem] = []
+    ancestors: list[TreeItem] = []
+    errors: list[str] = []
+    truncated = False
+    if flavor_link:
+        # M13-35: the flavor folder is a link (a WCI link, say, which
+        # discovery takes as a folder): listed as one, never walked.
+        folder_verdict = _link_verdict(lay, "")
+    else:
+        inv = lay.inventory()
+        reparse = _Reparse.of(inv, whole=flavor_placeholder)
+        items = [
+            i for p, i in sorted(_tree_items(lay, inv, reparse).items()) if _in_scope(p, prefix)
+        ]
+        ancestors = _ancestors(lay, items, prefix, reparse)
+        if explain:
+            items = _with_explained(lay, items)
+            ancestors = _with_explained(lay, ancestors)
+        errors = [f"{e.path}: {e.error}" for e in inv.errors]
+        truncated = inv.truncated
+        folder_verdict = _folder_verdict(lay, "", reparse)
     report = TreeReport(
         install_root=str(inst.root),
         flavor_folder=chosen.folder,
         items=items,
-        truncated=inv.truncated,
+        truncated=truncated,
         errors=errors,
         ancestors=ancestors,
-        flavor_folder_verdict=_folder_verdict(lay, "", reparse),
+        flavor_folder_verdict=folder_verdict,
     )
     if json_out:
         _emit(report)
         return
     _say(f"{chosen.folder} in {inst.root}")
+    if flavor_link:
+        _note("{} is a link; wowlab does not follow it, so nothing in it is listed.", chosen.folder)
     for item in items:
         _say_tree_item(item.path, item, explain)
-    if inv.truncated:
+    if truncated:
         _note("The walk hit a bound; the listing is incomplete.")
     for err in errors:
         _note("could not read {}", err)
@@ -2044,9 +2063,13 @@ def _tree_install(path: str | None, explain: bool, root: Path | None, json_out: 
         for i in items
         if i.base == "flavor" and not i.path and i.verdict.placeholder
     }
+    # M13-35: a flavor folder that is a link is listed above, never walked.
+    link_flavors = {i.flavor_folder for i in items if i.base == "flavor" and i.kind == "symlink"}
     truncated = False
     ancestors: list[TreeItem] = []
     for f in inst.flavors:
+        if f.folder in link_flavors:
+            continue
         lay = layout.Layout.for_flavor(f, inst.root)
         inv = lay.inventory()
         reparse = _Reparse.of(inv, whole=f.folder in placeholder_flavors)

@@ -23,14 +23,17 @@ Account folder shapes (LAB_FILE_MAP "Folder shape", GLOSSARY "Second name"):
   numeric folder is unknown.
 
 Reads only (L1): directories are listed, files are `lstat`ed, and TOC files
-are opened for reading. Nothing is created anywhere. Symlinks and Windows
-junctions are never followed, whether they point inside the install or out;
-each is reported in `symlinks` with its target text and whether that target
-resolves inside the install, and is left out of the typed lists. Any other
-Windows reparse point (a cloud placeholder, a deduplicated file, a file
-compressed with `compact /EXE`) is walked
-like a plain entry and named in `reparse_points`, because the write gate
-refuses it all the same (M13-33). Walks are
+are opened for reading. Nothing is created anywhere. A link is never
+followed, whether it points inside the install or out: a symlink, a Windows
+junction, or any other Windows reparse point that names another path (the
+name-surrogate bit: a WCI link, a WSL symlink; `is_link`, the one test
+`gaps` and `explain` use, M13-35). Each is reported in `symlinks` with its
+target text and whether that target resolves inside the install, and is
+left out of the typed lists. Any other Windows reparse point (a cloud
+placeholder, a deduplicated file, a file compressed with `compact /EXE`)
+holds real content, so it is walked like a plain entry and named in
+`reparse_points`, because the write gate refuses it all the same (M13-33).
+Walks are
 bounded in depth and entry count (`Limits`); a walk that hits a bound says so
 in `truncated`. `wtf_walk()` walks `WTF/` alone and also names what the typed
 lists leave out there (folders, FIFOs and other non-regular entries, links,
@@ -90,6 +93,7 @@ __all__ = [
     "WtfFile",
     "WtfWalk",
     "classify",
+    "is_link",
     "layouts",
 ]
 
@@ -181,16 +185,13 @@ class Symlink(_Model):
 
 
 class ReparsePoint(_Model):
-    """A Windows reparse point the walk went into (M13-33): not a symlink
-    or junction, so `layout` lists it and what is under it, but the write
-    gate refuses it and everything under it (`verdict.gate_refuses_stat`).
-    `name_surrogate`: it names another path (snapshot's and `gaps`' link
-    rule; `explain` calls it a link). Otherwise it holds real content: a
-    cloud placeholder, a deduplicated file, a file compressed with
-    `compact /EXE`."""
+    """A Windows reparse point the walk went into (M13-33): no link
+    (`is_link`), so it holds real content (a cloud placeholder, a
+    deduplicated file, a file compressed with `compact /EXE`) and `layout`
+    lists it and what is under it, but the write gate refuses it and
+    everything under it (`verdict.gate_refuses_stat`)."""
 
     path: FsText  # relative to the flavor folder, `/`-separated
-    name_surrogate: bool
 
 
 class WalkError(_Model):
@@ -338,7 +339,7 @@ class Inventory(_Model):
     other: Other
     symlinks: tuple[Symlink, ...]
     # M13-33: every entry the walk went into whose `lstat` the write gate
-    # refuses as a link, sorted by path. Empty off Windows.
+    # refuses although it is no link, sorted by path. Empty off Windows.
     reparse_points: tuple[ReparsePoint, ...] = ()
     # Files the file map classifies `os-metadata` (`.DS_Store`, `._*`, …):
     # listed here and kept out of every other list and count.
@@ -421,8 +422,17 @@ def lstat_entry(entry: os.DirEntry[str]) -> os.stat_result:
     return entry.stat(follow_symlinks=False)
 
 
-def _is_link(path: Path, st: os.stat_result) -> bool:
-    if stat.S_ISLNK(st.st_mode):
+def is_link(path: Path, st: os.stat_result) -> bool:
+    """A link the walk never follows: a symlink, a junction, or a Windows
+    reparse point with the name-surrogate bit (a reparse point that names
+    another path, such as a WCI link or a WSL symlink), the rule `snapshot`
+    uses (`snapshot._is_link_stat`). `st` is `path`'s `lstat`. The one link
+    test of the inventory walk, `tree`, `filemap gaps` (`gaps.is_link`) and
+    `explain` (M13-35). Other reparse points (OneDrive cloud placeholders,
+    deduplicated files) hold real content and are walked, as discovery and
+    `layout` take them (M13-04: an install under OneDrive is reported, never
+    refused)."""
+    if _snapshot_link(st):
         return True
     try:
         return path.is_junction()
@@ -523,7 +533,7 @@ class Layout:
         except OSError as exc:
             report.errors.append(WalkError(path=_rel_text(rel), error=exc.strerror or str(exc)))
             return None
-        if _is_link(Path(entry.path), st):
+        if is_link(Path(entry.path), st):
             report.symlinks.append(self._symlink(rel))
             return None
         self._note_reparse(rel, st, report)
@@ -582,7 +592,7 @@ class Layout:
                 WalkError(path=_rel_text((*rel, found)), error=exc.strerror or str(exc))
             )
             return None
-        if _is_link(path, st):
+        if is_link(path, st):
             report.symlinks.append(self._symlink((*rel, found)))
             return None
         self._note_reparse((*rel, found), st, report)
@@ -592,9 +602,7 @@ class Layout:
     def _note_reparse(rel: tuple[str, ...], st: os.stat_result, report: _Report) -> None:
         """Record `rel` when the write gate refuses its `lstat` (M13-33)."""
         if gate_refuses_stat(st):
-            report.reparse_points.append(
-                ReparsePoint(path=_rel_text(rel), name_surrogate=_snapshot_link(st))
-            )
+            report.reparse_points.append(ReparsePoint(path=_rel_text(rel)))
 
     def _entry_id(self, rel: tuple[str, ...], is_dir: bool) -> str | None:
         found = self._filemap.classify(rel, "flavor", "dir" if is_dir else "file")
@@ -869,13 +877,13 @@ class Layout:
                 continue
             top = self._top(name, report)
             if top is None:  # a symlink (reported) or not a folder
-                is_link = any(s.path == found for s in report.symlinks)
+                linked = any(s.path == found for s in report.symlinks)
                 areas.append(
                     Area(
                         name=name,
                         path=found,
                         present=True,
-                        symlink=is_link,
+                        symlink=linked,
                         files=0,
                         folders=0,
                         bytes=0,
@@ -1093,7 +1101,7 @@ def _kind(path: Path, is_dir: bool | None) -> _filemap.Kind:
         st = path.lstat()
     except OSError:
         return "any"
-    if stat.S_ISDIR(st.st_mode) and not _is_link(path, st):
+    if stat.S_ISDIR(st.st_mode) and not is_link(path, st):
         return "dir"
     if stat.S_ISREG(st.st_mode):
         return "file"
@@ -1109,7 +1117,7 @@ def _same_file(candidate: Path, known: Path) -> bool:
     """
     try:
         st = candidate.lstat()
-        if _is_link(candidate, st):
+        if is_link(candidate, st):
             return False
         return os.path.samestat(st, known.lstat())
     except OSError:
