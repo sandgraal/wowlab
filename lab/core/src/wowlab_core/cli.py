@@ -4153,9 +4153,9 @@ _MACROS_LIMIT = 16 * 1024 * 1024
 
 _MACROS_CHECK_NOTES = [
     "macros-cache.txt is what the client last wrote; the server can replace it at login when "
-    "macro sync is on. On Forever 1.60.1.70425 a macro made in a finished session was missing "
-    "from it (whether the client rewrites it at logout is [verify]), so a macro may be missing "
-    "here, or still listed after you deleted it.",
+    "macro sync is on. In a real capture (docs/LAB_FORMATS.md, 2026-10-16) a macro made in a "
+    "finished session was missing from it (whether the client rewrites it at logout is "
+    "[verify]), so a macro may be missing here, or still listed after you deleted it.",
     "The spellbook and action bars are the lab-addon's record as of its last save "
     "(logout or /reload), not the session in progress. It reads the player's spellbook "
     "only, so an item, a pet, mount or toy spell after /cast reads as not in the spellbook.",
