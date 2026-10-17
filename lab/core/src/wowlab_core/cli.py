@@ -2235,8 +2235,10 @@ class ExplainHint(_Out):
     command's arguments after `wowlab`; `command` is the whole line quoted
     for `shell`, the default shell of this machine: `posix` (`shlex.join`,
     for sh, bash and zsh) or `powershell` (single quotes, a quote doubled;
-    Windows Terminal's default; not cmd.exe). A copy button should use
-    `argv`. Every path in it is inside the install."""
+    Windows Terminal's default; not cmd.exe). A copy button copies
+    `command` exactly, already quoted for `shell`, and never rebuilds the
+    line from `argv` (amended 2026-10-16, M13-27). Every path in it is
+    inside the install."""
 
     command: str
     argv: list[str]
@@ -2650,6 +2652,11 @@ def explain(
     stat_, facts, views, note, hints = _detail(
         inst, judged, parts or (), verdict, root, lay, folder=folder, link=link
     )
+    captured = _captured_words(lay)
+    if facts is not None:
+        # M13-27: the line the text output prints, carried in the JSON so
+        # `wowlab ui` shows Python's words and words nothing itself.
+        facts = facts.model_copy(update={"words": _snapshot_line(facts, captured)})
     report = ExplainReport(
         query=path,
         result=result,
@@ -2661,7 +2668,6 @@ def explain(
         hints=hints,
         plain=_plain_text(result.entry) if isinstance(result, layout.Classified) else None,
     )
-    captured = _captured_words(lay)
     if json_out:
         _emit(report)
         return
@@ -2691,7 +2697,7 @@ def _say_detail(report: ExplainReport, captured: str) -> None:
         what = _bytes(st.size) if st.size is not None else f"a {st.kind}"
         _say(f"  on disk:      {what}, modified {st.mtime}")
     if report.snapshot is not None:
-        _say(f"  {_snapshot_line(report.snapshot, captured)}")
+        _say(f"  {report.snapshot.words or _snapshot_line(report.snapshot, captured)}")
     if report.views_note is not None:
         _say(f"  views:        {report.views_note}")
     for h in report.hints:

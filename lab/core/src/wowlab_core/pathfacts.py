@@ -115,6 +115,10 @@ class SnapshotFacts(BaseModel):
     # M13-32, after the fields above so the JSON only grows.
     last_held_path: str | None = None
     last_held_confirmed: bool | None = None
+    # M13-27: the facts above in words, the line `explain` prints after
+    # "In the latest snapshot", which `wowlab ui` shows verbatim. `explain`
+    # sets it; `snapshot_facts` leaves it None.
+    words: str | None = None
 
 
 def disk_spelling(base: Path, parts: Sequence[str]) -> tuple[str, ...]:

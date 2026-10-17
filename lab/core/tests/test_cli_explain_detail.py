@@ -649,9 +649,38 @@ def test_an_unreadable_store_is_said_not_guessed(
         damaged=0,
         damaged_newer=False,
         error="constructed: the store is a link",
+        # M13-27: the text output's line, carried in the JSON.
+        words=(
+            "In the latest snapshot: unknown; the snapshot store could not be read "
+            "(constructed: the store is a link)"
+        ),
     )
     assert not any(h.command.startswith("wowlab snap ") for h in report.hints)
     assert "the snapshot store could not be read" in ok("explain", SYNDICATOR).stdout
+
+
+def test_snapshot_words_are_the_line_the_text_prints(root: Path, flavor: Path) -> None:
+    """M13-27: `snapshot.words` in the JSON is the "In the latest snapshot"
+    line the text output prints, for every case the text has, so `wowlab ui`
+    can show Python's words verbatim."""
+    log = "Logs/WoWCombatLog-040126_021630.txt"
+
+    def same_words(rel: str) -> str:
+        report = explained(rel)
+        assert report.snapshot is not None and report.snapshot.words is not None
+        assert f"  {report.snapshot.words}\n" in ok("explain", rel).stdout
+        return report.snapshot.words
+
+    assert same_words(SYNDICATOR).startswith("In the latest snapshot: none;")
+    ok("snap", "create", "-m", "words")
+    latest = snapshot.SnapshotStore().list()[-1]
+    held = same_words(SYNDICATOR)
+    assert latest.id in held and '"words"' in held and held.endswith("is the same")
+    (flavor / SYNDICATOR).write_bytes((flavor / SYNDICATOR).read_bytes() + b"\n")
+    assert same_words(SYNDICATOR).endswith("the file on disk differs")
+    assert "snapshots capture" in same_words(log)
+    # No facts, no words: a folder has neither.
+    assert explained("WTF").snapshot is None
 
 
 # ─── hints are safe ──────────────────────────────────────────────────────────
