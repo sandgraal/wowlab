@@ -547,7 +547,7 @@ Found in the domain review of #195 (M13-21). A file such as `Interface/AddOns/Fo
 
 ---
 
-## [ ] M13-29 — `classify`: a path that does not exist is not a folder
+## [x] M13-29 — `classify`: a path that does not exist is not a folder
 **Size:** S · **Depends on:** M13-21
 
 Found in the domain review of #195. `classify` on a path that does not exist, with no `is_dir` given, matches the folder-only `realm-folder` row, so `explain` reports a folder. A missing path should be classified from its shape only where a row says so. Otherwise it should be reported as not found, with a verdict of `unclassified` and plain words.
