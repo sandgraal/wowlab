@@ -241,7 +241,10 @@ shows; anything wider is **[verify]**.
   NPC `0x10a48`. Per community documentation **[verify]**, unit flags
   describe a unit relative to the logging player (affiliation, reaction,
   control, type) and include a bit for that player's current target, so the
-  same NPC can log other values. Do not key on them.
+  same NPC can log other values. Do not key on them. *Amended 2026-10-17
+  (M13-08):* do not key on the whole value; the affiliation field
+  (`& 0xF`) and the type field (`& 0xFC00`) select the logging player's own
+  casts (see the 2026-10-17 entry in the breakage log below).
 - Records seen: `SPELL_CAST_START`, `SPELL_CAST_SUCCESS`,
   `SPELL_CAST_FAILED`, `SPELL_AURA_APPLIED`, `SPELL_AURA_REFRESH`,
   `SPELL_AURA_REMOVED`, `SPELL_DAMAGE`, `SPELL_PERIODIC_DAMAGE`,
@@ -725,3 +728,33 @@ Dated entries, newest last. Each names the fixture that prompted it.
   ticket could keep an applied record through a following open, which would
   be schema 4 with its own capture. `looks import-char` keeps saying "as of
   the last barber-shop open", which is still true.
+- **2026-10-17, §8, `SPELL_CAST_SUCCESS` layout and the unit-flag fields,
+  Forever 1.60.1 (M13-08; fixture
+  `macos/forever/Logs/WoWCombatLog-040126_021630.txt`, format 22, advanced
+  logging on).** The seven `SPELL_CAST_SUCCESS` records (lines 5, 10, 14,
+  30, 42, 57, 69) each have 30 fields after the event name, in this order:
+  source GUID, source name (quoted), source flags, source raid flags;
+  destination GUID, name, flags, raid flags; spell id (bare decimal), spell
+  name (quoted), school (hex, e.g. `0x20`, `0x4`, `0x1`); then the 19-field
+  advanced block, whose first field equals the source GUID on all seven and
+  whose second is the zero owner GUID. Six records are the owner's, with
+  source flags `0x511`; one is the NPC "Ravage" (id 3242), with `0x10a48`.
+  Read as the `COMBATLOG_OBJECT_*` fields (community documentation
+  **[verify]**; the bit values are not shown by a fixture): `0x511` is
+  affiliation mine (`0x1`), reaction friendly (`0x10`), control player
+  (`0x100`), type player (`0x400`); `0x10a48` is affiliation outsider
+  (`0x8`), reaction hostile (`0x40`), control NPC (`0x200`), type NPC
+  (`0x800`), plus the current-target bit (`0x10000`). The NPC logs `0x10a48`
+  on every one of its lines, so "flags change with the target" is still
+  only community documentation. `combatlog.cast_counts` (M13-08) selects
+  the player's own casts by requiring affiliation exactly "mine" and type
+  exactly "player"; the §8 text above is amended to say so. Spell ids in the
+  log are per rank: Shadow Bolt 695 is the spellbook's "Rank 2" and
+  Immolate 348 its "Rank 1", while the later schema-3 record (build 70425)
+  holds ranks 705 and 707 on the bars; the log predates the record, which
+  is why they differ. Still **[verify]**: the layout with advanced logging
+  off (counted on the first eleven fields only); pets and guardians (no
+  such source in this log); group and instance logs; mind control and charm
+  (whether a charmed player's casts carry "mine"); auto-repeat spells (a
+  wand's Shoot or Auto Shot may log one `SPELL_CAST_SUCCESS` per shot); a
+  log holding more than one of the player's characters.

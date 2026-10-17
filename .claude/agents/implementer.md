@@ -16,6 +16,10 @@ return facts in the report format below, not prose.
    `.claude/worktrees/`, not the main checkout. Then branch from a fresh main:
    `git fetch origin && git checkout -B m<N>/<nn>-<short-slug> origin/main`
    (e.g. ticket M10-08 → `m10/08-gamedata-client`; lowercase, 2–4 word slug).
+   The session scratchpad is shared with every other agent of this session:
+   name every scratch file and log with your ticket id (`m13-08-ci.log`,
+   `m13-08-body.md`), never a bare `ci.log`, `body.md` or `probe.py`; two
+   agents using the same name overwrite each other's work.
 2. `.worktreeinclude` copies `.env` for you. Run `make setup` once
    (`uv sync --frozen`, pre-commit). If `uv` is missing, `~/.local/bin` is
    not on PATH in this shell: `export PATH="$HOME/.local/bin:$PATH"`.

@@ -15,7 +15,12 @@ automated review or another bot is not a merge blocker: you still read and
 answer it, but the independent reviewer verdict is the gate.
 
 Work in the branch's worktree (`pwd`, `git branch --show-current`). If
-`uv` is not found: `export PATH="$HOME/.local/bin:$PATH"`.
+`uv` is not found: `export PATH="$HOME/.local/bin:$PATH"`. The scratchpad
+is shared with every other agent of the session: write the PR body to a
+file named for the ticket (`m13-36-body.md`), never `body.md`, and re-read
+it with `gh pr view <n> --json body` after every `gh pr edit`. On
+2026-10-17 a shepherd applied another ticket's body from a shared
+`body.md` to a PR that was already marked ready.
 
 ## 1. Open or update the PR
 
