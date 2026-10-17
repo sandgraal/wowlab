@@ -262,7 +262,6 @@ def hostile_gaps(install: Path) -> Path:
 # ─── the page shell ──────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 def test_the_page_has_the_gaps_tab_and_the_gaps_only_filter(server: Any) -> None:
     """page.html names the new parts: the gaps tab and its view (hidden
     until picked, like the commands), and the "gaps only" checkbox."""
@@ -279,7 +278,6 @@ def test_the_page_has_the_gaps_tab_and_the_gaps_only_filter(server: Any) -> None
 # ─── the tree: the whole install ─────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 def test_the_tree_is_the_whole_install_constructed(
     server: Any, two_flavors: Path, home: Path, tmp_path: Path
 ) -> None:
@@ -365,7 +363,6 @@ def test_the_tree_is_the_whole_install_constructed(
 # ─── "gaps only" ─────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 def test_gaps_only_shows_exactly_the_gaps_and_their_ancestors_constructed(
     server: Any, gapped_more: Path, tmp_path: Path
 ) -> None:
@@ -411,7 +408,6 @@ def test_gaps_only_shows_exactly_the_gaps_and_their_ancestors_constructed(
     assert [r["path"] for r in out["steps"][1]["rows"]] == [r["path"] for r in out["first"]["rows"]]
 
 
-@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 def test_the_verdict_and_text_filters_cover_the_whole_install_constructed(
     server: Any, two_flavors: Path, tmp_path: Path
 ) -> None:
@@ -446,7 +442,6 @@ def test_the_verdict_and_text_filters_cover_the_whole_install_constructed(
 # ─── the gaps tab ────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 def test_the_gaps_tab_draws_groups_catch_all_not_entered_and_links_constructed(
     server: Any, gapped_more: Path, tmp_path: Path
 ) -> None:
@@ -502,7 +497,6 @@ def test_the_gaps_tab_draws_groups_catch_all_not_entered_and_links_constructed(
     assert set(view["links"]) == set(gaps["links"])
 
 
-@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 def test_hostile_names_in_gaps_draw_as_inert_text_constructed(
     server: Any, hostile_gaps: Path, tmp_path: Path
 ) -> None:
@@ -559,7 +553,6 @@ def snapped(server: Any, install: Path) -> dict[str, Any]:
     return manifest
 
 
-@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 def test_the_detail_pane_shows_the_snapshot_facts(
     server: Any, snapped: dict[str, Any], home: Path, tmp_path: Path
 ) -> None:
@@ -592,7 +585,6 @@ def _snapshot_variant(base: dict[str, Any], words: str, **fields: Any) -> dict[s
     return report
 
 
-@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 def test_the_pane_shows_the_snapshot_words_and_words_nothing_itself_constructed(
     server: Any, snapped: dict[str, Any], tmp_path: Path
 ) -> None:
@@ -630,7 +622,6 @@ def test_the_pane_shows_the_snapshot_words_and_words_nothing_itself_constructed(
     assert "2028" in residue[3] and "202E" in residue[3].upper(), residue[3]
 
 
-@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 def test_a_copy_that_could_not_be_confirmed_is_said_so_constructed(
     server: Any, snapped: dict[str, Any], tmp_path: Path
 ) -> None:
@@ -683,7 +674,6 @@ def test_a_copy_that_could_not_be_confirmed_is_said_so_constructed(
 # ─── the detail pane: hints ──────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 def test_each_hint_has_a_copy_button_that_copies_the_command_exactly(
     server: Any, install: Path, home: Path, tmp_path: Path
 ) -> None:
@@ -748,7 +738,6 @@ def _powershell(hint: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 def test_a_hint_says_its_own_shell_and_copies_exactly_constructed(
     server: Any, metachar: Path, tmp_path: Path
 ) -> None:
@@ -799,7 +788,6 @@ def test_a_hint_says_its_own_shell_and_copies_exactly_constructed(
 HOSTILE_SV_FILES = [IMG + ".lua", "line" + LSEP + "sep.lua", RLO + "aul.exe.lua"]
 
 
-@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 def test_hostile_names_in_hints_copy_exactly_and_draw_inert_constructed(
     server: Any, hostile: Path, tmp_path: Path
 ) -> None:
@@ -833,7 +821,6 @@ def test_hostile_names_in_hints_copy_exactly_and_draw_inert_constructed(
 # ─── the detail pane: Preview ────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 def test_preview_runs_the_first_view_exactly_and_draws_a_tree(
     server: Any, install: Path, tmp_path: Path
 ) -> None:
@@ -869,7 +856,6 @@ def test_preview_runs_the_first_view_exactly_and_draws_a_tree(
         assert previewed["fields"] == 0, "read-only"
 
 
-@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 def test_preview_runs_only_the_first_view_constructed(
     server: Any, install: Path, tmp_path: Path
 ) -> None:
@@ -900,7 +886,6 @@ def test_preview_runs_only_the_first_view_constructed(
     assert not _runs_of(out, ["binds", "list"]), "the second view never runs"
 
 
-@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 def test_no_view_means_no_preview_button(server: Any, install: Path, tmp_path: Path) -> None:
     """A path with no view (a folder; `Logs/`) has no Preview button, while
     one with a view does: the button follows `views`, not the pane. Every
@@ -940,7 +925,6 @@ def _refused_views(listed: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 def test_a_refused_command_is_never_offered_constructed(
     server: Any, install: Path, tmp_path: Path
 ) -> None:
@@ -993,7 +977,6 @@ def test_a_refused_command_is_never_offered_constructed(
             assert tuple(request["body"]["command"]) not in named, request
 
 
-@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 def test_whether_a_view_is_offered_comes_from_the_command_list_constructed(
     server: Any, install: Path, tmp_path: Path
 ) -> None:
@@ -1027,7 +1010,6 @@ def test_whether_a_view_is_offered_comes_from_the_command_list_constructed(
     assert not _runs_of(out, ["cvar", "list"]) and not _runs_of(out, ["sv", "dump"])
 
 
-@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 def test_a_refused_first_view_is_not_replaced_by_the_next_constructed(
     server: Any, install: Path, tmp_path: Path
 ) -> None:
@@ -1064,7 +1046,6 @@ def test_a_refused_first_view_is_not_replaced_by_the_next_constructed(
     assert not _runs_of(out, ["cvar", "list"]) and not _runs_of(out, ["looks", "page"])
 
 
-@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 def test_a_hostile_preview_draws_as_inert_text_constructed(
     server: Any, install: Path, tmp_path: Path
 ) -> None:
@@ -1125,7 +1106,6 @@ def _swap_verdict(
     return swapped
 
 
-@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 def test_a_placeholder_verdict_has_its_own_badge_class_constructed(
     server: Any, install: Path, tmp_path: Path
 ) -> None:
@@ -1238,7 +1218,6 @@ def _effective(classes: set[str], css: str, scheme: str = "dark") -> dict[str, s
     return {name: value for name, (_, _, value) in best.items()}
 
 
-@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 @pytest.mark.parametrize("scheme", ["dark", "light"])
 @pytest.mark.parametrize("level", ["gate", "no", "folder", "not_applicable", "unclassified"])
 def test_the_placeholder_badge_is_painted_like_its_label(level: str, scheme: str) -> None:

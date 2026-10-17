@@ -1,8 +1,10 @@
 "use strict";
-// The page of `wowlab ui` (ADR-0029, §15.6). Two views:
-// - the explorer (M13-25): the tree of one flavor folder from
-//   `tree --explain --json`, and the detail of one path from
-//   `explain --json`;
+// The page of `wowlab ui` (ADR-0029, §15.6). Three views:
+// - the explorer (M13-25, M13-27): the tree of the whole install from
+//   `tree --install --explain --json`, and the detail of one path from
+//   `explain --json`: its verdict, its snapshot facts, the hints to copy,
+//   and a Preview that runs its first view and draws the JSON;
+// - the gaps (M13-27): what `filemap gaps --json` reports;
 // - the commands the server read from the CLI's Click tree, a field for each
 //   declared parameter, and what one run printed.
 // It holds no game rules and no file-map logic (§14.5 D3): every fact, the
@@ -84,6 +86,9 @@
     if (/^[a-z_]+$/.test(level)) node.classList.add("badge-" + level);
     // A link keeps its row's level class; `badge-link` overrides its colour.
     if (verdict.link === true) node.classList.add("badge-link");
+    // A placeholder (a path under a reparse point that is no link) keeps its
+    // level class too; `badge-placeholder` paints it like the label it says.
+    if (verdict.placeholder === true) node.classList.add("badge-placeholder");
     if (describe && typeof verdict.words === "string" && verdict.words) {
       node.title = verdict.words;
       node.appendChild(unseen(": " + verdict.words));
@@ -133,18 +138,22 @@
   // ─── the explorer ───
 
   const explorer = {
-    report: null, // the TreeReport
-    root: null, // the node of the flavor folder
-    flavor: "",
+    report: null, // the InstallTreeReport
+    root: null, // the node of the install root
+    flavors: [], // the flavor folders, as discovery reported them
     open: new Set(),
     closedWhileFiltering: new Set(),
     selected: null,
     treeSeq: 0,
     explainSeq: 0,
+    gaps: null, // the GapReport, once read
+    gapsAsked: null, // the one `filemap gaps` run, shared by the tab and the filter
+    gapsError: "", // why the last one failed; the next need asks again
+    gapHits: null, // the paths "gaps only" shows, from the install root
   };
-  // The first view: the flavor folder, with WTF/ and Interface/AddOns/ open
-  // (owner, 2026-10-16).
-  const FIRST_OPEN = ["", "WTF", "Interface", "Interface/AddOns"];
+  // The commands the server offers (`/api/commands`): a Preview is offered
+  // only for a view this list allows.
+  let offeredCommands = [];
 
   function explorerSay(text, isError) {
     const node = byId("explorer-status");
@@ -152,33 +161,65 @@
     node.classList.toggle("error", Boolean(isError));
   }
 
-  // The listed paths of a TreeReport: its items and the folders above them
+  // A path from the install root, `/`-separated: "" is the install root, a
+  // flavor folder its own name, a file in it `<flavor>/<path>`.
+  function keyOf(base, flavor, path) {
+    const rel = typeof path === "string" ? path : "";
+    if (base === "root") return rel;
+    const folder = typeof flavor === "string" ? flavor : "";
+    return rel ? folder + "/" + rel : folder;
+  }
+
+  function itemKey(item) {
+    return keyOf(item.base, item.flavor_folder, item.path);
+  }
+
+  // The listed paths of the report: its items and the folders above them
   // (`ancestors`), each with its verdict from Python.
   function listedOf(report) {
     const ancestors = Array.isArray(report.ancestors) ? report.ancestors : [];
     return report.items.concat(ancestors);
   }
 
-  // The listed paths as a tree of path segments. The flavor folder itself
-  // takes `flavor_folder_verdict`. A node no listed path names (only an
-  // older wowlab leaves one) has no item and no badge; `explain` gives its
-  // verdict when it is picked.
+  // The first view: the install root open, and the first flavor folder with
+  // WTF/ and Interface/AddOns/ open (owner, 2026-10-16).
+  function firstOpen(flavor) {
+    const open = [""];
+    if (flavor) {
+      for (const under of ["", "/WTF", "/Interface", "/Interface/AddOns"]) open.push(flavor + under);
+    }
+    return open;
+  }
+
+  // The listed paths as a tree of path segments under the install root. A
+  // node no listed path names has no item and no badge; `explain` gives its
+  // verdict when it is picked. Each node knows its flavor folder (none for
+  // the install root's own entries) and its path inside it, for `explain`.
   function buildTree(report) {
-    const top = report.flavor_folder_verdict
-      ? { note: null, verdict: report.flavor_folder_verdict }
-      : null;
-    const root = { name: report.flavor_folder, path: "", item: top, children: [], index: new Map() };
-    const listed = listedOf(report).slice();
-    listed.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-    for (const item of listed) {
-      if (typeof item.path !== "string" || item.path === "") continue;
+    const rootName = String(report.install_root).split(/[\\/]/).filter(Boolean).pop() || "";
+    const flavors = new Set(explorer.flavors);
+    const root = { name: rootName, path: "", item: null, children: [], index: new Map(), flavor: null, rel: "" };
+    const listed = listedOf(report).map((item) => [itemKey(item), item]);
+    listed.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    for (const [key, item] of listed) {
+      if (typeof key !== "string" || key === "") continue;
       let node = root;
       let path = "";
-      for (const part of item.path.split("/")) {
+      for (const part of key.split("/")) {
         path = path ? path + "/" + part : part;
         let child = node.index.get(part);
         if (!child) {
-          child = { name: part, path: path, item: null, children: [], index: new Map() };
+          const top = path.split("/")[0];
+          const inFlavor = flavors.has(top);
+          child = {
+            name: part,
+            path: path,
+            item: null,
+            children: [],
+            index: new Map(),
+            flavor: inFlavor ? top : null,
+            rel: inFlavor ? path.slice(top.length + 1) : path,
+          };
           node.index.set(part, child);
           node.children.push(child);
         }
@@ -197,6 +238,7 @@
     return {
       level: byId("level-filter").value,
       text: byId("text-filter").value.trim().toLowerCase(),
+      gaps: byId("gaps-only").checked === true,
     };
   }
 
@@ -213,6 +255,7 @@
       if (!node.item || filterKey(node.item.verdict) !== filter.level) return false;
     }
     if (filter.text && !node.path.toLowerCase().includes(filter.text)) return false;
+    if (filter.gaps && !(explorer.gapHits && explorer.gapHits.has(node.path))) return false;
     return true;
   }
 
@@ -220,7 +263,7 @@
   // matches and the folders that lead to them.
   function shownNodes(root, filter) {
     const keep = new Set();
-    const active = Boolean(filter.level || filter.text);
+    const active = Boolean(filter.level || filter.text || filter.gaps);
     let matched = 0;
     function walk(node) {
       const hit = !active || matches(node, filter);
@@ -268,7 +311,7 @@
     const name = make("button", visible(node.name) + (folder ? "/" : ""));
     name.type = "button";
     name.className = folder ? "name folder" : "name";
-    name.title = visible(node.path);
+    name.title = visible(node.path || node.name);
     name.addEventListener("click", () => select(node));
     row.appendChild(name);
     if (node.item) {
@@ -282,7 +325,7 @@
     li.appendChild(row);
     if (children.length && open) {
       const list = make("ul");
-      list.setAttribute("role", "group");
+      list.setAttribute("role", " group");
       for (const child of children) list.appendChild(drawNode(child, view, depth + 1));
       li.appendChild(list);
     }
@@ -294,6 +337,11 @@
     tree.replaceChildren();
     if (!explorer.root) return;
     const filter = filters();
+    if (filter.gaps && !explorer.gapHits) {
+      if (explorer.gapsAsked) explorerSay("Reading the file-map gaps…", false);
+      else explorerSay(explorer.gapsError, Boolean(explorer.gapsError));
+      return;
+    }
     const view = shownNodes(explorer.root, filter);
     if (view.active && !view.keep.has(explorer.root)) {
       explorerSay("Nothing matches.", false);
@@ -312,16 +360,27 @@
     drawTree();
   }
 
+  // The Verdict filter's choices, from the data. A choice reads as its
+  // level's label; a placeholder's label is another level's (Python words
+  // it as the label it is painted with), so it names a choice only when no
+  // other path of that level does.
   function fillLevels(report) {
     const select = byId("level-filter");
     const chosen = select.value;
     const levels = [];
     const labels = new Map();
+    const fromPlaceholder = new Set();
     for (const item of listedOf(report)) {
       const level = filterKey(item.verdict);
-      if (level && !levels.includes(level)) {
+      if (!level) continue;
+      const placeholder = item.verdict.placeholder === true;
+      if (!levels.includes(level)) {
         levels.push(level);
         labels.set(level, labelOf(item.verdict));
+        if (placeholder) fromPlaceholder.add(level);
+      } else if (fromPlaceholder.has(level) && !placeholder) {
+        labels.set(level, labelOf(item.verdict));
+        fromPlaceholder.delete(level);
       }
     }
     while (select.options.length > 1) select.remove(1);
@@ -333,14 +392,30 @@
     select.value = levels.includes(chosen) ? chosen : "";
   }
 
+  // With several flavor folders, a picker that opens one of them as the
+  // first view opens the first.
+  function fillFlavors(flavors) {
+    const picker = byId("flavor");
+    picker.replaceChildren();
+    for (const folder of flavors) {
+      const option = make("option", visible(folder));
+      option.value = folder;
+      picker.appendChild(option);
+    }
+    byId("flavor-box").hidden = flavors.length < 2;
+  }
+
   function clearDetail() {
     explorer.selected = null;
-    // A reply to an earlier pick (another flavor folder's file) is dropped.
+    // A reply to an earlier pick is dropped.
     explorer.explainSeq += 1;
     byId("explain-title").textContent = "Pick a file or folder";
     byId("explain-path").textContent = "";
     byId("explain-verdict").replaceChildren();
     byId("explain-facts").replaceChildren();
+    byId("explain-snapshot").replaceChildren();
+    byId("explain-hints").replaceChildren();
+    byId("explain-preview").replaceChildren();
     explainSay("", false);
   }
 
@@ -350,33 +425,32 @@
     node.classList.toggle("error", Boolean(isError));
   }
 
-  async function loadTree(flavor) {
+  async function loadTree() {
     const seq = ++explorer.treeSeq;
     explorer.root = null;
     explorer.report = null;
     byId("tree").replaceChildren();
     byId("tree-root").textContent = "";
     clearDetail();
-    explorerSay("Reading the flavor folder…", false);
-    const params = { explain: true };
-    if (flavor) params.flavor = flavor;
-    const reply = await runJson(["tree"], params);
+    explorerSay("Reading the install…", false);
+    const reply = await runJson(["tree"], { whole_install: true, explain: true });
     if (seq !== explorer.treeSeq) return;
     if (reply.error) {
       explorerSay(shown(reply.error), true);
       return;
     }
     const report = reply.data;
-    if (!report || !Array.isArray(report.items)) {
+    if (!report || !Array.isArray(report.items) || !Array.isArray(report.flavor_folders)) {
       explorerSay("wowlab tree printed something this page does not know.", true);
       return;
     }
     explorer.report = report;
-    explorer.flavor = report.flavor_folder;
+    explorer.flavors = report.flavor_folders.filter((f) => typeof f === "string" && f !== "");
     explorer.root = buildTree(report);
-    explorer.open = new Set(FIRST_OPEN);
+    explorer.open = new Set(firstOpen(explorer.flavors[0]));
     explorer.closedWhileFiltering = new Set();
-    byId("tree-root").textContent = shown(report.install_root + sep + report.flavor_folder);
+    byId("tree-root").textContent = shown(report.install_root);
+    fillFlavors(explorer.flavors);
     fillLevels(report);
     drawTree();
     const notes = [];
@@ -401,20 +475,149 @@
     list.appendChild(make("dd", shown(value)));
   }
 
+  // ─── the detail pane: hints and Preview ───
+
+  // A hint: Python's command line, quoted for its own shell, shown with the
+  // home folder as "~" and copied exactly as Python wrote it. Nothing here
+  // runs it.
+  function hintNode(hint) {
+    const box = make("div");
+    box.className = "hint";
+    const line = make("code", shown(hint.command));
+    line.className = "hint-command";
+    box.appendChild(line);
+    const shell = make("span", visible(String(hint.shell || "")));
+    shell.className = "hint-shell";
+    box.appendChild(shell);
+    const copy = make("button", "Copy");
+    copy.type = "button";
+    copy.className = "copy";
+    copy.setAttribute("aria-label", "Copy this command");
+    const text = hint.command;
+    copy.addEventListener("click", async () => {
+      let done = false;
+      try {
+        if (window.navigator && window.navigator.clipboard) {
+          await window.navigator.clipboard.writeText(text);
+          done = true;
+        }
+      } catch (_) {
+        done = false;
+      }
+      copy.textContent = done ? "Copied" : "Copy failed; select the line instead";
+      setTimeout(() => {
+        copy.textContent = "Copy";
+      }, 2000);
+    });
+    box.appendChild(copy);
+    if (typeof hint.does === "string" && hint.does) {
+      const does = make("p", shown(hint.does));
+      does.className = "hint-does";
+      box.appendChild(does);
+    }
+    return box;
+  }
+
+  function drawHints(hints) {
+    const box = byId("explain-hints");
+    box.replaceChildren();
+    const usable = (Array.isArray(hints) ? hints : []).filter(
+      (h) => h && typeof h.command === "string" && h.command !== "",
+    );
+    if (!usable.length) return;
+    box.appendChild(make("h3", "Commands to copy"));
+    const note = make("p", "Run them yourself in a terminal; this page never runs them.");
+    note.className = "hint-note";
+    box.appendChild(note);
+    for (const hint of usable) box.appendChild(hintNode(hint));
+  }
+
+  function samePath(a, b) {
+    return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => x === b[i]);
+  }
+
+  // Whether the server offers a view's run, by the command list it sent:
+  // the command is listed and not excluded, and every parameter the view
+  // sets is one the command declares and does not refuse.
+  function offered(view) {
+    if (!view || !Array.isArray(view.command) || !view.params || typeof view.params !== "object") return false;
+    const command = offeredCommands.find((c) => samePath(c.path, view.command));
+    if (!command || command.excluded) return false;
+    const params = Array.isArray(command.params) ? command.params : [];
+    for (const name of Object.keys(view.params)) {
+      const param = params.find((p) => p.name === name);
+      if (!param || param.refused) return false;
+      if (typeof view.params[name] !== "string") return false;
+    }
+    return true;
+  }
+
+  // The Preview of an entry is its first view or nothing: a first view the
+  // server refuses is not replaced by the next one.
+  function drawPreview(data, seq) {
+    const box = byId("explain-preview");
+    box.replaceChildren();
+    const views = Array.isArray(data.views) ? data.views : [];
+    const view = views[0];
+    if (!offered(view)) {
+      if (!views.length && typeof data.views_note === "string" && data.views_note) {
+        const note = make("p", shown(data.views_note));
+        note.className = "preview-note";
+        box.appendChild(note);
+      }
+      return;
+    }
+    const head = make("div");
+    head.className = "preview-head";
+    const button = make("button", "Preview");
+    button.type = "button";
+    button.className = "preview";
+    head.appendChild(button);
+    const what = make("span", "wowlab " + visible(view.command.join(" ")) + ": " + shown(String(view.does || "")));
+    what.className = "preview-does";
+    head.appendChild(what);
+    box.appendChild(head);
+    const out = make("div");
+    out.className = "preview-out";
+    box.appendChild(out);
+    const command = view.command.slice();
+    const params = Object.assign({}, view.params);
+    button.addEventListener("click", async () => {
+      if (button.disabled) return;
+      button.disabled = true;
+      out.replaceChildren(make("p", "Running wowlab " + visible(command.join(" ")) + "…"));
+      const reply = await runJson(command, params);
+      if (seq !== explorer.explainSeq) return;
+      button.disabled = false;
+      out.replaceChildren();
+      if (reply.error) {
+        const error = make("p", shown(reply.error));
+        error.className = "preview-error";
+        out.appendChild(error);
+        return;
+      }
+      out.appendChild(previewTree(reply.data));
+    });
+  }
+
   async function select(node) {
     const report = explorer.report;
     if (!report) return;
     explorer.selected = node.path;
     markSelected();
     const seq = ++explorer.explainSeq;
-    const where = report.flavor_folder + (node.path ? "/" + node.path : "");
     byId("explain-title").textContent = visible(node.name) + (isFolder(node) ? "/" : "");
-    byId("explain-path").textContent = visible(where);
+    byId("explain-path").textContent = visible(node.path);
     byId("explain-verdict").replaceChildren();
     byId("explain-facts").replaceChildren();
+    byId("explain-snapshot").replaceChildren();
+    byId("explain-hints").replaceChildren();
+    byId("explain-preview").replaceChildren();
     explainSay("Asking wowlab explain…", false);
-    const target = report.install_root + sep + report.flavor_folder + (node.path ? "/" + node.path : "");
-    const reply = await runJson(["explain"], { path: target, root: report.install_root, flavor: report.flavor_folder });
+    const target = node.path ? report.install_root + sep + node.path.split("/").join(sep) : report.install_root;
+    const params = { path: target, root: report.install_root };
+    if (node.flavor) params.flavor = node.flavor;
+    const reply = await runJson(["explain"], params);
     if (seq !== explorer.explainSeq) return;
     if (reply.error) {
       explainSay(shown(reply.error), true);
@@ -441,29 +644,26 @@
     } else {
       fact(facts, "Why it is unknown", result.reason);
     }
+    // The snapshot facts, in Python's words (`snapshot.words`), verbatim.
+    const words = data.snapshot ? data.snapshot.words : null;
+    if (typeof words === "string" && words) {
+      const snap = byId("explain-snapshot");
+      const label = make("span", "Snapshots");
+      label.className = "snapshot-label";
+      snap.appendChild(label);
+      snap.appendChild(make("span", shown(words)));
+    }
+    drawHints(data.hints);
+    drawPreview(data, seq);
     explainSay("", false);
   }
 
-  async function loadExplorer() {
-    explorerSay("Looking for the install…", false);
-    const reply = await runJson(["install", "show"], {});
-    if (reply.error) {
-      explorerSay(shown(reply.error), true);
-      return;
-    }
-    const flavors = Array.isArray(reply.data.flavors) ? reply.data.flavors : [];
-    const picker = byId("flavor");
-    picker.replaceChildren();
-    for (const flavor of flavors) {
-      const option = make("option", visible(flavor.folder) + (flavor.version ? " (" + visible(flavor.version) + ")" : ""));
-      option.value = flavor.folder;
-      picker.appendChild(option);
-    }
-    byId("flavor-box").hidden = flavors.length < 2;
-    await loadTree(flavors.length ? flavors[0].folder : "");
-  }
-
-  byId("flavor").addEventListener("change", () => loadTree(byId("flavor").value));
+  byId("flavor").addEventListener("change", () => {
+    const folder = byId("flavor").value;
+    if (!explorer.root || !explorer.flavors.includes(folder)) return;
+    for (const path of firstOpen(folder)) explorer.open.add(path);
+    drawTree();
+  });
   byId("level-filter").addEventListener("change", () => {
     explorer.closedWhileFiltering = new Set();
     drawTree();
@@ -472,17 +672,280 @@
     explorer.closedWhileFiltering = new Set();
     drawTree();
   });
+  byId("gaps-only").addEventListener("change", async () => {
+    explorer.closedWhileFiltering = new Set();
+    const pending = byId("gaps-only").checked && !explorer.gaps ? loadGaps() : null;
+    drawTree();
+    if (pending) {
+      await pending;
+      drawTree();
+    }
+  });
+
+  // ─── the preview: the JSON a view printed, as a read-only tree ───
+  // Drawn at once, with no listener, up to PREVIEW_NODES keys and values;
+  // an object or array is a <details> the player opens. Every key and value
+  // goes in through textContent, quoted as JSON.
+
+  const PREVIEW_NODES = 3000;
+
+  function previewTree(value) {
+    const box = make("div");
+    box.className = "jt preview-tree";
+    const budget = { left: PREVIEW_NODES, skipped: 0 };
+    const root = previewNode(null, value, budget);
+    const kind = jtKind(value);
+    if (kind === "object" || kind === "array") root.open = true;
+    box.appendChild(root);
+    if (budget.skipped) {
+      const more = make("p", budget.skipped + " more keys and values are not drawn here; the Commands tab shows the whole output.");
+      more.className = "jt-count";
+      box.appendChild(more);
+    }
+    return box;
+  }
+
+  function previewNode(key, value, budget) {
+    budget.left -= 1;
+    const kind = jtKind(value);
+    if (kind !== "object" && kind !== "array") {
+      const row = make("div");
+      row.className = "jt-leaf";
+      if (key !== null) row.appendChild(jtKey(key));
+      row.appendChild(jtScalar(value));
+      return row;
+    }
+    const entries = kind === "array" ? value.map((item, i) => [i, item]) : Object.entries(value);
+    const node = make("details");
+    node.className = "jt-node";
+    const summary = make("summary");
+    if (key !== null) summary.appendChild(jtKey(key));
+    const count = make("span", (kind === "array" ? "[" : "{") + entries.length + (kind === "array" ? "]" : "}"));
+    count.className = "jt-count";
+    summary.appendChild(count);
+    node.appendChild(summary);
+    const box = make("div");
+    box.className = "jt-children";
+    node.appendChild(box);
+    for (let i = 0; i < entries.length; i++) {
+      if (budget.left <= 0) {
+        budget.skipped += entries.length - i;
+        break;
+      }
+      box.appendChild(previewNode(entries[i][0], entries[i][1], budget));
+    }
+    return node;
+  }
+
+  // ─── the gaps tab: `filemap gaps --json` ───
+
+  // The one `filemap gaps` run, read when the tab or "gaps only" first
+  // needs it.
+  function loadGaps() {
+    if (!explorer.gapsAsked) {
+      explorer.gapsAsked = (async () => {
+        explorer.gapsError = "";
+        gapsSay("Looking for paths the file map does not describe…", false);
+        const reply = await runJson(["filemap", "gaps"], {});
+        const report = reply.data;
+        if (reply.error || !report || !Array.isArray(report.groups)) {
+          explorer.gapsAsked = null;
+          explorer.gapsError = reply.error
+            ? shown(reply.error)
+            : "wowlab filemap gaps printed something this page does not know.";
+          gapsSay(explorer.gapsError, true);
+          return;
+        }
+        explorer.gaps = report;
+        explorer.gapHits = gapHits(report);
+        drawGaps(report);
+      })();
+    }
+    return explorer.gapsAsked;
+  }
+
+  function gapsSay(text, isError) {
+    const node = byId("gaps-status");
+    node.textContent = text;
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  function listOf(value) {
+    return Array.isArray(value) ? value : [];
+  }
+
+  // What "gaps only" shows: the places in `groups` and `catch_all`, and the
+  // links, by their path from the install root (with their ancestors, as
+  // every filter draws them).
+  function gapHits(report) {
+    const hits = new Set();
+    for (const group of listOf(report.groups).concat(listOf(report.catch_all))) {
+      for (const place of Array.isArray(group.gaps) ? group.gaps : []) {
+        hits.add(keyOf(group.base, place.flavor_folder, place.path));
+      }
+    }
+    for (const link of listOf(report.links)) {
+      if (typeof link === "string") hits.add(link);
+    }
+    return hits;
+  }
+
+  // "1 file", "2 files": `word` with its leading space.
+  function plural(n, word) {
+    return n + word + (n === 1 ? "" : "s");
+  }
+
+  // A group's counts, from its numbers; no path in them.
+  function groupCounts(group) {
+    const parts = [];
+    if (group.kind === "file") {
+      parts.push(plural(group.bytes, " byte"));
+    } else if (group.kind === "link") {
+      parts.push("a link, not followed");
+    } else if (group.kind === "folder") {
+      parts.push(plural(group.files, " file"), plural(group.bytes, " byte"));
+      if (group.folders) parts.push(plural(group.folders, " folder"));
+      if (group.links) parts.push(plural(group.links, " link") + " not followed");
+      if (group.other) parts.push(group.other + " other");
+    } else {
+      parts.push("not a file, folder or link; never opened");
+    }
+    if (group.places > 1) parts.push("in " + group.places + " places");
+    if (group.entry_id) parts.push("row " + visible(group.entry_id));
+    if (group.note) parts.push(visible(group.note));
+    return parts.join(", ");
+  }
+
+  function placeCounts(place) {
+    const parts = [];
+    if (place.files) parts.push(plural(place.files, " file"));
+    parts.push(plural(place.bytes, " byte"));
+    if (place.folders) parts.push(plural(place.folders, " folder"));
+    if (place.links) parts.push(plural(place.links, " link") + " not followed");
+    if (place.other) parts.push(place.other + " other");
+    return parts.join(", ");
+  }
+
+  // One group: its header names the parent folder's row and the place's
+  // own name, never the parent's path (an account, realm or character
+  // folder), as `filemap gaps` prints it. Its places are inside.
+  function gapGroup(group, catchAll) {
+    const box = make("details");
+    box.className = catchAll ? "gap-group gap-catch-all" : "gap-group";
+    const head = make("summary");
+    head.className = "gap-head";
+    const parent = group.parent_entry_id ? "[" + visible(group.parent_entry_id) + "]" : "(install root)";
+    const slash = group.kind === "folder" ? "/" : "";
+    head.textContent = parent + " " + visible(group.name) + slash + "  " + groupCounts(group);
+    box.appendChild(head);
+    const list = make("ul");
+    list.className = "gap-places";
+    for (const place of Array.isArray(group.gaps) ? group.gaps : []) {
+      const key = keyOf(group.base, place.flavor_folder, place.path);
+      const item = make("li");
+      item.className = "gap-place";
+      item.dataset.path = key;
+      const where = make("code", visible(key));
+      item.appendChild(where);
+      item.appendChild(make("span", "  " + placeCounts(place)));
+      const examples = Array.isArray(place.examples) ? place.examples : [];
+      if (examples.length) {
+        const inside = make("ul");
+        inside.className = "gap-examples";
+        for (const example of examples) inside.appendChild(make("li", visible(String(example))));
+        item.appendChild(inside);
+      }
+      list.appendChild(item);
+    }
+    box.appendChild(list);
+    return box;
+  }
+
+  function gapSection(body, title, intro) {
+    const section = make("section");
+    section.className = "gap-section panel";
+    section.appendChild(make("h3", title));
+    if (intro) {
+      const p = make("p", intro);
+      p.className = "gap-intro";
+      section.appendChild(p);
+    }
+    body.appendChild(section);
+    return section;
+  }
+
+  function drawGaps(report) {
+    const body = byId("gaps-body");
+    body.replaceChildren();
+    const groups = listOf(report.groups);
+    const catchAll = listOf(report.catch_all);
+    const notEntered = listOf(report.not_entered);
+    const links = listOf(report.links);
+    const errors = listOf(report.errors);
+    const notes = [];
+    if (report.truncated) notes.push("The walk stopped at a bound: there may be thin spots it did not reach.");
+    if (errors.length) notes.push(plural(errors.length, " path") + " could not be read (listed below).");
+    gapsSay(notes.join(" "), false);
+
+    const none = gapSection(body, "Paths with no file-map row",
+      groups.length
+        ? plural(report.files, " file") + ", " + plural(report.bytes, " byte") + ", in " + plural(groups.length, " group") + "."
+        : "None: every path the walk reached has a row.");
+    for (const group of groups) none.appendChild(gapGroup(group, false));
+    if (catchAll.length) {
+      const only = gapSection(body, "Described only by a catch-all row",
+        plural(report.catch_all_files, " file") + ", " + plural(report.catch_all_bytes, " byte") + ".");
+      for (const group of catchAll) only.appendChild(gapGroup(group, true));
+    }
+    if (notEntered.length) {
+      const section = gapSection(body, "Not entered", "Folders a row labels whole; the walk did not look inside.");
+      const list = make("ul");
+      for (const item of notEntered) {
+        const key = keyOf(item.base, item.flavor_folder, item.path);
+        const li = make("li");
+        li.className = "gap-not-entered";
+        li.dataset.path = key;
+        li.appendChild(make("span", "[" + visible(String(item.entry_id || "")) + "] "));
+        li.appendChild(make("code", visible(key) + "/"));
+        list.appendChild(li);
+      }
+      section.appendChild(list);
+    }
+    if (links.length) {
+      const section = gapSection(body, "Links met and not followed", null);
+      const list = make("ul");
+      for (const link of links) {
+        if (typeof link !== "string") continue;
+        const li = make("li");
+        li.className = "gap-link";
+        li.dataset.path = link;
+        li.appendChild(make("code", visible(link)));
+        list.appendChild(li);
+      }
+      section.appendChild(list);
+    }
+    if (errors.length) {
+      const section = gapSection(body, "Could not be read", null);
+      const list = make("ul");
+      for (const error of errors) {
+        list.appendChild(make("li", visible(String(error.path)) + ": " + shown(String(error.error))));
+      }
+      section.appendChild(list);
+    }
+  }
 
   // ─── tabs ───
 
   function showTab(name) {
-    for (const which of ["explorer", "commands"]) {
+    for (const which of ["explorer", "gaps", "commands"]) {
       const on = which === name;
       byId("tab-" + which).setAttribute("aria-selected", on ? "true" : "false");
       byId(which + "-view").hidden = !on;
     }
+    if (name === "gaps") loadGaps();
   }
   byId("tab-explorer").addEventListener("click", () => showTab("explorer"));
+  byId("tab-gaps").addEventListener("click", () => showTab("gaps"));
   byId("tab-commands").addEventListener("click", () => showTab("commands"));
 
   // ─── the command list ───
@@ -605,6 +1068,7 @@
     const data = await reply.json();
     if (typeof data.home === "string") home = data.home;
     if (typeof data.sep === "string" && data.sep) sep = data.sep;
+    offeredCommands = Array.isArray(data.commands) ? data.commands : [];
     const list = byId("commands");
     for (const command of data.commands) {
       const button = make("button", command.path.join(" "));
@@ -619,7 +1083,7 @@
       }
       list.appendChild(button);
     }
-    await loadExplorer();
+    await loadTree();
   }
 
   // ─── the result: a generic JSON tree (M13-26) ─────────────────────────────
