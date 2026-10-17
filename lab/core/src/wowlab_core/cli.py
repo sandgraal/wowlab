@@ -106,12 +106,12 @@ import stat
 import sys
 import time
 import traceback
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import Annotated, Any, Literal, NamedTuple, NoReturn, Protocol, override
+from typing import Annotated, Any, Literal, NamedTuple, NoReturn, override
 
 import typer
 from pydantic import BaseModel, ConfigDict, Field, RootModel
@@ -149,7 +149,13 @@ from wowlab_core import (
     wtfconfig,
 )
 from wowlab_core.filemap import FileMapEntry
-from wowlab_core.verdict import Verdict, gate_refuses_stat, tier_words, verdict_of
+from wowlab_core.verdict import (
+    Verdict,
+    gate_refuses_stat,
+    has_executable_part,
+    tier_words,
+    verdict_of,
+)
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -4885,7 +4891,12 @@ GC_GRACE_SECONDS = 3600.0
 def snap_create(
     message: Annotated[str, typer.Option("-m", "--message", help="A label for the snapshot.")] = "",
     screenshots: Annotated[
-        bool, typer.Option("--screenshots", help="Also capture Screenshots/.")
+        bool,
+        typer.Option(
+            "--screenshots",
+            help="Also capture Screenshots/ (kept for show and diff; a restore never "
+            "writes them back).",
+        ),
     ] = False,
     root: RootOpt = None,
     flavor: FlavorOpt = None,
@@ -5263,15 +5274,16 @@ class SkippedPath(_Out):
     what: str
 
 
-class UnrestorablePath(_Out):
-    """A file a snapshot holds that the write gate never writes: its file-map
-    row's Edit cell is `n/a` (`Screenshots/`, captured with `snap create
-    --screenshots`). A whole restore leaves it out and restores the rest;
-    naming it with --paths is refused by the gate (M13-30)."""
+class NotRestoredPath(_Out):
+    """A screenshot in a snapshot taken with `snap create --screenshots`. Its
+    file-map row (`screenshots`) has Edit `n/a`: the write gate never writes
+    `Screenshots/`, so a whole restore leaves it out and restores the rest,
+    and naming it with --paths is refused (M13-30). It stays in the snapshot."""
 
     path: str  # relative to the flavor folder
     entry_id: str  # its file-map row, whose Edit cell is `n/a`
     what: str
+    disk: Literal["same", "differs", "missing"]  # the disk against the snapshot, read-only
 
 
 class RestoreReport(_Out):
@@ -5284,9 +5296,9 @@ class RestoreReport(_Out):
     paths: list[str] | None  # --paths as given; None restores the whole snapshot
     plan: list[guard.PlanItem]  # path, before/after SHA-256 (None: absent), bytes written
     skipped: list[SkippedPath]  # client-managed files a whole restore does not write
-    # Files outside the gate's subtrees (Edit `n/a`: screenshots) a whole
-    # restore cannot write and --paths cannot restore either.
-    unrestorable: list[UnrestorablePath]
+    # Screenshots (file-map Edit `n/a`) a whole restore leaves out and --paths
+    # cannot restore either; they stay in the snapshot.
+    not_restored: list[NotRestoredPath]
     dry_run: bool
     applied: bool
     transaction: str | None  # the journal record of the applied restore
@@ -5330,17 +5342,29 @@ def _client_managed(
     return kept, skipped
 
 
-def _outside_gate(
-    lay: layout.Layout, manifest: snapshot.Manifest, prefix: str
-) -> tuple[list[snapshot.Entry], list[UnrestorablePath]]:
-    """Split a snapshot's entries for a whole restore: an entry under a
-    top-level folder whose file-map row has Edit `n/a` (`Screenshots/`, from
-    `snap create --screenshots`) is outside the write gate's subtrees and set
-    aside; every other entry is to be restored. Each top-level folder is
-    classified once, and only the entries under an `n/a` one are classified
-    themselves (for their row id)."""
+# The file-map row of `Screenshots/`, which `snap create --screenshots`
+# captures and the write gate never writes (Edit `n/a`).
+_SCREENSHOTS_ROW = "screenshots"
+
+
+def _screenshot_row(lay: layout.Layout, rel: str, *, is_dir: bool | None) -> FileMapEntry | None:
+    found = lay.classify(rel, is_dir=is_dir)
+    if isinstance(found, layout.Classified) and found.entry.id == _SCREENSHOTS_ROW:
+        return found.entry
+    return None
+
+
+def _set_aside(
+    lay: layout.Layout, manifest: snapshot.Manifest, install_root: Path, folder: str
+) -> tuple[list[snapshot.Entry], list[NotRestoredPath]]:
+    """Split a snapshot's entries for a whole restore: the screenshots (every
+    entry under a top-level folder whose file-map row is `screenshots`) are
+    set aside, each with what the disk holds now (read-only: size first,
+    then content; `profiles.disk_state`); every other entry is to be
+    restored. Each top-level folder is classified once."""
+    prefix = folder + "/"
     rest: list[snapshot.Entry] = []
-    outside: list[UnrestorablePath] = []
+    aside: list[NotRestoredPath] = []
     tops: dict[str, FileMapEntry | None] = {}
     for entry in manifest.entries:
         if not entry.path.startswith(prefix):
@@ -5349,62 +5373,84 @@ def _outside_gate(
         rel = entry.path.removeprefix(prefix)
         top = rel.split("/", 1)[0]
         if top not in tops:
-            found = lay.classify(top, is_dir=True)
-            tops[top] = (
-                found.entry
-                if isinstance(found, layout.Classified) and found.entry.edit == "n/a"
-                else None
-            )
+            tops[top] = _screenshot_row(lay, top, is_dir=True)
         row = tops[top]
         if row is None:
             rest.append(entry)
             continue
-        own = lay.classify(rel, is_dir=False if entry.kind == "file" else None)
-        if isinstance(own, layout.Classified) and own.entry.edit == "n/a":
-            row = own.entry
-        outside.append(UnrestorablePath(path=rel, entry_id=row.id, what=_plain(row.what)))
-    return rest, outside
+        state = profiles.disk_state(install_root, folder, entry)
+        aside.append(
+            NotRestoredPath(
+                path=rel,
+                entry_id=row.id,
+                what=_plain(row.what),
+                disk="same" if state == "same" else "missing" if state == "missing" else "differs",
+            )
+        )
+    return rest, aside
 
 
-# How many unrestorable files (screenshots) the text plan names; --json has all.
-_UNRESTORABLE_SHOWN = 10
+def _names_for_whole(
+    entries: Sequence[snapshot.Entry], install_root: Path, folder: str
+) -> tuple[list[str], list[snapshot.Entry]]:
+    """A whole restore of `entries` (all of this flavor), as names for the
+    gate's restore by name, and the entries left unnamed.
 
-
-class _Restorer(Protocol):
-    """The part of a gate transaction `_restore_by_name` uses."""
-
-    def restore(self, snapshot_id: str, paths: Iterable[str] | None = None) -> None: ...
-
-
-def _restore_by_name(
-    tx: _Restorer,
-    manifest: snapshot.Manifest,
-    rest: Sequence[snapshot.Entry],
-    install_root: Path,
-    folder: str,
-) -> None:
-    """A whole restore of `rest` alone, in a dry run, for a snapshot that
-    also holds files the gate never writes (`_outside_gate`).
-
-    The gate's whole-snapshot restore cannot leave entries out, so `rest` is
-    restored by name. The disk is read first (read-only, never through a
-    link: `profiles._differs`) and only the entries it no longer holds are
-    named, so an unchanged link or executable, which a whole restore leaves
-    alone and a named one refuses, is left alone here too. A changed one, or
-    one behind a link, is named, and the gate refuses it as it refuses a
-    whole restore. Unchanged entries need no write and are not named."""
+    The gate's whole restore leaves an unchanged link or executable alone,
+    and refuses a changed one; by name it refuses both. So an unchanged
+    link or executable (by the gate's own name rule, `verdict`'s copy) is
+    left unnamed, the disk read first (read-only, following no link:
+    `profiles.disk_state`). Every other entry is named, unchanged or not,
+    so the gate checks each one as a whole restore does: it refuses what it
+    would refuse there (a reserved name, a case collision, a changed link),
+    and a file that changes between the plan and the confirm shows in its
+    plan."""
     prefix = folder + "/"
-    # The gate's snapshot checks (another install, another flavor) come
-    # before anything here reads the disk.
-    tx.restore(manifest.id, [])
-    if any(not e.path.startswith(prefix) for e in rest):
-        tx.restore(manifest.id)  # refused: the snapshot holds a path outside this flavor
-    changed = [
-        e.path.removeprefix(prefix)
-        for e in rest
-        if profiles._differs(install_root, folder, e) != "same"
+    names: list[str] = []
+    left: list[snapshot.Entry] = []
+    for e in entries:
+        rel = e.path.removeprefix(prefix)
+        special = e.kind != "file" or has_executable_part(rel)
+        if special and profiles.disk_state(install_root, folder, e) == "same":
+            left.append(e)
+        else:
+            names.append(rel)
+    return names, left
+
+
+# How many changed screenshots the text plan names; --json lists every one.
+_NOT_RESTORED_SHOWN = 10
+
+
+def _not_restored_lines(snapshot_id: str, aside: Sequence[NotRestoredPath]) -> list[str]:
+    changed = [a for a in aside if a.disk != "same"]
+    if not changed:
+        return [f"  The snapshot also holds {len(aside)} screenshot(s); all still match the disk."]
+    lines = [
+        f"  Not restored: {len(aside)} screenshot(s) wowlab never writes (file-map Edit "
+        f'"n/a"; --paths cannot restore them either). They stay in snapshot {snapshot_id}; '
+        f"{len(changed)} differ from or are missing on disk:"
     ]
-    tx.restore(manifest.id, changed)
+    lines += [f"    {a.path}  [{a.disk}]" for a in changed[:_NOT_RESTORED_SHOWN]]
+    if len(changed) > _NOT_RESTORED_SHOWN:
+        lines.append(f"    and {len(changed) - _NOT_RESTORED_SHOWN} more (--json lists every one)")
+    return lines
+
+
+def _screenshot_note(
+    lay: layout.Layout,
+    manifest: snapshot.Manifest,
+    folder: str,
+    named: Sequence[str],
+    exc: Exception,
+) -> None:
+    """When the gate refused a named screenshot, say why on one more line."""
+    for rel in named:
+        if repr(rel) in str(exc) and _screenshot_row(lay, rel, is_dir=False) is not None:
+            held = manifest.entry(f"{folder}/{rel}") is not None
+            where = f"; the file stays in snapshot {manifest.id}" if held else ""
+            exc.add_note(f'wowlab never writes Screenshots/ (file-map Edit "n/a"){where}.')
+            return
 
 
 @snap_app.command("restore")
@@ -5417,7 +5463,8 @@ def snap_restore(
             "--paths",
             help="Only this path, relative to the flavor folder; repeat for more. "
             "A path the snapshot covers but does not hold is deleted. A named path is "
-            "restored even when its file-map row says wowlab leaves it alone.",
+            "restored even when its file-map row says wowlab leaves it alone (not a "
+            "screenshot: wowlab never writes Screenshots/).",
         ),
     ] = None,
     dry_run: Annotated[
@@ -5434,9 +5481,9 @@ def snap_restore(
     backups such as `.lua.bak` and `.old`, `Interface/AddOns/Blizzard_*`,
     file-browser metadata) are left alone and counted in the plan; name one
     with --paths to restore it. Screenshots in a snapshot taken with
-    --screenshots are never restored (the write gate does not write
-    Screenshots/): a whole restore lists them and restores the rest.
-    JSON: RestoreReport."""
+    `snap create --screenshots` are never restored (wowlab never writes
+    Screenshots/, not even with --paths): a whole restore leaves them in the
+    snapshot, counts them, and restores the rest. JSON: RestoreReport."""
     store = snapshot.SnapshotStore()
     manifest = store.show(snapshot_id)
     inst, _ = _discover(root)
@@ -5461,27 +5508,48 @@ def snap_restore(
         label += " (" + ", ".join(paths) + ")"
     named = list(paths) if paths else None  # no --paths: everything the snapshot holds
     lay = layout.Layout.for_flavor(chosen, inst.root)
-    rest: list[snapshot.Entry] = []
-    unrestorable: list[UnrestorablePath] = []
+    folder = chosen.folder
+    rest: list[snapshot.Entry] = list(manifest.entries)
+    aside: list[NotRestoredPath] = []
+    names: list[str] | None = None
     with guard.transaction(chosen, label=label, dry_run=True) as tx:
-        if named is None:
-            # Files the gate never writes (screenshots) are left out of a
-            # whole restore, which the gate would otherwise refuse outright.
-            rest, unrestorable = _outside_gate(lay, manifest, chosen.folder + "/")
-        if unrestorable:
-            _restore_by_name(tx, manifest, rest, inst.root, chosen.folder)
+        if named is not None:
+            try:
+                tx.restore(manifest.id, named)
+            except guard.PathNotAllowedError as exc:
+                _screenshot_note(lay, manifest, folder, named, exc)
+                raise
         else:
-            tx.restore(manifest.id, named)
+            # Screenshots, which the gate never writes, are set aside; the
+            # gate would otherwise refuse the whole restore.
+            rest, aside = _set_aside(lay, manifest, inst.root, folder)
+            if not aside:
+                tx.restore(manifest.id)
+            else:
+                # The gate's snapshot checks (another install, another
+                # flavor) come before the disk is read for the names.
+                tx.restore(manifest.id, [])
+                if any(not e.path.startswith(folder + "/") for e in rest):
+                    tx.restore(manifest.id)  # refused: a path outside this flavor
+                names, left = _names_for_whole(rest, inst.root, folder)
+                tx.restore(manifest.id, names)
         whole_plan = tx.plan
     skipped: list[SkippedPath] = []
     plan = list(whole_plan)
     if named is None:
         plan, skipped = _client_managed(lay, whole_plan)
-    # With something left out, the rest is restored by name: the gate then
-    # writes exactly the kept paths.
+    # With something left out, the rest is restored by name: every entry the
+    # gate would check in a whole restore but the skipped ones, so the gate
+    # writes exactly the kept paths and a later change still shows in its
+    # plan. The unnamed links and executables are read again before commit.
     wanted = named
-    if named is None and (skipped or unrestorable):
-        wanted = [i.path for i in plan]
+    left_out: list[snapshot.Entry] = []
+    if named is None and (skipped or aside):
+        if names is None:
+            names, left = _names_for_whole(rest, inst.root, folder)
+        left_out = left
+        skipped_paths = {s.path for s in skipped}
+        wanted = [n for n in names if n not in skipped_paths]
 
     def report(*, applied: bool, transaction: str | None = None) -> RestoreReport:
         notes = _relogin_notes([i.path for i in plan]) if applied else []
@@ -5493,18 +5561,19 @@ def snap_restore(
             paths=named,
             plan=plan,
             skipped=skipped,
-            unrestorable=unrestorable,
+            not_restored=aside,
             dry_run=dry_run,
             applied=applied,
             transaction=transaction,
             notes=notes,
         )
 
-    if (not json_out or (prompting and plan)) and (plan or skipped or unrestorable):
+    shots_differ = any(a.disk != "same" for a in aside)
+    if (not json_out or (prompting and plan)) and (plan or skipped or aside):
         show(f"Restore from snapshot {manifest.id} into {chosen.path}: {len(plan)} change(s)")
         if manifest.flavor_version != chosen.version:
             show(
-                f"  Taken on version {_version(manifest.flavor_version)}; {chosen.folder} is "
+                f"  Taken on version {_version(manifest.flavor_version)}; {folder} is "
                 f"now on {_version(chosen.version)}."
             )
         for item in plan:
@@ -5517,29 +5586,23 @@ def snap_restore(
             )
             for sk in skipped:
                 show(f"    {sk.path}  [{sk.entry_id}]")
-        if unrestorable:
-            show(
-                f"  Not restored: {len(unrestorable)} file(s) the write gate never writes "
-                '(file-map Edit "n/a": screenshots, captured with snap create --screenshots; '
-                "--paths cannot restore them either):"
-            )
-            for un in unrestorable[:_UNRESTORABLE_SHOWN]:
-                show(f"    {un.path}  [{un.entry_id}]")
-            if len(unrestorable) > _UNRESTORABLE_SHOWN:
-                more = len(unrestorable) - _UNRESTORABLE_SHOWN
-                show(f"    and {more} more (--json lists every one)")
+        if aside:
+            for line in _not_restored_lines(manifest.id, aside):
+                show(line)
     if not plan:
         if json_out:
             _emit(report(applied=False))
+        elif skipped and shots_differ:
+            _say(
+                "Nothing to restore but the skipped files and the screenshots wowlab never "
+                "writes; nothing was changed."
+            )
         elif skipped:
             _say("Nothing to restore but the skipped files; nothing was changed.")
-        elif unrestorable:
-            _say(
-                f"Nothing to restore: what the write gate can write in {chosen.folder} already "
-                f"matches snapshot {manifest.id}; nothing was changed."
-            )
+        elif shots_differ:
+            _say("Nothing to restore but the screenshots wowlab never writes; nothing was changed.")
         else:
-            _say(f"Nothing to restore: {chosen.folder} already matches snapshot {manifest.id}.")
+            _say(f"Nothing to restore: {folder} already matches snapshot {manifest.id}.")
         return
     if dry_run:
         if json_out:
@@ -5555,7 +5618,8 @@ def snap_restore(
         raise
     with guard.transaction(chosen, label=label) as tx:
         tx.restore(manifest.id, wanted)
-        if tx.plan != tuple(plan):
+        moved = any(profiles.disk_state(inst.root, folder, e) != "same" for e in left_out)
+        if tx.plan != tuple(plan) or moved:
             # Raising inside the transaction makes the gate roll it back.
             raise CliError(
                 "the files changed after the plan was shown, so the restore was rolled "

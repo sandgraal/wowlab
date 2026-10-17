@@ -72,6 +72,7 @@ __all__ = [
     "SUBTREE_SCOPE_NOTE",
     "ApplyPlan",
     "CacheFile",
+    "DiskState",
     "Exclude",
     "LeftPath",
     "Preset",
@@ -88,6 +89,7 @@ __all__ = [
     "apply",
     "check_name",
     "delete",
+    "disk_state",
     "find",
     "is_always_excluded",
     "label_for",
@@ -671,10 +673,13 @@ def _entry_parts(flavor_folder: str, entry: Entry) -> list[str] | None:
 
 def _hash_fd(fd: int, entry: Entry) -> _Disk:
     """`differs` unless `fd` is a regular file (by `fstat`, before any read)
-    with the entry's content. Always closes `fd`, whatever happens."""
+    with the entry's size and content. Always closes `fd`, whatever happens."""
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
             return "differs"  # swapped for a folder or a FIFO since its lstat
+        if st.st_size != entry.size:
+            return "differs"  # the size decides it; nothing is read
         digest = hashlib.sha256()
         while chunk := os.read(fd, 1 << 20):
             digest.update(chunk)
@@ -807,8 +812,10 @@ def _differs_lstat(root: Path, parts: list[str], entry: Entry) -> _Disk:
     except OSError:
         return "differs"
     if entry.kind == "symlink":
+        # A junction lstats as a folder; it is a link here as it is to the
+        # gate (`guard._same_link`) and to the snapshot that recorded it.
         try:
-            same = stat.S_ISLNK(st.st_mode) and str(path.readlink()) == entry.target
+            same = _is_link(path, st) and str(path.readlink()) == entry.target
         except OSError:
             return "differs"
         return "same" if same else "differs"
@@ -826,6 +833,40 @@ def _differs_lstat(root: Path, parts: list[str], entry: Entry) -> _Disk:
     except OSError:
         return "differs"
     return _hash_fd(fd, entry)
+
+
+DiskState = Literal["same", "differs", "missing", "behind_link"]
+
+
+def disk_state(install_root: Path, flavor_folder: str, entry: Entry) -> DiskState:
+    """Whether the disk still holds a snapshot `entry` of `flavor_folder`
+    under `install_root`: `same`, `differs`, `missing` (nothing is there, or
+    a folder on its way is gone), or `behind_link` (a folder on its way is a
+    link or junction, and nothing is read behind it).
+
+    Reads only and follows no link (the walk `_differs` describes). A file
+    is compared by size first and read only when the size matches; a link
+    entry (a symlink, or on Windows a junction) by its link text. `missing`
+    is told from `differs` by an `lstat` of each part in turn, stopping at
+    the first link."""
+    found = _differs(install_root, flavor_folder, entry)
+    if found != "differs":
+        return found
+    parts = _entry_parts(flavor_folder, entry)
+    if parts is None:
+        return "differs"
+    current = install_root
+    for n, part in enumerate(parts):
+        current = current / part
+        try:
+            st = current.lstat()
+        except FileNotFoundError:
+            return "missing"
+        except OSError:
+            return "differs"
+        if n < len(parts) - 1 and _is_link(current, st):
+            return "differs"
+    return "differs"
 
 
 class _Restorer(Protocol):

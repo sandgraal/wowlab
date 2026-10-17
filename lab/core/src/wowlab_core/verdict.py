@@ -98,6 +98,13 @@ def _fold(text: str) -> str:
     return unicodedata.normalize("NFC", unicodedata.normalize("NFC", text).casefold())
 
 
+def has_executable_part(rel: str) -> bool:
+    """Whether a part of `rel` (flavor-relative, `/`-separated) is a name the
+    gate refuses as an executable (`guard._is_executable`, through
+    `filemap`'s copy)."""
+    return any(_is_executable(part) for part in rel.split("/"))
+
+
 def _gate_writes(rel: str) -> bool:
     """Whether the gate accepts `rel` (flavor-relative, `/`-separated) as a
     file it may write: `guard._check_rel(rel)` returns instead of raising."""

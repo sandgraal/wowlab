@@ -221,8 +221,9 @@ stored files that no snapshot needs, after asking.
   (a restore, a profile apply, a merge, an addon install or remove).
 - `wowlab snap restore <id>` puts files back from a snapshot (`--dry-run`
   shows the plan first); `wowlab snap list` shows your snapshots. A
-  snapshot taken with `snap create --screenshots` restores everything but
-  the screenshots: wowlab never writes `Screenshots/`, and the plan lists
-  what it left out.
+  whole restore also leaves out the screenshots in a snapshot taken with
+  `snap create --screenshots`. wowlab never writes `Screenshots/`, not even
+  with `--paths`. They stay in the snapshot, and the plan counts them and
+  names the first ten.
 - Both go through the same write gate: the game must be closed, a snapshot
   is taken first, and you are asked before anything is written.
