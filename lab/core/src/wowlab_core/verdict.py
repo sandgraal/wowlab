@@ -52,7 +52,7 @@ _LINK_WORDS = (
 _TIER_B_WORDS = "; unsupported by Blizzard, a patch can reset it"
 _REPARSE_NOT_LINK = (
     "a Windows reparse point that is not a link (for example a cloud placeholder, "
-    "a deduplicated or a compressed file), or inside one"
+    "a deduplicated file or a file compressed with compact /EXE), or inside one"
 )
 _PLACEHOLDER_WORDS = f"; {_REPARSE_NOT_LINK}: wowlab's write gate does not write through these"
 # At the gate level the usual words open with "yes"; under such a reparse
@@ -190,8 +190,8 @@ class Verdict(BaseModel):
     at the next login. `None` for every folder, whatever its level: a folder
     is judged by the files under it. `None` for a symlink or junction too, which
     a snapshot never captures. `False` for a file at or under a Windows
-    reparse point that is not a link (a cloud placeholder, a deduplicated or
-    compressed file): the gate refuses to write through any reparse point.
+    reparse point that is not a link (a cloud placeholder, a deduplicated
+    file, a file compressed with `compact /EXE`): the gate refuses to write through any reparse point.
 
     `server_may_replace`: the Edit cell is `gate (server may replace)`, so a
     reader never has to parse `words` for it.
@@ -206,8 +206,8 @@ class Verdict(BaseModel):
     or writes through it.
 
     `placeholder` (M13-32): the path is, or lies under, a Windows reparse
-    point that is not a link (a cloud placeholder, a deduplicated or
-    compressed file). The level stays the row's, but the gate refuses to
+    point that is not a link (a cloud placeholder, a deduplicated file, a
+    file compressed with `compact /EXE`). The level stays the row's, but the gate refuses to
     write through it, so the label is the `no` label. `link` wins.
     """
 

@@ -281,3 +281,76 @@ def test_install_tree_lists_the_folders_above_its_items(root: Path) -> None:
     for a in scoped["ancestors"]:
         assert a["path"].startswith("WTF/Account/90000001#6/"), a["path"]
     assert _tree(root, "--install", ".build.info")["ancestors"] == []
+
+
+# ─── the folders `Layout._sub` looks up (code review note 1) ─────────────────
+# `WTF/Account` and `Interface/AddOns` are found by name with `Path.lstat`
+# (`Layout._sub`), not only listed through `layout.lstat_entry`
+# (`Layout._stat`). These fake `Path.lstat` alone, so the reparse point is
+# seen through `_sub` and nowhere else in the walk.
+
+SUB_FOLDERS = [
+    pytest.param("WTF/Account", SYNDICATOR, id="wtf-account"),
+    pytest.param("Interface/AddOns", None, id="interface-addons"),
+]
+
+
+def _fake_path_lstat_only(monkeypatch: pytest.MonkeyPatch, path: Path, tag: int) -> None:
+    real_lstat = Path.lstat
+
+    def path_lstat(self: Path) -> Any:
+        st = real_lstat(self)
+        return _ReparseStat(st, tag) if self == path else st
+
+    monkeypatch.setattr(Path, "lstat", path_lstat)
+
+
+def _under(judged: dict[str, dict[str, Any]], key: str) -> list[str]:
+    return [k for k in judged if k.startswith(key + "/")]
+
+
+@pytest.mark.parametrize("install", [False, True], ids=["tree", "tree-install"])
+@pytest.mark.parametrize(("folder", "inside"), SUB_FOLDERS)
+def test_a_placeholder_seen_by_sub_lookup(
+    root: Path, monkeypatch: pytest.MonkeyPatch, install: bool, folder: str, inside: str | None
+) -> None:
+    """Constructed: a cloud placeholder on a folder `_sub` looks up, seen
+    only through `Path.lstat`."""
+    flavor = root / FLAVOR
+    _fake_path_lstat_only(monkeypatch, flavor / folder, CLOUD_PLACEHOLDER)
+    lay = layout.Layout(flavor, install_root=root)
+    assert [r.path for r in lay.inventory().reparse_points] == [folder]
+    judged = _judged(root, install=install)
+    key = _key(folder, install)
+    below = _under(judged, key)
+    assert below, folder  # still walked: a placeholder holds real content
+    for k in [key, *below]:
+        assert judged[k]["verdict"]["placeholder"] is True, k
+    assert judged[key]["verdict"] == _explain(root, flavor / folder)
+    if inside is not None:
+        assert judged[_key(inside, install)]["verdict"] == _explain(root, flavor / inside)
+        assert judged[_key(inside, install)]["verdict"]["restorable"] is False
+
+
+@pytest.mark.parametrize("install", [False, True], ids=["tree", "tree-install"])
+@pytest.mark.parametrize(("folder", "inside"), SUB_FOLDERS)
+def test_a_junction_seen_by_sub_lookup_is_unchanged(
+    root: Path, monkeypatch: pytest.MonkeyPatch, install: bool, folder: str, inside: str | None
+) -> None:
+    """Constructed: a junction on a folder `_sub` looks up (the mount-point
+    tag through `Path.lstat`, `Path.is_junction` answering yes): reported as
+    a link, never walked, and no placeholder anywhere."""
+    flavor = root / FLAVOR
+    target = flavor / folder
+    _fake_path_lstat_only(monkeypatch, target, MOUNT_POINT)
+    real_junction = Path.is_junction
+    monkeypatch.setattr(Path, "is_junction", lambda self: self == target or real_junction(self))
+    inv = layout.Layout(flavor, install_root=root).inventory()
+    assert inv.reparse_points == ()
+    assert folder in {s.path for s in inv.symlinks}
+    judged = _judged(root, install=install)
+    key = _key(folder, install)
+    assert judged[key]["kind"] == "symlink"
+    assert (judged[key]["verdict"]["link"], judged[key]["verdict"]["placeholder"]) == (True, False)
+    assert _under(judged, key) == []  # never followed
+    assert not any(v["verdict"]["placeholder"] for v in judged.values())

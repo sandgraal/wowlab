@@ -27,7 +27,8 @@ are opened for reading. Nothing is created anywhere. Symlinks and Windows
 junctions are never followed, whether they point inside the install or out;
 each is reported in `symlinks` with its target text and whether that target
 resolves inside the install, and is left out of the typed lists. Any other
-Windows reparse point (a cloud placeholder, a deduplicated file) is walked
+Windows reparse point (a cloud placeholder, a deduplicated file, a file
+compressed with `compact /EXE`) is walked
 like a plain entry and named in `reparse_points`, because the write gate
 refuses it all the same (M13-33). Walks are
 bounded in depth and entry count (`Limits`); a walk that hits a bound says so
@@ -185,7 +186,8 @@ class ReparsePoint(_Model):
     gate refuses it and everything under it (`verdict.gate_refuses_stat`).
     `name_surrogate`: it names another path (snapshot's and `gaps`' link
     rule; `explain` calls it a link). Otherwise it holds real content: a
-    cloud placeholder, a deduplicated or a compressed file."""
+    cloud placeholder, a deduplicated file, a file compressed with
+    `compact /EXE`."""
 
     path: FsText  # relative to the flavor folder, `/`-separated
     name_surrogate: bool
