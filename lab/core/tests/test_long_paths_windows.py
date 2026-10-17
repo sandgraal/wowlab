@@ -24,7 +24,9 @@ What is graded, each on the same operations a player's loop runs:
 - the root as callers may spell it: already extended-length (`\\\\?\\C:\\...`)
   and relative to the working folder, for `SnapshotStore.create` and
   `guard.transaction` (a prefix added to an unnormalised root opens another
-  path, or none).
+  path, or none). Through an extended-length flavor the gate never writes
+  what `undo()` cannot reverse (§6.10): it refuses on enter, or it journals
+  the plain root so `undo()` and restore work.
 
 The layouts (`_build`), each a copy of the real capture `fixtures/macos/`
 (README rows) under `tmp_path`; only the location is constructed, so every
@@ -66,7 +68,9 @@ holds the module to that. Where a grader fails with one exception type on
 `main` the marker also says `raises=`, so any other exception fails it
 outright.
 
-Where this runs: Windows only (`skipif` below). Every test also needs plain
+Where this runs: Windows only (`_long_paths_off` skips elsewhere), except the
+tests in `ANYWHERE`, which only read this module and run on every platform.
+Every other test also needs plain
 long paths to be refused in this process, which a fixture probes; where they
 work (`LongPathsEnabled` = 1, the runner image's default) the module skips,
 since a grader would pass and a strict marker would fail. The `lab
@@ -99,10 +103,6 @@ from typer.testing import CliRunner
 
 from wowlab_core import cli, combatlog, guard, install, luadata, toc, wtfconfig
 from wowlab_core.snapshot import Manifest, SnapshotStore
-
-pytestmark = pytest.mark.skipif(
-    sys.platform != "win32", reason="MAX_PATH and LongPathsEnabled are Windows facilities"
-)
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 CAPTURE = FIXTURES / "macos"
@@ -337,8 +337,19 @@ def plain_long_paths(tmp_path_factory: pytest.TempPathFactory) -> str | None:
     return f"stat of the plain {len(str(deep))}-character path {deep} succeeded"
 
 
+ANYWHERE = frozenset({"test_every_layout_a_grader_uses_is_built_by_an_unmarked_test"})
+"""Tests that only read this module (no file system, no Lab call): they run
+on every platform, so ordinary CI catches drift."""
+
+
 @pytest.fixture(autouse=True)
-def _long_paths_off(plain_long_paths: str | None) -> None:
+def _long_paths_off(request: pytest.FixtureRequest) -> None:
+    """Windows only, and plain long paths refused in this process."""
+    if request.node.originalname in ANYWHERE:
+        return
+    if sys.platform != "win32":
+        pytest.skip("MAX_PATH and LongPathsEnabled are Windows facilities")
+    plain_long_paths = request.getfixturevalue("plain_long_paths")
     if plain_long_paths is None:
         return
     if os.environ.get(EXPECT_OFF) == "1":
@@ -701,20 +712,53 @@ def test_constructed_snapshot_of_an_extended_length_root_captures_everything(
     _check_snapshot(tree, store, _x(tree.root))
 
 
+@pytest.mark.xfail(strict=True, reason="M13-15 not implemented")
 @pytest.mark.parametrize("tree", ["deep-dir"], indirect=True)
-def test_constructed_guard_writes_through_an_extended_length_flavor(
+def test_constructed_guard_never_writes_what_it_cannot_undo_through_an_extended_length_flavor(
     tree: Tree, store: Path
 ) -> None:
-    """A flavor handed over in `\\\\?\\C:\\...` form: the write lands, after a
-    pre-write snapshot that holds the old bytes. `undo()` refuses a record
-    whose root is `\\\\`-prefixed (not a local absolute path; conductor
-    ruling, M13-15T review) and changes nothing."""
-    _original, new, before = _write_once(tree, store, _x(tree.flavor))
-    with pytest.raises(guard.GuardError):
-        guard.undo(store=store)
+    """A flavor handed over in `\\\\?\\C:\\...` form. §6.10: a change `undo()`
+    could not reverse must not be written. Either outcome is consistent
+    (conductor ruling, M13-15T review round 2):
+
+    (a) the transaction refuses on enter, with nothing written and nothing
+        journaled; or
+    (b) the write lands, the journal and the pre-write manifest record the
+        plain local root, `undo()` puts the old bytes back, and a restore
+        from that snapshot through the plain flavor works too.
+
+    On `main` the write lands and `undo()` refuses the `\\\\?\\` root it
+    journaled."""
+    original = tree.source.read_bytes()
+    new = original + EDIT
+    before = {rel: _read(path) for rel, path in _files(tree.root).items()}
+    entered = False
+    try:
+        with guard.transaction(_Flavor(_x(tree.flavor)), label="extended", store=store) as tx:
+            entered = True
+            tx.write(tree.target, new)
+    except guard.GuardError:
+        assert not entered, "a refusal comes on enter, before the body runs"
+        assert guard.history(store=store) == (), "(a): nothing journaled"
+        assert {rel: _read(path) for rel, path in _files(tree.root).items()} == before
+        return
+
     assert _read(tree.target_path) == new
-    assert set(_files(tree.root)) == before
-    assert len(guard.history(store=store)) == 1
+    (record,) = guard.history(store=store)
+    assert (record.state, record.rolled_back) == ("committed", False)
+    assert not record.flavor_path.startswith(("\\\\", "//")), record.flavor_path
+    assert Path(record.flavor_path) == tree.flavor, "(b): the journal names the plain root"
+    manifest = SnapshotStore(store).show(record.snapshot_id)
+    assert not manifest.install_root.startswith(("\\\\", "//")), manifest.install_root
+    assert Path(manifest.install_root) == tree.root, "(b): the manifest names the plain root"
+
+    guard.undo(store=store)
+    assert {rel: _read(path) for rel, path in _files(tree.root).items()} == before
+
+    _write(tree.target_path, new)
+    with guard.transaction(_Flavor(tree.flavor), label="restore", store=store) as tx:
+        tx.restore(record.snapshot_id, [tree.target])
+    assert _read(tree.target_path) == original
 
 
 # ─── the graders ─────────────────────────────────────────────────────────────
