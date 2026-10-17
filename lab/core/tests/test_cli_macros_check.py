@@ -27,7 +27,7 @@ import platformdirs
 import pytest
 from typer.testing import CliRunner
 
-from wowlab_core import cli, install, macrocheck
+from wowlab_core import cli, install, labaddon, macrocheck
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 CAPTURE = FIXTURES / "macos"
@@ -41,6 +41,14 @@ ACCOUNT_DIR = f"WTF/Account/{ACCOUNT}"
 CHARACTER = "Labcharb-Labrealmd"  # holds the captured character macros-cache.txt
 CHAR_DIR = f"{ACCOUNT_DIR}/1/{CHARACTER}"
 SCHEMA_1_CHARACTER = "1/Labchard-Labrealmg"  # a schema-1 WowLab.lua (M11-03), no macros
+MAY_BE = (
+    "it may be an item, a pet, mount or toy spell, or a spell learned after the record was saved"
+)
+WORDS_1 = (
+    "no spellbook record (schema 1 has no spellbook or action-bar record; enable the lab-addon "
+    "(wowlab addon install lab), log in on this character, then log out or /reload; schema 3 "
+    "is needed)"
+)
 
 runner = CliRunner()
 
@@ -133,9 +141,10 @@ def test_macros_check_reports_on_the_fixture_install(root: Path) -> None:
     assert rep.record_file is None and rep.record_schema is None
     assert rep.findings == []
     assert [(c.rule, c.reason) for c in rep.cannot_judge] == [
-        ("spell-not-in-spellbook", "no spellbook record"),
-        ("not-on-action-bar", "no spellbook record"),
+        ("spell-not-in-spellbook", macrocheck.NO_RECORD),
+        ("not-on-action-bar", macrocheck.NO_RECORD),
     ]
+    assert macrocheck.NO_RECORD.startswith("no spellbook record (enable the lab-addon")
     assert (rep.length_limit, rep.length_unit) == (255, macrocheck.LENGTH_UNIT)
     assert "UTF-8 bytes" in rep.length_unit
     [m] = rep.macros
@@ -143,8 +152,8 @@ def test_macros_check_reports_on_the_fixture_install(root: Path) -> None:
     assert m.bytes == m.characters == 41  # the captured body is ASCII
     text = ok("macros", "check", "--character", CHARACTER).stdout
     assert "Findings: 0\n" in text
-    assert "  spell-not-in-spellbook: no spellbook record\n" in text
-    assert "counted in UTF-8 bytes" in text and "[verify]" in text
+    assert f"  spell-not-in-spellbook: {macrocheck.NO_RECORD}\n" in text
+    assert "counted in characters and UTF-8 bytes" in text and "[verify]" in text
     assert _state(root) == before  # reads never write (L1)
 
 
@@ -164,12 +173,12 @@ def test_macros_check_with_the_schema_3_record_cross_capture_constructed(flavor:
     assert rep.record_file == f"{CHAR_DIR}/SavedVariables/WowLab.lua"
     spells = [f for f in rep.findings if f.rule == "spell-not-in-spellbook"]
     assert [(f.line, f.detail) for f in spells] == [
-        (2, "'Arcane Intellect' is not in the spellbook record"),
-        (2, "'Polymorph' is not in the spellbook record"),
+        (2, f"'Arcane Intellect' is not in the spellbook record ({MAY_BE})"),
+        (2, f"'Polymorph' is not in the spellbook record ({MAY_BE})"),
     ]
     [bars] = [c for c in rep.cannot_judge if c.rule == "not-on-action-bar"]
     assert bars.macro is None
-    assert "2 macro slot(s) in action slots 1 to 180" in bars.reason
+    assert f"2 macro slot(s) on 1/{CHARACTER}'s action bars (slots 1 to 180)" in bars.reason
     assert "[verify]" in bars.reason
     assert rep.on_no_bar_at_least == 0
 
@@ -186,13 +195,19 @@ def test_length_rule_counts_utf8_bytes_constructed(flavor: Path) -> None:
         _macro(4, "Mac lines", "/say " + "a" * 124, "/say " + "a" * 120),  # 129 + LF + 125
     )
     rep = report("--character", CHARACTER)
-    assert _ids(rep, "length") == [_id(2), _id(3)]
+    assert _ids(rep, "length") == [_id(2)]
     wide = next(m for m in rep.macros if m.id == _id(3))
     assert (wide.bytes, wide.characters) == (257, 131)
     lines = next(m for m in rep.macros if m.id == _id(4))
     assert lines.bytes == 255
-    detail = next(f.detail for f in rep.findings if f.macro.id == _id(3))
-    assert detail == "the body is 257 bytes (131 characters), over 255"
+    detail = next(f.detail for f in rep.findings if f.macro.id == _id(2))
+    assert detail == "the body is 256 bytes (256 characters), over 255"
+    # Over 255 bytes, not over 255 characters: over only if the client counts bytes.
+    [bytes_only] = [c for c in rep.cannot_judge if c.rule == "length"]
+    assert bytes_only.macro is not None and bytes_only.macro.id == _id(3)
+    assert bytes_only.reason == (
+        "257 bytes, 131 characters: over 255 only if the client counts bytes [verify]"
+    )
 
 
 def test_spell_rule_reads_the_spellbook_record_constructed(flavor: Path) -> None:
@@ -204,16 +219,23 @@ def test_spell_rule_reads_the_spellbook_record_constructed(flavor: Path) -> None
         _macro(3, "Mac sequence", "/castsequence reset=3 Corruption, Frostbolt"),
         _macro(4, "Mac rank", "/cast Shadow Bolt(Rank 3)"),
         _macro(5, "Mac other", "/use 13", "/use Fireball", "/cast [@player]"),
+        _macro(6, "Mac rang", "/cast Schattenblitz(Rang 3)", "/cast Fear()"),
     )
     rep = report("--character", CHARACTER)
     spells = [f for f in rep.findings if f.rule == "spell-not-in-spellbook"]
     assert [(f.macro.id, f.line, f.detail) for f in spells] == [
-        (_id(2), 6, "'Fireball' is not in the spellbook record"),
-        (_id(3), 9, "'Frostbolt' is not in the spellbook record"),
+        (_id(2), 6, f"'Fireball' is not in the spellbook record ({MAY_BE})"),
+        (_id(3), 9, f"'Frostbolt' is not in the spellbook record ({MAY_BE})"),
     ]
-    [rank] = [c for c in rep.cannot_judge if c.rule == "spell-not-in-spellbook"]
-    assert rank.macro is not None and rank.macro.id == _id(4)
-    assert rank.line == 12 and "explicit rank" in rank.reason and "[verify]" in rank.reason
+    ranks = [c for c in rep.cannot_judge if c.rule == "spell-not-in-spellbook"]
+    assert [(c.macro.id if c.macro else None, c.line) for c in ranks] == [
+        (_id(4), 12),
+        (_id(6), 20),
+        (_id(6), 21),
+    ]
+    assert all("explicit rank" in c.reason and "[verify]" in c.reason for c in ranks)
+    assert ranks[0].reason.endswith("the spellbook record has 'Shadow Bolt' with subtext 'Rank 3'")
+    assert ranks[1].reason.endswith("does not have 'Schattenblitz' with subtext 'Rang 3'")
 
 
 def test_action_bar_rule_with_no_macro_slot_constructed(flavor: Path) -> None:
@@ -233,7 +255,7 @@ def test_action_bar_rule_bounds_what_it_cannot_judge_constructed(flavor: Path) -
     rep = report("--character", CHARACTER)
     assert _ids(rep, "not-on-action-bar") == []
     [bars] = [c for c in rep.cannot_judge if c.rule == "not-on-action-bar"]
-    assert "at least 3 of the 5 macros are on no action bar" in bars.reason
+    assert f"at least 3 of the 5 macros are on none of 1/{CHARACTER}'s action bars" in bars.reason
     assert rep.on_no_bar_at_least == 3
 
 
@@ -265,7 +287,7 @@ def test_unbalanced_bracket_rule_constructed(flavor: Path) -> None:
         _macro(1, "Mac open", "/cast [mod:shift Corruption"),
         _macro(2, "Mac close", "/cast mod:shift] Corruption"),
         _macro(3, "Mac fine", "/cast [mod:shift][@focus] Corruption; Fear"),
-        _macro(4, "Mac chat", "/say [ is free text"),
+        _macro(4, "Mac chat", "/say [ is free text", "/1 [ too", "/bn x [ y", "plain [ chat"),
     )
     rep = report("--character", CHARACTER)
     assert _ids(rep, "unbalanced-brackets") == [_id(1), _id(2)]
@@ -277,9 +299,12 @@ def test_showtooltip_rule_constructed(flavor: Path) -> None:
         _macro(1, "Mac first", "#showtooltip", "/cast Corruption"),
         _macro(2, "Mac second", "/cast Corruption", "#showtooltip Corruption"),
         _macro(3, "Mac upper", "/stopcasting", "#SHOWTOOLTIP"),
+        _macro(4, "Mac show", "/stopcasting", "#show Corruption"),
     )
     rep = report("--character", CHARACTER)
-    assert _ids(rep, "showtooltip-not-first") == [_id(2), _id(3)]
+    assert _ids(rep, "showtooltip-not-first") == [_id(2), _id(3), _id(4)]
+    show = next(f for f in rep.findings if f.macro.id == _id(4))
+    assert "#show (the same rule assumed, [verify])" in show.detail
     second = next(f for f in rep.findings if f.macro.id == _id(2))
     assert second.line == 7 and second.detail == "#showtooltip is on body line 2, not the first"
 
@@ -293,8 +318,8 @@ def test_schema_1_record_cannot_judge_the_record_rules_constructed(flavor: Path)
     rep = report("--character", SCHEMA_1_CHARACTER)
     assert rep.record_schema == 1
     assert [(c.rule, c.reason) for c in rep.cannot_judge] == [
-        ("spell-not-in-spellbook", "no spellbook record"),
-        ("not-on-action-bar", "no spellbook record"),
+        ("spell-not-in-spellbook", WORDS_1),
+        ("not-on-action-bar", WORDS_1),
     ]
     assert _ids(rep, "length") == [_id(1)]  # the other rules still run
 
@@ -330,6 +355,109 @@ def test_hostile_macro_name_is_escaped_in_text_constructed(flavor: Path) -> None
     assert '"Mac\\x1b[2J"' in out
     rep = report("--character", CHARACTER)
     assert rep.findings[0].name == "Mac\x1b[2J"
+
+
+# ─── a record that says it dropped values ────────────────────────────────────
+
+_BARS_PROBE = b'["api"] = "GetActionInfo",\r\n["calls"] = 180,\r\n["errors"] = 0,'
+_NAME_PROBE = b'["api"] = "C_SpellBook.GetSpellBookItemName",\r\n["calls"] = 28,\r\n["errors"] = 0,\r\n["secret"] = 0,'
+_FEAR = b'["spell_name"] = "Fear",\r\n["type"] = 1,'
+
+
+def test_bars_with_errored_calls_cannot_judge_constructed(flavor: Path) -> None:
+    data = SCHEMA_3.read_bytes().replace(b'["type"] = "macro",', b'["type"] = "item",')
+    assert data.count(_BARS_PROBE) == 1
+    _put_record(flavor, data.replace(_BARS_PROBE, _BARS_PROBE.replace(b"= 0,", b"= 20,")))
+    _put_macros(flavor, _macro(1, "Mac A", "/say a"))
+    rep = report("--character", CHARACTER)
+    assert _ids(rep, "not-on-action-bar") == []
+    [bars] = [c for c in rep.cannot_judge if c.rule == "not-on-action-bar"]
+    assert bars.reason.startswith("the action-bar record is incomplete (20 call(s) raised an error")
+    assert rep.on_no_bar_at_least is None
+
+
+def test_spellbook_with_secret_names_cannot_judge_constructed(flavor: Path) -> None:
+    data = SCHEMA_3.read_bytes()
+    assert data.count(_NAME_PROBE) == 1
+    _put_record(
+        flavor, data.replace(_NAME_PROBE, _NAME_PROBE.replace(b'["secret"] = 0', b'["secret"] = 8'))
+    )
+    _put_macros(flavor, _macro(1, "Mac A", "/cast Fireball"))
+    rep = report("--character", CHARACTER)
+    assert _ids(rep, "spell-not-in-spellbook") == []
+    [book] = [c for c in rep.cannot_judge if c.rule == "spell-not-in-spellbook"]
+    assert "8 value(s) were dropped as secret or untestable" in book.reason
+
+
+def test_spellbook_with_an_unnamed_item_cannot_judge_constructed(flavor: Path) -> None:
+    data = SCHEMA_3.read_bytes()
+    assert data.count(_FEAR) == 1
+    _put_record(flavor, data.replace(_FEAR, b'["type"] = 1,'))
+    _put_macros(flavor, _macro(1, "Mac A", "/cast Fear"))
+    rep = report("--character", CHARACTER)
+    assert _ids(rep, "spell-not-in-spellbook") == []
+    [book] = [c for c in rep.cannot_judge if c.rule == "spell-not-in-spellbook"]
+    assert "1 item(s) have no name" in book.reason
+
+
+def test_a_future_spell_is_reported_as_not_yet_learned_constructed(flavor: Path) -> None:
+    """Item 5 (a future spell on Forever) is still open: this record has the
+    real Fear item retyped to the record's own FutureSpell number."""
+    data = SCHEMA_3.read_bytes()
+    _put_record(flavor, data.replace(_FEAR, b'["spell_name"] = "Fear",\r\n["type"] = 2,'))
+    _put_macros(flavor, _macro(1, "Mac A", "/cast Fear", "/cast Corruption"))
+    rep = report("--character", CHARACTER)
+    spells = [f for f in rep.findings if f.rule == "spell-not-in-spellbook"]
+    assert [(f.line, f.detail) for f in spells] == [
+        (2, "'Fear' is in the spellbook record as not yet learned")
+    ]
+
+
+def test_blank_names_are_not_duplicates_constructed(flavor: Path) -> None:
+    _put_macros(
+        flavor,
+        _macro(1, " ", "#showtooltip", "/cast Fear"),
+        _macro(2, " ", "#showtooltip", "/cast Corruption"),
+        _macro(3, "", "/say x"),
+    )
+    rep = report("--character", CHARACTER)
+    assert _ids(rep, "duplicate-name") == []
+    assert rep.blank_names == 3
+    out = ok("macros", "check", "--character", CHARACTER).stdout
+    assert "Blank names: 3 macros named with nothing but spaces" in out
+
+
+def test_ambiguous_record_is_cannot_judge_not_an_error_constructed(
+    flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two case variants of WowLab.lua in one folder (a case-sensitive volume;
+    this one may not be, so `choose_lab_file` is made to refuse as it does)."""
+    _put_record(flavor)
+
+    def refuse(paths: list[str]) -> str | None:
+        raise labaddon.LabAddonError("2 files named like WowLab.lua; no single choice")
+
+    monkeypatch.setattr(labaddon, "choose_lab_file", refuse)
+    _put_macros(flavor, _macro(1, "Mac A", "/say " + "a" * 300))
+    rep = report("--character", CHARACTER)
+    assert rep.record_error is not None and "no single choice" in rep.record_error
+    assert [c.reason for c in rep.cannot_judge] == [
+        "no spellbook record: the WowLab.lua was not read",
+        "no spellbook record: the WowLab.lua was not read",
+    ]
+    assert _ids(rep, "length") == [_id(1)]  # the other rules still run
+
+
+def test_ambiguous_record_on_a_case_sensitive_volume_constructed(flavor: Path) -> None:
+    folder = flavor / CHAR_DIR / "SavedVariables"
+    _put_record(flavor)
+    twin = folder / "WOWLAB.lua"
+    twin.write_bytes(SCHEMA_3.read_bytes())
+    if len({p.name for p in folder.iterdir()}) < 2:
+        pytest.skip("this volume folds case: one file holds both names")
+    rep = report("--character", CHARACTER)
+    assert rep.record_error is not None
+    assert all(c.reason.endswith("was not read") for c in rep.cannot_judge[:2])
 
 
 # ─── the library ─────────────────────────────────────────────────────────────

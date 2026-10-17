@@ -4153,10 +4153,12 @@ _MACROS_LIMIT = 16 * 1024 * 1024
 
 _MACROS_CHECK_NOTES = [
     "macros-cache.txt is what the client last wrote; the server can replace it at login when "
-    "macro sync is on, and a macro made in the session in progress may not be in it yet.",
+    "macro sync is on. On Forever 1.60.1.70425 a macro made in a finished session was missing "
+    "from it (whether the client rewrites it at logout is [verify]), so a macro may be missing "
+    "here, or still listed after you deleted it.",
     "The spellbook and action bars are the lab-addon's record as of its last save "
     "(logout or /reload), not the session in progress. It reads the player's spellbook "
-    "only, so a pet spell or an item name after /cast reads as not in the spellbook.",
+    "only, so an item, a pet, mount or toy spell after /cast reads as not in the spellbook.",
 ]
 
 
@@ -4183,13 +4185,15 @@ class MacrosCheckReport(_Out):
     findings: list[macrocheck.Finding]
     cannot_judge: list[macrocheck.CannotJudge]
     on_no_bar_at_least: int | None
+    blank_names: int  # macros named with nothing but spaces: left out of duplicate-name
     notes: list[str]
 
 
 def _check_record(
     lay: layout.Layout, acct: layout.Account, character: str | None
 ) -> tuple[str | None, labaddon.CharDB | None, str | None]:
-    """The character's WowLab.lua: its path, its record, or why it has none."""
+    """The character's WowLab.lua: its path, its record, or why it could not
+    be read (the other rules still run, so none of this is an error)."""
     if character is None:
         return None, None, None
     char = _select_character(acct, character)
@@ -4204,7 +4208,10 @@ def _check_record(
     ]
     if not mine:
         return None, None, None
-    target = _chosen_lab_file(mine)
+    try:
+        target = _chosen_lab_file(mine)
+    except CliError as exc:  # several files and no single choice (case variants)
+        return None, None, str(exc)
     try:
         return target.path, labaddon.read_char(lay.flavor_path / target.path), None
     except (labaddon.LabAddonError, luadata.LuaDataError, OSError) as exc:
@@ -4222,10 +4229,11 @@ def macros_check(
 ) -> None:
     """Check the account's macros, and one character's with --character, for
     a body over 255, a spell not in the spellbook, a macro on no action bar,
-    duplicate names or bodies, unbalanced [ ] and a #showtooltip that is not
-    the first line. The spellbook and action bars come from the character's
-    lab-addon record (schema 3); without it those two rules say "cannot
-    judge". Reads only. JSON: MacrosCheckReport."""
+    duplicate names or bodies, unbalanced [ ] and a #showtooltip (or #show,
+    the same rule assumed, [verify]) that is not the first line. The
+    spellbook and action bars come from the character's lab-addon record
+    (schema 3); without it, or when the record says it dropped values, those
+    two rules say "cannot judge". Reads only. JSON: MacrosCheckReport."""
     _, chosen, lay = _open(root, flavor)
     acct = _select_account(lay, account)
     scopes: list[macrocheck.MacroScope] = (
@@ -4253,26 +4261,18 @@ def macros_check(
             macrocheck.SourceMacro(scope=scope, file=found.path, macro=m) for m in doc.macros
         )
     record_file, record, record_error = _check_record(lay, acct, character)
-    result = macrocheck.check(macros, record)
-    cannot_judge = list(result.cannot_judge)
+    who = target.character if target is not None and character is not None else None
     if record_error is not None:
-        cannot_judge = [
-            c.model_copy(update={"reason": f"{c.reason}: {record_file} was not read"})
-            if c.macro is None and c.rule in ("spell-not-in-spellbook", "not-on-action-bar")
-            else c
-            for c in cannot_judge
-        ]
+        no_record = f"no spellbook record: {record_file or 'the WowLab.lua'} was not read"
     elif character is None:
-        cannot_judge = [
-            c.model_copy(update={"reason": f"{c.reason} (no character chosen; use --character)"})
-            if c.macro is None
-            else c
-            for c in cannot_judge
-        ]
+        no_record = "no spellbook record (no character chosen; use --character)"
+    else:
+        no_record = macrocheck.NO_RECORD
+    result = macrocheck.check(macros, record, character=who, no_record=no_record)
     report = MacrosCheckReport(
         flavor_folder=chosen.folder,
         account=acct.folder,
-        character=target.character if target is not None and character is not None else None,
+        character=who,
         files=files,
         record_file=record_file,
         record_schema=record.schema_ if record is not None else None,
@@ -4281,8 +4281,9 @@ def macros_check(
         length_unit=macrocheck.LENGTH_UNIT,
         macros=result.macros,
         findings=result.findings,
-        cannot_judge=cannot_judge,
+        cannot_judge=result.cannot_judge,
         on_no_bar_at_least=result.on_no_bar_at_least,
+        blank_names=result.blank_names,
         notes=_MACROS_CHECK_NOTES,
     )
     if json_out:
@@ -4297,16 +4298,23 @@ def macros_check(
                 f"{f.scope.capitalize()} macros: {_plural(f.macros, 'macro')} in {f.file}"
                 + (extra if f.unknown_lines else "")
             )
-    if report.record_file is None:
-        _say("Spellbook and action bars: no lab-addon record")
-    elif report.record_error is not None:
-        _say(f"Spellbook and action bars: {report.record_file} not read ({report.record_error})")
+    if report.record_error is not None:
+        place = report.record_file or "the WowLab.lua"
+        _say(f"Spellbook and action bars: {place} not read ({report.record_error})")
+    elif report.record_file is None:
+        hint = "use --character" if character is None else "wowlab addon install lab, then log in"
+        _say(f"Spellbook and action bars: no lab-addon record ({hint})")
     else:
         _say(f"Spellbook and action bars: {report.record_file} (schema {report.record_schema})")
     _say(
         f"Length: counted in {report.length_unit}; the client's limit is "
         f"{report.length_limit}, and whether it counts characters or bytes is [verify]"
     )
+    if report.blank_names:
+        _say(
+            f"Blank names: {_plural(report.blank_names, 'macro')} named with nothing but spaces, "
+            "left out of duplicate-name"
+        )
     _say(f"Findings: {len(report.findings)}")
     for finding in report.findings:
         _say(

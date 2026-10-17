@@ -9,36 +9,44 @@ here opens a file, and nothing writes anywhere (L1).
 The rules:
 
 - `length`: a body over `LENGTH_LIMIT`. Whether the client counts characters
-  or UTF-8 bytes is **[verify]**, so the check counts UTF-8 bytes (never
-  fewer than characters, so it misses nothing a character count would
-  flag) of the body lines joined by LF with no final break (the text the
-  client is believed to show, `wtfconfig.Macro`), and says so
-  (`LENGTH_UNIT`); each macro carries both counts.
+  or UTF-8 bytes is **[verify]**. The body is the body lines joined by LF
+  with no final break (the text the client is believed to show,
+  `wtfconfig.Macro`); each macro carries both counts. Over 255 characters is
+  a finding; over 255 bytes but not over 255 characters is "cannot judge"
+  (`LENGTH_UNIT` says what was counted).
 - `spell-not-in-spellbook`: a spell name after `/cast`, `/castsequence`,
-  `/castrandom`, `#show` or `#showtooltip` that no item of the character's
-  spellbook record carries, compared without case **[verify]**.
+  `/castrandom`, `#show` or `#showtooltip` that no learned item of the
+  character's spellbook record carries, compared without case **[verify]**.
   Conditions (`[...]`), `!`, `reset=` and the `;` and `,` separators are
-  taken off; a number or `item:` is not a name. A name ending in a
-  parenthesised rank (`Spell(Rank 3)`, `Spell()`) is "cannot judge": whether
-  an explicit rank goes stale is **[verify]**. `/use` is not checked: it
-  names items as often as spells. A name the spellbook does not carry may
-  still be an item, a pet spell or a spell the record does not list; the
-  finding says only what the record holds.
+  taken off; a number or `item:` is not a name. A name only on a
+  not-yet-learned item (the record's `item_types["FutureSpell"]`) is a
+  finding that says so. A name ending in a parenthesised suffix
+  (`Spell(Rank 3)`, `Spell(Rang 3)`, `Spell()`) is an explicit rank and
+  "cannot judge": whether one goes stale is **[verify]**. `/use` is not
+  checked: it names items as often as spells. A name the spellbook does not
+  carry may still be an item, a pet, mount or toy spell, or a spell learned
+  later; the finding says so.
 - `not-on-action-bar`: a macro on none of the action slots the record
-  walked. A macro slot holds a macro index whose numbering against the ids in
-  `macros-cache.txt` is **[verify]** (`docs/LAB_FORMATS.md`, 2026-10-16), so
-  the rule judges only when the record has no macro slot at all; otherwise
-  it is "cannot judge", with the least number of macros that must be on no
-  bar.
+  walked, for the one character whose record it is. A macro slot holds a
+  macro index whose numbering against the ids in `macros-cache.txt` is
+  **[verify]** (`docs/LAB_FORMATS.md`, 2026-10-16), so the rule judges only
+  when the record has no macro slot at all; otherwise it is "cannot judge",
+  with the least number of macros that must be on no bar.
 - `duplicate-name`, `duplicate-body`: names or bodies that are byte for byte
-  the same, across both files.
-- `unbalanced-brackets`: a line whose `[` and `]` do not pair up. Chat and
-  script commands are not checked (their text is free; `CHAT_COMMANDS`).
-- `showtooltip-not-first`: a `#showtooltip` line that is not the body's
-  first line.
+  the same, across both files. A blank name (empty or spaces only) is a
+  choice, not a clash: it is left out and counted (`blank_names`).
+- `unbalanced-brackets`: a command line whose `[` and `]` do not pair up.
+  Chat and script commands (`CHAT_COMMANDS`, English names only) and lines
+  that are not commands are free text and not checked.
+- `showtooltip-not-first`: a `#showtooltip` line, or a `#show` line (the same
+  rule assumed, **[verify]**), that is not the body's first line.
 
-Without a schema-3 spellbook or action-bar record, those two rules are
-"cannot judge" and the others still run.
+A record section whose own probes say values were dropped (a call raised, a
+value was secret or untestable, a needed function was missing) or that holds
+items or slots with the value missing makes its rule "cannot judge" for
+every macro, with the counts: a missing name or slot may be one of those
+dropped. Without a schema-3 spellbook or action-bar record, those two rules
+are "cannot judge" and the others still run.
 """
 
 from __future__ import annotations
@@ -56,6 +64,7 @@ __all__ = [
     "CHAT_COMMANDS",
     "LENGTH_LIMIT",
     "LENGTH_UNIT",
+    "NO_RECORD",
     "RULES",
     "CannotJudge",
     "CheckResult",
@@ -71,7 +80,10 @@ __all__ = [
 ]
 
 LENGTH_LIMIT = 255
-LENGTH_UNIT = "UTF-8 bytes of the body lines joined by LF, with no final line break"
+LENGTH_UNIT = (
+    "characters and UTF-8 bytes of the body lines joined by LF, with no final line break; "
+    "over 255 characters is a finding, over 255 bytes only is cannot judge"
+)
 
 Rule = Literal[
     "length",
@@ -127,20 +139,42 @@ CHAT_COMMANDS = frozenset(
         "/battleground",
         "/channel",
         "/csay",
+        "/bn",
+        "/afk",
+        "/dnd",
         "/run",
         "/script",
         "/dump",
         "/print",
+        *(f"/{n}" for n in range(1, 11)),
     }
 )
 
 _SPELL_COMMANDS = frozenset({"/cast", "/castsequence", "/castrandom", "#show", "#showtooltip"})
 _LIST_COMMANDS = frozenset({"/castsequence", "/castrandom"})
+# `#showtooltip` must be the first line; `#show` is assumed to follow the
+# same rule [verify].
+_FIRST_LINE = {"#showtooltip": "#showtooltip", "#show": "#show (the same rule assumed, [verify])"}
 _COMMAND = re.compile(r"\s*([/#][^\s\[\]]+)(.*)", re.DOTALL)
 _CONDITIONS = re.compile(r"\s*(?:\[[^\[\]]*\]\s*)*")
 _RESET = re.compile(r"reset=\S*\s*", re.IGNORECASE)
-_RANK = re.compile(r".*\(\s*(?:[Rr]ank\s*\d+)?\s*\)")
+# A trailing parenthesised suffix: a rank in any client language (`Rank 3`,
+# `Rang 3`), or empty.
+_SUFFIX = re.compile(r"(.*)\(([^()]*)\)\s*", re.DOTALL)
 _NOT_A_NAME = re.compile(r"\d+(?:\s+\d+)?|item:\S*", re.IGNORECASE)
+
+_GET_RECORD = (
+    "enable the lab-addon (wowlab addon install lab), log in on this character, then log "
+    "out or /reload; schema 3 is needed"
+)
+NO_RECORD = f"no spellbook record ({_GET_RECORD})"
+_MAY_BE = (
+    "it may be an item, a pet, mount or toy spell, or a spell learned after the record was saved"
+)
+_SPELLBOOK_NEEDS = frozenset(
+    {"C_SpellBook.GetSpellBookItemInfo", "C_SpellBook.GetSpellBookItemName"}
+)
+_ACTIONBARS_NEEDS = frozenset({"GetActionInfo"})
 
 
 class _Model(BaseModel):
@@ -205,8 +239,10 @@ class CheckResult(_Model):
     findings: list[Finding]
     cannot_judge: list[CannotJudge]
     # The least number of macros on no action bar when the rule cannot say
-    # which; None when it judged each macro or had no record.
+    # which; None when it judged each macro or could not judge at all.
     on_no_bar_at_least: int | None
+    # Macros whose name is empty or spaces only: left out of duplicate-name.
+    blank_names: int
 
 
 def body_text(macro: Macro) -> str:
@@ -275,22 +311,98 @@ def _balanced(text: str) -> bool:
     return depth == 0
 
 
-def _spellbook(record: labaddon.CharDB | None) -> labaddon.Spellbook | str:
-    if not isinstance(record, labaddon.CharDBV3) or record.spellbook is None:
-        return "no spellbook record"
+# ─── the record ──────────────────────────────────────────────────────────────
+
+
+def _schema_words(record: labaddon.CharDB) -> str:
+    return (
+        f"no spellbook record (schema {record.schema_} has no spellbook or action-bar record; "
+        f"{_GET_RECORD})"
+    )
+
+
+def _dropped(probes: Sequence[labaddon.ApiProbe], needs: frozenset[str]) -> list[str]:
+    """What a section's own probes say it may be missing: calls that raised,
+    values dropped as secret or untestable, a needed function not there."""
+    counted = [p for p in probes if p.api not in labaddon.LOOKED_UP]
+    errors = sum(p.errors for p in counted)
+    secret = sum(p.secret for p in counted)
+    out: list[str] = []
+    if errors or secret:
+        out.append(
+            f"{errors} call(s) raised an error and {secret} value(s) were dropped as secret "
+            "or untestable"
+        )
+    missing = sorted(p.api for p in probes if p.api in needs and not p.present)
+    if missing:
+        out.append(f"{', '.join(missing)} not present")
+    return out
+
+
+def _spellbook(record: labaddon.CharDB | None, no_record: str) -> labaddon.Spellbook | str:
+    if record is None:
+        return no_record
+    if not isinstance(record, labaddon.CharDBV3):
+        return _schema_words(record)
+    if record.spellbook is None:
+        return NO_RECORD
     if isinstance(record.spellbook, labaddon.AbsentProbedSection):
         return f"no spellbook record (the section is absent: {record.spellbook.absent})"
-    return record.spellbook
+    book = record.spellbook
+    flyout = (book.item_types or {}).get("Flyout")
+    why = _dropped(book.probes, _SPELLBOOK_NEEDS)
+    unnamed = sum(
+        1 for i in book.list_ if i.spell_name is None and (flyout is None or i.type != flyout)
+    )
+    if unnamed:
+        why.append(f"{unnamed} item(s) have no name")
+    if why:
+        return (
+            f"the spellbook record is incomplete ({'; '.join(why)}), so a name it lacks may be "
+            "one of those dropped"
+        )
+    return book
 
 
-def _actionbars(record: labaddon.CharDB | None) -> labaddon.ActionBars | str:
+def _actionbars(record: labaddon.CharDB | None, no_record: str) -> labaddon.ActionBars | str:
+    if record is None:
+        return no_record
     if not isinstance(record, labaddon.CharDBV3):
-        return "no spellbook record"
+        return _schema_words(record)
     if record.actionbars is None:
-        return "no action-bar record"
+        return f"no action-bar record ({_GET_RECORD})"
     if isinstance(record.actionbars, labaddon.AbsentProbedSection):
         return f"no action-bar record (the section is absent: {record.actionbars.absent})"
-    return record.actionbars
+    bars = record.actionbars
+    why = _dropped(bars.probes, _ACTIONBARS_NEEDS)
+    untyped = sum(1 for s in bars.slots if s.type is None)
+    if untyped:
+        why.append(f"{untyped} slot(s) have no type")
+    if why:
+        return (
+            f"the action-bar record is incomplete ({'; '.join(why)}), so a macro slot may be "
+            "one of those dropped"
+        )
+    return bars
+
+
+# ─── the rules ───────────────────────────────────────────────────────────────
+
+
+def _rank_words(name: str, book: labaddon.Spellbook) -> str:
+    match = _SUFFIX.fullmatch(name)
+    assert match is not None
+    base, rank = match.group(1).strip(), match.group(2).strip()
+    pairs = {
+        (i.spell_name.casefold(), (i.subtext or "").casefold())
+        for i in book.list_
+        if i.spell_name is not None
+    }
+    held = "has" if (base.casefold(), rank.casefold()) in pairs else "does not have"
+    return (
+        "names an explicit rank; whether one goes stale is [verify]; the spellbook record "
+        f"{held} {base!r} with subtext {rank!r}"
+    )
 
 
 def _check_spells(
@@ -299,41 +411,56 @@ def _check_spells(
     findings: list[Finding],
     unjudged: list[CannotJudge],
 ) -> None:
-    known = {item.spell_name.casefold() for item in book.list_ if item.spell_name is not None}
+    future = (book.item_types or {}).get("FutureSpell")
+    learned: set[str] = set()
+    unlearned: set[str] = set()
+    for item in book.list_:
+        if item.spell_name is not None:
+            is_future = future is not None and item.type == future
+            (unlearned if is_future else learned).add(item.spell_name.casefold())
     for m in macros:
         for k, text in enumerate(m.macro.body_lines):
             for name in spell_names(text):
                 line = _body_line(m, k)
-                if _RANK.fullmatch(name):
+                folded = name.casefold()
+                if _SUFFIX.fullmatch(name):
                     unjudged.append(
                         CannotJudge(
                             rule="spell-not-in-spellbook",
                             macro=_ref(m),
                             name=m.macro.name,
                             line=line,
-                            reason="names an explicit rank; whether one goes stale is [verify]",
+                            reason=_rank_words(name, book),
                         )
                     )
-                elif name.casefold() not in known:
-                    findings.append(
-                        Finding(
-                            rule="spell-not-in-spellbook",
-                            macro=_ref(m),
-                            name=m.macro.name,
-                            line=line,
-                            detail=f"{name!r} is not in the spellbook record",
-                        )
+                    continue
+                if folded in learned:
+                    continue
+                detail = (
+                    f"{name!r} is in the spellbook record as not yet learned"
+                    if folded in unlearned
+                    else f"{name!r} is not in the spellbook record ({_MAY_BE})"
+                )
+                findings.append(
+                    Finding(
+                        rule="spell-not-in-spellbook",
+                        macro=_ref(m),
+                        name=m.macro.name,
+                        line=line,
+                        detail=detail,
                     )
+                )
 
 
 def _check_bars(
     macros: Sequence[SourceMacro],
     bars: labaddon.ActionBars,
+    whose: str,
     findings: list[Finding],
     unjudged: list[CannotJudge],
 ) -> int | None:
     slots = [s for s in bars.slots if s.type == "macro"]
-    walked = f"action slots {bars.first_slot} to {bars.last_slot}"
+    walked = f"{whose} action bars (slots {bars.first_slot} to {bars.last_slot})"
     if not slots:
         for m in macros:
             findings.append(
@@ -342,7 +469,7 @@ def _check_bars(
                     macro=_ref(m),
                     name=m.macro.name,
                     line=m.macro.header_index + 1,
-                    detail=f"the action-bar record has no macro slot in {walked}",
+                    detail=f"on none of {walked}: the record has no macro slot there",
                 )
             )
         return None
@@ -354,7 +481,7 @@ def _check_bars(
     )
     at_least = max(0, len(macros) - bound)
     count = (
-        f"at least {at_least} of the {len(macros)} macros are on no action bar"
+        f"at least {at_least} of the {len(macros)} macros are on none of {whose} action bars"
         if at_least
         else "so which macros are on one cannot be told"
     )
@@ -362,23 +489,24 @@ def _check_bars(
         CannotJudge(
             rule="not-on-action-bar",
             reason=(
-                f"the action-bar record has {len(slots)} macro slot(s) in {walked}, and how a "
-                f"slot's macro index maps to the ids in macros-cache.txt is [verify]; {count}"
+                f"the record has {len(slots)} macro slot(s) on {walked}, and how a slot's "
+                f"macro index maps to the ids in macros-cache.txt is [verify]; {count}"
             ),
         )
     )
     return at_least
 
 
-def _same_name(m: SourceMacro) -> bytes:
-    return _encoded(m.macro.name)
+def _same_name(m: SourceMacro) -> bytes | None:
+    # A blank name is a choice (the button shows no label), not a clash.
+    return _encoded(m.macro.name) if m.macro.name.strip() else None
 
 
-def _same_body(m: SourceMacro) -> bytes:
+def _same_body(m: SourceMacro) -> bytes | None:
     return _encoded(body_text(m.macro))
 
 
-_DUPLICATES: tuple[tuple[Rule, str, Callable[[SourceMacro], bytes]], ...] = (
+_DUPLICATES: tuple[tuple[Rule, str, Callable[[SourceMacro], bytes | None]], ...] = (
     ("duplicate-name", "name", _same_name),
     ("duplicate-body", "body", _same_body),
 )
@@ -388,7 +516,10 @@ def _check_duplicates(macros: Sequence[SourceMacro], findings: list[Finding]) ->
     for rule, what, key in _DUPLICATES:
         first: dict[bytes, SourceMacro] = {}
         for m in macros:
-            other = first.setdefault(key(m), m)
+            k = key(m)
+            if k is None:
+                continue
+            other = first.setdefault(k, m)
             if other is m:
                 continue
             findings.append(
@@ -411,76 +542,108 @@ def _check_lines(macros: Sequence[SourceMacro], findings: list[Finding]) -> None
         for k, text in enumerate(m.macro.body_lines):
             parsed = _command(text)
             line = _body_line(m, k)
-            if (parsed is None or parsed[0] not in CHAT_COMMANDS) and not _balanced(text):
+            # A line that is not a command is said in chat, so it is free
+            # text, as a chat command's is.
+            if parsed is not None and parsed[0] not in CHAT_COMMANDS and not _balanced(text):
                 findings.append(
                     Finding(
                         rule="unbalanced-brackets",
                         macro=_ref(m),
                         name=m.macro.name,
                         line=line,
-                        detail=f"body line {k + 1}: its [ and ] do not pair up",
+                        detail=(
+                            f"body line {k + 1}: its [ and ] do not pair up (a chat command "
+                            "with a localized name is checked as a command)"
+                        ),
                     )
                 )
-            if k > 0 and parsed is not None and parsed[0] == "#showtooltip":
+            if k > 0 and parsed is not None and parsed[0] in _FIRST_LINE:
                 findings.append(
                     Finding(
                         rule="showtooltip-not-first",
                         macro=_ref(m),
                         name=m.macro.name,
                         line=line,
-                        detail=f"#showtooltip is on body line {k + 1}, not the first",
+                        detail=f"{_FIRST_LINE[parsed[0]]} is on body line {k + 1}, not the first",
                     )
                 )
 
 
-def check(macros: Sequence[SourceMacro], record: labaddon.CharDB | None) -> CheckResult:
-    """Apply every rule. `record` is the character's lab-addon record, or
-    None when there is none (or no character was chosen)."""
-    checked: list[CheckedMacro] = []
-    findings: list[Finding] = []
-    unjudged: list[CannotJudge] = []
-    for m in macros:
-        text = body_text(m.macro)
-        size = len(_encoded(text))
-        checked.append(
-            CheckedMacro(
-                scope=m.scope,
-                file=m.file,
-                id=m.macro.macro_id,
+def _check_length(
+    m: SourceMacro, findings: list[Finding], unjudged: list[CannotJudge]
+) -> CheckedMacro:
+    text = body_text(m.macro)
+    size, chars = len(_encoded(text)), len(text)
+    line = m.macro.header_index + 1
+    if chars > LENGTH_LIMIT:
+        findings.append(
+            Finding(
+                rule="length",
+                macro=_ref(m),
                 name=m.macro.name,
-                line=m.macro.header_index + 1,
-                bytes=size,
-                characters=len(text),
-                complete=m.macro.complete,
+                line=line,
+                detail=f"the body is {size} bytes ({chars} characters), over {LENGTH_LIMIT}",
             )
         )
-        if size > LENGTH_LIMIT:
-            findings.append(
-                Finding(
-                    rule="length",
-                    macro=_ref(m),
-                    name=m.macro.name,
-                    line=m.macro.header_index + 1,
-                    detail=(
-                        f"the body is {size} bytes ({len(text)} characters), over {LENGTH_LIMIT}"
-                    ),
-                )
+    elif size > LENGTH_LIMIT:
+        unjudged.append(
+            CannotJudge(
+                rule="length",
+                macro=_ref(m),
+                name=m.macro.name,
+                line=line,
+                reason=(
+                    f"{size} bytes, {chars} characters: over {LENGTH_LIMIT} only if the client "
+                    "counts bytes [verify]"
+                ),
             )
-    book = _spellbook(record)
+        )
+    return CheckedMacro(
+        scope=m.scope,
+        file=m.file,
+        id=m.macro.macro_id,
+        name=m.macro.name,
+        line=line,
+        bytes=size,
+        characters=chars,
+        complete=m.macro.complete,
+    )
+
+
+def check(
+    macros: Sequence[SourceMacro],
+    record: labaddon.CharDB | None,
+    *,
+    character: str | None = None,
+    no_record: str = NO_RECORD,
+) -> CheckResult:
+    """Apply every rule. `record` is the character's lab-addon record, or
+    None; `no_record` is then why, the two lab-addon rules' reason.
+    `character` names whose action bars the record holds."""
+    findings: list[Finding] = []
+    unjudged: list[CannotJudge] = []
+    checked = [_check_length(m, findings, unjudged) for m in macros]
+    book = _spellbook(record, no_record)
     if isinstance(book, str):
         unjudged.append(CannotJudge(rule="spell-not-in-spellbook", reason=book))
     else:
         _check_spells(macros, book, findings, unjudged)
-    bars = _actionbars(record)
+    bars = _actionbars(record, no_record)
     at_least: int | None = None
     if isinstance(bars, str):
         unjudged.append(CannotJudge(rule="not-on-action-bar", reason=bars))
     else:
-        at_least = _check_bars(macros, bars, findings, unjudged)
+        whose = f"{character}'s" if character else "the character's"
+        at_least = _check_bars(macros, bars, whose, findings, unjudged)
     _check_duplicates(macros, findings)
     _check_lines(macros, findings)
     order = {rule: i for i, rule in enumerate(RULES)}
     findings.sort(key=lambda f: (order[f.rule], f.macro.scope, f.macro.line, f.line))
+    unjudged.sort(key=lambda c: order[c.rule])
     return CheckResult(
-        macros=checked, findings=findings, cannot_judge=unjudged, on_no_bar_at_least=at_least
+        macros=checked,
+        findings=findings,
+        cannot_judge=unjudged,
+        on_no_bar_at_least=at_least,
+        blank_names=sum(1 for m in macros if not m.macro.name.strip()),
     )
