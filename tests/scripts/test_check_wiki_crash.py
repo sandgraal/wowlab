@@ -14,6 +14,7 @@ there is personal data to find. Names and addresses are invented.
 from __future__ import annotations
 
 import os
+import runpy
 import subprocess
 import sys
 from pathlib import Path
@@ -209,5 +210,36 @@ def test_constructed_an_import_that_fails_exits_2_when_run_as_the_gate(
     )
     assert result.returncode == cw.EXIT_ERROR, result.stdout + result.stderr
     assert result.stdout == ""
-    assert "an import failed" in result.stderr
+    assert "loading the checker failed" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+def _break_render(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delattr(sys.modules["gen_command_reference"], "render")
+
+
+def _break_default_roots(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys.modules["wowlab_core.install"], "default_roots", _raise)
+
+
+@pytest.mark.parametrize("breaks", [_break_render, _break_default_roots])
+def test_constructed_module_set_up_that_raises_exits_2_when_run_as_the_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    breaks: Any,
+) -> None:
+    # `GENERATED` reads `gen.render` and `_DEFAULT_ROOT` runs
+    # `install.default_roots` as the module loads, after the imports.
+    root = _build(tmp_path / "wiki", Extra=PERSONAL)
+    breaks(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["check_wiki.py", str(root)])
+    with pytest.raises(SystemExit) as gate:
+        runpy.run_path(str(SCRIPTS / "check_wiki.py"), run_name="__main__")
+    assert gate.value.code == cw.EXIT_ERROR
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "loading the checker failed" in captured.err
+    # Imported as a library, the error propagates unchanged.
+    with pytest.raises((AttributeError, RuntimeError)):
+        runpy.run_path(str(SCRIPTS / "check_wiki.py"), run_name="check_wiki_library")
