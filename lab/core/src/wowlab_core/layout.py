@@ -67,6 +67,7 @@ from pydantic import (
 )
 
 from wowlab_core import filemap as _filemap
+from wowlab_core import longpath
 from wowlab_core.filemap import FileMapEntry
 
 # `is_link`: the one link test, defined in `install` so discovery uses it
@@ -447,7 +448,7 @@ def link_facts(path: Path, real_root: Path | None) -> tuple[str | None, bool | N
     resolved, or resolving the link fails (a loop) or ends at the link
     itself, so nothing says where it points."""
     try:
-        target: str | None = os.readlink(path)  # noqa: PTH115
+        target: str | None = os.readlink(longpath.extended(path))  # noqa: PTH115
     except (OSError, ValueError):
         target = None
     if target is None:
@@ -455,8 +456,8 @@ def link_facts(path: Path, real_root: Path | None) -> tuple[str | None, bool | N
     try:
         if real_root is None:
             return target, None
-        resolved = path.resolve()
-        if resolved == path.parent.resolve() / path.name:
+        resolved = longpath.resolve(path)
+        if resolved == longpath.resolve(path.parent) / path.name:
             return target, None
         return target, _is_within(resolved, real_root)
     except (OSError, RuntimeError):  # a loop: RuntimeError on 3.12, OSError later
@@ -507,8 +508,9 @@ class Layout:
 
     def _children(self, rel: tuple[str, ...], report: _Report) -> list[os.DirEntry[str]]:
         try:
-            with os.scandir(self._abs(rel)) as it:
-                return sorted(it, key=lambda e: e.name)
+            # Entries' own `.path` may be extended-length (M13-15): callers
+            # build a child's path from `rel` and the name.
+            return sorted(longpath.entries(self._abs(rel)), key=lambda e: e.name)
         except FileNotFoundError:
             return []
         except OSError as exc:
@@ -527,7 +529,7 @@ class Layout:
         path = self._abs(rel)
         try:
             if self._real_root is None:
-                self._real_root = self.install_root.resolve()
+                self._real_root = longpath.resolve(self.install_root)
             real_root: Path | None = self._real_root
         except (OSError, RuntimeError):
             real_root = None
@@ -549,7 +551,8 @@ class Layout:
         except OSError as exc:
             report.errors.append(WalkError(path=_rel_text(rel), error=exc.strerror or str(exc)))
             return None
-        if is_link(Path(entry.path), st):
+        # Built from `rel`: an entry's own `.path` may be extended-length (M13-15).
+        if is_link(self._abs(rel), st):
             report.symlinks.append(self._symlink(rel))
             return None
         self._note_reparse(rel, st, report)
@@ -602,7 +605,7 @@ class Layout:
             return None
         path = self._abs((*rel, found))
         try:
-            st = path.lstat()
+            st = longpath.lstat(path)
         except OSError as exc:
             report.errors.append(
                 WalkError(path=_rel_text((*rel, found)), error=exc.strerror or str(exc))
@@ -1136,7 +1139,7 @@ def _kind(
     if given is not None and not probe:
         return given, False
     try:
-        st = path.lstat()
+        st = longpath.lstat(path)
     except (FileNotFoundError, NotADirectoryError):
         if _missing(path, root):
             return given or "file", True
@@ -1160,10 +1163,10 @@ def _same_file(candidate: Path, known: Path) -> bool:
     case-insensitive volume (same entry) and a link is never followed.
     """
     try:
-        st = candidate.lstat()
+        st = longpath.lstat(candidate)
         if is_link(candidate, st):
             return False
-        return os.path.samestat(st, known.lstat())
+        return os.path.samestat(st, longpath.lstat(known))
     except OSError:
         return False
 
@@ -1212,7 +1215,9 @@ def _missing(path: Path, root: Path) -> bool:
     for part in parts:
         current = current / part
         try:
-            st = current.lstat()
+            # Extended-length past the plain limit (M13-15): a long path
+            # Windows refuses plainly is not "absent".
+            st = longpath.lstat(current)
         except (FileNotFoundError, NotADirectoryError):
             return True
         except OSError:

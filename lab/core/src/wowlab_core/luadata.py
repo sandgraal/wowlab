@@ -106,6 +106,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import NamedTuple, NoReturn, cast
 
+from wowlab_core import longpath
+
 __all__ = [
     "MAX_COST",
     "MAX_DEPTH",
@@ -1087,8 +1089,10 @@ def _resume_gc() -> None:
 
 def read(path: str | Path) -> LuaDocument:
     """Read and parse one file. Opens it read-only, reads it once and writes
-    nothing anywhere (L1). The size bound is checked before reading."""
-    with Path(path).open("rb") as handle:
+    nothing anywhere (L1). The size bound is checked before reading. A path
+    past Windows' plain limit is opened by its extended-length spelling
+    (`longpath`, M13-15)."""
+    with longpath.open_read(path) as handle:
         size = os.fstat(handle.fileno()).st_size
         if size > MAX_FILE_BYTES:
             raise LuaLimitError(
