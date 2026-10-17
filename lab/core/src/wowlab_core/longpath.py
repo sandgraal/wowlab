@@ -26,7 +26,7 @@ Off Windows every function here is the call it wraps, with the path as given.
 
 This module only reads: it lists folders, `lstat`s, `stat`s, resolves and
 opens for reading. A caller that writes (`guard` into an install, L2) spells
-the path with `extended` itself.
+the path with `extended` or `xpath` and makes the call itself.
 """
 
 from __future__ import annotations
