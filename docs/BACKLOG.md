@@ -750,3 +750,34 @@ Found while building M13-08. `combatlog.cast_counts` tokenizes every line. On a 
 Found in the security review of #244 (M13-39). M13-39 stopped the model's job from restoring or saving a cache, but the Actions cache is a channel that crosses workflows: any job running in `main`'s scope can write any key, and both `wiki-daily.yml` and `claude.yml` (triggered by `issue_comment` and `issues`, so on `main`'s ref) run the model with a runtime token whose "Cache mode" is write, whatever the job's own cache setting. A model past its permissions could pre-seed the key a coming `uv.lock` change will produce (the key is public in the PR before it merges) or evict and rewrite an existing one, and the five consumers would restore it: `quality`, `parser-suite`, `lab-desktop` and `harness` in `ci.yml`, and `lab-windows` in `windows.yml` (all `enable-cache: true`). Those jobs hold only `contents: read` and no secrets, but they are the required checks `pr-shepherd` merges on. A producer-side fix cannot close it. Set `enable-cache: false` on the five consumer jobs, as `release.yml` already does (`uv sync --frozen` from the lockfile costs about a second), and add a repository-wide static test that no job in any workflow restores an Actions cache: no `actions/cache*` step, setup-uv with `enable-cache` explicitly `false` (an omitted input means `auto`, which caches), no `cache:` input on any setup action, and an allowlist of the actions each workflow may use so an action that caches by default (`setup-go`) cannot slip in. Fix the count in the comment at the top of `wiki-daily.yml`'s improve job, which says "four cached jobs": there are five.
 
 **Acceptance:** no job in any workflow restores or saves a cache; the static test fails if one is added back in any of the four forms above; CI on the PR is green within a reasonable time of the uncached baseline (paste the job times); actionlint clean; `make ci` green; reviewed by `security-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-43 — `lab (windows)`: three `tree` link tests and one explorer hint test assume a POSIX host
+**Size:** S · **Depends on:** M13-15, M13-27, M13-35
+
+Found on 2026-10-17. `windows.yml` is red on `main` at a431c28 (https://github.com/sandgraal/wowlab/actions/runs/39069525782), the same way M13-36 found it: the job is off the PR path, and #235 (M13-35) and #237 (M13-27) each brought a test that passes only on a POSIX host. Four tests fail; one needs a one-line library change, the others are test-only:
+
+- `lab/core/tests/test_cli_tree_links.py::test_a_link_at_the_install_root_reads_as_one_in_a_flavor_folder[inside]`, `[outside]` and `::test_link_facts_of_a_link_whose_text_cannot_be_read_constructed`: on Windows `os.readlink` answers an absolute symlink's text with the `\\?\` prefix (`\\?\C:\…`), and `layout._symlink` prints it as read, so `tree` says `link to \\?\C:\… not followed`. The tests expect the plain spelling, and so does M13-15's acceptance (no `\\?\` reaches the owner). Strip the prefix with M13-15's `longpath.plain` where the text is read, keep the text otherwise exactly as stored (L4 for the link text: no other normalisation), and add a constructed Windows test with a relative-text link, whose text has no prefix and must stay as is.
+- `lab/core/tests/test_ui_explorer_stage2.py::test_a_hint_says_its_own_shell_and_copies_exactly_constructed`: the "posix" half of the test asserts POSIX quoting (`'"'"'`) with `cli._shell` unpatched, which answers `powershell` on Windows by design. Pin `_shell` to `posix` for that half, as M13-36 did for the `explain` tests, so both halves run on every platform.
+
+Nothing else in the library changes. If a test seems to need more than the one `plain` call, stop and report.
+
+**Acceptance:**
+- `gh workflow run windows.yml --ref <branch>` on the branch is green before merge; the run URL and the pasted summary line are in the report.
+- Nothing is loosened on macOS or Linux: the four tests still run there as they do on `main`, and `make ci` is green.
+- `tree`, `explain` and `gaps` output for a link is byte-identical to `main` on macOS and Linux (paste one run of each on the Forever fixture).
+- Reviewed by `code-reviewer`.
+
+---
+
+## [ ] M13-44 — Long paths on Windows: the readers and writers M13-15 left on plain paths
+**Size:** M · **Depends on:** M13-15
+
+Found in the review of #247 (M13-15). M13-15 covers the calls its graders show failing (`guard`, `snapshot`, `layout`, `install`). The code-reviewer listed the modules that still open a path by its plain spelling, so on Windows each fails past the 240-character limit the same way the graders did before: `profiles.py:318`, `luadata.py:2567` and `_read_sibling`, `pathfacts.py:138`, `cli.py` at 1757, 1975 and 4516, `addoninstall.py` at 489 and 546, `gaps.py:367`, and `combatlog.find_logs` (line numbers as of #247's head; take the list from the review thread on the PR). Route each through `longpath.extended` the way M13-15 does, with no behaviour change off Windows and no `\\?\` reaching any output, report, manifest or journal (M13-15's acceptance). `luadata.py` is load-bearing: its grader comes first in a `[TEST]` ticket (M13-44T, to be filed with this one when the owner picks it), written by a different agent; the other modules' tests are the implementer's.
+
+**Acceptance:**
+- A Windows test per call site, under the `long-paths` step of `windows.yml`, constructs a path past the limit and shows the call succeeds; `gh workflow run windows.yml --ref <branch>` is green before merge, with the run URL in the report.
+- No `\\?\` in any text or `--json` output of `profile`, `sv`, `explain`, `addon`, `gaps` or `combatlog` commands (a grader per command, run on every platform).
+- `make test-parser` green (`luadata.py` changes); `make ci` green.
+- Reviewed by `code-reviewer` and `security-reviewer` (it touches the readers `guard` depends on).
