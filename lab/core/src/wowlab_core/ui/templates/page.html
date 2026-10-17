@@ -21,30 +21,40 @@
 </div>
 <nav class="tabs" role="tablist" aria-label="Views">
 <button id="tab-explorer" class="tab" type="button" role="tab" aria-selected="true" aria-controls="explorer-view">Explorer</button>
+<button id="tab-gaps" class="tab" type="button" role="tab" aria-selected="false" aria-controls="gaps-view">Gaps</button>
 <button id="tab-commands" class="tab" type="button" role="tab" aria-selected="false" aria-controls="commands-view">Commands</button>
 </nav>
 </header>
 <main>
 <section id="explorer-view" role="tabpanel" aria-labelledby="tab-explorer">
 <div class="toolbar panel">
-<label id="flavor-box" hidden>Flavor folder <select id="flavor"></select></label>
+<label id="flavor-box" hidden>Open flavor folder <select id="flavor"></select></label>
 <label>Verdict <select id="level-filter"><option value="">All</option></select></label>
 <label>Find <input id="text-filter" type="search" placeholder="part of a path" autocomplete="off" spellcheck="false"></label>
+<label class="check"><input id="gaps-only" type="checkbox"> Gaps only</label>
 <p id="explorer-status" role="status"></p>
 </div>
 <div class="panes">
 <div class="panel tree-panel">
 <p id="tree-root" class="tree-root"></p>
-<ul id="tree" class="tree" role="tree" aria-label="Files in the flavor folder"></ul>
+<ul id="tree" class="tree" role="tree" aria-label="Files in the install"></ul>
 </div>
 <aside id="explain" class="parchment" aria-live="polite">
 <h2 id="explain-title">Pick a file or folder</h2>
 <p id="explain-path" class="path"></p>
 <div id="explain-verdict" class="verdict"></div>
 <dl id="explain-facts"></dl>
+<p id="explain-snapshot" class="snapshot"></p>
+<div id="explain-hints" class="hints"></div>
+<div id="explain-preview" class="preview-box"></div>
 <p id="explain-status"></p>
 </aside>
 </div>
+</section>
+<section id="gaps-view" role="tabpanel" aria-labelledby="tab-gaps" hidden>
+<p class="intro">Paths in the install that no file-map row describes, grouped under the row of the folder they are in and ranked by how many files they hold, then paths only a catch-all row describes, folders labelled whole and not looked inside, and links, which are never followed. Read only.</p>
+<p id="gaps-status" role="status"></p>
+<div id="gaps-body"></div>
 </section>
 <section id="commands-view" role="tabpanel" aria-labelledby="tab-commands" hidden>
 <p class="intro">Runs the commands of the <code>wowlab</code> you started, on this machine only. Commands that save only to wowlab's own data (snapshots, profiles, saved looks, the db2 cache, pages) are offered, and none of them touches the game folder. Commands that change your game files, or that ask before changing anything (<code>--yes</code>), are not offered in this version.</p>
