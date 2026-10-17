@@ -95,6 +95,10 @@ Anything weekly is anchored to the character's region, never to the local machin
 
 **Combat log** — the text file the client appends to under `Logs/` while `/combatlog` is on: one timestamped event per line. The record of what actually happened, as opposed to what a sim projects. Format: `docs/LAB_FORMATS.md` §8.
 
+**Unit flags** — the hex number after each unit's name in a combat-log record (`0x511`). It describes the unit **relative to the player who wrote the log**, not the unit itself: affiliation (mine, party, raid, outsider), reaction, controller, and type (player, NPC, pet, guardian), plus bits for that player's current target and focus. So the same NPC logs different flags as it becomes and stops being the target, and "mine" plus "player" means the logging player. A pet or guardian is "mine" but not a player. `wowlab binds coach` picks the player's own casts by those two fields alone, never by a GUID or a name (M13-08). Bit values are community documentation, **[verify]** beyond what the one real log shows.
+
+**Action slot, binding command** — the client has numbered action slots (1 to 180 on Forever's record); an action bar shows twelve of them, and what each holds is server state. A key binding does not name a spell: it names a command such as `ACTIONBUTTON3` or `MULTIACTIONBAR1BUTTON2`, and that command presses whichever slot its bar shows. In the default UI, button n of the bar showing page p is slot (p − 1) × 12 + n; the main bar changes page with forms, stances and paging, so the same key can cast different spells. Key to spell therefore needs both the bindings and the bars (`docs/LAB_PLAN.md` §15.2). A **rank** is a separate spell id per spell strength on clients that have ranks (Forever: Shadow Bolt is 686, 695 and 705), all under one name.
+
 **Parse** — a percentile ranking of a single logged performance against everyone else who did that encounter with that spec. Colloquially "I got a 95 parse." Nothing to do with text parsing.
 
 ## Client filesystem
