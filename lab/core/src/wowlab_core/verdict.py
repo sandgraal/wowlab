@@ -12,14 +12,17 @@ new cell in `filemap.toml` fails the test that maps every cell.
 from __future__ import annotations
 
 import os
-import re
 import stat
 import unicodedata
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from wowlab_core.filemap import FileMapEntry
+# The executable rule is `filemap`'s copy of guard's; its tables are named
+# here too, for `test_verdict.py`'s table-equality check against `guard`.
+from wowlab_core.filemap import _EXECUTABLE_SUFFIXES as _EXECUTABLE_SUFFIXES
+from wowlab_core.filemap import _VERSIONED_SHARED_LIBRARY as _VERSIONED_SHARED_LIBRARY
+from wowlab_core.filemap import FileMapEntry, _is_executable
 
 Level = Literal["gate", "no", "folder", "not_applicable", "unclassified"]
 
@@ -76,38 +79,13 @@ _TIER_WORDS = {
 # ─── the write gate's path rule, copied ──────────────────────────────────────
 # A copy of `guard._check_rel` for a file path with executables refused, so
 # `restorable` says exactly what the gate would write. `guard.py` is
-# load-bearing; its private rule is copied here rather than imported, and
-# `test_verdict.py::test_restorable_agrees_with_the_write_gate` fails when
-# the two drift apart.
+# load-bearing; its private rule is copied here rather than imported (the
+# executable rule is `filemap`'s copy, which its `<executable>` pattern
+# segment uses too), and `test_verdict.py::test_restorable_agrees_with_the_write_gate`
+# fails when the two drift apart.
 
 _ROOTS = ("WTF", "Interface", "Fonts")
 _ADDONS = "AddOns"
-_EXECUTABLE_SUFFIXES = (
-    ".exe",
-    ".dll",
-    ".dylib",
-    ".so",
-    ".scr",
-    ".com",
-    ".bat",
-    ".cmd",
-    ".ps1",
-    ".sh",
-    ".command",
-    ".app",
-    ".bundle",
-    ".plugin",
-    ".framework",
-    ".vbs",
-    ".js",
-    ".wsf",
-    ".hta",
-    ".msi",
-    ".lnk",
-    ".cpl",
-    ".jar",
-)
-_VERSIONED_SHARED_LIBRARY = re.compile(r"\.so(\.\d+)+\Z", re.IGNORECASE)
 _RESERVED_NAMES = frozenset(
     {"con", "prn", "aux", "nul", "conin$", "conout$"}
     | {f"{device}{n}" for device in ("com", "lpt") for n in (*"0123456789", "¹", "²", "³")}
@@ -118,11 +96,6 @@ _MAX_NAME_BYTES = 255
 
 def _fold(text: str) -> str:
     return unicodedata.normalize("NFC", unicodedata.normalize("NFC", text).casefold())
-
-
-def _is_executable(name: str) -> bool:
-    folded = name.casefold()
-    return folded.endswith(_EXECUTABLE_SUFFIXES) or bool(_VERSIONED_SHARED_LIBRARY.search(name))
 
 
 def _gate_writes(rel: str) -> bool:

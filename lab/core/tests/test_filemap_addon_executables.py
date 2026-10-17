@@ -17,6 +17,7 @@ table. Nothing reads or writes a real install.
 
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 
@@ -120,6 +121,16 @@ def test_the_copied_rule_equals_guards() -> None:
     assert filemap._EXECUTABLE_SUFFIXES == guard._EXECUTABLE_SUFFIXES
     assert filemap._VERSIONED_SHARED_LIBRARY.pattern == guard._VERSIONED_SHARED_LIBRARY.pattern
     assert filemap._VERSIONED_SHARED_LIBRARY.flags == guard._VERSIONED_SHARED_LIBRARY.flags
+
+
+def test_the_rows_path_cell_lists_guards_suffixes() -> None:
+    """The doc names every suffix the gate refuses, in guard's order, and the
+    versioned shared library; a suffix guard gains fails here until the
+    `doc_path` cell names it."""
+    cell = filemap.load().entry(ROW).doc_path
+    named = re.findall(r"`(\.[^`<]+)`", cell)
+    assert tuple(named) == guard._EXECUTABLE_SUFFIXES
+    assert "`.so.<n>`" in cell
 
 
 def test_the_table_has_both_answers() -> None:
@@ -252,3 +263,19 @@ def test_explain_still_says_gate_for_an_ordinary_addon_file(flavor: Path) -> Non
     assert isinstance(report.result, cli.layout.Classified)
     assert report.result.entry.id == "addon"
     assert report.verdict.level == "gate"
+
+
+def test_profile_apply_names_an_added_executable_as_skipped_not_deleted(flavor: Path) -> None:
+    """Constructed: an executable added to an addon since the save. `profile
+    apply` would delete it; the row's Edit `no` leaves it, and the text says so."""
+    ok_save = runner.invoke(cli.app, ["profile", "save", "mods", "--preset", "addons"])
+    assert ok_save.exit_code == 0, ok_save.stdout
+    added = flavor / ADDON / "bin" / "added.exe"
+    added.parent.mkdir()
+    added.write_bytes(b"MZ constructed\n")
+    result = runner.invoke(cli.app, ["profile", "apply", "mods", "--dry-run"])
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    text = " ".join(result.stdout.split())
+    assert "file-browser metadata, addon executables):" in text
+    assert f"{ADDON}/bin/added.exe [{ROW}] (added since the profile was saved; not deleted)" in text
+    assert added.exists()

@@ -72,9 +72,10 @@ _ID = re.compile(r"[a-z0-9][a-z0-9-]*")
 # ─── the write gate's executable rule, copied ────────────────────────────────
 # A copy of `guard._is_executable`, so the `<executable>` segment matches
 # exactly the names the gate refuses to write (L7, M13-28). `guard.py` is
-# load-bearing; its private rule is copied here rather than imported, as
-# `verdict` does, and `test_filemap.py::test_executable_row_agrees_with_the_write_gate`
-# fails when the two drift apart.
+# load-bearing; its private rule is copied here rather than imported (`verdict`
+# uses this copy too), and `test_filemap_addon_executables.py` fails when the
+# two drift apart (`test_the_copied_rule_equals_guards`,
+# `test_executable_row_agrees_with_the_write_gate`).
 
 _EXECUTABLE_SUFFIXES = (
     ".exe",

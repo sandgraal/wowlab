@@ -5743,10 +5743,12 @@ def _print_apply_plan(show: Callable[[str], None], plan: profiles.ApplyPlan) -> 
     if plan.skipped:
         show(
             f'  Skipped {len(plan.skipped)} file(s) wowlab leaves alone (file-map Edit "no": '
-            "client-written backups, Blizzard_* folders, file-browser metadata):"
+            "client-written backups, Blizzard_* folders, file-browser metadata, "
+            "addon executables):"
         )
         for sk in plan.skipped:
-            show(f"    {sk.path}  [{sk.entry_id}]")
+            undone = "  (added since the profile was saved; not deleted)"
+            show(f"    {sk.path}  [{sk.entry_id}]" + (undone if sk.action == "delete" else ""))
     if plan.left:
         show(f"  Left alone ({len(plan.left)} path(s)):")
         for lp in plan.left:
@@ -5781,9 +5783,9 @@ def profile_apply(
     characters, and with the addons preset, addons installed since (code and
     settings). Addon updates made since are undone. `--dry-run` shows the plan
     without asking. Files whose file-map Edit is `no` (client-written backups,
-    Blizzard_* folders, file-browser metadata) are left alone. Every *-cache*
-    file is listed: the server may replace it at your next login, so the result
-    is proven only by logging in.
+    Blizzard_* folders, file-browser metadata, addon executables) are left
+    alone. Every *-cache* file is listed: the server may replace it at your
+    next login, so the result is proven only by logging in.
 
     The lab-addon (Interface/AddOns/WowLab/ and WowLab.lua) is always left
     alone, and so is anything the write gate will not write or delete (an

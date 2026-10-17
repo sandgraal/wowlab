@@ -537,12 +537,12 @@ match = ["Interface/AddOns/"]
 id = "addon-executable"
 section = "flavor"
 base = "flavor"
-doc_path = "`Interface/AddOns/…/*.exe`, `*.bat`, `*.dll`, `*.dylib`, `*.app/`, … (any part of the path)"
-what = "An executable, script, shortcut, shared library or app bundle inside an addon folder, and everything inside such a bundle: any part of the path whose name ends, in any letter case, in `.exe`, `.dll`, `.dylib`, `.so` (or `.so.<n>`, as in `libfoo.so.1`), `.scr`, `.com`, `.bat`, `.cmd`, `.ps1`, `.sh`, `.command`, `.app`, `.bundle`, `.plugin`, `.framework`, `.vbs`, `.js`, `.wsf`, `.hta`, `.msi`, `.lnk`, `.cpl` or `.jar`. wowlab's write gate never writes an executable (LAB_PLAN L7)"
+doc_path = "`Interface/AddOns/…`, any part of the path ending, in any letter case, in `.exe`, `.dll`, `.dylib`, `.so` (or `.so.<n>`, as in `libfoo.so.1`), `.scr`, `.com`, `.bat`, `.cmd`, `.ps1`, `.sh`, `.command`, `.app`, `.bundle`, `.plugin`, `.framework`, `.vbs`, `.js`, `.wsf`, `.hta`, `.msi`, `.lnk`, `.cpl` or `.jar`"
+what = "A program, script, shortcut, shared library or app bundle in the addons folder, or a file inside one (or inside a folder named like one). The game loads only what an addon's TOC lists (Lua and XML) and the media those files use **[verify]**; it does not run these. One here usually came in the addon's download (a build script or a separate helper tool) or was left behind; if you did not expect it, find out where it came from. wowlab never writes, restores or deletes an executable: changing executables is permanently out of its scope (LAB_PLAN L7)"
 written_by = "You, or an addon manager"
 edit = "no"
-tier = "—"
-module = "none"
+tier = "A (read)"
+module = "none (kept by `snapshot` and `profile save`; never restored)"
 match = ["Interface/AddOns/**/<executable>/**"]
 
 [[entry]]
