@@ -27,10 +27,10 @@ return facts in the report format below, not prose.
    file for the area you are about to touch. Real fixtures live under
    `lab/core/tests/fixtures/` with their index. Write down the acceptance
    criteria and the exact commands that will prove them **before** editing.
-4. If the ticket touches a load-bearing file
-   (`luadata.py`, `guard.py`, `svmerge.py`, `profiles.py` or the `ui`
-   server, `ui.py` or `ui/`, under `lab/core/src/wowlab_core/`),
-   the graders already exist on `main` as
+4. If the ticket touches a load-bearing file (`luadata.py` or `guard.py`
+   under `lab/core/src/wowlab_core/`), or a `[TEST]` twin already landed
+   graders for it (some `svmerge.py`, `profiles.py` and `ui` tickets filed
+   before 2026-10-17 have one), the graders already exist on `main` as
    `pytest.mark.xfail(strict=True, reason="<ticket> not implemented")`.
    Activate each by deleting exactly that marker line. Never edit a grader's
    assertions, fixtures, or expectations — if one is wrong, stop and report

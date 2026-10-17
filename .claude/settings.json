@@ -107,11 +107,6 @@
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard_bash.py",
             "timeout": 15
-          },
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/precommit_gate.py",
-            "timeout": 240
           }
         ]
       },

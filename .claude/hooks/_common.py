@@ -23,10 +23,17 @@ if _HOME_BIN not in os.environ.get("PATH", "").split(os.pathsep):
     os.environ["PATH"] = os.environ.get("PATH", "") + os.pathsep + _HOME_BIN
 
 # Paths only the conductor (main session) may change. Subagents report the
-# need instead. Shell writes to these are blocked for everyone so that edits
-# always go through Edit/Write, where the hook can see them. Matched
-# case-insensitively: the default macOS filesystem is case-insensitive.
-HARNESS_PATHS = (".claude/", "AGENTS.md", "CLAUDE.md", "docs/DECISIONS.md", "docs/BACKLOG.md")
+# need instead. Shell writes into the harness proper (HARNESS_CODE) are
+# blocked for everyone, so that a stranger's PR text can never steer a
+# session into pulling a hook or an agent definition from another branch
+# unseen (ADR-0031): edits go through Edit/Write, where the hook can see
+# them. The two conductor documents (CONDUCTOR_DOCS) are blocked from the
+# shell for subagents only; the conductor may write them any way it likes,
+# since they land through a reviewed PR (owner decision, 2026-10-17).
+# Matched case-insensitively: the default macOS filesystem is case-insensitive.
+HARNESS_CODE = (".claude/", "AGENTS.md", "CLAUDE.md")
+CONDUCTOR_DOCS = ("docs/DECISIONS.md", "docs/BACKLOG.md")
+HARNESS_PATHS = HARNESS_CODE + CONDUCTOR_DOCS
 PROTECTED_ALWAYS = ("LICENSE",)
 # code-reviewer probes live in the `tests/review/` directory of a workspace
 # member (today: lab/core/tests/review/).
@@ -216,16 +223,26 @@ def classify_edit(
     return None
 
 
-def shell_write_denial(rel: str) -> str | None:
-    """Reason a shell-level write/delete/move of `rel` must be denied."""
+def shell_write_denial(rel: str, agent_type: str | None = None) -> str | None:
+    """Reason a shell-level write/delete/move of `rel` must be denied.
+
+    `agent_type` is the hook payload's field: set for a subagent, absent for
+    the conductor (main session)."""
     if any(_under(rel, p) for p in PROTECTED_ALWAYS):
         return f"{rel} is fixed and may not be rewritten from the shell."
-    for prefix in HARNESS_PATHS:
+    for prefix in HARNESS_CODE:
         if _under(rel, prefix):
             return (
                 f"shell write into {prefix} is blocked; use the Edit/Write tools so the "
                 "path guard can see the change (harness edits are conductor-only)."
             )
+    if agent_type:
+        for prefix in CONDUCTOR_DOCS:
+            if _under(rel, prefix):
+                return (
+                    f"shell write into {prefix} is blocked: it is conductor-only. "
+                    "Describe the needed change in your final report."
+                )
     return None
 
 

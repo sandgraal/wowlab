@@ -266,7 +266,7 @@ def _cd_target(seg: list[str], cwd: str) -> str | None:
     return os.path.normpath(expanded if Path(expanded).is_absolute() else str(Path(cwd) / expanded))
 
 
-def _inspect(command: str, cwd: str, depth: int = 0) -> None:
+def _inspect(command: str, cwd: str, agent_type: str | None = None, depth: int = 0) -> None:
     if depth > 3:
         deny(EVENT, "command nests shells too deeply to inspect; flatten it.")
     segments = split_segments(command)
@@ -275,7 +275,7 @@ def _inspect(command: str, cwd: str, depth: int = 0) -> None:
         return
     for seg in segments:
         for inner in inner_commands(seg):
-            _inspect(inner, cwd, depth + 1)
+            _inspect(inner, cwd, agent_type, depth + 1)
         for reason in (_check_git(seg), _check_gh(seg), _check_destructive(seg, cwd)):
             if reason:
                 deny(EVENT, reason)
@@ -289,7 +289,7 @@ def _inspect(command: str, cwd: str, depth: int = 0) -> None:
                     f"cannot resolve the variable in write target {target!r}; use a literal path.",
                 )
             _root, rel = relative_to_checkout(expanded, cwd)
-            reason = shell_write_denial(rel)
+            reason = shell_write_denial(rel, agent_type)
             if reason:
                 deny(EVENT, reason)
         new_cwd = _cd_target(seg, cwd)
@@ -309,7 +309,8 @@ def main() -> None:
     if not command:
         return
     cwd = str(data.get("cwd") or Path.cwd())
-    _inspect(command, cwd)
+    agent_type = data.get("agent_type") or None
+    _inspect(command, cwd, str(agent_type) if agent_type else None)
 
 
 if __name__ == "__main__":

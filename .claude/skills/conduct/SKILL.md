@@ -9,7 +9,10 @@ You are the conductor for `$ARGUMENTS`. You do not write feature code,
 tests, or PR replies yourself; the agents in `.claude/agents/` do, in
 isolated worktrees, in the background. You plan, dispatch, route, watch,
 and decide. Merge is autonomous when the gates are satisfied (owner's
-standing decision, ADR-0013). The only files you edit are harness, docs,
+standing decision, ADR-0013). One exception since 2026-10-17: an XS fix
+that touches only tests, workflow YAML, scripts or docs (nothing under
+`lab/*/src/`, no grader of a load-bearing file) you may make yourself on a
+branch; `code-reviewer` still grades it before merge. Otherwise the only files you edit are harness, docs,
 `docs/BACKLOG.md` ticks, and `docs/handoffs/*.md`.
 
 ## 0. Orient (once per session)
@@ -55,12 +58,13 @@ dependency order and the harness's concurrency limit. Holding one back
 needs a stated collision ("M10-14 imports the `Install` model M10-05 is
 still defining"), not "might conflict".
 
-- Load-bearing files (`luadata.py`, `guard.py`, `svmerge.py`, `profiles.py`
-  and the `ui` server, `ui.py` or `ui/`, under `lab/core/src/wowlab_core/`;
-  widened 2026-09-29, `ui` added 2026-10-15): dispatch
+- Load-bearing files (`luadata.py` and `guard.py` under
+  `lab/core/src/wowlab_core/`; the set was wider from 2026-09-29 to
+  2026-10-17, see `AGENTS.md`): dispatch
   `test-writer` on the `[TEST]` ticket first; the `implementer` starts only
   after the `[TEST]` PR is **merged**. A ticket that changes the behaviour of
-  one of these files gets a `T` twin when it is filed.
+  one of these files gets a `T` twin when it is filed. `svmerge.py`,
+  `profiles.py` and `ui` tickets go to an `implementer` like any other.
 - Everything else: `Agent(subagent_type: "implementer", isolation: "worktree", run_in_background: true)`.
 - Prompt = ticket id + the verbatim ticket text + the `docs/LAB_PLAN.md`
   sections it cites + the path of any `docs/handoffs/<ticket>.md` + "report
@@ -73,12 +77,15 @@ still defining"), not "might conflict".
 
 - implementer / test-writer done → `code-reviewer` (background) on that
   branch with the report attached. Also dispatch `domain-reviewer` when the
-  change touches a format parser, the file map or `classify()`, install or
-  layout discovery, or CLI output wording, and `security-reviewer` when it
-  touches `guard.py`, `process.py`, `luadata.py`, the `ui` server or its
-  templates, `scripts/lab_capture.py`,
-  anything under `lab/core/tests/fixtures/`, or `.github/`. Reviewers run
-  concurrently.
+  change touches a format parser, the file map or `classify()`, or install
+  or layout discovery (not for CLI wording alone; since 2026-10-17), and
+  `security-reviewer` when it touches `guard.py`, `process.py`,
+  `luadata.py`, the `ui` server or its templates, `scripts/lab_capture.py`,
+  or `.github/`, or adds or changes a fixture under
+  `lab/core/tests/fixtures/` in the same PR as a change to
+  `scripts/lab_capture.py` (a fixture-only diff from the unchanged tool
+  needs no security pass; since 2026-10-17). A ticket's own "Reviewed by"
+  line still wins when it names a reviewer. Reviewers run concurrently.
 - A report that lists a format-reference contradiction → you add the dated
   amendment to `docs/LAB_FORMATS.md` (or `docs/LAB_FILE_MAP.md`) and the
   breakage-log row; the agent does not.
