@@ -858,17 +858,23 @@ it, not `unreferenced_bytes`, after a real run.
 *Amended 2026-10-17 (M13-15, long paths on Windows):* `create` and
 `list_tree` reach a path past Windows' plain limit (`MAX_PATH`) whatever
 `LongPathsEnabled` says: `wowlab_core.longpath` spells a path whose absolute
-form is 240 characters or more as `\\?\C:\...` (or `\\?\UNC\server\share\...`)
-as the argument of the system call only. Paths are plain everywhere else. A
-root given relative is made absolute first; a root given in `\\?\` form is
-recorded plain in the manifest's `install_root`, and refused when it has no
-plain spelling. A file or folder the walk is told is missing
-(`FileNotFoundError`, which Windows also raises for a plain path past the
-limit) is skipped as removed only when an extended-length `lstat` agrees;
-otherwise `create` raises `SnapshotError` and writes no manifest. The same
-spelling reaches `install` discovery, `layout`, the first-run survey,
-`doctor`'s client and config reads and the readers (`luadata.read`, `wtfconfig.read_*`, `toc.read_toc`,
-`combatlog.read_log`); `Install.root` and `doctor`'s output are plain.
+form is 240 UTF-16 units or more (the unit Windows counts in; a character
+outside the Basic Multilingual Plane counts two) as `\\?\C:\...` (or
+`\\?\UNC\server\share\...`) as the argument of the system call only. Paths
+are plain everywhere else. A root given relative is made absolute first; a
+root given in `\\?\` form is recorded plain in the manifest's
+`install_root`, and refused when it has no plain spelling (a volume GUID
+path, a `..` component, a trailing dot). A file or folder the walk is told
+is missing (`FileNotFoundError`, which Windows also raises for a plain path
+past the limit) is skipped as removed only when an extended-length `lstat`
+agrees; that `lstat` prefixes the listed path as it is, without normalising
+it, so a name such as `foo.` is looked at itself. Otherwise `create` raises
+`SnapshotError` and writes no manifest. The same spelling reaches `install`
+discovery, `layout`, the first-run survey, `doctor`'s client and config
+reads and the readers (`luadata.read`, `wtfconfig.read_*`, `toc.read_toc`,
+`combatlog.read_log`). `Install.root` and `doctor`'s output are plain:
+discovery reports a `\\?\` root with no plain spelling as not an install
+(`unreadable`; the message quotes the root as given).
 
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 
@@ -1090,7 +1096,9 @@ plain path. A flavor handed to `transaction()` in `\\?\C:\...` form is taken
 by its plain spelling, so `undo()` and restore work on what it journals. A
 flavor that resolves to anything but a local absolute path (a network path,
 `\\?\UNC\...` included, or a volume with no drive letter) is refused on
-enter with nothing written or journaled: `undo()` and restore accept only a
+enter with nothing written or journaled (on Windows a network spelling is
+refused before any lookup; on POSIX, where `//x` is the local `/x`, only
+the resolved path is held to it): `undo()` and restore accept only a
 local absolute root (item 1), and a change `undo()` could not reverse is
 never written.
 

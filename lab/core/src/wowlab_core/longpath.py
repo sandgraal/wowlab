@@ -59,13 +59,15 @@ __all__ = [
     "resolve",
     "samefile",
     "stat",
+    "utf16_units",
     "xpath",
 ]
 
 ON_WINDOWS = sys.platform == "win32"
 
 PLAIN_LIMIT = 240
-"""A path whose absolute form is shorter keeps its spelling. Windows' tightest
+"""A path whose absolute form is shorter, in UTF-16 units (`utf16_units`, the
+unit Windows counts in), keeps its spelling. Windows' tightest
 plain limit is `CreateDirectoryW`'s 248 (`MAX_PATH` less room for an 8.3
 name); `scandir` adds `\\\\*` to the folder it lists. The margin covers both."""
 
@@ -82,17 +84,47 @@ def _is_device(text: str) -> bool:
     return head in (_EXTENDED, "\\\\.\\", "\\??\\")
 
 
-def extended_text(text: str, *, limit: int = PLAIN_LIMIT) -> str:
+def utf16_units(text: str) -> int:
+    """`len(text)` as Windows counts it, in UTF-16 code units: a character
+    outside the Basic Multilingual Plane (an emoji, a CJK Extension B
+    ideograph) counts two. `MAX_PATH` and `PLAIN_LIMIT` are in these units."""
+    return len(text.encode("utf-16-le", "surrogatepass")) // 2
+
+
+def _literal(text: str) -> bool:
+    """`text` is already absolute and spelled as an extended-length path takes
+    it: a drive (`C:\\`) or network (`\\\\server\\share\\`) path, backslashes
+    only, no `.` or `..` component. Prefixing it as it is keeps a name with a
+    trailing dot or space that normalising would trim."""
+    if "/" in text:
+        return False
+    if _DRIVE_ABSOLUTE.match(text):
+        parts = text[3:].split("\\")
+    elif text.startswith("\\\\") and not _is_device(text):
+        parts = text[2:].split("\\")
+        if len(parts) < 2 or not parts[0] or not parts[1]:
+            return False
+    else:
+        return False
+    return not any(part in (".", "..") for part in parts)
+
+
+def extended_text(text: str, *, limit: int = PLAIN_LIMIT, literal: bool = False) -> str:
     """The Windows rule behind `extended`, on any platform (it is pure text):
     `text` unchanged when it is already a device path, or when its absolute,
-    normalised form is shorter than `limit`; otherwise that form with
-    `\\\\?\\` (drive) or `\\\\?\\UNC\\` (network) in front. A relative `text`
-    is made absolute against the working folder, as Windows would."""
+    normalised form is shorter than `limit` UTF-16 units (`utf16_units`);
+    otherwise that form with `\\\\?\\` (drive) or `\\\\?\\UNC\\` (network) in
+    front. A relative `text` is made absolute against the working folder, as
+    Windows would. With `literal`, a `text` already absolute and clean
+    (`_literal`) is prefixed as it is, not normalised first, so the name of
+    an entry a listing returned (`foo.`, say) is kept exactly."""
     if _is_device(text):
         return text
     full = ntpath.abspath(text)
-    if len(full) < limit:
+    if utf16_units(full) < limit:
         return text
+    if literal and _literal(text):
+        return _EXTENDED_UNC + text[2:] if text.startswith("\\\\") else _EXTENDED + text
     if full.startswith("\\\\"):
         return full if _is_device(full) else _EXTENDED_UNC + full[2:]
     if _DRIVE_ABSOLUTE.match(full):
@@ -128,13 +160,15 @@ def _drive_folded(text: str) -> str:
 
 def extended(path: str | os.PathLike[str], *, always: bool = False) -> str | os.PathLike[str]:
     """`path` as the argument of one system call: on Windows its
-    extended-length spelling when its absolute form is `PLAIN_LIMIT`
-    characters or more (with `always`, whatever its length). Otherwise, and
-    on every other platform, `path` itself, the same object."""
+    extended-length spelling when its absolute form is `PLAIN_LIMIT` UTF-16
+    units or more. With `always`, whatever its length, and an absolute path
+    is prefixed as it is (`extended_text(..., literal=True)`), so a listed
+    name ending in a dot or space is the one looked at. Otherwise, and on
+    every other platform, `path` itself, the same object."""
     if not ON_WINDOWS:
         return path
     text = os.fspath(path)
-    spelled = extended_text(text, limit=0 if always else PLAIN_LIMIT)
+    spelled = extended_text(text, limit=0, literal=True) if always else extended_text(text)
     return path if spelled == text else spelled
 
 
