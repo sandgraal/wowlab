@@ -1,8 +1,9 @@
 name: Wiki daily
 
 # Checks and improves the GitHub wiki once a day, then pushes it with no pull
-# request (owner decision 2026-09-30, ticket M12-14). Four jobs, so that the
-# model and the push credential never share a runner:
+# request (owner decision 2026-09-30, ticket M12-14). Five jobs, so that the
+# model, the gates that judge its work and the push credential never share a
+# runner:
 #
 #   previous-report  on main: finds the last run, and when it failed, hands
 #            its gate report on to improve as an artifact of this run. Runs
@@ -11,23 +12,36 @@ name: Wiki daily
 #   improve  reads main and a credential-free clone of the wiki, regenerates
 #            CLI-Reference, lets Claude edit the wiki copy (prompt:
 #            .github/prompts/wiki-daily.md), checks that nothing under repo/
-#            changed (ignored paths included) before running anything from it
-#            again, then gates the result with scripts/check_wiki.py and
-#            gitleaks. Read-only token only.
+#            changed (ignored paths included), and hands the edited top-level
+#            pages on as a short-lived artifact, withholding them when
+#            check_wiki finds personal data in them (a check that can only
+#            block). No gate that could pass them runs after the model.
+#            Read-only token only.
+#   gates    on a fresh runner (M13-19): a model that got past its
+#            permissions could rewrite anything on improve's runner, its later
+#            steps' environment included ($GITHUB_ENV can set BASH_ENV or
+#            LD_PRELOAD for them), so nothing judged there can be trusted.
+#            This job checks out main and clones the wiki at the pass's base
+#            itself, takes only the pages from improve, as data, records the
+#            pass in .lab/state.json, and gates the result with
+#            scripts/check_wiki.py and gitleaks. Uses no cache. Read-only.
 #   publish  on main only, and only when the repository variable
 #            WIKI_DAILY_PUBLISH is `true`: a scheduled run, or a dispatch with
-#            push: true. Takes the pages from `improve` as data, rebuilds the
-#            generated page and .lab/state.json itself, runs both gates again,
-#            commits and pushes. The model cannot influence it beyond page text.
-#   report   when either job fails on main: opens, or comments on, the one
-#            open issue labelled wiki-daily. Nothing is pushed on a failure.
+#            push: true. Takes the pages that `gates` passed, by artifact id,
+#            as data, rebuilds the generated page and .lab/state.json itself,
+#            runs both gates again, commits and pushes. The model cannot
+#            influence it beyond page text.
+#   report   when any of those jobs fails on main: opens, or comments on, the
+#            one open issue labelled wiki-daily. Nothing is pushed on a failure.
 #
 # Publishing is off until the owner sets the repository variable
 # WIKI_DAILY_PUBLISH to `true` (Settings > Secrets and variables > Actions >
 # Variables), after reading the diff artifact of a dispatch run whose Claude
-# step ran. Until then every run is a dry run: it uploads the gate report and,
-# when the gate found no personal data and gitleaks found nothing, the pages
-# and the wiki diff as artifacts.
+# step ran. Until then every run is a dry run: gates uploads the gate report
+# and, when the gate found no personal data and gitleaks found nothing, the
+# pages and the wiki diff as artifacts (wiki-daily-report, wiki-daily-pages).
+# improve's wiki-daily-unchecked artifact, the pages before the gates (never
+# when check_wiki found personal data in them), is kept for one day.
 #
 # Needs CLAUDE_CODE_OAUTH_TOKEN, a token for the owner's Claude subscription
 # (docs/SETUP.md); every run counts against that subscription's usage limits.
@@ -37,7 +51,7 @@ name: Wiki daily
 #
 # Permissions beyond `contents: read`: `actions: read` on previous-report
 # (and nothing else there), `contents: write` on publish, `issues: write` on
-# report. improve, the job that hands its token to the model, has
+# report. improve, the job that hands its token to the model, and gates have
 # `contents: read` only. The push uses publish's own GITHUB_TOKEN. Verified on
 # 2026-09-30 (M12-14 dry run, runs 36765448581 and 36765760456): the wiki's
 # push service accepted a `contents: write` GITHUB_TOKEN (HTTP 200 on the
@@ -120,13 +134,21 @@ jobs:
     timeout-minutes: 75
     permissions:
       contents: read
+    # Only what steps before the model wrote, and step outcomes: a step's
+    # outputs are fixed when it ends, and an outcome is the runner's own
+    # record. Nothing a step after the model writes leaves this job except
+    # the unchecked pages, which gates takes as data.
     outputs:
       main_sha: ${{ steps.plan.outputs.main }}
       wiki_base: ${{ steps.wiki.outputs.base }}
       wiki_branch: ${{ steps.wiki.outputs.branch }}
       review: ${{ steps.plan.outputs.review }}
+      plan: ${{ steps.plan.outcome }}
+      claude: ${{ steps.claude.outcome }}
       claude_ran: ${{ steps.claude.outcome == 'success' }}
-      changed: ${{ steps.gate.outputs.changed }}
+      outside: ${{ steps.outside.outcome }}
+      withhold: ${{ steps.withhold.outcome }}
+      handoff: ${{ steps.handoff.outcome }}
     env:
       # Claude Code strips credentials from the environment of every command
       # it runs (the only one it may run is the gate on the wiki).
@@ -270,6 +292,10 @@ jobs:
             echo "${delim}"
           } >> "$GITHUB_OUTPUT"
           # Deny rules win over every allow rule. `//` starts an absolute path.
+          # The runner's temp directory is closed to edits as well as reads
+          # (M13-19, defence in depth): uv's cache and interpreters, the
+          # runner's per-step command files ($GITHUB_ENV among them), these
+          # settings and the snapshot of repo/ are kept there.
           ws="/${GITHUB_WORKSPACE}"
           jq -n --arg ws "$ws" --arg tmp "/${RUNNER_TEMP}" '{
             permissions: {
@@ -283,6 +309,7 @@ jobs:
                 "Read(~/.claude.json)", "Read(~/.claude/**)", "Read(~/.config/**)",
                 "Read(~/.gitconfig)", "Read(~/.git-credentials)", "Read(~/.netrc)",
                 "Read(~/.ssh/**)", "Read(~/.docker/**)", "Read(~/.npmrc)",
+                "Edit(\($tmp)/**)", "Write(\($tmp)/**)",
                 "Edit(\($ws)/wiki/CLI-Reference.md)", "Edit(\($ws)/wiki/.lab/**)",
                 "Edit(\($ws)/wiki/.git/**)",
                 "Write(\($ws)/wiki/CLI-Reference.md)", "Write(\($ws)/wiki/.lab/**)",
@@ -366,6 +393,10 @@ jobs:
       # only once the listing (which covers .git/config and hooks) matched,
       # with no global or system config and no fsmonitor. Its outcome is
       # never ignored (no continue-on-error), so improve fails with it.
+      # It is a tripwire, not the gate: like every step after the model it
+      # shares the model's runner, so a model past its permissions could
+      # defeat it (M13-19). The gates run in `gates`, which trusts nothing
+      # from this runner but the pages, as data, and step outcomes.
       - name: Nothing outside the wiki changed
         id: outside
         if: always() && steps.plan.outcome == 'success'
@@ -440,29 +471,177 @@ jobs:
             --summary "$GITHUB_STEP_SUMMARY" \
             --workspace "$GITHUB_WORKSPACE" --temp "$RUNNER_TEMP" --home "$HOME"
 
-      - name: Record the pass in .lab/state.json
-        if: steps.claude.outcome == 'success' && steps.outside.outcome == 'success'
+      # The pages leave for the gates: everything else on this runner may be
+      # the model's after it ran, so the judging happens on a fresh one. Only
+      # the regular top-level pages, which is all that publish ever takes
+      # (CLI-Reference.md among them, so the gates can check that the model
+      # left it as generated), copied into handoff/: upload-artifact follows
+      # symlinks, so a page that is a link is never read through. Other files
+      # the model wrote are dropped here, unreported. No repository code.
+      - name: Stage the pages for the gates
+        id: stage
+        if: always() && steps.plan.outcome == 'success' && steps.outside.outcome == 'success'
+        shell: /usr/bin/bash --noprofile --norc -eo pipefail {0}
+        run: |
+          export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+          mkdir handoff
+          find wiki -maxdepth 1 -type f -name '*.md' -exec cp -- {} handoff/ \;
+          echo "$(find handoff -type f | wc -l) pages staged"
+      # The hand-off artifact is public for a day, before the gates judge it,
+      # so the pages leave only when check_wiki finds no personal data in the
+      # staged copy (exit 0 or 1). This step can only withhold them, never
+      # pass them: the gates run again on a fresh runner whatever it says. It
+      # prints nothing of what it found, and fails (continue-on-error, so the
+      # gates still report) when it withholds; its outcome tells gates why.
+      - name: Withhold pages with personal data
+        id: withhold
+        if: always() && steps.stage.outcome == 'success' && steps.outside.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 3
+        working-directory: repo
+        run: |
+          code=0
+          uv run --frozen python scripts/check_wiki.py ../handoff > /dev/null 2>&1 || code=$?
+          if [ "$code" != 0 ] && [ "$code" != 1 ]; then
+            echo "::error::check_wiki exited ${code} on the edited pages (3: personal data, 2: error); they are withheld"
+            exit 1
+          fi
+      # Kept for one day only (the shortest retention); the gated copy is
+      # wiki-daily-pages, from gates. Without overwrite: if an artifact of
+      # this name already exists in the run, the upload fails, and improve
+      # with it.
+      - name: Hand the pages to the gates
+        id: handoff
+        if: always() && steps.withhold.outcome == 'success' && steps.outside.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wiki-daily-unchecked
+          path: handoff/
+          if-no-files-found: error
+          retention-days: 1
+      # Post steps run after this one whatever the check decided, outside the
+      # sandbox. actions/checkout's post runs git in repo/ (git config,
+      # `submodule foreach ... sh -c`), and git reads repo/.git/config
+      # (core.fsmonitor). It returns early when repo/.git/config is gone.
+      # Removed as root, so a planted read-only directory (mode 0500) cannot
+      # keep anything; rm does not follow a symlinked .git or .venv. Then it
+      # asserts both are gone. The rest of repo/ stays: setup-uv's post reads
+      # the project.
+      - name: Leave nothing in repo/ for the post steps
+        id: leave
+        if: always()
+        shell: /usr/bin/bash --noprofile --norc -eo pipefail {0}
+        run: |
+          export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+          /usr/bin/sudo /usr/bin/rm -rf -- repo/.git repo/.venv
+          [ ! -e repo/.git ] && [ ! -L repo/.git ] && [ ! -e repo/.venv ] && [ ! -L repo/.venv ]
+
+  # The gates, on a fresh runner (M13-19). Nothing of improve's runner
+  # reaches this job: not its environment ($GITHUB_ENV is per job), not its
+  # files, processes, tools or caches. It checks out main and clones the wiki
+  # itself, installs from the lockfile with no cache (a cache entry is
+  # runner state a model past its permissions could have written), and
+  # takes from improve only the pages, as data, the outputs of the steps
+  # before the model, and step outcomes. Its post steps (actions/checkout
+  # and setup-uv) see only its own checkout of main.
+  gates:
+    name: Gate the edited wiki
+    needs: improve
+    # Whenever improve planned the run, whatever happened after: a failed
+    # Claude step, a changed checkout or withheld pages still get a report.
+    if: ${{ !cancelled() && needs.improve.outputs.plan == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      changed: ${{ steps.gate.outputs.changed }}
+      # publish and report download by these ids, so an artifact of the same
+      # name uploaded by anything else in the run is never the one taken.
+      report_id: ${{ steps.report.outputs.artifact-id }}
+      pages_id: ${{ steps.pages.outputs.artifact-id }}
+    steps:
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: repo
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - name: Install
+        working-directory: repo
+        run: uv sync --frozen
+      # At the commit the pass started from, whatever the wiki holds now: the
+      # gate measures the pass's change against it.
+      - name: Clone the wiki at the commit the pass started from
+        env:
+          BASE: ${{ needs.improve.outputs.wiki_base }}
+        run: |
+          if ! [[ "$BASE" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::improve reported no wiki base commit"
+            exit 1
+          fi
+          git clone --quiet "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.wiki.git" wiki
+          git -C wiki -c advice.detachedHead=false checkout --quiet --detach "$BASE"
+          mkdir -p report
+      # A symlink among the wiki's own files would let page text be written
+      # through it, into repo/ or anywhere else: only regular files and
+      # directories, .git aside. The same step is in publish. The last setup
+      # step, so its outcome says whether this job's setup succeeded.
+      - name: The wiki holds only files and directories
+        id: tree
+        shell: /usr/bin/bash --noprofile --norc -eo pipefail {0}
+        run: |
+          export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+          odd=$(find wiki -path wiki/.git -prune -o ! -type f ! -type d -print -quit)
+          if [ -n "$odd" ]; then
+            echo "::error::the wiki holds a symlink or another special file; nothing is taken from this run"
+            exit 1
+          fi
+      - name: Download the pages
+        id: download
+        if: needs.improve.outputs.handoff == 'success'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: wiki-daily-unchecked
+          path: incoming
+      # The pages are data: only regular top-level .md files are taken, as in
+      # publish, and each replaces what it lands on rather than writing
+      # through it. CLI-Reference.md is the model's copy, which check_wiki
+      # compares with what the generator renders now; .lab/state.json is the
+      # base's, updated here.
+      - name: Apply the pages
+        id: apply
+        if: needs.improve.outputs.handoff == 'success'
         working-directory: repo
         env:
-          MAIN: ${{ steps.plan.outputs.main }}
-          REVIEW: ${{ steps.plan.outputs.review }}
-        run: uv run --frozen python scripts/wiki_state.py update --wiki ../wiki --main "$MAIN" --reviewed "$REVIEW" --date "$(date -u +%F)"
-
+          CLAUDE_RAN: ${{ needs.improve.outputs.claude_ran }}
+          MAIN: ${{ needs.improve.outputs.main_sha }}
+          REVIEW: ${{ needs.improve.outputs.review }}
+        run: |
+          find ../wiki -maxdepth 1 -type f -name '*.md' -delete
+          find ../incoming -maxdepth 1 -type f -name '*.md' -exec cp --remove-destination -- {} ../wiki/ \;
+          if [ "$CLAUDE_RAN" = true ]; then
+            uv run --frozen python scripts/wiki_state.py update --wiki ../wiki --main "$MAIN" --reviewed "$REVIEW" --date "$(date -u +%F)"
+          fi
       # Exit codes (scripts/check_wiki.py): 0 clean, 1 failures, 3 failures
       # including personal data, 2 error. Only 0 and 1 let artifacts out.
       - name: Gate - check_wiki
         id: check
-        if: always() && steps.plan.outcome == 'success' && steps.outside.outcome == 'success'
+        if: always() && steps.apply.outcome == 'success'
         working-directory: repo
         env:
-          BASE: ${{ steps.wiki.outputs.base }}
+          BASE: ${{ needs.improve.outputs.wiki_base }}
         run: |
           code=0
           uv run --frozen python scripts/check_wiki.py ../wiki --base "$BASE" > ../report/check.txt || code=$?
           cat ../report/check.txt
           echo "code=$code" >> "$GITHUB_OUTPUT"
       - name: Install gitleaks
-        if: always() && steps.plan.outcome == 'success' && steps.outside.outcome == 'success'
+        if: always() && steps.apply.outcome == 'success'
         run: |
           curl -sSfL -o "$RUNNER_TEMP/gitleaks.tar.gz" \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
@@ -473,42 +652,68 @@ jobs:
       # top-level pages (the `:(glob)` pathspec does not descend).
       - name: Gate - gitleaks on the wiki diff
         id: gitleaks
-        if: always() && steps.plan.outcome == 'success' && steps.outside.outcome == 'success'
+        if: always() && steps.apply.outcome == 'success'
         continue-on-error: true
         env:
-          BASE: ${{ steps.wiki.outputs.base }}
+          BASE: ${{ needs.improve.outputs.wiki_base }}
         run: |
           git -C wiki add -A
           git -C wiki diff --cached "$BASE" > "$RUNNER_TEMP/wiki-full.diff"
           git -C wiki diff --cached "$BASE" -- ':(glob)*.md' > report/wiki.diff
           gitleaks stdin --redact --no-banner --exit-code 1 --config repo/.gitleaks.toml < "$RUNNER_TEMP/wiki-full.diff"
-      # Runs when repo/ changed too, so it takes the same care as that check:
-      # an absolute shell and the system PATH. In that case it runs nothing
-      # else: it writes a fixed reason as the gate report (the issue quotes
-      # it) and fails.
+      # When the checkout of main changed while the model ran, improve
+      # withheld the pages, this job's setup failed, or the pages never
+      # arrived, the gate does not run: this writes a fixed reason, naming the
+      # first cause, as the gate report (the issue quotes it) and fails,
+      # running nothing else.
       - name: Gate result
         id: gate
-        if: always() && steps.plan.outcome == 'success'
+        if: always()
         shell: /usr/bin/bash --noprofile --norc -eo pipefail {0}
         env:
-          OUTSIDE: ${{ steps.outside.outcome }}
+          OUTSIDE: ${{ needs.improve.outputs.outside }}
+          WITHHOLD: ${{ needs.improve.outputs.withhold }}
+          HANDOFF: ${{ needs.improve.outputs.handoff }}
+          SETUP: ${{ steps.tree.outcome }}
+          DOWNLOAD: ${{ steps.download.outcome }}
+          APPLY: ${{ steps.apply.outcome }}
           CODE: ${{ steps.check.outputs.code }}
           LEAKS: ${{ steps.gitleaks.outcome }}
-          CLAUDE: ${{ steps.claude.outcome }}
-          BASE: ${{ steps.wiki.outputs.base }}
+          CLAUDE: ${{ needs.improve.outputs.claude }}
+          BASE: ${{ needs.improve.outputs.wiki_base }}
         run: |
           export PATH=/usr/sbin:/usr/bin:/sbin:/bin
-          if [ "$OUTSIDE" != success ]; then
+          if [ "$OUTSIDE" = failure ]; then
+            reason="the checkout of main changed outside the wiki while the model ran"
+          elif [ "$OUTSIDE" != success ]; then
+            reason="the check that nothing outside the wiki changed did not finish (step \"Nothing outside the wiki changed\": ${OUTSIDE:-not run})"
+          elif [ "$WITHHOLD" = failure ]; then
+            reason="improve withheld the pages: check_wiki found personal data in them, or could not check them"
+          elif [ "$WITHHOLD" != success ]; then
+            reason="improve could not stage the pages (step \"Withhold pages with personal data\": ${WITHHOLD:-not run})"
+          elif [ "$HANDOFF" != success ]; then
+            reason="improve did not hand the pages on (step \"Hand the pages to the gates\": ${HANDOFF:-not run})"
+          elif [ "$SETUP" != success ]; then
+            reason="this job's setup failed (checkout, install, the wiki clone or its file check: ${SETUP:-not run}; see the run log)"
+          elif [ "$DOWNLOAD" != success ]; then
+            reason="the pages did not reach the gate (step \"Download the pages\": ${DOWNLOAD:-not run})"
+          elif [ "$APPLY" != success ]; then
+            reason="the pages could not be applied (step \"Apply the pages\": ${APPLY:-not run})"
+          else
+            reason=
+          fi
+          if [ -n "$reason" ]; then
+            mkdir -p report
             rm -f report/check.txt
-            echo "check_wiki did not run: the checkout of main changed outside the wiki during the run (step \"Nothing outside the wiki changed\": ${OUTSIDE:-not run}). No later step ran repository code, and nothing is pushed." > report/check.txt
+            echo "check_wiki did not run: ${reason}. Nothing is pushed." > report/check.txt
             echo "report=true" >> "$GITHUB_OUTPUT"
             {
               echo "### Wiki daily"
               echo
               echo "- Claude step: ${CLAUDE:-skipped}"
-              echo "- the checkout of main changed outside the wiki; the gate did not run"
+              echo "- the gate did not run: ${reason}"
             } >> "$GITHUB_STEP_SUMMARY"
-            echo "::error::the checkout of main changed outside the wiki; nothing is pushed"
+            echo "::error::the gate did not run; nothing is pushed"
             exit 1
           fi
           # The report leaves only when check_wiki found no personal data; the
@@ -536,6 +741,7 @@ jobs:
             exit 1
           fi
       - name: Upload the gate report
+        id: report
         if: always() && steps.gate.outputs.report == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -543,45 +749,41 @@ jobs:
           path: report/check.txt
           if-no-files-found: ignore
           retention-days: 14
-      - name: Upload the pages and the wiki diff
+      # Regular files only, copied into a folder of their own: upload-artifact
+      # follows symlinks. The layout publish reads: wiki/*.md, report/wiki.diff.
+      - name: Stage the pages and the wiki diff
+        id: stage
         if: always() && steps.gate.outputs.pages == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: wiki-daily-pages
-          path: |
-            wiki/*.md
-            report/wiki.diff
-          if-no-files-found: error
-          retention-days: 14
-      # Post steps run after this one whatever the check decided, outside the
-      # sandbox. actions/checkout's post runs git in repo/ (git config,
-      # `submodule foreach ... sh -c`), and git reads repo/.git/config
-      # (core.fsmonitor). It returns early when repo/.git/config is gone.
-      # Removed as root, so a planted read-only directory (mode 0500) cannot
-      # keep anything; rm does not follow a symlinked .git or .venv. Then it
-      # asserts both are gone. The rest of repo/ stays: setup-uv's post reads
-      # the project.
-      - name: Leave nothing in repo/ for the post steps
-        id: leave
-        if: always()
         shell: /usr/bin/bash --noprofile --norc -eo pipefail {0}
         run: |
           export PATH=/usr/sbin:/usr/bin:/sbin:/bin
-          /usr/bin/sudo /usr/bin/rm -rf -- repo/.git repo/.venv
-          [ ! -e repo/.git ] && [ ! -L repo/.git ] && [ ! -e repo/.venv ] && [ ! -L repo/.venv ]
+          mkdir -p out/wiki out/report
+          find wiki -maxdepth 1 -type f -name '*.md' -exec cp -- {} out/wiki/ \;
+          cp -- report/wiki.diff out/report/wiki.diff
+      - name: Upload the pages and the wiki diff
+        id: pages
+        if: always() && steps.gate.outputs.pages == 'true' && steps.stage.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wiki-daily-pages
+          path: out/
+          if-no-files-found: error
+          retention-days: 14
 
   publish:
     name: Push the wiki
-    needs: improve
+    needs: [improve, gates]
     # Never from a branch; never until the owner sets WIKI_DAILY_PUBLISH; and
-    # a dispatch only with push: true. Only after improve succeeded; stated
-    # explicitly because the implicit check would also skip this job when
-    # previous-report, which improve does not depend on for success, failed.
+    # a dispatch only with push: true. Only after improve and gates both
+    # succeeded; stated explicitly because the implicit check would also skip
+    # this job when previous-report, which improve does not depend on for
+    # success, failed.
     if: >-
       github.ref == 'refs/heads/main' &&
       !cancelled() && needs.improve.result == 'success' &&
+      needs.gates.result == 'success' &&
       vars.WIKI_DAILY_PUBLISH == 'true' &&
-      needs.improve.outputs.changed == 'true' &&
+      needs.gates.outputs.changed == 'true' &&
       (github.event_name == 'schedule' ||
        (github.event_name == 'workflow_dispatch' && inputs.push))
     runs-on: ubuntu-latest
@@ -596,11 +798,12 @@ jobs:
           ref: ${{ needs.improve.outputs.main_sha }}
           path: repo
           persist-credentials: false
+      # No cache, as in gates: an entry is runner state that a model past its
+      # permissions in improve could have written, and this job can push.
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: repo/uv.lock
+          enable-cache: false
       - name: Install
         working-directory: repo
         run: uv sync --frozen
@@ -613,9 +816,21 @@ jobs:
             echo "::error::the wiki changed while the pass ran; nothing is pushed (the next run starts from the new wiki)"
             exit 1
           fi
+      # As in gates: no symlink in the wiki for page text to be written through.
+      - name: The wiki holds only files and directories
+        id: tree
+        shell: /usr/bin/bash --noprofile --norc -eo pipefail {0}
+        run: |
+          export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+          odd=$(find wiki -path wiki/.git -prune -o ! -type f ! -type d -print -quit)
+          if [ -n "$odd" ]; then
+            echo "::error::the wiki holds a symlink or another special file; nothing is taken from this run"
+            exit 1
+          fi
+      # The pages gates passed, by the id its upload returned.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: wiki-daily-pages
+          artifact-ids: ${{ needs.gates.outputs.pages_id }}
           path: incoming
       # The pages are data: only regular top-level .md files are taken. The
       # generated page and the state file are rebuilt here, not taken.
@@ -627,7 +842,7 @@ jobs:
           REVIEW: ${{ needs.improve.outputs.review }}
         run: |
           find ../wiki -maxdepth 1 -type f -name '*.md' -delete
-          find ../incoming/wiki -maxdepth 1 -type f -name '*.md' -exec cp -- {} ../wiki/ \;
+          find ../incoming/wiki -maxdepth 1 -type f -name '*.md' -exec cp --remove-destination -- {} ../wiki/ \;
           uv run --frozen python scripts/gen_command_reference.py --out ../wiki/CLI-Reference.md
           if [ "$CLAUDE_RAN" = true ]; then
             uv run --frozen python scripts/wiki_state.py update --wiki ../wiki --main "$MAIN" --reviewed "$REVIEW" --date "$(date -u +%F)"
@@ -683,7 +898,7 @@ jobs:
 
   report:
     name: Report a failure
-    needs: [improve, publish]
+    needs: [improve, gates, publish]
     if: >-
       always() && github.ref == 'refs/heads/main' &&
       (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled'))
@@ -693,22 +908,27 @@ jobs:
       issues: write
     steps:
       # Present only when the gate found no personal data (see "Gate result").
+      # By the id gates' upload returned: an artifact of the same name from
+      # anywhere else in the run never reaches the issue.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: needs.gates.outputs.report_id != ''
         continue-on-error: true
         with:
-          name: wiki-daily-report
+          artifact-ids: ${{ needs.gates.outputs.report_id }}
           path: report
       - name: Open or comment on the wiki-daily issue
         env:
           GH_TOKEN: ${{ github.token }}
           IMPROVE: ${{ needs.improve.result }}
+          GATES: ${{ needs.gates.result }}
           PUBLISH: ${{ needs.publish.result }}
         run: |
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           {
             echo "The daily wiki pass of $(date -u +%F) failed, and nothing was pushed to the wiki."
             echo
-            echo "- check and improve: ${IMPROVE}"
+            echo "- improve: ${IMPROVE}"
+            echo "- gate: ${GATES}"
             echo "- push: ${PUBLISH}"
             echo "- run: ${run_url}"
             echo

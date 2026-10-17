@@ -11,6 +11,11 @@ Round 2 (security review): post steps run whatever the check decided, so the
 job's last step removes repo/.git and repo/.venv (actions/checkout's post
 then runs no git in repo/), and improve never saves the uv cache that
 publish restores.
+M13-19: the gates (check_wiki, gitleaks, the gate result) moved to their
+own job on a fresh runner, and publish and gates use no uv cache at all.
+The check here stays in improve as a tripwire; the gate result, which reads
+its outcome through improve's job outputs, is looked up in `gates`.
+`tests/repo/test_wiki_daily_gates_job.py` grades the split.
 
 Static tests read `.github/workflows/wiki-daily.yml` as data. The
 `constructed` tests run the workflow's own step scripts with bash on an
@@ -64,10 +69,10 @@ PLANTED_TOOLS = [
 ]
 
 
-def _steps() -> list[dict[str, Any]]:
+def _steps(job: str = "improve") -> list[dict[str, Any]]:
     data = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     assert isinstance(data, dict)
-    steps = data["jobs"]["improve"]["steps"]
+    steps = data["jobs"][job]["steps"]
     assert isinstance(steps, list)
     return steps
 
@@ -76,8 +81,12 @@ def _index(steps: list[dict[str, Any]], step_id: str) -> int:
     return next(i for i, s in enumerate(steps) if s.get("id") == step_id)
 
 
+# M13-19: the gate result moved from improve to its own job, gates.
+GATES_STEPS = ("gate",)
+
+
 def _step(step_id: str) -> dict[str, Any]:
-    steps = _steps()
+    steps = _steps("gates" if step_id in GATES_STEPS else "improve")
     return steps[_index(steps, step_id)]
 
 
@@ -201,30 +210,43 @@ def test_every_later_step_that_runs_code_depends_on_the_check() -> None:
     later = steps[outside + 1 :]
     assert any(_runs_repo_code(s) for s in later)
     for step in later:
-        if step.get("id") in ("gate", "leave"):
-            continue  # each pinned on its own below
+        if step.get("id") == "leave":
+            continue  # pinned on its own below
         if "run" in step:
             assert OUTSIDE_OK in _conjuncts(step["if"]), step["name"]
         else:
-            # Artifact uploads only, gated on what the gate result decided.
+            # M13-19: one artifact upload only, the unchecked pages for the
+            # gates job, and only when the check passed.
+            assert step["id"] == "handoff", step["name"]
             assert step["uses"].startswith("actions/upload-artifact@"), step["name"]
-            assert "steps.gate.outputs." in step["if"], step["name"]
+            assert OUTSIDE_OK in _conjuncts(step["if"]), step["name"]
     # Nothing between the model and the check.
     assert steps[outside - 1]["id"] == "claude"
 
 
 def test_the_gate_result_branches_on_the_check_before_running_anything() -> None:
+    # M13-19: the gate result is in the gates job, and reads the check's
+    # outcome through improve's job outputs.
     step = _step("gate")
-    assert step["if"] == "always() && steps.plan.outcome == 'success'"
+    assert step["if"] == "always()"
     assert step["shell"] == SHELL
-    assert step["env"]["OUTSIDE"] == "${{ steps.outside.outcome }}"
+    assert step["env"]["OUTSIDE"] == "${{ needs.improve.outputs.outside }}"
     run = step["run"]
     lines = run.splitlines()
     assert lines[0] == SYSTEM_PATH
-    assert lines[1] == 'if [ "$OUTSIDE" != success ]; then'
-    branch = run[: run.index("\nfi\n")]
+    # The check's outcome is the first cause looked at (round 1: a failure
+    # and a check that never finished are named apart).
+    assert lines[1] == 'if [ "$OUTSIDE" = failure ]; then'
+    assert lines[3] == 'elif [ "$OUTSIDE" != success ]; then'
+    # The first block only names the reason; the second, which runs when
+    # there is one, writes the fixed report and fails, running no git.
+    decide = run[: run.index("\nfi\n")]
+    assert "git" not in decide and "cat " not in decide and "exit" not in decide
+    rest = run[run.index("\nfi\n") + 4 :]
+    assert rest.startswith('if [ -n "$reason" ]; then\n')
+    branch = rest[: rest.index("\nfi\n")]
     assert "git" not in branch.replace("check_wiki", "") and "cat " not in branch
-    assert "exit 1" in branch
+    assert branch.rstrip().endswith("exit 1")
 
 
 def test_the_last_step_leaves_nothing_in_repo_for_the_post_steps() -> None:
@@ -505,12 +527,23 @@ def test_constructed_the_gate_result_reports_a_changed_checkout_and_runs_nothing
     _plant_tools(ws / "repo" / ".venv" / "bin", _marker(ws))
     (ws / "report" / "check.txt").write_text("planted report\n", encoding="utf-8")
     done = _run(
-        ws, "gate", {"OUTSIDE": outcome, "CODE": "", "LEAKS": "skipped", "CLAUDE": "success"}
+        ws,
+        "gate",
+        # Every later step would have been skipped; the check's outcome
+        # decides, before anything else.
+        {"OUTSIDE": outcome, "APPLY": "", "CODE": "", "LEAKS": "skipped", "CLAUDE": "success"},
     )
     assert done.returncode == 1
-    assert "::error::the checkout of main changed outside the wiki" in done.stdout
+    assert "::error::the gate did not run; nothing is pushed" in done.stdout
     report = (ws / "report" / "check.txt").read_text(encoding="utf-8")
-    assert report.startswith("check_wiki did not run: the checkout of main changed")
+    if outcome == "failure":
+        assert report.startswith("check_wiki did not run: the checkout of main changed")
+    else:
+        # M13-19 round 1: a check that never finished is not said to have
+        # found a change.
+        assert report.startswith(
+            "check_wiki did not run: the check that nothing outside the wiki changed did not finish"
+        )
     assert "planted" not in report
     # The reason leaves as the gate report (the issue quotes it); no pages.
     assert (ws / "runner" / "output").read_text(encoding="utf-8").split() == ["report=true"]
