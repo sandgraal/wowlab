@@ -6,8 +6,9 @@ DIR is a checkout of `<repository>.wiki.git`. The daily wiki job pushes with
 no pull request, so this check is what stands between a bad run and a public
 page, and it fails closed. Exit codes: 0 no failure (one summary line);
 1 failures, none of them personal data; 3 failures, at least one of them
-personal data (the job then withholds its artifacts); 2 a usage or git error.
-One line per failure.
+personal data (the job then withholds its artifacts); 2 a usage or git error,
+or any other crash. The personal-data check runs first, so a crash after it
+found something exits 3, never 2 (M13-40). One line per failure.
 
 What it checks:
 
@@ -798,13 +799,19 @@ class Checker:
             )
 
     def run(self) -> list[Failure]:
+        # The personal-data check runs first, and on whatever was read even
+        # when reading fails part-way, so a later check that raises cannot
+        # leave a page unchecked for it (M13-40): `main` turns a crash into
+        # EXIT_PERSONAL when this found anything, EXIT_ERROR otherwise.
+        try:
+            self.load()
+        finally:
+            self.check_privacy()
         root = gen.root_command() if self.tree is None else self.tree
-        self.load()
         self.check_generated(root)
         self.check_links()
         self.check_commands(root)
         self.check_coverage(root)
-        self.check_privacy()
         self.check_diff()
         return self.failures
 
@@ -905,13 +912,25 @@ def main(argv: list[str] | None = None) -> int:
     if not args.dir.is_dir():
         print("DIR is not a directory", file=sys.stderr)
         return EXIT_ERROR
+    checker = Checker(root_dir=args.dir, base=args.base)
+    crashed = False
     try:
-        checker = check(args.dir, args.base)
+        checker.run()
     except subprocess.CalledProcessError:
         print("git failed reading --base; is REF a commit in DIR?", file=sys.stderr)
-        return EXIT_ERROR
+        crashed = True
+    except Exception as exc:  # any crash; Python's own exit code for one is 1
+        # The type only: an exception's text can quote the page, and the log
+        # is public. No traceback, for the same reason.
+        name = type(exc).__name__
+        print(f"check_wiki: a check failed ({name}); the wiki is not checked", file=sys.stderr)
+        crashed = True
     for failure in sorted(checker.failures, key=_order):
         print(failure)
+    if crashed:
+        # Exit 0 and 1 let pages out; a crash never does (M13-40). Personal
+        # data found before it still reads as personal data.
+        return EXIT_PERSONAL if any(f.personal for f in checker.failures) else EXIT_ERROR
     if checker.failures:
         return EXIT_PERSONAL if any(f.personal for f in checker.failures) else EXIT_FAILURES
     size = (
