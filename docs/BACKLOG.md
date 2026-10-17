@@ -560,7 +560,7 @@ Found in the domain review of #195. `classify` on a path that does not exist, wi
 
 ---
 
-## [ ] M13-30 — `snap restore`: a snapshot taken with `--screenshots` restores whole
+## [x] M13-30 — `snap restore`: a snapshot taken with `--screenshots` restores whole
 **Size:** S · **Depends on:** M13-01
 
 Found in the domain review of #195 (M13-21), on 2026-10-15. `snap create --screenshots` also captures `Screenshots/`, but the write gate refuses `Screenshots/…`, so a whole `snap restore` of such a snapshot is refused (exit 3) and puts nothing back. A whole restore should skip the screenshot files, the way it skips Edit `no` rows: say how many it skipped and why, and restore everything else. `--paths` naming a screenshot is still refused, with the gate's reason. The skipped screenshots are reported separately from the Edit `no` skips, because their file-map row is Edit `n/a`, and `--paths` cannot restore them. They go in their own `RestoreReport` list, or in `skipped` with a `reason` field that tells the two kinds apart. The text header must not say "name one with --paths to restore it" about them. `guard.py` does not change. If a fix seems to need a change there, stop and report, because that needs a `T` ticket first.
