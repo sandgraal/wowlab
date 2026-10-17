@@ -1097,11 +1097,14 @@ whole-snapshot restore of such a snapshot sets aside every entry under a
 top-level folder whose row is `screenshots` (only that row; no other row
 with Edit `n/a` is a snapshot subtree), and restores the rest. Each
 screenshot is listed in `RestoreReport.not_restored` (apart from the Edit
-`no` list in `skipped`) with what the disk holds now (`same`, `differs` or
-`missing`; read-only, size first, then content); it stays in the snapshot.
-The text plan counts them, names the first ten that differ or are missing,
-and never offers `--paths` for them; when none differs it says the snapshot
-also holds them and all still match. Naming one with `--paths` is refused
+`no` list in `skipped`) with what the disk holds now (`same`, `differs`,
+`missing`, or `behind_link` when a folder on its way, `Screenshots/`
+itself, is now a link: then nothing behind it is read; read-only, size
+first, then content); it stays in the snapshot. The text plan counts them,
+counts those that differ or are missing apart from those not read, names
+the first ten of either kind with its state, and never offers `--paths`
+for them; when every one matches it says the snapshot also holds them and
+all still match. Naming one with `--paths` is refused
 with the gate's reason (exit 3), followed by one line saying wowlab never
 writes `Screenshots/`. Because the gate's whole restore cannot leave
 entries out, the rest is restored by name, and every entry a whole restore
@@ -1112,7 +1115,8 @@ the restore back. The only entries left unnamed are unchanged links and
 unchanged executables, which a whole restore leaves alone and a named one
 refuses; the CLI finds them by reading the disk (`profiles.disk_state`,
 following no link; a Windows junction counts as a link, as it does for the
-gate) and reads them again before the commit. A whole restore that skips
+gate; an executable is unchanged only with the entry's bytes and permission
+bits, as `guard` judges it) and reads them again before the commit. A whole restore that skips
 an Edit `no` file is restored by name the same way. `guard` is unchanged.
 
 *Amended 2026-09-29 (M11-30):* text output is terminal-safe. No C0

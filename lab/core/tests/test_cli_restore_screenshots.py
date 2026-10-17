@@ -195,7 +195,7 @@ def test_whole_restore_with_only_screenshots_changed_writes_nothing_constructed(
     out = _plain(ok("snap", "restore", a.id, "--yes").stdout)
     assert "0 change(s)" in out
     assert "Not restored: 2 screenshot(s)" in out
-    assert "1 differ from or are missing on disk:" in out
+    assert f"They stay in snapshot {a.id}; 1 differs from or is missing on disk:" in out
     assert "Nothing to restore but the screenshots wowlab never writes; nothing was changed." in out
     assert guard.history() == ()
     report = _json(cli.RestoreReport, "snap", "restore", a.id, "--yes")
@@ -247,6 +247,90 @@ def test_only_skipped_files_and_screenshots_changed_says_both_constructed(
     out = _plain(ok("snap", "restore", a.id, "--yes").stdout)
     assert "Nothing to restore but the skipped files; nothing was changed." in out
     assert guard.history() == ()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symbolic links need privileges on Windows")
+def test_screenshots_behind_a_link_are_not_read_and_counted_apart_constructed(
+    root: Path, flavor: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Screenshots/ replaced by a symbolic link to a folder holding the same
+    files: nothing behind the link is read, and the screenshots are reported
+    `behind_link`, not `differs`."""
+    a = _screenshots_snapshot(flavor)
+    moved = tmp_path / "moved-screenshots-constructed"
+    (flavor / "Screenshots").rename(moved)
+    (flavor / "Screenshots").symlink_to(moved, target_is_directory=True)
+    _flip_syndicator(flavor)
+    opened: list[str] = []
+    real_open = os.open
+
+    def watching_open(path: object, *args: object, **kwargs: object) -> int:
+        opened.append(str(path))
+        return real_open(path, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(profiles.os, "open", watching_open)
+    report = _json(cli.RestoreReport, "snap", "restore", a.id, "--dry-run")
+    assert [(u.path, u.disk) for u in report.not_restored] == [
+        (SHOT_A, "behind_link"),
+        (SHOT_B, "behind_link"),
+    ]
+    assert not any("WoWScrnShot" in p for p in opened)
+    assert [i.path for i in report.plan] == [SYNDICATOR]
+    text = _plain(ok("snap", "restore", a.id, "--dry-run").stdout)
+    assert (
+        f"They stay in snapshot {a.id}; 2 not read (Screenshots/ is now a link, wowlab does "
+        "not follow it):"
+    ) in text
+    assert f"    {SHOT_A}  [behind_link]" in text
+    assert "differ" not in text
+    done = _json(cli.RestoreReport, "snap", "restore", a.id, "--yes")
+    assert done.applied
+    assert (flavor / "Screenshots").is_symlink()
+    assert (moved / SHOT_A.split("/")[1]).read_bytes() == JPEG
+
+
+def test_one_changed_and_one_unread_are_both_counted_constructed(root: Path, flavor: Path) -> None:
+    lines = cli._not_restored_lines(
+        "S1",
+        [
+            cli.NotRestoredPath(path=SHOT_A, entry_id="screenshots", what="w", disk="missing"),
+            cli.NotRestoredPath(path=SHOT_B, entry_id="screenshots", what="w", disk="behind_link"),
+            cli.NotRestoredPath(
+                path="Screenshots/c.jpg", entry_id="screenshots", what="w", disk="same"
+            ),
+        ],
+    )
+    assert lines[0].endswith(
+        "They stay in snapshot S1; 1 differs from or is missing on disk; 1 not read "
+        "(Screenshots/ is now a link, wowlab does not follow it):"
+    )
+    assert lines[0].startswith("  Not restored: 3 screenshot(s) wowlab never writes")
+    assert lines[1:] == [f"    {SHOT_A}  [missing]", f"    {SHOT_B}  [behind_link]"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="permission bits are not kept on Windows")
+def test_an_executable_whose_mode_changed_after_the_plan_rolls_back_constructed(
+    root: Path, flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unchanged executable is left unnamed and read again before commit,
+    bytes and permission bits both."""
+    script = flavor / "Interface" / "AddOns" / "DBM-Brawlers" / "build.sh"
+    script.write_bytes(b"#!/bin/sh\necho constructed\n")
+    script.chmod(0o644)
+    a = _screenshots_snapshot(flavor)
+    _flip_syndicator(flavor)
+    real = cli._confirm
+
+    def confirm(question: str, yes: bool) -> None:
+        script.chmod(0o755)
+        real(question, yes)
+
+    monkeypatch.setattr(cli, "_confirm", confirm)
+    result = run("snap", "restore", a.id, "--yes")
+    assert result.exit_code == 1, (result.stdout, result.stderr)
+    assert "the files changed after the plan was shown" in _plain(result.stderr)
+    (record,) = guard.history()
+    assert record.state != "committed"
 
 
 def test_many_screenshots_are_counted_and_the_text_names_ten_constructed(

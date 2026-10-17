@@ -5283,7 +5283,9 @@ class NotRestoredPath(_Out):
     path: str  # relative to the flavor folder
     entry_id: str  # its file-map row, whose Edit cell is `n/a`
     what: str
-    disk: Literal["same", "differs", "missing"]  # the disk against the snapshot, read-only
+    # The disk against the snapshot, read-only; `behind_link`: not read, as a
+    # folder on its way (Screenshots/ itself) is now a link wowlab does not follow.
+    disk: Literal["same", "differs", "missing", "behind_link"]
 
 
 class RestoreReport(_Out):
@@ -5384,7 +5386,7 @@ def _set_aside(
                 path=rel,
                 entry_id=row.id,
                 what=_plain(row.what),
-                disk="same" if state == "same" else "missing" if state == "missing" else "differs",
+                disk=state,
             )
         )
     return rest, aside
@@ -5411,11 +5413,27 @@ def _names_for_whole(
     for e in entries:
         rel = e.path.removeprefix(prefix)
         special = e.kind != "file" or has_executable_part(rel)
-        if special and profiles.disk_state(install_root, folder, e) == "same":
+        if special and _unchanged(install_root, folder, e):
             left.append(e)
         else:
             names.append(rel)
     return names, left
+
+
+def _unchanged(install_root: Path, folder: str, entry: snapshot.Entry) -> bool:
+    """Whether a link or executable `entry` is one the gate's whole restore
+    leaves alone: a link with the entry's target, or a regular file with the
+    entry's bytes and permission bits (`guard._unchanged_executable`). Reads
+    only, following no link (`profiles.disk_state`, then an `lstat`)."""
+    if profiles.disk_state(install_root, folder, entry) != "same":
+        return False
+    if entry.kind != "file":
+        return True
+    try:
+        st = install_root.joinpath(*entry.path.split("/")).lstat()
+    except OSError:
+        return False
+    return stat.S_ISREG(st.st_mode) and stat.S_IMODE(st.st_mode) == entry.mode
 
 
 # How many changed screenshots the text plan names; --json lists every one.
@@ -5423,17 +5441,30 @@ _NOT_RESTORED_SHOWN = 10
 
 
 def _not_restored_lines(snapshot_id: str, aside: Sequence[NotRestoredPath]) -> list[str]:
-    changed = [a for a in aside if a.disk != "same"]
-    if not changed:
+    shown = [a for a in aside if a.disk != "same"]
+    if not shown:
         return [f"  The snapshot also holds {len(aside)} screenshot(s); all still match the disk."]
+    changed = sum(a.disk in ("differs", "missing") for a in aside)
+    unread = [a for a in aside if a.disk == "behind_link"]
+    clauses: list[str] = []
+    if changed:
+        one = changed == 1
+        clauses.append(
+            f"{changed} {'differs' if one else 'differ'} from or {'is' if one else 'are'} "
+            "missing on disk"
+        )
+    if unread:
+        top = unread[0].path.split("/", 1)[0]
+        clauses.append(f"{len(unread)} not read ({top}/ is now a link, wowlab does not follow it)")
     lines = [
         f"  Not restored: {len(aside)} screenshot(s) wowlab never writes (file-map Edit "
         f'"n/a"; --paths cannot restore them either). They stay in snapshot {snapshot_id}; '
-        f"{len(changed)} differ from or are missing on disk:"
+        + "; ".join(clauses)
+        + ":"
     ]
-    lines += [f"    {a.path}  [{a.disk}]" for a in changed[:_NOT_RESTORED_SHOWN]]
-    if len(changed) > _NOT_RESTORED_SHOWN:
-        lines.append(f"    and {len(changed) - _NOT_RESTORED_SHOWN} more (--json lists every one)")
+    lines += [f"    {a.path}  [{a.disk}]" for a in shown[:_NOT_RESTORED_SHOWN]]
+    if len(shown) > _NOT_RESTORED_SHOWN:
+        lines.append(f"    and {len(shown) - _NOT_RESTORED_SHOWN} more (--json lists every one)")
     return lines
 
 
@@ -5618,7 +5649,7 @@ def snap_restore(
         raise
     with guard.transaction(chosen, label=label) as tx:
         tx.restore(manifest.id, wanted)
-        moved = any(profiles.disk_state(inst.root, folder, e) != "same" for e in left_out)
+        moved = any(not _unchanged(inst.root, folder, e) for e in left_out)
         if tx.plan != tuple(plan) or moved:
             # Raising inside the transaction makes the gate roll it back.
             raise CliError(
