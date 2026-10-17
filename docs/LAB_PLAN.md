@@ -855,6 +855,22 @@ was checked and that reads still follow it. (e) `GcReport` gains
 `removed_bytes`, the size of the objects actually removed; `snap gc` reports
 it, not `unreferenced_bytes`, after a real run.
 
+*Amended 2026-10-17 (M13-15, long paths on Windows):* `create` and
+`list_tree` reach a path past Windows' plain limit (`MAX_PATH`) whatever
+`LongPathsEnabled` says: `wowlab_core.longpath` spells a path whose absolute
+form is 240 characters or more as `\\?\C:\...` (or `\\?\UNC\server\share\...`)
+as the argument of the system call only. Paths are plain everywhere else. A
+root given relative is made absolute first; a root given in `\\?\` form is
+recorded plain in the manifest's `install_root`, and refused when it has no
+plain spelling. A file or folder the walk is told is missing
+(`FileNotFoundError`, which Windows also raises for a plain path past the
+limit) is skipped as removed only when an extended-length `lstat` agrees;
+otherwise `create` raises `SnapshotError` and writes no manifest. The same
+spelling reaches `install` discovery, `layout`, the first-run survey,
+`doctor`'s client and config reads, `process`'s root resolution and the
+readers (`luadata.read`, `wtfconfig.read_*`, `toc.read_toc`,
+`combatlog.read_log`); `Install.root` and `doctor`'s output are plain.
+
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 
 The only module that writes into an install (L2, ADR-0021).
@@ -1062,6 +1078,22 @@ the owner's rights, and some window always remains after the last check. The
 check-before-create order stops every mistake short of that; an
 implementation may re-check after creating, or create relative to directory
 handles, as defence in depth.
+
+*Amended 2026-10-17 (M13-15, long paths on Windows):* every lookup, read and
+write the gate makes in an install (the walk, the temp file beside the
+target, the replace or rename, an unlink, a folder it creates or removes)
+passes a path past the plain limit to the system in extended-length form
+(`wowlab_core.longpath`, as in §6.9), so a file deep in an install is
+written, restored and undone with `LongPathsEnabled` off. That includes a
+target whose plain path is at the limit, where only the temp file beside it
+is past it. The journal, the pre-write manifest and every message name the
+plain path. A flavor handed to `transaction()` in `\\?\C:\...` form is taken
+by its plain spelling, so `undo()` and restore work on what it journals. A
+flavor that resolves to anything but a local absolute path (a network path,
+`\\?\UNC\...` included, or a volume with no drive letter) is refused on
+enter with nothing written or journaled: `undo()` and restore accept only a
+local absolute root (item 1), and a change `undo()` could not reverse is
+never written.
 
 ### 6.11 CLI — `wowlab` (M10-14)
 
