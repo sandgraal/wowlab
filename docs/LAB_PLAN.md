@@ -252,6 +252,15 @@ Symlinks are reported and not followed outside the install. Walk depth and
 entry counts are bounded; an `Interface/AddOns` with 400 addons must inventory
 in under two seconds on an SSD.
 
+*Amended 2026-10-17 (M13-35):* a "link" here is what `layout.is_link` says,
+the one test `filemap gaps` (`gaps.is_link`), `explain` and `tree` share: a
+symlink, a junction, or any other Windows reparse point with the
+name-surrogate bit (a WCI link, a WSL symlink). Each is reported in
+`Inventory.symlinks` and never walked. A flavor folder that is such a link
+is listed by `tree` as a link, and nothing in it is listed. A reparse point
+without that bit (a cloud placeholder, a deduplicated file) is walked and
+named in `Inventory.reparse_points` (M13-33).
+
 *Amended 2026-09-22 (M10-06 reviews):* (1) **Symlinks and junctions are never
 followed**, whether they point inside the install or outside it. Each is
 reported in `Inventory.symlinks` with its link text and `inside_install`,
