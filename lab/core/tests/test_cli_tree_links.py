@@ -266,20 +266,67 @@ def test_a_link_at_the_top_has_one_item_in_text_constructed(
     assert named[0].startswith("  Extras  (link ") and named[0].endswith("not followed)")
 
 
-@pytest.mark.parametrize("install", [False, True], ids=["tree", "tree-install"])
-def test_a_flavor_folder_that_is_a_wci_link_is_a_link_never_walked_constructed(
-    root: Path, monkeypatch: pytest.MonkeyPatch, install: bool
+FLAVOR_LINKS = [
+    pytest.param(WCI_LINK, None, id="constructed-wci-link"),
+    pytest.param(LX_SYMLINK, WSL_MODE, id="constructed-wsl-symlink"),
+]
+
+
+@pytest.mark.parametrize(("tag", "mode"), FLAVOR_LINKS)
+def test_a_flavor_folder_that_is_a_link_is_no_flavor_and_never_walked(
+    root: Path, monkeypatch: pytest.MonkeyPatch, tag: int, mode: int | None
 ) -> None:
-    """Constructed: under this fake, discovery takes a WCI link as a flavor
-    folder (it is no symlink or junction, and the real folder behind the fake
-    holds `.flavor.info`). On a real machine that depends on whether Windows
-    can follow the link to read it. Either way `tree` judges it a link, as
-    `explain` does, and never walks it: `Layout.inventory` is never called.
-    The discovery line is expected to change with the follow-up ticket that
-    makes discovery use the same link test."""
+    """Constructed: discovery judges the flavor folder by the same link test
+    (M13-37), so a WCI link or a WSL symlink is named in `other_dirs`, not
+    taken as a flavor. `tree --install` lists it as a link that is not a
+    flavor folder, word for word as `filemap gaps` and `explain` say it, and
+    nothing in it is walked; a command that needs a flavor finds none."""
     flavor = root / FLAVOR
     assert [f.folder for f in discover(root).flavors] == [FLAVOR]
+    _fake(monkeypatch, [flavor], tag, mode=mode)
+    found = discover(root)
+    assert (found.flavors, found.other_dirs) == ((), (FLAVOR,))
+
+    def no_walk(self: layout.Layout) -> layout.Inventory:
+        raise AssertionError(f"walked {self.flavor_path}")
+
+    monkeypatch.setattr(layout.Layout, "inventory", no_walk)
+    expected = _explain(root, flavor)
+    assert (expected["link"], expected["placeholder"]) == (True, False)
+    report = _tree(root, "--install", "--explain")
+    judged = _by_path(report, install=True)
+    item = judged[FLAVOR]
+    assert (item["kind"], item["base"], item["flavor_folder"]) == ("symlink", "root", None)
+    assert item["size"] is None
+    assert item["note"] == f"{UNKNOWN_NOTE}; {gaps.NOT_A_FLAVOR_LINK}"
+    assert item["verdict"] == expected
+    assert [i for i in report["items"] if i["flavor_folder"] is not None] == []
+    assert ".build.info" in judged  # the install root is still listed
+    gap = json.loads(_run("filemap", "gaps", "--root", str(root), "--json"))
+    assert (gap["flavor_folders"], gap["links"]) == ([], [FLAVOR])
+    named = [g for g in gap["groups"] if g["name"] == FLAVOR]
+    assert [(g["base"], g["kind"], g["note"]) for g in named] == [
+        ("root", "link", gaps.NOT_A_FLAVOR_LINK)
+    ]
+    result = CliRunner().invoke(cli.app, ["tree", "--root", str(root)])
+    assert result.exit_code != 0
+    assert "has no flavor folders" in result.stderr
+
+
+@pytest.mark.parametrize("install", [False, True], ids=["tree", "tree-install"])
+def test_a_flavor_folder_that_became_a_link_after_discovery_is_never_walked_constructed(
+    root: Path, monkeypatch: pytest.MonkeyPatch, install: bool
+) -> None:
+    """Constructed: discovery took the folder as a flavor (here by standing
+    in a link test that says no, as when the folder is replaced by a WCI link
+    between discovery and the walk). `tree` judges it again by the walk's
+    link test, as `explain` does, and never walks it: `Layout.inventory` is
+    never called (M13-35)."""
+    from wowlab_core import install as install_mod
+
+    flavor = root / FLAVOR
     _fake(monkeypatch, [flavor], WCI_LINK)
+    monkeypatch.setattr(install_mod, "is_link", lambda path, st: False)
     assert [f.folder for f in discover(root).flavors] == [FLAVOR]
 
     def no_walk(self: layout.Layout) -> layout.Inventory:
@@ -305,10 +352,13 @@ def test_a_flavor_folder_that_is_a_wci_link_is_a_link_never_walked_constructed(
         assert report["errors"] == [] and report["truncated"] is False
 
 
-def test_a_flavor_folder_that_is_a_link_says_so_in_text_constructed(
+def test_a_flavor_folder_that_became_a_link_says_so_in_text_constructed(
     root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from wowlab_core import install as install_mod
+
     _fake(monkeypatch, [root / FLAVOR], WCI_LINK)
+    monkeypatch.setattr(install_mod, "is_link", lambda path, st: False)
     result = CliRunner().invoke(cli.app, ["tree", "--root", str(root)])
     assert result.exit_code == 0, result.output
     assert result.stdout.splitlines() == [f"{FLAVOR} in {root}"]

@@ -55,8 +55,9 @@ from pydantic import BaseModel, ConfigDict
 from wowlab_core import filemap as _filemap
 from wowlab_core.install import Install
 
-# `is_link`: the one link test of the inventory walk, `tree` and `explain`,
-# defined in `layout` (which this module imports) and exported here (M13-35).
+# `is_link`: the one link test of discovery, the inventory walk, `tree` and
+# `explain`, defined in `install`, re-exported by `layout` (which this module
+# imports) and exported here (M13-35, M13-37).
 from wowlab_core.layout import FsText, Limits, is_link
 
 __all__ = [
