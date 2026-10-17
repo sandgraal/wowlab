@@ -45,11 +45,17 @@ Proton; wowlab finds those only when you point it at them.
 
 You need [uv](https://docs.astral.sh/uv/). It brings Python 3.12 with it.
 
-**From a release.** No release has been published yet. When the first one
-is, its page carries a wheel and a SHA-256 sums file, and the README gives
-the one `uv tool install` line that installs it.
+**From a release.** The README gives the one `uv tool install` line that
+installs the current release, and the release page
+(https://github.com/sandgraal/wowlab/releases) carries the wheel, the sdist
+and `SHA256SUMS`. To check a download, put the three files in one folder and
+run `sha256sum -c SHA256SUMS` (on macOS `shasum -a 256 -c SHA256SUMS`; on
+Windows `Get-FileHash -Algorithm SHA256 <file>` in PowerShell, compared by
+hand with its line in `SHA256SUMS`); each file has to print `OK`. The
+release workflow builds every file from the tagged commit, and the tag can
+only be made by the repository owner (ADR-0031).
 
-**From source**, until then:
+**From source**, if you want the development version:
 
 ```bash
 git clone https://github.com/sandgraal/wowlab

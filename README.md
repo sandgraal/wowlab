@@ -2,7 +2,7 @@
   <a href="https://github.com/sandgraal/wowlab/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/sandgraal/wowlab/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python 3.12" src="https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white">
   <img alt="Local only, uploads nothing" src="https://img.shields.io/badge/local--only-uploads%20nothing-2ea44f">
-  <img alt="First public release, v0.1, on the way" src="https://img.shields.io/badge/status-first%20public%20release%20(v0.1)%20on%20the%20way-f3c969">
+  <a href="https://github.com/sandgraal/wowlab/releases/tag/v0.1.0"><img alt="First public release, v0.1.0" src="https://img.shields.io/badge/release-v0.1.0-2ea44f"></a>
   <a href="LICENSE"><img alt="License Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
 </p>
 
@@ -23,7 +23,7 @@
 uv tool install --python 3.12 https://github.com/sandgraal/wowlab/releases/download/v0.1.0/wowlab_core-0.1.0-py3-none-any.whl
 ```
 
-Until v0.1.0 is published, install from source ([`docs/INSTALL.md`](docs/INSTALL.md)).
+The release page carries the wheel, the sdist and `SHA256SUMS`; [`docs/INSTALL.md`](docs/INSTALL.md) says how to check them and how to run from a source checkout instead.
 
 **⚔️ The first three commands:**
 
