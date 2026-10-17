@@ -661,7 +661,7 @@ Add a byte-level rule to the scrub tool. It never parses and re-serializes the f
 
 ---
 
-## [ ] M13-35 — `tree`: a non-junction link is listed as a link and never walked
+## [x] M13-35 — `tree`: a non-junction link is listed as a link and never walked
 **Size:** S · **Depends on:** M13-33
 
 Found in the reviews of #228 (M13-33), 2026-10-16. Three gaps remain where `tree` and `explain` disagree about what is a link.
