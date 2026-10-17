@@ -167,9 +167,9 @@ jobs:
           persist-credentials: false
       # No cache, restored or saved (M13-39): the job that runs the model has
       # no cache step, so no entry it could have written is saved for main,
-      # where the four cached jobs in ci.yml restore from. A fresh `uv sync`
-      # costs about a second. The Claude action's own setup-bun is pinned
-      # with `no-cache: true`.
+      # which five jobs restore from (the four cached jobs in ci.yml and
+      # lab-windows in windows.yml). A fresh `uv sync` costs about a second.
+      # The Claude action's own setup-bun is pinned with `no-cache: true`.
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
