@@ -542,12 +542,15 @@ def test_hints_are_quoted_for_the_shell_of_the_machine(
     for hint in posix.hints:
         assert hint.shell == "posix"
         assert shlex.split(hint.command) == ["wowlab", *hint.argv]
+        # M13-27: which shells take it, in words, never PowerShell's.
+        assert hint.shell_label == "for sh, bash or zsh"
     monkeypatch.setattr(cli, "_shell", lambda: "powershell")
     report = explained(SYNDICATOR, "--root", str(root))
     assert report.hints
     for hint in report.hints:
         assert hint.shell == "powershell"
         assert _powershell_split(hint.command) == ["wowlab", *hint.argv]
+        assert hint.shell_label == "for PowerShell (not Command Prompt)"
 
 
 def test_explain_hashes_only_the_named_path_and_writes_nothing(

@@ -247,6 +247,9 @@
   function filterKey(verdict) {
     if (!verdict) return "";
     if (verdict.link === true) return "link";
+    // A placeholder says another level's label (Python's) and is painted
+    // as it: its own choice, not hidden under its row's level.
+    if (verdict.placeholder === true) return "placeholder";
     return typeof verdict.level === "string" ? verdict.level : "";
   }
 
@@ -325,7 +328,7 @@
     li.appendChild(row);
     if (children.length && open) {
       const list = make("ul");
-      list.setAttribute("role", " group");
+      list.setAttribute("role", "group");
       for (const child of children) list.appendChild(drawNode(child, view, depth + 1));
       li.appendChild(list);
     }
@@ -360,27 +363,18 @@
     drawTree();
   }
 
-  // The Verdict filter's choices, from the data. A choice reads as its
-  // level's label; a placeholder's label is another level's (Python words
-  // it as the label it is painted with), so it names a choice only when no
-  // other path of that level does.
+  // The Verdict filter's choices, from the data, each read as its group's
+  // label from Python.
   function fillLevels(report) {
     const select = byId("level-filter");
     const chosen = select.value;
     const levels = [];
     const labels = new Map();
-    const fromPlaceholder = new Set();
     for (const item of listedOf(report)) {
       const level = filterKey(item.verdict);
-      if (!level) continue;
-      const placeholder = item.verdict.placeholder === true;
-      if (!levels.includes(level)) {
+      if (level && !levels.includes(level)) {
         levels.push(level);
         labels.set(level, labelOf(item.verdict));
-        if (placeholder) fromPlaceholder.add(level);
-      } else if (fromPlaceholder.has(level) && !placeholder) {
-        labels.set(level, labelOf(item.verdict));
-        fromPlaceholder.delete(level);
       }
     }
     while (select.options.length > 1) select.remove(1);
@@ -397,6 +391,9 @@
   function fillFlavors(flavors) {
     const picker = byId("flavor");
     picker.replaceChildren();
+    const none = make("option", "choose one");
+    none.value = "";
+    picker.appendChild(none);
     for (const folder of flavors) {
       const option = make("option", visible(folder));
       option.value = folder;
@@ -486,7 +483,10 @@
     const line = make("code", shown(hint.command));
     line.className = "hint-command";
     box.appendChild(line);
-    const shell = make("span", visible(String(hint.shell || "")));
+    // Which shell's quoting it is in: Python's word, and its words for it.
+    const label =
+      typeof hint.shell_label === "string" && hint.shell_label ? " (" + visible(hint.shell_label) + ")" : "";
+    const shell = make("span", "Shell: " + visible(String(hint.shell || "")) + label);
     shell.className = "hint-shell";
     box.appendChild(shell);
     const copy = make("button", "Copy");
@@ -504,7 +504,7 @@
       } catch (_) {
         done = false;
       }
-      copy.textContent = done ? "Copied" : "Copy failed; select the line instead";
+      copy.textContent = done ? "Copied" : "Copy did not work in this browser";
       setTimeout(() => {
         copy.textContent = "Copy";
       }, 2000);
@@ -662,6 +662,8 @@
     const folder = byId("flavor").value;
     if (!explorer.root || !explorer.flavors.includes(folder)) return;
     for (const path of firstOpen(folder)) explorer.open.add(path);
+    // Back to the blank choice, so picking the same folder again reopens it.
+    byId("flavor").value = "";
     drawTree();
   });
   byId("level-filter").addEventListener("change", () => {
@@ -705,6 +707,16 @@
     return box;
   }
 
+  // How many keys and values `value` holds, itself included: what a cut
+  // leaves out.
+  function previewCount(value) {
+    const kind = jtKind(value);
+    if (kind !== "object" && kind !== "array") return 1;
+    let n = 1;
+    for (const child of kind === "array" ? value : Object.values(value)) n += previewCount(child);
+    return n;
+  }
+
   function previewNode(key, value, budget) {
     budget.left -= 1;
     const kind = jtKind(value);
@@ -712,7 +724,8 @@
       const row = make("div");
       row.className = "jt-leaf";
       if (key !== null) row.appendChild(jtKey(key));
-      row.appendChild(jtScalar(value));
+      // A path in a value shows the home folder as "~", as the pane does.
+      row.appendChild(jtScalar(kind === "string" ? shortHome(value) : value));
       return row;
     }
     const entries = kind === "array" ? value.map((item, i) => [i, item]) : Object.entries(value);
@@ -729,7 +742,7 @@
     node.appendChild(box);
     for (let i = 0; i < entries.length; i++) {
       if (budget.left <= 0) {
-        budget.skipped += entries.length - i;
+        for (let j = i; j < entries.length; j++) budget.skipped += previewCount(entries[j][1]);
         break;
       }
       box.appendChild(previewNode(entries[i][0], entries[i][1], budget));
@@ -790,9 +803,15 @@
     return hits;
   }
 
-  // "1 file", "2 files": `word` with its leading space.
+  // A count with a comma every three digits, as the CLI writes it
+  // (`f"{n:,}"`), whatever the browser's locale.
+  function grouped(n) {
+    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  }
+
+  // "1 file", "1,024 bytes": `word` with its leading space.
   function plural(n, word) {
-    return n + word + (n === 1 ? "" : "s");
+    return grouped(n) + word + (n === 1 ? "" : "s");
   }
 
   // A group's counts, from its numbers; no path in them.
@@ -801,16 +820,16 @@
     if (group.kind === "file") {
       parts.push(plural(group.bytes, " byte"));
     } else if (group.kind === "link") {
-      parts.push("a link, not followed");
+      parts.push("link, not followed");
     } else if (group.kind === "folder") {
       parts.push(plural(group.files, " file"), plural(group.bytes, " byte"));
       if (group.folders) parts.push(plural(group.folders, " folder"));
       if (group.links) parts.push(plural(group.links, " link") + " not followed");
-      if (group.other) parts.push(group.other + " other");
+      if (group.other) parts.push(grouped(group.other) + " other");
     } else {
       parts.push("not a file, folder or link; never opened");
     }
-    if (group.places > 1) parts.push("in " + group.places + " places");
+    if (group.places > 1) parts.push("in " + grouped(group.places) + " places");
     if (group.entry_id) parts.push("row " + visible(group.entry_id));
     if (group.note) parts.push(visible(group.note));
     return parts.join(", ");
@@ -822,7 +841,7 @@
     parts.push(plural(place.bytes, " byte"));
     if (place.folders) parts.push(plural(place.folders, " folder"));
     if (place.links) parts.push(plural(place.links, " link") + " not followed");
-    if (place.other) parts.push(place.other + " other");
+    if (place.other) parts.push(grouped(place.other) + " other");
     return parts.join(", ");
   }
 
@@ -887,10 +906,18 @@
     if (errors.length) notes.push(plural(errors.length, " path") + " could not be read (listed below).");
     gapsSay(notes.join(" "), false);
 
+    // With no groups, the links the walk did not follow are said, as
+    // `filemap gaps` says them: what they point at was not checked.
+    let noneText = "None: every path the walk reached has a row";
+    if (links.length) {
+      noneText +=
+        "; " + plural(links.length, " link") + " met and not followed (listed below), " +
+        "so what they point at, a linked WTF/ for one, was not checked";
+    }
     const none = gapSection(body, "Paths with no file-map row",
       groups.length
         ? plural(report.files, " file") + ", " + plural(report.bytes, " byte") + ", in " + plural(groups.length, " group") + "."
-        : "None: every path the walk reached has a row.");
+        : noneText + ".");
     for (const group of groups) none.appendChild(gapGroup(group, false));
     if (catchAll.length) {
       const only = gapSection(body, "Described only by a catch-all row",
@@ -899,20 +926,43 @@
     }
     if (notEntered.length) {
       const section = gapSection(body, "Not entered", "Folders a row labels whole; the walk did not look inside.");
-      const list = make("ul");
+      // By row, as `filemap gaps` prints them: one folder on its line, more
+      // as a count that opens to the list.
+      const byRow = new Map();
       for (const item of notEntered) {
+        const row = String(item.entry_id || "");
+        if (!byRow.has(row)) byRow.set(row, []);
+        byRow.get(row).push(item);
+      }
+      const list = make("ul");
+      const folderLine = (item, prefix) => {
         const key = keyOf(item.base, item.flavor_folder, item.path);
         const li = make("li");
         li.className = "gap-not-entered";
         li.dataset.path = key;
-        li.appendChild(make("span", "[" + visible(String(item.entry_id || "")) + "] "));
+        if (prefix) li.appendChild(make("span", prefix));
         li.appendChild(make("code", visible(key) + "/"));
+        return li;
+      };
+      for (const [row, items] of byRow) {
+        const tag = "[" + visible(row) + "] ";
+        if (items.length === 1) {
+          list.appendChild(folderLine(items[0], tag));
+          continue;
+        }
+        const li = make("li");
+        const box = make("details");
+        box.appendChild(make("summary", tag + plural(items.length, " folder")));
+        const inner = make("ul");
+        for (const item of items) inner.appendChild(folderLine(item, ""));
+        box.appendChild(inner);
+        li.appendChild(box);
         list.appendChild(li);
       }
       section.appendChild(list);
     }
     if (links.length) {
-      const section = gapSection(body, "Links met and not followed", null);
+      const section = gapSection(body, "Links met and not followed", "What they point at was not checked.");
       const list = make("ul");
       for (const link of links) {
         if (typeof link !== "string") continue;
@@ -1101,19 +1151,25 @@
     return typeof value; // "object", "string", "number" or "boolean"
   }
 
-  // Shown escaped, because they could reorder or hide what a key or value
-  // says: the bidi marks and controls U+061C, U+200E, U+200F, U+202A-U+202E
-  // and U+2066-U+2069; the zero-width characters U+200B-U+200D, U+2060 and
-  // U+FEFF; and the separators U+2028 and U+2029. JSON.stringify already
-  // escapes control characters and lone surrogates.
-  const JT_HIDDEN =
-    /[\u061C\u200B-\u200F\u2028-\u202E\u2060\u2066-\u2069\uFEFF]/g;
+  // Shown escaped as \uXXXX, because they could reorder, hide or break what
+  // a key or value says: the class `visible` escapes, every control (C0,
+  // DEL, C1), format character (bidi marks and overrides, zero-width
+  // characters, soft hyphen, invisible operators, interlinear annotation,
+  // tag characters) and line or paragraph separator. A character past
+  // U+FFFF is written as its surrogate pair, as JSON spells it.
+  // JSON.stringify already escapes C0 controls and lone surrogates.
+  const JT_HIDDEN = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
+
+  function jtEscape(ch) {
+    let out = "";
+    for (let i = 0; i < ch.length; i++) {
+      out += "\\u" + ch.charCodeAt(i).toString(16).toUpperCase().padStart(4, "0");
+    }
+    return out;
+  }
 
   function jtQuote(text) {
-    return JSON.stringify(text).replace(
-      JT_HIDDEN,
-      (ch) => "\\u" + ch.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0"),
-    );
+    return JSON.stringify(text).replace(JT_HIDDEN, jtEscape);
   }
 
   // An object's key in JSON form; an array's index (a number) as it is.
