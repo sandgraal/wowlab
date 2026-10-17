@@ -223,6 +223,16 @@ default holds an install, discovery raises `InstallNotFoundError`, which
 lists the locations it searched. Executable names are not part of
 discovery; `guard` finds them itself (M10-11 amendment).
 
+*Amended 2026-10-17 (M13-37):* the "symlink" of (6) is a link by
+`install.is_link`, the one link test discovery shares with `layout`, `tree`,
+`filemap gaps` and `explain` (`layout.is_link` and `gaps.is_link` are the
+same function; the M13-35 amendment under §6.2): a symlink, a junction, or
+any other Windows reparse point with the name-surrogate bit (a WCI link, a
+WSL symlink). A child named `_*_` that is such a link, or whose
+`.flavor.info` is one, is named in `other_dirs` and nothing is stated,
+listed or read through it, so no command builds a `Layout` for it. A
+reparse point without that bit (a cloud placeholder) is taken as before.
+
 ### 6.2 `layout` — typed walk of a flavor (M10-06)
 
 Pure read. Produces the inventory every later tool starts from:
@@ -267,7 +277,11 @@ a link the same way at the install root and in a flavor folder: "link to
 <target> (inside|outside the install), not followed". A flavor folder that
 is such a link is listed by `tree` as a link, and nothing in it is listed
 (`tree --install` notes it as "flavor folder; link …, not followed; nothing
-in it is listed"). A reparse point
+in it is listed"). Since M13-37 discovery uses the same test, so such a
+folder is named in `Install.other_dirs` rather than taken as a flavor, and
+`tree --install` notes it as "link …, not followed; not taken as a flavor
+folder (a link; links are not followed)"; the flavor-folder wording above
+remains for a folder that becomes a link after discovery. A reparse point
 without that bit (a cloud placeholder, a deduplicated file) is walked and
 named in `Inventory.reparse_points` (M13-33).
 
