@@ -45,9 +45,9 @@ MAY_BE = (
     "it may be an item, a pet, mount or toy spell, or a spell learned after the record was saved"
 )
 WORDS_1 = (
-    "no spellbook record (schema 1 has no spellbook or action-bar record; enable the lab-addon "
-    "(wowlab addon install lab), log in on this character, then log out or /reload; schema 3 "
-    "is needed)"
+    "no spellbook record (schema 1 has no spellbook or action-bar record; install the lab-addon "
+    "with the client closed (wowlab addon install lab), log in on this character, then log out "
+    "or /reload; schema 3 is needed)"
 )
 
 runner = CliRunner()
@@ -144,13 +144,18 @@ def test_macros_check_reports_on_the_fixture_install(root: Path) -> None:
         ("spell-not-in-spellbook", macrocheck.NO_RECORD),
         ("not-on-action-bar", macrocheck.NO_RECORD),
     ]
-    assert macrocheck.NO_RECORD.startswith("no spellbook record (enable the lab-addon")
+    assert macrocheck.NO_RECORD.startswith(
+        "no spellbook record (install the lab-addon with the client closed"
+    )
     assert (rep.length_limit, rep.length_unit) == (255, macrocheck.LENGTH_UNIT)
     assert "UTF-8 bytes" in rep.length_unit
     [m] = rep.macros
     assert (m.id, m.line, m.complete) == ("0100000000000001", 1, True)
     assert m.bytes == m.characters == 41  # the captured body is ASCII
     text = ok("macros", "check", "--character", CHARACTER).stdout
+    # The text hint is the JSON reason's own words (records are written at
+    # logout or /reload, not at login).
+    assert f"Spellbook and action bars: no lab-addon record ({macrocheck.GET_RECORD})\n" in text
     assert "Findings: 0\n" in text
     assert f"  spell-not-in-spellbook: {macrocheck.NO_RECORD}\n" in text
     assert "counted in characters and UTF-8 bytes" in text and "[verify]" in text
@@ -236,6 +241,8 @@ def test_spell_rule_reads_the_spellbook_record_constructed(flavor: Path) -> None
     assert all("explicit rank" in c.reason and "[verify]" in c.reason for c in ranks)
     assert ranks[0].reason.endswith("the spellbook record has 'Shadow Bolt' with subtext 'Rank 3'")
     assert ranks[1].reason.endswith("does not have 'Schattenblitz' with subtext 'Rang 3'")
+    assert ranks[2].reason.endswith("the rank is empty, and the spellbook record has 'Fear'")
+    assert "''" not in ranks[2].reason
 
 
 def test_action_bar_rule_with_no_macro_slot_constructed(flavor: Path) -> None:

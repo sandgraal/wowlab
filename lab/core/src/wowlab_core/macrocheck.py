@@ -62,6 +62,7 @@ from wowlab_core.wtfconfig import Macro
 
 __all__ = [
     "CHAT_COMMANDS",
+    "GET_RECORD",
     "LENGTH_LIMIT",
     "LENGTH_UNIT",
     "NO_RECORD",
@@ -163,11 +164,11 @@ _RESET = re.compile(r"reset=\S*\s*", re.IGNORECASE)
 _SUFFIX = re.compile(r"(.*)\(([^()]*)\)\s*", re.DOTALL)
 _NOT_A_NAME = re.compile(r"\d+(?:\s+\d+)?|item:\S*", re.IGNORECASE)
 
-_GET_RECORD = (
-    "enable the lab-addon (wowlab addon install lab), log in on this character, then log "
-    "out or /reload; schema 3 is needed"
+GET_RECORD = (
+    "install the lab-addon with the client closed (wowlab addon install lab), log in on "
+    "this character, then log out or /reload; schema 3 is needed"
 )
-NO_RECORD = f"no spellbook record ({_GET_RECORD})"
+NO_RECORD = f"no spellbook record ({GET_RECORD})"
 _MAY_BE = (
     "it may be an item, a pet, mount or toy spell, or a spell learned after the record was saved"
 )
@@ -317,7 +318,7 @@ def _balanced(text: str) -> bool:
 def _schema_words(record: labaddon.CharDB) -> str:
     return (
         f"no spellbook record (schema {record.schema_} has no spellbook or action-bar record; "
-        f"{_GET_RECORD})"
+        f"{GET_RECORD})"
     )
 
 
@@ -370,7 +371,7 @@ def _actionbars(record: labaddon.CharDB | None, no_record: str) -> labaddon.Acti
     if not isinstance(record, labaddon.CharDBV3):
         return _schema_words(record)
     if record.actionbars is None:
-        return f"no action-bar record ({_GET_RECORD})"
+        return f"no action-bar record ({GET_RECORD})"
     if isinstance(record.actionbars, labaddon.AbsentProbedSection):
         return f"no action-bar record (the section is absent: {record.actionbars.absent})"
     bars = record.actionbars
@@ -393,16 +394,18 @@ def _rank_words(name: str, book: labaddon.Spellbook) -> str:
     match = _SUFFIX.fullmatch(name)
     assert match is not None
     base, rank = match.group(1).strip(), match.group(2).strip()
+    stale = "names an explicit rank; whether one goes stale is [verify]; "
+    if not rank:  # `Spell()`: an empty rank, nothing to match a subtext against
+        names = {i.spell_name.casefold() for i in book.list_ if i.spell_name is not None}
+        held = "has" if base.casefold() in names else "does not have"
+        return f"{stale}the rank is empty, and the spellbook record {held} {base!r}"
     pairs = {
         (i.spell_name.casefold(), (i.subtext or "").casefold())
         for i in book.list_
         if i.spell_name is not None
     }
     held = "has" if (base.casefold(), rank.casefold()) in pairs else "does not have"
-    return (
-        "names an explicit rank; whether one goes stale is [verify]; the spellbook record "
-        f"{held} {base!r} with subtext {rank!r}"
-    )
+    return f"{stale}the spellbook record {held} {base!r} with subtext {rank!r}"
 
 
 def _check_spells(

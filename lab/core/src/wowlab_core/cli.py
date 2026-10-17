@@ -4302,7 +4302,7 @@ def macros_check(
         place = report.record_file or "the WowLab.lua"
         _say(f"Spellbook and action bars: {place} not read ({report.record_error})")
     elif report.record_file is None:
-        hint = "use --character" if character is None else "wowlab addon install lab, then log in"
+        hint = "use --character" if character is None else macrocheck.GET_RECORD
         _say(f"Spellbook and action bars: no lab-addon record ({hint})")
     else:
         _say(f"Spellbook and action bars: {report.record_file} (schema {report.record_schema})")
