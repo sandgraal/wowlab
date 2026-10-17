@@ -92,6 +92,7 @@ __all__ = [
     "WalkError",
     "WtfFile",
     "WtfWalk",
+    "absent",
     "classify",
     "is_link",
     "layouts",
@@ -1131,7 +1132,9 @@ def _dir_hint(path: Path | str | PurePath, is_dir: bool | None) -> bool | None:
     return is_dir
 
 
-def _kind(path: Path, is_dir: bool | None, *, probe: bool) -> tuple[_filemap.Kind, bool]:
+def _kind(
+    path: Path, root: Path, is_dir: bool | None, *, probe: bool
+) -> tuple[_filemap.Kind, bool]:
     """`(kind, absent)`: what to match `path` as, and whether nothing is on
     disk there. `is_dir` (the caller's word, or a trailing separator) sets
     the kind; `probe` (the caller gave no `is_dir`) allows an `lstat`.
@@ -1141,8 +1144,9 @@ def _kind(path: Path, is_dir: bool | None, *, probe: bool) -> tuple[_filemap.Kin
     a name alone cannot show it is one, so a missing `WTF/Account/A/x.txt`
     never matches the `realm-folder` row. File rows, which name a file by
     its shape, and `**` rows still match it. Only "no such file" and "not a
-    directory" count as absent; any other error (a folder that cannot be
-    read) leaves the kind unknown, as before.
+    directory" count as absent, and only with no link on the way down from
+    `root` (`_missing`); a link on the way, or any other error (a folder
+    that cannot be read), leaves the kind unknown, as before.
     """
     given: _filemap.Kind | None = None if is_dir is None else "dir" if is_dir else "file"
     if given is not None and not probe:
@@ -1150,7 +1154,9 @@ def _kind(path: Path, is_dir: bool | None, *, probe: bool) -> tuple[_filemap.Kin
     try:
         st = path.lstat()
     except (FileNotFoundError, NotADirectoryError):
-        return given or "file", True
+        if _missing(path, root):
+            return given or "file", True
+        return given or "any", False
     except OSError:
         return given or "any", False
     if given is not None:
@@ -1209,9 +1215,44 @@ def _flavor_spelling(first: str, root: Path, flavor_folders: set[str]) -> str | 
     return None
 
 
-_NO_ROW = "no file-map row matches"
-_NOT_FOUND = "not found; nothing is at this path"
-_AS_FOLDER = " (end it with / to look it up as a folder)"
+def _missing(path: Path, root: Path) -> bool:
+    """Whether nothing is at `path`, found by walking down from `root` one
+    `lstat` at a time: True at the first "no such file" or "not a
+    directory". A link on the way (a symlink, a junction, or a reparse point
+    that names another path) is never followed, so what is behind it is not
+    known: False, as for any other error, or for a path that is there."""
+    parts = _relative_parts(path, root)
+    if parts is None:
+        return False
+    current = root
+    for part in parts:
+        current = current / part
+        try:
+            st = current.lstat()
+        except (FileNotFoundError, NotADirectoryError):
+            return True
+        except OSError:
+            return False
+        if _is_link(current, st) or _snapshot_link(st):
+            return False
+    return False
+
+
+def absent(path: Path | str, install_root: Path | str) -> bool:
+    """Whether nothing is on disk at `path` (absolute, inside
+    `install_root`): "no such file" or "not a directory" with no link on the
+    way down from the install root (M13-29). False for a path that is there,
+    one behind a link, one that cannot be read, and one outside the root."""
+    return _missing(_normalize(Path(path)), _normalize(Path(install_root)))
+
+
+NO_ROW = "no file-map row matches"
+"""`Unclassified.reason` for a path that is there but has no row."""
+NOT_FOUND = "not found; nothing is at this path"
+"""How every reason for a path that is not on disk begins (M13-29)."""
+NO_ROW_LIKE = "no file-map row matches a name like this"
+AS_FOLDER = "end it with / to see what a folder by this name would be (/ works on Windows too)"
+_NOT_FOUND_REASON = f"{NOT_FOUND}, and {NO_ROW_LIKE}"
 
 
 def _no_row_reason(
@@ -1228,10 +1269,10 @@ def _no_row_reason(
     there to say otherwise, how to ask for the folder row a trailing
     separator would match (M13-29)."""
     if not absent:
-        return _NO_ROW
+        return NO_ROW
     if inferred and kind == "file" and fm.classify(parts, base, "dir") is not None:
-        return _NOT_FOUND + _AS_FOLDER
-    return _NOT_FOUND
+        return f"{_NOT_FOUND_REASON}; {AS_FOLDER}"
+    return _NOT_FOUND_REASON
 
 
 def _classify(
@@ -1249,7 +1290,7 @@ def _classify(
         return Unclassified(
             path="", base="root", flavor_folder=None, reason="the install root itself"
         )
-    kind, absent = _kind(target, is_dir, probe=probe)
+    kind, absent = _kind(target, root, is_dir, probe=probe)
     inferred = is_dir is None
     fm = _filemap.load()
     flavor = _flavor_spelling(rel[0], root, flavor_folders)

@@ -41,9 +41,13 @@ ACCOUNT = "90000001#6"
 REALM = "Labrealmb Partb Partc Partd"
 FIRST = "Labchard"  # a `<Realm>/<First>/` character folder in the capture
 NUMERIC_CHAR = "1/Labcharb-Labrealmd"  # a `<digits>/<First>-<Second>/` one
+SECOND = "_constructed_"  # a second flavor folder, a copy of the capture (constructed)
 NOT_FOUND = "not found; nothing is at this path"
-AS_FOLDER = " (end it with / to look it up as a folder)"
-NOT_FOUND_WORDS = "not found; nothing is at this path, and no file-map row matches it"
+NO_ROW_LIKE = "no file-map row matches a name like this"
+NOT_FOUND_REASON = f"{NOT_FOUND}, and {NO_ROW_LIKE}"
+AS_FOLDER = "end it with / to see what a folder by this name would be (/ works on Windows too)"
+NOT_FOUND_WORDS = NOT_FOUND_REASON
+NO_ROW = "no file-map row matches"
 
 runner = CliRunner()
 
@@ -83,8 +87,8 @@ def ok(*args: str) -> Any:
     return result
 
 
-def explain_json(path: str) -> cli.ExplainReport:
-    return cli.ExplainReport.model_validate_json(ok("explain", path, "--json").stdout)
+def explain_json(path: str, *args: str) -> cli.ExplainReport:
+    return cli.ExplainReport.model_validate_json(ok("explain", path, *args, "--json").stdout)
 
 
 A = f"WTF/Account/{ACCOUNT}"
@@ -136,17 +140,29 @@ def test_a_missing_path_gets_its_row_or_not_found(
         report = explain_json(typed)
         text = ok("explain", typed).stdout
         assert report.stat is None
+        assert report.absent is True
         if entry_id is None:
             assert isinstance(report.result, layout.Unclassified), typed
-            assert report.result.reason == NOT_FOUND + (AS_FOLDER if as_folder else ""), typed
+            tail = f"{NO_ROW_LIKE}; {AS_FOLDER}" if as_folder else NO_ROW_LIKE
+            assert report.result.reason == f"{NOT_FOUND}, and {tail}", typed
             assert report.verdict.level == "unclassified"
             assert report.verdict.words.startswith(NOT_FOUND_WORDS)
-            assert text.startswith(f"{typed}: no file-map row")
-            assert f": {report.result.reason}\n" in text
+            # What is (not) there leads; what the map says follows.
+            first, second = text.splitlines()[:2]
+            assert first.startswith(typed) and first.endswith(f": {NOT_FOUND}"), text
+            assert second == f"  {tail}", text
         else:
             assert isinstance(report.result, layout.Classified), typed
             assert report.result.entry.id == entry_id
             assert f"  file-map row: {entry_id} " in text
+            noun = "folder" if path.endswith("/") else "file"
+            assert f"  on disk:      nothing at this path; this is what a {noun} here would be" in (
+                text
+            )
+            # No view or view hint: each would fail on a path with nothing on it.
+            assert report.views == []
+            assert report.views_note == "nothing is at this path, so no wowlab command can show it"
+            assert all(h.argv[0] == "snap" for h in report.hints), report.hints
 
 
 def _folders_under_accounts(flavor: Path) -> list[Path]:
@@ -175,6 +191,7 @@ def test_no_missing_path_under_accounts_matches_a_folder_row_constructed(flavor:
             report = explain_json(rel)
             checked += 1
             assert report.verdict.level != "folder", rel
+            assert report.absent is True, rel
             if isinstance(report.result, layout.Classified):
                 entry = report.result.entry
                 assert entry.matches(tuple(rel.split("/")), "file"), (rel, entry.id)
@@ -223,7 +240,7 @@ def test_layout_classify_of_a_missing_path_constructed(flavor: Path) -> None:
     lay = layout.Layout.for_flavor(install.discover(flavor.parent).flavors[0], flavor.parent)
     missing = lay.classify(f"WTF/Account/{ACCOUNT}/unknown.txt")
     assert isinstance(missing, layout.Unclassified)
-    assert missing.reason == NOT_FOUND + AS_FOLDER
+    assert missing.reason == f"{NOT_FOUND_REASON}; {AS_FOLDER}"
     slash = lay.classify(f"WTF/Account/{ACCOUNT}/unknown.txt/")
     assert isinstance(slash, layout.Classified) and slash.entry.id == "realm-folder"
     # The caller's word is taken, and nothing is probed on disk for it.
@@ -231,10 +248,14 @@ def test_layout_classify_of_a_missing_path_constructed(flavor: Path) -> None:
     assert isinstance(told, layout.Classified) and told.entry.id == "realm-folder"
     told_file = lay.classify(f"WTF/Account/{ACCOUNT}/unknown.txt", is_dir=False)
     assert isinstance(told_file, layout.Unclassified)
-    assert told_file.reason == "no file-map row matches"
+    assert told_file.reason == NO_ROW
     # Under a file: "not a directory" is absent too.
     under_file = lay.classify("WTF/Config.wtf/unknown.txt")
-    assert isinstance(under_file, layout.Unclassified) and under_file.reason == NOT_FOUND
+    assert isinstance(under_file, layout.Unclassified)
+    assert under_file.reason == NOT_FOUND_REASON
+    assert layout.absent(flavor / "WTF" / "Config.wtf" / "unknown.txt", flavor.parent)
+    assert not layout.absent(flavor / "WTF" / "Config.wtf", flavor.parent)
+    assert not layout.absent(flavor.parent.parent / "elsewhere.txt", flavor.parent)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
@@ -255,7 +276,10 @@ def test_an_unreadable_folder_is_not_not_found_constructed(flavor: Path) -> None
 def test_verdict_words_for_a_missing_path() -> None:
     gate_path = verdict_of(None, "flavor", "WTF/unknown.txt", missing=True)
     assert gate_path.level == "unclassified" and gate_path.label == "unknown"
-    assert gate_path.words.startswith(NOT_FOUND_WORDS)
+    assert gate_path.words == (
+        f"{NOT_FOUND_WORDS}; `snap restore --paths` naming it puts back a snapshot's copy, "
+        "or removes a file created here after that snapshot"
+    )
     assert gate_path.restorable is True
     elsewhere = verdict_of(None, "flavor", "Cache/unknown.txt", missing=True)
     assert elsewhere.words == NOT_FOUND_WORDS and elsewhere.restorable is False
@@ -266,3 +290,129 @@ def test_verdict_words_for_a_missing_path() -> None:
     assert verdict_of(entry, "flavor", "WTF/x.lua", missing=True) == verdict_of(
         entry, "flavor", "WTF/x.lua"
     )
+
+
+# ─── several flavors (review of #242) ────────────────────────────────────────
+
+
+@pytest.fixture
+def two(root: Path) -> Path:
+    """A second flavor folder, a copy of the capture, and a file only it holds."""
+    shutil.copytree(CAPTURE / "forever", root / SECOND)
+    (root / SECOND / "WTF" / "OnlySecond-constructed.txt").write_bytes(b"")
+    assert {f.folder for f in install.discover(root).flavors} == {FLAVOR, SECOND}
+    return root
+
+
+def test_with_several_flavors_an_existing_path_keeps_mains_words(two: Path) -> None:
+    """No --flavor: the path is read at the install root, where nothing is,
+    but it is in a flavor folder, so it is not "not found"."""
+    text = ok("explain", "WTF/Config.wtf").stdout
+    assert text.startswith(
+        "WTF/Config.wtf: no file-map row: no file-map row matches\n"
+        "  (with several flavors, pass --flavor to read PATH inside one of them)\n"
+    ), text
+    report = explain_json("WTF/Config.wtf")
+    assert isinstance(report.result, layout.Unclassified)
+    assert report.result.reason == NO_ROW
+    assert report.absent is False
+    assert not report.verdict.words.startswith("not found")
+
+
+def test_a_path_in_another_flavor_only_is_not_not_found_constructed(two: Path) -> None:
+    for args in (["--flavor", FLAVOR], []):
+        report = explain_json("WTF/OnlySecond-constructed.txt", *args)
+        assert report.absent is False, args
+        assert isinstance(report.result, layout.Unclassified)
+        assert report.result.reason == NO_ROW, args
+        text = ok("explain", "WTF/OnlySecond-constructed.txt", *args).stdout
+        assert NOT_FOUND not in text, text
+
+
+def test_with_several_flavors_a_path_missing_everywhere_is_not_found_constructed(
+    two: Path,
+) -> None:
+    report = explain_json("WTF/zz-missing-constructed.txt")
+    assert report.absent is True
+    assert isinstance(report.result, layout.Unclassified)
+    assert report.result.reason.startswith(NOT_FOUND_REASON)
+    assert report.verdict.words.startswith(NOT_FOUND_WORDS)
+    text = ok("explain", "WTF/zz-missing-constructed.txt").stdout
+    assert text.startswith(f"WTF/zz-missing-constructed.txt: {NOT_FOUND}\n"), text
+
+
+# ─── links (review of #242) ──────────────────────────────────────────────────
+
+
+def _link(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot make a symlink here: {exc}")
+
+
+@pytest.mark.parametrize(
+    "dangling", [False, True], ids=["constructed-link", "constructed-dangling"]
+)
+def test_a_path_behind_a_link_is_never_not_found(
+    tmp_path: Path, flavor: Path, dangling: bool
+) -> None:
+    """Nothing is followed through a link, so what is behind it is unknown:
+    the words stay main's, never "not found" or the folder lookup hint."""
+    outside = tmp_path / "outside"
+    if not dangling:
+        outside.mkdir()
+    account = flavor / "WTF" / "Account" / ACCOUNT
+    _link(account / "LinkDir", outside)
+    for rel in (
+        f"WTF/Account/{ACCOUNT}/LinkDir/inner/missing.txt",
+        f"WTF/Account/{ACCOUNT}/LinkDir/missing.txt",
+    ):
+        lay = layout.Layout.for_flavor(install.discover(flavor.parent).flavors[0], flavor.parent)
+        found = lay.classify(rel)
+        assert not (
+            isinstance(found, layout.Unclassified) and found.reason.startswith(NOT_FOUND)
+        ), (rel, found)
+        assert not layout.absent(flavor / rel, flavor.parent), rel
+        report = explain_json(rel)
+        assert report.absent is False, rel
+        assert not report.verdict.words.startswith("not found"), rel
+        text = ok("explain", rel).stdout
+        assert NOT_FOUND not in text and "end it with /" not in text, text
+    assert not outside.exists() or not any(outside.iterdir())  # L1: nothing made behind it
+
+
+# ─── what a missing path a row describes would be (review of #242) ───────────
+
+
+def test_a_missing_savedvariables_file_says_when_the_client_writes_it_constructed(
+    flavor: Path,
+) -> None:
+    text = ok("explain", f"WTF/Account/{ACCOUNT}/SavedVariables/NoSuchAddon.lua").stdout
+    assert (
+        "  on disk:      nothing at this path; this is what a file here would be; "
+        "the client writes it at logout or /reload\n"
+    ) in text
+
+
+def test_a_missing_path_a_any_depth_row_names_is_a_file_or_folder_constructed(
+    flavor: Path,
+) -> None:
+    report = explain_json("Interface/AddOns/NoSuchAddon-constructed")
+    assert isinstance(report.result, layout.Classified)
+    text = ok("explain", "Interface/AddOns/NoSuchAddon-constructed").stdout
+    assert "this is what a file or folder here would be" in text, text
+
+
+def test_the_first_snapshot_hint_for_a_missing_path_constructed(flavor: Path) -> None:
+    report = explain_json(f"WTF/Account/{ACCOUNT}/zz-missing-constructed.txt")
+    assert report.absent is True
+    does = [h.does for h in report.hints if h.argv[:2] == ["snap", "create"]]
+    assert does == [
+        "take a snapshot, so a file created here later can be removed with "
+        "`snap restore --paths` naming it"
+    ], report.hints
+    present = explain_json("WTF/Config.wtf")
+    assert [h.does for h in present.hints if h.argv[:2] == ["snap", "create"]] == [
+        "take a snapshot, so a later change to this file can be put back"
+    ]

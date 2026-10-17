@@ -651,8 +651,9 @@ def test_classify_outside_root_other_dirs_and_hints_constructed(tmp_path: Path) 
     # Not on disk and not written as a folder: no folder row by accident (M13-29).
     missing_any = classify(f"{FLAVOR}/WTF/Account/ACC/9", install)
     assert isinstance(missing_any, Unclassified)
-    assert missing_any.reason == "not found; nothing is at this path" + (
-        " (end it with / to look it up as a folder)"
+    assert missing_any.reason == (
+        "not found; nothing is at this path, and no file-map row matches a name like this; "
+        "end it with / to see what a folder by this name would be (/ works on Windows too)"
     )
     missing_slash = classify(f"{FLAVOR}/WTF/Account/ACC/9/", install)
     assert isinstance(missing_slash, Classified) and missing_slash.entry.id == "numeric-folder"

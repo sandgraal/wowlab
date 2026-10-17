@@ -49,7 +49,18 @@ _SERVER_MAY_REPLACE = "(server may replace)"
 _SERVER_WORDS = "; the server may replace it at login (sync settings: wowlab doctor)"
 _UNCLASSIFIED_WORDS = "no file-map row; wowlab does not know what this file is"
 _UNCLASSIFIED_FOLDER_WORDS = "no file-map row; wowlab does not know what this folder is"
-_NOT_FOUND_WORDS = "not found; nothing is at this path, and no file-map row matches it"
+# The same words as `layout`'s reason for such a path (M13-29).
+_NOT_FOUND_WORDS = (
+    "not found; nothing is at this path, and no file-map row matches a name like this"
+)
+# What a restore can do at a path with nothing on it: put back a copy a
+# snapshot holds, or, naming the path with --paths, delete a file created
+# there after the snapshot (`guard` deletes a named path the snapshot's
+# subtrees cover but that it does not hold).
+_MISSING_RESTORED = (
+    "; `snap restore --paths` naming it puts back a snapshot's copy, "
+    "or removes a file created here after that snapshot"
+)
 _LINK_WORDS = (
     "a link, or inside one; wowlab never follows it or writes through it, "
     "and a restore does not put it back"
@@ -346,9 +357,7 @@ def verdict_of(
         )
     if entry is None:
         if missing:
-            words = _NOT_FOUND_WORDS + (
-                _UNCLASSIFIED_RESTORED if can_restore and not folder else ""
-            )
+            words = _NOT_FOUND_WORDS + (_MISSING_RESTORED if can_restore and not folder else "")
         elif folder:
             words = _UNCLASSIFIED_FOLDER_WORDS
         else:
