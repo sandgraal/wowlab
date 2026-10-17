@@ -359,7 +359,7 @@ Cover these:
 
 ---
 
-## [ ] M13-27 — The explorer view, second stage: whole install, gaps, snapshot facts, previews
+## [x] M13-27 — The explorer view, second stage: whole install, gaps, snapshot facts, previews
 **Size:** M · **Depends on:** M13-22, M13-23, M13-25, M13-27T, M13-32, M13-33
 
 This builds on M13-25's view, per §15.6.
@@ -422,7 +422,7 @@ Found in the M13-03 review. `lab/core/pyproject.toml` packaged only `src/wowlab_
 
 ---
 
-## [ ] M13-15T — Long paths on Windows: graders
+## [x] M13-15T — Long paths on Windows: graders
 **Size:** S · **Depends on:** M13-02 · **[TEST]** (test-writer only)
 
 Found by M13-02. With `LongPathsEnabled=0`, the default on many player PCs, Windows refuses plain paths longer than 260 characters, so `guard` and `snapshot` cannot reach a file deep in an install. Write `xfail(strict=True)` graders that run on `windows-latest`: a snapshot, a restore and a `guard` write of a file whose path exceeds 260 characters, with the setting off (the CI job can turn it off in a step). Readers open plain paths too (`install` discovery, `doctor`, the format parsers), so cover a read of such a file as well. M13-02's experiment failed while building the deep tree, before any Lab code ran, so which modules fail is not yet shown. `guard.py` is load-bearing, so the graders land first.
@@ -495,7 +495,7 @@ Add `pytest-xdist` to the root `dev` group, as a dev tool rather than a runtime 
 
 ---
 
-## [ ] M13-19 — wiki-daily: post-model gates in their own job
+## [x] M13-19 — wiki-daily: post-model gates in their own job
 **Size:** M · **Depends on:** M13-16
 
 From the M13-16 reviews (security-reviewer, and the PR review of #191). Within one job, the gates after the model cannot fully protect themselves from a model that bypasses its permissions.
@@ -520,7 +520,7 @@ Move `check_wiki`, gitleaks and the report out of `improve` into a job on a fres
 
 ---
 
-## [ ] M13-20T — child-process memory probes measure pytest on Linux
+## [x] M13-20T — child-process memory probes measure pytest on Linux
 **Size:** S · **Depends on:** — · **[TEST]** (test-writer only)
 
 Found by M13-17T and confirmed in its code review. On Linux, `ru_maxrss` carries over across `execve`, so a child that reads its own `RUSAGE_SELF` peak starts at the high-water mark of the pytest process that launched it. M13-17T's probe read a flat 948 MiB until it switched to `VmHWM` from `/proc/self/status`. Two more probes have the same fault, so on Linux they see no growth and pass without testing anything; they are honest only on macOS:
@@ -534,7 +534,7 @@ Apply M13-17T's fix to every child that measures memory: read `VmHWM` on Linux a
 
 ---
 
-## [ ] M13-28 — File map: executables inside an addon folder are "no"
+## [x] M13-28 — File map: executables inside an addon folder are "no"
 **Size:** S · **Depends on:** M13-21
 
 Found in the domain review of #195 (M13-21). A file such as `Interface/AddOns/Foo/bin/helper.exe` or `run.bat` matches the `addon` row, so `explain` calls it editable "through wowlab's write gate". The gate never writes an executable (L7, `guard`'s allowlist). Add a file-map row before `addon`, with Edit `no`, for executables and scripts under `Interface/AddOns/`. The row must classify exactly the paths `guard._is_executable` refuses. That predicate checks every path component (for example `Helper.app/Contents/MacOS/x` and `lib.bundle/y`), versioned shared libraries (`libfoo.so.1`) and its full suffix list (`.js`, `.sh`, `.ps1`, `.command`, `.app`, `.framework` and more). A test runs both over a broad table of paths and compares them. Regenerate `docs/LAB_FILE_MAP.md`.
@@ -711,7 +711,7 @@ Found in the domain and code reviews of #235 (M13-35). `install._is_link` checks
 ## [ ] M13-38 — `snap restore`: a whole restore skips a changed or missing addon executable
 **Size:** S · **Depends on:** M13-28, M13-30
 
-Found in the domain and code reviews of #231 (M13-28). M13-28 gave addon executables an Edit `no` row, but a whole `snap restore` asks the gate for the whole plan first (`tx.restore(id, None)`), and the gate refuses it when an executable in the snapshot changed or went missing, before `_client_managed` can skip anything. So the restore exits 3 and puts nothing back, and the Edit `no` promise ("left alone and counted in the plan") does not hold for this one row. M13-30 built the by-name route for screenshots; reuse it: entries under the `addon-executable` row that the disk no longer matches go in the plan's skipped list with their row, and the rest is restored by name. `guard.py` does not change; if a fix seems to need it, stop and report (that needs a `T` ticket first). The review probe `lab/core/tests/review/test_m13_28_whole_restore_refuses_an_edit_no_addon_executable.py` is the grader: activate it by deleting its marker only. The "Skipped" header must not offer `--paths` for an executable, because `--paths` naming one is refused too.
+Found in the domain and code reviews of #231 (M13-28). M13-28 gave addon executables an Edit `no` row, but a whole `snap restore` asks the gate for the whole plan first (`tx.restore(id, None)`), and the gate refuses it when an executable in the snapshot changed or went missing, before `_client_managed` can skip anything. So the restore exits 3 and puts nothing back, and the Edit `no` promise ("left alone and counted in the plan") does not hold for this one row. M13-30 built the by-name route for screenshots; reuse it: entries under the `addon-executable` row that the disk no longer matches go in the plan's skipped list with their row, and the rest is restored by name. `guard.py` does not change; if a fix seems to need it, stop and report (that needs a `T` ticket first). The review probe `lab/core/tests/review/test_m13_28_whole_restore_refuses_an_edit_no_addon_executable.py` is the grader: activate it by deleting its marker only. The "Skipped" header must not offer `--paths` for an executable, because `--paths` naming one is refused too. *Added 2026-10-17 (M13-28 domain re-review):* the `snap restore --paths` help still promises "A named path is restored even when its file-map row says wowlab leaves it alone"; make it read "…leaves it alone, except an executable, which never is", and when the gate refuses a named executable, say what the owner can do: name the other files with `--paths`, or reinstall the addon to get its executable back.
 
 **Acceptance:** the probe passes; a whole restore of a labelled constructed snapshot with a changed `helper.sh` and a removed `gone.dll` restores the `.toc` and lists both executables as skipped by their row; `--paths` on either is still refused with the gate's reason; `--json` validates; `make ci` green; reviewed by `security-reviewer` and `code-reviewer`.
 

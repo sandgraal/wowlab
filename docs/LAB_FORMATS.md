@@ -243,8 +243,10 @@ shows; anything wider is **[verify]**.
   control, type) and include a bit for that player's current target, so the
   same NPC can log other values. Do not key on them. *Amended 2026-10-17
   (M13-08):* do not key on the whole value; the affiliation field
-  (`& 0xF`) and the type field (`& 0xFC00`) select the logging player's own
-  casts (see the 2026-10-17 entry in the breakage log below).
+  (`& 0xF`), the type field (`& 0xFC00`) and, on the **[verify]**
+  assumption that a charmed player logs another controller, the control
+  field (`& 0x300` = `0x100`, "controlled by a player") select the logging
+  player's own casts (see the 2026-10-17 entry under Amendments below).
 - Records seen: `SPELL_CAST_START`, `SPELL_CAST_SUCCESS`,
   `SPELL_CAST_FAILED`, `SPELL_AURA_APPLIED`, `SPELL_AURA_REFRESH`,
   `SPELL_AURA_REMOVED`, `SPELL_DAMAGE`, `SPELL_PERIODIC_DAMAGE`,
@@ -747,8 +749,11 @@ Dated entries, newest last. Each names the fixture that prompted it.
   (`0x800`), plus the current-target bit (`0x10000`). The NPC logs `0x10a48`
   on every one of its lines, so "flags change with the target" is still
   only community documentation. `combatlog.cast_counts` (M13-08) selects
-  the player's own casts by requiring affiliation exactly "mine" and type
-  exactly "player"; the §8 text above is amended to say so. Spell ids in the
+  the player's own casts by requiring affiliation exactly "mine", type
+  exactly "player" and control exactly "player" (the last on the
+  **[verify]** assumption that a charmed or mind-controlled player logs
+  another controller; no capture shows it); the §8 text above is amended
+  to say so. Spell ids in the
   log are per rank: Shadow Bolt 695 is the spellbook's "Rank 2" and
   Immolate 348 its "Rank 1", while the later schema-3 record (build 70425)
   holds ranks 705 and 707 on the bars; the log predates the record, which
