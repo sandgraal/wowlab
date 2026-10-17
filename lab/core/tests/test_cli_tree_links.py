@@ -367,6 +367,31 @@ def test_a_link_at_the_install_root_reads_as_one_in_a_flavor_folder(
     assert judged[f"{FLAVOR}/WTF/flavorlink"]["note"] == expected
 
 
+def test_a_two_link_loop_is_where_it_points_unknown_constructed(root: Path) -> None:
+    """Constructed (POSIX, M13-35 round 2): two real symlinks in `WTF/` that
+    name each other. Their link text reads, but resolving them loops, so
+    nothing says where they point: neither is called inside or outside."""
+    wtf = root / FLAVOR / "WTF"
+    try:
+        (wtf / "loop-a").symlink_to("loop-b")
+        (wtf / "loop-b").symlink_to("loop-a")
+    except (OSError, NotImplementedError) as exc:  # Windows without the privilege
+        pytest.skip(f"cannot create a symlink here: {exc}")
+    links = {
+        s.path: s for s in layout.Layout(root / FLAVOR, install_root=root).inventory().symlinks
+    }
+    assert (links["WTF/loop-a"].target, links["WTF/loop-a"].inside_install) == ("loop-b", None)
+    assert (links["WTF/loop-b"].target, links["WTF/loop-b"].inside_install) == ("loop-a", None)
+    items = {i["path"]: i for i in _tree(root)["items"]}
+    assert (
+        items["WTF/loop-a"]["note"] == "link to loop-b (where it points is unknown), not followed"
+    )
+    assert (
+        items["WTF/loop-b"]["note"] == "link to loop-a (where it points is unknown), not followed"
+    )
+    assert items["WTF/loop-a"]["kind"] == "symlink"
+
+
 def test_link_facts_of_a_link_whose_text_cannot_be_read_constructed(tmp_path: Path) -> None:
     """Constructed: a folder stands in for a WCI link, whose link text
     `os.readlink` refuses: no target, and where it points is unknown."""

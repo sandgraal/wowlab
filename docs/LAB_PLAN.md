@@ -259,7 +259,10 @@ name-surrogate bit (a WCI link, a WSL symlink). Each is reported in
 `Inventory.symlinks` and never walked. A WCI link or a WSL symlink has no
 link text `os.readlink` can read, so it has no target and no inside or
 outside answer: `Symlink.target` and `Symlink.inside_install` are None, and
-`tree` says "link (where it points is unknown), not followed". `tree` words
+`tree` says "link (where it points is unknown), not followed". A link whose
+text reads but whose resolution fails (a loop) has a target and no inside
+or outside answer either: "link to <target> (where it points is unknown),
+not followed". `tree` words
 a link the same way at the install root and in a flavor folder: "link to
 <target> (inside|outside the install), not followed". A flavor folder that
 is such a link is listed by `tree` as a link, and nothing in it is listed
@@ -272,8 +275,9 @@ named in `Inventory.reparse_points` (M13-33).
 followed**, whether they point inside the install or outside it. Each is
 reported in `Inventory.symlinks` with its link text and `inside_install`,
 and left out of the typed lists. `inside_install` uses `Path.resolve()`,
-which reads link text and metadata but never lists or opens anything
-outside. (2) **Signatures:** `classify(path, install, *, is_dir=None)`
+which reads link text and metadata but never lists or reads anything
+outside; on Windows, resolving opens a link with no access to read its
+final name (wording corrected 2026-10-17, M13-35). (2) **Signatures:** `classify(path, install, *, is_dir=None)`
 (flavor folders are the ones discovery reported; the install root and
 flavor folder are also matched by their on-disk spelling on a
 case-insensitive volume) and `Layout.classify(path, *, is_dir=None)`. Both

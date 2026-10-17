@@ -185,7 +185,8 @@ class Symlink(_Model):
     target: FsText | None  # the link text as stored; None if it cannot be read
     # Whether the target resolves inside the install root. None when that is
     # unknown (M13-35): the link text cannot be read (a WCI link or a WSL
-    # symlink on Windows), or resolving it ends at the link itself.
+    # symlink on Windows), or resolving it fails (a loop) or ends at the
+    # link itself (`link_facts`).
     inside_install: bool | None
     entry_id: str | None  # file-map entry for the link's own location
 
@@ -454,9 +455,11 @@ def link_facts(path: Path, real_root: Path | None) -> tuple[str | None, bool | N
     """`(target, inside)` for the link at `path`: its link text exactly as
     stored (not normalised by pathlib), and whether it resolves inside
     `real_root` (the install root, resolved; None when that failed). Never
-    lists or opens anything through the link. `inside` is None when it is
+    lists or reads anything through the link; on Windows, resolving opens it
+    with no access to read its final name. `inside` is None when it is
     unknown (M13-35): the link text cannot be read (`os.readlink` refuses a
-    WCI link or a WSL symlink on Windows), or resolving it ends at the link
+    WCI link or a WSL symlink on Windows), the install root could not be
+    resolved, or resolving the link fails (a loop) or ends at the link
     itself, so nothing says where it points."""
     try:
         target: str | None = os.readlink(path)  # noqa: PTH115
@@ -466,13 +469,13 @@ def link_facts(path: Path, real_root: Path | None) -> tuple[str | None, bool | N
         return None, None
     try:
         if real_root is None:
-            return target, False
+            return target, None
         resolved = path.resolve()
         if resolved == path.parent.resolve() / path.name:
             return target, None
         return target, _is_within(resolved, real_root)
-    except (OSError, RuntimeError):
-        return target, False
+    except (OSError, RuntimeError):  # a loop: RuntimeError on 3.12, OSError later
+        return target, None
 
 
 class Layout:
