@@ -672,3 +672,21 @@ Use one link test for the walk, the top-level scan and the flavor-folder verdict
 - The text output for paths with no reparse point stays byte-identical.
 - `make ci` green.
 - Reviewed by `domain-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-36 — `lab (windows)`: four M13-22/M13-23 tests assume a POSIX host
+**Size:** S · **Depends on:** M13-22, M13-23
+
+Found on 2026-10-17. `windows.yml` is red on `main` at b340d00 (https://github.com/sandgraal/wowlab/actions/runs/38994075858) and was at 209bcb8 too. The failures came in with #203 and #204 and went unseen because the job is off the PR path (ADR-0014 amendment of 2026-10-15). Four tests fail, all in test code; the log shows nothing wrong in the library:
+
+- `lab/core/tests/test_gaps.py::test_gaps_json_keeps_undecodable_file_names_constructed`: `os.fsdecode(b"bad-\xff-constructed.txt")` raises `UnicodeDecodeError` on Windows before the guarded write, so the `except (OSError, UnicodeEncodeError)` skip never runs. NTFS names are UTF-16 and cannot be undecodable, so there is nothing for the test to grade on Windows: skip it there with a reason that says so (catching the decode error in the same skip is fine).
+- `lab/core/tests/test_cli_explain_detail.py::test_snapshot_facts_follow_the_file_on_disk` and `::test_hints_are_quoted_for_the_shell_of_the_machine` assert `hint.shell == "posix"` with `cli._shell` unpatched; on Windows it answers `powershell` by design. Pin `_shell` to `posix` for the POSIX half of each test, so both halves of the second test run on every platform.
+- `lab/core/tests/test_cli_explain_detail.py::test_hints_print_through_safe` copies a file named `Evil\x1b[31mRed.lua`; Windows refuses control characters in a name (WinError 123 from `shutil.copy2`). Skip that one name on Windows with a reason, and keep the U+202E case, which Windows accepts, running there.
+
+No library change is expected. If making a test pass on Windows seems to need one, stop and report; that is a different ticket.
+
+**Acceptance:**
+- `gh workflow run windows.yml --ref <branch>` on the branch is green before merge; the run URL and the pasted summary line are in the report.
+- Nothing is loosened on macOS or Linux: the four tests still run there as they do on `main`, and `make ci` is green.
+- Reviewed by `code-reviewer`.
