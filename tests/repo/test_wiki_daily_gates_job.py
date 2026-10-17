@@ -63,6 +63,20 @@ AFTER_THE_MODEL = [
 BLOCK_ONLY = "withhold"
 TREE_CHECK = "odd=$(find wiki -path wiki/.git -prune -o ! -type f ! -type d -print -quit)"
 PINNED = re.compile(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}")
+# Every action wiki-daily may use, at the commit reviewed for caching (M13-39).
+# None of them restores or saves an Actions cache as configured here. A bump
+# of claude-code-action means re-checking that its action.yml still runs its
+# nested oven-sh/setup-bun with `no-cache: true` (at 1d6de8c it does, and
+# that is the only action it nests).
+CACHE_REVIEWED = frozenset(
+    {
+        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        "anthropics/claude-code-action@1d6de8cb0c237e7c15e9e1bdf973826ebae490cc",
+        "astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884",
+    }
+)
 # Variables a model past its permissions would set through $GITHUB_ENV.
 MODEL_WRITES = (
     "BASH_ENV",
@@ -348,6 +362,43 @@ def test_publish_and_report_take_the_gated_artifacts_by_id() -> None:
         for step in body.get("steps", []):
             if _uses(step, "actions/download-artifact@"):
                 assert step["with"].get("name") not in GATED_ARTIFACTS, name
+
+
+def test_no_job_that_runs_or_follows_the_model_uses_a_cache() -> None:
+    # M13-39 (security review of #236): improve restored the uv cache. A
+    # model past its permissions there could write cache entries for main,
+    # which the cached jobs in ci.yml restore. The model's job, the gates
+    # and publish each install with setup-uv's cache off, restored or saved.
+    jobs = _jobs()
+    model_job, _ = _model_job(jobs)
+    assert model_job == "improve"
+    for name in (model_job, "gates", "publish"):
+        setup = [s for s in jobs[name]["steps"] if _uses(s, "astral-sh/setup-uv@")]
+        assert [s["with"]["enable-cache"] for s in setup] == [False], name
+        assert "save-cache" not in setup[0]["with"], name
+        assert "restore-cache" not in setup[0]["with"], name
+    # No job in the workflow caches anything, by any action. Some actions
+    # cache by default with no cache input (actions/setup-go,
+    # oven-sh/setup-bun), and a composite action's nested steps are not in
+    # this file, so only these actions, at these commits, may be used: a new
+    # action or a bump fails here until it is reviewed for caching.
+    # A job that calls a reusable workflow (job-level `uses:`, no steps) is
+    # rejected outright, not allowlisted: its jobs and steps are not in this
+    # file, so no review of this file could see what it caches (round 2).
+    for name, body in jobs.items():
+        assert "uses" not in body, (name, body["uses"])
+        assert "steps" in body, name
+        for step in body.get("steps", []):
+            uses = str(step.get("uses", ""))
+            if "uses" in step:
+                assert uses.split(" ")[0] in CACHE_REVIEWED, (name, uses)
+            assert not uses.startswith(("actions/cache@", "actions/cache/")), name
+            if uses.startswith("astral-sh/setup-uv@"):
+                assert step["with"]["enable-cache"] is False, name
+            assert not any("cache" in k for k in step.get("with", {}) if k != "enable-cache"), (
+                name,
+                step.get("name"),
+            )
 
 
 def test_the_model_may_not_edit_or_write_the_runners_temp_directory() -> None:
