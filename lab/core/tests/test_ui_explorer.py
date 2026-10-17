@@ -67,6 +67,11 @@ What the audit added:
   check pins `form-action` and `base-uri`. Timers given a function are no
   longer banned statically (the CSP forbids string evaluation, and the
   harness traps it).
+- Rounds 2 and 3 on #226: an `on<event>` property is trapped and banned;
+  events bubble from their target through its parents to `document` and
+  `window` (all but toggle, focus and blur), whose listeners are recorded,
+  and `activate: "everywhere"` dispatches every event any listener waits
+  for at every element the page drew, so a delegated handler is used too.
 """
 
 from __future__ import annotations
@@ -615,8 +620,8 @@ class El {
   toggleAttribute(k, on) { if (on === undefined) on = !(k in this.attrs); if (on) this.attrs[k] = ""; else delete this.attrs[k]; return on; }
   addEventListener(ev, fn) { (this.listeners[ev] = this.listeners[ev] || []).push(fn); }
   removeEventListener(ev, fn) { this.listeners[ev] = (this.listeners[ev] || []).filter((f) => f !== fn); }
-  fire(ev) { const e = { type: ev, target: this, currentTarget: this, preventDefault() {}, stopPropagation() {} }; for (const fn of this.listeners[ev] || []) fn(e); }
-  dispatchEvent(e) { for (const fn of this.listeners[e.type] || []) fn(Object.assign(e, { target: this, currentTarget: this })); return true; }
+  fire(ev) { dispatch(this, { type: ev }); }
+  dispatchEvent(e) { dispatch(this, e); return true; }
   click() { this.fire("click"); }
   focus() {}
   blur() {}
@@ -631,6 +636,31 @@ class El {
     if (i === undefined) { if (this.parentElement) this.parentElement.removeChild(this); return; }
     const o = this.options[i]; this.children.splice(this.children.indexOf(o), 1);
   }
+}
+// Events reach the target, then bubble through its parents to `document`
+// and `window` (all but toggle, focus and blur), as in a browser, so a
+// handler delegated to an ancestor, `document` or `window` runs too (security
+// review, round 3 on #226).
+const NO_BUBBLE = ["toggle", "focus", "blur"];
+const docListeners = {};
+const winListeners = {};
+function dispatch(target, init) {
+  let stopped = false;
+  const e = Object.assign({ key: "Enter", bubbles: !NO_BUBBLE.includes(init.type) }, init, {
+    target: target, preventDefault() {}, stopPropagation() { stopped = true; },
+    stopImmediatePropagation() { stopped = true; } });
+  const chain = [];
+  for (let at = target; at; at = at.parentElement) chain.push(at);
+  for (const at of chain) {
+    e.currentTarget = at;
+    for (const fn of (at.listeners[e.type] || []).slice()) fn(e);
+    if (stopped || !e.bubbles) return;
+  }
+  e.currentTarget = documentStub;
+  for (const fn of (docListeners[e.type] || []).slice()) fn(e);
+  if (stopped) return;
+  e.currentTarget = win;
+  for (const fn of (winListeners[e.type] || []).slice()) fn(e);
 }
 function matchSel(e, sel) {
   sel = sel.trim();
@@ -689,7 +719,8 @@ const documentStub = {
   createDocumentFragment: () => new El("#fragment"),
   querySelectorAll: (sel) => everywhere().filter((e) => matchSel(e, sel)),
   querySelector: (sel) => everywhere().find((e) => matchSel(e, sel)) || null,
-  addEventListener() {},
+  addEventListener(ev, fn) { (docListeners[ev] = docListeners[ev] || []).push(fn); },
+  removeEventListener(ev, fn) { docListeners[ev] = (docListeners[ev] || []).filter((f) => f !== fn); },
 };
 // Timers on a virtual clock: a tick runs every pending timer in time order
 // (an interval at most a bounded number of times), with no wall-clock wait.
@@ -715,7 +746,9 @@ const location = Object.freeze({
   replace(u) { trap("location.replace " + u); },
   reload() { trap("location.reload"); },
 });
-const win = { navigator: navigator, isSecureContext: true, open: (u) => trap("window.open " + u) };
+const win = { navigator: navigator, isSecureContext: true, open: (u) => trap("window.open " + u),
+  addEventListener(ev, fn) { (winListeners[ev] = winListeners[ev] || []).push(fn); },
+  removeEventListener(ev, fn) { winListeners[ev] = (winListeners[ev] || []).filter((f) => f !== fn); } };
 Object.defineProperty(win, "location", { get: () => location, set: (v) => trap("window.location = " + v) });
 const ctx = { window: win, document: documentStub, navigator: navigator,
   URLSearchParams, fetch: fetchStub, console, Set, Map, Promise, JSON, Error,
@@ -888,7 +921,12 @@ async function openAll() {
           for (const e of fresh) {
             done.add(e);
             if (e.tagName === "details") e.open = true;
-            for (const ev of Object.keys(e.listeners)) e.fire(ev);
+            const types = new Set(Object.keys(e.listeners));
+            if (step.activate === "everywhere") {
+              for (const t of Object.keys(docListeners)) types.add(t);
+              for (const t of Object.keys(winListeners)) types.add(t);
+            }
+            for (const ev of types) e.fire(ev);
             await tick();
           }
         }
