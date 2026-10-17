@@ -52,8 +52,9 @@ DATA_FILE = "filemap.toml"
 DOC_COLUMNS = ("Path", "What", "Written by / when", "Edit", "Tier", "Module")
 
 Base = Literal["root", "flavor", "any"]
-# What is being classified: a directory, a file, or unknown (a path that is
-# not on disk, or a symlink, which is never followed to find out).
+# What is being classified: a directory, a file, or unknown (a symlink, which
+# is never followed to find out). `layout.classify()` matches a path that is
+# not on disk as a file unless it ends in a separator (M13-29).
 Kind = Literal["file", "dir", "any"]
 
 _DIGITS = "<digits>"

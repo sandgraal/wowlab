@@ -1078,7 +1078,13 @@ class Layout:
         matched against the install-root rows."""
         p = Path(path)
         absolute = p if p.is_absolute() else self.flavor_path / p
-        return _classify(absolute, self.install_root, {self.flavor_folder}, _dir_hint(path, is_dir))
+        return _classify(
+            absolute,
+            self.install_root,
+            {self.flavor_folder},
+            _dir_hint(path, is_dir),
+            probe=is_dir is None,
+        )
 
 
 def _by_path(link: Symlink) -> str:
@@ -1125,18 +1131,35 @@ def _dir_hint(path: Path | str | PurePath, is_dir: bool | None) -> bool | None:
     return is_dir
 
 
-def _kind(path: Path, is_dir: bool | None) -> _filemap.Kind:
-    if is_dir is not None:
-        return "dir" if is_dir else "file"
+def _kind(path: Path, is_dir: bool | None, *, probe: bool) -> tuple[_filemap.Kind, bool]:
+    """`(kind, absent)`: what to match `path` as, and whether nothing is on
+    disk there. `is_dir` (the caller's word, or a trailing separator) sets
+    the kind; `probe` (the caller gave no `is_dir`) allows an `lstat`.
+
+    A path that is not on disk is matched as a file unless `is_dir` says
+    folder (M13-29): a folder-only row describes a folder that is there, and
+    a name alone cannot show it is one, so a missing `WTF/Account/A/x.txt`
+    never matches the `realm-folder` row. File rows, which name a file by
+    its shape, and `**` rows still match it. Only "no such file" and "not a
+    directory" count as absent; any other error (a folder that cannot be
+    read) leaves the kind unknown, as before.
+    """
+    given: _filemap.Kind | None = None if is_dir is None else "dir" if is_dir else "file"
+    if given is not None and not probe:
+        return given, False
     try:
         st = path.lstat()
+    except (FileNotFoundError, NotADirectoryError):
+        return given or "file", True
     except OSError:
-        return "any"
+        return given or "any", False
+    if given is not None:
+        return given, False
     if stat.S_ISDIR(st.st_mode) and not is_link(path, st):
-        return "dir"
+        return "dir", False
     if stat.S_ISREG(st.st_mode):
-        return "file"
-    return "any"  # a symlink, never followed to find out, or something else
+        return "file", False
+    return "any", False  # a symlink, never followed to find out, or something else
 
 
 def _same_file(candidate: Path, known: Path) -> bool:
@@ -1186,8 +1209,33 @@ def _flavor_spelling(first: str, root: Path, flavor_folders: set[str]) -> str | 
     return None
 
 
+_NO_ROW = "no file-map row matches"
+_NOT_FOUND = "not found; nothing is at this path"
+_AS_FOLDER = " (end it with / to look it up as a folder)"
+
+
+def _no_row_reason(
+    fm: _filemap.FileMap,
+    parts: tuple[str, ...],
+    base: Literal["root", "flavor"],
+    kind: _filemap.Kind,
+    *,
+    absent: bool,
+    inferred: bool,
+) -> str:
+    """Why no row matched, in plain words. For a path not on disk, "not
+    found", and, when it was matched as a file only because nothing is
+    there to say otherwise, how to ask for the folder row a trailing
+    separator would match (M13-29)."""
+    if not absent:
+        return _NO_ROW
+    if inferred and kind == "file" and fm.classify(parts, base, "dir") is not None:
+        return _NOT_FOUND + _AS_FOLDER
+    return _NOT_FOUND
+
+
 def _classify(
-    path: Path, root: Path, flavor_folders: set[str], is_dir: bool | None
+    path: Path, root: Path, flavor_folders: set[str], is_dir: bool | None, *, probe: bool
 ) -> Classified | Unclassified:
     target = _normalize(path)
     root = _normalize(root)
@@ -1201,7 +1249,8 @@ def _classify(
         return Unclassified(
             path="", base="root", flavor_folder=None, reason="the install root itself"
         )
-    kind = _kind(target, is_dir)
+    kind, absent = _kind(target, is_dir, probe=probe)
+    inferred = is_dir is None
     fm = _filemap.load()
     flavor = _flavor_spelling(rel[0], root, flavor_folders)
     if flavor is not None:
@@ -1213,13 +1262,16 @@ def _classify(
             path=_rel_text(sub),
             base="flavor",
             flavor_folder=flavor,
-            reason="no file-map row matches",
+            reason=_no_row_reason(fm, sub, "flavor", kind, absent=absent, inferred=inferred),
         )
     found = fm.classify(rel, "root", kind)
     if found is not None:
         return Classified(path=_rel_text(rel), base="root", flavor_folder=None, entry=found)
     return Unclassified(
-        path=_rel_text(rel), base="root", flavor_folder=None, reason="no file-map row matches"
+        path=_rel_text(rel),
+        base="root",
+        flavor_folder=None,
+        reason=_no_row_reason(fm, rel, "root", kind, absent=absent, inferred=inferred),
     )
 
 
@@ -1229,13 +1281,16 @@ def classify(
     """The file-map entry for any path inside `install`: absolute, or relative
     to the install root. Flavor folders are the ones discovery reported
     (`install.flavors`), never recognised by name (L6). `is_dir` overrides the
-    `lstat` used to tell a folder from a file; a path that does not exist,
-    or is a symlink, matches rows of either kind unless it ends in a
-    separator."""
+    `lstat` used to tell a folder from a file. A symlink matches rows of
+    either kind. A path that does not exist matches file rows and `**` rows
+    only, unless it ends in a separator (then folder rows and `**` rows), and with
+    no row it is `Unclassified` with a "not found" reason (M13-29)."""
     p = Path(path)
     absolute = p if p.is_absolute() else Path(install.root) / p
     folders = {f.folder for f in install.flavors}
-    return _classify(absolute, Path(install.root), folders, _dir_hint(path, is_dir))
+    return _classify(
+        absolute, Path(install.root), folders, _dir_hint(path, is_dir), probe=is_dir is None
+    )
 
 
 def layouts(install: Install, limits: Limits | None = None) -> tuple[Layout, ...]:

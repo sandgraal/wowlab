@@ -648,8 +648,14 @@ def test_classify_outside_root_other_dirs_and_hints_constructed(tmp_path: Path) 
     assert dotted.path == "WTF/Config.wtf" and dotted.flavor_folder == FLAVOR
     missing_dir = classify(f"{FLAVOR}/WTF/Account/ACC/", install)
     assert isinstance(missing_dir, Classified) and missing_dir.entry.id == "account-folder"
+    # Not on disk and not written as a folder: no folder row by accident (M13-29).
     missing_any = classify(f"{FLAVOR}/WTF/Account/ACC/9", install)
-    assert isinstance(missing_any, Classified) and missing_any.entry.id == "numeric-folder"
+    assert isinstance(missing_any, Unclassified)
+    assert missing_any.reason == "not found; nothing is at this path" + (
+        " (end it with / to look it up as a folder)"
+    )
+    missing_slash = classify(f"{FLAVOR}/WTF/Account/ACC/9/", install)
+    assert isinstance(missing_slash, Classified) and missing_slash.entry.id == "numeric-folder"
     forced = classify(f"{FLAVOR}/WTF/Account/ACC/9", install, is_dir=False)
     assert isinstance(forced, Unclassified) and forced.reason == "no file-map row matches"
     build = classify(".build.info", install)

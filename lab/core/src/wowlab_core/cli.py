@@ -2656,6 +2656,24 @@ def _path_kind(
     return slash or stat.S_ISDIR(st.st_mode), False, placeholder
 
 
+def _absent(install_root: Path | str, result: layout.Classified | layout.Unclassified) -> bool:
+    """Whether nothing is on disk at `explain`'s path (M13-29): "no such
+    file" or "not a directory". A path that cannot be read for another
+    reason is not absent. Call it only for a path with no link on the way
+    (`_path_kind`), so the `lstat` never goes through one."""
+    if result.base is None:
+        return False
+    under = [result.flavor_folder] if result.base == "flavor" and result.flavor_folder else []
+    target = Path(install_root).joinpath(*under, *[p for p in result.path.split("/") if p])
+    try:
+        target.lstat()
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError:
+        return False
+    return False
+
+
 def _is_inside(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 
@@ -2697,6 +2715,11 @@ def explain(
                 # chosen flavor, so every spelling of a flavor path gets the
                 # same one. `result` stays the install-root lookup, as on main.
                 judged = in_flavor
+                if _absent(inst.root, result):
+                    # Nothing at the install root: the reason is the flavor
+                    # path's, "not found" only when it is missing there too
+                    # (M13-29).
+                    result = result.model_copy(update={"reason": in_flavor.reason})
     if judged is None:
         judged = result
     folder, link, placeholder = _path_kind(inst.root, judged, path)
@@ -2711,6 +2734,11 @@ def explain(
         folder=folder,
         link=link,
         placeholder=placeholder,
+        # M13-29: the "not found" words only when nothing is there under
+        # either reading of the path.
+        missing=not link
+        and _absent(inst.root, judged)
+        and (judged is result or _absent(inst.root, result)),
     )
     lay = _flavor_layout(inst, judged)
     stat_, facts, views, note, hints = _detail(

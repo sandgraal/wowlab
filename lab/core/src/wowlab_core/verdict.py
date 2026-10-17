@@ -49,6 +49,7 @@ _SERVER_MAY_REPLACE = "(server may replace)"
 _SERVER_WORDS = "; the server may replace it at login (sync settings: wowlab doctor)"
 _UNCLASSIFIED_WORDS = "no file-map row; wowlab does not know what this file is"
 _UNCLASSIFIED_FOLDER_WORDS = "no file-map row; wowlab does not know what this folder is"
+_NOT_FOUND_WORDS = "not found; nothing is at this path, and no file-map row matches it"
 _LINK_WORDS = (
     "a link, or inside one; wowlab never follows it or writes through it, "
     "and a restore does not put it back"
@@ -297,6 +298,7 @@ def verdict_of(
     folder: bool = False,
     link: bool = False,
     placeholder: bool = False,
+    missing: bool = False,
 ) -> Verdict:
     """The verdict for `path` (relative to `base`, `/`-separated), classified
     as `entry`; `None` is a path with no file-map row. `folder`: the path is
@@ -307,12 +309,16 @@ def verdict_of(
     `placeholder` (M13-32): the path is, or lies under, a reparse point that
     is no link (`gate_refuses_stat` but not a name surrogate): the words are
     the usual ones plus a clause saying the gate does not write through it,
-    and a file is not `restorable`."""
+    and a file is not `restorable`.
+    `missing` (M13-29): nothing is on disk at the path. With no row, the
+    words say "not found" instead of naming a file or folder that is not
+    there; `restorable` is as for any path (a restore may put a file back).
+    A path with a row is judged by its row."""
     if placeholder and not link:
         # The words as for a path the gate never writes (base None), the
         # level and whether `restorable` has an answer as for this one.
-        plain = verdict_of(entry, base, path, folder=folder)
-        words = verdict_of(entry, None, path, folder=folder).words
+        plain = verdict_of(entry, base, path, folder=folder, missing=missing)
+        words = verdict_of(entry, None, path, folder=folder, missing=missing).words
         if words.startswith(_GATE_WORDS):
             words = _PLACEHOLDER_GATE_WORDS + words[len(_GATE_WORDS) :]
         else:
@@ -339,7 +345,11 @@ def verdict_of(
             link=True,
         )
     if entry is None:
-        if folder:
+        if missing:
+            words = _NOT_FOUND_WORDS + (
+                _UNCLASSIFIED_RESTORED if can_restore and not folder else ""
+            )
+        elif folder:
             words = _UNCLASSIFIED_FOLDER_WORDS
         else:
             words = _UNCLASSIFIED_WORDS + (_UNCLASSIFIED_RESTORED if can_restore else "")
