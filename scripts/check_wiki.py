@@ -7,7 +7,8 @@ no pull request, so this check is what stands between a bad run and a public
 page, and it fails closed. Exit codes: 0 no failure (one summary line);
 1 failures, none of them personal data; 3 failures, at least one of them
 personal data (the job then withholds its artifacts); 2 a usage or git error,
-or any other crash. The personal-data check runs first, so a crash after it
+or any other crash (a failed import, or a SystemExit raised inside a check,
+included). The personal-data check runs first, so a crash after it
 found something exits 3, never 2 (M13-40). One line per failure.
 
 What it checks:
@@ -75,10 +76,24 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
-import gen_command_reference as gen  # noqa: E402
+# Run as the gate, an import that fails (a missing dependency, or a module
+# that raises SystemExit(0) as it loads) must not exit 0 or 1, the codes that
+# let pages out (M13-40). Imported as a library, the error propagates.
+try:
+    import gen_command_reference as gen
 
-import wowlab_core  # noqa: E402
-from wowlab_core import install  # noqa: E402
+    import wowlab_core
+    from wowlab_core import install
+except KeyboardInterrupt:
+    raise
+except BaseException as _exc:
+    if __name__ != "__main__":
+        raise
+    print(
+        f"check_wiki: an import failed ({type(_exc).__name__}); the wiki is not checked",
+        file=sys.stderr,
+    )
+    raise SystemExit(2) from None  # EXIT_ERROR, defined below
 
 # ─── policy ──────────────────────────────────────────────────────────────────
 
@@ -912,40 +927,66 @@ def main(argv: list[str] | None = None) -> int:
     if not args.dir.is_dir():
         print("DIR is not a directory", file=sys.stderr)
         return EXIT_ERROR
-    checker = Checker(root_dir=args.dir, base=args.base)
-    crashed = False
+    # Exit 0 and 1 let pages out, and Python exits 1 on an uncaught exception
+    # (0 on SystemExit(0)), so from here on any crash exits 2, or 3 when
+    # personal data was found before it (M13-40). Only Ctrl-C passes.
+    checker: Checker | None = None
     try:
-        checker.run()
-    except subprocess.CalledProcessError:
-        print("git failed reading --base; is REF a commit in DIR?", file=sys.stderr)
-        crashed = True
-    except Exception as exc:  # any crash; Python's own exit code for one is 1
-        # The type only: an exception's text can quote the page, and the log
-        # is public. No traceback, for the same reason.
-        name = type(exc).__name__
-        print(f"check_wiki: a check failed ({name}); the wiki is not checked", file=sys.stderr)
-        crashed = True
-    for failure in sorted(checker.failures, key=_order):
-        print(failure)
-    if crashed:
-        # Exit 0 and 1 let pages out; a crash never does (M13-40). Personal
-        # data found before it still reads as personal data.
-        return EXIT_PERSONAL if any(f.personal for f in checker.failures) else EXIT_ERROR
-    if checker.failures:
-        return EXIT_PERSONAL if any(f.personal for f in checker.failures) else EXIT_FAILURES
-    size = (
-        f"; change {checker.changed_lines} lines, {checker.changed_bytes} bytes "
-        f"(cap {MAX_CHANGED_LINES}, {MAX_CHANGED_BYTES})"
-        if args.base
-        else ""
-    )
-    print(f"check_wiki: ok ({len(checker.pages)} pages{size})")
-    return EXIT_OK
+        checker = Checker(root_dir=args.dir, base=args.base)
+        crash: BaseException | None = None
+        try:
+            checker.run()
+        except KeyboardInterrupt:
+            raise
+        except BaseException as exc:
+            crash = exc
+        # What was found is printed even after a crash, withheld as always.
+        for failure in sorted(checker.failures, key=_order):
+            _print_line(str(failure))
+        if crash is not None:
+            _say_crash(crash)
+            return _crash_code(checker)
+        if checker.failures:
+            return EXIT_PERSONAL if any(f.personal for f in checker.failures) else EXIT_FAILURES
+        size = (
+            f"; change {checker.changed_lines} lines, {checker.changed_bytes} bytes "
+            f"(cap {MAX_CHANGED_LINES}, {MAX_CHANGED_BYTES})"
+            if args.base
+            else ""
+        )
+        print(f"check_wiki: ok ({len(checker.pages)} pages{size})")
+        return EXIT_OK
+    except KeyboardInterrupt:
+        raise
+    except BaseException as exc:
+        _say_crash(exc)
+        return _crash_code(checker)
+
+
+def _crash_code(checker: Checker | None) -> int:
+    personal = checker is not None and any(f.personal for f in checker.failures)
+    return EXIT_PERSONAL if personal else EXIT_ERROR
+
+
+def _say_crash(exc: BaseException) -> None:
+    # The type only: an exception's text can quote the page, and the log is
+    # public. No traceback, for the same reason.
+    if isinstance(exc, subprocess.CalledProcessError):
+        message = "git failed reading --base; is REF a commit in DIR?"
+    else:
+        message = f"check_wiki: a check failed ({type(exc).__name__}); the wiki is not checked"
+    print(message, file=sys.stderr)
+
+
+def _print_line(text: str) -> None:
+    """Print `text`, escaping what stdout's encoding cannot hold (a lone surrogate)."""
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    print(text.encode(encoding, "backslashreplace").decode(encoding))
 
 
 def _order(failure: Failure) -> tuple[str, int, str]:
     page, _, line = failure.where.rpartition(":")
-    if not line.isdigit():
+    if not re.fullmatch(r"[0-9]+", line):
         page, line = failure.where, ""
     return (page, int(line) if line else 0, failure.message)
 

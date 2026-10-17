@@ -13,12 +13,14 @@ there is personal data to find. Names and addresses are invented.
 
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, NoReturn
 
 import pytest
-from test_check_wiki import _build, _commit_all, cw
+from test_check_wiki import SCRIPTS, _build, _commit_all, cw
 
 PERSONAL = "# Extra\n\nWrite to jane.doe@example.org.\n"
 CLEAN = "# Extra\n\nNothing to see.\n"
@@ -120,3 +122,92 @@ def test_constructed_an_unexpected_error_is_not_swallowed_by_check(
     with pytest.raises(subprocess.CalledProcessError):
         monkeypatch.undo()
         cw.check(root, "no-such-ref")
+
+
+# ─── round 1 of review: crashes outside `run`, and SystemExit ────────────────
+
+
+@pytest.mark.parametrize("status", [0, 1, None])
+@pytest.mark.parametrize(("page", "code"), [(PERSONAL, 3), (CLEAN, 2)])
+def test_constructed_a_check_that_raises_system_exit_exits_3_or_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: int | None, page: str, code: int
+) -> None:
+    # e.g. a `sys.exit(0)` at the top of a module a check imports.
+    def leave(*_args: Any, **_kwargs: Any) -> NoReturn:
+        raise SystemExit(status)
+
+    root = _build(tmp_path / "wiki", Extra=page)
+    monkeypatch.setattr(cw.Checker, "check_generated", leave)
+    assert cw.main([str(root)]) == code
+
+
+def test_constructed_ctrl_c_is_not_turned_into_an_exit_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def interrupt(*_args: Any, **_kwargs: Any) -> NoReturn:
+        raise KeyboardInterrupt
+
+    root = _build(tmp_path / "wiki", Extra=PERSONAL)
+    monkeypatch.setattr(cw.Checker, "check_links", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        cw.main([str(root)])
+
+
+@pytest.mark.parametrize(("page", "code"), [(PERSONAL, 3), (CLEAN, 2)])
+def test_constructed_sorting_the_failures_that_raises_exits_3_or_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, page: str, code: int
+) -> None:
+    root = _build(tmp_path / "wiki", Extra=page + "`wowlab nope`\n")
+    monkeypatch.setattr(cw, "_order", _raise)
+    assert cw.main([str(root)]) == code
+
+
+def test_constructed_a_location_ending_in_a_non_ascii_digit_sorts_as_a_name() -> None:
+    # `'²'.isdigit()` holds and `int('²')` raises.
+    failure = cw.Failure("x:\u00b2", "unexpected file")
+    assert cw._order(failure) == ("x:\u00b2", 0, "unexpected file")
+    assert cw._order(cw.Failure("Extra.md:12", "m")) == ("Extra.md", 12, "m")
+
+
+def test_constructed_a_missing_allowed_terms_file_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _build(tmp_path / "wiki", Extra=CLEAN)
+    monkeypatch.setattr(cw, "ALLOWED_TERMS_FILE", tmp_path / "missing.txt")
+    assert cw.main([str(root)]) == cw.EXIT_ERROR
+
+
+def test_constructed_a_line_stdout_cannot_encode_is_escaped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def add_failure(self: Any, *_args: Any) -> None:
+        self.fail("\udcff.md", "a constructed failure")
+
+    root = _build(tmp_path / "wiki", Extra=CLEAN)
+    monkeypatch.setattr(cw.Checker, "check_links", add_failure)
+    assert cw.main([str(root)]) == cw.EXIT_FAILURES
+    assert capsys.readouterr().out == "\\udcff.md: a constructed failure\n"
+
+
+@pytest.mark.parametrize("body", ["raise SystemExit(0)\n", "raise ImportError('no')\n"])
+def test_constructed_an_import_that_fails_exits_2_when_run_as_the_gate(
+    tmp_path: Path, body: str
+) -> None:
+    # A `wowlab_core` ahead of the real one on the path stands in for a broken
+    # install: a missing dependency, or a module that exits as it loads.
+    fake = tmp_path / "fake" / "wowlab_core"
+    fake.mkdir(parents=True)
+    (fake / "__init__.py").write_text(body, encoding="utf-8")
+    root = _build(tmp_path / "wiki", Extra=PERSONAL)
+    env = {**os.environ, "PYTHONPATH": str(fake.parent)}
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS / "check_wiki.py"), str(root)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert result.returncode == cw.EXIT_ERROR, result.stdout + result.stderr
+    assert result.stdout == ""
+    assert "an import failed" in result.stderr
+    assert "Traceback" not in result.stderr
