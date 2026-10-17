@@ -251,6 +251,38 @@ def test_the_gated_uploads_leave_only_on_the_gate_results_word() -> None:
     assert _by_id(steps, "pages")["with"]["path"] == "out/"
 
 
+def test_the_gate_result_reads_each_verdict_from_its_own_step() -> None:
+    # Round 2 (code review): `LEAKS: success` would ignore gitleaks' verdict
+    # and still pass every constructed run. Every input is pinned to its source.
+    env = _by_id(_jobs()["gates"]["steps"], "gate")["env"]
+    assert env == {
+        "OUTSIDE": "${{ needs.improve.outputs.outside }}",
+        "WITHHOLD": "${{ needs.improve.outputs.withhold }}",
+        "HANDOFF": "${{ needs.improve.outputs.handoff }}",
+        "SETUP": "${{ steps.tree.outcome }}",
+        "DOWNLOAD": "${{ steps.download.outcome }}",
+        "APPLY": "${{ steps.apply.outcome }}",
+        "CODE": "${{ steps.check.outputs.code }}",
+        "LEAKS": "${{ steps.gitleaks.outcome }}",
+        "CLAUDE": "${{ needs.improve.outputs.claude }}",
+        "BASE": "${{ needs.improve.outputs.wiki_base }}",
+    }
+    # gitleaks' outcome is its verdict: it fails on a finding, and only its
+    # continue-on-error keeps the job going to the gate result.
+    gitleaks = _by_id(_jobs()["gates"]["steps"], "gitleaks")
+    assert gitleaks["continue-on-error"] is True
+    assert "--exit-code 1" in gitleaks["run"]
+
+
+def test_the_gates_job_runs_only_on_a_planned_run_that_was_not_cancelled() -> None:
+    # Round 2 (code review): `always()` here would run gates on a cancelled
+    # run or one whose plan failed.
+    assert _jobs()["gates"]["if"] == (
+        "${{ !cancelled() && needs.improve.outputs.plan == 'success' }}"
+    )
+    assert _jobs()["improve"]["outputs"]["plan"] == "${{ steps.plan.outcome }}"
+
+
 EXPR = re.compile(r"\$\{\{\s*(.*?)\s*\}\}")
 NEEDS_IMPROVE = re.compile(r"needs\.improve\.([\w-]+)(?:\.([\w-]+))?")
 
