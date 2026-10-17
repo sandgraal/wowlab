@@ -150,6 +150,7 @@
     gapsAsked: null, // the one `filemap gaps` run, shared by the tab and the filter
     gapsError: "", // why the last one failed; the next need asks again
     gapHits: null, // the paths "gaps only" shows, from the install root
+    choices: new Map(), // a Verdict choice's value: the filter keys it shows
   };
   // The commands the server offers (`/api/commands`): a Preview is offered
   // only for a view this list allows.
@@ -255,7 +256,8 @@
 
   function matches(node, filter) {
     if (filter.level) {
-      if (!node.item || filterKey(node.item.verdict) !== filter.level) return false;
+      const keys = explorer.choices.get(filter.level) || new Set([filter.level]);
+      if (!node.item || !keys.has(filterKey(node.item.verdict))) return false;
     }
     if (filter.text && !node.path.toLowerCase().includes(filter.text)) return false;
     if (filter.gaps && !(explorer.gapHits && explorer.gapHits.has(node.path))) return false;
@@ -363,27 +365,32 @@
     drawTree();
   }
 
-  // The Verdict filter's choices, from the data, each read as its group's
-  // label from Python.
+  // The Verdict filter's choices, from the data: one per distinct label
+  // Python gives, so paths that read the same share a choice (a placeholder
+  // reads as `no` does, and is shown with it). This groups on Python's
+  // words, not on a rule here. A choice's value is one of its filter keys,
+  // the last in sort order; `explorer.choices` maps it to all of them.
   function fillLevels(report) {
     const select = byId("level-filter");
     const chosen = select.value;
-    const levels = [];
-    const labels = new Map();
+    const byLabel = new Map();
     for (const item of listedOf(report)) {
-      const level = filterKey(item.verdict);
-      if (level && !levels.includes(level)) {
-        levels.push(level);
-        labels.set(level, labelOf(item.verdict));
-      }
+      const key = filterKey(item.verdict);
+      if (!key) continue;
+      const label = labelOf(item.verdict);
+      if (!byLabel.has(label)) byLabel.set(label, new Set());
+      byLabel.get(label).add(key);
     }
+    explorer.choices = new Map();
     while (select.options.length > 1) select.remove(1);
-    for (const level of levels) {
-      const option = make("option", labels.get(level));
-      option.value = level;
+    for (const [label, keys] of byLabel) {
+      const value = [...keys].sort().pop();
+      explorer.choices.set(value, keys);
+      const option = make("option", label);
+      option.value = value;
       select.appendChild(option);
     }
-    select.value = levels.includes(chosen) ? chosen : "";
+    select.value = explorer.choices.has(chosen) ? chosen : "";
   }
 
   // With several flavor folders, a picker that opens one of them as the
@@ -504,7 +511,7 @@
       } catch (_) {
         done = false;
       }
-      copy.textContent = done ? "Copied" : "Copy did not work in this browser";
+      copy.textContent = done ? "Copied" : "Copy did not work in this browser; use Copy in another browser";
       setTimeout(() => {
         copy.textContent = "Copy";
       }, 2000);
@@ -529,6 +536,12 @@
     const note = make("p", "Run them yourself in a terminal; this page never runs them.");
     note.className = "hint-note";
     box.appendChild(note);
+    // The line on screen writes the home folder as "~"; Copy gives Python's.
+    if (usable.some((h) => shortHome(h.command) !== h.command)) {
+      const tilde = make("p", "On screen, ~ stands for your home folder; Copy gives the full line.");
+      tilde.className = "hint-note";
+      box.appendChild(tilde);
+    }
     for (const hint of usable) box.appendChild(hintNode(hint));
   }
 
