@@ -247,7 +247,7 @@ def test_explain_says_no_for_an_executable_in_an_addon(flavor: Path, name: str) 
     assert "write gate" not in text.stdout.split("  edit:")[1].splitlines()[0]
 
 
-def test_explain_says_no_inside_an_app_bundle(flavor: Path) -> None:
+def test_explain_says_no_inside_an_app_bundle_constructed(flavor: Path) -> None:
     inner = flavor / ADDON / "Helper.app" / "Contents" / "MacOS" / "Helper"
     inner.parent.mkdir(parents=True)
     inner.write_bytes(b"constructed\n")
@@ -265,7 +265,9 @@ def test_explain_still_says_gate_for_an_ordinary_addon_file(flavor: Path) -> Non
     assert report.verdict.level == "gate"
 
 
-def test_profile_apply_names_an_added_executable_as_skipped_not_deleted(flavor: Path) -> None:
+def test_profile_apply_names_an_added_executable_as_skipped_not_deleted_constructed(
+    flavor: Path,
+) -> None:
     """Constructed: an executable added to an addon since the save. `profile
     apply` would delete it; the row's Edit `no` leaves it, and the text says so."""
     ok_save = runner.invoke(cli.app, ["profile", "save", "mods", "--preset", "addons"])
@@ -279,3 +281,24 @@ def test_profile_apply_names_an_added_executable_as_skipped_not_deleted(flavor: 
     assert "file-browser metadata, addon executables):" in text
     assert f"{ADDON}/bin/added.exe [{ROW}] (added since the profile was saved; not deleted)" in text
     assert added.exists()
+
+
+def test_views_for_paths_the_row_takes_constructed(flavor: Path) -> None:
+    """An addon folder named like a bundle is still listed by `addons list`,
+    so `explain` keeps that view; a folder named like one inside an addon,
+    and any file the row takes, have no reader."""
+    bundle = flavor / "Interface/AddOns/Foo.app"
+    bundle.mkdir()
+    (bundle / "Foo.toc").write_bytes(b"## Interface: 11508\n## Title: constructed\n")
+    (flavor / ADDON / "Helper.app").mkdir()
+    (flavor / ADDON / "run.bat").write_bytes(b"constructed\n")
+    listed = runner.invoke(cli.app, ["addons", "list", "--json"])
+    assert listed.exit_code == 0 and "Foo.app" in listed.stdout
+    folder = _explain("Interface/AddOns/Foo.app")
+    assert [v.command for v in folder.views] == [["addons", "list"]]
+    nested = _explain(f"{ADDON}/Helper.app")
+    assert nested.views == [] and nested.views_note is None  # a folder: no note
+    for rel in ("Interface/AddOns/Foo.app/Foo.toc", f"{ADDON}/run.bat"):
+        report = _explain(rel)
+        assert report.views == []
+        assert report.views_note == cli._NO_READER

@@ -2319,6 +2319,16 @@ def _addons_list(at: _At) -> list[_ViewSpec] | str:
     return f"{_NO_READER}; `wowlab addons list` lists addon folders and their TOC files"
 
 
+def _addon_executable(at: _At) -> list[_ViewSpec] | str:
+    """An addon folder named like a bundle (`Interface/AddOns/Foo.app/`) is
+    still an addon folder, and `addons list` lists it. Anything inside an
+    addon that is named like an executable, or lies inside such a folder, is
+    read by no command."""
+    if at.folder and len(at.parts) == 3:
+        return _addons_list(at)
+    return _NO_READER
+
+
 def _combat_log(at: _At) -> list[_ViewSpec] | str:
     """`log tail` reads the newest combat log only."""
     if at.newest_log is not None and at.parts[-1] == at.newest_log:
@@ -2374,6 +2384,7 @@ _VIEWS: dict[str, Callable[[_At], list[_ViewSpec] | str]] = {
     "character-wtf-config": _character_wtf,
     "addons-folder": _addons_list,
     "addon": _addons_list,
+    "addon-executable": _addon_executable,
     "blizzard-addon-export": _addons_list,
     "combat-log": _combat_log,
 }
