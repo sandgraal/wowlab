@@ -373,6 +373,14 @@ This builds on M13-25's view, per §15.6.
 
 **Gaps tab.** A new tab, drawn from `filemap gaps --json`.
 
+*Amended 2026-10-16, from the M13-27T rulings and reviews (#226):*
+- **Python changes.** M13-27 changes Python as well as the page:
+  - `SnapshotFacts` in `pathfacts.py` gains `words`, which the pane shows verbatim. That changes `explain --json`, so list it under user-facing changes.
+  - The `ExplainHint` docstring in `cli.py` is amended: a copy button copies `hint.command`, not `argv`.
+- **Placeholder badge.** Placeholder paths get their own badge class.
+- **Gaps only.** The filter shows the places in `groups`, the `catch_all` and the `links`, with their ancestors.
+- **Graders.** The graders were activated by deleting their markers only.
+
 **Acceptance:**
 - M13-25's rendering and escaping tests extend to the new panes.
 - The owner's end-to-end check, reported in the PR:
