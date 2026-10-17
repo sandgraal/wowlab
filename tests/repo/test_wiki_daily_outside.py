@@ -234,7 +234,10 @@ def test_the_gate_result_branches_on_the_check_before_running_anything() -> None
     run = step["run"]
     lines = run.splitlines()
     assert lines[0] == SYSTEM_PATH
-    assert lines[1] == 'if [ "$OUTSIDE" != success ]; then'
+    # The check's outcome is the first cause looked at (round 1: a failure
+    # and a check that never finished are named apart).
+    assert lines[1] == 'if [ "$OUTSIDE" = failure ]; then'
+    assert lines[3] == 'elif [ "$OUTSIDE" != success ]; then'
     # The first block only names the reason; the second, which runs when
     # there is one, writes the fixed report and fails, running no git.
     decide = run[: run.index("\nfi\n")]
@@ -526,13 +529,21 @@ def test_constructed_the_gate_result_reports_a_changed_checkout_and_runs_nothing
     done = _run(
         ws,
         "gate",
-        # The pages step would have been skipped; the check's outcome decides.
+        # Every later step would have been skipped; the check's outcome
+        # decides, before anything else.
         {"OUTSIDE": outcome, "APPLY": "", "CODE": "", "LEAKS": "skipped", "CLAUDE": "success"},
     )
     assert done.returncode == 1
     assert "::error::the gate did not run; nothing is pushed" in done.stdout
     report = (ws / "report" / "check.txt").read_text(encoding="utf-8")
-    assert report.startswith("check_wiki did not run: the checkout of main changed")
+    if outcome == "failure":
+        assert report.startswith("check_wiki did not run: the checkout of main changed")
+    else:
+        # M13-19 round 1: a check that never finished is not said to have
+        # found a change.
+        assert report.startswith(
+            "check_wiki did not run: the check that nothing outside the wiki changed did not finish"
+        )
     assert "planted" not in report
     # The reason leaves as the gate report (the issue quotes it); no pages.
     assert (ws / "runner" / "output").read_text(encoding="utf-8").split() == ["report=true"]

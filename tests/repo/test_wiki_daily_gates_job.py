@@ -25,6 +25,7 @@ in its job fails it.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -48,13 +49,19 @@ RUNS_A_GATE = re.compile(
 GATED_ARTIFACTS = ("wiki-daily-report", "wiki-daily-pages")
 HANDOFF = "wiki-daily-unchecked"
 # The improve steps after the model: a tripwire, a redacted diagnosis, the
-# hand-off and the cleanup for its post steps; none of them a gate.
+# staging and hand-off of the pages, and the cleanup for its post steps. None
+# of them a gate that could pass the pages; `withhold` (round 1, security)
+# runs check_wiki but can only keep them back.
 AFTER_THE_MODEL = [
     "Nothing outside the wiki changed",
     "Diagnose the Claude step (redacted)",
-    "Hand the pages to the gates (unchecked)",
+    "Stage the pages for the gates",
+    "Withhold pages with personal data",
+    "Hand the pages to the gates",
     "Leave nothing in repo/ for the post steps",
 ]
+BLOCK_ONLY = "withhold"
+TREE_CHECK = "odd=$(find wiki -path wiki/.git -prune -o ! -type f ! -type d -print -quit)"
 PINNED = re.compile(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}")
 # Variables a model past its permissions would set through $GITHUB_ENV.
 MODEL_WRITES = (
@@ -119,10 +126,23 @@ def test_no_gate_runs_after_the_model_in_its_job() -> None:
     assert [s["name"] for s in after] == AFTER_THE_MODEL
     for step in after:
         assert step.get("id") not in GATE_IDS, step["name"]
-        assert not RUNS_A_GATE.search(_code(step)), step["name"]
+        if step.get("id") != BLOCK_ONLY:
+            assert not RUNS_A_GATE.search(_code(step)), step["name"]
         # No gated artifact leaves the model's job.
         if _uses(step, "actions/upload-artifact@"):
             assert step["with"]["name"] == HANDOFF
+    # The one exception can only withhold the pages: it writes no output, it
+    # fails (and only fails) on check_wiki's personal-data or error exit,
+    # and the hand-off needs its success.
+    block = _by_id(jobs[job]["steps"], BLOCK_ONLY)
+    assert block["continue-on-error"] is True
+    run = block["run"]
+    assert "GITHUB_OUTPUT" not in run and "GITHUB_ENV" not in run
+    assert "uv run --frozen python scripts/check_wiki.py ../handoff > /dev/null 2>&1" in run
+    assert re.findall(r"\bexit\b.*", run) == ["exit 1"]
+    handoff = _by_id(jobs[job]["steps"], "handoff")
+    assert "steps.withhold.outcome == 'success'" in handoff["if"]
+    assert handoff["with"]["path"] == "handoff/"
     # The gate steps are all in gates, and nowhere else.
     for name, body in jobs.items():
         ids = {s.get("id") for s in body.get("steps", [])}
@@ -167,7 +187,7 @@ def test_the_gates_job_runs_on_a_fresh_runner_with_nothing_of_the_models() -> No
         "path": "repo",
         "persist-credentials": False,
     }
-    clone = _by_id(steps, "wiki")["run"]
+    clone = next(s for s in steps if s.get("name", "").startswith("Clone the wiki"))["run"]
     assert 'git clone --quiet "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.wiki.git" wiki' in clone
     assert 'checkout --quiet --detach "$BASE"' in clone
     # From improve's runner, the pages only: one download, of the hand-off.
@@ -176,14 +196,59 @@ def test_the_gates_job_runs_on_a_fresh_runner_with_nothing_of_the_models() -> No
     assert downloads[0]["with"] == {"name": HANDOFF, "path": "incoming"}
     handoff = _by_id(jobs["improve"]["steps"], "handoff")
     assert handoff["with"]["name"] == HANDOFF
-    assert handoff["with"]["path"] == "wiki/*.md"
     assert handoff["with"]["retention-days"] == 1
     # Without overwrite, an artifact of that name already in the run fails it.
     assert "overwrite" not in handoff["with"]
-    # And only regular top-level .md files of it, as publish takes them.
+    # And only regular top-level .md files of it, as publish takes them,
+    # each replacing what it lands on (round 1, security).
     apply = _by_id(steps, "apply")["run"]
-    assert "find ../incoming -maxdepth 1 -type f -name '*.md' -exec cp -- {} ../wiki/ \\;" in apply
+    assert (
+        "find ../incoming -maxdepth 1 -type f -name '*.md'"
+        " -exec cp --remove-destination -- {} ../wiki/ \\;"
+    ) in apply
     assert apply.count("../incoming") == 1
+
+
+def test_no_symlink_in_the_wiki_or_an_upload_can_carry_page_text_elsewhere() -> None:
+    # Round 1 (security): a symlinked page in the base clone let `cp` write
+    # page text through it into repo/, and upload-artifact follows symlinks.
+    jobs = _jobs()
+    trees = []
+    for name in ("gates", "publish"):
+        steps = jobs[name]["steps"]
+        tree = _by_id(steps, "tree")
+        trees.append(tree["run"])
+        assert "if" not in tree and tree.get("continue-on-error") is not True
+        assert TREE_CHECK in tree["run"].splitlines()[1]
+        # Straight after the clone, before anything is taken or applied.
+        at = steps.index(tree)
+        assert steps[at - 1]["name"].startswith("Clone the wiki")
+        apply = next(s for s in steps if s.get("name") == "Apply the pages")
+        assert steps.index(apply) > at
+        assert "cp --remove-destination --" in apply["run"]
+        assert re.search(r"\bcp -- ", apply["run"]) is None
+    assert trees[0] == trees[1]
+    # Every upload of pages is a folder of copied regular files.
+    stage = _by_id(jobs["improve"]["steps"], "stage")["run"]
+    assert "find wiki -maxdepth 1 -type f -name '*.md' -exec cp -- {} handoff/ \\;" in stage
+    stage = _by_id(jobs["gates"]["steps"], "stage")["run"]
+    assert "find wiki -maxdepth 1 -type f -name '*.md' -exec cp -- {} out/wiki/ \\;" in stage
+    for body in jobs.values():
+        for step in body.get("steps", []):
+            if _uses(step, "actions/upload-artifact@"):
+                assert "wiki/" not in str(step["with"]["path"]), step["name"]
+
+
+def test_the_gated_uploads_leave_only_on_the_gate_results_word() -> None:
+    # Round 1 (code review): the only thing keeping the report and the pages
+    # in on a personal-data hit or a gitleaks finding.
+    steps = _jobs()["gates"]["steps"]
+    assert _by_id(steps, "report")["if"] == "always() && steps.gate.outputs.report == 'true'"
+    assert _by_id(steps, "stage")["if"] == "always() && steps.gate.outputs.pages == 'true'"
+    assert _by_id(steps, "pages")["if"] == (
+        "always() && steps.gate.outputs.pages == 'true' && steps.stage.outcome == 'success'"
+    )
+    assert _by_id(steps, "pages")["with"]["path"] == "out/"
 
 
 EXPR = re.compile(r"\$\{\{\s*(.*?)\s*\}\}")
@@ -373,13 +438,19 @@ def _gate_steps(data: dict[str, Any], model_job: str) -> list[tuple[str, int]]:
 
     Every run step of a job other than the model's that holds a gate, and
     every gate step of the model's job (its plan step runs check_wiki before
-    the model, for the model's list of gaps).
+    the model, for the model's list of gaps). Not the block-only check after
+    the model: a model past its permissions can make it pass, which lets
+    its pages reach the gates, as they would anyway.
     """
     found = []
     for job, body in data["jobs"].items():
         steps = body.get("steps", [])
         if job == model_job:
-            found += [(job, i) for i, s in enumerate(steps) if "run" in s and _is_gate(s)]
+            found += [
+                (job, i)
+                for i, s in enumerate(steps)
+                if "run" in s and _is_gate(s) and s.get("id") != BLOCK_ONLY
+            ]
         elif any(_is_gate(s) for s in steps):
             found += [(job, i) for i, s in enumerate(steps) if "run" in s]
     return found
@@ -422,21 +493,215 @@ def test_constructed_bash_env_from_the_model_never_runs_in_the_gates(tmp_path: P
     assert marker.read_text(encoding="utf-8") == "ran\n"
 
 
-def test_constructed_the_gate_result_reports_pages_that_never_arrived(tmp_path: Path) -> None:
-    # The check passed in improve, but the hand-off did not reach gates: a
-    # fixed reason, no pages, and nothing else run.
+# ─── constructed: the gate result ────────────────────────────────────────────
+
+ALL_PASSED = {
+    "OUTSIDE": "success",
+    "WITHHOLD": "success",
+    "HANDOFF": "success",
+    "SETUP": "success",
+    "DOWNLOAD": "success",
+    "APPLY": "success",
+    "CODE": "0",
+    "LEAKS": "success",
+    "CLAUDE": "success",
+}
+
+
+def _gate_result(
+    tmp_path: Path, env: dict[str, str]
+) -> tuple[subprocess.CompletedProcess[str], Path, list[str]]:
     data = _workflow()
     ws, _, marker = _ws(tmp_path)
     (ws / "report" / "check.txt").write_text("planted report\n", encoding="utf-8")
-    gate = _by_id(data["jobs"]["gates"]["steps"], "gate")
-    env = {"OUTSIDE": "success", "APPLY": "skipped", "CODE": "", "LEAKS": "", "CLAUDE": "success"}
     for name in ("output", "summary"):
         (ws / "runner" / name).touch()
-    done = _start(data, gate, env, ws)
+    done = _start(data, _by_id(data["jobs"]["gates"]["steps"], "gate"), env, ws)
+    assert not marker.exists()
+    out = (ws / "runner" / "output").read_text(encoding="utf-8").split()
+    return done, ws, out
+
+
+# Round 1 (code review): each cause named as itself, first one first.
+CAUSES = [
+    ({"OUTSIDE": "failure"}, "the checkout of main changed outside the wiki while the model ran"),
+    ({"OUTSIDE": "skipped"}, "the check that nothing outside the wiki changed did not finish"),
+    (
+        {"WITHHOLD": "failure", "HANDOFF": "skipped"},
+        "improve withheld the pages: check_wiki found personal data in them",
+    ),
+    ({"WITHHOLD": "skipped"}, "improve could not stage the pages"),
+    ({"HANDOFF": "failure"}, "improve did not hand the pages on"),
+    ({"SETUP": "failure", "DOWNLOAD": "skipped"}, "this job's setup failed"),
+    ({"SETUP": "skipped", "APPLY": "skipped"}, "this job's setup failed"),
+    ({"DOWNLOAD": "failure", "APPLY": "skipped"}, "the pages did not reach the gate"),
+    ({"APPLY": "failure"}, "the pages could not be applied"),
+]
+
+
+@pytest.mark.parametrize(("changes", "cause"), CAUSES, ids=[c for _, c in CAUSES])
+def test_constructed_the_gate_result_names_why_the_gate_did_not_run(
+    tmp_path: Path, changes: dict[str, str], cause: str
+) -> None:
+    # The gate's own steps were skipped: no code, no gitleaks verdict.
+    env = {**ALL_PASSED, "CODE": "", "LEAKS": "skipped", **changes}
+    done, ws, out = _gate_result(tmp_path, env)
     assert done.returncode == 1, done.stdout + done.stderr
     assert "::error::the gate did not run; nothing is pushed" in done.stdout
     report = (ws / "report" / "check.txt").read_text(encoding="utf-8")
-    assert report.startswith('check_wiki did not run: the pages did not reach the gate (step "')
+    assert report.startswith(f"check_wiki did not run: {cause}")
     assert "planted" not in report
-    assert (ws / "runner" / "output").read_text(encoding="utf-8").split() == ["report=true"]
+    # The fixed reason leaves as the report; never the pages.
+    assert out == ["report=true"]
+
+
+def _wiki_repo(ws: Path) -> str:
+    wiki = ws / "wiki"
+    wiki.mkdir()
+    (wiki / "Home.md").write_text("# Home\n", encoding="utf-8")
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(ws / "runner"), "GIT_CONFIG_NOSYSTEM": "1"}
+    git = shutil.which("git", path="/usr/bin:/bin")
+    if git is None:
+        pytest.skip("git is not in /usr/bin or /bin")
+    for args in (
+        ["init", "-q"],
+        ["add", "-A"],
+        ["-c", "user.name=t", "-c", "user.email=t@invalid", "commit", "-qm", "base"],
+    ):
+        subprocess.run([git, *args], cwd=wiki, env=env, check=True, capture_output=True)
+    (wiki / "Home.md").write_text("# Home\n\nEdited.\n", encoding="utf-8")
+    subprocess.run([git, "add", "-A"], cwd=wiki, env=env, check=True, capture_output=True)
+    base = subprocess.run(
+        [git, "rev-parse", "HEAD"], cwd=wiki, env=env, check=True, capture_output=True, text=True
+    )
+    return base.stdout.strip()
+
+
+@pytest.mark.parametrize(
+    ("code", "leaks", "expected", "fails"),
+    [
+        pytest.param("0", "success", ["report=true", "pages=true"], False, id="clean"),
+        pytest.param("1", "success", ["report=true", "pages=true"], True, id="failures"),
+        pytest.param("3", "success", [], True, id="personal-data"),
+        pytest.param("2", "success", [], True, id="error"),
+        pytest.param("0", "failure", ["report=true"], True, id="gitleaks-found-something"),
+        pytest.param("3", "failure", [], True, id="both"),
+    ],
+)
+def test_constructed_the_report_and_pages_leave_only_when_clean(
+    tmp_path: Path, code: str, leaks: str, expected: list[str], fails: bool
+) -> None:
+    # Round 1 (code review): personal data keeps the report in; a gitleaks
+    # finding keeps the pages in; and gitleaks' outcome reaches the gate.
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    base = _wiki_repo(ws)
+    env = {**ALL_PASSED, "CODE": code, "LEAKS": leaks, "BASE": base}
+    done, _, out = _gate_result(tmp_path, env)
+    assert (done.returncode != 0) is fails, done.stdout + done.stderr
+    assert [o for o in out if not o.startswith("changed=")] == expected
+    assert "changed=true" in out
+    if fails:
+        assert "::error::the gate rejected the wiki; nothing is pushed" in done.stdout
+
+
+# ─── constructed: symlinks and the staged uploads ─────────────────────────────
+
+
+def _step_script(job: str, step_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    data = _workflow()
+    return data, _by_id(data["jobs"][job]["steps"], step_id)
+
+
+def _plain_wiki(ws: Path) -> Path:
+    wiki = ws / "wiki"
+    (wiki / ".git" / "hooks").mkdir(parents=True)
+    (wiki / ".lab").mkdir()
+    (wiki / "Home.md").write_text("# Home\n", encoding="utf-8")
+    (wiki / ".lab" / "state.json").write_text("{}\n", encoding="utf-8")
+    # A link inside .git is git's business, not a page.
+    (wiki / ".git" / "hooks" / "link").symlink_to("/nonexistent")
+    return wiki
+
+
+def _link_to_repo_code(ws: Path) -> None:
+    (ws / "repo" / "scripts").mkdir(parents=True, exist_ok=True)
+    (ws / "repo" / "scripts" / "check_wiki.py").write_text("print('repo code')\n")
+    (ws / "wiki" / "A.md").symlink_to("../repo/scripts/check_wiki.py")
+
+
+TREES = {
+    "plain": (lambda ws: None, 0),
+    "a page linked to repository code": (_link_to_repo_code, 1),
+    "a linked directory": (lambda ws: (ws / "wiki" / "sub").symlink_to(ws / "repo"), 1),
+    "a dangling link in .lab": (lambda ws: (ws / "wiki" / ".lab" / "x").symlink_to("/x"), 1),
+    "a fifo": (lambda ws: os.mkfifo(ws / "wiki" / "pipe.md"), 1),
+}
+
+
+@pytest.mark.parametrize("tree", list(TREES), ids=list(TREES))
+@pytest.mark.parametrize("job", ["gates", "publish"])
+def test_constructed_a_symlink_in_the_wiki_stops_the_job(
+    tmp_path: Path, tree: str, job: str
+) -> None:
+    ws, _, marker = _ws(tmp_path)
+    _plain_wiki(ws)
+    plant, expected = TREES[tree]
+    plant(ws)
+    data, step = _step_script(job, "tree")
+    done = _start(data, step, {}, ws)
+    assert done.returncode == expected, done.stdout + done.stderr
+    if expected:
+        assert "::error::the wiki holds a symlink or another special file" in done.stdout
+        # The path itself is not printed.
+        assert "A.md" not in done.stdout and "check_wiki.py" not in done.stdout
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize(("job", "dest"), [("improve", "handoff"), ("gates", "out/wiki")])
+def test_constructed_the_staged_upload_holds_only_regular_top_level_pages(
+    tmp_path: Path, job: str, dest: str
+) -> None:
+    # upload-artifact follows symlinks: a page linked to a secret would have
+    # put the secret in a public artifact. Only regular files are copied.
+    ws, _, _ = _ws(tmp_path)
+    wiki = _plain_wiki(ws)
+    secret = ws / "runner" / "environ"
+    secret.write_text("ACTIONS_RUNTIME_TOKEN=planted-secret\n", encoding="utf-8")
+    (wiki / "Leak.md").symlink_to(secret)
+    (wiki / "sub").mkdir()
+    (wiki / "sub" / "Deep.md").write_text("deep\n", encoding="utf-8")
+    (wiki / "notes.txt").write_text("not a page\n", encoding="utf-8")
+    if job == "gates":
+        (ws / "report" / "wiki.diff").write_text("diff\n", encoding="utf-8")
+    data, step = _step_script(job, "stage")
+    done = _start(data, step, {}, ws)
+    assert done.returncode == 0, done.stdout + done.stderr
+    staged = sorted(p.relative_to(ws).as_posix() for p in (ws / dest.split("/")[0]).rglob("*"))
+    pages = [p for p in staged if p.endswith(".md")]
+    assert pages == [f"{dest}/Home.md"]
+    for path in (ws / dest.split("/")[0]).rglob("*"):
+        assert not path.is_symlink()
+        if path.is_file():
+            assert "planted-secret" not in path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(("code", "withheld"), [(0, False), (1, False), (2, True), (3, True)])
+def test_constructed_the_block_only_check_withholds_on_personal_data(
+    tmp_path: Path, code: int, withheld: bool
+) -> None:
+    # Round 1 (security): check_wiki's exit 3 (personal data) or 2 (error)
+    # keeps the pages from the public hand-off artifact; 0 and 1 let them go
+    # on to the gates. A stand-in `uv` exits with the code check_wiki would.
+    ws, _, marker = _ws(tmp_path)
+    uv = ws / "empty" / "uv"
+    uv.write_text(f"#!/bin/sh\nexit {code}\n", encoding="utf-8")
+    uv.chmod(0o755)
+    data, step = _step_script("improve", BLOCK_ONLY)
+    done = _start(data, step, {}, ws)
+    assert (done.returncode == 1) is withheld, done.stdout + done.stderr
+    assert done.returncode in (0, 1)
+    if withheld:
+        assert f"::error::check_wiki exited {code} on the edited pages" in done.stdout
+    assert (ws / "runner" / "output").exists() is False
     assert not marker.exists()
