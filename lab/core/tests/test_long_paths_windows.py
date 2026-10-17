@@ -592,14 +592,19 @@ def _is_grader(test: object) -> bool:
 def test_every_layout_a_grader_uses_is_built_by_an_unmarked_test() -> None:
     """An xfail marker also swallows a failure in setup, so a grader whose
     tree cannot be built would pass as expected-to-fail. Every layout a grader
-    uses is therefore built by an unmarked test too, which fails the run."""
+    uses is therefore built by an unmarked test too, which fails the run.
+
+    M13-15 deleted the graders' markers, so the module may have none; the
+    check stays armed for any marker added later. That it is not vacuous is
+    shown by the layouts the unmarked tests build: every layout the M13-15
+    graders were written over is found among them."""
     tests = [f for name, f in sorted(globals().items()) if name.startswith("test_")]
     graders = [f for f in tests if _is_grader(f)]
-    assert graders, "the module has graders"
     for grader in graders:
         assert _layouts(grader), f"{grader.__name__} names its layouts in a parametrize"
     graded = set().union(*(_layouts(f) for f in graders))
     built = set().union(*(_layouts(f) for f in tests if not _is_grader(f)))
+    assert {*LONG_ANYWHERE, "at-limit"} <= built, f"the unmarked tests build {sorted(built)}"
     assert graded <= built, f"graded but built by no unmarked test: {sorted(graded - built)}"
 
 
