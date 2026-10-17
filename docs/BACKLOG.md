@@ -12,18 +12,20 @@ The backlog holds the current wave only (ADR-0024). Milestone numbers start at `
 
 ---
 
-# Carried forward from Wave 2 (M11), still open
+# Carried forward from Wave 2 (M11)
 
-Archived with Wave 3 on 2026-10-15 except this one, which waits on the owner's in-game capture. Its milestone stays M11.
+Archived with Wave 3 on 2026-10-15 except this one, which waited on the owner's in-game capture. Its milestone stays M11. *Closed 2026-10-16* by the M13-05 capture (#221).
 
-## [ ] M11-29 — lab-addon: the barber-shop record after an applied change
+## [x] M11-29 — lab-addon: the barber-shop record after an applied change
 **Size:** S · **Depends on:** M11-23 · **owner** (a short in-game check)
 
 From the M11-23 capture (1.60.1.70058; `docs/LAB_FORMATS.md`, M11-23 follow-up table): the owner opened the barber shop twice, the second time changing the hair colour and accepting, yet the record reads `recorded_at = "open"` although `BARBER_SHOP_APPEARANCE_APPLIED` registered; and `chr_model_id` is absent. Find why the applied event does not reach the section's handler (or whether a different event fires on Forever) and why `C_BarberShop` gives no model id; change the addon only for what a capture can confirm. Per `docs/AGENT_WORKFLOW.md`, any new API call is **[verify]**, sits in a section `/wowlab skip` can switch off, and gets a runbook step.
 
 **Acceptance:** static addon tests (labelled source scans) for the change; the README and §13.1 say what is confirmed and what stays [verify]; an owner capture after one applied change shows `recorded_at = "applied"` (or the reason it cannot); reviewed by `code-reviewer` and `domain-reviewer`.
 
-*Status 2026-09-30:* the code merged (#143, `5784422`): the addon now records which barber-shop events reach the section and why the model id is missing, and its saved format is **schema 2** (§13.1: any change after M11-04). The ticket stays **open** until the owner's capture is read: the runbook is `docs/handoffs/M11-29.md` (the reading table is in `lab/addon/README.md`, "M11-29 capture step"). Later tickets, only if the capture shows none of the watched events marks the Accept: record an event's payload (`BARBER_SHOP_RESULT`'s success argument) or a `hooksecurefunc` post-hook on `C_BarberShop.ApplyCustomizationChoices`, each **[verify]** with its own runbook step and capture.
+*Status 2026-09-30:* the code merged (#143, `5784422`): the addon now records which barber-shop events reach the section and why the model id is missing, and its saved format is **schema 2** (§13.1: any change after M11-04). The ticket stayed open until the owner's capture was read: the runbook is `docs/handoffs/M11-29.md` (the reading table is in `lab/addon/README.md`, "M11-29 capture step"). Later tickets, only if the capture shows none of the watched events marks the Accept: record an event's payload (`BARBER_SHOP_RESULT`'s success argument) or a `hooksecurefunc` post-hook on `C_BarberShop.ApplyCustomizationChoices`, each **[verify]** with its own runbook step and capture.
+
+*Closed 2026-10-16 (#221):* the capture on 1.60.1.70425 was read. `BARBER_SHOP_APPEARANCE_APPLIED` fires. The client then opens the shop again by itself, and the record from that open, which holds the new look, replaces the applied one. So `recorded_at` reads `"open"`, and the acceptance's "or the reason it cannot" is met (`lab/addon/README.md`; `docs/LAB_PLAN.md` §13.1, amendment of 2026-10-16). Keeping the applied record through a later open would need schema 4 and its own capture; that is not filed.
 
 ---
 
@@ -86,7 +88,7 @@ Two criteria were met by close equivalents, not literally:
 
 ---
 
-## [ ] M13-05 — lab-addon schema 3: spellbook, action bars, bindings (and M11-35)
+## [x] M13-05 — lab-addon schema 3: spellbook, action bars, bindings (and M11-35)
 **Size:** M · **Depends on:** M13-01 · **owner** (a capture on a real character)
 
 One schema 3 (§13.1), not a fourth. It carries M11-35 (the config id `talents.legacy` left out, and the corrected comments at `lab/addon/WowLab/Talents.lua` lines 8 and 279–280) and three new sections, each switchable with `/wowlab skip` (M11-37's rule): `spellbook` (spell id, name, subtext or rank where the client exposes it, passive flag); `actionbars` (slot to type and id; a macro slot carries the macro id only, never its name or body); `bindings` (live `GetBindingKey` results, to cross-check `bindings-cache.wtf`). Out-of-combat reads only; nothing may touch a value that becomes secret in combat (ADR-0026). `GetActionInfo`, `GetBindingKey`, `GetMacroInfo`, `C_SpellBook` and `GetSpellBookItemInfo` are listed for 69893 by forever-addon-kit; presence proves nothing, so each is probed and recorded the way `spec.api` is. The reader in `wowlab_core` reads schema 3 beside 1 and 2. The conductor writes the capture runbook (`docs/handoffs/M13-05.md`) when the code merges. This is the critical path for M13-06 and M13-08; it starts as soon as M13-01 merges.
@@ -95,7 +97,7 @@ One schema 3 (§13.1), not a fourth. It carries M11-35 (the config id `talents.l
 
 ---
 
-## [ ] M13-06 — `wowlab macros check`
+## [x] M13-06 — `wowlab macros check`
 **Size:** S · **Depends on:** M13-05, M12-15
 
 Read-only; writes nothing. Rules (§15.2): a body over 255 (stating whether characters or bytes were counted, **[verify]**); a spell name not in the character's spellbook (M13-05); a macro on no action bar (M13-05); duplicate names or bodies; unbalanced `[` `]`; `#showtooltip` not on the first line. An explicit rank (`Spell(Rank N)`) is reported as "cannot judge" until a capture settles it. Without a schema-3 record for the character, the two lab-addon rules say "cannot judge: no spellbook record" and the others still run. `--json` model `MacrosCheckReport`. Exit codes as the other commands (0 ok, 1 error, 2 usage); findings alone exit 0. Text through `cli._safe`.
@@ -131,7 +133,7 @@ Read-only. Adds `combatlog.cast_counts`: the player's own `SPELL_CAST_SUCCESS` e
 
 ---
 
-## [ ] M13-10 — Player-facing README
+## [x] M13-10 — Player-facing README
 **Size:** S · **Depends on:** M13-03
 
 The README's first screen: what wowlab is in three sentences; the trust model of ADR-0031; one install line (the one M13-03 tested, word for word); the three commands worth running first; a link to the wiki. *Amended 2026-10-15:* once M13-25 has merged, one of those three is `wowlab ui`, the explorer being the way in for a player. Platform status stated by ADR-0031's rule: "untested on <platform>" until M13-02's acceptance holds for it. *Amended 2026-10-16 (owner ruling under ADR-0029):* the README must also say that on a shared Linux machine, other accounts can briefly see the `wowlab ui` token URL in their process listing while the browser opens. The rest of the README may move to the wiki.
@@ -167,7 +169,7 @@ Thirty days after v0.1, the conductor records in `docs/handoffs/M13-gate.md` the
 
 Spec: `docs/LAB_PLAN.md` §15.6. Decision: ADR-0029 and its amendment of 2026-10-15 (accepted by the owner 2026-10-15: v0.1 runs read-only commands only). The owner pulled `wowlab ui` forward from Wave 5 into v0.1, with the explorer as its first view. Every fact the UI shows comes from a CLI `--json` model computed in Python. The JavaScript holds no file-map logic and no game rules (§14.5 D3). User-facing: each ticket's changes reach the wiki's file-map and command pages.
 
-## [ ] M13-21 — `wowlab_core.verdict`: the safe-to-edit answer in core
+## [x] M13-21 — `wowlab_core.verdict`: the safe-to-edit answer in core
 **Size:** S · **Depends on:** M13-01
 
 Move the verdict wording out of the CLI (`_edit_words`, `_TIER_WORDS`, `_restorable` in `cli.py`) into a core module, `wowlab_core.verdict`. It returns a Pydantic model, `Verdict{level: gate | no | folder | not_applicable | unclassified, restorable: bool, words: str}`, computed from a file-map entry, its base and the path. The mapping from the Edit cell is fixed:
@@ -188,7 +190,7 @@ Move the verdict wording out of the CLI (`_edit_words`, `_TIER_WORDS`, `_restora
 
 ---
 
-## [ ] M13-22 — The whole install, with file-map gaps
+## [x] M13-22 — The whole install, with file-map gaps
 **Size:** M · **Depends on:** M13-21
 
 `wowlab tree --install` covers the install root (the file map's `root` section) and every flavor folder, not only one. Each item carries `base` and `flavor_folder`.
@@ -209,7 +211,7 @@ The walk is bounded, read-only (L1), never follows a link, and reports `truncate
 
 ---
 
-## [ ] M13-23 — Per-path detail: snapshot facts, views and hints
+## [x] M13-23 — Per-path detail: snapshot facts, views and hints
 **Size:** S–M · **Depends on:** M13-21
 
 `wowlab explain PATH --json` gains four fields:
@@ -229,7 +231,7 @@ The text output gains a short "In the latest snapshot" line and the hints.
 
 ---
 
-## [ ] M13-24T — `wowlab ui` server: graders
+## [x] M13-24T — `wowlab ui` server: graders
 **Size:** S · **Depends on:** M13-01 · **[TEST]** (test-writer only)
 
 Expected-failure graders, derived from ADR-0029 and its amendment of 2026-10-15 and never from an implementation.
@@ -279,7 +281,7 @@ Commands that write only to wowlab's own store or user data directory are allowe
 
 ---
 
-## [ ] M13-24 — `wowlab_core.ui`: the server, and `wowlab ui`
+## [x] M13-24 — `wowlab_core.ui`: the server, and `wowlab ui`
 **Size:** M · **Depends on:** M13-24T
 
 - `http.server.ThreadingHTTPServer` on `127.0.0.1` at a free port.
@@ -296,7 +298,7 @@ Commands that write only to wowlab's own store or user data directory are allowe
 
 ---
 
-## [ ] M13-25 — The explorer view, first stage: tree, badges, detail
+## [x] M13-25 — The explorer view, first stage: tree, badges, detail
 **Size:** S–M · **Depends on:** M13-21, M13-24
 
 *Owner ruling, 2026-10-16:* M13-25 is exempt from graders-first, on the terms recorded under M13-26. The implementer writes `test_ui_explorer.py`, and a `test-writer` audits it and takes it over.
@@ -335,7 +337,7 @@ Commands that write only to wowlab's own store or user data directory are allowe
 
 ---
 
-## [ ] M13-27T — The explorer view, second stage: graders
+## [x] M13-27T — The explorer view, second stage: graders
 **Size:** S–M · **Depends on:** M13-22, M13-23, M13-25, M13-32 · **[TEST]** (test-writer only)
 
 Filed on 2026-10-16. `wowlab_core.ui` is load-bearing, so M13-27 is graders-first. Write expected-failure graders for M13-27's spec, derived from this backlog, §15.6, ADR-0029 with its rulings, and the JSON that M13-22 and M13-23 merged. Extend `test_ui_explorer.py`, which test-writer owns, or add a sibling file. Mark each new grader `xfail(strict=True, reason="M13-27 not implemented")`.
@@ -373,6 +375,14 @@ This builds on M13-25's view, per §15.6.
 
 **Gaps tab.** A new tab, drawn from `filemap gaps --json`.
 
+*Amended 2026-10-16, from the M13-27T rulings and reviews (#226):*
+- **Python changes.** M13-27 changes Python as well as the page:
+  - `SnapshotFacts` in `pathfacts.py` gains `words`, which the pane shows verbatim. That changes `explain --json`, so list it under user-facing changes.
+  - The `ExplainHint` docstring in `cli.py` is amended: a copy button copies `hint.command`, not `argv`.
+- **Placeholder badge.** Placeholder paths get their own badge class.
+- **Gaps only.** The filter shows the places in `groups`, the `catch_all` and the `links`, with their ancestors.
+- **Graders.** The graders were activated by deleting their markers only.
+
 **Acceptance:**
 - M13-25's rendering and escaping tests extend to the new panes.
 - The owner's end-to-end check, reported in the PR:
@@ -384,7 +394,7 @@ This builds on M13-25's view, per §15.6.
 
 ---
 
-## [ ] M13-26 — Generic forms for read commands, and the parity test
+## [x] M13-26 — Generic forms for read commands, and the parity test
 **Size:** S–M · **Depends on:** M13-24
 
 *Owner ruling, 2026-10-16:* M13-26 was filed on 2026-10-15, before `wowlab_core.ui` joined the load-bearing set (#199). It is therefore exempt from the graders-first rule, and the implementer's parity test stands. In exchange, a `test-writer` audits `test_ui_parity.py`, strengthens it where it falls short of the spec, and takes ownership of it. The exemption covers M13-26, and was extended to M13-25 on 2026-10-16 on the same terms: a `test-writer` audits and takes over `test_ui_explorer.py`. M13-25 was also filed before #199. Every later `ui` ticket, M13-27 included, is graders-first.
@@ -461,7 +471,7 @@ Found by M13-02. `lab/core/tests/review/test_m10_04_bounded_document_misses_memo
 
 ---
 
-## [ ] M13-18 — Run the test suite in parallel (pytest-xdist)
+## [x] M13-18 — Run the test suite in parallel (pytest-xdist)
 **Size:** S · **Depends on:** —
 
 Owner request, 2026-10-15: CI is too slow. The required "Lint, typecheck, tests" job runs about 6,300 tests serially in 13 to 15 minutes, and each agent's local `make ci` takes about 13 minutes.
@@ -590,7 +600,7 @@ The probe already measures child CPU time and keeps the better of two runs. The 
 
 ---
 
-## [ ] M13-32 — `explain` detail: the four leftovers from M13-23's final review
+## [x] M13-32 — `explain` detail: the four leftovers from M13-23's final review
 **Size:** S · **Depends on:** M13-23
 
 The owner ruled on 2026-10-16 that what M13-23's last fix round left, if it was not security, merges and is filed here. This ticket must land before M13-27 shows snapshot facts in the explorer. The four items come from the domain review of #204 at d744b11:
@@ -608,7 +618,7 @@ The owner ruled on 2026-10-16 that what M13-23's last fix round left, if it was 
 
 ---
 
-## [ ] M13-33 — `tree --explain`: a path under a non-link reparse point is not restorable
+## [x] M13-33 — `tree --explain`: a path under a non-link reparse point is not restorable
 **Size:** S · **Depends on:** M13-32
 
 Found while building M13-32 (#215), 2026-10-16. `explain` judges a path at or under a Windows reparse point that is not a link (a OneDrive cloud placeholder, a deduplicated file, a file compressed with `compact /EXE`) the way the write gate does: `restorable` is False, the label is "wowlab won't touch", and the words say the gate does not write through these. `tree --explain` and `tree --install --explain` still judge such a path from its name alone, so they mark it restorable.
@@ -626,7 +636,7 @@ M13-27 shows `tree` verdicts in the explorer, so this must land before it.
 
 ---
 
-## [ ] M13-34 — `lab_capture.py`: scrub the geoip country in `.build.info`
+## [x] M13-34 — `lab_capture.py`: scrub the geoip country in `.build.info`
 **Size:** S · **Depends on:** M13-01
 
 Found in the security review of #221 on 2026-10-16. The `Tags` cell of `.build.info` carries three country tokens. One is the game region (`US?` style), which matches the `Branch` column. The second is the account country (`acct-AAA?`), a property of the Battle.net account. The third is the geoip country (`geoip-AA?`): where the client was when it last updated. `.build.info` has one row per product, and each row has its own `Tags` cell. `scripts/lab_capture.py` stages `.build.info` on every capture (around line 3197) and leaves that tag as it is.
