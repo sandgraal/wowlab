@@ -350,6 +350,32 @@ def test_publish_and_report_take_the_gated_artifacts_by_id() -> None:
                 assert step["with"].get("name") not in GATED_ARTIFACTS, name
 
 
+def test_no_job_that_runs_or_follows_the_model_uses_a_cache() -> None:
+    # M13-39 (security review of #236): improve restored the uv cache. A
+    # model past its permissions there could write cache entries for main,
+    # which the cached jobs in ci.yml restore. The model's job, the gates
+    # and publish each install with setup-uv's cache off, restored or saved.
+    jobs = _jobs()
+    model_job, _ = _model_job(jobs)
+    assert model_job == "improve"
+    for name in (model_job, "gates", "publish"):
+        setup = [s for s in jobs[name]["steps"] if _uses(s, "astral-sh/setup-uv@")]
+        assert [s["with"]["enable-cache"] for s in setup] == [False], name
+        assert "save-cache" not in setup[0]["with"], name
+        assert "restore-cache" not in setup[0]["with"], name
+    # No job in the workflow caches anything, by any action.
+    for name, body in jobs.items():
+        for step in body.get("steps", []):
+            uses = str(step.get("uses", ""))
+            assert not uses.startswith(("actions/cache@", "actions/cache/")), name
+            if uses.startswith("astral-sh/setup-uv@"):
+                assert step["with"]["enable-cache"] is False, name
+            assert not any("cache" in k for k in step.get("with", {}) if k != "enable-cache"), (
+                name,
+                step.get("name"),
+            )
+
+
 def test_the_model_may_not_edit_or_write_the_runners_temp_directory() -> None:
     # Defence in depth (M13-19): the settings deny Edit and Write under
     # $RUNNER_TEMP, where $GITHUB_ENV, uv's cache and the snapshot live. The

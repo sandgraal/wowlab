@@ -16,7 +16,7 @@ name: Wiki daily
 #            pages on as a short-lived artifact, withholding them when
 #            check_wiki finds personal data in them (a check that can only
 #            block). No gate that could pass them runs after the model.
-#            Read-only token only.
+#            Read-only token only. Uses no cache (M13-39).
 #   gates    on a fresh runner (M13-19): a model that got past its
 #            permissions could rewrite anything on improve's runner, its later
 #            steps' environment included ($GITHUB_ENV can set BASH_ENV or
@@ -165,14 +165,15 @@ jobs:
           path: repo
           fetch-depth: 0
           persist-credentials: false
-      # Restores the uv cache, never saves it: a cache saved after the model
-      # ran would be restored in publish, which can write, before its sync.
+      # No cache, restored or saved (M13-39): the job that runs the model has
+      # no cache step, so no entry it could have written is saved for main,
+      # where the four cached jobs in ci.yml restore from. A fresh `uv sync`
+      # costs about a second. The Claude action's own setup-bun is pinned
+      # with `no-cache: true`.
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          save-cache: false
-          cache-dependency-glob: repo/uv.lock
+          enable-cache: false
       - name: Install
         working-directory: repo
         run: uv sync --frozen
