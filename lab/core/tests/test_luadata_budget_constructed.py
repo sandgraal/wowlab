@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import warnings
 
 import pytest
 
@@ -131,19 +132,81 @@ def test_constructed_error_keeps_at_most_forty_bytes_of_its_token(data: bytes) -
 
 # ── the error position is counted in constant memory (fix round 4, item 1) ──
 
+# How the child measures (M13-20T). On Linux `ru_maxrss` is kept across
+# `execve` (getrusage(2)), so a child of a large pytest process starts at the
+# parent's high-water mark and anything below it reads as no growth: this
+# test then passed without measuring. The child reads its own `VmHWM` from
+# `/proc/self/status` on Linux. The input is built so that nothing is freed
+# before the parse (the old `a + b * n + c` freed two 16 MiB temporaries that
+# were in `before` and that the parse could reuse unseen), and `body` is kept.
 POSITION_CHILD = r"""
 import resource, sys
 from wowlab_core import luadata
-size = int(sys.argv[1])
-data = b"\nX = 1" + b"\r\n\n" * (size // 3) + b"@\n"
-scale = 1 if sys.platform == "darwin" else 1024
-before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * scale
+size, parser = int(sys.argv[1]), sys.argv[2]
+parse = luadata.parse
+if parser == "line-starts":
+    # CONSTRUCTED stand-in, a test of the probe itself: a parser that, on a
+    # refusal, positions the error from a list of every line start, so it
+    # holds memory in proportion to the lines before the error.
+    def parse(data):
+        try:
+            return luadata.parse(data)
+        except luadata.LuaDataError:
+            starts = [i for i, byte in enumerate(data) if byte == 10]
+            raise
+body = b"\r\n\n" * (size // 3)
+data = b"".join((b"\nX = 1", body, b"@\n"))
+def peak():
+    # This process's peak RSS in bytes. VmHWM on Linux is this process's
+    # own, new at exec; `ru_maxrss` there is the parent's high-water mark.
+    if sys.platform.startswith("linux"):
+        with open("/proc/self/status") as status:
+            for line in status:
+                if line.startswith("VmHWM:"):
+                    return int(line.split()[1]) * 1024
+        raise SystemExit("no VmHWM in /proc/self/status")
+    scale = 1 if sys.platform == "darwin" else 1024
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * scale
+before = peak()
 try:
-    luadata.parse(data)
+    parse(data)
 except luadata.LuaDataError as err:
-    after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * scale
+    after = peak()
     print(err.line, err.column, after - before)
 """
+POSITION_SIZE = 16 * 1024 * 1024
+POSITION_LIMIT = 64 * 1024 * 1024
+# A loaded Mac can read no growth at all; there `ru_maxrss` is not carried
+# across exec, so a retry cannot hide an inherited high-water mark. On Linux
+# that fault reads no growth every time, so Linux takes one sample.
+ZERO_GROWTH_TRIES = 5 if sys.platform == "darwin" else 1
+
+
+class ProbeReading(UserWarning):
+    """A child's raw RSS reading, shown in the warnings summary (not a fault)."""
+
+
+def _position_readings(parser: str = "luadata") -> tuple[int, int, int]:
+    """The refusal's line and column, and the child's RSS growth in bytes.
+
+    Each reading is emitted as a `ProbeReading` warning, so the warnings
+    summary of the CI log shows it for a passing test too. A child that
+    reads no growth is retried on macOS only (`ZERO_GROWTH_TRIES`)."""
+    for _ in range(ZERO_GROWTH_TRIES):
+        out = subprocess.run(
+            [sys.executable, "-c", POSITION_CHILD, str(POSITION_SIZE), parser],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.split()
+        line, column, grown = int(out[0]), int(out[1]), int(out[2])
+        warnings.warn(
+            ProbeReading(f"{sys.platform} refusal {parser}: growth {grown / 2**20:.2f} MiB"),
+            stacklevel=2,
+        )
+        if grown > 0:
+            break
+    return line, column, grown
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="uses the resource module")
@@ -151,13 +214,32 @@ def test_constructed_refusal_after_a_long_mixed_line_break_run_stays_small() -> 
     """16 MiB of `\\r\\n\\n` (both pair orders, so no C-speed shortcut) and
     then a refused byte: the line count is right and positioning the error
     adds far less than the input's size (it once took about 1 GB here)."""
-    size = 16 * 1024 * 1024
-    out = subprocess.run(
-        [sys.executable, "-c", POSITION_CHILD, str(size)],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.split()
-    line, column, grown = int(out[0]), int(out[1]), int(out[2])
-    assert (line, column) == (2 + 2 * (size // 3), 1)
-    assert grown < 64 * 1024 * 1024, f"positioning the error grew RSS by {grown} bytes"
+    line, column, grown = _position_readings()
+    assert (line, column) == (2 + 2 * (POSITION_SIZE // 3), 1)
+    # Real growth (19 MiB on macOS, 12.6 MiB on Linux): a child that reads
+    # none is not measuring the refusal (an inherited high-water mark).
+    assert grown > 0, "the child read no growth: it is not measuring the refusal"
+    assert grown < POSITION_LIMIT, f"positioning the error grew RSS by {grown} bytes"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="uses the resource module")
+def test_constructed_stand_in_positioning_in_linear_memory_fails_the_refusal_probe() -> None:
+    """The measurement above sees a refusal that holds memory per line.
+
+    CONSTRUCTED stand-in, not `luadata`: it raises `luadata`'s own error but
+    first lists every line start, 11.2 million offsets (about 430 MiB on
+    macOS), the kind of positioning this probe was written against. The
+    same child and limit must report it over the limit; under the inherited
+    `ru_maxrss` of a large pytest parent it read as no growth and passed.
+    """
+    readings = []
+    for _ in range(3):  # a loaded Mac can read low (pages compressed); one round must see it
+        line, column, grown = _position_readings("line-starts")
+        assert (line, column) == (2 + 2 * (POSITION_SIZE // 3), 1)
+        readings.append(grown)
+        if grown >= POSITION_LIMIT:
+            return
+    pytest.fail(
+        f"a refusal holding a list of every line start grew RSS by only {readings} bytes; "
+        "the probe cannot see it"
+    )
