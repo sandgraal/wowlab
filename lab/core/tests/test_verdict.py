@@ -451,7 +451,8 @@ _REFUSED = "wowlab's write gate does not write through these"
 _NOT_HERE = (
     "no, not here: the file map says it goes through wowlab's write gate, but that gate does "
     "not write through a Windows reparse point that is not a link (for example a cloud "
-    "placeholder, a deduplicated or a compressed file), or inside one"
+    "placeholder, a deduplicated file or a file compressed with compact /EXE), "
+    "or inside one"
 )
 
 

@@ -1144,7 +1144,8 @@ def test_a_file_under_a_onedrive_placeholder_promises_no_write(
     assert report.verdict.words == (
         "no, not here: the file map says it goes through wowlab's write gate, but that gate "
         "does not write through a Windows reparse point that is not a link (for example a "
-        "cloud placeholder, a deduplicated or a compressed file), or inside one"
+        "cloud placeholder, a deduplicated file or a file compressed with compact /EXE), "
+        "or inside one"
     )
     assert report.snapshot is not None and report.snapshot.live == "differs"
     assert not any(h.argv[:1] == ["snap"] for h in report.hints), [h.command for h in report.hints]

@@ -108,6 +108,7 @@ import time
 import traceback
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
 from typing import Annotated, Any, Literal, NamedTuple, NoReturn, override
@@ -1658,6 +1659,10 @@ class InstallTreeReport(_Out):
     items: list[TreeItem]  # the root's entries in name order, then each flavor's
     truncated: bool
     errors: list[str]  # paths relative to the install root
+    # M13-33, JSON only: each flavor's folders above a listed item that are
+    # not listed themselves, as `TreeReport.ancestors` has them, flavor by
+    # flavor in `flavor_folders` order.
+    ancestors: list[TreeItem] = []
 
 
 def _explained(entry: FileMapEntry, verdict: Verdict) -> Explained:
@@ -1673,8 +1678,51 @@ def _explained(entry: FileMapEntry, verdict: Verdict) -> Explained:
     )
 
 
-def _tree_items(lay: layout.Layout, inv: layout.Inventory) -> dict[str, TreeItem]:
+@dataclass(frozen=True)
+class _Reparse:
+    """Where a flavor's paths meet a reparse point that is not a symlink or
+    junction (M13-33), so `tree` judges them as `explain` does. `whole`: the
+    flavor folder itself is one, so every path in it is a placeholder.
+    `placeholders` and `links`: paths relative to the flavor folder whose
+    own `lstat` the write gate refuses; `links` name another path (a name
+    surrogate, which `explain` calls a link), `placeholders` do not."""
+
+    whole: bool = False
+    placeholders: frozenset[str] = frozenset()
+    links: frozenset[str] = frozenset()
+
+    @classmethod
+    def of(cls, inv: layout.Inventory, *, whole: bool) -> "_Reparse":
+        return cls(
+            whole=whole,
+            placeholders=frozenset(r.path for r in inv.reparse_points if not r.name_surrogate),
+            links=frozenset(r.path for r in inv.reparse_points if r.name_surrogate),
+        )
+
+    def judge(self, path: str) -> tuple[bool, bool]:
+        """`(link, placeholder)` for `path`: it, or a folder above it, is one."""
+        parts = path.split("/") if path else []
+        above = {"/".join(parts[:n]) for n in range(1, len(parts) + 1)}
+        link = not above.isdisjoint(self.links)
+        return link, not link and (self.whole or not above.isdisjoint(self.placeholders))
+
+
+def _flavor_is_placeholder(lay: layout.Layout) -> bool:
+    """Whether the flavor folder itself is a reparse point the write gate
+    refuses that is no link, as `explain` walks it (M13-32). A flavor folder
+    that is a link is judged as before."""
+    try:
+        st = lay.flavor_path.lstat()
+    except OSError:
+        return False
+    return gate_refuses_stat(st) and not gaps.is_link(lay.flavor_path, st)
+
+
+def _tree_items(
+    lay: layout.Layout, inv: layout.Inventory, reparse: _Reparse | None = None
+) -> dict[str, TreeItem]:
     flavor_folder = lay.flavor_folder
+    marks = reparse if reparse is not None else _Reparse.of(inv, whole=False)
 
     items: dict[str, TreeItem] = {}
 
@@ -1684,13 +1732,19 @@ def _tree_items(lay: layout.Layout, inv: layout.Inventory) -> dict[str, TreeItem
         if path and path not in items:
             found = lay.classify(path, is_dir=kind == "folder" or None)
             entry = found.entry if isinstance(found, layout.Classified) else None
+            link, placeholder = marks.judge(path)
             items[path] = TreeItem(
                 path=path,
                 kind=kind,
                 size=size,
                 note=note,
                 verdict=verdict_of(
-                    entry, found.base, found.path, folder=kind == "folder", link=kind == "symlink"
+                    entry,
+                    found.base,
+                    found.path,
+                    folder=kind == "folder",
+                    link=link or kind == "symlink",
+                    placeholder=placeholder,
                 ),
                 explained=None,
                 base="flavor",
@@ -1759,16 +1813,22 @@ def _in_scope(path: str, prefix: str) -> bool:
     return not prefix or path == prefix or path.startswith(prefix + "/")
 
 
-def _folder_verdict(lay: layout.Layout, path: str) -> Verdict:
+def _folder_verdict(lay: layout.Layout, path: str, reparse: _Reparse | None = None) -> Verdict:
     found = lay.classify(path, is_dir=True)
     entry = found.entry if isinstance(found, layout.Classified) else None
-    return verdict_of(entry, found.base, found.path, folder=True)
+    link, placeholder = reparse.judge(path) if reparse is not None else (False, False)
+    return verdict_of(
+        entry, found.base, found.path, folder=True, link=link, placeholder=placeholder
+    )
 
 
-def _ancestors(lay: layout.Layout, items: list[TreeItem], prefix: str) -> list[TreeItem]:
+def _ancestors(
+    lay: layout.Layout, items: list[TreeItem], prefix: str, reparse: _Reparse | None = None
+) -> list[TreeItem]:
     """The folders above `items` that are not items themselves, in scope,
     sorted, each with its verdict. They are read from the item paths, never
-    from the disk: a folder above a listed path is a folder."""
+    from the disk: a folder above a listed path is a folder. `reparse`
+    (M13-33): the reparse points the inventory walk met."""
     listed = {item.path for item in items}
     above: set[str] = set()
     for item in items:
@@ -1783,7 +1843,7 @@ def _ancestors(lay: layout.Layout, items: list[TreeItem], prefix: str) -> list[T
             kind="folder",
             size=None,
             note=None,
-            verdict=_folder_verdict(lay, path),
+            verdict=_folder_verdict(lay, path, reparse),
             explained=None,
             base="flavor",
             flavor_folder=lay.flavor_folder,
@@ -1826,9 +1886,10 @@ def tree(
         return
     inst, chosen, lay = _open(root, flavor)
     inv = lay.inventory()
+    reparse = _Reparse.of(inv, whole=_flavor_is_placeholder(lay))
     prefix = _tree_prefix(path, lay.flavor_path)
-    items = [i for p, i in sorted(_tree_items(lay, inv).items()) if _in_scope(p, prefix)]
-    ancestors = _ancestors(lay, items, prefix)
+    items = [i for p, i in sorted(_tree_items(lay, inv, reparse).items()) if _in_scope(p, prefix)]
+    ancestors = _ancestors(lay, items, prefix, reparse)
     if explain:
         items = _with_explained(lay, items)
         ancestors = _with_explained(lay, ancestors)
@@ -1840,7 +1901,7 @@ def tree(
         truncated=inv.truncated,
         errors=errors,
         ancestors=ancestors,
-        flavor_folder_verdict=_folder_verdict(lay, ""),
+        flavor_folder_verdict=_folder_verdict(lay, "", reparse),
     )
     if json_out:
         _emit(report)
@@ -1904,7 +1965,8 @@ def _install_path(item: TreeItem) -> str:
 def _root_items(inst: install.Install, errors: list[str]) -> list[TreeItem]:
     """The install root's own entries, one level, in name order. A flavor
     folder is an item of base "flavor" and path "" (L6: by discovery's
-    name only); a link is named, never followed."""
+    name only); a link is named, never followed. A reparse point that is no
+    link is judged a placeholder, as `explain` judges it (M13-33)."""
     flavors = {f.folder for f in inst.flavors}
     root = Path(inst.root)
     try:
@@ -1921,6 +1983,7 @@ def _root_items(inst: install.Install, errors: list[str]) -> list[TreeItem]:
             errors.append(f"{e.name}: {exc.strerror or exc}")
             continue
         link = gaps.is_link(Path(e.path), st)
+        placeholder = not link and gate_refuses_stat(st)
         folder = not link and stat.S_ISDIR(st.st_mode)
         kind: Literal["file", "folder", "symlink"] = (
             "symlink" if link else "folder" if folder else "file"
@@ -1946,7 +2009,14 @@ def _root_items(inst: install.Install, errors: list[str]) -> list[TreeItem]:
                 kind=kind,
                 size=st.st_size if kind == "file" else None,
                 note=note,
-                verdict=verdict_of(entry, found.base, found.path, folder=folder, link=link),
+                verdict=verdict_of(
+                    entry,
+                    found.base,
+                    found.path,
+                    folder=folder,
+                    link=link,
+                    placeholder=placeholder,
+                ),
                 explained=None,
                 base="flavor" if found.base == "flavor" else "root",
                 flavor_folder=found.flavor_folder,
@@ -1968,11 +2038,23 @@ def _tree_install(path: str | None, explain: bool, root: Path | None, json_out: 
                 item = item.model_copy(update={"explained": _explained(found.entry, item.verdict)})
             explained.append(item)
         items = explained
+    placeholder_flavors = {
+        i.flavor_folder
+        for i in items
+        if i.base == "flavor" and not i.path and i.verdict.placeholder
+    }
     truncated = False
+    ancestors: list[TreeItem] = []
     for f in inst.flavors:
         lay = layout.Layout.for_flavor(f, inst.root)
         inv = lay.inventory()
-        listed = [i for _, i in sorted(_tree_items(lay, inv).items())]
+        reparse = _Reparse.of(inv, whole=f.folder in placeholder_flavors)
+        listed = [i for _, i in sorted(_tree_items(lay, inv, reparse).items())]
+        in_scope = [i for i in listed if _in_scope(_install_path(i), prefix)]
+        above = [
+            i for i in _ancestors(lay, in_scope, "", reparse) if _in_scope(_install_path(i), prefix)
+        ]
+        ancestors.extend(_with_explained(lay, above) if explain else above)
         items.extend(_with_explained(lay, listed) if explain else listed)
         truncated = truncated or inv.truncated
         errors.extend(f"{f.folder}/{e.path}: {e.error}" for e in inv.errors)
@@ -1983,6 +2065,7 @@ def _tree_install(path: str | None, explain: bool, root: Path | None, json_out: 
         items=items,
         truncated=truncated,
         errors=errors,
+        ancestors=ancestors,
     )
     if json_out:
         _emit(report)
