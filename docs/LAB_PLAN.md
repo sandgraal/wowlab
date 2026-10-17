@@ -2168,7 +2168,12 @@ after the PR #96 reviews:*
 Also left alone, and listed: file-map Edit `no` files (never written or
 deleted, as in a whole `snap restore`), anything added that is not a regular
 file, and any path the gate will not write or delete (an executable, changed,
-removed or added): the rest of the apply goes ahead. When the gate refuses
+removed or added): the rest of the apply goes ahead. *Note, 2026-10-17
+(M13-28):* under `Interface/AddOns/`, an executable added since the save is
+skipped by its own file-map row (`addon-executable`, Edit `no`) and listed
+under "skipped" with action `delete`, before the gate is asked; a changed or
+removed one is still listed as left alone with the gate's reason. The
+sentence above still holds for executables outside `AddOns/`. When the gate refuses
 the whole restore and `profiles` compares entries with the disk itself, it
 reads through no link: every folder from the flavor folder down is checked
 with `lstat`, a file is opened with `O_NOFOLLOW` and must be a regular file

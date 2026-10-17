@@ -20,7 +20,8 @@ branch; derive every expectation from `docs/LAB_PLAN.md`,
 Identical to `implementer.md` steps 1–3: worktree check, branch
 `m<N>/<nn>-<slug>-tests` from fresh `origin/main`, `make setup`, read the
 ticket, the plan sections it cites, `AGENTS.md` (invariants L1 to L8), the
-`.claude/rules/` file for the area.
+`.claude/rules/` file for the area. The scratchpad is shared: prefix every
+scratch file and log with your ticket id.
 
 ## What you produce
 

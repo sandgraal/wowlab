@@ -22,7 +22,10 @@ own internal consistency.
    `git checkout --detach origin/<branch> && make setup && make ci`. For a
    parser, round-trip every real fixture yourself and `cmp` the bytes. For
    `guard`, try to make it write somewhere it should not, in a `tmp_path`
-   tree. Never point anything at a real install.
+   tree. Never point anything at a real install. The scratchpad is shared
+   with every other agent of the session: prefix scratch files and logs
+   with the ticket id, and read a `make ci` log only when its rootdir line
+   names your worktree.
 
 ## Always check, whatever the diff claims to be about
 

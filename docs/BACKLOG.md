@@ -434,7 +434,9 @@ Found by M13-02. With `LongPathsEnabled=0`, the default on many player PCs, Wind
 
 Make the M13-15T graders pass by using extended-length (`\\?\`) paths for the filesystem calls the graders show failing (expected: `guard`, `snapshot` and the readers) on Windows, without changing behaviour on other platforms. Activate the graders by deleting their markers only.
 
-**Acceptance:** the graders pass on `lab (windows)` with the setting off, on a run of `windows.yml` on the branch before merge; the full suite passes; reviewed by `code-reviewer` and `security-reviewer` (the write gate).
+*Amended 2026-10-17, from the M13-15T security review (#234):* with long paths off, Windows reports WinError 2 and 3 for a long plain path, and Python raises `FileNotFoundError` for both, which `snapshot._walk` and `_capture` take to mean "removed while we walked" and skip. So on `main` a snapshot silently leaves such a file out and a later restore reports success while the file stays changed. The fix must not depend on the root's spelling: the graders cover drive-letter roots, UNC roots (`\\server\share`, which needs the `\\?\UNC\` form), a root already given in `\\?\` form, and a relative root. The 259-character "at limit" cases are in scope: the gate's temp file beside the target is what goes past the limit there. Whatever the gate does with a `\\?\`-prefixed flavor (refuse on enter, or normalise so `undo()` and restore work) must be consistent: a write the gate cannot reverse is never made (§6.10).
+
+**Acceptance:** the graders pass on `lab (windows)` with the setting off, on a run of `windows.yml` on the branch before merge; before skipping a file for `FileNotFoundError`, the snapshot confirms it is gone with an extended-length `lstat` and otherwise raises `SnapshotError` (a partial snapshot is never written); no `\\?\` prefix reaches `Install.root`, a manifest's `install_root`, the journal or `doctor`'s output; the full suite passes; reviewed by `code-reviewer` and `security-reviewer` (the write gate).
 
 ---
 
@@ -675,7 +677,7 @@ Use one link test for the walk, the top-level scan and the flavor-folder verdict
 
 ---
 
-## [ ] M13-36 — `lab (windows)`: four M13-22/M13-23 tests assume a POSIX host
+## [x] M13-36 — `lab (windows)`: four M13-22/M13-23 tests assume a POSIX host
 **Size:** S · **Depends on:** M13-22, M13-23
 
 Found on 2026-10-17. `windows.yml` is red on `main` at b340d00 (https://github.com/sandgraal/wowlab/actions/runs/38994075858) and was at 209bcb8 too. The failures came in with #203 and #204 and went unseen because the job is off the PR path (ADR-0014 amendment of 2026-10-15). Four tests fail, all in test code; the log shows nothing wrong in the library:
@@ -690,3 +692,50 @@ No library change is expected. If making a test pass on Windows seems to need on
 - `gh workflow run windows.yml --ref <branch>` on the branch is green before merge; the run URL and the pasted summary line are in the report.
 - Nothing is loosened on macOS or Linux: the four tests still run there as they do on `main`, and `make ci` is green.
 - Reviewed by `code-reviewer`.
+
+---
+
+# M13 follow-ups found in review (filed 2026-10-17)
+
+## [ ] M13-37 — Install discovery uses the same link test as `tree`, `gaps` and `explain`
+**Size:** S · **Depends on:** M13-35
+
+Found in the domain and code reviews of #235 (M13-35). `install._is_link` checks only "symlink or junction", so a flavor folder that is a non-junction name-surrogate reparse point (a WCI link, a WSL symlink) passes `is_dir()` and its `.flavor.info` is read through the link. Every command that builds a `Layout` for that flavor (`sv`, `addons`, `doctor`, `explain`'s detail lines) then reads through it; only `tree` refuses (M13-35's flavor-folder branch). This contradicts `gaps.NOT_A_FLAVOR_LINK` ("discovery never takes a link, whatever it points at"). Discovery uses `layout.is_link` and reports such a folder in `other_dirs` with `NOT_A_FLAVOR_LINK`. The test `test_a_flavor_folder_that_is_a_wci_link_is_a_link_never_walked_constructed` asserts `discover(root).flavors == [FLAVOR]` under the fake and changes with this ticket.
+
+**Acceptance:** constructed tests that fake the reparse tags: a WCI-link flavor folder and a WSL-symlink flavor folder are each reported in `other_dirs` as a link, not as a flavor, and nothing is read through them; discovery output for installs with no reparse point stays byte-identical; `make ci` green; reviewed by `domain-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-38 — `snap restore`: a whole restore skips a changed or missing addon executable
+**Size:** S · **Depends on:** M13-28, M13-30
+
+Found in the domain and code reviews of #231 (M13-28). M13-28 gave addon executables an Edit `no` row, but a whole `snap restore` asks the gate for the whole plan first (`tx.restore(id, None)`), and the gate refuses it when an executable in the snapshot changed or went missing, before `_client_managed` can skip anything. So the restore exits 3 and puts nothing back, and the Edit `no` promise ("left alone and counted in the plan") does not hold for this one row. M13-30 built the by-name route for screenshots; reuse it: entries under the `addon-executable` row that the disk no longer matches go in the plan's skipped list with their row, and the rest is restored by name. `guard.py` does not change; if a fix seems to need it, stop and report (that needs a `T` ticket first). The review probe `lab/core/tests/review/test_m13_28_whole_restore_refuses_an_edit_no_addon_executable.py` is the grader: activate it by deleting its marker only. The "Skipped" header must not offer `--paths` for an executable, because `--paths` naming one is refused too.
+
+**Acceptance:** the probe passes; a whole restore of a labelled constructed snapshot with a changed `helper.sh` and a removed `gone.dll` restores the `.toc` and lists both executables as skipped by their row; `--paths` on either is still refused with the gate's reason; `--json` validates; `make ci` green; reviewed by `security-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-39 — wiki-daily: `improve` still restores the uv cache
+**Size:** S · **Depends on:** M13-19
+
+Found in the security review of #236 (M13-19). `improve` restores the uv cache before the model runs. A model past its permissions there could take `ACTIONS_RUNTIME_TOKEN` and write cache entries for `main`, which the four `enable-cache: true` jobs in `ci.yml` restore, so the required CI checks could be fed a poisoned cache. `release.yml` uses no cache. Give `improve` `enable-cache: false` (the dry run showed a fresh `uv sync` costs about a second), and add the setting to the static test that pins the `gates` and `publish` jobs' cache settings.
+
+**Acceptance:** no job that runs the model restores or saves a cache; a dry run passes; actionlint clean; `make ci` green; reviewed by `security-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-40 — `check_wiki`: a crash reads as "no personal data"
+**Size:** S · **Depends on:** M13-19
+
+Found in the security re-review of #236 (M13-19). The withhold step and the gates release let pages out on `check_wiki` exit 0 or 1, but `main()` catches only `CalledProcessError`, and Python exits 1 on any uncaught exception. `Checker.run()` runs `check_generated`, `check_links`, `check_commands` and `check_coverage` before `check_privacy`, so a page that crashed any of those would leave with no personal-data check and an exit code that looks safe. The reviewer could not build such a page (16 hostile cases all exited 3), so this is defence in depth. Fix both: catch `Exception` in `main()` and return `EXIT_ERROR` (2), and run `check_privacy` first.
+
+**Acceptance:** a constructed page that makes one of the other checks raise still exits 3 when it holds personal data and 2 when it does not; `make ci` green; reviewed by `security-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-41 — `combatlog`: filter lines by event before tokenizing
+**Size:** S · **Depends on:** M13-08
+
+Found while building M13-08. `combatlog.cast_counts` tokenizes every line; on a constructed 110 MiB, 390k-line log it took 69.6 s on a loaded machine, 97% of it in the existing tokenizer (9.31 s tokenizing against 9.62 s for `cast_counts`). A multi-GB raid log would take minutes with no progress shown. Select the event name from the raw line (the second comma-separated field after the two-space timestamp separator) and tokenize only the records a caller asks for, keeping the tokenizer's results byte-identical for the lines it does tokenize. No performance target is set; report the measured speed-up on the same constructed log, and stop if the filter would change any count on the real fixture.
+
+**Acceptance:** `cast_counts` on the real Forever fixture gives the same counts as before; a labelled constructed test shows a line whose event field is quoted or holds a comma is still classified right; the measured time on the 110 MiB constructed log is in the PR; `make ci` green; reviewed by `code-reviewer`.
