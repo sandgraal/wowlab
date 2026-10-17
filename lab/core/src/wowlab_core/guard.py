@@ -948,7 +948,11 @@ def _place(path_value: object, version: object) -> _Place:
     given = longpath.plain(Path(path_value))
     if not given.is_absolute():
         raise GuardError(f"a flavor path must be absolute: {given}")
-    _refuse_unreachable(given, given)
+    if os.name == "nt":
+        # Before any lookup, so `\\server\share` is never asked anything. On
+        # POSIX the spelling proves nothing (`//x` is the local `/x`): the
+        # resolved paths are checked below.
+        _refuse_unreachable(given, given)
     try:
         st = longpath.lstat(given)
         if _is_link(st) or not stat.S_ISDIR(st.st_mode):

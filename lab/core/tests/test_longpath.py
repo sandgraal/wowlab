@@ -72,6 +72,31 @@ def test_constructed_extended_text(given: str, limit: int, expected: str) -> Non
     assert longpath.extended_text(given, limit=limit) == expected
 
 
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        pytest.param("C:\\a\\foo.", "\\\\?\\C:\\a\\foo.", id="constructed-trailing-dot-kept"),
+        pytest.param("C:\\a\\foo ", "\\\\?\\C:\\a\\foo ", id="constructed-trailing-space-kept"),
+        pytest.param(
+            "\\\\server\\share\\foo.", "\\\\?\\UNC\\server\\share\\foo.", id="constructed-unc"
+        ),
+        # Not clean: normalised as without `literal`.
+        pytest.param("C:\\a\\..\\b", "\\\\?\\C:\\b", id="constructed-dot-dot-normalised"),
+        pytest.param("C:/a/b", "\\\\?\\C:\\a\\b", id="constructed-forward-slash-normalised"),
+    ],
+)
+def test_constructed_extended_text_literal(given: str, expected: str) -> None:
+    """`literal` (what `extended(..., always=True)` uses, for `snapshot`'s
+    confirmation that a listed file is gone) prefixes a clean absolute path as
+    it is, so `foo.` is not looked up as `foo`."""
+    assert longpath.extended_text(given, limit=0, literal=True) == expected
+
+
+def test_constructed_utf16_units_counts_a_surrogate_pair_twice() -> None:
+    assert longpath.utf16_units("a\U0001f600") == 3
+    assert longpath.utf16_units("a\ud800") == 2  # a lone surrogate from a file name
+
+
 def test_constructed_extended_text_at_the_limit() -> None:
     """The prefix starts at `PLAIN_LIMIT` characters, under every plain limit
     Windows has (`CreateDirectoryW`'s 248 is the tightest)."""
@@ -369,3 +394,52 @@ def test_constructed_guard_refuses_a_network_flavor_on_enter(
         tx.write(CONFIG, before + EDIT)
     assert config.read_bytes() == before
     assert guard.history(store=store) == ()
+
+
+@WINDOWS
+def test_constructed_snapshot_raises_for_a_listed_name_with_a_trailing_dot(
+    tmp_path: Path, store: Path
+) -> None:
+    """A file named `foo.` (made through `\\\\?\\`) is listed, but its plain
+    path opens `foo`, which is not there. The confirmation looks at `foo.`
+    itself, finds it, and the `create` raises: never a silent skip."""
+    root = _source(tmp_path)
+    odd = longpath.extended_text(str(root / "WTF" / "foo."), limit=0, literal=True)
+    Path(odd).write_bytes(b"constructed\n")
+    try:
+        with pytest.raises(SnapshotError, match="but it is there"):
+            SnapshotStore(store).create(root, ["WTF"])
+        assert SnapshotStore(store).list() == ()
+    finally:
+        Path(odd).unlink()
+
+
+@WINDOWS
+def test_constructed_discovery_refuses_an_extended_root_with_no_plain_spelling(
+    root: Path,
+) -> None:
+    """`Install.root` is always plain: a `\\\\?\\` root with a `..` component
+    has no plain spelling, and is reported as not an install, before any
+    lookup."""
+    spelled = _x(root) + "\\..\\" + root.name
+    with pytest.raises(install.NotAnInstallError, match="no plain spelling"):
+        install.discover(spelled, environ={}, defaults=())
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="`//` begins a network path on Windows")
+def test_constructed_guard_takes_a_posix_flavor_spelled_with_a_double_slash(
+    root: Path, store: Path
+) -> None:
+    """Off Windows, `//x` is the local `/x`: the gate takes such a flavor as
+    before M13-15, journals the resolved path, and `undo()` reverses it."""
+    flavor = Path("/" + str(root / FLAVOR))
+    assert str(flavor).startswith("//")
+    config = root / FLAVOR / "WTF" / "Config.wtf"
+    original = config.read_bytes()
+    with guard.transaction(_Flavor(flavor), label="double slash", store=store) as tx:
+        tx.write(CONFIG, original + EDIT)
+    assert config.read_bytes() == original + EDIT
+    (record,) = guard.history(store=store)
+    assert not record.flavor_path.startswith("//")
+    guard.undo(store=store)
+    assert config.read_bytes() == original

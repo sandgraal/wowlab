@@ -476,8 +476,19 @@ def _flavor_folder_hint(root: Path) -> str:
 def _probe(root: Path, source: Source) -> None:
     """Raise `NotAnInstallError` unless `root/.build.info` is a regular file.
 
-    A refusal from the operating system is `unreadable`, never `missing`.
+    A refusal from the operating system is `unreadable`, never `missing`. So
+    is a root spelled `\\\\?\\...` that has no plain spelling (a volume GUID
+    path, a `..` component, a trailing dot): `Install.root` is always plain
+    (M13-15), and the write gate could not restore into such a root.
     """
+    if longpath.ON_WINDOWS and str(root).startswith("\\\\?\\"):
+        raise NotAnInstallError(
+            root,
+            source,
+            "unreadable",
+            "an extended-length path with no plain spelling; name the install as "
+            "C:\\... or \\\\server\\share\\...",
+        )
     try:
         st = longpath.stat(root / BUILD_INFO)
     except (FileNotFoundError, NotADirectoryError):
