@@ -91,8 +91,11 @@ starts with `/conduct milestone M10` (or `next`, or ticket ids). Feature
 code is written by the `implementer` agent and graders by `test-writer`,
 each in its own worktree; `code-reviewer` grades every branch spec-first;
 `domain-reviewer` and `security-reviewer` are added by area; `pr-shepherd`
-opens the PR, resolves every thread, and **merges autonomously** once the
-required checks are green, threads are resolved, and reviews are clean.
+opens the PR, answers every thread, and **merges autonomously** once the
+required checks are green, the reviewer verdicts are clean, and every
+thread the owner opened is answered. Since 2026-10-17 an open thread from
+the automated review or another bot does not hold a merge: the independent
+`code-reviewer` verdict is the gate, and the thread stays visible.
 
 - The conductor's only source edits are harness (`.claude/`), docs, backlog
   ticks, and handoffs. Everything else goes to an agent, including fixes for
