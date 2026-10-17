@@ -560,14 +560,16 @@ Found in the domain review of #195 (M13-21), on 2026-10-15. `snap create --scree
 
 ---
 
-## [ ] M13-31 — M10-04 CPU-budget probes fail on loaded macOS runners
-**Size:** S · **Depends on:** M13-01
+## [ ] M13-31 — M10-04 CPU-budget and memory probes fail on loaded machines
+**Size:** S · **Depends on:** M13-01, M13-20T
 
 Found on 2026-10-16. The same flake hit a sibling probe, `test_m10_04_escaped_key_list_at_budget_misses_time_target.py`, on #204 (10.04 CPU s), so this ticket covers every M10-04 CPU-budget probe under `lab/core/tests/review/`, not only the one named next. *Amended 2026-10-16:* the memory probe `test_m10_04_bounded_document_misses_memory_target.py::test_constructed_stand_in_holding_twice_the_memory_fails_the_assignment_probe` flaked the same way on several local `make ci` runs during M13-05, M13-10 and M13-25. Each time it took one low sample, for example 1383 MiB against about 1866 MiB, on a loaded machine, and passed when run alone. Cover it here too, keeping its target. In `lab/core/tests/review/test_m10_04_semicolon_list_at_budget_misses_time_target.py`, `test_constructed_control_zeros_at_the_budget_are_inside_the_target` failed on `lab (macos)` in two unrelated PRs: #204 at 10.16 CPU s and #206 at 10.74 CPU s. Neither PR touches `luadata.py`, and both passed when re-run.
 
 The probe already measures child CPU time and keeps the better of two runs. The runner is simply loaded. The sibling case `test_constructed_semicolon_list_at_the_budget_is_inside_the_target` uses the same measurement and target, and its expected time is similar, so it is just as exposed.
 
-**What to do.** Make every case in both M10-04 time-target probes (four in total) robust to a loaded runner without loosening §6.4's 10 s target.
+**What to do.** There are two parts. Neither loosens a target.
+
+*The CPU cases.* Make every case in both M10-04 time-target probes (four in total) robust to a loaded runner without loosening §6.4's 10 s target.
 - Choose one of these:
   - more samples, taking the minimum;
   - a threshold scaled from an in-run calibration parse, where the 10 s target is the threshold on an idle machine;
@@ -575,11 +577,14 @@ The probe already measures child CPU time and keeps the better of two runs. The 
 - Report the measured margins of all four cases on the macOS runner.
 - If either case still misses 10 s on an idle runner, stop and report. That is a missed performance target (AGENTS.md "Stop and ask"), not something to loosen.
 
-`luadata.py` is load-bearing. This is a review probe, not a grader, so do not edit any grader.
+*The memory case.* It fails in the opposite direction. It is a positive control that asserts `peak >= LIMIT_BYTES` with `peak = min(samples)`, so a single low sample fails it. More samples taking the minimum makes it worse, and the CPU options above do not apply to RSS. Choose a statistic that one low outlier cannot drag down, for example the median or the maximum of the samples, or another approach with a stated reason. Keep the probe failing against a stand-in that holds twice the memory. Measure after M13-20T lands, because M13-20T edits the same file (`CHILD` and the sampling helpers) and changes the readings. Rebase on it; do not re-implement it.
+
+`luadata.py` is load-bearing. These are review probes, not graders, so do not edit any grader.
 
 **Acceptance:**
-- 20 consecutive `lab (macos)` runs pass all four cases. If M13-18 lands first, measure after it.
-- The probe still fails against a constructed parser that is twice as slow.
+- 20 consecutive `lab (macos)` runs pass all four CPU cases. If M13-18 lands first, measure after it.
+- The CPU probes still fail against a constructed parser that is twice as slow.
+- The memory control passes 20 consecutive local `make ci` runs on a loaded machine (another `make ci` running alongside), with each run's samples and the chosen statistic reported. It still fails against a stand-in that holds half the memory.
 - `make ci` green.
 - Reviewed by `code-reviewer`.
 
@@ -639,3 +644,21 @@ Add a byte-level rule to the scrub tool. It never parses and re-serializes the f
 - A tag the tool cannot place refuses the file.
 - `make ci` green.
 - Reviewed by `security-reviewer` (scrub tool) and `code-reviewer`.
+
+---
+
+## [ ] M13-35 — `tree`: a non-junction link is listed as a link and never walked
+**Size:** S · **Depends on:** M13-33
+
+Found in the reviews of #228 (M13-33), 2026-10-16. Three gaps remain where `tree` and `explain` disagree about what is a link.
+- `layout._is_link` treats only symlinks and junctions as links. So the inventory walk goes into a name-surrogate reparse point that is not a junction, such as a WCI link or a WSL symlink made with `ln -s` under `/mnt/c`, and lists the files under it with sizes read through it. Each of them says it is a link wowlab never follows, and `filemap gaps` reports the same folder as a link it did not enter.
+- The top-level scan in `cli._tree_items` skips only entries where `DirEntry.is_symlink()` is true. On Windows a junction is not reported that way, so a top-level junction is listed as a plain folder, while `explain` calls it a link.
+- A flavor folder that is a non-junction name-surrogate link is still judged restorable by `tree`, while `explain` calls it a link.
+
+Use one link test for the walk, the top-level scan and the flavor-folder verdict: the one `gaps` uses (`gaps.is_link`), which matches `explain`'s `_path_kind`. A link is listed as a link and never walked. Nothing is read through it (L1). guard.py does not change.
+
+**Acceptance:**
+- Constructed tests that fake the reparse tags, so they run on any OS. A WCI link and a WSL symlink under `WTF/Account`, a junction at the top level, and a flavor folder that is a WCI link are each listed as a link, nothing under them is listed, and the verdict matches `explain` for the same path in `tree --explain --json` and `tree --install --explain --json`.
+- The text output for paths with no reparse point stays byte-identical.
+- `make ci` green.
+- Reviewed by `domain-reviewer` and `code-reviewer`.
