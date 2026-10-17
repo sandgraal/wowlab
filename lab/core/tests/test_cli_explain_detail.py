@@ -131,6 +131,8 @@ SAMPLES: dict[str, tuple[str, str, filemap.Kind]] = {
     ),
     "addons-folder": ("flavor", "Interface/AddOns", "dir"),
     "addon": ("flavor", "Interface/AddOns/DBM-Brawlers/DBM-Brawlers.toc", "file"),
+    # Constructed (the capture has none): an addon folder named like a bundle.
+    "addon-executable": ("flavor", "Interface/AddOns/Foo.app", "dir"),
     "blizzard-addon-export": ("flavor", "Interface/AddOns/Blizzard_Foo/Blizzard_Foo.toc", "file"),
     "combat-log": ("flavor", "Logs/WoWCombatLog-040126_021630.txt", "file"),
 }
@@ -238,7 +240,11 @@ def test_each_view_decodes_the_captured_file(root: Path, flavor: Path) -> None:
         for view in report.views:
             out = ok(*view.argv, "--json").stdout
             assert out.strip(), (path, view.argv)
-    assert seen == set(SAMPLES) - {"account-blizzard-savedvariables", "blizzard-addon-export"}
+    assert seen == set(SAMPLES) - {
+        "account-blizzard-savedvariables",
+        "blizzard-addon-export",
+        "addon-executable",
+    }
 
 
 def test_with_root_every_view_and_hint_names_the_install(root: Path) -> None:

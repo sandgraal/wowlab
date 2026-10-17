@@ -530,6 +530,14 @@ def test_an_entry_behind_a_symlinked_folder_is_never_read_constructed(
 def test_an_executable_the_gate_refuses_is_left_and_the_rest_applied_constructed(
     root: Path, flavor: Path
 ) -> None:
+    """An executable in an addon folder is never written or deleted (L7).
+
+    A changed or removed one is a write the gate refuses, so it is listed in
+    `left` with the gate's reason. An added one would be a delete, and the
+    file map's `addon-executable` row (Edit `no`, M13-28) catches it first,
+    as it catches an added `.DS_Store`: it is listed in `skipped` (§13.3:
+    Edit `no` files are skipped "as a whole restore does"). Either way the
+    file stays as it is on disk and the rest of the profile applies."""
     tool = flavor / "Interface/AddOns/Tool"
     tool.mkdir()
     (tool / "Tool.toc").write_bytes(b"## Title: constructed\n")
@@ -542,15 +550,27 @@ def test_an_executable_the_gate_refuses_is_left_and_the_rest_applied_constructed
     (tool / "helper.sh").write_bytes(b"#!/bin/sh\necho changed\n")  # changed
     (tool / "gone.dll").unlink()  # removed
     (tool / "added.so").write_bytes(b"constructed")  # added
+    tool_before = _bytes_under(tool)
+    assert tool_before == {
+        "Tool.toc": b"## Title: constructed\n",
+        "helper.sh": b"#!/bin/sh\necho changed\n",
+        "added.so": b"constructed",
+    }
     report = _json_of(cli.ProfileApplyReport, "profile", "apply", "mods", "--yes")
     assert report.applied
-    left = {lp.path: lp.reason for lp in report.left}
-    for rel in ("helper.sh", "gone.dll", "added.so"):
-        assert "is an executable; guard never writes one" in left[f"Interface/AddOns/Tool/{rel}"]
+    in_tool = "Interface/AddOns/Tool/"
+    left = {lp.path: lp.reason for lp in report.left if lp.path.startswith(in_tool)}
+    assert set(left) == {f"{in_tool}helper.sh", f"{in_tool}gone.dll"}, left
+    for path, reason in left.items():
+        assert "is an executable; guard never writes one" in reason, (path, reason)
+    skipped = [s for s in report.skipped if s.path.startswith(in_tool)]
+    assert [(s.path, s.action, s.entry_id) for s in skipped] == [
+        (f"{in_tool}added.so", "delete", "addon-executable")
+    ]
+    assert _bytes_under(tool) == tool_before, "no executable is written, restored or deleted"
     assert lua.read_bytes() == saved_lua, "the rest of the profile is applied"
-    assert (tool / "helper.sh").read_bytes() == b"#!/bin/sh\necho changed\n"
-    assert not (tool / "gone.dll").exists() and (tool / "added.so").exists()
     assert all("Tool/" not in i.path or i.path.endswith(".toc") for i in report.plan)
+    assert not [p for p in report.added if p.startswith(in_tool)]
 
 
 def test_too_many_deletes_are_refused_with_the_count_constructed(

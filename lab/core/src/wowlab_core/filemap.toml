@@ -24,6 +24,11 @@
 #   **         zero or more segments
 #   <digits>   a segment made only of ASCII digits
 #   <name>     a segment that is not made only of ASCII digits
+#   <executable>  a segment the write gate refuses as an executable: a name
+#              ending, in any letter case, in one of `guard`'s executable
+#              suffixes, or a versioned shared library (`libfoo.so.1`).
+#              `filemap.py` holds a copy of `guard`'s rule; a test fails when
+#              the two drift (M13-28)
 #   .          the base folder itself (only as the whole pattern)
 # A match pattern ending in `/` matches directories only; one ending in `**`
 # matches anything; any other matches files only. `exclude` patterns match
@@ -527,6 +532,18 @@ edit = "—"
 tier = "—"
 module = "`layout`"
 match = ["Interface/AddOns/"]
+
+[[entry]]
+id = "addon-executable"
+section = "flavor"
+base = "flavor"
+doc_path = "`Interface/AddOns/…`, any part of the path ending, in any letter case, in `.exe`, `.dll`, `.dylib`, `.so` (or `.so.<n>`, as in `libfoo.so.1`), `.scr`, `.com`, `.bat`, `.cmd`, `.ps1`, `.sh`, `.command`, `.app`, `.bundle`, `.plugin`, `.framework`, `.vbs`, `.js`, `.wsf`, `.hta`, `.msi`, `.lnk`, `.cpl` or `.jar`"
+what = "A program, script, shortcut, shared library or app bundle in the addons folder, or a file inside one (or inside a folder named like one). The game loads only what an addon's TOC lists (Lua and XML) and the media those files use **[verify]**; it does not run these. One here usually came in the addon's download (a build script or a separate helper tool) or was left behind; if you did not expect it, find out where it came from. wowlab never writes, restores or deletes an executable: changing executables is permanently out of its scope (LAB_PLAN L7)"
+written_by = "You, or an addon manager"
+edit = "no"
+tier = "A (read)"
+module = "none (kept by `snapshot` and `profile save`; never restored)"
+match = ["Interface/AddOns/**/<executable>/**"]
 
 [[entry]]
 id = "addon"

@@ -2330,6 +2330,16 @@ def _addons_list(at: _At) -> list[_ViewSpec] | str:
     return f"{_NO_READER}; `wowlab addons list` lists addon folders and their TOC files"
 
 
+def _addon_executable(at: _At) -> list[_ViewSpec] | str:
+    """An addon folder named like a bundle (`Interface/AddOns/Foo.app/`) is
+    still an addon folder, and `addons list` lists it. Anything inside an
+    addon that is named like an executable, or lies inside such a folder, is
+    read by no command."""
+    if at.folder and len(at.parts) == 3:
+        return _addons_list(at)
+    return _NO_READER
+
+
 def _combat_log(at: _At) -> list[_ViewSpec] | str:
     """`log tail` reads the newest combat log only."""
     if at.newest_log is not None and at.parts[-1] == at.newest_log:
@@ -2385,6 +2395,7 @@ _VIEWS: dict[str, Callable[[_At], list[_ViewSpec] | str]] = {
     "character-wtf-config": _character_wtf,
     "addons-folder": _addons_list,
     "addon": _addons_list,
+    "addon-executable": _addon_executable,
     "blizzard-addon-export": _addons_list,
     "combat-log": _combat_log,
 }
@@ -5764,10 +5775,12 @@ def _print_apply_plan(show: Callable[[str], None], plan: profiles.ApplyPlan) -> 
     if plan.skipped:
         show(
             f'  Skipped {len(plan.skipped)} file(s) wowlab leaves alone (file-map Edit "no": '
-            "client-written backups, Blizzard_* folders, file-browser metadata):"
+            "client-written backups, Blizzard_* folders, file-browser metadata, "
+            "addon executables):"
         )
         for sk in plan.skipped:
-            show(f"    {sk.path}  [{sk.entry_id}]")
+            undone = "  (added since the profile was saved; not deleted)"
+            show(f"    {sk.path}  [{sk.entry_id}]" + (undone if sk.action == "delete" else ""))
     if plan.left:
         show(f"  Left alone ({len(plan.left)} path(s)):")
         for lp in plan.left:
@@ -5802,9 +5815,9 @@ def profile_apply(
     characters, and with the addons preset, addons installed since (code and
     settings). Addon updates made since are undone. `--dry-run` shows the plan
     without asking. Files whose file-map Edit is `no` (client-written backups,
-    Blizzard_* folders, file-browser metadata) are left alone. Every *-cache*
-    file is listed: the server may replace it at your next login, so the result
-    is proven only by logging in.
+    Blizzard_* folders, file-browser metadata, addon executables) are left
+    alone. Every *-cache* file is listed: the server may replace it at your
+    next login, so the result is proven only by logging in.
 
     The lab-addon (Interface/AddOns/WowLab/ and WowLab.lua) is always left
     alone, and so is anything the write gate will not write or delete (an

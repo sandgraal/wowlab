@@ -15,7 +15,8 @@ product, interface or build (L6).
 Pattern grammar (also documented at the top of `filemap.toml`): `/`-separated
 segments; each is an fnmatch pattern compared case-insensitively, `**` (zero
 or more segments), `<digits>` (only ASCII digits), `<name>` (not only ASCII
-digits), or the whole pattern `.` (the base folder itself). A match pattern
+digits), `<executable>` (a name the write gate refuses as an executable,
+M13-28), or the whole pattern `.` (the base folder itself). A match pattern
 ending in `/` matches directories only, one ending in `**` anything, any
 other files only. `exclude` patterns match regardless of kind. When several
 entries match, the first in file order wins.
@@ -57,6 +58,7 @@ Kind = Literal["file", "dir", "any"]
 
 _DIGITS = "<digits>"
 _NAME = "<name>"
+_EXECUTABLE = "<executable>"
 _ANY_DEPTH = "**"
 _SELF = "."
 _BEGIN = "<!-- filemap:begin {} -->"
@@ -66,6 +68,46 @@ _BLOCK = re.compile(
     re.MULTILINE | re.DOTALL,
 )
 _ID = re.compile(r"[a-z0-9][a-z0-9-]*")
+
+# ─── the write gate's executable rule, copied ────────────────────────────────
+# A copy of `guard._is_executable`, so the `<executable>` segment matches
+# exactly the names the gate refuses to write (L7, M13-28). `guard.py` is
+# load-bearing; its private rule is copied here rather than imported (`verdict`
+# uses this copy too), and `test_filemap_addon_executables.py` fails when the
+# two drift apart (`test_the_copied_rule_equals_guards`,
+# `test_executable_row_agrees_with_the_write_gate`).
+
+_EXECUTABLE_SUFFIXES = (
+    ".exe",
+    ".dll",
+    ".dylib",
+    ".so",
+    ".scr",
+    ".com",
+    ".bat",
+    ".cmd",
+    ".ps1",
+    ".sh",
+    ".command",
+    ".app",
+    ".bundle",
+    ".plugin",
+    ".framework",
+    ".vbs",
+    ".js",
+    ".wsf",
+    ".hta",
+    ".msi",
+    ".lnk",
+    ".cpl",
+    ".jar",
+)
+_VERSIONED_SHARED_LIBRARY = re.compile(r"\.so(\.\d+)+\Z", re.IGNORECASE)
+
+
+def _is_executable(name: str) -> bool:
+    folded = name.casefold()
+    return folded.endswith(_EXECUTABLE_SUFFIXES) or bool(_VERSIONED_SHARED_LIBRARY.search(name))
 
 
 class Section(BaseModel):
@@ -219,6 +261,8 @@ def _segment(pattern: str, name: str) -> bool:
         return name.isascii() and name.isdigit()
     if pattern == _NAME:
         return not (name.isascii() and name.isdigit())
+    if pattern == _EXECUTABLE:
+        return _is_executable(name)
     return fnmatch.fnmatchcase(name.casefold(), pattern.casefold())
 
 
