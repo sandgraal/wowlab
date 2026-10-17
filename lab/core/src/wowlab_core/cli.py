@@ -5520,15 +5520,15 @@ def snap_restore(
                 _screenshot_note(lay, manifest, folder, named, exc)
                 raise
         else:
+            # The gate's snapshot checks (another install, another flavor)
+            # come before anything here reads the disk.
+            tx.restore(manifest.id, [])
             # Screenshots, which the gate never writes, are set aside; the
             # gate would otherwise refuse the whole restore.
             rest, aside = _set_aside(lay, manifest, inst.root, folder)
             if not aside:
                 tx.restore(manifest.id)
             else:
-                # The gate's snapshot checks (another install, another
-                # flavor) come before the disk is read for the names.
-                tx.restore(manifest.id, [])
                 if any(not e.path.startswith(folder + "/") for e in rest):
                     tx.restore(manifest.id)  # refused: a path outside this flavor
                 names, left = _names_for_whole(rest, inst.root, folder)
