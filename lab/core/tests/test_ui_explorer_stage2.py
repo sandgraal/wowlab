@@ -522,7 +522,7 @@ def test_hostile_names_in_gaps_draw_as_inert_text_constructed(
         assert name in rows, repr(name)
         row = rows[name]
         assert row["badge"] is not None, repr(name)
-        for text in (row["name"], row["nameTitle"], row["text"]):
+        for text in (row["name"], row["nameTitle"], row["text"], row["aria"]):
             assert LSEP not in text and RLO not in text, repr(text)
         if LSEP in name:
             assert "2028" in row["name"], row["name"]
@@ -965,6 +965,9 @@ def test_a_refused_command_is_never_offered_constructed(
     rels = files[: len(refused)]
     every = [control, *rels]
     steps = [s for r in every for s in ({"click": r}, {"activate": True})]
+    # Then every control the page drew anywhere, tree rows included
+    # (security review, round 2 on #226).
+    steps.append({"activate": "everywhere"})
     scenario, _ = _scenario(server, every, steps)
     assert _explain(scenario, control)["views"], control
     for rel, view in zip(rels, refused, strict=True):
@@ -1000,9 +1003,9 @@ def test_whether_a_view_is_offered_comes_from_the_command_list_constructed(
     it reads, neither real view is offered, while `binds list`, left as it
     is, still is. (The command list edited: constructed.)"""
     rels = ["WTF/Config.wtf", SV_FILE, ACCOUNT + "/bindings-cache.wtf"]
-    scenario, _ = _scenario(
-        server, rels, [s for r in rels for s in ({"click": r}, {"activate": True})]
-    )
+    steps = [s for r in rels for s in ({"click": r}, {"activate": True})]
+    steps.append({"activate": "everywhere"})
+    scenario, _ = _scenario(server, rels, steps)
     views = [_explain(scenario, r)["views"][0] for r in rels]
     assert [v["command"] for v in views] == [["cvar", "list"], ["sv", "dump"], ["binds", "list"]]
     for command in scenario["commands"]["commands"]:
@@ -1035,6 +1038,7 @@ def test_a_refused_first_view_is_not_replaced_by_the_next_constructed(
     constructed.)"""
     rel, control = "WTF/Config.wtf", ACCOUNT + "/bindings-cache.wtf"
     steps = [s for r in (control, rel) for s in ({"click": r}, {"activate": True})]
+    steps.append({"activate": "everywhere"})
     scenario, _ = _scenario(server, [control, rel], steps)
     report = _explain(scenario, rel)
     allowed = report["views"][0]

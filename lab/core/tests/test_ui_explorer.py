@@ -358,6 +358,9 @@ def test_the_script_writes_text_only(server: Any) -> None:
     script = _script()
     for sink in _HTML_SINKS:
         assert sink not in script, sink
+    # No handler set as an `on<event>` property (security review, round 2
+    # on #226): handlers go through addEventListener.
+    assert re.search(r"\.on[a-z]+\s*=(?!=)", script) is None
     # Attributes the script sets are a closed set, none of them a URL or a
     # handler, each named by a literal in either quote style (round 1 on #226).
     assert script.count("setAttribute(") == len(re.findall(r"setAttribute\([\"']", script))
@@ -569,6 +572,16 @@ class El {
       contains(c) { return has(self, c); },
       toggle(c, on) { if (on === undefined) on = !has(self, c); if (on) this.add(c); else this.remove(c); return on; },
     };
+    // A handler set as an `on<event>` property is trapped (security review,
+    // round 2 on #226): every handler goes through addEventListener, where
+    // the `activate` step finds it.
+    return new Proxy(this, {
+      set(target, key, value) {
+        if (typeof key === "string" && /^on[a-z]+$/.test(key)) trap("property " + key);
+        target[key] = value;
+        return true;
+      },
+    });
   }
   get textContent() { return this._text + this.children.map((c) => c.textContent).join(""); }
   set textContent(t) { this._text = String(t); this.children = []; }
@@ -734,7 +747,8 @@ function rows() {
       .map((b) => ({ text: b.textContent, title: b.title, cls: b.className }));
     return { path: row.dataset.path, name: name ? name.textContent : null,
       nameTitle: name ? name.title : null, expanded: li.getAttribute("aria-expanded"),
-      text: row.textContent, badge: marks.length ? marks[0] : null, badges: marks };
+      text: row.textContent, badge: marks.length ? marks[0] : null, badges: marks,
+      aria: [row, ...row.all()].map((e) => e.attrs["aria-label"] || "").join("\n") };
   });
 }
 // A row by its data-path; for a page that draws the whole install, a path
@@ -764,7 +778,8 @@ function detail() {
     pane: paneEls().map((e) => e.textContent).join("\n"),
     rest: paneEls().filter((e) => e.id !== "explain-title" && e.id !== "explain-path")
       .map((e) => e.textContent).join("\n"),
-    hints: all.filter((e) => has(e, "hint")).map((h) => ({ text: h.textContent,
+    hints: all.filter((e) => has(e, "hint")).map((h) => ({
+      text: h.textContent + [h, ...h.all()].map((e) => (e.attrs["aria-label"] ? "\n" + e.attrs["aria-label"] : "")).join(""),
       copies: h.all().filter((b) => b.tagName === "button" && has(b, "copy")).length })),
     copyButtons: all.filter((e) => e.tagName === "button" && has(e, "copy")).length,
     previewButtons: all.filter((e) => e.tagName === "button" && has(e, "preview")).length,
@@ -777,7 +792,8 @@ function detail() {
 // A group's own text: everything but its places, not-entered folders and links.
 function bareText(el) {
   if (["gap-place", "gap-not-entered", "gap-link"].some((c) => has(el, c))) return "";
-  return el._text + el.children.map(bareText).join("") + (el.title ? "\n" + el.title : "");
+  return el._text + el.children.map(bareText).join("") + (el.title ? "\n" + el.title : "")
+    + (el.attrs["aria-label"] ? "\n" + el.attrs["aria-label"] : "");
 }
 function gapsView() {
   const view = ids["gaps-view"];
@@ -860,12 +876,14 @@ async function openAll() {
         buttons[step.copy].fire("click"); await tick();
         out.steps.push({ clipboard: clipboard.slice(), newRequests: requests.length - before });
       } else if (step.activate !== undefined) {
-        // Every control in the detail pane, used: each listener fired, each
-        // <details> opened, until nothing new appears.
+        // Every control in the detail pane (or, with "everywhere", on the
+        // whole page: tree rows, tabs, the gaps view), used: each listener
+        // fired, each <details> opened, until nothing new appears.
         const before = requests.length;
         const done = new Set();
+        const scope = step.activate === "everywhere" ? everywhere : inPane;
         for (let round = 0; round < 10; round++) {
-          const fresh = inPane().filter((e) => !done.has(e));
+          const fresh = scope().filter((e) => !done.has(e));
           if (!fresh.length) break;
           for (const e of fresh) {
             done.add(e);
@@ -1261,7 +1279,7 @@ def test_hostile_names_draw_as_inert_text_constructed(
         assert path in rows, repr(path)
         row = rows[path]
         assert row["badge"] is not None, repr(path)
-        for text in (row["name"], row["nameTitle"], row["text"]):
+        for text in (row["name"], row["nameTitle"], row["text"], row["aria"]):
             assert LSEP not in text and RLO not in text, repr(text)
         if LSEP in path:
             assert "2028" in row["name"], row["name"]
