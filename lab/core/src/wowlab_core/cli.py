@@ -4384,7 +4384,7 @@ def _say_coach(report: BindsCoachReport) -> None:
             if counts.first_timestamp is not None
             else "; none of your casts"
         )
-        newest = " (the newest)" if report.log.chosen_by == "newest" else ""
+        newest = " (the newest)" if report.log.chosen_by == "newest" else " (--log)"
         _say(
             f"Combat log: {report.log.file}{newest} ({_plural(counts.lines, 'line')}; "
             f"COMBAT_LOG_VERSION {versions}{span}), judged against {against}"
@@ -4440,7 +4440,8 @@ def _say_coach(report: BindsCoachReport) -> None:
     for f in report.frequent_on_high_cost:
         note = f"; {f.match_note}" if f.match_note else ""
         _say(
-            f"  {f.spell_name} ({f.spell_id}): {_plural(f.casts, 'cast')} ({f.share:.0%}), "
+            f"  {f.spell_name} ({', '.join(map(str, f.spell_ids))}): "
+            f"{_plural(f.casts, 'cast')} ({f.share:.0%}), "
             f"{_key_words(f.keys)}{note}"
         )
     _say(f"Spells cast with no bind: {len(report.cast_without_bind)}")

@@ -197,8 +197,8 @@ def test_binds_coach_on_the_real_log_and_record_cross_capture(
     assert [s.match_note for s in rep.spells] == [
         None,
         None,
-        "matched by name: cast at 348, the bar holds Rank 2 (707)",
-        "matched by name: cast at 695, the bar holds Rank 3 (705)",
+        "matched by name: cast at Rank 1 (348), the bar holds Rank 2 (707)",
+        "matched by name: cast at Rank 2 (695), the bar holds Rank 3 (705)",
     ]
     assert rep.on_unfollowed_page == []
     assert rep.log.chosen_by == "newest"
@@ -236,8 +236,8 @@ def test_binds_coach_text_says_the_table_is_a_default_and_that_combatlog_must_be
         in text
     )
     assert (
-        "       1  Shadow Bolt (695): 5 (cost 2); matched by name: cast at 695, the bar holds "
-        "Rank 3 (705)\n"
+        "       1  Shadow Bolt (695): 5 (cost 2); matched by name: cast at Rank 2 (695), the bar "
+        "holds Rank 3 (705)\n"
     ) in text
     assert (
         "Binds to spells not cast in this log (6 casts, 02:16:37 to 02:17:00 log time): 8\n" in text
@@ -267,9 +267,9 @@ def test_frequent_spell_on_a_high_cost_key_constructed(flavor: Path, record: Pat
     put_log(flavor, HEADER, *[cast(755, "Health Funnel")] * 10, *[cast(172, "Corruption")] * 10)
     rep = report("--character", CHARACTER)
     [f] = rep.frequent_on_high_cost
-    assert (f.spell_name, f.spell_id, f.casts, f.share, f.cheapest, f.match_note) == (
+    assert (f.spell_name, f.spell_ids, f.casts, f.share, f.cheapest, f.match_note) == (
         "Health Funnel",
-        755,
+        [755],
         10,
         0.5,
         4,
@@ -659,7 +659,7 @@ def test_ranks_bound_on_purpose_stay_apart_constructed() -> None:
     [s] = got.spells
     assert (s.matched_by, s.slots) == ("spell name", [4, 5, 50, 67])
     assert s.match_note == (
-        "matched by name: cast at 695, the bar holds Rank 1 (686), Rank 3 (705)"
+        "matched by name: cast at Rank 2 (695), the bar holds Rank 1 (686), Rank 3 (705)"
     )
     assert not {4, 5} & {b.slot for b in got.bound_never_cast}
 
@@ -677,6 +677,51 @@ def test_a_spell_only_on_an_unfollowed_page_is_not_no_bind_constructed() -> None
     assert got.on_unfollowed_page[0].detail.startswith("on a main-bar page shown by a form")
     # Summon Voidwalker is also on slot 69, a followed slot no key reaches.
     assert [(u.spell_name, u.slots) for u in got.cast_without_bind] == [("Summon Voidwalker", [69])]
+    # ... and on slot 120, an unfollowed page, which its line says.
+    assert got.cast_without_bind[0].detail.endswith(
+        "; also on main-bar page slot(s) 120, which the coach does not follow"
+    )
+
+
+def test_possess_and_vehicle_slots_are_unfollowed_constructed() -> None:
+    """Slots 121 to 144 (pages 11 and 12) are not followed either; 145 is
+    bar 5's first slot, followed (no key reaches it here, so clicked)."""
+    rec = _with_slots(real_record(), {}, {121: 999005, 144: 999006, 145: 999007})
+    counts = constructed_counts(
+        cast(999005, "Possess Spell"), cast(999006, "Vehicle Spell"), cast(999007, "Bar Spell")
+    )
+    got = bindscoach.coach(counts, rec, default_table())
+    assert [p.slots for p in got.on_unfollowed_page] == [[121], [144]]
+    assert [u.slots for u in got.cast_without_bind] == [[145]]
+
+
+def test_ranks_on_the_same_slots_add_up_constructed() -> None:
+    """Rank 3 (705, on slots 5, 50 and 67, key 5) cast 3 times and rank 2
+    (695, matched to the same slots by name) 3 times: 6 presses of key 5."""
+    table = default_table().model_copy(update={"high_cost": 2})
+    got = bindscoach.coach(
+        constructed_counts(*[cast(705, "Shadow Bolt")] * 3, *[cast(695, "Shadow Bolt")] * 3),
+        real_record(),
+        table,
+    )
+    [f] = got.frequent_on_high_cost
+    assert (f.spell_ids, f.casts, f.share, [k.key for k in f.keys]) == ([695, 705], 6, 1.0, ["5"])
+    assert f.match_note == "matched by name: cast at Rank 2 (695), the bar holds Rank 3 (705)"
+    # Two rows still, one per id.
+    assert [(s.spell_id, s.casts) for s in got.spells] == [(695, 3), (705, 3)]
+
+
+def test_ranks_bound_apart_are_judged_apart_constructed() -> None:
+    """Rank 1 (686) on its own slot 4 (key 4) and rank 3 (705) on slot 5:
+    3 casts each are two keys pressed 3 times, under frequent_min_casts."""
+    rec = _with_slots(real_record(), {4: 686})
+    table = default_table().model_copy(update={"high_cost": 1})
+    got = bindscoach.coach(
+        constructed_counts(*[cast(686, "Shadow Bolt")] * 3, *[cast(705, "Shadow Bolt")] * 3),
+        rec,
+        table,
+    )
+    assert got.frequent_on_high_cost == []
 
 
 def test_unfollowed_page_in_text_constructed(
@@ -711,6 +756,24 @@ def test_many_left_out_commands_cannot_judge_no_bind_constructed() -> None:
     assert got.cannot_judge == []
 
 
+def test_many_left_out_commands_cannot_judge_frequent_constructed() -> None:
+    """An action-bar addon's key may be cheaper than the default UI's one."""
+    rec = real_record()
+    binds = rec.bindings
+    assert isinstance(binds, labaddon.Bindings)
+    counts = constructed_counts(*[cast(755, "Health Funnel")] * 10)
+    limit = bindscoach.LEFT_OUT_LIMIT
+    many = rec.model_copy(
+        update={"bindings": binds.model_copy(update={"commands_left_out": limit})}
+    )
+    got = bindscoach.coach(counts, many, default_table())
+    assert got.frequent_on_high_cost == []
+    [c] = got.cannot_judge
+    assert c.report == "frequent-on-high-cost" and "Bartender, Dominos or ElvUI" in c.reason
+    got = bindscoach.coach(counts, rec, default_table())
+    assert [f.spell_name for f in got.frequent_on_high_cost] == ["Health Funnel"]
+
+
 def test_log_option_reads_the_named_log(flavor: Path, record: Path) -> None:
     put_log(flavor, HEADER, cast(755, "Health Funnel"))
     newest = report("--character", CHARACTER).log.counts
@@ -720,6 +783,8 @@ def test_log_option_reads_the_named_log(flavor: Path, record: Path) -> None:
     assert rep.log.counts is not None and rep.log.counts.mine == 6
     folded = report("--character", CHARACTER, "--log", LOG_NAME.lower())
     assert folded.log.file == f"Logs/{LOG_NAME}"
+    text = ok("binds", "coach", "--character", CHARACTER, "--log", LOG_NAME).stdout
+    assert f"Combat log: Logs/{LOG_NAME} (--log) (79 lines;" in text
 
 
 @pytest.mark.parametrize(

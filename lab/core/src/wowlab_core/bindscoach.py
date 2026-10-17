@@ -38,7 +38,10 @@ The reports:
 
 - `frequent-on-high-cost`: a spell the player casts often (at least
   `frequent_share` of their casts and at least `frequent_min_casts`) whose
-  every key is a high-cost key (`high_cost` or more).
+  every key is a high-cost key (`high_cost` or more). Casts at several ids
+  (ranks) of one spell that matched the same slots press the same keys, so
+  they are added up first; ranks bound on purpose to their own slots stay
+  apart.
 - `cast-without-bind`: a spell cast with no key reaching it: on an action
   slot no key reaches (clicked), or on no slot at all (cast from a macro, the
   spellbook, an addon's button, or a key bound straight to it). A spell held
@@ -58,7 +61,9 @@ value was secret or untestable, a needed function was missing), or that
 holds slots with no type, makes every report "cannot judge": a key or slot
 dropped may be the one that changes the answer. Many binding commands left
 out of the record (an action-bar addon binds through its own click
-commands) make `cast-without-bind` "cannot judge" too.
+commands) make `cast-without-bind` and `frequent-on-high-cost` "cannot
+judge" too, when they have anything to report: a key the coach cannot see
+may reach the spell, and may be cheaper.
 """
 
 from __future__ import annotations
@@ -128,9 +133,11 @@ _BUTTON = re.compile(r"(ACTIONBUTTON|MULTIACTIONBAR[1-7]BUTTON)([1-9]|1[0-2])")
 
 # Main-bar pages the coach does not follow **[verify]**: page 2 (paging, as
 # `ACTIONPAGE2` or SHIFT-MOUSEWHEEL show it) and pages 7 to 10 (the bars a
-# form, stance or stealth swaps in). The main bar's keys reach them only
-# while that page is shown.
-UNFOLLOWED_SLOTS = frozenset(range(13, 25)) | frozenset(range(73, 121))
+# form, stance or stealth swaps in), and pages 11 and 12 (slots 121 to 144,
+# the possess, override or vehicle bars where the client has them; whether
+# Forever has them is unknown). The main bar's keys reach them only while
+# that page is shown.
+UNFOLLOWED_SLOTS = frozenset(range(13, 25)) | frozenset(range(73, 145))
 
 MODIFIERS = ("ALT", "CTRL", "SHIFT", "META")
 _SIDES = ("L", "R")
@@ -140,6 +147,10 @@ _SIDES = ("L", "R")
 # cannot read, so "cast with no bind" cannot be judged.
 LEFT_OUT_LIMIT = 12
 _BAR_ADDONS = "an action-bar addon such as Bartender, Dominos or ElvUI binds through these"
+_UNFOLLOWED_DETAIL = (
+    "on a main-bar page shown by a form, stance, stealth, paging, or a possess, override or "
+    "vehicle bar, which the coach does not follow"
+)
 
 GET_RECORD = (
     "install or update the lab-addon with the client closed (wowlab addon install lab), log "
@@ -334,8 +345,11 @@ class CastSpell(_Model):
 
 
 class FrequentOnHighCost(_Model):
+    """A spell pressed often on high-cost keys: the casts of every id (rank)
+    of it that matched the same slots, added up."""
+
     spell_name: str
-    spell_id: int
+    spell_ids: list[int]
     casts: int
     share: float
     match_note: str | None
@@ -533,6 +547,7 @@ def coach(
     unbound: list[CastWithoutBind] = []
     unfollowed: list[OnUnfollowedPage] = []
     matched_slots: set[int] = set()
+    pressed: dict[tuple[str, tuple[int, ...]], list[CastSpell]] = {}
     for s in counts.spells if counts is not None else ():
         matched_by: MatchedBy = "none"
         note: str | None = None
@@ -550,7 +565,7 @@ def coach(
                 matched_by = "spell name"
                 held = sorted({spell_slots[slot] for slot in slots})
                 note = (
-                    f"matched by name: cast at {s.spell_id}, the bar holds "
+                    f"matched by name: cast at {_held(s.spell_id, subtexts)}, the bar holds "
                     f"{', '.join(_held(i, subtexts) for i in held)}"
                 )
         matched_slots.update(slots)
@@ -579,10 +594,7 @@ def coach(
                         spell_id=s.spell_id,
                         casts=s.casts,
                         slots=slots,
-                        detail=(
-                            "on a main-bar page shown by a form, stance, stealth or paging, "
-                            "which the coach does not follow"
-                        ),
+                        detail=_UNFOLLOWED_DETAIL,
                     )
                 )
                 continue
@@ -591,6 +603,12 @@ def coach(
                     "on action slot(s) no key reaches: clicked, or bound in a way the record "
                     "does not show"
                 )
+                paged = [slot for slot in slots if slot in UNFOLLOWED_SLOTS]
+                if paged:
+                    detail += (
+                        f"; also on main-bar page slot(s) {', '.join(map(str, paged))}, which "
+                        "the coach does not follow"
+                    )
             else:
                 detail = (
                     "on no action slot: cast from a macro, the spellbook or an addon's button, "
@@ -605,34 +623,45 @@ def coach(
                     detail=detail,
                 )
             )
-        elif (
-            s.casts >= costs.frequent_min_casts
+        else:
+            # Ranks of one spell that reach the same slots press the same keys:
+            # their casts add up before the thresholds are applied.
+            pressed.setdefault((s.spell_name.casefold(), tuple(slots)), []).append(spells[-1])
+
+    for rows in pressed.values():
+        casts = sum(r.casts for r in rows)
+        share = casts / total if total else 0.0
+        keys = rows[0].keys
+        if (
+            casts >= costs.frequent_min_casts
             and share >= costs.frequent_share
             and keys[0].cost >= costs.high_cost
         ):
+            notes = [r.match_note for r in rows if r.match_note]
             frequent.append(
                 FrequentOnHighCost(
-                    spell_name=s.spell_name,
-                    spell_id=s.spell_id,
-                    casts=s.casts,
+                    spell_name=rows[0].spell_name,
+                    spell_ids=sorted(r.spell_id for r in rows),
+                    casts=casts,
                     share=share,
-                    match_note=note,
+                    match_note="; ".join(notes) or None,
                     keys=keys,
                     cheapest=keys[0].cost,
                 )
             )
+    frequent.sort(key=lambda f: (-f.casts, f.spell_name.casefold(), f.spell_ids))
 
-    if unbound and left_out >= LEFT_OUT_LIMIT:
-        cannot.append(
-            CannotJudge(
-                report="cast-without-bind",
-                reason=(
-                    f"the bindings record left out {left_out} binding commands that are not "
-                    f"action buttons ({_BAR_ADDONS}), so a key may reach these spells"
-                ),
-            )
+    if left_out >= LEFT_OUT_LIMIT:
+        hidden = (
+            f"the bindings record left out {left_out} binding commands that are not action "
+            f"buttons ({_BAR_ADDONS}), so a key the coach cannot see may reach these spells"
         )
-        unbound = []
+        if unbound:
+            cannot.append(CannotJudge(report="cast-without-bind", reason=hidden))
+            unbound = []
+        if frequent:
+            cannot.append(CannotJudge(report="frequent-on-high-cost", reason=hidden))
+            frequent = []
     elif unbound and (left_out or keys_left_out):
         caveats.append(
             f"the bindings record left out {left_out} command(s) that are not plain names (a "
