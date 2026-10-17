@@ -46,6 +46,32 @@ What the audit added:
 - Round 2 (2026-10-16): a symlinked addon (constructed) has the link label,
   `badge-link`, its own filter choice "link" (never under the gate label),
   and the link's words in the detail pane.
+- M13-27T (2026-10-16), so this file grades the first stage's behaviour
+  whichever stage the page is at; the second stage's graders are in
+  `test_ui_explorer_stage2.py`. The stand-in DOM has exactly the ids
+  page.html declares (null for any other id, as in a browser), a recorded
+  clipboard, and `<details>` that fire `toggle`. It answers `tree
+  --install`, `filemap gaps` and any run a scenario holds, and a click
+  first opens the folders above its row. Rows are read through
+  `_in_flavor`, so a page drawing the whole install (row paths from the
+  install root) is graded on the same flavor-folder behaviour. The
+  flavor-picker grader skips once the page reads the whole install. The
+  static checks also allow `.kind === "folder"` on a gap group, and
+  `filemap gaps` among the explorer's literal runs.
+- Round 1 on #226 (2026-10-16): the harness has timers on a virtual clock
+  (a string given to a timer is trapped), and traps navigation (`location`,
+  `window.open`), attributes outside the closed set, and link, form, frame,
+  script and media elements. The static checks ban `location.replace`,
+  `.action`, `.submit(`, URL and handler attributes in either quote style,
+  `javascript:`, a hint's `argv` and the CLI's snapshot wording; the CSP
+  check pins `form-action` and `base-uri`. Timers given a function are no
+  longer banned statically (the CSP forbids string evaluation, and the
+  harness traps it).
+- Rounds 2 and 3 on #226: an `on<event>` property is trapped and banned;
+  events bubble from their target through its parents to `document` and
+  `window` (all but toggle, focus and blur), whose listeners are recorded,
+  and `activate: "everywhere"` dispatches every event any listener waits
+  for at every element the page drew, so a delegated handler is used too.
 """
 
 from __future__ import annotations
@@ -238,6 +264,8 @@ def test_the_explorer_page_is_served_with_a_csp_that_hashes_it(server: Any) -> N
     assert directives["style-src"] == [_sha(styles[0])]
     assert directives["connect-src"] == ["'self'"]
     assert directives["frame-ancestors"] == ["'none'"]
+    assert directives["form-action"] == ["'none'"]  # round 1 on #226
+    assert directives["base-uri"] == ["'none'"]
     assert "font-src" not in directives
     flat = " ".join(" ".join(v) for v in directives.values())
     assert "unsafe" not in flat and "data:" not in flat and "http" not in flat
@@ -299,14 +327,34 @@ _HTML_SINKS = [
     "srcdoc",
     "eval(",
     "Function(",
-    "setTimeout(",
-    "setInterval(",
+    # A timer given a string evaluates it; one given a function is ordinary
+    # browser code, and the Node harness provides timers (round 1 on #226;
+    # the harness also traps a string at run time).
+    'setTimeout("',
+    "setTimeout('",
+    "setTimeout(`",
+    'setInterval("',
+    "setInterval('",
+    "setInterval(`",
     ".src",
     ".href",
     "location.assign",
+    "location.replace",
+    "location.reload",
+    "location =",
+    "location=",
     "window.open",
+    ".action",
+    ".submit(",
+    "javascript:",
     'setAttribute("on',
+    "setAttribute('on",
     'setAttribute("style',
+    "setAttribute('style",
+    'setAttribute("href',
+    "setAttribute('href",
+    'setAttribute("src',
+    "setAttribute('src",
     ".style.",
 ]
 
@@ -315,8 +363,13 @@ def test_the_script_writes_text_only(server: Any) -> None:
     script = _script()
     for sink in _HTML_SINKS:
         assert sink not in script, sink
-    # Attributes the script sets are a closed set, none of them a URL or a handler.
-    names = set(re.findall(r'setAttribute\("([^"]+)"', script))
+    # No handler set as an `on<event>` property (security review, round 2
+    # on #226): handlers go through addEventListener.
+    assert re.search(r"\.on[a-z]+\s*=(?!=)", script) is None
+    # Attributes the script sets are a closed set, none of them a URL or a
+    # handler, each named by a literal in either quote style (round 1 on #226).
+    assert script.count("setAttribute(") == len(re.findall(r"setAttribute\([\"']", script))
+    names = set(re.findall(r"setAttribute\([\"']([^\"']+)[\"']", script))
     assert names <= {
         "aria-pressed",
         "aria-selected",
@@ -340,12 +393,20 @@ def test_the_script_holds_no_file_map_logic() -> None:
         for pattern in entry.match:
             if "*" in pattern:
                 assert pattern not in script, pattern
-    # `kind` is the tree item's file-or-folder field, not a verdict level.
-    levels_free = script.replace('item.kind === "folder"', "")
+    # `kind` is a tree item's or a gap group's file-or-folder field, not a
+    # verdict level (widened for M13-27's gaps tab, 2026-10-16).
+    levels_free = re.sub(r'\.kind\s*===\s*"folder"', "", script)
     for level in ("gate", "no", "folder", "not_applicable", "unclassified"):
         assert f'"{level}"' not in levels_free, level
         assert f"'{level}'" not in script, level
     for words in ("write gate", "server may replace", "Blizzard", "snapshot restore"):
+        assert words not in script, words
+    # A hint is copied as `command`, quoted by Python for its shell; the page
+    # never rebuilds one from `argv` (round 1 on #226).
+    assert ".argv" not in script and '["argv"]' not in script
+    # Snapshot facts are worded by Python (`snapshot.words`, conductor ruling
+    # of 2026-10-16); the CLI's phrases are not repeated here.
+    for words in ("could not be confirmed", "the file on disk", "not held"):
         assert words not in script, words
 
 
@@ -356,7 +417,11 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         tuple(json.loads("[" + inside + "]"))
         for inside in re.findall(r"runJson\(\[([^\]]*)\]", _script())
     }
-    assert used == {("install", "show"), ("tree",), ("explain",)}
+    # M13-25 runs the first three; M13-27 adds `filemap gaps` and may drop
+    # `install show`. A Preview runs a view's command, which is data, not a
+    # literal here; its own graders are in test_ui_explorer_stage2.py.
+    assert {("tree",), ("explain",)} <= used, used
+    assert used <= {("install", "show"), ("tree",), ("explain",), ("filemap", "gaps")}, used
     for path in used:
         assert path in offered, path
         assert offered[path]["excluded"] is None, path
@@ -490,96 +555,309 @@ _HARNESS = r"""
 const fs = require("fs");
 const vm = require("vm");
 const scenario = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+const has = (e, c) => typeof e.className === "string" && e.className.split(" ").includes(c);
+// What the page may do and a browser would turn into a request or a
+// navigation is trapped: recorded, then thrown (round 1 on #226).
+const traps = [];
+function trap(what) { traps.push(String(what)); throw new Error("harness trap: " + what); }
+const ALLOWED_ATTRS = scenario.allowed_attrs || ["aria-pressed", "aria-selected", "aria-expanded",
+  "aria-level", "aria-label", "role"];
+const FORBIDDEN_TAGS = ["a", "area", "form", "iframe", "frame", "img", "image", "script", "link", "base",
+  "meta", "object", "embed", "video", "audio", "source", "track", "svg", "use", "style"];
 class El {
   constructor(tag) {
     this.tagName = tag; this.children = []; this.parentElement = null; this._text = "";
     this.attrs = {}; this.dataset = {}; this.listeners = {}; this.className = "";
     this.hidden = false; this.disabled = false; this.value = ""; this.title = "";
+    this.checked = false; this.type = ""; this.id = ""; this._open = false;
     const self = this;
     this.classList = {
-      add(c) { const s = new Set(self.className.split(" ").filter(Boolean)); s.add(c); self.className = [...s].join(" "); },
-      remove(c) { self.className = self.className.split(" ").filter((x) => x && x !== c).join(" "); },
-      contains(c) { return self.className.split(" ").includes(c); },
-      toggle(c, on) { if (on === undefined) on = !this.contains(c); if (on) this.add(c); else this.remove(c); return on; },
+      add(...cs) { const s = new Set(self.className.split(" ").filter(Boolean)); for (const c of cs) s.add(c); self.className = [...s].join(" "); },
+      remove(...cs) { self.className = self.className.split(" ").filter((x) => x && !cs.includes(x)).join(" "); },
+      contains(c) { return has(self, c); },
+      toggle(c, on) { if (on === undefined) on = !has(self, c); if (on) this.add(c); else this.remove(c); return on; },
     };
+    // A handler set as an `on<event>` property is trapped (security review,
+    // round 2 on #226): every handler goes through addEventListener, where
+    // the `activate` step finds it.
+    return new Proxy(this, {
+      set(target, key, value) {
+        if (typeof key === "string" && /^on[a-z]+$/.test(key)) trap("property " + key);
+        target[key] = value;
+        return true;
+      },
+    });
   }
   get textContent() { return this._text + this.children.map((c) => c.textContent).join(""); }
   set textContent(t) { this._text = String(t); this.children = []; }
+  get innerText() { return this.textContent; }
+  set innerText(t) { this.textContent = t; }
   set innerHTML(_) { throw new Error("HTML sink: innerHTML"); }
   set outerHTML(_) { throw new Error("HTML sink: outerHTML"); }
   insertAdjacentHTML() { throw new Error("HTML sink: insertAdjacentHTML"); }
-  appendChild(c) { c.parentElement = this; this.children.push(c); return c; }
-  append(...cs) { for (const c of cs) this.appendChild(typeof c === "string" ? Object.assign(new El("#text"), { _text: c }) : c); }
-  replaceChildren(...cs) { this.children = []; this._text = ""; for (const c of cs) this.appendChild(c); }
-  setAttribute(k, v) { this.attrs[k] = String(v); }
-  getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
-  addEventListener(ev, fn) { (this.listeners[ev] = this.listeners[ev] || []).push(fn); }
-  fire(ev) { for (const fn of this.listeners[ev] || []) fn({ target: this, preventDefault() {} }); }
-  all() { const o = []; for (const c of this.children) { o.push(c, ...c.all()); } return o; }
-  querySelectorAll(sel) {
-    if (sel.startsWith(".")) return this.all().filter((e) => e.className.split(" ").includes(sel.slice(1)));
-    return this.all().filter((e) => e.tagName === sel);
+  get open() { return this._open; }
+  set open(v) { const was = this._open; this._open = Boolean(v); if (was !== this._open) this.fire("toggle"); }
+  get childNodes() { return this.children; }
+  get firstChild() { return this.children[0] || null; }
+  get lastChild() { return this.children[this.children.length - 1] || null; }
+  _adopt(c) {
+    if (typeof c === "string") return [Object.assign(new El("#text"), { _text: c })];
+    if (c.tagName === "#fragment") { const kids = c.children; c.children = []; return kids; }
+    if (c.parentElement) c.parentElement.children = c.parentElement.children.filter((x) => x !== c);
+    return [c];
   }
+  appendChild(c) { for (const k of this._adopt(c)) { k.parentElement = this; this.children.push(k); } return c; }
+  append(...cs) { for (const c of cs) this.appendChild(c); }
+  prepend(...cs) { const kids = []; for (const c of cs) kids.push(...this._adopt(c)); for (const k of kids) k.parentElement = this; this.children.unshift(...kids); }
+  insertBefore(c, ref) { const kids = this._adopt(c); for (const k of kids) k.parentElement = this; const at = ref ? this.children.indexOf(ref) : -1; if (at < 0) this.children.push(...kids); else this.children.splice(at, 0, ...kids); return c; }
+  removeChild(c) { this.children = this.children.filter((x) => x !== c); c.parentElement = null; return c; }
+  replaceChildren(...cs) { this.children = []; this._text = ""; for (const c of cs) this.appendChild(c); }
+  replaceWith(...cs) { const p = this.parentElement; if (!p) return; const at = p.children.indexOf(this); const kids = []; for (const c of cs) kids.push(...this._adopt(c)); for (const k of kids) k.parentElement = p; p.children.splice(at, 1, ...kids); }
+  setAttribute(k, v) { k = String(k); if (!ALLOWED_ATTRS.includes(k)) trap("setAttribute " + k); this.attrs[k] = String(v); }
+  getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
+  hasAttribute(k) { return k in this.attrs; }
+  removeAttribute(k) { delete this.attrs[k]; }
+  toggleAttribute(k, on) { if (on === undefined) on = !(k in this.attrs); if (on) this.attrs[k] = ""; else delete this.attrs[k]; return on; }
+  addEventListener(ev, fn) { (this.listeners[ev] = this.listeners[ev] || []).push(fn); }
+  removeEventListener(ev, fn) { this.listeners[ev] = (this.listeners[ev] || []).filter((f) => f !== fn); }
+  fire(ev) { dispatch(this, { type: ev }); }
+  dispatchEvent(e) { dispatch(this, e); return true; }
+  click() { this.fire("click"); }
+  focus() {}
+  blur() {}
+  scrollIntoView() {}
+  contains(o) { return o === this || this.all().includes(o); }
+  closest(sel) { let e = this; while (e) { if (matchSel(e, sel)) return e; e = e.parentElement; } return null; }
+  all() { const o = []; for (const c of this.children) { o.push(c, ...c.all()); } return o; }
+  querySelectorAll(sel) { return this.all().filter((e) => matchSel(e, sel)); }
+  querySelector(sel) { return this.querySelectorAll(sel)[0] || null; }
   get options() { return this.children.filter((c) => c.tagName === "option"); }
-  remove(i) { if (i === undefined) return; const o = this.options[i]; this.children.splice(this.children.indexOf(o), 1); }
+  remove(i) {
+    if (i === undefined) { if (this.parentElement) this.parentElement.removeChild(this); return; }
+    const o = this.options[i]; this.children.splice(this.children.indexOf(o), 1);
+  }
 }
+// Events reach the target, then bubble through its parents to `document`
+// and `window` (all but toggle, focus and blur), as in a browser, so a
+// handler delegated to an ancestor, `document` or `window` runs too (security
+// review, round 3 on #226).
+const NO_BUBBLE = ["toggle", "focus", "blur"];
+const docListeners = {};
+const winListeners = {};
+function dispatch(target, init) {
+  let stopped = false;
+  const e = Object.assign({ key: "Enter", bubbles: !NO_BUBBLE.includes(init.type) }, init, {
+    target: target, preventDefault() {}, stopPropagation() { stopped = true; },
+    stopImmediatePropagation() { stopped = true; } });
+  const chain = [];
+  for (let at = target; at; at = at.parentElement) chain.push(at);
+  for (const at of chain) {
+    e.currentTarget = at;
+    for (const fn of (at.listeners[e.type] || []).slice()) fn(e);
+    if (stopped || !e.bubbles) return;
+  }
+  e.currentTarget = documentStub;
+  for (const fn of (docListeners[e.type] || []).slice()) fn(e);
+  if (stopped) return;
+  e.currentTarget = win;
+  for (const fn of (winListeners[e.type] || []).slice()) fn(e);
+}
+function matchSel(e, sel) {
+  sel = sel.trim();
+  if (sel.startsWith("#")) return e.id === sel.slice(1);
+  if (sel.startsWith(".")) return sel.slice(1).split(".").every((c) => has(e, c));
+  const dot = sel.indexOf(".");
+  if (dot > 0) return e.tagName === sel.slice(0, dot) && sel.slice(dot + 1).split(".").every((c) => has(e, c));
+  return e.tagName === sel;
+}
+// The page's own elements: the ids in page.html, nothing else. An id the
+// page asks for that page.html does not have is null, as in a browser.
 const ids = {};
-for (const id of ["status", "flavor-box", "flavor", "level-filter", "text-filter",
-  "explorer-status", "tree-root", "tree", "explain-title", "explain-path", "explain-verdict",
-  "explain-facts", "explain-status", "tab-explorer", "tab-commands", "explorer-view",
-  "commands-view", "commands", "title", "help", "fields", "run", "stdout", "stderr",
-  "result-tree", "result-raw"]) ids[id] = new El("x");
-ids["flavor-box"].hidden = true;
-ids["commands-view"].hidden = true;
-const all = new El("option"); all.value = ""; ids["level-filter"].appendChild(all);
+for (const spec of scenario.ids) {
+  const el = new El(spec.tag); el.id = spec.id; el.hidden = spec.hidden; ids[spec.id] = el;
+}
+if (ids["level-filter"]) { const all = new El("option"); all.value = ""; all.textContent = "All"; ids["level-filter"].appendChild(all); }
+const roots = () => Object.values(ids);
+const everywhere = () => { const o = []; for (const r of roots()) o.push(r, ...r.all()); return o; };
 const requests = [];
+const clipboard = [];
 const answer = (obj, ok) => ({ ok: ok !== false, status: ok === false ? 403 : 200, json: async () => obj });
+const norm = (p) => String(p).split(scenario.sep).join("/");
+function canon(v) {
+  if (Array.isArray(v)) return "[" + v.map(canon).join(",") + "]";
+  if (v && typeof v === "object") return "{" + Object.keys(v).sort().map((k) => JSON.stringify(k) + ":" + canon(v[k])).join(",") + "}";
+  return JSON.stringify(v);
+}
 const fetchStub = async (url, opts) => {
   const body = opts && opts.body ? JSON.parse(opts.body) : null;
   requests.push({ url: String(url), body: body });
   if (String(url).startsWith("/api/commands?")) return answer(scenario.commands);
   if (!String(url).startsWith("/api/run?")) return answer({ error: "unknown" }, false);
   const key = body.command.join(" ");
+  const params = body.params || {};
   let stdout = null;
-  if (key === "install show") stdout = scenario.install_show;
-  else if (key === "tree") stdout = scenario.trees[body.params.flavor || scenario.first_flavor];
-  else if (key === "explain") stdout = scenario.explains[body.params.path];
+  for (const run of scenario.runs || []) {
+    if (canon(run.command) === canon(body.command) && canon(run.params) === canon(params)) stdout = run.stdout;
+  }
+  if (stdout !== null) { /* an exact run the scenario holds */ }
+  else if (key === "install show") stdout = scenario.install_show;
+  else if (key === "tree" && params.whole_install === true) stdout = scenario.install_tree;
+  else if (key === "tree") stdout = scenario.trees[params.flavor || scenario.first_flavor];
+  else if (key === "filemap gaps") stdout = scenario.gaps;
+  else if (key === "explain") stdout = scenario.explains[norm(params.path)];
   if (typeof stdout !== "string") {
     return answer({ exit_code: 2, timed_out: false, truncated: false, stdout: "", stderr: "harness: no reply for " + key });
   }
   return answer({ exit_code: 0, timed_out: false, truncated: false, stdout: stdout, stderr: "" });
 };
-const ctx = { window: { location: { search: "?token=t" } },
-  document: { getElementById: (id) => ids[id], createElement: (t) => new El(t) },
-  URLSearchParams, fetch: fetchStub, console, Set, Map, Promise, JSON, Error };
+const navigator = { clipboard: { writeText: async (t) => { clipboard.push(String(t)); } } };
+const documentStub = {
+  getElementById: (id) => (id in ids ? ids[id] : null),
+  createElement: (t) => { const tag = String(t).toLowerCase(); if (FORBIDDEN_TAGS.includes(tag)) trap("createElement " + tag); return new El(tag); },
+  createElementNS: (_, t) => trap("createElementNS " + t),
+  createTextNode: (t) => Object.assign(new El("#text"), { _text: String(t) }),
+  createDocumentFragment: () => new El("#fragment"),
+  querySelectorAll: (sel) => everywhere().filter((e) => matchSel(e, sel)),
+  querySelector: (sel) => everywhere().find((e) => matchSel(e, sel)) || null,
+  addEventListener(ev, fn) { (docListeners[ev] = docListeners[ev] || []).push(fn); },
+  removeEventListener(ev, fn) { docListeners[ev] = (docListeners[ev] || []).filter((f) => f !== fn); },
+};
+// Timers on a virtual clock: a tick runs every pending timer in time order
+// (an interval at most a bounded number of times), with no wall-clock wait.
+// A timer given a string instead of a function is trapped (it would eval).
+const timers = [];
+let timerSeq = 0;
+let clock = 0;
+function addTimer(fn, ms, every) {
+  if (typeof fn !== "function") trap("a timer given a string");
+  const id = ++timerSeq;
+  const wait = Math.max(0, Number(ms) || 0);
+  timers.push({ id: id, fn: fn, at: clock + wait, every: every ? Math.max(1, wait) : 0, seq: id });
+  return id;
+}
+function clearTimer(id) { const at = timers.findIndex((t) => t.id === id); if (at >= 0) timers.splice(at, 1); }
+const location = Object.freeze({
+  get search() { return "?token=t"; },
+  get href() { return "http://127.0.0.1:1/?token=t"; },
+  set href(v) { trap("location.href = " + v); },
+  get hash() { return ""; },
+  set hash(v) { trap("location.hash = " + v); },
+  assign(u) { trap("location.assign " + u); },
+  replace(u) { trap("location.replace " + u); },
+  reload() { trap("location.reload"); },
+});
+const win = { navigator: navigator, isSecureContext: true, open: (u) => trap("window.open " + u),
+  addEventListener(ev, fn) { (winListeners[ev] = winListeners[ev] || []).push(fn); },
+  removeEventListener(ev, fn) { winListeners[ev] = (winListeners[ev] || []).filter((f) => f !== fn); } };
+Object.defineProperty(win, "location", { get: () => location, set: (v) => trap("window.location = " + v) });
+const ctx = { window: win, document: documentStub, navigator: navigator,
+  URLSearchParams, fetch: fetchStub, console, Set, Map, Promise, JSON, Error,
+  setTimeout: (fn, ms) => addTimer(fn, ms, false), clearTimeout: clearTimer,
+  setInterval: (fn, ms) => addTimer(fn, ms, true), clearInterval: clearTimer,
+  requestAnimationFrame: (fn) => addTimer(() => fn(clock), 16, false), cancelAnimationFrame: clearTimer,
+  queueMicrotask: (fn) => queueMicrotask(fn) };
+Object.defineProperty(ctx, "location", { get: () => location, set: (v) => trap("location = " + v), enumerable: true });
+win.window = win;
 vm.createContext(ctx);
-const tick = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
-const rowOf = (li) => li.children.find((c) => c.className.split(" ").includes("row"));
+const tick = async () => {
+  for (let round = 0; round < 50; round++) {
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+    if (!timers.length) return;
+    timers.sort((a, b) => a.at - b.at || a.seq - b.seq);
+    const due = timers.shift();
+    clock = Math.max(clock, due.at);
+    if (due.every) { due.at = clock + due.every; due.seq = ++timerSeq; timers.push(due); }
+    due.fn();
+  }
+};
+const rowOf = (li) => li.children.find((c) => has(c, "row"));
+const treeEl = () => ids.tree;
 function rows() {
-  return ids.tree.all().filter((e) => e.attrs.role === "treeitem").map((li) => {
+  return treeEl().all().filter((e) => e.attrs.role === "treeitem").map((li) => {
     const row = rowOf(li) || li;
-    const name = row.children.find((c) => c.className.split(" ").includes("name"));
-    const marks = row.children.filter((c) => c.className.split(" ").includes("badge"))
+    const name = row.children.find((c) => has(c, "name"));
+    const marks = row.children.filter((c) => has(c, "badge"))
       .map((b) => ({ text: b.textContent, title: b.title, cls: b.className }));
     return { path: row.dataset.path, name: name ? name.textContent : null,
       nameTitle: name ? name.title : null, expanded: li.getAttribute("aria-expanded"),
-      text: row.textContent, badge: marks.length ? marks[0] : null, badges: marks };
+      text: row.textContent, badge: marks.length ? marks[0] : null, badges: marks,
+      aria: [row, ...row.all()].map((e) => e.attrs["aria-label"] || "").join("\n") };
   });
 }
+// A row by its data-path; for a page that draws the whole install, a path
+// relative to the first flavor folder finds the same row under it.
 function liOf(path) {
-  return ids.tree.all().find((e) => e.attrs.role === "treeitem" && rowOf(e) && rowOf(e).dataset.path === path);
+  const find = (p) => treeEl().all().find((e) => e.attrs.role === "treeitem" && rowOf(e) && rowOf(e).dataset.path === p);
+  return find(path) || find(path === "" ? scenario.first_flavor : scenario.first_flavor + "/" + path);
 }
 function snap() {
-  return { rows: rows(), treeRoot: ids["tree-root"].textContent, status: ids["explorer-status"].textContent,
-    flavorBoxHidden: ids["flavor-box"].hidden, explorerHidden: ids["explorer-view"].hidden,
+  const pick = (id, f) => (ids[id] ? f(ids[id]) : null);
+  return { rows: rows(), treeRoot: pick("tree-root", (e) => e.textContent), status: pick("explorer-status", (e) => e.textContent),
+    flavorBoxHidden: pick("flavor-box", (e) => e.hidden), explorerHidden: pick("explorer-view", (e) => e.hidden),
     levels: ids["level-filter"].options.map((o) => o.value),
     levelTexts: ids["level-filter"].options.map((o) => o.textContent) };
 }
+// The detail pane: every element whose id starts with "explain", with what
+// the page drew inside it.
+function paneEls() { return roots().filter((e) => e.id.startsWith("explain")); }
+function inPane() { const o = []; for (const r of paneEls()) o.push(r, ...r.all()); return o; }
 function detail() {
-  const badge = ids["explain-verdict"].all().find((e) => e.className.split(" ").includes("badge"));
-  return { title: ids["explain-title"].textContent, path: ids["explain-path"].textContent,
-    verdict: ids["explain-verdict"].textContent, verdictBadge: badge ? badge.className : "",
-    facts: ids["explain-facts"].textContent, status: ids["explain-status"].textContent };
+  const badge = ids["explain-verdict"].all().find((e) => has(e, "badge"));
+  const own = (id) => ids[id].textContent;
+  const all = inPane();
+  return { title: own("explain-title"), path: own("explain-path"),
+    verdict: own("explain-verdict"), verdictBadge: badge ? badge.className : "",
+    facts: own("explain-facts"), status: own("explain-status"),
+    pane: paneEls().map((e) => e.textContent).join("\n"),
+    rest: paneEls().filter((e) => e.id !== "explain-title" && e.id !== "explain-path")
+      .map((e) => e.textContent).join("\n"),
+    hints: all.filter((e) => has(e, "hint")).map((h) => ({
+      text: h.textContent + [h, ...h.all()].map((e) => (e.attrs["aria-label"] ? "\n" + e.attrs["aria-label"] : "")).join(""),
+      copies: h.all().filter((b) => b.tagName === "button" && has(b, "copy")).length })),
+    copyButtons: all.filter((e) => e.tagName === "button" && has(e, "copy")).length,
+    previewButtons: all.filter((e) => e.tagName === "button" && has(e, "preview")).length,
+    details: all.filter((e) => e.tagName === "details").length,
+    fields: all.filter((e) => ["input", "textarea", "select"].includes(e.tagName)).length,
+    buttons: all.filter((e) => e.tagName === "button").map((e) => e.className),
+    listening: all.filter((e) => e.tagName !== "button" && Object.keys(e.listeners).length > 0)
+      .map((e) => e.tagName + "." + e.className) };
+}
+// A group's own text: everything but its places, not-entered folders and links.
+function bareText(el) {
+  if (["gap-place", "gap-not-entered", "gap-link"].some((c) => has(el, c))) return "";
+  return el._text + el.children.map(bareText).join("") + (el.title ? "\n" + el.title : "")
+    + (el.attrs["aria-label"] ? "\n" + el.attrs["aria-label"] : "");
+}
+function gapsView() {
+  const view = ids["gaps-view"];
+  const all = everywhere();
+  const path = (e) => (e.dataset && typeof e.dataset.path === "string" ? e.dataset.path : null);
+  return {
+    hidden: view ? view.hidden : null,
+    explorerHidden: ids["explorer-view"] ? ids["explorer-view"].hidden : null,
+    text: roots().filter((e) => e.id.startsWith("gaps")).map((e) => e.textContent).join("\n"),
+    groups: all.filter((e) => has(e, "gap-group")).map((g) => ({
+      catchAll: has(g, "gap-catch-all"),
+      heads: g.all().filter((e) => has(e, "gap-head")).map((e) => e.textContent),
+      places: g.all().filter((e) => has(e, "gap-place")).map(path),
+      bare: bareText(g),
+      summaries: g.all().filter((e) => e.tagName === "summary")
+        .map((e) => has(e, "gap-head") || e.all().some((c) => has(c, "gap-head"))),
+      text: g.textContent })),
+    places: all.filter((e) => has(e, "gap-place")).map(path),
+    notEntered: all.filter((e) => has(e, "gap-not-entered")).map(path),
+    links: all.filter((e) => has(e, "gap-link")).map(path),
+  };
+}
+async function openAll() {
+  for (let n = 0; n < 500; n++) {
+    const closed = treeEl().all().find((e) => e.attrs.role === "treeitem" && e.getAttribute("aria-expanded") === "false");
+    if (!closed) break;
+    const row = rowOf(closed);
+    const twisty = row.children.find((c) => c.tagName === "button" && !has(c, "name"));
+    twisty.fire("click");
+    await tick();
+  }
 }
 (async () => {
   const out = { steps: [] };
@@ -589,19 +867,15 @@ function detail() {
     out.first = snap();
     for (const step of scenario.steps) {
       if (step.open_all) {
-        for (let n = 0; n < 500; n++) {
-          const closed = ids.tree.all().find((e) => e.attrs.role === "treeitem" && e.getAttribute("aria-expanded") === "false");
-          if (!closed) break;
-          const row = rowOf(closed);
-          const twisty = row.children.find((c) => c.tagName === "button" && !c.className.split(" ").includes("name"));
-          twisty.fire("click");
-          await tick();
-        }
+        await openAll();
         out.steps.push(snap());
       } else if (step.click !== undefined) {
+        // A row not drawn yet is reached the way a player would: by opening
+        // the folders above it.
+        if (!liOf(step.click)) await openAll();
         const li = liOf(step.click);
         if (!li) { out.steps.push({ missing: step.click }); continue; }
-        rowOf(li).children.find((c) => c.className.split(" ").includes("name")).fire("click");
+        rowOf(li).children.find((c) => has(c, "name")).fire("click");
         await tick();
         out.steps.push(detail());
       } else if (step.level !== undefined) {
@@ -613,12 +887,69 @@ function detail() {
       } else if (step.flavor !== undefined) {
         ids.flavor.value = step.flavor; ids.flavor.fire("change"); await tick();
         out.steps.push(snap());
+      } else if (step.gaps_only !== undefined) {
+        const box = ids["gaps-only"];
+        if (!box) { out.steps.push({ missing: "#gaps-only" }); continue; }
+        box.checked = step.gaps_only; box.fire("change"); box.fire("input"); await tick();
+        out.steps.push(snap());
+      } else if (step.tab !== undefined) {
+        const tab = ids["tab-" + step.tab];
+        if (!tab) { out.steps.push({ missing: "#tab-" + step.tab }); continue; }
+        tab.fire("click"); await tick();
+        for (let n = 0; n < 500; n++) {
+          const shut = everywhere().find((e) => e.tagName === "details" && !e.open);
+          if (!shut) break;
+          shut.open = true; await tick();
+        }
+        out.steps.push(gapsView());
+      } else if (step.copy !== undefined) {
+        const buttons = inPane().filter((e) => e.tagName === "button" && has(e, "copy"));
+        if (!buttons[step.copy]) { out.steps.push({ missing: "copy " + step.copy }); continue; }
+        const before = requests.length;
+        buttons[step.copy].fire("click"); await tick();
+        out.steps.push({ clipboard: clipboard.slice(), newRequests: requests.length - before });
+      } else if (step.activate !== undefined) {
+        // Every control in the detail pane (or, with "everywhere", on the
+        // whole page: tree rows, tabs, the gaps view), used: each listener
+        // fired, each <details> opened, until nothing new appears.
+        const before = requests.length;
+        const done = new Set();
+        const scope = step.activate === "everywhere" ? everywhere : inPane;
+        for (let round = 0; round < 10; round++) {
+          const fresh = scope().filter((e) => !done.has(e));
+          if (!fresh.length) break;
+          for (const e of fresh) {
+            done.add(e);
+            if (e.tagName === "details") e.open = true;
+            const types = new Set(Object.keys(e.listeners));
+            if (step.activate === "everywhere") {
+              for (const t of Object.keys(docListeners)) types.add(t);
+              for (const t of Object.keys(winListeners)) types.add(t);
+            }
+            for (const ev of types) e.fire(ev);
+            await tick();
+          }
+        }
+        out.steps.push(Object.assign(detail(), { newRequests: requests.slice(before) }));
+      } else if (step.preview !== undefined) {
+        const button = inPane().find((e) => e.tagName === "button" && has(e, "preview"));
+        if (!button) { out.steps.push({ missing: "preview" }); continue; }
+        const before = requests.length;
+        button.fire("click"); await tick();
+        for (let n = 0; n < 500; n++) {
+          const shut = inPane().find((e) => e.tagName === "details" && !e.open);
+          if (!shut) break;
+          shut.open = true; await tick();
+        }
+        out.steps.push(Object.assign(detail(), { newRequests: requests.slice(before) }));
       }
     }
   } catch (error) {
     out.error = String((error && error.stack) || error);
   }
   out.requests = requests;
+  out.clipboard = clipboard;
+  out.traps = traps;
   process.stdout.write(JSON.stringify(out));
 })();
 """
@@ -648,6 +979,7 @@ def _drive(folder: Path, scenario: dict[str, Any]) -> dict[str, Any]:
     assert done.returncode == 0, done.stderr
     out: dict[str, Any] = json.loads(done.stdout)
     assert "error" not in out, out["error"]
+    assert not out["traps"], out["traps"]
     return out
 
 
@@ -660,13 +992,34 @@ def _stdout(server: Any, command: list[str], params: dict[str, Any]) -> str:
     return text
 
 
+def _norm(path: str) -> str:
+    """A path the page asks `explain` about, with `/` for the separator: the
+    page may join with `sep` or with `/`."""
+    return path.replace(os.sep, "/")
+
+
+def _page_ids() -> list[dict[str, Any]]:
+    """The elements page.html gives an id: the only ones the stand-in DOM
+    has, so a page that asks for an id page.html lacks gets null."""
+    html = (_TEMPLATES / "page.html").read_text(encoding="utf-8")
+    out = []
+    for tag, attrs in re.findall(r"<([a-z][a-z0-9]*)\b([^>]*)>", html):
+        found = re.search(r'\bid="([^"]+)"', attrs)
+        if found:
+            hidden = re.search(r"(?:^|\s)hidden(?:\s|=|$)", attrs) is not None
+            out.append({"id": found.group(1), "tag": tag, "hidden": hidden})
+    return out
+
+
 def _scenario(
     server: Any, explain: list[str], steps: list[dict[str, Any]]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """What the real CLI prints for the install under test, in the shape the
     harness serves: the command list, `install show`, a tree per flavor
-    folder, and an explain for each path in `explain`, keyed by the absolute
-    path the page asks for. Returns the scenario and the parsed first tree."""
+    folder, the whole install's tree (`tree --install`), `filemap gaps`, and
+    an explain for each path in `explain` (relative to the first flavor
+    folder), keyed by the absolute path the page asks for. Returns the
+    scenario and the parsed first tree."""
     listed = _send(server, "GET", "/api/commands").json()
     shown_text = _stdout(server, ["install", "show"], {})
     flavors = [f["folder"] for f in json.loads(shown_text)["flavors"]]
@@ -677,16 +1030,46 @@ def _scenario(
     for rel in explain:
         target = base + "/" + rel
         params = {"path": target, "root": first["install_root"], "flavor": first["flavor_folder"]}
-        explains[target] = _stdout(server, ["explain"], params)
+        explains[_norm(target)] = _stdout(server, ["explain"], params)
     scenario = {
+        "ids": _page_ids(),
+        "sep": os.sep,
         "commands": listed,
         "install_show": shown_text,
         "first_flavor": flavors[0],
         "trees": trees,
+        "install_tree": _stdout(server, ["tree"], {"whole_install": True, "explain": True}),
+        "gaps": _stdout(server, ["filemap", "gaps"], {}),
         "explains": explains,
+        "runs": [],
         "steps": steps,
     }
     return scenario, first
+
+
+def _install_mode(out: dict[str, Any]) -> bool:
+    """Whether the page read the whole install (`tree --install`, M13-27)
+    rather than one flavor folder (M13-25)."""
+    return any(p.get("whole_install") is True for p in _asked(out, ["tree"]))
+
+
+def _in_flavor(
+    out: dict[str, Any], rows: list[dict[str, Any]], flavor: str
+) -> list[dict[str, Any]]:
+    """The rows under one flavor folder, with paths relative to it, whichever
+    stage drew them: a page reading the whole install keys a row by its path
+    from the install root, so the flavor folder is `flavor` and a file in it
+    `flavor/...`; rows outside it are dropped."""
+    if not _install_mode(out):
+        return rows
+    kept = []
+    for row in rows:
+        path = row["path"]
+        if path == flavor:
+            kept.append({**row, "path": ""})
+        elif isinstance(path, str) and path.startswith(flavor + "/"):
+            kept.append({**row, "path": path[len(flavor) + 1 :]})
+    return kept
 
 
 def _asked(out: dict[str, Any], command: list[str]) -> list[dict[str, Any]]:
@@ -703,6 +1086,17 @@ def _group(verdict: dict[str, Any]) -> str:
     return "link" if verdict.get("link") is True else str(verdict["level"])
 
 
+def _texts(pane: dict[str, Any]) -> list[str]:
+    """Every string a detail-pane capture holds."""
+    out: list[str] = []
+    for value in pane.values():
+        if isinstance(value, str):
+            out.append(value)
+        elif isinstance(value, list):
+            out += [v["text"] for v in value if isinstance(v, dict) and "text" in v]
+    return out
+
+
 def _ancestors(path: str) -> set[str]:
     parts = path.split("/")
     return {""} | {"/".join(parts[:i]) for i in range(1, len(parts))}
@@ -715,7 +1109,7 @@ def test_the_first_view_opens_wtf_and_addons(server: Any, install: Path, tmp_pat
     out = _drive(tmp_path / "node", scenario)
     view = out["first"]
     assert view["explorerHidden"] is False
-    rows = {r["path"]: r for r in view["rows"]}
+    rows = {r["path"]: r for r in _in_flavor(out, view["rows"], first["flavor_folder"])}
     assert rows[""]["expanded"] == "true", "the flavor folder is the open root"
     for open_folder in ("WTF", "Interface", "Interface/AddOns"):
         assert rows[open_folder]["expanded"] == "true", open_folder
@@ -746,7 +1140,7 @@ def test_every_item_drawn_has_a_badge_from_python(
     which the colours hang on. No label is written into the script (D3)."""
     scenario, first = _scenario(server, [], [{"open_all": True}])
     out = _drive(tmp_path / "node", scenario)
-    rows = out["steps"][0]["rows"]
+    rows = _in_flavor(out, out["steps"][0]["rows"], first["flavor_folder"])
     drawn = {r["path"]: r for r in rows}
     listed = {i["path"]: i for i in [*first["items"], *first["ancestors"]]}
     assert first["ancestors"], "the capture has folders above its items"
@@ -769,8 +1163,8 @@ def test_every_item_drawn_has_a_badge_from_python(
     for level, classes in by_level.items():
         assert len(classes) == 1, (level, classes)
     assert len({min(c) for c in by_level.values()}) == len(by_level), by_level
-    # As a string literal: "folder" is also the tree item's `kind`.
-    script = _script().replace('item.kind === "folder"', "")
+    # As a string literal: "folder" is also a tree item's or gap group's `kind`.
+    script = re.sub(r'\.kind\s*===\s*"folder"', "", _script())
     for verdict in verdicts.values():
         for said in (verdict["label"], verdict["server_label"]):
             if said:
@@ -794,10 +1188,11 @@ def test_filter_to_no_and_by_text(server: Any, install: Path, tmp_path: Path) ->
             assert text == levels[value], (value, text)
 
     def check(view: dict[str, Any], keep: Any) -> set[str]:
-        hits = {r["path"] for r in view["rows"] if r["path"] in items and keep(items[r["path"]])}
+        drawn = _in_flavor(out, view["rows"], first["flavor_folder"])
+        hits = {r["path"] for r in drawn if r["path"] in items and keep(items[r["path"]])}
         assert hits, view["status"]
         allowed = hits.union(*(_ancestors(p) for p in hits))
-        for row in view["rows"]:
+        for row in drawn:
             assert row["path"] in allowed, row["path"]
         return hits
 
@@ -841,12 +1236,13 @@ def test_the_detail_pane_shows_what_who_and_the_verdict(
     for rel, pane, params in zip(rels, out["steps"][1:], explains, strict=True):
         assert "missing" not in pane, pane
         target = first["install_root"] + os.sep + first["flavor_folder"] + "/" + rel
-        assert params == {
-            "path": target,
-            "root": first["install_root"],
-            "flavor": first["flavor_folder"],
-        }
-        report = json.loads(scenario["explains"][target])
+        # The absolute path, the install root and the flavor folder; a page
+        # reading the whole install (M13-27) may join with `sep` throughout.
+        assert set(params) == {"path", "root", "flavor"}, params
+        assert _norm(params["path"]) == _norm(target), params
+        assert params["root"] == first["install_root"], params
+        assert params["flavor"] == first["flavor_folder"], params
+        report = json.loads(scenario["explains"][_norm(target)])
         entry = report["result"]["entry"]
         plain = report.get("plain") or entry
         assert plain["what"] in pane["facts"], rel
@@ -861,7 +1257,7 @@ def test_the_detail_pane_shows_what_who_and_the_verdict(
         assert pane["verdictBadge"], "the verdict level is drawn as a badge"
         assert rel.rsplit("/", 1)[-1] in pane["title"]
         assert pane["status"] == ""
-        for text in pane.values():
+        for text in _texts(pane):
             assert str(home) not in text, rel
 
 
@@ -871,7 +1267,9 @@ def test_home_is_shown_as_tilde(server: Any, install: Path, home: Path, tmp_path
     root = _drive(tmp_path / "node", scenario)["first"]["treeRoot"]
     assert root.startswith("~"), root
     assert str(home) not in root
-    assert root.endswith(first["flavor_folder"])
+    # The flavor folder (M13-25), or the install root when the page reads
+    # the whole install (M13-27).
+    assert root.endswith((first["flavor_folder"], Path(first["install_root"]).name)), root
 
 
 def test_the_flavor_picker_shows_with_two_folders_constructed(
@@ -889,6 +1287,11 @@ def test_the_flavor_picker_shows_with_two_folders_constructed(
     other = next(f for f in flavors if f != first["flavor_folder"])
     scenario["steps"] = [{"flavor": other}]
     out = _drive(tmp_path / "two", scenario)
+    if _install_mode(out):
+        # M13-27 draws every flavor folder in one tree; the picker belongs
+        # to the one-folder-at-a-time view, and stage 2's graders cover both
+        # folders (test_ui_explorer_stage2.py).
+        pytest.skip("the page reads the whole install: no flavor picker to grade")
     assert out["first"]["flavorBoxHidden"] is False
     assert out["first"]["treeRoot"].endswith(first["flavor_folder"])
     assert out["steps"][0]["treeRoot"].endswith(other)
@@ -906,7 +1309,7 @@ def test_hostile_names_draw_as_inert_text_constructed(
     steps: list[dict[str, Any]] = [{"open_all": True}, *({"click": p} for p in picked)]
     scenario, _ = _scenario(server, picked, steps)
     out = _drive(tmp_path / "node", scenario)
-    rows = {r["path"]: r for r in out["steps"][0]["rows"]}
+    rows = {r["path"]: r for r in _in_flavor(out, out["steps"][0]["rows"], FLAVOR)}
     hostile_paths = [saved + SCRIPT_CLOSE + ".lua"]
     hostile_paths += [saved + n for n in HOSTILE_SV if n != "<"]
     hostile_paths += ["Interface/AddOns/" + n for n in HOSTILE_ADDONS]
@@ -914,7 +1317,7 @@ def test_hostile_names_draw_as_inert_text_constructed(
         assert path in rows, repr(path)
         row = rows[path]
         assert row["badge"] is not None, repr(path)
-        for text in (row["name"], row["nameTitle"], row["text"]):
+        for text in (row["name"], row["nameTitle"], row["text"], row["aria"]):
             assert LSEP not in text and RLO not in text, repr(text)
         if LSEP in path:
             assert "2028" in row["name"], row["name"]
@@ -924,7 +1327,7 @@ def test_hostile_names_draw_as_inert_text_constructed(
     assert "script>.lua" in rows[saved + SCRIPT_CLOSE + ".lua"]["name"]
     for pane in out["steps"][1:]:
         assert "missing" not in pane, pane
-        for text in pane.values():
+        for text in _texts(pane):
             assert LSEP not in text and RLO not in text, repr(text)
     assert "script>.lua" in out["steps"][1]["title"]
     assert "202E" in out["steps"][2]["title"].upper()
@@ -974,7 +1377,7 @@ def test_a_linked_addon_has_its_own_badge_group_and_words_constructed(
     out = _drive(tmp_path / "node", scenario)
 
     # The badge.
-    row = {r["path"]: r for r in out["steps"][0]["rows"]}[linked]
+    row = {r["path"]: r for r in _in_flavor(out, out["steps"][0]["rows"], FLAVOR)}[linked]
     badge = row["badge"]
     assert badge is not None
     assert badge["text"].startswith(link_verdict["label"]), badge
@@ -988,11 +1391,11 @@ def test_a_linked_addon_has_its_own_badge_group_and_words_constructed(
     assert choices.get("link") == link_verdict["label"], choices
     assert "gate" in choices and choices["gate"] == verdict_module.LABELS["gate"], choices
     links = {p for p, i in listed.items() if i["verdict"]["link"]}
-    shown_link = {r["path"] for r in out["steps"][1]["rows"]} - {""}
+    shown_link = {r["path"] for r in _in_flavor(out, out["steps"][1]["rows"], FLAVOR)} - {""}
     assert linked in shown_link
     for path in shown_link:
         assert path in links or any(q.startswith(path + "/") for q in links), path
-    shown_gate = {r["path"] for r in out["steps"][2]["rows"]}
+    shown_gate = {r["path"] for r in _in_flavor(out, out["steps"][2]["rows"], FLAVOR)}
     assert shown_gate, "the capture has gate files"
     assert not shown_gate & links, sorted(shown_gate & links)
     for path in shown_gate & set(listed):
