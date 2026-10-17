@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import warnings
 
 import pytest
 
@@ -175,17 +176,37 @@ except luadata.LuaDataError as err:
 """
 POSITION_SIZE = 16 * 1024 * 1024
 POSITION_LIMIT = 64 * 1024 * 1024
+# A loaded Mac can read no growth at all; there `ru_maxrss` is not carried
+# across exec, so a retry cannot hide an inherited high-water mark. On Linux
+# that fault reads no growth every time, so Linux takes one sample.
+ZERO_GROWTH_TRIES = 5 if sys.platform == "darwin" else 1
+
+
+class ProbeReading(UserWarning):
+    """A child's raw RSS reading, shown in the warnings summary (not a fault)."""
 
 
 def _position_readings(parser: str = "luadata") -> tuple[int, int, int]:
-    """The refusal's line and column, and the child's RSS growth in bytes."""
-    out = subprocess.run(
-        [sys.executable, "-c", POSITION_CHILD, str(POSITION_SIZE), parser],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.split()
-    return int(out[0]), int(out[1]), int(out[2])
+    """The refusal's line and column, and the child's RSS growth in bytes.
+
+    Each reading is emitted as a `ProbeReading` warning, so the warnings
+    summary of the CI log shows it for a passing test too. A child that
+    reads no growth is retried on macOS only (`ZERO_GROWTH_TRIES`)."""
+    for _ in range(ZERO_GROWTH_TRIES):
+        out = subprocess.run(
+            [sys.executable, "-c", POSITION_CHILD, str(POSITION_SIZE), parser],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.split()
+        line, column, grown = int(out[0]), int(out[1]), int(out[2])
+        warnings.warn(
+            ProbeReading(f"{sys.platform} refusal {parser}: growth {grown / 2**20:.2f} MiB"),
+            stacklevel=2,
+        )
+        if grown > 0:
+            break
+    return line, column, grown
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="uses the resource module")
@@ -195,6 +216,9 @@ def test_constructed_refusal_after_a_long_mixed_line_break_run_stays_small() -> 
     adds far less than the input's size (it once took about 1 GB here)."""
     line, column, grown = _position_readings()
     assert (line, column) == (2 + 2 * (POSITION_SIZE // 3), 1)
+    # Real growth (19 MiB on macOS, 12.6 MiB on Linux): a child that reads
+    # none is not measuring the refusal (an inherited high-water mark).
+    assert grown > 0, "the child read no growth: it is not measuring the refusal"
     assert grown < POSITION_LIMIT, f"positioning the error grew RSS by {grown} bytes"
 
 

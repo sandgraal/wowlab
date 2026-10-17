@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import warnings
 
 import pytest
 
@@ -80,6 +81,16 @@ STAND_IN_RATIO = 1.25
 # against (an inherited high-water mark) reads no growth every time, so the
 # stand-in passes on the first of up to this many rounds that shows it.
 STAND_IN_ROUNDS = 3
+# A loaded Mac can read no growth at all (small integers 4 times in 10 at
+# load average 176 to 180, M13-20T review). There `ru_maxrss` is not carried
+# across exec, so a retry cannot hide an inherited high-water mark; on Linux
+# that fault reads no growth every time, so Linux takes one sample.
+ZERO_GROWTH_TRIES = 5 if sys.platform == "darwin" else 1
+
+
+class ProbeReading(UserWarning):
+    """A child's raw RSS reading, shown in the warnings summary (not a fault)."""
+
 
 CHILD = r"""
 import resource, sys
@@ -120,14 +131,30 @@ print(before, after)
 
 
 def _readings(item: bytes, parser: str = "luadata") -> tuple[int, int]:
-    """The child's peak RSS before and after the parse, in bytes."""
-    out = subprocess.run(
-        [sys.executable, "-c", CHILD, item.hex(), str(SCALE_MIB * MIB), parser],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.split()
-    before, after = int(out[0]), int(out[1])
+    """The child's peak RSS before and after the parse, in bytes.
+
+    Each reading is emitted as a `ProbeReading` warning, so the warnings
+    summary of the CI log shows it for a passing test too. A child that
+    reads no growth is retried on macOS only (`ZERO_GROWTH_TRIES`).
+    """
+    for _ in range(ZERO_GROWTH_TRIES):
+        out = subprocess.run(
+            [sys.executable, "-c", CHILD, item.hex(), str(SCALE_MIB * MIB), parser],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.split()
+        before, after = int(out[0]), int(out[1])
+        warnings.warn(
+            ProbeReading(
+                f"{sys.platform} {item!r} {parser} at {SCALE_MIB} MiB: "
+                f"before {before / MIB:.1f} MiB, after {after / MIB:.1f} MiB, "
+                f"growth {(after - before) / MIB:.2f} MiB"
+            ),
+            stacklevel=2,
+        )
+        if after > before:
+            break
     assert after > before, (
         f"the child read no growth ({before / MIB:.1f} -> {after / MIB:.1f} MiB): "
         "it is not measuring the parse"
