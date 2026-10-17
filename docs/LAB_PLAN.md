@@ -882,8 +882,7 @@ plain spelling. A file or folder the walk is told is missing
 limit) is skipped as removed only when an extended-length `lstat` agrees;
 otherwise `create` raises `SnapshotError` and writes no manifest. The same
 spelling reaches `install` discovery, `layout`, the first-run survey,
-`doctor`'s client and config reads, `process`'s root resolution and the
-readers (`luadata.read`, `wtfconfig.read_*`, `toc.read_toc`,
+`doctor`'s client and config reads and the readers (`luadata.read`, `wtfconfig.read_*`, `toc.read_toc`,
 `combatlog.read_log`); `Install.root` and `doctor`'s output are plain.
 
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
