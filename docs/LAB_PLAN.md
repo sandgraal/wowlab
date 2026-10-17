@@ -1089,6 +1089,20 @@ subtrees, as "no; wowlab leaves it alone (a restore writes it only if you
 name it with --paths)". `snap restore` and `undo` also take `--json` (the
 plan, and with `--yes` the result).
 
+*Amended 2026-10-17 (M13-30, from the #195 domain review):* a snapshot
+taken with `snap create --screenshots` holds `Screenshots/`, whose file-map
+row has Edit `n/a`; the write gate refuses it. A whole-snapshot restore of
+such a snapshot leaves out every entry under a top-level folder whose row is
+Edit `n/a`, lists them in `RestoreReport.unrestorable` (apart from the Edit
+`no` list in `skipped`), and restores the rest. The plan says how many and
+why, names the first ten, and never offers `--paths` for them: naming one is
+refused with the gate's reason (exit 3). Because the gate's whole restore
+cannot leave entries out, the rest is restored by name: the CLI reads the
+disk first (read-only, following no link) and names only the entries it no
+longer holds, so an unchanged link or executable is left alone as a whole
+restore leaves it, and a changed one is refused as a whole restore refuses
+it. `guard` is unchanged.
+
 *Amended 2026-09-29 (M11-30):* text output is terminal-safe. No C0
 control (tab and line feed included), no DEL, no C1 control and no Unicode
 format or separator character (Cf, Zl, Zp) reaches stdout or stderr raw.
