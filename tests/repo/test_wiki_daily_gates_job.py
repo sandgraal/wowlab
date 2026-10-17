@@ -382,7 +382,12 @@ def test_no_job_that_runs_or_follows_the_model_uses_a_cache() -> None:
     # oven-sh/setup-bun), and a composite action's nested steps are not in
     # this file, so only these actions, at these commits, may be used: a new
     # action or a bump fails here until it is reviewed for caching.
+    # A job that calls a reusable workflow (job-level `uses:`, no steps) is
+    # rejected outright, not allowlisted: its jobs and steps are not in this
+    # file, so no review of this file could see what it caches (round 2).
     for name, body in jobs.items():
+        assert "uses" not in body, (name, body["uses"])
+        assert "steps" in body, name
         for step in body.get("steps", []):
             uses = str(step.get("uses", ""))
             if "uses" in step:
