@@ -21,6 +21,7 @@ import os
 import re
 import shlex
 import shutil
+import sys
 import unicodedata
 from pathlib import Path
 from typing import Any
@@ -272,7 +273,10 @@ def _restore_hints(report: cli.ExplainReport) -> list[cli.ExplainHint]:
     return [h for h in report.hints if h.command.startswith("wowlab snap restore ")]
 
 
-def test_snapshot_facts_follow_the_file_on_disk(root: Path, flavor: Path) -> None:
+def test_snapshot_facts_follow_the_file_on_disk(
+    root: Path, flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli, "_shell", lambda: "posix")  # the hints below are POSIX-quoted
     before = explained(SYNDICATOR)
     assert before.snapshot is not None
     assert (before.snapshot.snapshot_id, before.snapshot.holds, before.snapshot.error) == (
@@ -532,6 +536,7 @@ def test_hints_are_quoted_for_the_shell_of_the_machine(
 ) -> None:
     ok("snap", "create")
     (flavor / SYNDICATOR).write_bytes((flavor / SYNDICATOR).read_bytes() + b"\n")
+    monkeypatch.setattr(cli, "_shell", lambda: "posix")  # so both halves run on every host
     posix = explained(SYNDICATOR, "--root", str(root))
     assert posix.hints
     for hint in posix.hints:
@@ -690,8 +695,13 @@ def test_hints_print_through_safe(root: Path, flavor: Path) -> None:
     """Constructed: SavedVariables files whose names hold ESC (the write gate
     refuses the name, so only the view's hint names it) and U+202E (a
     restore hint names it too)."""
+    cases = [("Evil\x1b[31mRed.lua", False), ("Evil\u202eRed.lua", True)]
+    if sys.platform == "win32":
+        # Windows refuses a control character in a file name (WinError 123), so
+        # the ESC name cannot be made there; it accepts U+202E, which still runs.
+        cases = [case for case in cases if "\x1b" not in case[0]]
     ok("snap", "create")  # neither file is in it yet
-    for name, restorable in (("Evil\x1b[31mRed.lua", False), ("Evil\u202eRed.lua", True)):
+    for name, restorable in cases:
         rel = f"{SV_DIR}/{name}"
         shutil.copy2(flavor / SYNDICATOR, flavor / rel)
         ok("snap", "create")

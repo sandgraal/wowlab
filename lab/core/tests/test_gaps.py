@@ -661,6 +661,10 @@ def test_the_cli_says_when_the_bound_is_hit_constructed(
     assert "The walk hit a bound; there may be gaps it did not reach." in result.stderr
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="NTFS names are UTF-16, so Windows has no undecodable file name to report",
+)
 def test_gaps_json_keeps_undecodable_file_names_constructed(root: Path, flavor: Path) -> None:
     name = os.fsdecode(b"bad-\xff-constructed.txt")
     try:
