@@ -38,6 +38,20 @@ page.html or set by the script, never inferred from layout):
 - A placeholder verdict's badge has the class `badge-placeholder`, on top
   of `badge` and its level's class, as `badge-link` is for a link.
 
+Conductor rulings of 2026-10-16 (round 1 on #226), graded here:
+- `tree --install --explain --json` carries `ancestors` (M13-33), and every
+  folder drawn takes its badge from there.
+- "gaps only" shows the places in `groups` and `catch_all` and the `links`,
+  with their ancestors; a folder not entered stays out.
+- A copy is exactly `hint.command`; the page never reads `argv`.
+- Snapshot facts are Python's words, `snapshot.words` (M13-27 adds it); the
+  page shows them and words nothing itself.
+
+The harness also traps what a browser would turn into a navigation or a
+request (`location`, `window.open`, URL attributes, link and media
+elements, any attribute outside a closed set); an `activate` step uses
+every control in the detail pane, so a refused view has no way in at all.
+
 Constructed inputs (L8: hostile input, boundary cases, or our own JSON
 formats) carry `constructed` in the test id: unknown files added to the
 captured tree to make gaps, a symlink, hostile names, and `explain` or
@@ -159,6 +173,30 @@ def _runs_of(out: dict[str, Any], command: list[str]) -> list[dict[str, Any]]:
     ]
 
 
+def _verdicts(scenario: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Every verdict `tree --install --explain --json` carries, by path from
+    the install root: its items and its `ancestors` (the folders above them
+    that are not listed themselves; M13-33 adds them, conductor ruling of
+    2026-10-16)."""
+    whole = json.loads(scenario["install_tree"])
+    out = {}
+    for item in [*whole.get("ancestors", []), *whole["items"]]:
+        out[_key(item["base"], item["flavor_folder"], item["path"])] = item["verdict"]
+    return out
+
+
+def _group_of(verdict: dict[str, Any]) -> str:
+    return "link" if verdict.get("link") is True else str(verdict["level"])
+
+
+def _only_copy_and_preview(pane: dict[str, Any]) -> None:
+    """The pane's controls are its hints' copy buttons and the Preview
+    button; nothing else in it listens for anything."""
+    for classes in pane["buttons"]:
+        assert {"copy", "preview"} & set(classes.split()), classes
+    assert pane["listening"] == [], pane["listening"]
+
+
 def _clean(pane: dict[str, Any]) -> None:
     assert "missing" not in pane, pane
     assert pane["status"] == "" or "error" not in pane["status"].lower(), pane["status"]
@@ -198,6 +236,9 @@ def gapped_more(gapped: Path, tmp_path: Path) -> Path:
     target.mkdir()
     try:
         (gapped / FLAVOR / "m13-27t-link").symlink_to(target, target_is_directory=True)
+        # A link with a row (an addon folder): in `links`, and in no group.
+        addon = gapped / FLAVOR / "Interface" / "AddOns" / "m13-27t-LinkedAddon"
+        addon.symlink_to(target, target_is_directory=True)
     except OSError as error:  # Windows without the symlink privilege
         pytest.skip(f"cannot make a symlink here: {error}")
     return gapped
@@ -283,14 +324,20 @@ def test_the_tree_is_the_whole_install_constructed(
     assert tree_root.rstrip("/\\").endswith(Path(root).name), tree_root
 
     # Everything, opened: every item at its path from the install root, its
-    # badge saying Python's label.
+    # badge saying Python's label; every folder drawn above them (the
+    # report's `ancestors`) too. The install root has no verdict.
     drawn = _rows(out["steps"][0])
+    verdicts = _verdicts(scenario)
+    assert whole.get("ancestors"), "M13-33: `tree --install` lists the folders above its items"
     for item in whole["items"]:
-        key = _key(item["base"], item["flavor_folder"], item["path"])
-        assert key in drawn, key
-        badge = drawn[key]["badge"]
+        assert _key(item["base"], item["flavor_folder"], item["path"]) in drawn, item["path"]
+    for key, row in drawn.items():
+        if key == "":
+            continue
+        assert key in verdicts, key
+        badge = row["badge"]
         assert badge is not None, key
-        assert badge["text"].startswith(item["verdict"]["label"]), (key, badge)
+        assert badge["text"].startswith(verdicts[key]["label"]), (key, badge)
     for flavor in whole["flavor_folders"]:
         assert flavor + "/WTF/Config.wtf" in drawn, flavor
     for path in drawn:
@@ -320,19 +367,27 @@ def test_the_tree_is_the_whole_install_constructed(
 
 @pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 def test_gaps_only_shows_exactly_the_gaps_and_their_ancestors_constructed(
-    server: Any, gapped: Path, tmp_path: Path
+    server: Any, gapped_more: Path, tmp_path: Path
 ) -> None:
-    """With "gaps only" on, the tree shows exactly the places `filemap gaps
-    --json` reports in `groups` and the folders that lead to them: no other
-    file, no not-entered addon folder. Off again, the first view returns."""
+    """With "gaps only" on, the tree shows exactly what `filemap gaps --json`
+    reports as thin: the places in `groups` and in `catch_all`, and the
+    `links`, each with the folders that lead to it. A folder not entered has
+    a file-map row and stays out, as does every other file (conductor
+    ruling, 2026-10-16). Off again, the first view returns."""
     steps: list[dict[str, Any]] = [{"gaps_only": True}, {"gaps_only": False}]
     scenario, _ = _scenario(server, [], steps)
     gaps = json.loads(scenario["gaps"])
-    assert len(gaps["groups"]) >= 3 and not gaps["catch_all"], "the constructed gaps, only"
+    assert len(gaps["groups"]) >= 3 and gaps["catch_all"] and gaps["links"]
     assert gaps["not_entered"], "the capture has folders not entered"
-    hits = _place_keys(gaps["groups"])
+    hits = _place_keys(gaps["groups"]) | _place_keys(gaps["catch_all"]) | set(gaps["links"])
     assert "m13-27t-unknown.bin" in hits and FLAVOR + "/m13-27t-stuff" in hits
     assert {FLAVOR + "/" + c + "/" + NOTES for c in SAME_KIND_CHARACTERS} <= hits
+    assert FLAVOR + "/Logs" in hits and FLAVOR + "/m13-27t-link" in hits
+    linked_addon = FLAVOR + "/Interface/AddOns/m13-27t-LinkedAddon"
+    assert linked_addon in gaps["links"], gaps["links"]
+    assert linked_addon not in _place_keys(gaps["groups"]) | _place_keys(gaps["catch_all"])
+    entered = {_key(n["base"], n["flavor_folder"], n["path"]) for n in gaps["not_entered"]}
+    assert not entered & hits
     # Every place is something the install tree draws.
     whole = json.loads(scenario["install_tree"])
     listed = {_key(i["base"], i["flavor_folder"], i["path"]) for i in whole["items"]}
@@ -354,6 +409,38 @@ def test_gaps_only_shows_exactly_the_gaps_and_their_ancestors_constructed(
         sorted(expected - set(_rows(filtered)))[:8],
     )
     assert [r["path"] for r in out["steps"][1]["rows"]] == [r["path"] for r in out["first"]["rows"]]
+
+
+@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
+def test_the_verdict_and_text_filters_cover_the_whole_install_constructed(
+    server: Any, two_flavors: Path, tmp_path: Path
+) -> None:
+    """The verdict filter and the text filter work across the whole tree:
+    the install root's own entries and the second flavor folder too, not
+    only the first flavor folder (code review, round 1 on #226). Each shows
+    exactly its matches and the folders that lead to them."""
+    steps: list[dict[str, Any]] = [{"level": "no"}, {"level": ""}, {"text": "config.wtf"}]
+    scenario, _ = _scenario(server, [], steps)
+    verdicts = _verdicts(scenario)
+    out = _drive(tmp_path / "node", scenario)
+    _own_api_only(out)
+
+    def shows(view: dict[str, Any], hits: set[str]) -> None:
+        assert hits, view["status"]
+        expected = hits.union(*(_ancestors(h) for h in hits))
+        assert set(_rows(view)) == expected, (
+            sorted(set(_rows(view)) - expected)[:8],
+            sorted(expected - set(_rows(view)))[:8],
+        )
+
+    no = {k for k, v in verdicts.items() if _group_of(v) == "no"}
+    assert ".build.info" in no, "a `no` file at the install root"
+    assert any(k.startswith(SECOND + "/") for k in no), "and in the second flavor folder"
+    shows(out["steps"][0], no)
+    assert [r["path"] for r in out["steps"][1]["rows"]] == [r["path"] for r in out["first"]["rows"]]
+    found = {k for k in verdicts if "config.wtf" in k.lower()}
+    assert {FLAVOR + "/WTF/Config.wtf", SECOND + "/WTF/Config.wtf"} <= found
+    shows(out["steps"][2], found)
 
 
 # ─── the gaps tab ────────────────────────────────────────────────────────────
@@ -394,13 +481,20 @@ def test_the_gaps_tab_draws_groups_catch_all_not_entered_and_links_constructed(
         assert len(drawn["heads"]) == 1, drawn["heads"]
         head = drawn["heads"][0]
         assert group["name"] in head, (group["name"], head)
+        # A <summary> is the header a player reads: it is, or holds, `.gap-head`.
+        assert all(drawn["summaries"]), drawn
         if group["files"]:
             assert str(group["files"]) in drawn["text"], (group["name"], drawn["text"])
+        # The group's own text, everything but its places, not-entered
+        # folders and links (titles included), names no account, realm or
+        # character folder (security review, round 1 on #226).
+        bare = drawn["bare"]
+        assert group["name"] in bare, bare
         for place in group["gaps"]:
             if place["parent"]:
-                assert place["parent"] not in head, head
+                assert place["parent"] not in bare, bare
         for name in IDENTIFYING:
-            assert name not in head, (name, head)
+            assert name not in bare, (name, bare)
     assert set(view["places"]) == _place_keys(every)
 
     entered = {_key(n["base"], n["flavor_folder"], n["path"]) for n in gaps["not_entered"]}
@@ -415,13 +509,27 @@ def test_hostile_names_in_gaps_draw_as_inert_text_constructed(
     """Gaps named with markup, U+2028 and U+202E: drawn as text (the
     stand-in DOM throws on an HTML sink), the two invisible characters shown
     as a code and never applied, in the headers and in the places."""
-    scenario, _ = _scenario(server, [], [{"tab": "gaps"}])
+    scenario, _ = _scenario(server, [], [{"open_all": True}, {"tab": "gaps"}])
     gaps = json.loads(scenario["gaps"])
     names = {g["name"] for g in gaps["groups"]}
     assert set(HOSTILE_ROOT) | {"<script>"} <= names, names
     out = _drive(tmp_path / "node", scenario)
     _own_api_only(out)
-    view = out["steps"][0]
+    # In the tree: the install root's own hostile entries (security review,
+    # round 1 on #226).
+    rows = _rows(out["steps"][0])
+    for name in [*HOSTILE_ROOT, FLAVOR + "/<script>"]:
+        assert name in rows, repr(name)
+        row = rows[name]
+        assert row["badge"] is not None, repr(name)
+        for text in (row["name"], row["nameTitle"], row["text"]):
+            assert LSEP not in text and RLO not in text, repr(text)
+        if LSEP in name:
+            assert "2028" in row["name"], row["name"]
+        if RLO in name:
+            assert "202E" in row["name"].upper(), row["name"]
+    assert IMG in rows[IMG]["name"]
+    view = out["steps"][1]
     assert "missing" not in view, view
     heads = [h for g in view["groups"] for h in g["heads"]]
     assert heads, view
@@ -455,56 +563,71 @@ def snapped(server: Any, install: Path) -> dict[str, Any]:
 def test_the_detail_pane_shows_the_snapshot_facts(
     server: Any, snapped: dict[str, Any], home: Path, tmp_path: Path
 ) -> None:
-    """`explain`'s `snapshot` is shown: the snapshot that holds the file (its
-    id and label) and whether the file on disk is the same or differs."""
+    """`explain`'s `snapshot` is shown in Python's words (`snapshot.words`,
+    which M13-27 adds; conductor ruling of 2026-10-16): the snapshot that
+    holds the file, by id and label, and whether the file on disk is the
+    same or differs."""
     rels = ["WTF/Config.wtf", SV_FILE]
     scenario, _ = _scenario(server, rels, [{"click": r} for r in rels])
     facts = [_explain(scenario, r)["snapshot"] for r in rels]
     for fact in facts:
         assert fact["holds"] is True and fact["confirmed"] is True, fact
         assert fact["label"] == "m13-27t label", fact
+        assert isinstance(fact.get("words"), str), "M13-27: `snapshot.words` in explain --json"
+        assert fact["snapshot_id"] in fact["words"] and fact["label"] in fact["words"], fact
     assert [f["live"] for f in facts] == ["same", "differs"], facts
+    assert facts[0]["words"] != facts[1]["words"], "Python words `live`"
     out = _drive(tmp_path / "node", scenario)
     _own_api_only(out)
-    panes = out["steps"]
-    for pane, fact in zip(panes, facts, strict=True):
+    for pane, fact in zip(out["steps"], facts, strict=True):
         _clean(pane)
-        assert fact["snapshot_id"] in pane["pane"], pane["pane"]
-        assert fact["label"] in pane["pane"], pane["pane"]
+        assert fact["words"].replace(str(home), "~") in pane["pane"], (fact["words"], pane["pane"])
         assert "could not be confirmed" not in pane["pane"].lower()
         assert str(home) not in pane["pane"]
 
 
-def _live_variant(base: dict[str, Any], live: str | None) -> dict[str, Any]:
+def _snapshot_variant(base: dict[str, Any], words: str, **fields: Any) -> dict[str, Any]:
     report = json.loads(json.dumps(base))
-    report["snapshot"].update(live=live, differs=None if live is None else live == "differs")
+    report["snapshot"].update(fields, words=words)
     return report
 
 
 @pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
-def test_the_snapshot_facts_follow_live_constructed(
+def test_the_pane_shows_the_snapshot_words_and_words_nothing_itself_constructed(
     server: Any, snapped: dict[str, Any], tmp_path: Path
 ) -> None:
-    """The same file, the same snapshot, and each value of `live`: the pane
-    says something different for each, so the player can tell a file that
-    is the same as its copy from one that differs, is missing, or could not
-    be read. (`live` edited in the real JSON: constructed.)"""
+    """The pane says what `snapshot.words` says, verbatim, and does not word
+    the other fields itself: two replies with the same words read the same
+    even when `live`, `confirmed` and `path` differ, and different words
+    read differently when the fields are the same. (Words and fields edited
+    in the real JSON: constructed.)"""
     rels = ["WTF/Config.wtf", SV_FILE, ACCOUNT + "/SavedVariables/WowLab.lua"]
     rels.append(ACCOUNT + "/SavedVariables/Syndicator.lua")
     scenario, _ = _scenario(server, rels, [{"click": r} for r in rels])
     base = _explain(scenario, "WTF/Config.wtf")
-    lives = ["same", "differs", "missing", "unreadable"]
-    for rel, live in zip(rels, lives, strict=True):
-        _set_explain(scenario, rel, _live_variant(base, live))
+    same = "m13-27t constructed words, the first"
+    other = "m13-27t constructed words, the second"
+    variants = [
+        _snapshot_variant(base, same),
+        _snapshot_variant(
+            base, same, live="differs", differs=True, confirmed=False, path="WTF/CONFIG.WTF"
+        ),
+        _snapshot_variant(base, other),
+        _snapshot_variant(base, other + " " + IMG + " line" + LSEP + "sep " + RLO + "x"),
+    ]
+    for rel, report in zip(rels, variants, strict=True):
+        _set_explain(scenario, rel, report)
     out = _drive(tmp_path / "node", scenario)
-    panes = []
+    residue = []
     for pane in out["steps"]:
         _clean(pane)
-        assert base["snapshot"]["snapshot_id"] in pane["pane"]
-        # The four replies differ only in `live`; the title and the path
-        # name the file clicked, so they are taken out before comparing.
-        panes.append(pane["pane"].replace(pane["path"], "").replace(pane["title"], ""))
-    assert len(set(panes)) == len(lives), "each `live` reads differently"
+        # Everything but the title and the path, which name the file clicked.
+        residue.append(pane["rest"])
+    assert same in residue[0] and same in residue[1], residue[:2]
+    assert residue[0] == residue[1], "the page words no field itself"
+    assert other in residue[2] and same not in residue[2], residue[2]
+    assert IMG in residue[3] and LSEP not in residue[3] and RLO not in residue[3], residue[3]
+    assert "2028" in residue[3] and "202E" in residue[3].upper(), residue[3]
 
 
 @pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
@@ -512,47 +635,49 @@ def test_a_copy_that_could_not_be_confirmed_is_said_so_constructed(
     server: Any, snapped: dict[str, Any], tmp_path: Path
 ) -> None:
     """M13-32: when the snapshot holds the file under another spelling that
-    could not be confirmed to name it (`confirmed` False), the pane says it
-    could not be confirmed and shows the spelling the snapshot holds. The
-    same for the latest snapshot that held it (`last_held_confirmed`
-    False). With `confirmed` True it says no such thing."""
+    could not be confirmed to name it (`confirmed` False), or the latest
+    snapshot that held it did (`last_held_confirmed` False), the pane shows
+    Python's words for it, which say it could not be confirmed and name the
+    spelling. With `confirmed` True there is no such sentence. (The two
+    cases cannot be made on a test volume: fields and words edited in the
+    real JSON, constructed.)"""
     rels = ["WTF/Config.wtf", SV_FILE, ACCOUNT + "/SavedVariables/WowLab.lua"]
     scenario, _ = _scenario(server, rels, [{"click": r} for r in rels])
     base = _explain(scenario, "WTF/Config.wtf")
     held = base["snapshot"]
     assert held["holds"] is True and held["confirmed"] is True
-
-    unconfirmed = json.loads(json.dumps(base))
-    unconfirmed["snapshot"].update(path="WTF/CONFIG.WTF", confirmed=False)
-    _set_explain(scenario, SV_FILE, unconfirmed)
-
-    earlier = json.loads(json.dumps(base))
-    earlier["snapshot"].update(
+    assert isinstance(held.get("words"), str), "M13-27: `snapshot.words` in explain --json"
+    assert "could not be confirmed" not in held["words"]
+    odd_words = (
+        "In the latest snapshot (m13-27t): it holds WTF/CONFIG.WTF, which could not be "
+        "confirmed to be this file; the file on disk is the same"
+    )
+    gone_words = (
+        "In the latest snapshot (m13-27t): not held; the latest snapshot that holds it is "
+        "m13-27t-earlier, as WTF/config.WTF, which could not be confirmed to be this file"
+    )
+    odd = _snapshot_variant(base, odd_words, path="WTF/CONFIG.WTF", confirmed=False)
+    _set_explain(scenario, SV_FILE, odd)
+    gone = _snapshot_variant(
+        base,
+        gone_words,
         holds=False,
         path=None,
         confirmed=None,
         live=None,
         differs=None,
-        last_held={
-            "id": "m13-27t-earlier",
-            "created_at": "2026-10-01T00:00:00Z",
-            "label": "m13-27t earlier",
-        },
+        last_held={"id": "m13-27t-earlier", "created_at": "2026-10-01T00:00:00Z", "label": ""},
         last_held_path="WTF/config.WTF",
         last_held_confirmed=False,
     )
-    _set_explain(scenario, ACCOUNT + "/SavedVariables/WowLab.lua", earlier)
-
+    _set_explain(scenario, ACCOUNT + "/SavedVariables/WowLab.lua", gone)
     out = _drive(tmp_path / "node", scenario)
-    plain, odd, gone = (p["pane"] for p in out["steps"])
     for pane in out["steps"]:
         _clean(pane)
+    plain, odd_pane, gone_pane = (p["pane"] for p in out["steps"])
     assert "could not be confirmed" not in plain.lower(), plain
-    assert "could not be confirmed" in odd.lower(), odd
-    assert "WTF/CONFIG.WTF" in odd, odd
-    assert "could not be confirmed" in gone.lower(), gone
-    assert "WTF/config.WTF" in gone, gone
-    assert "m13-27t-earlier" in gone, gone
+    assert odd_words in odd_pane, odd_pane
+    assert gone_words in gone_pane, gone_pane
 
 
 # ─── the detail pane: hints ──────────────────────────────────────────────────
@@ -599,30 +724,76 @@ def test_each_hint_has_a_copy_button_that_copies_the_command_exactly(
     assert len(out["clipboard"]) == sum(len(h) for h in hints.values())
 
 
+# SavedVariables names holding shell metacharacters (constructed): a quote,
+# a command substitution, a backtick, `;` and `&`. Allowed on every OS.
+METACHAR = ["m13-27t q'$(touch pwned)`id`;&.lua", "m13-27t ps'$(touch pwned)`id`;&.lua"]
+
+
+@pytest.fixture
+def metachar(install: Path) -> Path:
+    saved = install / FLAVOR / ACCOUNT / "SavedVariables"
+    for name in METACHAR:
+        (saved / name).write_text("X = 1\n", encoding="utf-8")
+    return install
+
+
+def _powershell(hint: dict[str, Any]) -> dict[str, Any]:
+    """The hint as Python quotes it for PowerShell: every argument in single
+    quotes, a quote doubled (`ExplainHint`)."""
+    line = ["wowlab", *hint["argv"]]
+    return {
+        **hint,
+        "shell": "powershell",
+        "command": " ".join("'" + a.replace("'", "''") + "'" for a in line),
+    }
+
+
 @pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
-def test_a_hint_says_its_own_shell_constructed(server: Any, install: Path, tmp_path: Path) -> None:
+def test_a_hint_says_its_own_shell_and_copies_exactly_constructed(
+    server: Any, metachar: Path, tmp_path: Path
+) -> None:
     """The shell named is the hint's own (`posix` or `powershell`), not one
-    the page assumes. (`shell` and `command` edited: constructed.)"""
-    rels = ["WTF/Config.wtf", SV_FILE]
-    scenario, _ = _scenario(server, rels, [{"click": r} for r in rels])
-    report = _explain(scenario, SV_FILE)
-    for hint in report["hints"]:
-        hint["shell"] = "powershell"
-        hint["command"] = "wowlab " + " ".join(
-            "'" + a.replace("'", "''") + "'" for a in hint["argv"]
-        )
-    _set_explain(scenario, SV_FILE, report)
-    posix = _explain(scenario, "WTF/Config.wtf")["hints"]
-    assert {h["shell"] for h in posix} == {"posix"}
+    the page assumes, and each copy is that hint's `command` byte for byte,
+    whatever the shell: a page that quotes `argv` itself would put the
+    wrong quoting on the clipboard (security review, round 1 on #226). One
+    file name holds `'`, `$(…)`, a backtick, `;` and `&`. (`shell` and
+    `command` edited to PowerShell's: constructed.)"""
+    posix_rel = ACCOUNT + "/SavedVariables/" + METACHAR[0]
+    ps_rels = [SV_FILE, ACCOUNT + "/SavedVariables/" + METACHAR[1]]
+    rels = ["WTF/Config.wtf", posix_rel, *ps_rels]
+    scenario, _ = _scenario(server, rels, [])
+    for rel in ps_rels:
+        report = _explain(scenario, rel)
+        report["hints"] = [_powershell(h) for h in report["hints"]]
+        _set_explain(scenario, rel, report)
+    hints = {r: _explain(scenario, r)["hints"] for r in rels}
+    # The name is an argument of a posix hint, quoted by Python (its `'`
+    # becomes `'"'"'`), so the command is not the name pasted in.
+    named = [h for h in hints[posix_rel] if any(METACHAR[0] in a for a in h["argv"])]
+    assert named and all("'\"'\"'" in h["command"] for h in named), hints[posix_rel]
+    assert any("''" in h["command"] for h in hints[ps_rels[1]]), hints[ps_rels[1]]
+    steps: list[dict[str, Any]] = []
+    for rel in rels:
+        steps.append({"click": rel})
+        steps += [{"copy": n} for n in range(len(hints[rel]))]
+    scenario["steps"] = steps
     out = _drive(tmp_path / "node", scenario)
-    first, second = out["steps"]
-    _clean(first)
-    _clean(second)
-    for shown in first["hints"]:
-        assert "posix" in shown["text"].lower() and "powershell" not in shown["text"].lower()
-    assert second["hints"], second
-    for shown in second["hints"]:
-        assert "powershell" in shown["text"].lower() and "posix" not in shown["text"].lower()
+    _own_api_only(out)
+    at = 0
+    for rel in rels:
+        pane = out["steps"][at]
+        _clean(pane)
+        assert len(pane["hints"]) == len(hints[rel]), (rel, pane["hints"])
+        for shown, hint in zip(pane["hints"], hints[rel], strict=True):
+            other = "posix" if hint["shell"] == "powershell" else "powershell"
+            assert hint["shell"] in shown["text"].lower(), (hint["shell"], shown)
+            assert other not in shown["text"].lower(), (other, shown)
+        for n, hint in enumerate(hints[rel]):
+            copied = out["steps"][at + 1 + n]
+            assert "missing" not in copied, copied
+            assert copied["clipboard"][-1] == hint["command"], (copied, hint["command"])
+            assert copied["newRequests"] == 0
+        at += 1 + len(hints[rel])
 
 
 HOSTILE_SV_FILES = [IMG + ".lua", "line" + LSEP + "sep.lua", RLO + "aul.exe.lua"]
@@ -732,16 +903,23 @@ def test_preview_runs_only_the_first_view_constructed(
 @pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
 def test_no_view_means_no_preview_button(server: Any, install: Path, tmp_path: Path) -> None:
     """A path with no view (a folder; `Logs/`) has no Preview button, while
-    one with a view does: the button follows `views`, not the pane."""
+    one with a view does: the button follows `views`, not the pane. Every
+    control in a pane with no view, used, runs nothing (security review,
+    round 1 on #226)."""
     rels = ["WTF", "Logs", "WTF/Config.wtf"]
-    scenario, _ = _scenario(server, rels, [{"click": r} for r in rels])
+    steps = [s for r in rels for s in ({"click": r}, {"activate": True})]
+    scenario, _ = _scenario(server, rels, steps)
     assert [bool(_explain(scenario, r)["views"]) for r in rels] == [False, False, True]
     out = _drive(tmp_path / "node", scenario)
     counts = []
-    for pane in out["steps"]:
+    for n in range(len(rels)):
+        pane, used = out["steps"][2 * n], out["steps"][2 * n + 1]
         _clean(pane)
         counts.append(pane["previewButtons"])
+        _only_copy_and_preview(used)
     assert counts == [0, 0, 1], counts
+    for n in (0, 1):
+        assert out["steps"][2 * n + 1]["newRequests"] == [], out["steps"][2 * n + 1]
 
 
 def _refused_views(listed: dict[str, Any]) -> list[dict[str, Any]]:
@@ -785,7 +963,9 @@ def test_a_refused_command_is_never_offered_constructed(
     )
     assert len(files) >= len(refused), (len(files), len(refused))
     rels = files[: len(refused)]
-    scenario, _ = _scenario(server, [control, *rels], [{"click": r} for r in [control, *rels]])
+    every = [control, *rels]
+    steps = [s for r in every for s in ({"click": r}, {"activate": True})]
+    scenario, _ = _scenario(server, every, steps)
     assert _explain(scenario, control)["views"], control
     for rel, view in zip(rels, refused, strict=True):
         report = _explain(scenario, rel)
@@ -795,12 +975,19 @@ def test_a_refused_command_is_never_offered_constructed(
     out = _drive(tmp_path / "node", scenario)
     _clean(out["steps"][0])
     assert out["steps"][0]["previewButtons"] == 1, "the control's view is offered"
-    for pane, view in zip(out["steps"][1:], refused, strict=True):
+    assert out["steps"][1]["newRequests"], "and used, it runs"
+    for n, view in enumerate(refused, start=1):
+        pane, used = out["steps"][2 * n], out["steps"][2 * n + 1]
         _clean(pane)
         assert pane["previewButtons"] == 0, view
-    for view in refused:
-        for run in _runs_of(out, view["command"]):
-            assert run["params"] != view["params"], view
+        # Every control in the pane, used: none of them is another way in
+        # (security review, round 1 on #226).
+        _only_copy_and_preview(used)
+        assert used["newRequests"] == [], (view, used["newRequests"])
+    named = {tuple(v["command"]) for v in refused}
+    for request in out["requests"]:
+        if request["body"] is not None:
+            assert tuple(request["body"]["command"]) not in named, request
 
 
 @pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
@@ -813,7 +1000,9 @@ def test_whether_a_view_is_offered_comes_from_the_command_list_constructed(
     it reads, neither real view is offered, while `binds list`, left as it
     is, still is. (The command list edited: constructed.)"""
     rels = ["WTF/Config.wtf", SV_FILE, ACCOUNT + "/bindings-cache.wtf"]
-    scenario, _ = _scenario(server, rels, [{"click": r} for r in rels])
+    scenario, _ = _scenario(
+        server, rels, [s for r in rels for s in ({"click": r}, {"activate": True})]
+    )
     views = [_explain(scenario, r)["views"][0] for r in rels]
     assert [v["command"] for v in views] == [["cvar", "list"], ["sv", "dump"], ["binds", "list"]]
     for command in scenario["commands"]["commands"]:
@@ -825,11 +1014,50 @@ def test_whether_a_view_is_offered_comes_from_the_command_list_constructed(
                     param["refused"] = "m13-27t constructed"
     out = _drive(tmp_path / "node", scenario)
     counts = []
-    for pane in out["steps"]:
+    for n in range(len(rels)):
+        pane, used = out["steps"][2 * n], out["steps"][2 * n + 1]
         _clean(pane)
         counts.append(pane["previewButtons"])
+        _only_copy_and_preview(used)
     assert counts == [0, 0, 1], counts
+    assert _runs_of(out, ["binds", "list"]), "the offered view, used, runs"
     assert not _runs_of(out, ["cvar", "list"]) and not _runs_of(out, ["sv", "dump"])
+
+
+@pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
+def test_a_refused_first_view_is_not_replaced_by_the_next_constructed(
+    server: Any, install: Path, tmp_path: Path
+) -> None:
+    """Preview is `views[0]` or nothing: when it is refused and `views[1]` is
+    allowed, there is no Preview and nothing runs; the page does not fall
+    back to the next view (security review, round 1 on #226). A control
+    entry, whose `views[0]` is allowed, is offered. (Views edited:
+    constructed.)"""
+    rel, control = "WTF/Config.wtf", ACCOUNT + "/bindings-cache.wtf"
+    steps = [s for r in (control, rel) for s in ({"click": r}, {"activate": True})]
+    scenario, _ = _scenario(server, [control, rel], steps)
+    report = _explain(scenario, rel)
+    allowed = report["views"][0]
+    assert allowed["command"] == ["cvar", "list"]
+    refused = {
+        "command": ["looks", "page"],
+        "params": {"out": "m13-27t-out.html"},
+        "argv": ["looks", "page", "--out", "m13-27t-out.html"],
+        "does": "m13-27t constructed refused view",
+    }
+    report["views"] = [refused, allowed]
+    report["hints"] = []
+    _set_explain(scenario, rel, report)
+    _add_run(scenario, allowed, _stdout(server, allowed["command"], allowed["params"]))
+    out = _drive(tmp_path / "node", scenario)
+    _clean(out["steps"][0])
+    assert out["steps"][0]["previewButtons"] == 1, "the control is offered"
+    pane, used = out["steps"][2], out["steps"][3]
+    _clean(pane)
+    assert pane["previewButtons"] == 0, pane
+    _only_copy_and_preview(used)
+    assert used["newRequests"] == [], used["newRequests"]
+    assert not _runs_of(out, ["cvar", "list"]) and not _runs_of(out, ["looks", "page"])
 
 
 @pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
@@ -846,9 +1074,17 @@ def test_a_hostile_preview_draws_as_inert_text_constructed(
         IMG: SCRIPT_CLOSE + "<b>bold</b>",
         "line" + LSEP + "sep": RLO + "aul.exe",
         "nested": {SCRIPT_CLOSE: [IMG, "line" + LSEP + "sep", RLO + "x"]},
+        # Values a careless page would turn into a link or a navigation.
+        "href": "https://m13-27t.invalid/x",
+        "src": "javascript:alert(1)",
+        "url": ["https://m13-27t.invalid/y", "//m13-27t.invalid/z"],
     }
     _add_run(scenario, view, json.dumps(printed, ensure_ascii=False))
     out = _drive(tmp_path / "node", scenario)
+    # Every request stayed on the server's API, and nothing navigated (the
+    # harness traps `location`, `window.open`, URL attributes and link
+    # elements; security review, round 1 on #226).
+    _own_api_only(out)
     previewed = out["steps"][1]
     assert "missing" not in previewed, previewed
     assert len(previewed["newRequests"]) == 1
@@ -856,6 +1092,7 @@ def test_a_hostile_preview_draws_as_inert_text_constructed(
     assert IMG in text and SCRIPT_CLOSE in text, "markup drawn as its own text"
     assert LSEP not in text and RLO not in text, repr(text)
     assert "2028" in text and "202E" in text.upper(), text
+    assert "https://m13-27t.invalid/x" in text and "javascript:alert(1)" in text, "drawn as text"
 
 
 # ─── the placeholder badge ───────────────────────────────────────────────────
@@ -924,9 +1161,29 @@ def test_a_placeholder_verdict_has_its_own_badge_class_constructed(
     assert verdict["label"] in pane["verdict"] and verdict["words"] in pane["verdict"]
 
 
-def _rules(css: str) -> list[tuple[str, str]]:
-    """The style rules, in order: top-level ones, then (for the light
-    scheme) those inside a `prefers-color-scheme` block; (selector, body)."""
+def _media_applies(query: str, scheme: str) -> bool:
+    """Whether a `@media` query holds on a screen in `scheme` ("dark" or
+    "light"). Only `screen`, `all` and `prefers-color-scheme` are taken as
+    holding; anything else (`print`, a width, `not ...`) is taken as not
+    holding, so a rule behind it never counts as painting the badge (code
+    review, round 1 on #226)."""
+    for part in query.lower().split(","):
+        part = part.strip()
+        features = re.findall(r"\(([^)]*)\)", part)
+        words = [w for w in re.sub(r"\([^)]*\)", " ", part).split() if w not in ("and", "only")]
+        if any(w not in ("screen", "all") for w in words):
+            continue
+        if all(
+            re.fullmatch(r"\s*prefers-color-scheme\s*:\s*" + scheme + r"\s*", f) for f in features
+        ):
+            return True
+    return False
+
+
+def _rules(css: str, scheme: str = "dark") -> list[tuple[str, str]]:
+    """The style rules that hold on a screen in `scheme`, in source order:
+    top-level ones and those in a `@media` block that holds there;
+    (selector, body)."""
     out: list[tuple[str, str]] = []
     at = 0
     while True:
@@ -944,7 +1201,8 @@ def _rules(css: str) -> list[tuple[str, str]]:
                     break
         body = css[opened + 1 : end]
         if head.startswith("@media"):
-            out += _rules(body)
+            if _media_applies(head[len("@media") :], scheme):
+                out += _rules(body, scheme)
         elif not head.startswith("@"):
             out.append((head, body))
         at = end + 1
@@ -953,12 +1211,13 @@ def _rules(css: str) -> list[tuple[str, str]]:
 _PAINT = ("color", "background", "background-color", "background-image", "border-color")
 
 
-def _effective(classes: set[str], css: str) -> dict[str, str]:
-    """What the badge is painted with: for each paint property, the value of
-    the matching rule with the most classes, the later one on a tie. Only
-    selectors made of classes are considered, as every badge rule is."""
+def _effective(classes: set[str], css: str, scheme: str = "dark") -> dict[str, str]:
+    """What the badge is painted with on a screen in `scheme`: for each paint
+    property, the value of the matching rule with the most classes, the
+    later one on a tie. Only selectors made of classes are considered, as
+    every badge rule is."""
     best: dict[str, tuple[int, int, str]] = {}
-    for order, (head, body) in enumerate(_rules(css)):
+    for order, (head, body) in enumerate(_rules(css, scheme)):
         for selector in head.split(","):
             selector = selector.strip()
             if not re.fullmatch(r"(\.[\w-]+)+", selector):
@@ -976,15 +1235,33 @@ def _effective(classes: set[str], css: str) -> dict[str, str]:
 
 
 @pytest.mark.xfail(strict=True, reason="M13-27 not implemented")
+@pytest.mark.parametrize("scheme", ["dark", "light"])
 @pytest.mark.parametrize("level", ["gate", "no", "folder", "not_applicable", "unclassified"])
-def test_the_placeholder_badge_is_painted_like_its_label(level: str) -> None:
-    """A placeholder badge says "wowlab won't touch", the `no` label, so it
-    is painted as a `no` badge whatever its row's level (backlog, M13-27T,
-    2026-10-16)."""
+def test_the_placeholder_badge_is_painted_like_its_label(level: str, scheme: str) -> None:
+    """A placeholder badge says "wowlab won't touch", the `no` label, so on
+    screen, in each colour scheme on its own, it is painted as a `no` badge
+    whatever its row's level (backlog, M13-27T, 2026-10-16)."""
     css = _css()
     assert re.search(r"\.badge-placeholder(?![\w-])", css), "a rule for the class"
-    painted = _effective({"badge", f"badge-{level}", "badge-placeholder"}, css)
-    as_no = _effective({"badge", "badge-no"}, css)
+    painted = _effective({"badge", f"badge-{level}", "badge-placeholder"}, css, scheme)
+    as_no = _effective({"badge", "badge-no"}, css, scheme)
     assert painted.get("color") and painted.get("color") == as_no.get("color"), (painted, as_no)
     for name in ("background", "background-color", "background-image", "border-color"):
         assert painted.get(name) == as_no.get(name), (name, painted, as_no)
+
+
+def test_the_paint_reader_takes_only_screen_rules_constructed() -> None:
+    """The reader above, on a constructed sheet: a print-only or width-only
+    rule does not count; a light-scheme rule counts in light only."""
+    base = ".badge-no { color: #ff0000; }\n.badge-gate { color: #ffd700; }\n"
+    rule = ".badge.badge-placeholder { color: #ff0000; }"
+    on = {"badge", "badge-gate", "badge-placeholder"}
+    assert _effective(on, base + rule)["color"] == "#ff0000"
+    for query in ("print", "(max-width: 600px)", "not screen", "screen and (min-width: 1px)"):
+        assert _effective(on, base + "@media " + query + " { " + rule + " }")["color"] == "#ffd700"
+    light = base + "@media (prefers-color-scheme: light) { " + rule + " }"
+    assert _effective(on, light, "light")["color"] == "#ff0000"
+    assert _effective(on, light, "dark")["color"] == "#ffd700"
+    dark = base + "@media screen and (prefers-color-scheme: dark) { " + rule + " }"
+    assert _effective(on, dark, "dark")["color"] == "#ff0000"
+    assert _effective(on, dark, "light")["color"] == "#ffd700"

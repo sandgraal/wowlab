@@ -58,6 +58,15 @@ What the audit added:
   flavor-picker grader skips once the page reads the whole install. The
   static checks also allow `.kind === "folder"` on a gap group, and
   `filemap gaps` among the explorer's literal runs.
+- Round 1 on #226 (2026-10-16): the harness has timers on a virtual clock
+  (a string given to a timer is trapped), and traps navigation (`location`,
+  `window.open`), attributes outside the closed set, and link, form, frame,
+  script and media elements. The static checks ban `location.replace`,
+  `.action`, `.submit(`, URL and handler attributes in either quote style,
+  `javascript:`, a hint's `argv` and the CLI's snapshot wording; the CSP
+  check pins `form-action` and `base-uri`. Timers given a function are no
+  longer banned statically (the CSP forbids string evaluation, and the
+  harness traps it).
 """
 
 from __future__ import annotations
@@ -250,6 +259,8 @@ def test_the_explorer_page_is_served_with_a_csp_that_hashes_it(server: Any) -> N
     assert directives["style-src"] == [_sha(styles[0])]
     assert directives["connect-src"] == ["'self'"]
     assert directives["frame-ancestors"] == ["'none'"]
+    assert directives["form-action"] == ["'none'"]  # round 1 on #226
+    assert directives["base-uri"] == ["'none'"]
     assert "font-src" not in directives
     flat = " ".join(" ".join(v) for v in directives.values())
     assert "unsafe" not in flat and "data:" not in flat and "http" not in flat
@@ -311,14 +322,34 @@ _HTML_SINKS = [
     "srcdoc",
     "eval(",
     "Function(",
-    "setTimeout(",
-    "setInterval(",
+    # A timer given a string evaluates it; one given a function is ordinary
+    # browser code, and the Node harness provides timers (round 1 on #226;
+    # the harness also traps a string at run time).
+    'setTimeout("',
+    "setTimeout('",
+    "setTimeout(`",
+    'setInterval("',
+    "setInterval('",
+    "setInterval(`",
     ".src",
     ".href",
     "location.assign",
+    "location.replace",
+    "location.reload",
+    "location =",
+    "location=",
     "window.open",
+    ".action",
+    ".submit(",
+    "javascript:",
     'setAttribute("on',
+    "setAttribute('on",
     'setAttribute("style',
+    "setAttribute('style",
+    'setAttribute("href',
+    "setAttribute('href",
+    'setAttribute("src',
+    "setAttribute('src",
     ".style.",
 ]
 
@@ -327,8 +358,10 @@ def test_the_script_writes_text_only(server: Any) -> None:
     script = _script()
     for sink in _HTML_SINKS:
         assert sink not in script, sink
-    # Attributes the script sets are a closed set, none of them a URL or a handler.
-    names = set(re.findall(r'setAttribute\("([^"]+)"', script))
+    # Attributes the script sets are a closed set, none of them a URL or a
+    # handler, each named by a literal in either quote style (round 1 on #226).
+    assert script.count("setAttribute(") == len(re.findall(r"setAttribute\([\"']", script))
+    names = set(re.findall(r"setAttribute\([\"']([^\"']+)[\"']", script))
     assert names <= {
         "aria-pressed",
         "aria-selected",
@@ -359,6 +392,13 @@ def test_the_script_holds_no_file_map_logic() -> None:
         assert f'"{level}"' not in levels_free, level
         assert f"'{level}'" not in script, level
     for words in ("write gate", "server may replace", "Blizzard", "snapshot restore"):
+        assert words not in script, words
+    # A hint is copied as `command`, quoted by Python for its shell; the page
+    # never rebuilds one from `argv` (round 1 on #226).
+    assert ".argv" not in script and '["argv"]' not in script
+    # Snapshot facts are worded by Python (`snapshot.words`, conductor ruling
+    # of 2026-10-16); the CLI's phrases are not repeated here.
+    for words in ("could not be confirmed", "the file on disk", "not held"):
         assert words not in script, words
 
 
@@ -508,6 +548,14 @@ const fs = require("fs");
 const vm = require("vm");
 const scenario = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
 const has = (e, c) => typeof e.className === "string" && e.className.split(" ").includes(c);
+// What the page may do and a browser would turn into a request or a
+// navigation is trapped: recorded, then thrown (round 1 on #226).
+const traps = [];
+function trap(what) { traps.push(String(what)); throw new Error("harness trap: " + what); }
+const ALLOWED_ATTRS = scenario.allowed_attrs || ["aria-pressed", "aria-selected", "aria-expanded",
+  "aria-level", "aria-label", "role"];
+const FORBIDDEN_TAGS = ["a", "area", "form", "iframe", "frame", "img", "image", "script", "link", "base",
+  "meta", "object", "embed", "video", "audio", "source", "track", "svg", "use", "style"];
 class El {
   constructor(tag) {
     this.tagName = tag; this.children = []; this.parentElement = null; this._text = "";
@@ -547,7 +595,7 @@ class El {
   removeChild(c) { this.children = this.children.filter((x) => x !== c); c.parentElement = null; return c; }
   replaceChildren(...cs) { this.children = []; this._text = ""; for (const c of cs) this.appendChild(c); }
   replaceWith(...cs) { const p = this.parentElement; if (!p) return; const at = p.children.indexOf(this); const kids = []; for (const c of cs) kids.push(...this._adopt(c)); for (const k of kids) k.parentElement = p; p.children.splice(at, 1, ...kids); }
-  setAttribute(k, v) { this.attrs[k] = String(v); }
+  setAttribute(k, v) { k = String(k); if (!ALLOWED_ATTRS.includes(k)) trap("setAttribute " + k); this.attrs[k] = String(v); }
   getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
   hasAttribute(k) { return k in this.attrs; }
   removeAttribute(k) { delete this.attrs[k]; }
@@ -622,18 +670,60 @@ const fetchStub = async (url, opts) => {
 const navigator = { clipboard: { writeText: async (t) => { clipboard.push(String(t)); } } };
 const documentStub = {
   getElementById: (id) => (id in ids ? ids[id] : null),
-  createElement: (t) => new El(String(t).toLowerCase()),
+  createElement: (t) => { const tag = String(t).toLowerCase(); if (FORBIDDEN_TAGS.includes(tag)) trap("createElement " + tag); return new El(tag); },
+  createElementNS: (_, t) => trap("createElementNS " + t),
   createTextNode: (t) => Object.assign(new El("#text"), { _text: String(t) }),
   createDocumentFragment: () => new El("#fragment"),
   querySelectorAll: (sel) => everywhere().filter((e) => matchSel(e, sel)),
   querySelector: (sel) => everywhere().find((e) => matchSel(e, sel)) || null,
   addEventListener() {},
 };
-const ctx = { window: { location: { search: "?token=t" }, navigator: navigator, isSecureContext: true },
-  document: documentStub, navigator: navigator,
-  URLSearchParams, fetch: fetchStub, console, Set, Map, Promise, JSON, Error };
+// Timers on a virtual clock: a tick runs every pending timer in time order
+// (an interval at most a bounded number of times), with no wall-clock wait.
+// A timer given a string instead of a function is trapped (it would eval).
+const timers = [];
+let timerSeq = 0;
+let clock = 0;
+function addTimer(fn, ms, every) {
+  if (typeof fn !== "function") trap("a timer given a string");
+  const id = ++timerSeq;
+  const wait = Math.max(0, Number(ms) || 0);
+  timers.push({ id: id, fn: fn, at: clock + wait, every: every ? Math.max(1, wait) : 0, seq: id });
+  return id;
+}
+function clearTimer(id) { const at = timers.findIndex((t) => t.id === id); if (at >= 0) timers.splice(at, 1); }
+const location = Object.freeze({
+  get search() { return "?token=t"; },
+  get href() { return "http://127.0.0.1:1/?token=t"; },
+  set href(v) { trap("location.href = " + v); },
+  get hash() { return ""; },
+  set hash(v) { trap("location.hash = " + v); },
+  assign(u) { trap("location.assign " + u); },
+  replace(u) { trap("location.replace " + u); },
+  reload() { trap("location.reload"); },
+});
+const win = { navigator: navigator, isSecureContext: true, open: (u) => trap("window.open " + u) };
+Object.defineProperty(win, "location", { get: () => location, set: (v) => trap("window.location = " + v) });
+const ctx = { window: win, document: documentStub, navigator: navigator,
+  URLSearchParams, fetch: fetchStub, console, Set, Map, Promise, JSON, Error,
+  setTimeout: (fn, ms) => addTimer(fn, ms, false), clearTimeout: clearTimer,
+  setInterval: (fn, ms) => addTimer(fn, ms, true), clearInterval: clearTimer,
+  requestAnimationFrame: (fn) => addTimer(() => fn(clock), 16, false), cancelAnimationFrame: clearTimer,
+  queueMicrotask: (fn) => queueMicrotask(fn) };
+Object.defineProperty(ctx, "location", { get: () => location, set: (v) => trap("location = " + v), enumerable: true });
+win.window = win;
 vm.createContext(ctx);
-const tick = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
+const tick = async () => {
+  for (let round = 0; round < 50; round++) {
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+    if (!timers.length) return;
+    timers.sort((a, b) => a.at - b.at || a.seq - b.seq);
+    const due = timers.shift();
+    clock = Math.max(clock, due.at);
+    if (due.every) { due.at = clock + due.every; due.seq = ++timerSeq; timers.push(due); }
+    due.fn();
+  }
+};
 const rowOf = (li) => li.children.find((c) => has(c, "row"));
 const treeEl = () => ids.tree;
 function rows() {
@@ -672,12 +762,22 @@ function detail() {
     verdict: own("explain-verdict"), verdictBadge: badge ? badge.className : "",
     facts: own("explain-facts"), status: own("explain-status"),
     pane: paneEls().map((e) => e.textContent).join("\n"),
+    rest: paneEls().filter((e) => e.id !== "explain-title" && e.id !== "explain-path")
+      .map((e) => e.textContent).join("\n"),
     hints: all.filter((e) => has(e, "hint")).map((h) => ({ text: h.textContent,
       copies: h.all().filter((b) => b.tagName === "button" && has(b, "copy")).length })),
     copyButtons: all.filter((e) => e.tagName === "button" && has(e, "copy")).length,
     previewButtons: all.filter((e) => e.tagName === "button" && has(e, "preview")).length,
     details: all.filter((e) => e.tagName === "details").length,
-    fields: all.filter((e) => ["input", "textarea", "select"].includes(e.tagName)).length };
+    fields: all.filter((e) => ["input", "textarea", "select"].includes(e.tagName)).length,
+    buttons: all.filter((e) => e.tagName === "button").map((e) => e.className),
+    listening: all.filter((e) => e.tagName !== "button" && Object.keys(e.listeners).length > 0)
+      .map((e) => e.tagName + "." + e.className) };
+}
+// A group's own text: everything but its places, not-entered folders and links.
+function bareText(el) {
+  if (["gap-place", "gap-not-entered", "gap-link"].some((c) => has(el, c))) return "";
+  return el._text + el.children.map(bareText).join("") + (el.title ? "\n" + el.title : "");
 }
 function gapsView() {
   const view = ids["gaps-view"];
@@ -691,6 +791,9 @@ function gapsView() {
       catchAll: has(g, "gap-catch-all"),
       heads: g.all().filter((e) => has(e, "gap-head")).map((e) => e.textContent),
       places: g.all().filter((e) => has(e, "gap-place")).map(path),
+      bare: bareText(g),
+      summaries: g.all().filter((e) => e.tagName === "summary")
+        .map((e) => has(e, "gap-head") || e.all().some((c) => has(c, "gap-head"))),
       text: g.textContent })),
     places: all.filter((e) => has(e, "gap-place")).map(path),
     notEntered: all.filter((e) => has(e, "gap-not-entered")).map(path),
@@ -756,6 +859,22 @@ async function openAll() {
         const before = requests.length;
         buttons[step.copy].fire("click"); await tick();
         out.steps.push({ clipboard: clipboard.slice(), newRequests: requests.length - before });
+      } else if (step.activate !== undefined) {
+        // Every control in the detail pane, used: each listener fired, each
+        // <details> opened, until nothing new appears.
+        const before = requests.length;
+        const done = new Set();
+        for (let round = 0; round < 10; round++) {
+          const fresh = inPane().filter((e) => !done.has(e));
+          if (!fresh.length) break;
+          for (const e of fresh) {
+            done.add(e);
+            if (e.tagName === "details") e.open = true;
+            for (const ev of Object.keys(e.listeners)) e.fire(ev);
+            await tick();
+          }
+        }
+        out.steps.push(Object.assign(detail(), { newRequests: requests.slice(before) }));
       } else if (step.preview !== undefined) {
         const button = inPane().find((e) => e.tagName === "button" && has(e, "preview"));
         if (!button) { out.steps.push({ missing: "preview" }); continue; }
@@ -774,6 +893,7 @@ async function openAll() {
   }
   out.requests = requests;
   out.clipboard = clipboard;
+  out.traps = traps;
   process.stdout.write(JSON.stringify(out));
 })();
 """
@@ -803,6 +923,7 @@ def _drive(folder: Path, scenario: dict[str, Any]) -> dict[str, Any]:
     assert done.returncode == 0, done.stderr
     out: dict[str, Any] = json.loads(done.stdout)
     assert "error" not in out, out["error"]
+    assert not out["traps"], out["traps"]
     return out
 
 
