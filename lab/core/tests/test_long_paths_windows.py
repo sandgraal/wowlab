@@ -2,22 +2,29 @@
 
 Found by M13-02. With `LongPathsEnabled` = 0, the default on many player
 PCs, Windows refuses a plain path of `MAX_PATH` (260 UTF-16 units, the
-terminator included) or more; only an extended-length path (`\\\\?\\C:\\...`)
-reaches such a file. The Lab passes plain `pathlib` paths, so `snapshot`,
-`guard` and the readers cannot reach a file deep in an install. M13-15 makes
-them reach it. Every grader here carries one marker line,
-`@pytest.mark.xfail(strict=True, reason="M13-15 not implemented")`, which
-M13-15 deletes and does not otherwise change.
+terminator included) or more; only an extended-length path (`\\\\?\\C:\\...`,
+or `\\\\?\\UNC\\server\\share\\...` for a network path) reaches such a file.
+The Lab passes plain `pathlib` paths, so `snapshot`, `guard` and the readers
+cannot reach a file deep in an install. M13-15 makes them reach it. Every
+grader here carries one marker line, `@pytest.mark.xfail(strict=True, ...,
+reason="M13-15 not implemented")`, which M13-15 deletes and does not
+otherwise change.
 
 What is graded, each on the same operations a player's loop runs:
 
 - `SnapshotStore.create` captures every file of the subtrees, the deep one
-  included, with its bytes;
+  included, with its bytes. On `main` it can drop the deep file without a
+  word (a partial snapshot), so the graders compare the whole entry set
+  with what is on disk;
 - `guard`: a write of the deep file (with its pre-write snapshot and journal
   record), its `undo()`, and a `restore` of it from a snapshot;
 - the readers: `install.discover` and `wowlab doctor` on an install whose
   root is past `MAX_PATH`, and the format parsers (`luadata`, `wtfconfig`,
-  `toc`, `combatlog`) on a real file past it.
+  `toc`, `combatlog`) on a real file past it;
+- the root as callers may spell it: already extended-length (`\\\\?\\C:\\...`)
+  and relative to the working folder, for `SnapshotStore.create` and
+  `guard.transaction` (a prefix added to an unnormalised root opens another
+  path, or none).
 
 The layouts (`_build`), each a copy of the real capture `fixtures/macos/`
 (README rows) under `tmp_path`; only the location is constructed, so every
@@ -33,18 +40,31 @@ test id says `constructed` (L8):
 - `at-limit`: a short root, and a real `.toc` whose path is exactly 259
   characters, the longest plain path Windows opens. The file is reachable;
   a file the gate creates beside it (a temp file, say) need not be. The
-  gate must still write and restore it;
-- `short`: every path well under the limit. The controls run each operation
-  here, under the same conditions, unmarked: they must pass on `main`, so a
-  grader that fails does so because of the path's length.
+  gate must still write and restore it (a labelled boundary case of the same
+  fix; conductor ruling, M13-15T review);
+- `unc-deep-dir` and `unc-short`: `deep-dir` and `short` with the root named
+  by a network path, `\\\\localhost\\C$\\...` (the drive's administrative
+  share, which the runner's administrator account opens). Its extended form
+  is `\\\\?\\UNC\\...`, not `\\\\?\\` in front of the plain path. Only
+  `snapshot` and the readers are graded there: `guard` restores and undoes
+  only from local roots (`guard._local_absolute`);
+- `short`: every path well under the limit.
 
-How the reason is pinned: the trees are built and checked by the test
-through extended-length paths, in fixtures, so a tree that cannot be built
-is an error, never an expected failure (M13-02's experiment failed there).
-`test_constructed_windows_refuses_the_plain_path_of_each_long_layout` shows
-the operating system refusing each plain path, and the controls show the
-same operations passing where the path is short. The Lab is only ever handed
-plain paths, as a caller would.
+How the reason is pinned. The trees are built and checked by the test
+through extended-length paths, and the Lab is handed plain paths, as a
+caller would. `test_constructed_windows_refuses_the_plain_path_of_each_long_layout`
+shows the operating system refusing each plain path, and the controls run
+the same operations where the path is short and must pass on `main`.
+
+An xfail marker does not tell a failure in the test from one in its setup:
+an exception while a grader's tree is built is reported as an expected
+failure too. The backstop is the unmarked tests: every layout a grader uses
+is also built, the same way, by an unmarked test in the same run, so a tree
+that cannot be built (or a share that does not exist, or long paths that
+are still on) fails the run there. `test_every_layout_a_grader_uses_is_built_by_an_unmarked_test`
+holds the module to that. Where a grader fails with one exception type on
+`main` the marker also says `raises=`, so any other exception fails it
+outright.
 
 Where this runs: Windows only (`skipif` below). Every test also needs plain
 long paths to be refused in this process, which a fixture probes; where they
@@ -52,7 +72,8 @@ work (`LongPathsEnabled` = 1, the runner image's default) the module skips,
 since a grader would pass and a strict marker would fail. The `lab
 (windows)` job turns the setting off in a step and runs this module alone
 with `WOWLAB_EXPECT_LONG_PATHS_OFF=1`; with that set, a process in which
-plain long paths work is an error, so the step can never pass by skipping.
+plain long paths work, or a missing administrative share, is a failure,
+never a skip.
 
 The user data directory is redirected into `tmp_path`, the process table is
 a fake one without a client in it, and nothing asks wago.tools anything
@@ -100,6 +121,7 @@ EXPECT_OFF = "WOWLAB_EXPECT_LONG_PATHS_OFF"
 REFUSED = {2, 3, 206}  # ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, ERROR_FILENAME_EXCED_RANGE
 
 LONG = ("deep-root", "deep-dir", "long-name")
+LONG_ANYWHERE = (*LONG, "unc-deep-dir")
 
 runner = CliRunner()
 
@@ -109,13 +131,27 @@ runner = CliRunner()
 
 def _x(path: Path) -> Path:
     """`path` as an extended-length path, which Windows opens whatever
-    `LongPathsEnabled` says. Only the test uses these, to build and check
-    the trees; the Lab is handed plain paths."""
+    `LongPathsEnabled` says: `\\\\?\\C:\\...` for a drive path,
+    `\\\\?\\UNC\\server\\share\\...` for a network one. Only the test uses
+    these, to build and check the trees; the Lab is handed plain paths
+    (except by the tests that pass this form on purpose)."""
     text = str(path)
     if sys.platform != "win32" or text.startswith("\\\\?\\"):
         return path
+    if text.startswith("\\\\"):
+        return Path("\\\\?\\UNC\\" + text[2:])
     assert len(text) > 3 and text[1:3] == ":\\", f"a drive-letter absolute path: {text}"
     return Path("\\\\?\\" + text)
+
+
+def _unc(path: Path) -> Path:
+    """`C:\\a\\b` named through the drive's administrative share,
+    `\\\\localhost\\C$\\a\\b`: the same folder, by a network path."""
+    text = str(path)
+    if sys.platform != "win32":
+        return path
+    assert len(text) > 3 and text[1:3] == ":\\", f"a drive-letter absolute path: {text}"
+    return Path(f"\\\\localhost\\{text[0]}$\\{text[3:]}")
 
 
 def _read(path: Path) -> bytes:
@@ -148,6 +184,7 @@ class Tree:
 
     layout: str
     root: Path
+    """Plain, as the Lab is handed it (a network path for `unc-*`)."""
     target: str
     """Flavor-relative, `/`-separated: the file the layout is about."""
     source: Path
@@ -180,50 +217,74 @@ def _files(top: Path) -> dict[str, Path]:
     return found
 
 
+def _require_share(root: Path) -> None:
+    """The administrative share must open; with `EXPECT_OFF` set its absence
+    fails the test, so the network layouts can never pass by skipping."""
+    try:
+        _x(root).stat()
+    except OSError as exc:
+        why = f"the administrative share does not open: {root} ({exc})"
+        if os.environ.get(EXPECT_OFF) == "1":
+            pytest.fail(why)
+        pytest.skip(why)
+
+
 def _build(where: Path, layout: str) -> Tree:
     """The install for `layout` under `where`, built and checked through
-    extended-length paths (so a refusal here is an error, not the grader's
-    expected failure)."""
-    if layout == "deep-root":
-        root = _segments(where, "games-library", lambda p: len(str(p / INSTALL)) > MAX_PATH)
+    extended-length paths. A `unc-*` layout is built on the drive and named
+    by its network path; every length is measured on the name the Lab gets."""
+    unc = layout.startswith("unc-")
+    shape = layout.removeprefix("unc-")
+    view: Callable[[Path], Path] = _unc if unc else (lambda p: p)
+
+    def length(path: Path) -> int:
+        return len(str(view(path)))
+
+    if shape == "deep-root":
+        assert not unc
+        root = _segments(where, "games-library", lambda p: length(p / INSTALL) > MAX_PATH)
         root = root / INSTALL
         _copy_install(root)
-        tree = Tree(layout, root, SYNDICATOR, CAPTURE / "forever" / SYNDICATOR)
-        assert len(str(root / ".build.info")) > MAX_PATH
+        target, source = SYNDICATOR, CAPTURE / "forever" / SYNDICATOR
+        assert length(root / ".build.info") > MAX_PATH
     else:
         root = where / INSTALL
         _copy_install(root)
         source = CAPTURE / "forever" / TOC
         brawlers = root / FLAVOR / BRAWLERS
-        if layout == "short":
-            tree = Tree(layout, root, SYNDICATOR, CAPTURE / "forever" / SYNDICATOR)
-        elif layout == "deep-dir":
-            deep = _segments(brawlers / "Libs", "LibDeep", lambda p: len(str(p)) > MAX_PATH)
-            rel = deep.relative_to(root / FLAVOR).as_posix()
-            tree = Tree(layout, root, f"{rel}/DBM-Brawlers.toc", source)
-            assert len(str(tree.target_path.parent)) > MAX_PATH
-        elif layout == "long-name":
-            length = MAX_PATH + 20 - len(str(brawlers)) - 1
-            name = "DBM-Brawlers-".ljust(length - len(".toc"), "n") + ".toc"
+        if shape == "short":
+            target, source = SYNDICATOR, CAPTURE / "forever" / SYNDICATOR
+        elif shape == "deep-dir":
+            deep = _segments(brawlers / "Libs", "LibDeep", lambda p: length(p) > MAX_PATH)
+            target = f"{deep.relative_to(root / FLAVOR).as_posix()}/DBM-Brawlers.toc"
+        elif shape == "long-name":
+            size = MAX_PATH + 20 - length(brawlers) - 1
+            name = "DBM-Brawlers-".ljust(size - len(".toc"), "n") + ".toc"
             assert len(name) <= 255, "one component stays a legal file name"
-            tree = Tree(layout, root, f"{BRAWLERS}/{name}", source)
-            assert len(str(tree.target_path)) == MAX_PATH + 20
-            assert len(str(tree.target_path.parent)) + 1 + ROOM < MAX_PATH
-        elif layout == "at-limit":
+            target = f"{BRAWLERS}/{name}"
+            assert length(brawlers / name) == MAX_PATH + 20
+            assert length(brawlers) + 1 + ROOM < MAX_PATH
+        elif shape == "at-limit":
             libs = brawlers / "Libs"
-            pad = LONGEST_PLAIN - len(str(libs)) - 1 - 1 - len("DBM-Brawlers.toc")
+            pad = LONGEST_PLAIN - length(libs) - 1 - 1 - len("DBM-Brawlers.toc")
             assert 1 <= pad <= 255, f"the runner's temp folder leaves room for a pad: {pad}"
-            rel = f"{BRAWLERS}/Libs/{'p' * pad}/DBM-Brawlers.toc"
-            tree = Tree(layout, root, rel, source)
-            assert len(str(tree.target_path)) == LONGEST_PLAIN
+            target = f"{BRAWLERS}/Libs/{'p' * pad}/DBM-Brawlers.toc"
         else:
             raise AssertionError(f"no layout {layout!r}")
-        if layout != "short":
-            _x(tree.target_path.parent).mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, _x(tree.target_path))
+        if shape != "short":
+            placed = (root / FLAVOR).joinpath(*target.split("/"))
+            _x(placed.parent).mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, _x(placed))
+    tree = Tree(layout, view(root), target, source)
+    if unc:
+        _require_share(tree.root)
+    if shape == "deep-dir":
+        assert len(str(tree.target_path.parent)) > MAX_PATH
+    if shape == "at-limit":
+        assert len(str(tree.target_path)) == LONGEST_PLAIN
     assert _read(tree.target_path) == tree.source.read_bytes()
-    if layout in ("short", "at-limit"):
-        for path in _files(root).values():
+    if shape in ("short", "at-limit"):
+        for path in _files(tree.root).values():
             assert len(str(path)) <= LONGEST_PLAIN, f"{layout}: {path} is plain-openable"
             if path != tree.target_path:
                 spare = LONGEST_PLAIN - len(str(path.parent)) - 1
@@ -335,16 +396,21 @@ class _Flavor:
 # ─── the operations, shared by graders and controls ──────────────────────────
 
 
-def _snapshot(tree: Tree, store: Path) -> Manifest:
+def _snapshot(tree: Tree, store: Path, root: Path | None = None) -> Manifest:
     return SnapshotStore(store).create(
-        tree.root, SUBTREES, label="long paths", flavor_folder=FLAVOR, client_running=False
+        tree.root if root is None else root,
+        SUBTREES,
+        label="long paths",
+        flavor_folder=FLAVOR,
+        client_running=False,
     )
 
 
-def _check_snapshot(tree: Tree, store: Path) -> None:
+def _check_snapshot(tree: Tree, store: Path, root: Path | None = None) -> Manifest:
     """Every file of the subtrees is captured with its bytes, the layout's
-    file included; the store verifies."""
-    manifest = _snapshot(tree, store)
+    file included (nothing dropped, nothing extra); the store verifies.
+    `root` is the spelling of the root handed to `create` (default: plain)."""
+    manifest = _snapshot(tree, store, root)
     expected = {
         rel: path
         for rel, path in _files(tree.root).items()
@@ -361,6 +427,7 @@ def _check_snapshot(tree: Tree, store: Path) -> None:
     for e in manifest.entries:
         assert e.sha256 == _sha(_read(expected[e.path])), e.path
     assert stored.verify().ok
+    return manifest
 
 
 def _check_restore(tree: Tree, store: Path) -> None:
@@ -384,14 +451,15 @@ def _check_restore(tree: Tree, store: Path) -> None:
     ]
 
 
-def _check_write_and_undo(tree: Tree, store: Path) -> None:
-    """`tx.write` replaces the file after a pre-write snapshot that holds its
-    old bytes; `undo()` puts them back."""
+def _write_once(tree: Tree, store: Path, flavor: Path) -> tuple[bytes, bytes, set[str]]:
+    """`tx.write` of the layout's file through `flavor` (a spelling of the
+    flavor folder): the bytes land, the pre-write snapshot holds the old ones,
+    one committed record names the path, nothing else appears."""
     original = tree.source.read_bytes()
     new = original + EDIT
     before = set(_files(tree.root))
 
-    with guard.transaction(_Flavor(tree.flavor), label="write", store=store) as tx:
+    with guard.transaction(_Flavor(flavor), label="write", store=store) as tx:
         tx.write(tree.target, new)
 
     assert _read(tree.target_path) == new
@@ -403,7 +471,12 @@ def _check_write_and_undo(tree: Tree, store: Path) -> None:
     ]
     pre = SnapshotStore(store).read_file(record.snapshot_id, f"{FLAVOR}/{tree.target}")
     assert pre == original, "the pre-write snapshot holds the old bytes"
+    return original, new, before
 
+
+def _check_write_and_undo(tree: Tree, store: Path) -> None:
+    """`tx.write` as above; `undo()` puts the old bytes back."""
+    original, _new, before = _write_once(tree, store, tree.flavor)
     guard.undo(store=store)
     assert _read(tree.target_path) == original
     assert set(_files(tree.root)) == before
@@ -480,14 +553,53 @@ def _check_reader(tree: Tree, reader: str, rel: str | None) -> None:
     assert read(path) == parse(source.read_bytes())
 
 
+# ─── the backstop: every graded layout is built by an unmarked test ──────────
+
+
+def _layouts(test: object) -> set[str]:
+    """The layouts a test function is parametrized over (`tree` or `layout`)."""
+    found: set[str] = set()
+    for mark in getattr(test, "pytestmark", []):
+        if mark.name != "parametrize":
+            continue
+        names, values = mark.args[0], mark.args[1]
+        names = [n.strip() for n in names.split(",")] if isinstance(names, str) else list(names)
+        for key in ("tree", "layout"):
+            if key in names:
+                at = names.index(key)
+                for value in values:
+                    found.add(value if len(names) == 1 else value[at])
+    return found
+
+
+def _is_grader(test: object) -> bool:
+    return any(mark.name == "xfail" for mark in getattr(test, "pytestmark", []))
+
+
+def test_every_layout_a_grader_uses_is_built_by_an_unmarked_test() -> None:
+    """An xfail marker also swallows a failure in setup, so a grader whose
+    tree cannot be built would pass as expected-to-fail. Every layout a grader
+    uses is therefore built by an unmarked test too, which fails the run."""
+    tests = [f for name, f in sorted(globals().items()) if name.startswith("test_")]
+    graders = [f for f in tests if _is_grader(f)]
+    assert graders, "the module has graders"
+    for grader in graders:
+        assert _layouts(grader), f"{grader.__name__} names its layouts in a parametrize"
+    graded = set().union(*(_layouts(f) for f in graders))
+    built = set().union(*(_layouts(f) for f in tests if not _is_grader(f)))
+    assert graded <= built, f"graded but built by no unmarked test: {sorted(graded - built)}"
+
+
 # ─── the precondition: why the graders fail ─────────────────────────────────
 
 
-@pytest.mark.parametrize("tree", LONG, indirect=True)
+@pytest.mark.parametrize("tree", LONG_ANYWHERE, indirect=True)
 def test_constructed_windows_refuses_the_plain_path_of_each_long_layout(tree: Tree) -> None:
     """With the setting off, the plain path of each long layout's file is
     refused by the operating system, and its extended-length path is not:
-    the reason the graders fail before M13-15."""
+    the reason the graders fail before M13-15. On `main` the refusal is a
+    `FileNotFoundError` (WinError 2 or 3), which is how a file removed during
+    a walk looks too."""
     with pytest.raises(OSError) as refused:
         tree.target_path.stat()
     assert getattr(refused.value, "winerror", None) in REFUSED, refused.value
@@ -511,7 +623,7 @@ def test_constructed_windows_opens_the_plain_path_at_the_limit(tree: Tree) -> No
 # ─── controls: the same operations at a short location pass on main ────────
 
 
-@pytest.mark.parametrize("tree", ["short", "at-limit"], indirect=True)
+@pytest.mark.parametrize("tree", ["short", "at-limit", "unc-short"], indirect=True)
 def test_constructed_control_snapshot_where_every_path_is_plain_openable(
     tree: Tree, store: Path
 ) -> None:
@@ -560,15 +672,73 @@ def test_constructed_control_reader_at_a_short_root(
     _check_reader(build("short"), reader, None)
 
 
+@pytest.mark.parametrize("tree", ["deep-dir"], indirect=True)
+def test_constructed_guard_refuses_a_relative_flavor_and_writes_nothing(
+    tree: Tree, store: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A flavor named relative to the working folder (a short one) is refused
+    on enter, as every relative flavor is: nothing journaled or written. A
+    prefix must never be glued to such a path."""
+    monkeypatch.chdir(tree.root.parent)
+    before = {rel: _read(path) for rel, path in _files(tree.root).items()}
+    with (
+        pytest.raises(guard.GuardError, match="absolute"),
+        guard.transaction(_Flavor(Path(INSTALL) / FLAVOR), label="relative", store=store) as tx,
+    ):
+        tx.write(tree.target, b"never")
+    assert guard.history(store=store) == ()
+    assert {rel: _read(path) for rel, path in _files(tree.root).items()} == before
+
+
+@pytest.mark.parametrize("tree", ["deep-dir"], indirect=True)
+def test_constructed_snapshot_of_an_extended_length_root_captures_everything(
+    tree: Tree, store: Path
+) -> None:
+    """A root handed over already in `\\\\?\\C:\\...` form reaches every
+    file, the deep one included: a prefix is never added twice."""
+    _check_snapshot(tree, store, _x(tree.root))
+
+
+@pytest.mark.parametrize("tree", ["deep-dir"], indirect=True)
+def test_constructed_guard_writes_through_an_extended_length_flavor(
+    tree: Tree, store: Path
+) -> None:
+    """A flavor handed over in `\\\\?\\C:\\...` form: the write lands, after a
+    pre-write snapshot that holds the old bytes. `undo()` refuses a record
+    whose root is `\\\\`-prefixed (not a local absolute path; conductor
+    ruling, M13-15T review) and changes nothing."""
+    _original, new, before = _write_once(tree, store, _x(tree.flavor))
+    with pytest.raises(guard.GuardError):
+        guard.undo(store=store)
+    assert _read(tree.target_path) == new
+    assert set(_files(tree.root)) == before
+    assert len(guard.history(store=store)) == 1
+
+
 # ─── the graders ─────────────────────────────────────────────────────────────
 
 
 @pytest.mark.xfail(strict=True, reason="M13-15 not implemented")
-@pytest.mark.parametrize("tree", LONG, indirect=True)
+@pytest.mark.parametrize("tree", LONG_ANYWHERE, indirect=True)
 def test_constructed_snapshot_captures_a_file_past_max_path(tree: Tree, store: Path) -> None:
     """`snap create` (`SnapshotStore.create`) captures the file past
-    `MAX_PATH` and every other file of the subtrees, byte for byte."""
+    `MAX_PATH` and every other file of the subtrees, byte for byte, on a
+    drive path and on a network path. A file it cannot reach is never left
+    out without an error."""
     _check_snapshot(tree, store)
+
+
+@pytest.mark.xfail(strict=True, reason="M13-15 not implemented")
+@pytest.mark.parametrize("tree", ["deep-dir"], indirect=True)
+def test_constructed_snapshot_of_a_relative_root_captures_the_file_past_max_path(
+    tree: Tree, store: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A root named relative to a short working folder: made absolute first,
+    then every file captured, the deep one included; the manifest names the
+    plain absolute root (a manifest with a `\\\\?\\` root is not restorable)."""
+    monkeypatch.chdir(tree.root.parent)
+    manifest = _check_snapshot(tree, store, Path(INSTALL))
+    assert manifest.install_root == str(tree.root)
 
 
 @pytest.mark.xfail(strict=True, reason="M13-15 not implemented")
@@ -588,34 +758,39 @@ def test_constructed_guard_writes_and_undoes_the_deep_file(tree: Tree, store: Pa
     _check_write_and_undo(tree, store)
 
 
-@pytest.mark.xfail(strict=True, reason="M13-15 not implemented")
-@pytest.mark.parametrize("source", ["argument", "environment"])
+@pytest.mark.xfail(strict=True, raises=install.NotAnInstallError, reason="M13-15 not implemented")
+@pytest.mark.parametrize(
+    ("layout", "source"), [("deep-root", "argument"), ("deep-root", "environment")]
+)
 def test_constructed_discovery_reads_an_install_rooted_past_max_path(
-    build: Callable[[str], Tree], source: str
+    build: Callable[[str], Tree], layout: str, source: str
 ) -> None:
     """`install.discover` finds and reads the install whose `.build.info` is
-    past `MAX_PATH`, as it reads the same install at a short root."""
+    past `MAX_PATH`, as it reads the same install at a short root, and hands
+    back the caller's plain root."""
     short = install.read_install(build("short").root)
-    _check_discovery(build("deep-root"), short, source)
+    _check_discovery(build(layout), short, source)
 
 
 @pytest.mark.xfail(strict=True, reason="M13-15 not implemented")
+@pytest.mark.parametrize("layout", ["deep-root"])
 def test_constructed_doctor_reports_an_install_rooted_past_max_path(
-    build: Callable[[str], Tree], monkeypatch: pytest.MonkeyPatch
+    build: Callable[[str], Tree], monkeypatch: pytest.MonkeyPatch, layout: str
 ) -> None:
     """`wowlab doctor --offline` reports the deep-rooted install exactly as
     it reports the same install at a short root, with no problems."""
     short = _doctor(build("short"), monkeypatch)
-    _check_doctor(build("deep-root"), short, monkeypatch)
+    _check_doctor(build(layout), short, monkeypatch)
 
 
-@pytest.mark.xfail(strict=True, reason="M13-15 not implemented")
+@pytest.mark.xfail(strict=True, raises=FileNotFoundError, reason="M13-15 not implemented")
 @pytest.mark.parametrize(
     ("layout", "reader"),
     [
         *[("deep-root", reader) for reader in sorted(READERS)],
         ("deep-dir", "toc"),
         ("long-name", "toc"),
+        ("unc-deep-dir", "toc"),
     ],
 )
 def test_constructed_reader_parses_a_real_file_past_max_path(
