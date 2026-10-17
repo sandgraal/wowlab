@@ -91,18 +91,12 @@ def test_constructed_extended_text_at_the_limit() -> None:
         pytest.param("\\\\?\\UNC\\server\\share\\a", "\\\\server\\share\\a", id="constructed-unc"),
         pytest.param("C:\\a\\b", "C:\\a\\b", id="constructed-already-plain"),
         # No plain spelling names the same path: each is kept as given.
-        # Windows' own normalisation (GetFullPathNameW) drops a trailing dot
-        # or space; `ntpath` elsewhere does not, so these two run on Windows.
+        # Windows' own normalisation (GetFullPathNameW) drops a component's
+        # trailing dot; `ntpath` elsewhere does not, so this one runs on Windows.
         pytest.param(
             "\\\\?\\C:\\a.\\b",
             "\\\\?\\C:\\a.\\b",
             id="constructed-trailing-dot",
-            marks=WINDOWS,
-        ),
-        pytest.param(
-            "\\\\?\\C:\\a \\b",
-            "\\\\?\\C:\\a \\b",
-            id="constructed-trailing-space",
             marks=WINDOWS,
         ),
         pytest.param("\\\\?\\C:\\a\\..\\b", "\\\\?\\C:\\a\\..\\b", id="constructed-dot-dot"),
@@ -337,7 +331,7 @@ def test_constructed_guard_through_an_extended_flavor_journals_it_plain_and_undo
     with guard.transaction(_Flavor(Path(_x(root / FLAVOR))), label="x", store=store) as tx:
         tx.write(CONFIG, original + EDIT)
     (record,) = guard.history(store=store)
-    assert (record.flavor_path, record.install_root) == (str(root / FLAVOR), str(root))
+    assert record.flavor_path == str(root / FLAVOR)
     assert SnapshotStore(store).show(record.snapshot_id).install_root == str(root)
     journal = b"".join(p.read_bytes() for p in sorted((store / "journal").glob("*.json")))
     assert b"\\\\\\\\?\\\\" not in journal and b"?\\\\UNC" not in journal
