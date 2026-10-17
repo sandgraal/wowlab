@@ -4280,8 +4280,8 @@ def binds_coach(
     cast. Keys reach spells through the lab-addon's record of the action bars and
     bindings (schema 3) of one character: --character, or the one whose WowLab.lua was
     written last. Combat logging must be on (/combatlog) for a log to exist. What a key
-    costs is an opinion, from a table you can override. Reads only. JSON:
-    BindsCoachReport."""
+    costs is an opinion, from a table you can override. Reads only.
+    JSON: BindsCoachReport."""
     _, chosen, lay = _open(root, flavor)
     acct = _select_account(lay, account)
     target, how, record, record_error = _coach_record(lay, acct, character)
