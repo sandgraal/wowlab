@@ -781,3 +781,18 @@ Found in the review of #247 (M13-15). M13-15 covers the calls its graders show f
 - No `\\?\` in any text or `--json` output of `profile`, `sv`, `explain`, `addon`, `gaps` or `combatlog` commands (a grader per command, run on every platform).
 - `make test-parser` green (`luadata.py` changes); `make ci` green.
 - Reviewed by `code-reviewer` and `security-reviewer` (it touches the readers `guard` depends on).
+
+---
+
+## [ ] M13-45 — Say why a `_*_` folder was not taken as a flavor, in text and `--json`
+**Size:** S · **Depends on:** M13-37
+
+Found in the domain review of M13-37. Discovery lists a `_*_` folder it did not take under `Install.other_dirs` as a bare name, so every surface that prints it has to guess at the reason, and for a linked flavor folder the guess is wrong: the client plays from a junctioned `_retail_` as from a real folder, and only wowlab declines to read through the link. Five places say it wrong today (on `main` for symlinks and junctions; since M13-37 for WCI links and WSL symlinks too):
+
+- `sv list --flavor <linked>` and the other `--flavor` lookups say "no flavor folder '<name>'" when the folder exists and is a link (`cli.py`, the `_flavor` lookup). Say instead that it is a link (with its target when readable), not followed, and that wowlab reads a flavor only from a real folder in the install.
+- The "has no flavor folders (a folder named _..._ holding .flavor.info)" refusal of `sv`, `addons` and `tree`: when `other_dirs` is not empty, add which names were not taken and why.
+- `doctor` and `install show` print "Folders named _..._ that are not flavors: <names>" with no reason. Say "not taken as flavors" and give each name's reason from `gaps.NOT_A_FLAVOR` / `gaps.NOT_A_FLAVOR_LINK`; `--json` says the same, so `Install` carries the reason per entry (a model change: add a field, keep `other_dirs` for scripts that read it, and list the change in the release notes' `--json` section).
+- The first run (`firstrun.py`, "has no flavor folders, so there is nothing to snapshot yet") when the only flavor is a link: say the folder is a link, not followed, nothing in it is snapshotted, and to back up the folder it points to, as `docs/INSTALL.md` step 7 already says for a linked `WTF`. Extend the "Links" bullet of `docs/INSTALL.md` to flavor folders and note that an install root reached through a link is fine.
+- `explain <linked flavor>` and `explain <linked>/WTF/Config.wtf` in text say only "no file-map row" while `--json` carries `link: true` and the link verdict. The text prints the verdict's words first, plus "not taken as a flavor folder" when the first path part is in `other_dirs`.
+
+**Acceptance:** each of the five prints the reason (paste one run each on a fixture copy with a symlinked flavor folder and a real one beside it); `--json` and text agree; `Install`'s new field is documented in `docs/LAB_PLAN.md` §6.1 with a dated amendment; output for an install with no `other_dirs` is byte-identical to `main`; `make ci` green; reviewed by `domain-reviewer` and `code-reviewer`.
