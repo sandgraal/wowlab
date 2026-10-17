@@ -101,6 +101,8 @@ def test_real_log_npc_cast_is_the_one_left_out() -> None:
         ("0x518", False),  # constructed: an outsider player
         ("0x10a48", False),  # the real NPC's flags
         ("0x501", True),  # constructed: mine and a player, reaction bits clear
+        ("0x611", False),  # constructed: mine and a player, but NPC-controlled (charmed)
+        ("0x411", False),  # constructed: mine and a player, no controller bit
     ],
     ids=lambda v: str(v),
 )

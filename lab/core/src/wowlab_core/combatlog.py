@@ -98,6 +98,8 @@ __all__ = [
     "AFFILIATION_MINE",
     "CAST_EVENT",
     "CAST_LAYOUT_VERSION",
+    "CONTROL_MASK",
+    "CONTROL_PLAYER",
     "MAX_DEPTH",
     "MAX_LINE_BYTES",
     "TYPE_MASK",
@@ -652,10 +654,15 @@ version line, are not counted: their layout is not known."""
 
 # Unit-flag bits (the client's COMBATLOG_OBJECT_* values, community
 # documentation; the real log's owner is 0x511 and its NPC 0x10a48). The
-# flags describe a unit relative to the player who logs; only these two
+# flags describe a unit relative to the player who logs; only these three
 # fields of them are read, never the target or focus bits, which change.
+# The controller must be a player too **[verify]**: a charmed or
+# mind-controlled player is assumed to log another controller, and its casts
+# then are not the player's own choices (no capture of that exists).
 AFFILIATION_MASK = 0x0000000F
 AFFILIATION_MINE = 0x00000001
+CONTROL_MASK = 0x00000300
+CONTROL_PLAYER = 0x00000100
 TYPE_MASK = 0x0000FC00
 TYPE_PLAYER = 0x00000400
 
@@ -680,7 +687,8 @@ class CastCounts(_Model):
     """What :func:`cast_counts` found in a log.
 
     ``mine`` counts the player's own casts: ``SPELL_CAST_SUCCESS`` records
-    whose source flags say affiliation "mine" and type "player". A pet's or
+    whose source flags say affiliation "mine", controller "player" and type
+    "player". A pet's or
     guardian's casts are "mine" but not "player", and are among ``others``
     with every other unit's. The pick never looks at a GUID or a name; only
     ``sources`` counts the distinct source GUIDs of the casts counted, so
@@ -753,7 +761,11 @@ def cast_counts(entries: Iterable[Entry]) -> CastCounts:
         ):
             not_read += 1
             continue
-        if flags & AFFILIATION_MASK != AFFILIATION_MINE or flags & TYPE_MASK != TYPE_PLAYER:
+        if (
+            flags & AFFILIATION_MASK != AFFILIATION_MINE
+            or flags & CONTROL_MASK != CONTROL_PLAYER
+            or flags & TYPE_MASK != TYPE_PLAYER
+        ):
             others += 1
             continue
         mine += 1

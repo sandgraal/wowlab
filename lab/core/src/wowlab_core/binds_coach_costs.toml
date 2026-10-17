@@ -53,7 +53,9 @@ SPACE = 2
 BUTTON3 = 2
 MOUSEWHEELUP = 2
 MOUSEWHEELDOWN = 2
-# A longer reach.
+# A longer reach. Whether the client names the backtick key "`" and caps lock
+# "CAPSLOCK" in its key bindings is [verify]; a key it names otherwise costs
+# `unlisted`.
 "6" = 3
 Y = 3
 H = 3

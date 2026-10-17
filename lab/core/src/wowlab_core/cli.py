@@ -4195,23 +4195,30 @@ def binds_list(
 
 _COMBATLOG_ON = (
     "Casts are counted only from a combat log, which the client writes only while combat "
-    "logging is on: type /combatlog in game before you play (it stays on until you type it "
-    "again or log out [verify]). The newest log under Logs/ is read."
+    "logging is on: type /combatlog in game before you play (whether it stays on after "
+    "logout has not been checked)."
 )
 _COACH_NOTES = [
-    "Your casts are the log's SPELL_CAST_SUCCESS records whose source flags say yours and a "
-    "player (not a pet), never picked by a name or a GUID; a log of another character of "
-    "yours counts as yours, so use the log of the character you chose.",
+    "The newest log under Logs/ is read (or the one --log names), whichever character wrote "
+    "it. Your casts are its SPELL_CAST_SUCCESS records whose source flags say yours and a "
+    "player (not a pet), never picked by a name or a GUID, so a log written by another "
+    "character than the record's makes these reports wrong: check the log's time and choose "
+    "it with --log.",
     "The action bars and key bindings are the lab-addon's record as of its last save (logout "
     "or /reload), not the session in progress; the log may be older or newer than it. A key "
     "reaches a spell through the default UI's action buttons only: the main bar at page 1, "
-    "and the bottom, right and extra bars. Its other pages (forms, stances, paging), the pet "
-    "and stance bars, an addon's buttons, items and macros are not followed.",
+    "and the bottom, right and extra bars. Its other pages (forms, stances, stealth, paging), "
+    "the pet and stance bars, an addon's buttons, items and macros are not followed.",
+    "An auto-repeating spell (a wand's Shoot, Auto Shot) may be logged once per shot rather "
+    "than once per key press; that has not been checked against a real log, so its count "
+    "may be high.",
 ]
+_SPAN_TIME = re.compile(r"\d{1,2}:\d{2}:\d{2}")
 
 
 class CoachLog(_Out):
     file: str | None  # relative to the flavor folder; None: no combat log under Logs/
+    chosen_by: Literal["newest", "--log"] | None
     counts: combatlog.CastCounts | None
 
 
@@ -4231,6 +4238,7 @@ class BindsCoachReport(_Out):
     spells: list[bindscoach.CastSpell]
     frequent_on_high_cost: list[bindscoach.FrequentOnHighCost]
     cast_without_bind: list[bindscoach.CastWithoutBind]
+    on_unfollowed_page: list[bindscoach.OnUnfollowedPage]
     bound_never_cast: list[bindscoach.BoundNeverCast]
     cannot_judge: list[bindscoach.CannotJudge]
     caveats: list[str]
@@ -4262,8 +4270,43 @@ def _coach_record(
         return target, how, None, str(exc)
 
 
+def _coach_log(lay: layout.Layout, name: str | None) -> Path | None:
+    """The combat log to read: the one `--log` names, directly under Logs/,
+    or the newest. A name that is a path, or not a combat log there, is a
+    usage error; only regular files count, never a link."""
+    logs = _logs_dir(lay)
+    if name is None:
+        return combatlog.newest_log(logs) if logs is not None else None
+    if "/" in name or "\\" in name or name in {"", ".", ".."}:
+        raise CliError(f"--log takes a file name under Logs/, not a path: {name!r}", EXIT_USAGE)
+    found = combatlog.find_logs(logs) if logs is not None else []
+    match = [p for p in found if p.name == name] or [
+        p for p in found if p.name.casefold() == name.casefold()
+    ]
+    if len(match) != 1:
+        listing = ", ".join(p.name for p in found) or "none"
+        raise CliError(
+            f"no combat log {name!r} under Logs/ (combat logs there: {listing})", EXIT_USAGE
+        )
+    return match[0]
+
+
 def _key_words(keys: Sequence[bindscoach.KeyCost]) -> str:
     return ", ".join(f"{k.key} (cost {k.cost})" for k in keys)
+
+
+def _clock(stamp: str | None) -> str | None:
+    found = _SPAN_TIME.search(stamp) if stamp is not None else None
+    return found.group() if found else None
+
+
+LogNameOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--log",
+        help="A combat log's file name under Logs/ to read instead of the newest one.",
+    ),
+]
 
 
 @binds_app.command("coach")
@@ -4271,27 +4314,27 @@ def _key_words(keys: Sequence[bindscoach.KeyCost]) -> str:
 def binds_coach(
     account: AccountOpt = None,
     character: CharacterOpt = None,
+    log: LogNameOpt = None,
     root: RootOpt = None,
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
 ) -> None:
-    """Coach your key bindings from the newest combat log: spells you cast often on
-    high-cost keys, spells you cast with no key, and keys bound to spells you never
-    cast. Keys reach spells through the lab-addon's record of the action bars and
-    bindings (schema 3) of one character: --character, or the one whose WowLab.lua was
-    written last. Combat logging must be on (/combatlog) for a log to exist. What a key
-    costs is an opinion, from a table you can override. Reads only.
+    """Coach your key bindings from a combat log (the newest, or --log): spells you
+    cast often on high-cost keys, spells you cast with no key, and keys bound to spells
+    you did not cast in that log. Keys reach spells through the lab-addon's record of
+    the action bars and bindings (schema 3) of one character: --character, or the one
+    whose WowLab.lua was written last. Combat logging must be on (/combatlog) for a log
+    to exist. What a key costs is an opinion, from a table you can override. Reads only.
     JSON: BindsCoachReport."""
     _, chosen, lay = _open(root, flavor)
     acct = _select_account(lay, account)
     target, how, record, record_error = _coach_record(lay, acct, character)
+    path = _coach_log(lay, log)
     try:
         costs = bindscoach.load_costs()
     except bindscoach.CostTableError as exc:
         raise CliError(f"the key-cost table cannot be used: {exc}") from exc
-    logs = _logs_dir(lay)
-    newest = combatlog.newest_log(logs) if logs is not None else None
-    counts = combatlog.cast_counts(combatlog.read_log(newest)) if newest is not None else None
+    counts = combatlog.cast_counts(combatlog.read_log(path)) if path is not None else None
     if record_error is not None:
         no_record = f"no lab-addon record: {record_error}"
     else:
@@ -4307,16 +4350,21 @@ def binds_coach(
         record_file=target.path if target else None,
         record_schema=record.schema_ if record is not None else None,
         record_error=record_error,
-        log=CoachLog(file=_rel(lay, newest) if newest else None, counts=counts),
+        log=CoachLog(
+            file=_rel(lay, path) if path else None,
+            chosen_by=None if path is None else ("newest" if log is None else "--log"),
+            counts=counts,
+        ),
         costs=costs,
         matched_by=result.matched_by,
         spells=result.spells,
         frequent_on_high_cost=result.frequent_on_high_cost,
         cast_without_bind=result.cast_without_bind,
+        on_unfollowed_page=result.on_unfollowed_page,
         bound_never_cast=result.bound_never_cast,
         cannot_judge=result.cannot_judge,
         caveats=result.caveats,
-        notes=[_COMBATLOG_ON, *_COACH_NOTES],
+        notes=[_COMBATLOG_ON, f"{_BATCHES[:1].upper()}{_BATCHES[1:]}.", *_COACH_NOTES],
     )
     if json_out:
         _emit(report)
@@ -4326,13 +4374,20 @@ def binds_coach(
 
 def _say_coach(report: BindsCoachReport) -> None:
     counts = report.log.counts
+    against = report.record_file or "no lab-addon record"
     if report.log.file is None or counts is None:
         _say(f"Combat log: {_NO_LOG}")
     else:
         versions = ", ".join(counts.versions) or "none"
+        span = (
+            f"; your casts from {counts.first_timestamp} to {counts.last_timestamp}, log time"
+            if counts.first_timestamp is not None
+            else "; none of your casts"
+        )
+        newest = " (the newest)" if report.log.chosen_by == "newest" else ""
         _say(
-            f"Combat log: {report.log.file} ({_plural(counts.lines, 'line')}; "
-            f"COMBAT_LOG_VERSION {versions})"
+            f"Combat log: {report.log.file}{newest} ({_plural(counts.lines, 'line')}; "
+            f"COMBAT_LOG_VERSION {versions}{span}), judged against {against}"
         )
         _say(
             f"  Your casts: {counts.mine} of {counts.cast_events} SPELL_CAST_SUCCESS record(s) "
@@ -4363,8 +4418,10 @@ def _say_coach(report: BindsCoachReport) -> None:
     table = costs.table
     if costs.source == "default":
         _say(
-            "Key costs: the shipped default table, an opinion. To use your own, copy "
-            f"{costs.shipped} to {costs.user_file} and edit it."
+            "Key costs: the shipped default table, an opinion that assumes a QWERTY keyboard, "
+            "the left hand on W A S D and a mouse with two side buttons. To use your own, copy "
+            f"{costs.shipped} to {costs.user_file} (create the folder if it is missing) and "
+            "edit it."
         )
     else:
         _say(f"Key costs: your table {costs.user_file}, over the shipped default {costs.shipped}")
@@ -4377,15 +4434,37 @@ def _say_coach(report: BindsCoachReport) -> None:
         _say("  none")
     for s in report.spells:
         keys = _key_words(s.keys) if s.keys else "no key"
-        _say(f"  {s.casts:>6}  {s.spell_name} ({', '.join(map(str, s.spell_ids))}): {keys}")
+        note = f"; {s.match_note}" if s.match_note else ""
+        _say(f"  {s.casts:>6}  {s.spell_name} ({s.spell_id}): {keys}{note}")
     _say(f"Frequent spells on high-cost keys: {len(report.frequent_on_high_cost)}")
     for f in report.frequent_on_high_cost:
-        _say(f"  {f.spell_name}: {_plural(f.casts, 'cast')} ({f.share:.0%}), {_key_words(f.keys)}")
+        note = f"; {f.match_note}" if f.match_note else ""
+        _say(
+            f"  {f.spell_name} ({f.spell_id}): {_plural(f.casts, 'cast')} ({f.share:.0%}), "
+            f"{_key_words(f.keys)}{note}"
+        )
     _say(f"Spells cast with no bind: {len(report.cast_without_bind)}")
     for u in report.cast_without_bind:
         where = f" (slots {', '.join(map(str, u.slots))})" if u.slots else ""
-        _say(f"  {u.spell_name}: {_plural(u.casts, 'cast')}{where}: {u.detail}")
-    _say(f"Binds to spells never cast: {len(report.bound_never_cast)}")
+        _say(f"  {u.spell_name} ({u.spell_id}): {_plural(u.casts, 'cast')}{where}: {u.detail}")
+    if report.on_unfollowed_page:
+        _say(
+            "Spells only on main-bar pages the coach does not follow: "
+            f"{len(report.on_unfollowed_page)}"
+        )
+        for p in report.on_unfollowed_page:
+            _say(
+                f"  {p.spell_name} ({p.spell_id}): {_plural(p.casts, 'cast')} (slots "
+                f"{', '.join(map(str, p.slots))}): {p.detail}"
+            )
+    mine = counts.mine if counts is not None else 0
+    start = _clock(counts.first_timestamp) if counts is not None else None
+    end = _clock(counts.last_timestamp) if counts is not None else None
+    span = f", {start} to {end} log time" if start and end else ""
+    _say(
+        f"Binds to spells not cast in this log ({_plural(mine, 'cast')}{span}): "
+        f"{len(report.bound_never_cast)}"
+    )
     for b in report.bound_never_cast:
         name = b.spell_name or "a spell the spellbook record does not name"
         _say(f"  {_key_words(b.keys)}: slot {b.slot}, {name} ({b.spell_id})")

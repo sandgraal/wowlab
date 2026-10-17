@@ -13,20 +13,26 @@ reaches a spell through two records of the lab-addon: `bindings` (the keys
 `GetBindingKey` gave for each command) and `actionbars` (what each slot
 held). A command reaches a slot through `BAR_PAGES`: the default UI's action
 buttons, where button n of the bar showing page p is slot (p - 1) * 12 + n.
-That numbering is the default UI's **[verify]**; the real record agrees with
-it (`MULTIACTIONBAR1BUTTON1` to `3` hold keys and slots 61 to 63 hold
-spells). The main bar is read at page 1 only: its other pages (forms,
-stances, stealth, paging) are not followed, nor are the pet and stance bars,
-an addon's buttons, or a key bound straight to a spell, macro or click (the
-record leaves those commands out and counts them). Only spell slots count:
-an item's use logs the item's spell, which no slot record ties to the item,
-and a macro slot holds a macro index, not what the macro casts.
+That numbering is the default UI's **[verify]**. The real record is
+consistent with it and proves no more: `MULTIACTIONBAR1BUTTON1` to `3` hold
+keys and slots 61 to 63 hold spells, and slots 49 and 50 fit page 5; no
+`MULTIACTIONBAR5` to `7` command has a key in it, so bars 5 to 7 are
+unconfirmed on Forever. The main bar is read at page 1 only. Its other pages
+(`UNFOLLOWED_SLOTS`: page 2, and the pages forms, stances and stealth show)
+are not followed, nor are the pet and stance bars, an addon's buttons, or a
+key bound straight to a spell, macro or click (the record leaves those
+commands out and counts them). Only spell slots count: an item's use logs
+the item's spell, which no slot record ties to the item, and a macro slot
+holds a macro index, not what the macro casts.
 
-A cast matches a slot when the slot holds the same spell id, or when the
-character's spellbook names the slot's spell with the cast's name (compared
-without case), so ranks of one spell are one spell: the real log casts
-Shadow Bolt at the id of its rank 2 while the bar holds rank 3. Without a
-spellbook record, ids alone match, and the report says so.
+A cast matches the slots that hold its exact spell id. A cast at an id no
+slot holds falls back to the slots whose spell the character's spellbook
+names with the cast's name (compared without case), and says so on the
+spell's line: the real log is older than the real record, and casts Shadow
+Bolt at the id of its rank 2 while the bar, recorded later, holds rank 3.
+A player who binds two ranks on purpose keeps both apart, since each rank's
+id is on its own slot. Without a spellbook record, ids alone match, and the
+report says so.
 
 The reports:
 
@@ -35,10 +41,13 @@ The reports:
   every key is a high-cost key (`high_cost` or more).
 - `cast-without-bind`: a spell cast with no key reaching it: on an action
   slot no key reaches (clicked), or on no slot at all (cast from a macro, the
-  spellbook, an addon's button, or a key bound straight to it).
+  spellbook, an addon's button, or a key bound straight to it). A spell held
+  only on unfollowed main-bar pages is listed apart (`on_unfollowed_page`),
+  not here.
 - `bound-never-cast`: a slot a key reaches whose spell the log never shows
-  the player casting. Cannot judge when the log has none of the player's
-  casts, since then every bound spell would be listed.
+  the player casting: no cast at the slot's own id, and none matched to it by
+  name. Cannot judge when the log has none of the player's casts, since then
+  every bound spell would be listed.
 
 "High-cost" is an opinion: the cost table is `binds_coach_costs.toml`,
 shipped beside this module, which a player overrides key by key with a file
@@ -47,7 +56,9 @@ of the same name in wowlab's user config folder.
 A record section whose own probes say values were dropped (a call raised, a
 value was secret or untestable, a needed function was missing), or that
 holds slots with no type, makes every report "cannot judge": a key or slot
-dropped may be the one that changes the answer.
+dropped may be the one that changes the answer. Many binding commands left
+out of the record (an action-bar addon binds through its own click
+commands) make `cast-without-bind` "cannot judge" too.
 """
 
 from __future__ import annotations
@@ -69,8 +80,10 @@ __all__ = [
     "COSTS_FILE",
     "COSTS_LIMIT",
     "GET_RECORD",
+    "LEFT_OUT_LIMIT",
     "MODIFIERS",
     "REPORTS",
+    "UNFOLLOWED_SLOTS",
     "BoundNeverCast",
     "CannotJudge",
     "CastSpell",
@@ -81,6 +94,7 @@ __all__ = [
     "Costs",
     "FrequentOnHighCost",
     "KeyCost",
+    "OnUnfollowedPage",
     "Report",
     "coach",
     "command_slot",
@@ -98,24 +112,38 @@ Report = Literal["frequent-on-high-cost", "cast-without-bind", "bound-never-cast
 REPORTS: tuple[Report, ...] = ("frequent-on-high-cost", "cast-without-bind", "bound-never-cast")
 
 # The default UI's action buttons: binding command prefix to the page its bar
-# shows (Blizzard's ActionButton and MultiActionBar frames) **[verify]**.
+# shows (Blizzard's ActionButton and MultiActionBar frames) **[verify]**. The
+# real record is consistent with pages 5 and 6 only; see the module docstring.
 BAR_PAGES: Mapping[str, int] = {
     "ACTIONBUTTON": 1,
     "MULTIACTIONBAR3BUTTON": 3,  # right bar
     "MULTIACTIONBAR4BUTTON": 4,  # right bar 2
     "MULTIACTIONBAR2BUTTON": 5,  # bottom right bar
     "MULTIACTIONBAR1BUTTON": 6,  # bottom left bar
-    "MULTIACTIONBAR5BUTTON": 13,
+    "MULTIACTIONBAR5BUTTON": 13,  # unconfirmed on Forever
     "MULTIACTIONBAR6BUTTON": 14,
     "MULTIACTIONBAR7BUTTON": 15,
 }
 _BUTTON = re.compile(r"(ACTIONBUTTON|MULTIACTIONBAR[1-7]BUTTON)([1-9]|1[0-2])")
+
+# Main-bar pages the coach does not follow **[verify]**: page 2 (paging, as
+# `ACTIONPAGE2` or SHIFT-MOUSEWHEEL show it) and pages 7 to 10 (the bars a
+# form, stance or stealth swaps in). The main bar's keys reach them only
+# while that page is shown.
+UNFOLLOWED_SLOTS = frozenset(range(13, 25)) | frozenset(range(73, 121))
+
 MODIFIERS = ("ALT", "CTRL", "SHIFT", "META")
 _SIDES = ("L", "R")
 
+# A bar's worth of binding commands left out of the record: past this, keys
+# probably go through an action-bar addon's click commands, which the coach
+# cannot read, so "cast with no bind" cannot be judged.
+LEFT_OUT_LIMIT = 12
+_BAR_ADDONS = "an action-bar addon such as Bartender, Dominos or ElvUI binds through these"
+
 GET_RECORD = (
-    "install the lab-addon with the client closed (wowlab addon install lab), log in on "
-    "this character, then log out or /reload; schema 3 is needed"
+    "install or update the lab-addon with the client closed (wowlab addon install lab), log "
+    "in on this character, then log out or /reload; schema 3 is needed"
 )
 _ACTIONBARS_NEEDS = frozenset({"GetActionInfo"})
 _BINDINGS_NEEDS = frozenset({"GetNumBindings", "GetBinding", "GetBindingKey"})
@@ -135,10 +163,10 @@ class CostTableError(ValueError):
 class CostTable(_Model):
     """The cost of each key, the modifiers' costs and the two thresholds."""
 
-    high_cost: int = Field(ge=0)
+    high_cost: int = Field(ge=0, le=1000)
     frequent_share: float = Field(gt=0, le=1)
-    frequent_min_casts: int = Field(ge=1)
-    unlisted: int = Field(ge=0)
+    frequent_min_casts: int = Field(ge=1, le=1000)
+    unlisted: int = Field(ge=0, le=1000)
     modifiers: dict[str, int]  # ALT, CTRL, SHIFT, META
     keys: dict[str, int]  # upper case, as the client writes key names
 
@@ -164,10 +192,27 @@ _SECTIONS = {"coach", "modifiers", "keys"}
 _COACH = {"high_cost", "frequent_share", "frequent_min_casts", "unlisted"}
 
 
-def _cost(where: str, value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 1000:
-        raise CostTableError(f"{where}: a cost is a whole number from 0 to 1000, not {value!r}")
+def _cost(where: str, value: object, least: int = 0) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not least <= value <= 1000:
+        raise CostTableError(
+            f"{where}: a cost is a whole number from {least} to 1000, not {value!r}"
+        )
     return value
+
+
+def _share(where: str, value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float) or not 0 < value <= 1:
+        raise CostTableError(
+            f"{where}: a share is a fraction above 0 and at most 1 (0.05 is 5%), not {value!r}"
+        )
+    return float(value)
+
+
+def _coach_value(name: str, value: object) -> int | float:
+    where = f"[coach] {name}"
+    if name == "frequent_share":
+        return _share(where, value)
+    return _cost(where, value, 1 if name == "frequent_min_casts" else 0)
 
 
 def parse_costs(text: str, base: CostTable | None = None) -> CostTable:
@@ -196,7 +241,8 @@ def parse_costs(text: str, base: CostTable | None = None) -> CostTable:
                 raise CostTableError(
                     f"[coach]: unknown key {', '.join(extra)} (known: {', '.join(sorted(_COACH))})"
                 )
-            merged.update(part)
+            for key, value in part.items():
+                merged[key] = _coach_value(key, value)
         elif name == "modifiers":
             for mod, value in part.items():
                 if mod.upper() not in MODIFIERS:
@@ -216,7 +262,7 @@ def parse_costs(text: str, base: CostTable | None = None) -> CostTable:
     if missing:
         raise CostTableError(f"[coach]: {', '.join(missing)} not set")
     try:
-        return CostTable.model_validate(merged)
+        return CostTable.model_validate(merged, strict=True)
     except ValidationError as exc:
         first = exc.errors()[0]
         where = ".".join(str(p) for p in first["loc"])
@@ -237,7 +283,8 @@ def load_costs() -> Costs:
         return Costs(source="default", shipped=shipped, user_file=str(user), table=table)
     try:
         data = snapshot.read_regular_file(user, limit=COSTS_LIMIT)
-        mine = parse_costs(data.decode("utf-8"), table)
+        # utf-8-sig: an editor that saves a byte-order mark is not an error.
+        mine = parse_costs(data.decode("utf-8-sig"), table)
     except (OSError, snapshot.UnsafeReadError, UnicodeDecodeError, CostTableError) as exc:
         raise CostTableError(f"{user}: {exc}") from exc
     return Costs(source="user", shipped=shipped, user_file=str(user), table=mine)
@@ -266,33 +313,52 @@ def key_cost(key: str, table: CostTable) -> KeyCost:
 
 # ─── the reports ─────────────────────────────────────────────────────────────
 
+MatchedBy = Literal["spell id", "spell name", "none"]
+
 
 class CastSpell(_Model):
-    """One spell the player cast: its name, every id it was cast under (ranks),
-    how often, and the keys that reach a slot holding it."""
+    """One spell id the player cast under one name, how often, the action
+    slots it was matched to and the keys that reach them. `matched_by`:
+    "spell id" when a slot holds that id; "spell name" when none does and
+    the spellbook names a slot's spell with the cast's name (`match_note`
+    says what the bar holds); "none" when no slot was matched."""
 
     spell_name: str
-    spell_ids: list[int]
+    spell_id: int
     casts: int
     share: float  # of the player's casts
+    matched_by: MatchedBy
+    match_note: str | None
     keys: list[KeyCost]  # cheapest first
-    slots: list[int]  # action slots holding it, with or without a key
+    slots: list[int]  # matched action slots, with or without a key
 
 
 class FrequentOnHighCost(_Model):
     spell_name: str
-    spell_ids: list[int]
+    spell_id: int
     casts: int
     share: float
+    match_note: str | None
     keys: list[KeyCost]  # every key reaching it, each high-cost
     cheapest: int
 
 
 class CastWithoutBind(_Model):
     spell_name: str
-    spell_ids: list[int]
+    spell_id: int
     casts: int
-    slots: list[int]  # action slots holding it that no key reaches; empty: on no slot
+    slots: list[int]  # matched action slots no key reaches; empty: on no slot
+    detail: str
+
+
+class OnUnfollowedPage(_Model):
+    """A spell cast with no key the coach can follow, held only on main-bar
+    pages it does not follow (`UNFOLLOWED_SLOTS`): not counted as no bind."""
+
+    spell_name: str
+    spell_id: int
+    casts: int
+    slots: list[int]
     detail: str
 
 
@@ -314,6 +380,7 @@ class CoachResult(_Model):
     spells: list[CastSpell]
     frequent_on_high_cost: list[FrequentOnHighCost]
     cast_without_bind: list[CastWithoutBind]
+    on_unfollowed_page: list[OnUnfollowedPage]
     bound_never_cast: list[BoundNeverCast]
     cannot_judge: list[CannotJudge]
     caveats: list[str]  # what may make a report wrong without making it unjudgeable
@@ -379,37 +446,33 @@ def _sections(
     return bars, binds
 
 
-def _spell_names(record: labaddon.CharDB | None) -> tuple[dict[int, str], str | None]:
-    """Spell id to name from the spellbook record, and why it is not there."""
+def _spellbook(
+    record: labaddon.CharDB | None,
+) -> tuple[dict[int, str], dict[int, str], str | None]:
+    """Spell id to name and to subtext from the spellbook record, and why it is not there."""
     if not isinstance(record, labaddon.CharDBV3) or record.spellbook is None:
-        return {}, "no spellbook record"
+        return {}, {}, "no spellbook record"
     if isinstance(record.spellbook, labaddon.AbsentProbedSection):
-        return {}, f"no spellbook record (the section is absent: {record.spellbook.absent})"
-    names = {
-        i.spell_id: i.spell_name
-        for i in record.spellbook.list_
-        if i.spell_id is not None and i.spell_name is not None
-    }
-    return names, None
-
-
-class _Group:
-    """The casts of one spell name."""
-
-    def __init__(self, name: str) -> None:
-        self.name = name
-        self.ids: list[int] = []
-        self.casts = 0
-
-    def holds(self, spell_id: int, names: Mapping[int, str]) -> bool:
-        known = names.get(spell_id)
-        return spell_id in self.ids or (
-            known is not None and known.casefold() == self.name.casefold()
-        )
+        return {}, {}, f"no spellbook record (the section is absent: {record.spellbook.absent})"
+    names: dict[int, str] = {}
+    subtexts: dict[int, str] = {}
+    for i in record.spellbook.list_:
+        if i.spell_id is None:
+            continue
+        if i.spell_name is not None:
+            names[i.spell_id] = i.spell_name
+        if i.subtext is not None:
+            subtexts[i.spell_id] = i.subtext
+    return names, subtexts, None
 
 
 def _cheapest(keys: list[KeyCost]) -> list[KeyCost]:
     return sorted(keys, key=lambda k: (k.cost, k.key))
+
+
+def _held(spell_id: int, subtexts: Mapping[int, str]) -> str:
+    sub = subtexts.get(spell_id)
+    return f"{sub} ({spell_id})" if sub else str(spell_id)
 
 
 def coach(
@@ -421,14 +484,8 @@ def coach(
     no_log: str = "no combat log",
 ) -> CoachResult:
     """The three reports for one log's casts and one character's record."""
-    names, no_book = _spell_names(record)
+    names, subtexts, no_book = _spellbook(record)
     sections = _sections(record, no_record)
-    groups: dict[str, _Group] = {}
-    for s in counts.spells if counts is not None else ():
-        group = groups.setdefault(s.spell_name.casefold(), _Group(s.spell_name))
-        if s.spell_id not in group.ids:
-            group.ids.append(s.spell_id)
-        group.casts += s.casts
     total = counts.mine if counts is not None else 0
     cannot: list[CannotJudge] = []
     caveats: list[str] = []
@@ -457,8 +514,9 @@ def coach(
 
     spell_slots: dict[int, int] = {}  # slot -> spell id
     keys_of: dict[int, list[KeyCost]] = {}  # slot -> keys reaching it
-    left_out: str | None = None
     command_of: dict[int, str] = {}
+    left_out = 0
+    keys_left_out = 0
     if not isinstance(sections, str):
         bars, binds = sections
         spell_slots = {s.slot: s.id for s in bars.slots if s.type == "spell" and s.id is not None}
@@ -468,27 +526,44 @@ def coach(
                 continue
             command_of.setdefault(slot, b.command)
             keys_of.setdefault(slot, []).extend(key_cost(k, costs) for k in b.keys)
-        if binds.commands_left_out or binds.keys_left_out:
-            left_out = (
-                f"the bindings record left out {binds.commands_left_out} command(s) that are "
-                f"not plain names (a key bound straight to a spell, macro or click) and "
-                f"{binds.keys_left_out} key(s) that are not printable, so a spell listed as "
-                "cast with no bind may have one of those"
-            )
+        left_out, keys_left_out = binds.commands_left_out, binds.keys_left_out
 
     spells: list[CastSpell] = []
     frequent: list[FrequentOnHighCost] = []
     unbound: list[CastWithoutBind] = []
-    for group in sorted(groups.values(), key=lambda g: (-g.casts, g.name.casefold())):
-        slots = sorted(s for s, i in spell_slots.items() if group.holds(i, names))
-        keys = _cheapest([k for s in slots for k in keys_of.get(s, [])])
-        share = group.casts / total if total else 0.0
+    unfollowed: list[OnUnfollowedPage] = []
+    matched_slots: set[int] = set()
+    for s in counts.spells if counts is not None else ():
+        matched_by: MatchedBy = "none"
+        note: str | None = None
+        slots = sorted(slot for slot, i in spell_slots.items() if i == s.spell_id)
+        if slots:
+            matched_by = "spell id"
+        else:  # no slot holds this id: fall back to the spellbook name
+            folded = s.spell_name.casefold()
+            slots = sorted(
+                slot
+                for slot, i in spell_slots.items()
+                if (known := names.get(i)) is not None and known.casefold() == folded
+            )
+            if slots:
+                matched_by = "spell name"
+                held = sorted({spell_slots[slot] for slot in slots})
+                note = (
+                    f"matched by name: cast at {s.spell_id}, the bar holds "
+                    f"{', '.join(_held(i, subtexts) for i in held)}"
+                )
+        matched_slots.update(slots)
+        keys = _cheapest([k for slot in slots for k in keys_of.get(slot, [])])
+        share = s.casts / total if total else 0.0
         spells.append(
             CastSpell(
-                spell_name=group.name,
-                spell_ids=sorted(group.ids),
-                casts=group.casts,
+                spell_name=s.spell_name,
+                spell_id=s.spell_id,
+                casts=s.casts,
                 share=share,
+                matched_by=matched_by,
+                match_note=note,
                 keys=keys,
                 slots=slots,
             )
@@ -496,7 +571,22 @@ def coach(
         if isinstance(sections, str):
             continue
         if not keys:
-            if slots:
+            followed = [slot for slot in slots if slot not in UNFOLLOWED_SLOTS]
+            if slots and not followed:
+                unfollowed.append(
+                    OnUnfollowedPage(
+                        spell_name=s.spell_name,
+                        spell_id=s.spell_id,
+                        casts=s.casts,
+                        slots=slots,
+                        detail=(
+                            "on a main-bar page shown by a form, stance, stealth or paging, "
+                            "which the coach does not follow"
+                        ),
+                    )
+                )
+                continue
+            if followed:
                 detail = (
                     "on action slot(s) no key reaches: clicked, or bound in a way the record "
                     "does not show"
@@ -508,39 +598,54 @@ def coach(
                 )
             unbound.append(
                 CastWithoutBind(
-                    spell_name=group.name,
-                    spell_ids=sorted(group.ids),
-                    casts=group.casts,
-                    slots=slots,
+                    spell_name=s.spell_name,
+                    spell_id=s.spell_id,
+                    casts=s.casts,
+                    slots=followed,
                     detail=detail,
                 )
             )
         elif (
-            group.casts >= costs.frequent_min_casts
+            s.casts >= costs.frequent_min_casts
             and share >= costs.frequent_share
             and keys[0].cost >= costs.high_cost
         ):
             frequent.append(
                 FrequentOnHighCost(
-                    spell_name=group.name,
-                    spell_ids=sorted(group.ids),
-                    casts=group.casts,
+                    spell_name=s.spell_name,
+                    spell_id=s.spell_id,
+                    casts=s.casts,
                     share=share,
+                    match_note=note,
                     keys=keys,
                     cheapest=keys[0].cost,
                 )
             )
 
-    if unbound and left_out is not None:
-        caveats.append(left_out)
+    if unbound and left_out >= LEFT_OUT_LIMIT:
+        cannot.append(
+            CannotJudge(
+                report="cast-without-bind",
+                reason=(
+                    f"the bindings record left out {left_out} binding commands that are not "
+                    f"action buttons ({_BAR_ADDONS}), so a key may reach these spells"
+                ),
+            )
+        )
+        unbound = []
+    elif unbound and (left_out or keys_left_out):
+        caveats.append(
+            f"the bindings record left out {left_out} command(s) that are not plain names (a "
+            f"key bound straight to a spell, macro or click; {_BAR_ADDONS}) and "
+            f"{keys_left_out} key(s) that are not printable, so a spell listed as cast with no "
+            "bind may have one of those"
+        )
 
     never: list[BoundNeverCast] = []
-    if not cannot:
+    if not any(c.report == "bound-never-cast" for c in cannot):
         for slot in sorted(keys_of):
             spell_id = spell_slots.get(slot)
-            if spell_id is None:
-                continue
-            if any(g.holds(spell_id, names) for g in groups.values()):
+            if spell_id is None or slot in matched_slots:
                 continue
             never.append(
                 BoundNeverCast(
@@ -551,11 +656,13 @@ def coach(
                     spell_name=names.get(spell_id),
                 )
             )
+    spells.sort(key=lambda c: (-c.casts, c.spell_name.casefold(), c.spell_id))
     return CoachResult(
         matched_by="spell id" if no_book is not None else "spell id or spellbook name",
         spells=spells,
         frequent_on_high_cost=frequent,
         cast_without_bind=unbound,
+        on_unfollowed_page=unfollowed,
         bound_never_cast=never,
         cannot_judge=cannot,
         caveats=caveats,

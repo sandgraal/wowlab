@@ -182,16 +182,26 @@ def test_binds_coach_on_the_real_log_and_record_cross_capture(
     assert rep.costs.source == "default"
     assert rep.costs.user_file == str(user_dirs / bindscoach.COSTS_FILE)
     assert rep.matched_by == "spell id or spellbook name"
-    # Ranks are one spell: the log's Immolate (348, rank 1) and Shadow Bolt
-    # (695, rank 2) reach the bars' rank 2 (707) and rank 3 (705) by name.
+    # The log is older than the record: no slot holds its Immolate (348, rank
+    # 1) or Shadow Bolt (695, rank 2), so those fall back to the bars' rank 2
+    # (707) and rank 3 (705) by name, and say so.
     assert [
-        (s.spell_name, s.spell_ids, s.casts, s.slots, [k.key for k in s.keys]) for s in rep.spells
+        (s.spell_name, s.spell_id, s.casts, s.matched_by, s.slots, [k.key for k in s.keys])
+        for s in rep.spells
     ] == [
-        ("Bane of Agony", [980], 2, [3], ["3"]),
-        ("Corruption", [172], 2, [2], ["2"]),
-        ("Immolate", [348], 1, [1, 49], ["1"]),
-        ("Shadow Bolt", [695], 1, [5, 50, 67], ["5"]),
+        ("Bane of Agony", 980, 2, "spell id", [3], ["3"]),
+        ("Corruption", 172, 2, "spell id", [2], ["2"]),
+        ("Immolate", 348, 1, "spell name", [1, 49], ["1"]),
+        ("Shadow Bolt", 695, 1, "spell name", [5, 50, 67], ["5"]),
     ]
+    assert [s.match_note for s in rep.spells] == [
+        None,
+        None,
+        "matched by name: cast at 348, the bar holds Rank 2 (707)",
+        "matched by name: cast at 695, the bar holds Rank 3 (705)",
+    ]
+    assert rep.on_unfollowed_page == []
+    assert rep.log.chosen_by == "newest"
     assert rep.frequent_on_high_cost == []  # six casts: none reaches five of one spell
     assert rep.cast_without_bind == []
     assert [
@@ -210,18 +220,34 @@ def test_binds_coach_text_says_the_table_is_a_default_and_that_combatlog_must_be
     record: Path,
 ) -> None:
     text = ok("binds", "coach", "--character", CHARACTER).stdout
-    assert f"Combat log: Logs/{LOG_NAME} (79 lines; COMBAT_LOG_VERSION 22)\n" in text
+    assert (
+        f"Combat log: Logs/{LOG_NAME} (the newest) (79 lines; COMBAT_LOG_VERSION 22; your "
+        "casts from 4/1/2026 02:16:37.862-4 to 4/1/2026 02:17:00.351-4, log time), judged "
+        f"against {RECORD}\n"
+    ) in text
     assert "  Your casts: 6 of 7 SPELL_CAST_SUCCESS record(s)" in text
-    assert "Key costs: the shipped default table, an opinion." in text
-    assert bindscoach.COSTS_FILE in text
+    assert (
+        "Key costs: the shipped default table, an opinion that assumes a QWERTY keyboard, the "
+        "left hand on W A S D and a mouse with two side buttons." in text
+    )
+    assert bindscoach.COSTS_FILE in text and "(create the folder if it is missing)" in text
     assert (
         "  High-cost: 4 or more. Frequent: at least 5% of your casts and at least 5 casts.\n"
         in text
     )
-    assert "       1  Shadow Bolt (695): 5 (cost 2)\n" in text
-    assert "Binds to spells never cast: 8\n" in text
+    assert (
+        "       1  Shadow Bolt (695): 5 (cost 2); matched by name: cast at 695, the bar holds "
+        "Rank 3 (705)\n"
+    ) in text
+    assert (
+        "Binds to spells not cast in this log (6 casts, 02:16:37 to 02:17:00 log time): 8\n" in text
+    )
     assert "  7 (cost 4): slot 7, Health Funnel (755)\n" in text
     assert "/combatlog" in text
+    assert "The client adds to this file in batches" in text
+    assert "whichever character wrote it" in text and "--log" in text
+    assert "An auto-repeating spell" in text
+    assert "[verify]" not in text  # never printed to a player
 
 
 def test_binds_coach_without_character_takes_the_latest_record(flavor: Path, record: Path) -> None:
@@ -241,18 +267,19 @@ def test_frequent_spell_on_a_high_cost_key_constructed(flavor: Path, record: Pat
     put_log(flavor, HEADER, *[cast(755, "Health Funnel")] * 10, *[cast(172, "Corruption")] * 10)
     rep = report("--character", CHARACTER)
     [f] = rep.frequent_on_high_cost
-    assert (f.spell_name, f.spell_ids, f.casts, f.share, f.cheapest) == (
+    assert (f.spell_name, f.spell_id, f.casts, f.share, f.cheapest, f.match_note) == (
         "Health Funnel",
-        [755],
+        755,
         10,
         0.5,
         4,
+        None,
     )
     assert [(k.key, k.cost) for k in f.keys] == [("7", 4)]
     text = ok("binds", "coach", "--character", CHARACTER).stdout
     assert (
-        "Frequent spells on high-cost keys: 1\n  Health Funnel: 10 casts (50%), 7 (cost 4)\n"
-        in text
+        "Frequent spells on high-cost keys: 1\n"
+        "  Health Funnel (755): 10 casts (50%), 7 (cost 4)\n" in text
     )
 
 
@@ -294,16 +321,18 @@ def test_cast_with_no_bind_clicked_and_on_no_slot_constructed(flavor: Path, reco
     put_log(flavor, HEADER, cast(697, "Summon Voidwalker"), cast(999001, "Constructed Spell"))
     rep = report("--character", CHARACTER)
     assert [(u.spell_name, u.casts, u.slots) for u in rep.cast_without_bind] == [
-        ("Constructed Spell", 1, []),
         ("Summon Voidwalker", 1, [69]),
+        ("Constructed Spell", 1, []),
     ]
-    assert rep.cast_without_bind[0].detail.startswith("on no action slot: cast from a macro")
-    assert rep.cast_without_bind[1].detail.startswith("on action slot(s) no key reaches: clicked")
-    # The record left one binding command out, so the report says it may be wrong.
-    assert [c for c in rep.caveats if "left out 1 command(s)" in c]
+    assert rep.cast_without_bind[0].detail.startswith("on action slot(s) no key reaches: clicked")
+    assert rep.cast_without_bind[1].detail.startswith("on no action slot: cast from a macro")
+    # The record left one binding command out, so the report says it may be
+    # wrong, and names the action-bar addons that bind that way.
+    [left] = [c for c in rep.caveats if "left out 1 command(s)" in c]
+    assert "Bartender, Dominos or ElvUI" in left
     text = ok("binds", "coach", "--character", CHARACTER).stdout
     assert "Spells cast with no bind: 2\n" in text
-    assert "  Summon Voidwalker: 1 cast (slots 69): on action slot(s) no key reaches" in text
+    assert "  Summon Voidwalker (697): 1 cast (slots 69): on action slot(s) no key reaches" in text
 
 
 def test_bound_never_cast_lists_only_bound_spell_slots_constructed() -> None:
@@ -591,3 +620,151 @@ def test_a_hostile_spell_name_is_escaped_in_text_constructed(flavor: Path, recor
     text = ok("binds", "coach", "--character", CHARACTER).stdout
     assert "\x1b" not in text and "\x07" not in text
     assert "Bolt\\x1b]0;owned\\x07" in text
+
+
+# ─── review round 1 ──────────────────────────────────────────────────────────
+
+
+def _with_slots(
+    rec: labaddon.CharDBV3, changes: dict[int, int], add: dict[int, int] | None = None
+) -> labaddon.CharDBV3:
+    """The record with slot ids replaced (`changes`) and spell slots added (`add`)."""
+    bars = rec.actionbars
+    assert isinstance(bars, labaddon.ActionBars)
+    slots = [
+        s.model_copy(update={"id": changes[s.slot]}) if s.slot in changes else s for s in bars.slots
+    ]
+    slots += [
+        labaddon.ActionSlot(slot=k, type="spell", id=v, sub_type="spell")
+        for k, v in (add or {}).items()
+    ]
+    return rec.model_copy(update={"actionbars": bars.model_copy(update={"slots": slots})})
+
+
+def test_ranks_bound_on_purpose_stay_apart_constructed() -> None:
+    """Rank 1 Shadow Bolt (686) on slot 4 (key 4), rank 3 (705) on slot 5 (key
+    5): a log casting 686 reaches key 4 only, and slot 5 is not cast."""
+    rec = _with_slots(real_record(), {4: 686})
+    got = bindscoach.coach(constructed_counts(cast(686, "Shadow Bolt")), rec, default_table())
+    [s] = got.spells
+    assert (s.matched_by, s.slots, [k.key for k in s.keys], s.match_note) == (
+        "spell id",
+        [4],
+        ["4"],
+        None,
+    )
+    assert 5 in [b.slot for b in got.bound_never_cast]
+    # A rank no slot holds (695) falls back to every slot holding a Shadow Bolt.
+    got = bindscoach.coach(constructed_counts(cast(695, "Shadow Bolt")), rec, default_table())
+    [s] = got.spells
+    assert (s.matched_by, s.slots) == ("spell name", [4, 5, 50, 67])
+    assert s.match_note == (
+        "matched by name: cast at 695, the bar holds Rank 1 (686), Rank 3 (705)"
+    )
+    assert not {4, 5} & {b.slot for b in got.bound_never_cast}
+
+
+def test_a_spell_only_on_an_unfollowed_page_is_not_no_bind_constructed() -> None:
+    rec = _with_slots(real_record(), {}, {13: 999003, 73: 999004, 120: 697})
+    counts = constructed_counts(
+        cast(999003, "Paged Spell"), cast(999004, "Form Spell"), cast(697, "Summon Voidwalker")
+    )
+    got = bindscoach.coach(counts, rec, default_table())
+    assert [(p.spell_name, p.slots) for p in got.on_unfollowed_page] == [
+        ("Paged Spell", [13]),
+        ("Form Spell", [73]),
+    ]
+    assert got.on_unfollowed_page[0].detail.startswith("on a main-bar page shown by a form")
+    # Summon Voidwalker is also on slot 69, a followed slot no key reaches.
+    assert [(u.spell_name, u.slots) for u in got.cast_without_bind] == [("Summon Voidwalker", [69])]
+
+
+def test_unfollowed_page_in_text_constructed(
+    flavor: Path, record: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rec = _with_slots(real_record(), {}, {73: 999004})
+    monkeypatch.setattr(labaddon, "read_char", lambda path: rec)
+    put_log(flavor, HEADER, cast(999004, "Form Spell"))
+    text = ok("binds", "coach", "--character", CHARACTER).stdout
+    assert "Spells only on main-bar pages the coach does not follow: 1\n" in text
+    assert "Spells cast with no bind: 0\n" in text
+
+
+def test_many_left_out_commands_cannot_judge_no_bind_constructed() -> None:
+    rec = real_record()
+    binds = rec.bindings
+    assert isinstance(binds, labaddon.Bindings)
+    counts = constructed_counts(cast(697, "Summon Voidwalker"))
+    limit = bindscoach.LEFT_OUT_LIMIT
+    many = rec.model_copy(
+        update={"bindings": binds.model_copy(update={"commands_left_out": limit})}
+    )
+    got = bindscoach.coach(counts, many, default_table())
+    assert got.cast_without_bind == []
+    [c] = got.cannot_judge
+    assert c.report == "cast-without-bind" and "Bartender, Dominos or ElvUI" in c.reason
+    few = rec.model_copy(
+        update={"bindings": binds.model_copy(update={"commands_left_out": limit - 1})}
+    )
+    got = bindscoach.coach(counts, few, default_table())
+    assert [u.spell_name for u in got.cast_without_bind] == ["Summon Voidwalker"]
+    assert got.cannot_judge == []
+
+
+def test_log_option_reads_the_named_log(flavor: Path, record: Path) -> None:
+    put_log(flavor, HEADER, cast(755, "Health Funnel"))
+    newest = report("--character", CHARACTER).log.counts
+    assert newest is not None and newest.spells[0].spell_name == "Health Funnel"
+    rep = report("--character", CHARACTER, "--log", LOG_NAME)
+    assert (rep.log.file, rep.log.chosen_by) == (f"Logs/{LOG_NAME}", "--log")
+    assert rep.log.counts is not None and rep.log.counts.mine == 6
+    folded = report("--character", CHARACTER, "--log", LOG_NAME.lower())
+    assert folded.log.file == f"Logs/{LOG_NAME}"
+
+
+@pytest.mark.parametrize(
+    ("name", "words"),
+    [
+        ("../WTF/Config.wtf", "--log takes a file name under Logs/, not a path"),
+        ("Logs/" + LOG_NAME, "--log takes a file name under Logs/, not a path"),
+        ("sub\\x.txt", "--log takes a file name under Logs/, not a path"),
+        ("..", "--log takes a file name under Logs/, not a path"),
+        ("WoWCombatLog-nope.txt", "no combat log 'WoWCombatLog-nope.txt' under Logs/"),
+        ("Config.wtf", "no combat log 'Config.wtf' under Logs/"),
+    ],
+)
+def test_log_option_takes_only_a_log_under_logs(
+    flavor: Path, record: Path, name: str, words: str
+) -> None:
+    result = run("binds", "coach", "--character", CHARACTER, "--log", name)
+    assert result.exit_code == 2, result.stderr
+    assert words in result.stderr
+
+
+def test_a_players_table_with_a_byte_order_mark_is_read_constructed(
+    record: Path, user_dirs: Path
+) -> None:
+    user_dirs.mkdir(parents=True)
+    (user_dirs / bindscoach.COSTS_FILE).write_bytes(b"\xef\xbb\xbf[coach]\nhigh_cost = 3\n")
+    rep = report("--character", CHARACTER)
+    assert (rep.costs.source, rep.costs.table.high_cost) == ("user", 3)
+
+
+@pytest.mark.parametrize(
+    ("text", "words"),
+    [
+        ("[coach]\nunlisted = 1001\n", "[coach] unlisted: a cost is a whole number from 0 to"),
+        ("[coach]\nfrequent_share = true\n", "[coach] frequent_share: a share is a fraction"),
+        ("[coach]\nfrequent_min_casts = 0\n", "[coach] frequent_min_casts: a cost is a whole"),
+        ("[coach]\nfrequent_share = 1\n", None),
+        ("[coach]\nhigh_cost = 0\n", None),
+    ],
+)
+def test_coach_values_are_checked_constructed(text: str, words: str | None) -> None:
+    base = default_table()
+    if words is None:
+        bindscoach.parse_costs(text, base)
+        return
+    with pytest.raises(bindscoach.CostTableError) as err:
+        bindscoach.parse_costs(text, base)
+    assert words in str(err.value)
