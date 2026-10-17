@@ -234,6 +234,18 @@ def _offset(path: Path) -> None:
 
 
 def _peak_rss_bytes() -> int:
+    """This process's peak RSS in bytes.
+
+    On Linux `ru_maxrss` is kept across `execve` (getrusage(2)), so the
+    measuring child would start at the high-water mark of the bench that
+    generated the document and launched it. `VmHWM` is the child's own, new
+    at exec (M13-20T, as M13-17T did for its probe)."""
+    if sys.platform.startswith("linux"):
+        with Path("/proc/self/status").open() as status:
+            for line in status:
+                if line.startswith("VmHWM:"):
+                    return int(line.split()[1]) * 1024
+        raise SystemExit("no VmHWM in /proc/self/status")
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return peak if sys.platform == "darwin" else peak * 1024  # Linux reports KiB
 
