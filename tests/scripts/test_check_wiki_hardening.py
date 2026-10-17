@@ -378,8 +378,9 @@ def test_the_pass_runs_and_publishes_even_when_previous_report_fails() -> None:
     cond = " ".join(jobs["publish"]["if"].split())
     assert "!cancelled() && needs.improve.result == 'success'" in cond
     assert "always()" not in cond
-    # report still fires on a failed or cancelled improve or publish.
-    assert set(jobs["report"]["needs"]) == {"improve", "publish"}
+    # report still fires on a failed or cancelled improve, gates (M13-19) or
+    # publish.
+    assert set(jobs["report"]["needs"]) == {"improve", "gates", "publish"}
 
 
 def test_bubblewrap_is_installed_and_probed_before_the_claude_step_and_the_scrub_stays_on() -> None:
