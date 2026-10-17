@@ -256,8 +256,15 @@ in under two seconds on an SSD.
 the one test `filemap gaps` (`gaps.is_link`), `explain` and `tree` share: a
 symlink, a junction, or any other Windows reparse point with the
 name-surrogate bit (a WCI link, a WSL symlink). Each is reported in
-`Inventory.symlinks` and never walked. A flavor folder that is such a link
-is listed by `tree` as a link, and nothing in it is listed. A reparse point
+`Inventory.symlinks` and never walked. A WCI link or a WSL symlink has no
+link text `os.readlink` can read, so it has no target and no inside or
+outside answer: `Symlink.target` and `Symlink.inside_install` are None, and
+`tree` says "link (where it points is unknown), not followed". `tree` words
+a link the same way at the install root and in a flavor folder: "link to
+<target> (inside|outside the install), not followed". A flavor folder that
+is such a link is listed by `tree` as a link, and nothing in it is listed
+(`tree --install` notes it as "flavor folder; link …, not followed; nothing
+in it is listed"). A reparse point
 without that bit (a cloud placeholder, a deduplicated file) is walked and
 named in `Inventory.reparse_points` (M13-33).
 

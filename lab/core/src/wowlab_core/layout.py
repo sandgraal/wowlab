@@ -95,6 +95,7 @@ __all__ = [
     "classify",
     "is_link",
     "layouts",
+    "link_facts",
 ]
 
 # Client-written folder and file names inside a flavor folder, looked up
@@ -176,11 +177,16 @@ class Limits(_Model):
 
 
 class Symlink(_Model):
-    """A symlink or junction met by a walk: reported, never followed."""
+    """A link met by a walk (`is_link`: a symlink, a junction, or another
+    Windows reparse point that names another path): reported, never
+    followed."""
 
     path: FsText  # relative to the flavor folder, `/`-separated
     target: FsText | None  # the link text as stored; None if it cannot be read
-    inside_install: bool  # whether the target resolves inside the install root
+    # Whether the target resolves inside the install root. None when that is
+    # unknown (M13-35): the link text cannot be read (a WCI link or a WSL
+    # symlink on Windows), or resolving it ends at the link itself.
+    inside_install: bool | None
     entry_id: str | None  # file-map entry for the link's own location
 
 
@@ -444,6 +450,31 @@ def _is_within(child: Path, parent: Path) -> bool:
     return child == parent or parent in child.parents
 
 
+def link_facts(path: Path, real_root: Path | None) -> tuple[str | None, bool | None]:
+    """`(target, inside)` for the link at `path`: its link text exactly as
+    stored (not normalised by pathlib), and whether it resolves inside
+    `real_root` (the install root, resolved; None when that failed). Never
+    lists or opens anything through the link. `inside` is None when it is
+    unknown (M13-35): the link text cannot be read (`os.readlink` refuses a
+    WCI link or a WSL symlink on Windows), or resolving it ends at the link
+    itself, so nothing says where it points."""
+    try:
+        target: str | None = os.readlink(path)  # noqa: PTH115
+    except (OSError, ValueError):
+        target = None
+    if target is None:
+        return None, None
+    try:
+        if real_root is None:
+            return target, False
+        resolved = path.resolve()
+        if resolved == path.parent.resolve() / path.name:
+            return target, None
+        return target, _is_within(resolved, real_root)
+    except (OSError, RuntimeError):
+        return target, False
+
+
 class Layout:
     """A read-only view of one flavor folder.
 
@@ -506,16 +537,13 @@ class Layout:
 
     def _symlink(self, rel: tuple[str, ...]) -> Symlink:
         path = self._abs(rel)
-        try:  # the link text exactly as stored, not normalised by pathlib
-            target: str | None = os.readlink(path)  # noqa: PTH115
-        except (OSError, ValueError):
-            target = None
         try:
             if self._real_root is None:
                 self._real_root = self.install_root.resolve()
-            inside = _is_within(path.resolve(), self._real_root)
+            real_root: Path | None = self._real_root
         except (OSError, RuntimeError):
-            inside = False
+            real_root = None
+        target, inside = link_facts(path, real_root)
         found = self._filemap.classify(rel, "flavor", "any")
         return Symlink(
             path=_rel_text(rel),
@@ -527,7 +555,7 @@ class Layout:
     def _stat(
         self, rel: tuple[str, ...], entry: os.DirEntry[str], report: _Report
     ) -> _Entry | None:
-        """`lstat` one entry; symlinks and junctions are reported and dropped."""
+        """`lstat` one entry; a link (`is_link`) is reported and dropped."""
         try:
             st = lstat_entry(entry)
         except OSError as exc:
@@ -1112,7 +1140,7 @@ def _same_file(candidate: Path, known: Path) -> bool:
     """Whether `candidate` is the folder `known` itself, never through a link.
 
     Compares `lstat` results (`os.path.samestat`), and refuses a candidate
-    that is a symlink or junction, so a case-only spelling is accepted on a
+    that is a link (`is_link`), so a case-only spelling is accepted on a
     case-insensitive volume (same entry) and a link is never followed.
     """
     try:

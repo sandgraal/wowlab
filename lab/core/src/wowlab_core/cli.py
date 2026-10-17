@@ -1756,7 +1756,11 @@ def _tree_items(
         try:
             st = layout.lstat_entry(e)
         except OSError:
-            continue  # the walk names the error
+            # Judged from the listing alone, as before M13-35; the walk
+            # names the error.
+            if not e.is_symlink():
+                add(e.name, "folder" if e.is_dir(follow_symlinks=False) else "file", None, None)
+            continue
         if gaps.is_link(Path(e.path), st):
             continue  # the walk reports it, with its target, below (M13-35)
         add(e.name, "folder" if stat.S_ISDIR(st.st_mode) else "file", None, None)
@@ -1790,14 +1794,22 @@ def _tree_items(
                 f"{area.files} files in {area.folders} folders, not listed one by one",
             )
     for link in inv.symlinks:
-        where = "inside" if link.inside_install else "outside"
-        # No target text: a reparse point `os.readlink` cannot read, such as
-        # a WCI link or a WSL symlink on Windows (M13-35).
-        to = f" to {link.target}" if link.target is not None else ""
-        add(link.path, "symlink", None, f"link{to} ({where} the install), not followed")
+        add(link.path, "symlink", None, _link_note(link.target, link.inside_install))
     for meta in inv.os_metadata:
         add(meta, "file", None, "operating-system folder metadata")
     return items
+
+
+def _link_note(target: str | None, inside: bool | None) -> str:
+    """`tree`'s note for a link, at the install root and in a flavor folder
+    alike (M13-35). `inside` None: where it points is unknown, as for a WCI
+    link or a WSL symlink, whose link text cannot be read."""
+    to = f" to {target}" if target is not None else ""
+    if inside is None:
+        where = "where it points is unknown"
+    else:
+        where = f"{'inside' if inside else 'outside'} the install"
+    return f"link{to} ({where}), not followed"
 
 
 _SELECTION_WORDS = {
@@ -1990,6 +2002,10 @@ def _root_items(inst: install.Install, errors: list[str]) -> list[TreeItem]:
     flavors = {f.folder for f in inst.flavors}
     root = Path(inst.root)
     try:
+        real_root: Path | None = root.resolve()
+    except (OSError, RuntimeError):
+        real_root = None
+    try:
         with os.scandir(root) as it:
             entries = sorted(it, key=lambda e: e.name)
     except OSError as exc:
@@ -2012,12 +2028,11 @@ def _root_items(inst: install.Install, errors: list[str]) -> list[TreeItem]:
         entry = found.entry if isinstance(found, layout.Classified) else None
         note: str | None = None
         if link:
-            try:
-                target = os.readlink(e.path)  # noqa: PTH115
-                note = f"link to {target}, not followed"
-            except (OSError, ValueError):
-                note = "link, not followed"
-            if e.name in inst.other_dirs:
+            note = _link_note(*layout.link_facts(Path(e.path), real_root))
+            if e.name in flavors:
+                # M13-35: as `tree` says it for this flavor folder alone.
+                note = f"flavor folder; {note}; nothing in it is listed"
+            elif e.name in inst.other_dirs:
                 note += f"; {gaps.NOT_A_FLAVOR_LINK}"
         elif folder and e.name in flavors:
             note = "flavor folder"

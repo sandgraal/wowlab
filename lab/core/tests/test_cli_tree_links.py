@@ -46,6 +46,9 @@ LX_SYMLINK = 0xA000001D  # IO_REPARSE_TAG_LX_SYMLINK (WSL `ln -s`): name surroga
 # Windows reports a WSL symlink as a file whatever it points at: the reparse
 # point carries no directory attribute.
 WSL_MODE = stat.S_IFREG | 0o644
+# `os.readlink` cannot read a WCI link or a WSL symlink (nor, here, a faked
+# junction), so nothing says where it points (M13-35 review).
+UNKNOWN_NOTE = "link (where it points is unknown), not followed"
 
 
 class _ReparseStat:
@@ -198,6 +201,7 @@ def test_a_name_surrogate_under_wtf_account_is_a_link_never_walked(
     _fake(monkeypatch, [flavor / ACCOUNT_DIR], tag, mode=mode)
     judged = _judged(root, install=install)
     _assert_a_link_not_walked(root, judged, ACCOUNT_DIR, install)
+    assert judged[_key(ACCOUNT_DIR, install)]["note"] == UNKNOWN_NOTE
     # Everything outside it is as it was.
     inside = _key(ACCOUNT_DIR, install)
     assert {k: v for k, v in judged.items() if k != inside} == {
@@ -205,7 +209,8 @@ def test_a_name_surrogate_under_wtf_account_is_a_link_never_walked(
     }
     # The walk reports it as a link, and `filemap gaps` names the same one.
     inv = layout.Layout(flavor, install_root=root).inventory()
-    assert ACCOUNT_DIR in {s.path for s in inv.symlinks}
+    links = {s.path: s for s in inv.symlinks}
+    assert (links[ACCOUNT_DIR].target, links[ACCOUNT_DIR].inside_install) == (None, None)
     assert inv.reparse_points == ()
     assert not any(sv.path.startswith(ACCOUNT_DIR + "/") for sv in inv.saved_variables)
     assert f"{FLAVOR}/{ACCOUNT_DIR}" in _links_in_gaps(root)
@@ -221,6 +226,7 @@ def test_a_wsl_symlink_file_is_a_link_constructed(
     _fake(monkeypatch, [flavor / SYNDICATOR], LX_SYMLINK, mode=WSL_MODE)
     judged = _judged(root, install=install)
     _assert_a_link_not_walked(root, judged, SYNDICATOR, install)
+    assert judged[_key(SYNDICATOR, install)]["note"] == UNKNOWN_NOTE
 
 
 @pytest.mark.parametrize("install", [False, True], ids=["tree", "tree-install"])
@@ -264,9 +270,13 @@ def test_a_link_at_the_top_has_one_item_in_text_constructed(
 def test_a_flavor_folder_that_is_a_wci_link_is_a_link_never_walked_constructed(
     root: Path, monkeypatch: pytest.MonkeyPatch, install: bool
 ) -> None:
-    """Constructed: discovery takes a WCI link as a flavor folder (it is no
-    symlink or junction), but `tree` judges it a link, as `explain` does, and
-    never walks it: `Layout.inventory` is never called."""
+    """Constructed: under this fake, discovery takes a WCI link as a flavor
+    folder (it is no symlink or junction, and the real folder behind the fake
+    holds `.flavor.info`). On a real machine that depends on whether Windows
+    can follow the link to read it. Either way `tree` judges it a link, as
+    `explain` does, and never walks it: `Layout.inventory` is never called.
+    The discovery line is expected to change with the follow-up ticket that
+    makes discovery use the same link test."""
     flavor = root / FLAVOR
     assert [f.folder for f in discover(root).flavors] == [FLAVOR]
     _fake(monkeypatch, [flavor], WCI_LINK)
@@ -283,6 +293,7 @@ def test_a_flavor_folder_that_is_a_wci_link_is_a_link_never_walked_constructed(
         judged = _by_path(report, install=True)
         item = judged[FLAVOR]
         assert item["kind"] == "symlink"
+        assert item["note"] == f"flavor folder; {UNKNOWN_NOTE}; nothing in it is listed"
         assert item["verdict"] == expected
         assert [i for i in report["items"] if i["flavor_folder"] == FLAVOR and i["path"]] == []
         assert report["ancestors"] == []
@@ -307,3 +318,62 @@ def test_a_flavor_folder_that_is_a_link_says_so_in_text_constructed(
 def test_gaps_uses_the_walks_link_test() -> None:
     """One link test (M13-35): `gaps.is_link` is `layout.is_link`."""
     assert gaps.is_link is layout.is_link
+
+
+def test_an_entry_that_cannot_be_stated_is_listed_as_before(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Constructed (code review, M13-35): a plain top-level folder whose
+    `lstat` fails is still listed from the listing alone, and the walk names
+    the error, as on main before this ticket."""
+    extras = root / FLAVOR / "Extras"
+    real = layout.lstat_entry
+
+    def refuse(entry: os.DirEntry[str]) -> os.stat_result:
+        if entry.path == str(extras):
+            raise PermissionError(13, "Permission denied")
+        return real(entry)
+
+    monkeypatch.setattr(layout, "lstat_entry", refuse)
+    report = _tree(root)
+    items = {i["path"]: i for i in report["items"]}
+    assert items["Extras"]["kind"] == "folder"
+    assert items["Extras"]["verdict"]["link"] is False
+    assert "Extras: Permission denied" in report["errors"]
+    lines = _run("tree", "--root", str(root)).splitlines()
+    assert "  Extras/" in lines
+
+
+@pytest.mark.parametrize(
+    ("target", "where"),
+    [
+        pytest.param("outside", "outside the install", id="outside"),
+        pytest.param("inside", "inside the install", id="inside"),
+    ],
+)
+def test_a_link_at_the_install_root_reads_as_one_in_a_flavor_folder(
+    root: Path, tmp_path: Path, target: str, where: str
+) -> None:
+    """One wording for a link at both levels (M13-35 review): a real symlink
+    at the install root and one in the flavor folder both say where they
+    point, inside or outside the install."""
+    to = tmp_path / "elsewhere" if target == "outside" else root / FLAVOR / "Logs"
+    to.mkdir(exist_ok=True)
+    (root / "rootlink").symlink_to(to, target_is_directory=True)
+    (root / FLAVOR / "WTF" / "flavorlink").symlink_to(to, target_is_directory=True)
+    judged = _by_path(_tree(root, "--install"), install=True)
+    expected = f"link to {to} ({where}), not followed"
+    assert judged["rootlink"]["note"] == expected
+    assert judged[f"{FLAVOR}/WTF/flavorlink"]["note"] == expected
+
+
+def test_link_facts_of_a_link_whose_text_cannot_be_read_constructed(tmp_path: Path) -> None:
+    """Constructed: a folder stands in for a WCI link, whose link text
+    `os.readlink` refuses: no target, and where it points is unknown."""
+    folder = tmp_path / "wci"
+    folder.mkdir()
+    assert layout.link_facts(folder, tmp_path.resolve()) == (None, None)
+    real = tmp_path / "real"
+    real.mkdir()
+    (tmp_path / "plain").symlink_to(real, target_is_directory=True)
+    assert layout.link_facts(tmp_path / "plain", tmp_path.resolve()) == (str(real), True)

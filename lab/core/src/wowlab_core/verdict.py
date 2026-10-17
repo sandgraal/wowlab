@@ -36,7 +36,8 @@ LABELS: dict[str, str] = {
 """Each level in a player's words, for a badge (owner, 2026-10-16)."""
 
 LINK_LABEL = "a link; wowlab won't follow it"
-"""The label of a symlink or junction, or a path inside one, at any level:
+"""The label of a link (a symlink, a junction or another Windows reparse
+point that names another path), or a path inside one, at any level:
 the gate refuses it whatever its row says (M13-25 round 2)."""
 
 SERVER_LABEL = "server may overwrite"
@@ -161,8 +162,9 @@ class Verdict(BaseModel):
     named with `--paths` (owner decision 2026-09-27). A restore is not the
     last word on a `server_may_replace` file: the server may replace it again
     at the next login. `None` for every folder, whatever its level: a folder
-    is judged by the files under it. `None` for a symlink or junction too, which
-    a snapshot never captures. `False` for a file at or under a Windows
+    is judged by the files under it. `None` for a link too (a symlink, a
+    junction or another reparse point that names another path), which a
+    snapshot never captures. `False` for a file at or under a Windows
     reparse point that is not a link (a cloud placeholder, a deduplicated
     file, a file compressed with `compact /EXE`): the gate refuses to write through any reparse point.
 
@@ -174,8 +176,9 @@ class Verdict(BaseModel):
     `server_may_replace`, else `None`. Both follow from the fields above and
     are filled in when not given; a value that disagrees is refused.
 
-    `link`: the path is a symlink or junction, or lies inside one. The level
-    stays the row's, but the label is `LINK_LABEL`: wowlab never follows it
+    `link`: the path is a link (a symlink, a junction or another reparse
+    point that names another path), or lies inside one. The level stays the
+    row's, but the label is `LINK_LABEL`: wowlab never follows it
     or writes through it.
 
     `placeholder` (M13-32): the path is, or lies under, a Windows reparse
@@ -298,8 +301,8 @@ def verdict_of(
     """The verdict for `path` (relative to `base`, `/`-separated), classified
     as `entry`; `None` is a path with no file-map row. `folder`: the path is
     a folder (a row at level `folder` is one whatever the caller says).
-    `link`: the path is a symlink or junction, or lies inside one. The gate
-    refuses any path through a link and a snapshot never captures one, so
+    `link`: the path is a link (a symlink, a junction or another reparse
+    point that names another path), or lies inside one. The gate refuses any path through a link and a snapshot never captures one, so
     the words are the link words at every level (with the tier suffix).
     `placeholder` (M13-32): the path is, or lies under, a reparse point that
     is no link (`gate_refuses_stat` but not a name surrogate): the words are
