@@ -212,7 +212,7 @@ def test_a_name_surrogate_under_wtf_account_is_a_link_never_walked(
 
 
 @pytest.mark.parametrize("install", [False, True], ids=["tree", "tree-install"])
-def test_a_wsl_symlink_file_is_a_link(
+def test_a_wsl_symlink_file_is_a_link_constructed(
     root: Path, monkeypatch: pytest.MonkeyPatch, install: bool
 ) -> None:
     """Constructed: a SavedVariables file that is a WSL symlink is named as a
@@ -250,7 +250,7 @@ def test_a_link_at_the_top_of_the_flavor_folder_is_a_link_never_walked(
     }
 
 
-def test_a_link_at_the_top_has_one_item_in_text(
+def test_a_link_at_the_top_has_one_item_in_text_constructed(
     root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _fake(monkeypatch, [root / FLAVOR / "Extras"], MOUNT_POINT)
@@ -261,7 +261,7 @@ def test_a_link_at_the_top_has_one_item_in_text(
 
 
 @pytest.mark.parametrize("install", [False, True], ids=["tree", "tree-install"])
-def test_a_flavor_folder_that_is_a_wci_link_is_a_link_never_walked(
+def test_a_flavor_folder_that_is_a_wci_link_is_a_link_never_walked_constructed(
     root: Path, monkeypatch: pytest.MonkeyPatch, install: bool
 ) -> None:
     """Constructed: discovery takes a WCI link as a flavor folder (it is no
@@ -294,7 +294,7 @@ def test_a_flavor_folder_that_is_a_wci_link_is_a_link_never_walked(
         assert report["errors"] == [] and report["truncated"] is False
 
 
-def test_a_flavor_folder_that_is_a_link_says_so_in_text(
+def test_a_flavor_folder_that_is_a_link_says_so_in_text_constructed(
     root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _fake(monkeypatch, [root / FLAVOR], WCI_LINK)
