@@ -1233,7 +1233,7 @@ def _missing(path: Path, root: Path) -> bool:
             return True
         except OSError:
             return False
-        if _is_link(current, st) or _snapshot_link(st):
+        if is_link(current, st):
             return False
     return False
 
