@@ -1,0 +1,35 @@
+# TEMPORARY (M13-31): measurement runs on macos-latest; removed before review.
+name: m13-31-tmp
+
+on:
+  push:
+    branches: [m13/31-m10-04-probe-robustness]
+    paths: [".github/workflows/m13-31-tmp.yml", "scripts/m13_31_tmp/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  explore:
+    name: explore (${{ matrix.n }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        n: [1, 2, 3, 4, 5, 6, 7, 8]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.12.12"
+          enable-cache: true
+      - name: Install
+        run: uv sync --frozen
+      - name: explore before the parallel pass
+        run: uv run --frozen python scripts/m13_31_tmp/explore.py 3
+      - name: pytest lab/core/tests (parallel)
+        run: uv run --frozen pytest -q -n auto --dist worksteal -m "not live and not serial" lab/core/tests || true
+      - name: explore after the parallel pass
+        run: uv run --frozen python scripts/m13_31_tmp/explore.py 3
