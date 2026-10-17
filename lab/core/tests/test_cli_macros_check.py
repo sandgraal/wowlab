@@ -456,15 +456,22 @@ def test_ambiguous_record_is_cannot_judge_not_an_error_constructed(
 
 
 def test_ambiguous_record_on_a_case_sensitive_volume_constructed(flavor: Path) -> None:
+    """Two case variants and none spelled exactly WowLab.lua: `choose_lab_file`
+    has no single choice (the exact spelling, when present, would win)."""
     folder = flavor / CHAR_DIR / "SavedVariables"
-    _put_record(flavor)
-    twin = folder / "WOWLAB.lua"
-    twin.write_bytes(SCHEMA_3.read_bytes())
-    if len({p.name for p in folder.iterdir()}) < 2:
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in ("wowlab.lua", "WOWLAB.LUA"):
+        (folder / name).write_bytes(SCHEMA_3.read_bytes())
+    if len(list(folder.iterdir())) < 2:
         pytest.skip("this volume folds case: one file holds both names")
+    _put_macros(flavor, _macro(1, "Mac A", "/say " + "a" * 300))
     rep = report("--character", CHARACTER)
-    assert rep.record_error is not None
-    assert all(c.reason.endswith("was not read") for c in rep.cannot_judge[:2])
+    assert rep.record_error is not None and "none spelled exactly" in rep.record_error
+    assert [c.reason for c in rep.cannot_judge] == [
+        "no spellbook record: the WowLab.lua was not read",
+        "no spellbook record: the WowLab.lua was not read",
+    ]
+    assert _ids(rep, "length") == [_id(1)]  # the other rules still run
 
 
 # ─── the library ─────────────────────────────────────────────────────────────
