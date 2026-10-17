@@ -286,7 +286,9 @@ def _build(where: Path, layout: str) -> Tree:
     if shape in ("short", "at-limit"):
         for path in _files(tree.root).values():
             assert len(str(path)) <= LONGEST_PLAIN, f"{layout}: {path} is plain-openable"
-            if path != tree.target_path:
+            # Room for the gate's own names; the network layouts are only
+            # snapshotted and read, which create nothing in the install.
+            if path != tree.target_path and not unc:
                 spare = LONGEST_PLAIN - len(str(path.parent)) - 1
                 assert spare > ROOM, f"{layout}: room beside {path} for another name"
     return tree
