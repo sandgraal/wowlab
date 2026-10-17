@@ -105,9 +105,20 @@ def has_executable_part(rel: str) -> bool:
     return any(_is_executable(part) for part in rel.split("/"))
 
 
-def _gate_writes(rel: str) -> bool:
+def gate_names_but_for_executable(rel: str) -> bool:
+    """Whether `rel` (flavor-relative, `/`-separated) passes every rule of
+    the gate's file path check except the executable rule:
+    `guard._check_rel(rel, allow_executable=True)` returns instead of
+    raising. The gate's whole restore leaves an unchanged executable alone
+    only when this holds (`guard._unchanged_executable`)."""
+    return _gate_writes(rel, allow_executable=True)
+
+
+def _gate_writes(rel: str, *, allow_executable: bool = False) -> bool:
     """Whether the gate accepts `rel` (flavor-relative, `/`-separated) as a
-    file it may write: `guard._check_rel(rel)` returns instead of raising."""
+    file it may write: `guard._check_rel(rel)` returns instead of raising.
+    `allow_executable=True` skips only the executable rule, as the gate's
+    own `allow_executable` does."""
     if rel == "" or rel.startswith("/"):
         return False
     if any(c in _FORBIDDEN_CHARACTERS for c in rel):
@@ -126,7 +137,7 @@ def _gate_writes(rel: str) -> bool:
             return False
         if len(part.encode("utf-8", "surrogateescape")) > _MAX_NAME_BYTES:
             return False
-        if _is_executable(part):
+        if _is_executable(part) and not allow_executable:
             return False
     if parts[0] not in _ROOTS:
         return False

@@ -151,6 +151,7 @@ from wowlab_core import (
 from wowlab_core.filemap import FileMapEntry
 from wowlab_core.verdict import (
     Verdict,
+    gate_names_but_for_executable,
     gate_refuses_stat,
     has_executable_part,
     tier_words,
@@ -5422,15 +5423,27 @@ def _names_for_whole(
 
 def _unchanged(install_root: Path, folder: str, entry: snapshot.Entry) -> bool:
     """Whether a link or executable `entry` is one the gate's whole restore
-    leaves alone: a link with the entry's target, or a regular file with the
-    entry's bytes and permission bits (`guard._unchanged_executable`). Reads
-    only, following no link (`profiles.disk_state`, then an `lstat`)."""
+    leaves alone: a link with the entry's target, or a file the gate would
+    accept but for being an executable (`verdict`'s copy of its name rules),
+    spelled on disk exactly as in the snapshot (every part, case included,
+    is in its folder's listing), and a regular file with the entry's bytes
+    and permission bits (`guard._unchanged_executable`). Anything else is
+    named, so the gate refuses it as a whole restore does. Reads only,
+    following no link (`profiles.disk_state`, listings, then an `lstat`)."""
     if profiles.disk_state(install_root, folder, entry) != "same":
         return False
     if entry.kind != "file":
         return True
+    rel = entry.path.removeprefix(folder + "/")
+    if not gate_names_but_for_executable(rel):
+        return False
+    parent = install_root / folder
     try:
-        st = install_root.joinpath(*entry.path.split("/")).lstat()
+        for part in rel.split("/"):
+            if part not in {child.name for child in parent.iterdir()}:
+                return False  # spelled otherwise on disk (case): the gate refuses it
+            parent = parent / part
+        st = parent.lstat()
     except OSError:
         return False
     return stat.S_ISREG(st.st_mode) and stat.S_IMODE(st.st_mode) == entry.mode
