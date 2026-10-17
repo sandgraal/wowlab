@@ -15,6 +15,10 @@ command exits 3 and nothing is skipped or restored.
 Positive control: the same flow with a changed `.DS_Store` in the same addon
 folder (row `os-metadata`, Edit `no`) is skipped and the `.toc` restored.
 Nothing reads or writes a real install.
+
+Conductor, 2026-10-17: the fix belongs to M13-38 (after M13-30's by-name
+restore lands), so the defect test carries that ticket's strict xfail marker
+and is its grader. M13-38 activates it by deleting the marker line only.
 """
 
 from __future__ import annotations
@@ -78,6 +82,7 @@ def test_positive_control_os_metadata_in_an_addon_is_skipped_constructed(flavor:
     _whole_restore_skips(flavor, ".DS_Store", "os-metadata")
 
 
+@pytest.mark.xfail(strict=True, reason="M13-38 not implemented")
 def test_a_changed_addon_executable_is_skipped_by_a_whole_restore_constructed(
     flavor: Path,
 ) -> None:
