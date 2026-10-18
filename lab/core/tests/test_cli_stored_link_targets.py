@@ -134,7 +134,7 @@ def _linked(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
 
     def readlink(path: str | os.PathLike[str]) -> Path:
         text = answers.get(os.path.normcase(os.fspath(path)))
-        return Path(text) if text is not None and not longpath.ON_WINDOWS else real(path)
+        return Path(text) if text is not None else real(path)
 
     monkeypatch.setattr(longpath, "readlink", readlink)
 
@@ -209,7 +209,8 @@ def test_profile_save_and_show_print_a_stored_target_plain_on_windows_constructe
     `snap show` does."""
     _linked(root, tmp_path, monkeypatch)
     saved = ok("profile", "save", "linked", "--subtree", ADDON_LINK).stdout.splitlines()
-    assert _link_line(ADDON_LINK, DRIVE_RAW) in saved, "taken off Windows: as stored"
+    on_this_host = DRIVE_SHOWN if longpath.ON_WINDOWS else DRIVE_RAW
+    assert _link_line(ADDON_LINK, on_this_host) in saved, "as this platform shows it"
     report = cli.ProfileReport.model_validate_json(ok("profile", "show", "linked", "--json").stdout)
     assert [e.target for e in report.entries if e.kind == "symlink"] == [DRIVE_RAW]
     _windows(monkeypatch, True)
