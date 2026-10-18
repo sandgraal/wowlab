@@ -443,3 +443,29 @@ def test_constructed_guard_takes_a_posix_flavor_spelled_with_a_double_slash(
     assert not record.flavor_path.startswith("//")
     guard.undo(store=store)
     assert config.read_bytes() == original
+
+
+UNREACHABLE = "\\\\wowlab-nonexistent.invalid\\share\\World of Warcraft\\" + FLAVOR
+
+
+@WINDOWS
+@pytest.mark.parametrize(
+    "flavor",
+    [
+        pytest.param(UNREACHABLE, id="constructed-unc"),
+        pytest.param(longpath.extended_text(UNREACHABLE, limit=0), id="constructed-extended-unc"),
+    ],
+)
+def test_constructed_guard_refuses_an_unreachable_network_flavor_before_any_lookup(
+    store: Path, flavor: str
+) -> None:
+    """Never skips: a network flavor on a server that does not exist is
+    refused on enter as not a local absolute path, with nothing journaled.
+    The refusal comes before any lookup: one made after an `lstat` or a
+    `resolve` would be a different error, or a wait on the network."""
+    with (
+        pytest.raises(guard.GuardError, match="not a local absolute path"),
+        guard.transaction(_Flavor(Path(flavor)), label="unreachable", store=store) as tx,
+    ):
+        tx.write(CONFIG, b"never")
+    assert guard.history(store=store) == ()
