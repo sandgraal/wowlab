@@ -21,10 +21,14 @@ reached through the explicit root or the environment variable only.
 A directory is an install if it holds a readable, regular file
 `.build.info`. A flavor is a child directory whose name starts and ends with
 `_` and which holds a regular file `.flavor.info`. A child named `_*_`
-without a regular `.flavor.info`, or one that is a symlink, or whose
-`.flavor.info` is a symlink, is not a flavor; its name is listed in
-`other_dirs` (a regular file of that name is ignored). Symlinks are not
-followed, whether the folder or its `.flavor.info`. The flavor's product code comes
+without a regular `.flavor.info`, or one that is a link, or whose
+`.flavor.info` is a link, is not a flavor; its name is listed in
+`other_dirs` (a regular file of that name is ignored). A link is what
+`is_link` says, the one link test of `layout`, `tree`, `filemap gaps` and
+`explain` (M13-35, M13-37): a symlink, a junction, or any other Windows
+reparse point that names another path (a WCI link, a WSL symlink). Links are
+not followed, whether the folder or its `.flavor.info`: nothing is listed or
+read through one. The flavor's product code comes
 from `.flavor.info` and is joined to the `.build.info` row with the same
 `Product`. Discovery never raises on a partial install: a flavor with no
 matching row, or with an unreadable `.flavor.info`, is returned with
@@ -50,6 +54,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from wowlab_core.snapshot import _is_link_stat as _snapshot_link
+
 __all__ = [
     "BUILD_INFO",
     "ENV_ROOT",
@@ -63,6 +69,7 @@ __all__ = [
     "NotAnInstallError",
     "default_roots",
     "discover",
+    "is_link",
     "parse_build_info",
     "parse_flavor_info",
     "read_install",
@@ -267,8 +274,8 @@ class Install(BaseModel):
     # folder exists or is complete; see `flavors`.
     products: tuple[BuildInfoRow, ...]
     # Children named `_*_` that are not flavors (no regular .flavor.info, a
-    # symlinked .flavor.info, or a symlinked folder; symlinks are not
-    # followed), sorted.
+    # .flavor.info that is a link, or a folder that is a link, by `is_link`;
+    # links are not followed), sorted.
     other_dirs: tuple[str, ...]
     raw_build_info: bytes  # the file, byte for byte (L4)
     # True when .build.info or any .flavor.info had bytes that are not UTF-8;
@@ -421,12 +428,32 @@ def _as_path(value: Path | str) -> Path:
     return Path(value).expanduser().absolute()
 
 
-def _is_regular(path: Path) -> bool:
-    """A regular file, not reached through a symlink at the last component."""
+def is_link(path: Path, st: os.stat_result) -> bool:
+    """A link that is never followed: a symlink, a junction, or a Windows
+    reparse point with the name-surrogate bit (a reparse point that names
+    another path, such as a WCI link or a WSL symlink), the rule `snapshot`
+    uses (`snapshot._is_link_stat`). `st` is `path`'s `lstat`. The one link
+    test of discovery, the inventory walk, `tree`, `filemap gaps` and
+    `explain` (`layout.is_link` and `gaps.is_link` are this function;
+    M13-35, M13-37). Other reparse points (OneDrive cloud placeholders,
+    deduplicated files) hold real content and are walked, as discovery and
+    `layout` take them (M13-04: an install under OneDrive is reported, never
+    refused)."""
+    if _snapshot_link(st):
+        return True
     try:
-        return stat.S_ISREG(path.lstat().st_mode)
+        return path.is_junction()
     except OSError:
         return False
+
+
+def _is_regular(path: Path) -> bool:
+    """A regular file that is no link at the last component (`is_link`)."""
+    try:
+        st = path.lstat()
+    except OSError:
+        return False
+    return stat.S_ISREG(st.st_mode) and not is_link(path, st)
 
 
 def _flavor_folder_hint(root: Path) -> str:
@@ -560,12 +587,11 @@ def _match_row(matches: Sequence[BuildInfoRow]) -> BuildInfoRow | None:
     return next((r for r in matches if r.is_active), matches[0])
 
 
-def _is_link(path: Path) -> bool:
-    return path.is_symlink() or path.is_junction()
-
-
 def _scan_children(root: Path) -> tuple[list[Path], list[str]]:
-    """(flavor directories, names of other `_*_` directories or symlinks)."""
+    """(flavor directories, names of other `_*_` directories or links).
+
+    A child is judged by its `lstat` alone (`is_link`): a link is named and
+    never followed, whatever it points at, so nothing under it is read."""
     try:
         children = list(root.iterdir())
     except OSError:
@@ -577,15 +603,19 @@ def _scan_children(root: Path) -> tuple[list[Path], list[str]]:
         if len(name) < 2 or not (name.startswith("_") and name.endswith("_")):
             continue
         try:
-            if _is_link(child):
-                others.append(name)
-            elif child.is_dir():
-                if _is_regular(child / FLAVOR_INFO):
-                    flavors.append(child)
-                else:
-                    others.append(name)
+            st = child.lstat()
+        except (FileNotFoundError, NotADirectoryError):
+            continue  # gone since the listing: not there, so not named
         except OSError:
+            others.append(name)  # refused: named, as it could not be checked
+            continue
+        if is_link(child, st):
             others.append(name)
+        elif stat.S_ISDIR(st.st_mode):
+            if _is_regular(child / FLAVOR_INFO):
+                flavors.append(child)
+            else:
+                others.append(name)
     return flavors, sorted(others)
 
 
