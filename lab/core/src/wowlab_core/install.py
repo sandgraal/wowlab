@@ -22,7 +22,7 @@ A directory is an install if it holds a readable, regular file
 `.build.info`. A flavor is a child directory whose name starts and ends with
 `_` and which holds a regular file `.flavor.info`. A child named `_*_`
 without a regular `.flavor.info`, or one that is a link, or whose
-`.flavor.info` is a link, is not a flavor; its name is listed in
+`.flavor.info` is a link, is not taken as a flavor; its name is listed in
 `other_dirs` (a regular file of that name is ignored), and with the reason
 it was not taken in `not_taken` (M13-45). A link is what
 `is_link` says, the one link test of `layout`, `tree`, `filemap gaps` and
@@ -71,6 +71,7 @@ __all__ = [
     "NOT_A_FLAVOR_LINK",
     "NOT_A_FLAVOR_UNCHECKED",
     "NOT_TAKEN_LINK",
+    "NO_READABLE_FLAVOR",
     "BuildInfo",
     "BuildInfoRow",
     "Flavor",
@@ -81,6 +82,7 @@ __all__ = [
     "NotTaken",
     "default_roots",
     "discover",
+    "folder_note",
     "is_link",
     "not_taken_why",
     "parse_build_info",
@@ -132,19 +134,26 @@ Reason = Literal["missing", "not_regular", "unreadable"]
 # link: the file that took its place may be a regular file.
 NotTakenReason = Literal["link", "no_flavor_info", "not_checked", "flavor_info_changed"]
 
-# The words for each reason, shown by `doctor`, `install show`, `tree
-# --install`, `filemap gaps`, `explain` and the `--flavor` lookups alike
-# (`gaps` re-exports the first two). Worded "not taken", never "is not a
-# flavor": the client plays from a linked flavor folder as from a real one;
-# only wowlab declines to read through the link (M13-37 review, M13-45).
+# The words for each reason (`NotTaken.note`), shown by `doctor`, `install
+# show`, `explain`, the first run and the `--flavor` lookups; `tree
+# --install` and `filemap gaps` give a link `NOT_A_FLAVOR_LINK` after their
+# own link words, and a folder its note (`folder_note`). `gaps` re-exports
+# the first two. Worded "not taken", never "is not a flavor": the client
+# reads through a linked flavor folder like a folder; only wowlab declines to
+# (M13-37 review, M13-45).
 NOT_A_FLAVOR = "not taken as a flavor folder (no regular .flavor.info file)"
 # For a link: no reason in brackets, since every place it is shown already
 # says the entry is a link that is not followed (M13-37 review).
 NOT_A_FLAVOR_LINK = "not taken as a flavor folder"
 NOT_A_FLAVOR_UNCHECKED = "not taken as a flavor folder (it could not be checked)"
-NOT_A_FLAVOR_CHANGED = "not taken as a flavor folder (its .flavor.info changed as it was read)"
+NOT_A_FLAVOR_CHANGED = (
+    "not taken as a flavor folder (its .flavor.info changed as it was read; run the command again)"
+)
 # Said wherever a linked `_*_` folder is the reason a flavor is missing.
 NOT_TAKEN_LINK = "wowlab reads a flavor only from a real folder in the install"
+# "<root> has no flavor folders" is literally false of an install whose
+# `_retail_` is a junction; with a folder in `not_taken` this is said instead.
+NO_READABLE_FLAVOR = "has no flavor folder wowlab can read (a real folder named _..._ holding a regular .flavor.info)"
 
 
 # ─── errors ──────────────────────────────────────────────────────────────────
@@ -311,30 +320,41 @@ class NotTaken(BaseModel):
 def not_taken_why(entry: NotTaken) -> str:
     """The reason alone, without "not taken as a flavor folder": "link to
     <target>, not followed" (or "link (where it points is unknown), not
-    followed"), "no regular .flavor.info file", "it could not be checked",
-    "its .flavor.info changed as it was read"."""
-    return _why(entry.reason, entry.target)
-
-
-def _why(reason: NotTakenReason, target: str | None) -> str:
-    if reason == "link":
-        to = f" to {target}" if target is not None else " (where it points is unknown)"
+    followed"); for any other reason, what the note says in brackets ("no
+    regular .flavor.info file", "it could not be checked: <error>", "its
+    .flavor.info changed as it was read; run the command again")."""
+    if entry.reason == "link":
+        to = f" to {entry.target}" if entry.target is not None else " (where it points is unknown)"
         return f"link{to}, not followed"
-    if reason == "no_flavor_info":
-        return "no regular .flavor.info file"
-    if reason == "flavor_info_changed":
-        return "its .flavor.info changed as it was read"
-    return "it could not be checked"
+    return entry.note.removeprefix(f"{NOT_A_FLAVOR_LINK} (").removesuffix(")")
 
 
-def _not_taken(name: str, reason: NotTakenReason, target: str | None = None) -> NotTaken:
-    notes = {
-        "no_flavor_info": NOT_A_FLAVOR,
-        "not_checked": NOT_A_FLAVOR_UNCHECKED,
-        "flavor_info_changed": NOT_A_FLAVOR_CHANGED,
-    }
-    note = f"{_why(reason, target)}; {NOT_A_FLAVOR_LINK}" if reason == "link" else notes[reason]
+def _not_taken(
+    name: str, reason: NotTakenReason, target: str | None = None, error: str | None = None
+) -> NotTaken:
+    """The entry with its note. `error`: the operating system's words for a
+    refused `lstat` (`not_checked`), added to its note."""
+    if reason == "link":
+        why = not_taken_why(NotTaken(name=name, reason=reason, target=target, note=""))
+        note = f"{why}; {NOT_A_FLAVOR_LINK}"
+    elif reason == "not_checked" and error:
+        note = f"{NOT_A_FLAVOR_LINK} (it could not be checked: {error})"
+    else:
+        notes = {
+            "no_flavor_info": NOT_A_FLAVOR,
+            "not_checked": NOT_A_FLAVOR_UNCHECKED,
+            "flavor_info_changed": NOT_A_FLAVOR_CHANGED,
+        }
+        note = notes[reason]
     return NotTaken(name=name, reason=reason, target=target, note=note)
+
+
+def folder_note(inst: Install, name: str) -> str:
+    """The note `tree --install` and `filemap gaps` give a folder (not a
+    link) of `other_dirs`: its `not_taken` note, unless discovery saw a link
+    there, or the model carries no reasons; then `NOT_A_FLAVOR`."""
+    entry = next((n for n in inst.not_taken if n.name == name), None)
+    return entry.note if entry is not None and entry.reason != "link" else NOT_A_FLAVOR
 
 
 class Install(BaseModel):
@@ -352,7 +372,7 @@ class Install(BaseModel):
     # `.build.info` rows in file order. A row does not show that its flavor
     # folder exists or is complete; see `flavors`.
     products: tuple[BuildInfoRow, ...]
-    # Children named `_*_` that are not flavors (no regular .flavor.info, a
+    # Children named `_*_` not taken as flavors (no regular .flavor.info, a
     # .flavor.info that is a link, or a folder that is a link, by `is_link`;
     # links are not followed), sorted.
     other_dirs: tuple[str, ...]
@@ -748,9 +768,9 @@ def _scan_children(root: Path) -> tuple[list[Path], list[NotTaken]]:
             st = longpath.lstat(child)
         except (FileNotFoundError, NotADirectoryError):
             continue  # gone since the listing: not there, so not named
-        except OSError:
+        except OSError as exc:
             # refused: named, as it could not be checked
-            others.append(_not_taken(name, "not_checked"))
+            others.append(_not_taken(name, "not_checked", error=exc.strerror or str(exc)))
             continue
         if is_link(child, st):
             others.append(_not_taken(name, "link", _link_text(child)))

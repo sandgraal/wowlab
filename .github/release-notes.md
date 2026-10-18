@@ -41,4 +41,4 @@ The wheel, the sdist and `SHA256SUMS` are attached below. Download them into one
 
 Scripts that read `wowlab … --json` depend on the models behind it. A release that changes a model's shape lists here each model, what changed, and what a script reading it has to do (ADR-0031).
 
-_None listed._
+- `Install` (`install show --json`), `DoctorReport` (`doctor --json`) and `ExplainReport` (`explain --json`) gain `not_taken` (M13-45): for each folder named `_..._` that was not taken as a flavor, `{name, reason, target, note}`, where `reason` is `link`, `no_flavor_info`, `not_checked` or `flavor_info_changed`, `target` is a link's text (or null) and `note` is the reason in the words the text output prints. It is a list in `Install` and `DoctorReport`, and in `ExplainReport` the one entry the path's first part names. It is left out when empty (or none), so an install with no such folder prints the same JSON as before. `other_dirs` is unchanged; a script needs no change.

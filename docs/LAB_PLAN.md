@@ -235,42 +235,56 @@ reparse point without that bit (a cloud placeholder) is taken as before.
 
 *Amended 2026-10-17 (M13-45):* **`Install.not_taken`** names the folders of
 `other_dirs`, in the same order, each as a `NotTaken` with why it was not
-taken as a flavor folder: `name`; `reason`, one of `link` (the folder is a
+taken as a flavor folder. `name`. `reason`, one of `link` (the folder is a
 link by `is_link`, never followed), `no_flavor_info` (no regular
-`.flavor.info`, which covers one that is a link), `not_checked` (its
-`lstat` was refused) or `flavor_info_changed` (its `.flavor.info` was regular
-at the scan and was refused at the read, M13-46: it became a link or no
-longer a regular file, or another file took its place; never worded as a
-link, since that file may be regular); `target`, a link's text as stored when it can be read
-(read from the link itself with `readlink`, never through it, and on
+`.flavor.info`, which covers one that is a link), `not_checked` (its `lstat`
+was refused) or `flavor_info_changed` (its `.flavor.info` was regular at the
+scan and was refused at the read, M13-46: it became a link or no longer a
+regular file, or another file took its place; never worded as a link, since
+that file may be regular). `target`, a link's text as stored when it can be
+read (read from the link itself with `readlink`, never through it, and on
 Windows spelled without the extended-length prefix as `tree` spells it,
-M13-43; None for a WCI link or a WSL symlink, and for every other reason); and `note`, the reason
-in the words every command prints: `install.NOT_A_FLAVOR` ("not taken as a
-flavor folder (no regular .flavor.info file)"), "link to <target>, not
-followed; " or "link (where it points is unknown), not followed; " followed
-by `install.NOT_A_FLAVOR_LINK` ("not taken as a flavor folder"), or
-`install.NOT_A_FLAVOR_UNCHECKED` ("not taken as a flavor folder (it could not
-be checked)"), or `install.NOT_A_FLAVOR_CHANGED` ("not taken as a flavor
-folder (its .flavor.info changed as it was read)"). The first two constants moved from `gaps`, which re-exports
-them unchanged. `other_dirs` stays, for scripts that read it. The field is
-left out of the JSON when it is empty and reads back as empty, so the JSON
-of an install with no such folder is byte for byte what it was; `doctor
---json` carries the same list as `not_taken` (redacted under `--redact`:
-`reason` as is, the rest replaced), and `explain --json` carries the one
-entry a path's first part names as `not_taken`, left out when there is
-none. The words say "not taken", never "is not a flavor": the client plays
-from a linked flavor folder as from a real one, and only wowlab declines to
-read through the link. `doctor` and `install show` print "Folders named
-_..._ not taken as flavors:" and one line per folder, `<name>: <note>`; a
-`--flavor` that names such a folder is answered with its note (and, for a
-link, "wowlab reads a flavor only from a real folder in the install",
-`install.NOT_TAKEN_LINK`) instead of "no flavor folder"; the refusal of a
-command that needs a flavor when there is none adds "not taken: <name>
-(<reason>), ..."; the first run says a linked folder is not followed, that
-nothing in it is snapshotted, and to back up the folder it points to; and
-`explain` of a link, or of a path inside one, prints the verdict's words
-first, then the `<name>: <note>` line when the path starts with such a
-folder.
+M13-43; None for a WCI link or a WSL symlink, and for every other reason).
+`note`, the reason in the words the commands print:
+`install.NOT_A_FLAVOR` ("not taken as a flavor folder (no regular
+.flavor.info file)"); "link to <target>, not followed; " or "link (where it
+points is unknown), not followed; " followed by `install.NOT_A_FLAVOR_LINK`
+("not taken as a flavor folder"); "not taken as a flavor folder (it could
+not be checked: <the operating system's words>)" (`NOT_A_FLAVOR_UNCHECKED`
+without them); or `install.NOT_A_FLAVOR_CHANGED` ("not taken as a flavor
+folder (its .flavor.info changed as it was read; run the command again)").
+The first two constants moved from `gaps`, which re-exports them unchanged.
+`other_dirs` stays, for scripts that read it. The field is left out of the
+JSON when it is empty and reads back as empty, so the JSON of an install with
+no such folder is byte for byte what it was (`Field(exclude_if=...)`, which
+needs pydantic 2.12, so the floor is `pydantic>=2.12`). `doctor --json`
+carries the same list as `not_taken` (redacted under `--redact`: `reason` as
+is, the rest replaced), and `explain --json` carries the one entry a path's
+first part names as `not_taken`, left out when there is none.
+
+The words say "not taken", never "is not a flavor": the client reads through
+a linked flavor folder like a folder, and only wowlab declines to. `doctor`
+and `install show` print "Folders named _..._ not taken as flavors:" and one
+line per folder, `<name>: <note>`. `tree --install` and `filemap gaps` give
+a folder its own note (`install.folder_note`; `NOT_A_FLAVOR` was given to
+every folder before) and a link `NOT_A_FLAVOR_LINK` after their link words,
+as before. A `--flavor` that names such a folder is answered with its note
+(and, for a link, `install.NOT_TAKEN_LINK`, "wowlab reads a flavor only
+from a real folder in the install"), then "; flavors found: ...", instead of
+"no flavor folder". When there is no flavor and `not_taken` is not empty,
+"<root> has no flavor folders" (literally false of a junctioned `_retail_`)
+becomes "<root> has no flavor folder wowlab can read (a real folder named
+_..._ holding a regular .flavor.info)" (`install.NO_READABLE_FLAVOR`) in the
+refusal of a command that needs a flavor, which then adds "not taken: <name>
+(<reason>), ...", in the first run, and in `doctor`'s `problems`; with
+`not_taken` empty the old words stay. The first run says a linked folder is
+not followed, that its WTF (settings and SavedVariables), Interface and
+Fonts are not snapshotted, and to back up the folder it points to.
+`explain` reads a relative path whose first part is such a folder at the
+install root, not in the one flavor folder (M13-29 reads it there
+otherwise); a link there, or a path inside one, prints the verdict's words
+first, and any path under such a folder then prints `<name>: <note>`. Every
+other link prints as before.
 
 ### 6.2 `layout` — typed walk of a flavor (M10-06)
 

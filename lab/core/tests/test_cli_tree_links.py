@@ -310,7 +310,7 @@ def test_a_flavor_folder_that_is_a_link_is_no_flavor_and_never_walked(
     ]
     result = CliRunner().invoke(cli.app, ["tree", "--root", str(root)])
     assert result.exit_code != 0
-    assert "has no flavor folders" in result.stderr
+    assert "has no flavor folder wowlab can read" in result.stderr  # M13-45
 
 
 @pytest.mark.parametrize("install", [False, True], ids=["tree", "tree-install"])

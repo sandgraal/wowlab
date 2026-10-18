@@ -823,15 +823,13 @@ def _not_taken_named(inst: install.Install, name: str) -> install.NotTaken | Non
 def _no_flavors(inst: install.Install) -> str:
     """Why there is no flavor to read (M13-45): the folders named `_..._`
     that were not taken, each with its reason, when there are any."""
-    words = (
-        f"{inst.root} has no flavor folders (a folder named _..._ holding {install.FLAVOR_INFO})"
+    if not inst.not_taken:
+        return f"{inst.root} has no flavor folders (a folder named _..._ holding {install.FLAVOR_INFO})"
+    words = f"{inst.root} {install.NO_READABLE_FLAVOR}; not taken: " + ", ".join(
+        f"{n.name} ({install.not_taken_why(n)})" for n in inst.not_taken
     )
-    if inst.not_taken:
-        words += "; not taken: " + ", ".join(
-            f"{n.name} ({install.not_taken_why(n)})" for n in inst.not_taken
-        )
-        if any(n.reason == "link" for n in inst.not_taken):
-            words += f"; {install.NOT_TAKEN_LINK}"
+    if any(n.reason == "link" for n in inst.not_taken):
+        words += f"; {install.NOT_TAKEN_LINK}"
     return words
 
 
@@ -861,8 +859,8 @@ def _select_flavor(inst: install.Install, name: str | None) -> install.Flavor:
             # M13-45: the folder is there; say why it was not taken.
             tail = f"; {install.NOT_TAKEN_LINK}" if missed.reason == "link" else ""
             raise CliError(
-                f"{missed.name!r} in {inst.root}: {missed.note}{tail} "
-                f"(flavors found: {_flavor_list(inst)})",
+                f"{missed.name!r} in {inst.root}: {missed.note}{tail}; "
+                f"flavors found: {_flavor_list(inst)}",
                 EXIT_USAGE,
             )
         raise CliError(
@@ -1284,7 +1282,11 @@ def _doctor(
                 )
             )
         if not inst.flavors:
-            problems.append(f"{inst.root} has no flavor folders")
+            problems.append(
+                f"{inst.root} {install.NO_READABLE_FLAVOR}"
+                if inst.not_taken
+                else f"{inst.root} has no flavor folders"
+            )
         client = _client_report(inst)
 
     store = _store_report()
@@ -2097,7 +2099,7 @@ def _root_items(inst: install.Install, errors: list[str]) -> list[TreeItem]:
         elif folder and e.name in flavors:
             note = "flavor folder"
         elif folder and e.name in inst.other_dirs:
-            note = gaps.NOT_A_FLAVOR
+            note = install.folder_note(inst, e.name)  # M13-45: its own reason
         items.append(
             TreeItem(
                 path=found.path,
@@ -2841,7 +2843,15 @@ def explain(
     else:
         relative = True
         result = layout.classify(path, inst)
-        if isinstance(result, layout.Unclassified) and (flavor or len(inst.flavors) == 1):
+        # M13-45: a path under a `_..._` folder discovery did not take stays
+        # at the install root, where that folder is; it is not re-read in a
+        # flavor folder.
+        at_root = _not_taken_at(inst, result) is not None
+        if (
+            isinstance(result, layout.Unclassified)
+            and (flavor or len(inst.flavors) == 1)
+            and not at_root
+        ):
             chosen = _select_flavor(inst, flavor)
             chosen_folder = chosen.folder
             in_flavor = layout.Layout.for_flavor(chosen, inst.root).classify(path)
@@ -2917,9 +2927,10 @@ def explain(
             # M13-29: what is (not) there first, then what the map says.
             _say(f"{path}{where}: {layout.NOT_FOUND}")
             _say(f"  {result.reason.removeprefix(layout.NOT_FOUND + ', and ')}")
-        elif verdict.link:
-            # M13-45: a link, or a path inside one, says so first, as the
-            # verdict `--json` carries does.
+        elif verdict.link and taken is not None:
+            # M13-45: a link not taken as a flavor folder, or a path inside
+            # one, says so first, as the verdict `--json` carries does. Any
+            # other link prints as before.
             _say(f"{path}{where}: {verdict.words}")
         else:
             _say(f"{path}: no file-map row{where}: {result.reason}")

@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import os
 import stat
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -59,7 +60,7 @@ from wowlab_core import filemap as _filemap
 # missing, is not a regular file, or (`NOT_A_FLAVOR_LINK`) the folder itself
 # is a link. Defined in `install` since M13-45, where each entry of
 # `Install.not_taken` carries the same words.
-from wowlab_core.install import NOT_A_FLAVOR, NOT_A_FLAVOR_LINK, Install
+from wowlab_core.install import NOT_A_FLAVOR, NOT_A_FLAVOR_LINK, Install, folder_note
 
 # `is_link`: the one link test of discovery, the inventory walk, `tree` and
 # `explain`, defined in `install`, re-exported by `layout` (which this module
@@ -119,7 +120,9 @@ class GapGroup(_Model):
     kind: GapKind
     # In `catch_all`: the catch-all row that matches these places; None in `groups`.
     entry_id: str | None
-    note: str | None  # NOT_A_FLAVOR or NOT_A_FLAVOR_LINK
+    # NOT_A_FLAVOR_LINK for a link, else the folder's `Install.not_taken`
+    # note (`install.folder_note`, M13-45)
+    note: str | None
     places: int
     files: int
     bytes: int
@@ -284,7 +287,7 @@ def _reported(place: _Place, catch_all: bool) -> bool:
     return bool(place.files or place.links or place.other)
 
 
-def _groups(found: _Found, *, catch_all: bool, other_dirs: set[str]) -> list[GapGroup]:
+def _groups(found: _Found, *, catch_all: bool, other_dirs: Mapping[str, str]) -> list[GapGroup]:
     out = []
     for (base, parent_entry, name, kind, entry_id), places in found.places.items():
         kept = sorted(
@@ -302,7 +305,7 @@ def _groups(found: _Found, *, catch_all: bool, other_dirs: set[str]) -> list[Gap
                 kind=kind,
                 entry_id=entry_id,
                 note=(
-                    (NOT_A_FLAVOR_LINK if kind == "link" else NOT_A_FLAVOR)
+                    (NOT_A_FLAVOR_LINK if kind == "link" else other_dirs[name])
                     if at_root and name in other_dirs
                     else None
                 ),
@@ -410,7 +413,8 @@ def find_gaps(install: Install, limits: Limits | None = None) -> GapReport:
             continue
         stack.extend(reversed(below))
 
-    other_dirs = set(install.other_dirs)
+    # M13-45: a folder's note is its own reason (`install.folder_note`).
+    other_dirs = {name: folder_note(install, name) for name in install.other_dirs}
     groups = _groups(gaps, catch_all=False, other_dirs=other_dirs)
     catch_all = _groups(loose, catch_all=True, other_dirs=other_dirs)
     return GapReport(

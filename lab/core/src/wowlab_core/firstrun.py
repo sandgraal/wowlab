@@ -372,7 +372,8 @@ def not_taken_lines(inst: install.Install) -> list[str]:
     for n in inst.not_taken:
         if n.reason == "link":
             lines.append(
-                f"  {n.name} is a {install.not_taken_why(n)}, so nothing in it is snapshotted: "
+                f"  {n.name} is a {install.not_taken_why(n)}, so its WTF (settings and "
+                "SavedVariables), Interface and Fonts are not snapshotted: "
                 f"{install.NOT_TAKEN_LINK}. Back up the folder it points to yourself."
             )
         else:
@@ -885,7 +886,8 @@ def run(
     if inst is None:
         return report("no_install")
     if not inst.flavors:
-        say(f"{inst.root} has no flavor folders, so there is nothing to snapshot yet.")
+        opening = install.NO_READABLE_FLAVOR if inst.not_taken else "has no flavor folders"
+        say(f"{inst.root} {opening}, so there is nothing to snapshot yet.")
         for line in not_taken_lines(inst):
             say(line)
         return report("no_flavors")

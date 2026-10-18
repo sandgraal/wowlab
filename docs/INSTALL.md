@@ -194,7 +194,8 @@ would.
   settings and SavedVariables are not in the snapshot, and to back up the
   folder it points to yourself. The same holds for a flavor folder: a
   `_retail_` (or any `_..._` folder) that is a symlink or a junction is not
-  followed and not taken as a flavor, even though the game plays from it.
+  followed and not taken as a flavor, even though the game reads through it
+  like a folder.
   `wowlab doctor` and `wowlab install show` name it with where it points;
   nothing in it is read or snapshotted, so back up the folder it points to
   yourself. An install folder you reach through a link (the path you pass

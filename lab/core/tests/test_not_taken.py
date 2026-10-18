@@ -158,9 +158,10 @@ def test_a_refused_lstat_could_not_be_checked_constructed(
             name="_racing_",
             reason="not_checked",
             target=None,
-            note=install.NOT_A_FLAVOR_UNCHECKED,
+            note="not taken as a flavor folder (it could not be checked: refused)",
         ),
     )
+    assert install.not_taken_why(got.not_taken[0]) == "it could not be checked: refused"
 
 
 def test_an_install_with_no_such_folder_prints_its_json_as_before(tmp_path: Path) -> None:
@@ -205,9 +206,19 @@ def test_a_flavor_lookup_of_a_linked_folder_says_it_is_a_link(tmp_path: Path) ->
 
     assert result.stderr == (
         f"wowlab: {LINKED!r} in {root}: {_link_note(target)}; "
-        f"{install.NOT_TAKEN_LINK} (flavors found: {FLAVOR})\n"
+        f"{install.NOT_TAKEN_LINK}; flavors found: {FLAVOR}\n"
     )
     assert "no flavor folder" not in result.stderr
+    # A folder with no .flavor.info: its own note, one bracketed group.
+    root2 = tmp_path / "second"
+    root2.mkdir()
+    shutil.copy2(CAPTURE / ".build.info", root2 / ".build.info")
+    shutil.copytree(CAPTURE / "forever", root2 / FLAVOR)
+    (root2 / EMPTY).mkdir()
+    empty = _run("sv", "list", "--root", str(root2), "--flavor", EMPTY, code=2)
+    assert empty.stderr == (
+        f"wowlab: {EMPTY!r} in {root2}: {gaps.NOT_A_FLAVOR}; flavors found: {FLAVOR}\n"
+    )
     # A name that is nowhere is still "no flavor folder".
     absent = _run("sv", "list", "--root", str(root), "--flavor", "_absent_", code=2)
     assert "no flavor folder '_absent_'" in absent.stderr
@@ -222,7 +233,8 @@ def test_no_flavor_folders_names_what_was_not_taken(
     result = _run(*command, "--root", str(root), code=1)
 
     assert result.stderr == (
-        f"wowlab: {root} has no flavor folders (a folder named _..._ holding .flavor.info); "
+        f"wowlab: {root} has no flavor folder wowlab can read (a real folder named _..._ "
+        "holding a regular .flavor.info); "
         f"not taken: {EMPTY} (no regular .flavor.info file), "
         f"{LINKED} (link to {target}, not followed); {install.NOT_TAKEN_LINK}\n"
     )
@@ -266,24 +278,47 @@ def test_the_first_run_says_a_linked_flavor_folder_is_not_snapshotted(tmp_path: 
     root, target = _install(tmp_path, real=False)
 
     result = _run("doctor", "--offline", "--root", str(root), code=1)
+    data = json.loads(_run("doctor", "--offline", "--json", "--root", str(root), code=1).stdout)
 
     assert (
-        f"{root} has no flavor folders, so there is nothing to snapshot yet.\n"
-        f"  {LINKED} is a link to {target}, not followed, so nothing in it is snapshotted: "
+        f"{root} {install.NO_READABLE_FLAVOR}, so there is nothing to snapshot yet.\n"
+        f"  {LINKED} is a link to {target}, not followed, so its WTF (settings and "
+        f"SavedVariables), Interface and Fonts are not snapshotted: "
         f"{install.NOT_TAKEN_LINK}. Back up the folder it points to yourself.\n"
     ) in result.stdout
+    assert f"{root} {install.NO_READABLE_FLAVOR}" in data["problems"]
+    assert f"{root} has no flavor folders" not in data["problems"]
 
 
+def test_with_nothing_not_taken_the_old_opening_stays(tmp_path: Path) -> None:
+    root = tmp_path / "wow"
+    root.mkdir()
+    shutil.copy2(CAPTURE / ".build.info", root / ".build.info")
+
+    refused = _run("sv", "list", "--root", str(root), code=1)
+    doctor = _run("doctor", "--offline", "--root", str(root), code=1)
+
+    assert refused.stderr == (
+        f"wowlab: {root} has no flavor folders (a folder named _..._ holding .flavor.info)\n"
+    )
+    assert f"{root} has no flavor folders, so there is nothing to snapshot yet.\n" in doctor.stdout
+
+
+@pytest.mark.parametrize("absolute", [True, False], ids=["absolute", "relative"])
 @pytest.mark.parametrize("below", ["", "WTF/Config.wtf"], ids=["folder", "file-inside"])
 def test_explain_of_a_linked_folder_says_link_first_and_not_taken(
-    tmp_path: Path, below: str
+    tmp_path: Path, below: str, absolute: bool
 ) -> None:
+    """With one real flavor beside the link, a relative path whose first part
+    is the link stays at the install root (it is not re-read in the flavor)."""
     root, target = _install(tmp_path)
-    path = str(root / LINKED / below) if below else str(root / LINKED)
+    relative = f"{LINKED}/{below}" if below else LINKED
+    path = str(root / relative) if absolute else relative
 
     text = _run("explain", path, "--root", str(root)).stdout
     data = json.loads(_run("explain", path, "--root", str(root), "--json").stdout)
 
+    assert (data["result"]["base"], data["result"]["path"]) == ("root", relative)
     assert (data["verdict"]["link"], data["verdict"]["words"]) == (True, VERDICT_LINK)
     assert data["not_taken"] == {
         "name": LINKED,
@@ -297,13 +332,17 @@ def test_explain_of_a_linked_folder_says_link_first_and_not_taken(
     ]
 
 
-def test_explain_of_a_folder_without_flavor_info_says_not_taken(tmp_path: Path) -> None:
+@pytest.mark.parametrize("absolute", [True, False], ids=["absolute", "relative"])
+def test_explain_of_a_folder_without_flavor_info_says_not_taken(
+    tmp_path: Path, absolute: bool
+) -> None:
     root, _ = _install(tmp_path, empty=True)
-    path = str(root / EMPTY)
+    path = str(root / EMPTY) if absolute else EMPTY
 
     text = _run("explain", path, "--root", str(root)).stdout
     data = json.loads(_run("explain", path, "--root", str(root), "--json").stdout)
 
+    assert data["result"]["base"] == "root"
     assert data["not_taken"]["note"] == gaps.NOT_A_FLAVOR
     assert text.splitlines()[:2] == [
         f"{path}: no file-map row: no file-map row matches",
@@ -350,4 +389,34 @@ def test_a_flavor_info_refused_at_the_read_changed_never_a_link(
         note=install.NOT_A_FLAVOR_CHANGED,
     )
     assert "link" not in got.not_taken[0].note
-    assert install.not_taken_why(got.not_taken[0]) == "its .flavor.info changed as it was read"
+    assert install.not_taken_why(got.not_taken[0]) == (
+        "its .flavor.info changed as it was read; run the command again"
+    )
+
+
+@pytest.mark.parametrize(
+    ("reason", "note"),
+    [
+        ("not_checked", "not taken as a flavor folder (it could not be checked: refused)"),
+        ("flavor_info_changed", install.NOT_A_FLAVOR_CHANGED),
+    ],
+)
+def test_tree_and_gaps_give_a_folder_its_own_note_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reason: str, note: str
+) -> None:
+    """Constructed: the folder's reason is stood in on the model discovery
+    returns; `tree --install` and `filemap gaps` give its note, not
+    `NOT_A_FLAVOR`."""
+    root, _ = _install(tmp_path, empty=True)
+    real = install.read_install(root)
+    entry = NotTaken(name=EMPTY, reason=reason, target=None, note=note)  # type: ignore[arg-type]
+    stood = real.model_copy(update={"not_taken": (entry, *real.not_taken[1:])})
+    monkeypatch.setattr(install, "discover", lambda *a, **k: stood)
+    (root / EMPTY / "x.txt").write_bytes(b"constructed\n")
+
+    tree = json.loads(_run("tree", "--install", "--root", str(root), "--json").stdout)
+    gap = json.loads(_run("filemap", "gaps", "--root", str(root), "--json").stdout)
+
+    item = next(i for i in tree["items"] if i["path"] == EMPTY)
+    assert item["note"] == note
+    assert [g["note"] for g in gap["groups"] if g["name"] == EMPTY] == [note]
