@@ -3513,15 +3513,31 @@ are specified in §16.5 for the owner's next pick; they are not M14 tickets.
 ### 16.1 The confirm flow (ADR-0029)
 
 Built exactly as ADR-0029 decides. A command that declares `--yes` is run
-first without it and with stdin closed, so that the CLI prints its plan
-(the files it will touch, the snapshot it will take), `_confirm` gets no
-answer, and the run ends with `Nothing was changed.` and exit 1. That
-ending is the plan marker: the server (Python, never the page) recognises
-it by the constant the CLI prints, and only then offers Confirm; every
-other outcome, a refusal (exit 3) included, is shown as the CLI printed it
-with no Confirm. After the click the server runs the command again with
-`--yes`; the result shows only the hint the CLI prints (`wowlab undo` for a
-`guard` transaction; `snap gc` prints none, and no undo is offered for it). The set of commands is derived from the Click tree, not
+first without it, as every UI run is made: with `--json`, stdin closed, and
+the argv built from the Click tree. The *plan run* has one of three shapes,
+chosen by the server (Python, never the page) from what the leaf declares,
+and the server offers Confirm only when the run ended with that shape's
+marker; every other outcome, a refusal (exit 3) included, is shown as the
+CLI printed it with no Confirm:
+
+- a leaf that declares `--dry-run` (`snap gc`, `snap restore`, `profile
+  apply`, `addon install`, `addon remove`) is run with `--dry-run --json`;
+  the marker is the JSON report with `dry_run: true`, and it is the plan;
+- a leaf with no `--dry-run` that confirms through `cli._confirm` (`undo`,
+  `sv merge`) is run with `--json` and no `--yes`; the CLI writes the text
+  plan to stderr, `_confirm` gets no answer, and the run ends with
+  `Nothing was changed.` and exit 1; the marker is that ending, read by a
+  constant the CLI exports, and the plan is the stderr text before it;
+- `doctor` never reaches `_confirm`: with `--json` it reports
+  `first_run.outcome == "not_asked"` (exit 0) when a first snapshot could be
+  offered, which is the marker and the plan; `choose_flavor` (exit 2) is
+  shown as the CLI's usage text with a `--flavor` field to fill, and any
+  other outcome offers nothing.
+
+After the click the server runs the same argv again with `--yes` appended
+(and `--dry-run` removed where the plan run added it); the result shows
+only the hint the CLI prints (`wowlab undo` for a `guard` transaction;
+`snap gc` and `doctor` print none, and no undo is offered for them). The set of commands is derived from the Click tree, not
 from a count (on 2026-10-18: `snap restore`, `undo`, `profile apply`,
 `addon install`, `addon remove`, `sv merge`, `snap gc` and `doctor`). It
 ships in two steps so that the mechanism is proven on the two commands
