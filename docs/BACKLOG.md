@@ -597,7 +597,7 @@ The probe already measures child CPU time and keeps the better of two runs. The 
 
 **Acceptance:**
 - 20 consecutive `lab (macos)` runs pass all four CPU cases. If M13-18 lands first, measure after it.
-- The CPU probes still fail against a constructed parser that is twice as slow.
+- The CPU probes still fail against a constructed parser that is slower than the 10 s target. *Amended 2026-10-18 (conductor ruling from the #255 review):* "twice as slow" cannot be met for the two cases a fast runner parses in under 5 s, since doubled they are still inside the target; no statistic with the fixed §6.4 target catches that, and the limit was the same under the old best-of-two. The 2x stand-in is still the control for the cases near the target (the `0,` cases fail it in every job; `0;` in most), and the probe docstrings say so.
 - The memory control passes 20 consecutive local `make ci` runs on a loaded machine (another `make ci` running alongside), with each run's samples and the chosen statistic reported. It still fails against a stand-in that holds half the memory.
 - `make ci` green.
 - Reviewed by `code-reviewer`.
