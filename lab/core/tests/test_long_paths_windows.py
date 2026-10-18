@@ -28,6 +28,30 @@ What is graded, each on the same operations a player's loop runs:
   what `undo()` cannot reverse (§6.10): it refuses on enter, or it journals
   the plain root so `undo()` and restore work.
 
+M13-44T adds graders for the `luadata` reads M13-15 left on plain paths and
+for the `sv` commands' output, each with one marker line,
+`@pytest.mark.xfail(..., strict=True, ..., reason="M13-44 not implemented")`,
+which M13-44 deletes and does not otherwise change (§6.9 as amended
+2026-10-17: "the same spelling reaches ... the readers"; paths plain
+everywhere they are shown):
+
+- `luadata.serialize(..., target=...)` takes a new slot's style from the
+  sibling SavedVariables (§6.4, amendment 2026-09-27): the folder listing
+  (`WTF/Account` and below) and each sibling's read reach a sibling past
+  `MAX_PATH`, so the output is what it is at a short root. The real
+  captures all show the fallback style, so a sibling that was never read
+  looks like one that was; one constructed sibling in another style (tab
+  indentation, `-- [n]`, LF) is what tells them apart (L8: labelled);
+- `wowlab sv list` and `wowlab sv dump` on a SavedVariables file past
+  `MAX_PATH`, the dump's `FILE` spelled each way its help allows (relative to
+  the flavor folder, absolute, relative to the current folder), print what
+  they print for the same file at a short root (L4: the same values);
+- on every platform (`EVERY_PLATFORM`), no `\\\\?\\` reaches the text or
+  `--json` output of `sv list` or `sv dump` when the root or the file is
+  handed over in the spelling `longpath.plain` strips (`_x`; on POSIX the
+  plain path itself, so there these pass on `main` as controls and the
+  marker is conditional on Windows).
+
 The layouts (`_build`), each a copy of the real capture `fixtures/macos/`
 (README rows) under `tmp_path`; only the location is constructed, so every
 test id says `constructed` (L8):
@@ -39,6 +63,10 @@ test id says `constructed` (L8):
 - `long-name`: a short root, and a real `.toc` copied beside the original
   under a long file name, so the directory is short and the file path is past
   `MAX_PATH`;
+- `sv-long-name` (M13-44T): a short root, and the real `Syndicator.lua`
+  copied beside the original under a long file name, so its folder
+  (`WTF/Account/<account>/SavedVariables`) lists plainly and its own path is
+  past `MAX_PATH` (an addon's SavedVariables file is named after it);
 - `at-limit`: a short root, and a real `.toc` whose path is exactly 259
   characters, the longest plain path Windows opens. The file is reachable;
   a file the gate creates beside it (a temp file, say) need not be. The
@@ -69,7 +97,9 @@ holds the module to that. Where a grader fails with one exception type on
 outright.
 
 Where this runs: Windows only (`_long_paths_off` skips elsewhere), except the
-tests in `ANYWHERE`, which only read this module and run on every platform.
+tests in `ANYWHERE`, which only read this module and run on every platform,
+and those in `EVERY_PLATFORM`, which use only short paths and run on every
+platform whatever `LongPathsEnabled` says.
 Every other test also needs plain
 long paths to be refused in this process, which a fixture probes; where they
 work (`LongPathsEnabled` = 1, the runner image's default) the module skips,
@@ -93,13 +123,13 @@ import shutil
 import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import platformdirs
 import psutil
 import pytest
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from wowlab_core import cli, combatlog, guard, install, luadata, toc, wtfconfig
 from wowlab_core.snapshot import Manifest, SnapshotStore
@@ -108,7 +138,8 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 CAPTURE = FIXTURES / "macos"
 FLAVOR = "_classic_beta_"  # the provenance row's flavor folder; tests may name it (L6)
 INSTALL = "World of Warcraft"
-SYNDICATOR = "WTF/Account/90000001#6/SavedVariables/Syndicator.lua"
+SV_FOLDER = "WTF/Account/90000001#6/SavedVariables"
+SYNDICATOR = f"{SV_FOLDER}/Syndicator.lua"
 BRAWLERS = "Interface/AddOns/DBM-Brawlers"
 TOC = f"{BRAWLERS}/DBM-Brawlers.toc"
 SUBTREES = (f"{FLAVOR}/WTF", f"{FLAVOR}/Interface")
@@ -118,6 +149,8 @@ MAX_PATH = 260  # UTF-16 units, the terminator included
 LONGEST_PLAIN = MAX_PATH - 1  # the longest plain path Windows opens with the setting off
 ROOM = 50  # a short layout leaves this much room for a name created beside any file
 EXPECT_OFF = "WOWLAB_EXPECT_LONG_PATHS_OFF"
+ON_WINDOWS = sys.platform == "win32"
+EXTENDED = "\\\\?\\"  # the prefix `longpath.plain` strips; never in the Lab's output
 REFUSED = {2, 3, 206}  # ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, ERROR_FILENAME_EXCED_RANGE
 
 LONG = ("deep-root", "deep-dir", "long-name")
@@ -264,6 +297,14 @@ def _build(where: Path, layout: str) -> Tree:
             target = f"{BRAWLERS}/{name}"
             assert length(brawlers / name) == MAX_PATH + 20
             assert length(brawlers) + 1 + ROOM < MAX_PATH
+        elif shape == "sv-long-name":
+            folder = root / FLAVOR / SV_FOLDER
+            size = MAX_PATH + 20 - length(folder) - 1
+            name = "Syndicator-".ljust(size - len(".lua"), "n") + ".lua"
+            assert len(name) <= 255, "one component stays a legal file name"
+            target, source = f"{SV_FOLDER}/{name}", CAPTURE / "forever" / SYNDICATOR
+            assert length(folder / name) == MAX_PATH + 20
+            assert length(folder) + 1 + ROOM < MAX_PATH
         elif shape == "at-limit":
             libs = brawlers / "Libs"
             pad = LONGEST_PLAIN - length(libs) - 1 - 1 - len("DBM-Brawlers.toc")
@@ -283,7 +324,9 @@ def _build(where: Path, layout: str) -> Tree:
     if shape == "at-limit":
         assert len(str(tree.target_path)) == LONGEST_PLAIN
     assert _read(tree.target_path) == tree.source.read_bytes()
-    if shape in ("short", "at-limit"):
+    # `MAX_PATH` is Windows' limit; elsewhere (`EVERY_PLATFORM`) a short
+    # layout may sit in a long temporary folder (macOS: `/private/var/...`).
+    if shape in ("short", "at-limit") and ON_WINDOWS:
         for path in _files(tree.root).values():
             assert len(str(path)) <= LONGEST_PLAIN, f"{layout}: {path} is plain-openable"
             # Room for the gate's own names; the network layouts are only
@@ -341,11 +384,20 @@ ANYWHERE = frozenset({"test_every_layout_a_grader_uses_is_built_by_an_unmarked_t
 """Tests that only read this module (no file system, no Lab call): they run
 on every platform, so ordinary CI catches drift."""
 
+EVERY_PLATFORM = frozenset(
+    {
+        "test_constructed_sv_output_names_no_extended_length_path",
+        "test_constructed_sv_dump_json_names_an_extended_length_file_plainly",
+    }
+)
+"""Tests on short paths only (M13-44T): they run on every platform, and on
+Windows whatever `LongPathsEnabled` says."""
+
 
 @pytest.fixture(autouse=True)
 def _long_paths_off(request: pytest.FixtureRequest) -> None:
     """Windows only, and plain long paths refused in this process."""
-    if request.node.originalname in ANYWHERE:
+    if request.node.originalname in ANYWHERE | EVERY_PLATFORM:
         return
     if sys.platform != "win32":
         pytest.skip("MAX_PATH and LongPathsEnabled are Windows facilities")
@@ -594,10 +646,10 @@ def test_every_layout_a_grader_uses_is_built_by_an_unmarked_test() -> None:
     tree cannot be built would pass as expected-to-fail. Every layout a grader
     uses is therefore built by an unmarked test too, which fails the run.
 
-    M13-15 deleted the graders' markers, so the module may have none; the
-    check stays armed for any marker added later. That it is not vacuous is
-    shown by the layouts the unmarked tests build: every layout the M13-15
-    graders were written over is found among them."""
+    M13-15 deleted its graders' markers and M13-44 deletes its own, so the
+    module may have none; the check stays armed for any marker added later.
+    That it is not vacuous is shown by the layouts the unmarked tests build:
+    every layout the M13-15 graders were written over is found among them."""
     tests = [f for name, f in sorted(globals().items()) if name.startswith("test_")]
     graders = [f for f in tests if _is_grader(f)]
     for grader in graders:
@@ -611,7 +663,7 @@ def test_every_layout_a_grader_uses_is_built_by_an_unmarked_test() -> None:
 # ─── the precondition: why the graders fail ─────────────────────────────────
 
 
-@pytest.mark.parametrize("tree", LONG_ANYWHERE, indirect=True)
+@pytest.mark.parametrize("tree", [*LONG_ANYWHERE, "sv-long-name"], indirect=True)
 def test_constructed_windows_refuses_the_plain_path_of_each_long_layout(tree: Tree) -> None:
     """With the setting off, the plain path of each long layout's file is
     refused by the operating system, and its extended-length path is not:
@@ -843,3 +895,421 @@ def test_constructed_reader_parses_a_real_file_past_max_path(
     `MAX_PATH`, returns what parsing the file's bytes returns."""
     tree = build(layout)
     _check_reader(tree, reader, tree.target if layout != "deep-root" else None)
+
+
+# ─── M13-44T: luadata's sibling reads ────────────────────────────────────────
+
+# A constructed sibling in §4.2's remembered retail layout: tab indentation,
+# `-- [n]` comments, LF. Every real capture shows the fallback style, so only
+# a sibling in another style shows whether a sibling was read (L8:
+# constructed, as every test id here says).
+CONSTRUCTED_TAB_LF_SIBLING = (
+    b"\n"
+    b"LabSiblingDB = {\n"
+    b'\t["opts"] = {\n'
+    b'\t\t["size"] = 3,\n'
+    b"\t},\n"
+    b'\t["seen"] = {\n'
+    b'\t\t"x", -- [1]\n'
+    b'\t\t"y", -- [2]\n'
+    b"\t},\n"
+    b"}\n"
+)
+TAB_SIBLING = f"{SV_FOLDER}/LabTabSibling.lua"
+NEW_FILE = f"{SV_FOLDER}/LabNewAddon.lua"  # the target: it need not exist (§6.4)
+
+# `_new_document()` serialized. With the constructed sibling the newest one
+# (§6.4 amendment 2026-09-27, item 4: per property, the most recently
+# modified sibling that shows it decides): its tab indentation, `-- [n]`
+# comments, LF and leading empty line; `[42] = ` as no sibling shows a number
+# key (item 6).
+NEW_IN_SIBLING_STYLE = (
+    b"\n"
+    b"LabNewDB = {\n"
+    b'\t["opts"] = {\n'
+    b'\t\t["name"] = "Default",\n'
+    b"\t},\n"
+    b'\t"first", -- [1]\n'
+    b'\t"second", -- [2]\n'
+    b"\t[42] = true,\n"
+    b"}\n"
+)
+# With no sibling read, or only the real Forever ones: the fallback, which is
+# also what every Forever capture shows (item 6): no indentation, no
+# `-- [n]`, CRLF, a leading empty line.
+NEW_IN_FALLBACK_STYLE = (
+    b"\r\n"
+    b"LabNewDB = {\r\n"
+    b'["opts"] = {\r\n'
+    b'["name"] = "Default",\r\n'
+    b"},\r\n"
+    b'"first",\r\n'
+    b'"second",\r\n'
+    b"[42] = true,\r\n"
+    b"}\r\n"
+)
+
+
+def _string(text: str) -> luadata.LuaString:
+    return luadata.LuaString(lead=None, raw=b'"' + text.encode("ascii") + b'"')
+
+
+def _entry(style: str, key: Any, value: Any) -> luadata.Entry:
+    return luadata.Entry(
+        lead=None,
+        style=luadata.KeyStyle(style),
+        key=key,
+        key_close_lead=None,
+        eq_lead=None,
+        value=value,
+        sep_lead=None,
+        sep=None,
+        comment=None,
+        duplicate=False,
+    )
+
+
+def _table(*entries: luadata.Entry) -> luadata.LuaTable:
+    return luadata.LuaTable(lead=None, entries=entries, close_lead=None)
+
+
+def _new_document() -> luadata.LuaDocument:
+    """A document built with no source, every slot `None`, so every byte of
+    layout is the detected style's: a nested table, two positional entries
+    and a number key."""
+    value = _table(
+        _entry(
+            "string", _string("opts"), _table(_entry("string", _string("name"), _string("Default")))
+        ),
+        _entry("positional", None, _string("first")),
+        _entry("positional", None, _string("second")),
+        _entry(
+            "number", luadata.LuaNumber(lead=None, raw="42"), luadata.LuaBool(lead=None, value=True)
+        ),
+    )
+    only = luadata.Assignment(lead=None, name="LabNewDB", eq_lead=None, value=value)
+    return luadata.LuaDocument(assignments=(only,), tail=None)
+
+
+def _place_tab_sibling(tree: Tree, rel: str) -> Path:
+    """The constructed sibling at `rel` (flavor-relative), written by the
+    test through an extended-length path and made the newest file of the
+    tree; returns its plain path."""
+    path = tree.flavor.joinpath(*rel.split("/"))
+    _write(path, CONSTRUCTED_TAB_LF_SIBLING)
+    newest = max(_x(p).stat().st_mtime_ns for p in _files(tree.root).values())
+    later = newest + 100 * 1_000_000_000
+    os.utime(_x(path), ns=(later, later))
+    return path
+
+
+def _check_sibling_style(tree: Tree, expected: bytes, lab_written: tuple[Path, ...] = ()) -> None:
+    """`serialize` of the new document for `NEW_FILE` returns `expected`
+    and writes nothing anywhere in the install (L1)."""
+    target = tree.flavor.joinpath(*NEW_FILE.split("/"))
+    before = {rel: _read(path) for rel, path in _files(tree.root).items()}
+    out = luadata.serialize(_new_document(), target=target, lab_written=lab_written)
+    assert out == expected
+    assert {rel: _read(path) for rel, path in _files(tree.root).items()} == before
+
+
+@pytest.mark.parametrize("layout", ["short"])
+def test_constructed_control_serialize_takes_a_sibling_style_at_a_short_root(
+    build: Callable[[str], Tree], layout: str
+) -> None:
+    """At a short root the constructed sibling, newest, decides every
+    property it shows; with no target the same document is the fallback, so
+    the graders below cannot pass without reading the sibling."""
+    tree = build(layout)
+    _place_tab_sibling(tree, TAB_SIBLING)
+    _check_sibling_style(tree, NEW_IN_SIBLING_STYLE)
+    assert luadata.serialize(_new_document()) == NEW_IN_FALLBACK_STYLE != NEW_IN_SIBLING_STYLE
+
+
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M13-44 not implemented")
+@pytest.mark.parametrize("layout", ["deep-root", "sv-long-name"])
+def test_constructed_serialize_takes_the_style_of_a_sibling_past_max_path(
+    build: Callable[[str], Tree], layout: str
+) -> None:
+    """`serialize(..., target=...)` reads a sibling past `MAX_PATH` as it
+    reads one at a short root, so its style decides (§6.4; §6.9 as amended
+    for M13-15: the readers reach such a path).
+
+    - `deep-root`: the install root is past the limit, so is `WTF/Account`:
+      the folder listing beside `_read_sibling` lists it, and the sibling
+      (and the target) are past it too;
+    - `sv-long-name`: `WTF/Account/<account>/SavedVariables` is short and
+      lists plainly, but the sibling's own path (the long-named file,
+      holding the constructed bytes) is past the limit: its type check,
+      real-path check, open and read reach it.
+
+    On `main` the sibling is never read and a sibling-less flavor falls back
+    silently (§6.4), so the output is `NEW_IN_FALLBACK_STYLE`."""
+    tree = build(layout)
+    _place_tab_sibling(tree, TAB_SIBLING if layout == "deep-root" else tree.target)
+    _check_sibling_style(tree, NEW_IN_SIBLING_STYLE)
+
+
+@pytest.mark.parametrize("layout", ["short", "deep-root", "sv-long-name"])
+def test_constructed_serialize_never_takes_the_style_of_a_lab_written_sibling(
+    build: Callable[[str], Tree], layout: str
+) -> None:
+    """A pin, unmarked: a file in `lab_written` (the guard journal's last
+    Lab writes) is never a sibling, past `MAX_PATH` too, so the constructed
+    file does not decide and the real Forever siblings (the fallback's
+    style) do. It passes on `main`, where the long sibling cannot be reached
+    at all; it holds M13-44 to recognising that file once it is reached (the
+    same file, `st_dev` and `st_ino`, whatever its spelling)."""
+    tree = build(layout)
+    sibling = _place_tab_sibling(tree, TAB_SIBLING if layout != "sv-long-name" else tree.target)
+    _check_sibling_style(tree, NEW_IN_FALLBACK_STYLE, lab_written=(sibling,))
+
+
+# ─── M13-44T: `sv list` and `sv dump` ────────────────────────────────────────
+
+DUMP_PATH = "SYNDICATOR_CONFIG.debug"  # one value of the real Syndicator.lua
+
+
+def _invoke(*args: str) -> Result:
+    return runner.invoke(cli.app, list(args))
+
+
+def _ok(result: Result) -> Result:
+    assert result.exit_code == 0, (result.stdout, result.stderr, result.exception)
+    return result
+
+
+def _list_report(root: Path) -> cli.SvListReport:
+    result = _ok(_invoke("sv", "list", "--root", str(root), "--json"))
+    return cli.SvListReport.model_validate_json(result.stdout)
+
+
+def _rows(report: cli.SvListReport) -> dict[str, dict[str, Any]]:
+    return {f.path: f.model_dump(exclude={"mtime_ns"}) for f in report.files}
+
+
+def _check_sv_list(tree: Tree, short: Tree) -> None:
+    """`sv list --json` lists what it lists at a short root, plus the
+    layout's own file when it is a copy beside the real one, with its size
+    and modification time from disk; the text output prints the same lines,
+    plus that file's."""
+    reference = _list_report(short.root)
+    report = _list_report(tree.root)
+    expected = _rows(reference)
+    added = tree.target != SYNDICATOR
+    if added:
+        stem = PurePosixPath(tree.target).stem
+        expected[tree.target] = {**expected[SYNDICATOR], "path": tree.target, "addon": stem}
+    assert report.flavor_folder == FLAVOR
+    assert _rows(report) == expected
+    (entry,) = [f for f in report.files if f.path == tree.target]
+    assert entry.size == len(tree.source.read_bytes())
+    assert entry.mtime_ns == _x(tree.target_path).stat().st_mtime_ns
+
+    reference_lines = _ok(_invoke("sv", "list", "--root", str(short.root))).stdout.splitlines()
+    lines = _ok(_invoke("sv", "list", "--root", str(tree.root))).stdout.splitlines()
+    mine = [line for line in lines if line.endswith(tree.target)]
+    assert len(mine) == 1, lines
+    if added:
+        lines.remove(mine[0])
+    assert lines == reference_lines
+
+
+def _dump_file(tree: Tree, spelling: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    """The layout's file as `sv dump` takes it: relative to the flavor
+    folder, absolute, or relative to the (short) current folder."""
+    if spelling == "flavor-relative":
+        return tree.target
+    if spelling == "absolute":
+        return str(tree.target_path)
+    assert spelling == "cwd-relative"
+    monkeypatch.chdir(tmp_path)
+    assert len(str(tmp_path)) + 1 + ROOM < MAX_PATH, "the current folder is short"
+    return str(tree.target_path.relative_to(tmp_path))
+
+
+def _check_sv_dump(tree: Tree, short: Tree, file: str) -> None:
+    """`sv dump FILE` prints, as text and as `--json`, and with `--path`,
+    what it prints for the real file at a short root (L4: the same values),
+    and the JSON `file` names the layout's file, plainly."""
+    plain = str(short.target_path)
+    for extra in ((), ("--path", DUMP_PATH)):
+        reference = _ok(_invoke("sv", "dump", "--root", str(short.root), *extra, plain))
+        result = _ok(_invoke("sv", "dump", "--root", str(tree.root), *extra, file))
+        assert result.stdout == reference.stdout
+        assert reference.stdout.strip(), "the dump prints something"
+
+        reference = _ok(_invoke("sv", "dump", "--root", str(short.root), "--json", *extra, plain))
+        result = _ok(_invoke("sv", "dump", "--root", str(tree.root), "--json", *extra, file))
+        expected = cli.SvDumpReport.model_validate_json(reference.stdout)
+        report = cli.SvDumpReport.model_validate_json(result.stdout)
+        assert (report.path, report.values) == (expected.path, expected.values)
+        assert expected.values, "the dump holds values"
+        assert EXTENDED not in report.file, report.file
+        named = os.path.normcase(str(Path(report.file).absolute()))
+        assert named == os.path.normcase(str(tree.target_path)), report.file
+
+
+@pytest.mark.parametrize("layout", ["deep-root", "sv-long-name"])
+def test_constructed_sv_list_lists_a_savedvariables_file_past_max_path(
+    build: Callable[[str], Tree], layout: str
+) -> None:
+    """`wowlab sv list` on an install rooted past `MAX_PATH`, and on a
+    SavedVariables file whose own path is past it, lists every file as at a
+    short root. Unmarked: M13-15's layout walk already reaches them."""
+    _check_sv_list(build(layout), build("short"))
+
+
+@pytest.mark.parametrize(
+    ("layout", "spelling"),
+    [
+        (layout, spelling)
+        for layout in ("deep-root", "sv-long-name")
+        for spelling in ("flavor-relative", "absolute")
+    ],
+)
+def test_constructed_sv_dump_reads_a_savedvariables_file_past_max_path(
+    build: Callable[[str], Tree],
+    layout: str,
+    spelling: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`wowlab sv dump` of a SavedVariables file past `MAX_PATH`, named
+    relative to the flavor folder or absolutely, prints what it prints for
+    the file at a short root. Unmarked: `luadata.read` reaches it since
+    M13-15."""
+    tree = build(layout)
+    _check_sv_dump(tree, build("short"), _dump_file(tree, spelling, tmp_path, monkeypatch))
+
+
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M13-44 not implemented")
+@pytest.mark.parametrize(
+    ("layout", "spelling"), [("deep-root", "cwd-relative"), ("sv-long-name", "cwd-relative")]
+)
+def test_constructed_sv_dump_reads_a_file_past_max_path_named_from_the_current_folder(
+    build: Callable[[str], Tree],
+    layout: str,
+    spelling: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`sv dump FILE` takes FILE "relative to the current folder" (its
+    help), and a file so named whose absolute path is past `MAX_PATH` is the
+    one dumped, as at a short root. On `main` the plain lookup does not see
+    it, so FILE is taken relative to the flavor folder, where there is no
+    such file, and the command fails."""
+    tree = build(layout)
+    _check_sv_dump(tree, build("short"), _dump_file(tree, spelling, tmp_path, monkeypatch))
+
+
+# ─── M13-44T: no extended-length spelling in the `sv` output ─────────────────
+
+# Each `sv` invocation, from the spelling of the root and of the flavor
+# folder (`Path`s) to its argv.
+SV_COMMANDS: dict[str, Callable[[Path, Path], list[str]]] = {
+    "sv-list": lambda root, flavor: ["sv", "list", "--root", str(root)],
+    "sv-list-json": lambda root, flavor: ["sv", "list", "--root", str(root), "--json"],
+    "sv-dump-absolute": lambda root, flavor: [
+        "sv",
+        "dump",
+        "--root",
+        str(root),
+        str(flavor.joinpath(*SYNDICATOR.split("/"))),
+    ],
+    "sv-dump-flavor-relative-json": lambda root, flavor: [
+        "sv",
+        "dump",
+        "--root",
+        str(root),
+        "--json",
+        SYNDICATOR,
+    ],
+    "sv-dump-missing-absolute": lambda root, flavor: [
+        "sv",
+        "dump",
+        "--root",
+        str(root),
+        str(flavor.joinpath(*SV_FOLDER.split("/"), "LabNone.lua")),
+    ],
+    "sv-dump-absolute-json": lambda root, flavor: [
+        "sv",
+        "dump",
+        "--root",
+        str(root),
+        "--json",
+        str(flavor.joinpath(*SYNDICATOR.split("/"))),
+    ],
+    "sv-dump-absolute-json-path": lambda root, flavor: [
+        "sv",
+        "dump",
+        "--root",
+        str(root),
+        "--json",
+        "--path",
+        DUMP_PATH,
+        str(flavor.joinpath(*SYNDICATOR.split("/"))),
+    ],
+}
+
+
+def _check_no_extended_spelling(tree: Tree, command: str) -> None:
+    """The command, handed the root and file in the spelling `longpath.plain`
+    strips (`_x`: `\\\\?\\C:\\...` on Windows, the plain path elsewhere),
+    exits and prints exactly as when handed the plain ones, and no
+    `\\\\?\\` reaches its stdout or stderr."""
+    argv = SV_COMMANDS[command]
+    plain = _invoke(*argv(tree.root, tree.flavor))
+    spelled = _invoke(*argv(_x(tree.root), _x(tree.flavor)))
+    if ON_WINDOWS:
+        assert str(_x(tree.root)).startswith(EXTENDED), "the root is handed over extended"
+    expected_code = 1 if command == "sv-dump-missing-absolute" else 0
+    assert plain.exit_code == expected_code, (plain.stdout, plain.stderr, plain.exception)
+    assert EXTENDED not in plain.stdout + plain.stderr
+    assert spelled.exit_code == expected_code, (spelled.stdout, spelled.stderr, spelled.exception)
+    assert EXTENDED not in spelled.stdout, spelled.stdout
+    assert EXTENDED not in spelled.stderr, spelled.stderr
+    assert (spelled.stdout, spelled.stderr) == (plain.stdout, plain.stderr)
+    if command == "sv-dump-missing-absolute":
+        assert str(tree.flavor.joinpath(*SV_FOLDER.split("/"), "LabNone.lua")) in spelled.stderr
+    if command.startswith("sv-dump") and command.endswith(("json", "json-path")):
+        report = cli.SvDumpReport.model_validate_json(spelled.stdout)
+        assert report.file == str(tree.flavor.joinpath(*SYNDICATOR.split("/")))
+
+
+@pytest.mark.parametrize("layout", ["short"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "sv-list",
+        "sv-list-json",
+        "sv-dump-absolute",
+        "sv-dump-flavor-relative-json",
+        "sv-dump-missing-absolute",
+    ],
+)
+def test_constructed_sv_output_names_no_extended_length_path(
+    build: Callable[[str], Tree], layout: str, command: str
+) -> None:
+    """Every platform, unmarked: `sv list` (text, `--json`) and `sv dump`
+    (text, a `--json` dump of a flavor-relative file, the error for a
+    missing file) under a root handed over in `\\\\?\\` form print what they
+    print under the plain root. They pass on `main`: discovery hands back a
+    plain root (M13-15), and an `OSError` from `longpath` names the plain
+    path."""
+    _check_no_extended_spelling(build(layout), command)
+
+
+@pytest.mark.xfail(ON_WINDOWS, strict=True, raises=AssertionError, reason="M13-44 not implemented")
+@pytest.mark.parametrize("layout", ["short"])
+@pytest.mark.parametrize("command", ["sv-dump-absolute-json", "sv-dump-absolute-json-path"])
+def test_constructed_sv_dump_json_names_an_extended_length_file_plainly(
+    build: Callable[[str], Tree], layout: str, command: str
+) -> None:
+    """Every platform: `sv dump --json FILE`, with FILE absolute and handed
+    over in `\\\\?\\` form, names it plainly in `file` (§6.9 as amended for
+    M13-15: paths are plain everywhere they are shown; a `\\\\?\\` root is
+    recorded plain), with `--path` too. On `main` on Windows `file` is FILE
+    as given. Elsewhere `_x` is the plain path, so it passes there, which is
+    why the marker holds on Windows only."""
+    _check_no_extended_spelling(build(layout), command)
