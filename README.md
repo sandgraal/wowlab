@@ -35,6 +35,18 @@ wowlab snap create   # snapshot your setup before you experiment
 
 `wowlab ui` never changes game files. It runs every wowlab command except those that take `--yes`, `ui` itself, `log tail --follow` and `looks page --out`: the commands that read, and the ones that save only to wowlab's own data (snapshots, profiles, saved looks, the game-table cache, pages), never to game files. It listens only on this machine, behind a random token in the link it opens. **On a shared Linux machine**, other accounts can see that link, token included, in their process listing for a while (a newly started browser can keep it in its command line).
 
+**🖥️ Using the explorer:**
+
+```bash
+wowlab ui
+```
+
+It picks a free port on this machine only, opens your browser on a link that carries a random token, and runs until Ctrl-C. If no browser opens, paste the link it prints. `wowlab ui` takes no `--root`: when your install is not in a default place, set `WOWLAB_WOW_ROOT` first (see [`docs/INSTALL.md`](docs/INSTALL.md)).
+
+- **Explorer.** Your install as a tree, one folder at a time. Each file carries a badge: *wowlab can edit*, *wowlab won't touch*, or *unknown*. Click a file for what it is, who writes it, its file-map row, and whether the copy on disk still matches your latest snapshot. Below that, the commands that act on the file, written for your shell; **Copy** gives the exact line. **Preview** runs the file's read command (CVars, binds, macros, saved data) and shows the result as a tree.
+- **Gaps.** The files the file map does not know yet, grouped by folder, the same list as `wowlab filemap gaps`.
+- **Commands.** Runs this wowlab's read commands with `--json` and shows the result. The ones that change game files, or ask before changing anything, are greyed out in this version.
+
 **🗺️ Platforms:**
 
 | | Status |
