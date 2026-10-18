@@ -19,7 +19,9 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "wiki-daily.yml"
 PROMPT = ROOT / ".github" / "prompts" / "wiki-daily.md"
 
-SECRETS = ("jane", "Jane", "gmail", "Arthas", "Stormrage", "evil")
+# A `Name-Realm` pair is no longer personal data (M13-49); the account number
+# and a credential stand in for it where a test needs page text withheld.
+SECRETS = ("jane", "Jane", "gmail", "123456789", "ghp_", "evil")
 
 
 def _no_secret(lines: list[str]) -> None:
@@ -45,9 +47,9 @@ def _checker(tmp_path: Path, base: bool = False, **pages: str) -> cw.Checker:
     ("line", "message"),
     [
         ("[x](jane.doe@gmail.com)", "link to a page that does not exist (target withheld)"),
-        ("[x](Arthas-Stormrage)", "link to a page that does not exist (target withheld)"),
+        ("[x](Account/123456789)", "link to a page that does not exist (target withheld)"),
         ("[x](Home#jane.doe@gmail.com)", "link to an anchor that does not exist (anchor withheld)"),
-        ("`wowlab Arthas-Stormrage`", "unknown command (withheld)"),
+        ("`wowlab Account/123456789`", "unknown command (withheld)"),
         (
             "`wowlab doctor --jane.doe@gmail.com`",
             "`wowlab doctor` has no such option (option withheld)",
@@ -82,10 +84,9 @@ def test_constructed_a_clean_host_is_named(tmp_path: Path) -> None:
     ]
 
 
-def test_constructed_a_host_with_a_name_realm_is_withheld(tmp_path: Path) -> None:
-    checker = _checker(
-        tmp_path, base=True, **{"Extra.md": "# Extra\n\n[x](https://Arthas-Stormrage.example/)\n"}
-    )
+def test_constructed_a_host_with_personal_data_is_withheld(tmp_path: Path) -> None:
+    host = "https://ghp_abcdefghijklmnopqrstuv.example/"  # credential-shaped
+    checker = _checker(tmp_path, base=True, **{"Extra.md": f"# Extra\n\n[x]({host})\n"})
     out = [str(f) for f in checker.failures]
     assert (
         "Extra.md: links to a host (withheld), which the wiki at the base does not link to; "
@@ -115,8 +116,6 @@ def test_constructed_exit_codes_tell_personal_data_apart(tmp_path: Path) -> None
         ("key sk-\u200bant-api03-abcdefghijklmnop", "a credential-shaped string"),
         ("Add me: Jane&#35;1234.", "a BattleTag"),
         ("Add me: Jane\\#1234.", "a BattleTag"),
-        ("Arthas-stormrage logged in.", "a Name-Realm pair"),
-        ("`Arthas-Stormrage` in code.", "a Name-Realm pair"),
     ],
 )
 def test_constructed_personal_data_is_found_however_it_is_written(
@@ -128,8 +127,8 @@ def test_constructed_personal_data_is_found_however_it_is_written(
     _no_secret(out)
 
 
-def test_constructed_a_page_named_after_a_character_is_flagged(tmp_path: Path) -> None:
-    """No exemption for page names: the page itself does not approve the pair."""
+def test_constructed_a_page_named_after_a_character_is_not_personal_data(tmp_path: Path) -> None:
+    """Since M13-49 a `Name-Realm` page name is public text; an email one still is not."""
     checker = _checker(
         tmp_path,
         **{
@@ -137,9 +136,10 @@ def test_constructed_a_page_named_after_a_character_is_flagged(tmp_path: Path) -
             "Extra.md": "# Extra\n\n[main](Arthas-Stormrage)\n",
         },
     )
+    assert not [f for f in checker.failures if f.personal]
+    checker = _checker(tmp_path / "email", **{"jane@example.org.md": "# Notes\n"})
     out = [str(f) for f in checker.failures]
-    assert f"{cw.WITHHELD_NAME}: a Name-Realm pair in a file name {cw.PERSONAL_SUFFIX}" in out
-    assert f"Extra.md:3: a Name-Realm pair {cw.PERSONAL_SUFFIX}" in out
+    assert f"{cw.WITHHELD_NAME}: an email address in a file name {cw.PERSONAL_SUFFIX}" in out
     _no_secret(out)
 
 
@@ -223,7 +223,7 @@ def test_slug_matches_github(heading: str, anchor: str) -> None:
     assert cw.slug(heading) == anchor
 
 
-# ─── 6. reviewed terms are not characters ─────────────────────────────────────
+# ─── 6. hyphenated terms are not personal data ────────────────────────────────
 
 
 @pytest.mark.parametrize(
@@ -233,12 +233,6 @@ def test_slug_matches_github(heading: str, anchor: str) -> None:
 def test_constructed_a_reviewed_term_passes_in_prose_and_code(tmp_path: Path, term: str) -> None:
     checker = _checker(tmp_path, **{"Extra.md": f"# Extra\n\n{term} and `{term}`.\n"})
     assert [str(f) for f in checker.failures] == []
-
-
-def test_allowed_terms_file_holds_no_placeholder_and_is_lower_cased_on_read() -> None:
-    terms = cw.allowed_terms()
-    assert "add-on" in terms and "read-only" in terms
-    assert all(t == t.lower() for t in terms)
 
 
 # ─── 8, 9. instruction files and look-alike page names ───────────────────────

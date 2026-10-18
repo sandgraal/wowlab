@@ -20,9 +20,10 @@ Identity = lab_capture.Identity
 
 FLAVOR = "_classic_beta_"
 OUT_ACCOUNT = f"macos/{FLAVOR}/WTF/Account/90000001#1"
-MAIN_DIR = f"{OUT_ACCOUNT}/1/Labchara-Labrealmb"  # 70/Alyra-Bloodfist: the group gets "1"
-TWIN_DIR = f"{OUT_ACCOUNT}/Labrealmb/Labchara"  # Bloodfist/Alyra
-REAL = ("Alyra", "Bloodfist", "Glade", "Moon", "Area 52", "Area52", "area52", "alyra", ACCOUNT)
+# Character, realm and second names are kept as they are (M13-49); the group gets "1".
+MAIN_DIR = f"{OUT_ACCOUNT}/1/Alyra-Bloodfist"
+TWIN_DIR = f"{OUT_ACCOUNT}/Bloodfist/Alyra"
+REAL = (ACCOUNT,)
 
 CHAT_CACHE = "COLORS\nGUILD 64 255 64\nSAY 255 255 255\nWHISPER 170 170 255\nEND\n"
 EDIT_MODE = "anchor BOTTOM -270.0 170.5\n"
@@ -124,8 +125,8 @@ def test_constructed_forever_layout_end_to_end(
     # The digits-only group is a grouping level: not a name, not a content token,
     # and a path-only pseudonym ("1") in case it is a realm id.
     assert (
-        "identity map: 6 names (1 accounts, 3 realms, 2 characters, 0 extra), "
-        "1 own GUIDs, 8 CVars blanked"
+        "identity map: 1 names (1 accounts, 0 extra; character and realm names are kept as "
+        "they are), 1 own GUIDs, 8 CVars blanked"
     ) in stdout
     expected = {
         f"{MAIN_DIR}/{name}"
@@ -151,7 +152,7 @@ def test_constructed_forever_layout_end_to_end(
     }
     assert expected <= set(written), sorted(expected - set(written))
     assert not [d for d in written if d.endswith((".old", ".md5"))], "no .old twin, no cache.md5"
-    assert not [d for d in written if "Labchara-LabrealmaPartb" in d or "Labcharb" in d]
+    assert not [d for d in written if "Alyra-Area52" in d or "Moon-Glade" in d]
 
     # Numbers that contain the group id survive byte for byte.
     assert written[f"{MAIN_DIR}/chat-cache.txt"] == CHAT_CACHE.encode()
@@ -160,16 +161,11 @@ def test_constructed_forever_layout_end_to_end(
     assert written[f"{OUT_ACCOUNT}/chat-frontend-cache.txt"] == b"GUILD 1\nWHISPER 170 170 255\n"
     assert written[f"macos/{FLAVOR}/WTF/Config.wtf"] == b'SET portal "us"\nSET realmName ""\n'
 
-    # "Name - Realm" inside a file is scrubbed through both halves, exactly as
-    # the `<First>-<Second>` folder is, and the numbers beside it are untouched.
-    assert written[f"{MAIN_DIR}/SavedVariables/DBM-Core.lua"] == (
-        DBM.replace("Alyra - Bloodfist", "Labchara - Labrealmb")
-        .replace("Alyra - Area 52", "Labchara - Labrealma Partb")
-        .encode()
-    )
-    # The list of characters is scrubbed the same way, spaces-dropped realm included.
+    # "Name - Realm" inside a file, the `<First>-<Second>` folder and the list
+    # of characters all keep their names, byte for byte (M13-49).
+    assert written[f"{MAIN_DIR}/SavedVariables/DBM-Core.lua"] == DBM.encode()
     assert written[f"{OUT_ACCOUNT}/character-list-order.txt"] == (
-        b"Labchara-Labrealmb\nLabchara-LabrealmaPartb\nLabcharb-Labrealmc\n"
+        b"Alyra-Bloodfist\nAlyra-Area52\nMoon-Glade\n"
     )
     for dest, data in written.items():
         for real in REAL:
@@ -210,18 +206,17 @@ def test_constructed_account_savedvariables_folder_is_not_an_account(
     "folder",
     ["70/Alyra-123", "70/123", "Bloodfist/123", "70/Alyra-1-2"],
 )
-def test_constructed_letterless_character_or_realm_folder_stops_the_run(
+def test_constructed_letterless_character_or_realm_folder_no_longer_stops_the_run(
     folder: str, forever: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """A letterless name could not be replaced safely; since M13-49 no character
+    or realm name is replaced, so such a folder is just another folder."""
     account = forever / FLAVOR / "WTF" / "Account" / ACCOUNT
     _write(account.joinpath(*folder.split("/")) / "layout-local.txt", "x\n")
     out = tmp_path / "incoming"
-    assert capture(forever, out) == 2
-    text = capsys.readouterr()
-    assert "has no letters" in text.err and "nothing is captured" in text.err
-    assert not out.exists()
-    for real in ("123", "1-2", "Alyra"):
-        assert real not in text.err
+    assert capture(forever, out) == 0
+    assert "has no letters" not in capsys.readouterr().err
+    assert outputs(out)
 
 
 def test_constructed_letterless_names_are_refused_as_pseudonym_sources() -> None:
@@ -244,13 +239,13 @@ def test_constructed_character_can_be_named_in_either_shape(
     out = tmp_path / "incoming"
     assert capture(forever, out, "--character", wanted) == 0
     written = set(outputs(out))
-    chosen = f"{OUT_ACCOUNT}/1/Labchara-LabrealmaPartb"
+    chosen = f"{OUT_ACCOUNT}/1/Alyra-Area52"
     assert f"{chosen}/chat-cache.txt" in written
     assert f"{chosen}/SavedVariables/DBM-Core.lua" in written or any(
         d.startswith(f"{chosen}/SavedVariables/") for d in written
     )
-    assert f"{OUT_ACCOUNT}/Labrealma Partb/Labchara/AddOns.txt" in written  # the twin
-    assert not [d for d in written if "Labchara-Labrealmb" in d or d.startswith(TWIN_DIR)]
+    assert f"{OUT_ACCOUNT}/Area 52/Alyra/AddOns.txt" in written  # the twin
+    assert not [d for d in written if "Alyra-Bloodfist" in d or d.startswith(TWIN_DIR)]
 
 
 def test_constructed_most_recent_character_is_picked_among_both_shapes(
@@ -264,7 +259,7 @@ def test_constructed_most_recent_character_is_picked_among_both_shapes(
     out = tmp_path / "incoming"
     assert capture(forever, out) == 0
     written = set(outputs(out))
-    assert f"{OUT_ACCOUNT}/Labrealmc/Labcharc/config-cache.wtf" in written
+    assert f"{OUT_ACCOUNT}/Glade/Soloist/config-cache.wtf" in written
     assert not [d for d in written if "/1/" in d or "/70/" in d]
 
 
@@ -335,10 +330,11 @@ def test_constructed_extra_name_vocabulary_message_shows_the_value_only_with_sho
 # ─── round 2 of #33 ──────────────────────────────────────────────────────────
 
 
-def test_constructed_grouped_spelling_in_another_casing_shares_the_realm_pseudonym(
+def test_constructed_grouped_spelling_in_another_casing_keeps_both_folders(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Code review 3: folder `Vex-Stormrage` beside the twin `Storm Rage/Vex/`."""
+    """Code review 3: folder `Vex-Stormrage` beside the twin `Storm Rage/Vex/`.
+    Since M13-49 both keep their names; the path is neither withheld nor refused."""
     root = tmp_path / "World of Warcraft"
     _write(root / ".build.info", BUILD_INFO)
     base = root / FLAVOR
@@ -350,37 +346,29 @@ def test_constructed_grouped_spelling_in_another_casing_shares_the_realm_pseudon
     out = tmp_path / "incoming"
     assert capture(root, out) == 0
     stdout = capsys.readouterr().out
-    assert "<path withheld>" not in stdout and "(1 accounts, 1 realms, 1 characters" in stdout
+    assert "<path withheld>" not in stdout and "(1 accounts, 0 extra;" in stdout
     written = set(outputs(out))
-    assert f"{OUT_ACCOUNT}/1/Labchara-LabrealmaPartb/chat-cache.txt" in written
-    assert f"{OUT_ACCOUNT}/Labrealma Partb/Labchara/AddOns.txt" in written
+    assert f"{OUT_ACCOUNT}/1/Vex-Stormrage/chat-cache.txt" in written
+    assert f"{OUT_ACCOUNT}/Storm Rage/Vex/AddOns.txt" in written
 
 
-def test_constructed_character_list_naming_an_alt_without_a_folder_is_refused(
-    forever: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+def test_constructed_character_list_naming_an_alt_without_a_folder_is_kept(
+    forever: Path, tmp_path: Path
 ) -> None:
-    """Security S2, end to end: the alt is in no folder, so nothing maps it."""
+    """Security S2 refused a list naming an alt with no folder, because nothing
+    mapped it. Character names are public since M13-49: the list is written as is."""
     listing = forever / FLAVOR / "WTF" / "Account" / ACCOUNT / "character-list-order.txt"
     listing.write_bytes(listing.read_bytes() + b"Zedalt-Faerlina\n")
     out = tmp_path / "incoming"
-    assert capture(forever, out) == 1
-    stdout = capsys.readouterr().out
-    assert (
-        f"REFUSED  {OUT_ACCOUNT}/character-list-order.txt: character list names a character "
-        "this install has no folder for x1 (first at byte "
-    ) in stdout
-    assert "Zedalt" not in stdout and "Faerlina" not in stdout
-    assert f"{OUT_ACCOUNT}/character-list-order.txt" not in outputs(out)
-    # Named with --extra-name, the alt is mapped and the list is written.
-    again = tmp_path / "again"
-    assert capture(forever, again, "--extra-name", "Zedalt", "--extra-name", "Faerlina") == 0
-    assert f"{OUT_ACCOUNT}/character-list-order.txt" in outputs(again)
+    assert capture(forever, out) == 0
+    assert outputs(out)[f"{OUT_ACCOUNT}/character-list-order.txt"] == listing.read_bytes()
 
 
-def test_constructed_folder_only_second_part_in_an_apostrophe_spelling_refuses(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+def test_constructed_folder_only_second_part_in_any_spelling_is_kept(
+    tmp_path: Path,
 ) -> None:
-    """Security S1, end to end: `Kael-QuelThalas` with no twin, `Quel'Thalas` inside a file."""
+    """Security S1 refused `Quel'Thalas` inside a file when the folder spelled it
+    `Kael-QuelThalas`. A second name is public since M13-49: every spelling stays."""
     root = tmp_path / "World of Warcraft"
     _write(root / ".build.info", BUILD_INFO)
     base = root / FLAVOR
@@ -390,12 +378,9 @@ def test_constructed_folder_only_second_part_in_an_apostrophe_spelling_refuses(
     _write(character / "layout-local.txt", "Frame: Kael - Quel'Thalas\n")
     _write(character / "chat-cache.txt", "Kael - Quel Thalas\n")
     out = tmp_path / "incoming"
-    assert capture(root, out) == 1
-    stdout = capsys.readouterr().out
-    assert (
-        "layout-local.txt: surviving identity string (spaced or apostrophe spelling) x1" in stdout
-    )
+    assert capture(root, out) == 0
     written = outputs(out)
-    assert written[f"{OUT_ACCOUNT}/1/Labchara-Labrealma/chat-cache.txt"] == (
-        b"Labchara - Labrealma\n"
+    assert written[f"{OUT_ACCOUNT}/1/Kael-QuelThalas/layout-local.txt"] == (
+        b"Frame: Kael - Quel'Thalas\n"
     )
+    assert written[f"{OUT_ACCOUNT}/1/Kael-QuelThalas/chat-cache.txt"] == b"Kael - Quel Thalas\n"

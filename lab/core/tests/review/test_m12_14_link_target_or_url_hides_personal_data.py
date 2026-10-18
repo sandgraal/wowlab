@@ -21,6 +21,10 @@ quoted, and the baseline wiki passes.
 Constructed: the real wiki fixture (d4344c8) plus the generated page and an
 index naming every module; one invented line is appended per case. The
 names and the address are invented.
+
+Amended 2026-10-17 (M13-49, ADR-0019 amendment): a `Name-Realm` pair is
+public and no longer matched, so the account folder `Account/123456789`
+stands in for it; a `Name-Realm` link target is now quoted like any other.
 """
 
 from __future__ import annotations
@@ -53,7 +57,7 @@ cw = _load("check_wiki")
 gen = _load("gen_command_reference")
 ERA = cw.read_commands(REAL_WIKI.with_name("wiki-a47a7ee.commands.txt"))
 
-SECRETS = ("Thrall", "Stormrage", "someone", "example.org")
+SECRETS = ("123456789", "someone", "example.org")
 
 
 def _wiki(tmp_path: Path, extra_line: str | None) -> Path:
@@ -79,7 +83,7 @@ def test_control_baseline_passes(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "line",
-    ["Ask Thrall-Stormrage about it.", "Write to someone@example.org about it."],
+    ["Ask about Account/123456789.", "Write to someone@example.org about it."],
 )
 def test_control_the_same_values_in_prose_are_flagged_and_not_quoted(
     tmp_path: Path, line: str
@@ -92,7 +96,7 @@ def test_control_the_same_values_in_prose_are_flagged_and_not_quoted(
 @pytest.mark.parametrize(
     "line",
     [
-        "See [my main](Thrall-Stormrage).",
+        "See [my main](Account/123456789).",
         "See [home](Home#someone@example.org).",
         "See https://github.com/search?q=someone@example.org for it.",
     ],
@@ -103,3 +107,8 @@ def test_personal_data_in_a_link_target_or_url_is_flagged_and_not_quoted(
     out = _failures(_wiki(tmp_path, line))
     assert any("not quoted here" in f for f in out), out
     assert not any(s in f for s in SECRETS for f in out), out
+
+
+def test_a_name_realm_link_target_is_public_and_quoted(tmp_path: Path) -> None:
+    out = _failures(_wiki(tmp_path, "See [my main](Thrall-Stormrage)."))
+    assert out == ["FAQ.md:67: link to a page that does not exist: Thrall-Stormrage"]

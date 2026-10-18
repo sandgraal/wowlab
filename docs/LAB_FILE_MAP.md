@@ -79,7 +79,7 @@ scope permanently (LAB_PLAN L7).
 | `WTF/Account/<ACCOUNT>/chat-frontend-cache.txt` | Unknown; 0 bytes on the Forever beta (2026-09-22) **[verify]** | Client | gate (server may replace) | A | none (kept by `snapshot`; empty kept as empty) |
 | `WTF/Account/<ACCOUNT>/flagged-cache-account.txt`, `…/<Character>/flagged-cache-character.txt` | Unknown; on the Forever beta exactly `2` then a NUL **[verify purpose]** | Client | gate (server may replace) | A | none (kept by `snapshot`) |
 | `WTF/Account/<ACCOUNT>/tts-cache-account.txt`, `…/<Character>/tts-cache-character.txt` | Text-to-speech settings **[verify]**; mixed LF and CRLF within the file | Client | gate (server may replace) | A | none (kept by `snapshot`) |
-| `WTF/Account/<ACCOUNT>/character-list-order.txt` | Character-select order **[verify]**; not captured (its lines refused by the scrub tool) | Client | gate | A | none (kept by `snapshot`) |
+| `WTF/Account/<ACCOUNT>/character-list-order.txt` | Character-select order **[verify]**; captured as written since 2026-10-17 (M13-49: character and realm names are public; before that the scrub tool refused its lines) | Client | gate | A | none (kept by `snapshot`) |
 | `…/<Character>/edit-mode-cache-character.txt` | Character Edit Mode layouts, same encoding as the account file | Client | gate (server may replace) | A | none (kept by `snapshot`) |
 | `…/<Character>/click-bindings-cache.txt` | Click Casting bindings on unit frames; LF, ends `END` | Client | gate (server may replace) | A | none (kept by `snapshot`) |
 | `WTF/Account/<ACCOUNT>/edit-mode-cache-account.old` | Previous write of the same file | Client | no | A (read) | none (kept by `snapshot`) |

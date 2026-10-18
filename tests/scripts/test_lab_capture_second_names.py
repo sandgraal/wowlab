@@ -13,6 +13,12 @@ flagged cache bodies are constructed from the one-line descriptions in
 docs/LAB_FILE_MAP.md (space-separated tokens, length-prefixed layout names,
 a final NUL; `2` then a NUL). No test needs or touches a real install
 (ADR-0012).
+
+Since M13-49 (ADR-0019 amendment, 2026-10-17) character, realm and second
+names are public and kept as they are. The refusal rules for third-party
+files, addon names, SavedVariables file names and edit-mode layouts still
+hold for the identifiers that stay; the end-to-end tests below reach them
+through `--extra-name` (`Qorvey`, `Alyra`), a kept identity string.
 """
 
 from __future__ import annotations
@@ -27,11 +33,13 @@ Identity = lab_capture.Identity
 
 FLAVOR = "_classic_beta_"
 OUT_ACCOUNT = f"macos/{FLAVOR}/WTF/Account/90000001#1"
-# Realm-category names sort bloodfist, moon, qorv, some realm: a, b, c, d.
-QORV_DIR = f"{OUT_ACCOUNT}/1/Labchara-Labrealmc"
-MOON_DIR = f"{OUT_ACCOUNT}/1/Labchara-Labrealmb"
-TWIN_ADDONS = f"{OUT_ACCOUNT}/Labrealmd Partb/Labchara/AddOns.txt"
-REAL = ("Alyra", "alyra", "Bloodfist", "Qorv", "Moon", "Some Realm", "SomeRealm", ACCOUNT)
+# Names are kept as they are (M13-49); only the account and the group are rewritten.
+QORV_DIR = f"{OUT_ACCOUNT}/1/Alyra-Qorv"
+MOON_DIR = f"{OUT_ACCOUNT}/1/Alyra-Moon"
+TWIN_ADDONS = f"{OUT_ACCOUNT}/Some Realm/Alyra/AddOns.txt"
+REAL = (ACCOUNT,)
+# A kept identity string (an --extra-name) inside the addon name `AnchorQorvey`.
+GLUED_EXTRA = ("--extra-name", "Qorvey")
 
 FLAGGED = b"2\x00"
 EDIT_MODE = b"1 2 0 3 def 0 6 Priest 0 1 1 0\x00"
@@ -95,14 +103,14 @@ def test_constructed_twin_is_paired_by_first_name_and_shared(
     written = outputs(out)
 
     assert (
-        "identity map: 6 names (1 accounts, 4 realms, 1 characters, 0 extra), "
-        "0 own GUIDs, 8 CVars blanked"
+        "identity map: 1 names (1 accounts, 0 extra; character and realm names are kept as "
+        "they are), 0 own GUIDs, 8 CVars blanked"
     ) in stdout
     # The most recently played <First>-<Second> folder, and its twin's AddOns.txt.
     assert f"{QORV_DIR}/chat-cache.txt" in written
     assert written[TWIN_ADDONS] == b"Plain: enabled\n"
     assert [d for d in written if d.endswith("AddOns.txt")] == [TWIN_ADDONS]
-    assert not [d for d in written if "Labrealma" in d or "Labrealmb" in d]
+    assert not [d for d in written if "Alyra-Bloodfist" in d or "Alyra-Moon" in d]
     for dest, data in written.items():
         for real in REAL:
             assert real.encode() not in data and real not in dest, (real, dest)
@@ -160,9 +168,9 @@ THIRD_PARTY = "identity string inside a third-party addon file"
 def test_constructed_automatic_toc_selection_passes_over_an_identity_match(
     forever: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Constructed case: a four-letter second name inside a longer addon file name."""
+    """Constructed case: a kept identity string inside a longer addon file name."""
     out = tmp_path / "incoming"
-    assert capture(forever, out) == 0
+    assert capture(forever, out, *GLUED_EXTRA) == 0
     stdout = capsys.readouterr().out
     written = outputs(out)
     assert written[f"macos/{FLAVOR}/Interface/AddOns/Plain/Plain.toc"] == PLAIN_TOC.encode()
@@ -171,14 +179,14 @@ def test_constructed_automatic_toc_selection_passes_over_an_identity_match(
     assert f"  {FLAVOR}/Interface/AddOns/Anchor/Anchor.toc: {THIRD_PARTY} x1" in (
         stdout.splitlines()
     )
-    assert "AnchorLabrealm" not in stdout
+    assert "AnchorLabname" not in stdout
 
 
 def test_constructed_explicit_toc_with_an_identity_match_is_refused(
     forever: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     out = tmp_path / "incoming"
-    assert capture(forever, out, "--toc", "Anchor") == 1
+    assert capture(forever, out, "--toc", "Anchor", *GLUED_EXTRA) == 1
     stdout = capsys.readouterr().out
     assert f"REFUSED  macos/{FLAVOR}/Interface/AddOns/Anchor/Anchor.toc: {THIRD_PARTY} x1" in (
         stdout.splitlines()
@@ -193,11 +201,11 @@ def test_constructed_identity_in_an_addon_path_is_refused_with_the_path_withheld
     addons = forever / FLAVOR / "Interface" / "AddOns"
     _write(addons / "AlyraBars" / "AlyraBars.toc", PLAIN_TOC)
     out = tmp_path / "incoming"
-    assert capture(forever, out, "--toc", "AlyraBars") == 1
+    assert capture(forever, out, "--toc", "AlyraBars", "--extra-name", "Alyra") == 1
     stdout = capsys.readouterr().out
     assert f"REFUSED  macos/{FLAVOR}/<path withheld>: in path: {THIRD_PARTY}" in stdout
     assert f"  {FLAVOR}/<path withheld>: in path: {THIRD_PARTY}" in stdout.splitlines()
-    assert "LabcharaBars" not in stdout and "Alyra" not in stdout
+    assert "LabnameaBars" not in stdout and "Alyra" not in stdout
     assert not [d for d in outputs(out) if "Bars" in d]
 
 
@@ -234,11 +242,11 @@ def test_constructed_unreadable_addon_file_never_prints_its_rewritten_folder(
 
     monkeypatch.setattr(lab_capture, "read_bytes", read)
     out = tmp_path / "incoming"
-    assert capture(forever, out, "--toc", "AlyraBars") == 1
+    assert capture(forever, out, "--toc", "AlyraBars", "--extra-name", "Alyra") == 1
     stdout = capsys.readouterr().out
     assert f"REFUSED  macos/{FLAVOR}/<path withheld>: unreadable (PermissionError)" in stdout
     assert f"  {FLAVOR}/<path withheld>: unreadable (PermissionError)" in stdout.splitlines()
-    assert "LabcharaBars" not in stdout and "Alyra" not in stdout
+    assert "LabnameaBars" not in stdout and "Alyra" not in stdout
 
 
 # ─── security S1: addon names in AddOns.txt and SavedVariables ───────────────
@@ -255,10 +263,10 @@ def test_constructed_addons_txt_naming_an_addon_after_a_name_is_refused(
     twin.write_bytes(b"AnchorQorvey: enabled\nPlain: enabled\n")
     os.utime(twin, (OLD + 200, OLD + 200))
     out = tmp_path / "incoming"
-    assert capture(forever, out) == 1
+    assert capture(forever, out, *GLUED_EXTRA) == 1
     stdout = capsys.readouterr().out
     assert f"REFUSED  {TWIN_ADDONS}: {ADDON_LIST} x1" in stdout.splitlines()
-    assert TWIN_ADDONS not in outputs(out) and "AnchorLabrealm" not in stdout
+    assert TWIN_ADDONS not in outputs(out) and "AnchorLabname" not in stdout
 
 
 def test_constructed_savedvariables_with_a_glued_name_or_named_after_one_is_refused(
@@ -289,10 +297,10 @@ def test_constructed_savedvariables_file_named_after_a_name_withholds_its_path(
     saved = forever / FLAVOR / "WTF" / "Account" / ACCOUNT / "SavedVariables"
     _write(saved / "AnchorQorvey.lua", "\nAnchorDB = 1\n")
     out = tmp_path / "incoming"
-    assert capture(forever, out, "--sv", "AnchorQorvey.lua") == 1
+    assert capture(forever, out, "--sv", "AnchorQorvey.lua", *GLUED_EXTRA) == 1
     stdout = capsys.readouterr().out
     assert f"REFUSED  macos/{FLAVOR}/<path withheld>: in path: {ADDON_FILE_NAME}" in stdout
-    assert "AnchorLabrealm" not in stdout and not [d for d in outputs(out) if "Anchor" in d]
+    assert "AnchorLabname" not in stdout and not [d for d in outputs(out) if "Anchor" in d]
 
 
 # ─── 3. an identity match in an edit-mode cache refuses it ───────────────────
@@ -312,7 +320,7 @@ def test_constructed_owner_named_layout_refuses_the_edit_mode_cache(
     target.write_bytes(EDIT_MODE_OWNED)
     os.utime(target, (OLD + 100, OLD + 100))
     out = tmp_path / "incoming"
-    assert capture(forever, out) == 1
+    assert capture(forever, out, "--extra-name", "Alyra") == 1
     stdout = capsys.readouterr().out
     refused = [line for line in stdout.splitlines() if line.startswith("REFUSED")]
     assert len(refused) == 1, refused
@@ -357,7 +365,7 @@ def test_constructed_ambiguous_twin_leaves_the_character_captured_with_a_note(
     assert capture(forever, out) == 0
     stdout = capsys.readouterr().out
     written = outputs(out)
-    assert any(d.endswith("-Labrealmd/chat-cache.txt") for d in written), sorted(written)
+    assert any(d.endswith("/Alyra-Qorv/chat-cache.txt") for d in written), sorted(written)
     assert not [d for d in written if d.endswith("AddOns.txt")]
     assert (
         f"note     {FLAVOR}: the chosen character's retail-style twin could not be paired "
@@ -464,11 +472,12 @@ def test_constructed_character_naming_an_unpaired_twin_says_so_without_real_name
     out = tmp_path / "incoming"
     assert capture(forever, out, "--character", "Other Realm/Alyra") == 2
     err = capsys.readouterr().err
+    # The twin's label is shown as written: realm and character names are public (M13-49).
     assert (
-        "lab_capture: --character: the retail-style twin Labrealmc Partb/Labchara could not be "
+        "lab_capture: --character: the retail-style twin Other Realm/Alyra could not be "
         "paired with a character; choose its <First>-<Second> folder instead"
     ) in err
-    assert "Other" not in err and "Alyra" not in err and not out.exists()
+    assert not out.exists()
 
 
 # ─── round 3, item 1: --character across flavors ─────────────────────────────
@@ -493,10 +502,9 @@ def test_constructed_character_in_one_flavor_is_captured_and_the_other_noted(
     assert capture(root, out, "--character", "Alyra-Moon") == 0
     stdout = capsys.readouterr().out
     written = set(outputs(out))
-    # The retail realm joins the map: area 52, bloodfist, moon, qorv, some realm.
     account = f"macos/{FLAVOR}/WTF/Account/90000001#1"
-    assert f"{account}/1/Labchara-Labrealmc/chat-cache.txt" in written
-    assert f"{account}/Labrealme Partb/Labchara/AddOns.txt" in written
+    assert f"{account}/1/Alyra-Moon/chat-cache.txt" in written
+    assert f"{account}/Some Realm/Alyra/AddOns.txt" in written
     assert not [d for d in written if d.endswith("/chat-cache.txt") and "_retail_" in d]
     assert "note     _retail_: --character matched no character here; skipped" in (
         stdout.splitlines()

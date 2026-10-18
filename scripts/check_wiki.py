@@ -37,12 +37,12 @@ What it checks:
   with a URL attribute (`href`, `src`, ...);
 - nothing, in any file's text or any file name, matches an absolute home
   path, an install path other than the documented default locations
-  (`wowlab_core.install.default_roots`), a numeric account folder, a
-  `Name-Realm` pair other than the documented placeholders and the reviewed
-  terms in `scripts/wiki_allowed_terms.txt`, an email address, a BattleTag
-  or a credential-shaped string. Text is matched after HTML entities and
-  Markdown escapes are decoded, NFKC normalisation, and removal of zero-width
-  and other format characters;
+  (`wowlab_core.install.default_roots`), a numeric account folder, an email
+  address, a BattleTag or a credential-shaped string. Text is matched after
+  HTML entities and Markdown escapes are decoded, NFKC normalisation, and
+  removal of zero-width and other format characters. A character's
+  `Name-Realm` is not personal data (ADR-0019 amendment, 2026-10-17, M13-49):
+  character and realm names are public, so the wiki may name them;
 - with `--base REF` (a commit in DIR): the change against REF stays under a
   fixed size cap, so no single run can rewrite the wiki, and no link goes to
   a host the wiki at REF does not already link to (Markdown links, reference
@@ -123,13 +123,6 @@ INSTRUCTION_FILES = frozenset({"claude.md", "claude.local.md"})
 MAX_CHANGED_LINES = 400
 MAX_CHANGED_BYTES = 32_000
 
-# `Name-Realm` shapes the wiki may use as placeholders.
-NAME_REALM_PLACEHOLDERS = frozenset({"name-realm", "character-realm", "first-second"})
-# Reviewed technical terms of the same shape (page names, `Add-On`, ...). A
-# file in the repository, so the model, which only writes the wiki, cannot
-# add to it.
-ALLOWED_TERMS_FILE = _HERE / "wiki_allowed_terms.txt"
-
 EXIT_OK, EXIT_FAILURES, EXIT_ERROR, EXIT_PERSONAL = 0, 1, 2, 3
 
 WITHHELD_NAME = "(a file whose name is withheld)"
@@ -176,10 +169,6 @@ _HOME_PATH = re.compile(
 _ACCOUNT_FOLDER = re.compile(r"(?<![\w#])\d{5,}#\d{1,2}(?!\w)|Account[\\/]+\d+(?![\w-])", re.I)
 _EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?!\w)")
 _BATTLETAG = re.compile(r"(?<![\w#])[^\W\d_]\w{2,11}#\d{4,6}(?!\w)")
-_NAME_REALM = re.compile(
-    r"(?<![\w'<>/.\\-])([A-Z][a-zß-ÿ']{1,11})-([A-Za-z][A-Za-z0-9À-ÿ']{1,30})"
-    r"(?:-(?:US|EU|KR|TW|CN))?(?![\w'<>/\\-])"
-)
 _CREDENTIAL = re.compile(
     r"(?:sk-ant-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})"
     r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"
@@ -219,16 +208,6 @@ except BaseException as _exc:
 DEFAULT_ROOT_WINDOW = 512
 
 
-def allowed_terms() -> frozenset[str]:
-    """The reviewed `Word-Word` terms, lower-cased; `#` starts a comment."""
-    terms = set()
-    for line in ALLOWED_TERMS_FILE.read_text(encoding="utf-8").splitlines():
-        term = line.split("#", 1)[0].strip()
-        if term:
-            terms.add(term.lower())
-    return frozenset(terms)
-
-
 # ─── personal data ───────────────────────────────────────────────────────────
 
 
@@ -238,23 +217,22 @@ def normalise(text: str) -> str:
     return "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
 
 
-def personal_kinds(text: str, terms: frozenset[str] | None = None) -> list[str]:
+def personal_kinds(text: str) -> list[str]:
     """One entry per personal-data match in `text`, by kind; empty when clean.
 
     Matched on the normalised text and again with Markdown escapes removed;
     a kind counts as often as the variant that matches it most.
     """
-    terms = allowed_terms() if terms is None else terms
     norm = normalise(text)
     counts: Counter[str] = Counter()
     for variant in {norm, _MD_ESCAPE.sub(r"\1", norm)}:
-        found = Counter(_kinds(variant, terms))
+        found = Counter(_kinds(variant))
         for kind, n in found.items():
             counts[kind] = max(counts[kind], n)
     return [kind for kind in sorted(counts) for _ in range(counts[kind])]
 
 
-def _kinds(text: str, terms: frozenset[str]) -> Iterator[str]:
+def _kinds(text: str) -> Iterator[str]:
     for _ in _HOME_PATH.finditer(text):
         yield "an absolute home path"
     for m in _INSTALL_DIR.finditer(text):
@@ -268,11 +246,6 @@ def _kinds(text: str, terms: frozenset[str]) -> Iterator[str]:
         yield "a BattleTag"
     for _ in _CREDENTIAL.finditer(text):
         yield "a credential-shaped string"
-    for m in _NAME_REALM.finditer(text):
-        pair = f"{m.group(1)}-{m.group(2)}".lower()
-        if pair in NAME_REALM_PLACEHOLDERS or pair in terms:
-            continue
-        yield "a Name-Realm pair"
 
 
 # ─── Markdown ────────────────────────────────────────────────────────────────
@@ -534,14 +507,13 @@ class Checker:
     covered_leaves: set[str] = field(default_factory=set)
     changed_lines: int = 0
     changed_bytes: int = 0
-    terms: frozenset[str] = field(default_factory=allowed_terms)
 
     def fail(self, where: str, message: str, personal: bool = False) -> None:
         self.failures.append(Failure(where, message, personal))
 
     def quote(self, text: str) -> str | None:
         """`text` when it may be printed: no personal data, printable, short."""
-        if _QUOTABLE.match(text) and not personal_kinds(text, self.terms):
+        if _QUOTABLE.match(text) and not personal_kinds(text):
             return text
         return None
 
@@ -558,7 +530,7 @@ class Checker:
             if rel_path.parts[0] == ".git":
                 continue
             rel = rel_path.as_posix()
-            name_kinds = personal_kinds(rel, self.terms)
+            name_kinds = personal_kinds(rel)
             self.display[rel] = WITHHELD_NAME if name_kinds else (self.quote(rel) or WITHHELD_NAME)
             for kind in name_kinds:
                 self.fail(self.at(rel), f"{kind} in a file name {PERSONAL_SUFFIX}", personal=True)
@@ -781,7 +753,7 @@ class Checker:
         """Every line of every file, raw: link targets, URLs and code included."""
         for rel, text in self.texts.items():
             for number, line in enumerate(text.splitlines(), start=1):
-                for kind in personal_kinds(line, self.terms):
+                for kind in personal_kinds(line):
                     self.fail(self.at(rel, number), f"{kind} {PERSONAL_SUFFIX}", personal=True)
 
     # ── the change against --base ──

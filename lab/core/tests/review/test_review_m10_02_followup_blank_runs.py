@@ -23,6 +23,10 @@ bytes already in memory: no I/O, no sleep, no thread.
 
 Constructed hostile and boundary input with invented names; no install
 (ADR-0012).
+
+Amended 2026-10-17 (M13-49, ADR-0019 amendment): the own-realm partner
+checks were retired, so defect (1) no longer exists and its two tests were
+removed. The timing guard of (2) stays.
 """
 
 from __future__ import annotations
@@ -31,8 +35,6 @@ import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType
-
-import pytest
 
 PARSER = Path(__file__).resolve().parents[1] / "parser"
 if str(PARSER) not in sys.path:
@@ -44,7 +46,6 @@ SCRIPT = Path(__file__).resolve().parents[4] / "scripts" / "lab_capture.py"
 CLOCK, CLOCK_NAME = cpu_clock()
 CHARACTER = "Thrallmar"
 REALM = "Area 52"
-FOREIGN = "someone else's name on an own realm"
 
 
 def _load() -> ModuleType:
@@ -62,21 +63,6 @@ lab_capture = _load()
 
 def _identity() -> object:
     return lab_capture.Identity(characters=[CHARACTER], realms=[REALM])
-
-
-def _refused(text: bytes) -> bool:
-    result = _identity().scrub(text)  # type: ignore[attr-defined]
-    return any(p.startswith(FOREIGN) for p in result.problems)
-
-
-def test_constructed_positive_control_one_space_before_a_paren_refuses() -> None:
-    assert _refused(b'"Jaina (Area 52)"')
-    assert _refused(b'"Jaina  - Area 52"')  # the joint already tolerates a blank run
-
-
-@pytest.mark.parametrize("text", [b'"Jaina  (Area 52)"', b'"Jaina\t(Area52)"'])
-def test_constructed_a_blank_run_before_a_paren_still_refuses(text: bytes) -> None:
-    assert _refused(text)
 
 
 def _seconds(data: bytes) -> float:

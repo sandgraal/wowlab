@@ -5,7 +5,7 @@ Two kinds of input:
 - `constructed`: a small wiki built in `tmp_path` from the current Click tree
   (a page naming every leaf command and every public module, plus the
   generated `CLI-Reference.md`), which passes; each test breaks one thing and
-  asserts the matching failure. The names in them (`Brakka-Stonewhisper`,
+  asserts the matching failure. The names in them (`Brakka#12345`,
   `/Users/someone`) are invented.
 - `real`: `fixtures/wiki-a47a7ee/`, a byte-for-byte copy of every page of
   https://github.com/sandgraal/wowlab.wiki at commit a47a7ee (2026-10-14, the
@@ -311,8 +311,6 @@ def test_constructed_unexpected_files_fail(tmp_path: Path) -> None:
             "an install path other than a documented default location",
         ),
         ("`WTF/Account/123456789#1/`", "a numeric account folder"),
-        ("Brakka-Stonewhisper logged in.", "a Name-Realm pair"),
-        ('The log said "Brakka-Area52-US".', "a Name-Realm pair"),
         ("Write to someone@example.org.", "an email address"),
         ("Add me: Brakka#12345.", "a BattleTag"),
         ("key sk-ant-api03-abcdefghijklmnop", "a credential-shaped string"),
@@ -341,6 +339,41 @@ def test_constructed_documented_placeholders_and_defaults_pass(tmp_path: Path) -
     )
     root = _build(tmp_path / "wiki", Extra=page)
     assert _failures(root) == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Brakka-Stonewhisper logged in.",
+        'The log said "Brakka-Area52-US".',
+        "`Brakka-Stonewhisper` in code, and Thrall-Stormrage in prose.",
+        "On Forever: `Alyra-Qorv`.",
+    ],
+)
+def test_constructed_a_name_realm_pair_is_not_personal_data(tmp_path: Path, line: str) -> None:
+    """Character and realm names are public (ADR-0019 amendment, 2026-10-17, M13-49)."""
+    root = _build(tmp_path / "wiki", Extra=f"# Extra\n\n{line}\n")
+    assert _failures(root) == []
+    assert cw.main([str(root)]) == cw.EXIT_OK
+
+
+@pytest.mark.parametrize(
+    ("line", "kind"),
+    [
+        ("Mine is in `/Users/someone/Games`.", "an absolute home path"),
+        ("`WTF/Account/123456789#1/`", "a numeric account folder"),
+        ("Write to someone@example.org.", "an email address"),
+        ("Add me: Brakka#12345.", "a BattleTag"),
+    ],
+    ids=["home-path", "account-folder", "email", "battletag"],
+)
+def test_constructed_kept_identifiers_still_exit_personal_beside_a_name_realm(
+    tmp_path: Path, line: str, kind: str
+) -> None:
+    """M13-49 narrows the gate to identifiers of the account: these still fail (exit 3)."""
+    root = _build(tmp_path / "wiki", Extra=f"# Extra\n\nBrakka-Stonewhisper says: {line}\n")
+    assert _failures(root) == [f"Extra.md:3: {kind} (not quoted here; the log is public)"]
+    assert cw.main([str(root)]) == cw.EXIT_PERSONAL
 
 
 # ─── the change against --base ───────────────────────────────────────────────
@@ -421,14 +454,14 @@ def test_constructed_cli_prints_one_line_per_failure(
 ) -> None:
     root = _build(
         tmp_path / "wiki",
-        Extra="# Extra\n\n[x](Nope) `wowlab nope`\n\nBrakka-Stonewhisper\n",
+        Extra="# Extra\n\n[x](Nope) `wowlab nope`\n\nBrakka#12345\n",
     )
     assert cw.main([str(root)]) == cw.EXIT_PERSONAL
     out = capsys.readouterr().out.splitlines()
     assert out == [
         "Extra.md:3: link to a page that does not exist: Nope",
         "Extra.md:3: unknown command `wowlab nope`",
-        "Extra.md:5: a Name-Realm pair (not quoted here; the log is public)",
+        "Extra.md:5: a BattleTag (not quoted here; the log is public)",
     ]
 
 

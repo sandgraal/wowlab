@@ -8,11 +8,22 @@ the test that uses them, and are labelled `constructed` (invariant L8).
 ## Rules
 
 - **Capture tool only.** Every install file arrives through
-  `scripts/lab_capture.py` (ticket M10-02), which replaces account folder,
-  character and realm names with stable pseudonyms, blanks identity CVars,
-  and refuses to emit a file that still contains an email address, a
-  BattleTag or an unmapped `Player-<n>-<hex>` GUID. The repository is
-  public; an unscrubbed capture is a leak.
+  `scripts/lab_capture.py` (ticket M10-02), which replaces account folder
+  names (and any `--extra-name`) with stable pseudonyms, rewrites the
+  owner's own `Player-<n>-<hex>` GUIDs, blanks identity CVars, and refuses
+  to emit a file that still contains an email address, a BattleTag, a home
+  path carrying a login (since 2026-10-17, M13-49) or an unmapped
+  `Player-<n>-<hex>` GUID. The home-path check fails closed: a URL path
+  such as `https://example.org/home/page`, or a folder named `Users` or
+  `Home` inside a path, refuses the file too. The repository is public; an
+  unscrubbed capture is a leak.
+  *Amended 2026-10-17 (M13-49, ADR-0019 amendment):* character names, realm
+  names and the Forever second name are visible to anyone in the game, so
+  they are no longer identifiers here: a new capture keeps them as they
+  are, in paths and in contents, and a fixture, test, doc or PR may name
+  them. Fixtures committed before this date keep their `Labchar…` and
+  `Labrealm…` pseudonyms and their provenance rows; nothing is re-captured
+  or edited.
 - **Nothing else is edited.** Structure, key order, number text, escapes and
   line endings stay byte for byte. `.gitattributes` turns off end-of-line
   conversion for this directory.
@@ -87,7 +98,12 @@ mounted drive must pass `--platform`. `scrub` records what the tool rewrote,
 as it prints it: `identity-rewritten: n` (or `path only`), `cvars-blanked: n`,
 `guids-rewritten: n`, `unit-guids-rewritten: n`,
 `other-players-pseudonymised: n`, `timestamps-shifted`, `embedded: n`,
-joined with `; `, or `none`. The tool
+joined with `; `, or `none`. *Amended 2026-10-17 (M13-49):* from this
+date `identity-rewritten: n` counts only rewrites of the account folder and
+`--extra-name` strings, and `path only` means only the account or the
+digits group folder was rewritten in the path; before it, both also counted
+character and realm names. Rows from before and after the date do not
+compare on this cell. The tool
 prints each row ready to paste. Run it with
 `--kind <flavor folder>=<flavor-kind>` and the `file` cell is already the
 final path: move `incoming/<platform>/` up one level and the rows match.

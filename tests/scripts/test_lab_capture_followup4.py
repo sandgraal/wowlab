@@ -2,14 +2,17 @@
 
 `--pseudonymise-other-players` (combat logs only): every Player GUID that is
 not the owner's becomes an invented GUID, and the character-name part of the
-quoted unit name after it an invented pseudonym, consistently for the run. A
-later part of the unit name that is one of the owner's own identity strings
-(another player on the owner's realm) is scrubbed by the own-identity rules; a
-realm the tool does not know gets a realm-style pseudonym; a region word or an
-empty part (the trailing `-`) stays. The log is refused, with a count only, if
-one of those real parts appears anywhere outside the rewritten unit fields, or
-if another player's GUID never stands in a GUID+name unit pair. Without the
-flag nothing changes: the log is refused with `unmapped player GUID`.
+quoted unit name after it an invented pseudonym, consistently for the run.
+Since M13-49 (ADR-0019 amendment, 2026-10-17) the realm and region parts after
+the character name are left as written: a realm name is no identifier. Any
+identity string there is still the identity rules' business; `_identity` below
+still hands the engine the owner's character and realm (Identity accepts them,
+discovery no longer passes them), so in the engine-level tests the owner's realm
+is rewritten by those rules, while the command-line tests show the capture as it
+now runs. The log is refused, with a count only, if a real character name
+appears anywhere outside the rewritten unit fields, or if another player's GUID
+never stands in a GUID+name unit pair. Without the flag nothing changes: the
+log is refused with `unmapped player GUID`.
 
 CONSTRUCTED INPUT. Every log line below is written for the test in the shape of
 docs/LAB_FORMATS.md §8, with invented names only; trees are synthetic, under
@@ -117,7 +120,8 @@ def test_constructed_two_players_on_the_owners_realm_are_pseudonymised(tmp_path:
     )
 
 
-def test_constructed_player_on_a_foreign_realm_gets_a_realm_pseudonym(tmp_path: Path) -> None:
+def test_constructed_player_on_a_foreign_realm_keeps_the_realm(tmp_path: Path) -> None:
+    """Only the character name next to the rewritten GUID is pseudonymised (M13-49)."""
     log = (
         HEADER
         + _line(b"SPELL_HEAL," + FAR + b"," + OWN_UNIT + b',2061,"Flash Heal",0x2,500,0,0,nil')
@@ -125,8 +129,8 @@ def test_constructed_player_on_a_foreign_realm_gets_a_realm_pseudonym(tmp_path: 
     )
     problems, data, outcome = _process(log, tmp_path, others=OtherPlayers())
     assert problems == []
-    assert data.count(b'Player-9998-00000001,"Labothera-Labotherrealma-US",0x548,0x0') == 2
-    assert _no_real(data) == []
+    assert data.count(b'Player-9998-00000001,"Labothera-Gloamspire-US",0x548,0x0') == 2
+    assert b"Tamrisk" not in data and FAR_GUID not in data
     assert outcome.other_players == 1
 
 
@@ -173,14 +177,15 @@ def test_constructed_other_players_name_outside_a_unit_field_refuses(
     assert problems == [f"{OTHER_NAME} x1"]  # a count only: no offset, no line, no text
 
 
-def test_constructed_foreign_realm_outside_a_unit_field_refuses(tmp_path: Path) -> None:
+def test_constructed_foreign_realm_outside_a_unit_field_is_public_text(tmp_path: Path) -> None:
+    """A realm is not hunted: it was never rewritten (M13-49)."""
     log = (
         HEADER
         + _line(b"SWING_DAMAGE," + FAR + b"," + DUMMY + b",10,-1,1,0,0,0,nil,nil,nil")
         + _line(b'ENCOUNTER_START,1234,"Warden of Gloamspire",1,5,36')
     )
     problems, _data, _o = _process(log, tmp_path, others=OtherPlayers())
-    assert problems == [f"{OTHER_NAME} x1"]
+    assert problems == []
 
 
 def test_constructed_own_realm_outside_other_units_is_left_to_the_own_rules(
@@ -322,9 +327,11 @@ def test_constructed_cli_flag_writes_the_log_and_records_the_count(
     written = outputs(out)
     logs = [data for dest, data in written.items() if "WoWCombatLog" in dest]
     assert len(logs) == 2 and logs[0] == logs[1]  # one run, one pseudonym per player
-    assert b'Player-9998-00000001,"Labothera-LabrealmaPartb-",0x512' in logs[0]
-    assert logs[0].count(b'Player-9998-00000002,"Labotherb-LabrealmaPartb-US",0x514') == 2
-    assert b'Player-9999-00000001,"Labchara-LabrealmaPartb-US",0x511' in logs[0]
+    # The character names next to rewritten GUIDs are pseudonymised; the realm
+    # stays, and so does the owner's own name (M13-49).
+    assert b'Player-9998-00000001,"Labothera-Area52-",0x512' in logs[0]
+    assert logs[0].count(b'Player-9998-00000002,"Labotherb-Area52-US",0x514') == 2
+    assert b'Player-9999-00000001,"Thrallmar-Area52-US",0x511' in logs[0]
     rows = [line for line in printed.out.splitlines() if "WoWCombatLog" in line and "| " in line]
     assert len(rows) == 2 and all("other-players-pseudonymised: 2" in row for row in rows)
     for data in written.values():
@@ -425,37 +432,28 @@ def test_constructed_name_found_whatever_its_normal_form_or_casing(
 @pytest.mark.parametrize(
     "spelling", [b"Gloam Spire", b"Gloam_Spire", b"gloam-spire", b"Gloam'Spire"]
 )
-def test_constructed_unknown_realm_found_in_spaced_and_split_spellings(
+def test_constructed_unknown_realm_in_any_spelling_elsewhere_passes(
     spelling: bytes, tmp_path: Path
 ) -> None:
+    """Hunted before M13-49, when the realm part was pseudonymised; it is kept now."""
     log = _one_player(b"Zorvinth-GloamSpire-US", b"The Warden of " + spelling + b" wakes.")
-    problems, _data, _o = _process(log, tmp_path, others=OtherPlayers())
-    assert problems == [f"{OTHER_NAME} x1"]
+    problems, data, _o = _process(log, tmp_path, others=OtherPlayers())
+    assert problems == [] and b'"Labothera-GloamSpire-US"' in data
 
 
-def test_constructed_own_realm_only_counts_as_a_whole_unit_name_part(tmp_path: Path) -> None:
-    """`KestrelHollowmere` holds the owner's realm but is not it: pseudonymised whole."""
+def test_constructed_realm_part_is_left_as_written(tmp_path: Path) -> None:
+    """With the identity map discovery now builds (no character or realm names),
+    a realm part holding the owner's realm is kept whole, like any other."""
+    identity = Identity(guids=[OWN])
     problems, data, _o = _process(
-        _one_player(b"Zorvinth-KestrelHollowmere-"), tmp_path, others=OtherPlayers()
+        _one_player(b"Zorvinth-KestrelHollowmere-"),
+        tmp_path,
+        others=OtherPlayers(),
+        identity=identity,
     )
     assert problems == []
-    assert b'"Labothera-Labotherrealma-"' in data
-    assert b"Kestrel" not in data and b"mere" not in data
-
-
-def test_constructed_other_pseudonyms_stop_counting_as_known_after_the_log(
-    tmp_path: Path,
-) -> None:
-    identity = _identity(OWN)
-    problems, _data, _o = _process(TWO_PLAYERS, tmp_path, others=OtherPlayers(), identity=identity)
-    assert problems == []
-    assert identity._scoped_words == frozenset()
-    source = tmp_path / "Tracker.lua"
-    source.write_bytes(b'\nTrackerDB = {\n["Labothera - Kestrel Hollow"] = 1,\n}\n')
-    rel = PurePosixPath("_retail_/WTF/Account/A/SavedVariables/Tracker.lua")
-    item = lab_capture.Item(source, rel, "_retail_", "1", "savedvariables")
-    after = lab_capture.process(item, identity)
-    assert any(p.startswith("someone else's name on an own realm") for p in after.problems)
+    assert b'"Labothera-KestrelHollowmere-"' in data
+    assert b'"Orlavin-KestrelHollow-"' in data and b"Zorvinth" not in data
 
 
 @pytest.mark.parametrize(
@@ -500,31 +498,34 @@ def test_constructed_dotted_capital_i_still_matches(
     [b"KelVesh", b"Kel Vesh", b"Kel\\'Vesh", b"Kel'Vesh"],
     ids=["joined", "spaced", "lua-escaped", "as-written"],
 )
-def test_constructed_separator_inside_an_unknown_realm_is_optional(
+def test_constructed_unknown_realm_with_a_separator_is_not_hunted(
     spelling: bytes, tmp_path: Path
 ) -> None:
     log = _one_player(b"Zorvinth-Kel'Vesh-US", b"The Warden of " + spelling + b" wakes.")
     problems, _data, _o = _process(log, tmp_path, others=OtherPlayers())
-    assert problems == [f"{OTHER_NAME} x1"]
+    assert problems == []
 
 
 def test_constructed_unknown_realm_with_separator_passes_when_absent(tmp_path: Path) -> None:
     problems, data, _o = _process(
         _one_player(b"Zorvinth-Kel'Vesh-US"), tmp_path, others=OtherPlayers()
     )
-    assert problems == [] and b'"Labothera-Labotherrealma\'Partb-US"' in data
+    assert problems == [] and b'"Labothera-Kel\'Vesh-US"' in data
 
 
 def test_constructed_uncheckable_part_counts_beside_searched_parts(tmp_path: Path) -> None:
-    """`GloamSpire` is searched (absent), `Default` cannot be: the count still lands."""
+    """`Default`, the character name, cannot be searched: the count lands."""
     problems, _data, _o = _process(
         _one_player(b"Default-GloamSpire-US"), tmp_path, others=OtherPlayers()
     )
     assert problems == [f"{OTHER_UNCHECKABLE} x1"]
 
 
-def test_constructed_one_character_part_is_uncheckable(tmp_path: Path) -> None:
+def test_constructed_one_character_realm_part_is_not_checked(tmp_path: Path) -> None:
+    """Uncheckable while realm parts were hunted; only the character name is now."""
     problems, _data, _o = _process(_one_player(b"Zorvinth-X-US"), tmp_path, others=OtherPlayers())
+    assert problems == []
+    problems, _data, _o = _process(_one_player(b"X-Gloam-US"), tmp_path, others=OtherPlayers())
     assert problems == [f"{OTHER_UNCHECKABLE} x1"]
 
 
