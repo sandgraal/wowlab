@@ -835,7 +835,7 @@ Found in the code review of #249 (M13-38). `guard._unchanged_executable` treats 
 
 ---
 
-## [ ] M13-49 — The scrub and the wiki gate stop treating character and realm names as identifiers
+## [x] M13-49 — The scrub and the wiki gate stop treating character and realm names as identifiers
 **Size:** S · **Depends on:** nothing (ADR-0019 amendment of 2026-10-17, Accepted the same day)
 
 Owner decision of 2026-10-17 (ADR-0019 amendment; `docs/LAB_PLAN.md` §8): character names and realm names may appear as they are in the public repository. Narrow three tools to the identifiers that stay: the Battle.net account folder (`<digits>#<n>`), email addresses and BattleTags, the owner's real name, a home path carrying the owner's login, the owner's own `Player-<n>-<hex>` GUIDs, other players' GUIDs in combat logs together with the unit name beside each, and the identity CVars on the deny-list.
