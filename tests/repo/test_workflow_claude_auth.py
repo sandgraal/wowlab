@@ -20,7 +20,10 @@ admit only the owner's (and the action's own) comments to the prompt.
 Follow-ups to #180 (security review): the PR review is read-only, the
 responder skips fork PRs, every Claude workflow denies `./.git/config`, and
 the only gh command any of them allows is `gh pr diff`, which has no
---jq/--template/--json to read the App token from the environment.
+--jq/--template/--json to read the App token from the environment. Since
+M13-59 the PR review allows no shell command at all: `gh pr diff` never ran
+in its sandbox, and the workflow writes the diff to a file instead
+(`tests/repo/test_workflow_claude_review_diff.py`).
 
 A usage-limit failure in the Claude step is reported by the action as
 is_error:true; `test_constructed_a_usage_limit_result_is_diagnosed` in
@@ -407,7 +410,12 @@ def test_the_review_cannot_read_comments_around_the_actor_filter() -> None:
     args = with_["claude_args"]
     assert "gh pr view" not in args
     assert "gh pr checks" not in args
-    assert "Bash(gh pr diff:*)" in args
+    # M13-59: no shell at all; the diff is a file the workflow wrote.
+    assert not [
+        tool
+        for tool in _allowed_tools(_action_step("claude-review.yml"))
+        if tool.startswith("Bash")
+    ]
     assert "mcp__github_ci__get_ci_status" in args
     assert "mcp__github_ci__get_workflow_run_details" in args
     # The prompt does not send the model to a command it no longer has.
