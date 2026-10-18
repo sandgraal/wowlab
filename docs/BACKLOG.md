@@ -918,3 +918,12 @@ Found in the domain review of #258 (M13-45), both pre-existing or outside that t
 Found in the code review of #258 (M13-45), on `main` since M13-29. With one flavor installed, `explain Foo` for a relative path with no row at the install root is re-judged inside that flavor (cli.py around 2844–2856), so a link named `Foo` at the install root reports `link: false` and "wowlab does not know what this file is", while the absolute spelling reports the link. M13-45 fixes this for `_*_` names in `not_taken`; extend the same rule to any root entry that exists at the root (a link, a file or a folder that `lstat` finds there): judge it at the root, never inside a flavor. Labelled constructed test with a root link in both spellings; `explain` output for paths that do exist inside the flavor byte-identical to `main`.
 
 **Acceptance:** the test passes; byte-identity on the install fixtures; `make ci` green; reviewed by `code-reviewer`.
+
+---
+
+## [ ] M13-58 — `labaddon` reads `WowLab.lua` by its plain path; `tree PATH` echoes a `\\?\` argument
+**Size:** S · **Depends on:** M13-44
+
+Found in the code review of #260 (M13-44). (1) `labaddon.py` (around lines 1635 and 1686) still `os.lstat`s the lab-addon's `WowLab.lua` under `WTF/Account/…` by its plain path, so on Windows with long paths off, past the limit, every character's file shows as an error row ("cannot read") in the commands that use `labaddon.read_char` / `read_account` (`char list`, `char show`, `looks import-char`, the binds coach). Route it through `longpath` as M13-44 did for the other readers, with a Windows test under the long-paths step and an every-platform "no `\\?\` in `char list`/`char show` output" test. (2) `tree PATH` with a `\\?\` argument on Windows hits `_tree_prefix`'s "is not inside" usage error and echoes the prefix; apply `cli._plain_arg` there as `explain` does. The reviewer also noted that M13-44T did not grade the `_read_sibling` containment check past `MAX_PATH`; the implementer's own junction test covers it, and the security review confirmed it. If the owner wants an independent grader for that check (`luadata.py` is load-bearing), file M13-58T for it; otherwise this ticket needs none.
+
+**Acceptance:** the tests pass on `lab (windows)`; `char list`/`char show` output byte-identical to `main` off Windows; `make ci` green; reviewed by `code-reviewer`.
