@@ -793,7 +793,7 @@ Found in the review of #247 (M13-15). M13-15 covers the calls its graders show f
 
 ---
 
-## [ ] M13-45 — Say why a `_*_` folder was not taken as a flavor, in text and `--json`
+## [x] M13-45 — Say why a `_*_` folder was not taken as a flavor, in text and `--json`
 **Size:** S · **Depends on:** M13-37
 
 Found in the domain review of M13-37. Discovery lists a `_*_` folder it did not take under `Install.other_dirs` as a bare name, so every surface that prints it has to guess at the reason, and for a linked flavor folder the guess is wrong: the client plays from a junctioned `_retail_` as from a real folder, and only wowlab declines to read through the link. Five places say it wrong today (on `main` for symlinks and junctions; since M13-37 for WCI links and WSL symlinks too):
