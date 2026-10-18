@@ -1317,7 +1317,7 @@ Later waves add siblings of `core/` under `lab/`. Apps depend on
 
 ## 8. Fixtures and scrubbing
 
-*Amended 2026-10-17 (owner decision; ADR-0019 amendment of the same date, proposed):* character names and realm names are not identifiers for this repository and may appear as they are; the scrub keeps rewriting and refusing only the account folder, email addresses and BattleTags, the owner's real name, a home path carrying the owner's login, and the owner's own GUIDs. Existing fixtures keep their pseudonyms. M13-49 narrows the tools; until it merges, the rules below still describe what the tools do.
+*Amended 2026-10-17 (owner decision; ADR-0019 amendment of the same date, accepted):* character names and realm names are not identifiers for this repository and may appear as they are; the scrub keeps rewriting and refusing only the account folder, email addresses and BattleTags, the owner's real name, a home path carrying the owner's login, and the owner's own GUIDs. Existing fixtures keep their pseudonyms. M13-49 narrows the tools; until it merges, the rules below still describe what the tools do.
 
 *Amended 2026-09-29 (Wave 3 plan, proposed):* a wago.tools recording of a
 large table may be an ID-filtered subset of whole verbatim lines, produced
