@@ -120,8 +120,10 @@ Handle, in order:
 
 ## 3. Merge
 
-Only when `mergeStateStatus == CLEAN` (or `UNSTABLE` solely because the
-non-required `review` job of the `Claude review` workflow failed), every
+Only when `mergeStateStatus == CLEAN` (or `UNSTABLE` solely because a
+job that is not in `.github/rulesets/main.json`'s required list failed or
+is still pending: the `review` job of the `Claude review` workflow,
+`lab (windows)`, `lab (macos)`), every
 **required** check is SUCCESS
 on the head sha, every thread the owner opened has an answer, every other
 thread has a reply, and the conductor's dispatch said
