@@ -142,7 +142,7 @@ The README's first screen: what wowlab is in three sentences; the trust model of
 
 ---
 
-## [ ] M13-11 — First public release, v0.1
+## [x] M13-11 — First public release, v0.1
 **Size:** S · **Depends on:** M13-03, M13-04, M13-09, M13-10, M13-14, M13-21, M13-22, M13-23, M13-24, M13-25, M13-26, M13-27 · **owner** (pushes the tag)
 
 Contents: M13-02 to M13-04, M13-09, M13-10, M13-21 to M13-27 (the explorer and the first `wowlab ui`; *amended 2026-10-15*, owner decision 2026-10-14), and M13-06 if M13-05 has landed. Not held for M13-08. *Amended 2026-10-16:* when the owner tags v0.1.0, the conductor's release PR also (a) removes the README's note under the install line that the release is not published yet (M13-10), (b) updates `docs/INSTALL.md`, which still says "No release has been published yet", and (c) sets the version back to `0.1.0` in `lab/core/pyproject.toml` and `uv.lock` (`docs/handoffs/M13-03.md`, merged with #216). *Amended 2026-10-16 (owner):* not held for M13-02's human Windows run either. v0.1 ships with Windows marked "untested" in the README and the release notes, by ADR-0031's platform rule. The Windows CI job (`windows.yml`) still runs, but no person has tried a real Windows install yet. The conductor drafts the release notes (what is in it, the trust model, platform status, the `--json` models); the owner pushes the tag.
