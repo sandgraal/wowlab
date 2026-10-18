@@ -190,13 +190,15 @@ PATH` prefix echo). About three days of agent work; none blocks v0.1.
 
 ## Owner actions outstanding
 
-- Pick the next wave (below).
-- M13-48: option (a) or (b); (a) needs M13-48T first.
-- M13-52: how a manifest spells a link target; then M13-52T.
-- M13-07: the macros-cache persistence test, when there is a play session.
-- M13-02: a first run on a real Windows install, by a person.
+- Pick the next wave (below). *Picked 2026-10-18: finish M13, then M14 (§16).*
+- M13-48: option (a) or (b); (a) needs M13-48T first. *Decided 2026-10-18: (b).*
+- M13-52: how a manifest spells a link target; then M13-52T. *Decided 2026-10-18: raw in the manifest, plain on display; no grader ticket.*
+- M13-07: the macros-cache persistence test, when there is a play session. *2026-10-18: the owner will run it together with the bindings twin, `docs/handoffs/M14-binds-persist.md`.*
+- M13-02: a first run on a real Windows install, by a person. *2026-10-18: stays deferred; no Windows machine or tester.*
 - M13-13: the gate on 2026-11-17 (`docs/handoffs/M13-gate.md`).
-- The M13 backlog section is archived with the pick PR, as #188 did for M12.
+- The M13 backlog section is archived with the pick PR, as #188 did for M12. *Not yet: M13 continues until its twelve follow-ups merge; it is archived with M14-01.*
+
+*2026-10-18, later:* the owner went through every open decision with the conductor: ADR-0032 accepted (both stages), the ADR-0029 amendment accepted, every §16.6 default accepted, `pr-shepherd` gets the GitHub MCP tools for cloud sessions, §16.5 is ticketed only after the Wave 5 review, and the twelve follow-ups are dispatched by a later `/conduct next`.
 
 ## Recommended next wave (at most three; the owner picks)
 
