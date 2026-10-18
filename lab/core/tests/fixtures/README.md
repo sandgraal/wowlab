@@ -11,9 +11,12 @@ the test that uses them, and are labelled `constructed` (invariant L8).
   `scripts/lab_capture.py` (ticket M10-02), which replaces account folder
   names (and any `--extra-name`) with stable pseudonyms, rewrites the
   owner's own `Player-<n>-<hex>` GUIDs, blanks identity CVars, and refuses
-  to emit a file that still contains an email address, a BattleTag or an
-  unmapped `Player-<n>-<hex>` GUID. The repository is public; an unscrubbed
-  capture is a leak.
+  to emit a file that still contains an email address, a BattleTag, a home
+  path carrying a login (since 2026-10-17, M13-49) or an unmapped
+  `Player-<n>-<hex>` GUID. The home-path check fails closed: a URL path
+  such as `https://example.org/home/page`, or a folder named `Users` or
+  `Home` inside a path, refuses the file too. The repository is public; an
+  unscrubbed capture is a leak.
   *Amended 2026-10-17 (M13-49, ADR-0019 amendment):* character names, realm
   names and the Forever second name are visible to anyone in the game, so
   they are no longer identifiers here: a new capture keeps them as they

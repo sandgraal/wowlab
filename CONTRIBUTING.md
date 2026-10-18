@@ -63,7 +63,8 @@ repository is public. Two rules follow.
 - Fixtures enter only through `scripts/lab_capture.py` (ticket M10-02),
   which replaces the account folder name with a pseudonym, rewrites your own
   player GUIDs, blanks identity CVars, and refuses output that still
-  contains an email address, a BattleTag or another player's GUID. Character
+  contains an email address, a BattleTag, a home path carrying a login or
+  another player's GUID. Character
   and realm names are kept as they are (since 2026-10-17): they are visible
   to anyone in the game. To hide one anyway, pass it with `--extra-name`.
   Nothing else in a fixture is edited.
