@@ -526,3 +526,33 @@ def test_session_start_reports_frontier(tmp_path: Path) -> None:
     assert "ready   M10-05" not in result.stdout
     assert "blocked M10-06 Owner but blocked (needs M10-02)" in result.stdout
     assert "/conduct" in result.stdout
+
+
+def test_session_start_prints_every_eligible_ticket_and_cuts_blocked_at_eight(
+    tmp_path: Path,
+) -> None:
+    """The conductor dispatches the whole frontier, so no eligible ticket is cut;
+    the blocked list is cut at eight while the counts line keeps the totals."""
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / "docs").mkdir()
+    eligible = "".join(
+        f"## [ ] M10-{n:02d} — Ready {n}\n**Size:** S · **Depends on:** nothing\n\n"
+        for n in range(1, 10)
+    )
+    blocked = "".join(
+        f"## [ ] M10-{n:02d} — Blocked {n}\n**Size:** S · **Depends on:** M10-99\n\n"
+        for n in range(10, 19)
+    )
+    (repo / "docs" / "BACKLOG.md").write_text(eligible + blocked)
+    result = run_hook(
+        "session_start.py",
+        {"hook_event_name": "SessionStart", "cwd": str(repo)},
+        env={"PATH": "/usr/bin:/bin"},
+    )
+    assert result.returncode == 0, result.stderr
+    assert "[wowlab] backlog: 0 done, 9 eligible, 9 blocked, 0 owner" in result.stdout
+    assert "ready   M10-09 Ready 9" in result.stdout
+    assert result.stdout.count("  ready   ") == 9
+    assert result.stdout.count("  blocked ") == 8
+    assert "blocked M10-18 Blocked 18" not in result.stdout
