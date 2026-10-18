@@ -574,7 +574,7 @@ Found in the domain review of #195 (M13-21), on 2026-10-15. `snap create --scree
 
 ---
 
-## [ ] M13-31 — M10-04 CPU-budget and memory probes fail on loaded machines
+## [x] M13-31 — M10-04 CPU-budget and memory probes fail on loaded machines
 **Size:** S · **Depends on:** M13-01, M13-20T
 
 Found on 2026-10-16. The same flake hit a sibling probe, `test_m10_04_escaped_key_list_at_budget_misses_time_target.py`, on #204 (10.04 CPU s), so this ticket covers every M10-04 CPU-budget probe under `lab/core/tests/review/`, not only the one named next. *Amended 2026-10-16:* the memory probe `test_m10_04_bounded_document_misses_memory_target.py::test_constructed_stand_in_holding_twice_the_memory_fails_the_assignment_probe` flaked the same way on several local `make ci` runs during M13-05, M13-10 and M13-25. Each time it took one low sample, for example 1383 MiB against about 1866 MiB, on a loaded machine, and passed when run alone. Cover it here too, keeping its target. In `lab/core/tests/review/test_m10_04_semicolon_list_at_budget_misses_time_target.py`, `test_constructed_control_zeros_at_the_budget_are_inside_the_target` failed on `lab (macos)` in two unrelated PRs: #204 at 10.16 CPU s and #206 at 10.74 CPU s. Neither PR touches `luadata.py`, and both passed when re-run.
@@ -597,7 +597,7 @@ The probe already measures child CPU time and keeps the better of two runs. The 
 
 **Acceptance:**
 - 20 consecutive `lab (macos)` runs pass all four CPU cases. If M13-18 lands first, measure after it.
-- The CPU probes still fail against a constructed parser that is twice as slow.
+- The CPU probes still fail against a constructed parser that is slower than the 10 s target. *Amended 2026-10-18 (conductor ruling from the #255 review):* "twice as slow" cannot be met for the two cases a fast runner parses in under 5 s, since doubled they are still inside the target; no statistic with the fixed §6.4 target catches that, and the limit was the same under the old best-of-two. The 2x stand-in is still the control for the two `0,` cases (they fail it in every job; `0;` sits at the edge and fails it in most), and the probe docstrings say so.
 - The memory control passes 20 consecutive local `make ci` runs on a loaded machine (another `make ci` running alongside), with each run's samples and the chosen statistic reported. It still fails against a stand-in that holds half the memory.
 - `make ci` green.
 - Reviewed by `code-reviewer`.
@@ -735,7 +735,7 @@ Found in the security re-review of #236 (M13-19). The withhold step and the gate
 
 ---
 
-## [ ] M13-41 — `combatlog`: filter lines by event before tokenizing
+## [x] M13-41 — `combatlog`: filter lines by event before tokenizing
 **Size:** S · **Depends on:** M13-08
 
 Found while building M13-08. `combatlog.cast_counts` tokenizes every line. On a constructed 110 MiB, 390k-line log the whole command took 69.6 s on a loaded machine; a separate profile of a smaller run showed 9.31 s of its 9.62 s inside the existing tokenizer, so about 97% of the time is tokenizing lines the caller never asked for. A multi-GB raid log would take minutes with no progress shown. Select the event name from the raw line (the first comma-separated field after the two-space timestamp separator, as every record in the real fixture shows: `…02:16:37.862-4  SPELL_CAST_SUCCESS,Player-…`) and tokenize only the records a caller asks for, keeping the tokenizer's results byte-identical for the lines it does tokenize. No performance target is set. The baseline for the speed-up is the same 110 MiB constructed log, timed before and after on the same machine in the same session with the command in the PR; stop if the filter would change any count on the real fixture.
@@ -753,7 +753,7 @@ Found in the security review of #244 (M13-39). M13-39 stopped the model's job fr
 
 ---
 
-## [ ] M13-43 — `lab (windows)`: three `tree` link tests and one explorer hint test assume a POSIX host
+## [x] M13-43 — `lab (windows)`: three `tree` link tests and one explorer hint test assume a POSIX host
 **Size:** S · **Depends on:** M13-15, M13-27, M13-35
 
 Found on 2026-10-17. `windows.yml` is red on `main` at a431c28 (https://github.com/sandgraal/wowlab/actions/runs/39069525782), the same way M13-36 found it: the job is off the PR path, and #235 (M13-35) and #237 (M13-27) each brought a test that passes only on a POSIX host. Four tests fail; one needs a one-line library change, the others are test-only:
@@ -771,19 +771,19 @@ Nothing else in the library changes. If a test seems to need more than the one `
 
 ---
 
-## [ ] M13-44T — [TEST] Graders for `luadata`'s long-path reads on Windows
+## [x] M13-44T — [TEST] Graders for `luadata`'s long-path reads on Windows
 **Size:** S · **Depends on:** M13-15
 
 `luadata.py` is load-bearing (ADR-0013), so its M13-44 change lands graders first, written by a different agent from M13-44's implementer. In `lab/core/tests/test_long_paths_windows.py` (M13-15T's file, same fixtures and the same pattern: Windows-only, long paths off, a tree whose paths pass the 240-character plain limit, strict `xfail` markers with `reason="M13-44 not implemented"`): `luadata._read_sibling` and the folder listing beside it (around line 2567 at #247's head) read a sibling file through a long path; `sv dump` and `sv list` succeed on a SavedVariables file under such a path; and on every platform, no `\\?\` reaches the text or `--json` output of `sv list` and `sv dump` (a labelled constructed test with a root that `longpath.plain` would strip). Derive expected behaviour from `docs/LAB_PLAN.md` §6.9 (as amended for M13-15) and L4, never from the implementation. Markers are deleted by M13-44 only.
 
-**Acceptance:** the graders fail on `main` for the stated reason on `lab (windows)` (run on the branch with `gh workflow run windows.yml --ref <branch>`, URL in the report) and are strict xfails elsewhere; `make ci` green; reviewed by `code-reviewer`.
+**Acceptance:** the graders fail on `main` for the stated reason on `lab (windows)` (run on the branch with `gh workflow run windows.yml --ref <branch>`, URL in the report); off Windows the Windows-only graders skip as M13-15T's do and the every-platform ones pass as controls (*amended 2026-10-18, from the #254 review*); `make ci` green; reviewed by `code-reviewer`.
 
 ---
 
 ## [ ] M13-44 — Long paths on Windows: the readers and writers M13-15 left on plain paths
 **Size:** M · **Depends on:** M13-44T
 
-Found in the review of #247 (M13-15). M13-15 covers the calls its graders show failing (`guard`, `snapshot`, `layout`, `install`). The code-reviewer listed the modules that still open a path by its plain spelling, so on Windows each fails past the 240-character limit the same way the graders did before: `profiles.py:318`, `luadata.py:2567` and `_read_sibling`, `pathfacts.py:138`, `cli.py` at 1757, 1975 and 4516, `addoninstall.py` at 489 and 546, `gaps.py:367`, and `combatlog.find_logs` (line numbers as of #247's head; take the list from the review thread on the PR). Route each through `longpath.extended` the way M13-15 does, with no behaviour change off Windows and no `\\?\` reaching any output, report, manifest or journal (M13-15's acceptance). `luadata.py` is load-bearing: its graders come first in M13-44T, written by a different agent; the other modules' tests are the implementer's.
+Found in the review of #247 (M13-15). M13-15 covers the calls its graders show failing (`guard`, `snapshot`, `layout`, `install`). The code-reviewer listed the modules that still open a path by its plain spelling, so on Windows each fails past the 240-character limit the same way the graders did before: `profiles.py:318`, `luadata.py:2567` and `_read_sibling`, `pathfacts.py:138`, three spots in `cli.py` (*amended 2026-10-18:* the review of #254 found the quoted line numbers 1757/1975/4516 no longer point at filesystem calls; take the list from the #247 code review's report, and add `_sv_file`'s plain `os.path.lexists` at cli.py:3286–3291 and `_stream_dump`'s echo of FILE as given at 3323/3329, which the M13-44T graders show failing), `addoninstall.py` at 489 and 546, `gaps.py:367`, and `combatlog.find_logs`. Its `security-reviewer` checks that `_read_sibling`'s containment check (`os.path.realpath` against `WTF/Account`'s real path) still holds past `MAX_PATH`: extending only the `open` call would leave that check on a path Windows cannot resolve. Route each through `longpath.extended` the way M13-15 does, with no behaviour change off Windows and no `\\?\` reaching any output, report, manifest or journal (M13-15's acceptance). `luadata.py` is load-bearing: its graders come first in M13-44T, written by a different agent; the other modules' tests are the implementer's.
 
 **Acceptance:**
 - A Windows test per call site, under the `long-paths` step of `windows.yml`, constructs a path past the limit and shows the call succeeds; `gh workflow run windows.yml --ref <branch>` is green before merge, with the run URL in the report.
@@ -808,7 +808,7 @@ Found in the domain review of M13-37. Discovery lists a `_*_` folder it did not 
 
 ---
 
-## [ ] M13-46 — Discovery opens `.flavor.info` without following a link
+## [x] M13-46 — Discovery opens `.flavor.info` without following a link
 **Size:** XS · **Depends on:** M13-37
 
 Found in the code review of #248 (M13-37), on `main` already. `install._read_flavor_product` checks `.flavor.info` with `lstat` and then opens it with `Path.open("rb")`, which follows a link; a swap between the two calls reads through a link, so the §6.1 promise that nothing is read through a link holds only without a race. `snapshot.open_regular_file` (a no-follow open plus an identity check against the `lstat`) exists for exactly this; use it here and in any other discovery read that does `lstat` then `open`. No behaviour change for a real file. Labelled constructed test: a `.flavor.info` replaced by a link between the check and the open is refused, and the folder goes to `other_dirs` with the link reason.
@@ -827,7 +827,7 @@ Found while merging #246. The release notes' `--json` paragraph names every mode
 ---
 
 ## [ ] M13-48 — `snap restore`: a mode-only change to an addon executable
-**Size:** XS · **Depends on:** M13-38 · **owner** (picks (a) or (b) first; (a) changes `guard.py`, so it needs an M13-48T grader ticket before it, ADR-0013)
+**Size:** XS · **Depends on:** M13-38, and M13-48T if the owner picks (a) · **owner** (picks (a) or (b) first; (a) changes `guard.py`, so it needs an M13-48T grader ticket before it, ADR-0013)
 
 Found in the code review of #249 (M13-38). `guard._unchanged_executable` treats the permission bits as part of "matches", so an addon executable whose bytes are unchanged but whose mode changed (a `chmod 644 → 755`) still refuses a whole restore with exit 3 and the gate's line alone; the advice line M13-38 added runs only for `--paths`. Rare (an addon update changes the bytes too) and it fails safe, but the `--help` promise reads as if any change were counted and skipped. Two M13-30 review probes pin the current behaviour (`test_m13_30_screenshots_restore_ignores_executable_mode.py`, lines 71–90), so the owner decides: either (a) a mode-only change is skipped and listed like a content change, in which case a `test-writer` inverts those two probes first, or (b) the behaviour stays and the restore prints the advice line for it. Pick one in the ticket before dispatch.
 
@@ -846,3 +846,57 @@ Owner decision of 2026-10-17 (ADR-0019 amendment; `docs/LAB_PLAN.md` §8): chara
 - Docs: `docs/LAB_PLAN.md` §8's rule list and `lab/core/tests/fixtures/README.md`'s policy text follow; existing fixtures and provenance rows are not touched (ADR-0012: a committed fixture is never edited).
 
 **Acceptance:** `wowlab doctor --redact` output on the install fixtures is byte-identical to `main`; the refusal tests for the kept identifiers still pass unchanged; new labelled constructed tests show a character name, a realm name and a Forever second name pass through the scrub untouched and that `check_wiki` accepts a `Name-Realm` pair; the account-folder, email, BattleTag, home-path and own-GUID cases still refuse, and other players' GUIDs in combat logs and their unit names are still rewritten; `make ci` green; reviewed by `security-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-53 — `check_wiki` quotes a bare account number in its "page does not exist" line
+**Size:** XS · **Depends on:** M13-49
+
+Found while building and reviewing M13-49 (#257), both pre-existing on `main`. (1) For a link such as `[x](123456789#1)`, `check_wiki` prints "link to a page that does not exist: 123456789", quoting the account number into the public job log; the line is still flagged personal (exit 3), but the quote leaks: in `_resolve`, withhold the target when `personal_kinds(dest)` finds anything, not only when the page part does, and the same in the anchor branch. (2) `_ACCOUNT_FOLDER`'s lookbehind `(?<![\w#])` misses an account folder right after `#`: `#123456789#1` and `Home#123456789#1` pass the gate and are printed by the anchor message (`link to an anchor that does not exist: FAQ#123456789#1`); `wiki_diagnose.Redactor` shares the matcher. Take `#` out of the lookbehind. Labelled constructed tests for the three link shapes and the bare `#…#1` line: exit 3 and a log with no digits of the number.
+
+**Acceptance:** the test passes; the ok/failure/personal exit codes unchanged; `make ci` green; reviewed by `security-reviewer`.
+
+---
+
+## [ ] M13-54 — Discovery can still read through a flavor folder swapped for a link after the scan
+**Size:** S · **Depends on:** M13-46
+
+Found in the code review of #256 (M13-46), on `main` before it too. `O_NOFOLLOW` guards only the last path component: a `_*_` folder replaced by a link to a directory between `_scan_children` and `_read_flavor_product` is read through (`flavors` held the link target's product in a constructed probe), against §6.1's M13-37 amendment. Closing it needs a directory descriptor on POSIX (`O_DIRECTORY|O_NOFOLLOW` on the flavor folder, an identity check against the scan's `lstat`, then `open_regular_file` with `dir_fd`) and a stated answer for Windows, where `os.open` has no `dir_fd` (an `lstat` of the folder each side of the read is the likely floor). Same family, same fix pattern: the root `.build.info` is `stat`-then-`read_bytes`, so a FIFO or device swapped in between blocks discovery forever; reuse `snapshot.read_regular_file(..., expect=…)` there. Labelled constructed tests for both, with the POSIX and the Windows paths exercised as M13-46's race tests do. The spec amendment (§6.1) names what the Windows floor leaves open.
+
+**Acceptance:** the tests pass; discovery output on the install fixtures byte-identical to `main`; no blocking read (a 5 s alarm in the tests); `make ci` green; reviewed by `code-reviewer` and `security-reviewer`.
+
+---
+
+## [ ] M13-50 — `char show` counts a stray `SavedVariables` folder as an account
+**Size:** XS · **Depends on:** nothing
+
+Found 2026-10-17 on the owner's install. `WTF/Account/` there holds the account folder and a stray `SavedVariables/` folder beside it. `char list` lists the one account; `char show` without `--account` refuses with "2 accounts (<account>, SavedVariables); choose one with --account", because its account discovery takes every child of `WTF/Account/` as an account. The misclassification lives in `layout._scan_wtf`, which takes every directory under `WTF/Account/` as an `Account`; `char show`, `char list --account` and `profiles.py` (around line 372) all go through `lay.accounts()`. Fix it there: an account folder is one whose name has the `<digits>#<n>` shape or that holds character folders (a realm or digits folder with a character folder inside), so one real account needs no `--account`, `char list --account SavedVariables` is refused as it should be, and the refusal, when it is still needed, lists only real accounts. Say in the report which callers of `lay.accounts()` changed behaviour (expected: `char show`, `char list --account`, `profile`). Labelled constructed test with a stray folder beside one account. While there: `wowlab ui --help` and its docstring in `cli.py` still say the explorer shows "a flavor folder's files"; since M13-27 it is the whole install (README and INSTALL.md say so). Fix the sentence.
+
+**Acceptance:** `char show` on a tree with one account plus a stray folder picks the account without `--account`; with two real accounts it still refuses and names both; `char list --account <stray>` and `profile` with that name are refused with the real accounts listed; `char list` without `--account` is unchanged; `layout`, `sv list`, `tree` and `explain` output on the install fixtures is byte-identical to `main` (the fixtures have no stray folder), and on a constructed tree with one the files under it are reported as what they are (say what, in the user-facing list; `_as_saved_variables` takes the account from the path, so decide whether it follows the account list); `ui --help` says the whole install; `make ci` green; reviewed by `code-reviewer`. If the layout change reaches more than this, the ticket is S, not XS.
+
+---
+
+## [ ] M13-51 — The first-run survey prints `\\?\` link targets on Windows
+**Size:** XS · **Depends on:** M13-43
+
+Found in the code review of #253 (M13-43), unverified on Windows. `firstrun._link_target` returns `str(longpath.readlink(path))` raw, and the survey prints `{link.path} -> {target}` and fills `SyncHint.link_target` from it; on Windows an absolute link target comes back `\\?\C:\…`, against §6.9's M13-15 amendment (paths are plain everywhere the owner sees them, the first-run survey named). Strip the prefix with `longpath.plain_text` where the text has a plain spelling, keep relative text as is (as M13-43 did in `layout.link_facts`), Windows only; constructed Windows test with an absolute and a relative link; byte-identical `doctor` output on macOS and Linux.
+
+**Acceptance:** the test passes on `lab (windows)`; `doctor` text and `--json` byte-identical to `main` on a fixture copy with two links on macOS; `make ci` green; reviewed by `code-reviewer`.
+
+---
+
+## [ ] M13-52 — Snapshot manifests store raw `\\?\` link targets on Windows
+**Size:** S · **Depends on:** M13-15, M13-52T (to be filed once the owner decides) · **owner** (how a manifest spells a link target is a format decision)
+
+Found in the code review of #253 (M13-43), unverified on Windows. `snapshot._dir_link_target` (and the file-link path at `snapshot.py` ~1119) records a link's target in the manifest as `str(longpath.readlink(path))`, which on Windows carries the `\\?\` prefix for an absolute target; `guard.py` (~2054) and `profiles.py` (~818) compare a link on disk against that stored text, so every `snap` output that shows a target inherits the prefix and a manifest written on Windows is not what §6.9 promises. Decide first (owner): store the plain spelling (then `guard`'s comparison must compare plain to plain, and a manifest written before the change still compares equal through `plain_text` on both sides) or keep raw and strip only on display. `guard.py` is load-bearing: a `[TEST]` ticket (M13-52T) lands graders for the comparison before the change; `snapshot.py`'s tests are the implementer's.
+
+**Acceptance:** per the decision; manifests written by `main` on macOS still verify byte for byte; `snap show` and `snap verify` print no `\\?\`; the Windows graders pass; `make ci` green; reviewed by `code-reviewer` and `security-reviewer`.
+
+---
+
+## [ ] M13-55 — The capture tool hunts the values of blanked identity settings in other files
+**Size:** XS · **Depends on:** M13-49
+
+Found in the security review of #257 (M13-49), pre-existing. `scripts/lab_capture.py` blanks `accountName`, `accountList`, `realmName` and `lastCharacterGuid` in `Config.wtf`, but its harvest (`_HARVEST_RE`) reads only `lastCharacterGuid` (and, until M13-49 merges, `realmName`) into the identity map, so the value of `accountName` (on current clients usually an email address, caught by the email check; on older ones an account name) or an `accountList` entry that also appears in a SavedVariables value is written out unchanged with exit 0. Add the `accountName` value (and, once its separator is known, each `accountList` entry; the format reference does not give it, so capture it from a real `Config.wtf` first and mark it **[verify]**) to the identity map as account-type strings (rewritten in contents, refused glued into a longer word), as the account folder is today. Labelled constructed test: `SET accountName "SECRETACCT"` in `Config.wtf` and `"SECRETACCT"` in a SavedVariables value: blanked in one, rewritten in the other, provenance count up by one.
+
+**Acceptance:** the test passes; existing refusal tests unchanged; `make ci` green; reviewed by `security-reviewer`.
