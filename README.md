@@ -145,9 +145,10 @@ wowlab grows in **waves**: the owner picks each one after reviewing the last. **
 
 **Wave 4 is the first public release, v0.1** (owner decision, 2026-10-13; [ADR-0031](docs/DECISIONS.md)). The promise does not change: reading never writes, every change to your install asks first, a snapshot comes before it and `wowlab undo` reverses it, and nothing is uploaded. Already on `main`: the release pipeline, the first run in `wowlab doctor`, `wowlab doctor --redact`, the lab-addon inside the package, `wowlab ui` with its explorer's second stage (the whole install, the files the file map does not know yet, snapshot facts and previews), `macros check`, and `binds coach` (from your own combat log: spells cast often on awkward keys, spells cast with no bind, and binds never used; read-only, with an editable "awkward key" table). Still to come:
 
+**v0.1.0 is out**: install it with the one `uv tool install` line above and check the download against the published SHA-256 sums ([the release page](https://github.com/sandgraal/wowlab/releases/tag/v0.1.0)). No installer, no app store, no hosted version. One item is still to come before Wave 5:
+
 | | Feature | What you'll be able to do |
 |---|---|---|
-| 📦 | **The v0.1.0 release** | Install it with the one `uv tool install` line above, and check it against published SHA-256 sums. No installer, no app store, no hosted version. |
 | 🪟 | **Windows, tested** | CI already runs the test suite on Windows. Windows is called supported once a person has run the first run on a real Windows install; v0.1 ships with it untested. |
 
 After that, Wave 5 adds to `wowlab ui` the commands that ask before changing anything (`--yes`), each behind the same confirm step as the CLI, and is aimed at the second public release.
