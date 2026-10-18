@@ -735,7 +735,7 @@ Found in the security re-review of #236 (M13-19). The withhold step and the gate
 
 ---
 
-## [ ] M13-41 — `combatlog`: filter lines by event before tokenizing
+## [x] M13-41 — `combatlog`: filter lines by event before tokenizing
 **Size:** S · **Depends on:** M13-08
 
 Found while building M13-08. `combatlog.cast_counts` tokenizes every line. On a constructed 110 MiB, 390k-line log the whole command took 69.6 s on a loaded machine; a separate profile of a smaller run showed 9.31 s of its 9.62 s inside the existing tokenizer, so about 97% of the time is tokenizing lines the caller never asked for. A multi-GB raid log would take minutes with no progress shown. Select the event name from the raw line (the first comma-separated field after the two-space timestamp separator, as every record in the real fixture shows: `…02:16:37.862-4  SPELL_CAST_SUCCESS,Player-…`) and tokenize only the records a caller asks for, keeping the tokenizer's results byte-identical for the lines it does tokenize. No performance target is set. The baseline for the speed-up is the same 110 MiB constructed log, timed before and after on the same machine in the same session with the command in the PR; stop if the filter would change any count on the real fixture.
