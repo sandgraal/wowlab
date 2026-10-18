@@ -420,3 +420,20 @@ def test_tree_and_gaps_give_a_folder_its_own_note_constructed(
     item = next(i for i in tree["items"] if i["path"] == EMPTY)
     assert item["note"] == note
     assert [g["note"] for g in gap["groups"] if g["name"] == EMPTY] == [note]
+
+
+@pytest.mark.parametrize("chosen", [FLAVOR, LINKED])
+def test_explain_of_a_not_taken_path_with_a_named_flavor_stays_at_the_root(
+    tmp_path: Path, chosen: str
+) -> None:
+    """`--flavor` naming the real flavor or the folder not taken: the path is
+    still read at the install root. One naming nothing is refused as on main."""
+    root, _ = _install(tmp_path)
+
+    data = json.loads(
+        _run("explain", LINKED, "--flavor", chosen, "--root", str(root), "--json").stdout
+    )
+    nope = _run("explain", LINKED, "--flavor", "_nope_", "--root", str(root), code=2)
+
+    assert (data["result"]["base"], data["not_taken"]["name"]) == ("root", LINKED)
+    assert "no flavor folder '_nope_'" in nope.stderr

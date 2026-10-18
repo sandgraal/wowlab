@@ -2847,6 +2847,10 @@ def explain(
         # at the install root, where that folder is; it is not re-read in a
         # flavor folder.
         at_root = _not_taken_at(inst, result) is not None
+        if at_root and flavor is not None and _not_taken_named(inst, flavor) is None:
+            # The path is not read in it, but a `--flavor` that names no
+            # folder at all is refused as on main.
+            _select_flavor(inst, flavor)
         if (
             isinstance(result, layout.Unclassified)
             and (flavor or len(inst.flavors) == 1)
