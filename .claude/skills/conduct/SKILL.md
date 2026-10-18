@@ -95,10 +95,14 @@ still defining"), not "might conflict".
   third is a stop condition. Batch every reviewer's findings into one
   message per round. The re-check goes to the *same* reviewer, names the
   fixes, and asks for one short report on them; it is not a second full
-  review. An item a reviewer lists as "Off the branch" is yours to file
-  or fix in the docs PR and never holds the merge. A rebase whose
-  before/after patch comparison (the shepherd's) is identical needs no
-  re-check at all (owner decision, 2026-10-17).
+  review. An item a reviewer lists as "Off the branch" (a defect the
+  branch neither introduces nor makes worse) is yours to file or fix in
+  the docs PR and never holds the merge. A rebase whose `git range-diff`
+  (the shepherd's) shows every commit unchanged needs no re-check at all.
+  A bot-review finding: check it against every dispatched reviewer's
+  report; if each saw it and did not count it, tell the shepherd so,
+  naming the reports, and it answers "seen by the reviewers, not held";
+  otherwise route it like any finding (owner decision, 2026-10-17).
 - All verdicts clean → `pr-shepherd` (background, in that worktree) with all
   reports; it marks the PR ready and drives it to merged.
 - `NEEDS_IMPLEMENTER:` → forward to the branch's author (the implementer,

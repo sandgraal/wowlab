@@ -1446,8 +1446,9 @@ yet, and a fixture produced by the thing under test proves nothing).
   It ran on every PR as a required check from #173 until later the same day,
   when the owner took it off the PR path because every PR waited 15 to 30
   minutes on it. It now runs in `.github/workflows/windows.yml` after each
-  merge to `main`, nightly, and on demand for a branch, and is not required
-  (ADR-0014 amendment). The `skipif` tests run there, so a Windows regression
+  merge to `main`, nightly, on demand for a branch, and (since 2026-10-17) on
+  a pull request that touches `lab/**`, the lockfile, the root `pyproject.toml`
+  or `conftest.py`; it is not required (ADR-0014 amendments). The `skipif` tests run there, so a Windows regression
   is found after merge, not before; the conductor checks the latest runs
   (`docs/AGENT_WORKFLOW.md`).
 

@@ -92,9 +92,12 @@ will `git pull --rebase` before fixing.
 Findings ranked by severity. For each: file and line, the invariant, ADR,
 or plan section it violates, what you expected, what the code does, and,
 where you ran something, the command and its output. Unverified findings
-are labelled as such. A finding whose fix lives outside the files the
-branch touches (a doc on `main`, a wiki page, an older wording the branch
-only reaches, a follow-up) goes under its own heading, **Off the branch**,
-and does not count toward the verdict; the conductor files it. **An empty
+are labelled as such. A defect the branch neither introduces nor makes
+worse, whose fix lives outside its files (an older wording the branch only
+reaches, a doc already stale on `main`, a wiki page, a follow-up), goes
+under its own heading, **Off the branch**, and does not count toward the
+verdict; the conductor files it. A caller the branch broke in a file it did
+not edit, a doc the branch made stale, or an unlisted user-facing change
+is a finding as before. **An empty
 findings list must state what was run to earn it.** End with
 `verdict: CLEAN | FINDINGS(<n>) | BLOCKED: <why>`.
