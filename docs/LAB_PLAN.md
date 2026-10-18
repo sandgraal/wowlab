@@ -1139,6 +1139,22 @@ gate; an executable is unchanged only with the entry's bytes and permission
 bits, as `guard` judges it) and reads them again before the commit. A whole restore that skips
 an Edit `no` file is restored by name the same way. `guard` is unchanged.
 
+*Amended 2026-10-17 (M13-38, from the #231 reviews):* an executable under
+`Interface/AddOns/` has its own file-map row (`addon-executable`, Edit
+`no`, M13-28). A whole restore skips one whose bytes the disk no longer
+holds (changed or missing, by `profiles.disk_state`), lists it in
+`skipped` with its row, and restores the rest by name as above; the text
+plan lists these under their own "Skipped … addon executable(s)" header,
+which does not offer `--paths` but says to reinstall the addon. Only a
+regular-file entry the gate would refuse for being an executable and
+nothing else is skipped: a reserved name, a link, an executable whose
+bytes match but whose permission bits or spelling on disk do not, one
+behind a linked folder, and an executable outside `AddOns/` still refuse
+the whole restore as the gate does. Naming one with `--paths` is refused
+with the gate's reason, followed by one line: name the other files with
+`--paths`, or (in an addon folder) reinstall the addon to get its
+executable back. `guard` is unchanged.
+
 *Amended 2026-09-29 (M11-30):* text output is terminal-safe. No C0
 control (tab and line feed included), no DEL, no C1 control and no Unicode
 format or separator character (Cf, Zl, Zp) reaches stdout or stderr raw.

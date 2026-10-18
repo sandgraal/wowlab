@@ -82,7 +82,6 @@ def test_positive_control_os_metadata_in_an_addon_is_skipped_constructed(flavor:
     _whole_restore_skips(flavor, ".DS_Store", "os-metadata")
 
 
-@pytest.mark.xfail(strict=True, reason="M13-38 not implemented")
 def test_a_changed_addon_executable_is_skipped_by_a_whole_restore_constructed(
     flavor: Path,
 ) -> None:

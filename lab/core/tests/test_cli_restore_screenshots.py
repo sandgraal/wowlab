@@ -620,16 +620,23 @@ def test_an_unchanged_executable_is_left_alone_constructed(root: Path, flavor: P
     assert script.read_bytes() == b"#!/bin/sh\necho constructed\n"
 
 
-def test_a_changed_executable_refuses_the_restore_constructed(root: Path, flavor: Path) -> None:
+def test_a_changed_addon_executable_is_skipped_and_the_rest_restored_constructed(
+    root: Path, flavor: Path
+) -> None:
+    """M13-38: an addon executable whose bytes changed is skipped by its
+    file-map row (`addon-executable`, Edit `no`); the rest is restored."""
     script = flavor / "Interface" / "AddOns" / "DBM-Brawlers" / "build.sh"
     script.write_bytes(b"#!/bin/sh\necho constructed\n")
     a = _screenshots_snapshot(flavor)
     script.write_bytes(b"#!/bin/sh\necho constructed later\n")
     _later_session(flavor)
-    result = run("snap", "restore", a.id, "--yes")
-    assert result.exit_code == 3, (result.stdout, result.stderr)
-    assert "is an executable; guard never writes one" in _plain(result.stderr)
-    assert guard.history() == ()
+    report = _json(cli.RestoreReport, "snap", "restore", a.id, "--yes")
+    assert report.applied
+    assert [(s.path, s.entry_id) for s in report.skipped] == [
+        ("Interface/AddOns/DBM-Brawlers/build.sh", "addon-executable")
+    ]
+    assert sorted(i.path for i in report.plan) == sorted([FONT, TOC, SYNDICATOR])
+    assert script.read_bytes() == b"#!/bin/sh\necho constructed later\n"
 
 
 # ─── a forged snapshot holding another flavor's paths ────────────────────────

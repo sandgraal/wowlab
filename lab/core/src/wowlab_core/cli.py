@@ -5448,7 +5448,9 @@ class RestoreReport(_Out):
     flavor_version: str | None  # the flavor's version now
     paths: list[str] | None  # --paths as given; None restores the whole snapshot
     plan: list[guard.PlanItem]  # path, before/after SHA-256 (None: absent), bytes written
-    skipped: list[SkippedPath]  # client-managed files a whole restore does not write
+    # File-map Edit `no` files a whole restore does not write: client-managed
+    # ones, and addon executables that changed or are missing (M13-38).
+    skipped: list[SkippedPath]
     # Screenshots (file-map Edit `n/a`) a whole restore leaves out and --paths
     # cannot restore either; they stay in the snapshot.
     not_restored: list[NotRestoredPath]
@@ -5505,6 +5507,48 @@ def _screenshot_row(lay: layout.Layout, rel: str, *, is_dir: bool | None) -> Fil
     if isinstance(found, layout.Classified) and found.entry.id == _SCREENSHOTS_ROW:
         return found.entry
     return None
+
+
+# The file-map row of an executable under `Interface/AddOns/` (Edit `no`):
+# the write gate never writes, restores or deletes one (L7).
+_EXECUTABLE_ROW = "addon-executable"
+
+
+def _changed_executables(
+    lay: layout.Layout, entries: Sequence[snapshot.Entry], install_root: Path, folder: str
+) -> tuple[list[snapshot.Entry], list[SkippedPath]]:
+    """Split this flavor's `entries` for a whole restore: an addon
+    executable (file-map row `addon-executable`, Edit `no`) whose bytes the
+    disk no longer holds, changed or missing, is skipped and listed with its
+    row (M13-38); every other entry is to be restored.
+
+    Only a regular-file entry the gate would refuse for being an executable
+    and nothing else (`verdict`'s copy of its name rules) is skipped, so a
+    reserved name or a link is refused as a whole restore refuses it. An
+    executable whose bytes match but whose mode or spelling on disk does
+    not stays too, and the gate refuses it by name as it does whole. Reads
+    only, following no link (`profiles.disk_state`); an entry behind a
+    linked folder is not read and stays for the gate to refuse."""
+    prefix = folder + "/"
+    rest: list[snapshot.Entry] = []
+    skipped: list[SkippedPath] = []
+    for entry in entries:
+        rel = entry.path.removeprefix(prefix)
+        mine = entry.path.startswith(prefix)  # another flavor's path: the gate refuses it
+        if mine and entry.kind == "file" and has_executable_part(rel):
+            found = lay.classify(rel, is_dir=False)
+            if (
+                isinstance(found, layout.Classified)
+                and found.entry.id == _EXECUTABLE_ROW
+                and gate_names_but_for_executable(rel)
+                and profiles.disk_state(install_root, folder, entry) in ("differs", "missing")
+            ):
+                skipped.append(
+                    SkippedPath(path=rel, entry_id=found.entry.id, what=_plain(found.entry.what))
+                )
+                continue
+        rest.append(entry)
+    return rest, skipped
 
 
 def _set_aside(
@@ -5599,6 +5643,29 @@ def _unchanged(install_root: Path, folder: str, entry: snapshot.Entry) -> bool:
     return stat.S_ISREG(st.st_mode) and stat.S_IMODE(st.st_mode) == entry.mode
 
 
+def _skipped_lines(skipped: Sequence[SkippedPath]) -> list[str]:
+    """The text plan's skipped files: the ones --paths can restore, then the
+    addon executables, which it cannot (the gate never writes one)."""
+    lines: list[str] = []
+    others = [s for s in skipped if s.entry_id != _EXECUTABLE_ROW]
+    executables = [s for s in skipped if s.entry_id == _EXECUTABLE_ROW]
+    if others:
+        lines.append(
+            f'  Skipped {len(others)} file(s) wowlab leaves alone (file-map Edit "no": '
+            "client-written backups, Blizzard_* folders, file-browser metadata; name one "
+            "with --paths to restore it):"
+        )
+        lines += [f"    {sk.path}  [{sk.entry_id}]" for sk in others]
+    if executables:
+        lines.append(
+            f"  Skipped {len(executables)} addon executable(s) that changed or are missing "
+            'on disk (file-map Edit "no"): wowlab never writes, restores or deletes an '
+            "executable, not even with --paths; reinstall the addon to get one back:"
+        )
+        lines += [f"    {sk.path}  [{sk.entry_id}]" for sk in executables]
+    return lines
+
+
 # How many changed screenshots the text plan names; --json lists every one.
 _NOT_RESTORED_SHOWN = 10
 
@@ -5647,6 +5714,21 @@ def _screenshot_note(
             return
 
 
+def _executable_note(lay: layout.Layout, named: Sequence[str], exc: Exception) -> None:
+    """When the gate refused a named executable, say what the owner can do."""
+    for rel in named:
+        if f"{rel!r} is an executable" not in str(exc):
+            continue
+        found = lay.classify(rel, is_dir=False)
+        addon = isinstance(found, layout.Classified) and found.entry.id == _EXECUTABLE_ROW
+        exc.add_note(
+            "wowlab never writes, restores or deletes an executable, not even with --paths: "
+            "name the other files with --paths"
+            + (", or reinstall the addon to get its executable back." if addon else ".")
+        )
+        return
+
+
 @snap_app.command("restore")
 @_handled
 def snap_restore(
@@ -5657,8 +5739,9 @@ def snap_restore(
             "--paths",
             help="Only this path, relative to the flavor folder; repeat for more. "
             "A path the snapshot covers but does not hold is deleted. A named path is "
-            "restored even when its file-map row says wowlab leaves it alone (not a "
-            "screenshot: wowlab never writes Screenshots/).",
+            "restored even when its file-map row says wowlab leaves it alone, except an "
+            "executable, which never is. Nor is a screenshot: wowlab never writes "
+            "Screenshots/.",
         ),
     ] = None,
     dry_run: Annotated[
@@ -5674,7 +5757,10 @@ def snap_restore(
     Without --paths, files whose file-map Edit is `no` (client-written
     backups such as `.lua.bak` and `.old`, `Interface/AddOns/Blizzard_*`,
     file-browser metadata) are left alone and counted in the plan; name one
-    with --paths to restore it. Screenshots in a snapshot taken with
+    with --paths to restore it. An executable in an addon folder (its row is
+    `addon-executable`) that changed or went missing is left alone and
+    counted too, but --paths cannot restore it: wowlab never writes one, so
+    reinstall the addon to get it back. Screenshots in a snapshot taken with
     `snap create --screenshots` are never restored (wowlab never writes
     Screenshots/, not even with --paths): a whole restore leaves them in the
     snapshot, counts them, and restores the rest. JSON: RestoreReport."""
@@ -5706,12 +5792,14 @@ def snap_restore(
     rest: list[snapshot.Entry] = list(manifest.entries)
     aside: list[NotRestoredPath] = []
     names: list[str] | None = None
+    executables: list[SkippedPath] = []
     with guard.transaction(chosen, label=label, dry_run=True) as tx:
         if named is not None:
             try:
                 tx.restore(manifest.id, named)
             except guard.PathNotAllowedError as exc:
                 _screenshot_note(lay, manifest, folder, named, exc)
+                _executable_note(lay, named, exc)
                 raise
         else:
             # The gate's snapshot checks (another install, another flavor)
@@ -5720,7 +5808,11 @@ def snap_restore(
             # Screenshots, which the gate never writes, are set aside; the
             # gate would otherwise refuse the whole restore.
             rest, aside = _set_aside(lay, manifest, inst.root, folder)
-            if not aside:
+            # An addon executable that changed or went missing is skipped by
+            # its row: the gate never writes one, and would refuse the whole
+            # restore for it (M13-38).
+            rest, executables = _changed_executables(lay, rest, inst.root, folder)
+            if not aside and not executables:
                 tx.restore(manifest.id)
             else:
                 if any(not e.path.startswith(folder + "/") for e in rest):
@@ -5732,6 +5824,7 @@ def snap_restore(
     plan = list(whole_plan)
     if named is None:
         plan, skipped = _client_managed(lay, whole_plan)
+        skipped = sorted([*skipped, *executables], key=lambda s: s.path)
     # With something left out, the rest is restored by name: every entry the
     # gate would check in a whole restore but the skipped ones, so the gate
     # writes exactly the kept paths and a later change still shows in its
@@ -5772,14 +5865,8 @@ def snap_restore(
             )
         for item in plan:
             show(_plan_line(item))
-        if skipped:
-            show(
-                f'  Skipped {len(skipped)} file(s) wowlab leaves alone (file-map Edit "no": '
-                "client-written backups, Blizzard_* folders, file-browser metadata; name one "
-                "with --paths to restore it):"
-            )
-            for sk in skipped:
-                show(f"    {sk.path}  [{sk.entry_id}]")
+        for line in _skipped_lines(skipped):
+            show(line)
         if aside:
             for line in _not_restored_lines(manifest.id, aside):
                 show(line)
