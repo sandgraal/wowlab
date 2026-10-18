@@ -12,9 +12,12 @@ refuses the whole restore, as the gate does.
 The install is the captured tree as `test_cli.py` builds it (copied into
 `tmp_path`, the user data directory redirected, the process table a fake).
 Inputs labelled `constructed` in the test names (L8): an addon's
-`helper.sh`, `gone.dll`, `aux.sh` and `.DS_Store`, a `tool.sh` under `WTF/`,
-which the capture does not have, and an edited copy of the captured `.toc`
-standing for a later session. Nothing reads or writes a real install.
+`helper.sh`, `gone.dll`, `aux.sh`, `.DS_Store` and `._helper.sh`, a
+`tool.sh` under `WTF/`, which the capture does not have, a symbolic link to a
+file outside the install or a folder where `helper.sh` was, a snapshot
+manifest forged to spell `helper.sh` as `HELPER.sh` (re-fingerprinted so the
+store accepts it), and an edited copy of the captured `.toc` standing for a
+later session. Nothing reads or writes a real install.
 """
 
 # ruff: noqa: F811  (fixtures imported from test_cli are requested by name)
@@ -37,7 +40,7 @@ from test_cli import (
 )
 
 from wowlab_core import cli, guard
-from wowlab_core.snapshot import Manifest
+from wowlab_core.snapshot import Manifest, SnapshotStore, manifest_bytes, tree_fingerprint
 
 ADDON = "Interface/AddOns/DBM-Brawlers"
 TOC = f"{ADDON}/DBM-Brawlers.toc"
@@ -95,9 +98,9 @@ def test_whole_restore_skips_a_changed_and_a_missing_executable_constructed(
     lines = text.splitlines()
     (header,) = [ln for ln in lines if ln.startswith("  Skipped ")]
     assert header == (
-        "  Skipped 2 addon executable(s) that changed or are missing on disk (file-map Edit "
-        '"no"): wowlab never writes, restores or deletes an executable, not even with '
-        "--paths; reinstall the addon to get one back:"
+        "  Skipped 2 executable(s) whose content changed or that are missing on disk "
+        '(file-map Edit "no"): wowlab never writes, restores or deletes an executable, '
+        "not even with --paths; reinstall the addon to get one back:"
     )
     assert "name one with --paths" not in text
     at = lines.index(header)
@@ -158,7 +161,7 @@ def test_executables_and_other_edit_no_files_are_listed_apart_constructed(
     assert len(headers) == 2
     assert headers[0].startswith('  Skipped 1 file(s) wowlab leaves alone (file-map Edit "no"')
     assert "name one with --paths to restore it" in headers[0]
-    assert headers[1].startswith("  Skipped 2 addon executable(s)")
+    assert headers[1].startswith("  Skipped 2 executable(s)")
     assert "name one with --paths" not in headers[1]
     ok("snap", "restore", a.id, "--yes")
     assert (flavor / ds).read_bytes() == b"constructed metadata, later"
@@ -230,3 +233,114 @@ def test_help_says_paths_never_restores_an_executable() -> None:
         "A named path is restored even when its file-map row says wowlab leaves it alone, "
         "except an executable, which never is." in text.replace("│ ", "").replace(" │", "")
     )
+
+
+# ─── what is not a plain change still refuses, as the gate does ─────────────
+
+
+def _refused(a: Manifest) -> None:
+    for args in (["--dry-run"], ["--yes"], ["--yes", "--json"]):
+        result = run("snap", "restore", a.id, *args)
+        assert result.exit_code == 3, (args, result.stdout, result.stderr)
+        assert "is an executable; guard never writes one" in _plain(result.stderr)
+    assert guard.history() == ()
+
+
+def test_a_link_where_the_executable_was_still_refuses_constructed(
+    root: Path, flavor: Path, tmp_path: Path
+) -> None:
+    (flavor / HELPER).write_bytes(HELPER_BYTES)
+    a = _snapshot()
+    outside = tmp_path / "outside-constructed.sh"
+    outside.write_bytes(HELPER_LATER)
+    (flavor / HELPER).unlink()
+    try:
+        (flavor / HELPER).symlink_to(outside)
+    except OSError:
+        pytest.skip("this machine does not let a test create a symbolic link")
+    _later(flavor)
+    _refused(a)
+    assert (flavor / HELPER).is_symlink()
+
+
+def test_a_folder_where_the_executable_was_still_refuses_constructed(
+    root: Path, flavor: Path
+) -> None:
+    (flavor / HELPER).write_bytes(HELPER_BYTES)
+    a = _snapshot()
+    (flavor / HELPER).unlink()
+    (flavor / HELPER).mkdir()
+    _later(flavor)
+    _refused(a)
+
+
+def test_a_missing_executable_whose_folder_is_gone_still_refuses_constructed(
+    root: Path, flavor: Path
+) -> None:
+    """Missing is skipped only from real folders that are still there."""
+    tool = f"{ADDON}/tools/build.sh"
+    (flavor / tool).parent.mkdir()
+    (flavor / tool).write_bytes(HELPER_BYTES)
+    a = _snapshot()
+    (flavor / tool).unlink()
+    (flavor / tool).parent.rmdir()
+    _later(flavor)
+    _refused(a)
+
+
+def _forge_case(base: Manifest) -> str:
+    """`base` with `helper.sh` spelled `HELPER.sh`, re-fingerprinted."""
+    entries = tuple(
+        sorted(
+            (
+                e.model_copy(update={"path": e.path.replace("/helper.sh", "/HELPER.sh")})
+                for e in base.entries
+            ),
+            key=lambda e: e.path,
+        )
+    )
+    fingerprint = tree_fingerprint(base.subtrees, base.excluded, entries)
+    forged = Manifest(
+        **{
+            **base.model_dump(),
+            "id": f"20260921T130000.000000Z-{fingerprint}",
+            "created_at": "2026-09-21T13:00:00.000000Z",
+            "label": "constructed: forged",
+            "entries": entries,
+        }
+    )
+    store = SnapshotStore()
+    (store.manifests_dir / f"{forged.id}.json").write_bytes(manifest_bytes(forged))
+    assert store.show(forged.id) == forged, "the store accepts it; refusing is guard's job"
+    return forged.id
+
+
+def test_a_forged_case_variant_of_an_executable_still_refuses_constructed(
+    root: Path, flavor: Path
+) -> None:
+    (flavor / HELPER).write_bytes(HELPER_BYTES)
+    forged = SnapshotStore().show(_forge_case(_snapshot()))
+    (flavor / HELPER).write_bytes(HELPER_LATER)
+    _later(flavor)
+    _refused(forged)
+
+
+def test_a_changed_appledouble_of_an_executable_is_listed_with_the_executables_constructed(
+    root: Path, flavor: Path
+) -> None:
+    """`._helper.sh` (row `os-metadata`) is refused by the gate for its name,
+    so it is skipped as an executable is and its header offers no --paths."""
+    meta = f"{ADDON}/._helper.sh"
+    (flavor / meta).write_bytes(b"\x00\x05\x16\x07constructed")
+    a, _ = _executables_snapshot(flavor)
+    (flavor / meta).write_bytes(b"\x00\x05\x16\x07constructed, later")
+    report = _json(cli.RestoreReport, "snap", "restore", a.id, "--dry-run")
+    assert [(s.path, s.entry_id) for s in report.skipped] == [
+        (meta, "os-metadata"),
+        (GONE, "addon-executable"),
+        (HELPER, "addon-executable"),
+    ]
+    text = _plain(ok("snap", "restore", a.id, "--dry-run").stdout)
+    (header,) = [ln for ln in text.splitlines() if ln.startswith("  Skipped ")]
+    assert header.startswith("  Skipped 3 executable(s) whose content changed")
+    assert "name one with --paths" not in text

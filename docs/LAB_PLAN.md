@@ -1141,19 +1141,25 @@ an Edit `no` file is restored by name the same way. `guard` is unchanged.
 
 *Amended 2026-10-17 (M13-38, from the #231 reviews):* an executable under
 `Interface/AddOns/` has its own file-map row (`addon-executable`, Edit
-`no`, M13-28). A whole restore skips one whose bytes the disk no longer
-holds (changed or missing, by `profiles.disk_state`), lists it in
-`skipped` with its row, and restores the rest by name as above; the text
-plan lists these under their own "Skipped … addon executable(s)" header,
-which does not offer `--paths` but says to reinstall the addon. Only a
-regular-file entry the gate would refuse for being an executable and
-nothing else is skipped: a reserved name, a link, an executable whose
-bytes match but whose permission bits or spelling on disk do not, one
-behind a linked folder, and an executable outside `AddOns/` still refuse
-the whole restore as the gate does. Naming one with `--paths` is refused
-with the gate's reason, followed by one line: name the other files with
-`--paths`, or (in an addon folder) reinstall the addon to get its
-executable back. `guard` is unchanged.
+`no`, M13-28). A whole restore skips a file named like an executable whose
+row has Edit `no` (that row, or `os-metadata` for the `._helper.sh` macOS
+writes beside `helper.sh`) when the disk holds a plain change of it: a
+regular file with other content, every part spelled exactly as in the
+snapshot and no link, junction or other reparse point on the way, or
+nothing at that name (in any letter case) inside real folders that are
+still there. It is listed in `skipped` with its row, and the rest is
+restored by name as above; the text plan lists these under their own
+"Skipped … executable(s)" header, which does not offer `--paths` but says
+to reinstall the addon. Only a regular-file entry the gate would refuse for
+being an executable and nothing else is skipped: a reserved name, a link or
+a folder where the file was, a name spelled otherwise on disk, a missing
+one whose folder is gone too, one behind a linked folder, one whose content
+matches but whose permission bits do not, and an executable whose row is
+not Edit `no` (outside `AddOns/`) still refuse the whole restore as the
+gate does. Naming one with `--paths` is refused with the gate's reason,
+followed by one line: name the other files with `--paths`, or (for the
+`addon-executable` row) reinstall the addon to get its executable back.
+`guard` is unchanged.
 
 *Amended 2026-09-29 (M11-30):* text output is terminal-safe. No C0
 control (tab and line feed included), no DEL, no C1 control and no Unicode
