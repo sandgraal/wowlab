@@ -3,9 +3,11 @@
 Grammar per docs/LAB_FORMATS.md §8 and its amendment of 2026-09-28, which
 records what the one real Forever log shows. The Forever client does write a
 usable combat log (M10-03), so this module is graded on that capture, and on
-constructed lines for what it lacks. There are no event semantics in Wave 1:
+constructed lines for what it lacks. The tokenizer has no event semantics:
 a line becomes a timestamp, an event name and a list of fields, and nothing
-here knows what any field means.
+in it knows what any field means. The one place that reads fields is
+:func:`cast_counts` (M13-08), which counts the player's own
+``SPELL_CAST_SUCCESS`` records in the format-22 layout the real log shows.
 
 Read-only (L1): files are opened read-only (on POSIX also non-blocking, so a
 FIFO under a log's name cannot hang a read), must be regular files, are read
@@ -85,16 +87,25 @@ import re
 import stat
 import sys
 import time
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import Callable, Generator, Iterable, Iterator
 from pathlib import Path
 from typing import Annotated, BinaryIO, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Discriminator
 
 __all__ = [
+    "AFFILIATION_MASK",
+    "AFFILIATION_MINE",
+    "CAST_EVENT",
+    "CAST_LAYOUT_VERSION",
+    "CONTROL_MASK",
+    "CONTROL_PLAYER",
     "MAX_DEPTH",
     "MAX_LINE_BYTES",
+    "TYPE_MASK",
+    "TYPE_PLAYER",
     "Bracket",
+    "CastCounts",
     "Ending",
     "Entry",
     "FieldValue",
@@ -103,7 +114,9 @@ __all__ = [
     "NotARegularFileError",
     "Quoted",
     "Record",
+    "SpellCasts",
     "Unparsed",
+    "cast_counts",
     "find_logs",
     "follow",
     "is_log_name",
@@ -629,6 +642,153 @@ def newest_log(directory: Path | str) -> Path | None:
     """The combat log in ``directory`` written last, or None."""
     logs = find_logs(directory)
     return logs[-1] if logs else None
+
+
+# ─── cast counts (M13-08) ────────────────────────────────────────────────────
+
+CAST_EVENT = "SPELL_CAST_SUCCESS"
+CAST_LAYOUT_VERSION = "22"
+"""The ``COMBAT_LOG_VERSION`` whose cast layout the real Forever log shows
+(docs/LAB_FORMATS.md §8). Casts under any other version, or before any
+version line, are not counted: their layout is not known."""
+
+# Unit-flag bits (the client's COMBATLOG_OBJECT_* values, community
+# documentation; the real log's owner is 0x511 and its NPC 0x10a48). The
+# flags describe a unit relative to the player who logs; only these three
+# fields of them are read, never the target or focus bits, which change.
+# The controller must be a player too **[verify]**: a charmed or
+# mind-controlled player is assumed to log another controller, and its casts
+# then are not the player's own choices (no capture of that exists).
+AFFILIATION_MASK = 0x0000000F
+AFFILIATION_MINE = 0x00000001
+CONTROL_MASK = 0x00000300
+CONTROL_PLAYER = 0x00000100
+TYPE_MASK = 0x0000FC00
+TYPE_PLAYER = 0x00000400
+
+# The format-22 cast layout, after the event name: source GUID, name, flags,
+# raid flags; destination GUID, name, flags, raid flags; spell id, spell name,
+# school; then the advanced block when advanced logging is on.
+_SOURCE_GUID, _SOURCE_FLAGS, _SPELL_ID, _SPELL_NAME = 0, 2, 8, 9
+_CAST_FIELDS = 11
+_FLAGS = re.compile(r"0x[0-9A-Fa-f]{1,8}")
+_SPELL = re.compile(r"[0-9]{1,10}")
+
+
+class SpellCasts(_Model):
+    """The player's casts of one spell id under one name, as the log writes them."""
+
+    spell_id: int
+    spell_name: str
+    casts: int
+
+
+class CastCounts(_Model):
+    """What :func:`cast_counts` found in a log.
+
+    ``mine`` counts the player's own casts: ``SPELL_CAST_SUCCESS`` records
+    whose source flags say affiliation "mine", controller "player" and type
+    "player". A pet's or
+    guardian's casts are "mine" but not "player", and are among ``others``
+    with every other unit's. The pick never looks at a GUID or a name; only
+    ``sources`` counts the distinct source GUIDs of the casts counted, so
+    that a log holding more than one of the player's characters (logging left
+    on across a character change) can be said to.
+    """
+
+    lines: int  # every line of the log
+    unparsed: int  # lines the tokenizer did not read as a record
+    versions: tuple[str, ...]  # COMBAT_LOG_VERSION values, in order of first appearance
+    cast_events: int  # every SPELL_CAST_SUCCESS record
+    other_version: int  # casts under another version, or before any: not counted
+    not_read: int  # casts under version 22 whose fields do not have its layout
+    others: int  # casts by any unit that is not the player
+    mine: int  # the player's own casts, counted
+    sources: int  # distinct source GUIDs among the counted casts
+    first_timestamp: str | None  # of the first counted cast, as written
+    last_timestamp: str | None  # of the last counted cast, as written
+    spells: tuple[SpellCasts, ...]  # most cast first, then by spell id and name
+
+
+def _flags(value: FieldValue) -> int | None:
+    if isinstance(value, str) and _FLAGS.fullmatch(value):
+        return int(value, 16)
+    return None
+
+
+def cast_counts(entries: Iterable[Entry]) -> CastCounts:
+    """The player's own ``SPELL_CAST_SUCCESS`` records in ``entries`` (a log's
+    lines in order, as :func:`read_log` yields them), counted per spell id and
+    name. Reads one entry at a time; memory grows only with distinct spells."""
+    lines = unparsed = cast_events = other_version = not_read = others = mine = 0
+    versions: list[str] = []
+    version: str | None = None
+    guids: set[str] = set()
+    first: str | None = None
+    last: str | None = None
+    counts: dict[tuple[int, str], int] = {}
+    for entry in entries:
+        lines += 1
+        if not isinstance(entry, Record):
+            unparsed += 1
+            continue
+        if entry.event == "COMBAT_LOG_VERSION":
+            head = entry.fields[0] if entry.fields else None
+            version = head if isinstance(head, str) else None
+            if version is not None and version not in versions:
+                versions.append(version)
+            continue
+        if entry.event != CAST_EVENT:
+            continue
+        cast_events += 1
+        if version != CAST_LAYOUT_VERSION:
+            other_version += 1
+            continue
+        fields = entry.fields
+        if len(fields) < _CAST_FIELDS:
+            not_read += 1
+            continue
+        flags = _flags(fields[_SOURCE_FLAGS])
+        spell_id = fields[_SPELL_ID]
+        name = fields[_SPELL_NAME]
+        guid = fields[_SOURCE_GUID]
+        if (
+            flags is None
+            or not isinstance(spell_id, str)
+            or not _SPELL.fullmatch(spell_id)
+            or not isinstance(name, Quoted)
+            or not isinstance(guid, str)
+        ):
+            not_read += 1
+            continue
+        if (
+            flags & AFFILIATION_MASK != AFFILIATION_MINE
+            or flags & CONTROL_MASK != CONTROL_PLAYER
+            or flags & TYPE_MASK != TYPE_PLAYER
+        ):
+            others += 1
+            continue
+        mine += 1
+        guids.add(guid)
+        first = entry.timestamp if first is None else first
+        last = entry.timestamp
+        key = (int(spell_id), name.text)
+        counts[key] = counts.get(key, 0) + 1
+    spells = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return CastCounts(
+        lines=lines,
+        unparsed=unparsed,
+        versions=tuple(versions),
+        cast_events=cast_events,
+        other_version=other_version,
+        not_read=not_read,
+        others=others,
+        mine=mine,
+        sources=len(guids),
+        first_timestamp=first,
+        last_timestamp=last,
+        spells=tuple(SpellCasts(spell_id=i, spell_name=n, casts=c) for (i, n), c in spells),
+    )
 
 
 # ─── following ───────────────────────────────────────────────────────────────
