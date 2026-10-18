@@ -225,7 +225,9 @@ def test_profile_save_and_show_print_a_stored_target_plain_on_windows_constructe
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="a junction is a Windows link")
-def test_a_real_junction_is_stored_raw_and_shown_plain(root: Path, tmp_path: Path) -> None:
+def test_a_real_junction_is_stored_raw_and_shown_plain_constructed(
+    root: Path, tmp_path: Path
+) -> None:
     """On Windows `readlink` answers a junction's target with the
     extended-length prefix: the manifest keeps that text, `snap show` prints
     the plain spelling, and the manifest verifies."""
