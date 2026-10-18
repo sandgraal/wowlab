@@ -25,7 +25,7 @@ M1 with the WoW client running:
 
 This probe times, in a fresh interpreter, a parse of an over-full document
 up to the point where the budget refuses it. That is the parse of one
-budget's worth of the shape. It takes the better of two runs. Positive
+budget's worth of the shape. It takes the least of up to five runs (M13-31, below). Positive
 control: the table's `0,` shape, measured the same way, is well under 10 s.
 
 What is measured, and why (M11-16T, 2026-09-28). The figures above are wall
@@ -46,17 +46,48 @@ parse, never flatter it. A constructed slow parse still fails: a parse that
 does more work uses more CPU. Where the platform has no process clock
 (`time.get_clock_info("process_time")` fails), the child falls back to
 `time.perf_counter()`, wall clock, and says so in the failure message.
+
+Robust to a loaded runner (M13-31, 2026-10-17). Best of two still failed on
+the macOS runner in the serial pass, with no other test running: the `0,`
+control at 10.04 and 11.46 CPU s. That runner is a virtual machine, and a
+guest's CPU clock also runs while the host has taken its core away, so a
+busy host reads as a slow parse. Eight runner jobs of three rounds each,
+before and after the parallel pass (run 39050556689), measured per child:
+`0,` 5.83 to 9.47 CPU s, `0;` 5.43 to 9.14, `["\\1"]=0,` 4.64 to 8.37,
+the spread within one job as wide as across jobs. A calibration loop in the
+same child did not track it (parse over calibration varied 17 to 30), so
+the threshold is not scaled. The probe instead takes up to five parses,
+each in a fresh interpreter, and stops at the first inside the target: the
+result is that of the least of five, and a loaded stretch has to last all
+five parses to fail it. The 10 s target is unchanged, and a sample is never
+flattered (CPU time only overstates under load), so a parser slower
+than the 10 s target on an idle machine fails every sample; one between the
+real parser's time and the target can pass, as the twice-as-slow stand-in
+does for the two cases under 5 s. Each sample is shown in the warnings
+summary as a `ProbeReading`. Over 40 runner jobs of the full `lab (macos)`
+steps (runs 39069464056 and 39096528977) every case passed; one `0,` case
+needed a second parse (11.41, then 9.57 CPU s), and the largest first
+parse otherwise was 9.29 CPU s.
 """
 
 from __future__ import annotations
 
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 
 from wowlab_core import luadata
 
 TARGET_SECONDS = 10.0
+# Up to this many parses, each in a fresh interpreter; the first inside the
+# target ends the loop, so the result is that of the least of them (M13-31).
+SAMPLES = 5
+
+
+class ProbeReading(UserWarning):
+    """One child's parse time, shown in the warnings summary (not a fault)."""
+
 
 # Prints "<clock> <seconds>": the CPU time of the parse, or wall clock where
 # the platform has no process clock.
@@ -79,14 +110,14 @@ else:
 """
 
 
-def _seconds_to_the_budget(item: bytes, folder: Path) -> tuple[float, str]:
+def _seconds_to_the_budget(item: bytes, folder: Path) -> tuple[float, str, list[float]]:
     # Over-full for a 170-per-entry charge: the budget refuses it part way.
     data = b"\r\nX = {\r\n" + item * (luadata.MAX_COST // 150) + b"}\r\n"
     path = folder / "Overfull.lua"
     path.write_bytes(data)
-    best = float("inf")
+    samples: list[float] = []
     clock = ""
-    for _ in range(2):
+    for _ in range(SAMPLES):
         out = subprocess.run(
             [sys.executable, "-c", CHILD, str(path)],
             check=True,
@@ -95,18 +126,26 @@ def _seconds_to_the_budget(item: bytes, folder: Path) -> tuple[float, str]:
         ).stdout.strip()
         assert out != "parsed", "the document should cross the budget"
         clock, seconds = out.split()
-        best = min(best, float(seconds))
-    return best, clock
+        samples.append(float(seconds))
+        warnings.warn(
+            ProbeReading(f"{sys.platform} {item!r} at the budget: {samples[-1]:.2f} {clock} s"),
+            stacklevel=2,
+        )
+        if samples[-1] < TARGET_SECONDS:
+            break
+    return min(samples), clock, samples
 
 
 def test_constructed_control_zeros_at_the_budget_are_inside_the_target(tmp_path: Path) -> None:
-    took, clock = _seconds_to_the_budget(b"0,\r\n", tmp_path)
-    assert took < TARGET_SECONDS, f"`0,` list at the budget: {took:.2f} {clock} s"
+    took, clock, samples = _seconds_to_the_budget(b"0,\r\n", tmp_path)
+    assert took < TARGET_SECONDS, (
+        f"`0,` list at the budget: {took:.2f} {clock} s (samples {samples})"
+    )
 
 
 def test_constructed_semicolon_list_at_the_budget_is_inside_the_target(tmp_path: Path) -> None:
-    took, clock = _seconds_to_the_budget(b"0;\n", tmp_path)
+    took, clock, samples = _seconds_to_the_budget(b"0;\n", tmp_path)
     assert took < TARGET_SECONDS, (
-        f"`0;` list at the budget: {took:.2f} {clock} s, over the §6.4 target of "
-        f"{TARGET_SECONDS:.0f} s (the amendment's slowest shape is 7.6 s)"
+        f"`0;` list at the budget: {took:.2f} {clock} s (samples {samples}), over the §6.4 "
+        f"target of {TARGET_SECONDS:.0f} s (the amendment's slowest shape is 7.6 s)"
     )
