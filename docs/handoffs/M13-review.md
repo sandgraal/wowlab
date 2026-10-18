@@ -220,5 +220,15 @@ PATH` prefix echo). About three days of agent work; none blocks v0.1.
    `binds coach --apply` and `macros fix`, each a `guard` write of a WTF text
    file with undo, sharing the writers **wow-as-code** needs.
 
+*Owner, 2026-10-18 (later the same day):* recommendation 1 picked as
+written, then 2 with an addition: the player's character in the UI (gear,
+keys, macros), read-only in M14 and built toward editing and
+model-assisted optimizing in the wave after. Specified in
+`docs/LAB_PLAN.md` §16; ADR-0032 (Proposed) covers the model's access to
+the data; recommendation 3 is §16.5. The plan's proposed default (§16.6
+F-F, not an owner ruling) is that §16.5 is built whether or not the gate
+passes and the gate decides only whether it is released; the owner has not
+spoken to that.
+
 Not recommended yet: anything from section D (bridges and live data) or 3D,
 and the **crew-book**/**comp-builder** pair until their privacy ADR exists.

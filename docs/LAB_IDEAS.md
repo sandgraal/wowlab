@@ -18,8 +18,13 @@ can be picked again. Wave 4 (M13, 2026-10-13): the first public release
 (ADR-0031, §15), with the read-only halves of **macro-doctor**
 (`wowlab macros check`) and **keybind-coach** (`wowlab binds coach`, no
 writer), plus `wowlab macros fix`, whose form (print-only or a `guard`
-writer) waits on an owner test (M13-07). Wave 5 (M14): `wowlab ui`
-(ADR-0029).
+writer) waits on an owner test (M13-07). Wave 5 (M14, specified
+2026-10-18, `docs/LAB_PLAN.md` §16): `wowlab ui`'s confirm flow (ADR-0029)
+and, at the owner's request, the character in the UI: gear, keys and
+macros, read-only, the first slice of **char-planner**'s "view consolidated
+state"; the apply halves of **keybind-coach** and **macro-doctor** and the
+model-assisted step are planned in §16.5 and ADR-0032 (Proposed) for the
+wave after.
 
 Two things from the original brainstorm are deliberately absent: anything
 needing memory access, injection, packets or a modified `Data/` (ADR-0023),
