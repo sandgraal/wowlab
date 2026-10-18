@@ -22,16 +22,18 @@ Two files can hold bindings. The account file,
 `WTF/Account/<ACCOUNT>/bindings-cache.wtf`, is the one the client keeps for
 every character. The character file,
 `WTF/Account/<ACCOUNT>/<Realm folder>/<Character>/bindings-cache.wtf`,
-exists only when character-specific key bindings are switched on for that
-character (the Forever capture had none; `docs/LAB_FILE_MAP.md`). This
+is believed to exist only when character-specific key bindings are
+switched on for that character (**[verify]** in `docs/LAB_FILE_MAP.md`;
+the Forever capture had none). This
 runbook edits the **account** file. If you also play with
 character-specific bindings on, say so in the report and, if you have
 time, repeat run A on the character file as run D.
 
 Every command is pasted from your wowlab folder. Use the flavor you play;
 name it in the report. If the install has more than one flavor folder, add
-`--flavor <folder>` to each `wowlab` command, as `wowlab install show` lists
-it.
+`--flavor <folder>` to `doctor` and `binds list`, as `wowlab install show`
+lists it; the `snap` commands take no `--flavor` (a snapshot names its
+flavor itself).
 
 ## 0. Before anything
 
@@ -62,8 +64,9 @@ it.
 
    Pick one binding you will recognise and can live without for two
    logins, for example a key bound to `TOGGLEBACKPACK` or to an action
-   button you do not use in combat. Write down its line as `binds list`
-   prints it (key, action, line number).
+   button you do not use in combat. Write down the key and the action as
+   `binds list` prints them (`binds list --json` adds the line number, if
+   you want it).
 
 ## 1. Run A: with `synchronizeBindings` as it is now
 
@@ -153,7 +156,8 @@ Also say:
   have kept both);
 - anything the client did that surprised you.
 
-Nothing in this runbook writes through the Lab: the edit is yours, by hand,
-on purpose, because this test is about what the client does with a file
-the Lab did not write. The snapshot is there so the original always comes
-back.
+Nothing before section 3 writes through the Lab: the edit is yours, by
+hand, on purpose, because this test is about what the client does with a
+file the Lab did not write. The optional restore in section 3 goes through
+the write gate like any `snap restore`, and `wowlab undo` reverses it. The
+snapshot is there so the original always comes back.

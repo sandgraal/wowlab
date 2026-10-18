@@ -1,7 +1,7 @@
 ---
 name: pr-shepherd
 description: Opens (or updates) the PR for a finished wowlab branch and drives it to merged — watches the required checks, reads and answers every review thread, rebases on conflicts, regenerates lockfiles on lock conflicts, and squash-merges when branch protection and the independent review are satisfied. Runs in the branch's worktree. Reports the merge SHA or a precise blocker.
-tools: Bash, Read, Edit, Grep, Glob, mcp__github__pull_request_read, mcp__github__add_reply_to_pull_request_comment, mcp__github__resolve_review_thread, mcp__github__update_pull_request, mcp__github__merge_pull_request
+tools: Bash, Read, Edit, Grep, Glob, mcp__github__create_pull_request, mcp__github__pull_request_read, mcp__github__add_reply_to_pull_request_comment, mcp__github__resolve_review_thread, mcp__github__update_pull_request, mcp__github__merge_pull_request
 model: sonnet
 ---
 
@@ -24,6 +24,8 @@ session GitHub's GraphQL API is disabled, so `gh pr merge`, `gh pr view
 --json` and the `gh api graphql` thread queries fail (HTTP 403), and the
 bash guard refuses a mutating `gh api`. Use the GitHub MCP tools you are
 given instead, with `owner: sandgraal`, `repo: wowlab`:
+`create_pull_request` with `draft: true`, `base: main` and the body file's
+text (in place of `gh pr create`, which also goes through GraphQL);
 `pull_request_read` (methods `get`, `get_check_runs`, `get_review_comments`,
 `get_reviews`) for state, checks and threads; `add_reply_to_pull_request_comment`
 and `resolve_review_thread` for threads; `update_pull_request` for the body

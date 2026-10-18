@@ -3501,8 +3501,9 @@ model's help. This section specifies both halves. The owner's pick of
 2026-10-18 holds: the twelve M13 follow-ups merge before any M14 ticket is
 dispatched (`docs/BACKLOG.md`, M14-01).
 
-Nothing here changes ADR-0019, ADR-0021, ADR-0023, ADR-0026 or ADR-0027,
-and L1 to L8 apply to every ticket. ADR-0029 gets one dated amendment: its
+Nothing in M14 changes ADR-0019, ADR-0021, ADR-0023, ADR-0026 or
+ADR-0027, and L1 to L8 apply to every ticket; §16.5 F4's second stage
+amends ADR-0019 through ADR-0032, accepted 2026-10-18, and is not M14 work. ADR-0029 gets one dated amendment: its
 2026-10-15 amendment named an embedded "character page", and §16.3 builds
 a native tab instead, drawn from `--json` as the explorer is (F-A); the
 amendment is under ADR-0029, accepted by the owner on 2026-10-18. The read-only stage uploads
@@ -3545,10 +3546,13 @@ only the hint the CLI prints (`wowlab undo` for a `guard` transaction;
 **The confirmed run applies the plan that was shown, not a newer one.**
 The token binds the argv; it cannot bind state that moved between the two
 processes (automated review of #265, finding 1). Each command pins its
-own plan: `snap restore`, `profile apply`, `addon install` and `addon
-remove` are pinned by their arguments (a snapshot id and paths, a profile
-name, an addon name), and `guard` snapshots the live files before any
-change, so drift there is captured, never lost. `snap gc` removes only
+own plan: `snap restore`, `addon install` and `addon remove` are pinned by
+their arguments (a snapshot id and paths, an addon name); `profile apply`
+is pinned by a profile name only, and a name can be deleted and saved
+again between plan and confirm (`profiles.save` refuses a name only while
+it exists), so its drift is captured, not pinned: `guard` snapshots the
+live files before any change, so nothing is lost, and the result names
+the profile's snapshot id so the player can see what was applied. `snap gc` removes only
 what is unreferenced at confirm time, so a snapshot taken in between is
 kept; harmless. `doctor --yes` takes a first snapshot; harmless. The two
 that can apply a different plan are `undo`, which undoes the newest
@@ -3788,11 +3792,12 @@ with `|` escape sequences), and it is the only path from any suggestion,
 human or model, to a `guard` plan. **A proposal is data, never
 instructions**: the same rule ADR-0031 sets for strangers' text.
 
-**F4. The advice packet and the model (ADR-0032, Proposed).** How a model
+**F4. The advice packet and the model (ADR-0032, accepted 2026-10-18, both stages).** How a model
 gets to see the character's data is the one question the Lab's rules do
 not already answer: ADR-0019 and ADR-0031 say nothing read from an install
 is ever uploaded, and that sentence is on the README's first screen.
-ADR-0032 proposes two stages and the owner picks the second or leaves it:
+ADR-0032 sets two stages; the owner accepted both on 2026-10-18, and the
+second is built after the first:
 
 - *Stage one, no upload:* `wowlab char advise` writes an **advice packet**,
   one self-contained text file under the data directory: the gear, keys

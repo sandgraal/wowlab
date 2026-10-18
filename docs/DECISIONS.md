@@ -346,13 +346,13 @@ The decision itself is unchanged. This amendment only stages it, so that the fir
 - The first public release carries the trust model, Windows CI, the first-run flow, redaction and the README. Feature work rides on later releases. `wowlab ui` (ADR-0029) is unchanged and moves to the second public release.
 - If the gate fails, nothing is taken down, and what was built for it (the release workflow, redaction, Windows CI, the first-run flow) still serves the owner.
 
-**Amended by:** ADR-0032 (accepted 2026-10-18): the trust model's "nothing is uploaded" gains the one opt-in exception named there, `wowlab char advise --send`, and the README's first screen says so when that command ships.
+**Amended by:** ADR-0032 (accepted 2026-10-18): the trust model's "nothing is uploaded" and "the only network traffic is fetching public game tables" gain the one opt-in exception named there, `wowlab char advise --send`, and the README's first screen says so when that command ships.
 
 ---
 
 ## ADR-0032 — A model may advise on a character's bindings and macros; how it sees the data
 
-**Status:** Accepted (2026-10-18; proposed 2026-10-18) — owner decision, both stages ("Both stages", in answer to the conductor's question); the status edit was made by the conductor on the owner's explicit instruction. Stage two is built after stage one, off until configured; the wording changes it names (README trust sentence, `AGENTS.md`, `.claude/rules/lab.md`, ADR-0019 and ADR-0031 cross-notes) are made when its ticket ships, except the cross-notes, which were added on acceptance.
+**Status:** Accepted (2026-10-18; proposed 2026-10-18) — owner decision, both stages ("Both stages", in answer to the conductor's question); the status edit was made by the conductor on the owner's explicit instruction. Stage two is built after stage one, off until configured; the README trust sentence and `doctor`'s report change when stage two's ticket ships; the ADR-0019 and ADR-0031 cross-notes and the "accepted, not yet built" sentences in `AGENTS.md` and `.claude/rules/lab.md` were added on acceptance.
 
 **Context:** On 2026-10-18 the owner asked for the player's character in `wowlab ui` (gear, key bindings, macros), read-only first, with the intention that a later wave changes and optimizes bindings and macros from the UI "using AI to help improve and add to them" (`docs/LAB_PLAN.md` §16.5). A model can only advise on data it has seen, and the data is the player's own bindings, macros, spellbook and action bars, read from their install. ADR-0019 says wowlab "never uploads anything it reads"; ADR-0031 kept that clause unchanged and put it on the README's first screen as the trust model. Sending a character's data to a hosted model is an upload under that sentence, whoever presses the button. ADR-0012 forbids a live service in tests or CI. The runtime dependency list (`docs/LAB_PLAN.md` §6) has no HTTP client beyond `gamedata`'s. ADR-0031 also says text from strangers is data, never instructions; a model's reply is text from a stranger in that sense.
 
