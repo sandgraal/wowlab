@@ -221,13 +221,16 @@ def test_a_changed_executable_outside_addons_still_refuses_constructed(
     _later(flavor)
     result = run("snap", "restore", a.id, "--yes")
     assert result.exit_code == 3, (result.stdout, result.stderr)
-    assert f"{tool!r} is an executable; guard never writes one" in _plain(result.stderr)
-    named = run("snap", "restore", a.id, "--paths", tool, "--yes")
-    assert named.exit_code == 3
-    assert _plain(named.stderr).splitlines()[1] == (
+    err = _plain(result.stderr).splitlines()
+    assert f"{tool!r} is an executable; guard never writes one" in err[0]
+    shorter = (
         "wowlab never writes, restores or deletes an executable, not even with --paths: "
         "name the other files with --paths."
     )
+    assert err[1] == shorter  # the whole restore gives the shorter line too (M13-48)
+    named = run("snap", "restore", a.id, "--paths", tool, "--yes")
+    assert named.exit_code == 3
+    assert _plain(named.stderr).splitlines()[1] == shorter
     assert guard.history() == ()
 
 
@@ -246,7 +249,9 @@ def _refused(a: Manifest) -> None:
     for args in (["--dry-run"], ["--yes"], ["--yes", "--json"]):
         result = run("snap", "restore", a.id, *args)
         assert result.exit_code == 3, (args, result.stdout, result.stderr)
-        assert "is an executable; guard never writes one" in _plain(result.stderr)
+        err = _plain(result.stderr).splitlines()
+        assert "is an executable; guard never writes one" in err[0]
+        assert err[1] == NOTE  # the advice line, on a whole restore too (M13-48)
     assert guard.history() == ()
 
 
