@@ -714,7 +714,10 @@ def test_constructed_an_unknown_placeholder_or_a_wrong_tag_fails(tmp_path: Path)
 # `constructed` cases mutate a copy in memory, never the file.
 
 _JSON_PARAGRAPH = "**`--json`.**"
-_BACKTICKED = re.compile(r"`([A-Za-z_.]+)`")
+# A code span holding exactly one name by the generator's own rule
+# (`_MODEL_NAME`: digits allowed, an optional `module.` prefix), so any name
+# `json_models` can report can also be read from the notes.
+_BACKTICKED = re.compile(rf"`({gen._MODEL_NAME.pattern})`")
 
 
 def _listed(text: str) -> set[str]:
