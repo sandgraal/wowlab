@@ -1271,7 +1271,10 @@ def _check_no_extended_spelling(tree: Tree, command: str) -> None:
     assert EXTENDED not in spelled.stderr, spelled.stderr
     assert (spelled.stdout, spelled.stderr) == (plain.stdout, plain.stderr)
     if command == "sv-dump-missing-absolute":
-        assert str(tree.flavor.joinpath(*SV_FOLDER.split("/"), "LabNone.lua")) in spelled.stderr
+        # The error names the file plainly, as written or as `repr` writes
+        # it (backslashes doubled, so a leaked prefix would still be found).
+        missing = str(tree.flavor.joinpath(*SV_FOLDER.split("/"), "LabNone.lua"))
+        assert missing in spelled.stderr or repr(missing) in spelled.stderr, spelled.stderr
     if command.startswith("sv-dump") and command.endswith(("json", "json-path")):
         report = cli.SvDumpReport.model_validate_json(spelled.stdout)
         assert report.file == str(tree.flavor.joinpath(*SYNDICATOR.split("/")))
