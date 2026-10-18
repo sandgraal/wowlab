@@ -138,9 +138,11 @@ the fixtures rule follows ADR-0019).
   worktrees without loss (the conductor's observation across this wave's
   sessions); the one loss came from removing a shepherd's worktree while
   its PR was open, which is now a note in the conductor's memory.
-- **The automated review overlapped the independent reviewers** and on #245
-  and #255 found small items they had chosen not to count; such items now
-  get a reply and no re-check (ADR-0013 amendment, 2026-10-17, later).
+- **The automated review overlapped the independent reviewers** and found
+  small items beside them: on #245 one both reviewers had seen and not
+  counted, on #255 one neither had raised. The first kind now gets a reply
+  and no re-check (ADR-0013 amendment, 2026-10-17, later); the second is
+  fixed like any finding.
 
 ## Effort against the plan
 
