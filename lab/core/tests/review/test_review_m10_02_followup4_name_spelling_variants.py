@@ -14,6 +14,10 @@ the tool's own realms are also searched spaced (REALM_TRANSFORMS,
 `Zorvinth` and the unspaced realm are the positive controls: they refuse
 today. Constructed boundary input in the docs/LAB_FORMATS.md §8 shape,
 invented names only; no install (ADR-0012).
+
+Amended 2026-10-17 (M13-49, ADR-0019 amendment): another player's realm part
+is no longer pseudonymised, so it is no longer hunted; the two realm cases
+now pass, and the name cases still refuse.
 """
 
 from __future__ import annotations
@@ -76,12 +80,17 @@ def _problems(unit_name: str, text: str, tmp_path: Path) -> list[str]:
     [
         ("Zorvinth-GloamSpire-US", "The Warden glares at ZORVINTH!"),  # control
         ("Weißbart-GloamSpire-US", "The Warden glares at WEISSBART!"),
-        ("Zorvinth-GloamSpire-US", "The Warden of GloamSpire wakes."),  # control
-        ("Zorvinth-GloamSpire-US", "The Warden of Gloam Spire wakes."),
     ],
-    ids=["control-name", "sharp-s-upper", "control-realm", "realm-spaced"],
+    ids=["control-name", "sharp-s-upper"],
 )
 def test_constructed_other_player_spelling_variant_in_game_text_refuses(
     unit_name: str, text: str, tmp_path: Path
 ) -> None:
     assert _problems(unit_name, text, tmp_path), "a log naming the other player was written"
+
+
+@pytest.mark.parametrize(
+    "text", ["The Warden of GloamSpire wakes.", "The Warden of Gloam Spire wakes."]
+)
+def test_constructed_other_players_realm_in_game_text_passes(text: str, tmp_path: Path) -> None:
+    assert _problems("Zorvinth-GloamSpire-US", text, tmp_path) == []

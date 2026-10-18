@@ -75,8 +75,6 @@ SERIAL_TESTS: frozenset[str] = frozenset(
         "lab/core/tests/test_snap_gc_keep_rule.py"
         "::test_the_keep_rule_takes_exactly_seven_parts_and_stops_splitting_a_long_path_constructed",
         "tests/scripts/test_lab_capture_followup.py"
-        "::test_constructed_one_line_of_many_own_realms_stays_fast",
-        "tests/scripts/test_lab_capture_followup.py"
         "::test_constructed_many_short_lines_scrub_in_linear_time",
         "tests/scripts/test_lab_capture_followup3.py"
         "::test_constructed_unclosed_openers_do_not_rescan_the_file",

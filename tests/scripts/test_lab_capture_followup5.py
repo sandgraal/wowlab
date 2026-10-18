@@ -380,10 +380,6 @@ def _one_player(unit_name: str, text: str) -> bytes:
         ("Zorvinth-KestrelHollow-", "Zor\u200bvinth waves."),
         ("Zorvinth-KestrelHollow-", "Zor  vinth waves."),
         ("Zorvinth-KestrelHollow-", "Zor -\t' vinth waves."),
-        ("Zorvinth-Gloamspire-US", "The Warden of Gloam\u00a0\u00a0spire wakes."),
-        ("Zorvinth-Gloamspire-US", "The Warden of Gloam\u200bspire wakes."),
-        # Two words in the unit name: each is its own hunted part, so two hits.
-        ("Zorvinth-Gloam\u00a0Spire-US", "The Warden of GloamSpire wakes."),
     ],
     ids=[
         "full-width",
@@ -394,17 +390,30 @@ def _one_player(unit_name: str, text: str) -> bytes:
         "zero-width-space",
         "doubled-space",
         "mixed-run",
-        "realm-doubled-nbsp",
-        "realm-zero-width",
-        "nbsp-in-the-unit-name",
     ],
 )
 def test_constructed_other_players_name_in_a_new_fold_case_refuses(
     unit_name: str, text: str, tmp_path: Path
 ) -> None:
     problems, _data, _o = _process(_one_player(unit_name, text), tmp_path, others=OtherPlayers())
-    hits = 2 if "\u00a0Spire" in unit_name else 1
-    assert problems == [f"{OTHER_NAME} x{hits}"]
+    assert problems == [f"{OTHER_NAME} x1"]
+
+
+@pytest.mark.parametrize(
+    ("unit_name", "text"),
+    [
+        ("Zorvinth-Gloamspire-US", "The Warden of Gloam\u00a0\u00a0spire wakes."),
+        ("Zorvinth-Gloamspire-US", "The Warden of Gloam\u200bspire wakes."),
+        ("Zorvinth-Gloam\u00a0Spire-US", "The Warden of GloamSpire wakes."),
+    ],
+    ids=["realm-doubled-nbsp", "realm-zero-width", "nbsp-in-the-unit-name"],
+)
+def test_constructed_other_players_realm_in_a_fold_case_is_not_hunted(
+    unit_name: str, text: str, tmp_path: Path
+) -> None:
+    """These refused while the realm part was pseudonymised; it is kept since M13-49."""
+    problems, _data, _o = _process(_one_player(unit_name, text), tmp_path, others=OtherPlayers())
+    assert problems == []
 
 
 def test_constructed_new_fold_cases_have_a_passing_control(tmp_path: Path) -> None:
@@ -618,7 +627,7 @@ def test_constructed_log_lines_and_own_guid_apply_to_each_named_log(
     assert set(logs) == {OLDER, NEWER}
     for data in logs.values():
         assert data.count(b"\n") == 3
-        assert b',"Labchara",0x511' in data and b"0000BEEF" not in data
+        assert b',"Thrallmar",0x511' in data and b"0000BEEF" not in data
 
 
 def test_constructed_other_player_pseudonyms_stay_distinct_across_logs(
@@ -639,9 +648,9 @@ def test_constructed_other_player_pseudonyms_stay_distinct_across_logs(
     args = ("--flavor", "_retail_", "--combat-log", OLDER, "--combat-log", NEWER)
     assert capture(root, out, *args, "--pseudonymise-other-players") == 0
     logs = _written_logs(out)
-    assert b'Player-9998-00000001,"Labothera-LabrealmaPartb-US"' in logs[OLDER]
-    assert b'Player-9998-00000001,"Labothera-LabrealmaPartb-US"' in logs[NEWER]
-    assert b'Player-9998-00000002,"Labotherb-LabrealmaPartb-US"' in logs[NEWER]
+    assert b'Player-9998-00000001,"Labothera-Area52-US"' in logs[OLDER]
+    assert b'Player-9998-00000001,"Labothera-Area52-US"' in logs[NEWER]
+    assert b'Player-9998-00000002,"Labotherb-Area52-US"' in logs[NEWER]
     for data in logs.values():
         assert not [s for s in (b"Zorvinth", b"Quellanor", b"00C0FFEE", b"00BEEF01") if s in data]
     printed = capsys.readouterr().out

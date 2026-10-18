@@ -85,8 +85,9 @@ def test_constructed_positive_control_one_twin_the_character_folder_is_captured(
     tmp_path: Path,
 ) -> None:
     written = _capture(tmp_path, ["Some Realm"])
-    assert any(d.endswith("/1/Labchara-Labrealma/chat-cache.txt") for d in written), written
-    assert any(d.endswith("/Labchara/AddOns.txt") for d in written), written
+    # Since M13-49 the folders keep their names; only the account and group are rewritten.
+    assert any(d.endswith("/1/Alyra-Qorv/chat-cache.txt") for d in written), written
+    assert any(d.endswith("/Some Realm/Alyra/AddOns.txt") for d in written), written
 
 
 def test_constructed_leftover_twin_elsewhere_the_character_folder_is_still_captured(

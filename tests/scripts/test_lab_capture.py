@@ -82,7 +82,9 @@ FOREIGN_GUID = "Player-77-0BADBEEF"
 EMAIL = "someone.real@example.com"
 BATTLETAG = "Stranger#12345"
 
-# Every byte string the scrubber is allowed to touch in this tree.
+# Every byte string the scrubber is allowed to touch in this tree. Since the
+# ADR-0019 amendment of 2026-10-17 (M13-49) character and realm names are not
+# identifiers: the realm is here only as the value of the blanked `realmName`.
 SENSITIVE = [
     s.encode()
     for s in (
@@ -91,18 +93,31 @@ SENSITIVE = [
         ACCOUNT_NAME,
         "!SECRETACCT|",
         REALM,
-        REALM_NORMALISED,
-        REALM.lower(),
-        REALM_NORMALISED.lower(),
-        MAIN,
-        MAIN.lower(),
-        MAIN.upper(),
-        ALT,
-        ALT.lower(),
         OWN_GUID,
     )
 ]
-REAL_NAMES = [ACCOUNT, ACCOUNT_NUMBER, ACCOUNT_NAME, REALM, REALM_NORMALISED, MAIN, ALT, OWN_GUID]
+# For test_edit_list_accounts_for_every_changed_offset, which still hands the
+# engine realms and characters directly (Identity keeps those inputs).
+ENGINE_SENSITIVE = [
+    *SENSITIVE,
+    *(
+        s.encode()
+        for s in (
+            REALM_NORMALISED,
+            REALM.lower(),
+            REALM_NORMALISED.lower(),
+            MAIN,
+            MAIN.lower(),
+            MAIN.upper(),
+            ALT,
+            ALT.lower(),
+        )
+    ),
+]
+# What identifies the account and never survives a capture.
+REAL_NAMES = [ACCOUNT, ACCOUNT_NUMBER, ACCOUNT_NAME, OWN_GUID]
+# Public, and kept as they are (M13-49).
+KEPT_NAMES = [REALM, REALM_NORMALISED, MAIN, ALT]
 
 BUILD_INFO = (
     "Branch!STRING:0|Active!DEC:1|Build Key!HEX:16|Version!STRING:0|Product!STRING:0\n"
@@ -233,7 +248,7 @@ def outputs(out: Path) -> dict[str, bytes]:
 def source_of(root: Path, dest: str) -> Path:
     """Map a pseudonymised output path back to the file it came from."""
     parts = dest.split("/")[1:]  # drop the platform folder
-    real = {"90000001#1": ACCOUNT, PSEUDO_REALM: REALM, "Labchara": MAIN, "Labcharb": ALT}
+    real = {"90000001#1": ACCOUNT}
     return root.joinpath(*[real.get(p, p) for p in parts])
 
 
@@ -255,29 +270,23 @@ def test_pseudonyms_are_stable_across_files_paths_and_flavors(
     assert capture(install, out) == 0
     written = outputs(out)
 
-    # Both flavors, the account, the realm and the character all landed on the
-    # same pseudonyms, in paths...
+    # Both flavors and the account landed on the same pseudonym, in paths; the
+    # realm and character folders keep their names (M13-49)...
     for flavor in ("_retail_", "_classic_beta_"):
-        assert (
-            f"macos/{flavor}/WTF/Account/90000001#1/{PSEUDO_REALM}/Labchara/AddOns.txt" in written
-        )
-    # ...and in contents: wherever the original named a character, the output
-    # names that character's one pseudonym and never the other's.
+        assert f"macos/{flavor}/WTF/Account/90000001#1/{REALM}/{MAIN}/AddOns.txt" in written
+    # ...and in contents: every character and realm name the original holds is
+    # still there, as often, outside the blanked identity CVars.
     seen_main = seen_alt = 0
     for dest, data in written.items():
         original = without_blanked_lines(source_of(install, dest).read_bytes())
-        assert data.count(b"Labchara") == original.count(MAIN.encode()), dest
-        assert data.count(b"Labcharb") == original.count(ALT.encode()), dest
-        # The folder spelling and the normalised spelling stay distinct, and related.
-        assert data.count(PSEUDO_REALM.encode()) == original.count(REALM.encode()), dest
-        assert data.count(PSEUDO_REALM_NORMALISED.encode()) == original.count(
-            REALM_NORMALISED.encode()
-        ), dest
-        seen_main += data.count(b"Labchara")
-        seen_alt += data.count(b"Labcharb")
+        for name in KEPT_NAMES:
+            assert data.count(name.encode()) == original.count(name.encode()), (dest, name)
+        assert b"Labchar" not in data and b"Labrealm" not in data, dest
+        seen_main += data.count(MAIN.encode())
+        seen_alt += data.count(ALT.encode())
     assert seen_main >= 6 and seen_alt >= 2, "the tree must exercise cross-file references"
 
-    # Nothing real survives anywhere, in any casing.
+    # Nothing that identifies the account survives anywhere, in any casing.
     for dest, data in written.items():
         for name in REAL_NAMES:
             assert name.casefold() not in dest.casefold(), (dest, name)
@@ -358,7 +367,7 @@ def test_bytes_outside_identity_spans_are_identical_by_offset(
         ).get_opcodes():
             if tag != "equal":
                 assert all(_sensitive_spans(line) for line in before[i1:i2]), (dest, i1, i2)
-    assert rewritten >= 20, "the tree must contain identity to rewrite"
+    assert rewritten >= 12, "the tree must contain identity to rewrite"
 
 
 def test_edit_list_accounts_for_every_changed_offset() -> None:
@@ -378,7 +387,7 @@ def test_edit_list_accounts_for_every_changed_offset() -> None:
         assert result.data[cursor_out : cursor_out + len(edit.new)] == edit.new
         cursor_out += len(edit.new)
         cursor_in = edit.end
-        assert edit.old in SENSITIVE, f"edited something that is not identity: {edit.old!r}"
+        assert edit.old in ENGINE_SENSITIVE, f"edited something that is not identity: {edit.old!r}"
     assert result.data[cursor_out:] == original[cursor_in:]
 
     # Number text is never touched: the account number inside a longer float stays.
@@ -539,7 +548,7 @@ def test_capture_set_matches_the_runbook(install: Path, tmp_path: Path) -> None:
     assert capture(install, out, "--flavor", "_retail_", "--log-lines", "10") == 0
     written = outputs(out)
     account = "macos/_retail_/WTF/Account/90000001#1"
-    character = f"{account}/{PSEUDO_REALM}/Labchara"
+    character = f"{account}/{REALM}/{MAIN}"
     expected = {
         "macos/.build.info",
         "macos/_retail_/.flavor.info",
@@ -562,7 +571,7 @@ def test_capture_set_matches_the_runbook(install: Path, tmp_path: Path) -> None:
     assert log.count(b"\n") == 10 and log.startswith(
         b"9/20/2026 21:14:03.123-4  COMBAT_LOG_VERSION"
     )
-    assert b'Player-9999-00000001,"Labchara-LabrealmaPartb-US"' in log
+    assert b'Player-9999-00000001,"Thrallmar-Area52-US"' in log
 
 
 def test_prints_one_pasteable_provenance_row_per_file(

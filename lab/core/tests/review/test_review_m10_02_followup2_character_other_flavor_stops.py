@@ -77,7 +77,8 @@ def test_constructed_positive_control_with_flavor_the_character_is_captured(
     tmp_path: Path,
 ) -> None:
     rc, written = _run(tmp_path, "--character", "Alyra-Qorv", "--flavor", "_classic_beta_")
-    assert rc == 0 and any(d.endswith("-Labrealmb/chat-cache.txt") for d in written), written
+    # Since M13-49 the folder keeps its name; only the account and group are rewritten.
+    assert rc == 0 and any(d.endswith("/1/Alyra-Qorv/chat-cache.txt") for d in written), written
 
 
 def test_constructed_character_in_one_flavor_does_not_stop_the_other(tmp_path: Path) -> None:

@@ -97,12 +97,6 @@ finished pass is worth more than a large unfinished one.
   `~/` for the home folder. Never write an absolute home path (`/Users/…`,
   `/home/…`, `C:\Users\…`), a numeric account folder, an email address or a
   BattleTag.
-- The gate reads two words joined by a hyphen, the first capitalised
-  (`Read-Only`, `Alt-Dashboard`, `Two-way`), as a character's name and
-  realm, anywhere on a page or in a file name, code spans included, unless
-  the pair is a reviewed term in `repo/scripts/wiki_allowed_terms.txt`.
-  Write such a word in lower case (`read-only`) or without the hyphen, and
-  name a new page with three or more words (`Alt-Dashboard-Guide`).
 - Every `wowlab …` in code must be a real command with real options; the gate
   checks each one against the command tree.
 - Link pages by their file name without `.md`: `[Profiles](Profiles)`,

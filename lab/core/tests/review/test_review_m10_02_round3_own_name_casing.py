@@ -51,8 +51,8 @@ def test_constructed_own_non_ascii_name_in_any_casing_is_scrubbed_and_not_refuse
 ) -> None:
     identity = lab_capture.Identity(characters=[CHARACTER], realms=[REALM])
 
-    # Positive control: someone else beside the same realm is still refused.
-    assert identity.scrub(f'"Bystander - {REALM}"'.encode()).problems
+    # The positive control (someone else beside the same realm refused) was
+    # removed 2026-10-17 (M13-49): the own-realm partner checks were retired.
 
     result = identity.scrub(text.encode("utf-8"))
     assert not result.problems, "the owner's own pair was refused"
