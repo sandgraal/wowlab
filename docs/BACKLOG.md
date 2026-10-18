@@ -771,7 +771,7 @@ Nothing else in the library changes. If a test seems to need more than the one `
 
 ---
 
-## [ ] M13-44T — [TEST] Graders for `luadata`'s long-path reads on Windows
+## [x] M13-44T — [TEST] Graders for `luadata`'s long-path reads on Windows
 **Size:** S · **Depends on:** M13-15
 
 `luadata.py` is load-bearing (ADR-0013), so its M13-44 change lands graders first, written by a different agent from M13-44's implementer. In `lab/core/tests/test_long_paths_windows.py` (M13-15T's file, same fixtures and the same pattern: Windows-only, long paths off, a tree whose paths pass the 240-character plain limit, strict `xfail` markers with `reason="M13-44 not implemented"`): `luadata._read_sibling` and the folder listing beside it (around line 2567 at #247's head) read a sibling file through a long path; `sv dump` and `sv list` succeed on a SavedVariables file under such a path; and on every platform, no `\\?\` reaches the text or `--json` output of `sv list` and `sv dump` (a labelled constructed test with a root that `longpath.plain` would strip). Derive expected behaviour from `docs/LAB_PLAN.md` §6.9 (as amended for M13-15) and L4, never from the implementation. Markers are deleted by M13-44 only.
