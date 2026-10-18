@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        n: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+        n: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -27,10 +27,9 @@ jobs:
           enable-cache: true
       - name: Install
         run: uv sync --frozen
+      - name: explore memory, idle runner
+        run: uv run --frozen python scripts/m13_31_tmp/explore_mem.py 6
       - name: pytest lab/core/tests (parallel)
-        run: uv run --frozen pytest -q -n auto --dist worksteal -m "not live and not serial" lab/core/tests
-      - name: pytest lab/core/tests (serial)
-        run: uv run --frozen pytest -q -m "serial and not live" lab/core/tests
-      - name: stand-ins (twice as slow, half the memory)
-        if: ${{ always() && matrix.n <= 3 }}
-        run: uv run --frozen python scripts/m13_31_tmp/standins.py
+        run: uv run --frozen pytest -q -n auto --dist worksteal -m "not live and not serial" lab/core/tests || true
+      - name: explore memory, after the parallel pass
+        run: uv run --frozen python scripts/m13_31_tmp/explore_mem.py 6
