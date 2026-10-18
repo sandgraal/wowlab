@@ -175,3 +175,12 @@ def test_constructed_own_guid_is_still_rewritten_and_the_name_beside_it_kept(
     refused = tmp_path / "refused"
     assert capture(root, refused, "--flavor", "_retail_") == 1
     assert not [d for d in outputs(refused) if "WoWCombatLog" in d]
+
+    # With the opt-in flag, the other player's GUID and the character name beside
+    # it are still rewritten; their realm part is kept (M13-49).
+    flagged = tmp_path / "flagged"
+    assert capture(root, flagged, "--flavor", "_retail_", "--pseudonymise-other-players") == 0
+    log = next(data for dest, data in outputs(flagged).items() if "WoWCombatLog" in dest)
+    assert b'Player-9998-00000001,"Labothera-Illidan-US",0x514' in log
+    assert FOREIGN_GUID.encode() not in log and b"Bystander" not in log
+    assert f'Player-9999-00000001,"{CHARACTER}-Area52-US"'.encode() in log
