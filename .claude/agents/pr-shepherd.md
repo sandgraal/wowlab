@@ -120,12 +120,19 @@ Handle, in order:
 
 ## 3. Merge
 
-Only when `mergeStateStatus == CLEAN` (or `UNSTABLE` solely because the
-non-required `review` job of the `Claude review` workflow failed), every
+Only when `mergeStateStatus == CLEAN` (or `UNSTABLE` solely because a
+job that is not in `.github/rulesets/main.json`'s required list failed or
+is still pending: the `review` job of the `Claude review` workflow,
+`lab (windows)`, `lab (macos)`), every
 **required** check is SUCCESS
 on the head sha, every thread the owner opened has an answer, every other
 thread has a reply, and the conductor's dispatch said
-the reviewer verdicts are clean. Then
+the reviewer verdicts are clean. A failed non-required job never holds
+the merge, but it is never silent either: name it, with its run URL and
+the failing test ids from `gh run view <id> --log-failed`, on the report's
+`checks:` line, so the conductor can file it (`windows.yml`'s header: a
+red run on `main` is a bug to fix next, and a red run on the PR is how it
+is seen first). Then
 `gh pr merge <n> --squash --delete-branch` (never `--admin`). Confirm:
 `git fetch origin main && git log origin/main -1 --format=%H%n%s`. Do not
 edit `docs/BACKLOG.md`; the conductor batches ticks.
@@ -148,7 +155,7 @@ changes; report it under follow-ups instead.
 pr: #<n> <url>
 result: MERGED <sha> | BLOCKED: <reason> | NEEDS_IMPLEMENTER: <thread or run urls>
 threads: <n> resolved (<n> fixed, <n> answered), <n> open
-checks: all required green @ <sha> | <which failed and why>
+checks: all required green @ <sha> | <which failed and why>; non-required: <none failed | job, run url, failing test ids>
 rebases: <n>   lockfile regenerations: <n>
 follow-ups worth a ticket: <bullets, or none>
 cleanup: worktree removed, branches deleted | <what is left and why>
