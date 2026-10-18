@@ -726,7 +726,7 @@ Found in the security review of #236 (M13-19). `improve` restores the uv cache b
 
 ---
 
-## [ ] M13-40 — `check_wiki`: a crash reads as "no personal data"
+## [x] M13-40 — `check_wiki`: a crash reads as "no personal data"
 **Size:** S · **Depends on:** M13-19
 
 Found in the security re-review of #236 (M13-19). The withhold step and the gates release let pages out on `check_wiki` exit 0 or 1, but `main()` catches only `CalledProcessError`, and Python exits 1 on any uncaught exception. `Checker.run()` runs `check_generated`, `check_links`, `check_commands` and `check_coverage` before `check_privacy`, so a page that crashed any of those would leave with no personal-data check and an exit code that looks safe. The reviewer could not build such a page (16 hostile cases all exited 3), so this is defence in depth. Fix both: catch `Exception` in `main()` and return `EXIT_ERROR` (2), and run `check_privacy` first.
