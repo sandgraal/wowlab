@@ -1,6 +1,6 @@
 [project]
 name = "wowlab-core"
-version = "0.1.0rc1"
+version = "0.1.0"
 description = "Local-only library and CLI over a World of Warcraft install"
 requires-python = ">=3.12"
 license = "Apache-2.0"
