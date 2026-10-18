@@ -745,6 +745,22 @@ keeps memory bounded, and the same line gives the same entry however the file
 is read or chunked. Every other line keeps its text, ending and offset, so a
 log with no such line is rebuilt byte for byte.
 
+*Amended 2026-10-18 (M13-41):* `read_log` and `tokenize` take `events=`, the
+event names a caller reads. The 1 MiB rule comes first and is unchanged: an
+over-long line is the truncated `Unparsed` it always was, whatever its event.
+A line is then yielded as `Skipped` (its offset, event name, text and ending)
+and not tokenized when the text before its first two spaces is a timestamp
+and its first comma-separated field after them is a bare event name
+(`[A-Za-z0-9_]+`) not among `events`. Every other line, including one whose
+first field is quoted, holds a quote or bracket, or is not ASCII, is
+tokenized exactly as without `events`. `Skipped` keeps the line's bytes and
+ending, so a filtered read still rebuilds the file byte for byte. A
+malformed line of an event not asked for is not tokenized, so it is a
+`Skipped`, not an `Unparsed`. `wowlab binds coach` reads with
+`events=CAST_COUNT_EVENTS` (`COMBAT_LOG_VERSION`, `SPELL_CAST_SUCCESS`), so
+its count of lines the tokenizer could not read covers only those events'
+lines and lines with no timestamp and bare event name.
+
 ### 6.9 `snapshot` — content-addressed store (M10-10)
 
 Store location: `platformdirs.user_data_path("wowlab")/store/`. Never inside
