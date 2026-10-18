@@ -431,7 +431,7 @@ Found by M13-02. With `LongPathsEnabled=0`, the default on many player PCs, Wind
 
 **Acceptance:** the graders fail on `main` for the stated reason on the `lab (windows)` job, run on the branch with `gh workflow run windows.yml --ref <branch>` (off the PR path from 2026-10-15; since 2026-10-17 it also runs on a PR that touches `lab/**`); the layouts and root spellings above are graded; reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M13-15 — Long paths on Windows: `\\?\` where the graders need it
+## [x] M13-15 — Long paths on Windows: `\\?\` where the graders need it
 **Size:** M · **Depends on:** M13-15T
 
 Make the M13-15T graders pass by using extended-length (`\\?\`) paths for the filesystem calls the graders show failing (expected: `guard`, `snapshot` and the readers) on Windows, without changing behaviour on other platforms. Activate the graders by deleting their markers only.
@@ -771,8 +771,17 @@ Nothing else in the library changes. If a test seems to need more than the one `
 
 ---
 
+## [ ] M13-44T — [TEST] Graders for `luadata`'s long-path reads on Windows
+**Size:** S · **Depends on:** M13-15
+
+`luadata.py` is load-bearing (ADR-0013), so its M13-44 change lands graders first, written by a different agent from M13-44's implementer. In `lab/core/tests/test_long_paths_windows.py` (M13-15T's file, same fixtures and the same pattern: Windows-only, long paths off, a tree whose paths pass the 240-character plain limit, strict `xfail` markers with `reason="M13-44 not implemented"`): `luadata._read_sibling` and the folder listing beside it (around line 2567 at #247's head) read a sibling file through a long path; `sv dump` and `sv list` succeed on a SavedVariables file under such a path; and on every platform, no `\?\` reaches the text or `--json` output of `sv list` and `sv dump` (a labelled constructed test with a root that `longpath.plain` would strip). Derive expected behaviour from `docs/LAB_PLAN.md` §6.9 (as amended for M13-15) and L4, never from the implementation. Markers are deleted by M13-44 only.
+
+**Acceptance:** the graders fail on `main` for the stated reason on `lab (windows)` (run on the branch with `gh workflow run windows.yml --ref <branch>`, URL in the report) and are strict xfails elsewhere; `make ci` green; reviewed by `code-reviewer`.
+
+---
+
 ## [ ] M13-44 — Long paths on Windows: the readers and writers M13-15 left on plain paths
-**Size:** M · **Depends on:** M13-15
+**Size:** M · **Depends on:** M13-44T
 
 Found in the review of #247 (M13-15). M13-15 covers the calls its graders show failing (`guard`, `snapshot`, `layout`, `install`). The code-reviewer listed the modules that still open a path by its plain spelling, so on Windows each fails past the 240-character limit the same way the graders did before: `profiles.py:318`, `luadata.py:2567` and `_read_sibling`, `pathfacts.py:138`, `cli.py` at 1757, 1975 and 4516, `addoninstall.py` at 489 and 546, `gaps.py:367`, and `combatlog.find_logs` (line numbers as of #247's head; take the list from the review thread on the PR). Route each through `longpath.extended` the way M13-15 does, with no behaviour change off Windows and no `\\?\` reaching any output, report, manifest or journal (M13-15's acceptance). `luadata.py` is load-bearing: its grader comes first in a `[TEST]` ticket (M13-44T, to be filed with this one when the owner picks it), written by a different agent; the other modules' tests are the implementer's.
 
