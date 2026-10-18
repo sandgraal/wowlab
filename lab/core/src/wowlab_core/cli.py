@@ -4492,7 +4492,11 @@ def binds_coach(
         costs = bindscoach.load_costs()
     except bindscoach.CostTableError as exc:
         raise CliError(f"the key-cost table cannot be used: {exc}") from exc
-    counts = combatlog.cast_counts(combatlog.read_log(path)) if path is not None else None
+    counts = (
+        combatlog.cast_counts(combatlog.read_log(path, events=combatlog.CAST_COUNT_EVENTS))
+        if path is not None
+        else None
+    )
     if record_error is not None:
         no_record = f"no lab-addon record: {record_error}"
     else:
