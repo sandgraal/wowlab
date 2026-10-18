@@ -1,25 +1,33 @@
 # Wave 4 (M13) review
 
-Written by the conductor on 2026-10-18, following `docs/LAB_PLAN.md` §11 and
-ADR-0024. Wave 4 was picked on 2026-10-13 (ADR-0031): the first public
-release, v0.1, with the read-only first stage of `wowlab ui` pulled forward
-on 2026-10-14 (ADR-0029). The wave's last non-owner code ticket, M13-44,
-merged on 2026-10-18. Three tickets stay with the owner: M13-02 (a human
-runs the first run on a real Windows install), M13-07 (the macros-cache
-persistence test, `docs/handoffs/M13-07.md`) and M13-13 (the 30-day gate,
-`docs/handoffs/M13-gate.md`, gate day 2026-11-17).
+Written by the conductor on 2026-10-18, following `docs/LAB_PLAN.md` §11,
+ADR-0024 and ticket M13-12. Wave 4 was picked on 2026-10-13 (ADR-0031): the
+first public release, v0.1, with the read-only first stage of `wowlab ui`
+pulled forward on 2026-10-14 (ADR-0029). The wave as picked was 38 tickets
+(M13-01 to M13-35 with their `[TEST]` twins); the last of them to merge was
+M13-44's predecessor set on 2026-10-18, and reviews along the way filed 24
+more (M13-36 to M13-58), of which twelve merged inside the wave and twelve
+are open (below).
 
-The v0.1.0 tag is on `fd5aab4` (2026-10-18 05:09 UTC). At the time of
-writing the release run waits for the owner to approve the `release`
-environment, so the release page is not yet public and the strangers'
-reports §11 asks about do not exist yet.
+**The release is out.** v0.1.0 is tagged on `fd5aab4` (2026-10-18 05:09 UTC)
+and was published at 13:49 UTC the same day, after the owner approved the
+`release` environment: the wheel, the sdist and `SHA256SUMS` are on the
+release page. No stranger's report has arrived yet, and downloads and stars
+stood at zero when this was written; `docs/handoffs/M13-gate.md` holds the
+commands for gate day, 2026-11-17.
+
+**Dispatch stops here.** The twelve open M13 tickets were filed from reviews
+during the wave and were never part of the pick, so under ADR-0024 they wait
+for the owner's word like any idea would. The owner's choice between
+finishing them first and starting Wave 5 is the first recommendation below.
 
 ## What shipped
 
 | Ticket | PR | What |
 |---|---|---|
-| M13-02 (CI half) | #173 | Windows and macOS run the Lab suite; Windows later moves off the PR path, then back on for `lab/` PRs (ADR-0014 amendments) |
-| M13-03 | #175, #216 | The release workflow for tagged builds; the v0.1.0rc1 dry run |
+| M13-01 | #166 | README and docs follow the public direction (ADR-0031) |
+| M13-02 (CI half) | #173 | Windows and macOS run the Lab suite; Windows later moves off the PR path, then back on for `lab/` PRs (ADR-0014 amendments of 2026-10-15 and 2026-10-17) |
+| M13-03 | #175, #214, #216 | The release workflow for tagged builds; the 0.1.0rc1 version bump and dry run |
 | M13-04 | #179 | The first run inside `wowlab doctor`; `docs/INSTALL.md` |
 | M13-05, M11-29 | #176, #221 | Lab-addon schema 3: spellbook, action bars, bindings; the schema-3 capture |
 | M13-06 | #227 | `wowlab macros check` |
@@ -37,17 +45,33 @@ reports §11 asks about do not exist yet.
 | M13-34 | #224 | The scrub covers the countries in `.build.info` |
 | M13-36, M13-43 | #233, #253 | Windows CI: tests stop assuming a POSIX host; link text loses its `\\?\` prefix |
 | M13-37, M13-45, M13-46 | #248, #258, #256 | Discovery uses the one link test, says why a `_*_` folder was not taken, and opens `.flavor.info` without following a link |
-| M13-41 | #252 | `combatlog` filters lines by event before tokenizing (binds coach 7.4 s → 3.1 s on a 110 MiB log) |
+| M13-41 | #252 | `combatlog` filters lines by event before tokenizing (binds coach 7.4 s → 3.1 s on a constructed 110 MiB log) |
 | M13-44, M13-44T | #260, #254 | The readers M13-15 left on plain paths, with graders first for `luadata` |
 | M13-49 | #257 | The scrub and the wiki gate keep character and realm names (ADR-0019 amendment, 2026-10-17) |
 
-Harness and process, same wave: #232 and #250 (ADR-0013 amendments of
+Harness and process in the same wave: #232 (ADR-0013 amendment of
 2026-10-17: the load-bearing set back to two files, the conductor's XS lane,
-review-thread resolution no longer a merge gate, Windows on `lab/` PRs, bot
-findings seen by both reviewers not re-checked, narrow re-checks, range-diff
-rebase comparison, "Off the branch" findings) and #261 (the frontier respects
-the owner marker; a failed non-required job is named in every shepherd
-report).
+review-thread resolution no longer a merge gate, lighter reviewer routing),
+#250 (ADR-0014 amendment: Windows on `lab/` PRs; ADR-0013, later: bot
+findings seen by both reviewers are not re-checked, narrow re-checks,
+range-diff rebase comparison, "Off the branch" findings), and #261 (open at
+the time of writing: the frontier respects the owner marker and prints every
+eligible ticket; a failed non-required job is named in the shepherd's report;
+the fixtures rule follows ADR-0019).
+
+## What slipped to v0.2
+
+- M13-02's human half: a person running the first run on a real Windows
+  install. `docs/INSTALL.md` calls Windows untested until then.
+- M13-07, `wowlab macros fix`, behind the owner's macros-cache persistence
+  test (`docs/handoffs/M13-07.md`).
+- The apply halves of the binds coach and the macro checker (see the ideas
+  section).
+- Two `--json` changes already on `main` that v0.2's notes must list:
+  `not_taken` on `Install`, `DoctorReport` and `ExplainReport` (M13-45), and
+  the narrowed meaning of `log.counts.unparsed` in `binds coach` (M13-41).
+  M13-47 adds the guard that makes a missing line fail CI.
+- The twelve open follow-ups below.
 
 ## What was learned about the client and the platforms
 
@@ -55,8 +79,9 @@ report).
   WCI links and WSL symlinks each reached a different code path until M13-35,
   M13-37, M13-45 and M13-46 made one `is_link` the rule: a reparse point with
   the name-surrogate bit is a link; a cloud placeholder (OneDrive, Dropbox)
-  is not. Battle.net runs the client from a junctioned flavor folder, so the
-  words must say wowlab declined, never that the folder "is not a flavor".
+  is not. The client reads through a linked flavor folder like a folder
+  (`docs/LAB_PLAN.md` §6.1), so the words must say wowlab declined, never
+  that the folder "is not a flavor".
 - **Windows paths past 240 characters** (M13-15, M13-44): `os.readlink`
   answers an absolute link with the `\\?\` prefix; `ntpath.abspath` trims a
   trailing dot, so a `foo.` made through `\\?\` looks "gone"; the plain
@@ -66,10 +91,13 @@ report).
   the next file, APFS does not, so a race test that unlinks and recreates
   passes on macOS and fails on Linux. Tests that need a stable identity rename
   the original aside.
-- **The combat log's unit flags** (M13-08): the player's own casts need the
-  controller field (`& 0x300` = `0x100`) as well as affiliation and type;
-  `SPELL_CAST_SUCCESS` carries 30 fields in V22. The charm case is still
-  **[verify]** (`docs/LAB_FORMATS.md` §8, 2026-10-17 amendment).
+- **The combat log's unit flags** (M13-08; `docs/LAB_FORMATS.md` §8,
+  2026-10-17 entry): on the one real log, the player's own casts were picked
+  by affiliation, type and the controller field (`& 0x300` = `0x100`) and
+  `SPELL_CAST_SUCCESS` carried 30 fields with advanced logging on. The bit
+  values come from community documentation and no fixture shows them, the
+  control-field reading rests on an assumption about charmed players, and
+  advanced logging off was not captured: all three stay **[verify]**.
 - **An addon folder can ship executables** (M13-28): `.sh`, `.bat`, `.ps1`,
   `.js`, `.dll`, and an `.app` bundle; the gate never writes one, so a whole
   restore now restores around them.
@@ -80,34 +108,58 @@ report).
   pass the CPU probe (disclosed limit).
 - **Privacy.** Character and realm names are visible to anyone in the game,
   so scrubbing them cost capture rounds and reviewer time for nothing; the
-  owner narrowed the public-repository identifier set on 2026-10-17 to the
-  account folder, email and BattleTag, the real name, a home path with the
-  login, and GUIDs. `doctor --redact` is unchanged.
-- **The explorer** (M13-27, checked end to end by the owner and the conductor
-  on the owner's install): tree, verdicts, detail, hints copied byte for
-  byte, previews through the read commands, gaps, and the commands tab with
-  the `--yes` commands greyed out. `wowlab ui` takes no `--root`.
+  owner narrowed the public-repository identifier set on 2026-10-17
+  (ADR-0019 amendment) to the account folder, email and BattleTag, the real
+  name, a home path with the login, the owner's own GUIDs, other players'
+  GUIDs with the unit name beside each, and the identity CVars.
+  `doctor --redact` is unchanged.
+- **The explorer** (M13-27), checked end to end by the owner and the
+  conductor on the owner's install: tree, verdicts, detail, hints copied byte
+  for byte, previews through the read commands, gaps, and the commands tab
+  with the `--yes` commands greyed out. `wowlab ui` takes no `--root`.
 
-## What strangers' reports taught
+## What was learned about running the wave
 
-Nothing yet: the release is tagged but not published. `docs/handoffs/M13-gate.md`
-holds the counts to record on 2026-11-17 and the commands that produce them.
+- **Six guardrails were loosened on the owner's word** (ADR-0013 amendment,
+  2026-10-17) after a cost audit, and four review-round rules followed from
+  the same day's reviews (#250). None caused an incident; the merges that
+  waited longest were waiting on docs items that lived outside the branch,
+  which is what the "Off the branch" rule now names.
+- **The Windows job went red on `main` twice while off the PR path**
+  (M13-36, M13-43), each time from a test that assumed a POSIX host. It now
+  runs on `lab/` PRs (ADR-0014 amendment, 2026-10-17).
+- **The performance probes flaked in almost every review run** on the loaded
+  machine until M13-31; reviewers now run the full suite once and re-checks
+  run only what a fix touched.
+- **Agents stop at the usage limit every few hours** and resume from their
+  worktrees without loss; the one loss came from removing a shepherd's
+  worktree while its PR was open.
+- **The automated review overlapped the independent reviewers** and twice
+  found a small item they had chosen not to count; such items now get a
+  reply and no re-check.
+
+## Effort against the plan
+
+The wave as picked was 38 tickets; 24 more were filed from reviews during
+it. Of those 62, 50 are merged, twelve are open, and three stay with the
+owner (M13-02's human half, M13-07, M13-13). Every merged ticket went
+through the independent reviewers; 21 needed one fix round, six needed two,
+and one (M13-30) needed a narrow third under the owner's 2026-10-16 ruling.
 
 ## Follow-ups filed, not yet picked
 
-Fourteen M13 follow-up tickets came out of this wave's reviews and are on the
-backlog, none built: M13-42 (CI consumers stop restoring the Actions cache),
-M13-47 (a new `--json` model fails CI until the release notes list it),
-M13-48 (mode-only executable change; owner picks (a) or (b)), M13-50
-(`char show` and a stray `SavedVariables` folder; `ui --help` wording),
-M13-51 and M13-52 (link-target prefixes in the first run and in manifests;
-M13-52 is an owner format decision with M13-52T first), M13-53 (`check_wiki`
-quoting an account number and missing `#…#1`), M13-54 (a flavor folder
-swapped for a link after the scan), M13-55 (the capture tool hunts blanked
-identity values), M13-56 (`doctor` prints its problems in text; a linked
-flavor beside a real one), M13-57 (a root link judged in-flavor), M13-58
-(`labaddon` plain path; `tree PATH` prefix echo). Together about three days
-of agent work; none blocks v0.1.
+Twelve M13 tickets came out of this wave's reviews and are on the backlog,
+none built: M13-42 (CI consumers stop restoring the Actions cache), M13-47
+(a new `--json` model fails CI until the release notes list it), M13-48
+(mode-only executable change; owner picks (a) or (b)), M13-50 (`char show`
+and a stray `SavedVariables` folder; `ui --help` wording), M13-51 and M13-52
+(link-target prefixes in the first run and in manifests; M13-52 is an owner
+format decision with M13-52T first), M13-53 (`check_wiki` quoting an account
+number and missing `#…#1`), M13-54 (a flavor folder swapped for a link after
+the scan), M13-55 (the capture tool hunts blanked identity values), M13-56
+(`doctor` prints its problems in text; a linked flavor beside a real one),
+M13-57 (a root link judged in-flavor), M13-58 (`labaddon` plain path; `tree
+PATH` prefix echo). About three days of agent work; none blocks v0.1.
 
 ## `docs/LAB_IDEAS.md`: what moved
 
@@ -116,38 +168,49 @@ of agent work; none blocks v0.1.
   "apply" halves wait on M13-07 (whether the client re-reads
   `macros-cache.txt`) and on the WTF text writers that **wow-as-code** needs
   too.
-- **Cheaper than estimated:** `wowlab ui` (ADR-0029). The server-over-CLI
+- **Cheaper than its M row:** `wowlab ui` (ADR-0029). The server-over-CLI
   design with the parity test meant the explorer's two stages took six
   tickets, and every later page is a form over an existing `--json` model.
-- **More expensive than estimated:** Windows. Links, long paths and
-  POSIX-only test assumptions cost nine tickets across the wave and are not
-  finished (M13-51, M13-52, M13-58); `docs/INSTALL.md` still calls Windows
-  untested until M13-02's human run.
-- **Still gated:** **crew-book** and **comp-builder** on a privacy ADR for
-  other players' names (the ADR-0019 amendment covers the owner's own names
-  only); everything 3D on **casc-source**.
+- **More expensive than planned:** Windows. Links, long paths and POSIX-only
+  test assumptions took at least eleven tickets (M13-02, 15T, 15, 33, 35, 36,
+  37, 43, 44T, 44, 46) and are not finished (M13-51, M13-52, M13-58).
+- **Still gated:** **crew-book** and **comp-builder**, which the ideas file
+  gates on ADR-0026's rule for the lab-addon and on a privacy ADR of their
+  own for other players' names (the ADR-0019 amendment settled what the
+  public repository may hold, not what the Lab stores locally about other
+  players); everything 3D on **casc-source**.
+
+## Owner actions outstanding
+
+- Pick the next wave (below).
+- M13-48: option (a) or (b); (a) needs M13-48T first.
+- M13-52: how a manifest spells a link target; then M13-52T.
+- M13-07: the macros-cache persistence test, when there is a play session.
+- M13-02: a first run on a real Windows install, by a person.
+- M13-13: the gate on 2026-11-17 (`docs/handoffs/M13-gate.md`).
+- The M13 backlog section is archived with the pick PR, as #188 did for M12.
 
 ## Recommended next wave (at most three; the owner picks)
 
-1. **Wave 4.1: the M13 follow-ups** (the fourteen tickets above, about
-   three days). Scope: close the Windows path and link gaps (M13-51, 52, 54,
-   57, 58), the two `check_wiki`/capture privacy gaps (M13-53, 55), the CI
-   cache and release-notes guards (M13-42, 47), and the wording tickets
-   (M13-50, 56). Nothing new to design; two owner decisions (M13-48, M13-52).
-   Doing this before M14 means v0.2's notes list the `--json` changes
-   (M13-45's `not_taken`, M13-41's narrowed `unparsed`) with a guard behind
-   them.
+1. **Finish M13 first: the twelve follow-ups** (about three days). Not a new
+   milestone, so not a new wave under ADR-0024: a continuation the owner
+   authorises before Wave 5. Scope: close the Windows path and link gaps
+   (M13-51, 52, 54, 57, 58), the two `check_wiki`/capture privacy gaps
+   (M13-53, 55), the CI cache and release-notes guards (M13-42, 47), and the
+   wording tickets (M13-50, 56). Nothing new to design; two owner decisions
+   (M13-48, M13-52). Doing this before M14 means v0.2's notes carry the
+   `--json` changes with a guard behind them.
 2. **Wave 5 (M14): `wowlab ui`, the confirm flow** (ADR-0029, already
-   named). Scope: the commands that declare `--yes` (`snap restore`, `undo`,
-   `profile apply`, `sv merge`, `addon install`, `addon remove`, `doctor`'s
-   first snapshot) each behind the same confirm step as the CLI, the plan
-   shown before the change, and the embedded pages (`looks page`). One
-   security review per ticket, since every one reaches `guard`.
+   named). Scope: the commands that declare `--yes` (`snap restore`,
+   `snap gc`, `undo`, `profile apply`, `sv merge`, `addon install`,
+   `addon remove`, and `doctor`'s first snapshot) each behind the same
+   confirm step as the CLI, the plan shown before the change, and the
+   embedded pages (`looks page`). A security review per ticket that reaches
+   `guard`; `snap gc` and the first snapshot write only wowlab's own store.
 3. **The apply halves of keybind-coach and macro-doctor**, only after
    M13-07's answer and only if the gate (M13-13) says public work continues:
    `binds coach --apply` and `macros fix`, each a `guard` write of a WTF text
    file with undo, sharing the writers **wow-as-code** needs.
 
 Not recommended yet: anything from section D (bridges and live data) or 3D,
-and the **crew-book**/**comp-builder** pair until a privacy ADR for other
-players' names exists.
+and the **crew-book**/**comp-builder** pair until their privacy ADR exists.
