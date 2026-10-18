@@ -87,28 +87,36 @@ test) shows the same measurement still fails such a parser.
 On a loaded Mac that last test still failed (M13-31): one sample read
 1383 MiB against about 1866 on several local `make ci` runs, and under the
 load of a dozen agents every sample read low (968, 637, 551, 496 and
-509 MiB, and the whole parse growth once 14 MiB where an idle run reads
-98). The memory compressor takes pages as they are allocated, and
-`ru_maxrss` counts only resident pages, so no statistic of those readings
-can recover the parse. On macOS the assignment projections now read the
-lifetime peak footprint instead, as `/usr/bin/time -l` prints it: it counts
-compressed pages, and the §6.4 table was measured with it. The child cannot
-read its own footprint without a foreign-function call, so each sample is a
-child under `/usr/bin/time -l`, and `before` is the peak of one child that
-builds the same input and does not parse. Measured on the owner's M1 at
-load average 99 to 123, three rounds: input alone 54.5 MiB each time,
-`luadata` projected 1342, 1343 and 1346 MiB, the stand-in 1856, 1877 and
-1882 MiB (in-child `ru_maxrss` in the same hour: the stand-in 528 to
-1864 MiB). Linux keeps `VmHWM`, which has no compressor to hide pages.
-The test of `luadata` keeps the least of the samples; the stand-in test
-takes their median, which one low sample cannot drag down, and still fails
-a stand-in holding as much as `luadata` (1342 MiB is under the target).
+509 MiB; once the stand-in's whole parse growth read 14 MiB where an idle
+run reads 98). The memory compressor takes pages as they are allocated and
+`ru_maxrss` counts resident pages only, so no statistic of those readings
+recovers the parse. The lifetime peak footprint that `/usr/bin/time -l`
+prints counts compressed pages, and the §6.4 table was measured with it.
+On the owner's M1 at load average 99 to 123 it read the input alone at
+54.5 MiB each time, and projected `luadata` at 1342 to 1346 MiB and the
+stand-in at 1856 to 1882 MiB. On the macOS runner it fails the other way:
+about one stand-in child in three read a footprint no higher than
+`luadata`'s (109 MiB) while the same child's `ru_maxrss` read the second
+copy (164 MiB). The runner's `ru_maxrss` was steady: over eight rounds of
+six children, the stand-in projected at least 1976 MiB and `luadata` 1428
+to 1791 MiB.
+
+So on macOS each assignment child runs under `/usr/bin/time -l` and gives
+both readings, and its projection is the higher of the two. Each reading
+falls short only in its own condition, and neither reads more than the
+process held. The child cannot read its own footprint without a
+foreign-function call, so the footprint's `before` is the peak of one child
+that builds the same input and does not parse. Both tests keep the least
+of five such projections, so the stand-in test still checks the statistic
+the `luadata` test uses. Linux keeps `VmHWM`, which has no compressor to
+hide pages from. A stand-in holding only what `luadata` holds (half the
+stand-in) projects about 1340 MiB locally and 1430 MiB on the runner, under
+the target, so the stand-in test fails it.
 """
 
 from __future__ import annotations
 
 import re
-import statistics
 import subprocess
 import sys
 import warnings
@@ -187,7 +195,7 @@ def peak():
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * scale
 before = peak()
 # "none" builds the input and does not parse: the baseline of the darwin
-# footprint reading (M13-31, `_footprints`).
+# footprint reading (M13-31, `_darwin_projections`).
 doc = parse(data) if parser != "none" else None
 after = peak()
 print(before, after, len(data))
@@ -242,12 +250,14 @@ def _projected_peak(
 FOOTPRINT = re.compile(r"^\s*(\d+)\s+peak memory footprint\s*$", re.MULTILINE)
 
 
-def _footprint(shape: str, count: int, parser: str) -> tuple[int, int]:
-    """A darwin child's lifetime peak footprint and its slice size, in bytes (M13-31).
+def _timed_child(shape: str, count: int, parser: str) -> tuple[int, int, int, int]:
+    """A darwin child under `/usr/bin/time -l` (M13-31), in bytes.
 
-    The peak footprint (`ri_lifetime_max_phys_footprint`, what `/usr/bin/time
-    -l` prints and what the §6.4 table was measured with) counts the pages
-    the memory compressor holds; `ru_maxrss` counts resident pages only.
+    Returns the child's own `ru_maxrss` before and after the parse, its
+    slice size, and its lifetime peak footprint. The peak footprint
+    (`ri_lifetime_max_phys_footprint`, what `/usr/bin/time -l` prints and
+    what the §6.4 table was measured with) counts the pages the memory
+    compressor holds; `ru_maxrss` counts resident pages only.
     """
     proc = subprocess.run(
         ["/usr/bin/time", "-l", sys.executable, "-c", CHILD, shape, str(count), parser],
@@ -257,50 +267,64 @@ def _footprint(shape: str, count: int, parser: str) -> tuple[int, int]:
     )
     found = FOOTPRINT.search(proc.stderr)
     assert found, f"no peak memory footprint from /usr/bin/time -l: {proc.stderr[-400:]!r}"
-    peak, size = int(found.group(1)), int(proc.stdout.split()[2])
+    before, after, size = (int(field) for field in proc.stdout.split())
+    footprint = int(found.group(1))
     warnings.warn(
-        ProbeReading(f"darwin {shape} {parser} x{count}: peak footprint {peak / MIB:.1f} MiB"),
+        ProbeReading(
+            f"darwin {shape} {parser} x{count}: ru_maxrss before {before / MIB:.1f} MiB, "
+            f"after {after / MIB:.1f} MiB; peak footprint {footprint / MIB:.1f} MiB"
+        ),
         stacklevel=2,
     )
-    return peak, size
+    return before, after, size, footprint
 
 
-def _footprint_projections(count: int, parser: str) -> list[float]:
-    """`ASSIGN_SAMPLES` darwin projections from the peak footprint (M13-31).
+def _darwin_projections(count: int, parser: str) -> list[float]:
+    """`ASSIGN_SAMPLES` darwin projections, each the higher of two readings (M13-31).
 
-    `before` is the peak of a child that builds the same input and does not
-    parse (`parser="none"`); `after` is the peak of a child that parses it.
-    The projection is `_projected_peak`'s, with these two in place of the
-    in-child `ru_maxrss` readings.
+    Each child yields two projections, by `_projected_peak`'s formula. One
+    takes the child's own `ru_maxrss` before and after the parse, as on
+    every platform. The other takes the child's lifetime peak footprint as
+    `after`, and as `before` the peak footprint of one child that builds the
+    same input and does not parse (`parser="none"`). Each reading falls short
+    in a different condition, and neither reads more than the process held:
+    `ru_maxrss` on a loaded Mac, whose compressor holds pages as they are
+    allocated; the footprint on the runner, where about one stand-in child
+    in three reads no more than `luadata` (a reused freed region is not
+    charged), while its `ru_maxrss` reads the second copy.
     """
-    before, size = _footprint("assign", count, "none")
-    samples = []
+    _, _, _, base = _timed_child("assign", count, "none")
+    samples: list[float] = []
     for _ in range(ASSIGN_SAMPLES):
-        after, _ = _footprint("assign", count, parser)
-        assert after > before, (
-            f"the parse read no growth over the input alone ({before / MIB:.1f} -> "
-            f"{after / MIB:.1f} MiB): it is not measuring the parse"
+        before, after, size, footprint = _timed_child("assign", count, parser)
+        assert after > before or footprint > base, (
+            f"the child read no growth (ru_maxrss {before / MIB:.1f} -> {after / MIB:.1f} MiB, "
+            f"footprint {base / MIB:.1f} -> {footprint / MIB:.1f} MiB): "
+            "it is not measuring the parse"
         )
-        samples.append(before + (ASSIGN_FRACTION - 1) * size + (after - before) * ASSIGN_FRACTION)
+        scaled = (ASSIGN_FRACTION - 1) * size
+        samples.append(
+            max(
+                before + scaled + (after - before) * ASSIGN_FRACTION,
+                base + scaled + (footprint - base) * ASSIGN_FRACTION,
+            )
+        )
     return samples
 
 
-def _assignment_projections(parser: str = "luadata") -> list[float]:
-    """`ASSIGN_SAMPLES` projections at `MAX_FILE_BYTES`, each from a fresh interpreter.
+def _projected_assignments_peak(parser: str = "luadata") -> tuple[float, list[float]]:
+    """The least of `ASSIGN_SAMPLES` projections, each from a fresh interpreter.
 
-    On macOS from the peak footprint (M13-31), elsewhere from `_readings`.
+    On macOS each is the higher of a `ru_maxrss` and a peak-footprint
+    projection from the same child (M13-31); elsewhere `_readings`.
     """
     count = MAX_FILE_BYTES // 4 // ASSIGN_FRACTION
     if sys.platform == "darwin":
-        return _footprint_projections(count, parser)
-    return [
-        _projected_peak("assign", count, ASSIGN_FRACTION, parser) for _ in range(ASSIGN_SAMPLES)
-    ]
-
-
-def _projected_assignments_peak(parser: str = "luadata") -> tuple[float, list[float]]:
-    """The least of `_assignment_projections`, and all of them."""
-    samples = _assignment_projections(parser)
+        samples = _darwin_projections(count, parser)
+    else:
+        samples = [
+            _projected_peak("assign", count, ASSIGN_FRACTION, parser) for _ in range(ASSIGN_SAMPLES)
+        ]
     return min(samples), samples
 
 
@@ -361,15 +385,13 @@ def test_constructed_stand_in_holding_twice_the_memory_fails_the_assignment_prob
     peak growth rises only about 1.5 times (1.49 locally, 1.59 on the macOS
     runner, 1.51 on Linux), because the first parse's temporaries are freed
     before the second runs. The input, the interpreter, the slice, the
-    target and the measurement are those of the test above. The median of
-    its projections must miss the target (by about 320 MiB on macOS), or the
-    measurement has stopped being able to see the parser. The median, not
-    the least: this asserts the projection is high enough, and the least of
-    five fails on one low sample (M13-31).
+    target, the measurement and the least-of-five rule are those of the test
+    above. Its projection must miss the target (it did by at least 320 MiB on
+    macOS, M13-31), or the measurement has stopped being able to see the
+    parser.
     """
-    samples = _assignment_projections("double")
-    peak = statistics.median(samples)
+    peak, samples = _projected_assignments_peak("double")
     assert peak >= LIMIT_BYTES, (
-        f"a parser holding twice the memory projected a median of only {peak / MIB:.0f} MiB "
+        f"a parser holding twice the memory projected only {peak / MIB:.0f} MiB "
         f"at MAX_FILE_BYTES (samples {_mib(samples)}); the probe cannot see it"
     )

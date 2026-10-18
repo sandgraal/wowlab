@@ -5,7 +5,6 @@ every case. Memory: the twice-the-memory control must fail when the stand-in
 holds only what `luadata` holds (half the stand-in's memory).
 """
 
-import statistics
 import sys
 import tempfile
 import warnings
@@ -43,11 +42,10 @@ if "cpu" in what:
             flush=True,
         )
 if "mem" in what:
-    samples = mem._assignment_projections("luadata")
-    median = statistics.median(samples)
-    verdict = "FAILS (as it should)" if median < mem.LIMIT_BYTES else "PASSES (control blind)"
+    least, samples = mem._projected_assignments_peak("luadata")
+    verdict = "FAILS (as it should)" if least < mem.LIMIT_BYTES else "PASSES (control blind)"
     print(
-        f"M1331 memory control with a stand-in holding half (luadata): median "
-        f"{median / mem.MIB:.0f} MiB, samples {mem._mib(samples)} -> {verdict}",
+        f"M1331 memory control with a stand-in holding half (luadata): least "
+        f"{least / mem.MIB:.0f} MiB, samples {mem._mib(samples)} -> {verdict}",
         flush=True,
     )
