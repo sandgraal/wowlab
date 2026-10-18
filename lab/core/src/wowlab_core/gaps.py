@@ -55,8 +55,9 @@ from pydantic import BaseModel, ConfigDict
 from wowlab_core import filemap as _filemap
 from wowlab_core.install import Install
 
-# `is_link`: the one link test of the inventory walk, `tree` and `explain`,
-# defined in `layout` (which this module imports) and exported here (M13-35).
+# `is_link`: the one link test of discovery, the inventory walk, `tree` and
+# `explain`, defined in `install`, re-exported by `layout` (which this module
+# imports) and exported here (M13-35, M13-37).
 from wowlab_core.layout import FsText, Limits, is_link
 
 __all__ = [
@@ -80,8 +81,9 @@ GapKind = Literal["file", "folder", "link", "other"]
 # missing, is not a regular file, or the folder itself is a link.
 NOT_A_FLAVOR = "not taken as a flavor folder (no regular .flavor.info file)"
 # The same, for a root link named `_..._`: discovery never takes a link,
-# whatever it points at.
-NOT_A_FLAVOR_LINK = "not taken as a flavor folder (a link; links are not followed)"
+# whatever it points at. No reason in brackets: every place it is shown
+# already says the entry is a link that is not followed (M13-37 review).
+NOT_A_FLAVOR_LINK = "not taken as a flavor folder"
 # Paths of files below a folder place kept as examples in the JSON.
 EXAMPLES = 5
 

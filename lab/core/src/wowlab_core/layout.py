@@ -27,7 +27,7 @@ are opened for reading. Nothing is created anywhere. A link is never
 followed, whether it points inside the install or out: a symlink, a Windows
 junction, or any other Windows reparse point that names another path (the
 name-surrogate bit: a WCI link, a WSL symlink; `is_link`, the one test
-`gaps` and `explain` use, M13-35). Each is reported in `symlinks` with its
+discovery, `gaps` and `explain` use, M13-35, M13-37). Each is reported in `symlinks` with its
 target text and whether that target resolves inside the install, and is
 left out of the typed lists. Any other Windows reparse point (a cloud
 placeholder, a deduplicated file, a file compressed with `compact /EXE`)
@@ -68,8 +68,10 @@ from pydantic import (
 
 from wowlab_core import filemap as _filemap
 from wowlab_core.filemap import FileMapEntry
-from wowlab_core.install import Flavor, Install
-from wowlab_core.snapshot import _is_link_stat as _snapshot_link
+
+# `is_link`: the one link test, defined in `install` so discovery uses it
+# too (M13-37) and exported here: `layout.is_link is install.is_link`.
+from wowlab_core.install import Flavor, Install, is_link
 from wowlab_core.toc import MAX_TOC_BYTES, TocDocument, TocTooLargeError, read_toc
 from wowlab_core.verdict import gate_refuses_stat
 
@@ -428,24 +430,6 @@ def lstat_entry(entry: os.DirEntry[str]) -> os.stat_result:
     """`lstat` of one listed entry: never follows a link. One place, so a
     test can stand in Windows reparse-point attributes on any system."""
     return entry.stat(follow_symlinks=False)
-
-
-def is_link(path: Path, st: os.stat_result) -> bool:
-    """A link the walk never follows: a symlink, a junction, or a Windows
-    reparse point with the name-surrogate bit (a reparse point that names
-    another path, such as a WCI link or a WSL symlink), the rule `snapshot`
-    uses (`snapshot._is_link_stat`). `st` is `path`'s `lstat`. The one link
-    test of the inventory walk, `tree`, `filemap gaps` (`gaps.is_link`) and
-    `explain` (M13-35). Other reparse points (OneDrive cloud placeholders,
-    deduplicated files) hold real content and are walked, as discovery and
-    `layout` take them (M13-04: an install under OneDrive is reported, never
-    refused)."""
-    if _snapshot_link(st):
-        return True
-    try:
-        return path.is_junction()
-    except OSError:
-        return False
 
 
 def _is_within(child: Path, parent: Path) -> bool:
