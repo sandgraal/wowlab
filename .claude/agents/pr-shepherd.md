@@ -94,8 +94,9 @@ Handle, in order:
   ones you fixed or answered, never silently. A thread the owner opened is
   answered before merge; a bot thread that is routed to the implementer
   may stay open through the merge once the reviewer verdicts are clean,
-  and a bot finding the conductor says both reviewers saw and did not
-  count gets the "seen by both reviewers, not held" reply and no fix.
+  and a bot finding the conductor says every dispatched independent
+  reviewer saw and did not count gets the "seen by the reviewers, not
+  held" reply and no fix.
   **At most two fix rounds**; a third is `BLOCKED:`.
 - **`mergeable: CONFLICTING`** → `git fetch origin && git rebase origin/main`.
   For a `uv.lock` conflict, never hand-merge: take `origin/main`'s copy

@@ -1449,7 +1449,8 @@ yet, and a fixture produced by the thing under test proves nothing).
   merge to `main`, nightly, on demand for a branch, and (since 2026-10-17) on
   a pull request that touches `lab/**`, the lockfile, the root `pyproject.toml`
   or `conftest.py`; it is not required (ADR-0014 amendments). The `skipif` tests run there, so a Windows regression
-  is found after merge, not before; the conductor checks the latest runs
+  is found on the PR when the PR touches those paths and after merge
+  otherwise; the conductor checks the latest runs
   (`docs/AGENT_WORKFLOW.md`).
 
 ## 10. Wave 1 tickets
