@@ -846,3 +846,21 @@ Owner decision of 2026-10-17 (ADR-0019 amendment; `docs/LAB_PLAN.md` §8): chara
 - Docs: `docs/LAB_PLAN.md` §8's rule list and `lab/core/tests/fixtures/README.md`'s policy text follow; existing fixtures and provenance rows are not touched (ADR-0012: a committed fixture is never edited).
 
 **Acceptance:** `wowlab doctor --redact` output on the install fixtures is byte-identical to `main`; the refusal tests for the kept identifiers still pass unchanged; new labelled constructed tests show a character name, a realm name and a Forever second name pass through the scrub untouched and that `check_wiki` accepts a `Name-Realm` pair; the account-folder, email, BattleTag, home-path and own-GUID cases still refuse, and other players' GUIDs in combat logs and their unit names are still rewritten; `make ci` green; reviewed by `security-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-53 — `check_wiki` quotes a bare account number in its "page does not exist" line
+**Size:** XS · **Depends on:** M13-49
+
+Found while building M13-49, pre-existing. For a link such as `[x](123456789#1)`, `check_wiki` prints "link to a page that does not exist: 123456789", quoting the account number into the public job log; the line is still flagged personal (exit 3), but the quote leaks. Route the "does not exist" message through the same quoting the personal-data lines use (`PERSONAL_SUFFIX` / `quote()`), so a target that matches a personal-data matcher is never printed. Labelled constructed test: an account-folder link target yields exit 3 and a log with no digits of it.
+
+**Acceptance:** the test passes; the ok/failure/personal exit codes unchanged; `make ci` green; reviewed by `security-reviewer`.
+
+---
+
+## [ ] M13-54 — Discovery can still read through a flavor folder swapped for a link after the scan
+**Size:** S · **Depends on:** M13-46
+
+Found in the code review of #256 (M13-46), on `main` before it too. `O_NOFOLLOW` guards only the last path component: a `_*_` folder replaced by a link to a directory between `_scan_children` and `_read_flavor_product` is read through (`flavors` held the link target's product in a constructed probe), against §6.1's M13-37 amendment. Closing it needs a directory descriptor on POSIX (`O_DIRECTORY|O_NOFOLLOW` on the flavor folder, an identity check against the scan's `lstat`, then `open_regular_file` with `dir_fd`) and a stated answer for Windows, where `os.open` has no `dir_fd` (an `lstat` of the folder each side of the read is the likely floor). Same family, same fix pattern: the root `.build.info` is `stat`-then-`read_bytes`, so a FIFO or device swapped in between blocks discovery forever; reuse `snapshot.read_regular_file(..., expect=…)` there. Labelled constructed tests for both, with the POSIX and the Windows paths exercised as M13-46's race tests do. The spec amendment (§6.1) names what the Windows floor leaves open.
+
+**Acceptance:** the tests pass; discovery output on the install fixtures byte-identical to `main`; no blocking read (a 5 s alarm in the tests); `make ci` green; reviewed by `code-reviewer` and `security-reviewer`.
