@@ -7,7 +7,9 @@
 Copies the capture set of `docs/handoffs/M10-03.md` out of a World of Warcraft
 install and scrubs identity from it per `docs/LAB_PLAN.md` §8:
 
-- the account folder (`<digits>#<n>`, or an older account-name folder) and
+- the account folder (`<digits>#<n>`, or an older account-name folder), the
+  value of every `accountName` CVar in a `Config.wtf` or `config-cache.wtf`
+  (M13-55; an email address is left to the email refusal below), and
   each `--extra-name` (the owner's real name, a guild name) become stable
   pseudonyms, in paths and in file contents (same input, same pseudonym, whole
   capture set). Character names, realm names and the second name of the
@@ -536,12 +538,16 @@ class Identity:
         realm_aliases: Iterable[str] = (),
         loose: Iterable[str] = (),
         groups: Iterable[str] = (),
+        account_names: Iterable[str] = (),
     ) -> None:
         """`realm_aliases`: other spellings of a realm in `realms` (a grouped
         folder's casing), given that realm's pseudonym. `loose`: second names of
         `<First>-<Second>` folders, hunted with a space, apostrophe or hyphen
         between any two letters. `groups`: digits-only group folders, given
-        path-only numeric pseudonyms.
+        path-only numeric pseudonyms. `account_names`: `accountName` CVar values
+        (M13-55), scrubbed as account folders are; numbered after the folders,
+        so adding one never renumbers a folder's pseudonym, and one that is a
+        folder's name in another casing is that folder's.
         """
         self.names: dict[str, str] = {}
         self._show_names = show_names
@@ -567,8 +573,15 @@ class Identity:
             self._add_name(character, _shaped(character, "Labchar", i), "character")
         for i, extra in enumerate(self._ordered(extras)):
             self._add_name(extra, _shaped(extra, "Labname", i), "extra name")
-        for i, account in enumerate(self._ordered(accounts)):
+        ordered_accounts = self._ordered(accounts)
+        for i, account in enumerate(ordered_accounts):
             self._add_account(account, i)
+        folded_accounts = {account.casefold() for account in ordered_accounts}
+        cvar_accounts = [
+            name for name in self._ordered(account_names) if name.casefold() not in folded_accounts
+        ]
+        for i, name in enumerate(cvar_accounts, start=len(ordered_accounts)):
+            self._add_account(name, i)
 
         canonical = sorted({guid.upper() for guid in guids})
         self.guids: dict[bytes, bytes] = {
@@ -2714,8 +2727,12 @@ def provenance_row(outcome: Outcome, platform: str, captured_by: str, consent: s
 
 # ─── identity discovery ──────────────────────────────────────────────────────
 
+# The CVars whose values join the identity map: group 1 the name, group 2 the
+# value. `accountList` is blanked but not harvested: its separator is not in
+# the format reference and no unblanked capture shows it (M13-55, [verify]).
 _HARVEST_RE = re.compile(
-    _LINE_START + rb'SET[ \t]+lastCharacterGuid[ \t]+"([^"\r\n]*)"', re.IGNORECASE
+    _LINE_START + rb'SET[ \t]+(lastCharacterGuid|accountName)[ \t]+"([^"\r\n]*)"',
+    re.IGNORECASE,
 )
 
 
@@ -2724,7 +2741,9 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
 
     Since the ADR-0019 amendment of 2026-10-17 (M13-49) that is the account
     folders, the `--extra-name` strings and the owner's own player GUIDs (and
-    the digits-only group folders, as path-only numbers). Character names,
+    the digits-only group folders, as path-only numbers); since M13-55 also
+    each `accountName` value a config file holds, as an account (an email
+    address is left out: the email refusal already stops it everywhere). Character names,
     realm names and the second name of a `<First>-<Second>` folder are
     public and pass through as they are; the character and realm folders are
     still walked, because their config files hold the owner's
@@ -2793,18 +2812,31 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
                     configs.extend(config_files(listed(character)))
 
     guids: set[bytes] = {g.encode() for g in args.own_guid or []}
+    account_names: set[str] = set()
     for config in configs:
         try:
             data = read_bytes(config)
         except OSError as error:
             raise CaptureError(
                 f"a Config.wtf or config-cache.wtf could not be read ({type(error).__name__}); "
-                "its lastCharacterGuid would be missing from the identity map, "
-                "so nothing is captured"
+                "its lastCharacterGuid and accountName would be missing from the identity "
+                "map, so nothing is captured"
             ) from None
         for m in _HARVEST_RE.finditer(data):
-            if GUID_RE.fullmatch(m.group(1)):
-                guids.add(m.group(1))
+            value = m.group(2)
+            if m.group(1).lower() == b"lastcharacterguid":
+                if GUID_RE.fullmatch(value):
+                    guids.add(value)
+                continue
+            if not value.strip() or EMAIL_RE.search(value):
+                continue  # blank, or an email address: the email refusal stops that
+            try:
+                account_names.add(value.decode("utf-8"))
+            except UnicodeDecodeError:
+                raise CaptureError(
+                    "an accountName value in a config file is not UTF-8, so it cannot be "
+                    "added to the identity map; nothing is captured"
+                ) from None
 
     own: set[tuple[bytes, bytes]] = set()
     for character_name, realm_name in pairs:
@@ -2834,6 +2866,7 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
         cvars=(*IDENTITY_CVARS, *(args.blank_cvar or [])),
         show_names=args.show_map,
         groups=groups,
+        account_names=account_names,
     )
 
 
