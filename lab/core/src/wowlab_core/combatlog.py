@@ -30,6 +30,13 @@ with ``truncated`` set, its full byte ``length`` and its real ending, and the
 rest of it is skipped, so memory stays bounded. The same line gives the same
 entry however the file is chunked.
 
+Filtering (M13-41). A caller that reads only some events passes
+``events=`` to :func:`read_log` or :func:`tokenize`. A line whose event,
+read from its bytes as the first comma-separated field after the
+timestamp's two spaces, is a bare name not asked for is yielded as a
+:class:`Skipped` (its text and ending kept) and not tokenized; every other
+line is tokenized exactly as without the filter.
+
 Record grammar (anything else is :class:`Unparsed`, with a reason and, where
 there is one, the column):
 
@@ -89,7 +96,7 @@ import sys
 import time
 from collections.abc import Callable, Generator, Iterable, Iterator
 from pathlib import Path
-from typing import Annotated, BinaryIO, Literal
+from typing import Annotated, BinaryIO, Literal, cast, overload
 
 from pydantic import BaseModel, ConfigDict, Discriminator
 
@@ -98,6 +105,7 @@ from wowlab_core import longpath
 __all__ = [
     "AFFILIATION_MASK",
     "AFFILIATION_MINE",
+    "CAST_COUNT_EVENTS",
     "CAST_EVENT",
     "CAST_LAYOUT_VERSION",
     "CONTROL_MASK",
@@ -116,6 +124,7 @@ __all__ = [
     "NotARegularFileError",
     "Quoted",
     "Record",
+    "Skipped",
     "SpellCasts",
     "Unparsed",
     "cast_counts",
@@ -194,6 +203,25 @@ class Unparsed(_Model):
 
 
 type Entry = Annotated[Record | Unparsed, Discriminator("kind")]
+
+
+class Skipped(_Model):
+    """A line whose event the caller did not ask for, read only as far as its
+    event name (``events=`` on :func:`read_log` and :func:`tokenize`).
+
+    It is a line with a timestamp, two spaces and a bare event name as its
+    first comma-separated field, so tokenizing it would give a
+    :class:`Record` of that ``event``, or an :class:`Unparsed` when a later
+    field is malformed; which of the two is not known, since the rest of the
+    line is not read. ``raw`` and ``ending`` are kept, so the lines of a
+    filtered read still rebuild the file (L4).
+    """
+
+    kind: Literal["skipped"] = "skipped"
+    offset: int
+    event: str
+    raw: str  # the line's text without its ending
+    ending: Ending
 
 
 class Following(_Model):
@@ -415,6 +443,58 @@ def _line(data: bytes, offset: int, ending: Ending) -> Record | Unparsed:
     )
 
 
+# The event selector works on the line's bytes, before decoding. Both
+# patterns are the tokenizer's, as bytes: a bytes ``\d`` is ASCII only, so a
+# line they accept is one the tokenizer's own checks accept too, and a line
+# they do not accept (a non-ASCII digit, say) is tokenized, never skipped.
+_TIMESTAMP_BYTES = re.compile(_TIMESTAMP.pattern.encode("ascii"))
+_EVENT_BYTES = re.compile(_EVENT.pattern.encode("ascii"))
+
+
+def _selecting(events: Iterable[str]) -> Callable[[bytes, int, Ending], Entry | Skipped]:
+    """A line reader that tokenizes a line only when its event is in ``events``.
+
+    The event is the first comma-separated field after the two spaces that
+    end the timestamp (``...02:16:37.862-4  SPELL_CAST_SUCCESS,Player-...``).
+    A line is skipped only when that field is a bare event name not in
+    ``events`` and the text before the two spaces is a timestamp: the
+    tokenizer would then read the same name as the record's event, since a
+    bare name holds no quote, bracket or comma. Every other line (one with
+    no timestamp, a quoted or bracketed first field, a quote holding a
+    comma, a non-ASCII byte in the name) goes to the tokenizer, whose result
+    is the one it gives without the filter. The over-long-line rule comes
+    first, unchanged.
+    """
+    if isinstance(events, str):  # a str is an iterable of one-letter names
+        raise TypeError("events is a collection of event names, not one name")
+    # A name that is not ASCII is never a bare event name, so it is never
+    # compared: such a line goes to the tokenizer, which does not read it as
+    # a record either.
+    wanted = frozenset(e.encode("ascii") for e in events if e.isascii())
+
+    def line(data: bytes, offset: int, ending: Ending) -> Entry | Skipped:
+        if len(data) <= MAX_LINE_BYTES:
+            sep = data.find(b"  ")
+            if sep != -1:
+                start = sep + 2
+                comma = data.find(b",", start)
+                event = data[start:] if comma == -1 else data[start:comma]
+                if (
+                    event not in wanted
+                    and _EVENT_BYTES.fullmatch(event)
+                    and _TIMESTAMP_BYTES.fullmatch(data, 0, sep)
+                ):
+                    return Skipped(
+                        offset=offset,
+                        event=event.decode("ascii"),
+                        raw=data.decode("utf-8", "surrogateescape"),
+                        ending=ending,
+                    )
+        return _line(data, offset, ending)
+
+    return line
+
+
 class _Long:
     """A line over MAX_LINE_BYTES whose break has not been seen yet."""
 
@@ -425,21 +505,36 @@ class _Long:
         self.last_cr = head.endswith(b"\r")
 
 
-class _Splitter:
+class _Splitter[T]:
     """Bytes in, lines out; a partial last line waits for its line break.
+
+    ``line`` turns one whole line (its bytes, offset and ending) into what is
+    yielded: :func:`_line` (the default) tokenizes every line,
+    :func:`_selecting` only the events asked for.
 
     Memory is bounded: a pending line over MAX_LINE_BYTES keeps only its head
     and a count, and is yielded when its break arrives, with its real ending,
     exactly as if the whole line had been read at once.
     """
 
-    def __init__(self, offset: int = 0) -> None:
+    @overload
+    def __init__(self: _Splitter[Record], offset: int = 0) -> None: ...
+    @overload
+    def __init__(
+        self, offset: int = 0, *, line: Callable[[bytes, int, Ending], T | Unparsed]
+    ) -> None: ...
+    def __init__(
+        self, offset: int = 0, *, line: Callable[[bytes, int, Ending], T | Unparsed] | None = None
+    ) -> None:
+        self.line = cast(
+            Callable[[bytes, int, Ending], T | Unparsed], _line if line is None else line
+        )
         self.pending = b""
         self.start = offset  # file offset of pending[0], or of the next byte fed
         self.long: _Long | None = None
 
-    def feed(self, chunk: bytes) -> list[Entry]:
-        out: list[Entry] = []
+    def feed(self, chunk: bytes) -> list[T | Unparsed]:
+        out: list[T | Unparsed] = []
         pos = 0
         if self.long is not None:
             long = self.long
@@ -463,9 +558,9 @@ class _Splitter:
             if nl == -1:
                 break
             if nl > pos and data[nl - 1] == _CR:
-                out.append(_line(data[pos : nl - 1], self.start + pos, "\r\n"))
+                out.append(self.line(data[pos : nl - 1], self.start + pos, "\r\n"))
             else:
-                out.append(_line(data[pos:nl], self.start + pos, "\n"))
+                out.append(self.line(data[pos:nl], self.start + pos, "\n"))
             pos = nl + 1
         rest = data[pos:]
         # Measured without a trailing CR: its LF may start the next chunk, and a
@@ -490,7 +585,7 @@ class _Splitter:
         start, self.start = self.start, self.start + len(rest)
         return rest, start, len(rest), False
 
-    def end(self) -> list[Entry]:
+    def end(self) -> list[T | Unparsed]:
         """At the end of a file: the unterminated last line, tokenized (``ending=""``)."""
         held = self._take()
         if held is None:
@@ -498,9 +593,9 @@ class _Splitter:
         head, offset, length, truncated = held
         if truncated:
             return [_too_long(head, offset, "", length)]
-        return [_line(head, offset, "")]
+        return [self.line(head, offset, "")]
 
-    def abandon(self, why: str) -> list[Entry]:
+    def abandon(self, why: str) -> list[T | Unparsed]:
         """The file went away under a partial line: yield it, never as a record."""
         held = self._take()
         if held is None:
@@ -541,16 +636,43 @@ def _open_log(path: Path) -> BinaryIO:
     return f
 
 
-def tokenize(data: bytes, *, offset: int = 0) -> Iterator[Entry]:
-    """Every line of ``data``, in order; an unterminated last line is tokenized too."""
-    splitter = _Splitter(offset)
+@overload
+def tokenize(data: bytes, *, offset: int = 0, events: None = None) -> Iterator[Entry]: ...
+@overload
+def tokenize(
+    data: bytes, *, offset: int = 0, events: Iterable[str]
+) -> Iterator[Entry | Skipped]: ...
+def tokenize(
+    data: bytes, *, offset: int = 0, events: Iterable[str] | None = None
+) -> Iterator[Entry | Skipped]:
+    """Every line of ``data``, in order; an unterminated last line is tokenized too.
+
+    With ``events``, only the records of those events are tokenized, and a
+    line of any other event is yielded as a :class:`Skipped` (see
+    :func:`_selecting` for which lines that is). A line that is tokenized
+    gives exactly what it gives without ``events``.
+    """
+    splitter: _Splitter[Entry | Skipped] = _Splitter(
+        offset, line=_line if events is None else _selecting(events)
+    )
     yield from splitter.feed(data)
     yield from splitter.end()
 
 
-def read_log(path: Path | str) -> Iterator[Entry]:
-    """Every line of a combat log file, read in chunks (a log can be large)."""
-    splitter = _Splitter()
+@overload
+def read_log(path: Path | str, *, events: None = None) -> Iterator[Entry]: ...
+@overload
+def read_log(path: Path | str, *, events: Iterable[str]) -> Iterator[Entry | Skipped]: ...
+def read_log(path: Path | str, *, events: Iterable[str] | None = None) -> Iterator[Entry | Skipped]:
+    """Every line of a combat log file, read in chunks (a log can be large).
+
+    ``events`` as on :func:`tokenize`: a caller that reads a few events of a
+    large log asks for them, and the lines of every other event are not
+    tokenized.
+    """
+    splitter: _Splitter[Entry | Skipped] = _Splitter(
+        line=_line if events is None else _selecting(events)
+    )
     with _open_log(Path(path)) as f:
         while chunk := f.read(_CHUNK):
             yield from splitter.feed(chunk)
@@ -654,6 +776,10 @@ CAST_LAYOUT_VERSION = "22"
 (docs/LAB_FORMATS.md §8). Casts under any other version, or before any
 version line, are not counted: their layout is not known."""
 
+CAST_COUNT_EVENTS = frozenset({"COMBAT_LOG_VERSION", CAST_EVENT})
+"""The events :func:`cast_counts` reads; pass as ``events=`` to
+:func:`read_log` so that no other line is tokenized (M13-41)."""
+
 # Unit-flag bits (the client's COMBATLOG_OBJECT_* values, community
 # documentation; the real log's owner is 0x511 and its NPC 0x10a48). The
 # flags describe a unit relative to the player who logs; only these three
@@ -699,7 +825,10 @@ class CastCounts(_Model):
     """
 
     lines: int  # every line of the log
-    unparsed: int  # lines the tokenizer did not read as a record
+    # Lines the tokenizer did not read as a record. When the entries come
+    # from a read with ``events=CAST_COUNT_EVENTS``, a line of another event
+    # is a Skipped, not tokenized, and so never counted here.
+    unparsed: int
     versions: tuple[str, ...]  # COMBAT_LOG_VERSION values, in order of first appearance
     cast_events: int  # every SPELL_CAST_SUCCESS record
     other_version: int  # casts under another version, or before any: not counted
@@ -718,10 +847,14 @@ def _flags(value: FieldValue) -> int | None:
     return None
 
 
-def cast_counts(entries: Iterable[Entry]) -> CastCounts:
+def cast_counts(entries: Iterable[Entry | Skipped]) -> CastCounts:
     """The player's own ``SPELL_CAST_SUCCESS`` records in ``entries`` (a log's
     lines in order, as :func:`read_log` yields them), counted per spell id and
-    name. Reads one entry at a time; memory grows only with distinct spells."""
+    name. Reads one entry at a time; memory grows only with distinct spells.
+
+    ``read_log(path, events=CAST_COUNT_EVENTS)`` gives the same counts as
+    ``read_log(path)`` without tokenizing any other event's lines, except
+    that a malformed line of another event is not among ``unparsed``."""
     lines = unparsed = cast_events = other_version = not_read = others = mine = 0
     versions: list[str] = []
     version: str | None = None
@@ -731,6 +864,8 @@ def cast_counts(entries: Iterable[Entry]) -> CastCounts:
     counts: dict[tuple[int, str], int] = {}
     for entry in entries:
         lines += 1
+        if isinstance(entry, Skipped):
+            continue
         if not isinstance(entry, Record):
             unparsed += 1
             continue

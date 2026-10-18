@@ -216,6 +216,24 @@ def test_binds_coach_on_the_real_log_and_record_cross_capture(
     assert not (user_dirs.parent.parent / "userdata").exists()
 
 
+def test_binds_coach_reads_the_log_filtered_to_the_cast_events(
+    root: Path, record: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M13-41: the command asks `read_log` for the events `cast_counts` reads,
+    so no other line is tokenized, and its counts are the unfiltered ones."""
+    asked: list[object] = []
+    real_read_log = combatlog.read_log
+
+    def spy(path: Path, **kwargs: Any) -> Any:
+        asked.append(kwargs.get("events"))
+        return real_read_log(path, **kwargs)
+
+    monkeypatch.setattr(combatlog, "read_log", spy)
+    rep = report("--character", CHARACTER)
+    assert asked == [combatlog.CAST_COUNT_EVENTS]
+    assert rep.log.counts == real_counts()
+
+
 def test_binds_coach_text_says_the_table_is_a_default_and_that_combatlog_must_be_on(
     record: Path,
 ) -> None:
