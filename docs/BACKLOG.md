@@ -832,3 +832,17 @@ Found while merging #246. The release notes' `--json` paragraph names every mode
 Found in the code review of #249 (M13-38). `guard._unchanged_executable` treats the permission bits as part of "matches", so an addon executable whose bytes are unchanged but whose mode changed (a `chmod 644 → 755`) still refuses a whole restore with exit 3 and the gate's line alone; the advice line M13-38 added runs only for `--paths`. Rare (an addon update changes the bytes too) and it fails safe, but the `--help` promise reads as if any change were counted and skipped. Two M13-30 review probes pin the current behaviour (`test_m13_30_screenshots_restore_ignores_executable_mode.py`, lines 71–90), so the owner decides: either (a) a mode-only change is skipped and listed like a content change, in which case a `test-writer` inverts those two probes first, or (b) the behaviour stays and the restore prints the advice line for it. Pick one in the ticket before dispatch.
 
 **Acceptance:** per the choice: (a) the inverted probes pass, the skip is listed with its row, nothing is written; or (b) a mode-only change prints the gate's line plus the advice line, exit 3, labelled constructed test; `make ci` green; reviewed by `code-reviewer` and `security-reviewer`.
+
+---
+
+## [ ] M13-49 — The scrub and the wiki gate stop treating character and realm names as identifiers
+**Size:** S · **Depends on:** nothing · **owner** (ADR-0019 amendment of 2026-10-17 to be Accepted first)
+
+Owner decision of 2026-10-17 (ADR-0019 amendment; `docs/LAB_PLAN.md` §8): character names and realm names may appear as they are in the public repository. Narrow three tools to the identifiers that stay: the Battle.net account folder (`<digits>#<n>`), email addresses and BattleTags, the owner's real name, a home path carrying the owner's login, and the owner's own `Player-<n>-<hex>` GUIDs.
+
+- `scripts/lab_capture.py` and `wowlab_core.redact` (shared rules, §13.3 D-09): stop rewriting character and realm names and the second name of the Forever layout; stop refusing a capture because such a name lands inside a longer word or in a SavedVariables file's own name; keep every other rewrite and refusal, the CVar deny-list and the provenance counts (`identity-rewritten` now counts only the kept set). Other players' GUIDs in combat logs: keep rewriting them (a GUID plus a name identifies an account), and keep the unit-name rewrite only where it accompanies a rewritten GUID.
+- `scripts/check_wiki.py`: drop the `Name-Realm` matcher and its placeholder allowlist; keep the home-path and account-folder matchers; exit codes unchanged.
+- `wowlab doctor --redact`: unchanged (it is for another player's report, and what they hide is their choice); say so in its docstring if it is not already.
+- Docs: `docs/LAB_PLAN.md` §8's rule list and `lab/core/tests/fixtures/README.md`'s policy text follow; existing fixtures and provenance rows are not touched (ADR-0012: a committed fixture is never edited).
+
+**Acceptance:** the refusal tests for the kept identifiers still pass unchanged; new labelled constructed tests show a character name, a realm name and a Forever second name pass through the scrub untouched and that `check_wiki` accepts a `Name-Realm` pair; the account-folder, email, BattleTag, home-path and own-GUID cases still refuse; `make ci` green; reviewed by `security-reviewer` and `code-reviewer`.
