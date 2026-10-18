@@ -546,8 +546,9 @@ class Identity:
         between any two letters. `groups`: digits-only group folders, given
         path-only numeric pseudonyms. `account_names`: `accountName` CVar values
         (M13-55), scrubbed as account folders are; numbered after the folders,
-        so adding one never renumbers a folder's pseudonym, and one that is a
-        folder's name in another casing is that folder's.
+        so adding one never renumbers a folder's pseudonym. One that is a
+        folder's name or another value in another casing is an alias of it:
+        same pseudonym, counted once.
         """
         self.names: dict[str, str] = {}
         self._show_names = show_names
@@ -576,12 +577,19 @@ class Identity:
         ordered_accounts = self._ordered(accounts)
         for i, account in enumerate(ordered_accounts):
             self._add_account(account, i)
-        folded_accounts = {account.casefold() for account in ordered_accounts}
-        cvar_accounts = [
-            name for name in self._ordered(account_names) if name.casefold() not in folded_accounts
-        ]
-        for i, name in enumerate(cvar_accounts, start=len(ordered_accounts)):
-            self._add_account(name, i)
+        # One account per casefold: a value that is a folder's name, or an earlier
+        # value, in another casing is that account's, and its own spelling is
+        # registered with that account's pseudonym.
+        first_spelling = {account.casefold(): account for account in ordered_accounts}
+        index = len(ordered_accounts)
+        for name in self._ordered(account_names):
+            self._check_account_value(name)
+            first = first_spelling.setdefault(name.casefold(), name)
+            if first != name:
+                self._add_account_alias(name, first)
+            elif name not in self.names:
+                self._add_account(name, index)
+                index += 1
 
         canonical = sorted({guid.upper() for guid in guids})
         self.guids: dict[bytes, bytes] = {
@@ -773,6 +781,36 @@ class Identity:
             # The bare account number, but never inside a longer number.
             self._token(numbered.group(1), number, "number")
             self._survivor_form(numbered.group(1), "number")
+
+    def _check_account_value(self, real: str) -> None:
+        """Refuse an `accountName` value whose other spellings nothing hunts.
+
+        A name of EMBEDDED_MIN_CHARS letters or more is hunted with its
+        separators dropped, anywhere (`_folded_hits`); a shorter one only as a
+        whole word as written. A short one with a separator in it (`Jo Al`)
+        would leave `Jo-Al` and `JoAl` unhunted, so it stops the capture.
+        """
+        folded = _hunt_fold(real)
+        letters = _LOOSE_DROPPED.sub("", folded)
+        if letters != folded and len(letters) < EMBEDDED_MIN_CHARS:
+            shown = (
+                repr(real) if self._show_names else f"an accountName value ({len(real)} characters)"
+            )
+            raise CaptureError(
+                f"{shown} is short and has a separator in it, so its other spellings "
+                "cannot be hunted safely; nothing is captured"
+            )
+
+    def _add_account_alias(self, alias: str, real: str) -> None:
+        """`alias`, another casing of the account `real`, gets `real`'s pseudonym."""
+        pseudonym = self.names[real]
+        self._fold_sources.append(alias)
+        pairs: list[tuple[str, str]] = []
+        for normal in ("NFC", "NFD"):
+            pair = (unicodedata.normalize(normal, alias), unicodedata.normalize(normal, pseudonym))
+            if pair not in pairs:
+                pairs.append(pair)
+        self._register(pairs, "account")
 
     # ── scrubbing ──
 
@@ -2730,6 +2768,9 @@ def provenance_row(outcome: Outcome, platform: str, captured_by: str, consent: s
 # The CVars whose values join the identity map: group 1 the name, group 2 the
 # value. `accountList` is blanked but not harvested: its separator is not in
 # the format reference and no unblanked capture shows it (M13-55, [verify]).
+# What is stripped from either end of an accountName piece left beside an email
+# address: blanks and the punctuation a display form wraps an address in.
+_ACCOUNT_VALUE_EDGES = b" \t<>()[]{},;:\"'"
 _HARVEST_RE = re.compile(
     _LINE_START + rb'SET[ \t]+(lastCharacterGuid|accountName)[ \t]+"([^"\r\n]*)"',
     re.IGNORECASE,
@@ -2743,7 +2784,7 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
     folders, the `--extra-name` strings and the owner's own player GUIDs (and
     the digits-only group folders, as path-only numbers); since M13-55 also
     each `accountName` value a config file holds, as an account (an email
-    address is left out: the email refusal already stops it everywhere). Character names,
+    address in it is left out: the email refusal already stops it everywhere). Character names,
     realm names and the second name of a `<First>-<Second>` folder are
     public and pass through as they are; the character and realm folders are
     still walked, because their config files hold the owner's
@@ -2828,15 +2869,20 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
                 if GUID_RE.fullmatch(value):
                     guids.add(value)
                 continue
-            if not value.strip() or EMAIL_RE.search(value):
-                continue  # blank, or an email address: the email refusal stops that
-            try:
-                account_names.add(value.decode("utf-8"))
-            except UnicodeDecodeError:
-                raise CaptureError(
-                    "an accountName value in a config file is not UTF-8, so it cannot be "
-                    "added to the identity map; nothing is captured"
-                ) from None
+            # An email address is left to the email refusal, which stops it in
+            # every file; whatever else the value holds (`Real Name <a@b.c>`) is
+            # hunted, each piece around an address on its own.
+            for piece in EMAIL_RE.split(value):
+                piece = piece.strip(_ACCOUNT_VALUE_EDGES)
+                if not piece:
+                    continue
+                try:
+                    account_names.add(piece.decode("utf-8"))
+                except UnicodeDecodeError:
+                    raise CaptureError(
+                        "an accountName value in a config file is not UTF-8, so it cannot be "
+                        "added to the identity map; nothing is captured"
+                    ) from None
 
     own: set[tuple[bytes, bytes]] = set()
     for character_name, realm_name in pairs:

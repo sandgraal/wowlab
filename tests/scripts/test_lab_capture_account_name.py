@@ -134,9 +134,77 @@ def test_constructed_an_email_account_name_is_left_to_the_email_refusal(
 def test_constructed_account_name_shares_the_pseudonym_of_its_folder() -> None:
     """An older account-name folder and its `accountName` in another casing are
     one account; adding a CVar value never renumbers a folder's pseudonym."""
-    same = lab_capture.Identity(accounts=["SECRETACCT"], account_names=["secretacct"])
-    assert same.counts["account"] == 1
+    same = lab_capture.Identity(accounts=["SECRETACCT"], account_names=["SecretAcct"])
+    assert same.counts["account"] == 1 and len(same.names) == 1
+    assert same.scrub(b'"SecretAcct"').data == b'"LABACCOUNTA"'
     assert same.scrub(b'"secretacct"').data == b'"labaccounta"'
     ordered = lab_capture.Identity(accounts=[ACCOUNT], account_names=["0first"])
     assert ordered.names[ACCOUNT] == "90000001#1"
     assert ordered.counts["account"] == 2
+
+
+def test_constructed_one_account_in_two_config_files_and_two_casings_counts_once(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "World of Warcraft"
+    _tree(root, 'SET accountName "SecretAcct"\r\n', "SECRETACCT secretacct SecretAcct")
+    cache = root / "_retail_" / "WTF" / "Account" / ACCOUNT / "config-cache.wtf"
+    _write(cache, f'SET lastCharacterGuid "{OWN_GUID}"\nSET accountName "secretacct"\n')
+    out = tmp_path / "incoming"
+    assert capture(root, out, "--flavor", "_retail_", "--sv", SV) == 0
+    printed = capsys.readouterr().out
+    assert "identity map: 2 names (2 accounts," in printed
+    data = outputs(out)[SV_OUT]
+    assert b'"LABACCOUNTB labaccountb LABACCOUNTb"' in data, data
+
+
+def test_constructed_a_non_utf8_account_name_stops_the_capture(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "World of Warcraft"
+    _tree(root, 'SET portal "US"\r\n', "x")
+    config = root / "_retail_" / "WTF" / "Config.wtf"
+    config.write_bytes(b'SET accountName "SECRET\xffACCT"\r\n')
+    out = tmp_path / "incoming"
+    assert capture(root, out, "--flavor", "_retail_", "--sv", SV) == 2
+    printed = capsys.readouterr()
+    assert "accountName value in a config file is not UTF-8" in printed.err
+    assert "nothing is captured" in printed.err
+    assert "SECRET" not in printed.out + printed.err
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("spelling", ["Jo-Al", "JoAl", "jo_al"])
+def test_constructed_a_short_account_name_with_a_separator_stops_the_capture(
+    spelling: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Under EMBEDDED_MIN_CHARS letters only the spelling as written is hunted,
+    so `Jo Al` would let `Jo-Al` and `JoAl` through: the capture stops instead."""
+    code, written, printed = _run(tmp_path, capsys, 'SET accountName "Jo Al"\r\n', spelling)
+    assert code == 2 and written == {}
+    assert "short and has a separator in it" in printed and "nothing is captured" in printed
+    assert "Jo Al" not in printed
+
+
+@pytest.mark.parametrize("spelling", ["Real-Name", "RealName", "real_name"])
+def test_constructed_a_long_account_name_in_another_spelling_refuses(
+    spelling: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Five letters or more are hunted with their separators dropped."""
+    code, written, printed = _run(tmp_path, capsys, 'SET accountName "Real Name"\r\n', spelling)
+    assert code == 1 and SV_OUT not in written
+    refused = [line for line in printed.splitlines() if line.startswith("REFUSED")]
+    assert len(refused) == 1 and SV in refused[0], refused
+
+
+def test_constructed_the_name_beside_an_email_in_account_name_is_hunted(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`Real Name <a@b.c>`: the address is left to the email refusal, the name is
+    rewritten like any account string."""
+    config = 'SET accountName "Secret Owner <someone.real@example.com>"\r\n'
+    code, written, printed = _run(tmp_path, capsys, config, "Secret Owner")
+    assert code == 0
+    assert b'["login"] = "LABACCOUNTb Partb"' in written[SV_OUT], written[SV_OUT]
+    assert "Secret Owner" not in printed and "someone.real" not in printed
+    assert written["macos/_retail_/WTF/Config.wtf"] == b'SET accountName ""\r\n'
