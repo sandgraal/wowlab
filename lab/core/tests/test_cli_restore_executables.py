@@ -5,14 +5,16 @@ An executable under `Interface/AddOns/` has the file-map row
 restores or deletes one. A whole restore skips one that changed or went
 missing, lists it in `RestoreReport.skipped` by its row, and restores the
 rest by name; `--paths` naming one is refused with the gate's reason and a
-note on what the owner can do. An executable the gate would refuse for
+note on what the owner can do. One whose bytes are unchanged but whose
+permission bits changed still refuses the whole restore, with the same note
+(owner decision of 2026-10-18, M13-48). An executable the gate would refuse for
 another reason too (a reserved name), or one outside `AddOns/`, still
 refuses the whole restore, as the gate does.
 
 The install is the captured tree as `test_cli.py` builds it (copied into
 `tmp_path`, the user data directory redirected, the process table a fake).
 Inputs labelled `constructed` in the test names (L8): an addon's
-`helper.sh`, `gone.dll`, `aux.sh`, `.DS_Store` and `._helper.sh`, a
+`helper.sh` (also with its mode changed from 0644 to 0755), `gone.dll`, `aux.sh`, `.DS_Store` and `._helper.sh`, a
 `tool.sh` under `WTF/`, which the capture does not have, a symbolic link to a
 file outside the install or a folder where `helper.sh` was, a snapshot
 manifest forged to spell `helper.sh` as `HELPER.sh` (re-fingerprinted so the
@@ -397,3 +399,38 @@ def test_a_changed_appledouble_of_an_executable_is_listed_with_the_executables_c
     (header,) = [ln for ln in text.splitlines() if ln.startswith("  Skipped ")]
     assert header.startswith("  Skipped 3 executable(s) whose content changed")
     assert "name one with --paths" not in text
+
+
+# ─── a mode-only change still refuses, with the advice line (M13-48) ─────────
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="permission bits are not kept on Windows")
+def test_a_mode_only_change_refuses_the_whole_restore_with_what_to_do_constructed(
+    root: Path, flavor: Path
+) -> None:
+    """Owner decision of 2026-10-18 (option b): an executable whose bytes are
+    the snapshot's but whose permission bits are not (`chmod 644 → 755`) is
+    not skipped; the gate refuses the whole restore, and the restore prints
+    the gate's line and the advice line `--paths` prints. Nothing is written
+    and nothing is journaled."""
+    helper = flavor / HELPER
+    helper.write_bytes(HELPER_BYTES)
+    helper.chmod(0o644)
+    a = _snapshot()
+    helper.chmod(0o755)  # the bytes are the snapshot's; the mode is not
+    _later(flavor)
+    edited = (flavor / TOC).read_bytes()
+    for extra in ([], ["--json"], ["--dry-run"]):
+        result = run("snap", "restore", a.id, "--yes", *extra)
+        assert result.exit_code == 3, (extra, result.stdout, result.stderr)
+        err = _plain(result.stderr).splitlines()
+        assert err[0] == (
+            f"wowlab: refused by the write gate: {HELPER!r} is an executable; "
+            "guard never writes one"
+        )
+        assert err[1] == NOTE
+        assert result.stdout == ""
+    assert (flavor / TOC).read_bytes() == edited
+    assert helper.read_bytes() == HELPER_BYTES
+    assert helper.stat().st_mode & 0o777 == 0o755
+    assert guard.history() == ()

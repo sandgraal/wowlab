@@ -6258,13 +6258,23 @@ def snap_restore(
             # or that went missing is skipped by its row: the gate never
             # writes one, and would refuse the whole restore for it (M13-38).
             rest, executables = _changed_executables(lay, rest, inst.root, folder)
-            if not aside and not executables:
-                tx.restore(manifest.id)
-            else:
-                if any(not e.path.startswith(folder + "/") for e in rest):
-                    tx.restore(manifest.id)  # refused: a path outside this flavor
-                names, left = _names_for_whole(rest, inst.root, folder)
-                tx.restore(manifest.id, names)
+            try:
+                if not aside and not executables:
+                    tx.restore(manifest.id)
+                else:
+                    if any(not e.path.startswith(folder + "/") for e in rest):
+                        tx.restore(manifest.id)  # refused: a path outside this flavor
+                    names, left = _names_for_whole(rest, inst.root, folder)
+                    tx.restore(manifest.id, names)
+            except guard.PathNotAllowedError as exc:
+                # An executable the gate still refuses (its bytes are the
+                # snapshot's but its mode is not, or a link or a folder
+                # stands where it was) refuses the whole restore; say what
+                # the owner can do, as --paths does (M13-48).
+                prefix = folder + "/"
+                held = [e.path.removeprefix(prefix) for e in rest if e.path.startswith(prefix)]
+                _executable_note(lay, held, exc)
+                raise
         whole_plan = tx.plan
     skipped: list[SkippedPath] = []
     plan = list(whole_plan)
