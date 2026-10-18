@@ -2768,13 +2768,34 @@ def provenance_row(outcome: Outcome, platform: str, captured_by: str, consent: s
 # The CVars whose values join the identity map: group 1 the name, group 2 the
 # value. `accountList` is blanked but not harvested: its separator is not in
 # the format reference and no unblanked capture shows it (M13-55, [verify]).
-# What is stripped from either end of an accountName piece left beside an email
-# address: blanks and the punctuation a display form wraps an address in.
-_ACCOUNT_VALUE_EDGES = b" \t<>()[]{},;:\"'"
+# What an accountName piece may hold once everything but letters and digits is
+# trimmed from its ends. Anything else inside it (`Jo.Al`, `a|b`) would stay in
+# the hunted token, so the bare name would match nothing: the capture stops.
+_ACCOUNT_VALUE_INNER = frozenset(" -'_#")
 _HARVEST_RE = re.compile(
     _LINE_START + rb'SET[ \t]+(lastCharacterGuid|accountName)[ \t]+"([^"\r\n]*)"',
     re.IGNORECASE,
 )
+
+
+def _trim_account_piece(text: str) -> str:
+    """`text` without anything but letters and digits at either end (quotes,
+    guillemets, `|`, `.`, `!` around a name beside an email address). Fails
+    closed: a piece that still holds anything outside letters, digits and
+    `_ACCOUNT_VALUE_INNER` stops the capture."""
+    start, end = 0, len(text)
+    while start < end and not text[start].isalnum():
+        start += 1
+    while end > start and not text[end - 1].isalnum():
+        end -= 1
+    piece = text[start:end]
+    if any(not c.isalnum() and c not in _ACCOUNT_VALUE_INNER for c in piece):
+        raise CaptureError(
+            f"an accountName value holds a character other than a letter, a digit or "
+            f"one of {''.join(sorted(_ACCOUNT_VALUE_INNER))!r} inside a name, so its "
+            "spellings cannot be hunted safely; nothing is captured"
+        )
+    return piece
 
 
 def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Namespace) -> Identity:
@@ -2784,7 +2805,8 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
     folders, the `--extra-name` strings and the owner's own player GUIDs (and
     the digits-only group folders, as path-only numbers); since M13-55 also
     each `accountName` value a config file holds, as an account (an email
-    address in it is left out: the email refusal already stops it everywhere). Character names,
+    address in it is left out: the email refusal already stops it everywhere).
+    Character names,
     realm names and the second name of a `<First>-<Second>` folder are
     public and pass through as they are; the character and realm folders are
     still walked, because their config files hold the owner's
@@ -2872,17 +2894,17 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
             # An email address is left to the email refusal, which stops it in
             # every file; whatever else the value holds (`Real Name <a@b.c>`) is
             # hunted, each piece around an address on its own.
-            for piece in EMAIL_RE.split(value):
-                piece = piece.strip(_ACCOUNT_VALUE_EDGES)
-                if not piece:
-                    continue
+            for raw in EMAIL_RE.split(value):
                 try:
-                    account_names.add(piece.decode("utf-8"))
+                    text = unicodedata.normalize("NFC", raw.decode("utf-8"))
                 except UnicodeDecodeError:
                     raise CaptureError(
                         "an accountName value in a config file is not UTF-8, so it cannot be "
                         "added to the identity map; nothing is captured"
                     ) from None
+                piece = _trim_account_piece(text)
+                if piece:
+                    account_names.add(piece)
 
     own: set[tuple[bytes, bytes]] = set()
     for character_name, realm_name in pairs:

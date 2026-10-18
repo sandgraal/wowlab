@@ -208,3 +208,36 @@ def test_constructed_the_name_beside_an_email_in_account_name_is_hunted(
     assert b'["login"] = "LABACCOUNTb Partb"' in written[SV_OUT], written[SV_OUT]
     assert "Secret Owner" not in printed and "someone.real" not in printed
     assert written["macos/_retail_/WTF/Config.wtf"] == b'SET accountName ""\r\n'
+
+
+@pytest.mark.parametrize(
+    ("value", "name"),
+    [
+        ("«Secret Owner» someone.real@example.com", "Secret Owner"),
+        ("“Secret Owner” <someone.real@example.com>", "Secret Owner"),
+        ("Secret Owner | someone.real@example.com", "Secret Owner"),
+        ("Jo. someone.real@example.com", "Jo"),
+        ("Jo» someone.real@example.com", "Jo"),
+        ("Jo! someone.real@example.com", "Jo"),
+    ],
+    ids=["guillemets", "curly-quotes", "pipe", "full-stop", "closing-guillemet", "bang"],
+)
+def test_constructed_any_punctuation_around_the_name_beside_an_email_is_trimmed(
+    value: str, name: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, written, printed = _run(tmp_path, capsys, f'SET accountName "{value}"\r\n', name)
+    assert code == 0
+    assert name.encode() not in written[SV_OUT], written[SV_OUT]
+    assert b"LABACCOUNT" in written[SV_OUT].upper()
+    assert name not in printed and "someone.real" not in printed
+
+
+@pytest.mark.parametrize("value", ["Jo.Al", "Secret|Owner", "Se·cret"])
+def test_constructed_punctuation_inside_an_account_name_stops_the_capture(
+    value: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Fail closed: what stays inside the hunted token would hide the bare name."""
+    code, written, printed = _run(tmp_path, capsys, f'SET accountName "{value}"\r\n', "x")
+    assert code == 2 and written == {}
+    assert "inside a name" in printed and "nothing is captured" in printed
+    assert value not in printed

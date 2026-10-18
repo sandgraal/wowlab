@@ -1471,7 +1471,8 @@ never edited. Every capture passes through `scripts/lab_capture.py`, which
 - records what it rewrote in the provenance row (`identity-rewritten`,
   `cvars-dropped: n`). *Amended 2026-10-17 (M13-49):* `identity-rewritten`
   counts only rewrites of the kept set (account folders, `--extra-name`
-  strings, and since 2026-10-18 (M13-55) `accountName` values); a path whose only rewrite is the account or group folder still
+  strings, and since 2026-10-18 (M13-55) `accountName` values); a
+  path whose only rewrite is the account or group folder still
   reads `identity-rewritten: path only`. Committed fixtures and their rows
   keep their pseudonyms (ADR-0012).
 
