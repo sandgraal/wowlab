@@ -52,9 +52,15 @@ def _to_link(info: Path, target: Path) -> None:
 
 
 def _to_other_file(info: Path, target: Path) -> None:
-    """A regular file again, but not the one the `lstat` saw."""
-    del target
-    info.unlink()
+    """A regular file again, but not the one the `lstat` saw.
+
+    The original is renamed aside, not unlinked, so it keeps its inode: on
+    ext4 a file created just after an unlink may get the freed inode back,
+    and a new file with the old (device, inode) is not told apart by the
+    identity check (`snapshot.open_regular_file`). That case reads a regular
+    file in the folder, never a link, so M13-46 leaves it; closing it would
+    need a directory descriptor."""
+    info.rename(target.parent / "m13-46-original.flavor.info")
     info.write_bytes(REAL_FLAVOR_INFO)
 
 
