@@ -143,15 +143,12 @@ Flavor folders, product codes and build numbers are **discovered from your insta
 
 wowlab grows in **waves**: the owner picks each one after reviewing the last. **Waves 1 to 3 are done**: everything in the table above except `wowlab ui`, the first run and `doctor --redact`, which are Wave 4's, plus the character list and a daily check that keeps [the wiki](https://github.com/sandgraal/wowlab/wiki) in step with the code. Wave 3 was trimmed on 2026-10-14: its game-table database, talent planner and alt-dashboard are deferred, because players already have good talent planners.
 
-**Wave 4 is the first public release, v0.1** (owner decision, 2026-10-13; [ADR-0031](docs/DECISIONS.md)). The promise does not change: reading never writes, every change to your install asks first, a snapshot comes before it and `wowlab undo` reverses it, and nothing is uploaded. Already on `main`: the release pipeline, the first run in `wowlab doctor`, `wowlab doctor --redact`, the lab-addon inside the package, and the first stage of `wowlab ui`. Still to come:
+**Wave 4 is the first public release, v0.1** (owner decision, 2026-10-13; [ADR-0031](docs/DECISIONS.md)). The promise does not change: reading never writes, every change to your install asks first, a snapshot comes before it and `wowlab undo` reverses it, and nothing is uploaded. Already on `main`: the release pipeline, the first run in `wowlab doctor`, `wowlab doctor --redact`, the lab-addon inside the package, `wowlab ui` with its explorer's second stage (the whole install, the files the file map does not know yet, snapshot facts and previews), `macros check`, and `binds coach` (from your own combat log: spells cast often on awkward keys, spells cast with no bind, and binds never used; read-only, with an editable "awkward key" table). Still to come:
 
 | | Feature | What you'll be able to do |
 |---|---|---|
 | 📦 | **The v0.1.0 release** | Install it with the one `uv tool install` line above, and check it against published SHA-256 sums. No installer, no app store, no hosted version. |
-| 🗂️ | **The explorer, second stage** | The whole install in `wowlab ui`, not one flavor folder, with the files the file map does not know yet, snapshot facts and previews. |
 | 🪟 | **Windows, tested** | CI already runs the test suite on Windows. Windows is called supported once a person has run the first run on a real Windows install; v0.1 ships with it untested. |
-| 📝 | **macros check** | Finds macros over the length limit, spell names not in your spellbook, macros on no action bar, duplicates, unbalanced `[ ]` and a misplaced `#showtooltip`. Read-only. |
-| ⌨️ | **binds coach** | From your own combat log: spells you cast often on awkward keys, spells you cast with no bind, and binds you never use. Read-only; the "awkward key" table is a default you can edit. May arrive in the second release. |
 
 After that, Wave 5 adds to `wowlab ui` the commands that ask before changing anything (`--yes`), each behind the same confirm step as the CLI, and is aimed at the second public release.
 
@@ -178,7 +175,7 @@ Here is what wowlab becomes as the ideas on [the menu](docs/LAB_IDEAS.md) are bu
 <summary><b>🎛️ Your UI, keybinds and settings</b></summary>
 
 - **Your whole setup as a file.** Describe CVars, binds, macros and addon settings in one file, then plan, apply and roll back, with drift detection (`wow-as-code`).
-- **Keybinds that fit how you play.** Spells you cast most on your easiest keys, spells you click that have no bind, and binds you never use, applied with undo (`keybind-coach`; the read-only report is planned for the first public releases).
+- **Keybinds that fit how you play.** Spells you cast most on your easiest keys, spells you click that have no bind, and binds you never use, applied with undo (`keybind-coach`; the read-only report is `wowlab binds coach`).
 - **Macros that don't silently break.** A linter that checks spell names and ranks, conditionals, length, unused and duplicate macros, with fixes through the write gate (`macro-doctor`; the check is planned for the first public release, and fixes are written only if a test shows the game keeps an edited macro file).
 - **Look and feel.** Reversible font and texture packs, and nameplates designed outside the game with a live preview (`skin-packs`, `nameplate-designer`).
 - **A map of your install.** A local website of your install, every file annotated, with viewers for saved data, settings and your snapshot timeline (`explorer`).
