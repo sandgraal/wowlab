@@ -19,7 +19,6 @@ from test_lab_capture import (
     EMAIL,
     MAIN,
     OWN_GUID,
-    PSEUDO_REALM,
     REALM,
     _write,
     build_install,
@@ -67,17 +66,19 @@ def test_constructed_name_is_found_in_either_normal_form(
 def test_constructed_names_under_a_flavorless_wtf_folder_are_still_identity(
     install: Path, tmp_path: Path
 ) -> None:
+    """An account folder under a WTF/ no installed flavor owns is still identity;
+    the character and realm under it are public and kept (M13-49)."""
     orphan = install / "_gone_" / "WTF" / "Account" / "987654321#2" / "Old Realm" / "Forgottenalt"
     _write(orphan / "AddOns.txt", "Solo: enabled\n")
     _write(
         saved_variables(install) / "AltTracker.lua",
-        '\nAlts = {\n\t["Forgottenalt - Old Realm"] = 1,\n}\n',
+        '\nAlts = {\n\t["987654321#2"] = "Forgottenalt - Old Realm",\n}\n',
     )
     out = tmp_path / "incoming"
     assert capture(install, out, "--flavor", "_retail_", "--sv", "AltTracker.lua") == 0
     written = outputs(out)
     tracker = next(data for dest, data in written.items() if dest.endswith("AltTracker.lua"))
-    assert b"Forgottenalt" not in tracker and b"Old Realm" not in tracker
+    assert b"987654321" not in tracker and b'"Forgottenalt - Old Realm"' in tracker
     assert not [dest for dest in written if "_gone_" in dest], "capture stays gated on .flavor.info"
 
 
@@ -112,9 +113,11 @@ def test_constructed_identity_cvar_the_blanker_cannot_handle_is_refused(line: by
     assert any("identity CVar" in problem for problem in result.problems)
 
 
-def test_constructed_realm_known_only_from_realmname_is_replaced_everywhere(
+def test_constructed_realm_known_only_from_realmname_is_blanked_there_and_kept_elsewhere(
     install: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """`realmName` stays on the deny-list and is blanked; the realm it names is
+    public, so the same realm elsewhere is kept as written (M13-49)."""
     config = install / "_retail_" / "WTF" / "Config.wtf"
     config.write_bytes(
         config.read_bytes().replace(b'"Area 52"', b'"Gone Realm"')
@@ -123,8 +126,10 @@ def test_constructed_realm_known_only_from_realmname_is_replaced_everywhere(
     _write(saved_variables(install) / "Seen.lua", f'\nSeen = "{MAIN}-GoneRealm"\n')
     out = tmp_path / "incoming"
     assert capture(install, out, "--flavor", "_retail_", "--sv", "Seen.lua") == 0
-    seen = next(data for dest, data in outputs(out).items() if dest.endswith("Seen.lua"))
-    assert b"Gone" not in seen and b'"Labchara-Labrealm' in seen
+    written = outputs(out)
+    seen = next(data for dest, data in written.items() if dest.endswith("Seen.lua"))
+    assert seen == f'\nSeen = "{MAIN}-GoneRealm"\n'.encode()
+    assert b'SET realmName ""\r\n' in written["macos/_retail_/WTF/Config.wtf"]
     # The by-eye list names CVars and never shows a value.
     stdout = capsys.readouterr().out
     assert "CVars to review by eye: lastCharacterIndex, guildRosterView" in stdout
@@ -263,21 +268,21 @@ def test_constructed_unreadable_file_is_refused_without_naming_the_real_path(
         locked.chmod(0o644)
     text = capsys.readouterr()
     assert code == 1
-    expected = (
-        f"REFUSED  macos/_retail_/WTF/Account/90000001#1/{PSEUDO_REALM}/Labchara/chat-cache.txt"
-    )
+    expected = f"REFUSED  macos/_retail_/WTF/Account/90000001#1/{REALM}/{MAIN}/chat-cache.txt"
     assert f"{expected}: unreadable (PermissionError)" in text.out
-    for real in (ACCOUNT, REALM, MAIN, "Traceback"):
+    for real in (ACCOUNT, "Traceback"):
         assert real not in text.out + text.err
 
 
 def test_constructed_unusable_identity_string_is_not_echoed(
     install: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    # A character folder called "Nil" is public and no longer stops the run
+    # (M13-49); an --extra-name that is a format keyword still does.
     _write(install.joinpath(*RETAIL_ACCOUNT, REALM, "Nil", "AddOns.txt"), "x\n")
-    assert capture(install, tmp_path / "a") == 2
+    assert capture(install, tmp_path / "a", "--extra-name", "Nil") == 2
     assert "Nil" not in capsys.readouterr().err
-    assert capture(install, tmp_path / "b", "--show-map") == 2
+    assert capture(install, tmp_path / "b", "--extra-name", "Nil", "--show-map") == 2
     assert "'Nil'" in capsys.readouterr().err
 
 
@@ -307,25 +312,33 @@ def test_constructed_name_that_is_a_game_word_leaves_cvar_names_and_toc_keys_alo
 def test_constructed_embedded_count_reaches_the_refusal_and_no_row(
     install: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A name glued to a word refuses the file in every kind (second follow-up,
-    security S1 of round 2). The count of such edits is what the refusal prints;
-    no written file carries one, so no row or `wrote` line says `embedded`."""
+    """A kept identity string (here an --extra-name) glued to a word refuses the
+    file in every kind (second follow-up, security S1 of round 2). The count of
+    such edits is what the refusal prints; no written file carries one, so no
+    row or `wrote` line says `embedded`. A character name glued to a word is
+    public text since M13-49 and refuses nothing."""
+    guild = "Ironclaw"
     saved = saved_variables(install)
-    _write(saved / "Words.lua", f'\nWords = {{\n\t["{MAIN}sBank"] = "{MAIN}",\n}}\n')
+    _write(saved / "Words.lua", f'\nWords = {{\n\t["{guild}sBank"] = "{guild}",\n}}\n')
+    _write(saved / "Guild.lua", f'\nGuild = {{\n\t["{MAIN}sBank"] = "{guild}",\n}}\n')
     character = install.joinpath(*RETAIL_ACCOUNT, REALM, MAIN)
-    _write(character / "layout-local.txt", f"Frame: {MAIN}sBank {MAIN}sVault {MAIN}\n")
+    _write(character / "layout-local.txt", f"Frame: {guild}sBank {guild}sVault {guild}\n")
     out = tmp_path / "incoming"
-    assert capture(install, out, "--flavor", "_retail_", "--sv", "Words.lua") == 1
+    args = ("--flavor", "_retail_", "--sv", "Words.lua", "--sv", "Guild.lua", "--extra-name", guild)
+    assert capture(install, out, *args) == 1
     stdout = capsys.readouterr().out
     refused = sorted(line for line in stdout.splitlines() if line.startswith("REFUSED"))
     assert len(refused) == 2, refused
-    assert refused[0].endswith("Labchara/layout-local.txt: identity string inside a longer word x2")
+    assert refused[0].endswith(f"{MAIN}/layout-local.txt: identity string inside a longer word x2")
     assert refused[1].endswith("SavedVariables/Words.lua: identity string inside a longer word x1")
-    assert not [d for d in outputs(out) if d.endswith(("layout-local.txt", "Words.lua"))]
+    written = outputs(out)
+    assert not [d for d in written if d.endswith(("layout-local.txt", "Words.lua"))]
+    guild_lua = next(data for dest, data in written.items() if dest.endswith("Guild.lua"))
+    assert f'["{MAIN}sBank"] = "Labnamea"'.encode() in guild_lua
     assert "embedded)" not in stdout and "embedded:" not in stdout
     # The summary counts only what was written, and the other files still are.
     summary = stdout.split("replacements per pseudonym")[1]
-    assert "  Labchara: " in summary and f"  {PSEUDO_REALM}: " in summary
+    assert "  Labnamea: 1" in summary
 
 
 # ─── 11. selection notes describe the scrubbed bytes ─────────────────────────
@@ -358,15 +371,13 @@ def test_constructed_selection_note_is_recomputed_on_the_scrubbed_bytes(
 def test_constructed_file_whose_only_non_ascii_bytes_were_a_name_is_not_called_non_ascii(
     install: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Pseudonyms are ASCII, so a file like this comes out ASCII: it must not carry the note."""
-    alt = install.joinpath(*RETAIL_ACCOUNT, REALM, "Zoë")
-    _write(alt / "AddOns.txt", "Solo: enabled\n")
-    for stale in (alt / "AddOns.txt", alt):
-        os.utime(stale, (1_000_000_000, 1_000_000_000))
+    """Pseudonyms are ASCII, so a file like this comes out ASCII: it must not carry the note.
+    The name is an --extra-name: a character name is kept as written since M13-49."""
     _write(saved_variables(install) / "OnlyName.lua", '\nOnlyName = {\n\t["Zoë"] = 1,\n}\n')
     out = tmp_path / "incoming"
 
-    assert capture(install, out, "--flavor", "_retail_", "--sv", "OnlyName.lua") == 0
+    args = ("--flavor", "_retail_", "--sv", "OnlyName.lua", "--extra-name", "Zoë")
+    assert capture(install, out, *args) == 0
 
     stdout = capsys.readouterr().out
     assert "OnlyName.lua: no longer 'non-ASCII strings' once scrubbed" in stdout

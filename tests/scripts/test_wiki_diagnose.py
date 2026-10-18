@@ -34,7 +34,7 @@ SCRIPT = SCRIPTS / "wiki_diagnose.py"
 WORKSPACE = "/home/runner/work/wowlab/wowlab"
 TEMP = "/home/runner/work/_temp"
 HOME = "/home/runner"
-PERSONAL = ("jane", "Jane", "gmail", "Arthas", "Stormrage", "12345")
+PERSONAL = ("jane", "Jane", "gmail", "12345")
 
 
 def _tool(n: int, name: str, content: Any) -> list[dict[str, Any]]:
@@ -159,7 +159,8 @@ def test_constructed_runner_paths_are_shortened_and_personal_data_withheld(
         assert "/home/runner" not in out
         assert "[withheld: an absolute home path]" in out
         assert "[withheld: an email address]" in out
-        assert "[withheld: a Name-Realm pair]" in out
+        # A character's Name-Realm is public since M13-49: it is printed as it is.
+        assert "Arthas-Stormrage asked" in out
         assert "[withheld: a BattleTag]" in out
         assert "Permission denied" in out and "copied from" in out
         for secret in PERSONAL:

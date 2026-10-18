@@ -13,6 +13,10 @@ such page, is flagged; the baseline wiki passes.
 
 Constructed: the real wiki fixture (d4344c8) plus the generated page and an
 index naming every module; the names and address are invented.
+
+Amended 2026-10-17 (M13-49, ADR-0019 amendment): character and realm names
+are public and the gate no longer matches a `Name-Realm` pair, in prose or in
+a page name. The email page name is still the finding this probe guards.
 """
 
 from __future__ import annotations
@@ -62,20 +66,19 @@ def test_control_baseline_passes(tmp_path: Path) -> None:
     assert [str(f) for f in cw.check(_wiki(tmp_path), commands=ERA).failures] == []
 
 
-def test_control_the_pair_in_prose_is_flagged(tmp_path: Path) -> None:
+def test_the_pair_in_prose_is_public_text(tmp_path: Path) -> None:
     root = _wiki(tmp_path)
     _append(root / "FAQ.md", "\nThrall-Stormrage is my main.\n")
-    out = [str(f) for f in cw.check(root, commands=ERA).failures]
-    assert out == ["FAQ.md:67: a Name-Realm pair (not quoted here; the log is public)"]
+    assert [str(f) for f in cw.check(root, commands=ERA).failures] == []
 
 
-def test_a_page_named_after_a_name_realm_pair_is_flagged(tmp_path: Path) -> None:
+def test_a_page_named_after_a_name_realm_pair_is_not_personal_data(tmp_path: Path) -> None:
     root = _wiki(tmp_path)
     (root / "Thrall-Stormrage.md").write_text(
         "# Notes\n\nThrall-Stormrage is my main.\n", encoding="utf-8"
     )
     _append(root / "_Sidebar.md", "\n[Thrall-Stormrage](Thrall-Stormrage)\n")
-    assert cw.check(root, commands=ERA).failures != []
+    assert not [f for f in cw.check(root, commands=ERA).failures if f.personal]
 
 
 def test_a_page_named_after_an_email_address_is_flagged(tmp_path: Path) -> None:

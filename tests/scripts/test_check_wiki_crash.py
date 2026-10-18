@@ -170,14 +170,6 @@ def test_constructed_a_location_ending_in_a_non_ascii_digit_sorts_as_a_name() ->
     assert cw._order(cw.Failure("Extra.md:12", "m")) == ("Extra.md", 12, "m")
 
 
-def test_constructed_a_missing_allowed_terms_file_exits_2(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = _build(tmp_path / "wiki", Extra=CLEAN)
-    monkeypatch.setattr(cw, "ALLOWED_TERMS_FILE", tmp_path / "missing.txt")
-    assert cw.main([str(root)]) == cw.EXIT_ERROR
-
-
 def test_constructed_a_line_stdout_cannot_encode_is_escaped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

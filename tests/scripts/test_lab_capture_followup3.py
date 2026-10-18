@@ -166,7 +166,9 @@ def test_constructed_combat_log_own_guid_from_the_command_line_allows_the_rewrit
 
     allowed = tmp_path / "allowed"
     assert capture(root, allowed, "--flavor", "_retail_", "--own-guid", "Player-5-0000BEEF") == 0
-    assert b',"Labchara",0x511\n' in outputs(allowed)[dest]
+    # The GUID is rewritten; the name beside it is public and kept (M13-49).
+    log = outputs(allowed)[dest]
+    assert b',"Thrallmar",0x511\n' in log and b"0000BEEF" not in log
 
 
 # ─── 2. SavedVariables nesting depth ─────────────────────────────────────────

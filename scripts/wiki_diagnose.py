@@ -50,7 +50,7 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
-from check_wiki import PERSONAL_SUFFIX, allowed_terms, normalise, personal_kinds  # noqa: E402
+from check_wiki import PERSONAL_SUFFIX, normalise, personal_kinds  # noqa: E402
 
 RESULT_LIMIT = 1_500
 TOOL_LIMIT = 300
@@ -85,7 +85,6 @@ class Redactor:
     """Shortens runner paths, drops control characters, withholds personal data."""
 
     paths: list[tuple[str, str]] = field(default_factory=list)
-    terms: frozenset[str] = field(default_factory=allowed_terms)
 
     def clean(self, text: str) -> str:
         # Lone surrogates (Cs) first: Claude Code cuts tool output by UTF-16
@@ -98,14 +97,14 @@ class Redactor:
         return "".join(ch for ch in text if ch == "\n" or unicodedata.category(ch) not in _DROPPED)
 
     def line(self, line: str) -> str:
-        if not personal_kinds(line, self.terms):
+        if not personal_kinds(line):
             return line
         words = []
         for word in line.split(" "):
-            kinds = personal_kinds(word, self.terms)
+            kinds = personal_kinds(word)
             words.append(f"[withheld: {_kinds(kinds)}]" if kinds else word)
         line = " ".join(words)
-        kinds = personal_kinds(line, self.terms)
+        kinds = personal_kinds(line)
         if kinds:
             return f"[line withheld: {_kinds(kinds)} {PERSONAL_SUFFIX}]"
         return line

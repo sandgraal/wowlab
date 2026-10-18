@@ -406,21 +406,6 @@ def test_constructed_loose_spelling_of_a_short_part_needs_a_whole_word() -> None
     assert identity.scrub(b'"qo\'rv"').problems
 
 
-def test_constructed_character_list_refuses_a_character_with_no_folder() -> None:
-    """Security S2."""
-    identity = Identity(
-        characters=["Alyra", "Moon"], realms=["Bloodfist", "Glade"], guids=[b"Player-1-0000ABCD"]
-    )
-    good = b"\xef\xbb\xbfAlyra-Bloodfist\r\n\r\nMoon-Glade\r\nPlayer-1-0000ABCD\r\n42\r\n"
-    assert not identity.scrub(good, character_list=True).problems
-    bad = identity.scrub(b"Alyra-Bloodfist\nZedalt-Faerlina\nzedalt\n", character_list=True)
-    label = "character list names a character this install has no folder for"
-    assert [p for p in bad.problems if p.startswith(f"{label} x2 (first at byte 19, line 2)")]
-    assert "Zedalt" not in " ".join(bad.problems)
-    # Any other file is not held to that rule.
-    assert not identity.scrub(b"Zedalt-Faerlina\n").problems
-
-
 def test_constructed_group_folders_get_a_path_only_numeric_pseudonym() -> None:
     """Security S3: `<flavor>/WTF/Account/<account>/<digits>` only; never a content token."""
     identity = Identity(characters=["Alyra"], realms=["Bloodfist"], groups=["70", "5"])

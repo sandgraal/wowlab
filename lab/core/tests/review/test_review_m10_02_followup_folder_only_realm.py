@@ -12,6 +12,10 @@ written out with exit 0, no refusal and no note.
 
 Constructed input with invented names, in the tool's own layout, built in
 `tmp_path`. No real install (ADR-0012).
+
+Amended 2026-10-17 (M13-49, ADR-0019 amendment): realm names are public and
+the capture no longer rewrites them, so every spelling of the realm is now
+expected to be written out as it is, with or without a twin.
 """
 
 from __future__ import annotations
@@ -72,13 +76,13 @@ def test_constructed_positive_control_a_twin_supplies_the_spaced_spelling(tmp_pa
     root = tmp_path / "World of Warcraft"
     _forever(root, twin=True)
     written = _written(root, tmp_path / "incoming")
-    assert any(name.endswith("DBM-Core.lua") for name in written)
-    assert not [name for name, data in written.items() if b"Storm" in data or "Storm" in name]
+    dbm = [data for name, data in written.items() if name.endswith("DBM-Core.lua")]
+    assert dbm == [b'\nDBM_Chars = {\n\t["Vex-StormRage"] = 1,\n\t["Vex - Storm Rage"] = 2,\n}\n']
 
 
-def test_constructed_spaced_spelling_of_a_folder_only_realm_never_leaves(tmp_path: Path) -> None:
+def test_constructed_spaced_spelling_of_a_folder_only_realm_is_kept(tmp_path: Path) -> None:
     root = tmp_path / "World of Warcraft"
     _forever(root, twin=False)
     written = _written(root, tmp_path / "incoming")
-    leaked = [name for name, data in written.items() if b"Storm Rage" in data]
-    assert not leaked, f"own realm's spaced spelling written out in {leaked}"
+    kept = [name for name, data in written.items() if b'"Vex - Storm Rage"' in data]
+    assert kept and all("/1/Vex-StormRage/" in name for name in kept), kept
