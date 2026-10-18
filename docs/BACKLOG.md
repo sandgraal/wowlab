@@ -699,7 +699,7 @@ No library change is expected. If making a test pass on Windows seems to need on
 
 # M13 follow-ups found in review (filed 2026-10-17)
 
-*Owner pick, 2026-10-18 (after the Wave 4 review, `docs/handoffs/M13-review.md`): finish these before Wave 5 (M14, the `wowlab ui` confirm flow), then the apply halves of keybind-coach and macro-doctor after M13-07. A continuation of M13, not a new wave (ADR-0024). M13-50 first. M13-48 and M13-52 wait for the owner's two decisions.*
+*Owner pick, 2026-10-18 (after the Wave 4 review, `docs/handoffs/M13-review.md`): finish these before Wave 5 (M14, the `wowlab ui` confirm flow), then the apply halves of keybind-coach and macro-doctor after M13-07. A continuation of M13, not a new wave (ADR-0024). M13-50 first. M13-48 (option (b)) and M13-52 (raw in the manifest, plain on display) were decided by the owner the same day.*
 
 ## [x] M13-37 — Install discovery uses the same link test as `tree`, `gaps` and `explain`
 **Size:** S · **Depends on:** M13-35
@@ -829,7 +829,7 @@ Found while merging #246. The release notes' `--json` paragraph names every mode
 ---
 
 ## [ ] M13-48 — `snap restore`: a mode-only change to an addon executable
-**Size:** XS · **Depends on:** M13-38, and M13-48T if the owner picks (a) · **owner** (picks (a) or (b) first; (a) changes `guard.py`, so it needs an M13-48T grader ticket before it, ADR-0013)
+**Size:** XS · **Depends on:** M13-38. *Owner decision 2026-10-18: option (b).* The behaviour stays (a mode-only change to an addon executable still refuses the whole restore, exit 3); the restore prints the gate's line plus the advice line M13-38 added for `--paths` (name the other files with `--paths`, or reinstall the addon). `guard.py` is untouched.
 
 Found in the code review of #249 (M13-38). `guard._unchanged_executable` treats the permission bits as part of "matches", so an addon executable whose bytes are unchanged but whose mode changed (a `chmod 644 → 755`) still refuses a whole restore with exit 3 and the gate's line alone; the advice line M13-38 added runs only for `--paths`. Rare (an addon update changes the bytes too) and it fails safe, but the `--help` promise reads as if any change were counted and skipped. Two M13-30 review probes pin the current behaviour (`test_m13_30_screenshots_restore_ignores_executable_mode.py`, lines 71–90), so the owner decides: either (a) a mode-only change is skipped and listed like a content change, in which case a `test-writer` inverts those two probes first, or (b) the behaviour stays and the restore prints the advice line for it. Pick one in the ticket before dispatch.
 
@@ -888,11 +888,11 @@ Found in the code review of #253 (M13-43), unverified on Windows. `firstrun._lin
 ---
 
 ## [ ] M13-52 — Snapshot manifests store raw `\\?\` link targets on Windows
-**Size:** S · **Depends on:** M13-15, M13-52T (to be filed once the owner decides) · **owner** (how a manifest spells a link target is a format decision)
+**Size:** S · **Depends on:** M13-15, M13-43. *Owner decision 2026-10-18: keep the raw text in the manifest, strip on display.* The manifest keeps what `os.readlink` returned (evidence of what the disk said; `guard.py` and `profiles.py` compare raw to raw, unchanged, so no M13-52T); every place a target is shown (`snap show`, `snap verify`, `snap list`'s details, the restore plan, `explain`'s snapshot facts, the explorer) prints it through `longpath.plain_text` as `tree` does since M13-43, Windows only, relative text kept as stored.
 
-Found in the code review of #253 (M13-43), unverified on Windows. `snapshot._dir_link_target` (and the file-link path at `snapshot.py` ~1119) records a link's target in the manifest as `str(longpath.readlink(path))`, which on Windows carries the `\\?\` prefix for an absolute target; `guard.py` (~2054) and `profiles.py` (~818) compare a link on disk against that stored text, so every `snap` output that shows a target inherits the prefix and a manifest written on Windows is not what §6.9 promises. Decide first (owner): store the plain spelling (then `guard`'s comparison must compare plain to plain, and a manifest written before the change still compares equal through `plain_text` on both sides) or keep raw and strip only on display. `guard.py` is load-bearing: a `[TEST]` ticket (M13-52T) lands graders for the comparison before the change; `snapshot.py`'s tests are the implementer's.
+Found in the code review of #253 (M13-43), unverified on Windows. `snapshot._dir_link_target` (and the file-link path at `snapshot.py` ~1119) records a link's target in the manifest as `str(longpath.readlink(path))`, which on Windows carries the `\\?\` prefix for an absolute target; `guard.py` (~2054) and `profiles.py` (~818) compare a link on disk against that stored text, so every `snap` output that shows a target inherits the prefix and a manifest written on Windows is not what §6.9 promises. Decided (above): raw in the manifest, plain on display. `snapshot.py` and `guard.py` are untouched; the change is in the printers (`cli.py`, `pathfacts.py` where it formats a target, the explorer's page data), with the implementer's own tests.
 
-**Acceptance:** per the decision; manifests written by `main` on macOS still verify byte for byte; `snap show` and `snap verify` print no `\\?\`; the Windows graders pass; `make ci` green; reviewed by `code-reviewer` and `security-reviewer`.
+**Acceptance:** manifests written by `main` verify byte for byte; a constructed Windows test shows `snap show`, `snap verify`, the restore plan and `explain`'s snapshot facts print a drive-letter target without `\\?\` and a relative target as stored; output off Windows byte-identical to `main`; `make ci` green; reviewed by `code-reviewer`.
 
 ---
 
