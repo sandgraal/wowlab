@@ -124,14 +124,14 @@ Only when `mergeStateStatus == CLEAN` (or `UNSTABLE` solely because a
 job that is not in `.github/rulesets/main.json`'s required list failed or
 is still pending: the `review` job of the `Claude review` workflow,
 `lab (windows)`, `lab (macos)`), every
-**required** check is SUCCESS. A failed non-required job never holds the
-merge, but it is never silent either: name it, with its run URL and the
-failing test ids from `gh run view <id> --log-failed`, on the report's
-`checks:` line, so the conductor can file it (`windows.yml`'s header: a
-red Windows run is a bug to fix next). Every
+**required** check is SUCCESS
 on the head sha, every thread the owner opened has an answer, every other
 thread has a reply, and the conductor's dispatch said
-the reviewer verdicts are clean. Then
+the reviewer verdicts are clean. A failed non-required job never holds
+the merge, but it is never silent either: name it, with its run URL and
+the failing test ids from `gh run view <id> --log-failed`, on the report's
+`checks:` line, so the conductor can file it (`windows.yml`'s header: a
+red Windows run is a bug to fix next). Then
 `gh pr merge <n> --squash --delete-branch` (never `--admin`). Confirm:
 `git fetch origin main && git log origin/main -1 --format=%H%n%s`. Do not
 edit `docs/BACKLOG.md`; the conductor batches ticks.
