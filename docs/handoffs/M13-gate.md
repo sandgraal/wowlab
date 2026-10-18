@@ -8,8 +8,9 @@ Owner decision at the end; the conductor only records the counts
 - Tag `v0.1.0` on `fd5aab4e5becce2c5f7fbc7f28d15576a9260a4f` (#246, M13-11),
   pushed by the owner on 2026-10-18 at 05:09 UTC (2026-10-17 evening, owner's
   local time). Release run: https://github.com/sandgraal/wowlab/actions/runs/39099567299.
-- Published at: _(fill in when the owner approves the `release` environment and
-  the run completes; the release page is https://github.com/sandgraal/wowlab/releases/tag/v0.1.0)_.
+- Published at 2026-10-18 13:49 UTC, after the owner approved the `release`
+  environment: https://github.com/sandgraal/wowlab/releases/tag/v0.1.0 (the
+  wheel, the sdist and `SHA256SUMS`). Downloads and stars at that moment: 0.
 - Gate day: **2026-11-17** (thirty days after the tag).
 
 ## What to record on the gate day

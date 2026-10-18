@@ -151,7 +151,7 @@ Contents: M13-02 to M13-04, M13-09, M13-10, M13-21 to M13-27 (the explorer and t
 
 ---
 
-## [ ] M13-12 — Wave 4 review
+## [x] M13-12 — Wave 4 review
 **Size:** S · **Depends on:** M13-11
 
 The conductor writes `docs/handoffs/M13-review.md` per `docs/LAB_PLAN.md` §11: what shipped, what strangers' reports taught (as data), what slipped to v0.2, and a recommended next wave. Wave 5 is already named (`wowlab ui`, ADR-0029, M14, aimed at v0.2). Its read-only first stage shipped in v0.1 (§15.6), so the review says what M14 still owes: the confirm flow for the commands that declare `--yes` and the embedded pages.
@@ -780,7 +780,7 @@ Nothing else in the library changes. If a test seems to need more than the one `
 
 ---
 
-## [ ] M13-44 — Long paths on Windows: the readers and writers M13-15 left on plain paths
+## [x] M13-44 — Long paths on Windows: the readers and writers M13-15 left on plain paths
 **Size:** M · **Depends on:** M13-44T
 
 Found in the review of #247 (M13-15). M13-15 covers the calls its graders show failing (`guard`, `snapshot`, `layout`, `install`). The code-reviewer listed the modules that still open a path by its plain spelling, so on Windows each fails past the 240-character limit the same way the graders did before: `profiles.py:318`, `luadata.py:2567` and `_read_sibling`, `pathfacts.py:138`, three spots in `cli.py` (*amended 2026-10-18:* the review of #254 found the quoted line numbers 1757/1975/4516 no longer point at filesystem calls; take the list from the #247 code review's report, and add `_sv_file`'s plain `os.path.lexists` at cli.py:3286–3291 and `_stream_dump`'s echo of FILE as given at 3323/3329, which the M13-44T graders show failing), `addoninstall.py` at 489 and 546, `gaps.py:367`, and `combatlog.find_logs`. Its `security-reviewer` checks that `_read_sibling`'s containment check (`os.path.realpath` against `WTF/Account`'s real path) still holds past `MAX_PATH`: extending only the `open` call would leave that check on a path Windows cannot resolve. Route each through `longpath.extended` the way M13-15 does, with no behaviour change off Windows and no `\\?\` reaching any output, report, manifest or journal (M13-15's acceptance). `luadata.py` is load-bearing: its graders come first in M13-44T, written by a different agent; the other modules' tests are the implementer's.
@@ -793,7 +793,7 @@ Found in the review of #247 (M13-15). M13-15 covers the calls its graders show f
 
 ---
 
-## [ ] M13-45 — Say why a `_*_` folder was not taken as a flavor, in text and `--json`
+## [x] M13-45 — Say why a `_*_` folder was not taken as a flavor, in text and `--json`
 **Size:** S · **Depends on:** M13-37
 
 Found in the domain review of M13-37. Discovery lists a `_*_` folder it did not take under `Install.other_dirs` as a bare name, so every surface that prints it has to guess at the reason, and for a linked flavor folder the guess is wrong: the client plays from a junctioned `_retail_` as from a real folder, and only wowlab declines to read through the link. Five places say it wrong today (on `main` for symlinks and junctions; since M13-37 for WCI links and WSL symlinks too):
@@ -835,7 +835,7 @@ Found in the code review of #249 (M13-38). `guard._unchanged_executable` treats 
 
 ---
 
-## [ ] M13-49 — The scrub and the wiki gate stop treating character and realm names as identifiers
+## [x] M13-49 — The scrub and the wiki gate stop treating character and realm names as identifiers
 **Size:** S · **Depends on:** nothing (ADR-0019 amendment of 2026-10-17, Accepted the same day)
 
 Owner decision of 2026-10-17 (ADR-0019 amendment; `docs/LAB_PLAN.md` §8): character names and realm names may appear as they are in the public repository. Narrow three tools to the identifiers that stay: the Battle.net account folder (`<digits>#<n>`), email addresses and BattleTags, the owner's real name, a home path carrying the owner's login, the owner's own `Player-<n>-<hex>` GUIDs, other players' GUIDs in combat logs together with the unit name beside each, and the identity CVars on the deny-list.
@@ -900,3 +900,30 @@ Found in the code review of #253 (M13-43), unverified on Windows. `snapshot._dir
 Found in the security review of #257 (M13-49), pre-existing. `scripts/lab_capture.py` blanks `accountName`, `accountList`, `realmName` and `lastCharacterGuid` in `Config.wtf`, but its harvest (`_HARVEST_RE`) reads only `lastCharacterGuid` (and, until M13-49 merges, `realmName`) into the identity map, so the value of `accountName` (on current clients usually an email address, caught by the email check; on older ones an account name) or an `accountList` entry that also appears in a SavedVariables value is written out unchanged with exit 0. Add the `accountName` value (and, once its separator is known, each `accountList` entry; the format reference does not give it, so capture it from a real `Config.wtf` first and mark it **[verify]**) to the identity map as account-type strings (rewritten in contents, refused glued into a longer word), as the account folder is today. Labelled constructed test: `SET accountName "SECRETACCT"` in `Config.wtf` and `"SECRETACCT"` in a SavedVariables value: blanked in one, rewritten in the other, provenance count up by one.
 
 **Acceptance:** the test passes; existing refusal tests unchanged; `make ci` green; reviewed by `security-reviewer`.
+
+---
+
+## [ ] M13-56 — `doctor` prints its `problems` in text, and the first run names a linked flavor beside a real one
+**Size:** XS · **Depends on:** M13-45
+
+Found in the domain review of #258 (M13-45), both pre-existing or outside that ticket's scope. (1) `doctor --json` carries `problems` (for example "<root> has no flavor folders"), but `_print_doctor` never prints them in text, so a run that skips the first run (`--redact`, or any run once a snapshot exists) exits 1 with no line saying why. Print each problem in text, and when the no-flavor problem is raised with `not_taken` entries, include their reasons in the string so text and `--json` agree. (2) The first run on an install with a real flavor beside a linked `_*_` folder says nothing about the link; M13-45 covers only the case where the link is the only flavor. Print the same "<name> is a link to <target>, not followed, so its WTF (settings and SavedVariables), Interface and Fonts are not snapshotted … Back up the folder it points to yourself" line under the flavor list in that case too. Labelled constructed tests for both; `doctor` text for an install with no problems and no links byte-identical to `main`.
+
+**Acceptance:** the tests pass; byte-identity on the install fixtures; `make ci` green; reviewed by `domain-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-57 — `explain` of a link at the install root is judged inside the only flavor
+**Size:** XS · **Depends on:** M13-45
+
+Found in the code review of #258 (M13-45), on `main` since M13-29. With one flavor installed, `explain Foo` for a relative path with no row at the install root is re-judged inside that flavor (cli.py around 2844–2856), so a link named `Foo` at the install root reports `link: false` and "wowlab does not know what this file is", while the absolute spelling reports the link. M13-45 fixes this for `_*_` names in `not_taken`; extend the same rule to any root entry that exists at the root (a link, a file or a folder that `lstat` finds there): judge it at the root, never inside a flavor. Labelled constructed test with a root link in both spellings; `explain` output for paths that do exist inside the flavor byte-identical to `main`.
+
+**Acceptance:** the test passes; byte-identity on the install fixtures; `make ci` green; reviewed by `code-reviewer`.
+
+---
+
+## [ ] M13-58 — `labaddon` reads `WowLab.lua` by its plain path; `tree PATH` echoes a `\\?\` argument
+**Size:** S · **Depends on:** M13-44
+
+Found in the code review of #260 (M13-44). (1) `labaddon.py` (around lines 1635 and 1686) still `os.lstat`s the lab-addon's `WowLab.lua` under `WTF/Account/…` by its plain path, so on Windows with long paths off, past the limit, every character's file shows as an error row ("cannot read") in `char list`, which reaches those lines through `labaddon.survey` (`_Reader.read`, `_grew_past`); `read_char` and `read_account` already go through `snapshot.read_regular_file`'s long-path spelling, so `char show`, `looks import-char` and the binds coach are not affected (by reading; not run on Windows). Route it through `longpath` as M13-44 did for the other readers, with a Windows test under the long-paths step and an every-platform "no `\\?\` in `char list`/`char show` output" test. (2) `tree PATH` with a `\\?\` argument on Windows hits `_tree_prefix`'s "is not inside" usage error and echoes the prefix; apply `cli._plain_arg` there as `explain` does. The reviewer also noted that M13-44T did not grade the `_read_sibling` containment check past `MAX_PATH`; the implementer's own junction test covers it, and the security review confirmed it. If the owner wants an independent grader for that check (`luadata.py` is load-bearing), file M13-58T for it; otherwise this ticket needs none.
+
+**Acceptance:** the tests pass on `lab (windows)`; `char list`/`char show` output byte-identical to `main` off Windows; `make ci` green; reviewed by `code-reviewer`.
