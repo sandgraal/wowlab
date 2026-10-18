@@ -54,6 +54,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from wowlab_core import longpath
 from wowlab_core.snapshot import _is_link_stat as _snapshot_link
 
 __all__ = [
@@ -425,7 +426,10 @@ def default_roots(
 
 
 def _as_path(value: Path | str) -> Path:
-    return Path(value).expanduser().absolute()
+    """Absolute, and plain where it was given in extended-length form
+    (`\\\\?\\C:\\...`): `Install.root` and every flavor path are plain
+    (M13-15), and every read below reaches a long path all the same."""
+    return longpath.plain(Path(value).expanduser().absolute())
 
 
 def is_link(path: Path, st: os.stat_result) -> bool:
@@ -442,7 +446,7 @@ def is_link(path: Path, st: os.stat_result) -> bool:
     if _snapshot_link(st):
         return True
     try:
-        return path.is_junction()
+        return longpath.is_junction(path)
     except OSError:
         return False
 
@@ -450,7 +454,7 @@ def is_link(path: Path, st: os.stat_result) -> bool:
 def _is_regular(path: Path) -> bool:
     """A regular file that is no link at the last component (`is_link`)."""
     try:
-        st = path.lstat()
+        st = longpath.lstat(path)
     except OSError:
         return False
     return stat.S_ISREG(st.st_mode) and not is_link(path, st)
@@ -463,7 +467,7 @@ def _flavor_folder_hint(root: Path) -> str:
     if _is_regular(root / FLAVOR_INFO):
         return f"; this looks like the flavor folder {root.name!r}; pass its parent {root.parent}"
     try:
-        parent_is_install = (root.parent / BUILD_INFO).is_file()
+        parent_is_install = longpath.is_file(root.parent / BUILD_INFO)
     except OSError:
         return ""
     return f"; its parent {root.parent} is an install; pass that" if parent_is_install else ""
@@ -472,13 +476,24 @@ def _flavor_folder_hint(root: Path) -> str:
 def _probe(root: Path, source: Source) -> None:
     """Raise `NotAnInstallError` unless `root/.build.info` is a regular file.
 
-    A refusal from the operating system is `unreadable`, never `missing`.
+    A refusal from the operating system is `unreadable`, never `missing`. So
+    is a root spelled `\\\\?\\...` that has no plain spelling (a volume GUID
+    path, a `..` component, a trailing dot): `Install.root` is always plain
+    (M13-15), and the write gate could not restore into such a root.
     """
+    if longpath.ON_WINDOWS and str(root).startswith("\\\\?\\"):
+        raise NotAnInstallError(
+            root,
+            source,
+            "unreadable",
+            "an extended-length path with no plain spelling; name the install as "
+            "C:\\... or \\\\server\\share\\...",
+        )
     try:
-        st = (root / BUILD_INFO).stat()
+        st = longpath.stat(root / BUILD_INFO)
     except (FileNotFoundError, NotADirectoryError):
         try:
-            root_exists = root.exists()
+            root_exists = longpath.exists(root)
         except OSError:
             root_exists = True
         if not root_exists:
@@ -517,7 +532,7 @@ def _resolve(
         # something there that is not a directory could not be checked: it is
         # passed over and reported as such, never as searched.
         try:
-            st = candidate.stat()
+            st = longpath.stat(candidate)
         except (FileNotFoundError, NotADirectoryError):
             searched.append(candidate)
             continue
@@ -563,7 +578,7 @@ def resolve_root(
 
 def _read_flavor_product(path: Path) -> tuple[str, bool]:
     try:
-        with path.open("rb") as handle:
+        with longpath.open_read(path) as handle:
             data = handle.read(_FLAVOR_INFO_READ_LIMIT)
     except OSError:
         return "", False
@@ -593,7 +608,7 @@ def _scan_children(root: Path) -> tuple[list[Path], list[str]]:
     A child is judged by its `lstat` alone (`is_link`): a link is named and
     never followed, whatever it points at, so nothing under it is read."""
     try:
-        children = list(root.iterdir())
+        children = longpath.iterdir(root)
     except OSError:
         return [], []
     flavors: list[Path] = []
@@ -603,7 +618,7 @@ def _scan_children(root: Path) -> tuple[list[Path], list[str]]:
         if len(name) < 2 or not (name.startswith("_") and name.endswith("_")):
             continue
         try:
-            st = child.lstat()
+            st = longpath.lstat(child)
         except (FileNotFoundError, NotADirectoryError):
             continue  # gone since the listing: not there, so not named
         except OSError:
@@ -641,7 +656,7 @@ def _read(root: Path, source: Source) -> Install:
     # Checked first: a FIFO or device named `.build.info` could block a read.
     _probe(root, source)
     try:
-        raw = (root / BUILD_INFO).read_bytes()
+        raw = longpath.read_bytes(root / BUILD_INFO)
     except OSError as exc:  # refused, or gone since the check
         reason: Reason = "missing" if isinstance(exc, FileNotFoundError) else "unreadable"
         raise NotAnInstallError(root, source, reason, exc.strerror or str(exc)) from exc

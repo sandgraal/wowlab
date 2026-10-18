@@ -69,6 +69,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from wowlab_core import longpath
+
 __all__ = [
     "BindLine",
     "Binding",
@@ -632,16 +634,17 @@ def parse_macros(data: bytes) -> MacrosDocument:
 
 
 # --------------------------------------------------------------------------
-# Path helpers: open read-only, never write (L1)
+# Path helpers: open read-only, never write (L1). A path past Windows' plain
+# limit is read by its extended-length spelling (`longpath`, M13-15).
 
 
 def read_config(path: Path) -> ConfigDocument:
-    return parse_config(path.read_bytes())
+    return parse_config(longpath.read_bytes(path))
 
 
 def read_bindings(path: Path) -> BindingsDocument:
-    return parse_bindings(path.read_bytes())
+    return parse_bindings(longpath.read_bytes(path))
 
 
 def read_macros(path: Path) -> MacrosDocument:
-    return parse_macros(path.read_bytes())
+    return parse_macros(longpath.read_bytes(path))
