@@ -717,7 +717,7 @@ Found in the domain and code reviews of #231 (M13-28). M13-28 gave addon executa
 
 ---
 
-## [ ] M13-39 — wiki-daily: `improve` still restores the uv cache
+## [x] M13-39 — wiki-daily: `improve` still restores the uv cache
 **Size:** S · **Depends on:** M13-19
 
 Found in the security review of #236 (M13-19). `improve` restores the uv cache before the model runs. A model past its permissions there could take `ACTIONS_RUNTIME_TOKEN` and write cache entries for `main`, which the four `enable-cache: true` jobs in `ci.yml` restore, so the required CI checks could be fed a poisoned cache. `release.yml` uses no cache. Give `improve` `enable-cache: false` (the dry run showed a fresh `uv sync` costs about a second), and add the setting to the static test that pins the `gates` and `publish` jobs' cache settings.
