@@ -852,7 +852,7 @@ Owner decision of 2026-10-17 (ADR-0019 amendment; `docs/LAB_PLAN.md` §8): chara
 ## [ ] M13-53 — `check_wiki` quotes a bare account number in its "page does not exist" line
 **Size:** XS · **Depends on:** M13-49
 
-Found while building M13-49, pre-existing. For a link such as `[x](123456789#1)`, `check_wiki` prints "link to a page that does not exist: 123456789", quoting the account number into the public job log; the line is still flagged personal (exit 3), but the quote leaks. Route the "does not exist" message through the same quoting the personal-data lines use (`PERSONAL_SUFFIX` / `quote()`), so a target that matches a personal-data matcher is never printed. Labelled constructed test: an account-folder link target yields exit 3 and a log with no digits of it.
+Found while building and reviewing M13-49 (#257), both pre-existing on `main`. (1) For a link such as `[x](123456789#1)`, `check_wiki` prints "link to a page that does not exist: 123456789", quoting the account number into the public job log; the line is still flagged personal (exit 3), but the quote leaks: in `_resolve`, withhold the target when `personal_kinds(dest)` finds anything, not only when the page part does, and the same in the anchor branch. (2) `_ACCOUNT_FOLDER`'s lookbehind `(?<![\w#])` misses an account folder right after `#`: `#123456789#1` and `Home#123456789#1` pass the gate and are printed by the anchor message (`link to an anchor that does not exist: FAQ#123456789#1`); `wiki_diagnose.Redactor` shares the matcher. Take `#` out of the lookbehind. Labelled constructed tests for the three link shapes and the bare `#…#1` line: exit 3 and a log with no digits of the number.
 
 **Acceptance:** the test passes; the ok/failure/personal exit codes unchanged; `make ci` green; reviewed by `security-reviewer`.
 
@@ -891,3 +891,12 @@ Found in the code review of #253 (M13-43), unverified on Windows. `firstrun._lin
 Found in the code review of #253 (M13-43), unverified on Windows. `snapshot._dir_link_target` (and the file-link path at `snapshot.py` ~1119) records a link's target in the manifest as `str(longpath.readlink(path))`, which on Windows carries the `\\?\` prefix for an absolute target; `guard.py` (~2054) and `profiles.py` (~818) compare a link on disk against that stored text, so every `snap` output that shows a target inherits the prefix and a manifest written on Windows is not what §6.9 promises. Decide first (owner): store the plain spelling (then `guard`'s comparison must compare plain to plain, and a manifest written before the change still compares equal through `plain_text` on both sides) or keep raw and strip only on display. `guard.py` is load-bearing: a `[TEST]` ticket (M13-52T) lands graders for the comparison before the change; `snapshot.py`'s tests are the implementer's.
 
 **Acceptance:** per the decision; manifests written by `main` on macOS still verify byte for byte; `snap show` and `snap verify` print no `\\?\`; the Windows graders pass; `make ci` green; reviewed by `code-reviewer` and `security-reviewer`.
+
+---
+
+## [ ] M13-55 — The capture tool hunts the values of blanked identity settings in other files
+**Size:** XS · **Depends on:** M13-49
+
+Found in the security review of #257 (M13-49), pre-existing. `scripts/lab_capture.py` blanks `accountName`, `accountList`, `realmName` and `lastCharacterGuid` in `Config.wtf`, but its harvest (`_HARVEST_RE`) reads only `lastCharacterGuid` into the identity map, so the value of `accountName` (on current clients usually an email address, caught by the email check; on older ones an account name) or an `accountList` entry that also appears in a SavedVariables value is written out unchanged with exit 0. Add the `accountName` value and each `accountList` entry to the identity map as account-type strings (rewritten in contents, refused glued into a longer word), as the account folder is today. Labelled constructed test: `SET accountName "SECRETACCT"` in `Config.wtf` and `"SECRETACCT"` in a SavedVariables value: blanked in one, rewritten in the other, provenance count up by one.
+
+**Acceptance:** the test passes; existing refusal tests unchanged; `make ci` green; reviewed by `security-reviewer`.
