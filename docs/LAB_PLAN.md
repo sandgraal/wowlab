@@ -3501,19 +3501,27 @@ model's help. This section specifies both halves. The owner's pick of
 2026-10-18 holds: the twelve M13 follow-ups merge before any M14 ticket is
 dispatched (`docs/BACKLOG.md`, M14-01).
 
-Nothing here changes ADR-0019, ADR-0021, ADR-0023, ADR-0026, ADR-0027 or
-ADR-0029, and L1 to L8 apply to every ticket. The read-only stage uploads
+Nothing here changes ADR-0019, ADR-0021, ADR-0023, ADR-0026 or ADR-0027,
+and L1 to L8 apply to every ticket. ADR-0029 gets one dated amendment: its
+2026-10-15 amendment named an embedded "character page", and §16.3 builds
+a native tab instead, drawn from `--json` as the explorer is (F-A); the
+amendment is written under ADR-0029 and waits for the owner's word on the
+plan PR. The read-only stage uploads
 nothing and writes nothing into an install. The modify and optimize stages
 are specified in §16.5 for the owner's next pick; they are not M14 tickets.
 
 ### 16.1 The confirm flow (ADR-0029)
 
 Built exactly as ADR-0029 decides. A command that declares `--yes` is run
-first without it, so that `guard` prints its plan (the files it will
-touch, the snapshot it will take); the UI shows that plan and a Confirm
-button; only after the click does the server run the command again with
-`--yes`; the result offers `wowlab undo`; a refusal (exit 3) is shown as
-the CLI prints it. The set of commands is derived from the Click tree, not
+first without it and with stdin closed, so that the CLI prints its plan
+(the files it will touch, the snapshot it will take), `_confirm` gets no
+answer, and the run ends with `Nothing was changed.` and exit 1. That
+ending is the plan marker: the server (Python, never the page) recognises
+it by the constant the CLI prints, and only then offers Confirm; every
+other outcome, a refusal (exit 3) included, is shown as the CLI printed it
+with no Confirm. After the click the server runs the command again with
+`--yes`; the result shows only the hint the CLI prints (`wowlab undo` for a
+`guard` transaction; `snap gc` prints none, and no undo is offered for it). The set of commands is derived from the Click tree, not
 from a count (on 2026-10-18: `snap restore`, `undo`, `profile apply`,
 `addon install`, `addon remove`, `sv merge`, `snap gc` and `doctor`). It
 ships in two steps so that the mechanism is proven on the two commands
@@ -3530,8 +3538,9 @@ whose worst case is wowlab's own store before it reaches an install:
   `sv merge`, `addon install` and `addon remove` behind the same mechanism,
   with the plan shown as `guard` prints it and the undo offer after. Every
   one of these reaches `guard`, so `security-reviewer` reviews the ticket.
-  The exclusion list is then empty except for `ui` itself and `log tail
-  --follow`.
+  The exclusion list then holds `ui` itself alone; the two refused
+  parameters, `log tail --follow` and `looks page --out` (owner rulings of
+  2026-10-15), stay refused.
 
 The server itself still writes nothing (L2). The UI never adds `--yes` to a
 command the player did not confirm, and never runs a confirmed argv other
@@ -3545,9 +3554,9 @@ character view shows is a field in one of three new models, computed and
 tested in Python, each with a text form too. The lab-addon's record is the
 source for gear, action bars and spellbook (§13.1, schema 3); the WTF text
 files are the source for the bindings and macros on disk (§6.5); the view
-is their join. Each command takes `--character` and `--account` as `char
-show` does, and `--root`; without `--character` it picks the latest-written
-`WowLab.lua`, as `char show` does, and says so.
+is their join. Each command takes `--character`, `--account`, `--root` and
+`--flavor` exactly as `char show` does; without `--character` it picks the
+latest-written `WowLab.lua`, as `char show` does, and says so.
 
 - **`wowlab char gear` (M14-05).** The equipped gear of one character,
   slot by slot, from `gear` in the addon record. A new parser,
@@ -3591,12 +3600,14 @@ show` does, and `--root`; without `--character` it picks the latest-written
   client did not report, or the reverse) the row says so rather than
   choosing; §15.2 names that cross-check. Also: the filled slots no key
   reaches (the "clicked" ones the coach reports as cast-without-bind), and
-  the commands the addon left out (`commands_left_out`). A character
+  how many commands and keys the addon left out (`commands_left_out` and
+  `keys_left_out` are counts, not lists). A character
   without a schema-3 record gets the file rows alone with "cannot place:
   no action-bar record", the two lab-addon rules of `macros check` being
   the precedent. Model `CharBindsReport{character, files, record_file,
   keys: [{key, command, slot, page_note, holds: {type, id, name, subtext}
-  | null, sources}], unreached_slots, left_out, notes}`.
+  | null, sources}], unreached_slots, commands_left_out, keys_left_out,
+  notes}`.
 - **`wowlab char macros` (M14-07).** The macros of one character: every
   record of the account and character `macros-cache.txt` (`macros list`'s
   `MacroItem`, body kept line by line), each with the action slots that
@@ -3604,11 +3615,14 @@ show` does, and `--root`; without `--character` it picks the latest-written
   `macros check` findings for it (`MacrosCheckReport`'s rules, unchanged,
   joined by macro). Which action-slot macro id names which file record is
   **[verify]** (§15.2: the macro index when the slot has no subtype,
-  otherwise the spell or item id the macro shows now); until a capture
-  settles it the placement says "cannot place" with the reason, and the
-  ticket writes the owner's capture step for it into `docs/handoffs/`.
-  Model `CharMacrosReport{character, files, macros: [{scope, id, name,
-  icon, body_lines, complete, slots, keys, findings}], notes}`.
+  otherwise the spell or item id the macro shows now). Placement therefore
+  has three states: `unconfirmed`, the slots the candidate rule would give,
+  shown as "may sit at slot n (unconfirmed)"; `none`, no candidate slot;
+  and `confirmed`, used only once a dated amendment in `docs/LAB_FORMATS.md`
+  records the rule a capture confirmed. The ticket writes the owner's
+  capture step into `docs/handoffs/`. Model `CharMacrosReport{character,
+  files, macros: [{scope, id, name, icon, body_lines, complete, placement:
+  {status, slots, keys, reason}, findings}], notes}`.
 
 All three are read commands: no `--yes`, nothing written anywhere (L1), so
 the UI's generic forms (M13-26) reach them the day they merge, and the
@@ -3641,19 +3655,39 @@ bodies and item names are player text and are never interpreted as markup.
   as lines, where it sits and which keys reach it, and its findings as the
   checker words them, with a "findings only" filter. Both panels say which
   files and which record they came from, with the file's time.
-- **M14-04, the embedded page.** `looks page` rendered inside the UI (an
-  `iframe` with `sandbox` and the page's own CSP, served from the data
-  directory's `pages/`), as ADR-0029 names. The talents page is not built
-  in M14: §14.3 is deferred (§14.8) and there is no `talents` command to
-  embed; it returns with char-planner.
+- **M14-04, the embedded page.** `looks page` shown inside the UI, as
+  ADR-0029 names. Three facts of the server constrain the route: every
+  response carries `frame-ancestors 'none'` (owner ruling 2026-10-15), the
+  token is required on every request and lives only in the opened URL, and
+  the UI's CSP allows its own inline script and style by hash and nothing
+  else. So the page is not served as a framable document. The default
+  route: the page reads the file through the token-checked API (the server
+  builds the path under the data directory's `pages/` itself, never from a
+  request parameter) and puts the text into an `iframe` with
+  `sandbox="allow-scripts"` and `srcdoc`; a `srcdoc` document inherits the
+  UI's CSP, so the UI's `script-src` and `style-src` gain the hashes of the
+  looks page's static script and style (`lookspage._SCRIPT`, `_STYLE`,
+  already hashed by `lookspage` for its own CSP; the data block is
+  `type="application/json"` and runs nothing). No header is loosened and no
+  ruling changes; a test asserts the hashes match the templates. If the
+  security review finds the route unsound, the fallback is the file's path
+  with a copy button, which is what the CLI gives today, and the owner is
+  asked for a ruling. The talents page is not built in M14: §14.3 is
+  deferred (§14.8) and there is no `talents` command to embed; it returns
+  with char-planner.
 
 ### 16.4 What is known, and what is [verify]
 
-- **Item links.** `docs/LAB_FORMATS.md` §4.2: the fixtures carry nine
-  links per character with the named colour form and no crafter; the field
-  positions after the item id are **[verify]** against community
+- **Item links.** `docs/LAB_FORMATS.md` §4.2 and its amendments: the
+  committed `WowLab.lua` files carry 38 links in all (nine per character
+  in the 70009 pair, eleven in the 70425 capture), every one in the named
+  colour form `|cnIQn:` and none with a crafter; the `|cffRRGGBB` form is
+  unobserved and is covered by a labelled constructed boundary test only.
+  The field positions after the item id are **[verify]** against community
   documentation, and the parser keeps every field raw. The specialization
-  field matched `spec.id` in the 70425 capture (§13.1 follow-up table).
+  field matched `spec.id` in the 70009 captures (`docs/LAB_FORMATS.md`,
+  M11-23 follow-up table, "Spec found by testing for the API") and again in
+  the 70425 capture (`:15:1490:`).
 - **Slot names and quality words** are game knowledge the client does not
   write into the record. They ship as a data file with **[verify]** marks,
   overridable from the user config directory as `binds_coach_costs.toml`
@@ -3694,8 +3728,9 @@ lossless (L4: only the lines that change are rewritten, every other byte
 kept), each applied by a `guard` transaction with `--yes`, a snapshot
 first and `wowlab undo` after (L2, ADR-0021). These are the writers
 `docs/LAB_IDEAS.md` says **keybind-coach**, **macro-doctor** and
-**wow-as-code** share. The commands are `wowlab binds apply` and `wowlab
-macros fix` (M13-07), each taking a *proposal file* (F3), each printing
+**wow-as-code** share. The commands are `wowlab binds coach --apply` (the
+name the Wave 4 review used) and `wowlab macros fix` (M13-07), each taking
+a *proposal file* (F3), each printing
 its plan without `--yes`, and each reaching the UI through the confirm
 flow of §16.1 with nothing UI-specific added. If the server replaces the
 file, no writer is built: the same commands print the corrected text for
@@ -3728,8 +3763,8 @@ ADR-0032 proposes two stages and the owner picks the second or leaves it:
   findings, the cost table in use, and the proposal grammar of F3 with
   three worked examples. The player gives it to whichever assistant they
   use, in a browser, by hand, and brings a proposal file back; `binds
-  apply` and `macros fix` validate it (F3) and plan it. The Lab makes no
-  network request and holds no key. The UI shows the packet with a copy
+  coach --apply` and `macros fix` validate it (F3) and plan it. The Lab
+  makes no network request and holds no key. The UI shows the packet with a copy
   button and a drop target for the proposal, and the confirm flow does the
   rest. This stage needs no change to any accepted ADR.
 - *Stage two, opt-in, if the owner accepts it:* a `wowlab char advise
@@ -3742,8 +3777,11 @@ ADR-0032 proposes two stages and the owner picks the second or leaves it:
   run by a test or a workflow (ADR-0012's live-service rule). The reply is
   parsed as a proposal (F3) and validated like any other; a reply that is
   not a valid proposal is shown as text and nothing is planned. The README
-  sentence changes to name this one exception and its switch. This stage
-  is the amendment to ADR-0019 that ADR-0032 proposes.
+  sentence changes to name this one exception and its switch, and so does
+  "the only network traffic is fetching public game tables" (ADR-0019,
+  ADR-0022, ADR-0031 and `.claude/rules/lab.md`), which gains the same
+  exception. This stage is the amendment to ADR-0019 that ADR-0032
+  proposes.
 
 Why staged this way: F3 is the part that has to be right under L2 and L4
 whichever stage the owner picks, and stage one exercises it in full with
@@ -3762,9 +3800,12 @@ you want one changed.
 
 - **F-A. Where the character lives.** Default: a Character tab in `wowlab
   ui`, drawn from `--json` models (§16.3), the explorer's pattern.
-  Alternative: a static page like `looks page` (ADR-0027), embedded. The
-  tab is chosen because the later editing stage (F5) needs the server, and
-  because a page would duplicate the explorer's JSON rendering.
+  Alternative: a static page like `looks page` (ADR-0027), embedded, which
+  is what ADR-0029's 2026-10-15 amendment named. The tab is chosen because
+  the later editing stage (F5) needs the server, and because a page would
+  duplicate the explorer's JSON rendering. The default is a dated
+  amendment under ADR-0029 and takes effect with the owner's word on the
+  plan PR.
 - **F-B. New commands or a wider `char show`.** Default: three new leaf
   commands (§16.2), each small and each with its own model. Alternative:
   new sections on `CharShowReport`. New commands are chosen so that the
@@ -3801,14 +3842,19 @@ you want one changed.
 | M14-10 | Wave 5 review | conductor | S |
 
 ```
-M14-01 ─┬─ M14-02 confirm (store) ── M14-03 confirm (installs) ─┐
-        ├─ M14-04 looks page embed ─────────────────────────────┤
-        ├─ M14-05 char gear ─────────── M14-08 tab: gear ───────┤
-        └─ M14-06 keymap, char binds ─┬─ M14-07 char macros ─┐  │
-                                      └──────────────────────┴─ M14-09 tab: keys, macros ─┴─ M14-10 review
+M14-01 ─┬─ M14-02 confirm (store) ─┬─ M14-03 confirm (installs) ──────────────────────┐
+        │                          ├─ M14-04 looks page embed ────────────────────────┤
+        │                          └──────────────┐                                    │
+        ├─ M14-05 char gear ──────────────────────┴─ M14-08 tab: gear ─┐               │
+        └─ M14-06 keymap, char binds ─┬─ M14-07 char macros ─┐         │               │
+                                      └──────────────────────┴─────────┴─ M14-09 tab: keys, macros ─┴─ M14-10 review
 ```
 
-M14-02, M14-04, M14-05 and M14-06 are independent and dispatch together.
+M14-02, M14-05 and M14-06 are independent and dispatch together. Every
+ticket that touches `ui/__init__.py` or the templates (M14-02, M14-03,
+M14-04, M14-08, M14-09) edits the same three files, which is the named
+collision AGENTS.md allows as a reason to hold one back: the conductor runs
+them one at a time, in that order, while the CLI tickets run beside them.
 `wowlab_core.ui` is no longer in the graders-first set (AGENTS.md, owner
 decision 2026-10-17), so no M14 ticket has a `T` twin; `security-reviewer`
 reviews every ticket that touches the server or its templates, and
