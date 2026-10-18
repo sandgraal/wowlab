@@ -25,7 +25,7 @@ M1 with the WoW client running:
 
 This probe times, in a fresh interpreter, a parse of an over-full document
 up to the point where the budget refuses it. That is the parse of one
-budget's worth of the shape. It takes the better of two runs. Positive
+budget's worth of the shape. It takes the least of up to five runs (M13-31, below). Positive
 control: the table's `0,` shape, measured the same way, is well under 10 s.
 
 What is measured, and why (M11-16T, 2026-09-28). The figures above are wall

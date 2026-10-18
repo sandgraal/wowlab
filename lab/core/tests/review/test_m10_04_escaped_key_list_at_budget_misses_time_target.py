@@ -28,7 +28,7 @@ rewrite) 7.66 s.
 
 This probe times, in a fresh interpreter, a parse of an over-full document
 up to the point where the budget refuses it (one budget's worth of the
-shape), and takes the better of two runs. The positive control is the
+shape), and takes the least of up to five runs (M13-31, below). The positive control is the
 table's `0,` shape, measured the same way, well under 10 s.
 
 What is measured, and why (M11-16T, 2026-09-28). The figures above are wall
