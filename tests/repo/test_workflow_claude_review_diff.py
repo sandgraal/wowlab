@@ -108,18 +108,33 @@ def test_the_diff_step_has_no_token_and_no_network() -> None:
 
 
 def test_every_git_diff_runs_without_external_programs() -> None:
-    # Every git invocation: at the start of a line, after `!`, or in `$(...)`.
     run = _diff_step()["run"]
-    lines = [line for line in run.splitlines() if re.search(r"(^\s*|!\s+|\$\()git\s", line)]
-    assert len(lines) == 5
-    diffs = [line for line in lines if re.search(r"\bdiff\b", line)]
-    assert len(diffs) == 2
-    for line in diffs:
-        assert "--no-ext-diff" in line
-        assert "--no-textconv" in line
-        assert "'HEAD^1' HEAD" in line
-    # The only other git commands read the merge commit's parents.
-    assert all("git rev-parse" in line for line in lines if line not in diffs)
+    # Every `git` anywhere in the script (inside `$(...)`, after `&&`, in a
+    # quoted string), with its global options, up to its subcommand.
+    # Whitespace within one line only: a call never continues on the next.
+    calls = list(
+        re.finditer(r"\bgit\b((?:[ \t]+(?:-c[ \t]+\S+|--?\S+))*)(?:[ \t]+([a-z-]+))?", run)
+    )
+    assert calls
+    diffs = 0
+    for call in calls:
+        options, command = call.group(1), call.group(2)
+        line = run[call.start() : run.find("\n", call.start())]
+        if command == "diff":
+            diffs += 1
+            # Attributes from the base, never the PR's .gitattributes, and no
+            # external diff or textconv program.
+            assert "--attr-source='HEAD^1'" in options, line
+            assert "--no-ext-diff" in line, line
+            assert "--no-textconv" in line, line
+            assert "'HEAD^1' HEAD" in line, line
+        else:
+            # The rest only print git's version or read the merge's parents.
+            assert command == "rev-parse" or (command is None and options.strip() == "--version"), (
+                line
+            )
+    # The stat and the unified diff.
+    assert diffs == 2
 
 
 def test_the_diff_file_is_outside_git_and_every_restored_path() -> None:
@@ -136,6 +151,8 @@ def test_the_prompt_names_the_diff_file_and_the_restored_paths() -> None:
     prompt = _prompt()
     assert DIFF_FILE in prompt
     assert "[truncated" in prompt
+    # The `+` line numbers are the merge result's, not the PR head's.
+    assert "line numbers on `+` lines are the merge result's" in prompt
     # It no longer sends the model to a command that cannot run, nor claims
     # every file on disk is the PR's.
     assert "gh pr diff" not in prompt

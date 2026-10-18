@@ -404,8 +404,13 @@ def test_the_review_cannot_edit_commit_or_push() -> None:
 
 def test_the_review_cannot_read_comments_around_the_actor_filter() -> None:
     # F2: `gh pr view --comments` would print every comment, around
-    # include_comments_by_actor. The diff stays; CI results come from the
-    # action's get_ci_status and get_workflow_run_details tools.
+    # include_comments_by_actor. Since M13-59 the review runs no shell
+    # command at all: its diff is .pr-review/pr.diff, written before the
+    # action (test_workflow_claude_review_diff.py), and CI results come from
+    # the action's get_ci_status and get_workflow_run_details tools. The
+    # scrub and bubblewrap stay (test_the_env_scrub_is_on_with_bubblewrap_
+    # before_every_claude_step), so a command added back cannot read the
+    # token.
     with_ = _action_step("claude-review.yml")["with"]
     args = with_["claude_args"]
     assert "gh pr view" not in args

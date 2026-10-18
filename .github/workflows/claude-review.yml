@@ -28,11 +28,14 @@ jobs:
       # Pinned so reviews are reproducible across Claude Code releases.
       REVIEW_MODEL: claude-opus-5-5
       # Claude Code strips credentials, CLAUDE_CODE_OAUTH_TOKEN among them,
-      # from the environment of every command it runs (here `gh pr diff`),
-      # and runs Bash in its own PID namespace so /proc shows no other
-      # process. Without it, `gh ... --jq '$ENV.CLAUDE_CODE_OAUTH_TOKEN'`
-      # reads the token (security review of PR #174, 2026-10-14). GitHub
-      # tokens stay, so `gh` keeps working.
+      # from the environment of every command it runs, and runs Bash in its
+      # own PID namespace so /proc shows no other process. Without it,
+      # `gh ... --jq '$ENV.CLAUDE_CODE_OAUTH_TOKEN'` reads the token
+      # (security review of PR #174, 2026-10-14). Since M13-59 the review
+      # runs no shell command at all (its diff is a file written before the
+      # action); the scrub and the bubblewrap step stay, so a command added
+      # back later still cannot read the token. GitHub tokens are not
+      # scrubbed.
       CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
     steps:
       # A presence check only (owner decision 2026-10-14). A subscription
@@ -71,14 +74,19 @@ jobs:
       # .git/ and outside every restored path, capped at 400 KiB with a
       # closing "[truncated" line. No token is in this step's environment
       # or in .git/config (persist-credentials is false). git runs with no
-      # external diff and no textconv, so nothing in the PR's tree
-      # (.gitattributes) picks a program to run; the PR's tree supplies no
-      # git config. The directory is removed and recreated first, so a link
+      # external diff and no textconv, so no program named by a diff driver
+      # runs, and the PR's tree supplies no git config. Attributes come from
+      # the base commit (`--attr-source`, git 2.40 or later; an older git
+      # fails the step), not from the merge ref's working tree, which is the
+      # PR's: a PR adding `* -diff` to .gitattributes would otherwise turn
+      # every hunk into "Binary files ... differ" (review of M13-59). The
+      # directory is removed and recreated first, so a link
       # the PR placed at that path is never written through.
       - name: Write the pull request diff for the review
         if: steps.secret.outputs.present == 'true'
         run: |
           set -euo pipefail
+          git --version
           out=.pr-review
           cap=409600
           full="$RUNNER_TEMP/pr-review-full.diff"
@@ -92,11 +100,11 @@ jobs:
           mkdir -- "$out"
           {
             echo "# The pull request's diff: the merge of its head $head into the base $base."
-            echo "# Written by the workflow before the review started: git diff --stat --summary, then the unified diff."
+            echo "# Written by the workflow before the review started: the stat and summary, then the unified diff."
             echo
-            git -c core.quotePath=false diff --no-ext-diff --no-textconv --no-color --stat=200 --summary 'HEAD^1' HEAD
+            git --attr-source='HEAD^1' -c core.quotePath=false diff --no-ext-diff --no-textconv --no-color --stat=200 --summary 'HEAD^1' HEAD
             echo
-            git -c core.quotePath=false diff --no-ext-diff --no-textconv --no-color 'HEAD^1' HEAD
+            git --attr-source='HEAD^1' -c core.quotePath=false diff --no-ext-diff --no-textconv --no-color 'HEAD^1' HEAD
           } > "$full"
           size=$(wc -c < "$full" | tr -d ' ')
           if [ "$size" -gt "$cap" ]; then
@@ -198,8 +206,11 @@ jobs:
             base. It is capped at 400 KiB; a last line starting
             "[truncated" says so when it was cut. Read it first (with an
             offset and limit when it is long), then open only the files you
-            need. You have no shell: `git` and `gh` cannot run here and the
-            sandbox has no network, so do not try them.
+            need. Its line numbers on `+` lines are the merge result's: when
+            `main` changed the same file after the PR branched, they can
+            differ from the PR branch's file on disk. You have no shell:
+            `git` and `gh` cannot run here and the sandbox has no network,
+            so do not try them.
 
             The rest of the working tree is the PR branch, except these
             paths, which the action replaced with the base branch's copy
