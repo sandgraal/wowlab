@@ -115,7 +115,7 @@ The test comes first, run by the owner from a runbook the conductor writes (`doc
 
 ---
 
-## [ ] M13-08 — `wowlab binds coach`
+## [x] M13-08 — `wowlab binds coach`
 **Size:** M · **Depends on:** M13-05, M12-15
 
 Read-only. Adds `combatlog.cast_counts`: the player's own `SPELL_CAST_SUCCESS` events, picked by the source-flags bits (affiliation "mine", type "player"), never by a GUID or a name (§15.2). The format V22 layout of cast events on Forever, and that the flags pick the player, are **[verify]** against one real log before the rules are written; the finding is a dated amendment in `docs/LAB_FORMATS.md`. The command finds the latest log (`combatlog.newest_log`) and says that `/combatlog` must be on. Reports: frequently cast spells on high-cost keys; spells cast with no bind (clicked, or cast from a macro); binds to spells never cast. Key to spell goes through the action bars and bindings of M13-05. "High-cost key" is an opinion: the cost table is an editable data file shipped with defaults, which a player can override from the user config directory, and the output says the table is a default. `--json` model `BindsCoachReport`; writes nothing.
@@ -142,7 +142,7 @@ The README's first screen: what wowlab is in three sentences; the trust model of
 
 ---
 
-## [ ] M13-11 — First public release, v0.1
+## [x] M13-11 — First public release, v0.1
 **Size:** S · **Depends on:** M13-03, M13-04, M13-09, M13-10, M13-14, M13-21, M13-22, M13-23, M13-24, M13-25, M13-26, M13-27 · **owner** (pushes the tag)
 
 Contents: M13-02 to M13-04, M13-09, M13-10, M13-21 to M13-27 (the explorer and the first `wowlab ui`; *amended 2026-10-15*, owner decision 2026-10-14), and M13-06 if M13-05 has landed. Not held for M13-08. *Amended 2026-10-16:* when the owner tags v0.1.0, the conductor's release PR also (a) removes the README's note under the install line that the release is not published yet (M13-10), (b) updates `docs/INSTALL.md`, which still says "No release has been published yet", and (c) sets the version back to `0.1.0` in `lab/core/pyproject.toml` and `uv.lock` (`docs/handoffs/M13-03.md`, merged with #216). *Amended 2026-10-16 (owner):* not held for M13-02's human Windows run either. v0.1 ships with Windows marked "untested" in the README and the release notes, by ADR-0031's platform rule. The Windows CI job (`windows.yml`) still runs, but no person has tried a real Windows install yet. The conductor drafts the release notes (what is in it, the trust model, platform status, the `--json` models); the owner pushes the tag.
@@ -359,7 +359,7 @@ Cover these:
 
 ---
 
-## [ ] M13-27 — The explorer view, second stage: whole install, gaps, snapshot facts, previews
+## [x] M13-27 — The explorer view, second stage: whole install, gaps, snapshot facts, previews
 **Size:** M · **Depends on:** M13-22, M13-23, M13-25, M13-27T, M13-32, M13-33
 
 This builds on M13-25's view, per §15.6.
@@ -422,16 +422,16 @@ Found in the M13-03 review. `lab/core/pyproject.toml` packaged only `src/wowlab_
 
 ---
 
-## [ ] M13-15T — Long paths on Windows: graders
+## [x] M13-15T — Long paths on Windows: graders
 **Size:** S · **Depends on:** M13-02 · **[TEST]** (test-writer only)
 
 Found by M13-02. With `LongPathsEnabled=0`, the default on many player PCs, Windows refuses plain paths longer than 260 characters, so `guard` and `snapshot` cannot reach a file deep in an install. Write `xfail(strict=True)` graders that run on `windows-latest`: a snapshot, a restore and a `guard` write of a file whose path exceeds 260 characters, with the setting off (the CI job can turn it off in a step). Readers open plain paths too (`install` discovery, `doctor`, the format parsers), so cover a read of such a file as well. M13-02's experiment failed while building the deep tree, before any Lab code ran, so which modules fail is not yet shown. `guard.py` is load-bearing, so the graders land first.
 
 *Amended 2026-10-17, from the #234 reviews:* the graders also cover the root's spelling, because a fix that adds `\\?\` only to drive-letter paths would pass the deep-tree graders while an install on a UNC path still got a silent partial snapshot: a UNC root (`\\server\share`, handed to the Lab as `\\localhost\<drive>$\…` on the runner; fail, not skip, when the share does not open while long paths are off), a root already given in `\\?\` form (a pin against a double prefix), a relative root, the 259-character at-limit cases (the gate's temp file beside the target is what goes past the limit), and one grader that no write the gate cannot reverse is ever made through an extended-length flavor (either consistent outcome passes: refuse on enter with nothing journaled, or write with plain local roots in the journal and manifest so `undo()` and restore work). Every layout a grader uses is also built by an unmarked control, because pytest's xfail swallows setup errors. #234 carries all of these.
 
-**Acceptance:** the graders fail on `main` for the stated reason on the `lab (windows)` job, run on the branch with `gh workflow run windows.yml --ref <branch>` (it is off the PR path since 2026-10-15); the layouts and root spellings above are graded; reviewed by `code-reviewer` and `security-reviewer`.
+**Acceptance:** the graders fail on `main` for the stated reason on the `lab (windows)` job, run on the branch with `gh workflow run windows.yml --ref <branch>` (off the PR path from 2026-10-15; since 2026-10-17 it also runs on a PR that touches `lab/**`); the layouts and root spellings above are graded; reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M13-15 — Long paths on Windows: `\\?\` where the graders need it
+## [x] M13-15 — Long paths on Windows: `\\?\` where the graders need it
 **Size:** M · **Depends on:** M13-15T
 
 Make the M13-15T graders pass by using extended-length (`\\?\`) paths for the filesystem calls the graders show failing (expected: `guard`, `snapshot` and the readers) on Windows, without changing behaviour on other platforms. Activate the graders by deleting their markers only.
@@ -495,7 +495,7 @@ Add `pytest-xdist` to the root `dev` group, as a dev tool rather than a runtime 
 
 ---
 
-## [ ] M13-19 — wiki-daily: post-model gates in their own job
+## [x] M13-19 — wiki-daily: post-model gates in their own job
 **Size:** M · **Depends on:** M13-16
 
 From the M13-16 reviews (security-reviewer, and the PR review of #191). Within one job, the gates after the model cannot fully protect themselves from a model that bypasses its permissions.
@@ -520,7 +520,7 @@ Move `check_wiki`, gitleaks and the report out of `improve` into a job on a fres
 
 ---
 
-## [ ] M13-20T — child-process memory probes measure pytest on Linux
+## [x] M13-20T — child-process memory probes measure pytest on Linux
 **Size:** S · **Depends on:** — · **[TEST]** (test-writer only)
 
 Found by M13-17T and confirmed in its code review. On Linux, `ru_maxrss` carries over across `execve`, so a child that reads its own `RUSAGE_SELF` peak starts at the high-water mark of the pytest process that launched it. M13-17T's probe read a flat 948 MiB until it switched to `VmHWM` from `/proc/self/status`. Two more probes have the same fault, so on Linux they see no growth and pass without testing anything; they are honest only on macOS:
@@ -534,7 +534,7 @@ Apply M13-17T's fix to every child that measures memory: read `VmHWM` on Linux a
 
 ---
 
-## [ ] M13-28 — File map: executables inside an addon folder are "no"
+## [x] M13-28 — File map: executables inside an addon folder are "no"
 **Size:** S · **Depends on:** M13-21
 
 Found in the domain review of #195 (M13-21). A file such as `Interface/AddOns/Foo/bin/helper.exe` or `run.bat` matches the `addon` row, so `explain` calls it editable "through wowlab's write gate". The gate never writes an executable (L7, `guard`'s allowlist). Add a file-map row before `addon`, with Edit `no`, for executables and scripts under `Interface/AddOns/`. The row must classify exactly the paths `guard._is_executable` refuses. That predicate checks every path component (for example `Helper.app/Contents/MacOS/x` and `lib.bundle/y`), versioned shared libraries (`libfoo.so.1`) and its full suffix list (`.js`, `.sh`, `.ps1`, `.command`, `.app`, `.framework` and more). A test runs both over a broad table of paths and compares them. Regenerate `docs/LAB_FILE_MAP.md`.
@@ -547,7 +547,7 @@ Found in the domain review of #195 (M13-21). A file such as `Interface/AddOns/Fo
 
 ---
 
-## [ ] M13-29 — `classify`: a path that does not exist is not a folder
+## [x] M13-29 — `classify`: a path that does not exist is not a folder
 **Size:** S · **Depends on:** M13-21
 
 Found in the domain review of #195. `classify` on a path that does not exist, with no `is_dir` given, matches the folder-only `realm-folder` row, so `explain` reports a folder. A missing path should be classified from its shape only where a row says so. Otherwise it should be reported as not found, with a verdict of `unclassified` and plain words.
@@ -560,7 +560,7 @@ Found in the domain review of #195. `classify` on a path that does not exist, wi
 
 ---
 
-## [ ] M13-30 — `snap restore`: a snapshot taken with `--screenshots` restores whole
+## [x] M13-30 — `snap restore`: a snapshot taken with `--screenshots` restores whole
 **Size:** S · **Depends on:** M13-01
 
 Found in the domain review of #195 (M13-21), on 2026-10-15. `snap create --screenshots` also captures `Screenshots/`, but the write gate refuses `Screenshots/…`, so a whole `snap restore` of such a snapshot is refused (exit 3) and puts nothing back. A whole restore should skip the screenshot files, the way it skips Edit `no` rows: say how many it skipped and why, and restore everything else. `--paths` naming a screenshot is still refused, with the gate's reason. The skipped screenshots are reported separately from the Edit `no` skips, because their file-map row is Edit `n/a`, and `--paths` cannot restore them. They go in their own `RestoreReport` list, or in `skipped` with a `reason` field that tells the two kinds apart. The text header must not say "name one with --paths to restore it" about them. `guard.py` does not change. If a fix seems to need a change there, stop and report, because that needs a `T` ticket first.
@@ -661,7 +661,7 @@ Add a byte-level rule to the scrub tool. It never parses and re-serializes the f
 
 ---
 
-## [ ] M13-35 — `tree`: a non-junction link is listed as a link and never walked
+## [x] M13-35 — `tree`: a non-junction link is listed as a link and never walked
 **Size:** S · **Depends on:** M13-33
 
 Found in the reviews of #228 (M13-33), 2026-10-16. Three gaps remain where `tree` and `explain` disagree about what is a link.
@@ -699,7 +699,7 @@ No library change is expected. If making a test pass on Windows seems to need on
 
 # M13 follow-ups found in review (filed 2026-10-17)
 
-## [ ] M13-37 — Install discovery uses the same link test as `tree`, `gaps` and `explain`
+## [x] M13-37 — Install discovery uses the same link test as `tree`, `gaps` and `explain`
 **Size:** S · **Depends on:** M13-35
 
 Found in the domain and code reviews of #235 (M13-35). `install._is_link` checks only "symlink or junction", so a flavor folder that is a non-junction name-surrogate reparse point (a WCI link, a WSL symlink) passes `is_dir()` and its `.flavor.info` is read through the link. Every command that builds a `Layout` for that flavor (`sv`, `addons`, `doctor`, `explain`'s detail lines) then reads through it; only `tree` refuses (M13-35's flavor-folder branch). This contradicts `gaps.NOT_A_FLAVOR_LINK` ("discovery never takes a link, whatever it points at"). Discovery uses `layout.is_link` and reports such a folder in `other_dirs` with `NOT_A_FLAVOR_LINK`. The test `test_a_flavor_folder_that_is_a_wci_link_is_a_link_never_walked_constructed` asserts `discover(root).flavors == [FLAVOR]` under the fake and changes with this ticket.
@@ -708,16 +708,16 @@ Found in the domain and code reviews of #235 (M13-35). `install._is_link` checks
 
 ---
 
-## [ ] M13-38 — `snap restore`: a whole restore skips a changed or missing addon executable
+## [x] M13-38 — `snap restore`: a whole restore skips a changed or missing addon executable
 **Size:** S · **Depends on:** M13-28, M13-30
 
-Found in the domain and code reviews of #231 (M13-28). M13-28 gave addon executables an Edit `no` row, but a whole `snap restore` asks the gate for the whole plan first (`tx.restore(id, None)`), and the gate refuses it when an executable in the snapshot changed or went missing, before `_client_managed` can skip anything. So the restore exits 3 and puts nothing back, and the Edit `no` promise ("left alone and counted in the plan") does not hold for this one row. M13-30 built the by-name route for screenshots; reuse it: entries under the `addon-executable` row that the disk no longer matches go in the plan's skipped list with their row, and the rest is restored by name. `guard.py` does not change; if a fix seems to need it, stop and report (that needs a `T` ticket first). The review probe `lab/core/tests/review/test_m13_28_whole_restore_refuses_an_edit_no_addon_executable.py` is the grader: activate it by deleting its marker only. The "Skipped" header must not offer `--paths` for an executable, because `--paths` naming one is refused too.
+Found in the domain and code reviews of #231 (M13-28). M13-28 gave addon executables an Edit `no` row, but a whole `snap restore` asks the gate for the whole plan first (`tx.restore(id, None)`), and the gate refuses it when an executable in the snapshot changed or went missing, before `_client_managed` can skip anything. So the restore exits 3 and puts nothing back, and the Edit `no` promise ("left alone and counted in the plan") does not hold for this one row. M13-30 built the by-name route for screenshots; reuse it: entries under the `addon-executable` row that the disk no longer matches go in the plan's skipped list with their row, and the rest is restored by name. `guard.py` does not change; if a fix seems to need it, stop and report (that needs a `T` ticket first). The review probe `lab/core/tests/review/test_m13_28_whole_restore_refuses_an_edit_no_addon_executable.py` is the grader: activate it by deleting its marker only. The "Skipped" header must not offer `--paths` for an executable, because `--paths` naming one is refused too. *Added 2026-10-17 (M13-28 domain re-review):* the `snap restore --paths` help still promises "A named path is restored even when its file-map row says wowlab leaves it alone"; make it read "…leaves it alone, except an executable, which never is", and when the gate refuses a named executable, say what the owner can do: name the other files with `--paths`, or reinstall the addon to get its executable back.
 
 **Acceptance:** the probe passes; a whole restore of a labelled constructed snapshot with a changed `helper.sh` and a removed `gone.dll` restores the `.toc` and lists both executables as skipped by their row; `--paths` on either is still refused with the gate's reason; `--json` validates; `make ci` green; reviewed by `security-reviewer` and `code-reviewer`.
 
 ---
 
-## [ ] M13-39 — wiki-daily: `improve` still restores the uv cache
+## [x] M13-39 — wiki-daily: `improve` still restores the uv cache
 **Size:** S · **Depends on:** M13-19
 
 Found in the security review of #236 (M13-19). `improve` restores the uv cache before the model runs. A model past its permissions there could take `ACTIONS_RUNTIME_TOKEN` and write cache entries for `main`, which the four `enable-cache: true` jobs in `ci.yml` restore, so the required CI checks could be fed a poisoned cache. `release.yml` uses no cache. Give `improve` `enable-cache: false` (the dry run showed a fresh `uv sync` costs about a second), and add the setting to the static test that pins the `gates` and `publish` jobs' cache settings.
@@ -726,7 +726,7 @@ Found in the security review of #236 (M13-19). `improve` restores the uv cache b
 
 ---
 
-## [ ] M13-40 — `check_wiki`: a crash reads as "no personal data"
+## [x] M13-40 — `check_wiki`: a crash reads as "no personal data"
 **Size:** S · **Depends on:** M13-19
 
 Found in the security re-review of #236 (M13-19). The withhold step and the gates release let pages out on `check_wiki` exit 0 or 1, but `main()` catches only `CalledProcessError`, and Python exits 1 on any uncaught exception. `Checker.run()` runs `check_generated`, `check_links`, `check_commands` and `check_coverage` before `check_privacy`, so a page that crashed any of those would leave with no personal-data check and an exit code that looks safe. The reviewer could not build such a page (16 hostile cases all exited 3), so this is defence in depth. Fix both: catch `Exception` in `main()` and return `EXIT_ERROR` (2), and run `check_privacy` first.
@@ -741,3 +741,108 @@ Found in the security re-review of #236 (M13-19). The withhold step and the gate
 Found while building M13-08. `combatlog.cast_counts` tokenizes every line. On a constructed 110 MiB, 390k-line log the whole command took 69.6 s on a loaded machine; a separate profile of a smaller run showed 9.31 s of its 9.62 s inside the existing tokenizer, so about 97% of the time is tokenizing lines the caller never asked for. A multi-GB raid log would take minutes with no progress shown. Select the event name from the raw line (the first comma-separated field after the two-space timestamp separator, as every record in the real fixture shows: `…02:16:37.862-4  SPELL_CAST_SUCCESS,Player-…`) and tokenize only the records a caller asks for, keeping the tokenizer's results byte-identical for the lines it does tokenize. No performance target is set. The baseline for the speed-up is the same 110 MiB constructed log, timed before and after on the same machine in the same session with the command in the PR; stop if the filter would change any count on the real fixture.
 
 **Acceptance:** `cast_counts` on the real Forever fixture gives the same counts as before; a labelled constructed test shows a line whose event field is quoted or holds a comma is still classified right; the measured time on the 110 MiB constructed log is in the PR; `make ci` green; reviewed by `code-reviewer`.
+
+---
+
+## [ ] M13-42 — CI jobs stop restoring the Actions cache
+**Size:** S · **Depends on:** M13-39
+
+Found in the security review of #244 (M13-39). M13-39 stopped the model's job from restoring or saving a cache, but the Actions cache is a channel that crosses workflows: any job running in `main`'s scope can write any key, and both `wiki-daily.yml` and `claude.yml` (triggered by `issue_comment` and `issues`, so on `main`'s ref) run the model with a runtime token whose "Cache mode" is write, whatever the job's own cache setting. A model past its permissions could pre-seed the key a coming `uv.lock` change will produce (the key is public in the PR before it merges) or evict and rewrite an existing one, and the five consumers would restore it: `quality`, `parser-suite`, `lab-desktop` and `harness` in `ci.yml`, and `lab-windows` in `windows.yml` (all `enable-cache: true`). Those jobs hold only `contents: read` and no secrets, but they are the required checks `pr-shepherd` merges on. A producer-side fix cannot close it. Set `enable-cache: false` on the five consumer jobs, as `release.yml` already does (`uv sync --frozen` from the lockfile costs about a second), and add a repository-wide static test that no job in any workflow restores an Actions cache: no `actions/cache*` step, setup-uv with `enable-cache` explicitly `false` (an omitted input means `auto`, which caches), no `cache:` input on any setup action, and an allowlist of the actions each workflow may use so an action that caches by default (`setup-go`) cannot slip in.
+
+**Acceptance:** no job in any workflow restores or saves a cache; the static test fails if one is added back in any of the four forms above; CI on the PR is green, and the five jobs' times are pasted beside those of the last cached run on `main` (expect about a second more each for `uv sync --frozen`); actionlint clean; `make ci` green; reviewed by `security-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-43 — `lab (windows)`: three `tree` link tests and one explorer hint test assume a POSIX host
+**Size:** S · **Depends on:** M13-15, M13-27, M13-35
+
+Found on 2026-10-17. `windows.yml` is red on `main` at a431c28 (https://github.com/sandgraal/wowlab/actions/runs/39069525782), the same way M13-36 found it: the job is off the PR path, and #235 (M13-35) and #237 (M13-27) each brought a test that passes only on a POSIX host. Four tests fail; one needs a one-line library change, the others are test-only:
+
+- `lab/core/tests/test_cli_tree_links.py::test_a_link_at_the_install_root_reads_as_one_in_a_flavor_folder[inside]`, `[outside]` and `::test_link_facts_of_a_link_whose_text_cannot_be_read_constructed`: on Windows `os.readlink` answers an absolute symlink's text with the `\\?\` prefix (`\\?\C:\…`), and `layout._symlink` prints it as read, so `tree` says `link to \\?\C:\… not followed`. The tests expect the plain spelling, and so does M13-15's acceptance (no `\\?\` reaches the owner). Strip the prefix with M13-15's `longpath.plain_text` (the string form; `plain` returns a `Path` and would normalise separators) where the text is read, keep the text otherwise exactly as stored (L4 for the link text: no other normalisation), and add a constructed Windows test with a relative-text link, whose text has no prefix and must stay as is.
+- `lab/core/tests/test_ui_explorer_stage2.py::test_a_hint_says_its_own_shell_and_copies_exactly_constructed`: the "posix" half of the test asserts POSIX quoting (`'"'"'`) with `cli._shell` unpatched, which answers `powershell` on Windows by design. Pin `_shell` to `posix` for that half, as M13-36 did for the `explain` tests, so both halves run on every platform.
+
+Nothing else in the library changes. If a test seems to need more than the one `plain_text` call, stop and report.
+
+**Acceptance:**
+- `gh workflow run windows.yml --ref <branch>` on the branch is green before merge; the run URL and the pasted summary line are in the report.
+- Nothing is loosened on macOS or Linux: the four tests still run there as they do on `main`, and `make ci` is green.
+- `tree`, `explain` and `gaps` output for a link is byte-identical to `main` on macOS and Linux (paste one run of each on the Forever fixture).
+- Reviewed by `code-reviewer`.
+
+---
+
+## [ ] M13-44T — [TEST] Graders for `luadata`'s long-path reads on Windows
+**Size:** S · **Depends on:** M13-15
+
+`luadata.py` is load-bearing (ADR-0013), so its M13-44 change lands graders first, written by a different agent from M13-44's implementer. In `lab/core/tests/test_long_paths_windows.py` (M13-15T's file, same fixtures and the same pattern: Windows-only, long paths off, a tree whose paths pass the 240-character plain limit, strict `xfail` markers with `reason="M13-44 not implemented"`): `luadata._read_sibling` and the folder listing beside it (around line 2567 at #247's head) read a sibling file through a long path; `sv dump` and `sv list` succeed on a SavedVariables file under such a path; and on every platform, no `\\?\` reaches the text or `--json` output of `sv list` and `sv dump` (a labelled constructed test with a root that `longpath.plain` would strip). Derive expected behaviour from `docs/LAB_PLAN.md` §6.9 (as amended for M13-15) and L4, never from the implementation. Markers are deleted by M13-44 only.
+
+**Acceptance:** the graders fail on `main` for the stated reason on `lab (windows)` (run on the branch with `gh workflow run windows.yml --ref <branch>`, URL in the report) and are strict xfails elsewhere; `make ci` green; reviewed by `code-reviewer`.
+
+---
+
+## [ ] M13-44 — Long paths on Windows: the readers and writers M13-15 left on plain paths
+**Size:** M · **Depends on:** M13-44T
+
+Found in the review of #247 (M13-15). M13-15 covers the calls its graders show failing (`guard`, `snapshot`, `layout`, `install`). The code-reviewer listed the modules that still open a path by its plain spelling, so on Windows each fails past the 240-character limit the same way the graders did before: `profiles.py:318`, `luadata.py:2567` and `_read_sibling`, `pathfacts.py:138`, `cli.py` at 1757, 1975 and 4516, `addoninstall.py` at 489 and 546, `gaps.py:367`, and `combatlog.find_logs` (line numbers as of #247's head; take the list from the review thread on the PR). Route each through `longpath.extended` the way M13-15 does, with no behaviour change off Windows and no `\\?\` reaching any output, report, manifest or journal (M13-15's acceptance). `luadata.py` is load-bearing: its graders come first in M13-44T, written by a different agent; the other modules' tests are the implementer's.
+
+**Acceptance:**
+- A Windows test per call site, under the `long-paths` step of `windows.yml`, constructs a path past the limit and shows the call succeeds; `gh workflow run windows.yml --ref <branch>` is green before merge, with the run URL in the report.
+- No `\\?\` in any text or `--json` output of `profile`, `sv`, `explain`, `addon`, `gaps` or `combatlog` commands (a grader per command, run on every platform).
+- `make test-parser` green (`luadata.py` changes); `make ci` green.
+- Reviewed by `code-reviewer` and `security-reviewer` (it touches the readers `guard` depends on).
+
+---
+
+## [ ] M13-45 — Say why a `_*_` folder was not taken as a flavor, in text and `--json`
+**Size:** S · **Depends on:** M13-37
+
+Found in the domain review of M13-37. Discovery lists a `_*_` folder it did not take under `Install.other_dirs` as a bare name, so every surface that prints it has to guess at the reason, and for a linked flavor folder the guess is wrong: the client plays from a junctioned `_retail_` as from a real folder, and only wowlab declines to read through the link. Five places say it wrong today (on `main` for symlinks and junctions; since M13-37 for WCI links and WSL symlinks too):
+
+- `sv list --flavor <linked>` and the other `--flavor` lookups say "no flavor folder '<name>'" when the folder exists and is a link (`cli.py`, the `_flavor` lookup). Say instead that it is a link (with its target when readable), not followed, and that wowlab reads a flavor only from a real folder in the install.
+- The "has no flavor folders (a folder named _..._ holding .flavor.info)" refusal of `sv`, `addons` and `tree`: when `other_dirs` is not empty, add which names were not taken and why.
+- `doctor` and `install show` print "Folders named _..._ that are not flavors: <names>" with no reason. Say "not taken as flavors" and give each name's reason from `gaps.NOT_A_FLAVOR` / `gaps.NOT_A_FLAVOR_LINK`; `--json` says the same, so `Install` carries the reason per entry (a model change: add a field, keep `other_dirs` for scripts that read it, and list the change in the release notes' `--json` section).
+- The first run (`firstrun.py`, "has no flavor folders, so there is nothing to snapshot yet") when the only flavor is a link: say the folder is a link, not followed, nothing in it is snapshotted, and to back up the folder it points to, as `docs/INSTALL.md` step 7 already says for a linked `WTF`. Extend the "Links" bullet of `docs/INSTALL.md` to flavor folders and note that an install root reached through a link is fine.
+- `explain <linked flavor>` and `explain <linked>/WTF/Config.wtf` in text say only "no file-map row" while `--json` carries `link: true` and the link verdict. The text prints the verdict's words first, plus "not taken as a flavor folder" when the first path part is in `other_dirs`.
+
+**Acceptance:** each of the five prints the reason (paste one run each on a fixture copy with a symlinked flavor folder and a real one beside it); `--json` and text agree; `Install`'s new field is documented in `docs/LAB_PLAN.md` §6.1 with a dated amendment; output for an install with no `other_dirs` is byte-identical to `main`; `make ci` green; reviewed by `domain-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-46 — Discovery opens `.flavor.info` without following a link
+**Size:** XS · **Depends on:** M13-37
+
+Found in the code review of #248 (M13-37), on `main` already. `install._read_flavor_product` checks `.flavor.info` with `lstat` and then opens it with `Path.open("rb")`, which follows a link; a swap between the two calls reads through a link, so the §6.1 promise that nothing is read through a link holds only without a race. `snapshot.open_regular_file` (a no-follow open plus an identity check against the `lstat`) exists for exactly this; use it here and in any other discovery read that does `lstat` then `open`. No behaviour change for a real file. Labelled constructed test: a `.flavor.info` replaced by a link between the check and the open is refused, and the folder goes to `other_dirs` with the link reason.
+
+**Acceptance:** the test passes; output on the install fixtures is byte-identical to `main`; `make ci` green; reviewed by `code-reviewer`.
+
+---
+
+## [ ] M13-47 — A new `--json` model fails CI until the release notes list it
+**Size:** XS · **Depends on:** M13-11
+
+Found while merging #246. The release notes' `--json` paragraph names every model a command's help names, and the review probe `lab/core/tests/review/test_m13_11_release_notes_json_models_incomplete.py` checks that, but it only fires on the release branch: M13-08 added `BindsCoachReport` to `main` after the review, the probe passed on the branch and failed on the merged tree, and the conductor fixed the notes by hand before the tag. Move the check into `tests/scripts/test_release.py` so it runs on every PR: every model name that `gen_command_reference.json_models` reports is listed in `.github/release-notes.md`, and every listed name exists. A PR that adds a `--json` model then fails CI until it also adds the line, which is the ADR-0031 rule for `--json` changes. Keep the review probe or fold it in; say which.
+
+**Acceptance:** the test fails on a tree with a model missing from the notes (prove by a labelled constructed mutation in the test, not by editing the notes); `make ci` green; reviewed by `code-reviewer`.
+
+---
+
+## [ ] M13-48 — `snap restore`: a mode-only change to an addon executable
+**Size:** XS · **Depends on:** M13-38 · **owner** (picks (a) or (b) first; (a) changes `guard.py`, so it needs an M13-48T grader ticket before it, ADR-0013)
+
+Found in the code review of #249 (M13-38). `guard._unchanged_executable` treats the permission bits as part of "matches", so an addon executable whose bytes are unchanged but whose mode changed (a `chmod 644 → 755`) still refuses a whole restore with exit 3 and the gate's line alone; the advice line M13-38 added runs only for `--paths`. Rare (an addon update changes the bytes too) and it fails safe, but the `--help` promise reads as if any change were counted and skipped. Two M13-30 review probes pin the current behaviour (`test_m13_30_screenshots_restore_ignores_executable_mode.py`, lines 71–90), so the owner decides: either (a) a mode-only change is skipped and listed like a content change, in which case a `test-writer` inverts those two probes first, or (b) the behaviour stays and the restore prints the advice line for it. Pick one in the ticket before dispatch.
+
+**Acceptance:** per the choice: (a) the inverted probes pass, the skip is listed with its row, nothing is written; or (b) a mode-only change prints the gate's line plus the advice line, exit 3, labelled constructed test; `make ci` green; reviewed by `code-reviewer` and `security-reviewer`.
+
+---
+
+## [ ] M13-49 — The scrub and the wiki gate stop treating character and realm names as identifiers
+**Size:** S · **Depends on:** nothing (ADR-0019 amendment of 2026-10-17, Accepted the same day)
+
+Owner decision of 2026-10-17 (ADR-0019 amendment; `docs/LAB_PLAN.md` §8): character names and realm names may appear as they are in the public repository. Narrow three tools to the identifiers that stay: the Battle.net account folder (`<digits>#<n>`), email addresses and BattleTags, the owner's real name, a home path carrying the owner's login, the owner's own `Player-<n>-<hex>` GUIDs, other players' GUIDs in combat logs together with the unit name beside each, and the identity CVars on the deny-list.
+
+- `scripts/lab_capture.py`, and in `wowlab_core.redact` only what the capture tool takes from it (the realm forms and the GUID-with-name rule); `wowlab doctor --redact` imports the same module (`doctorredact.py`) and must keep its output: stop rewriting character and realm names and the second name of the Forever layout; stop refusing a capture because such a name lands inside a longer word or in a SavedVariables file's own name; keep every other rewrite and refusal, the CVar deny-list and the provenance counts (`identity-rewritten` now counts only the kept set). Other players' GUIDs in combat logs: keep rewriting them (a GUID plus a name identifies an account), and keep the unit-name rewrite only where it accompanies a rewritten GUID.
+- `scripts/check_wiki.py`: drop the `Name-Realm` matcher and its placeholder allowlist; keep the home-path and account-folder matchers; exit codes unchanged.
+- `wowlab doctor --redact`: unchanged (it is for another player's report, and what they hide is their choice); say so in its docstring if it is not already.
+- Docs: `docs/LAB_PLAN.md` §8's rule list and `lab/core/tests/fixtures/README.md`'s policy text follow; existing fixtures and provenance rows are not touched (ADR-0012: a committed fixture is never edited).
+
+**Acceptance:** `wowlab doctor --redact` output on the install fixtures is byte-identical to `main`; the refusal tests for the kept identifiers still pass unchanged; new labelled constructed tests show a character name, a realm name and a Forever second name pass through the scrub untouched and that `check_wiki` accepts a `Name-Realm` pair; the account-folder, email, BattleTag, home-path and own-GUID cases still refuse, and other players' GUIDs in combat logs and their unit names are still rewritten; `make ci` green; reviewed by `security-reviewer` and `code-reviewer`.
