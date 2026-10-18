@@ -1146,14 +1146,15 @@ row has Edit `no` (that row, or `os-metadata` for the `._helper.sh` macOS
 writes beside `helper.sh`) when the disk holds a plain change of it: a
 regular file with other content, every part spelled exactly as in the
 snapshot and no link, junction or other reparse point on the way, or
-nothing at that name (in any letter case) inside real folders that are
-still there. It is listed in `skipped` with its row, and the rest is
+nothing there: the file, or a folder on its way (a deleted addon,
+sub-folder or `.app` bundle), absent in every letter case from a real
+parent folder's listing. It is listed in `skipped` with its row, and the rest is
 restored by name as above; the text plan lists these under their own
 "Skipped … executable(s)" header, which does not offer `--paths` but says
 to reinstall the addon. Only a regular-file entry the gate would refuse for
 being an executable and nothing else is skipped: a reserved name, a link or
-a folder where the file was, a name spelled otherwise on disk, a missing
-one whose folder is gone too, one behind a linked folder, one whose content
+a folder where the file was, a name spelled otherwise on disk, one
+behind a linked folder, one whose content
 matches but whose permission bits do not, and an executable whose row is
 not Edit `no` (outside `AddOns/`) still refuse the whole restore as the
 gate does. Naming one with `--paths` is refused with the gate's reason,

@@ -16,13 +16,15 @@ Inputs labelled `constructed` in the test names (L8): an addon's
 `tool.sh` under `WTF/`, which the capture does not have, a symbolic link to a
 file outside the install or a folder where `helper.sh` was, a snapshot
 manifest forged to spell `helper.sh` as `HELPER.sh` (re-fingerprinted so the
-store accepts it), and an edited copy of the captured `.toc` standing for a
+store accepts it), an addon's `tools/build.sh` and `Tool.app` bundle deleted
+with their folders (or the whole addon folder deleted), and an edited copy of the captured `.toc` standing for a
 later session. Nothing reads or writes a real install.
 """
 
 # ruff: noqa: F811  (fixtures imported from test_cli are requested by name)
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -274,18 +276,69 @@ def test_a_folder_where_the_executable_was_still_refuses_constructed(
     _refused(a)
 
 
-def test_a_missing_executable_whose_folder_is_gone_still_refuses_constructed(
+def _skipped_around(a: Manifest, executables: list[str]) -> list[str]:
+    """A whole restore of `a`: `executables` are skipped by their row, the
+    rest is restored, and the journal holds only the restored files."""
+    plan = _json(cli.RestoreReport, "snap", "restore", a.id, "--dry-run")
+    assert [s.path for s in plan.skipped] == sorted(executables)
+    assert all(s.entry_id == "addon-executable" for s in plan.skipped)
+    done = _json(cli.RestoreReport, "snap", "restore", a.id, "--yes")
+    assert done.applied and done.plan == plan.plan
+    restored = [i.path for i in done.plan]
+    assert not set(restored) & set(executables)
+    (record,) = guard.history()
+    assert record.state == "committed"
+    assert [p.path for p in record.paths] == restored
+    return restored
+
+
+def test_a_missing_executable_whose_folder_is_gone_is_skipped_constructed(
     root: Path, flavor: Path
 ) -> None:
-    """Missing is skipped only from real folders that are still there."""
+    """A folder on the way that is absent, in every letter case, from its
+    real parent is a true absence: the executable under it is skipped."""
     tool = f"{ADDON}/tools/build.sh"
     (flavor / tool).parent.mkdir()
     (flavor / tool).write_bytes(HELPER_BYTES)
     a = _snapshot()
-    (flavor / tool).unlink()
-    (flavor / tool).parent.rmdir()
-    _later(flavor)
-    _refused(a)
+    shutil.rmtree(flavor / tool.rsplit("/", 1)[0])
+    saved = _later(flavor)
+    assert _skipped_around(a, [tool]) == [TOC]
+    assert (flavor / TOC).read_bytes() == saved
+    assert not (flavor / tool).parent.exists()
+
+
+def test_a_deleted_addon_is_restored_around_its_executable_constructed(
+    root: Path, flavor: Path
+) -> None:
+    tool = f"{ADDON}/tools/build.sh"
+    (flavor / tool).parent.mkdir()
+    (flavor / tool).write_bytes(HELPER_BYTES)
+    a = _snapshot()
+    held = {e.path.split("/", 1)[1]: e for e in a.entries}
+    addon_files = sorted(p for p in held if p.startswith(ADDON + "/") and p != tool)
+    assert TOC in addon_files
+    shutil.rmtree(flavor / ADDON)
+    restored = _skipped_around(a, [tool])
+    assert sorted(restored) == addon_files
+    assert (flavor / TOC).is_file()
+    assert not (flavor / tool).exists()
+
+
+def test_a_deleted_app_bundle_is_skipped_and_its_siblings_restored_constructed(
+    root: Path, flavor: Path
+) -> None:
+    plist = f"{ADDON}/Tool.app/Contents/Info.plist"
+    binary = f"{ADDON}/Tool.app/Contents/MacOS/Tool"
+    (flavor / binary).parent.mkdir(parents=True)
+    (flavor / plist).write_bytes(b"<plist>constructed</plist>\n")
+    (flavor / binary).write_bytes(b"\xcf\xfa\xed\xfeconstructed")
+    a = _snapshot()
+    shutil.rmtree(flavor / f"{ADDON}/Tool.app")
+    saved = _later(flavor)
+    assert _skipped_around(a, [plist, binary]) == [TOC]
+    assert (flavor / TOC).read_bytes() == saved
+    assert not (flavor / f"{ADDON}/Tool.app").exists()
 
 
 def _forge_case(base: Manifest) -> str:

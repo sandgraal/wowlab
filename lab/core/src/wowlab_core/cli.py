@@ -5577,10 +5577,12 @@ def _plainly_on_disk(flavor_dir: Path, rel: str) -> Literal["file", "missing"] |
     when every part is in its folder's listing spelled exactly as in `rel`,
     each folder on the way is a real folder (by `lstat`: not a link, a
     junction or another reparse point) and the last part a regular file;
-    `missing` when the folders on the way are real folders, spelled exactly,
-    and the last part is not in the listing in any letter case; None for
-    anything else (a link, a folder, a part spelled otherwise, a folder on
-    the way missing, an error)."""
+    `missing` when the folders on the way that are there are real folders,
+    spelled exactly, and the first part that is not there (the file, or a
+    folder on its way: a deleted addon, sub-folder or `.app`) is absent from
+    its real parent's listing in every letter case; None for anything else
+    (a link, a junction or another reparse point on the way, a folder or a
+    link at the leaf, a part spelled otherwise, an error)."""
     parts = rel.split("/")
     current = flavor_dir
     try:
@@ -5589,9 +5591,9 @@ def _plainly_on_disk(flavor_dir: Path, rel: str) -> Literal["file", "missing"] |
             last = n == len(parts) - 1
             if part not in names:
                 folded = part.casefold()
-                if last and all(name.casefold() != folded for name in names):
-                    return "missing"
-                return None
+                if all(name.casefold() != folded for name in names):
+                    return "missing"  # nothing below it is there either
+                return None  # spelled otherwise on disk
             current = current / part
             st = current.lstat()
             if _is_reparse(st):
