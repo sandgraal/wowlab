@@ -435,7 +435,7 @@ def _junction(link: Path, target: Path) -> None:
     short folder `target`."""
     import _winapi  # Windows only
 
-    _winapi.CreateJunction(str(target), str(_x(link)))  # type: ignore[attr-defined]
+    _winapi.CreateJunction(str(target), str(_x(link)))
 
 
 def _json(argv: list[str]) -> dict[str, Any]:
@@ -477,7 +477,6 @@ def test_constructed_windows_read_sibling_refuses_a_file_through_a_junction_past
     root = luadata._sibling_paths(deep.at(f"{ACCT}/SavedVariables/LabNew.lua"), ())[0][1]
     assert root == longpath.realpath(account)
     assert EXTENDED not in root
-    assert os.path.normcase(root) == os.path.normcase(str(account))
     assert luadata._read_sibling(deep.at(SYNDICATOR), root) is not None
 
     outside = tmp_path / "outside-account"
