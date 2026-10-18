@@ -805,3 +805,12 @@ Found in the domain review of M13-37. Discovery lists a `_*_` folder it did not 
 Found in the code review of #248 (M13-37), on `main` already. `install._read_flavor_product` checks `.flavor.info` with `lstat` and then opens it with `Path.open("rb")`, which follows a link; a swap between the two calls reads through a link, so the §6.1 promise that nothing is read through a link holds only without a race. `snapshot.open_regular_file` (a no-follow open plus an identity check against the `lstat`) exists for exactly this; use it here and in any other discovery read that does `lstat` then `open`. No behaviour change for a real file. Labelled constructed test: a `.flavor.info` replaced by a link between the check and the open is refused, and the folder goes to `other_dirs` with the link reason.
 
 **Acceptance:** the test passes; output on the install fixtures is byte-identical to `main`; `make ci` green; reviewed by `code-reviewer`.
+
+---
+
+## [ ] M13-47 — A new `--json` model fails CI until the release notes list it
+**Size:** XS · **Depends on:** M13-11
+
+Found while merging #246. The release notes' `--json` paragraph names every model a command's help names, and the review probe `lab/core/tests/review/test_m13_11_release_notes_json_models_incomplete.py` checks that, but it only fires on the release branch: M13-08 added `BindsCoachReport` to `main` after the review, the probe passed on the branch and failed on the merged tree, and the conductor fixed the notes by hand before the tag. Move the check into `tests/scripts/test_release.py` so it runs on every PR: every model name that `gen_command_reference.json_models` reports is listed in `.github/release-notes.md`, and every listed name exists. A PR that adds a `--json` model then fails CI until it also adds the line, which is the ADR-0031 rule for `--json` changes. Keep the review probe or fold it in; say which.
+
+**Acceptance:** the test fails on a tree with a model missing from the notes (prove by a labelled constructed mutation in the test, not by editing the notes); `make ci` green; reviewed by `code-reviewer`.
