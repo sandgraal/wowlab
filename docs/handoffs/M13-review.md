@@ -3,11 +3,12 @@
 Written by the conductor on 2026-10-18, following `docs/LAB_PLAN.md` §11,
 ADR-0024 and ticket M13-12. Wave 4 was picked on 2026-10-13 (ADR-0031): the
 first public release, v0.1, with the read-only first stage of `wowlab ui`
-pulled forward on 2026-10-14 (ADR-0029). The wave as picked was 38 tickets
-(M13-01 to M13-35 with their `[TEST]` twins); the last of them to merge was
-M13-44's predecessor set on 2026-10-18, and reviews along the way filed 24
-more (M13-36 to M13-58), of which twelve merged inside the wave and twelve
-are open (below).
+pulled forward on 2026-10-14 (ADR-0029). The plan PR (#165) carried thirteen
+tickets, M13-01 to M13-13; the wave grew as it ran: M13-14 to M13-20T from
+follow-up and probe PRs (#183, #192), M13-21 to M13-27 from the owner's
+2026-10-14 pull-forward of `wowlab ui`, and M13-28 to M13-58 from reviews.
+The backlog's M13 section holds 62 headings: 46 merged, this review, twelve
+review follow-ups still open, and three with the owner.
 
 **The release is out.** v0.1.0 is tagged on `fd5aab4` (2026-10-18 05:09 UTC)
 and was published at 13:49 UTC the same day, after the owner approved the
@@ -16,10 +17,11 @@ release page. No stranger's report has arrived yet, and downloads and stars
 stood at zero when this was written; `docs/handoffs/M13-gate.md` holds the
 commands for gate day, 2026-11-17.
 
-**Dispatch stops here.** The twelve open M13 tickets were filed from reviews
-during the wave and were never part of the pick, so under ADR-0024 they wait
-for the owner's word like any idea would. The owner's choice between
-finishing them first and starting Wave 5 is the first recommendation below.
+**Dispatch stops here.** Earlier review follow-ups (M13-28 to M13-35) were
+dispatched inside the wave because the wave's own work was still running;
+with the release out and the review written, the twelve that remain wait for
+the owner's word, as §11 says the next step is the owner's pick. Finishing
+them first or starting Wave 5 is the first recommendation below.
 
 ## What shipped
 
@@ -122,9 +124,10 @@ the fixtures rule follows ADR-0019).
 
 - **Six guardrails were loosened on the owner's word** (ADR-0013 amendment,
   2026-10-17) after a cost audit, and four review-round rules followed from
-  the same day's reviews (#250). None caused an incident; the merges that
-  waited longest were waiting on docs items that lived outside the branch,
-  which is what the "Off the branch" rule now names.
+  the same day's reviews (#250). The conductor's observation, not a
+  measured claim: no merge of the wave went wrong for lack of them, and the
+  merges that waited longest were waiting on docs items that lived outside
+  the branch, which is what the "Off the branch" rule now names.
 - **The Windows job went red on `main` twice while off the PR path**
   (M13-36, M13-43), each time from a test that assumed a POSIX host. It now
   runs on `lab/` PRs (ADR-0014 amendment, 2026-10-17).
@@ -132,19 +135,22 @@ the fixtures rule follows ADR-0019).
   machine until M13-31; reviewers now run the full suite once and re-checks
   run only what a fix touched.
 - **Agents stop at the usage limit every few hours** and resume from their
-  worktrees without loss; the one loss came from removing a shepherd's
-  worktree while its PR was open.
-- **The automated review overlapped the independent reviewers** and twice
-  found a small item they had chosen not to count; such items now get a
-  reply and no re-check.
+  worktrees without loss (the conductor's observation across this wave's
+  sessions); the one loss came from removing a shepherd's worktree while
+  its PR was open, which is now a note in the conductor's memory.
+- **The automated review overlapped the independent reviewers** and on #245
+  and #255 found small items they had chosen not to count; such items now
+  get a reply and no re-check (ADR-0013 amendment, 2026-10-17, later).
 
 ## Effort against the plan
 
-The wave as picked was 38 tickets; 24 more were filed from reviews during
-it. Of those 62, 50 are merged, twelve are open, and three stay with the
-owner (M13-02's human half, M13-07, M13-13). Every merged ticket went
-through the independent reviewers; 21 needed one fix round, six needed two,
-and one (M13-30) needed a narrow third under the owner's 2026-10-16 ruling.
+Thirteen tickets at the pick (#165), 62 M13 headings by the end: 46
+merged, this review, twelve open follow-ups, and three with the owner
+(M13-02's human half, M13-07, M13-13). Every merged ticket went through the
+independent reviewers; most needed one or two fix rounds, a few (for
+example M13-04, M13-05, M13-09, M13-16) ran to a third or fourth, and
+M13-30 had a narrow third re-check. Round numbering differs between PR
+bodies, so no exact count is given.
 
 ## Follow-ups filed, not yet picked
 
