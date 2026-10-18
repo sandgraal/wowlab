@@ -237,8 +237,11 @@ reparse point without that bit (a cloud placeholder) is taken as before.
 `other_dirs`, in the same order, each as a `NotTaken` with why it was not
 taken as a flavor folder: `name`; `reason`, one of `link` (the folder is a
 link by `is_link`, never followed), `no_flavor_info` (no regular
-`.flavor.info`, which covers one that is a link) or `not_checked` (its
-`lstat` was refused); `target`, a link's text as stored when it can be read
+`.flavor.info`, which covers one that is a link), `not_checked` (its
+`lstat` was refused) or `flavor_info_changed` (its `.flavor.info` was regular
+at the scan and was refused at the read, M13-46: it became a link or no
+longer a regular file, or another file took its place; never worded as a
+link, since that file may be regular); `target`, a link's text as stored when it can be read
 (read from the link itself with `readlink`, never through it; None for a WCI
 link or a WSL symlink, and for every other reason); and `note`, the reason
 in the words every command prints: `install.NOT_A_FLAVOR` ("not taken as a
@@ -246,7 +249,8 @@ flavor folder (no regular .flavor.info file)"), "link to <target>, not
 followed; " or "link (where it points is unknown), not followed; " followed
 by `install.NOT_A_FLAVOR_LINK` ("not taken as a flavor folder"), or
 `install.NOT_A_FLAVOR_UNCHECKED` ("not taken as a flavor folder (it could not
-be checked)"). The first two constants moved from `gaps`, which re-exports
+be checked)"), or `install.NOT_A_FLAVOR_CHANGED` ("not taken as a flavor
+folder (its .flavor.info changed as it was read)"). The first two constants moved from `gaps`, which re-exports
 them unchanged. `other_dirs` stays, for scripts that read it. The field is
 left out of the JSON when it is empty and reads back as empty, so the JSON
 of an install with no such folder is byte for byte what it was; `doctor

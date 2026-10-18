@@ -23,7 +23,7 @@ import pytest
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
-from wowlab_core import cli, doctorredact, gaps, install, redact
+from wowlab_core import cli, doctorredact, gaps, install, redact, snapshot
 from wowlab_core.install import NotTaken, discover, read_install
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -309,3 +309,45 @@ def test_explain_of_a_folder_without_flavor_info_says_not_taken(tmp_path: Path) 
         f"{path}: no file-map row: no file-map row matches",
         f"  {EMPTY}: {gaps.NOT_A_FLAVOR}",
     ]
+
+
+# ─── refused at the read (M13-46) ────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("swap", ["link", "other-file"], ids=lambda s: f"constructed-{s}")
+def test_a_flavor_info_refused_at_the_read_changed_never_a_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, swap: str
+) -> None:
+    """Constructed (a race cannot be captured): the scan saw a regular
+    `.flavor.info`, and between the read's `lstat` and its open it became a
+    link, or another regular file took its place (refused by the identity
+    check). Either way the folder is named with `flavor_info_changed`,
+    never worded as a link: the file that took its place may be regular."""
+    root, _ = _install(tmp_path)
+    info = root / FLAVOR / ".flavor.info"
+    real_open = snapshot.open_regular_file
+
+    def open_regular_file(path: Path, **kwargs: Any) -> Any:
+        if path == info:
+            if swap == "link":
+                info.unlink()
+                info.symlink_to(tmp_path / "elsewhere" / "retail" / ".flavor.info")
+            else:  # renamed aside so the new file cannot reuse its inode
+                info.rename(info.parent / "m13-45-original.flavor.info")
+                info.write_bytes((CAPTURE / "forever" / ".flavor.info").read_bytes())
+        return real_open(path, **kwargs)
+
+    monkeypatch.setattr(snapshot, "open_regular_file", open_regular_file)
+
+    got = read_install(root)
+
+    assert got.flavors == ()
+    assert got.other_dirs == (FLAVOR, LINKED)
+    assert got.not_taken[0] == NotTaken(
+        name=FLAVOR,
+        reason="flavor_info_changed",
+        target=None,
+        note=install.NOT_A_FLAVOR_CHANGED,
+    )
+    assert "link" not in got.not_taken[0].note
+    assert install.not_taken_why(got.not_taken[0]) == "its .flavor.info changed as it was read"
