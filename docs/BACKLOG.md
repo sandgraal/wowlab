@@ -808,7 +808,7 @@ Found in the domain review of M13-37. Discovery lists a `_*_` folder it did not 
 
 ---
 
-## [ ] M13-46 — Discovery opens `.flavor.info` without following a link
+## [x] M13-46 — Discovery opens `.flavor.info` without following a link
 **Size:** XS · **Depends on:** M13-37
 
 Found in the code review of #248 (M13-37), on `main` already. `install._read_flavor_product` checks `.flavor.info` with `lstat` and then opens it with `Path.open("rb")`, which follows a link; a swap between the two calls reads through a link, so the §6.1 promise that nothing is read through a link holds only without a race. `snapshot.open_regular_file` (a no-follow open plus an identity check against the `lstat`) exists for exactly this; use it here and in any other discovery read that does `lstat` then `open`. No behaviour change for a real file. Labelled constructed test: a `.flavor.info` replaced by a link between the check and the open is refused, and the folder goes to `other_dirs` with the link reason.
