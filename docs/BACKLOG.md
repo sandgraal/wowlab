@@ -900,3 +900,21 @@ Found in the code review of #253 (M13-43), unverified on Windows. `snapshot._dir
 Found in the security review of #257 (M13-49), pre-existing. `scripts/lab_capture.py` blanks `accountName`, `accountList`, `realmName` and `lastCharacterGuid` in `Config.wtf`, but its harvest (`_HARVEST_RE`) reads only `lastCharacterGuid` (and, until M13-49 merges, `realmName`) into the identity map, so the value of `accountName` (on current clients usually an email address, caught by the email check; on older ones an account name) or an `accountList` entry that also appears in a SavedVariables value is written out unchanged with exit 0. Add the `accountName` value (and, once its separator is known, each `accountList` entry; the format reference does not give it, so capture it from a real `Config.wtf` first and mark it **[verify]**) to the identity map as account-type strings (rewritten in contents, refused glued into a longer word), as the account folder is today. Labelled constructed test: `SET accountName "SECRETACCT"` in `Config.wtf` and `"SECRETACCT"` in a SavedVariables value: blanked in one, rewritten in the other, provenance count up by one.
 
 **Acceptance:** the test passes; existing refusal tests unchanged; `make ci` green; reviewed by `security-reviewer`.
+
+---
+
+## [ ] M13-56 — `doctor` prints its `problems` in text, and the first run names a linked flavor beside a real one
+**Size:** XS · **Depends on:** M13-45
+
+Found in the domain review of #258 (M13-45), both pre-existing or outside that ticket's scope. (1) `doctor --json` carries `problems` (for example "<root> has no flavor folders"), but `_print_doctor` never prints them in text, so a run that skips the first run (`--redact`, or any run once a snapshot exists) exits 1 with no line saying why. Print each problem in text, and when the no-flavor problem is raised with `not_taken` entries, include their reasons in the string so text and `--json` agree. (2) The first run on an install with a real flavor beside a linked `_*_` folder says nothing about the link; M13-45 covers only the case where the link is the only flavor. Print the same "<name> is a link to <target>, not followed, so its WTF (settings and SavedVariables), Interface and Fonts are not snapshotted … Back up the folder it points to yourself" line under the flavor list in that case too. Labelled constructed tests for both; `doctor` text for an install with no problems and no links byte-identical to `main`.
+
+**Acceptance:** the tests pass; byte-identity on the install fixtures; `make ci` green; reviewed by `domain-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-57 — `explain` of a link at the install root is judged inside the only flavor
+**Size:** XS · **Depends on:** M13-45
+
+Found in the code review of #258 (M13-45), on `main` since M13-29. With one flavor installed, `explain Foo` for a relative path with no row at the install root is re-judged inside that flavor (cli.py around 2844–2856), so a link named `Foo` at the install root reports `link: false` and "wowlab does not know what this file is", while the absolute spelling reports the link. M13-45 fixes this for `_*_` names in `not_taken`; extend the same rule to any root entry that exists at the root (a link, a file or a folder that `lstat` finds there): judge it at the root, never inside a flavor. Labelled constructed test with a root link in both spellings; `explain` output for paths that do exist inside the flavor byte-identical to `main`.
+
+**Acceptance:** the test passes; byte-identity on the install fixtures; `make ci` green; reviewed by `code-reviewer`.
