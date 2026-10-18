@@ -31,9 +31,9 @@ time, repeat run A on the character file as run D.
 
 Every command is pasted from your wowlab folder. Use the flavor you play;
 name it in the report. If the install has more than one flavor folder, add
-`--flavor <folder>` to `doctor` and `binds list`, as `wowlab install show`
-lists it; the `snap` commands take no `--flavor` (a snapshot names its
-flavor itself).
+`--flavor <folder>` to `doctor`, `binds list` and `snap create`, as
+`wowlab install show` lists it; `snap list` and `snap restore` take none
+(a snapshot names its flavor itself).
 
 ## 0. Before anything
 
