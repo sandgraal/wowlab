@@ -717,11 +717,15 @@ def _match_row(matches: Sequence[BuildInfoRow]) -> BuildInfoRow | None:
 
 def _link_text(path: Path) -> str | None:
     """A link's text as stored, read from the link itself; None when it
-    cannot be read (a WCI link or a WSL symlink on Windows)."""
+    cannot be read (a WCI link or a WSL symlink on Windows). Spelled as
+    `layout.link_facts` spells it (M13-43): not through `Path`, so a
+    relative text is kept exactly, and on Windows without the
+    extended-length prefix an absolute text is answered with."""
     try:
-        return str(longpath.readlink(path))
+        target = os.readlink(longpath.extended(path))  # noqa: PTH115
     except (OSError, ValueError):
         return None
+    return longpath.plain_text(target) if longpath.ON_WINDOWS else target
 
 
 def _scan_children(root: Path) -> tuple[list[Path], list[NotTaken]]:

@@ -242,8 +242,9 @@ link by `is_link`, never followed), `no_flavor_info` (no regular
 at the scan and was refused at the read, M13-46: it became a link or no
 longer a regular file, or another file took its place; never worded as a
 link, since that file may be regular); `target`, a link's text as stored when it can be read
-(read from the link itself with `readlink`, never through it; None for a WCI
-link or a WSL symlink, and for every other reason); and `note`, the reason
+(read from the link itself with `readlink`, never through it, and on
+Windows spelled without the extended-length prefix as `tree` spells it,
+M13-43; None for a WCI link or a WSL symlink, and for every other reason); and `note`, the reason
 in the words every command prints: `install.NOT_A_FLAVOR` ("not taken as a
 flavor folder (no regular .flavor.info file)"), "link to <target>, not
 followed; " or "link (where it points is unknown), not followed; " followed
