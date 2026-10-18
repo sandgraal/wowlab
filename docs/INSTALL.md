@@ -202,6 +202,44 @@ would.
   while it waited for your answer is still recorded. Commands that change
   files refuse until the game is closed.
 
+## The explorer in your browser
+
+`wowlab ui` opens a local page that shows your install the way `wowlab
+tree` and `wowlab explain` do, one folder at a time. From a source
+checkout:
+
+```bash
+uv run wowlab ui
+```
+
+It picks a free port, listens only on this machine, and opens your
+browser on a link that carries a random token; if no browser opens, the
+link is printed once, so paste it. Stop it with Ctrl-C. It reads the
+install exactly as the other commands do and writes nothing there.
+
+What to look for:
+
+- **The tree.** The whole install, with each flavor folder. Click a file
+  to see what it is, who writes it, and whether wowlab may edit it, the
+  same answer `wowlab explain <path>` gives.
+- **Gaps.** Files the file map does not know yet are marked, and listed
+  together, as `wowlab filemap gaps` lists them.
+- **Snapshot facts.** For a file that is in a snapshot, whether the copy
+  on disk still matches it.
+- **Hints.** Each detail pane ends with the commands that act on that
+  file, written for your shell (`posix` or `powershell`) and copied byte
+  for byte.
+- **Previews.** Text files show their first lines; SavedVariables are
+  shown as data, never run.
+- **The commands tab.** Runs this wowlab's commands with `--json` and shows
+  the result. Only the commands that read, or that save to wowlab's own
+  data folder (snapshots, profiles, saved looks, the game-table cache,
+  pages), are offered. Nothing that changes a game file is, in this
+  version.
+
+If something looks wrong, the useful report is the path you clicked, what
+the page said, and what `wowlab explain <that path>` says in a terminal.
+
 ## Where wowlab keeps its files
 
 In the platform's user data folder, never in your install:
