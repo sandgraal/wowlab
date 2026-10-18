@@ -931,3 +931,95 @@ Found in the code review of #258 (M13-45), on `main` since M13-29. With one flav
 Found in the code review of #260 (M13-44). (1) `labaddon.py` (around lines 1635 and 1686) still `os.lstat`s the lab-addon's `WowLab.lua` under `WTF/Account/…` by its plain path, so on Windows with long paths off, past the limit, every character's file shows as an error row ("cannot read") in `char list`, which reaches those lines through `labaddon.survey` (`_Reader.read`, `_grew_past`); `read_char` and `read_account` already go through `snapshot.read_regular_file`'s long-path spelling, so `char show`, `looks import-char` and the binds coach are not affected (by reading; not run on Windows). Route it through `longpath` as M13-44 did for the other readers, with a Windows test under the long-paths step and an every-platform "no `\\?\` in `char list`/`char show` output" test. (2) `tree PATH` with a `\\?\` argument on Windows hits `_tree_prefix`'s "is not inside" usage error and echoes the prefix; apply `cli._plain_arg` there as `explain` does. The reviewer also noted that M13-44T did not grade the `_read_sibling` containment check past `MAX_PATH`; the implementer's own junction test covers it, and the security review confirmed it. If the owner wants an independent grader for that check (`luadata.py` is load-bearing), file M13-58T for it; otherwise this ticket needs none.
 
 **Acceptance:** the tests pass on `lab (windows)`; `char list`/`char show` output byte-identical to `main` off Windows; `make ci` green; reviewed by `code-reviewer`.
+
+---
+
+# M14 — `wowlab ui`: the confirm flow, and the character (Wave 5)
+
+Spec: `docs/LAB_PLAN.md` §16 (2026-10-18). Decisions: ADR-0029 (accepted) for the confirm flow; ADR-0032 (Proposed, the model's access to the data) binds nothing here and is for the wave after. Owner request of 2026-10-18: the player's character in the UI, with equipped gear, key bindings and macros, read-only in this wave and built so that a later wave can change and optimize them from the UI (§16.5). **Every ticket below depends on M14-01**, which waits for the twelve M13 follow-ups of the owner's 2026-10-18 pick; nothing in M14 is dispatched before they are on `main`. L1 to L8 apply; no ticket writes into an install outside the confirm flow's `guard` commands, no ticket adds a network request, and no ticket puts a game rule in JavaScript (§14.5 D3). `wowlab_core.ui` left the graders-first set on 2026-10-17, so no ticket here has a `T` twin.
+
+## [ ] M14-01 — Wave 5 opens: the M13 follow-ups are on `main`
+**Size:** XS · **Depends on:** M13-42, M13-47, M13-48, M13-50, M13-51, M13-52, M13-53, M13-54, M13-55, M13-56, M13-57, M13-58
+
+The conductor's own ticket, the gate the owner set on 2026-10-18. When the twelve are merged: read the latest `lab (windows)` runs on `main` and file anything red at the front of the frontier; re-read the `--yes` set from the Click tree and record it in §16.1 if it differs from the eight named there; record the opening commit in §16.7; write the bindings persistence runbook `docs/handoffs/M14-binds-persist.md` (§16.5 F1, the twin of `docs/handoffs/M13-07.md`) so the owner can run both tests at once; tick this heading in the same `docs` PR. No source change.
+
+**Acceptance:** the runbook exists and names the file, the two sync states and the table the owner fills; §16 carries the commit and any correction to the `--yes` set; the heading is ticked.
+
+---
+
+## [ ] M14-02 — The confirm flow: the mechanism, on `snap gc` and `doctor --yes`
+**Size:** M · **Depends on:** M14-01
+
+ADR-0029 "Writes", built on the two `--yes` commands whose worst case is wowlab's own store (§16.1). `POST /api/run` on a `--yes` leaf runs it without `--yes` and returns the plan output together with a one-time confirm token minted for that run: random (`secrets`), bound server-side to the exact argv, spent on first use, and expiring with the server. A second request carrying the token and the same argv runs the command with `--yes` appended as a separate argument; a different argv, a reused token or an unknown token is refused (403) and nothing runs. The page shows the plan as printed, a Confirm button, the result, and the `wowlab undo` hint the CLI prints. The exclusion list loses "confirm flow: M14" for these two leaves, keeps it for the other six, and the parity test gains ADR-0029's assertion that every `--yes` command goes through the confirm step. The server still writes nothing itself (L2).
+
+**Acceptance:** tests for: a `--yes` leaf run without a token never carries `--yes`; a token confirms exactly once and only its own argv; the confirmed argv ends in `--yes` as its own element and is otherwise byte-identical to the plan's; a `--yes` leaf that is still excluded is refused before anything runs; the parity test's new assertion fails when a `--yes` leaf skips the step (a dummy leaf in the test). `make ci` green. Reviewed by `security-reviewer` and `code-reviewer`. User-facing: the Commands tab can run `snap gc` and `doctor --yes`; the wiki's `wowlab ui` page.
+
+---
+
+## [ ] M14-03 — The confirm flow: the six install writes
+**Size:** S · **Depends on:** M14-02
+
+`snap restore`, `undo`, `profile apply`, `sv merge`, `addon install` and `addon remove` behind M14-02's mechanism, with no change to it. The set is derived from the Click tree at test time, not listed in code. The plan shown is `guard`'s own text (the files, the snapshot it will take); a refusal (exit 3, the client running) is shown as the CLI prints it and offers no confirm. After the run the result shows the journal id and the `wowlab undo` hint. The exclusion list is then `ui` and `log tail --follow` only, and the reason string "confirm flow: M14" leaves the code.
+
+**Acceptance:** one test per command that the plan run carries no `--yes` and the confirmed run goes through `guard` (the synthetic install of §9: a snapshot is taken, the journal has the entry, `wowlab undo` restores the bytes); a test that a refusal while the fake client runs reaches the page as exit 3 with no confirm offered; the parity test shows no `--yes` leaf excluded; `make ci` green. Reviewed by `security-reviewer` and `code-reviewer`. User-facing: every write command is usable from the UI; the wiki's `wowlab ui` page and each command's page.
+
+---
+
+## [ ] M14-04 — `looks page` embedded in the UI
+**Size:** S · **Depends on:** M14-01
+
+ADR-0029 "Richer views … are embedded". A Looks entry in the UI runs `looks page` (its default output under the data directory's `pages/`; `--out` stays refused, owner ruling 2026-10-15) and shows the file in an `iframe` with `sandbox` (no `allow-same-origin`, no scripts beyond the page's own inline ones as its CSP allows) served by the server from that directory only, by a path the server built, never from a request parameter. The page's own CSP (ADR-0027) is kept; the UI's `frame-ancestors 'none'` stays on every page of the UI itself.
+
+**Acceptance:** a test that the served path is confined to `pages/` (a traversal request is refused); a test that the frame carries `sandbox`; `looks page` output byte-identical to `main`; `make ci` green. Reviewed by `security-reviewer` and `code-reviewer`. User-facing: the Looks view; the wiki's `wowlab ui` and `looks` pages.
+
+---
+
+## [ ] M14-05 — `wowlab char gear`, and `wowlab_core.itemlink`
+**Size:** S · **Depends on:** M14-01
+
+§16.2. A new lossless parser `wowlab_core.itemlink` for the item-link string the lab-addon records: colour code (named and hex forms), the `|Hitem:` payload split on `:` with the item id first and every later field kept raw and also named where community documentation names it (enchant, gems, suffix, unique, level, specialization, upgrade, bonus count and bonus ids; all **[verify]** in `docs/LAB_FORMATS.md` §4.2, dated), the bracketed name, and the raw string. Graded on every link in the committed `WowLab.lua` fixtures (`macos/`, `macos-70058/`, `macos-70425/`), with the round-trip `raw == input`; constructed links only for the hostile cases (no closing `|h`, a GUID-shaped crafter field, a field count past the longest seen), labelled. A shipped data file `gear_slots.toml` maps slot numbers to names and colour codes to quality words, marked **[verify]** on Forever, overridable from the user config directory as the coach's cost table is, and the output says it is a default. The command `wowlab char gear [--character] [--account] [--root] [--json]` prints the slots in the client's order and the averages; `--json` is `CharGearReport` as §16.2 lists it. Names come from the bracketed text only; nothing is fetched. `char show` is unchanged, text and JSON.
+
+**Acceptance:** parser tests on the real links (count per fixture in the test id) and the labelled hostile cases; a slot-table test that every slot number in the fixtures has a name and the file has no duplicate; the command's text and `--json` on the three fixtures (snapshot files under `tests/`), `--json` validating against the model; a record without `gear` exits 1 with the reason; `char show` output byte-identical to `main`; `make ci` green. Reviewed by `domain-reviewer` (slot names, quality words, the link fields) and `code-reviewer`. User-facing: a new command; the wiki's `char` page.
+
+---
+
+## [ ] M14-06 — `wowlab_core.keymap`, and `wowlab char binds`
+**Size:** M · **Depends on:** M14-01
+
+§16.2. Lift the key-to-slot-to-spell join out of `bindscoach` (`command_slot`, `_spellbook`, `_held`, the default-page rule of GLOSSARY "Action slot") into `wowlab_core.keymap`, and make `binds coach` use it with its text and `--json` byte-identical to `main` on the fixtures and the constructed logs. The module takes the bindings (the account and character `BindingsDocument`s, and the addon's `Bindings` section), the `ActionBars` and `Spellbook` sections, and answers per key: command, slot, what the slot holds (type, id, spell name and rank subtext from the spellbook; a macro, item, flyout or equipment set by id), and the sources that said so, marking disagreement between file and record rather than choosing. The command `wowlab char binds [--character] [--account] [--root] [--json]` prints the table and the unreached filled slots; `--json` is `CharBindsReport`. Without a schema-3 record it prints the file rows with "cannot place: no action-bar record", exit 0.
+
+**Acceptance:** `binds coach` byte-identical before and after on every existing test; keymap tests on the schema-3 fixture (`macos-70425/`) with the counts in the test ids, and labelled constructed cases for a file-only key, a record-only key, a key on a paged slot, a macro slot and an empty slot; the command's text and `--json` on the fixtures, validating; `make ci` green. Reviewed by `domain-reviewer` (the page rule, the wording of "what it does") and `code-reviewer`. User-facing: a new command; the wiki's `char` and `binds` pages.
+
+---
+
+## [ ] M14-07 — `wowlab char macros`
+**Size:** S · **Depends on:** M14-06
+
+§16.2. `wowlab char macros [--character] [--account] [--root] [--json]`: every record of the account and character `macros-cache.txt` (through `wtfconfig`, as `macros list` reads them), each with the action slots that hold it and the keys that reach those slots through `keymap`, and the `macros check` findings for it (the checker's rules called, not copied; their wording unchanged). Which action-slot macro id names which file record is **[verify]** (§15.2); the command places a macro only by the rule a capture has confirmed, otherwise says "cannot place" with the reason, and the ticket writes the owner's capture step that would settle it as a runbook, `docs/handoffs/M14-macro-place.md`, in the style of `docs/handoffs/M13-05.md`. `--json` is `CharMacrosReport`. `macros list` and `macros check` are unchanged.
+
+**Acceptance:** text and `--json` on the fixture install, validating; a labelled constructed macro per placement outcome (placed, cannot place, on no bar) and one with findings; `macros list` and `macros check` output byte-identical to `main`; the runbook exists; `make ci` green. Reviewed by `domain-reviewer` and `code-reviewer`. User-facing: a new command; the wiki's `char` and `macros` pages.
+
+---
+
+## [ ] M14-08 — The Character tab: picker, header, gear
+**Size:** M · **Depends on:** M14-05
+
+§16.3. A fourth tab, Character. A picker from `char list --json` (latest-written first, the folder label and the file's local time), a header from `char gear --json` (character, spec id, equipped and overall average item level, and the two notes `char show` prints), and the gear in the client's slot order: slot name, item name in its quality colour, item level; a detail row on click with item id, enchant, gems, bonus ids and the raw link with a copy button. Empty slots drawn empty; a record with no `gear` shows the command's reason; a refusal or error shows the CLI's text. Every name and colour comes from the model; the JavaScript holds no slot table and no quality table (a test greps the templates for the slot names and colour codes of `gear_slots.toml` and finds none). All text through `textContent`; the tab runs only `char list` and `char gear`.
+
+**Acceptance:** UI tests in the style of `test_ui_explorer.py`: the tab appears, the picker lists the fixture characters, the gear rows match `char gear --json` for the picked one, the detail row carries the raw link, and no request other than the two read commands is made; the grep test; `make ci` green. Reviewed by `security-reviewer` (the templates) and `code-reviewer`. User-facing: the Character tab; the wiki's `wowlab ui` page.
+
+---
+
+## [ ] M14-09 — The Character tab: keys and macros
+**Size:** M · **Depends on:** M14-06, M14-07, M14-08
+
+§16.3. Two panels under the picked character. Keys: `char binds --json` as a table (key, command, what it does, source), a text filter, a "disagreements only" filter and the unreached-slots list. Macros: `char macros --json`, each with its body as lines, where it sits and which keys reach it, and its findings in the checker's words, with a "findings only" filter. Both panels name the files and the record they came from with their times. Macro bodies and spell names are player text, rendered with `textContent` and never as markup. The tab still offers no edit control; a note under each panel says the panel is read-only in this version and that changes are a later wave (§16.5).
+
+**Acceptance:** UI tests: the panels draw the fixture character's rows and the filters narrow them as the model says; a labelled constructed body with `<script>` and `|c` sequences renders as text; only read commands are requested; `make ci` green. Reviewed by `security-reviewer` and `code-reviewer`. User-facing: the Character tab's two panels; the wiki's `wowlab ui` page.
+
+---
+
+## [ ] M14-10 — Wave 5 review
+**Size:** S · **Depends on:** M14-03, M14-04, M14-09
+
+The conductor writes `docs/handoffs/M14-review.md` per `docs/LAB_PLAN.md` §11: what shipped, what the two persistence tests answered if the owner has run them, the state of ADR-0032, and a recommended next wave, of which §16.5 (F2 to F5) is the first candidate.
