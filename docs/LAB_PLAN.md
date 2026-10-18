@@ -229,7 +229,7 @@ discovery; `guard` finds them itself (M10-11 amendment).
 same function; the M13-35 amendment under §6.2): a symlink, a junction, or
 any other Windows reparse point with the name-surrogate bit (a WCI link, a
 WSL symlink). A child named `_*_` that is such a link, or whose
-`.flavor.info` is one, is named in `other_dirs` and nothing is stated,
+`.flavor.info` is one, is named in `other_dirs` and nothing is `stat`ed,
 listed or read through it, so no command builds a `Layout` for it. A
 reparse point without that bit (a cloud placeholder) is taken as before.
 
@@ -280,7 +280,8 @@ is such a link is listed by `tree` as a link, and nothing in it is listed
 in it is listed"). Since M13-37 discovery uses the same test, so such a
 folder is named in `Install.other_dirs` rather than taken as a flavor, and
 `tree --install` notes it as "link …, not followed; not taken as a flavor
-folder (a link; links are not followed)"; the flavor-folder wording above
+folder" (`gaps.NOT_A_FLAVOR_LINK`, worded so since M13-37 so that "not
+followed" is said once); the flavor-folder wording above
 remains for a folder that becomes a link after discovery. A reparse point
 without that bit (a cloud placeholder, a deduplicated file) is walked and
 named in `Inventory.reparse_points` (M13-33).

@@ -551,7 +551,7 @@ def test_symlinked_flavor_folder_is_listed_not_followed_constructed(tmp_path: Pa
 _MOUNT_POINT = 0xA0000003  # IO_REPARSE_TAG_MOUNT_POINT, a junction: name surrogate
 _WCI_LINK = 0xA0000027  # IO_REPARSE_TAG_WCI_LINK_1: name surrogate, not a junction
 _LX_SYMLINK = 0xA000001D  # IO_REPARSE_TAG_LX_SYMLINK (WSL `ln -s`): name surrogate
-_CLOUD_PLACEHOLDER = 0x9000001A  # IO_REPARSE_TAG_CLOUD_A: no name-surrogate bit
+_CLOUD_PLACEHOLDER = 0x9000001A  # IO_REPARSE_TAG_CLOUD: no name-surrogate bit
 # Windows reports a WSL symlink as a file whatever it points at.
 _WSL_MODE = stat.S_IFREG | 0o644
 
@@ -579,7 +579,7 @@ def _fake_reparse(
     monkeypatch: pytest.MonkeyPatch, path: Path, tag: int, mode: int | None
 ) -> list[str]:
     """`path`'s `lstat` reports `tag`. Returns the list that collects every
-    path below `path` that is stated, opened or listed from then on (the
+    path below `path` that is `stat`ed, opened or listed from then on (the
     reads that would go through the link)."""
     through: list[str] = []
     marked, below = str(path), str(path) + os.sep
@@ -680,6 +680,38 @@ def test_a_flavor_folder_that_is_a_cloud_placeholder_is_still_a_flavor_construct
 
     assert [f.folder for f in got.flavors] == [REAL_FOLDER]
     assert got.other_dirs == ()
+
+
+@pytest.mark.parametrize(
+    ("error", "named"),
+    [
+        pytest.param(FileNotFoundError(2, "gone"), False, id="constructed-vanished"),
+        pytest.param(NotADirectoryError(20, "gone"), False, id="constructed-parent-replaced"),
+        pytest.param(PermissionError(13, "refused"), True, id="constructed-refused"),
+    ],
+)
+def test_a_child_whose_lstat_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: OSError, named: bool
+) -> None:
+    """A `_*_` child that is gone between the listing and its `lstat` is
+    skipped, as it was before discovery used `is_link`; one whose `lstat` is
+    refused is named in `other_dirs`, since it could not be checked."""
+    root = _make_install(
+        tmp_path, REAL_BUILD_INFO, {REAL_FOLDER: REAL_FLAVOR_INFO, "_racing_": REAL_FLAVOR_INFO}
+    )
+    racing, real_lstat = root / "_racing_", Path.lstat
+
+    def lstat(self: Path) -> Any:
+        if self == racing:
+            raise error
+        return real_lstat(self)
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+
+    got = read_install(root)
+
+    assert [f.folder for f in got.flavors] == [REAL_FOLDER]
+    assert got.other_dirs == (("_racing_",) if named else ())
 
 
 def test_discovery_uses_the_one_link_test() -> None:

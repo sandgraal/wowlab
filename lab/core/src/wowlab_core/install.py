@@ -604,15 +604,18 @@ def _scan_children(root: Path) -> tuple[list[Path], list[str]]:
             continue
         try:
             st = child.lstat()
-            if is_link(child, st):
-                others.append(name)
-            elif stat.S_ISDIR(st.st_mode):
-                if _is_regular(child / FLAVOR_INFO):
-                    flavors.append(child)
-                else:
-                    others.append(name)
+        except (FileNotFoundError, NotADirectoryError):
+            continue  # gone since the listing: not there, so not named
         except OSError:
+            others.append(name)  # refused: named, as it could not be checked
+            continue
+        if is_link(child, st):
             others.append(name)
+        elif stat.S_ISDIR(st.st_mode):
+            if _is_regular(child / FLAVOR_INFO):
+                flavors.append(child)
+            else:
+                others.append(name)
     return flavors, sorted(others)
 
 

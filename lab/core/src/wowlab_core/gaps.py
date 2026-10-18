@@ -81,8 +81,9 @@ GapKind = Literal["file", "folder", "link", "other"]
 # missing, is not a regular file, or the folder itself is a link.
 NOT_A_FLAVOR = "not taken as a flavor folder (no regular .flavor.info file)"
 # The same, for a root link named `_..._`: discovery never takes a link,
-# whatever it points at.
-NOT_A_FLAVOR_LINK = "not taken as a flavor folder (a link; links are not followed)"
+# whatever it points at. No reason in brackets: every place it is shown
+# already says the entry is a link that is not followed (M13-37 review).
+NOT_A_FLAVOR_LINK = "not taken as a flavor folder"
 # Paths of files below a folder place kept as examples in the JSON.
 EXAMPLES = 5
 
