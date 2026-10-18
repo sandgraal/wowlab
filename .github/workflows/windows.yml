@@ -74,19 +74,20 @@ jobs:
       # Long paths off (M13-15T): the default on many player PCs. The runner
       # image turns them on, so the module skips in the passes above. These
       # steps run whatever the passes above did, turn the setting off for new
-      # processes, run that one module alone (it errors rather than skipping
-      # if plain long paths still work), and turn the setting back on.
+      # processes, run those modules alone (M13-15T's graders, and M13-44's
+      # tests of the readers it left; each errors rather than skipping if
+      # plain long paths still work), and turn the setting back on.
       - name: Turn long paths off
         if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -Value 0 -Type DWord
           "LongPathsEnabled=" + (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem').LongPathsEnabled
-      - name: pytest test_long_paths_windows.py (long paths off)
+      - name: pytest test_long_paths_windows.py test_long_paths_readers.py (long paths off)
         if: ${{ !cancelled() }}
         env:
           WOWLAB_EXPECT_LONG_PATHS_OFF: "1"
-        run: uv run --frozen pytest -q -rxXs -m "not live" lab/core/tests/test_long_paths_windows.py
+        run: uv run --frozen pytest -q -rxXs -m "not live" lab/core/tests/test_long_paths_windows.py lab/core/tests/test_long_paths_readers.py
       - name: Turn long paths back on
         if: ${{ always() }}
         shell: pwsh

@@ -50,12 +50,14 @@ __all__ = [
     "is_junction",
     "is_symlink",
     "iterdir",
+    "lexists",
     "lstat",
     "open_read",
     "plain",
     "plain_errors",
     "read_bytes",
     "readlink",
+    "realpath",
     "resolve",
     "samefile",
     "stat",
@@ -223,6 +225,11 @@ def exists(path: str | os.PathLike[str]) -> bool:
         return _x(path).exists()
 
 
+def lexists(path: str | os.PathLike[str]) -> bool:
+    """`os.path.lexists(path)`: something is there, a broken link included."""
+    return os.path.lexists(extended(path))
+
+
 def is_dir(path: str | os.PathLike[str]) -> bool:
     with plain_errors():
         return _x(path).is_dir()
@@ -263,6 +270,19 @@ def resolve(path: str | os.PathLike[str], *, strict: bool = False) -> Path:
         if not ON_WINDOWS:
             return Path(path).resolve(strict=strict)
         return plain(_x(path).resolve(strict=strict))
+
+
+def realpath(path: str | os.PathLike[str]) -> str:
+    """`os.path.realpath(path)`, every link on the way resolved, past the
+    plain limit too: on Windows the extended spelling is resolved (a plain
+    path Windows cannot open resolves only as far up as it can, leaving the
+    rest unresolved) and the result is made plain (`plain_text`) where it
+    has a plain spelling. For a containment check, compare two results of
+    this function, never one with a path spelled otherwise."""
+    with plain_errors():
+        if not ON_WINDOWS:
+            return os.path.realpath(path)
+        return plain_text(os.path.realpath(extended(path)))
 
 
 def iterdir(path: str | os.PathLike[str]) -> list[Path]:

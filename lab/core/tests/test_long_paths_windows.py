@@ -1026,7 +1026,6 @@ def test_constructed_control_serialize_takes_a_sibling_style_at_a_short_root(
     assert luadata.serialize(_new_document()) == NEW_IN_FALLBACK_STYLE != NEW_IN_SIBLING_STYLE
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M13-44 not implemented")
 @pytest.mark.parametrize("layout", ["deep-root", "sv-long-name"])
 def test_constructed_serialize_takes_the_style_of_a_sibling_past_max_path(
     build: Callable[[str], Tree], layout: str
@@ -1183,7 +1182,6 @@ def test_constructed_sv_dump_reads_a_savedvariables_file_past_max_path(
     _check_sv_dump(tree, build("short"), _dump_file(tree, spelling, tmp_path, monkeypatch))
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M13-44 not implemented")
 @pytest.mark.parametrize(
     ("layout", "spelling"), [("deep-root", "cwd-relative"), ("sv-long-name", "cwd-relative")]
 )
@@ -1303,7 +1301,6 @@ def test_constructed_sv_output_names_no_extended_length_path(
     _check_no_extended_spelling(build(layout), command)
 
 
-@pytest.mark.xfail(ON_WINDOWS, strict=True, raises=AssertionError, reason="M13-44 not implemented")
 @pytest.mark.parametrize("layout", ["short"])
 @pytest.mark.parametrize("command", ["sv-dump-absolute-json", "sv-dump-absolute-json-path"])
 def test_constructed_sv_dump_json_names_an_extended_length_file_plainly(

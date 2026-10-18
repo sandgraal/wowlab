@@ -746,9 +746,13 @@ def is_log_name(name: str) -> bool:
 def find_logs(directory: Path | str) -> list[Path]:
     """The combat logs directly in ``directory``, oldest first by modification
     time, then by name. Only regular files count; a symbolic link does not.
-    Lists the folder and stats its entries; opens nothing."""
+    Lists the folder and stats its entries; opens nothing. A folder past
+    Windows' plain limit is listed by its extended-length spelling
+    (`longpath`, M13-44); each path returned is ``directory`` joined with the
+    file's name, never extended-length."""
+    base = Path(directory)
     found: list[tuple[int, str, Path]] = []
-    with os.scandir(directory) as it:
+    with longpath.plain_errors(), os.scandir(longpath.extended(base)) as it:
         for entry in it:
             if not is_log_name(entry.name):
                 continue
@@ -758,7 +762,7 @@ def find_logs(directory: Path | str) -> list[Path]:
                 mtime = entry.stat(follow_symlinks=False).st_mtime_ns
             except OSError:
                 continue
-            found.append((mtime, entry.name, Path(entry.path)))
+            found.append((mtime, entry.name, base / entry.name))
     return [p for _, _, p in sorted(found)]
 
 
@@ -1067,11 +1071,11 @@ def follow(
     found, ``sleep(poll_interval)`` is called before the next look.
     """
     path = Path(path)
-    if path.is_dir():
+    if longpath.is_dir(path):
         directory, current = path, newest_log(path)
-    elif path.is_file():
+    elif longpath.is_file(path):
         directory, current = path.parent, path
-    elif path.exists():
+    elif longpath.exists(path):
         raise NotARegularFileError(f"not a regular file or a folder: {path}")
     else:
         raise FileNotFoundError(f"no such file or folder: {path}")

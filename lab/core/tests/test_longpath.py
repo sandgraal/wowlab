@@ -158,6 +158,37 @@ def test_constructed_off_windows_every_spelling_is_the_path_as_given(tmp_path: P
     assert longpath.plain(odd) == Path(odd)
 
 
+def test_constructed_realpath_and_lexists_are_the_os_calls_on_a_short_path(tmp_path: Path) -> None:
+    """M13-44: `realpath` and `lexists` answer as `os.path` does for a path
+    Windows opens plainly (every path off Windows), a dangling link and a
+    link's target included; `realpath` never names a `\\\\?\\` path."""
+    real = tmp_path / "real"
+    real.mkdir()
+    (real / "file.txt").write_bytes(b"")
+    for path in (real / "file.txt", real / "missing.txt", tmp_path / "real" / ".." / "real"):
+        assert longpath.realpath(path) == os.path.realpath(path)
+        assert longpath.lexists(path) == os.path.lexists(path)
+        assert not longpath.realpath(path).startswith("\\\\?\\")
+    if sys.platform != "win32":
+        (tmp_path / "dangling").symlink_to(tmp_path / "nowhere")
+        (tmp_path / "linked").symlink_to(real, target_is_directory=True)
+        assert longpath.lexists(tmp_path / "dangling") is True
+        assert longpath.realpath(tmp_path / "linked" / "file.txt") == os.path.realpath(
+            real / "file.txt"
+        )
+
+
+@WINDOWS
+def test_constructed_realpath_of_an_extended_spelling_is_plain(tmp_path: Path) -> None:
+    """M13-44: a `\\\\?\\` path with a plain spelling resolves to that plain
+    spelling, so two results compare whatever spelling each was given in."""
+    (tmp_path / "file.txt").write_bytes(b"")
+    spelled = longpath.extended_text(str(tmp_path / "file.txt"), limit=0)
+    assert longpath.realpath(spelled) == longpath.realpath(tmp_path / "file.txt")
+    assert not longpath.realpath(spelled).startswith("\\\\?\\")
+    assert longpath.lexists(spelled) is True
+
+
 def test_constructed_plain_errors_names_the_plain_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(longpath, "ON_WINDOWS", True)
     with pytest.raises(FileNotFoundError) as raised, longpath.plain_errors():

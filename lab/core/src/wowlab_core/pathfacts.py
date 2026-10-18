@@ -25,7 +25,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from wowlab_core import snapshot
+from wowlab_core import longpath, snapshot
 from wowlab_core.verdict import _fold  # the write gate's fold: NFC, casefold, NFC
 
 __all__ = [
@@ -129,18 +129,18 @@ def disk_spelling(base: Path, parts: Sequence[str]) -> tuple[str, ...]:
     folder's listing holds that same entry (same device and inode) under a
     spelling equal to it after the write gate's fold. From the first part
     that names nothing, or that is a link, the rest stay as typed: no link
-    is entered."""
+    is entered. A path past Windows' plain limit is looked at and listed by
+    its extended-length spelling (`longpath`, M13-44)."""
     out: list[str] = []
     current = base
     for i, part in enumerate(parts):
         try:
-            st = (current / part).lstat()
+            st = longpath.lstat(current / part)
         except OSError:
             return (*out, *parts[i:])
         name = part
         try:
-            with os.scandir(current) as it:
-                names = [e.name for e in it]
+            names = [e.name for e in longpath.entries(current)]
         except OSError:
             names = []
         if part not in names:
@@ -156,7 +156,7 @@ def disk_spelling(base: Path, parts: Sequence[str]) -> tuple[str, ...]:
 
 def _same_entry(path: Path, st: os.stat_result) -> bool:
     try:
-        other = path.lstat()
+        other = longpath.lstat(path)
     except OSError:
         return False
     return (other.st_dev, other.st_ino) == (st.st_dev, st.st_ino)
@@ -167,7 +167,7 @@ def path_stat(path: Path) -> PathStat | None:
     does not exist or cannot be read. The caller has already refused a path
     that is a link or lies inside one."""
     try:
-        st = path.lstat()
+        st = longpath.lstat(path)
     except OSError:
         return None
     if stat.S_ISREG(st.st_mode):
@@ -194,7 +194,7 @@ def _same_root(recorded: str, root: Path) -> bool:
     if Path(recorded) == root:
         return True
     try:
-        return Path(recorded).resolve() == root.resolve()
+        return longpath.resolve(recorded) == longpath.resolve(root)
     except (OSError, RuntimeError):
         return False
 
@@ -237,14 +237,14 @@ class _Volume:
             if above is None or above == _LINK:
                 return above
             try:
-                st_above = self.root.joinpath(*parts[:-1]).lstat()
+                st_above = longpath.lstat(self.root.joinpath(*parts[:-1]))
             except OSError:
                 return None
             # A symbolic link, or on Windows a junction: the store's own rule.
             if snapshot._is_link_stat(st_above) or not stat.S_ISDIR(st_above.st_mode):
                 return _LINK
         try:
-            st = self.root.joinpath(*parts).lstat()
+            st = longpath.lstat(self.root.joinpath(*parts))
         except OSError:
             return None
         return (st.st_dev, st.st_ino)

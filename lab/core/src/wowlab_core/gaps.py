@@ -54,6 +54,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from wowlab_core import filemap as _filemap
+from wowlab_core import longpath
 
 # The note on a root folder (or link) named `_..._` that discovery did not
 # take as a flavor folder (`Install.other_dirs`): its `.flavor.info` is
@@ -354,8 +355,8 @@ def find_gaps(install: Install, limits: Limits | None = None) -> GapReport:
     while stack:
         frame = stack.pop()
         try:
-            with os.scandir(frame.path) as it:
-                children = sorted(it, key=lambda e: e.name)
+            # Extended-length past the plain limit (`longpath`, M13-44).
+            children = sorted(longpath.entries(frame.path), key=lambda e: e.name)
         except OSError as exc:
             where = _install_rel(frame.base, frame.flavor_folder, frame.rel)
             errors.append(GapError(path=where, error=_error(exc)))
@@ -372,7 +373,7 @@ def find_gaps(install: Install, limits: Limits | None = None) -> GapReport:
             except OSError as exc:
                 errors.append(GapError(path=_install_rel(base, flavor, rel), error=_error(exc)))
                 continue
-            path = Path(child.path)
+            path = frame.path / child.name  # plain; `child.path` may be extended-length
             kind = _kind(path, st)
             if base == "root" and not frame.rel and kind == "folder" and child.name in flavors:
                 base, flavor, rel = "flavor", child.name, ()
