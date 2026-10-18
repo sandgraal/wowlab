@@ -22,6 +22,14 @@ Account folder shapes (LAB_FILE_MAP "Folder shape", GLOSSARY "Second name"):
   first name, a match by name only, because which realm name goes with which
   numeric folder is unknown.
 
+Not every folder under `WTF/Account/` is an account (M13-50): one is an
+account folder when its name has the `<digits>#<n>` shape of a current
+client's account folder, or when it holds a character folder (a realm or
+digits folder with a folder inside other than `SavedVariables/`). Any other
+(a stray `WTF/Account/SavedVariables/`, say) is named in `not_accounts` and
+is no `Account`; a file below it is a `WtfFile` of scope `other` with no
+account, never a SavedVariables file of an account.
+
 Reads only (L1): directories are listed, files are `lstat`ed, and TOC files
 are opened for reading. Nothing is created anywhere. A link is never
 followed, whether it points inside the install or out: a symlink, a Windows
@@ -62,6 +70,7 @@ from pydantic import (
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    Field,
     PlainSerializer,
     ValidationInfo,
 )
@@ -107,6 +116,8 @@ __all__ = [
 _WTF = "WTF"
 _ACCOUNT = "Account"
 _SAVED_VARIABLES = "SavedVariables"
+# M13-50: the name of a current client's account folder, `<digits>#<n>`.
+_ACCOUNT_NAME = re.compile(r"[0-9]+#[0-9]+")
 _OS_METADATA = "os-metadata"  # file-map entry id
 _BLIZZARD_SV = "SavedVariables.lua"
 _INTERFACE = "Interface"
@@ -359,6 +370,9 @@ class Inventory(_Model):
     os_metadata: tuple[FsText, ...]
     errors: tuple[WalkError, ...]
     truncated: bool
+    # M13-50: every folder directly under `WTF/Account/` that is not an
+    # account folder, sorted by path. Left out of the JSON when empty.
+    not_accounts: tuple[FsText, ...] = Field(default=(), exclude_if=lambda v: not v)
 
 
 class WtfWalk(_Model):
@@ -376,6 +390,8 @@ class WtfWalk(_Model):
     symlinks: tuple[Symlink, ...]  # met at or below `WTF/`, never followed
     errors: tuple[WalkError, ...]  # folders that could not be listed, entries not `lstat`ed
     truncated: bool
+    # M13-50: as `Inventory.not_accounts`. Left out of the JSON when empty.
+    not_accounts: tuple[FsText, ...] = Field(default=(), exclude_if=lambda v: not v)
 
 
 class Classified(_Model):
@@ -423,6 +439,26 @@ class _Report:
     wtf_folders: list[str] = field(default_factory=list)
     # M13-33: entries walked although the write gate refuses them.
     reparse_points: list[ReparsePoint] = field(default_factory=list)
+    # M13-50: folders under `WTF/Account/` that are not account folders.
+    not_accounts: list[str] = field(default_factory=list)
+
+
+def _is_saved_variables_name(name: str) -> bool:
+    return name.casefold() == _SAVED_VARIABLES.casefold()
+
+
+def _is_account_folder(name: str, realms: Iterable[tuple[str, Iterable[str]]]) -> bool:
+    """M13-50: whether a folder under `WTF/Account/` is an account folder:
+    its name has the `<digits>#<n>` shape, or one of `realms` (each sub-folder
+    with the names of the folders inside it) other than `SavedVariables/`
+    holds a folder other than `SavedVariables/`, a character folder."""
+    if _ACCOUNT_NAME.fullmatch(name):
+        return True
+    return any(
+        not _is_saved_variables_name(realm)
+        and any(not _is_saved_variables_name(c) for c in characters)
+        for realm, characters in realms
+    )
 
 
 def _rel_text(rel: Iterable[str]) -> str:
@@ -666,19 +702,30 @@ class Layout:
         def dirs_in(rel: tuple[str, ...]) -> tuple[str, ...]:
             return tuple(e.rel[-1] for e in by_folder.get(rel, []) if e.is_dir)
 
+        account_names: list[str] = []
+        if account_root is not None:
+            for name in dirs_in(account_root):
+                arel = (*account_root, name)
+                below = ((r, dirs_in((*arel, r))) for r in dirs_in(arel))
+                if _is_account_folder(name, below):
+                    account_names.append(name)
+                else:
+                    report.not_accounts.append(_rel_text(arel))
+        known = frozenset(account_names)
+
         n_wtf = len(wtf)
         for e in entries:
             if e.is_dir:
                 continue
             sub = e.rel[n_wtf:]
-            sv = self._as_saved_variables(e, sub, account_root is not None)
+            sv = self._as_saved_variables(e, sub, known)
             if sv is not None:
                 svs.append(sv)
                 continue
-            wtf_files.append(self._as_wtf_file(e, sub, account_root is not None))
+            wtf_files.append(self._as_wtf_file(e, sub, known))
 
         if account_root is not None:
-            for account_name in dirs_in(account_root):
+            for account_name in account_names:
                 arel = (*account_root, account_name)
                 realms: list[Realm] = []
                 for realm_name in dirs_in(arel):
@@ -727,10 +774,12 @@ class Layout:
         return accounts, svs, wtf_files
 
     def _as_saved_variables(
-        self, e: _Entry, sub: tuple[str, ...], has_accounts: bool
+        self, e: _Entry, sub: tuple[str, ...], accounts: frozenset[str]
     ) -> SavedVariablesFile | None:
-        """`sub` is relative to `WTF/`: `Account/<A>/…`."""
-        if not has_accounts or len(sub) < 3 or sub[0].casefold() != _ACCOUNT.casefold():
+        """`sub` is relative to `WTF/`: `Account/<A>/…`, where `<A>` is one of
+        the account folders `accounts` (M13-50: a file below a folder that is
+        no account folder is no account's SavedVariables)."""
+        if len(sub) < 3 or sub[0].casefold() != _ACCOUNT.casefold() or sub[1] not in accounts:
             return None
         name = sub[-1]
         lower = name.casefold()
@@ -774,8 +823,12 @@ class Layout:
             entry_id=self._entry_id(e.rel, False),
         )
 
-    def _as_wtf_file(self, e: _Entry, sub: tuple[str, ...], has_accounts: bool) -> WtfFile:
-        in_accounts = has_accounts and len(sub) >= 3 and sub[0].casefold() == _ACCOUNT.casefold()
+    def _as_wtf_file(self, e: _Entry, sub: tuple[str, ...], accounts: frozenset[str]) -> WtfFile:
+        # M13-50: below a folder of `WTF/Account/` that is no account folder,
+        # a file is of scope `other` and of no account.
+        in_accounts = (
+            len(sub) >= 3 and sub[0].casefold() == _ACCOUNT.casefold() and sub[1] in accounts
+        )
         account = realm = character = None
         scope: Literal["machine", "account", "character", "other"]
         if len(sub) == 1:
@@ -975,8 +1028,28 @@ class Layout:
     # ── public ─────────────────────────────────────────────────────────────
 
     def accounts(self) -> tuple[Account, ...]:
-        """Account folders under `WTF/Account/`, each with realms and characters."""
+        """Account folders under `WTF/Account/`, each with realms and
+        characters; a folder there that is no account folder (M13-50: its
+        name is not `<digits>#<n>` and it holds no character folder) is not
+        one of them."""
         return tuple(self._scan_wtf(_Report())[0])
+
+    def is_account_folder(self, folder: str) -> bool:
+        """M13-50: whether `WTF/Account/<folder>/` is a real folder and an
+        account folder by the rule `accounts()` uses, from a listing of it and
+        of its sub-folders only (no walk of `WTF/`)."""
+        report = _Report()
+        wtf = self._top(_WTF, report)
+        account_root = None if wtf is None else self._sub(wtf, _ACCOUNT, report)
+        arel = None if account_root is None else self._sub(account_root, folder, report)
+        if arel is None:
+            return False
+        realms = (
+            (r.rel[-1], [c.rel[-1] for c in self._list(r.rel, report) if c.is_dir])
+            for r in self._list(arel, report)
+            if r.is_dir
+        )
+        return _is_account_folder(arel[-1], realms)
 
     def saved_variables(
         self, scope: Literal["account", "character"] | None = None
@@ -1006,6 +1079,7 @@ class Layout:
             symlinks=tuple(sorted({s.path: s for s in report.symlinks}.values(), key=_by_path)),
             errors=tuple(dict.fromkeys(report.errors)),
             truncated=report.truncated,
+            not_accounts=tuple(sorted(report.not_accounts)),
         )
 
     def addons(self) -> tuple[Addon, ...]:
@@ -1048,6 +1122,7 @@ class Layout:
             os_metadata=tuple(sorted(set(report.os_metadata))),
             errors=tuple(report.errors),
             truncated=report.truncated,
+            not_accounts=tuple(sorted(report.not_accounts)),
         )
 
     def snapshot_subtrees(self, *, screenshots: bool = False) -> tuple[str, ...]:

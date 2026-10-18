@@ -130,6 +130,10 @@ def identities(root: Path | None) -> Identities:
                     found.characters.add(character.first_name)
                     if character.second_name:
                         found.realms.add(character.second_name)
+        # M13-50: a folder under WTF/Account/ that is no account folder may
+        # still be named after one (an account with no character yet, under
+        # an old-style name); its name is redacted as before.
+        found.accounts.update(path.rsplit("/", 1)[-1] for path in walk.not_accounts)
         for f in walk.wtf_files:
             if f.name.casefold() in _CONFIG_NAMES:
                 _harvest(lay.flavor_path / f.path, found)

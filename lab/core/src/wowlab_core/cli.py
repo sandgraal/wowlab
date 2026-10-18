@@ -885,8 +885,18 @@ def _open(
     return inst, chosen, layout.Layout.for_flavor(chosen, inst.root)
 
 
+# M13-50: why a folder under WTF/Account/ is not taken as an account.
+_NOT_AN_ACCOUNT = (
+    "not an account folder: its name is not <digits>#<n> and it holds no character folder"
+)
+
+
 def _select_account(lay: layout.Layout, name: str | None) -> layout.Account:
-    accounts = lay.accounts()
+    """The account folder `name`, or the only one. Only account folders
+    count (M13-50): a stray folder under WTF/Account/ is neither chosen nor
+    counted, and naming it is refused with the accounts listed."""
+    walk = lay.wtf_walk()
+    accounts = walk.accounts
     names = ", ".join(a.folder for a in accounts) or "none"
     if name is not None:
         match = [a for a in accounts if a.folder == name] or [
@@ -894,8 +904,10 @@ def _select_account(lay: layout.Layout, name: str | None) -> layout.Account:
         ]
         if len(match) == 1:
             return match[0]
+        stray = [p for p in walk.not_accounts if p.rsplit("/", 1)[-1].casefold() == name.casefold()]
+        why = f"; {stray[0]} is {_NOT_AN_ACCOUNT}" if stray else ""
         raise CliError(
-            f"no account folder {name!r} (accounts wowlab could look inside: {names})",
+            f"no account folder {name!r} (accounts wowlab could look inside: {names}){why}",
             EXIT_USAGE,
         )
     if len(accounts) == 1:
@@ -1827,6 +1839,8 @@ def _tree_items(
         add(e.name, "folder" if stat.S_ISDIR(st.st_mode) else "file", None, None)
     for acct in inv.accounts:
         add(acct.path, "folder", None, "account folder")
+    for path in inv.not_accounts:
+        add(path, "folder", None, _NOT_AN_ACCOUNT)
         for realm in acct.realms:
             note = (
                 "numeric folder (not a realm name)" if realm.kind == "numeric" else "realm folder"
@@ -2508,6 +2522,17 @@ _VIEWS: dict[str, Callable[[_At], list[_ViewSpec] | str]] = {
 }
 
 
+# The entries whose views pass `--account` (M13-50).
+_ACCOUNT_VIEWS = frozenset(
+    {
+        "account-config-cache",
+        "account-bindings-cache",
+        "account-macros-cache",
+        "character-wtf-config",
+    }
+)
+
+
 def _view(command: tuple[str, ...], params: dict[str, str], does: str) -> ExplainView:
     argv = list(command)
     if "file" in params:
@@ -3081,6 +3106,15 @@ def _detail(
             newest_log=newest,
         )
         views, note = _views(judged.entry.id, at, given_root)
+        if (
+            views
+            and judged.entry.id in _ACCOUNT_VIEWS
+            and lay is not None
+            and not lay.is_account_folder(parts[2])
+        ):
+            # M13-50: `--account` would be refused for a folder that is no
+            # account folder, so no view names it.
+            views, note = [], f"WTF/Account/{parts[2]} is {_NOT_AN_ACCOUNT}; {_NO_READER}"
     hints = _hints(verdict, facts, judged.flavor_folder, given_root, views, absent=absent)
     return stat_, facts, views, note, hints
 
@@ -8959,7 +8993,7 @@ def ui_command() -> None:
 
     The server listens on 127.0.0.1 only, at a port the system picks, and
     answers only requests that carry the random token in the URL it opens.
-    It opens on the explorer: a flavor folder's files, each with whether
+    It opens on the explorer: the whole install's files, each with whether
     wowlab may edit it, and what a picked file is and who writes it. A
     second tab runs this wowlab's commands with --json. Commands that save only to
     wowlab's own data (snapshots, profiles, saved looks, the db2 cache,
