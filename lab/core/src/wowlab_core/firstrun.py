@@ -56,6 +56,7 @@ __all__ = [
     "flavor_label",
     "intro_lines",
     "is_first_run",
+    "link_lines",
     "not_taken_lines",
     "pointing_lines",
     "run",
@@ -363,22 +364,32 @@ def _sync_lines(scan: FlavorScan, wtf_is_link: bool) -> list[str]:
     return lines
 
 
+def _link_line(entry: install.NotTaken) -> str:
+    """A linked `_..._` folder: never followed, so nothing in it is
+    snapshotted; the player backs up the folder it points to, as for a
+    linked `WTF` (`_sync_lines`)."""
+    return (
+        f"{entry.name} is a {install.not_taken_why(entry)}, so its WTF (settings and "
+        "SavedVariables), Interface and Fonts are not snapshotted: "
+        f"{install.NOT_TAKEN_LINK}. Back up the folder it points to yourself."
+    )
+
+
 def not_taken_lines(inst: install.Install) -> list[str]:
     """Why each folder named `_..._` was not taken as a flavor, for a first
-    run that found none (M13-45). A link is never followed, so nothing in
-    it is snapshotted; the player backs up the folder it points to, as for
-    a linked `WTF` (`_sync_lines`)."""
-    lines: list[str] = []
-    for n in inst.not_taken:
-        if n.reason == "link":
-            lines.append(
-                f"  {n.name} is a {install.not_taken_why(n)}, so its WTF (settings and "
-                "SavedVariables), Interface and Fonts are not snapshotted: "
-                f"{install.NOT_TAKEN_LINK}. Back up the folder it points to yourself."
-            )
-        else:
-            lines.append(f"  {n.name}: {n.note}")
-    return lines
+    run that found none (M13-45)."""
+    return [
+        f"  {_link_line(n)}" if n.reason == "link" else f"  {n.name}: {n.note}"
+        for n in inst.not_taken
+    ]
+
+
+def link_lines(inst: install.Install) -> list[str]:
+    """For a first run that found a flavor: each linked `_..._` folder beside
+    it, under the flavor list, in the words `not_taken_lines` gives it
+    (M13-56). A folder not taken for another reason holds nothing the
+    client plays from, and `doctor` already lists it."""
+    return [_link_line(n) for n in inst.not_taken if n.reason == "link"]
 
 
 def scan_lines(scan: FlavorScan, number: int, count: int) -> list[str]:
@@ -897,6 +908,8 @@ def run(
     for n, scan in enumerate(scans, 1):
         for line in scan_lines(scan, n, len(scans)):
             say(line)
+    for line in link_lines(inst):
+        say(line)
 
     def estimate(flavor: install.Flavor) -> str:
         return _duration(next(s for s in scans if s.folder == flavor.folder).estimated_seconds)

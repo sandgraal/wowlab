@@ -287,6 +287,20 @@ otherwise); a link there, or a path inside one, prints the verdict's words
 first, and any path under such a folder then prints `<name>: <note>`. Every
 other link prints as before.
 
+*Amended 2026-10-18 (M13-56):* `doctor`'s no-flavor problem, when
+`not_taken` is not empty, is the refusal's words in full, "not taken:
+<name> (<reason>), ..." and, for a link, `install.NOT_TAKEN_LINK` included,
+so `--json` says why as the text does. The text of `doctor` ends with
+"Problems:" and one indented line per entry of `problems` whenever there is
+one (a run that skips the first run, under `--redact` or once a snapshot of
+the install exists, exited 1 with no line saying why); with no problem
+nothing is added. A first run that finds a flavor prints, under the flavor
+list, the line the link-only first run gives each linked folder ("<name> is
+a link to <target>, not followed, so its WTF (settings and SavedVariables),
+Interface and Fonts are not snapshotted: ... Back up the folder it points to
+yourself."), unindented; a folder not taken for another reason is not
+repeated there.
+
 ### 6.2 `layout` — typed walk of a flavor (M10-06)
 
 Pure read. Produces the inventory every later tool starts from:
