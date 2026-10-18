@@ -5739,7 +5739,9 @@ class RestoreReport(_Out):
     flavor_version: str | None  # the flavor's version now
     paths: list[str] | None  # --paths as given; None restores the whole snapshot
     plan: list[guard.PlanItem]  # path, before/after SHA-256 (None: absent), bytes written
-    skipped: list[SkippedPath]  # client-managed files a whole restore does not write
+    # File-map Edit `no` files a whole restore does not write: client-managed
+    # ones, and executables whose content changed or that are missing (M13-38).
+    skipped: list[SkippedPath]
     # Screenshots (file-map Edit `n/a`) a whole restore leaves out and --paths
     # cannot restore either; they stay in the snapshot.
     not_restored: list[NotRestoredPath]
@@ -5795,6 +5797,104 @@ def _screenshot_row(lay: layout.Layout, rel: str, *, is_dir: bool | None) -> Fil
     found = lay.classify(rel, is_dir=is_dir)
     if isinstance(found, layout.Classified) and found.entry.id == _SCREENSHOTS_ROW:
         return found.entry
+    return None
+
+
+# The file-map row of an executable under `Interface/AddOns/` (Edit `no`):
+# the write gate never writes, restores or deletes one (L7).
+_EXECUTABLE_ROW = "addon-executable"
+
+
+def _changed_executables(
+    lay: layout.Layout, entries: Sequence[snapshot.Entry], install_root: Path, folder: str
+) -> tuple[list[snapshot.Entry], list[SkippedPath]]:
+    """Split this flavor's `entries` for a whole restore: a file named like
+    an executable whose file-map row has Edit `no` (an addon's `helper.sh`,
+    row `addon-executable`, or the `._helper.sh` macOS writes beside it, row
+    `os-metadata`) and whose content the disk no longer holds, changed or
+    missing, is skipped and listed with its row (M13-38); every other entry
+    is to be restored.
+
+    Only a regular-file entry the gate would refuse for being an executable
+    and nothing else (`verdict`'s copy of its name rules) is skipped, and
+    only when the disk shows a plain change (`_plainly_on_disk`): a regular
+    file with other bytes, spelled exactly as in the snapshot, or nothing
+    at all in real folders. Everything else (a reserved name, a link, a
+    folder or a link where the file was, a name spelled otherwise on disk,
+    one behind a linked folder, same bytes with other permission bits) stays
+    named, and the gate refuses it as a whole restore does. Reads only,
+    following no link (`profiles.disk_state`, folder listings, `lstat`)."""
+    prefix = folder + "/"
+    rest: list[snapshot.Entry] = []
+    skipped: list[SkippedPath] = []
+    for entry in entries:
+        rel = entry.path.removeprefix(prefix)
+        mine = entry.path.startswith(prefix)  # another flavor's path: the gate refuses it
+        if mine and entry.kind == "file" and entry.sha256 is not None and has_executable_part(rel):
+            found = lay.classify(rel, is_dir=False)
+            if (
+                isinstance(found, layout.Classified)
+                and found.entry.edit == "no"
+                and gate_names_but_for_executable(rel)
+                and _plainly_changed(install_root, folder, entry, rel)
+            ):
+                skipped.append(
+                    SkippedPath(path=rel, entry_id=found.entry.id, what=_plain(found.entry.what))
+                )
+                continue
+        rest.append(entry)
+    return rest, skipped
+
+
+def _plainly_changed(install_root: Path, folder: str, entry: snapshot.Entry, rel: str) -> bool:
+    """Whether the disk holds a plain change of `entry`: its content differs
+    and `rel` is a regular file there, or it is missing from real folders."""
+    state = profiles.disk_state(install_root, folder, entry)
+    if state not in ("differs", "missing"):
+        return False
+    return _plainly_on_disk(install_root / folder, rel) == (
+        "file" if state == "differs" else "missing"
+    )
+
+
+def _is_reparse(st: os.stat_result) -> bool:
+    """A Windows reparse point of any kind (a junction, a symlink, or one that
+    is neither); always False elsewhere, where the attribute is absent."""
+    return bool(getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+def _plainly_on_disk(flavor_dir: Path, rel: str) -> Literal["file", "missing"] | None:
+    """What `rel` is under `flavor_dir`, read without following a link: `file`
+    when every part is in its folder's listing spelled exactly as in `rel`,
+    each folder on the way is a real folder (by `lstat`: not a link, a
+    junction or another reparse point) and the last part a regular file;
+    `missing` when the folders on the way that are there are real folders,
+    spelled exactly, and the first part that is not there (the file, or a
+    folder on its way: a deleted addon, sub-folder or `.app`) is absent from
+    its real parent's listing in every letter case; None for anything else
+    (a link, a junction or another reparse point on the way, a folder or a
+    link at the leaf, a part spelled otherwise, an error)."""
+    parts = rel.split("/")
+    current = flavor_dir
+    try:
+        for n, part in enumerate(parts):
+            names = {child.name for child in current.iterdir()}
+            last = n == len(parts) - 1
+            if part not in names:
+                folded = part.casefold()
+                if all(name.casefold() != folded for name in names):
+                    return "missing"  # nothing below it is there either
+                return None  # spelled otherwise on disk
+            current = current / part
+            st = current.lstat()
+            if _is_reparse(st):
+                return None
+            if last:
+                return "file" if stat.S_ISREG(st.st_mode) else None
+            if not stat.S_ISDIR(st.st_mode) or current.is_junction():
+                return None
+    except OSError:
+        return None
     return None
 
 
@@ -5890,6 +5990,29 @@ def _unchanged(install_root: Path, folder: str, entry: snapshot.Entry) -> bool:
     return stat.S_ISREG(st.st_mode) and stat.S_IMODE(st.st_mode) == entry.mode
 
 
+def _skipped_lines(skipped: Sequence[SkippedPath]) -> list[str]:
+    """The text plan's skipped files: the ones --paths can restore, then the
+    addon executables, which it cannot (the gate never writes one)."""
+    lines: list[str] = []
+    others = [s for s in skipped if not has_executable_part(s.path)]
+    executables = [s for s in skipped if has_executable_part(s.path)]
+    if others:
+        lines.append(
+            f'  Skipped {len(others)} file(s) wowlab leaves alone (file-map Edit "no": '
+            "client-written backups, Blizzard_* folders, file-browser metadata; name one "
+            "with --paths to restore it):"
+        )
+        lines += [f"    {sk.path}  [{sk.entry_id}]" for sk in others]
+    if executables:
+        lines.append(
+            f"  Skipped {len(executables)} executable(s) whose content changed or that are "
+            'missing on disk (file-map Edit "no"): wowlab never writes, restores or deletes '
+            "an executable, not even with --paths; reinstall the addon to get one back:"
+        )
+        lines += [f"    {sk.path}  [{sk.entry_id}]" for sk in executables]
+    return lines
+
+
 # How many changed screenshots the text plan names; --json lists every one.
 _NOT_RESTORED_SHOWN = 10
 
@@ -5938,6 +6061,21 @@ def _screenshot_note(
             return
 
 
+def _executable_note(lay: layout.Layout, named: Sequence[str], exc: Exception) -> None:
+    """When the gate refused a named executable, say what the owner can do."""
+    for rel in named:
+        if f"{rel!r} is an executable" not in str(exc):
+            continue
+        found = lay.classify(rel, is_dir=False)
+        addon = isinstance(found, layout.Classified) and found.entry.id == _EXECUTABLE_ROW
+        exc.add_note(
+            "wowlab never writes, restores or deletes an executable, not even with --paths: "
+            "name the other files with --paths"
+            + (", or reinstall the addon to get its executable back." if addon else ".")
+        )
+        return
+
+
 @snap_app.command("restore")
 @_handled
 def snap_restore(
@@ -5948,8 +6086,9 @@ def snap_restore(
             "--paths",
             help="Only this path, relative to the flavor folder; repeat for more. "
             "A path the snapshot covers but does not hold is deleted. A named path is "
-            "restored even when its file-map row says wowlab leaves it alone (not a "
-            "screenshot: wowlab never writes Screenshots/).",
+            "restored even when its file-map row says wowlab leaves it alone, except an "
+            "executable, which never is. Nor is a screenshot: wowlab never writes "
+            "Screenshots/.",
         ),
     ] = None,
     dry_run: Annotated[
@@ -5965,7 +6104,10 @@ def snap_restore(
     Without --paths, files whose file-map Edit is `no` (client-written
     backups such as `.lua.bak` and `.old`, `Interface/AddOns/Blizzard_*`,
     file-browser metadata) are left alone and counted in the plan; name one
-    with --paths to restore it. Screenshots in a snapshot taken with
+    with --paths to restore it. An executable in an addon folder (its row is
+    `addon-executable`) whose content changed or that went missing is left
+    alone and counted too, but --paths cannot restore it: wowlab never
+    writes one, so reinstall the addon to get it back. Screenshots in a snapshot taken with
     `snap create --screenshots` are never restored (wowlab never writes
     Screenshots/, not even with --paths): a whole restore leaves them in the
     snapshot, counts them, and restores the rest. JSON: RestoreReport."""
@@ -5997,12 +6139,14 @@ def snap_restore(
     rest: list[snapshot.Entry] = list(manifest.entries)
     aside: list[NotRestoredPath] = []
     names: list[str] | None = None
+    executables: list[SkippedPath] = []
     with guard.transaction(chosen, label=label, dry_run=True) as tx:
         if named is not None:
             try:
                 tx.restore(manifest.id, named)
             except guard.PathNotAllowedError as exc:
                 _screenshot_note(lay, manifest, folder, named, exc)
+                _executable_note(lay, named, exc)
                 raise
         else:
             # The gate's snapshot checks (another install, another flavor)
@@ -6011,7 +6155,11 @@ def snap_restore(
             # Screenshots, which the gate never writes, are set aside; the
             # gate would otherwise refuse the whole restore.
             rest, aside = _set_aside(lay, manifest, inst.root, folder)
-            if not aside:
+            # An Edit "no" file named like an executable whose content changed
+            # or that went missing is skipped by its row: the gate never
+            # writes one, and would refuse the whole restore for it (M13-38).
+            rest, executables = _changed_executables(lay, rest, inst.root, folder)
+            if not aside and not executables:
                 tx.restore(manifest.id)
             else:
                 if any(not e.path.startswith(folder + "/") for e in rest):
@@ -6023,6 +6171,7 @@ def snap_restore(
     plan = list(whole_plan)
     if named is None:
         plan, skipped = _client_managed(lay, whole_plan)
+        skipped = sorted([*skipped, *executables], key=lambda s: s.path)
     # With something left out, the rest is restored by name: every entry the
     # gate would check in a whole restore but the skipped ones, so the gate
     # writes exactly the kept paths and a later change still shows in its
@@ -6063,14 +6212,8 @@ def snap_restore(
             )
         for item in plan:
             show(_plan_line(item))
-        if skipped:
-            show(
-                f'  Skipped {len(skipped)} file(s) wowlab leaves alone (file-map Edit "no": '
-                "client-written backups, Blizzard_* folders, file-browser metadata; name one "
-                "with --paths to restore it):"
-            )
-            for sk in skipped:
-                show(f"    {sk.path}  [{sk.entry_id}]")
+        for line in _skipped_lines(skipped):
+            show(line)
         if aside:
             for line in _not_restored_lines(manifest.id, aside):
                 show(line)
