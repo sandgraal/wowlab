@@ -1366,16 +1366,34 @@ byte for byte and recorded as such (§14.6).
 every file has a provenance row, consent is recorded, a committed fixture is
 never edited. Every capture passes through `scripts/lab_capture.py`, which
 
-- replaces account folder names, character names and realm names with
-  stable pseudonyms (same input → same pseudonym within a capture set, so
-  cross-file references still line up),
+- replaces account folder names with stable pseudonyms (same input → same
+  pseudonym within a capture set, so cross-file references still line up),
+  and each `--extra-name` the owner gives (a real name, a guild name) the
+  same way. *Amended 2026-10-17 (M13-49, ADR-0019 amendment):* character
+  names, realm names and the second name of a Forever `<First>-<Second>`
+  folder are no longer rewritten; they pass through as they are, in paths
+  and in contents. The digits-only Forever group folder keeps its path-only
+  numeric pseudonym,
 - drops or blanks CVars known to carry identity (`accountName`,
   `accountList`, `lastCharacterGuid`, `portal` stays) per a deny-list kept in
-  the tool and extended as found,
+  the tool and extended as found (`realmName` stays on it and is blanked),
 - refuses to emit anything matching an email address, a BattleTag, or a
-  `Player-<realm>-<hex>` GUID outside the pseudonym map,
+  `Player-<realm>-<hex>` GUID outside the pseudonym map. *Amended
+  2026-10-17 (M13-49):* a character or realm name inside a longer word, in
+  a SavedVariables file's own name, in an addon file, joined to an own
+  realm, or in an account's character list no longer refuses anything; the
+  same rules still refuse for the account folder and `--extra-name` strings,
+- with `--pseudonymise-other-players`, rewrites another player's GUID in a
+  combat log, and the character name of the unit name beside it. *Amended
+  2026-10-17 (M13-49):* the realm part of that unit name is left as written
+  and is no longer hunted elsewhere in the log; the owner's own unit names
+  keep their names, beside a rewritten own GUID,
 - records what it rewrote in the provenance row (`identity-rewritten`,
-  `cvars-dropped: n`).
+  `cvars-dropped: n`). *Amended 2026-10-17 (M13-49):* `identity-rewritten`
+  counts only rewrites of the kept set (account folders, `--extra-name`
+  strings); a path whose only rewrite is the account or group folder still
+  reads `identity-rewritten: path only`. Committed fixtures and their rows
+  keep their pseudonyms (ADR-0012).
 
 > **Amendment 2026-09-21 (M10-02 reviews).** The tool blanks rather than
 > drops: the line is kept as `SET name ""`, so the row says

@@ -5,13 +5,19 @@ Two users, one set of patterns (docs/LAB_PLAN.md §15.2, ADR-0031):
 - `scripts/lab_capture.py`, the fixture scrub tool, takes its identifier
   detectors from here: the email, BattleTag and GUID patterns, the identity
   CVar deny-list, and the spellings a realm name takes. It keeps its own
-  pseudonyms and its own refusal rules. It loads this file by path, so the
+  pseudonyms and its own refusal rules; since M13-49 (ADR-0019 amendment,
+  2026-10-17) those cover the account folder, BattleTags, email addresses
+  and the owner's GUIDs, not character or realm names, and it uses the realm
+  spellings only to tell the owner's own unit names in a combat log from
+  other players'. It loads this file by path, so the
   scrub tool still runs on the standard library alone: **this module imports
   the standard library only** (a test holds it to that).
 - `wowlab doctor --redact` builds a `Redactor` from the names found in the
   install and the player's home folder, and replaces each with a placeholder
   (`<CHARACTER>`, `<REALM>`, `<ACCOUNT>`, `<HOME>`, ...) so the output can be
-  pasted into an issue.
+  pasted into an issue. It still replaces character and realm names: it is
+  for another player's report, and what they hide is their choice (M13-49
+  leaves it unchanged).
 
 A `Redactor` works on text that is already text: it never parses a file, and
 it never writes one. A miss is a leak and an extra placeholder costs a little

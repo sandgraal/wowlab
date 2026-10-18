@@ -40,6 +40,10 @@ lines (tracebacks included) are redacted while the report is built, Python
 warnings are not shown, and the message of an error that stops it is
 redacted.
 
+Character and realm names are still replaced here although, since the
+ADR-0019 amendment of 2026-10-17 (M13-49), the fixture scrub keeps them: this
+report is for another player's issue, and what they hide is their choice.
+
 Read-only, like `doctor` itself (L1).
 """
 

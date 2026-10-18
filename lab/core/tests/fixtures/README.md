@@ -8,11 +8,19 @@ the test that uses them, and are labelled `constructed` (invariant L8).
 ## Rules
 
 - **Capture tool only.** Every install file arrives through
-  `scripts/lab_capture.py` (ticket M10-02), which replaces account folder,
-  character and realm names with stable pseudonyms, blanks identity CVars,
-  and refuses to emit a file that still contains an email address, a
-  BattleTag or an unmapped `Player-<n>-<hex>` GUID. The repository is
-  public; an unscrubbed capture is a leak.
+  `scripts/lab_capture.py` (ticket M10-02), which replaces account folder
+  names (and any `--extra-name`) with stable pseudonyms, rewrites the
+  owner's own `Player-<n>-<hex>` GUIDs, blanks identity CVars, and refuses
+  to emit a file that still contains an email address, a BattleTag or an
+  unmapped `Player-<n>-<hex>` GUID. The repository is public; an unscrubbed
+  capture is a leak.
+  *Amended 2026-10-17 (M13-49, ADR-0019 amendment):* character names, realm
+  names and the Forever second name are visible to anyone in the game, so
+  they are no longer identifiers here: a new capture keeps them as they
+  are, in paths and in contents, and a fixture, test, doc or PR may name
+  them. Fixtures committed before this date keep their `Labchar…` and
+  `Labrealm…` pseudonyms and their provenance rows; nothing is re-captured
+  or edited.
 - **Nothing else is edited.** Structure, key order, number text, escapes and
   line endings stay byte for byte. `.gitattributes` turns off end-of-line
   conversion for this directory.
