@@ -56,6 +56,7 @@ __all__ = [
     "flavor_label",
     "intro_lines",
     "is_first_run",
+    "not_taken_lines",
     "pointing_lines",
     "run",
     "scan_flavor",
@@ -359,6 +360,23 @@ def _sync_lines(scan: FlavorScan, wtf_is_link: bool) -> list[str]:
             f"{what} A sync service can leave online-only placeholders and conflict copies, "
             "and it copies to your other computers whatever a later restore puts back."
         )
+    return lines
+
+
+def not_taken_lines(inst: install.Install) -> list[str]:
+    """Why each folder named `_..._` was not taken as a flavor, for a first
+    run that found none (M13-45). A link is never followed, so nothing in
+    it is snapshotted; the player backs up the folder it points to, as for
+    a linked `WTF` (`_sync_lines`)."""
+    lines: list[str] = []
+    for n in inst.not_taken:
+        if n.reason == "link":
+            lines.append(
+                f"  {n.name} is a {install.not_taken_why(n)}, so nothing in it is snapshotted: "
+                f"{install.NOT_TAKEN_LINK}. Back up the folder it points to yourself."
+            )
+        else:
+            lines.append(f"  {n.name}: {n.note}")
     return lines
 
 
@@ -868,6 +886,8 @@ def run(
         return report("no_install")
     if not inst.flavors:
         say(f"{inst.root} has no flavor folders, so there is nothing to snapshot yet.")
+        for line in not_taken_lines(inst):
+            say(line)
         return report("no_flavors")
 
     scans = [scan_flavor(f, layout.Layout.for_flavor(f, inst.root)) for f in inst.flavors]

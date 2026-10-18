@@ -53,7 +53,13 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from wowlab_core import filemap as _filemap
-from wowlab_core.install import Install
+
+# The note on a root folder (or link) named `_..._` that discovery did not
+# take as a flavor folder (`Install.other_dirs`): its `.flavor.info` is
+# missing, is not a regular file, or (`NOT_A_FLAVOR_LINK`) the folder itself
+# is a link. Defined in `install` since M13-45, where each entry of
+# `Install.not_taken` carries the same words.
+from wowlab_core.install import NOT_A_FLAVOR, NOT_A_FLAVOR_LINK, Install
 
 # `is_link`: the one link test of discovery, the inventory walk, `tree` and
 # `explain`, defined in `install`, re-exported by `layout` (which this module
@@ -76,14 +82,6 @@ __all__ = [
 Base = Literal["root", "flavor"]
 GapKind = Literal["file", "folder", "link", "other"]
 
-# The note on a root folder (or link) named `_..._` that discovery did not
-# take as a flavor folder (`Install.other_dirs`): its `.flavor.info` is
-# missing, is not a regular file, or the folder itself is a link.
-NOT_A_FLAVOR = "not taken as a flavor folder (no regular .flavor.info file)"
-# The same, for a root link named `_..._`: discovery never takes a link,
-# whatever it points at. No reason in brackets: every place it is shown
-# already says the entry is a link that is not followed (M13-37 review).
-NOT_A_FLAVOR_LINK = "not taken as a flavor folder"
 # Paths of files below a folder place kept as examples in the JSON.
 EXAMPLES = 5
 
