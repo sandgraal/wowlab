@@ -1839,8 +1839,6 @@ def _tree_items(
         add(e.name, "folder" if stat.S_ISDIR(st.st_mode) else "file", None, None)
     for acct in inv.accounts:
         add(acct.path, "folder", None, "account folder")
-    for path in inv.not_accounts:
-        add(path, "folder", None, _NOT_AN_ACCOUNT)
         for realm in acct.realms:
             note = (
                 "numeric folder (not a realm name)" if realm.kind == "numeric" else "realm folder"
@@ -1848,6 +1846,8 @@ def _tree_items(
             add(realm.path, "folder", None, note)
             for c in realm.characters:
                 add(c.path, "folder", None, "character folder")
+    for path in inv.not_accounts:
+        add(path, "folder", None, _NOT_AN_ACCOUNT)
     for f in inv.wtf_files:
         add(f.path, "file", f.size, None)
     for sv in inv.saved_variables:

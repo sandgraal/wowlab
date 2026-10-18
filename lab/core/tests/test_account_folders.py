@@ -273,6 +273,11 @@ def test_constructed_tree_names_the_stray_folder(stray: Path) -> None:
     items = {i.path: i for i in report.items}
     assert items[STRAY_DIR].note == cli._NOT_AN_ACCOUNT
     assert items[f"WTF/Account/{ACCOUNT}"].note == "account folder"
+    # The real account's realm and character rows stay (review of the first
+    # cut: a loop nested under the stray rows dropped them).
+    assert items[f"WTF/Account/{ACCOUNT}/1"].note == "numeric folder (not a realm name)"
+    assert items[f"WTF/Account/{ACCOUNT}/1/Labchard-Labrealmg"].note == "character folder"
+    assert items[f"WTF/Account/{ACCOUNT}/Labrealmb Partb Partc Partd"].note == "realm folder"
     for name in STRAY_FILES:
         assert items[f"{STRAY_DIR}/{name}"].note is None
     assert STRAY_DIR in ok("tree").stdout
