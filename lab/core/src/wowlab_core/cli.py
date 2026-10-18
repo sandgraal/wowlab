@@ -811,6 +811,41 @@ def _flavor_list(inst: install.Install) -> str:
     return ", ".join(f.folder for f in inst.flavors) or "none"
 
 
+def _not_taken_named(inst: install.Install, name: str) -> install.NotTaken | None:
+    """The `_*_` folder discovery did not take that `name` names, exactly
+    or, failing that, as the only one of that name in any case."""
+    exact = [n for n in inst.not_taken if n.name == name]
+    folded = [n for n in inst.not_taken if n.name.casefold() == name.casefold()]
+    match = exact or folded
+    return match[0] if len(match) == 1 else None
+
+
+def _no_flavors(inst: install.Install) -> str:
+    """Why there is no flavor to read (M13-45): the folders named `_..._`
+    that were not taken, each with its reason, when there are any."""
+    if not inst.not_taken:
+        return f"{inst.root} has no flavor folders (a folder named _..._ holding {install.FLAVOR_INFO})"
+    words = f"{inst.root} {install.NO_READABLE_FLAVOR}; not taken: " + ", ".join(
+        f"{n.name} ({install.not_taken_why(n)})" for n in inst.not_taken
+    )
+    if any(n.reason == "link" for n in inst.not_taken):
+        words += f"; {install.NOT_TAKEN_LINK}"
+    return words
+
+
+def _not_taken_lines(not_taken: Sequence[install.NotTaken], other_dirs: Sequence[str]) -> list[str]:
+    """`doctor` and `install show`: each `_..._` folder not taken, with the
+    reason `--json` carries in `not_taken[].note` (M13-45). A model built
+    with `other_dirs` alone (no reasons) gets the names only."""
+    if not_taken:
+        return ["Folders named _..._ not taken as flavors:"] + [
+            f"  {n.name}: {n.note}" for n in not_taken
+        ]
+    if other_dirs:
+        return ["Folders named _..._ not taken as flavors: " + ", ".join(other_dirs)]
+    return []
+
+
 def _select_flavor(inst: install.Install, name: str | None) -> install.Flavor:
     flavors = inst.flavors
     if name is not None:
@@ -819,6 +854,15 @@ def _select_flavor(inst: install.Install, name: str | None) -> install.Flavor:
         match = exact or folded
         if len(match) == 1:
             return match[0]
+        missed = _not_taken_named(inst, name) if not match else None
+        if missed is not None:
+            # M13-45: the folder is there; say why it was not taken.
+            tail = f"; {install.NOT_TAKEN_LINK}" if missed.reason == "link" else ""
+            raise CliError(
+                f"{missed.name!r} in {inst.root}: {missed.note}{tail}; "
+                f"flavors found: {_flavor_list(inst)}",
+                EXIT_USAGE,
+            )
         raise CliError(
             f"no flavor folder {name!r} in {inst.root} (flavors found: {_flavor_list(inst)})",
             EXIT_USAGE,
@@ -826,10 +870,7 @@ def _select_flavor(inst: install.Install, name: str | None) -> install.Flavor:
     if len(flavors) == 1:
         return flavors[0]
     if not flavors:
-        raise CliError(
-            f"{inst.root} has no flavor folders (a folder named _..._ holding "
-            f"{install.FLAVOR_INFO})"
-        )
+        raise CliError(_no_flavors(inst))
     raise CliError(
         f"{inst.root} has {len(flavors)} flavors ({_flavor_list(inst)}); choose one with --flavor",
         EXIT_USAGE,
@@ -1052,6 +1093,9 @@ class DoctorReport(_Out):
     # Present on a first run only: the store held no snapshot of this install
     # (M13-04, `wowlab_core.firstrun`).
     first_run: firstrun.FirstRunReport | None = None
+    # `Install.not_taken`: each name of `other_dirs` with why it was not
+    # taken (M13-45). Left out of the JSON when empty, as there.
+    not_taken: list[install.NotTaken] = Field(default_factory=list, exclude_if=lambda v: not v)
 
 
 # The CVars that decide whether the server may replace local binds, macros
@@ -1238,7 +1282,11 @@ def _doctor(
                 )
             )
         if not inst.flavors:
-            problems.append(f"{inst.root} has no flavor folders")
+            problems.append(
+                f"{inst.root} {install.NO_READABLE_FLAVOR}"
+                if inst.not_taken
+                else f"{inst.root} has no flavor folders"
+            )
         client = _client_report(inst)
 
     store = _store_report()
@@ -1256,6 +1304,7 @@ def _doctor(
         client=client,
         store=store,
         problems=problems,
+        not_taken=list(inst.not_taken) if inst is not None else [],
     )
 
 
@@ -1307,8 +1356,8 @@ def _print_doctor(report: DoctorReport) -> None:
                     else "not set (client default; wowlab does not know whether that default is on)"
                 )
                 _say(f"    {sync.file}: {sync.name} {value}")
-    if report.other_dirs:
-        _say("Folders named _..._ that are not flavors: " + ", ".join(report.other_dirs))
+    for line in _not_taken_lines(report.not_taken, report.other_dirs):
+        _say(line)
     if report.client is not None:
         c = report.client
         if c.state == "not_running":
@@ -1584,8 +1633,8 @@ def install_show(root: RootOpt = None, json_out: JsonOpt = False) -> None:
     for row in inst.products:
         active = "active" if row.is_active else "inactive"
         _say(f"  {row.product or '(no product)'}  {row.version or '(no version)'}  {active}")
-    if inst.other_dirs:
-        _say("Folders named _..._ that are not flavors: " + ", ".join(inst.other_dirs))
+    for line in _not_taken_lines(inst.not_taken, inst.other_dirs):
+        _say(line)
     if inst.decode_errors:
         _say("Some bytes in .build.info or .flavor.info are not UTF-8; shown replaced.")
 
@@ -2050,7 +2099,7 @@ def _root_items(inst: install.Install, errors: list[str]) -> list[TreeItem]:
         elif folder and e.name in flavors:
             note = "flavor folder"
         elif folder and e.name in inst.other_dirs:
-            note = gaps.NOT_A_FLAVOR
+            note = install.folder_note(inst, e.name)  # M13-45: its own reason
         items.append(
             TreeItem(
                 path=found.path,
@@ -2327,6 +2376,10 @@ class ExplainReport(_Out):
     # relative path: at the install root and in every flavor folder); never
     # True behind a link. `stat` is None then too.
     absent: bool = False
+    # M13-45: the path's first part is a folder named `_..._` that discovery
+    # did not take as a flavor (`Install.not_taken`), with why. Left out of
+    # the JSON when None, so every other path prints as before.
+    not_taken: install.NotTaken | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 # The option each view parameter is spelled with; `file` is `sv dump`'s
@@ -2748,6 +2801,16 @@ def _is_inside(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 
 
+def _not_taken_at(
+    inst: install.Install, found: layout.Classified | layout.Unclassified
+) -> install.NotTaken | None:
+    """The `_..._` folder not taken as a flavor that an install-root path
+    starts with, if any (M13-45)."""
+    if found.base != "root" or not found.path:
+        return None
+    return _not_taken_named(inst, found.path.split("/", 1)[0])
+
+
 @app.command()
 @_handled
 def explain(
@@ -2780,7 +2843,19 @@ def explain(
     else:
         relative = True
         result = layout.classify(path, inst)
-        if isinstance(result, layout.Unclassified) and (flavor or len(inst.flavors) == 1):
+        # M13-45: a path under a `_..._` folder discovery did not take stays
+        # at the install root, where that folder is; it is not re-read in a
+        # flavor folder.
+        at_root = _not_taken_at(inst, result) is not None
+        if at_root and flavor is not None and _not_taken_named(inst, flavor) is None:
+            # The path is not read in it, but a `--flavor` that names no
+            # folder at all is refused as on main.
+            _select_flavor(inst, flavor)
+        if (
+            isinstance(result, layout.Unclassified)
+            and (flavor or len(inst.flavors) == 1)
+            and not at_root
+        ):
             chosen = _select_flavor(inst, flavor)
             chosen_folder = chosen.folder
             in_flavor = layout.Layout.for_flavor(chosen, inst.root).classify(path)
@@ -2844,18 +2919,27 @@ def explain(
         hints=hints,
         plain=_plain_text(result.entry) if isinstance(result, layout.Classified) else None,
         absent=nowhere,
+        not_taken=_not_taken_at(inst, judged),
     )
     if json_out:
         _emit(report)
         return
+    taken = report.not_taken
     if isinstance(result, layout.Unclassified):
         where = f" ({result.flavor_folder})" if result.flavor_folder else ""
         if nowhere and result.reason.startswith(layout.NOT_FOUND):
             # M13-29: what is (not) there first, then what the map says.
             _say(f"{path}{where}: {layout.NOT_FOUND}")
             _say(f"  {result.reason.removeprefix(layout.NOT_FOUND + ', and ')}")
+        elif verdict.link and taken is not None:
+            # M13-45: a link not taken as a flavor folder, or a path inside
+            # one, says so first, as the verdict `--json` carries does. Any
+            # other link prints as before.
+            _say(f"{path}{where}: {verdict.words}")
         else:
             _say(f"{path}: no file-map row{where}: {result.reason}")
+        if taken is not None:
+            _say(f"  {taken.name}: {taken.note}")
         if len(inst.flavors) > 1 and flavor is None and not given.is_absolute() and not nowhere:
             _say("  (with several flavors, pass --flavor to read PATH inside one of them)")
         _say_detail(report, captured)
@@ -2869,6 +2953,8 @@ def explain(
     _say(f"  tier:         {tier_words(e.tier)}")
     _say(f"  read by:      {e.module}")
     _say(f"  file-map row: {e.id} ({e.doc_path})")
+    if taken is not None:  # no install-root row matches below `_..._` today
+        _say(f"  {taken.name}: {taken.note}")
     if nowhere:
         _say(f"  on disk:      {_absent_line(result, folder)}")
     _say_detail(report, captured)

@@ -192,7 +192,15 @@ would.
   follow it, so the files behind it are not in the snapshot. If WTF itself
   is a link (a common way to sync settings), the first run says that your
   settings and SavedVariables are not in the snapshot, and to back up the
-  folder it points to yourself.
+  folder it points to yourself. The same holds for a flavor folder: a
+  `_retail_` (or any `_..._` folder) that is a symlink or a junction is not
+  followed and not taken as a flavor, even though the game reads through it
+  like a folder.
+  `wowlab doctor` and `wowlab install show` name it with where it points;
+  nothing in it is read or snapshotted, so back up the folder it points to
+  yourself. An install folder you reach through a link (the path you pass
+  to `--root`, or one of its parent folders) is fine: only links inside the
+  install are not followed.
 - **A large snapshot.** The size and estimated time are always printed
   before the snapshot; a large one (a gigabyte, or a minute or more) is
   called out.
