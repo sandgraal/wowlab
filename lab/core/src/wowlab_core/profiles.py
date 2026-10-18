@@ -51,7 +51,7 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from wowlab_core import guard, layout
+from wowlab_core import guard, layout, longpath
 from wowlab_core.snapshot import Entry, InvalidManifest, Manifest, SnapshotStore
 
 __all__ = [
@@ -317,7 +317,7 @@ class _Speller:
     def _names(self, folder: Path) -> tuple[str, ...] | None:
         if folder not in self._listings:
             try:
-                self._listings[folder] = tuple(p.name for p in folder.iterdir())
+                self._listings[folder] = tuple(p.name for p in longpath.iterdir(folder))
             except OSError:
                 self._listings[folder] = None
         return self._listings[folder]
@@ -648,7 +648,7 @@ def _is_link(path: Path, st: os.stat_result) -> bool:
     if stat.S_ISLNK(st.st_mode):
         return True
     try:
-        return stat.S_ISDIR(st.st_mode) and path.is_junction()
+        return stat.S_ISDIR(st.st_mode) and longpath.is_junction(path)
     except OSError:
         return True
 
@@ -796,26 +796,28 @@ def _differs_at(root: Path, parts: list[str], entry: Entry) -> _Disk:
 
 
 def _differs_lstat(root: Path, parts: list[str], entry: Entry) -> _Disk:
-    """`_differs` by `lstat` walk, where `os.open` takes no `dir_fd` (Windows)."""
+    """`_differs` by `lstat` walk, where `os.open` takes no `dir_fd` (Windows).
+    A path past the plain limit is looked at and opened by its extended-length
+    spelling (`longpath`, M13-44)."""
     current = root
     for part in parts[:-1]:
         current = current / part
         try:
-            st = current.lstat()
+            st = longpath.lstat(current)
         except OSError:
             return "differs"  # the entry's folder is gone
         if _is_link(current, st):
             return "behind_link"
     path = current / parts[-1]
     try:
-        st = path.lstat()
+        st = longpath.lstat(path)
     except OSError:
         return "differs"
     if entry.kind == "symlink":
         # A junction lstats as a folder; it is a link here as it is to the
         # gate (`guard._same_link`) and to the snapshot that recorded it.
         try:
-            same = _is_link(path, st) and str(path.readlink()) == entry.target
+            same = _is_link(path, st) and str(longpath.readlink(path)) == entry.target
         except OSError:
             return "differs"
         return "same" if same else "differs"
@@ -823,7 +825,7 @@ def _differs_lstat(root: Path, parts: list[str], entry: Entry) -> _Disk:
         return "differs"
     try:
         fd = os.open(
-            path,
+            longpath.extended(path),
             os.O_RDONLY
             | getattr(os, "O_BINARY", 0)
             | getattr(os, "O_NOFOLLOW", 0)
@@ -859,7 +861,7 @@ def disk_state(install_root: Path, flavor_folder: str, entry: Entry) -> DiskStat
     for n, part in enumerate(parts):
         current = current / part
         try:
-            st = current.lstat()
+            st = longpath.lstat(current)  # extended-length past the plain limit (M13-44)
         except FileNotFoundError:
             return "missing"
         except OSError:

@@ -2407,7 +2407,7 @@ def _account_folder(target: Path) -> tuple[Path, Path] | None:
 def _file_id(path: str | os.PathLike[str]) -> tuple[int, int] | None:
     """(`st_dev`, `st_ino`) of an existing file, or `None`."""
     try:
-        info = Path(path).stat()
+        info = longpath.stat(path)
     except (OSError, ValueError):
         return None
     return (info.st_dev, info.st_ino) if info.st_ino else None
@@ -2447,7 +2447,7 @@ def _sibling_paths(
             skip_ids.add(identity)
             continue
         try:
-            resolved = Path(path).resolve()
+            resolved = longpath.resolve(path)
         except (OSError, RuntimeError, TypeError, ValueError):
             continue
         if _folds_case(resolved, folds):
@@ -2457,7 +2457,7 @@ def _sibling_paths(
     ranked: list[tuple[int, bytes, Path]] = []
     for path in _list_siblings(account):
         try:
-            info = path.stat(follow_symlinks=False)
+            info = longpath.lstat(path)
         except (OSError, ValueError):
             continue
         if not stat.S_ISREG(info.st_mode):
@@ -2466,7 +2466,7 @@ def _sibling_paths(
             continue
         if skip_exact or skip_folded:
             try:
-                real = path.resolve()
+                real = longpath.resolve(path)
             except (OSError, RuntimeError, ValueError):
                 continue
             if _path_key(real, fold=False) in skip_exact:
@@ -2476,7 +2476,9 @@ def _sibling_paths(
         order = os.fsencode(path.relative_to(flavor).as_posix())
         ranked.append((-info.st_mtime_ns, order, path))
     ranked.sort(key=lambda item: (item[0], item[1]))
-    root = os.path.realpath(account)
+    # Resolved past the plain limit too (M13-44): `_read_sibling` compares
+    # each sibling's real path, made the same way, with this one.
+    root = longpath.realpath(account)
     return [(path, root) for _time, _order, path in ranked[:SIBLING_READ_LIMIT]]
 
 
@@ -2499,7 +2501,7 @@ def _folds_case(path: Path, cache: dict[Path, bool]) -> bool:
     style source, never keep a file that should have been excluded."""
     for known in (path, *path.parents):
         try:
-            device = known.lstat().st_dev
+            device = longpath.lstat(known).st_dev
         except (OSError, ValueError):
             continue
         break
@@ -2523,12 +2525,12 @@ def _probe_folds_case(known: Path, device: int) -> bool:
         if swapped == folder.name:
             continue  # no ASCII letter (or the root): try the parent's name
         try:
-            here = folder.lstat()
-            if here.st_dev != device or folder.parent.lstat().st_dev != device:
+            here = longpath.lstat(folder)
+            if here.st_dev != device or longpath.lstat(folder.parent).st_dev != device:
                 return True  # another volume above: cannot tell from here
             if not here.st_ino:
                 return True
-            other = (folder.parent / swapped).lstat()
+            other = longpath.lstat(folder.parent / swapped)
         except FileNotFoundError:
             return False
         except (OSError, ValueError):
@@ -2553,18 +2555,25 @@ def _list_siblings(account: Path) -> list[Path]:
     one are pulled from its listing, which is then closed unsorted, so
     whether it is skipped depends only on its entry count, never on the
     order the file system lists it in. A skipped folder takes nothing from
-    `_SIBLING_SCAN_LIMIT`."""
+    `_SIBLING_SCAN_LIMIT`.
+
+    A folder past Windows' plain limit is listed by its extended-length
+    spelling (`longpath.extended`, M13-44); every path this returns is
+    `account` joined with the listed names, so it is spelled as `account`
+    is, never extended-length."""
     found: list[Path] = []
     left = _SIBLING_SCAN_LIMIT
 
-    def entries(folder: str | Path) -> list[os.DirEntry[str]]:
+    def entries(folder: Path) -> list[tuple[os.DirEntry[str], Path]]:
+        """`folder`'s entries in byte-wise name order, each with its path
+        (`folder / name`)."""
         nonlocal left
         if left <= 0:
             return []
         try:
             # `os.scandir` looked up at call time, on a path (never a
             # descriptor), and never iterated past the bound plus one.
-            with os.scandir(folder) as it:
+            with os.scandir(longpath.extended(folder)) as it:
                 listed = list(itertools.islice(it, _SIBLING_FOLDER_LIMIT + 1))
         except OSError:
             return []
@@ -2573,7 +2582,7 @@ def _list_siblings(account: Path) -> list[Path]:
         listed.sort(key=lambda entry: os.fsencode(entry.name))
         taken = listed[: max(left, 0)]
         left -= len(taken)
-        return taken
+        return [(entry, folder / entry.name) for entry in taken]
 
     def linked(entry: os.DirEntry[str]) -> bool:
         try:
@@ -2593,32 +2602,32 @@ def _list_siblings(account: Path) -> list[Path]:
         except OSError:
             return False
 
-    def lua_files(folder: str) -> None:
-        for entry in entries(folder):
+    def lua_files(folder: Path) -> None:
+        for entry, path in entries(folder):
             if entry.name.casefold().endswith(".lua") and is_file(entry):
-                found.append(Path(entry.path))
+                found.append(path)
 
-    others: list[os.DirEntry[str]] = []  # realm or `<digits>` folders, for the second pass
-    for per_account in entries(account):
+    others: list[Path] = []  # realm or `<digits>` folders, for the second pass
+    for per_account, account_path in entries(Path(account)):
         if not is_dir(per_account):
             continue
-        for child in entries(per_account.path):
+        for child, child_path in entries(account_path):
             name = child.name.casefold()
             if name == "savedvariables.lua":
                 if is_file(child):
-                    found.append(Path(child.path))
+                    found.append(child_path)
             elif name == "savedvariables":
                 if is_dir(child):
-                    lua_files(child.path)
+                    lua_files(child_path)
             elif is_dir(child):
-                others.append(child)
+                others.append(child_path)
     for realm in others:
-        for character in entries(realm.path):
+        for character, character_path in entries(realm):
             if not is_dir(character):
                 continue
-            for folder in entries(character.path):
+            for folder, folder_path in entries(character_path):
                 if folder.name.casefold() == "savedvariables" and is_dir(folder):
-                    lua_files(folder.path)
+                    lua_files(folder_path)
     return found
 
 
@@ -2629,15 +2638,20 @@ def _read_sibling(path: Path, root: str) -> LuaDocument | None:
     swapped for a link or junction after listing is caught here on every
     system, `O_NOFOLLOW` covering only the last name and only on POSIX).
     Opened read-only, without following a link and without blocking (a FIFO
-    is refused, not waited on), then checked on the open descriptor (L1)."""
+    is refused, not waited on), then checked on the open descriptor (L1).
+
+    Past Windows' plain limit the check resolves, and the open opens, the
+    extended-length spelling (`longpath`, M13-44): a plain path Windows
+    cannot open would resolve only part of the way, so a link below that
+    point would go unseen. `root` comes from `longpath.realpath` too."""
     try:
-        if not Path(os.path.realpath(path)).is_relative_to(root):
+        if not Path(longpath.realpath(path)).is_relative_to(root):
             return None
     except (OSError, ValueError):
         return None
     try:
         fd = os.open(
-            path,
+            longpath.extended(path),
             os.O_RDONLY
             | getattr(os, "O_NONBLOCK", 0)
             | getattr(os, "O_NOFOLLOW", 0)

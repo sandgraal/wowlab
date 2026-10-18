@@ -981,6 +981,21 @@ reads and the readers (`luadata.read`, `wtfconfig.read_*`, `toc.read_toc`,
 discovery reports a `\\?\` root with no plain spelling as not an install
 (`unreadable`; the message quotes the root as given).
 
+*Amended 2026-10-18 (M13-44, the readers M13-15 left on plain paths):* the
+same spelling reaches `luadata`'s sibling reads for `serialize(...,
+target=...)` (the folder listing, each sibling's `lstat`, real-path check and
+open), `profiles` (the folder speller and the `lstat` walk `disk_state`
+makes on Windows), `pathfacts` (`explain`'s spelling, `stat` and snapshot
+facts), `gaps`, `addoninstall` (the source folder and the installed addon
+folder), `combatlog.find_logs` and `follow`, and the plain-path lookups in
+the CLI (`tree`, `explain`, `sv dump`, `sv merge`, `log tail`, `snap
+restore`'s checks). A containment check resolves both sides by
+`longpath.realpath` (the extended spelling resolved, then made plain), so a
+link past the plain limit is still seen. A path argument typed in `\\?\`
+form with a plain spelling (`explain PATH`, `sv dump FILE`, `sv merge FILE`)
+is taken by that plain spelling, so `sv dump --json`'s `file` and
+`explain`'s `query` name it plainly.
+
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 
 The only module that writes into an install (L2, ADR-0021).
