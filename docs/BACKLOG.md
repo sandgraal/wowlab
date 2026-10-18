@@ -780,7 +780,7 @@ Nothing else in the library changes. If a test seems to need more than the one `
 
 ---
 
-## [ ] M13-44 — Long paths on Windows: the readers and writers M13-15 left on plain paths
+## [x] M13-44 — Long paths on Windows: the readers and writers M13-15 left on plain paths
 **Size:** M · **Depends on:** M13-44T
 
 Found in the review of #247 (M13-15). M13-15 covers the calls its graders show failing (`guard`, `snapshot`, `layout`, `install`). The code-reviewer listed the modules that still open a path by its plain spelling, so on Windows each fails past the 240-character limit the same way the graders did before: `profiles.py:318`, `luadata.py:2567` and `_read_sibling`, `pathfacts.py:138`, three spots in `cli.py` (*amended 2026-10-18:* the review of #254 found the quoted line numbers 1757/1975/4516 no longer point at filesystem calls; take the list from the #247 code review's report, and add `_sv_file`'s plain `os.path.lexists` at cli.py:3286–3291 and `_stream_dump`'s echo of FILE as given at 3323/3329, which the M13-44T graders show failing), `addoninstall.py` at 489 and 546, `gaps.py:367`, and `combatlog.find_logs`. Its `security-reviewer` checks that `_read_sibling`'s containment check (`os.path.realpath` against `WTF/Account`'s real path) still holds past `MAX_PATH`: extending only the `open` call would leave that check on a path Windows cannot resolve. Route each through `longpath.extended` the way M13-15 does, with no behaviour change off Windows and no `\\?\` reaching any output, report, manifest or journal (M13-15's acceptance). `luadata.py` is load-bearing: its graders come first in M13-44T, written by a different agent; the other modules' tests are the implementer's.
