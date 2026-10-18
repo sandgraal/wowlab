@@ -1769,7 +1769,7 @@ def _flavor_reparse(lay: layout.Layout) -> tuple[bool, bool]:
     component walk judges it: a link by `gaps.is_link` (M13-35), else a
     reparse point the write gate refuses that is no link (M13-32)."""
     try:
-        st = lay.flavor_path.lstat()
+        st = longpath.lstat(lay.flavor_path)
     except OSError:
         return False, False
     if gaps.is_link(lay.flavor_path, st):
@@ -1810,8 +1810,7 @@ def _tree_items(
             )
 
     try:
-        with os.scandir(lay.flavor_path) as it:
-            top = sorted(it, key=lambda e: e.name)
+        top = sorted(longpath.entries(lay.flavor_path), key=lambda e: e.name)
     except OSError:
         top = []
     for e in top:
@@ -1823,7 +1822,7 @@ def _tree_items(
             if not e.is_symlink():
                 add(e.name, "folder" if e.is_dir(follow_symlinks=False) else "file", None, None)
             continue
-        if gaps.is_link(Path(e.path), st):
+        if gaps.is_link(lay.flavor_path / e.name, st):
             continue  # the walk reports it, with its target, below (M13-35)
         add(e.name, "folder" if stat.S_ISDIR(st.st_mode) else "file", None, None)
     for acct in inv.accounts:
@@ -2064,12 +2063,11 @@ def _root_items(inst: install.Install, errors: list[str]) -> list[TreeItem]:
     flavors = {f.folder for f in inst.flavors}
     root = Path(inst.root)
     try:
-        real_root: Path | None = root.resolve()
+        real_root: Path | None = longpath.resolve(root)
     except (OSError, RuntimeError):
         real_root = None
     try:
-        with os.scandir(root) as it:
-            entries = sorted(it, key=lambda e: e.name)
+        entries = sorted(longpath.entries(root), key=lambda e: e.name)
     except OSError as exc:
         errors.append(f".: {exc.strerror or exc}")
         return []
@@ -2080,7 +2078,7 @@ def _root_items(inst: install.Install, errors: list[str]) -> list[TreeItem]:
         except OSError as exc:
             errors.append(f"{e.name}: {exc.strerror or exc}")
             continue
-        link = gaps.is_link(Path(e.path), st)
+        link = gaps.is_link(root / e.name, st)
         placeholder = not link and gate_refuses_stat(st)
         folder = not link and stat.S_ISDIR(st.st_mode)
         kind: Literal["file", "folder", "symlink"] = (
@@ -2090,7 +2088,7 @@ def _root_items(inst: install.Install, errors: list[str]) -> list[TreeItem]:
         entry = found.entry if isinstance(found, layout.Classified) else None
         note: str | None = None
         if link:
-            note = _link_note(*layout.link_facts(Path(e.path), real_root))
+            note = _link_note(*layout.link_facts(root / e.name, real_root))
             if e.name in flavors:
                 # M13-35: as `tree` says it for this flavor folder alone.
                 note = f"flavor folder; {note}; nothing in it is listed"
@@ -2727,7 +2725,7 @@ def _path_kind(
     for part in [*under, *[p for p in result.path.split("/") if p]]:
         current = current / part
         try:
-            st = current.lstat()
+            st = longpath.lstat(current)
         except OSError:
             return slash, False, placeholder  # absent from here down: nothing to follow
         if gaps.is_link(current, st):
@@ -2811,6 +2809,13 @@ def _not_taken_at(
     return _not_taken_named(inst, found.path.split("/", 1)[0])
 
 
+def _plain_arg(text: str) -> str:
+    """A path argument as typed, except that on Windows a `\\\\?\\` spelling
+    with a plain one is taken by that (`longpath.plain_text`), so no output,
+    report or message echoes the prefix (M13-44)."""
+    return longpath.plain_text(text) if longpath.ON_WINDOWS else text
+
+
 @app.command()
 @_handled
 def explain(
@@ -2828,6 +2833,7 @@ def explain(
     """What a path in the install is, who writes it, whether wowlab may edit it.
     JSON: ExplainReport."""
     inst, _ = _discover(root)
+    path = _plain_arg(path)
     given = Path(path)
     result: layout.Classified | layout.Unclassified
     judged: layout.Classified | layout.Unclassified | None = None
@@ -2838,7 +2844,7 @@ def explain(
     chosen_folder = inst.flavors[0].folder if len(inst.flavors) == 1 else None
     if given.is_absolute():
         result = layout.classify(path, inst)
-    elif os.path.lexists(here) and _is_inside(here.absolute(), Path(inst.root).absolute()):
+    elif longpath.lexists(here) and _is_inside(here.absolute(), Path(inst.root).absolute()):
         result = layout.classify(str(here) + ("/" if path.endswith("/") else ""), inst)
     else:
         relative = True
@@ -3370,8 +3376,10 @@ def _resolve_path(doc: luadata.LuaDocument, expr: str) -> luadata.LuaValue:
 
 
 def _sv_file(path: str, root: Path | None, flavor: str | None) -> Path:
-    given = Path(path)
-    if given.is_absolute() or os.path.lexists(given):
+    """FILE as `sv dump` takes it, plain (a `\\\\?\\` spelling named by its plain
+    one, so no output shows it), looked up past the plain limit too (M13-44)."""
+    given = Path(_plain_arg(path))
+    if given.is_absolute() or longpath.lexists(given):
         return given
     _, _, lay = _open(root, flavor)
     return lay.flavor_path / given
@@ -3580,7 +3588,7 @@ def _merge_target(
             f"WTF/Account/{account.folder}/SavedVariables/"
         )
     given = Path(file)
-    if not given.is_absolute() and not os.path.lexists(given):
+    if not given.is_absolute() and not longpath.lexists(given):
         given = lay.flavor_path / given
     absolute = Path(os.path.normpath(given.absolute()))
     if not _is_inside(absolute, lay.flavor_path):
@@ -3628,7 +3636,7 @@ def _same_root(a: str, b: Path) -> bool:
     if Path(a) == b:
         return True
     try:
-        return Path(a).resolve() == b.resolve()
+        return longpath.resolve(a) == longpath.resolve(b)
     except (OSError, RuntimeError):
         return False
 
@@ -4039,7 +4047,7 @@ def sv_merge(
     acct = _select_account(lay, account)
     char = _into_character(acct, into, "--into")
     files = lay.saved_variables()
-    target = _merge_target(lay, files, file, acct, char)
+    target = _merge_target(lay, files, _plain_arg(file), acct, char)
     source_char: layout.Character | None = None
     source_snap: str | None = None
     if from_ is not None:
@@ -5082,8 +5090,8 @@ class LogTailReport(_Out):
 
 def _logs_dir(lay: layout.Layout) -> Path | None:
     """The flavor's `Logs/` folder, however its case is spelled, or None."""
-    for child in sorted(lay.flavor_path.iterdir()):
-        if child.name.casefold() == "logs" and child.is_dir():
+    for child in sorted(longpath.iterdir(lay.flavor_path)):
+        if child.name.casefold() == "logs" and longpath.is_dir(child):
             return child
     return None
 
@@ -5195,7 +5203,8 @@ def log_tail(
     end: int | None = None
     notes = [_NO_LOG]
     if newest is not None:
-        size = newest.stat().st_size  # before the read: a line finished since is not "partial"
+        # Before the read: a line finished since is not "partial".
+        size = longpath.stat(newest).st_size
         entries, end = combatlog.tail(newest, lines)
         notes = [_BATCHES] + ([_STILL_WRITING] if end < size else [])
     if follow:
@@ -5968,7 +5977,7 @@ def _plainly_on_disk(flavor_dir: Path, rel: str) -> Literal["file", "missing"] |
     current = flavor_dir
     try:
         for n, part in enumerate(parts):
-            names = {child.name for child in current.iterdir()}
+            names = {child.name for child in longpath.iterdir(current)}
             last = n == len(parts) - 1
             if part not in names:
                 folded = part.casefold()
@@ -5976,12 +5985,12 @@ def _plainly_on_disk(flavor_dir: Path, rel: str) -> Literal["file", "missing"] |
                     return "missing"  # nothing below it is there either
                 return None  # spelled otherwise on disk
             current = current / part
-            st = current.lstat()
+            st = longpath.lstat(current)
             if _is_reparse(st):
                 return None
             if last:
                 return "file" if stat.S_ISREG(st.st_mode) else None
-            if not stat.S_ISDIR(st.st_mode) or current.is_junction():
+            if not stat.S_ISDIR(st.st_mode) or longpath.is_junction(current):
                 return None
     except OSError:
         return None
@@ -6071,10 +6080,10 @@ def _unchanged(install_root: Path, folder: str, entry: snapshot.Entry) -> bool:
     parent = install_root / folder
     try:
         for part in rel.split("/"):
-            if part not in {child.name for child in parent.iterdir()}:
+            if part not in {child.name for child in longpath.iterdir(parent)}:
                 return False  # spelled otherwise on disk (case): the gate refuses it
             parent = parent / part
-        st = parent.lstat()
+        st = longpath.lstat(parent)
     except OSError:
         return False
     return stat.S_ISREG(st.st_mode) and stat.S_IMODE(st.st_mode) == entry.mode

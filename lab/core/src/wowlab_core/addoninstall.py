@@ -69,7 +69,7 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict
 
-from wowlab_core import guard
+from wowlab_core import guard, longpath
 from wowlab_core.toc import parse_toc
 
 __all__ = [
@@ -260,16 +260,18 @@ def _is_link(path: Path, st: os.stat_result) -> bool:
     if stat.S_ISLNK(st.st_mode):
         return True
     try:
-        return stat.S_ISDIR(st.st_mode) and path.is_junction()
+        return stat.S_ISDIR(st.st_mode) and longpath.is_junction(path)
     except OSError:
         return True
 
 
 def _read_regular(path: Path, limit: int) -> bytes:
     """The bytes of the regular file at `path`, opened without following a
-    link, checked by `fstat` to be the file `lstat` saw, at most `limit`."""
+    link, checked by `fstat` to be the file `lstat` saw, at most `limit`.
+    A path past Windows' plain limit is looked at and opened by its
+    extended-length spelling (`longpath`, M13-44); a message names it plainly."""
     try:
-        seen = path.lstat()
+        seen = longpath.lstat(path)
     except OSError as exc:
         raise _UnreadableError(f"cannot be read: {exc}") from exc
     if not stat.S_ISREG(seen.st_mode):
@@ -277,14 +279,15 @@ def _read_regular(path: Path, limit: int) -> bytes:
     if seen.st_size > limit:
         raise _UnreadableError(f"is {seen.st_size} bytes, over {limit}")
     try:
-        fd = os.open(
-            path,
-            os.O_RDONLY
-            | getattr(os, "O_BINARY", 0)
-            | getattr(os, "O_NOFOLLOW", 0)
-            | getattr(os, "O_NONBLOCK", 0)
-            | getattr(os, "O_CLOEXEC", 0),
-        )
+        with longpath.plain_errors():
+            fd = os.open(
+                longpath.extended(path),
+                os.O_RDONLY
+                | getattr(os, "O_BINARY", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0)
+                | getattr(os, "O_CLOEXEC", 0),
+            )
     except OSError as exc:
         raise _UnreadableError(f"cannot be opened without following a link: {exc}") from exc
     with os.fdopen(fd, "rb") as handle:
@@ -306,7 +309,7 @@ def _is_workspace_root(folder: Path) -> bool:
     """`.git` (a folder, or a worktree's file) or a `pyproject.toml` that
     declares the uv workspace."""
     try:
-        if (folder / ".git").lstat():
+        if longpath.lstat(folder / ".git"):
             return True
     except OSError:
         pass
@@ -327,7 +330,7 @@ def _candidate(folder: Path, parts: Sequence[str] = SOURCE_PARTS) -> Path | None
     for part in parts:
         current = current / part
         try:
-            st = current.lstat()
+            st = longpath.lstat(current)
         except FileNotFoundError:
             return None
         except OSError as exc:
@@ -340,7 +343,7 @@ def _candidate(folder: Path, parts: Sequence[str] = SOURCE_PARTS) -> Path | None
         if not stat.S_ISDIR(st.st_mode):
             return None
     try:
-        st = (current / TOC_NAME).lstat()
+        st = longpath.lstat(current / TOC_NAME)
     except FileNotFoundError:
         return None
     except OSError as exc:
@@ -486,7 +489,7 @@ def addon_files(interface: int, source: Path | None = None) -> dict[str, bytes]:
     the order the TOC lists them."""
     folder = find_source() if source is None else source
     try:
-        names = sorted(e.name for e in os.scandir(folder))
+        names = sorted(e.name for e in longpath.entries(folder))
     except OSError as exc:
         raise AddonSourceError(f"cannot list the lab-addon sources in {folder}: {exc}") from exc
     if TOC_NAME not in names:
@@ -522,7 +525,7 @@ def _installed(flavor_dir: Path) -> tuple[list[str], list[LeftPath], bool]:
     for part in ADDON_FOLDER.split("/"):
         current = current / part
         try:
-            st = current.lstat()
+            st = longpath.lstat(current)  # extended-length past the plain limit (M13-44)
         except FileNotFoundError:
             return [], [], False
         except OSError as exc:
@@ -543,7 +546,7 @@ def _installed(flavor_dir: Path) -> tuple[list[str], list[LeftPath], bool]:
     while pending:
         folder = pending.pop()
         try:
-            entries = sorted(os.scandir(folder), key=lambda e: e.name)
+            entries = sorted(longpath.entries(folder), key=lambda e: e.name)
         except OSError as exc:
             raise AddonError(f"cannot list {folder}: {exc}") from exc
         for entry in entries:
@@ -552,10 +555,10 @@ def _installed(flavor_dir: Path) -> tuple[list[str], list[LeftPath], bool]:
                 raise AddonError(
                     f"{ADDON_FOLDER} holds more than {MAX_ENTRIES} entries; nothing was changed"
                 )
-            path = Path(entry.path)
+            path = folder / entry.name  # plain; `entry.path` may be extended-length
             rel = path.relative_to(flavor_dir).as_posix()
             try:
-                st = path.lstat()
+                st = longpath.lstat(path)
             except OSError as exc:
                 left.append(LeftPath(path=rel, reason=f"cannot be examined: {exc}"))
                 continue
