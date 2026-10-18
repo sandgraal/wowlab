@@ -85,7 +85,6 @@ Nothing here names a flavor, a product or a build (L6).
 
 from __future__ import annotations
 
-import os
 import re
 import shlex
 from collections.abc import Iterator, Mapping
@@ -108,7 +107,7 @@ from pydantic import (
     model_validator,
 )
 
-from wowlab_core import layout, luadata, snapshot
+from wowlab_core import layout, longpath, luadata, snapshot
 from wowlab_core.layout import FsText
 
 __all__ = [
@@ -1582,7 +1581,9 @@ class _Reader:
         # caller's --root (only when one was given), then the flavor folder.
         self.show = ["wowlab", "char", "show"]
         if root is not None:
-            self.show += ["--root", root]
+            # On Windows a `\\?\` root is named by its plain spelling, as
+            # every path the Lab shows is (longpath, M13-58).
+            self.show += ["--root", longpath.plain_text(root) if longpath.ON_WINDOWS else root]
         self.show += ["--flavor", flavor_path.name]
         self.budget = budget
         self.left = budget
@@ -1632,7 +1633,7 @@ class _Reader:
         other exception is a bug)."""
         path = self.flavor_path / rel
         try:
-            st = os.lstat(path)
+            st = longpath.lstat(path)  # past Windows' plain limit too (M13-58)
         except OSError as exc:
             return _Read(error=_os_error(exc, path))
         if st.st_size > luadata.MAX_FILE_BYTES:
@@ -1683,7 +1684,7 @@ class _Reader:
 def _grew_past(path: Path, limit: int) -> bool:
     """Whether the file at `path` now holds more than `limit` bytes."""
     try:
-        return os.lstat(path).st_size > limit
+        return longpath.lstat(path).st_size > limit
     except OSError:
         return False
 
@@ -1861,7 +1862,8 @@ def survey(
     0 nothing is opened: only the listing (`not_looked_at`) is worth reading
     then. A row refused on a bound ends with the `wowlab char show` command
     that reads it alone, every argument shell-quoted: `--root` with `root`
-    (the caller's --root as given; None, the default, leaves it out, so the
+    (the caller's --root as given, a `\\\\?\\` spelling on Windows taken by its
+    plain one; None, the default, leaves it out, so the
     environment or discovery finds the install again and no absolute path
     is printed), then `--flavor` (the flavor folder's name), `--account` and
     `--character`. A file already read and parsed

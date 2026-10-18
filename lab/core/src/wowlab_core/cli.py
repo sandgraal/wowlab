@@ -2012,6 +2012,7 @@ def _tree_prefix(path: str | None, base: Path) -> str:
     """`tree`'s PATH argument, relative to `base` and `/`-separated."""
     if not path:
         return ""
+    path = _plain_arg(path)  # a `\\?\` spelling taken plainly, as `explain` does (M13-58)
     given = Path(path)
     if given.is_absolute():
         try:
