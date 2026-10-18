@@ -115,7 +115,7 @@ The test comes first, run by the owner from a runbook the conductor writes (`doc
 
 ---
 
-## [ ] M13-08 — `wowlab binds coach`
+## [x] M13-08 — `wowlab binds coach`
 **Size:** M · **Depends on:** M13-05, M12-15
 
 Read-only. Adds `combatlog.cast_counts`: the player's own `SPELL_CAST_SUCCESS` events, picked by the source-flags bits (affiliation "mine", type "player"), never by a GUID or a name (§15.2). The format V22 layout of cast events on Forever, and that the flags pick the player, are **[verify]** against one real log before the rules are written; the finding is a dated amendment in `docs/LAB_FORMATS.md`. The command finds the latest log (`combatlog.newest_log`) and says that `/combatlog` must be on. Reports: frequently cast spells on high-cost keys; spells cast with no bind (clicked, or cast from a macro); binds to spells never cast. Key to spell goes through the action bars and bindings of M13-05. "High-cost key" is an opinion: the cost table is an editable data file shipped with defaults, which a player can override from the user config directory, and the output says the table is a default. `--json` model `BindsCoachReport`; writes nothing.
