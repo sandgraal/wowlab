@@ -151,7 +151,7 @@ Contents: M13-02 to M13-04, M13-09, M13-10, M13-21 to M13-27 (the explorer and t
 
 ---
 
-## [ ] M13-12 — Wave 4 review
+## [x] M13-12 — Wave 4 review
 **Size:** S · **Depends on:** M13-11
 
 The conductor writes `docs/handoffs/M13-review.md` per `docs/LAB_PLAN.md` §11: what shipped, what strangers' reports taught (as data), what slipped to v0.2, and a recommended next wave. Wave 5 is already named (`wowlab ui`, ADR-0029, M14, aimed at v0.2). Its read-only first stage shipped in v0.1 (§15.6), so the review says what M14 still owes: the confirm flow for the commands that declare `--yes` and the embedded pages.
