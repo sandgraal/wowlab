@@ -60,8 +60,10 @@ the threshold is not scaled. The probe instead takes up to five parses,
 each in a fresh interpreter, and stops at the first inside the target: the
 result is that of the least of five, and a loaded stretch has to last all
 five parses to fail it. The 10 s target is unchanged, and a sample is never
-flattered (CPU time only overstates under load), so a parser that is slower
-on an idle machine fails every sample. Each sample is shown in the warnings
+flattered (CPU time only overstates under load), so a parser slower
+than the 10 s target on an idle machine fails every sample; one between the
+real parser's time and the target can pass, as the twice-as-slow stand-in
+does for the two cases under 5 s. Each sample is shown in the warnings
 summary as a `ProbeReading`. Over 40 runner jobs of the full `lab (macos)`
 steps (runs 39069464056 and 39096528977) every case passed; one `0,` case
 needed a second parse (11.41, then 9.57 CPU s), and the largest first
