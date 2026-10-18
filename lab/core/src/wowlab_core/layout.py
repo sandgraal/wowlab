@@ -186,7 +186,9 @@ class Symlink(_Model):
     followed."""
 
     path: FsText  # relative to the flavor folder, `/`-separated
-    target: FsText | None  # the link text as stored; None if it cannot be read
+    # The link text as stored; on Windows without an extended-length prefix
+    # where it has a plain spelling (M13-43). None if it cannot be read.
+    target: FsText | None
     # Whether the target resolves inside the install root. None when that is
     # unknown (M13-35): the link text cannot be read (a WCI link or a WSL
     # symlink on Windows), or resolving it fails (a loop) or ends at the
