@@ -16,10 +16,16 @@ Owner decision at the end; the conductor only records the counts
 
 Run each from the repository and paste the output under it, unedited.
 
-Release-asset downloads (the three assets, summed):
+Release-asset downloads, summed over every release's assets as §15.4 counts them (v0.1.0, the rc1 pre-release and any v0.1.x in the window):
 
 ```bash
-gh api repos/sandgraal/wowlab/releases/tags/v0.1.0 --jq '.assets[] | "\(.name) \(.download_count)"'
+gh api repos/sandgraal/wowlab/releases --paginate --jq '[.[].assets[].download_count] | add'
+```
+
+and per asset, for the record:
+
+```bash
+gh api repos/sandgraal/wowlab/releases --paginate --jq '.[] | .tag_name as $t | .assets[] | "\($t) \(.name) \(.download_count)"'
 ```
 
 Distinct non-owner authors of issues and discussions, bots excluded
@@ -46,7 +52,7 @@ _(filled in on 2026-11-17)_
 | Measure | Count | Threshold (§15.4) |
 |---|---|---|
 | Release-asset downloads | | at least 50 |
-| Non-owner issue authors | | together at least 5, issues weighing more |
+| Non-owner issue authors | | together at least 5 distinct people (an author in both lists counts once), issues weighing more |
 | Non-owner discussion authors | | |
 | Stars | | (recorded, no threshold) |
 

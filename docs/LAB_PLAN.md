@@ -1317,7 +1317,7 @@ Later waves add siblings of `core/` under `lab/`. Apps depend on
 
 ## 8. Fixtures and scrubbing
 
-*Amended 2026-10-17 (owner decision; ADR-0019 amendment of the same date, accepted):* character names and realm names are not identifiers for this repository and may appear as they are; the scrub keeps rewriting and refusing only the account folder, email addresses and BattleTags, the owner's real name, a home path carrying the owner's login, and the owner's own GUIDs. Existing fixtures keep their pseudonyms. M13-49 narrows the tools; until it merges, the rules below still describe what the tools do.
+*Amended 2026-10-17 (owner decision; ADR-0019 amendment of the same date, accepted):* character names and realm names are not identifiers for this repository and may appear as they are; the scrub keeps rewriting and refusing only the account folder, email addresses and BattleTags, the owner's real name, a home path carrying the owner's login, the owner's own GUIDs, other players' GUIDs in combat logs with the unit name beside each, and the identity CVars on the deny-list. `wowlab doctor --redact` is unchanged. Existing fixtures keep their pseudonyms. M13-49 narrows the tools; until it merges, the rules below still describe what the tools do.
 
 *Amended 2026-09-29 (Wave 3 plan, proposed):* a wago.tools recording of a
 large table may be an ID-filtered subset of whole verbatim lines, produced
@@ -3181,7 +3181,8 @@ and the CI job stays on.
   otherwise the spell or item id the macro shows now **[verify]**.
 - **Cast counts.** `combatlog` has no cast counting today. The player's own
   casts are picked by the source-flags bits (affiliation "mine", type
-  "player") rather than by a GUID or a name, since the lab-addon stores no
+  "player" and, since M13-08, controller "player": `& 0x300` = `0x100`,
+  `docs/LAB_FORMATS.md` §8) rather than by a GUID or a name, since the lab-addon stores no
   GUID (ADR-0026); that this holds for `SPELL_CAST_SUCCESS` in a Forever log,
   and the field layout of those events in format V22, are **[verify]**
   against one real log before the rules are written. The player has to turn

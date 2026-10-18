@@ -212,11 +212,10 @@ would.
 ## The explorer in your browser
 
 `wowlab ui` opens a local page that shows your install the way `wowlab
-tree` and `wowlab explain` do, one folder at a time. From a source
-checkout:
+tree` and `wowlab explain` do, one folder at a time:
 
 ```bash
-uv run wowlab ui
+wowlab ui
 ```
 
 It picks a free port, listens only on this machine, and opens your
@@ -239,8 +238,11 @@ What to look for:
 - **Hints.** Each detail pane ends with the commands that act on that
   file, written for your shell (`posix` or `powershell`) and copied byte
   for byte.
-- **Previews.** Text files show their first lines; SavedVariables are
-  shown as data, never run.
+- **Previews.** For a file wowlab has a read command for, Preview runs
+  that command with `--json` and shows the result: `cvar list`,
+  `binds list`, `macros list`, `sv dump` (SavedVariables as data, never
+  run), `addons list`, `install show`, or `log tail` for the newest combat
+  log. Other files have no Preview button.
 - **The commands tab.** Runs this wowlab's commands with `--json` and shows
   the result. Only the commands that read, or that save to wowlab's own
   data folder (snapshots, profiles, saved looks, the game-table cache,

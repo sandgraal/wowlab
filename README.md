@@ -29,7 +29,7 @@ The release page carries the wheel, the sdist and `SHA256SUMS`; [`docs/INSTALL.m
 
 ```bash
 wowlab doctor        # finds your install; on a first run, says what wowlab will do and offers a first snapshot
-wowlab ui            # the explorer in your browser: every file in a flavor folder, and whether it is safe to touch
+wowlab ui            # the explorer in your browser: every file in your install, and whether it is safe to touch
 wowlab snap create   # snapshot your setup before you experiment
 ```
 
@@ -63,7 +63,7 @@ wowlab snap create   # snapshot your setup before you experiment
 | | Feature | Command |
 |---|---|---|
 | 🔍 | **Explain any file.** Every path in your install mapped: what it is, who writes it, when, and whether wowlab may edit it. | `wowlab explain PATH` · `wowlab tree --explain` |
-| 🖥️ | **The explorer in your browser.** A local page, served only to this machine, that shows a flavor folder's files, one folder at a time, with whether each is safe to touch. It runs every wowlab command except those that take `--yes`, `ui` itself, `log tail --follow` and `looks page --out`: the commands that read, and the ones that save only to wowlab's own data (snapshots, profiles, saved looks, the game-table cache, pages), never to game files. | `wowlab ui` |
+| 🖥️ | **The explorer in your browser.** A local page, served only to this machine, that shows every file in your install, one folder at a time, with whether each is safe to touch, what it is and who writes it. It runs every wowlab command except those that take `--yes`, `ui` itself, `log tail --follow` and `looks page --out`: the commands that read, and the ones that save only to wowlab's own data (snapshots, profiles, saved looks, the game-table cache, pages), never to game files. | `wowlab ui` |
 | 🩺 | **Health check and first run.** Finds your install, its flavors and versions, whether the game is running, and your server-sync settings. On a first run it says what wowlab will and won't do and offers a first snapshot. `--redact` prints output safe to paste into an issue. | `wowlab doctor` · `wowlab doctor --redact` |
 | 📸 | **Snapshots.** Save your whole setup (settings, keybinds, macros, addons and their saved data) and compare any two snapshots, down to the individual addon setting. | `wowlab snap create` · `snap diff A B` |
 | ↩️ | **Undo, for real.** Put a snapshot back, or undo the last change. You see the plan first, and it refuses while the game is running. | `wowlab snap restore` · `wowlab undo` |
@@ -143,7 +143,7 @@ Flavor folders, product codes and build numbers are **discovered from your insta
 
 wowlab grows in **waves**: the owner picks each one after reviewing the last. **Waves 1 to 3 are done**: everything in the table above except `wowlab ui`, the first run and `doctor --redact`, which are Wave 4's, plus the character list and a daily check that keeps [the wiki](https://github.com/sandgraal/wowlab/wiki) in step with the code. Wave 3 was trimmed on 2026-10-14: its game-table database, talent planner and alt-dashboard are deferred, because players already have good talent planners.
 
-**Wave 4 is the first public release, v0.1** (owner decision, 2026-10-13; [ADR-0031](docs/DECISIONS.md)). The promise does not change: reading never writes, every change to your install asks first, a snapshot comes before it and `wowlab undo` reverses it, and nothing is uploaded. Already on `main`: the release pipeline, the first run in `wowlab doctor`, `wowlab doctor --redact`, the lab-addon inside the package, `wowlab ui` with its explorer's second stage (the whole install, the files the file map does not know yet, snapshot facts and previews), `macros check`, and `binds coach` (from your own combat log: spells cast often on awkward keys, spells cast with no bind, and binds never used; read-only, with an editable "awkward key" table). Still to come:
+**Wave 4 is the first public release, v0.1** (owner decision, 2026-10-13; [ADR-0031](docs/DECISIONS.md)). The promise does not change: reading never writes, every change to your install asks first, a snapshot comes before it and `wowlab undo` reverses it, and nothing is uploaded. Already on `main`: the release pipeline, the first run in `wowlab doctor`, `wowlab doctor --redact`, the lab-addon inside the package, `wowlab ui` with its explorer's second stage (the whole install, the files the file map does not know yet, snapshot facts and previews), `macros check`, and `binds coach` (from your own combat log: spells cast often on awkward keys, spells cast with no bind, and binds never used; read-only, with an editable "awkward key" table).
 
 **v0.1.0 is out**: install it with the one `uv tool install` line above and check the download against the published SHA-256 sums ([the release page](https://github.com/sandgraal/wowlab/releases/tag/v0.1.0)). No installer, no app store, no hosted version. One item is still to come before Wave 5:
 
