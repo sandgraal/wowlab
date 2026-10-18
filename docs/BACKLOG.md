@@ -864,3 +864,30 @@ Found while building M13-49, pre-existing. For a link such as `[x](123456789#1)`
 Found in the code review of #256 (M13-46), on `main` before it too. `O_NOFOLLOW` guards only the last path component: a `_*_` folder replaced by a link to a directory between `_scan_children` and `_read_flavor_product` is read through (`flavors` held the link target's product in a constructed probe), against §6.1's M13-37 amendment. Closing it needs a directory descriptor on POSIX (`O_DIRECTORY|O_NOFOLLOW` on the flavor folder, an identity check against the scan's `lstat`, then `open_regular_file` with `dir_fd`) and a stated answer for Windows, where `os.open` has no `dir_fd` (an `lstat` of the folder each side of the read is the likely floor). Same family, same fix pattern: the root `.build.info` is `stat`-then-`read_bytes`, so a FIFO or device swapped in between blocks discovery forever; reuse `snapshot.read_regular_file(..., expect=…)` there. Labelled constructed tests for both, with the POSIX and the Windows paths exercised as M13-46's race tests do. The spec amendment (§6.1) names what the Windows floor leaves open.
 
 **Acceptance:** the tests pass; discovery output on the install fixtures byte-identical to `main`; no blocking read (a 5 s alarm in the tests); `make ci` green; reviewed by `code-reviewer` and `security-reviewer`.
+
+---
+
+## [ ] M13-50 — `char show` counts a stray `SavedVariables` folder as an account
+**Size:** XS · **Depends on:** nothing
+
+Found 2026-10-17 on the owner's install. `WTF/Account/` there holds the account folder and a stray `SavedVariables/` folder beside it. `char list` lists the one account; `char show` without `--account` refuses with "2 accounts (<account>, SavedVariables); choose one with --account", because its account discovery takes every child of `WTF/Account/` as an account. Make `char show` use the same account discovery as `char list` (an account folder is one that holds character folders with a `WowLab.lua`, or whose name has the `<digits>#<n>` shape), so one real account needs no `--account`, and the refusal, when it is still needed, lists only real accounts. Labelled constructed test with a stray folder beside one account. While there: `wowlab ui --help` and its docstring in `cli.py` still say the explorer shows "a flavor folder's files"; since M13-27 it is the whole install (README and INSTALL.md say so). Fix the sentence.
+
+**Acceptance:** `char show` on a tree with one account plus a stray folder picks the account without `--account`; with two real accounts it still refuses and names both; `char list` output unchanged; `ui --help` says the whole install; `make ci` green; reviewed by `code-reviewer`.
+
+---
+
+## [ ] M13-51 — The first-run survey prints `\\?\` link targets on Windows
+**Size:** XS · **Depends on:** M13-43
+
+Found in the code review of #253 (M13-43), unverified on Windows. `firstrun._link_target` returns `str(longpath.readlink(path))` raw, and the survey prints `{link.path} -> {target}` and fills `SyncHint.link_target` from it; on Windows an absolute link target comes back `\\?\C:\…`, against §6.9's M13-15 amendment (paths are plain everywhere the owner sees them, the first-run survey named). Strip the prefix with `longpath.plain_text` where the text has a plain spelling, keep relative text as is (as M13-43 did in `layout.link_facts`), Windows only; constructed Windows test with an absolute and a relative link; byte-identical `doctor` output on macOS and Linux.
+
+**Acceptance:** the test passes on `lab (windows)`; `doctor` text and `--json` byte-identical to `main` on a fixture copy with two links on macOS; `make ci` green; reviewed by `code-reviewer`.
+
+---
+
+## [ ] M13-52 — Snapshot manifests store raw `\\?\` link targets on Windows
+**Size:** S · **Depends on:** M13-15 · **owner** (how a manifest spells a link target is a format decision)
+
+Found in the code review of #253 (M13-43), unverified on Windows. `snapshot._dir_link_target` (and the file-link path at `snapshot.py` ~1119) records a link's target in the manifest as `str(longpath.readlink(path))`, which on Windows carries the `\\?\` prefix for an absolute target; `guard.py` (~2054) and `profiles.py` (~818) compare a link on disk against that stored text, so every `snap` output that shows a target inherits the prefix and a manifest written on Windows is not what §6.9 promises. Decide first (owner): store the plain spelling (then `guard`'s comparison must compare plain to plain, and a manifest written before the change still compares equal through `plain_text` on both sides) or keep raw and strip only on display. `guard.py` is load-bearing: a `[TEST]` ticket (M13-52T) lands graders for the comparison before the change; `snapshot.py`'s tests are the implementer's.
+
+**Acceptance:** per the decision; manifests written by `main` on macOS still verify byte for byte; `snap show` and `snap verify` print no `\\?\`; the Windows graders pass; `make ci` green; reviewed by `code-reviewer` and `security-reviewer`.
