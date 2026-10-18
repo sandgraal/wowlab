@@ -27,7 +27,8 @@ HEADING = re.compile(r"^## \[( |x)\] (M\d+-\d+T?) — (.+?)\s*$")
 DEPENDS = re.compile(r"\*\*Depends on:\*\*\s*(.*?)(?:·|$)")
 TICKET = re.compile(r"M\d+-\d+T?")
 # A ticket whose Size line carries `**owner**` is the owner's to do or to
-# decide; the conductor never dispatches it (docs/AGENT_WORKFLOW.md).
+# decide; the conductor never dispatches it (the legend at the top of
+# docs/BACKLOG.md; the stop rule is .claude/skills/start-ticket/SKILL.md).
 OWNER = re.compile(r"\*\*Size:\*\*.*\*\*owner\*\*")
 
 

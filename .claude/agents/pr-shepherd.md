@@ -124,7 +124,11 @@ Only when `mergeStateStatus == CLEAN` (or `UNSTABLE` solely because a
 job that is not in `.github/rulesets/main.json`'s required list failed or
 is still pending: the `review` job of the `Claude review` workflow,
 `lab (windows)`, `lab (macos)`), every
-**required** check is SUCCESS
+**required** check is SUCCESS. A failed non-required job never holds the
+merge, but it is never silent either: name it, with its run URL and the
+failing test ids from `gh run view <id> --log-failed`, on the report's
+`checks:` line, so the conductor can file it (`windows.yml`'s header: a
+red Windows run is a bug to fix next). Every
 on the head sha, every thread the owner opened has an answer, every other
 thread has a reply, and the conductor's dispatch said
 the reviewer verdicts are clean. Then
@@ -150,7 +154,7 @@ changes; report it under follow-ups instead.
 pr: #<n> <url>
 result: MERGED <sha> | BLOCKED: <reason> | NEEDS_IMPLEMENTER: <thread or run urls>
 threads: <n> resolved (<n> fixed, <n> answered), <n> open
-checks: all required green @ <sha> | <which failed and why>
+checks: all required green @ <sha> | <which failed and why>; non-required: <none failed | job, run url, failing test ids>
 rebases: <n>   lockfile regenerations: <n>
 follow-ups worth a ticket: <bullets, or none>
 cleanup: worktree removed, branches deleted | <what is left and why>
