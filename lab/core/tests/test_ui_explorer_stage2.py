@@ -89,7 +89,7 @@ from test_ui_explorer import (
     _stdout,
 )
 
-from wowlab_core import filemap
+from wowlab_core import cli, filemap
 from wowlab_core import verdict as verdict_module
 
 # The first stage's fixtures: a stand-in home, the copied capture, its
@@ -739,18 +739,30 @@ def _powershell(hint: dict[str, Any]) -> dict[str, Any]:
 
 
 def test_a_hint_says_its_own_shell_and_copies_exactly_constructed(
-    server: Any, metachar: Path, tmp_path: Path
+    server: Any, metachar: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The shell named is the hint's own (`posix` or `powershell`), not one
     the page assumes, and each copy is that hint's `command` byte for byte,
     whatever the shell: a page that quotes `argv` itself would put the
     wrong quoting on the clipboard (security review, round 1 on #226). One
     file name holds `'`, `$(…)`, a backtick, `;` and `&`. (`shell` and
-    `command` edited to PowerShell's: constructed.)"""
+    `command` edited to PowerShell's: constructed.) The posix half has
+    `cli._shell` pinned to `posix` (M13-43, as `test_cli_explain_detail.py`
+    does), so both halves run on every host: the server's CLI runs are
+    subprocesses, so its hints are made again here by `cli._hint` from
+    their `argv`, which on a POSIX host changes nothing."""
     posix_rel = ACCOUNT + "/SavedVariables/" + METACHAR[0]
     ps_rels = [SV_FILE, ACCOUNT + "/SavedVariables/" + METACHAR[1]]
     rels = ["WTF/Config.wtf", posix_rel, *ps_rels]
     scenario, _ = _scenario(server, rels, [])
+    monkeypatch.setattr(cli, "_shell", lambda: "posix")
+    for rel in rels[:2]:
+        report = _explain(scenario, rel)
+        posix = [cli._hint(h["argv"], h["does"]).model_dump(mode="json") for h in report["hints"]]
+        if os.name != "nt":
+            assert posix == report["hints"], rel  # the pin changes nothing on this host
+        report["hints"] = posix
+        _set_explain(scenario, rel, report)
     for rel in ps_rels:
         report = _explain(scenario, rel)
         report["hints"] = [_powershell(h) for h in report["hints"]]

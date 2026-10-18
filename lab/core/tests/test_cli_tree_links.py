@@ -31,7 +31,7 @@ import psutil
 import pytest
 from typer.testing import CliRunner
 
-from wowlab_core import cli, gaps, layout, verdict
+from wowlab_core import cli, gaps, layout, longpath, verdict
 from wowlab_core.install import discover
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -452,3 +452,61 @@ def test_link_facts_of_a_link_whose_text_cannot_be_read_constructed(tmp_path: Pa
     real.mkdir()
     (tmp_path / "plain").symlink_to(real, target_is_directory=True)
     assert layout.link_facts(tmp_path / "plain", tmp_path.resolve()) == (str(real), True)
+
+
+@pytest.mark.parametrize(
+    ("stored", "shown"),
+    [
+        pytest.param(
+            "\\\\?\\C:\\Games\\World of Warcraft\\Logs",
+            "C:\\Games\\World of Warcraft\\Logs",
+            id="drive",
+        ),
+        pytest.param("\\\\?\\UNC\\server\\share\\Logs", "\\\\server\\share\\Logs", id="unc"),
+        pytest.param("..\\Logs", "..\\Logs", id="relative"),
+        pytest.param("../Logs/", "../Logs/", id="relative-slashes"),
+        pytest.param(".\\Logs\\..\\Logs", ".\\Logs\\..\\Logs", id="relative-dots"),
+    ],
+)
+def test_link_text_on_windows_is_plain_and_otherwise_as_stored_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stored: str, shown: str
+) -> None:
+    """Constructed (M13-43): on Windows `os.readlink` answers an absolute
+    symlink's text with the extended-length prefix; the link text shown has
+    it dropped, as every path the Lab shows is (M13-15). A relative text has
+    no prefix and is kept exactly as stored: its separators, a trailing one,
+    `.` and `..` alike (L4 for the link text). Stood in on every host: the
+    text `os.readlink` answers, and the platform `longpath` reads."""
+    link = tmp_path / "link"
+    link.mkdir()  # where it points stays unknown: resolving it ends at itself
+    monkeypatch.setattr(longpath, "ON_WINDOWS", True)
+    monkeypatch.setattr(layout.os, "readlink", lambda _path: stored)
+    assert layout.link_facts(link, tmp_path.resolve()) == (shown, None)
+
+
+def test_link_text_off_windows_is_kept_as_stored_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Constructed (M13-43): off Windows a link text that happens to begin
+    `\\\\?\\` is a name like any other, kept byte for byte."""
+    link = tmp_path / "link"
+    link.mkdir()
+    stored = "\\\\?\\C:\\Logs"
+    monkeypatch.setattr(longpath, "ON_WINDOWS", False)
+    monkeypatch.setattr(layout.os, "readlink", lambda _path: stored)
+    assert layout.link_facts(link, tmp_path.resolve()) == (stored, None)
+
+
+def test_a_relative_link_shows_its_text_as_stored_constructed(root: Path) -> None:
+    """Constructed (M13-43): a real symlink in `WTF/` whose text is relative,
+    in this host's separator. It has no extended-length prefix on any
+    platform, so `tree` shows the text exactly as stored, and says it points
+    inside the install."""
+    text = os.path.join("..", "Logs")  # noqa: PTH118 -- the link text, not a path to open
+    (root / FLAVOR / "Logs").mkdir(exist_ok=True)
+    try:
+        (root / FLAVOR / "WTF" / "rellink").symlink_to(text, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:  # Windows without the privilege
+        pytest.skip(f"cannot create a symlink here: {exc}")
+    items = {i["path"]: i for i in _tree(root)["items"]}
+    assert items["WTF/rellink"]["note"] == f"link to {text} (inside the install), not followed"

@@ -186,7 +186,9 @@ class Symlink(_Model):
     followed."""
 
     path: FsText  # relative to the flavor folder, `/`-separated
-    target: FsText | None  # the link text as stored; None if it cannot be read
+    # The link text as stored; on Windows without an extended-length prefix
+    # where it has a plain spelling (M13-43). None if it cannot be read.
+    target: FsText | None
     # Whether the target resolves inside the install root. None when that is
     # unknown (M13-35): the link text cannot be read (a WCI link or a WSL
     # symlink on Windows), or resolving it fails (a loop) or ends at the
@@ -439,7 +441,8 @@ def _is_within(child: Path, parent: Path) -> bool:
 
 def link_facts(path: Path, real_root: Path | None) -> tuple[str | None, bool | None]:
     """`(target, inside)` for the link at `path`: its link text exactly as
-    stored (not normalised by pathlib), and whether it resolves inside
+    stored (not normalised by pathlib; on Windows an extended-length prefix
+    is dropped where the text has a plain spelling, M13-43), and whether it resolves inside
     `real_root` (the install root, resolved; None when that failed). Never
     lists or reads anything through the link; on Windows, resolving opens it
     with no access to read its final name. `inside` is None when it is
@@ -453,6 +456,11 @@ def link_facts(path: Path, real_root: Path | None) -> tuple[str | None, bool | N
         target = None
     if target is None:
         return None, None
+    if longpath.ON_WINDOWS:
+        # Windows answers an absolute symlink's text as `\\?\C:\...`
+        # (M13-43): shown plain, as every path is (M13-15). Text only, not
+        # through `Path`, so a relative text is kept exactly as stored.
+        target = longpath.plain_text(target)
     try:
         if real_root is None:
             return target, None
