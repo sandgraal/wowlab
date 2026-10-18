@@ -17,7 +17,9 @@ alt-dashboard deferred). Wave 4 (M13) is the first public release and
 its v0.1 includes the read-only first stage of `wowlab ui` (ADR-0029,
 amended 2026-10-15); Wave 5 (M14) finishes it. Other players may install it from a tagged
 GitHub release and run it on their own machine; it is never deployed as a
-service and never uploads anything (ADR-0019, ADR-0031).
+service and never uploads anything (ADR-0019, ADR-0031), with one opt-in
+exception accepted on 2026-10-18 and not yet built: `wowlab char advise
+--send` (ADR-0032).
 
 ## Hard invariants
 

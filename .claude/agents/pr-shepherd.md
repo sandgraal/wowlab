@@ -1,7 +1,7 @@
 ---
 name: pr-shepherd
 description: Opens (or updates) the PR for a finished wowlab branch and drives it to merged — watches the required checks, reads and answers every review thread, rebases on conflicts, regenerates lockfiles on lock conflicts, and squash-merges when branch protection and the independent review are satisfied. Runs in the branch's worktree. Reports the merge SHA or a precise blocker.
-tools: Bash, Read, Edit, Grep, Glob
+tools: Bash, Read, Edit, Grep, Glob, mcp__github__pull_request_read, mcp__github__add_reply_to_pull_request_comment, mcp__github__resolve_review_thread, mcp__github__update_pull_request, mcp__github__merge_pull_request
 model: sonnet
 ---
 
@@ -18,6 +18,20 @@ dispatched for the branch already saw a bot finding and did not count it:
 reply on the thread that it was seen by the reviewers and is not held,
 resolve it, and merge; no fix and no re-check. Without that word, route
 the thread as below (ADR-0013 amendment of 2026-10-17, later).
+
+**Cloud sessions (owner decision 2026-10-18).** In a claude.ai cloud
+session GitHub's GraphQL API is disabled, so `gh pr merge`, `gh pr view
+--json` and the `gh api graphql` thread queries fail (HTTP 403), and the
+bash guard refuses a mutating `gh api`. Use the GitHub MCP tools you are
+given instead, with `owner: sandgraal`, `repo: wowlab`:
+`pull_request_read` (methods `get`, `get_check_runs`, `get_review_comments`,
+`get_reviews`) for state, checks and threads; `add_reply_to_pull_request_comment`
+and `resolve_review_thread` for threads; `update_pull_request` for the body
+and the draft flag; `merge_pull_request` with `merge_method: squash`,
+`expectedHeadSha` set to the head you verified, and `commit_title` the PR
+title with ` (#<n>)`. Try `gh` first; the moment it answers 403 or
+"GraphQL", switch and do not retry `gh`. The merge rule below is the same
+whichever tool runs it.
 
 Work in the branch's worktree (`pwd`, `git branch --show-current`). If
 `uv` is not found: `export PATH="$HOME/.local/bin:$PATH"`. The scratchpad

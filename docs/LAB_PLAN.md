@@ -3505,8 +3505,7 @@ Nothing here changes ADR-0019, ADR-0021, ADR-0023, ADR-0026 or ADR-0027,
 and L1 to L8 apply to every ticket. ADR-0029 gets one dated amendment: its
 2026-10-15 amendment named an embedded "character page", and §16.3 builds
 a native tab instead, drawn from `--json` as the explorer is (F-A); the
-amendment is written under ADR-0029 and waits for the owner's word on the
-plan PR. The read-only stage uploads
+amendment is under ADR-0029, accepted by the owner on 2026-10-18. The read-only stage uploads
 nothing and writes nothing into an install. The modify and optimize stages
 are specified in §16.5 for the owner's next pick; they are not M14 tickets.
 
@@ -3529,15 +3528,37 @@ CLI printed it with no Confirm:
   `Nothing was changed.` and exit 1; the marker is that ending, read by a
   constant the CLI exports, and the plan is the stderr text before it;
 - `doctor` never reaches `_confirm`: with `--json` it reports
-  `first_run.outcome == "not_asked"` (exit 0) when a first snapshot could be
-  offered, which is the marker and the plan; `choose_flavor` (exit 2) is
-  shown as the CLI's usage text with a `--flavor` field to fill, and any
-  other outcome offers nothing.
+  `first_run.outcome == "not_asked"` when a first snapshot could be
+  offered. A plan run without `--yes` never returns `choose_flavor`: on an
+  install with several flavors it returns `not_asked` with `flavor` unset
+  (`firstrun.run`), and the confirmed `--yes` run would then exit 2. So
+  the marker is `not_asked` **with `flavor` set** (exit 0); `not_asked`
+  without a flavor is shown with a `--flavor` field to fill and no token,
+  and any other outcome offers nothing. (Automated review of #265, finding
+  2, 2026-10-18.)
 
 After the click the server runs the same argv again with `--yes` appended
 (and `--dry-run` removed where the plan run added it); the result shows
 only the hint the CLI prints (`wowlab undo` for a `guard` transaction;
-`snap gc` and `doctor` print none, and no undo is offered for them). The set of commands is derived from the Click tree, not
+`snap gc` and `doctor` print none, and no undo is offered for them).
+
+**The confirmed run applies the plan that was shown, not a newer one.**
+The token binds the argv; it cannot bind state that moved between the two
+processes (automated review of #265, finding 1). Each command pins its
+own plan: `snap restore`, `profile apply`, `addon install` and `addon
+remove` are pinned by their arguments (a snapshot id and paths, a profile
+name, an addon name), and `guard` snapshots the live files before any
+change, so drift there is captured, never lost. `snap gc` removes only
+what is unreferenced at confirm time, so a snapshot taken in between is
+kept; harmless. `doctor --yes` takes a first snapshot; harmless. The two
+that can apply a different plan are `undo`, which undoes the newest
+journal record at run time (the CLI's own re-read in `undo`, and
+`guard.undo(expected_id=…)`, protect one process, not two), and `sv
+merge`, which hashes the target at its own start. M14-03 gives both an
+`--expect` option: `undo --expect <journal id>` and `sv merge --expect
+<sha256 of the target>`, each printed in the plan JSON, each passed back
+by the confirmed run, each compared by the CLI under `guard`'s lock and
+refused with exit 3 on mismatch. The UI never confirms either without it. The set of commands is derived from the Click tree, not
 from a count (on 2026-10-18: `snap restore`, `undo`, `profile apply`,
 `addon install`, `addon remove`, `sv merge`, `snap gc` and `doctor`). It
 ships in two steps so that the mechanism is proven on the two commands
@@ -3695,8 +3716,8 @@ bodies and item names are player text and are never interpreted as markup.
 ### 16.4 What is known, and what is [verify]
 
 - **Item links.** `docs/LAB_FORMATS.md` §4.2 and its amendments: the
-  committed `WowLab.lua` files carry 38 links in all (nine per character
-  in the 70009 pair, eleven in the 70425 capture), every one in the named
+  committed `WowLab.lua` files carry 38 links in all (nine in each of the
+  three 70009 and 70058 files, eleven in the 70425 capture), every one in the named
   colour form `|cnIQn:` and none with a crafter; the `|cffRRGGBB` form is
   unobserved and is covered by a labelled constructed boundary test only.
   The field positions after the item id are **[verify]** against community
@@ -3801,7 +3822,9 @@ ADR-0032 proposes two stages and the owner picks the second or leaves it:
 
 Why staged this way: F3 is the part that has to be right under L2 and L4
 whichever stage the owner picks, and stage one exercises it in full with
-the trust model untouched. The owner can accept stage one alone, or both.
+the trust model untouched. *The owner accepted both stages on 2026-10-18
+(ADR-0032, Accepted).* Stage two is still built after stage one, off until
+configured.
 
 **F5. The views become editable.** Only after F2 and F3: the Keys and
 Macros panels gain an editor whose output is a proposal file, never a
@@ -3811,8 +3834,11 @@ like one written by hand. Gear is never edited: the client owns it (ADR-
 
 ### 16.6 Decisions for the owner
 
-Each has a default and the work is planned on it. Say so on the plan PR if
-you want one changed.
+Each has a default and the work is planned on it. *The owner accepted every
+default on 2026-10-18, one by one: F-A (with the ADR-0029 amendment), F-B,
+F-C, F-D (strengthened the same day by the `--expect` pin in §16.1, from
+the automated review's finding), F-E (ADR-0032, both stages) and F-F
+("build regardless").*
 
 - **F-A. Where the character lives.** Default: a Character tab in `wowlab
   ui`, drawn from `--json` models (§16.3), the explorer's pattern.
@@ -3848,7 +3874,7 @@ you want one changed.
 |---|---|---|---|
 | M14-01 | Wave 5 opens: the M13 follow-ups are on `main` | conductor | XS |
 | M14-02 | The confirm flow, on `snap gc` and `doctor --yes` (§16.1) | implementer; `security-reviewer` | M |
-| M14-03 | The confirm flow, on the six install writes (§16.1) | implementer; `security-reviewer` | S |
+| M14-03 | The confirm flow, on the six install writes; `--expect` on `undo` and `sv merge` (§16.1) | implementer; `security-reviewer` | M |
 | M14-04 | `looks page` embedded in the UI (§16.3) | implementer; `security-reviewer` | S |
 | M14-05 | `wowlab char gear` and `wowlab_core.itemlink` (§16.2) | implementer; `domain-reviewer` | S |
 | M14-06 | `wowlab_core.keymap` and `wowlab char binds` (§16.2) | implementer; `domain-reviewer` | M |
