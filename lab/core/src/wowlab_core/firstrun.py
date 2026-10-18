@@ -387,8 +387,8 @@ def not_taken_lines(inst: install.Install) -> list[str]:
 def link_lines(inst: install.Install) -> list[str]:
     """For a first run that found a flavor: each linked `_..._` folder beside
     it, under the flavor list, in the words `not_taken_lines` gives it
-    (M13-56). A folder not taken for another reason holds nothing the
-    client plays from, and `doctor` already lists it."""
+    (M13-56). A folder not taken for another reason is not repeated here:
+    `doctor` lists it above with its note."""
     return [_link_line(n) for n in inst.not_taken if n.reason == "link"]
 
 
