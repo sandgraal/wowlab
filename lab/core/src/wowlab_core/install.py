@@ -28,7 +28,10 @@ without a regular `.flavor.info`, or one that is a link, or whose
 `explain` (M13-35, M13-37): a symlink, a junction, or any other Windows
 reparse point that names another path (a WCI link, a WSL symlink). Links are
 not followed, whether the folder or its `.flavor.info`: nothing is listed or
-read through one. The flavor's product code comes
+read through one. `.flavor.info` is opened without following a link and must
+be the file its `lstat` saw (`snapshot.open_regular_file`, M13-46), so one
+replaced by a link between the check and the read is refused and its folder
+listed in `other_dirs` too. The flavor's product code comes
 from `.flavor.info` and is joined to the `.build.info` row with the same
 `Product`. Discovery never raises on a partial install: a flavor with no
 matching row, or with an unreadable `.flavor.info`, is returned with
@@ -44,6 +47,7 @@ nothing is created, locked or cached anywhere, inside the install or out.
 
 from __future__ import annotations
 
+import errno
 import os
 import stat
 import sys
@@ -54,7 +58,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from wowlab_core import longpath
+from wowlab_core import longpath, snapshot
 from wowlab_core.snapshot import _is_link_stat as _snapshot_link
 
 __all__ = [
@@ -576,13 +580,38 @@ def resolve_root(
     return _resolve(root, environ, defaults)[0]
 
 
-def _read_flavor_product(path: Path) -> tuple[str, bool]:
+def _read_flavor_product(path: Path) -> tuple[str, bool] | None:
+    """(product, decode errors) from `.flavor.info` at `path`, or `None` when
+    it is refused: a link by `is_link`, or no longer a regular file.
+
+    The check and the read name one file (M13-46): `path` is `lstat`ed, then
+    opened by `snapshot.open_regular_file` with that `lstat` as `expect`, so
+    a final link is never followed (`O_NOFOLLOW`, or on Windows an `lstat`
+    each side of the open) and a file swapped in after the `lstat` is
+    refused. Any other failure (gone, refused by the operating system) is an
+    unreadable `.flavor.info`: `("", False)`, as before."""
     try:
-        with longpath.open_read(path) as handle:
-            data = handle.read(_FLAVOR_INFO_READ_LIMIT)
+        st = longpath.lstat(path)
+        if is_link(path, st) or not stat.S_ISREG(st.st_mode):
+            return None
+        fd, _ = snapshot.open_regular_file(path, expect=st)
+    except snapshot.UnsafeReadError:
+        return None
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:  # a link swapped in after the lstat
+            return None
+        return "", False
+    try:
+        chunks: list[bytes] = []
+        left = _FLAVOR_INFO_READ_LIMIT
+        while left > 0 and (chunk := os.read(fd, left)):
+            chunks.append(chunk)
+            left -= len(chunk)
     except OSError:
         return "", False
-    text, errors = _decode(data)
+    finally:
+        os.close(fd)
+    text, errors = _decode(b"".join(chunks))
     return parse_flavor_info(text), errors
 
 
@@ -634,8 +663,13 @@ def _scan_children(root: Path) -> tuple[list[Path], list[str]]:
     return flavors, sorted(others)
 
 
-def _flavor(directory: Path, rows: Sequence[BuildInfoRow]) -> tuple[Flavor, bool]:
-    product, errors = _read_flavor_product(directory / FLAVOR_INFO)
+def _flavor(directory: Path, rows: Sequence[BuildInfoRow]) -> tuple[Flavor, bool] | None:
+    """The flavor in `directory`, or `None` when its `.flavor.info` is
+    refused as a link at the read (`_read_flavor_product`)."""
+    read = _read_flavor_product(directory / FLAVOR_INFO)
+    if read is None:
+        return None
+    product, errors = read
     matches = _matching(rows, product)
     row = _match_row(matches)
     version = ((row.version or "").strip() or None) if row is not None else None
@@ -665,10 +699,15 @@ def _read(root: Path, source: Source) -> Install:
     directories, others = _scan_children(root)
     flavors: list[Flavor] = []
     for directory in directories:
-        flavor, flavor_errors = _flavor(directory, rows)
+        found = _flavor(directory, rows)
+        if found is None:  # its .flavor.info became a link after the scan
+            others.append(directory.name)
+            continue
+        flavor, flavor_errors = found
         flavors.append(flavor)
         errors = errors or flavor_errors
     flavors.sort(key=lambda f: f.folder)
+    others.sort()
     return Install(
         root=root,
         flavors=tuple(flavors),
