@@ -15,7 +15,6 @@ from pathlib import Path
 import pytest
 from test_lab_capture import (
     ACCOUNT,
-    ALT,
     EMAIL,
     MAIN,
     OWN_GUID,
@@ -166,25 +165,7 @@ def test_constructed_combat_log_guid_needs_name_and_realm_to_be_adopted(
     assert not [dest for dest in outputs(out) if "WoWCombatLog" in dest]
 
 
-# ─── 6. other people on the owner's realm ────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    "text, refused",
-    [
-        (f'"Otherguy-{REALM}"', True),
-        ('"Otherguy - Area52"', True),
-        ('"otherguy-area-52"', True),
-        (f'"{MAIN}-{REALM}" "{ALT} - Area52"', False),
-        (f'"Horde - {REALM}" "Alliance - {REALM} - US"', False),  # AceDB factionrealm keys
-    ],
-)
-def test_constructed_someone_else_on_an_own_realm_is_refused(text: str, refused: bool) -> None:
-    identity = Identity(realms=[REALM], characters=[MAIN, ALT])
-    result = identity.scrub(text.encode())
-    assert any("someone else's name" in p for p in result.problems) is refused
-    if not refused:
-        assert not result.problems
+# ─── 6. review notes (the own-realm checks were retired with M13-49) ─────────
 
 
 def test_constructed_review_notes_count_without_quoting() -> None:
@@ -205,8 +186,9 @@ def test_constructed_review_notes_count_without_quoting() -> None:
     assert [n for n in result.notes if n.startswith(label)], result.notes
     assert "Privatefriend" not in " ".join(result.notes)
     assert not identity.scrub(b'"thrallmar-area52" "Thrallmar - Area 52"').notes
+    # The Name-Realm look note was retired with M13-49: a pair is public text.
     shaped = identity.scrub(b'["Privatefriend-Illidan"] = 1,\n["Left-Click"] = 2,\n')
-    assert [n for n in shaped.notes if n.startswith("Name-Realm-shaped string") and " x2 " in n]
+    assert not shaped.notes and not shaped.problems
 
 
 # ─── 7. embedded and variant forms ───────────────────────────────────────────

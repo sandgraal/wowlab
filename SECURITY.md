@@ -25,13 +25,13 @@ by mistake, edit it out and tell us; a public issue keeps its edit history.
 ### A leaked identifier in a fixture
 
 Fixtures under `lab/core/tests/fixtures/` are real captures that were
-scrubbed by `scripts/lab_capture.py` (the capture tool, ticket M10-02). If you find something that identifies
-a person's account in one (an account folder name that is not a pseudonym,
-an email address, a BattleTag, a real name, a home path, a
-`Player-<n>-<hex>` GUID, a friend or guild roster inside an addon's saved
-data). Character and realm names are not on that list: they are visible to
-anyone in the game, and since 2026-10-17 the capture tool keeps them
-(ADR-0019 amendment, M13-49):
+scrubbed by `scripts/lab_capture.py` (the capture tool, ticket M10-02).
+Character and realm names are not identifiers there: they are visible to
+anyone in the game, and since 2026-10-17 the capture tool keeps them as they
+are (ADR-0019 amendment, M13-49). What identifies an account is an account
+folder name that is not a pseudonym, an email address, a BattleTag, a real
+name, a home path that carries a login, or a `Player-<n>-<hex>` GUID that is
+not a pseudonym. If you find one of these in a fixture, do this:
 
 1. Report it privately as above. **Do not quote the identifier in a public
    issue, PR or commit message**; that publishes it a second time. Give the

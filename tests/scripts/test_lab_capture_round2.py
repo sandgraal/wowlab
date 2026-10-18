@@ -137,51 +137,6 @@ def test_constructed_long_name_split_by_a_short_exact_name_refuses() -> None:
     assert not Identity(characters=["Al", "Thrall"]).scrub(b'"Thrall" "thrall" "Al"').problems
 
 
-# ─── 4. who stands next to an own realm ──────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    "text, refused",
-    [
-        ('"Jaina - Horde - Area 52"', True),
-        ("[[Jaina-Horde-Area52]]", True),
-        ('"Area 52 - Horde - Jaina"', True),
-        ('"Default.Area 52.Jaina"', True),  # DataStore/Altoholic keys
-        ('"Jaina.Area52" "Jaina|Area52" "Jaina:Area52" "Jaina/Area52" "Jaina_Area52"', True),
-        ('"Area 52 - Jaina"', True),
-        ('"Jaina (Area 52)" "Jaina(Area52)"', True),
-        ('"JAINA-AREA52"', True),
-        (f'"Default.Area 52.{MAIN}" "{MAIN} (Area 52)" "Area 52 - {MAIN}"', False),
-        (f'"{MAIN} - Horde - Area 52" "Horde - Area 52" "Area52-US" "EU-Area52"', False),
-        (f'"{MAIN.upper()} - AREA 52" "{MAIN.lower()}.area52"', False),
-    ],
-)
-def test_constructed_partner_of_an_own_realm(text: str, refused: bool) -> None:
-    result = Identity(characters=[MAIN], realms=[REALM]).scrub(text.encode())
-    assert any("someone else's name" in p for p in result.problems) is refused, result.problems
-    if not refused:
-        assert not result.problems
-
-
-def test_constructed_tolerated_partners_are_counted_and_faction_pairs_are_not_noted() -> None:
-    result = Identity(characters=[MAIN], realms=[REALM]).scrub(
-        b'["Horde - Area 52"] = 1,\n["Area52-US"] = 2,\n["Default.Area 52.Thrallmar"] = 3,\n'
-    )
-    assert not result.problems
-    assert [
-        n
-        for n in result.notes
-        if n.startswith("own realm next to a faction, region") and " x3 " in n
-    ]
-    assert not [n for n in result.notes if n.startswith("Name-Realm-shaped")]
-
-
-def test_constructed_upper_cased_non_ascii_realm_still_catches_a_foreign_name() -> None:
-    result = Identity(realms=["Échó"]).scrub('"JAINA-ÉCHÓ" "jaina-échó"'.encode())
-    assert "ÉCHÓ".encode() not in result.data and "échó".encode() not in result.data
-    assert any("someone else's name" in p and " x2 " in p for p in result.problems)
-
-
 # ─── 5. an identity map that would be short is not used ──────────────────────
 
 

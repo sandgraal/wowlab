@@ -95,7 +95,12 @@ mounted drive must pass `--platform`. `scrub` records what the tool rewrote,
 as it prints it: `identity-rewritten: n` (or `path only`), `cvars-blanked: n`,
 `guids-rewritten: n`, `unit-guids-rewritten: n`,
 `other-players-pseudonymised: n`, `timestamps-shifted`, `embedded: n`,
-joined with `; `, or `none`. The tool
+joined with `; `, or `none`. *Amended 2026-10-17 (M13-49):* from this
+date `identity-rewritten: n` counts only rewrites of the account folder and
+`--extra-name` strings, and `path only` means only the account or the
+digits group folder was rewritten in the path; before it, both also counted
+character and realm names. Rows from before and after the date do not
+compare on this cell. The tool
 prints each row ready to paste. Run it with
 `--kind <flavor folder>=<flavor-kind>` and the `file` cell is already the
 final path: move `incoming/<platform>/` up one level and the rows match.

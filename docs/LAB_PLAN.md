@@ -1356,7 +1356,7 @@ Later waves add siblings of `core/` under `lab/`. Apps depend on
 
 ## 8. Fixtures and scrubbing
 
-*Amended 2026-10-17 (owner decision; ADR-0019 amendment of the same date, accepted):* character names and realm names are not identifiers for this repository and may appear as they are; the scrub keeps rewriting and refusing only the account folder, email addresses and BattleTags, the owner's real name, a home path carrying the owner's login, the owner's own GUIDs, other players' GUIDs in combat logs with the unit name beside each, and the identity CVars on the deny-list. `wowlab doctor --redact` is unchanged. Existing fixtures keep their pseudonyms. M13-49 narrows the tools; until it merges, the rules below still describe what the tools do.
+*Amended 2026-10-17 (owner decision; ADR-0019 amendment of the same date, accepted):* character names and realm names are not identifiers for this repository and may appear as they are; the scrub keeps rewriting and refusing only the account folder, email addresses and BattleTags, the owner's real name, a home path carrying the owner's login, the owner's own GUIDs, other players' GUIDs in combat logs with the unit name beside each, and the identity CVars on the deny-list. `wowlab doctor --redact` is unchanged. Existing fixtures keep their pseudonyms. M13-49 narrows the tools; the bullet list below carries its dated amendments.
 
 *Amended 2026-09-29 (Wave 3 plan, proposed):* a wago.tools recording of a
 large table may be an ID-filtered subset of whole verbatim lines, produced
@@ -1382,7 +1382,12 @@ never edited. Every capture passes through `scripts/lab_capture.py`, which
   2026-10-17 (M13-49):* a character or realm name inside a longer word, in
   a SavedVariables file's own name, in an addon file, joined to an own
   realm, or in an account's character list no longer refuses anything; the
-  same rules still refuse for the account folder and `--extra-name` strings,
+  same rules still refuse for the account folder and `--extra-name` strings.
+  A home path that carries a login (the shape `wowlab doctor --redact`
+  replaces, `/Users/<name>`, `C:\Users\<name>` and the like, and the
+  capturing machine's own home) now refuses the file too. The own-realm
+  partner checks and their notes, and the `Name-Realm-shaped string` note,
+  are retired,
 - with `--pseudonymise-other-players`, rewrites another player's GUID in a
   combat log, and the character name of the unit name beside it. *Amended
   2026-10-17 (M13-49):* the realm part of that unit name is left as written

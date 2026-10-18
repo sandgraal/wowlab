@@ -456,21 +456,6 @@ def test_constructed_realm_part_is_left_as_written(tmp_path: Path) -> None:
     assert b'"Orlavin-KestrelHollow-"' in data and b"Zorvinth" not in data
 
 
-def test_constructed_other_pseudonyms_stop_counting_as_known_after_the_log(
-    tmp_path: Path,
-) -> None:
-    identity = _identity(OWN)
-    problems, _data, _o = _process(TWO_PLAYERS, tmp_path, others=OtherPlayers(), identity=identity)
-    assert problems == []
-    assert identity._scoped_words == frozenset()
-    source = tmp_path / "Tracker.lua"
-    source.write_bytes(b'\nTrackerDB = {\n["Labothera - Kestrel Hollow"] = 1,\n}\n')
-    rel = PurePosixPath("_retail_/WTF/Account/A/SavedVariables/Tracker.lua")
-    item = lab_capture.Item(source, rel, "_retail_", "1", "savedvariables")
-    after = lab_capture.process(item, identity)
-    assert any(p.startswith("someone else's name on an own realm") for p in after.problems)
-
-
 @pytest.mark.parametrize(
     "name", [b"Neutral", b"Default", b"True", b"Nil", b"Player", b"Us", b"Bind"]
 )

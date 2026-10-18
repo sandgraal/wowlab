@@ -52,14 +52,17 @@ install and scrubs identity from it per `docs/LAB_PLAN.md` §8:
   region token and the `Branch` column stay. A `geoip` or `acct` anywhere
   else, or in a token of another shape, refuses the file (M13-34);
 - a file whose scrubbed bytes or output path still contain an email address,
-  a BattleTag, an unmapped player, account, guild or community GUID, a
+  a home path that carries a login (`/Users/<name>`, `C:\\Users\\<name>`, and
+  this machine's home; since M13-49), a BattleTag, an unmapped player,
+  account, guild or community GUID, a
   surviving identity string in any casing or embedding (CVar names included),
   or an unblanked identity CVar is refused: nothing is written for it and the
   exit status is non-zero.
 
-`Identity` still accepts realms, characters and second names, with the
-own-realm partner checks built for them; since M13-49 discovery passes none,
-so those rules apply to nothing a capture reads.
+`Identity` still accepts realms, characters and second names; since M13-49
+discovery passes none, and the inputs are kept for the unit tests that grade
+the scrub engine through them. The own-realm partner checks and the
+`Name-Realm` look note built for them were retired with M13-49.
 
 How it edits: byte-level, targeted replacement only. Every edit is an
 (offset, old bytes, new bytes) triple against the original file; every byte
@@ -90,7 +93,6 @@ import sys
 import unicodedata
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path, PurePosixPath
@@ -131,6 +133,28 @@ EMBEDDED_MIN_CHARS: int = _redact.EMBEDDED_MIN_CHARS
 REALM_TRANSFORMS: tuple[Callable[[str], str], ...] = _redact.REALM_TRANSFORMS
 _nfc: Callable[[str], str] = _redact.nfc
 _realm_forms: Callable[[str], list[str]] = _redact.realm_forms
+
+
+def _home_pattern() -> re.Pattern[bytes]:
+    """A home folder in a file's text (M13-49): one that carries a login.
+
+    The shape `wowlab doctor --redact` uses (`/Users/<name>`, `/home/<name>`,
+    `C:\\Users\\<name>`, XP's `Documents and Settings`, Wine's
+    `drive_c/users/<name>`), and this machine's own home in every spelling
+    `home_forms` gives, both taken from `wowlab_core.redact` unchanged and
+    applied to bytes. A path with no login in it (`/Applications/...`,
+    `C:\\Program Files\\...`) matches neither.
+    """
+    shape: re.Pattern[str] = _redact._HOME_SHAPE_RE
+    branches = [shape.pattern.encode("ascii")]
+    forms = sorted(_redact.home_forms(str(Path.home())), key=len, reverse=True)
+    if forms:
+        known = b"|".join(re.escape(f.encode("utf-8", "surrogatepass")) for f in forms)
+        branches.append(b"(?:" + known + b")" + _redact._HOME_END.encode("ascii"))
+    return re.compile(b"|".join(b"(?:" + b + b")" for b in branches), re.IGNORECASE)
+
+
+HOME_RE: re.Pattern[bytes] = _home_pattern()
 
 # ─── deny-lists and detectors ────────────────────────────────────────────────
 
@@ -182,26 +206,12 @@ CLIENT_VOCABULARY = RESERVED_WORDS | frozenset(
     ]
 )
 
-# Words that stand next to a realm without being a player: AceDB `factionrealm`
-# keys ("Horde - <realm>"), region tags ("<realm>-US"), DataStore's literal
-# account key ("Default.<realm>.<name>").
+# Words a name part is never searched for in a combat log, because the log's
+# own text holds them (see OtherUnits.leaks): factions, regions, `Default`.
 FACTION_WORDS = frozenset({"horde", "alliance", "neutral"})
 REGION_WORDS = frozenset({"us", "eu", "kr", "tw", "cn"})
 VOCABULARY_PARTNERS = FACTION_WORDS | REGION_WORDS | {"default"}
 _LETTERS = rb"A-Za-z\x80-\xff"
-# What joins a name to a realm: "Name-Realm", "Name - Realm", DataStore's
-# "Default.Realm.Name", and the other single-character joints addons use. Any
-# run of blanks around the joint character counts ("Horde  - Realm" is still
-# the same key), line breaks included ("Jaina -\nRealm"), so neither a stray
-# space nor a wrapped line turns a refusal into a note. A `/` with a line
-# break (and any blanks) before it starts a macro's slash command and is not
-# a joint. En and em
-# dashes are joints too: the detectors read a copy of the bytes in which each
-# is replaced by " - " (the same three bytes long, so every offset holds).
-# Bare blanks, commas and words ("Jaina Area52", "jaina of area52") are not
-# joints; those neighbours get a note instead (see Identity.inspect).
-_JOINT = rb"(?:(?:[ \t\r\n]*[-.|:_]|[ \t]*/)[ \t\r\n]*)"
-_DASHES = (b"\xe2\x80\x93", b"\xe2\x80\x94")  # U+2013, U+2014 in UTF-8
 _UNIT_TOKENS = (
     "player|target|focus|mouseover|cursor|pet|none|vehicle|npc|softenemy|softfriend|"
     "softinteract|party|raid|arena|boss|nameplate"
@@ -224,10 +234,6 @@ SOCIAL_MACRO_RE = re.compile(
     % (_UNIT_TOKENS.encode(), _LETTERS, _LETTERS),
     re.IGNORECASE,
 )
-NAME_REALM_SHAPE_RE = re.compile(
-    rb'"([A-Za-z\x80-\xff]{2,24})(?: - |-)([A-Za-z\x80-\xff][^"\r\n]{1,40})"'
-)
-
 _WORD = rb"A-Za-z0-9\x80-\xff"
 _WORD_BYTES = frozenset(
     b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -372,57 +378,7 @@ FOLDED_SURVIVOR_LABEL = "surviving identity string (folded or separated spelling
 
 
 Span = tuple[int, int]
-# A partner word is letters AND digits: "Jaina9" is a word, not an absent
-# neighbour. A word that is only digits ("Realm-2", a profile copy) is nobody
-# and is looked past.
-#
-# Backward searches run in a window of _WINDOW bytes and start only at a word
-# boundary (a lookbehind sees past the window's start). A word or a joint that
-# the window cuts is read as a person: the safe direction.
-_WINDOW = 160
-_BEYOND_AFTER = re.compile(_JOINT + rb"([%s]+)" % _WORD)
-_BEYOND_BEFORE = re.compile(rb"(?<![%s])([%s]+)%s\Z" % (_WORD, _WORD, _JOINT))
-_PAREN_BEFORE = re.compile(rb"(?<![%s])([%s]+)[ \t]*\([ \t]*\Z" % (_WORD, _WORD))
-_PAREN_CUT = re.compile(rb"[%s]*[ \t]*\([ \t]*" % _WORD)  # fullmatch over a whole window
-_CUT_BEFORE = re.compile(rb"[%s]*%s" % (_WORD, _JOINT))  # fullmatch over a whole window
-_JOINT_BYTES = frozenset(bytes([b]) for b in b"-.|:/_")  # one-byte slices
-# The nearest word across a short separator that is not a joint (" ", ", ",
-# " of ", "~", "'s ", a bare line break), in any casing: up to 8 bytes that
-# are not word bytes. Vocabulary and numbers are read past, up to
-# _NEAR_STEPS words on each side.
-_NEAR_WINDOW = 72
-_NEAR_STEPS = 4
-_NEAR_BEFORE = re.compile(rb"(?<![%s])([%s]+)[^%s]{1,8}\Z" % (_WORD, _WORD, _WORD))
-_NEAR_CUT = re.compile(rb"[%s]*[^%s]{1,8}" % (_WORD, _WORD))  # fullmatch over a whole window
-_NEAR_AFTER = re.compile(rb"[^%s]{1,8}([%s]+)" % (_WORD, _WORD))
 _LINE_TEXT_RE = re.compile(rb"[^\r\n]+")
-# Nothing but blanks and joint characters (fullmatch; dashes already replaced).
-_JOINT_ONLY = re.compile(rb"[ \t\-.|:/_]*")
-# A word that starts with a capital (or a non-ASCII byte, which may be one),
-# at a word boundary, for the same-line note.
-_CAPITALISED_RE = re.compile(rb"(?<![%s])[A-Z\x80-\xff][%s]*" % (_WORD, _WORD))
-_LINE_BREAKS_RE = re.compile(rb"\r\n|\r|\n")
-
-
-class _Lines:
-    """Where each line of a byte string starts and ends. CRLF, CR and LF each end one."""
-
-    def __init__(self, data: bytes) -> None:
-        self._size = len(data)
-        self._breaks = [m.span() for m in _LINE_BREAKS_RE.finditer(data)]
-        self._ends = [end for _, end in self._breaks]
-
-    @property
-    def count(self) -> int:
-        return len(self._breaks) + 1
-
-    def index(self, position: int) -> int:
-        return bisect.bisect_right(self._ends, position)
-
-    def span(self, index: int) -> Span:
-        start = self._breaks[index - 1][1] if index else 0
-        end = self._breaks[index][0] if index < len(self._breaks) else self._size
-        return start, end
 
 
 def _fold(word: str) -> str:
@@ -560,6 +516,11 @@ class Identity:
     Pseudonyms are assigned in sorted order of the real names over the whole
     install, so one run maps a name the same way in every file and every path,
     and a dry run followed by a real run agrees with itself.
+
+    Since M13-49 (ADR-0019 amendment, 2026-10-17) `discover_identity` passes
+    only accounts, `--extra-name` strings, own GUIDs and group folders. The
+    `realms`, `characters`, `realm_aliases` and `loose` inputs are unused by
+    discovery and kept for the unit tests that grade the engine through them.
     """
 
     def __init__(
@@ -587,10 +548,6 @@ class Identity:
         self._tokens: dict[bytes, Token] = {}
         self._survivors: dict[bytes, str] = {}  # ASCII-lowered long form -> mode
         self._short_survivors: dict[bytes, str] = {}  # ASCII-lowered short form -> "substring"
-        self._realm_pseudonyms: set[bytes] = set()
-        self._partner_words: set[str] = set()  # every letter run of every pseudonym, casefolded
-        # Other players' pseudonym words, known only while one combat log is inspected.
-        self._scoped_words: frozenset[str] = frozenset()
         self.counts: Counter[str] = Counter()
         self._fold_sources: list[str] = []  # real spellings for the folded hunt (_folded_hits)
         self._loose_names = {_nfc(name) for name in loose}
@@ -633,11 +590,6 @@ class Identity:
         self._identity = _trie_regex({t.text: t.mode for t in self._tokens.values()})
         self._survivor = _trie_regex(self._survivors)
         self._short_survivor = _trie_regex(self._short_survivors)
-        # Every own-realm pseudonym in the output is found with one prefix-tree
-        # pattern (its three casings are separate literals), and what stands on
-        # either side of it is then read in a bounded window. No pattern here
-        # walks a long run of letters more than once.
-        self._own_realm = _trie_regex(dict.fromkeys(self._realm_pseudonyms, "substring"))
         self._folded_long, self._folded_short = self._folded_forms()
 
     @staticmethod
@@ -778,7 +730,7 @@ class Identity:
         return hits
 
     def _register(self, pairs: Sequence[tuple[str, str]], category: str) -> None:
-        """Tokens, survivor forms and partner words for (real form, pseudonym form) pairs."""
+        """Tokens and survivor forms for (real form, pseudonym form) pairs."""
         # Exact spelling first: replaced wherever it occurs, even inside a
         # longer word. Over-replacing is ugly; under-replacing is a leak.
         for form, replacement in pairs:
@@ -791,12 +743,6 @@ class Identity:
             self._token(form.upper(), replacement.upper(), mode)
             for cased in (form, form.lower(), form.upper(), form.title(), form.casefold()):
                 self._survivor_form(cased)
-        for _form, replacement in pairs:
-            for cased in (replacement, replacement.lower(), replacement.upper()):
-                if category == "realm":
-                    # All three casings: bytes-level IGNORECASE folds ASCII only.
-                    self._realm_pseudonyms.add(cased.encode("utf-8"))
-                self._partner_words.update(_fold(run) for run in re.findall(r"[^\W\d_]+", cased))
 
     def _add_account(self, real: str, index: int) -> None:
         if real in self.names:
@@ -988,26 +934,15 @@ class Identity:
         """(reasons these bytes must not be emitted, notes for the eye). Never quotes a match.
 
         `written` is where this scrub put its replacements, if it made any.
-        `others`: other players' pseudonym GUIDs are mapped, and their
-        pseudonym words count as pseudonyms, not strangers.
+        `others`: other players' pseudonym GUIDs are mapped.
         """
-        with self._also_known(others.words if others is not None else frozenset()):
-            return self._inspect(
-                scrubbed,
-                config=config,
-                toc=toc,
-                written=written,
-                pseudo_guids=others.pseudo_guids if others is not None else frozenset(),
-            )
-
-    @contextmanager
-    def _also_known(self, words: frozenset[str]) -> Iterator[None]:
-        saved = self._scoped_words
-        self._scoped_words = saved | words
-        try:
-            yield
-        finally:
-            self._scoped_words = saved
+        return self._inspect(
+            scrubbed,
+            config=config,
+            toc=toc,
+            written=written,
+            pseudo_guids=others.pseudo_guids if others is not None else frozenset(),
+        )
 
     def _inspect(
         self,
@@ -1034,6 +969,7 @@ class Identity:
             return (m for m in matches if not _overlaps(spans, m.start(), m.end()))
 
         report(problems, "email address", EMAIL_RE.finditer(scrubbed))
+        report(problems, "home path", HOME_RE.finditer(scrubbed))
         report(problems, "BattleTag", BATTLETAG_RE.finditer(scrubbed))
         report(
             problems,
@@ -1092,224 +1028,13 @@ class Identity:
             report(problems, "surviving short identity string (whole word or glued)", glued)
             report(notes, "short identity string inside a longer word", loose)
 
-        if self._own_realm is not None:
-            # Who stands next to each own realm. Beyond any adjacency check, and
-            # left to the owner's eye: a name and the realm in separate fields
-            # of one record (`["name"] = "Jaina", ["realm"] = "<realm>"`).
-            view = scrubbed
-            for dash in _DASHES:
-                view = view.replace(dash, b" - ")  # same length: offsets hold
-            foreign: list[re.Match[bytes]] = []
-            tolerated: list[re.Match[bytes]] = []
-            unexplained: list[re.Match[bytes]] = []
-            nearby: list[re.Match[bytes]] = []
-            lines: _Lines | None = None
-            strangers: dict[int, bool] = {}  # line index -> holds an unexplained capitalised word
-            for m in self._own_realm.finditer(view):
-                verdict, past_own = self._partner(view, m)
-                if verdict == "foreign":
-                    foreign.append(m)
-                elif verdict == "vocabulary":
-                    tolerated.append(m)
-                # A name joined by something that is not a joint ("Jaina Area52",
-                # "jaina, area52", "Jaina\nArea52") is not refused, it is noted:
-                # a capitalised word nobody accounts for on the realm's line (or
-                # on the next or previous line, when only blanks and joints stand
-                # between the realm and that line break), else a foreign word of
-                # any casing right next to it. At most one of the two per realm.
-                lines = lines or _Lines(view)
-                if self._capitalised_near(view, lines, strangers, m):
-                    unexplained.append(m)
-                elif past_own or self._stranger_adjacent(view, m):
-                    nearby.append(m)
-            report(problems, "someone else's name on an own realm", foreign)
-            report(notes, "own realm next to a faction, region or 'Default' word", tolerated)
-            report(notes, "own realm near an unexplained capitalised word", unexplained)
-            report(notes, "own realm next to an unexplained lowercase word", nearby)
-        report(
-            notes,
-            "Name-Realm-shaped string that is not a pseudonym pair",
-            (m for m in NAME_REALM_SHAPE_RE.finditer(scrubbed) if not self._is_pair(m)),
-        )
+        # The own-realm partner checks and the Name-Realm look note were retired
+        # with M13-49: character and realm names are public (ADR-0019 amendment,
+        # 2026-10-17), so who stands next to a realm is nothing to refuse or flag.
         report(
             notes, "whisper/invite/target macro line or @Name", SOCIAL_MACRO_RE.finditer(scrubbed)
         )
         return problems, notes
-
-    def _partner(self, scrubbed: bytes, match: re.Match[bytes]) -> tuple[str, bool]:
-        """Who stands next to this own-realm pseudonym: "own", "vocabulary", or "foreign".
-
-        The flag says a stranger stands one segment past an own name
-        ("jaina-<own character>-<realm>"): a note, not a refusal.
-
-        Looks at `<word><joint><realm>`, `<word> (<realm>)` and
-        `<realm><joint><word>`, and keeps looking one segment further for as
-        long as the word is vocabulary (a faction, a region, `Default`) or
-        only digits: "Jaina - Horde - <realm>", "Jaina-US-<realm>",
-        "Default.<realm>.Jaina" and "<realm>-US-Jaina" all end on Jaina. A word
-        or a joint that the backward window cuts makes the verdict foreign: the
-        safe direction.
-        """
-        cut = False
-
-        def before(position: int) -> re.Match[bytes] | None:
-            nonlocal cut
-            low = max(0, position - _WINDOW)
-            if scrubbed[low:position].rstrip(b" \t\r\n")[-1:] not in _JOINT_BYTES:
-                return None  # no joint character: no match and no cut (the common case)
-            found = _BEYOND_BEFORE.search(scrubbed, low, position)
-            if found is None and low > 0 and _CUT_BEFORE.fullmatch(scrubbed, low, position):
-                cut = True  # "<a word or blanks longer than the window><joint><realm>"
-            return found
-
-        def after(position: int) -> re.Match[bytes] | None:
-            return _BEYOND_AFTER.match(scrubbed, position)
-
-        past_own = False
-
-        def walk(
-            found: re.Match[bytes],
-            step: Callable[[int], re.Match[bytes] | None],
-            edge: Callable[[re.Match[bytes]], int],
-        ) -> str:
-            """Read one side outward; stop at the first word that is a person or an own name."""
-            nonlocal cut, past_own
-            chain = [self._kind(found.group(1))]
-            beyond: re.Match[bytes] | None = found
-            while chain[-1] in ("vocabulary", "number") and beyond is not None:
-                # The faction, region or number is fine; the segment beyond it may not be.
-                beyond = step(edge(beyond))
-                if cut:
-                    return "foreign"
-                if beyond is not None:
-                    chain.append(self._kind(beyond.group(1)))
-            if chain[-1] == "foreign":
-                return "foreign"
-            if chain[-1] == "own" and beyond is not None:
-                # One segment past an own name, for the note only.
-                peek = step(edge(beyond))
-                past_own = past_own or cut or (peek is not None and self._stranger(peek.group(1)))
-                cut = False
-            # A plain number next to the realm ("<realm>-2") is nobody: as good as own.
-            return "vocabulary" if "vocabulary" in chain else "own"
-
-        verdicts: set[str] = set()
-        leading = before(match.start())
-        if cut:
-            return "foreign", past_own
-        low = max(0, match.start() - _WINDOW)
-        if leading is None and scrubbed[low : match.start()].rstrip(b" \t").endswith(b"("):
-            leading = _PAREN_BEFORE.search(scrubbed, low, match.start())
-            if leading is None and low > 0 and _PAREN_CUT.fullmatch(scrubbed, low, match.start()):
-                return "foreign", past_own  # "<a word or blanks longer than the window> (<realm>"
-        if leading is not None:
-            verdicts.add(walk(leading, before, lambda m: m.start()))
-        trailing = after(match.end())
-        if trailing is not None:
-            verdicts.add(walk(trailing, after, lambda m: m.end()))
-        return next((v for v in ("foreign", "vocabulary", "own") if v in verdicts), "own"), past_own
-
-    @staticmethod
-    def _word(raw: bytes) -> str:
-        # A byte-order mark is made of word bytes; it is never part of a name.
-        return _fold(raw.replace(_BOM, b"").decode("utf-8", errors="replace"))
-
-    def _kind(self, raw: bytes) -> str:
-        """ "own" (a pseudonym word), "vocabulary", "number" (digits only) or "foreign"."""
-        word = self._word(raw)
-        if word in self._partner_words or word in self._scoped_words:
-            return "own"
-        if word in VOCABULARY_PARTNERS:
-            return "vocabulary"
-        bare = raw.replace(_BOM, b"")
-        return "number" if not bare or bare.isdigit() else "foreign"  # a lone BOM is nobody
-
-    def _stranger(self, raw: bytes) -> bool:
-        """A word nobody accounts for: not a pseudonym, vocabulary, a number or a keyword."""
-        return (
-            self._kind(raw) == "foreign"
-            and not raw[:1].isdigit()  # `0x511`, `3rd`: character names hold no digit
-            and self._word(raw) not in RESERVED_WORDS
-        )
-
-    def _capitalised_near(
-        self, view: bytes, lines: _Lines, strangers: dict[int, bool], match: re.Match[bytes]
-    ) -> bool:
-        """Is there a capitalised stranger on this realm's line, or across a joint-only line end?
-
-        Each line is read once however many realms it holds (`strangers`
-        remembers), so a file of many short lines or one long line is linear.
-        """
-
-        def stranger_on(index: int) -> bool:
-            if index not in strangers:
-                start, end = lines.span(index)
-                strangers[index] = any(
-                    self._stranger(m.group(0)) for m in _CAPITALISED_RE.finditer(view, start, end)
-                )
-            return strangers[index]
-
-        index = lines.index(match.start())
-        start, end = lines.span(index)
-        if stranger_on(index):
-            return True
-        if (
-            index > 0
-            and _JOINT_ONLY.fullmatch(view, start, match.start())
-            and stranger_on(index - 1)
-        ):
-            return True
-        return (
-            index + 1 < lines.count
-            and _JOINT_ONLY.fullmatch(view, match.end(), end) is not None
-            and stranger_on(index + 1)
-        )
-
-    def _stranger_adjacent(self, view: bytes, match: re.Match[bytes]) -> bool:
-        """Is the nearest word across a short separator, on either side, a stranger?
-
-        Vocabulary and numbers are read past ("jaina-horde area52", "jaina, 2
-        area52"), up to _NEAR_STEPS words a side; an own name or a keyword ends
-        the side quietly.
-        """
-
-        def settle(raw: bytes) -> str | None:
-            """None: read past this word; else "stranger" or "quiet"."""
-            if self._kind(raw) in ("vocabulary", "number") or raw[:1].isdigit():
-                return None
-            return "stranger" if self._stranger(raw) else "quiet"
-
-        position = match.start()
-        for _ in range(_NEAR_STEPS):
-            if not position or view[position - 1] in _WORD_BYTES:
-                break
-            low = max(0, position - _NEAR_WINDOW)
-            leading = _NEAR_BEFORE.search(view, low, position)
-            if leading is None:
-                if low > 0 and _NEAR_CUT.fullmatch(view, low, position):
-                    return True  # a word longer than the window: assume a person
-                break
-            verdict = settle(leading.group(1))
-            if verdict == "stranger":
-                return True
-            if verdict == "quiet":
-                break
-            position = leading.start()
-        position = match.end()
-        for _ in range(_NEAR_STEPS):
-            trailing = _NEAR_AFTER.match(view, position)
-            if trailing is None:
-                break
-            verdict = settle(trailing.group(1))
-            if verdict is not None:
-                return verdict == "stranger"
-            position = trailing.end()
-        return False
-
-    def _is_pair(self, match: re.Match[bytes]) -> bool:
-        """Is every word of this quoted string a pseudonym or a faction/region/'Default' word?"""
-        runs = re.findall(rb"[%s]+" % _LETTERS, match.group(0))
-        return all(self._kind(run) != "foreign" for run in runs)
 
     def scrub_path(self, rel: PurePosixPath) -> tuple[PurePosixPath, list[str]]:
         """Pseudonymise each path component; report anything that must not be a path."""
@@ -1400,7 +1125,6 @@ class OtherUnits:
     fields: tuple[Span, ...]  # every other player's quoted unit-name field
     hunted: tuple[str, ...]  # real name parts that must not appear anywhere else
     unpaired: int  # other players' GUIDs never seen in a GUID+name unit pair
-    words: frozenset[str]  # casefolded letter runs of every other-player pseudonym so far
 
     @property
     def pseudo_guids(self) -> frozenset[bytes]:
@@ -1477,12 +1201,9 @@ class OtherPlayers:
 
     def __init__(self) -> None:
         self._players: dict[bytes, int] = {}  # upper-cased real GUID -> index
-        self._words: set[str] = set()
 
     def _pseudonym(self, text: str, stem: str, index: int) -> bytes:
-        pseudonym = _shaped(text, stem, index)
-        self._words.update(_fold(run) for run in re.findall(r"[^\W\d_]+", pseudonym))
-        return pseudonym.encode("utf-8")
+        return _shaped(text, stem, index).encode("utf-8")
 
     def units(self, data: bytes, identity: Identity) -> OtherUnits:
         """Find every other player's unit pair in `data` (the ORIGINAL bytes of a log)."""
@@ -1516,7 +1237,6 @@ class OtherPlayers:
             fields=tuple(fields),
             hunted=tuple(hunted),
             unpaired=unpaired,
-            words=frozenset(self._words),
         )
 
 

@@ -4,8 +4,9 @@ Character names, realm names and the Forever second name are visible to anyone
 in the game, so the scrub keeps them as they are, in paths and in contents,
 and no longer refuses a file because one of them sits inside a longer word or
 a SavedVariables file's own name. What identifies the account stays scrubbed
-and refused: the account folder, an email address, a BattleTag, and the
-owner's own player GUIDs (an unmapped player GUID refuses the file).
+and refused: the account folder, an email address, a BattleTag, a home path
+that carries a login (refused since M13-49), and the owner's own player GUIDs
+(an unmapped player GUID refuses the file).
 
 CONSTRUCTED INPUT. Every tree is synthetic, built in `tmp_path` in both
 account layouts, with invented names. No test needs or touches a real install
@@ -147,6 +148,41 @@ def test_constructed_kept_identifiers_still_refuse_beside_a_kept_name(
     assert len(refused) == 1 and "Leak.lua" in refused[0] and label in refused[0], refused
     for secret in (EMAIL, BATTLETAG, FOREIGN_GUID, ACCOUNT):
         assert secret not in printed.out + printed.err
+
+
+@pytest.mark.parametrize(
+    ("value", "refused"),
+    [
+        ("C:\\\\Users\\\\jdoe\\\\Desktop", True),  # a Lua string: each backslash escaped
+        ("/Users/jdoe/Library/x", True),
+        ("/Applications/World of Warcraft/_retail_", False),
+        ("C:\\\\Program Files (x86)\\\\World of Warcraft", False),
+    ],
+    ids=["windows-home", "macos-home", "macos-install", "windows-install"],
+)
+def test_constructed_a_home_path_in_a_savedvariables_value_refuses(
+    value: str,
+    refused: bool,
+    tree: tuple[Path, Path, Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A home path carries the owner's login: it stays refused (ADR-0019
+    amendment, 2026-10-17). A path with no login in it is kept as written."""
+    root, retail, _forever = tree
+    body = f'\nPathDB = {{\n\t["who"] = "{CHARACTER}",\n\t["last"] = "{value}",\n}}\n'
+    _write(retail / REALM / CHARACTER / "SavedVariables" / "PathDB.lua", body)
+    out = tmp_path / "incoming"
+    code = capture(root, out, "--flavor", "_retail_", "--sv", "PathDB.lua")
+    written = [data for dest, data in outputs(out).items() if dest.endswith("/PathDB.lua")]
+    printed = capsys.readouterr().out
+    if refused:
+        assert code == 1 and written == []
+        lines = [line for line in printed.splitlines() if line.startswith("REFUSED")]
+        assert len(lines) == 1 and "PathDB.lua: home path x1 (first at byte" in lines[0], lines
+        assert "jdoe" not in printed
+    else:
+        assert code == 0 and written == [body.encode()]
 
 
 def test_constructed_own_guid_is_still_rewritten_and_the_name_beside_it_kept(
