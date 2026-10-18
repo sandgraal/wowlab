@@ -699,7 +699,7 @@ No library change is expected. If making a test pass on Windows seems to need on
 
 # M13 follow-ups found in review (filed 2026-10-17)
 
-## [ ] M13-37 — Install discovery uses the same link test as `tree`, `gaps` and `explain`
+## [x] M13-37 — Install discovery uses the same link test as `tree`, `gaps` and `explain`
 **Size:** S · **Depends on:** M13-35
 
 Found in the domain and code reviews of #235 (M13-35). `install._is_link` checks only "symlink or junction", so a flavor folder that is a non-junction name-surrogate reparse point (a WCI link, a WSL symlink) passes `is_dir()` and its `.flavor.info` is read through the link. Every command that builds a `Layout` for that flavor (`sv`, `addons`, `doctor`, `explain`'s detail lines) then reads through it; only `tree` refuses (M13-35's flavor-folder branch). This contradicts `gaps.NOT_A_FLAVOR_LINK` ("discovery never takes a link, whatever it points at"). Discovery uses `layout.is_link` and reports such a folder in `other_dirs` with `NOT_A_FLAVOR_LINK`. The test `test_a_flavor_folder_that_is_a_wci_link_is_a_link_never_walked_constructed` asserts `discover(root).flavors == [FLAVOR]` under the fake and changes with this ticket.
