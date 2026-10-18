@@ -814,3 +814,12 @@ Found in the code review of #248 (M13-37), on `main` already. `install._read_fla
 Found while merging #246. The release notes' `--json` paragraph names every model a command's help names, and the review probe `lab/core/tests/review/test_m13_11_release_notes_json_models_incomplete.py` checks that, but it only fires on the release branch: M13-08 added `BindsCoachReport` to `main` after the review, the probe passed on the branch and failed on the merged tree, and the conductor fixed the notes by hand before the tag. Move the check into `tests/scripts/test_release.py` so it runs on every PR: every model name that `gen_command_reference.json_models` reports is listed in `.github/release-notes.md`, and every listed name exists. A PR that adds a `--json` model then fails CI until it also adds the line, which is the ADR-0031 rule for `--json` changes. Keep the review probe or fold it in; say which.
 
 **Acceptance:** the test fails on a tree with a model missing from the notes (prove by a labelled constructed mutation in the test, not by editing the notes); `make ci` green; reviewed by `code-reviewer`.
+
+---
+
+## [ ] M13-48 — `snap restore`: a mode-only change to an addon executable
+**Size:** XS · **Depends on:** M13-38
+
+Found in the code review of #249 (M13-38). `guard._unchanged_executable` treats the permission bits as part of "matches", so an addon executable whose bytes are unchanged but whose mode changed (a `chmod 644 → 755`) still refuses a whole restore with exit 3 and the gate's line alone; the advice line M13-38 added runs only for `--paths`. Rare (an addon update changes the bytes too) and it fails safe, but the `--help` promise reads as if any change were counted and skipped. Two M13-30 review probes pin the current behaviour (`test_m13_30_screenshots_restore_ignores_executable_mode.py`, lines 71–90), so the owner decides: either (a) a mode-only change is skipped and listed like a content change, in which case a `test-writer` inverts those two probes first, or (b) the behaviour stays and the restore prints the advice line for it. Pick one in the ticket before dispatch.
+
+**Acceptance:** per the choice: (a) the inverted probes pass, the skip is listed with its row, nothing is written; or (b) a mode-only change prints the gate's line plus the advice line, exit 3, labelled constructed test; `make ci` green; reviewed by `code-reviewer` and `security-reviewer`.
