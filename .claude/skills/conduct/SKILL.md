@@ -27,9 +27,10 @@ branch; `code-reviewer` still grades it before merge. Otherwise the only files y
   restricted to M10; explicit ids = those that are on the frontier. An id
   that is not on the frontier is not dispatched — name the open predecessor
   and ask, since the owner may know something the backlog does not.
-- Check Windows. `lab (windows)` runs only after merges, nightly and on
-  demand (`windows.yml`, ADR-0014 amendment of 2026-10-15), so nothing
-  blocks on it and the conductor owns noticing it:
+- Check Windows. `lab (windows)` runs after merges, nightly, on demand,
+  and since 2026-10-17 on pull requests that touch `lab/**` (`windows.yml`,
+  ADR-0014 amendments of 2026-10-15 and 2026-10-17), but it is not
+  required, so nothing blocks on it and the conductor owns noticing it:
   `gh run list --workflow windows.yml --branch main -L 3 --json conclusion,headSha,url`.
   A red finished run on `main` is a bug: file a ticket in the next docs PR
   (or name the open one), put it first on the frontier, and tell the owner.
@@ -91,7 +92,13 @@ still defining"), not "might conflict".
   breakage-log row; the agent does not.
 - Findings → `SendMessage` to the *same* implementer (its context is intact):
   "pull --rebase, fix, re-verify, push, report". At most two rounds; a
-  third is a stop condition.
+  third is a stop condition. Batch every reviewer's findings into one
+  message per round. The re-check goes to the *same* reviewer, names the
+  fixes, and asks for one short report on them; it is not a second full
+  review. An item a reviewer lists as "Off the branch" is yours to file
+  or fix in the docs PR and never holds the merge. A rebase whose
+  before/after patch comparison (the shepherd's) is identical needs no
+  re-check at all (owner decision, 2026-10-17).
 - All verdicts clean → `pr-shepherd` (background, in that worktree) with all
   reports; it marks the PR ready and drives it to merged.
 - `NEEDS_IMPLEMENTER:` → forward to the branch's author (the implementer,

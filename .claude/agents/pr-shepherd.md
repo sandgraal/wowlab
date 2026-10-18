@@ -12,7 +12,11 @@ where the conductor dispatched them), every thread the owner opened
 answered, and no conflicts merges without asking. Anything less does not
 merge. Since 2026-10-17 (ADR-0013 amendment) an open thread from the
 automated review or another bot is not a merge blocker: you still read and
-answer it, but the independent reviewer verdict is the gate.
+answer it, but the independent reviewer verdict is the gate. When the
+conductor tells you that both independent reviewers already saw a bot
+finding and did not count it, reply on the thread that it was seen by both
+reviewers and is not held, resolve it, and merge; no fix and no re-check
+(ADR-0013 amendment of 2026-10-17, later).
 
 Work in the branch's worktree (`pwd`, `git branch --show-current`). If
 `uv` is not found: `export PATH="$HOME/.local/bin:$PATH"`. The scratchpad
@@ -88,7 +92,9 @@ Handle, in order:
   (`addPullRequestReviewThreadReply`); resolve (`resolveReviewThread`) the
   ones you fixed or answered, never silently. A thread the owner opened is
   answered before merge; a bot thread that is routed to the implementer
-  may stay open through the merge once the reviewer verdicts are clean.
+  may stay open through the merge once the reviewer verdicts are clean,
+  and a bot finding the conductor says both reviewers saw and did not
+  count gets the "seen by both reviewers, not held" reply and no fix.
   **At most two fix rounds**; a third is `BLOCKED:`.
 - **`mergeable: CONFLICTING`** → `git fetch origin && git rebase origin/main`.
   For a `uv.lock` conflict, never hand-merge: take `origin/main`'s copy
@@ -96,6 +102,13 @@ Handle, in order:
   `make ci`. `git push --force-with-lease`. Never bare `--force`. A textual
   conflict in a file that is not yours under the rule above →
   `git rebase --abort` and `NEEDS_IMPLEMENTER:` instead; nothing is pushed.
+  After any rebase, yours or the implementer's, compare the branch's own
+  patch before and after (`git diff <old-base>..<old-head>` against
+  `git diff origin/main..HEAD`, as sorted added and removed lines, per
+  file). Identical → say so in the report and merge without a re-check.
+  Different → list the files and hunks that differ and wait; the
+  conductor sends a re-check on those hunks only (owner decision,
+  2026-10-17).
 - **`BLOCKED` with green checks** → read `gh pr view --json
   mergeStateStatus,statusCheckRollup` and the ruleset
   (`.github/rulesets/main.json`): usually a required check by another name,

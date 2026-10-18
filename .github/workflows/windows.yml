@@ -17,6 +17,10 @@ name: Windows
 on:
   push:
     branches: [main]
+  pull_request:
+    paths:
+      - "lab/**"
+      - ".github/workflows/windows.yml"
   schedule:
     - cron: "17 7 * * *"
   workflow_dispatch:
@@ -25,7 +29,7 @@ permissions:
   contents: read
 
 # Runs on main queue rather than cancel, so each merge gets its own verdict;
-# a superseded on-demand branch run is cancelled.
+# a superseded pull-request or on-demand branch run is cancelled.
 concurrency:
   group: windows-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}

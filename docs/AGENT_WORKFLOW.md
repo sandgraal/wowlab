@@ -160,6 +160,10 @@ the latest runs on `main`, and a red one becomes a ticket at the front of the
 frontier. A ticket that touches path handling, `guard`, `snapshot` or
 `process` runs it on its branch before merge.
 
+*Amendment (2026-10-17, owner decision):* the job also runs on a pull request that touches `lab/**`, still not required, so a POSIX-only test assumption shows on the PR instead of turning `main` red after the merge (M13-36 and M13-43 were found that way). The on-demand run is still the way to get a verdict on a branch without a PR.
+
+**Review rounds (2026-10-17, owner decision; ADR-0013 amendment).** A reviewer runs `make ci` once, on its first round; a re-check runs only what the fix touches. A re-check goes to the same reviewer, names the fixes, and returns one short report. After a rebase the shepherd compares the branch's own patch before and after: identical merges without a re-check, different gets a re-check on the differing hunks. A finding whose fix lives outside the branch's files is reported "Off the branch" and filed by the conductor; it never holds the merge. A bot finding both independent reviewers saw and did not count gets a "seen by both reviewers, not held" reply and no fix.
+
 **Shared scratchpad (2026-10-15).** Parallel agents share one session
 scratchpad and overwrote each other's `ci.log` and PR-body files. Every agent
 keeps its files in a subfolder named after its ticket or PR

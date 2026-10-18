@@ -95,7 +95,10 @@ opens the PR, answers every thread, and **merges autonomously** once the
 required checks are green, the reviewer verdicts are clean, and every
 thread the owner opened is answered. Since 2026-10-17 an open thread from
 the automated review or another bot does not hold a merge: the independent
-`code-reviewer` verdict is the gate, and the thread stays visible.
+`code-reviewer` verdict is the gate, and the thread stays visible. A bot
+finding both independent reviewers saw and did not count gets a "seen by
+both reviewers, not held" reply from the shepherd, and no fix or re-check
+(owner decision, 2026-10-17).
 
 - The conductor's only source edits are harness (`.claude/`), docs, backlog
   ticks, and handoffs. Everything else goes to an agent, including fixes for
