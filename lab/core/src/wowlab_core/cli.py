@@ -2809,6 +2809,19 @@ def _not_taken_at(
     return _not_taken_named(inst, found.path.split("/", 1)[0])
 
 
+def _found_at_root(inst: install.Install, found: layout.Classified | layout.Unclassified) -> bool:
+    """Whether an `lstat` finds an entry (a link, a file, a folder) at an
+    install-root path (M13-57). Such a path is judged at the root, where it
+    is, never re-read inside a flavor folder."""
+    if found.base != "root" or not found.path:
+        return False
+    try:
+        longpath.lstat(Path(inst.root).joinpath(*[p for p in found.path.split("/") if p]))
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 def _plain_arg(text: str) -> str:
     """A path argument as typed, except that on Windows a `\\\\?\\` spelling
     with a plain one is taken by that (`longpath.plain_text`), so no output,
@@ -2839,6 +2852,7 @@ def explain(
     judged: layout.Classified | layout.Unclassified | None = None
     here = Path.cwd() / given
     relative = False
+    at_root = False  # a relative path judged at the install root only
     # The flavor folder a relative path is read in (M13-29): `--flavor`, or
     # the only one; None with several and none chosen.
     chosen_folder = inst.flavors[0].folder if len(inst.flavors) == 1 else None
@@ -2852,10 +2866,21 @@ def explain(
         # M13-45: a path under a `_..._` folder discovery did not take stays
         # at the install root, where that folder is; it is not re-read in a
         # flavor folder.
-        at_root = _not_taken_at(inst, result) is not None
-        if at_root and flavor is not None and _not_taken_named(inst, flavor) is None:
+        taken_root = _not_taken_at(inst, result) is not None
+        # M13-57: so does a path with no row that is there at the install
+        # root (a link, a file or a folder `lstat` finds there).
+        on_root = (
+            not taken_root
+            and isinstance(result, layout.Unclassified)
+            and _found_at_root(inst, result)
+        )
+        at_root = taken_root or on_root
+        if flavor is not None and (
+            on_root or (taken_root and _not_taken_named(inst, flavor) is None)
+        ):
             # The path is not read in it, but a `--flavor` that names no
-            # folder at all is refused as on main.
+            # flavor is refused as on main (for a path under a folder not
+            # taken, naming that folder is accepted, M13-45).
             _select_flavor(inst, flavor)
         if (
             isinstance(result, layout.Unclassified)
@@ -2946,7 +2971,13 @@ def explain(
             _say(f"{path}: no file-map row{where}: {result.reason}")
         if taken is not None:
             _say(f"  {taken.name}: {taken.note}")
-        if len(inst.flavors) > 1 and flavor is None and not given.is_absolute() and not nowhere:
+        if (
+            len(inst.flavors) > 1
+            and flavor is None
+            and not given.is_absolute()
+            and not nowhere
+            and not at_root  # M13-57: `--flavor` would not read it in one
+        ):
             _say("  (with several flavors, pass --flavor to read PATH inside one of them)")
         _say_detail(report, captured)
         return
