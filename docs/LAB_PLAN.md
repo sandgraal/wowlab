@@ -252,12 +252,32 @@ Symlinks are reported and not followed outside the install. Walk depth and
 entry counts are bounded; an `Interface/AddOns` with 400 addons must inventory
 in under two seconds on an SSD.
 
+*Amended 2026-10-17 (M13-35):* a "link" here is what `layout.is_link` says,
+the one test `filemap gaps` (`gaps.is_link`), `explain` and `tree` share: a
+symlink, a junction, or any other Windows reparse point with the
+name-surrogate bit (a WCI link, a WSL symlink). Each is reported in
+`Inventory.symlinks` and never walked. A WCI link or a WSL symlink has no
+link text `os.readlink` can read, so it has no target and no inside or
+outside answer: `Symlink.target` and `Symlink.inside_install` are None, and
+`tree` says "link (where it points is unknown), not followed". A link whose
+text reads but whose resolution fails (a loop) has a target and no inside
+or outside answer either: "link to <target> (where it points is unknown),
+not followed". `tree` words
+a link the same way at the install root and in a flavor folder: "link to
+<target> (inside|outside the install), not followed". A flavor folder that
+is such a link is listed by `tree` as a link, and nothing in it is listed
+(`tree --install` notes it as "flavor folder; link …, not followed; nothing
+in it is listed"). A reparse point
+without that bit (a cloud placeholder, a deduplicated file) is walked and
+named in `Inventory.reparse_points` (M13-33).
+
 *Amended 2026-09-22 (M10-06 reviews):* (1) **Symlinks and junctions are never
 followed**, whether they point inside the install or outside it. Each is
 reported in `Inventory.symlinks` with its link text and `inside_install`,
 and left out of the typed lists. `inside_install` uses `Path.resolve()`,
-which reads link text and metadata but never lists or opens anything
-outside. (2) **Signatures:** `classify(path, install, *, is_dir=None)`
+which reads link text and metadata but never lists or reads anything
+outside; on Windows, resolving opens a link with no access to read its
+final name (wording corrected 2026-10-17, M13-35). (2) **Signatures:** `classify(path, install, *, is_dir=None)`
 (flavor folders are the ones discovery reported; the install root and
 flavor folder are also matched by their on-disk spelling on a
 case-insensitive volume) and `Layout.classify(path, *, is_dir=None)`. Both
@@ -725,7 +745,8 @@ an install (L1), never inside the repository.
 - Default subtrees: `WTF/`, `Interface/AddOns/`, `Fonts/`, and loose files
   under `Interface/` outside `AddOns/`. `Cache/`, `Logs/`, `Screenshots/`,
   `Errors/` and everything under `Data/` are excluded by default;
-  `Screenshots/` can be opted in.
+  `Screenshots/` can be opted in; a restore never writes it back (§6.11,
+  M13-30).
 - `create`, `list`, `show`, `diff(a, b)` (added / removed / changed, with a
   `luadata`-aware structural diff for `.lua` SavedVariables when both sides
   parse), `verify` (re-hash objects), `gc` (unreferenced objects, dry-run
@@ -1088,6 +1109,35 @@ why. Such a file is restored only when it is named with `--paths`.
 subtrees, as "no; wowlab leaves it alone (a restore writes it only if you
 name it with --paths)". `snap restore` and `undo` also take `--json` (the
 plan, and with `--yes` the result).
+
+*Amended 2026-10-17 (M13-30, from the #195 domain review):* a snapshot
+taken with `snap create --screenshots` holds `Screenshots/`, whose file-map
+row (`screenshots`) has Edit `n/a`; the write gate refuses it. A
+whole-snapshot restore of such a snapshot sets aside every entry under a
+top-level folder whose row is `screenshots` (only that row; no other row
+with Edit `n/a` is a snapshot subtree), and restores the rest. Each
+screenshot is listed in `RestoreReport.not_restored` (apart from the Edit
+`no` list in `skipped`) with what the disk holds now (`same`, `differs`,
+`missing`, or `behind_link` when a folder on its way, `Screenshots/`
+itself, is now a link: then nothing behind it is read; read-only, size
+first, then content); it stays in the snapshot. The text plan counts them,
+counts those that differ or are missing apart from those not read, names
+the first ten of either kind with its state, and never offers `--paths`
+for them; when every one matches it says the snapshot also holds them and
+all still match. Naming one with `--paths` is refused
+with the gate's reason (exit 3), followed by one line saying wowlab never
+writes `Screenshots/`. Because the gate's whole restore cannot leave
+entries out, the rest is restored by name, and every entry a whole restore
+would check is named, so the gate refuses what it would refuse there (a
+reserved name, a case collision, a changed link or executable) and a file
+that changes between the plan and the confirm shows in its plan and rolls
+the restore back. The only entries left unnamed are unchanged links and
+unchanged executables, which a whole restore leaves alone and a named one
+refuses; the CLI finds them by reading the disk (`profiles.disk_state`,
+following no link; a Windows junction counts as a link, as it does for the
+gate; an executable is unchanged only with the entry's bytes and permission
+bits, as `guard` judges it) and reads them again before the commit. A whole restore that skips
+an Edit `no` file is restored by name the same way. `guard` is unchanged.
 
 *Amended 2026-09-29 (M11-30):* text output is terminal-safe. No C0
 control (tab and line feed included), no DEL, no C1 control and no Unicode

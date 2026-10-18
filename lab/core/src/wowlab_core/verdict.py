@@ -12,14 +12,17 @@ new cell in `filemap.toml` fails the test that maps every cell.
 from __future__ import annotations
 
 import os
-import re
 import stat
 import unicodedata
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from wowlab_core.filemap import FileMapEntry
+# The executable rule is `filemap`'s copy of guard's; its tables are named
+# here too, for `test_verdict.py`'s table-equality check against `guard`.
+from wowlab_core.filemap import _EXECUTABLE_SUFFIXES as _EXECUTABLE_SUFFIXES
+from wowlab_core.filemap import _VERSIONED_SHARED_LIBRARY as _VERSIONED_SHARED_LIBRARY
+from wowlab_core.filemap import FileMapEntry, _is_executable
 
 Level = Literal["gate", "no", "folder", "not_applicable", "unclassified"]
 
@@ -33,7 +36,8 @@ LABELS: dict[str, str] = {
 """Each level in a player's words, for a badge (owner, 2026-10-16)."""
 
 LINK_LABEL = "a link; wowlab won't follow it"
-"""The label of a symlink or junction, or a path inside one, at any level:
+"""The label of a link (a symlink, a junction or another Windows reparse
+point that names another path), or a path inside one, at any level:
 the gate refuses it whatever its row says (M13-25 round 2)."""
 
 SERVER_LABEL = "server may overwrite"
@@ -45,6 +49,18 @@ _SERVER_MAY_REPLACE = "(server may replace)"
 _SERVER_WORDS = "; the server may replace it at login (sync settings: wowlab doctor)"
 _UNCLASSIFIED_WORDS = "no file-map row; wowlab does not know what this file is"
 _UNCLASSIFIED_FOLDER_WORDS = "no file-map row; wowlab does not know what this folder is"
+# The same words as `layout`'s reason for such a path (M13-29).
+_NOT_FOUND_WORDS = (
+    "not found; nothing is at this path, and no file-map row matches a name like this"
+)
+# What a restore can do at a path with nothing on it: put back a copy a
+# snapshot holds, or, naming the path with --paths, delete a file created
+# there after the snapshot (`guard` deletes a named path the snapshot's
+# subtrees cover but that it does not hold).
+_MISSING_RESTORED = (
+    "; `snap restore --paths` naming it puts back a snapshot's copy, "
+    "or removes a file created here after that snapshot"
+)
 _LINK_WORDS = (
     "a link, or inside one; wowlab never follows it or writes through it, "
     "and a restore does not put it back"
@@ -76,38 +92,13 @@ _TIER_WORDS = {
 # ─── the write gate's path rule, copied ──────────────────────────────────────
 # A copy of `guard._check_rel` for a file path with executables refused, so
 # `restorable` says exactly what the gate would write. `guard.py` is
-# load-bearing; its private rule is copied here rather than imported, and
-# `test_verdict.py::test_restorable_agrees_with_the_write_gate` fails when
-# the two drift apart.
+# load-bearing; its private rule is copied here rather than imported (the
+# executable rule is `filemap`'s copy, which its `<executable>` pattern
+# segment uses too), and `test_verdict.py::test_restorable_agrees_with_the_write_gate`
+# fails when the two drift apart.
 
 _ROOTS = ("WTF", "Interface", "Fonts")
 _ADDONS = "AddOns"
-_EXECUTABLE_SUFFIXES = (
-    ".exe",
-    ".dll",
-    ".dylib",
-    ".so",
-    ".scr",
-    ".com",
-    ".bat",
-    ".cmd",
-    ".ps1",
-    ".sh",
-    ".command",
-    ".app",
-    ".bundle",
-    ".plugin",
-    ".framework",
-    ".vbs",
-    ".js",
-    ".wsf",
-    ".hta",
-    ".msi",
-    ".lnk",
-    ".cpl",
-    ".jar",
-)
-_VERSIONED_SHARED_LIBRARY = re.compile(r"\.so(\.\d+)+\Z", re.IGNORECASE)
 _RESERVED_NAMES = frozenset(
     {"con", "prn", "aux", "nul", "conin$", "conout$"}
     | {f"{device}{n}" for device in ("com", "lpt") for n in (*"0123456789", "¹", "²", "³")}
@@ -120,14 +111,27 @@ def _fold(text: str) -> str:
     return unicodedata.normalize("NFC", unicodedata.normalize("NFC", text).casefold())
 
 
-def _is_executable(name: str) -> bool:
-    folded = name.casefold()
-    return folded.endswith(_EXECUTABLE_SUFFIXES) or bool(_VERSIONED_SHARED_LIBRARY.search(name))
+def has_executable_part(rel: str) -> bool:
+    """Whether a part of `rel` (flavor-relative, `/`-separated) is a name the
+    gate refuses as an executable (`guard._is_executable`, through
+    `filemap`'s copy)."""
+    return any(_is_executable(part) for part in rel.split("/"))
 
 
-def _gate_writes(rel: str) -> bool:
+def gate_names_but_for_executable(rel: str) -> bool:
+    """Whether `rel` (flavor-relative, `/`-separated) passes every rule of
+    the gate's file path check except the executable rule:
+    `guard._check_rel(rel, allow_executable=True)` returns instead of
+    raising. The gate's whole restore leaves an unchanged executable alone
+    only when this holds (`guard._unchanged_executable`)."""
+    return _gate_writes(rel, allow_executable=True)
+
+
+def _gate_writes(rel: str, *, allow_executable: bool = False) -> bool:
     """Whether the gate accepts `rel` (flavor-relative, `/`-separated) as a
-    file it may write: `guard._check_rel(rel)` returns instead of raising."""
+    file it may write: `guard._check_rel(rel)` returns instead of raising.
+    `allow_executable=True` skips only the executable rule, as the gate's
+    own `allow_executable` does."""
     if rel == "" or rel.startswith("/"):
         return False
     if any(c in _FORBIDDEN_CHARACTERS for c in rel):
@@ -146,7 +150,7 @@ def _gate_writes(rel: str) -> bool:
             return False
         if len(part.encode("utf-8", "surrogateescape")) > _MAX_NAME_BYTES:
             return False
-        if _is_executable(part):
+        if _is_executable(part) and not allow_executable:
             return False
     if parts[0] not in _ROOTS:
         return False
@@ -188,8 +192,9 @@ class Verdict(BaseModel):
     named with `--paths` (owner decision 2026-09-27). A restore is not the
     last word on a `server_may_replace` file: the server may replace it again
     at the next login. `None` for every folder, whatever its level: a folder
-    is judged by the files under it. `None` for a symlink or junction too, which
-    a snapshot never captures. `False` for a file at or under a Windows
+    is judged by the files under it. `None` for a link too (a symlink, a
+    junction or another reparse point that names another path), which a
+    snapshot never captures. `False` for a file at or under a Windows
     reparse point that is not a link (a cloud placeholder, a deduplicated
     file, a file compressed with `compact /EXE`): the gate refuses to write through any reparse point.
 
@@ -201,8 +206,9 @@ class Verdict(BaseModel):
     `server_may_replace`, else `None`. Both follow from the fields above and
     are filled in when not given; a value that disagrees is refused.
 
-    `link`: the path is a symlink or junction, or lies inside one. The level
-    stays the row's, but the label is `LINK_LABEL`: wowlab never follows it
+    `link`: the path is a link (a symlink, a junction or another reparse
+    point that names another path), or lies inside one. The level stays the
+    row's, but the label is `LINK_LABEL`: wowlab never follows it
     or writes through it.
 
     `placeholder` (M13-32): the path is, or lies under, a Windows reparse
@@ -321,22 +327,27 @@ def verdict_of(
     folder: bool = False,
     link: bool = False,
     placeholder: bool = False,
+    missing: bool = False,
 ) -> Verdict:
     """The verdict for `path` (relative to `base`, `/`-separated), classified
     as `entry`; `None` is a path with no file-map row. `folder`: the path is
     a folder (a row at level `folder` is one whatever the caller says).
-    `link`: the path is a symlink or junction, or lies inside one. The gate
-    refuses any path through a link and a snapshot never captures one, so
+    `link`: the path is a link (a symlink, a junction or another reparse
+    point that names another path), or lies inside one. The gate refuses any path through a link and a snapshot never captures one, so
     the words are the link words at every level (with the tier suffix).
     `placeholder` (M13-32): the path is, or lies under, a reparse point that
     is no link (`gate_refuses_stat` but not a name surrogate): the words are
     the usual ones plus a clause saying the gate does not write through it,
-    and a file is not `restorable`."""
+    and a file is not `restorable`.
+    `missing` (M13-29): nothing is on disk at the path. With no row, the
+    words say "not found" instead of naming a file or folder that is not
+    there; `restorable` is as for any path (a restore may put a file back).
+    A path with a row is judged by its row."""
     if placeholder and not link:
         # The words as for a path the gate never writes (base None), the
         # level and whether `restorable` has an answer as for this one.
-        plain = verdict_of(entry, base, path, folder=folder)
-        words = verdict_of(entry, None, path, folder=folder).words
+        plain = verdict_of(entry, base, path, folder=folder, missing=missing)
+        words = verdict_of(entry, None, path, folder=folder, missing=missing).words
         if words.startswith(_GATE_WORDS):
             words = _PLACEHOLDER_GATE_WORDS + words[len(_GATE_WORDS) :]
         else:
@@ -363,7 +374,9 @@ def verdict_of(
             link=True,
         )
     if entry is None:
-        if folder:
+        if missing:
+            words = _NOT_FOUND_WORDS + (_MISSING_RESTORED if can_restore and not folder else "")
+        elif folder:
             words = _UNCLASSIFIED_FOLDER_WORDS
         else:
             words = _UNCLASSIFIED_WORDS + (_UNCLASSIFIED_RESTORED if can_restore else "")

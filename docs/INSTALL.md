@@ -227,6 +227,11 @@ stored files that no snapshot needs, after asking.
 - `wowlab undo` reverses the most recent change wowlab made to your install
   (a restore, a profile apply, a merge, an addon install or remove).
 - `wowlab snap restore <id>` puts files back from a snapshot (`--dry-run`
-  shows the plan first); `wowlab snap list` shows your snapshots.
+  shows the plan first); `wowlab snap list` shows your snapshots. A
+  whole restore also leaves out the screenshots in a snapshot taken with
+  `snap create --screenshots`. wowlab never writes `Screenshots/`, not even
+  with `--paths`. They stay in the snapshot, and the plan counts them and
+  names the first ten that differ from the disk, are missing, or could not
+  be read (`Screenshots/` now a link).
 - Both go through the same write gate: the game must be closed, a snapshot
   is taken first, and you are asked before anything is written.

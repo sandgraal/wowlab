@@ -215,19 +215,24 @@ def test_a_placeholder_entry_of_the_install_root(
 
 
 @pytest.mark.parametrize("install", [False, True], ids=["tree", "tree-install"])
-def test_a_name_surrogate_that_layout_walks_is_judged_a_link_as_explain_does(
+def test_a_name_surrogate_is_judged_a_link_as_explain_does(
     root: Path, monkeypatch: pytest.MonkeyPatch, install: bool
 ) -> None:
     """Constructed: a name-surrogate reparse point that is no junction (a
-    WCI link). `layout` walks it, but `explain` and the gate call it a link."""
+    WCI link). `explain` and the gate call it a link; since M13-35 `layout`
+    does too, so it is listed as a link and never walked
+    (`test_cli_tree_links.py` covers the rest)."""
     flavor = root / FLAVOR
     _fake(monkeypatch, [flavor / ACCOUNT_DIR], WCI_LINK)
     judged = _judged(root, install=install)
-    for rel in (ACCOUNT_DIR, SV_DIR, SYNDICATOR):
-        v = judged[_key(rel, install)]["verdict"]
-        assert (v["link"], v["placeholder"], v["restorable"]) == (True, False, None), rel
-        assert v["label"] == verdict.LINK_LABEL
-        assert v == _explain(root, flavor / rel), rel
+    item = judged[_key(ACCOUNT_DIR, install)]
+    assert item["kind"] == "symlink"
+    v = item["verdict"]
+    assert (v["link"], v["placeholder"], v["restorable"]) == (True, False, None)
+    assert v["label"] == verdict.LINK_LABEL
+    assert v == _explain(root, flavor / ACCOUNT_DIR)
+    for rel in (SV_DIR, SYNDICATOR):
+        assert _key(rel, install) not in judged, rel  # never walked
 
 
 @pytest.mark.parametrize("install", [False, True], ids=["tree", "tree-install"])

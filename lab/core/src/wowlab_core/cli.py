@@ -127,6 +127,7 @@ from typer.core import TyperGroup
 from wowlab_core import (
     __version__,
     addoninstall,
+    bindscoach,
     combatlog,
     doctorredact,
     firstrun,
@@ -149,7 +150,14 @@ from wowlab_core import (
     wtfconfig,
 )
 from wowlab_core.filemap import FileMapEntry
-from wowlab_core.verdict import Verdict, gate_refuses_stat, tier_words, verdict_of
+from wowlab_core.verdict import (
+    Verdict,
+    gate_names_but_for_executable,
+    gate_refuses_stat,
+    has_executable_part,
+    tier_words,
+    verdict_of,
+)
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -258,7 +266,11 @@ sv_app = typer.Typer(
     no_args_is_help=True,
 )
 cvar_app = typer.Typer(help="CVars in Config.wtf and config-cache.wtf.", no_args_is_help=True)
-binds_app = typer.Typer(help="Key bindings in bindings-cache.wtf.", no_args_is_help=True)
+binds_app = typer.Typer(
+    help="Key bindings in bindings-cache.wtf, and a coach over the combat log and the "
+    "lab-addon's record of the action bars.",
+    no_args_is_help=True,
+)
 macros_app = typer.Typer(help="Macros in macros-cache.txt.", no_args_is_help=True)
 addons_app = typer.Typer(help="Folders under Interface/AddOns/.", no_args_is_help=True)
 addon_app = typer.Typer(
@@ -1681,42 +1693,38 @@ def _explained(entry: FileMapEntry, verdict: Verdict) -> Explained:
 
 @dataclass(frozen=True)
 class _Reparse:
-    """Where a flavor's paths meet a reparse point that is not a symlink or
-    junction (M13-33), so `tree` judges them as `explain` does. `whole`: the
-    flavor folder itself is one, so every path in it is a placeholder.
-    `placeholders` and `links`: paths relative to the flavor folder whose
-    own `lstat` the write gate refuses; `links` name another path (a name
-    surrogate, which `explain` calls a link), `placeholders` do not."""
+    """Where a flavor's paths meet a reparse point that is no link (M13-33),
+    so `tree` judges them as `explain` does. `whole`: the flavor folder
+    itself is one, so every path in it is a placeholder. `placeholders`:
+    paths relative to the flavor folder whose own `lstat` the write gate
+    refuses. A link (`layout.is_link`) is never among them: the walk lists
+    it in `Inventory.symlinks` and never goes into it (M13-35)."""
 
     whole: bool = False
     placeholders: frozenset[str] = frozenset()
-    links: frozenset[str] = frozenset()
 
     @classmethod
     def of(cls, inv: layout.Inventory, *, whole: bool) -> "_Reparse":
-        return cls(
-            whole=whole,
-            placeholders=frozenset(r.path for r in inv.reparse_points if not r.name_surrogate),
-            links=frozenset(r.path for r in inv.reparse_points if r.name_surrogate),
-        )
+        return cls(whole=whole, placeholders=frozenset(r.path for r in inv.reparse_points))
 
-    def judge(self, path: str) -> tuple[bool, bool]:
-        """`(link, placeholder)` for `path`: it, or a folder above it, is one."""
+    def judge(self, path: str) -> bool:
+        """Whether `path` is a placeholder: it, or a folder above it, is one."""
         parts = path.split("/") if path else []
         above = {"/".join(parts[:n]) for n in range(1, len(parts) + 1)}
-        link = not above.isdisjoint(self.links)
-        return link, not link and (self.whole or not above.isdisjoint(self.placeholders))
+        return self.whole or not above.isdisjoint(self.placeholders)
 
 
-def _flavor_is_placeholder(lay: layout.Layout) -> bool:
-    """Whether the flavor folder itself is a reparse point the write gate
-    refuses that is no link, as `explain` walks it (M13-32). A flavor folder
-    that is a link is judged as before."""
+def _flavor_reparse(lay: layout.Layout) -> tuple[bool, bool]:
+    """`(link, placeholder)` for the flavor folder itself, as `explain`'s
+    component walk judges it: a link by `gaps.is_link` (M13-35), else a
+    reparse point the write gate refuses that is no link (M13-32)."""
     try:
         st = lay.flavor_path.lstat()
     except OSError:
-        return False
-    return gate_refuses_stat(st) and not gaps.is_link(lay.flavor_path, st)
+        return False, False
+    if gaps.is_link(lay.flavor_path, st):
+        return True, False
+    return False, gate_refuses_stat(st)
 
 
 def _tree_items(
@@ -1733,7 +1741,6 @@ def _tree_items(
         if path and path not in items:
             found = lay.classify(path, is_dir=kind == "folder" or None)
             entry = found.entry if isinstance(found, layout.Classified) else None
-            link, placeholder = marks.judge(path)
             items[path] = TreeItem(
                 path=path,
                 kind=kind,
@@ -1744,8 +1751,8 @@ def _tree_items(
                     found.base,
                     found.path,
                     folder=kind == "folder",
-                    link=link or kind == "symlink",
-                    placeholder=placeholder,
+                    link=kind == "symlink",
+                    placeholder=marks.judge(path),
                 ),
                 explained=None,
                 base="flavor",
@@ -1758,9 +1765,17 @@ def _tree_items(
     except OSError:
         top = []
     for e in top:
-        if e.is_symlink():
-            continue  # reported with its target below
-        add(e.name, "folder" if e.is_dir(follow_symlinks=False) else "file", None, None)
+        try:
+            st = layout.lstat_entry(e)
+        except OSError:
+            # Judged from the listing alone, as before M13-35; the walk
+            # names the error.
+            if not e.is_symlink():
+                add(e.name, "folder" if e.is_dir(follow_symlinks=False) else "file", None, None)
+            continue
+        if gaps.is_link(Path(e.path), st):
+            continue  # the walk reports it, with its target, below (M13-35)
+        add(e.name, "folder" if stat.S_ISDIR(st.st_mode) else "file", None, None)
     for acct in inv.accounts:
         add(acct.path, "folder", None, "account folder")
         for realm in acct.realms:
@@ -1791,16 +1806,22 @@ def _tree_items(
                 f"{area.files} files in {area.folders} folders, not listed one by one",
             )
     for link in inv.symlinks:
-        where = "inside" if link.inside_install else "outside"
-        add(
-            link.path,
-            "symlink",
-            None,
-            f"link to {link.target} ({where} the install), not followed",
-        )
+        add(link.path, "symlink", None, _link_note(link.target, link.inside_install))
     for meta in inv.os_metadata:
         add(meta, "file", None, "operating-system folder metadata")
     return items
+
+
+def _link_note(target: str | None, inside: bool | None) -> str:
+    """`tree`'s note for a link, at the install root and in a flavor folder
+    alike (M13-35). `inside` None: where it points is unknown, as for a WCI
+    link or a WSL symlink, whose link text cannot be read."""
+    to = f" to {target}" if target is not None else ""
+    if inside is None:
+        where = "where it points is unknown"
+    else:
+        where = f"{'inside' if inside else 'outside'} the install"
+    return f"link{to} ({where}), not followed"
 
 
 _SELECTION_WORDS = {
@@ -1817,10 +1838,16 @@ def _in_scope(path: str, prefix: str) -> bool:
 def _folder_verdict(lay: layout.Layout, path: str, reparse: _Reparse | None = None) -> Verdict:
     found = lay.classify(path, is_dir=True)
     entry = found.entry if isinstance(found, layout.Classified) else None
-    link, placeholder = reparse.judge(path) if reparse is not None else (False, False)
-    return verdict_of(
-        entry, found.base, found.path, folder=True, link=link, placeholder=placeholder
-    )
+    placeholder = reparse.judge(path) if reparse is not None else False
+    return verdict_of(entry, found.base, found.path, folder=True, placeholder=placeholder)
+
+
+def _link_verdict(lay: layout.Layout, path: str) -> Verdict:
+    """The verdict of a link in a flavor folder, as `tree` gives a listed
+    link and `explain` gives it: classified by its own name, never followed."""
+    found = lay.classify(path)
+    entry = found.entry if isinstance(found, layout.Classified) else None
+    return verdict_of(entry, found.base, found.path, link=True)
 
 
 def _ancestors(
@@ -1886,31 +1913,47 @@ def tree(
         _tree_install(path, explain, root, json_out)
         return
     inst, chosen, lay = _open(root, flavor)
-    inv = lay.inventory()
-    reparse = _Reparse.of(inv, whole=_flavor_is_placeholder(lay))
     prefix = _tree_prefix(path, lay.flavor_path)
-    items = [i for p, i in sorted(_tree_items(lay, inv, reparse).items()) if _in_scope(p, prefix)]
-    ancestors = _ancestors(lay, items, prefix, reparse)
-    if explain:
-        items = _with_explained(lay, items)
-        ancestors = _with_explained(lay, ancestors)
-    errors = [f"{e.path}: {e.error}" for e in inv.errors]
+    flavor_link, flavor_placeholder = _flavor_reparse(lay)
+    items: list[TreeItem] = []
+    ancestors: list[TreeItem] = []
+    errors: list[str] = []
+    truncated = False
+    if flavor_link:
+        # M13-35: the flavor folder is a link (a WCI link, say, which
+        # discovery takes as a folder): listed as one, never walked.
+        folder_verdict = _link_verdict(lay, "")
+    else:
+        inv = lay.inventory()
+        reparse = _Reparse.of(inv, whole=flavor_placeholder)
+        items = [
+            i for p, i in sorted(_tree_items(lay, inv, reparse).items()) if _in_scope(p, prefix)
+        ]
+        ancestors = _ancestors(lay, items, prefix, reparse)
+        if explain:
+            items = _with_explained(lay, items)
+            ancestors = _with_explained(lay, ancestors)
+        errors = [f"{e.path}: {e.error}" for e in inv.errors]
+        truncated = inv.truncated
+        folder_verdict = _folder_verdict(lay, "", reparse)
     report = TreeReport(
         install_root=str(inst.root),
         flavor_folder=chosen.folder,
         items=items,
-        truncated=inv.truncated,
+        truncated=truncated,
         errors=errors,
         ancestors=ancestors,
-        flavor_folder_verdict=_folder_verdict(lay, "", reparse),
+        flavor_folder_verdict=folder_verdict,
     )
     if json_out:
         _emit(report)
         return
     _say(f"{chosen.folder} in {inst.root}")
+    if flavor_link:
+        _note("{} is a link; wowlab does not follow it, so nothing in it is listed.", chosen.folder)
     for item in items:
         _say_tree_item(item.path, item, explain)
-    if inv.truncated:
+    if truncated:
         _note("The walk hit a bound; the listing is incomplete.")
     for err in errors:
         _note("could not read {}", err)
@@ -1971,6 +2014,10 @@ def _root_items(inst: install.Install, errors: list[str]) -> list[TreeItem]:
     flavors = {f.folder for f in inst.flavors}
     root = Path(inst.root)
     try:
+        real_root: Path | None = root.resolve()
+    except (OSError, RuntimeError):
+        real_root = None
+    try:
         with os.scandir(root) as it:
             entries = sorted(it, key=lambda e: e.name)
     except OSError as exc:
@@ -1993,12 +2040,11 @@ def _root_items(inst: install.Install, errors: list[str]) -> list[TreeItem]:
         entry = found.entry if isinstance(found, layout.Classified) else None
         note: str | None = None
         if link:
-            try:
-                target = os.readlink(e.path)  # noqa: PTH115
-                note = f"link to {target}, not followed"
-            except (OSError, ValueError):
-                note = "link, not followed"
-            if e.name in inst.other_dirs:
+            note = _link_note(*layout.link_facts(Path(e.path), real_root))
+            if e.name in flavors:
+                # M13-35: as `tree` says it for this flavor folder alone.
+                note = f"flavor folder; {note}; nothing in it is listed"
+            elif e.name in inst.other_dirs:
                 note += f"; {gaps.NOT_A_FLAVOR_LINK}"
         elif folder and e.name in flavors:
             note = "flavor folder"
@@ -2044,9 +2090,13 @@ def _tree_install(path: str | None, explain: bool, root: Path | None, json_out: 
         for i in items
         if i.base == "flavor" and not i.path and i.verdict.placeholder
     }
+    # M13-35: a flavor folder that is a link is listed above, never walked.
+    link_flavors = {i.flavor_folder for i in items if i.base == "flavor" and i.kind == "symlink"}
     truncated = False
     ancestors: list[TreeItem] = []
     for f in inst.flavors:
+        if f.folder in link_flavors:
+            continue
         lay = layout.Layout.for_flavor(f, inst.root)
         inv = lay.inventory()
         reparse = _Reparse.of(inv, whole=f.folder in placeholder_flavors)
@@ -2272,6 +2322,10 @@ class ExplainReport(_Out):
     views_note: str | None
     hints: list[ExplainHint]  # M13-23
     plain: PlainText | None = None  # M13-25: the row's text without Markdown
+    # M13-29: nothing is on disk at the path under any reading of it (for a
+    # relative path: at the install root and in every flavor folder); never
+    # True behind a link. `stat` is None then too.
+    absent: bool = False
 
 
 # The option each view parameter is spelled with; `file` is `sv dump`'s
@@ -2330,6 +2384,16 @@ def _addons_list(at: _At) -> list[_ViewSpec] | str:
     return f"{_NO_READER}; `wowlab addons list` lists addon folders and their TOC files"
 
 
+def _addon_executable(at: _At) -> list[_ViewSpec] | str:
+    """An addon folder named like a bundle (`Interface/AddOns/Foo.app/`) is
+    still an addon folder, and `addons list` lists it. Anything inside an
+    addon that is named like an executable, or lies inside such a folder, is
+    read by no command."""
+    if at.folder and len(at.parts) == 3:
+        return _addons_list(at)
+    return _NO_READER
+
+
 def _combat_log(at: _At) -> list[_ViewSpec] | str:
     """`log tail` reads the newest combat log only."""
     if at.newest_log is not None and at.parts[-1] == at.newest_log:
@@ -2385,6 +2449,7 @@ _VIEWS: dict[str, Callable[[_At], list[_ViewSpec] | str]] = {
     "character-wtf-config": _character_wtf,
     "addons-folder": _addons_list,
     "addon": _addons_list,
+    "addon-executable": _addon_executable,
     "blizzard-addon-export": _addons_list,
     "combat-log": _combat_log,
 }
@@ -2455,6 +2520,8 @@ def _hints(
     flavor: str | None,
     root: str | None,
     views: Sequence[ExplainView],
+    *,
+    absent: bool = False,
 ) -> list[ExplainHint]:
     """Copyable commands for one path. A restore hint only for a file the
     write gate would write (`restorable` is True: never a folder or a link)
@@ -2495,11 +2562,21 @@ def _hints(
             hints.append(
                 _hint(
                     ["snap", "create", "--flavor", flavor, *with_root],
-                    "take a snapshot, so a later change to this file can be put back",
+                    _FIRST_SNAPSHOT_ABSENT if absent else _FIRST_SNAPSHOT,
                 )
             )
     hints.extend(_hint(v.argv, v.does) for v in views)
     return hints
+
+
+_FIRST_SNAPSHOT = "take a snapshot, so a later change to this file can be put back"
+# M13-29: a named path a snapshot covers but does not hold is deleted by
+# `snap restore --paths`.
+_FIRST_SNAPSHOT_ABSENT = (
+    "take a snapshot, so a file created here later can be removed with "
+    "`snap restore --paths` naming it"
+)
+_ABSENT_VIEWS = "nothing is at this path, so no wowlab command can show it"
 
 
 def _snap_name(ref: pathfacts.SnapshotRef) -> str:
@@ -2607,6 +2684,65 @@ def _path_kind(
     return slash or stat.S_ISDIR(st.st_mode), False, placeholder
 
 
+def _nowhere(
+    inst: install.Install,
+    given: Path,
+    judged: layout.Classified | layout.Unclassified,
+    *,
+    relative: bool,
+    chosen: str | None,
+) -> bool:
+    """Whether nothing is on disk at `explain`'s path under every reading of
+    it (M13-29). A path typed relative to the install is read at the install
+    root and in the chosen flavor folder (`--flavor`, or the only one), or,
+    with several flavors and none chosen, in every one of them, so a file in
+    any of those is there; an absolute path, or one relative to the current
+    folder, is read once. `layout.absent` never looks behind a link, so a
+    path with a link on the way is never "not found"."""
+    if judged.base is None:
+        return False
+    if relative:
+        base = Path(inst.root)
+        folders = [chosen] if chosen is not None else [f.folder for f in inst.flavors]
+        readings = [base / given, *(base / folder / given for folder in folders)]
+    else:
+        under = [judged.flavor_folder] if judged.base == "flavor" and judged.flavor_folder else []
+        readings = [Path(inst.root).joinpath(*under, *[p for p in judged.path.split("/") if p])]
+    return all(layout.absent(r, inst.root) for r in readings)
+
+
+# Rows the client writes at logout or `/reload` (their Written-by cell);
+# a test pins this set to the file map.
+WRITTEN_AT_LOGOUT = frozenset(
+    {"account-blizzard-savedvariables", "account-savedvariables", "character-savedvariables"}
+)
+
+
+def _absent_line(result: layout.Classified, folder: bool) -> str:
+    """The "on disk" words for a path a row describes that is not there: a
+    folder when written as one or when the row describes only folders; "a
+    file or folder" when the path is exactly the fixed part of a `**` row
+    (`Fonts`, `Interface/AddOns/<x>`); else a file."""
+    e = result.entry
+    parts = tuple(p for p in result.path.split("/") if p)
+    if folder or not e.matches(parts, "file"):
+        noun = "folder"
+    elif e.heads_a_subtree(parts):
+        noun = "file or folder"
+    else:
+        noun = "file"
+    line = f"nothing at this path; this is what a {noun} here would be"
+    if e.id in WRITTEN_AT_LOGOUT:
+        line += "; the client writes it at logout or /reload"
+    return line
+
+
+_NOT_FOUND_AT_ROOT = (
+    f"{layout.NOT_FOUND}, and no file-map row matches it at the install root; "
+    "pass --flavor to see what it would be inside a flavor folder"
+)
+
+
 def _is_inside(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 
@@ -2632,14 +2768,20 @@ def explain(
     result: layout.Classified | layout.Unclassified
     judged: layout.Classified | layout.Unclassified | None = None
     here = Path.cwd() / given
+    relative = False
+    # The flavor folder a relative path is read in (M13-29): `--flavor`, or
+    # the only one; None with several and none chosen.
+    chosen_folder = inst.flavors[0].folder if len(inst.flavors) == 1 else None
     if given.is_absolute():
         result = layout.classify(path, inst)
     elif os.path.lexists(here) and _is_inside(here.absolute(), Path(inst.root).absolute()):
         result = layout.classify(str(here) + ("/" if path.endswith("/") else ""), inst)
     else:
+        relative = True
         result = layout.classify(path, inst)
         if isinstance(result, layout.Unclassified) and (flavor or len(inst.flavors) == 1):
             chosen = _select_flavor(inst, flavor)
+            chosen_folder = chosen.folder
             in_flavor = layout.Layout.for_flavor(chosen, inst.root).classify(path)
             if isinstance(in_flavor, layout.Classified):
                 result = in_flavor
@@ -2651,6 +2793,23 @@ def explain(
     if judged is None:
         judged = result
     folder, link, placeholder = _path_kind(inst.root, judged, path)
+    # M13-29: "not found" only when nothing is there under any reading of
+    # the path; else the words are main's, whatever one reading found.
+    nowhere = not link and _nowhere(inst, given, judged, relative=relative, chosen=chosen_folder)
+    # Several flavors, none chosen: the path was looked up at the install
+    # root only, and is in none of the flavor folders.
+    unchosen = relative and chosen_folder is None and len(inst.flavors) > 1
+    if isinstance(result, layout.Unclassified) and result.base is not None:
+        if not nowhere and result.reason.startswith(layout.NOT_FOUND):
+            result = result.model_copy(update={"reason": layout.NO_ROW})
+        elif nowhere and unchosen and result.base == "root":
+            result = result.model_copy(update={"reason": _NOT_FOUND_AT_ROOT})
+        elif (
+            nowhere
+            and isinstance(judged, layout.Unclassified)
+            and judged.reason.startswith(layout.NOT_FOUND)
+        ):
+            result = result.model_copy(update={"reason": judged.reason})
     # M13-23: the verdict judges the file as it is spelled on disk (a volume
     # that folds case or normalization opens it under any spelling); `query`
     # and `result` stay as typed. A path typed as stored is judged as before.
@@ -2662,10 +2821,11 @@ def explain(
         folder=folder,
         link=link,
         placeholder=placeholder,
+        missing=nowhere,
     )
     lay = _flavor_layout(inst, judged)
     stat_, facts, views, note, hints = _detail(
-        inst, judged, parts or (), verdict, root, lay, folder=folder, link=link
+        inst, judged, parts or (), verdict, root, lay, folder=folder, link=link, absent=nowhere
     )
     captured = _captured_words(lay)
     if facts is not None:
@@ -2682,14 +2842,20 @@ def explain(
         views_note=note,
         hints=hints,
         plain=_plain_text(result.entry) if isinstance(result, layout.Classified) else None,
+        absent=nowhere,
     )
     if json_out:
         _emit(report)
         return
     if isinstance(result, layout.Unclassified):
         where = f" ({result.flavor_folder})" if result.flavor_folder else ""
-        _say(f"{path}: no file-map row{where}: {result.reason}")
-        if len(inst.flavors) > 1 and flavor is None and not given.is_absolute():
+        if nowhere and result.reason.startswith(layout.NOT_FOUND):
+            # M13-29: what is (not) there first, then what the map says.
+            _say(f"{path}{where}: {layout.NOT_FOUND}")
+            _say(f"  {result.reason.removeprefix(layout.NOT_FOUND + ', and ')}")
+        else:
+            _say(f"{path}: no file-map row{where}: {result.reason}")
+        if len(inst.flavors) > 1 and flavor is None and not given.is_absolute() and not nowhere:
             _say("  (with several flavors, pass --flavor to read PATH inside one of them)")
         _say_detail(report, captured)
         return
@@ -2702,6 +2868,8 @@ def explain(
     _say(f"  tier:         {tier_words(e.tier)}")
     _say(f"  read by:      {e.module}")
     _say(f"  file-map row: {e.id} ({e.doc_path})")
+    if nowhere:
+        _say(f"  on disk:      {_absent_line(result, folder)}")
     _say_detail(report, captured)
 
 
@@ -2759,6 +2927,7 @@ def _detail(
     *,
     folder: bool,
     link: bool,
+    absent: bool = False,
 ) -> tuple[
     pathfacts.PathStat | None,
     pathfacts.SnapshotFacts | None,
@@ -2770,7 +2939,9 @@ def _detail(
     for a path outside the install or reached through a link: no `lstat`
     through it, no hash, no decoder pointed at it, no restore hint. The path
     is respelled as it is on disk first, so a volume that folds case gives
-    every spelling the same answer."""
+    every spelling the same answer. `absent` (M13-29): nothing is at the
+    path, so no view (each would fail on it) and the first-snapshot hint
+    says what a snapshot does for a file created there later."""
     if judged.base is None or link:
         return None, None, [], None, []
     under = [judged.flavor_folder] if judged.base == "flavor" and judged.flavor_folder else []
@@ -2788,7 +2959,9 @@ def _detail(
         )
     views: list[ExplainView] = []
     note: str | None = None
-    if isinstance(judged, layout.Classified):
+    if isinstance(judged, layout.Classified) and absent:
+        note = _ABSENT_VIEWS
+    elif isinstance(judged, layout.Classified):
         newest: str | None = None
         if judged.entry.id == "combat-log" and lay is not None:
             logs = _logs_dir(lay)
@@ -2802,7 +2975,7 @@ def _detail(
             newest_log=newest,
         )
         views, note = _views(judged.entry.id, at, given_root)
-    hints = _hints(verdict, facts, judged.flavor_folder, given_root, views)
+    hints = _hints(verdict, facts, judged.flavor_folder, given_root, views, absent=absent)
     return stat_, facts, views, note, hints
 
 
@@ -4177,6 +4350,291 @@ def binds_list(
     _say(report.notes[0])
 
 
+_COMBATLOG_ON = (
+    "Casts are counted only from a combat log, which the client writes only while combat "
+    "logging is on: type /combatlog in game before you play (whether it stays on after "
+    "logout has not been checked)."
+)
+_COACH_NOTES = [
+    "The newest log under Logs/ is read (or the one --log names), whichever character wrote "
+    "it. Your casts are its SPELL_CAST_SUCCESS records whose source flags say yours and a "
+    "player (not a pet), never picked by a name or a GUID, so a log written by another "
+    "character than the record's makes these reports wrong: check the log's time and choose "
+    "it with --log.",
+    "The action bars and key bindings are the lab-addon's record as of its last save (logout "
+    "or /reload), not the session in progress; the log may be older or newer than it. A key "
+    "reaches a spell through the default UI's action buttons only: the main bar at page 1, "
+    "and the bottom, right and extra bars. Its other pages (forms, stances, stealth, paging), "
+    "the pet and stance bars, an addon's buttons, items and macros are not followed.",
+    "An auto-repeating spell (a wand's Shoot, Auto Shot) may be logged once per shot rather "
+    "than once per key press; that has not been checked against a real log, so its count "
+    "may be high.",
+]
+_SPAN_TIME = re.compile(r"\d{1,2}:\d{2}:\d{2}")
+
+
+class CoachLog(_Out):
+    file: str | None  # relative to the flavor folder; None: no combat log under Logs/
+    chosen_by: Literal["newest", "--log"] | None
+    counts: combatlog.CastCounts | None
+
+
+class BindsCoachReport(_Out):
+    """`wowlab binds coach --json`. Findings alone leave the exit code at 0."""
+
+    flavor_folder: str
+    account: str
+    character: str | None  # "<realm folder>/<character folder>" of the record read
+    chosen_by: Literal["--character", "latest"] | None
+    record_file: str | None  # the character's WowLab.lua: action bars, bindings, spellbook
+    record_schema: int | None
+    record_error: str | None  # why no WowLab.lua was read
+    log: CoachLog
+    costs: bindscoach.Costs
+    matched_by: Literal["spell id or spellbook name", "spell id"]
+    spells: list[bindscoach.CastSpell]
+    frequent_on_high_cost: list[bindscoach.FrequentOnHighCost]
+    cast_without_bind: list[bindscoach.CastWithoutBind]
+    on_unfollowed_page: list[bindscoach.OnUnfollowedPage]
+    bound_never_cast: list[bindscoach.BoundNeverCast]
+    cannot_judge: list[bindscoach.CannotJudge]
+    caveats: list[str]
+    notes: list[str]
+
+
+def _coach_record(
+    lay: layout.Layout, acct: layout.Account, character: str | None
+) -> tuple[
+    layout.SavedVariablesFile | None,
+    Literal["--character", "latest"] | None,
+    labaddon.CharDB | None,
+    str | None,
+]:
+    """The character's WowLab.lua as `char show` chooses it, or why there is
+    none to read. A --character naming no folder stays a usage error; a
+    record that is missing or unreadable is reported, and the casts are still
+    counted."""
+    files = [f for f in lay.saved_variables() if f.account == acct.folder and _is_lab_file(f)]
+    try:
+        target, how, _ = _lab_char_file(acct, files, character)
+    except CliError as exc:
+        if exc.code == EXIT_USAGE:
+            raise
+        return None, None, None, str(exc)
+    try:
+        return target, how, labaddon.read_char(lay.flavor_path / target.path), None
+    except (labaddon.LabAddonError, luadata.LuaDataError, OSError) as exc:
+        return target, how, None, str(exc)
+
+
+def _coach_log(lay: layout.Layout, name: str | None) -> Path | None:
+    """The combat log to read: the one `--log` names, directly under Logs/,
+    or the newest. A name that is a path, or not a combat log there, is a
+    usage error; only regular files count, never a link."""
+    logs = _logs_dir(lay)
+    if name is None:
+        return combatlog.newest_log(logs) if logs is not None else None
+    if "/" in name or "\\" in name or name in {"", ".", ".."}:
+        raise CliError(f"--log takes a file name under Logs/, not a path: {name!r}", EXIT_USAGE)
+    found = combatlog.find_logs(logs) if logs is not None else []
+    match = [p for p in found if p.name == name] or [
+        p for p in found if p.name.casefold() == name.casefold()
+    ]
+    if len(match) != 1:
+        listing = ", ".join(p.name for p in found) or "none"
+        raise CliError(
+            f"no combat log {name!r} under Logs/ (combat logs there: {listing})", EXIT_USAGE
+        )
+    return match[0]
+
+
+def _key_words(keys: Sequence[bindscoach.KeyCost]) -> str:
+    return ", ".join(f"{k.key} (cost {k.cost})" for k in keys)
+
+
+def _clock(stamp: str | None) -> str | None:
+    found = _SPAN_TIME.search(stamp) if stamp is not None else None
+    return found.group() if found else None
+
+
+LogNameOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--log",
+        help="A combat log's file name under Logs/ to read instead of the newest one.",
+    ),
+]
+
+
+@binds_app.command("coach")
+@_handled
+def binds_coach(
+    account: AccountOpt = None,
+    character: CharacterOpt = None,
+    log: LogNameOpt = None,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+) -> None:
+    """Coach your key bindings from a combat log (the newest, or --log): spells you
+    cast often on high-cost keys, spells you cast with no key, and keys bound to spells
+    you did not cast in that log. Keys reach spells through the lab-addon's record of
+    the action bars and bindings (schema 3) of one character: --character, or the one
+    whose WowLab.lua was written last. Combat logging must be on (/combatlog) for a log
+    to exist. What a key costs is an opinion, from a table you can override. Reads only.
+    JSON: BindsCoachReport."""
+    _, chosen, lay = _open(root, flavor)
+    acct = _select_account(lay, account)
+    target, how, record, record_error = _coach_record(lay, acct, character)
+    path = _coach_log(lay, log)
+    try:
+        costs = bindscoach.load_costs()
+    except bindscoach.CostTableError as exc:
+        raise CliError(f"the key-cost table cannot be used: {exc}") from exc
+    counts = combatlog.cast_counts(combatlog.read_log(path)) if path is not None else None
+    if record_error is not None:
+        no_record = f"no lab-addon record: {record_error}"
+    else:
+        no_record = f"no lab-addon record ({bindscoach.GET_RECORD})"
+    result = bindscoach.coach(
+        counts, record, costs.table, no_record=no_record, no_log=f"{_NO_LOG}. {_COMBATLOG_ON}"
+    )
+    report = BindsCoachReport(
+        flavor_folder=chosen.folder,
+        account=acct.folder,
+        character=f"{target.realm_folder}/{target.character_folder}" if target else None,
+        chosen_by=how,
+        record_file=target.path if target else None,
+        record_schema=record.schema_ if record is not None else None,
+        record_error=record_error,
+        log=CoachLog(
+            file=_rel(lay, path) if path else None,
+            chosen_by=None if path is None else ("newest" if log is None else "--log"),
+            counts=counts,
+        ),
+        costs=costs,
+        matched_by=result.matched_by,
+        spells=result.spells,
+        frequent_on_high_cost=result.frequent_on_high_cost,
+        cast_without_bind=result.cast_without_bind,
+        on_unfollowed_page=result.on_unfollowed_page,
+        bound_never_cast=result.bound_never_cast,
+        cannot_judge=result.cannot_judge,
+        caveats=result.caveats,
+        notes=[_COMBATLOG_ON, f"{_BATCHES[:1].upper()}{_BATCHES[1:]}.", *_COACH_NOTES],
+    )
+    if json_out:
+        _emit(report)
+        return
+    _say_coach(report)
+
+
+def _say_coach(report: BindsCoachReport) -> None:
+    counts = report.log.counts
+    against = report.record_file or "no lab-addon record"
+    if report.log.file is None or counts is None:
+        _say(f"Combat log: {_NO_LOG}")
+    else:
+        versions = ", ".join(counts.versions) or "none"
+        span = (
+            f"; your casts from {counts.first_timestamp} to {counts.last_timestamp}, log time"
+            if counts.first_timestamp is not None
+            else "; none of your casts"
+        )
+        newest = " (the newest)" if report.log.chosen_by == "newest" else " (--log)"
+        _say(
+            f"Combat log: {report.log.file}{newest} ({_plural(counts.lines, 'line')}; "
+            f"COMBAT_LOG_VERSION {versions}{span}), judged against {against}"
+        )
+        _say(
+            f"  Your casts: {counts.mine} of {counts.cast_events} SPELL_CAST_SUCCESS record(s) "
+            f"(picked by the source flags: yours, and a player); {counts.others} by other units"
+        )
+        if counts.other_version:
+            _say(
+                f"  {counts.other_version} cast(s) under a COMBAT_LOG_VERSION other than "
+                f"{combatlog.CAST_LAYOUT_VERSION}, or before any, were not counted: their "
+                "layout is not known"
+            )
+        if counts.not_read:
+            _say(f"  {counts.not_read} cast(s) without the expected fields were not counted")
+        if counts.unparsed:
+            _say(f"  {_plural(counts.unparsed, 'line')} the tokenizer could not read")
+    if report.record_file is None:
+        why = report.record_error or bindscoach.GET_RECORD
+        _say(f"Action bars and bindings: no lab-addon record ({why})")
+    elif report.record_error is not None:
+        _say(f"Action bars and bindings: {report.record_file} not read ({report.record_error})")
+    else:
+        picked = " (written last; choose another with --character)" * (report.chosen_by == "latest")
+        _say(
+            f"Action bars and bindings: {report.record_file} "
+            f"(schema {report.record_schema}){picked}"
+        )
+    costs = report.costs
+    table = costs.table
+    if costs.source == "default":
+        _say(
+            "Key costs: the shipped default table, an opinion that assumes a QWERTY keyboard, "
+            "the left hand on W A S D and a mouse with two side buttons. To use your own, copy "
+            f"{costs.shipped} to {costs.user_file} (create the folder if it is missing) and "
+            "edit it."
+        )
+    else:
+        _say(f"Key costs: your table {costs.user_file}, over the shipped default {costs.shipped}")
+    _say(
+        f"  High-cost: {table.high_cost} or more. Frequent: at least {table.frequent_share:.0%} "
+        f"of your casts and at least {_plural(table.frequent_min_casts, 'cast')}."
+    )
+    _say(f"Your casts by spell (matched to slots by {report.matched_by}):")
+    if not report.spells:
+        _say("  none")
+    for s in report.spells:
+        keys = _key_words(s.keys) if s.keys else "no key"
+        note = f"; {s.match_note}" if s.match_note else ""
+        _say(f"  {s.casts:>6}  {s.spell_name} ({s.spell_id}): {keys}{note}")
+    _say(f"Frequent spells on high-cost keys: {len(report.frequent_on_high_cost)}")
+    for f in report.frequent_on_high_cost:
+        note = f"; {f.match_note}" if f.match_note else ""
+        _say(
+            f"  {f.spell_name} ({', '.join(map(str, f.spell_ids))}): "
+            f"{_plural(f.casts, 'cast')} ({f.share:.0%}), "
+            f"{_key_words(f.keys)}{note}"
+        )
+    _say(f"Spells cast with no bind: {len(report.cast_without_bind)}")
+    for u in report.cast_without_bind:
+        where = f" (slots {', '.join(map(str, u.slots))})" if u.slots else ""
+        _say(f"  {u.spell_name} ({u.spell_id}): {_plural(u.casts, 'cast')}{where}: {u.detail}")
+    if report.on_unfollowed_page:
+        _say(
+            "Spells only on main-bar pages the coach does not follow: "
+            f"{len(report.on_unfollowed_page)}"
+        )
+        for p in report.on_unfollowed_page:
+            _say(
+                f"  {p.spell_name} ({p.spell_id}): {_plural(p.casts, 'cast')} (slots "
+                f"{', '.join(map(str, p.slots))}): {p.detail}"
+            )
+    mine = counts.mine if counts is not None else 0
+    start = _clock(counts.first_timestamp) if counts is not None else None
+    end = _clock(counts.last_timestamp) if counts is not None else None
+    span = f", {start} to {end} log time" if start and end else ""
+    _say(
+        f"Binds to spells not cast in this log ({_plural(mine, 'cast')}{span}): "
+        f"{len(report.bound_never_cast)}"
+    )
+    for b in report.bound_never_cast:
+        name = b.spell_name or "a spell the spellbook record does not name"
+        _say(f"  {_key_words(b.keys)}: slot {b.slot}, {name} ({b.spell_id})")
+    _say(f"Cannot judge: {len(report.cannot_judge)}")
+    for c in report.cannot_judge:
+        _say(f"  {c.report}: {c.reason}")
+    for caveat in report.caveats:
+        _say(f"Note: {caveat}")
+    for note in report.notes:
+        _say(note)
+
+
 class MacroItem(_Out):
     id: str
     name: str
@@ -4874,7 +5332,12 @@ GC_GRACE_SECONDS = 3600.0
 def snap_create(
     message: Annotated[str, typer.Option("-m", "--message", help="A label for the snapshot.")] = "",
     screenshots: Annotated[
-        bool, typer.Option("--screenshots", help="Also capture Screenshots/.")
+        bool,
+        typer.Option(
+            "--screenshots",
+            help="Also capture Screenshots/ (kept for show and diff; a restore never "
+            "writes them back).",
+        ),
     ] = False,
     root: RootOpt = None,
     flavor: FlavorOpt = None,
@@ -5252,6 +5715,20 @@ class SkippedPath(_Out):
     what: str
 
 
+class NotRestoredPath(_Out):
+    """A screenshot in a snapshot taken with `snap create --screenshots`. Its
+    file-map row (`screenshots`) has Edit `n/a`: the write gate never writes
+    `Screenshots/`, so a whole restore leaves it out and restores the rest,
+    and naming it with --paths is refused (M13-30). It stays in the snapshot."""
+
+    path: str  # relative to the flavor folder
+    entry_id: str  # its file-map row, whose Edit cell is `n/a`
+    what: str
+    # The disk against the snapshot, read-only; `behind_link`: not read, as a
+    # folder on its way (Screenshots/ itself) is now a link wowlab does not follow.
+    disk: Literal["same", "differs", "missing", "behind_link"]
+
+
 class RestoreReport(_Out):
     """`wowlab snap restore --json`: the plan, and with `--yes` what was done."""
 
@@ -5262,6 +5739,9 @@ class RestoreReport(_Out):
     paths: list[str] | None  # --paths as given; None restores the whole snapshot
     plan: list[guard.PlanItem]  # path, before/after SHA-256 (None: absent), bytes written
     skipped: list[SkippedPath]  # client-managed files a whole restore does not write
+    # Screenshots (file-map Edit `n/a`) a whole restore leaves out and --paths
+    # cannot restore either; they stay in the snapshot.
+    not_restored: list[NotRestoredPath]
     dry_run: bool
     applied: bool
     transaction: str | None  # the journal record of the applied restore
@@ -5305,6 +5785,158 @@ def _client_managed(
     return kept, skipped
 
 
+# The file-map row of `Screenshots/`, which `snap create --screenshots`
+# captures and the write gate never writes (Edit `n/a`).
+_SCREENSHOTS_ROW = "screenshots"
+
+
+def _screenshot_row(lay: layout.Layout, rel: str, *, is_dir: bool | None) -> FileMapEntry | None:
+    found = lay.classify(rel, is_dir=is_dir)
+    if isinstance(found, layout.Classified) and found.entry.id == _SCREENSHOTS_ROW:
+        return found.entry
+    return None
+
+
+def _set_aside(
+    lay: layout.Layout, manifest: snapshot.Manifest, install_root: Path, folder: str
+) -> tuple[list[snapshot.Entry], list[NotRestoredPath]]:
+    """Split a snapshot's entries for a whole restore: the screenshots (every
+    entry under a top-level folder whose file-map row is `screenshots`) are
+    set aside, each with what the disk holds now (read-only: size first,
+    then content; `profiles.disk_state`); every other entry is to be
+    restored. Each top-level folder is classified once."""
+    prefix = folder + "/"
+    rest: list[snapshot.Entry] = []
+    aside: list[NotRestoredPath] = []
+    tops: dict[str, FileMapEntry | None] = {}
+    for entry in manifest.entries:
+        if not entry.path.startswith(prefix):
+            rest.append(entry)  # another flavor's path: the gate refuses the restore
+            continue
+        rel = entry.path.removeprefix(prefix)
+        top = rel.split("/", 1)[0]
+        if top not in tops:
+            tops[top] = _screenshot_row(lay, top, is_dir=True)
+        row = tops[top]
+        if row is None:
+            rest.append(entry)
+            continue
+        state = profiles.disk_state(install_root, folder, entry)
+        aside.append(
+            NotRestoredPath(
+                path=rel,
+                entry_id=row.id,
+                what=_plain(row.what),
+                disk=state,
+            )
+        )
+    return rest, aside
+
+
+def _names_for_whole(
+    entries: Sequence[snapshot.Entry], install_root: Path, folder: str
+) -> tuple[list[str], list[snapshot.Entry]]:
+    """A whole restore of `entries` (all of this flavor), as names for the
+    gate's restore by name, and the entries left unnamed.
+
+    The gate's whole restore leaves an unchanged link or executable alone,
+    and refuses a changed one; by name it refuses both. So an unchanged
+    link or executable (by the gate's own name rule, `verdict`'s copy) is
+    left unnamed, the disk read first (read-only, following no link:
+    `profiles.disk_state`). Every other entry is named, unchanged or not,
+    so the gate checks each one as a whole restore does: it refuses what it
+    would refuse there (a reserved name, a case collision, a changed link),
+    and a file that changes between the plan and the confirm shows in its
+    plan."""
+    prefix = folder + "/"
+    names: list[str] = []
+    left: list[snapshot.Entry] = []
+    for e in entries:
+        rel = e.path.removeprefix(prefix)
+        special = e.kind != "file" or has_executable_part(rel)
+        if special and _unchanged(install_root, folder, e):
+            left.append(e)
+        else:
+            names.append(rel)
+    return names, left
+
+
+def _unchanged(install_root: Path, folder: str, entry: snapshot.Entry) -> bool:
+    """Whether a link or executable `entry` is one the gate's whole restore
+    leaves alone: a link with the entry's target, or a file the gate would
+    accept but for being an executable (`verdict`'s copy of its name rules),
+    spelled on disk exactly as in the snapshot (every part, case included,
+    is in its folder's listing), and a regular file with the entry's bytes
+    and permission bits (`guard._unchanged_executable`). Anything else is
+    named, so the gate refuses it as a whole restore does. Reads only,
+    following no link (`profiles.disk_state`, listings, then an `lstat`)."""
+    if profiles.disk_state(install_root, folder, entry) != "same":
+        return False
+    if entry.kind != "file":
+        return True
+    rel = entry.path.removeprefix(folder + "/")
+    if not gate_names_but_for_executable(rel):
+        return False
+    parent = install_root / folder
+    try:
+        for part in rel.split("/"):
+            if part not in {child.name for child in parent.iterdir()}:
+                return False  # spelled otherwise on disk (case): the gate refuses it
+            parent = parent / part
+        st = parent.lstat()
+    except OSError:
+        return False
+    return stat.S_ISREG(st.st_mode) and stat.S_IMODE(st.st_mode) == entry.mode
+
+
+# How many changed screenshots the text plan names; --json lists every one.
+_NOT_RESTORED_SHOWN = 10
+
+
+def _not_restored_lines(snapshot_id: str, aside: Sequence[NotRestoredPath]) -> list[str]:
+    shown = [a for a in aside if a.disk != "same"]
+    if not shown:
+        return [f"  The snapshot also holds {len(aside)} screenshot(s); all still match the disk."]
+    changed = sum(a.disk in ("differs", "missing") for a in aside)
+    unread = [a for a in aside if a.disk == "behind_link"]
+    clauses: list[str] = []
+    if changed:
+        one = changed == 1
+        clauses.append(
+            f"{changed} {'differs' if one else 'differ'} from or {'is' if one else 'are'} "
+            "missing on disk"
+        )
+    if unread:
+        top = unread[0].path.split("/", 1)[0]
+        clauses.append(f"{len(unread)} not read ({top}/ is now a link, wowlab does not follow it)")
+    lines = [
+        f"  Not restored: {len(aside)} screenshot(s) wowlab never writes (file-map Edit "
+        f'"n/a"; --paths cannot restore them either). They stay in snapshot {snapshot_id}; '
+        + "; ".join(clauses)
+        + ":"
+    ]
+    lines += [f"    {a.path}  [{a.disk}]" for a in shown[:_NOT_RESTORED_SHOWN]]
+    if len(shown) > _NOT_RESTORED_SHOWN:
+        lines.append(f"    and {len(shown) - _NOT_RESTORED_SHOWN} more (--json lists every one)")
+    return lines
+
+
+def _screenshot_note(
+    lay: layout.Layout,
+    manifest: snapshot.Manifest,
+    folder: str,
+    named: Sequence[str],
+    exc: Exception,
+) -> None:
+    """When the gate refused a named screenshot, say why on one more line."""
+    for rel in named:
+        if repr(rel) in str(exc) and _screenshot_row(lay, rel, is_dir=False) is not None:
+            held = manifest.entry(f"{folder}/{rel}") is not None
+            where = f"; the file stays in snapshot {manifest.id}" if held else ""
+            exc.add_note(f'wowlab never writes Screenshots/ (file-map Edit "n/a"){where}.')
+            return
+
+
 @snap_app.command("restore")
 @_handled
 def snap_restore(
@@ -5315,7 +5947,8 @@ def snap_restore(
             "--paths",
             help="Only this path, relative to the flavor folder; repeat for more. "
             "A path the snapshot covers but does not hold is deleted. A named path is "
-            "restored even when its file-map row says wowlab leaves it alone.",
+            "restored even when its file-map row says wowlab leaves it alone (not a "
+            "screenshot: wowlab never writes Screenshots/).",
         ),
     ] = None,
     dry_run: Annotated[
@@ -5331,7 +5964,10 @@ def snap_restore(
     Without --paths, files whose file-map Edit is `no` (client-written
     backups such as `.lua.bak` and `.old`, `Interface/AddOns/Blizzard_*`,
     file-browser metadata) are left alone and counted in the plan; name one
-    with --paths to restore it. JSON: RestoreReport."""
+    with --paths to restore it. Screenshots in a snapshot taken with
+    `snap create --screenshots` are never restored (wowlab never writes
+    Screenshots/, not even with --paths): a whole restore leaves them in the
+    snapshot, counts them, and restores the rest. JSON: RestoreReport."""
     store = snapshot.SnapshotStore()
     manifest = store.show(snapshot_id)
     inst, _ = _discover(root)
@@ -5355,16 +5991,49 @@ def snap_restore(
     if paths:
         label += " (" + ", ".join(paths) + ")"
     named = list(paths) if paths else None  # no --paths: everything the snapshot holds
+    lay = layout.Layout.for_flavor(chosen, inst.root)
+    folder = chosen.folder
+    rest: list[snapshot.Entry] = list(manifest.entries)
+    aside: list[NotRestoredPath] = []
+    names: list[str] | None = None
     with guard.transaction(chosen, label=label, dry_run=True) as tx:
-        tx.restore(manifest.id, named)
+        if named is not None:
+            try:
+                tx.restore(manifest.id, named)
+            except guard.PathNotAllowedError as exc:
+                _screenshot_note(lay, manifest, folder, named, exc)
+                raise
+        else:
+            # The gate's snapshot checks (another install, another flavor)
+            # come before anything here reads the disk.
+            tx.restore(manifest.id, [])
+            # Screenshots, which the gate never writes, are set aside; the
+            # gate would otherwise refuse the whole restore.
+            rest, aside = _set_aside(lay, manifest, inst.root, folder)
+            if not aside:
+                tx.restore(manifest.id)
+            else:
+                if any(not e.path.startswith(folder + "/") for e in rest):
+                    tx.restore(manifest.id)  # refused: a path outside this flavor
+                names, left = _names_for_whole(rest, inst.root, folder)
+                tx.restore(manifest.id, names)
         whole_plan = tx.plan
     skipped: list[SkippedPath] = []
     plan = list(whole_plan)
     if named is None:
-        plan, skipped = _client_managed(layout.Layout.for_flavor(chosen, inst.root), whole_plan)
-    # With something skipped, the rest is restored by name: the gate then
-    # writes exactly the kept paths.
-    wanted = named if named is not None or not skipped else [i.path for i in plan]
+        plan, skipped = _client_managed(lay, whole_plan)
+    # With something left out, the rest is restored by name: every entry the
+    # gate would check in a whole restore but the skipped ones, so the gate
+    # writes exactly the kept paths and a later change still shows in its
+    # plan. The unnamed links and executables are read again before commit.
+    wanted = named
+    left_out: list[snapshot.Entry] = []
+    if named is None and (skipped or aside):
+        if names is None:
+            names, left = _names_for_whole(rest, inst.root, folder)
+        left_out = left
+        skipped_paths = {s.path for s in skipped}
+        wanted = [n for n in names if n not in skipped_paths]
 
     def report(*, applied: bool, transaction: str | None = None) -> RestoreReport:
         notes = _relogin_notes([i.path for i in plan]) if applied else []
@@ -5376,17 +6045,19 @@ def snap_restore(
             paths=named,
             plan=plan,
             skipped=skipped,
+            not_restored=aside,
             dry_run=dry_run,
             applied=applied,
             transaction=transaction,
             notes=notes,
         )
 
-    if (not json_out or (prompting and plan)) and (plan or skipped):
+    shots_differ = any(a.disk != "same" for a in aside)
+    if (not json_out or (prompting and plan)) and (plan or skipped or aside):
         show(f"Restore from snapshot {manifest.id} into {chosen.path}: {len(plan)} change(s)")
         if manifest.flavor_version != chosen.version:
             show(
-                f"  Taken on version {_version(manifest.flavor_version)}; {chosen.folder} is "
+                f"  Taken on version {_version(manifest.flavor_version)}; {folder} is "
                 f"now on {_version(chosen.version)}."
             )
         for item in plan:
@@ -5399,13 +6070,23 @@ def snap_restore(
             )
             for sk in skipped:
                 show(f"    {sk.path}  [{sk.entry_id}]")
+        if aside:
+            for line in _not_restored_lines(manifest.id, aside):
+                show(line)
     if not plan:
         if json_out:
             _emit(report(applied=False))
+        elif skipped and shots_differ:
+            _say(
+                "Nothing to restore but the skipped files and the screenshots wowlab never "
+                "writes; nothing was changed."
+            )
         elif skipped:
             _say("Nothing to restore but the skipped files; nothing was changed.")
+        elif shots_differ:
+            _say("Nothing to restore but the screenshots wowlab never writes; nothing was changed.")
         else:
-            _say(f"Nothing to restore: {chosen.folder} already matches snapshot {manifest.id}.")
+            _say(f"Nothing to restore: {folder} already matches snapshot {manifest.id}.")
         return
     if dry_run:
         if json_out:
@@ -5421,7 +6102,8 @@ def snap_restore(
         raise
     with guard.transaction(chosen, label=label) as tx:
         tx.restore(manifest.id, wanted)
-        if tx.plan != tuple(plan):
+        moved = any(not _unchanged(inst.root, folder, e) for e in left_out)
+        if tx.plan != tuple(plan) or moved:
             # Raising inside the transaction makes the gate roll it back.
             raise CliError(
                 "the files changed after the plan was shown, so the restore was rolled "
@@ -5764,10 +6446,12 @@ def _print_apply_plan(show: Callable[[str], None], plan: profiles.ApplyPlan) -> 
     if plan.skipped:
         show(
             f'  Skipped {len(plan.skipped)} file(s) wowlab leaves alone (file-map Edit "no": '
-            "client-written backups, Blizzard_* folders, file-browser metadata):"
+            "client-written backups, Blizzard_* folders, file-browser metadata, "
+            "addon executables):"
         )
         for sk in plan.skipped:
-            show(f"    {sk.path}  [{sk.entry_id}]")
+            undone = "  (added since the profile was saved; not deleted)"
+            show(f"    {sk.path}  [{sk.entry_id}]" + (undone if sk.action == "delete" else ""))
     if plan.left:
         show(f"  Left alone ({len(plan.left)} path(s)):")
         for lp in plan.left:
@@ -5802,9 +6486,9 @@ def profile_apply(
     characters, and with the addons preset, addons installed since (code and
     settings). Addon updates made since are undone. `--dry-run` shows the plan
     without asking. Files whose file-map Edit is `no` (client-written backups,
-    Blizzard_* folders, file-browser metadata) are left alone. Every *-cache*
-    file is listed: the server may replace it at your next login, so the result
-    is proven only by logging in.
+    Blizzard_* folders, file-browser metadata, addon executables) are left
+    alone. Every *-cache* file is listed: the server may replace it at your
+    next login, so the result is proven only by logging in.
 
     The lab-addon (Interface/AddOns/WowLab/ and WowLab.lua) is always left
     alone, and so is anything the write gate will not write or delete (an

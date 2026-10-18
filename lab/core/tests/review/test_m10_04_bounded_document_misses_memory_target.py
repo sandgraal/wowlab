@@ -64,6 +64,16 @@ moved it:
   below projected 948 MiB: the probe saw the parent, not the parser. The
   child now reads its own `VmHWM` from `/proc/self/status` on Linux.
 
+M13-20T applied the same two fixes to the entry-bound tests. Their slice
+was also freed before the parse (`del body`, and the concatenation's
+temporary): on macOS the wide-trivia shape read 5.9 MiB of growth that way
+and 7.9 MiB with the slice kept, a projection of 97 MiB that is really
+116 MiB. Every child now asserts `after > before`, since a child that sees
+no growth is not measuring the parse, and a stand-in test per entry-bound
+shape checks that the growth follows a parser holding twice as much.
+Readings at `MAX_ENTRIES // 10` on macOS, `luadata` then the stand-in:
+wide-trivia grew 7.9 and 14.3 MiB, empty tables 1.0 and 3.9 MiB.
+
 So the assignment test keeps `body` alive (its `before` then counts one
 unscaled extra slice of input, 16 MiB, which only makes it stricter),
 measures a 1/16 slice (4,194,304 assignments, 16 MiB, under `MAX_COST`) so
@@ -79,6 +89,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import warnings
 
 import pytest
 
@@ -94,6 +105,25 @@ LIMIT_BYTES = 1.5 * 1024 * MIB  # 1.5 GB read as GiB, the generous reading
 FRACTION = 10
 ASSIGN_FRACTION = 16  # of MAX_FILE_BYTES; a 1/10 slice is over MAX_COST
 ASSIGN_SAMPLES = 5
+# A parser that keeps a second copy of its result must read at least this
+# many times `luadata`'s growth at the entry bound. Measured on macOS: 1.8
+# for the wide-trivia shape, 3.8 for empty tables.
+STAND_IN_RATIO = 1.25
+# A loaded Mac compresses pages as they are allocated and `ru_maxrss` counts
+# resident pages only, so a reading can come out low; the inherited
+# high-water mark reads no growth every time. The stand-in passes on the
+# first of up to this many rounds that shows it.
+STAND_IN_ROUNDS = 3
+# A loaded Mac can read no growth at all (empty tables 6 times in 20 at load
+# average 176 to 180, M13-20T review). There `ru_maxrss` is not carried
+# across exec, so a retry cannot hide an inherited high-water mark; on Linux
+# that fault reads no growth every time, so Linux takes one sample.
+ZERO_GROWTH_TRIES = 5 if sys.platform == "darwin" else 1
+
+
+class ProbeReading(UserWarning):
+    """A child's raw RSS reading, shown in the warnings summary (not a fault)."""
+
 
 CHILD = r"""
 import resource, sys
@@ -110,15 +140,16 @@ if shape == "assign":
     # `before` high-water mark) would be reused by the parse and hidden.
     body = b"a=1\n" * count
     data = b"\r\n" + body
-elif shape == "wide":
-    body = b"".join(
-        b'  [  "k%07d"  ]  =  {  }  ,  -- %07d\r\n' % (i, i) for i in range(count)
-    )
 else:
-    body = b"{},\r\n" * count
-if shape != "assign":
-    data = b"\r\nCONSTRUCTED_DB = {\r\n" + body + b"}\r\n"
-    del body
+    # The same for the table shapes (M13-20T): `lines`, `body` and `data`
+    # all stay alive, and `data` is one join, so nothing is freed between
+    # `before` and the parse.
+    if shape == "wide":
+        lines = [b'  [  "k%07d"  ]  =  {  }  ,  -- %07d\r\n' % (i, i) for i in range(count)]
+        body = b"".join(lines)
+    else:
+        body = b"{},\r\n" * count
+    data = b"".join((b"\r\nCONSTRUCTED_DB = {\r\n", body, b"}\r\n"))
 def peak():
     # This process's peak RSS in bytes. On Linux `ru_maxrss` is kept across
     # execve (getrusage(2)), so a child of a large pytest process starts at
@@ -139,19 +170,46 @@ print(before, after, len(data))
 """
 
 
+def _readings(
+    shape: str, count: int = MAX_ENTRIES // FRACTION, parser: str = "luadata"
+) -> tuple[int, int, int]:
+    """The child's peak RSS before and after the parse, and the slice size, in bytes.
+
+    Each reading is emitted as a `ProbeReading` warning, so the warnings
+    summary of the CI log shows it for a passing test too. A child that
+    reads no growth is retried on macOS only (`ZERO_GROWTH_TRIES`).
+    """
+    for _ in range(ZERO_GROWTH_TRIES):
+        out = subprocess.run(
+            [sys.executable, "-c", CHILD, shape, str(count), parser],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.split()
+        before, after, size = int(out[0]), int(out[1]), int(out[2])
+        warnings.warn(
+            ProbeReading(
+                f"{sys.platform} {shape} {parser} x{count}: before {before / MIB:.1f} MiB, "
+                f"after {after / MIB:.1f} MiB, growth {(after - before) / MIB:.2f} MiB"
+            ),
+            stacklevel=2,
+        )
+        if after > before:
+            break
+    assert after > before, (
+        f"the child read no growth ({before / MIB:.1f} -> {after / MIB:.1f} MiB): "
+        "it is not measuring the parse"
+    )
+    return before, after, size
+
+
 def _projected_peak(
     shape: str,
     count: int = MAX_ENTRIES // FRACTION,
     fraction: int = FRACTION,
     parser: str = "luadata",
 ) -> float:
-    out = subprocess.run(
-        [sys.executable, "-c", CHILD, shape, str(count), parser],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.split()
-    before, after, size = int(out[0]), int(out[1]), int(out[2])
+    before, after, size = _readings(shape, count, parser)
     # Interpreter and data at full size, plus the parse's growth scaled up.
     return before + (fraction - 1) * size + (after - before) * fraction
 
@@ -184,6 +242,34 @@ def test_constructed_top_level_assignments_at_the_file_bound_fit_the_rss_target(
 def test_constructed_positive_control_empty_tables_at_the_entry_bound() -> None:
     peak = _projected_peak("tables")
     assert peak < LIMIT_BYTES, f"projected peak RSS {peak / MIB:.0f} MiB at MAX_ENTRIES"
+
+
+@pytest.mark.parametrize(
+    "shape", ["wide", "tables"], ids=["constructed-wide", "constructed-tables"]
+)
+def test_constructed_stand_in_holding_twice_the_memory_reads_more_growth(shape: str) -> None:
+    """The entry-bound measurement follows the parser (M13-20T).
+
+    CONSTRUCTED stand-in, not `luadata`: the same one as the last test, two
+    parses kept. At `MAX_ENTRIES` both shapes project far under the target,
+    so a parser holding twice as much still fits it and the target is not
+    what this asserts. The child must see the second copy: its growth must
+    be at least `STAND_IN_RATIO` times `luadata`'s. Under the inherited
+    `ru_maxrss` both read no growth, and this fails.
+    """
+    rounds = []
+    for _ in range(STAND_IN_ROUNDS):
+        before, after, _ = _readings(shape)
+        double_before, double_after, _ = _readings(shape, parser="double")
+        growth, double = after - before, double_after - double_before
+        rounds.append(f"{growth / MIB:.2f} and {double / MIB:.2f}")
+        if double >= STAND_IN_RATIO * growth:
+            return
+    pytest.fail(
+        f"a parser holding twice the memory never grew {STAND_IN_RATIO} times what "
+        f"luadata did (MiB, luadata and stand-in: {'; '.join(rounds)}); "
+        "the probe cannot see it"
+    )
 
 
 def test_constructed_stand_in_holding_twice_the_memory_fails_the_assignment_probe() -> None:

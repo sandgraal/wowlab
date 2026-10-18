@@ -468,6 +468,10 @@ class Entry(_Frozen):
         return value
 
 
+# The `Manifest.__dict__` key of its path index (`Manifest.entry`).
+_ENTRY_INDEX = "_wowlab_entry_index"
+
+
 class Manifest(_Frozen):
     """An immutable snapshot manifest. Only `label` can ever be rewritten."""
 
@@ -503,10 +507,21 @@ class Manifest(_Frozen):
         return self.id.rsplit("-", 1)[-1]
 
     def entry(self, path: str) -> Entry | None:
-        for e in self.entries:
-            if e.path == path:
-                return e
-        return None
+        """The entry at `path` (the first, should a hand-made manifest hold
+        two), or None. Looked up in an index built once per `entries` tuple,
+        so naming every path of a large snapshot (`guard`'s restore by name)
+        is linear, not quadratic. The index lives in the instance `__dict__`
+        outside the model's fields: it is never serialized or compared, and a
+        `model_copy` with other entries rebuilds it."""
+        cached = self.__dict__.get(_ENTRY_INDEX)
+        if cached is None or cached[0] is not self.entries:
+            index: dict[str, Entry] = {}
+            for e in self.entries:
+                index.setdefault(e.path, e)
+            cached = (self.entries, index)
+            self.__dict__[_ENTRY_INDEX] = cached
+        found: Entry | None = cached[1].get(path)
+        return found
 
 
 class Change(_Frozen):

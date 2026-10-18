@@ -13,6 +13,7 @@ then runs no git in repo/), and improve never saves the uv cache that
 publish restores.
 M13-19: the gates (check_wiki, gitleaks, the gate result) moved to their
 own job on a fresh runner, and publish and gates use no uv cache at all.
+M13-39: nor does improve, restored or saved.
 The check here stays in improve as a tripwire; the gate result, which reads
 its outcome through improve's job outputs, is looked up in `gates`.
 `tests/repo/test_wiki_daily_gates_job.py` grades the split.
@@ -283,12 +284,14 @@ def test_nothing_in_improve_is_added_to_path() -> None:
     assert 'echo "UV_PROJECT=${GITHUB_WORKSPACE}/repo"' in _step("prompt")["run"]
 
 
-def test_improve_restores_the_uv_cache_but_never_saves_it() -> None:
+def test_improve_neither_restores_nor_saves_the_uv_cache() -> None:
     # Round 2 (security review): a cache saved by improve after the model ran
     # would be restored in publish, which has contents: write, before its sync.
+    # M13-39: it no longer restores one either; ci.yml's cached jobs restore
+    # main's entries. test_wiki_daily_gates_job.py pins every job's setting.
     setups = [s for s in _steps() if s.get("uses", "").startswith("astral-sh/setup-uv@")]
     assert len(setups) == 1
-    assert setups[0]["with"]["save-cache"] in (False, "false")
+    assert setups[0]["with"]["enable-cache"] is False
 
 
 def test_publish_runs_only_after_improve_succeeded_and_from_its_own_checkout() -> None:
