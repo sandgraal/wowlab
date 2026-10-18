@@ -131,7 +131,8 @@ the reviewer verdicts are clean. A failed non-required job never holds
 the merge, but it is never silent either: name it, with its run URL and
 the failing test ids from `gh run view <id> --log-failed`, on the report's
 `checks:` line, so the conductor can file it (`windows.yml`'s header: a
-red Windows run is a bug to fix next). Then
+red run on `main` is a bug to fix next, and a red run on the PR is how it
+is seen first). Then
 `gh pr merge <n> --squash --delete-branch` (never `--admin`). Confirm:
 `git fetch origin main && git log origin/main -1 --format=%H%n%s`. Do not
 edit `docs/BACKLOG.md`; the conductor batches ticks.
