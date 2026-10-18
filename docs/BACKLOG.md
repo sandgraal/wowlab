@@ -753,7 +753,7 @@ Found in the security review of #244 (M13-39). M13-39 stopped the model's job fr
 
 ---
 
-## [ ] M13-43 — `lab (windows)`: three `tree` link tests and one explorer hint test assume a POSIX host
+## [x] M13-43 — `lab (windows)`: three `tree` link tests and one explorer hint test assume a POSIX host
 **Size:** S · **Depends on:** M13-15, M13-27, M13-35
 
 Found on 2026-10-17. `windows.yml` is red on `main` at a431c28 (https://github.com/sandgraal/wowlab/actions/runs/39069525782), the same way M13-36 found it: the job is off the PR path, and #235 (M13-35) and #237 (M13-27) each brought a test that passes only on a POSIX host. Four tests fail; one needs a one-line library change, the others are test-only:
