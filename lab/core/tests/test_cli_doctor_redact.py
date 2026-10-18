@@ -565,7 +565,9 @@ def test_constructed_names_in_loadable_snapshots_are_known(
         (other / folder).mkdir(parents=True)
         (other / folder / "AddOns.txt").write_bytes(b"")
     snapshot.SnapshotStore().create(other, ["_x_/WTF"])
-    account = root / FLAVOR / "WTF" / "Account" / "NEWACCT9"
+    # M13-50: an account folder by its `<digits>#<n>` name; it holds no
+    # character folder, so a name of another shape would be no account.
+    account = root / FLAVOR / "WTF" / "Account" / "90000009#1"
     account.mkdir()
     (account / "config-cache.wtf").write_bytes(
         f'SET synchronizeMacros "{OLD_CHARACTER} of {OTHER_REALM}, Altchar of Kazzak, '
