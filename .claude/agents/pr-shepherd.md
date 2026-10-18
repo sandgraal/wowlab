@@ -33,7 +33,30 @@ and the draft flag; `merge_pull_request` with `merge_method: squash`,
 `expectedHeadSha` set to the head you verified, and `commit_title` the PR
 title with ` (#<n>)`. Try `gh` first; the moment it answers 403 or
 "GraphQL", switch and do not retry `gh`. The merge rule below is the same
-whichever tool runs it.
+whichever tool runs it. Learned on #266 (2026-10-18):
+- **Waiting.** `gh pr checks --watch` is GraphQL-backed. Foreground
+  `sleep` and inline `--jq` select loops are blocked by the guard. Poll
+  from a script file under your scratchpad subfolder, at most every five
+  minutes, with the REST call
+  `gh api repos/sandgraal/wowlab/commits/<sha>/check-runs --jq '.check_runs[] | [.name,.status,.conclusion] | @tsv'`,
+  or call `pull_request_read` `get_check_runs` between steps.
+- **Required or not.** Neither route flags a check as required. Cross-check
+  the names against the `contexts` in `.github/rulesets/main.json`;
+  `review` and `lab (macos)` are not in it and never hold the merge.
+- **State words.** `pull_request_read` `get` gives `mergeable_state`:
+  `blocked` while a required check is pending, `unstable` when only a
+  non-required check failed, `clean` otherwise; it has no `reviewDecision`
+  or `statusCheckRollup`. Read `blocked` as "wait", `unstable` and `clean`
+  as "the checks allow it".
+- **Threads by REST.** The 403 names REST routes that replace the GraphQL
+  thread queries: `GET repos/{owner}/{repo}/pulls/{n}/ccr/review_threads`
+  and `POST …/ccr/comments/{id}/resolve`. The MCP tools do the same; use
+  whichever answers.
+- **Cleanup.** The worktree guard refuses a `cd` to the main checkout, so
+  the cleanup step below cannot run from a cloud session; the auto-clean
+  of unchanged worktrees covers it. Report your worktree path and skip the
+  step (M13-60 decides the lasting rule). The repository deletes the
+  remote branch on merge; do not try to delete it yourself.
 
 Work in the branch's worktree (`pwd`, `git branch --show-current`). If
 `uv` is not found: `export PATH="$HOME/.local/bin:$PATH"`. The scratchpad

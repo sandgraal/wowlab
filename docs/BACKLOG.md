@@ -934,6 +934,24 @@ Found in the code review of #260 (M13-44). (1) `labaddon.py` (around lines 1635 
 
 ---
 
+## [ ] M13-59 — `claude-review.yml`: the review hits its 30-turn cap before a verdict
+**Size:** S · **Depends on:** nothing
+
+Found 2026-10-18 on #265 (error after 2m58s, a partial report posted: "`git` and `gh` could not run in this sandbox; `.git/config` is unreadable") and #266 (error after 3m24s, nothing posted; the log ends `Reached maximum number of turns (30)`). The workflow denies the checkout's `.git/config` on purpose (its comment around line 106) so the token never reaches the model, which also stops `git diff`; the model then reads whole files to reconstruct the diff and spends its turns. Fix in the workflow, not by loosening the denial: a step that runs before the model, with the checkout's credentials, writes `git diff --stat` and the unified diff of the PR head against the merge base to a file under the workspace the model may read, capped in size (say 400 KiB, with a "truncated" line), and the prompt names that file as the diff; `--max-turns 30` stays unless two measured runs still need more, in which case it is raised to the number they needed, stated in the PR body. The job stays non-required.
+
+**Acceptance:** on a docs-only PR and on a PR that touches `lab/`, the job posts its verdict within the cap, and the PR body records both runs' turn counts from the action log; the token still never reaches the model's environment (the existing scrub is unchanged, and the security review says so); `make ci` green; reviewed by `security-reviewer` (`.github/**`) and `code-reviewer`.
+
+---
+
+## [ ] M13-60 — `pr-shepherd` cleanup step versus the worktree guard
+**Size:** XS · **Depends on:** nothing
+
+Found 2026-10-18 by the shepherd on #266, the first merge through the GitHub MCP tools. The Merge section of `.claude/agents/pr-shepherd.md` ends with a cleanup step run from the main checkout (`git worktree remove`, `git branch -D`), and the worktree-isolation guard refuses any command that `cd`s to the main checkout; the shepherd's own worktree also showed as locked. The definition now tells the shepherd to report its worktree path and skip the step (2026-10-18). Decide the lasting rule. Default: the shepherd never cleans up; the harness's auto-clean of unchanged worktrees covers the common case, and the conductor removes a changed one after the merge from the main checkout, where the guard allows it; the definition's cleanup step is rewritten to say so. Alternative: a narrow guard allowance for `git worktree remove <own path>` from a worktree, with a test in `tests/harness`. No guard loosening without the test.
+
+**Acceptance:** the shepherd definition's cleanup step matches the rule chosen; any guard change has a `tests/harness` test for the allowed and the refused form; `make hooks-test` green; `scripts/check_frontmatter.py` clean; reviewed by `code-reviewer`.
+
+---
+
 # M14 — `wowlab ui`: the confirm flow, and the character (Wave 5)
 
 Spec: `docs/LAB_PLAN.md` §16 (2026-10-18). Decisions: ADR-0029 (accepted) for the confirm flow; ADR-0032 (Proposed, the model's access to the data) binds nothing here and is for the wave after. Owner request of 2026-10-18: the player's character in the UI, with equipped gear, key bindings and macros, read-only in this wave and built so that a later wave can change and optimize them from the UI (§16.5). **Every ticket below depends on M14-01**, which waits for the twelve M13 follow-ups of the owner's 2026-10-18 pick; nothing in M14 is dispatched before they are on `main`. L1 to L8 apply; no ticket writes into an install outside the confirm flow's `guard` commands, no ticket adds a network request, and no ticket puts a game rule in JavaScript (§14.5 D3). `wowlab_core.ui` left the graders-first set on 2026-10-17, so no ticket here has a `T` twin. The five tickets that edit `ui/__init__.py` and the templates (M14-02, M14-03, M14-04, M14-08, M14-09) collide on those files, so the conductor dispatches them one at a time in that order (§16.7); the CLI tickets run beside them.
