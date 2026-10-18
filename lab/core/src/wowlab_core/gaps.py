@@ -54,8 +54,11 @@ from pydantic import BaseModel, ConfigDict
 
 from wowlab_core import filemap as _filemap
 from wowlab_core.install import Install
-from wowlab_core.layout import FsText, Limits
-from wowlab_core.snapshot import _is_link_stat as _snapshot_link
+
+# `is_link`: the one link test of discovery, the inventory walk, `tree` and
+# `explain`, defined in `install`, re-exported by `layout` (which this module
+# imports) and exported here (M13-35, M13-37).
+from wowlab_core.layout import FsText, Limits, is_link
 
 __all__ = [
     "NOT_A_FLAVOR",
@@ -78,8 +81,9 @@ GapKind = Literal["file", "folder", "link", "other"]
 # missing, is not a regular file, or the folder itself is a link.
 NOT_A_FLAVOR = "not taken as a flavor folder (no regular .flavor.info file)"
 # The same, for a root link named `_..._`: discovery never takes a link,
-# whatever it points at.
-NOT_A_FLAVOR_LINK = "not taken as a flavor folder (a link; links are not followed)"
+# whatever it points at. No reason in brackets: every place it is shown
+# already says the entry is a link that is not followed (M13-37 review).
+NOT_A_FLAVOR_LINK = "not taken as a flavor folder"
 # Paths of files below a folder place kept as examples in the JSON.
 EXAMPLES = 5
 
@@ -246,21 +250,6 @@ def lstat_entry(entry: os.DirEntry[str]) -> os.stat_result:
     """`lstat` of one listed entry: never follows a link. One place, so a
     test can stand in Windows reparse-point attributes on any system."""
     return entry.stat(follow_symlinks=False)
-
-
-def is_link(path: Path, st: os.stat_result) -> bool:
-    """A link the walk never follows: a symlink, a junction, or a Windows
-    reparse point with the name-surrogate bit (a reparse point that names
-    another path), the rule `snapshot` uses (`snapshot._is_link_stat`).
-    Other reparse points (OneDrive cloud placeholders, deduplicated files)
-    hold real content and are walked, as discovery and `layout` take them
-    (M13-04: an install under OneDrive is reported, never refused)."""
-    if _snapshot_link(st):
-        return True
-    try:
-        return path.is_junction()
-    except OSError:
-        return False
 
 
 def _kind(path: Path, st: os.stat_result) -> GapKind:

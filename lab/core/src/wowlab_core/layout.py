@@ -23,14 +23,17 @@ Account folder shapes (LAB_FILE_MAP "Folder shape", GLOSSARY "Second name"):
   numeric folder is unknown.
 
 Reads only (L1): directories are listed, files are `lstat`ed, and TOC files
-are opened for reading. Nothing is created anywhere. Symlinks and Windows
-junctions are never followed, whether they point inside the install or out;
-each is reported in `symlinks` with its target text and whether that target
-resolves inside the install, and is left out of the typed lists. Any other
-Windows reparse point (a cloud placeholder, a deduplicated file, a file
-compressed with `compact /EXE`) is walked
-like a plain entry and named in `reparse_points`, because the write gate
-refuses it all the same (M13-33). Walks are
+are opened for reading. Nothing is created anywhere. A link is never
+followed, whether it points inside the install or out: a symlink, a Windows
+junction, or any other Windows reparse point that names another path (the
+name-surrogate bit: a WCI link, a WSL symlink; `is_link`, the one test
+discovery, `gaps` and `explain` use, M13-35, M13-37). Each is reported in `symlinks` with its
+target text and whether that target resolves inside the install, and is
+left out of the typed lists. Any other Windows reparse point (a cloud
+placeholder, a deduplicated file, a file compressed with `compact /EXE`)
+holds real content, so it is walked like a plain entry and named in
+`reparse_points`, because the write gate refuses it all the same (M13-33).
+Walks are
 bounded in depth and entry count (`Limits`); a walk that hits a bound says so
 in `truncated`. `wtf_walk()` walks `WTF/` alone and also names what the typed
 lists leave out there (folders, FIFOs and other non-regular entries, links,
@@ -64,9 +67,12 @@ from pydantic import (
 )
 
 from wowlab_core import filemap as _filemap
+from wowlab_core import longpath
 from wowlab_core.filemap import FileMapEntry
-from wowlab_core.install import Flavor, Install
-from wowlab_core.snapshot import _is_link_stat as _snapshot_link
+
+# `is_link`: the one link test, defined in `install` so discovery uses it
+# too (M13-37) and exported here: `layout.is_link is install.is_link`.
+from wowlab_core.install import Flavor, Install, is_link
 from wowlab_core.toc import MAX_TOC_BYTES, TocDocument, TocTooLargeError, read_toc
 from wowlab_core.verdict import gate_refuses_stat
 
@@ -89,8 +95,11 @@ __all__ = [
     "WalkError",
     "WtfFile",
     "WtfWalk",
+    "absent",
     "classify",
+    "is_link",
     "layouts",
+    "link_facts",
 ]
 
 # Client-written folder and file names inside a flavor folder, looked up
@@ -172,25 +181,28 @@ class Limits(_Model):
 
 
 class Symlink(_Model):
-    """A symlink or junction met by a walk: reported, never followed."""
+    """A link met by a walk (`is_link`: a symlink, a junction, or another
+    Windows reparse point that names another path): reported, never
+    followed."""
 
     path: FsText  # relative to the flavor folder, `/`-separated
     target: FsText | None  # the link text as stored; None if it cannot be read
-    inside_install: bool  # whether the target resolves inside the install root
+    # Whether the target resolves inside the install root. None when that is
+    # unknown (M13-35): the link text cannot be read (a WCI link or a WSL
+    # symlink on Windows), or resolving it fails (a loop) or ends at the
+    # link itself (`link_facts`).
+    inside_install: bool | None
     entry_id: str | None  # file-map entry for the link's own location
 
 
 class ReparsePoint(_Model):
-    """A Windows reparse point the walk went into (M13-33): not a symlink
-    or junction, so `layout` lists it and what is under it, but the write
-    gate refuses it and everything under it (`verdict.gate_refuses_stat`).
-    `name_surrogate`: it names another path (snapshot's and `gaps`' link
-    rule; `explain` calls it a link). Otherwise it holds real content: a
-    cloud placeholder, a deduplicated file, a file compressed with
-    `compact /EXE`."""
+    """A Windows reparse point the walk went into (M13-33): no link
+    (`is_link`), so it holds real content (a cloud placeholder, a
+    deduplicated file, a file compressed with `compact /EXE`) and `layout`
+    lists it and what is under it, but the write gate refuses it and
+    everything under it (`verdict.gate_refuses_stat`)."""
 
     path: FsText  # relative to the flavor folder, `/`-separated
-    name_surrogate: bool
 
 
 class WalkError(_Model):
@@ -338,7 +350,7 @@ class Inventory(_Model):
     other: Other
     symlinks: tuple[Symlink, ...]
     # M13-33: every entry the walk went into whose `lstat` the write gate
-    # refuses as a link, sorted by path. Empty off Windows.
+    # refuses although it is no link, sorted by path. Empty off Windows.
     reparse_points: tuple[ReparsePoint, ...] = ()
     # Files the file map classifies `os-metadata` (`.DS_Store`, `._*`, …):
     # listed here and kept out of every other list and count.
@@ -421,17 +433,35 @@ def lstat_entry(entry: os.DirEntry[str]) -> os.stat_result:
     return entry.stat(follow_symlinks=False)
 
 
-def _is_link(path: Path, st: os.stat_result) -> bool:
-    if stat.S_ISLNK(st.st_mode):
-        return True
-    try:
-        return path.is_junction()
-    except OSError:
-        return False
-
-
 def _is_within(child: Path, parent: Path) -> bool:
     return child == parent or parent in child.parents
+
+
+def link_facts(path: Path, real_root: Path | None) -> tuple[str | None, bool | None]:
+    """`(target, inside)` for the link at `path`: its link text exactly as
+    stored (not normalised by pathlib), and whether it resolves inside
+    `real_root` (the install root, resolved; None when that failed). Never
+    lists or reads anything through the link; on Windows, resolving opens it
+    with no access to read its final name. `inside` is None when it is
+    unknown (M13-35): the link text cannot be read (`os.readlink` refuses a
+    WCI link or a WSL symlink on Windows), the install root could not be
+    resolved, or resolving the link fails (a loop) or ends at the link
+    itself, so nothing says where it points."""
+    try:
+        target: str | None = os.readlink(longpath.extended(path))  # noqa: PTH115
+    except (OSError, ValueError):
+        target = None
+    if target is None:
+        return None, None
+    try:
+        if real_root is None:
+            return target, None
+        resolved = longpath.resolve(path)
+        if resolved == longpath.resolve(path.parent) / path.name:
+            return target, None
+        return target, _is_within(resolved, real_root)
+    except (OSError, RuntimeError):  # a loop: RuntimeError on 3.12, OSError later
+        return target, None
 
 
 class Layout:
@@ -478,8 +508,9 @@ class Layout:
 
     def _children(self, rel: tuple[str, ...], report: _Report) -> list[os.DirEntry[str]]:
         try:
-            with os.scandir(self._abs(rel)) as it:
-                return sorted(it, key=lambda e: e.name)
+            # Entries' own `.path` may be extended-length (M13-15): callers
+            # build a child's path from `rel` and the name.
+            return sorted(longpath.entries(self._abs(rel)), key=lambda e: e.name)
         except FileNotFoundError:
             return []
         except OSError as exc:
@@ -496,16 +527,13 @@ class Layout:
 
     def _symlink(self, rel: tuple[str, ...]) -> Symlink:
         path = self._abs(rel)
-        try:  # the link text exactly as stored, not normalised by pathlib
-            target: str | None = os.readlink(path)  # noqa: PTH115
-        except (OSError, ValueError):
-            target = None
         try:
             if self._real_root is None:
-                self._real_root = self.install_root.resolve()
-            inside = _is_within(path.resolve(), self._real_root)
+                self._real_root = longpath.resolve(self.install_root)
+            real_root: Path | None = self._real_root
         except (OSError, RuntimeError):
-            inside = False
+            real_root = None
+        target, inside = link_facts(path, real_root)
         found = self._filemap.classify(rel, "flavor", "any")
         return Symlink(
             path=_rel_text(rel),
@@ -517,13 +545,14 @@ class Layout:
     def _stat(
         self, rel: tuple[str, ...], entry: os.DirEntry[str], report: _Report
     ) -> _Entry | None:
-        """`lstat` one entry; symlinks and junctions are reported and dropped."""
+        """`lstat` one entry; a link (`is_link`) is reported and dropped."""
         try:
             st = lstat_entry(entry)
         except OSError as exc:
             report.errors.append(WalkError(path=_rel_text(rel), error=exc.strerror or str(exc)))
             return None
-        if _is_link(Path(entry.path), st):
+        # Built from `rel`: an entry's own `.path` may be extended-length (M13-15).
+        if is_link(self._abs(rel), st):
             report.symlinks.append(self._symlink(rel))
             return None
         self._note_reparse(rel, st, report)
@@ -576,13 +605,13 @@ class Layout:
             return None
         path = self._abs((*rel, found))
         try:
-            st = path.lstat()
+            st = longpath.lstat(path)
         except OSError as exc:
             report.errors.append(
                 WalkError(path=_rel_text((*rel, found)), error=exc.strerror or str(exc))
             )
             return None
-        if _is_link(path, st):
+        if is_link(path, st):
             report.symlinks.append(self._symlink((*rel, found)))
             return None
         self._note_reparse((*rel, found), st, report)
@@ -592,9 +621,7 @@ class Layout:
     def _note_reparse(rel: tuple[str, ...], st: os.stat_result, report: _Report) -> None:
         """Record `rel` when the write gate refuses its `lstat` (M13-33)."""
         if gate_refuses_stat(st):
-            report.reparse_points.append(
-                ReparsePoint(path=_rel_text(rel), name_surrogate=_snapshot_link(st))
-            )
+            report.reparse_points.append(ReparsePoint(path=_rel_text(rel)))
 
     def _entry_id(self, rel: tuple[str, ...], is_dir: bool) -> str | None:
         found = self._filemap.classify(rel, "flavor", "dir" if is_dir else "file")
@@ -869,13 +896,13 @@ class Layout:
                 continue
             top = self._top(name, report)
             if top is None:  # a symlink (reported) or not a folder
-                is_link = any(s.path == found for s in report.symlinks)
+                linked = any(s.path == found for s in report.symlinks)
                 areas.append(
                     Area(
                         name=name,
                         path=found,
                         present=True,
-                        symlink=is_link,
+                        symlink=linked,
                         files=0,
                         folders=0,
                         bytes=0,
@@ -1039,7 +1066,13 @@ class Layout:
         matched against the install-root rows."""
         p = Path(path)
         absolute = p if p.is_absolute() else self.flavor_path / p
-        return _classify(absolute, self.install_root, {self.flavor_folder}, _dir_hint(path, is_dir))
+        return _classify(
+            absolute,
+            self.install_root,
+            {self.flavor_folder},
+            _dir_hint(path, is_dir),
+            probe=is_dir is None,
+        )
 
 
 def _by_path(link: Symlink) -> str:
@@ -1086,32 +1119,54 @@ def _dir_hint(path: Path | str | PurePath, is_dir: bool | None) -> bool | None:
     return is_dir
 
 
-def _kind(path: Path, is_dir: bool | None) -> _filemap.Kind:
-    if is_dir is not None:
-        return "dir" if is_dir else "file"
+def _kind(
+    path: Path, root: Path, is_dir: bool | None, *, probe: bool
+) -> tuple[_filemap.Kind, bool]:
+    """`(kind, absent)`: what to match `path` as, and whether nothing is on
+    disk there. `is_dir` (the caller's word, or a trailing separator) sets
+    the kind; `probe` (the caller gave no `is_dir`) allows an `lstat`.
+
+    A path that is not on disk is matched as a file unless `is_dir` says
+    folder (M13-29): a folder-only row describes a folder that is there, and
+    a name alone cannot show it is one, so a missing `WTF/Account/A/x.txt`
+    never matches the `realm-folder` row. File rows, which name a file by
+    its shape, and `**` rows still match it. Only "no such file" and "not a
+    directory" count as absent, and only with no link on the way down from
+    `root` (`_missing`); a link on the way, or any other error (a folder
+    that cannot be read), leaves the kind unknown, as before.
+    """
+    given: _filemap.Kind | None = None if is_dir is None else "dir" if is_dir else "file"
+    if given is not None and not probe:
+        return given, False
     try:
-        st = path.lstat()
+        st = longpath.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        if _missing(path, root):
+            return given or "file", True
+        return given or "any", False
     except OSError:
-        return "any"
-    if stat.S_ISDIR(st.st_mode) and not _is_link(path, st):
-        return "dir"
+        return given or "any", False
+    if given is not None:
+        return given, False
+    if stat.S_ISDIR(st.st_mode) and not is_link(path, st):
+        return "dir", False
     if stat.S_ISREG(st.st_mode):
-        return "file"
-    return "any"  # a symlink, never followed to find out, or something else
+        return "file", False
+    return "any", False  # a symlink, never followed to find out, or something else
 
 
 def _same_file(candidate: Path, known: Path) -> bool:
     """Whether `candidate` is the folder `known` itself, never through a link.
 
     Compares `lstat` results (`os.path.samestat`), and refuses a candidate
-    that is a symlink or junction, so a case-only spelling is accepted on a
+    that is a link (`is_link`), so a case-only spelling is accepted on a
     case-insensitive volume (same entry) and a link is never followed.
     """
     try:
-        st = candidate.lstat()
-        if _is_link(candidate, st):
+        st = longpath.lstat(candidate)
+        if is_link(candidate, st):
             return False
-        return os.path.samestat(st, known.lstat())
+        return os.path.samestat(st, longpath.lstat(known))
     except OSError:
         return False
 
@@ -1147,8 +1202,70 @@ def _flavor_spelling(first: str, root: Path, flavor_folders: set[str]) -> str | 
     return None
 
 
+def _missing(path: Path, root: Path) -> bool:
+    """Whether nothing is at `path`, found by walking down from `root` one
+    `lstat` at a time: True at the first "no such file" or "not a
+    directory". A link on the way (a symlink, a junction, or a reparse point
+    that names another path) is never followed, so what is behind it is not
+    known: False, as for any other error, or for a path that is there."""
+    parts = _relative_parts(path, root)
+    if parts is None:
+        return False
+    current = root
+    for part in parts:
+        current = current / part
+        try:
+            # Extended-length past the plain limit (M13-15): a long path
+            # Windows refuses plainly is not "absent".
+            st = longpath.lstat(current)
+        except (FileNotFoundError, NotADirectoryError):
+            return True
+        except OSError:
+            return False
+        if is_link(current, st):
+            return False
+    return False
+
+
+def absent(path: Path | str, install_root: Path | str) -> bool:
+    """Whether nothing is on disk at `path` (absolute, inside
+    `install_root`): "no such file" or "not a directory" with no link on the
+    way down from the install root (M13-29). False for a path that is there,
+    one behind a link, one that cannot be read, and one outside the root."""
+    return _missing(_normalize(Path(path)), _normalize(Path(install_root)))
+
+
+NO_ROW = "no file-map row matches"
+"""`Unclassified.reason` for a path that is there but has no row."""
+NOT_FOUND = "not found; nothing is at this path"
+"""How every reason for a path that is not on disk begins (M13-29)."""
+NO_ROW_LIKE = "no file-map row matches a name like this"
+AS_FOLDER = "end it with / to see what a folder by this name would be (/ works on Windows too)"
+_NOT_FOUND_REASON = f"{NOT_FOUND}, and {NO_ROW_LIKE}"
+
+
+def _no_row_reason(
+    fm: _filemap.FileMap,
+    parts: tuple[str, ...],
+    base: Literal["root", "flavor"],
+    kind: _filemap.Kind,
+    *,
+    absent: bool,
+    inferred: bool,
+) -> str:
+    """Why no row matched, in plain words. For a path not on disk, "not
+    found", and, when it was matched as a file only because nothing is
+    there to say otherwise, how to ask for the folder row a trailing
+    separator would match (M13-29)."""
+    if not absent:
+        return NO_ROW
+    if inferred and kind == "file" and fm.classify(parts, base, "dir") is not None:
+        return f"{_NOT_FOUND_REASON}; {AS_FOLDER}"
+    return _NOT_FOUND_REASON
+
+
 def _classify(
-    path: Path, root: Path, flavor_folders: set[str], is_dir: bool | None
+    path: Path, root: Path, flavor_folders: set[str], is_dir: bool | None, *, probe: bool
 ) -> Classified | Unclassified:
     target = _normalize(path)
     root = _normalize(root)
@@ -1162,7 +1279,8 @@ def _classify(
         return Unclassified(
             path="", base="root", flavor_folder=None, reason="the install root itself"
         )
-    kind = _kind(target, is_dir)
+    kind, absent = _kind(target, root, is_dir, probe=probe)
+    inferred = is_dir is None
     fm = _filemap.load()
     flavor = _flavor_spelling(rel[0], root, flavor_folders)
     if flavor is not None:
@@ -1174,13 +1292,16 @@ def _classify(
             path=_rel_text(sub),
             base="flavor",
             flavor_folder=flavor,
-            reason="no file-map row matches",
+            reason=_no_row_reason(fm, sub, "flavor", kind, absent=absent, inferred=inferred),
         )
     found = fm.classify(rel, "root", kind)
     if found is not None:
         return Classified(path=_rel_text(rel), base="root", flavor_folder=None, entry=found)
     return Unclassified(
-        path=_rel_text(rel), base="root", flavor_folder=None, reason="no file-map row matches"
+        path=_rel_text(rel),
+        base="root",
+        flavor_folder=None,
+        reason=_no_row_reason(fm, rel, "root", kind, absent=absent, inferred=inferred),
     )
 
 
@@ -1190,13 +1311,16 @@ def classify(
     """The file-map entry for any path inside `install`: absolute, or relative
     to the install root. Flavor folders are the ones discovery reported
     (`install.flavors`), never recognised by name (L6). `is_dir` overrides the
-    `lstat` used to tell a folder from a file; a path that does not exist,
-    or is a symlink, matches rows of either kind unless it ends in a
-    separator."""
+    `lstat` used to tell a folder from a file. A symlink matches rows of
+    either kind. A path that does not exist matches file rows and `**` rows
+    only, unless it ends in a separator (then folder rows and `**` rows), and with
+    no row it is `Unclassified` with a "not found" reason (M13-29)."""
     p = Path(path)
     absolute = p if p.is_absolute() else Path(install.root) / p
     folders = {f.folder for f in install.flavors}
-    return _classify(absolute, Path(install.root), folders, _dir_hint(path, is_dir))
+    return _classify(
+        absolute, Path(install.root), folders, _dir_hint(path, is_dir), probe=is_dir is None
+    )
 
 
 def layouts(install: Install, limits: Limits | None = None) -> tuple[Layout, ...]:

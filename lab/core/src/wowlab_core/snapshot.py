@@ -50,6 +50,8 @@ from pydantic import (
     model_validator,
 )
 
+from wowlab_core import longpath
+
 __all__ = [
     "MANIFEST_FORMAT",
     "OBJECTS_DIR_ENTRY",
@@ -160,7 +162,8 @@ def _is_link_stat(st: os.stat_result) -> bool:
 def _lstat_at(path: Path, dir_fd: int | None) -> os.stat_result:
     """`os.lstat(path)`, relative to `dir_fd` when one is given."""
     if dir_fd is None:
-        return os.lstat(path)
+        with longpath.plain_errors():
+            return os.lstat(longpath.extended(path))
     return os.stat(path, dir_fd=dir_fd, follow_symlinks=False)
 
 
@@ -179,7 +182,9 @@ def open_regular_file(
     open, and the path is checked after it to still name the opened file.
     The caller owns the descriptor returned; on any error it is closed here.
     A missing path raises `FileNotFoundError`. With `dir_fd` (M11-18), a
-    relative `path` names an entry of that directory descriptor.
+    relative `path` names an entry of that directory descriptor; without
+    one, a path past Windows' plain limit is opened, and `lstat`ed, by its
+    extended-length spelling (`longpath`, M13-15).
     """
     nofollow = _O_NOFOLLOW
     before: os.stat_result | None = None
@@ -194,7 +199,8 @@ def open_regular_file(
         | getattr(os, "O_NONBLOCK", 0)
         | getattr(os, "O_NOCTTY", 0)
     )
-    fd = os.open(path, flags, dir_fd=dir_fd)
+    with longpath.plain_errors():
+        fd = os.open(path if dir_fd is not None else longpath.extended(path), flags, dir_fd=dir_fd)
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
@@ -468,6 +474,10 @@ class Entry(_Frozen):
         return value
 
 
+# The `Manifest.__dict__` key of its path index (`Manifest.entry`).
+_ENTRY_INDEX = "_wowlab_entry_index"
+
+
 class Manifest(_Frozen):
     """An immutable snapshot manifest. Only `label` can ever be rewritten."""
 
@@ -503,10 +513,21 @@ class Manifest(_Frozen):
         return self.id.rsplit("-", 1)[-1]
 
     def entry(self, path: str) -> Entry | None:
-        for e in self.entries:
-            if e.path == path:
-                return e
-        return None
+        """The entry at `path` (the first, should a hand-made manifest hold
+        two), or None. Looked up in an index built once per `entries` tuple,
+        so naming every path of a large snapshot (`guard`'s restore by name)
+        is linear, not quadratic. The index lives in the instance `__dict__`
+        outside the model's fields: it is never serialized or compared, and a
+        `model_copy` with other entries rebuilds it."""
+        cached = self.__dict__.get(_ENTRY_INDEX)
+        if cached is None or cached[0] is not self.entries:
+            index: dict[str, Entry] = {}
+            for e in self.entries:
+                index.setdefault(e.path, e)
+            cached = (self.entries, index)
+            self.__dict__[_ENTRY_INDEX] = cached
+        found: Entry | None = cached[1].get(path)
+        return found
 
 
 class Change(_Frozen):
@@ -656,7 +677,9 @@ def _is_junction(path: Path | os.DirEntry[str]) -> bool:
     Only junctions count: other reparse points (cloud-file placeholders,
     deduplicated files) hold real content and `readlink` cannot describe them.
     """
-    return path.is_junction()
+    if isinstance(path, os.DirEntry):
+        return path.is_junction()
+    return longpath.is_junction(path)
 
 
 def _is_link_like_dir(path: Path | os.DirEntry[str]) -> bool:
@@ -673,7 +696,8 @@ def _is_link_like_dir(path: Path | os.DirEntry[str]) -> bool:
     if not _ON_WINDOWS:
         return False
     try:
-        st = os.lstat(path)
+        # An entry listed from a short folder can still have a long path.
+        st = os.lstat(longpath.extended(path))
     except OSError:
         return False  # gone, or unreadable: the walk reports it where it matters
     return bool(int(getattr(st, "st_reparse_tag", 0)) & _REPARSE_NAME_SURROGATE)
@@ -682,9 +706,9 @@ def _is_link_like_dir(path: Path | os.DirEntry[str]) -> bool:
 def _dir_link_target(path: Path) -> str | None:
     """`readlink` of a link-like directory, or `None` when it cannot say (see `Entry.target`)."""
     try:
-        return str(path.readlink())
+        return str(longpath.readlink(path))
     except FileNotFoundError:
-        raise  # removed while we walked; `_capture` skips it
+        raise  # removed while we walked; `_capture` confirms it, then skips it
     except (OSError, ValueError):
         return None
 
@@ -700,7 +724,7 @@ def _is_within(child: Path, parent: Path) -> bool:
 def _same_dir(a: Path, b: Path) -> bool:
     """Identity, not spelling: true when both exist and are one directory."""
     try:
-        return a.samefile(b)
+        return longpath.samefile(a, b)
     except (OSError, ValueError):
         return False
 
@@ -714,6 +738,38 @@ def _strictly_holds(outer: Path, inner: Path) -> bool:
 def _overlap_error(store: Path, source: Path) -> StoreLocationError:
     return StoreLocationError(
         f"the store ({store}) and the source tree ({source}) must not contain each other"
+    )
+
+
+def _plain_root(root: Path | str) -> Path:
+    """`root` made absolute, and plain where a caller spelled it in
+    extended-length form (M13-15): the manifest names the root a player
+    knows, and the write gate restores only into a local absolute path
+    (§6.10). A root with no plain spelling is refused."""
+    absolute = longpath.plain(Path(root).absolute())
+    if longpath.ON_WINDOWS and str(absolute).startswith("\\\\?\\"):
+        raise SnapshotError(
+            f"source root {absolute} has no plain spelling (C:\\... or \\\\server\\share\\...)"
+        )
+    return absolute
+
+
+def _confirm_gone(path: Path) -> None:
+    """A `FileNotFoundError` means "removed while we walked" only once an
+    extended-length `lstat` agrees (M13-15). With long paths off, Windows
+    reports a plain path past `MAX_PATH` as not found; a file skipped for
+    that would leave a partial snapshot, which is never written. Raises
+    `SnapshotError` when the path is still there or cannot be looked at."""
+    try:
+        with longpath.plain_errors():
+            os.lstat(longpath.extended(path, always=True))
+    except (FileNotFoundError, NotADirectoryError):
+        return
+    except (OSError, ValueError) as exc:
+        raise SnapshotError(f"cannot read {path}, and cannot inspect it: {exc}") from exc
+    raise SnapshotError(
+        f"cannot read {path}: the system reported it missing, but it is there; "
+        "a snapshot without it would be partial"
     )
 
 
@@ -813,11 +869,20 @@ class SnapshotStore:
         `purpose` is recorded in the manifest (`"profile"` from
         `profiles.save`, M11-08); a manifest with none omits the field.
 
+        Long paths on Windows (M13-15): every path past the plain limit is
+        reached by its extended-length spelling (`longpath`), whatever
+        `LongPathsEnabled` says. A root given relative is made absolute
+        first, and one given in extended-length form is recorded plain
+        (refused when it has no plain spelling). A file or folder the system
+        reports missing is skipped only once an extended-length `lstat`
+        agrees; otherwise the `create` raises, never writing a partial
+        snapshot.
+
         `now` fixes the clock (timezone-aware); it exists for tests and for
         callers that want one timestamp across several records.
         """
-        root = Path(root).absolute()
-        if not root.is_dir():
+        root = _plain_root(root)
+        if not longpath.is_dir(root):
             raise SnapshotError(f"source root is not a directory: {root}")
         self._refuse_overlap(root)
 
@@ -924,7 +989,7 @@ class SnapshotStore:
         stays as a second net for paths that do not exist yet.
         """
         store = self.path.resolve()
-        source = root.resolve()
+        source = longpath.resolve(root)
         overlap = store == source or _same_dir(store, source)
         # The store may not exist yet; its existing ancestors do.
         overlap = overlap or _strictly_holds(source, store) or _strictly_holds(store, source)
@@ -956,7 +1021,7 @@ class SnapshotStore:
         except StoreLocationError:
             return
         store = self.path.resolve()
-        source = Path(root).absolute().resolve()
+        source = longpath.resolve(longpath.plain(Path(root).absolute()))
         if _strictly_holds(store, source):
             raise _overlap_error(store, source)
 
@@ -984,7 +1049,7 @@ class SnapshotStore:
         for part in PurePosixPath(subtree).parts[:-1]:
             current = current / part
             try:
-                mode = current.lstat().st_mode
+                mode = longpath.lstat(current).st_mode
             except FileNotFoundError:
                 return  # nothing there; the walk will find nothing either
             except (OSError, ValueError) as exc:
@@ -1009,8 +1074,9 @@ class SnapshotStore:
         self._refuse_symlinked_parent(root, subtree)
         start = root if subtree == "." else root / subtree
         try:
-            st = start.lstat()
+            st = longpath.lstat(start)
         except FileNotFoundError:
+            _confirm_gone(start)
             return
         except (OSError, ValueError) as exc:
             raise SnapshotError(f"cannot inspect {start}: {exc}") from exc
@@ -1021,9 +1087,9 @@ class SnapshotStore:
         while stack:
             rel_dir, abs_dir = stack.pop()
             try:
-                with os.scandir(abs_dir) as it:
-                    children = sorted(it, key=lambda d: d.name)
+                children = sorted(longpath.entries(abs_dir), key=lambda d: d.name)
             except FileNotFoundError:
+                _confirm_gone(abs_dir)
                 continue  # removed while we walked
             except OSError as exc:
                 raise SnapshotError(f"cannot list {abs_dir}: {exc}") from exc
@@ -1031,17 +1097,18 @@ class SnapshotStore:
                 rel = child.name if rel_dir == "." else f"{rel_dir}/{child.name}"
                 if any(_is_under(rel, x) for x in excluded):
                     continue
+                # Built from the name: an entry's own `.path` may be extended-length.
                 if child.is_dir(follow_symlinks=False) and not _is_link_like_dir(child):
-                    stack.append((rel, Path(child.path)))
+                    stack.append((rel, abs_dir / child.name))
                 else:
-                    yield rel, Path(child.path)
+                    yield rel, abs_dir / child.name
 
     def _capture(self, rel: str, abs_path: Path, verified: set[str]) -> Entry | None:
         # Hold the path to the model before any byte is stored: a name the
         # manifest cannot carry fails here, typed, with no object written.
         self._entry(abs_path, path=rel)
         try:
-            st = abs_path.lstat()
+            st = longpath.lstat(abs_path)
             if stat.S_ISLNK(st.st_mode):
                 return self._entry(
                     abs_path,
@@ -1049,7 +1116,7 @@ class SnapshotStore:
                     kind="symlink",
                     mode=stat.S_IMODE(st.st_mode),
                     mtime_ns=st.st_mtime_ns,
-                    target=str(abs_path.readlink()),
+                    target=str(longpath.readlink(abs_path)),
                 )
             # A junction or other directory link is recorded as a symlink is:
             # its target, never followed.
@@ -1069,6 +1136,7 @@ class SnapshotStore:
             # after the lstat is skipped, as one found by the lstat is.
             fd, st = open_regular_file(abs_path)
         except FileNotFoundError:
+            _confirm_gone(abs_path)
             return None  # removed while we walked
         except UnsafeReadError:
             return None  # no longer a regular file: replaced while we walked
@@ -1744,7 +1812,7 @@ class SnapshotStore:
         2026-09-28 (M11-08) so `profiles` can find the files added under a
         profile's subtrees since it was saved without taking a snapshot.
         """
-        root = Path(root).absolute()
+        root = _plain_root(root)
         wanted = sorted({_normalize_rel(s, "subtree") for s in subtrees})
         excluded = sorted({_normalize_rel(x, "exclude") for x in exclude})
         found: dict[str, Literal["file", "symlink", "other"]] = {}
@@ -1753,8 +1821,9 @@ class SnapshotStore:
                 if rel in found:
                     continue
                 try:
-                    st = abs_path.lstat()
+                    st = longpath.lstat(abs_path)
                 except FileNotFoundError:
+                    _confirm_gone(abs_path)
                     continue  # removed while we walked
                 except OSError as exc:
                     raise SnapshotError(f"cannot inspect {abs_path}: {exc}") from exc

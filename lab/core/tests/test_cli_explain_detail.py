@@ -461,7 +461,10 @@ def test_a_file_no_command_reads_says_so(root: Path) -> None:
         "  views:        no wowlab command shows this file's contents\n"
         in ok("explain", addons_txt).stdout
     )
-    lua = explained("Interface/AddOns/DBM-Brawlers/DBM-Brawlers.lua-constructed")
+    # On disk: a path with nothing on it has its own note (M13-29).
+    lua_rel = "Interface/AddOns/DBM-Brawlers/DBM-Brawlers.lua-constructed"
+    (root / FLAVOR / lua_rel).write_bytes(b"")
+    lua = explained(lua_rel)
     assert lua.views == []
     assert lua.views_note is not None
     assert lua.views_note.startswith("no wowlab command shows this file's contents")
@@ -766,6 +769,14 @@ def _old_text(report: cli.ExplainReport) -> list[str]:
     result = report.result
     if isinstance(result, cli.layout.Unclassified):
         where = f" ({result.flavor_folder})" if result.flavor_folder else ""
+        if report.absent:
+            # M13-29: a path with nothing on it leads with that, in two lines.
+            prefix = f"{cli.layout.NOT_FOUND}, and "
+            assert result.reason.startswith(prefix)
+            return [
+                f"{report.query}{where}: {cli.layout.NOT_FOUND}",
+                f"  {result.reason.removeprefix(prefix)}",
+            ]
         return [f"{report.query}: no file-map row{where}: {result.reason}"]
     e = result.entry
     base = f"in flavor folder {result.flavor_folder}" if result.base == "flavor" else "install root"

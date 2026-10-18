@@ -25,7 +25,11 @@ own internal consistency.
    tree. Never point anything at a real install. The scratchpad is shared
    with every other agent of the session: prefix scratch files and logs
    with the ticket id, and read a `make ci` log only when its rootdir line
-   names your worktree.
+   names your worktree. Run `make ci` once, on the first round. On a
+   re-check after a fix round, run the suites the fix touches and your
+   probes only: the PR's required checks run the full suite on every push,
+   and a second full run on a loaded machine is where the timing and
+   memory probes flake (owner decision, 2026-10-17).
 
 ## Always check, whatever the diff claims to be about
 
@@ -88,5 +92,12 @@ will `git pull --rebase` before fixing.
 Findings ranked by severity. For each: file and line, the invariant, ADR,
 or plan section it violates, what you expected, what the code does, and,
 where you ran something, the command and its output. Unverified findings
-are labelled as such. **An empty findings list must state what was run to
-earn it.** End with `verdict: CLEAN | FINDINGS(<n>) | BLOCKED: <why>`.
+are labelled as such. A defect the branch neither introduces nor makes
+worse, whose fix lives outside its files (an older wording the branch only
+reaches, a doc already stale on `main`, a wiki page, a follow-up), goes
+under its own heading, **Off the branch**, and does not count toward the
+verdict; the conductor files it. A caller the branch broke in a file it did
+not edit, a doc the branch made stale, or an unlisted user-facing change
+is a finding as before. **An empty
+findings list must state what was run to earn it.** End with
+`verdict: CLEAN | FINDINGS(<n>) | BLOCKED: <why>`.

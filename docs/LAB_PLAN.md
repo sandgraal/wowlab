@@ -223,6 +223,16 @@ default holds an install, discovery raises `InstallNotFoundError`, which
 lists the locations it searched. Executable names are not part of
 discovery; `guard` finds them itself (M10-11 amendment).
 
+*Amended 2026-10-17 (M13-37):* the "symlink" of (6) is a link by
+`install.is_link`, the one link test discovery shares with `layout`, `tree`,
+`filemap gaps` and `explain` (`layout.is_link` and `gaps.is_link` are the
+same function; the M13-35 amendment under §6.2): a symlink, a junction, or
+any other Windows reparse point with the name-surrogate bit (a WCI link, a
+WSL symlink). A child named `_*_` that is such a link, or whose
+`.flavor.info` is one, is named in `other_dirs` and nothing is `stat`ed,
+listed or read through it, so no command builds a `Layout` for it. A
+reparse point without that bit (a cloud placeholder) is taken as before.
+
 ### 6.2 `layout` — typed walk of a flavor (M10-06)
 
 Pure read. Produces the inventory every later tool starts from:
@@ -252,12 +262,37 @@ Symlinks are reported and not followed outside the install. Walk depth and
 entry counts are bounded; an `Interface/AddOns` with 400 addons must inventory
 in under two seconds on an SSD.
 
+*Amended 2026-10-17 (M13-35):* a "link" here is what `layout.is_link` says,
+the one test `filemap gaps` (`gaps.is_link`), `explain` and `tree` share: a
+symlink, a junction, or any other Windows reparse point with the
+name-surrogate bit (a WCI link, a WSL symlink). Each is reported in
+`Inventory.symlinks` and never walked. A WCI link or a WSL symlink has no
+link text `os.readlink` can read, so it has no target and no inside or
+outside answer: `Symlink.target` and `Symlink.inside_install` are None, and
+`tree` says "link (where it points is unknown), not followed". A link whose
+text reads but whose resolution fails (a loop) has a target and no inside
+or outside answer either: "link to <target> (where it points is unknown),
+not followed". `tree` words
+a link the same way at the install root and in a flavor folder: "link to
+<target> (inside|outside the install), not followed". A flavor folder that
+is such a link is listed by `tree` as a link, and nothing in it is listed
+(`tree --install` notes it as "flavor folder; link …, not followed; nothing
+in it is listed"). Since M13-37 discovery uses the same test, so such a
+folder is named in `Install.other_dirs` rather than taken as a flavor, and
+`tree --install` notes it as "link …, not followed; not taken as a flavor
+folder" (`gaps.NOT_A_FLAVOR_LINK`, worded so since M13-37 so that "not
+followed" is said once); the flavor-folder wording above
+remains for a folder that becomes a link after discovery. A reparse point
+without that bit (a cloud placeholder, a deduplicated file) is walked and
+named in `Inventory.reparse_points` (M13-33).
+
 *Amended 2026-09-22 (M10-06 reviews):* (1) **Symlinks and junctions are never
 followed**, whether they point inside the install or outside it. Each is
 reported in `Inventory.symlinks` with its link text and `inside_install`,
 and left out of the typed lists. `inside_install` uses `Path.resolve()`,
-which reads link text and metadata but never lists or opens anything
-outside. (2) **Signatures:** `classify(path, install, *, is_dir=None)`
+which reads link text and metadata but never lists or reads anything
+outside; on Windows, resolving opens a link with no access to read its
+final name (wording corrected 2026-10-17, M13-35). (2) **Signatures:** `classify(path, install, *, is_dir=None)`
 (flavor folders are the ones discovery reported; the install root and
 flavor folder are also matched by their on-disk spelling on a
 case-insensitive volume) and `Layout.classify(path, *, is_dir=None)`. Both
@@ -746,7 +781,8 @@ an install (L1), never inside the repository.
 - Default subtrees: `WTF/`, `Interface/AddOns/`, `Fonts/`, and loose files
   under `Interface/` outside `AddOns/`. `Cache/`, `Logs/`, `Screenshots/`,
   `Errors/` and everything under `Data/` are excluded by default;
-  `Screenshots/` can be opted in.
+  `Screenshots/` can be opted in; a restore never writes it back (§6.11,
+  M13-30).
 - `create`, `list`, `show`, `diff(a, b)` (added / removed / changed, with a
   `luadata`-aware structural diff for `.lua` SavedVariables when both sides
   parse), `verify` (re-hash objects), `gc` (unreferenced objects, dry-run
@@ -854,6 +890,27 @@ the owner removes it. (d) `verify` names a linked `objects/` as `objects/`
 was checked and that reads still follow it. (e) `GcReport` gains
 `removed_bytes`, the size of the objects actually removed; `snap gc` reports
 it, not `unreferenced_bytes`, after a real run.
+
+*Amended 2026-10-17 (M13-15, long paths on Windows):* `create` and
+`list_tree` reach a path past Windows' plain limit (`MAX_PATH`) whatever
+`LongPathsEnabled` says: `wowlab_core.longpath` spells a path whose absolute
+form is 240 UTF-16 units or more (the unit Windows counts in; a character
+outside the Basic Multilingual Plane counts two) as `\\?\C:\...` (or
+`\\?\UNC\server\share\...`) as the argument of the system call only. Paths
+are plain everywhere else. A root given relative is made absolute first; a
+root given in `\\?\` form is recorded plain in the manifest's
+`install_root`, and refused when it has no plain spelling (a volume GUID
+path, a `..` component, a trailing dot). A file or folder the walk is told
+is missing (`FileNotFoundError`, which Windows also raises for a plain path
+past the limit) is skipped as removed only when an extended-length `lstat`
+agrees; that `lstat` prefixes the listed path as it is, without normalising
+it, so a name such as `foo.` is looked at itself. Otherwise `create` raises
+`SnapshotError` and writes no manifest. The same spelling reaches `install`
+discovery, `layout`, the first-run survey, `doctor`'s client and config
+reads and the readers (`luadata.read`, `wtfconfig.read_*`, `toc.read_toc`,
+`combatlog.read_log`). `Install.root` and `doctor`'s output are plain:
+discovery reports a `\\?\` root with no plain spelling as not an install
+(`unreadable`; the message quotes the root as given).
 
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 
@@ -1063,6 +1120,24 @@ check-before-create order stops every mistake short of that; an
 implementation may re-check after creating, or create relative to directory
 handles, as defence in depth.
 
+*Amended 2026-10-17 (M13-15, long paths on Windows):* every lookup, read and
+write the gate makes in an install (the walk, the temp file beside the
+target, the replace or rename, an unlink, a folder it creates or removes)
+passes a path past the plain limit to the system in extended-length form
+(`wowlab_core.longpath`, as in §6.9), so a file deep in an install is
+written, restored and undone with `LongPathsEnabled` off. That includes a
+target whose plain path is at the limit, where only the temp file beside it
+is past it. The journal, the pre-write manifest and every message name the
+plain path. A flavor handed to `transaction()` in `\\?\C:\...` form is taken
+by its plain spelling, so `undo()` and restore work on what it journals. A
+flavor that resolves to anything but a local absolute path (a network path,
+`\\?\UNC\...` included, or a volume with no drive letter) is refused on
+enter with nothing written or journaled (on Windows a network spelling is
+refused before any lookup; on POSIX, where `//x` is the local `/x`, only
+the resolved path is held to it): `undo()` and restore accept only a
+local absolute root (item 1), and a change `undo()` could not reverse is
+never written.
+
 ### 6.11 CLI — `wowlab` (M10-14)
 
 ```
@@ -1109,6 +1184,35 @@ why. Such a file is restored only when it is named with `--paths`.
 subtrees, as "no; wowlab leaves it alone (a restore writes it only if you
 name it with --paths)". `snap restore` and `undo` also take `--json` (the
 plan, and with `--yes` the result).
+
+*Amended 2026-10-17 (M13-30, from the #195 domain review):* a snapshot
+taken with `snap create --screenshots` holds `Screenshots/`, whose file-map
+row (`screenshots`) has Edit `n/a`; the write gate refuses it. A
+whole-snapshot restore of such a snapshot sets aside every entry under a
+top-level folder whose row is `screenshots` (only that row; no other row
+with Edit `n/a` is a snapshot subtree), and restores the rest. Each
+screenshot is listed in `RestoreReport.not_restored` (apart from the Edit
+`no` list in `skipped`) with what the disk holds now (`same`, `differs`,
+`missing`, or `behind_link` when a folder on its way, `Screenshots/`
+itself, is now a link: then nothing behind it is read; read-only, size
+first, then content); it stays in the snapshot. The text plan counts them,
+counts those that differ or are missing apart from those not read, names
+the first ten of either kind with its state, and never offers `--paths`
+for them; when every one matches it says the snapshot also holds them and
+all still match. Naming one with `--paths` is refused
+with the gate's reason (exit 3), followed by one line saying wowlab never
+writes `Screenshots/`. Because the gate's whole restore cannot leave
+entries out, the rest is restored by name, and every entry a whole restore
+would check is named, so the gate refuses what it would refuse there (a
+reserved name, a case collision, a changed link or executable) and a file
+that changes between the plan and the confirm shows in its plan and rolls
+the restore back. The only entries left unnamed are unchanged links and
+unchanged executables, which a whole restore leaves alone and a named one
+refuses; the CLI finds them by reading the disk (`profiles.disk_state`,
+following no link; a Windows junction counts as a link, as it does for the
+gate; an executable is unchanged only with the entry's bytes and permission
+bits, as `guard` judges it) and reads them again before the commit. A whole restore that skips
+an Edit `no` file is restored by name the same way. `guard` is unchanged.
 
 *Amended 2026-09-29 (M11-30):* text output is terminal-safe. No C0
 control (tab and line feed included), no DEL, no C1 control and no Unicode
@@ -1419,9 +1523,11 @@ yet, and a fixture produced by the thing under test proves nothing).
   It ran on every PR as a required check from #173 until later the same day,
   when the owner took it off the PR path because every PR waited 15 to 30
   minutes on it. It now runs in `.github/workflows/windows.yml` after each
-  merge to `main`, nightly, and on demand for a branch, and is not required
-  (ADR-0014 amendment). The `skipif` tests run there, so a Windows regression
-  is found after merge, not before; the conductor checks the latest runs
+  merge to `main`, nightly, on demand for a branch, and (since 2026-10-17) on
+  a pull request that touches `lab/**`, the lockfile, the root `pyproject.toml`,
+  `conftest.py` or the workflow itself; it is not required (ADR-0014 amendments). The `skipif` tests run there, so a Windows regression
+  is found on the PR when the PR touches those paths and after merge
+  otherwise; the conductor checks the latest runs
   (`docs/AGENT_WORKFLOW.md`).
 
 ## 10. Wave 1 tickets

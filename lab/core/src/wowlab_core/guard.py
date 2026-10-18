@@ -13,7 +13,11 @@ What entering a transaction does, in this order, before the body runs:
 1. The flavor is validated: an absolute path to a directory that is not a
    link, holding a regular `.flavor.info`, whose parent (the install root)
    holds a regular `.build.info` (§6.1). A flavor path read back from the
-   journal by `undo()` is validated the same way; it is untrusted.
+   journal by `undo()` is validated the same way; it is untrusted. A flavor
+   spelled in extended-length form (`\\\\?\\C:\\...`) is taken by its plain
+   spelling, and one that resolves to anything but a local absolute path (a
+   network path, a volume with no drive letter) is refused, since `undo()`
+   and restore could not reach it (M13-15).
 2. The store (a directory path; `None` means `snapshot.default_store_path()`)
    must not overlap the install in either direction (L1), and neither may
    the two lock files nor `locks/` (below), compared after resolving. None
@@ -111,7 +115,12 @@ the error. A path whose only operation was refused is not journaled as
 changed, keeps what is on disk, and is left alone by `undo()`.
 
 Mutations are made by absolute path, on every platform, so the same code runs
-on Windows (where there are no directory descriptors). The residual window is
+on Windows (where there are no directory descriptors). On Windows a path past
+the plain limit (the target, its temp file, a folder on the way) is spelled
+in extended-length form only as the argument of the system call
+(`wowlab_core.longpath`, M13-15), so a long path is reached with
+`LongPathsEnabled` off; the journal, the manifest and every message name the
+plain path. The residual window is
 the moment between the last re-check and the rename or unlink; a process of
 the same user that swaps a directory for a link in exactly that moment can
 redirect one rename (whose unguessable temp-file source then does not exist,
@@ -187,7 +196,7 @@ from typing import Literal, NoReturn, Protocol
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from wowlab_core import process
+from wowlab_core import longpath, process
 from wowlab_core import snapshot as _snapshots
 from wowlab_core.snapshot import (
     Entry,
@@ -897,7 +906,7 @@ class _Place:
 
 def _require_regular_file(path: Path, what: str) -> None:
     try:
-        st = path.lstat()
+        st = longpath.lstat(path)
     except OSError as exc:
         raise GuardError(f"not a flavor of an install: {what} {path} is missing ({exc})") from exc
     if not stat.S_ISREG(st.st_mode) or _is_link(st):
@@ -906,27 +915,49 @@ def _require_regular_file(path: Path, what: str) -> None:
 
 def _disk_name(root: Path, real: Path) -> str:
     """The flavor folder's name as the install root lists it."""
-    names = [p.name for p in root.iterdir()]
+    names = [p.name for p in longpath.iterdir(root)]
     if real.name in names:
         return real.name
     for name in names:
-        if _fold(name) == _fold(real.name) and (root / name).samefile(real):
+        if _fold(name) == _fold(real.name) and longpath.samefile(root / name, real):
             return name
     raise GuardError(f"{real} is not listed in {root}")
+
+
+def _refuse_unreachable(given: Path, path: Path) -> None:
+    """§6.10: a change `undo()` could not reverse must not be written.
+    `undo()` and restore accept only a local absolute root (item 1,
+    2026-09-23), so a flavor named by, or resolving to, anything else (a
+    network path, `\\\\?\\UNC\\...` included, or a volume with no drive
+    letter, which has no plain spelling) is refused on enter (M13-15)."""
+    if not _local_absolute(str(path)):
+        named = "is" if path == given else f"resolves to {path}, which is"
+        raise GuardError(
+            f"the flavor {given} {named} not a local absolute path; undo and restore "
+            "could not reach it, so nothing is written there"
+        )
 
 
 def _place(path_value: object, version: object) -> _Place:
     """Validate a flavor path the way §6.1 defines a flavor. Raises GuardError."""
     if not isinstance(path_value, str | os.PathLike):
         raise GuardError(f"a flavor needs a path, not {type(path_value).__name__}")
-    given = Path(path_value)
+    # A flavor spelled `\\?\C:\...` is taken by its plain spelling (M13-15),
+    # so the journal and the pre-write manifest name a root that `undo()` and
+    # restore accept; every call below reaches a long path all the same.
+    given = longpath.plain(Path(path_value))
     if not given.is_absolute():
         raise GuardError(f"a flavor path must be absolute: {given}")
+    if os.name == "nt":
+        # Before any lookup, so `\\server\share` is never asked anything. On
+        # POSIX the spelling proves nothing (`//x` is the local `/x`): the
+        # resolved paths are checked below.
+        _refuse_unreachable(given, given)
     try:
-        st = given.lstat()
+        st = longpath.lstat(given)
         if _is_link(st) or not stat.S_ISDIR(st.st_mode):
             raise GuardError(f"the flavor folder {given} is not a directory (links are refused)")
-        real = given.resolve(strict=True)
+        real = longpath.resolve(given, strict=True)
         root = real.parent
         if root == real:
             raise GuardError(f"the flavor folder {given} has no install root above it")
@@ -934,10 +965,12 @@ def _place(path_value: object, version: object) -> _Place:
         _require_regular_file(root / ".build.info", ".build.info")
         folder = _disk_name(root, real)
         flavor_dir = root / folder
-        root_st = root.lstat()
-        flavor_st = flavor_dir.lstat()
+        root_st = longpath.lstat(root)
+        flavor_st = longpath.lstat(flavor_dir)
     except (OSError, RuntimeError, ValueError) as exc:
         raise GuardError(f"not a flavor of an install: {given} ({exc})") from exc
+    for resolved in (root, flavor_dir):
+        _refuse_unreachable(given, resolved)
     if (
         _is_link(flavor_st)
         or not stat.S_ISDIR(flavor_st.st_mode)
@@ -957,7 +990,7 @@ def _place(path_value: object, version: object) -> _Place:
 
 def _same_dir(a: Path, b: Path) -> bool:
     try:
-        return a.samefile(b)
+        return longpath.samefile(a, b)
     except (OSError, ValueError):
         return False
 
@@ -1031,14 +1064,14 @@ def _local_absolute(text: str) -> bool:
 def _client_names(flavor_dir: Path) -> list[str]:
     """Executable names in the flavor folder, for `process` (`extra_names`)."""
     names: list[str] = []
-    for child in sorted(flavor_dir.iterdir()):
+    for child in sorted(longpath.iterdir(flavor_dir)):
         folded = child.name.casefold()
         if folded.endswith(".exe"):
             names.append(child.name)
         elif folded.endswith(".app"):
             names.append(child.name[: -len(".app")])
             with contextlib.suppress(OSError):
-                names.extend(p.name for p in (child / "Contents" / "MacOS").iterdir())
+                names.extend(p.name for p in longpath.iterdir(child / "Contents" / "MacOS"))
     return names
 
 
@@ -1137,7 +1170,7 @@ def _verify(chain: Iterable[tuple[Path, _Identity]], rel: str) -> None:
     """Each directory is still the one the walk found, and still not a link."""
     for path, expected in chain:
         try:
-            st = path.lstat()
+            st = longpath.lstat(path)
         except OSError as exc:
             raise GuardError(f"{rel}: {path} changed during the transaction ({exc})") from exc
         if _is_link(st) or not stat.S_ISDIR(st.st_mode) or _identity(st) != expected:
@@ -1157,7 +1190,7 @@ def _entry(directory: Path, name: str, rel: str) -> os.stat_result | None:
     name that only matches an existing one by case or Unicode form, and a
     name the file system resolves although the directory does not list it."""
     try:
-        names = {p.name for p in directory.iterdir()}
+        names = {p.name for p in longpath.iterdir(directory)}
     except OSError as exc:
         raise GuardError(f"{rel}: cannot list {directory}: {exc}") from exc
     path = directory / name
@@ -1168,14 +1201,14 @@ def _entry(directory: Path, name: str, rel: str) -> os.stat_result | None:
                 f"{rel}: {name!r} collides with {clash[0]!r} already in {directory}"
             )
         try:
-            path.lstat()
+            longpath.lstat(path)
         except FileNotFoundError:
             return None
         except OSError as exc:
             raise GuardError(f"{rel}: cannot inspect {path}: {exc}") from exc
         raise PathNotAllowedError(f"{rel}: {path} resolves to a file listed under another name")
     try:
-        st = path.lstat()
+        st = longpath.lstat(path)
     except FileNotFoundError:
         return None
     except OSError as exc:
@@ -1271,7 +1304,7 @@ def _changed(rel: str, why: str) -> ChangedSinceSnapshotError:
 
 def _stat_or_none(path: Path, rel: str) -> os.stat_result | None:
     try:
-        return path.lstat()
+        return longpath.lstat(path)
     except FileNotFoundError:
         return None
     except OSError as exc:
@@ -1328,7 +1361,8 @@ def _replace(
     )
     _verify(chain, rel)
     try:
-        fd = os.open(tmp, flags, create_mode)
+        with longpath.plain_errors():
+            fd = os.open(longpath.extended(tmp), flags, create_mode)
     except OSError as exc:
         raise GuardError(f"cannot write {rel}: {exc}") from exc
     replaced = False
@@ -1338,7 +1372,7 @@ def _replace(
             # Where the temp file really is: a parent swapped for a link
             # between the check and the open shows here.
             _verify(chain, rel)
-            if _identity(tmp.lstat()) != _identity(opened):
+            if _identity(longpath.lstat(tmp)) != _identity(opened):
                 raise GuardError(f"{rel}: the temp file is not where it was created")
             _write_all(fd, data)
             if chmod_to is not None and os.name == "posix":
@@ -1347,13 +1381,18 @@ def _replace(
         finally:
             os.close(fd)
         _recheck(found, chain, expect_hash)
-        if found.st is None and os.name == "nt":
-            try:
-                tmp.rename(found.path)  # os.rename: never replaces on Windows
-            except FileExistsError as exc:
-                raise _changed(rel, "appeared after guard found it absent") from exc
-        else:
-            tmp.replace(found.path)
+        # Both names by their extended-length spelling past the plain limit
+        # (M13-15): the temp name is longer than the target's, so it can be
+        # the one past it.
+        source, target = longpath.xpath(tmp), longpath.xpath(found.path)
+        with longpath.plain_errors():
+            if found.st is None and os.name == "nt":
+                try:
+                    source.rename(target)  # os.rename: never replaces on Windows
+                except FileExistsError as exc:
+                    raise _changed(rel, "appeared after guard found it absent") from exc
+            else:
+                source.replace(target)
         replaced = True
         _verify_after(chain, rel)
     except OSError as exc:
@@ -1361,7 +1400,7 @@ def _replace(
     finally:
         if not replaced:
             with contextlib.suppress(OSError):
-                tmp.unlink()
+                longpath.xpath(tmp).unlink()
     _fsync_dir(found.path.parent)
 
 
@@ -1392,7 +1431,8 @@ def _mutate(
             return
         _recheck(found, found.chain, expect_hash)
         try:
-            found.path.unlink()
+            with longpath.plain_errors():
+                longpath.xpath(found.path).unlink()
         except OSError as exc:
             raise GuardError(f"cannot delete {rel}: {exc}") from exc
         _verify_after(found.chain, rel)
@@ -1403,8 +1443,9 @@ def _mutate(
         directory = place.flavor_dir.joinpath(*rel_dir.split("/"))
         _verify(chain, rel)
         try:
-            directory.mkdir()
-            st = directory.lstat()
+            with longpath.plain_errors():
+                longpath.xpath(directory).mkdir()
+            st = longpath.lstat(directory)
         except OSError as exc:
             raise GuardError(f"cannot create {rel_dir} for {rel}: {exc}") from exc
         created.append(rel_dir)
@@ -1425,7 +1466,8 @@ def _remove_dir(place: _Place, rel_dir: str) -> None:
         return
     _verify(found.chain, rel_dir)
     try:
-        found.path.rmdir()
+        with longpath.plain_errors():
+            longpath.xpath(found.path).rmdir()
     except OSError as exc:
         raise GuardError(f"cannot remove {rel_dir}: {exc}") from exc
 
@@ -1702,7 +1744,8 @@ class _Transaction:
                 ):
                     raise GuardError(f"{rel} changed before its removal")
                 try:
-                    found.path.unlink()
+                    with longpath.plain_errors():
+                        longpath.xpath(found.path).unlink()
                 except OSError as exc:
                     raise GuardError(f"cannot remove {rel}: {exc}") from exc
                 _verify_after(found.chain, rel)
@@ -2007,8 +2050,8 @@ class _Transaction:
             return False
         path = self._place.flavor_dir.joinpath(*parts)
         try:
-            linked = path.is_symlink() or path.is_junction()
-            return linked and str(path.readlink()) == entry.target
+            linked = longpath.is_symlink(path) or longpath.is_junction(path)
+            return linked and str(longpath.readlink(path)) == entry.target
         except OSError:
             return False
 

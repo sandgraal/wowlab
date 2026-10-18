@@ -540,6 +540,189 @@ def test_symlinked_flavor_folder_is_listed_not_followed_constructed(tmp_path: Pa
     assert got.other_dirs == ("_linked_",)
 
 
+# ─── links by the shared link test (M13-37) ──────────────────────────────────
+#
+# Constructed (L8, boundary): a Windows reparse point cannot be made on macOS
+# or Linux, so the `lstat` result of the chosen path is stood in with the
+# attribute and tag Windows reports for it, through `Path.lstat` (the one
+# place discovery reads it), as `test_cli_tree_links.py` does. A junction
+# also answers yes to `Path.is_junction`, as it does on Windows.
+
+_MOUNT_POINT = 0xA0000003  # IO_REPARSE_TAG_MOUNT_POINT, a junction: name surrogate
+_WCI_LINK = 0xA0000027  # IO_REPARSE_TAG_WCI_LINK_1: name surrogate, not a junction
+_LX_SYMLINK = 0xA000001D  # IO_REPARSE_TAG_LX_SYMLINK (WSL `ln -s`): name surrogate
+_CLOUD_PLACEHOLDER = 0x9000001A  # IO_REPARSE_TAG_CLOUD: no name-surrogate bit
+# Windows reports a WSL symlink as a file whatever it points at.
+_WSL_MODE = stat.S_IFREG | 0o644
+
+_NAME_SURROGATES = [
+    pytest.param(_MOUNT_POINT, None, id="constructed-junction"),
+    pytest.param(_WCI_LINK, None, id="constructed-wci-link"),
+    pytest.param(_LX_SYMLINK, _WSL_MODE, id="constructed-wsl-symlink"),
+]
+
+
+class _ReparseStat:
+    """An `lstat` result as Windows gives it for a reparse point."""
+
+    def __init__(self, real: os.stat_result, tag: int, mode: int | None) -> None:
+        self.st_mode = real.st_mode if mode is None else mode
+        self.st_size = real.st_size
+        self.st_mtime_ns = real.st_mtime_ns
+        self.st_dev = real.st_dev
+        self.st_ino = real.st_ino
+        self.st_file_attributes = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT
+        self.st_reparse_tag = tag
+
+
+def _fake_reparse(
+    monkeypatch: pytest.MonkeyPatch, path: Path, tag: int, mode: int | None
+) -> list[str]:
+    """`path`'s `lstat` reports `tag`. Returns the list that collects every
+    path below `path` that is `stat`ed, opened or listed from then on (the
+    reads that would go through the link)."""
+    through: list[str] = []
+    marked, below = str(path), str(path) + os.sep
+    real_lstat, real_stat, real_junction = Path.lstat, Path.stat, Path.is_junction
+
+    def note(target: object) -> None:
+        if isinstance(target, (str, os.PathLike)) and os.fspath(target).startswith(below):
+            through.append(os.fspath(target))
+
+    def path_lstat(self: Path) -> Any:
+        note(self)
+        st = real_lstat(self)
+        return _ReparseStat(st, tag, mode) if str(self) == marked else st
+
+    def path_stat(self: Path, *, follow_symlinks: bool = True) -> Any:
+        note(self)
+        return real_stat(self, follow_symlinks=follow_symlinks)
+
+    def audit(event: str, args: tuple[Any, ...]) -> None:
+        if event in ("open", "os.scandir", "os.listdir") and args:
+            note(args[0])
+
+    monkeypatch.setattr(Path, "lstat", path_lstat)
+    monkeypatch.setattr(Path, "stat", path_stat)
+    if tag == _MOUNT_POINT:
+        monkeypatch.setattr(
+            Path, "is_junction", lambda self: str(self) == marked or real_junction(self)
+        )
+    _READ_HOOKS.append(audit)
+    return through
+
+
+# Audit hooks cannot be removed; this one forwards to the hooks of the test
+# that is running and is inert otherwise.
+_READ_HOOKS: list[Any] = []
+sys.addaudithook(lambda event, args: [hook(event, args) for hook in _READ_HOOKS])
+
+
+@pytest.fixture(autouse=True)
+def _no_read_hooks() -> Iterator[None]:
+    yield
+    _READ_HOOKS.clear()
+
+
+@pytest.mark.parametrize(("tag", "mode"), _NAME_SURROGATES)
+def test_a_flavor_folder_that_is_a_name_surrogate_is_a_link_not_followed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tag: int, mode: int | None
+) -> None:
+    """Discovery judges a link by `is_link`, the test `tree`, `filemap gaps`
+    and `explain` use (M13-37): a WCI link or a WSL symlink is a link like a
+    junction, named in `other_dirs`, and nothing is read through it."""
+    root = _make_install(
+        tmp_path, REAL_BUILD_INFO, {REAL_FOLDER: REAL_FLAVOR_INFO, "_other_": REAL_FLAVOR_INFO}
+    )
+    assert [f.folder for f in read_install(root).flavors] == [REAL_FOLDER, "_other_"]
+    through = _fake_reparse(monkeypatch, root / REAL_FOLDER, tag, mode)
+
+    got = discover(root, environ={}, defaults=[])
+
+    assert [f.folder for f in got.flavors] == ["_other_"]
+    assert got.other_dirs == (REAL_FOLDER,)
+    assert through == []  # its .flavor.info was never stated or opened
+
+
+@pytest.mark.parametrize(("tag", "mode"), _NAME_SURROGATES)
+def test_a_flavor_info_that_is_a_name_surrogate_is_not_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tag: int, mode: int | None
+) -> None:
+    """Constructed: a `.flavor.info` that is a WSL symlink is reported as a
+    regular file by Windows; it is a link all the same, so its folder is no
+    flavor and the file is never opened."""
+    root = _real_install(tmp_path)
+    info = root / REAL_FOLDER / ".flavor.info"
+    opened: list[str] = []
+    _READ_HOOKS.append(
+        lambda event, args: (
+            opened.append(args[0]) if event == "open" and args[0] == str(info) else None
+        )
+    )
+    _fake_reparse(monkeypatch, info, tag, _WSL_MODE if mode is None else mode)
+
+    got = read_install(root)
+
+    assert got.flavors == ()
+    assert got.other_dirs == (REAL_FOLDER,)
+    assert opened == []
+
+
+def test_a_flavor_folder_that_is_a_cloud_placeholder_is_still_a_flavor_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reparse point with no name-surrogate bit holds real content: it is
+    taken as before (M13-04, an install under OneDrive)."""
+    root = _real_install(tmp_path)
+    _fake_reparse(monkeypatch, root / REAL_FOLDER, _CLOUD_PLACEHOLDER, None)
+
+    got = read_install(root)
+
+    assert [f.folder for f in got.flavors] == [REAL_FOLDER]
+    assert got.other_dirs == ()
+
+
+@pytest.mark.parametrize(
+    ("error", "named"),
+    [
+        pytest.param(FileNotFoundError(2, "gone"), False, id="constructed-vanished"),
+        pytest.param(NotADirectoryError(20, "gone"), False, id="constructed-parent-replaced"),
+        pytest.param(PermissionError(13, "refused"), True, id="constructed-refused"),
+    ],
+)
+def test_a_child_whose_lstat_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: OSError, named: bool
+) -> None:
+    """A `_*_` child that is gone between the listing and its `lstat` is
+    skipped, as it was before discovery used `is_link`; one whose `lstat` is
+    refused is named in `other_dirs`, since it could not be checked."""
+    root = _make_install(
+        tmp_path, REAL_BUILD_INFO, {REAL_FOLDER: REAL_FLAVOR_INFO, "_racing_": REAL_FLAVOR_INFO}
+    )
+    racing, real_lstat = root / "_racing_", Path.lstat
+
+    def lstat(self: Path) -> Any:
+        if self == racing:
+            raise error
+        return real_lstat(self)
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+
+    got = read_install(root)
+
+    assert [f.folder for f in got.flavors] == [REAL_FOLDER]
+    assert got.other_dirs == (("_racing_",) if named else ())
+
+
+def test_discovery_uses_the_one_link_test() -> None:
+    """One link test (M13-35, M13-37): `layout.is_link` and `gaps.is_link`
+    are `install.is_link`."""
+    from wowlab_core import gaps, layout
+
+    assert layout.is_link is install_mod.is_link
+    assert gaps.is_link is install_mod.is_link
+
+
 def test_empty_flavor_info_gives_an_empty_product_and_no_version_constructed(
     tmp_path: Path,
 ) -> None:

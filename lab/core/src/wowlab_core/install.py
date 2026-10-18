@@ -21,10 +21,14 @@ reached through the explicit root or the environment variable only.
 A directory is an install if it holds a readable, regular file
 `.build.info`. A flavor is a child directory whose name starts and ends with
 `_` and which holds a regular file `.flavor.info`. A child named `_*_`
-without a regular `.flavor.info`, or one that is a symlink, or whose
-`.flavor.info` is a symlink, is not a flavor; its name is listed in
-`other_dirs` (a regular file of that name is ignored). Symlinks are not
-followed, whether the folder or its `.flavor.info`. The flavor's product code comes
+without a regular `.flavor.info`, or one that is a link, or whose
+`.flavor.info` is a link, is not a flavor; its name is listed in
+`other_dirs` (a regular file of that name is ignored). A link is what
+`is_link` says, the one link test of `layout`, `tree`, `filemap gaps` and
+`explain` (M13-35, M13-37): a symlink, a junction, or any other Windows
+reparse point that names another path (a WCI link, a WSL symlink). Links are
+not followed, whether the folder or its `.flavor.info`: nothing is listed or
+read through one. The flavor's product code comes
 from `.flavor.info` and is joined to the `.build.info` row with the same
 `Product`. Discovery never raises on a partial install: a flavor with no
 matching row, or with an unreadable `.flavor.info`, is returned with
@@ -50,6 +54,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from wowlab_core import longpath
+from wowlab_core.snapshot import _is_link_stat as _snapshot_link
+
 __all__ = [
     "BUILD_INFO",
     "ENV_ROOT",
@@ -63,6 +70,7 @@ __all__ = [
     "NotAnInstallError",
     "default_roots",
     "discover",
+    "is_link",
     "parse_build_info",
     "parse_flavor_info",
     "read_install",
@@ -267,8 +275,8 @@ class Install(BaseModel):
     # folder exists or is complete; see `flavors`.
     products: tuple[BuildInfoRow, ...]
     # Children named `_*_` that are not flavors (no regular .flavor.info, a
-    # symlinked .flavor.info, or a symlinked folder; symlinks are not
-    # followed), sorted.
+    # .flavor.info that is a link, or a folder that is a link, by `is_link`;
+    # links are not followed), sorted.
     other_dirs: tuple[str, ...]
     raw_build_info: bytes  # the file, byte for byte (L4)
     # True when .build.info or any .flavor.info had bytes that are not UTF-8;
@@ -418,15 +426,38 @@ def default_roots(
 
 
 def _as_path(value: Path | str) -> Path:
-    return Path(value).expanduser().absolute()
+    """Absolute, and plain where it was given in extended-length form
+    (`\\\\?\\C:\\...`): `Install.root` and every flavor path are plain
+    (M13-15), and every read below reaches a long path all the same."""
+    return longpath.plain(Path(value).expanduser().absolute())
+
+
+def is_link(path: Path, st: os.stat_result) -> bool:
+    """A link that is never followed: a symlink, a junction, or a Windows
+    reparse point with the name-surrogate bit (a reparse point that names
+    another path, such as a WCI link or a WSL symlink), the rule `snapshot`
+    uses (`snapshot._is_link_stat`). `st` is `path`'s `lstat`. The one link
+    test of discovery, the inventory walk, `tree`, `filemap gaps` and
+    `explain` (`layout.is_link` and `gaps.is_link` are this function;
+    M13-35, M13-37). Other reparse points (OneDrive cloud placeholders,
+    deduplicated files) hold real content and are walked, as discovery and
+    `layout` take them (M13-04: an install under OneDrive is reported, never
+    refused)."""
+    if _snapshot_link(st):
+        return True
+    try:
+        return longpath.is_junction(path)
+    except OSError:
+        return False
 
 
 def _is_regular(path: Path) -> bool:
-    """A regular file, not reached through a symlink at the last component."""
+    """A regular file that is no link at the last component (`is_link`)."""
     try:
-        return stat.S_ISREG(path.lstat().st_mode)
+        st = longpath.lstat(path)
     except OSError:
         return False
+    return stat.S_ISREG(st.st_mode) and not is_link(path, st)
 
 
 def _flavor_folder_hint(root: Path) -> str:
@@ -436,7 +467,7 @@ def _flavor_folder_hint(root: Path) -> str:
     if _is_regular(root / FLAVOR_INFO):
         return f"; this looks like the flavor folder {root.name!r}; pass its parent {root.parent}"
     try:
-        parent_is_install = (root.parent / BUILD_INFO).is_file()
+        parent_is_install = longpath.is_file(root.parent / BUILD_INFO)
     except OSError:
         return ""
     return f"; its parent {root.parent} is an install; pass that" if parent_is_install else ""
@@ -445,13 +476,24 @@ def _flavor_folder_hint(root: Path) -> str:
 def _probe(root: Path, source: Source) -> None:
     """Raise `NotAnInstallError` unless `root/.build.info` is a regular file.
 
-    A refusal from the operating system is `unreadable`, never `missing`.
+    A refusal from the operating system is `unreadable`, never `missing`. So
+    is a root spelled `\\\\?\\...` that has no plain spelling (a volume GUID
+    path, a `..` component, a trailing dot): `Install.root` is always plain
+    (M13-15), and the write gate could not restore into such a root.
     """
+    if longpath.ON_WINDOWS and str(root).startswith("\\\\?\\"):
+        raise NotAnInstallError(
+            root,
+            source,
+            "unreadable",
+            "an extended-length path with no plain spelling; name the install as "
+            "C:\\... or \\\\server\\share\\...",
+        )
     try:
-        st = (root / BUILD_INFO).stat()
+        st = longpath.stat(root / BUILD_INFO)
     except (FileNotFoundError, NotADirectoryError):
         try:
-            root_exists = root.exists()
+            root_exists = longpath.exists(root)
         except OSError:
             root_exists = True
         if not root_exists:
@@ -490,7 +532,7 @@ def _resolve(
         # something there that is not a directory could not be checked: it is
         # passed over and reported as such, never as searched.
         try:
-            st = candidate.stat()
+            st = longpath.stat(candidate)
         except (FileNotFoundError, NotADirectoryError):
             searched.append(candidate)
             continue
@@ -536,7 +578,7 @@ def resolve_root(
 
 def _read_flavor_product(path: Path) -> tuple[str, bool]:
     try:
-        with path.open("rb") as handle:
+        with longpath.open_read(path) as handle:
             data = handle.read(_FLAVOR_INFO_READ_LIMIT)
     except OSError:
         return "", False
@@ -560,14 +602,13 @@ def _match_row(matches: Sequence[BuildInfoRow]) -> BuildInfoRow | None:
     return next((r for r in matches if r.is_active), matches[0])
 
 
-def _is_link(path: Path) -> bool:
-    return path.is_symlink() or path.is_junction()
-
-
 def _scan_children(root: Path) -> tuple[list[Path], list[str]]:
-    """(flavor directories, names of other `_*_` directories or symlinks)."""
+    """(flavor directories, names of other `_*_` directories or links).
+
+    A child is judged by its `lstat` alone (`is_link`): a link is named and
+    never followed, whatever it points at, so nothing under it is read."""
     try:
-        children = list(root.iterdir())
+        children = longpath.iterdir(root)
     except OSError:
         return [], []
     flavors: list[Path] = []
@@ -577,15 +618,19 @@ def _scan_children(root: Path) -> tuple[list[Path], list[str]]:
         if len(name) < 2 or not (name.startswith("_") and name.endswith("_")):
             continue
         try:
-            if _is_link(child):
-                others.append(name)
-            elif child.is_dir():
-                if _is_regular(child / FLAVOR_INFO):
-                    flavors.append(child)
-                else:
-                    others.append(name)
+            st = longpath.lstat(child)
+        except (FileNotFoundError, NotADirectoryError):
+            continue  # gone since the listing: not there, so not named
         except OSError:
+            others.append(name)  # refused: named, as it could not be checked
+            continue
+        if is_link(child, st):
             others.append(name)
+        elif stat.S_ISDIR(st.st_mode):
+            if _is_regular(child / FLAVOR_INFO):
+                flavors.append(child)
+            else:
+                others.append(name)
     return flavors, sorted(others)
 
 
@@ -611,7 +656,7 @@ def _read(root: Path, source: Source) -> Install:
     # Checked first: a FIFO or device named `.build.info` could block a read.
     _probe(root, source)
     try:
-        raw = (root / BUILD_INFO).read_bytes()
+        raw = longpath.read_bytes(root / BUILD_INFO)
     except OSError as exc:  # refused, or gone since the check
         reason: Reason = "missing" if isinstance(exc, FileNotFoundError) else "unreadable"
         raise NotAnInstallError(root, source, reason, exc.strerror or str(exc)) from exc

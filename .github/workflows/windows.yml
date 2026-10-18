@@ -5,11 +5,13 @@ name: Windows
 # collisions, reserved names, `\\?\` long paths, files held open
 # (docs/LAB_PLAN.md §9; the first run caught the byte-0 lock bug on PR #59).
 #
-# Off the PR path (owner decision, ADR-0014 amendment of 2026-10-15): the job
-# took 15 to 30 minutes and every PR waited on it. It runs after each merge to
-# main, nightly, and on demand for a branch:
+# Not a required check (owner decisions, ADR-0014 amendments of 2026-10-15 and
+# 2026-10-17): the job took 15 to 30 minutes and every PR waited on it. It runs
+# after each merge to main, nightly, on demand for a branch:
 #   gh workflow run windows.yml --ref <branch>
-# It is not a required check. A red run on main is a bug to fix next, filed
+# and on a pull request that touches lab/, the lockfile, the root pyproject,
+# the root conftest or this file, so a POSIX-only test assumption shows on the
+# PR; nothing waits on it. A red run on main is a bug to fix next, filed
 # as a ticket, not a reason to revert. The conductor checks the latest runs
 # on main at the start of each /conduct session and before a wave review
 # (.claude/skills/conduct/SKILL.md, docs/AGENT_WORKFLOW.md).
@@ -17,6 +19,13 @@ name: Windows
 on:
   push:
     branches: [main]
+  pull_request:
+    paths:
+      - "lab/**"
+      - "uv.lock"
+      - "pyproject.toml"
+      - "conftest.py"
+      - ".github/workflows/windows.yml"
   schedule:
     - cron: "17 7 * * *"
   workflow_dispatch:
@@ -25,7 +34,7 @@ permissions:
   contents: read
 
 # Runs on main queue rather than cancel, so each merge gets its own verdict;
-# a superseded on-demand branch run is cancelled.
+# a superseded pull-request or on-demand branch run is cancelled.
 concurrency:
   group: windows-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
