@@ -32,7 +32,14 @@ not followed, whether the folder or its `.flavor.info`: nothing is listed or
 read through one. `.flavor.info` is opened without following a link and must
 be the file its `lstat` saw (`snapshot.open_regular_file`, M13-46), so one
 replaced by a link between the check and the read is refused and its folder
-listed in `other_dirs` too. The flavor's product code comes
+listed in `other_dirs` too. The folder is held to be the directory the scan
+`lstat`ed (M13-54): on POSIX `.flavor.info` is opened through a descriptor
+on the folder (`O_DIRECTORY | O_NOFOLLOW`, checked against that `lstat`), and
+on every platform the folder is `lstat`ed again before and after the read,
+so one swapped for a link or another directory after the scan is refused
+(`folder_changed`). `.build.info` is read as `snapshot.read_regular_file`
+reads (never blocking on a FIFO or device put there after the check, and
+the file the check saw). The flavor's product code comes
 from `.flavor.info` and is joined to the `.build.info` row with the same
 `Product`. Discovery never raises on a partial install: a flavor with no
 matching row, or with an unreadable `.flavor.info`, is returned with
@@ -68,6 +75,7 @@ __all__ = [
     "FLAVOR_INFO",
     "NOT_A_FLAVOR",
     "NOT_A_FLAVOR_CHANGED",
+    "NOT_A_FLAVOR_FOLDER_CHANGED",
     "NOT_A_FLAVOR_LINK",
     "NOT_A_FLAVOR_UNCHECKED",
     "NOT_TAKEN_LINK",
@@ -130,9 +138,13 @@ Reason = Literal["missing", "not_regular", "unreadable"]
 # refused, so it could not be checked; or its `.flavor.info` was regular when
 # the folder was scanned and was refused when it was read (M13-46: it became
 # a link or something other than a regular file, or another file was put in
-# its place), so it changed between the two. The last is never worded as a
-# link: the file that took its place may be a regular file.
-NotTakenReason = Literal["link", "no_flavor_info", "not_checked", "flavor_info_changed"]
+# its place), so it changed between the two; or the folder itself was no
+# longer the directory the scan saw when it was read (M13-54: it became a link
+# or another directory, or is gone). The last two are never worded as a link:
+# what took its place may be a real folder or a regular file.
+NotTakenReason = Literal[
+    "link", "no_flavor_info", "not_checked", "flavor_info_changed", "folder_changed"
+]
 
 # The words for each reason (`NotTaken.note`), shown by `doctor`, `install
 # show`, `explain`, the first run and the `--flavor` lookups; `tree
@@ -148,6 +160,9 @@ NOT_A_FLAVOR_LINK = "not taken as a flavor folder"
 NOT_A_FLAVOR_UNCHECKED = "not taken as a flavor folder (it could not be checked)"
 NOT_A_FLAVOR_CHANGED = (
     "not taken as a flavor folder (its .flavor.info changed as it was read; run the command again)"
+)
+NOT_A_FLAVOR_FOLDER_CHANGED = (
+    "not taken as a flavor folder (it changed as it was read; run the command again)"
 )
 # Said wherever a linked `_*_` folder is the reason a flavor is missing.
 NOT_TAKEN_LINK = "wowlab reads a flavor only from a real folder in the install"
@@ -322,7 +337,8 @@ def not_taken_why(entry: NotTaken) -> str:
     <target>, not followed" (or "link (where it points is unknown), not
     followed"); for any other reason, what the note says in brackets ("no
     regular .flavor.info file", "it could not be checked: <error>", "its
-    .flavor.info changed as it was read; run the command again")."""
+    .flavor.info changed as it was read; run the command again", "it changed
+    as it was read; run the command again")."""
     if entry.reason == "link":
         to = f" to {entry.target}" if entry.target is not None else " (where it points is unknown)"
         return f"link{to}, not followed"
@@ -344,6 +360,7 @@ def _not_taken(
             "no_flavor_info": NOT_A_FLAVOR,
             "not_checked": NOT_A_FLAVOR_UNCHECKED,
             "flavor_info_changed": NOT_A_FLAVOR_CHANGED,
+            "folder_changed": NOT_A_FLAVOR_FOLDER_CHANGED,
         }
         note = notes[reason]
     return NotTaken(name=name, reason=reason, target=target, note=note)
@@ -581,8 +598,9 @@ def _flavor_folder_hint(root: Path) -> str:
     return f"; its parent {root.parent} is an install; pass that" if parent_is_install else ""
 
 
-def _probe(root: Path, source: Source) -> None:
-    """Raise `NotAnInstallError` unless `root/.build.info` is a regular file.
+def _probe(root: Path, source: Source) -> os.stat_result:
+    """Raise `NotAnInstallError` unless `root/.build.info` is a regular file;
+    return its `stat` (a link to a regular file is followed, as always).
 
     A refusal from the operating system is `unreadable`, never `missing`. So
     is a root spelled `\\\\?\\...` that has no plain spelling (a volume GUID
@@ -613,6 +631,35 @@ def _probe(root: Path, source: Source) -> None:
         ) from exc
     if not stat.S_ISREG(st.st_mode):
         raise NotAnInstallError(root, source, "not_regular", hint=_flavor_folder_hint(root))
+    return st
+
+
+# What `NotAnInstallError` says when `.build.info` was not the file `_probe`
+# checked by the time it was opened (M13-54).
+_BUILD_INFO_CHANGED = "it changed as it was read; run the command again"
+
+
+def _read_build_info(root: Path, source: Source, probed: os.stat_result) -> bytes:
+    """`root/.build.info`, the file `_probe` saw (`probed`, its `stat`).
+
+    Read by `snapshot.read_regular_file` with `probed` as `expect` (M13-54):
+    the open never blocks, so a FIFO or device put there after the check is
+    refused at once rather than waited on, and a file that is not the one
+    checked is refused too. A `.build.info` that is a link to a regular file
+    is taken as `_probe` takes it (followed, as before M13-54): the file it
+    resolves to is opened, and held to be the file `probed` saw."""
+    path = root / BUILD_INFO
+    try:
+        if _snapshot_link(longpath.lstat(path)):
+            path = Path(longpath.realpath(path))
+        return snapshot.read_regular_file(path, expect=probed)
+    except snapshot.UnsafeReadError as exc:  # not the regular file checked
+        raise NotAnInstallError(root, source, "unreadable", _BUILD_INFO_CHANGED) from exc
+    except OSError as exc:  # refused, or gone since the check
+        if exc.errno == errno.ELOOP:  # a link swapped in after the check
+            raise NotAnInstallError(root, source, "unreadable", _BUILD_INFO_CHANGED) from exc
+        reason: Reason = "missing" if isinstance(exc, FileNotFoundError) else "unreadable"
+        raise NotAnInstallError(root, source, reason, exc.strerror or str(exc)) from exc
 
 
 def _resolve(
@@ -684,26 +731,114 @@ def resolve_root(
     return _resolve(root, environ, defaults)[0]
 
 
-def _read_flavor_product(path: Path) -> tuple[str, bool] | None:
-    """(product, decode errors) from `.flavor.info` at `path`, or `None` when
-    it is refused: a link by `is_link`, or no longer a regular file.
+_Refused = Literal["flavor_info_changed", "folder_changed"]
 
-    The check and the read name one file (M13-46): `path` is `lstat`ed, then
-    opened by `snapshot.open_regular_file` with that `lstat` as `expect`, so
-    a final link is never followed (`O_NOFOLLOW`, or on Windows an `lstat`
-    each side of the open) and a file swapped in after the `lstat` is
-    refused. Any other failure (gone, refused by the operating system) is an
-    unreadable `.flavor.info`: `("", False)`, as before."""
+
+def _folder_fds() -> bool:
+    """True where a flavor folder can be held by a descriptor that was opened
+    without following a link, and `.flavor.info` opened relative to it
+    (POSIX). Asked at each read, not fixed at import, so a test can stand in
+    for Windows by setting `snapshot._O_NOFOLLOW` to 0."""
+    return (
+        bool(snapshot._O_NOFOLLOW)
+        and hasattr(os, "O_DIRECTORY")
+        and {os.open, os.stat} <= os.supports_dir_fd
+    )
+
+
+def _same_folder(directory: Path, scanned: os.stat_result) -> bool:
+    """`directory` is, by `lstat` now, still the directory the scan saw
+    (`scanned`): no link by `is_link`, a directory, the same device and inode."""
     try:
-        st = longpath.lstat(path)
-        if is_link(path, st) or not stat.S_ISREG(st.st_mode):
-            return None
-        fd, _ = snapshot.open_regular_file(path, expect=st)
-    except snapshot.UnsafeReadError:
+        now = longpath.lstat(directory)
+    except OSError:
+        return False
+    return (
+        not is_link(directory, now)
+        and stat.S_ISDIR(now.st_mode)
+        and (now.st_dev, now.st_ino) == (scanned.st_dev, scanned.st_ino)
+    )
+
+
+def _open_folder(directory: Path, scanned: os.stat_result) -> int | None:
+    """A descriptor on `directory`, opened with `O_DIRECTORY | O_NOFOLLOW` and
+    held to be the directory the scan saw by `fstat`; None where there are no
+    folder descriptors (`_folder_fds`), or where the folder may be searched
+    but not listed (an open for reading is refused, as `lstat` of a file in
+    it is not), so the `lstat` each side of the read is all that holds it.
+    Raises `OSError` when it is a link now (`ELOOP`, or `ENOTDIR` on some
+    systems), not a directory, gone, or another directory."""
+    if not _folder_fds():
         return None
+    flags = os.O_RDONLY | os.O_DIRECTORY | snapshot._O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(longpath.extended(directory), flags)
+    except PermissionError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if (st.st_dev, st.st_ino) != (scanned.st_dev, scanned.st_ino):
+            raise snapshot.UnsafeReadError(f"{directory} was replaced after it was scanned")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _read_flavor_product(directory: Path, scanned: os.stat_result) -> tuple[str, bool] | _Refused:
+    """(product, decode errors) from `directory`'s `.flavor.info`, or why it
+    was refused.
+
+    The folder is the one the scan saw (M13-54), `scanned` being its `lstat`
+    there. It is `lstat`ed again before and after the read, and must still be
+    that directory and no link; on POSIX `.flavor.info` is also opened
+    relative to a descriptor on the folder (`_open_folder`), so no link put
+    in the folder's place is ever read through. A folder that fails any of
+    these is `folder_changed`.
+
+    The check and the read of `.flavor.info` name one file (M13-46): it is
+    `lstat`ed, then opened by `snapshot.open_regular_file` with that `lstat`
+    as `expect`, so a final link is never followed (`O_NOFOLLOW`, or on
+    Windows an `lstat` each side of the open) and a file swapped in after
+    the `lstat` is refused: `flavor_info_changed`, as is one that is a link
+    or no longer a regular file. Any other failure (gone, refused by the
+    operating system) is an unreadable `.flavor.info`: `("", False)`, as
+    before."""
+    if not _same_folder(directory, scanned):
+        return "folder_changed"
+    try:
+        folder = _open_folder(directory, scanned)
+    except OSError:  # a link now, another directory, or gone
+        return "folder_changed"
+    try:
+        read = _read_flavor_info(directory, folder)
+    finally:
+        if folder is not None:
+            os.close(folder)
+    if not _same_folder(directory, scanned):
+        return "folder_changed"
+    return read
+
+
+def _read_flavor_info(directory: Path, folder: int | None) -> tuple[str, bool] | _Refused:
+    """`directory`'s `.flavor.info`, opened relative to the descriptor
+    `folder` when there is one, else by its path (`_read_flavor_product`)."""
+    path = Path(FLAVOR_INFO) if folder is not None else directory / FLAVOR_INFO
+    try:
+        if folder is not None:
+            st = os.stat(path, dir_fd=folder, follow_symlinks=False)
+            linked = _snapshot_link(st)  # no junctions where there are folder descriptors
+        else:
+            st = longpath.lstat(path)
+            linked = is_link(path, st)
+        if linked or not stat.S_ISREG(st.st_mode):
+            return "flavor_info_changed"
+        fd, _ = snapshot.open_regular_file(path, expect=st, dir_fd=folder)
+    except snapshot.UnsafeReadError:
+        return "flavor_info_changed"
     except OSError as exc:
         if exc.errno == errno.ELOOP:  # a link swapped in after the lstat
-            return None
+            return "flavor_info_changed"
         return "", False
     try:
         chunks: list[bytes] = []
@@ -748,9 +883,10 @@ def _link_text(path: Path) -> str | None:
     return longpath.plain_text(target) if longpath.ON_WINDOWS else target
 
 
-def _scan_children(root: Path) -> tuple[list[Path], list[NotTaken]]:
-    """(flavor directories, the other `_*_` directories or links, each with
-    why it was not taken, sorted by name).
+def _scan_children(root: Path) -> tuple[list[tuple[Path, os.stat_result]], list[NotTaken]]:
+    """(flavor directories, each with its `lstat`, which the read holds it to;
+    the other `_*_` directories or links, each with why it was not taken,
+    sorted by name).
 
     A child is judged by its `lstat` alone (`is_link`): a link is named and
     never followed, whatever it points at, so nothing under it is read."""
@@ -758,7 +894,7 @@ def _scan_children(root: Path) -> tuple[list[Path], list[NotTaken]]:
         children = longpath.iterdir(root)
     except OSError:
         return [], []
-    flavors: list[Path] = []
+    flavors: list[tuple[Path, os.stat_result]] = []
     others: list[NotTaken] = []
     for child in children:
         name = child.name
@@ -776,18 +912,20 @@ def _scan_children(root: Path) -> tuple[list[Path], list[NotTaken]]:
             others.append(_not_taken(name, "link", _link_text(child)))
         elif stat.S_ISDIR(st.st_mode):
             if _is_regular(child / FLAVOR_INFO):
-                flavors.append(child)
+                flavors.append((child, st))
             else:
                 others.append(_not_taken(name, "no_flavor_info"))
     return flavors, sorted(others, key=lambda n: n.name)
 
 
-def _flavor(directory: Path, rows: Sequence[BuildInfoRow]) -> tuple[Flavor, bool] | None:
-    """The flavor in `directory`, or `None` when its `.flavor.info` is
-    refused as a link at the read (`_read_flavor_product`)."""
-    read = _read_flavor_product(directory / FLAVOR_INFO)
-    if read is None:
-        return None
+def _flavor(
+    directory: Path, scanned: os.stat_result, rows: Sequence[BuildInfoRow]
+) -> tuple[Flavor, bool] | _Refused:
+    """The flavor in `directory` (`scanned`: its `lstat` at the scan), or why
+    it was refused at the read (`_read_flavor_product`)."""
+    read = _read_flavor_product(directory, scanned)
+    if isinstance(read, str):
+        return read
     product, errors = read
     matches = _matching(rows, product)
     row = _match_row(matches)
@@ -806,21 +944,17 @@ def _flavor(directory: Path, rows: Sequence[BuildInfoRow]) -> tuple[Flavor, bool
 
 
 def _read(root: Path, source: Source) -> Install:
-    # Checked first: a FIFO or device named `.build.info` could block a read.
-    _probe(root, source)
-    try:
-        raw = longpath.read_bytes(root / BUILD_INFO)
-    except OSError as exc:  # refused, or gone since the check
-        reason: Reason = "missing" if isinstance(exc, FileNotFoundError) else "unreadable"
-        raise NotAnInstallError(root, source, reason, exc.strerror or str(exc)) from exc
+    # Checked first, then read as the file checked: a FIFO or device named
+    # `.build.info` could block a read (M13-54).
+    raw = _read_build_info(root, source, _probe(root, source))
     text, errors = _decode(raw)
     rows = parse_build_info(text).rows
     directories, others = _scan_children(root)
     flavors: list[Flavor] = []
-    for directory in directories:
-        found = _flavor(directory, rows)
-        if found is None:  # its .flavor.info changed after the scan
-            others.append(_not_taken(directory.name, "flavor_info_changed"))
+    for directory, scanned in directories:
+        found = _flavor(directory, scanned, rows)
+        if isinstance(found, str):  # it or its .flavor.info changed after the scan
+            others.append(_not_taken(directory.name, found))
             continue
         flavor, flavor_errors = found
         flavors.append(flavor)

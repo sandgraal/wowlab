@@ -64,6 +64,15 @@ def _to_other_file(info: Path, target: Path) -> None:
     info.write_bytes(REAL_FLAVOR_INFO)
 
 
+def _names(info: Path, path: Path, dir_fd: int | None) -> bool:
+    """`open_regular_file` was asked for `info`: by its path, or (POSIX,
+    M13-54) by its name relative to a descriptor on the folder that holds it."""
+    if dir_fd is None:
+        return path == info
+    held, there = os.fstat(dir_fd), os.lstat(info.parent)
+    return path == Path(info.name) and (held.st_dev, held.st_ino) == (there.st_dev, there.st_ino)
+
+
 _SWAPS = [
     pytest.param(_to_link, id="constructed-link"),
     pytest.param(_to_other_file, id="constructed-other-file"),
@@ -144,10 +153,11 @@ def test_swapped_between_the_lstat_and_the_open_is_refused(
     opened: list[str] = []
 
     def open_regular_file(path: Path, **kwargs: Any) -> tuple[int, os.stat_result]:
-        if path == info:
+        racing = _names(info, path, kwargs.get("dir_fd"))
+        if racing:
             swap(info, target)
         fd, st = real_open(path, **kwargs)
-        opened.append(str(path))
+        opened.append(str(info if racing else path))
         return fd, st
 
     monkeypatch.setattr(snapshot, "open_regular_file", open_regular_file)
