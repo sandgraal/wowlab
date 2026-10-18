@@ -58,8 +58,9 @@ def _to_other_file(info: Path, target: Path) -> None:
     ext4 a file created just after an unlink may get the freed inode back,
     and a new file with the old (device, inode) is not told apart by the
     identity check (`snapshot.open_regular_file`). That case reads a regular
-    file in the folder, never a link, so M13-46 leaves it; closing it would
-    need a directory descriptor."""
+    file in the folder, never a link, so M13-46 leaves it; M13-54's folder
+    descriptor does not change that (the file is still one in the scanned
+    folder)."""
     info.rename(target.parent / "m13-46-original.flavor.info")
     info.write_bytes(REAL_FLAVOR_INFO)
 

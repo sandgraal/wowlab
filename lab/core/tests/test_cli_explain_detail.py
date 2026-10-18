@@ -579,9 +579,12 @@ def test_explain_hashes_only_the_named_path_and_writes_nothing(
     ok("explain", SYNDICATOR)
     assert _state(root) == before
     # Discovery reads each flavor's .flavor.info with the same no-follow open
-    # (M13-46); that is a read of the install, not a hash of the named path.
-    assert {p for p in opened if p.name == ".flavor.info"} <= {flavor / ".flavor.info"}
-    in_install = [p for p in opened if root in p.parents and p.name != ".flavor.info"]
+    # (M13-46), on POSIX by its name in a descriptor on the flavor folder
+    # (M13-54), and the root .build.info so too (M13-54); those are reads of
+    # the install, not a hash of the named path.
+    discovery = {flavor / ".flavor.info", Path(".flavor.info"), root / ".build.info"}
+    assert {p for p in opened if p.name == ".flavor.info"} <= discovery
+    in_install = [p for p in opened if root in p.parents and p not in discovery]
     assert in_install == [flavor / SYNDICATOR] * 2
 
 
@@ -629,8 +632,11 @@ def test_a_link_or_a_path_inside_one_gets_no_detail(
         text = ok("explain", path).stdout
         assert "hint:" not in text
         assert "In the latest snapshot" not in text
-    # Only discovery's no-follow read of .flavor.info (M13-46), never a hash.
-    assert [p for p in opened if p != flavor / ".flavor.info"] == []
+    # Only discovery's no-follow reads of .flavor.info (M13-46; on POSIX by
+    # its name in the folder's descriptor, M13-54) and .build.info (M13-54),
+    # never a hash.
+    discovery = {flavor / ".flavor.info", Path(".flavor.info"), root / ".build.info"}
+    assert [p for p in opened if p not in discovery] == []
 
 
 def test_a_path_outside_the_install_gets_no_detail(root: Path, tmp_path: Path) -> None:

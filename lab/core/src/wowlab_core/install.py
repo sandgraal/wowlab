@@ -391,7 +391,7 @@ class Install(BaseModel):
     products: tuple[BuildInfoRow, ...]
     # Children named `_*_` not taken as flavors (no regular .flavor.info, a
     # .flavor.info that is a link, or a folder that is a link, by `is_link`;
-    # links are not followed), sorted.
+    # links are not followed; or one that changed as it was read), sorted.
     other_dirs: tuple[str, ...]
     raw_build_info: bytes  # the file, byte for byte (L4)
     # True when .build.info or any .flavor.info had bytes that are not UTF-8;
@@ -770,9 +770,16 @@ def _open_folder(directory: Path, scanned: os.stat_result) -> int | None:
     systems), not a directory, gone, or another directory."""
     if not _folder_fds():
         return None
-    flags = os.O_RDONLY | os.O_DIRECTORY | snapshot._O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
     try:
-        fd = os.open(longpath.extended(directory), flags)
+        # Read-only, flags spelled in the call so the write-site scan sees them.
+        # `_folder_fds` holds only where `os.O_NOFOLLOW` exists.
+        fd = os.open(
+            longpath.extended(directory),
+            os.O_RDONLY
+            | os.O_DIRECTORY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0),
+        )
     except PermissionError:
         return None
     try:

@@ -480,7 +480,11 @@ def test_constructed_a_mistyped_account_opens_no_file(
     except (OSError, NotImplementedError) as exc:
         pytest.skip(f"cannot create a symlink here: {exc}")
 
-    def never(path: Path, **kwargs: object) -> bytes:
+    real = snapshot.read_regular_file
+
+    def never(path: Path, **kwargs: Any) -> bytes:
+        if Path(path).name == ".build.info":  # discovery's own read (M13-54)
+            return real(path, **kwargs)
         raise AssertionError(f"read {path}")
 
     monkeypatch.setattr(snapshot, "read_regular_file", never)

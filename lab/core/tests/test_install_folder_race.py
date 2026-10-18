@@ -188,8 +188,19 @@ def test_folder_swapped_before_the_descriptor_is_opened_is_refused(
             swap(directory, elsewhere)
         return ok
 
+    real_read = install_mod._read_flavor_info
+    read: list[str] = []
+
+    def read_flavor_info(directory: Path, folder: int | None) -> Any:
+        read.append(directory.name)
+        return real_read(directory, folder)
+
     monkeypatch.setattr(install_mod, "_same_folder", same_folder)
+    monkeypatch.setattr(install_mod, "_read_flavor_info", read_flavor_info)
     _assert_refused(root)
+    # With a descriptor the folder is refused before anything in it is
+    # opened; without one only the `lstat`s around the read hold it.
+    assert (RACING in read) is not nofollow
 
 
 @pytest.mark.parametrize("swap", _SWAPS)

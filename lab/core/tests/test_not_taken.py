@@ -400,6 +400,7 @@ def test_a_flavor_info_refused_at_the_read_changed_never_a_link(
     [
         ("not_checked", "not taken as a flavor folder (it could not be checked: refused)"),
         ("flavor_info_changed", install.NOT_A_FLAVOR_CHANGED),
+        ("folder_changed", install.NOT_A_FLAVOR_FOLDER_CHANGED),  # M13-54
     ],
 )
 def test_tree_and_gaps_give_a_folder_its_own_note_constructed(
