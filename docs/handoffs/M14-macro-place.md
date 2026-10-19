@@ -93,7 +93,7 @@ folder name as `wowlab char list` prints it.
    in its tab and how many the tab holds (for example, illustrative only,
    "acct: 5th of 5"). If the window sorts by name, `aa wowlab two` comes
    before `zz wowlab one` although you made it last.
-5. **Optional, if your client allows it** (the names and `/dump` on Forever
+4. **Optional, if your client allows it** (the names and `/dump` on Forever
    are from memory, **[verify]**; if a line errors, skip this step). Type in
    chat, one at a time, and write down what each prints:
 
@@ -107,13 +107,13 @@ folder name as `wowlab char list` prints it.
 
    These are the client's own indices. They settle which index each macro
    has; the drag step shows whether a slot's id is that index.
-6. **Drag each onto an empty button of the main action bar** (the bottom
+5. **Drag each onto an empty button of the main action bar** (the bottom
    bar, on its first page): `wowlab acct` on one, `zz wowlab one` on
    another, `aa wowlab two` on a third. Note the three button numbers,
    counting from the left (button 1 is the one bound to the `1` key). If the
    main bar has no three free buttons, use another bar and name it.
-7. Don't click the macros, and don't change bars or forms after this.
-8. **Log out cleanly**, then exit the client. The files are only complete
+6. Don't click the macros, and don't change bars or forms after this.
+7. **Log out cleanly**, then exit the client. The files are only complete
    after logout.
 
 ## 2. Read what the client wrote (client closed)
@@ -186,7 +186,7 @@ by the server at the next login when macro sync is on.
 
 One row per macro. Values are what you saw, not what you expected.
 
-| Macro | Tab | Position in the macro window | Position `<n>` in `char macros` after logout (or "missing") | `/dump` index (optional step 1.5) | Bar and button | Id `char binds` shows for that button | `char macros` placement line(s) |
+| Macro | Tab | Position in the macro window | Position `<n>` in `char macros` after logout (or "missing") | `/dump` index (optional step 1.4) | Bar and button | Id `char binds` shows for that button | `char macros` placement line(s) |
 |---|---|---|---|---|---|---|---|
 | `wowlab acct` | General | | | | | | |
 | `zz wowlab one` | character | | | | | | |
@@ -196,7 +196,7 @@ Also say:
 - the macro counts and written times of step 0.4 and of step 2.1, and whether each
   time changed at logout; if the character tab refused a macro, the count it stopped at;
 - what `GetNumMacros()` and `MAX_ACCOUNT_MACROS, MAX_CHARACTER_MACROS`
-  printed in step 1.5, or that you skipped it (and the error, if one came);
+  printed in step 1.4, or that you skipped it (and the error, if one came);
 - whether you needed the second login of section 2;
 - the flavor and client build (`wowlab doctor` prints both), and whether
   `synchronizeMacros` is on (`doctor` prints it);
@@ -208,7 +208,7 @@ It compares each button's id with the macro's place in the files. If the
 id on `wowlab acct`'s button is that macro's position in the account file,
 and the ids on the other two buttons are 120 plus each macro's position in
 the character file, the candidate numbering holds as `char macros` uses it.
-If you did step 1.5, it also compares the `/dump` indices with the file
+If you did step 1.4, it also compares the `/dump` indices with the file
 positions, and the button ids with the `/dump` indices; if `aa wowlab two`
 went to General because the character tab was full, it is checked against
 the account numbering instead. If the ids follow the
