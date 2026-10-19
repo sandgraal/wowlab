@@ -297,15 +297,20 @@ the owner's install at 1.60.1.70450 on 2026-10-19 (read-only).
 - **`.build.info`**: a pipe-separated table with `Name!TYPE:n` headers;
   `Build Key` names the build config at `Data/config/<k[0:2]>/<k[2:4]>/<k>`,
   `key = value` text; `root` is a content key, `encoding` a content key and
-  an encoding key. The client writes `.build.info` (the "agent").
+  an encoding key. The Battle.net agent writes `.build.info` and the
+  configs; the product row is picked by `.flavor.info`'s product.
 - **`Data/data/*.idx`**: a header (hash size, hash, `Unk0 = 7`, bucket,
   the spec `4/5/9/30`), then at the next 16-byte boundary the entries
   block (size, hash) of 18-byte records: nine key bytes (the first nine of
   the encoding key), a five-byte big-endian offset field (ten bits archive
   number, thirty bits offset), a four-byte little-endian size. Sixteen
-  buckets; the bucket of a key is `((k0 ^ k1 ^ … ^ k8) & 0xF) ^ (that >> 4)`.
-  `shmem` lists the current version per bucket **[verify]**; the Lab never
-  opens it for writing. Also present: `index.lock.0`, an `.lru` file,
+  buckets, shared by every product in the install (the counts below are
+  for the whole install); the bucket of a key: `x = k0 ^ k1 ^ … ^ k8`,
+  `bucket = (x & 0xF) ^ (x >> 4)`. `shmem`, recreated by the game client at
+  start and only a template after an agent update, lists the current
+  version per bucket **[verify]**; the Lab neither reads nor writes it and
+  takes the newest version per bucket. The agent (patches, repair) and the
+  client (streaming) both write the index files and the archives. Also present: `index.lock.0`, an `.lru` file,
   `Data/indices/*.index` (CDN indexes, unused locally), `ecache/`
   (**[verify]** what it is).
 - **`data.NNN`**: at the index offset a 30-byte record header (the BLTE
@@ -321,13 +326,15 @@ the owner's install at 1.60.1.70450 on 2026-10-19 (read-only).
   in KB big-endian, page counts, flags, ESpec block size), the ESpec
   strings, a page index of first content key plus MD5 per page, then 4 KB
   pages of entries (key count, a 40-bit big-endian size, the content key,
-  the encoding keys). 141.6 MB decoded at 70450.
+  the encoding keys: one content key may have several, an encrypted and a
+  plain copy for one). 141.6 MB decoded at 70450.
 - **Root**: magic `MFST` (bytes `TSFM`), header size, version, total and
   named file counts; blocks of (count, flags, int32 file-id deltas with the
   first absolute, MD5 content keys, optional 64-bit name hashes). Version 2
   (11.1.0+): locale flags, two flag words and a byte combined as
-  `f1 | f2 | (f3 << 17)`; `Encrypted` is `0x8000000`; a macOS client skips
-  `flags & 0x108`, Windows `flags & 0x110`; enUS is locale `0x2`. At 70450:
+  `f1 | f2 | (f3 << 17)`; `Encrypted` is `0x8000000`, `LowViolence` `0x80`; a macOS client skips
+  `flags & 0x108`, Windows `flags & 0x110`, and wow.export skips
+  `LowViolence` too; enUS is locale `0x2`. At 70450:
   version 2, 2,433,102 records in 916 blocks, 26 flagged encrypted,
   1,244,477 ids after filtering. The content key is the MD5 of the decoded
   file.
@@ -337,11 +344,13 @@ the owner's install at 1.60.1.70450 on 2026-10-19 (read-only).
 Reference: https://wowdev.wiki/BLP. `BLP2`, version 1, a 148-byte header:
 colour encoding (1 palette, 2 DXT, 3 BGRA), alpha depth (0, 1, 4, 8),
 alpha type, has-mips, width, height, sixteen mip offsets and sizes; then a
-1024-byte palette (256 BGRX). DXT1 when alpha depth is 0 or 1, DXT5 when
-alpha type is 7, else DXT3 (wow.export's rule; **[verify]** the enum);
+1024-byte palette (256 BGRX). The DXT choice: the wiki says the alpha type decides (0 DXT1, 1 DXT3, 7
+DXT5), wow.export says alpha depth first (`alphaDepth > 1 ? (alphaType ==
+7 ? DXT5 : DXT3) : DXT1`); the two differ for depth 8 with type 0 and depth
+1 with type 1 (**[verify]**; the Lab refuses such a texture naming both);
 some stored mip sizes are wrong, so the block size is computed. Palette
 alpha: 1 bit per pixel LSB-first, 4 bits (**[verify]**, the wiki is
-incomplete), or 8 bits. BC5 (preferred format 11) is refused. Every
+incomplete), or 8 bits. BC5 (alpha type 11, the header's "preferred format" byte) is refused. Every
 character texture sampled at 70450 was DXT1 or DXT5 with mips, 128² to
 512².
 
@@ -357,13 +366,15 @@ four bone weights, four bone indices, normal, two UV pairs; Z-up),
 skin-profile count at 0x44, textures at 0x50 (16 bytes: type, flags, a
 filename array; types 1 body skin, 2 object skin, 6 hair, 19 eyes, …),
 materials at 0x70, texture combos at 0x80, attachments at 0xF0 (id, bone,
-position), the attachment lookup at 0xF8. The wiki's version table stops
-at 274; the HD body models at 70450 are version 272 with bones and
-attachments inside the M2 and no `SKID` (**[verify]** for every race).
+position), the attachment lookup at 0xF8. The wiki's version table runs to
+274; the HD body models at 70450 are version 272, inside it (MoP/WoD and the
+start of the Legion to Shadowlands range), with bones and attachments
+inside the M2 and no `SKID` (**[verify]** for every race).
 `.skin`: `SKIN`, the vertex lookup (uint16), the indices (uint16
 triangles), bones, the sections (48 bytes: `skinSectionId` = the geoset
 id as `group * 100 + value`, level, vertex start and count, index start
-and count, …; `level << 16` is added to the index start), the batches
+and count, …; `level << 16` is added to the index start, "and alike" per
+the wiki; at 70450 only the index start overflows), the batches
 (24 bytes: flags, priority plane, shader id, section index, geoset
 index, colour index, material index, material layer, texture count, texture
 combo index, …). `humanmale_hd` skin 0 at 70450: 113 sections, 147,966
