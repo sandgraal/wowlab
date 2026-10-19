@@ -279,6 +279,6 @@
       "6520",
       "5778"
     ],
-    "note": "No dressing-room link: the room needs the race, body type and class, and the record has no race_id (the record is schema 1; identity is recorded from schema 4 (the lab-addon from M15-01: install it with wowlab addon install lab, then log in and out on this character)). The item ids are listed instead, in slot order, to paste into a dressing room yourself."
+    "note": "No dressing-room link: the room needs the race, body type and class, and the record has no race_id: the record is schema 1; identity is recorded from schema 4 (the lab-addon from M15-01: install it with wowlab addon install lab, then log in and out on this character). The item ids are listed instead, in slot order, to paste into a dressing room yourself."
   }
 }
