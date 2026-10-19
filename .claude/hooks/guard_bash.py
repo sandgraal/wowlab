@@ -124,7 +124,7 @@ def _check_git(seg: list[str]) -> str | None:
     return None
 
 
-def _check_gh(seg: list[str]) -> str | None:
+def _check_gh(seg: list[str], cwd: str = "", written: frozenset[str] = frozenset()) -> str | None:
     i = command_position(seg, "gh")
     if i is None:
         return None
@@ -148,8 +148,19 @@ def _check_gh(seg: list[str]) -> str | None:
             elif a.startswith(("--field=", "--raw-field=")):
                 spec = a.split("=", 1)[1]
             if spec.startswith("query=@"):
+                raw = spec[len("query=@") :]
+                expanded, ok = expand_vars(raw, cwd) if cwd else (raw, True)
+                path = Path(expanded)
+                if cwd and not path.is_absolute():
+                    path = Path(cwd) / path
+                if not ok or os.path.normpath(str(path)) in written:
+                    return (
+                        "gh api graphql with query=@<file> is checked against the file as it is "
+                        "now; write the file in its own command, with a literal path, then run "
+                        "the call."
+                    )
                 try:
-                    joined += " " + Path(spec[len("query=@") :]).read_text(encoding="utf-8")
+                    joined += " " + path.read_text(encoding="utf-8")
                 except OSError:
                     return (
                         "gh api graphql with query=@<file> reads the file to check it for "
@@ -293,10 +304,26 @@ def _inspect(command: str, cwd: str, agent_type: str | None = None, depth: int =
     if segments is None:
         deny(EVENT, "command could not be tokenised (unbalanced quote?); rewrite it plainly.")
         return
+    # Every path this command line writes, with the cd chain followed, so a
+    # gh api graphql query file written earlier in the same line is refused:
+    # the hook reads the file before the shell runs (2026-10-19, M14-02 notes).
+    written: set[str] = set()
+    scan_cwd = cwd
+    for seg in segments:
+        for target in _write_targets(seg, scan_cwd):
+            expanded, ok = expand_vars(target, scan_cwd)
+            if ok:
+                full = expanded if Path(expanded).is_absolute() else str(Path(scan_cwd) / expanded)
+                written.add(os.path.normpath(full))
+        scan_cwd = _cd_target(seg, scan_cwd) or scan_cwd
     for seg in segments:
         for inner in inner_commands(seg):
             _inspect(inner, cwd, agent_type, depth + 1)
-        for reason in (_check_git(seg), _check_gh(seg), _check_destructive(seg, cwd)):
+        for reason in (
+            _check_git(seg),
+            _check_gh(seg, cwd, frozenset(written)),
+            _check_destructive(seg, cwd),
+        ):
             if reason:
                 deny(EVENT, reason)
         for target in _write_targets(seg, cwd):

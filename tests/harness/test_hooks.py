@@ -581,3 +581,29 @@ def test_guard_bash_reads_a_graphql_query_file_for_mutations(tmp_path: Path) -> 
         run_hook("guard_bash.py", bash(f"gh api graphql -F query=@{missing}")),
         "write the file first",
     )
+
+
+def test_guard_bash_query_file_follows_cd_and_refuses_a_same_line_write(tmp_path: Path) -> None:
+    """The query file is resolved against the tracked cwd, and a file this command line writes is refused."""
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / "q.graphql").write_text(
+        'mutation{deleteRepositoryRuleset(input:{repositoryRulesetId:"x"}){clientMutationId}}'
+    )
+    (tmp_path / "q.graphql").write_text("query{viewer{login}}")
+    assert_blocked(
+        run_hook(
+            "guard_bash.py",
+            bash(f"cd {sub} && gh api graphql -F query=@q.graphql", cwd=str(tmp_path)),
+        ),
+        "GraphQL mutations",
+    )
+    stale = tmp_path / "threads.graphql"
+    stale.write_text("query{viewer{login}}")
+    assert_blocked(
+        run_hook(
+            "guard_bash.py",
+            bash(f"printf '%s' 'mutation{{x}}' > {stale} && gh api graphql -F query=@{stale}"),
+        ),
+        "its own command",
+    )
