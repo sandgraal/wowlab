@@ -57,13 +57,17 @@ and `params`, and runs the bound confirmed argv only when the two plan argvs
 are equal: the plan argv with `--dry-run` taken out and `--yes` added as its
 own element after `--json` (and before any `--`, so it is never read as an
 argument), and for the declined shape `--expect=<pin>` after it, with the
-pin read here from the plan's own report, so the confirmed run is refused
-(exit 3) if it would apply another plan than the one shown. An unknown,
-spent or mismatched token answers 403 `confirm` and runs nothing. A
-confirmed run's result names the journal record its report names, with the
-`wowlab undo` hint, and a confirmed run killed at its limit says what to do
-(`_KILLED_NOTE`). The server writes nothing itself: the confirmed run is the
-CLI's, and every change it causes is the CLI's (L2).
+pin read here from the plan's own report: `undo` is refused (exit 3) if
+another record was journaled after the plan, `sv merge` if its target file
+changed (its source is not pinned; M13-74). The dry-run shape carries no
+pin: its confirmed run applies what is there at confirm time, after the
+pre-write snapshot. An unknown, spent or mismatched token answers 403
+`confirm` and runs nothing. A confirmed run's result names the journal
+record its report names, with the `wowlab undo` hint, and a confirmed run
+killed at its limit says what to do (`_KILLED_NOTE`, or
+`_KILLED_STORE_NOTE` for `snap gc` and `doctor`). The server writes
+nothing itself: the confirmed run is the CLI's, and every change it causes
+is the CLI's (L2).
 
 At most `MAX_CONCURRENT_RUNS` run at once (503
 `busy` past that). Each run has a timeout and an output cap, read as a stream
@@ -783,14 +787,29 @@ def _declined_offer(leaf: _Leaf, report: Mapping[str, Any] | None) -> _Offer:
     pin = report.get(leaf.pin)
     if not isinstance(pin, str) or not _PIN.fullmatch(pin):
         return _Offer(False)
+    check = _PIN_CHECKS.get(
+        leaf.pin, "if that no longer matches by then, it is refused (exit 3) and nothing is changed"
+    )
     return _Offer(
         True,
         "The plan is what the command printed on stderr before it asked. Confirm runs it "
-        f"with --yes and --expect {pin}: if what the plan read has changed by then, it is "
-        "refused (exit 3) and nothing is changed.",
+        f"with --yes and --expect {pin}: {check}.",
         pin=pin,
     )
 
+
+# What `--expect` checks, by the report field its pin is read from, in the
+# words the offer uses: exactly what the CLI compares, nothing more. `sv
+# merge` pins its target only, not its source (M13-74 follows that up).
+_PIN_CHECKS: Mapping[str, str] = {
+    "undone": (
+        "if another change has been journaled since this plan, it is refused (exit 3) and "
+        "nothing is undone"
+    ),
+    "target_sha256": (
+        "if the target file has changed by then, it is refused (exit 3) and nothing is written"
+    ),
+}
 
 # The sentence beside a confirmed run that was killed (its time limit or its
 # output cap) before it ended. M14-03 decides this case (§16.1): a `guard`
@@ -804,15 +823,27 @@ _KILLED_NOTE = (
     "undo, and if the record it names is this command's (state open), Confirm there puts "
     "back what it changed."
 )
+# The same for a leaf of the step that changes only wowlab's own store and
+# never goes through the write gate: it takes no pre-write snapshot and
+# journals nothing, so there is nothing to undo.
+_KILLED_STORE_NOTE = (
+    "It was stopped before it finished. It changes only wowlab's own store, never your "
+    "game files, and its lock was released when its process ended: run it again."
+)
+# The leaves of the step whose confirmed run writes only the store (§16.1:
+# `snap gc` removes unreferenced objects, `doctor --yes` takes a first
+# snapshot). Any other leaf of the step gets `_KILLED_NOTE`.
+_STORE_ONLY: frozenset[tuple[str, ...]] = frozenset({("snap", "gc"), _DOCTOR})
 
 
-def _confirmed_note(run: _Run) -> str | None:
+def _confirmed_note(leaf: _Leaf, run: _Run) -> str | None:
     """The sentence beside a confirmed run (§16.1): the journal record it
     made and the `wowlab undo` hint, when its report names one; what to do
-    when it was killed; else nothing (`snap gc` and `doctor` make no
-    record, and a refusal is shown as the CLI printed it)."""
+    when it was killed, by whether it writes the install; else nothing
+    (`snap gc` and `doctor` make no record, and a refusal is shown as the
+    CLI printed it)."""
     if run.timed_out or run.truncated:
-        return _KILLED_NOTE
+        return _KILLED_STORE_NOTE if leaf.path in _STORE_ONLY else _KILLED_NOTE
     report = run.report()
     record = report.get("transaction") if report is not None else None
     if isinstance(record, str) and _PIN.fullmatch(record):
@@ -1046,7 +1077,7 @@ class UiServer(http.server.ThreadingHTTPServer):
         run.confirm = {
             "stage": "confirmed",
             "token": None,
-            "note": _confirmed_note(run),
+            "note": _confirmed_note(leaf, run),
             "needs": None,
         }
         return run

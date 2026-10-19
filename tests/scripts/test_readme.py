@@ -44,12 +44,15 @@ MACOS_RECORD = ROOT / "docs" / "handoffs" / "M13-10-macos.md"
 # and the confirm step on every `--yes` command, M14-02 and M14-03).
 UI_RUNS = (
     "It runs every wowlab command except `ui` itself, `log tail --follow` and "
-    "`looks page --out`. A command that changes files runs first as a plan that "
-    "changes nothing, and runs for real only when you confirm the plan it shows: "
-    "`snap gc` and `doctor --yes` change only wowlab's own store, and `snap "
-    "restore`, `undo`, `profile apply`, `sv merge`, `addon install` and `addon "
-    "remove` change your install through the same write gate as on the command "
-    "line, which takes a snapshot first, so `wowlab undo` reverses them."
+    "`looks page --out`. The commands that read, and the ones that save only to "
+    "wowlab's own data (snapshots, profiles, saved looks, the game-table cache, "
+    "pages), run directly. A command that asks before changing anything (`--yes`) "
+    "runs first as a plan that changes nothing, and runs for real only when you "
+    "confirm the plan it shows: `snap gc` and `doctor --yes` change only wowlab's "
+    "own store, and `snap restore`, `undo`, `profile apply`, `sv merge`, `addon "
+    "install` and `addon remove` change your install through the same write gate as "
+    "on the command line, which takes a snapshot first, so `wowlab undo` reverses "
+    "them."
 )
 
 

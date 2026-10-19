@@ -38,6 +38,7 @@ from typing import Any
 import pytest
 from test_ui_confirm import (
     FLAVOR,
+    GC,
     Recorder,
     _commands,
     _confirm,
@@ -351,6 +352,39 @@ def test_a_confirmed_run_killed_at_its_limit_says_what_to_do(recorder: Recorder)
     assert note == ui._KILLED_NOTE
     for words in ("lock", "snapshot", "undo", "state open"):
         assert words in note, words
+
+
+def test_a_killed_store_only_run_does_not_point_at_undo(recorder: Recorder) -> None:
+    """`snap gc` (and `doctor`) take no pre-write snapshot and journal
+    nothing: a killed run of one says it changed only the store, and nothing
+    about a snapshot or `undo` (review S3; constructed: a run that outlives
+    a short limit)."""
+    recorder.reply({"dry_run": True, "unreferenced": []}, 0, {"removed": []}, 0, csleep=60)
+    with _serving(wowlab_argv=recorder.argv, timeout_s=8) as served:
+        token = _token(_plan(served, GC))
+        assert token is not None
+        status, done = _confirm(served, GC, token)
+    assert status == 200 and done["timed_out"] is True
+    note = done["confirm"]["note"]
+    assert note == ui._KILLED_STORE_NOTE
+    assert "store" in note and "undo" not in note and "snapshot" not in note
+
+
+def test_each_declined_note_says_exactly_what_its_pin_checks(
+    server: ui.UiServer, recorder: Recorder
+) -> None:
+    """`undo` is refused over a newer record and `sv merge` over a changed
+    target, and neither note claims more (review S1: the source of `sv
+    merge` is not pinned; M13-74)."""
+    report, stderr = _declined({"undone": RECORD})
+    recorder.reply(report, 1, stderr=stderr)
+    note = _plan(server, UNDO)["confirm"]["note"]
+    assert f"--expect {RECORD}" in note and "another change has been journaled" in note
+    recorder.reply({"target_sha256": SHA}, 1, stderr=f"plan\n{_MARKER}")
+    note = _plan(server, MERGE, {"file": "x.lua", "into": CHAR_A})["confirm"]["note"]
+    assert f"--expect {SHA}" in note and "if the target file has changed" in note
+    for note in ui._PIN_CHECKS.values():
+        assert "what the plan read" not in note
 
 
 def test_the_page_shows_the_confirmed_note_and_no_confirm(tmp_path: Path) -> None:
