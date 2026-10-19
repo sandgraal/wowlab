@@ -367,8 +367,10 @@ def test_publish_and_report_take_the_gated_artifacts_by_id() -> None:
 def test_no_job_that_runs_or_follows_the_model_uses_a_cache() -> None:
     # M13-39 (security review of #236): improve restored the uv cache. A
     # model past its permissions there could write cache entries for main,
-    # which the cached jobs in ci.yml restore. The model's job, the gates
-    # and publish each install with setup-uv's cache off, restored or saved.
+    # which the cached jobs in ci.yml restored, until M13-42 turned their
+    # cache off too (test_workflows_use_no_cache.py). The model's job, the
+    # gates and publish each install with setup-uv's cache off, restored or
+    # saved.
     jobs = _jobs()
     model_job, _ = _model_job(jobs)
     assert model_job == "improve"

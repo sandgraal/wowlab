@@ -287,8 +287,9 @@ def test_nothing_in_improve_is_added_to_path() -> None:
 def test_improve_neither_restores_nor_saves_the_uv_cache() -> None:
     # Round 2 (security review): a cache saved by improve after the model ran
     # would be restored in publish, which has contents: write, before its sync.
-    # M13-39: it no longer restores one either; ci.yml's cached jobs restore
-    # main's entries. test_wiki_daily_gates_job.py pins every job's setting.
+    # M13-39: it no longer restores one either; ci.yml's cached jobs restored
+    # main's entries until M13-42 turned their cache off too.
+    # test_wiki_daily_gates_job.py pins every job's setting.
     setups = [s for s in _steps() if s.get("uses", "").startswith("astral-sh/setup-uv@")]
     assert len(setups) == 1
     assert setups[0]["with"]["enable-cache"] is False
