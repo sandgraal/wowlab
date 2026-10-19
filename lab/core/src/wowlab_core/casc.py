@@ -39,9 +39,11 @@ product in the install; only the build config is per product.
    refused with `UnsupportedBlockMode` (an `F` block is never decoded, so
    never recursed into), and `E` with `EncryptedContent` and its key name:
    nothing is decrypted. Every size is checked against the bytes there and
-   the decoded size against a stated cap (`DECODE_LIMIT`) before anything
-   is decoded or allocated (`decode_blte`). The archive is opened for one
-   ranged read and closed (`read_record`).
+   the stored and decoded sizes against a stated cap (`DECODE_LIMIT`, 256
+   MiB) and the block count against another (`BLOCK_LIMIT`) before
+   anything is decoded or allocated (`decode_blte`); a `Z` block is never
+   inflated a byte past its declared size. The archive is opened for one
+   bounded, ranged read and closed (`read_record`).
 
 Reads only (L1, ADR-0033): every file is opened read-only without following
 a final link (`snapshot.open_regular_file`, the open under
@@ -1169,9 +1171,10 @@ def parse_blte(data: Buffer, path: Path | None = None) -> BlteLayout:
     a header size that is 0 (one block, the rest of the data) or exactly
     the flag byte `0x0F`, a 24-bit block count (at most `BLOCK_LIMIT`) and
     that many 24-byte rows (stored size, decoded size, MD5), inside the
-    data; each block at least
-    its mode byte; the stored sizes adding up to exactly the bytes after the
-    header. Nothing is decoded and nothing is allocated past the rows."""
+    data; each block at least its mode byte; the stored sizes adding up to
+    exactly the bytes after the header. Data that is not BLTE at all (one
+    record at 70450) is refused as unsupported. Nothing is decoded and
+    nothing is allocated past the rows."""
     view = _octets(data)
     n = len(view)
     if n < _BLTE_PREAMBLE:
