@@ -70,6 +70,9 @@ def _symlink(link: Path, target: Path, *, directory: bool = False) -> None:
 
 
 A = "WTF/Account/ACCOUNT1"
+# M13-50: an account folder by its `<digits>#<n>` name alone, for a tree in
+# which the account holds no character folder.
+A_SHAPED = "WTF/Account/12345678#1"
 
 
 # ─── accounts, realms, characters ───────────────────────────────────────────
@@ -248,7 +251,7 @@ def test_folder_names_are_found_case_insensitively_constructed(tmp_path: Path) -
     _, flavor = _install(
         tmp_path,
         {
-            "wtf/account/ACC/savedvariables/Foo.lua": b"",
+            "wtf/account/12345678#1/savedvariables/Foo.lua": b"",
             "interface/addons/Foo/foo.TOC": REAL_TOC,
         },
     )
@@ -430,14 +433,14 @@ def test_os_metadata_at_the_flavor_root_and_in_addons_folder_constructed(tmp_pat
 def test_savedvariables_folder_at_realm_depth_is_not_a_character_constructed(
     tmp_path: Path,
 ) -> None:
-    _, flavor = _install(tmp_path, {f"{A}/Realm/SavedVariables/Foo.lua": b"x"})
+    _, flavor = _install(tmp_path, {f"{A_SHAPED}/Realm/SavedVariables/Foo.lua": b"x"})
     lay = Layout(flavor)
     (realm,) = lay.accounts()[0].realms
     assert realm.characters == ()
     (stray,) = lay.wtf_files()
     assert (stray.scope, stray.character_folder, stray.entry_id) == ("other", None, None)
     assert lay.saved_variables() == ()
-    got = lay.classify(f"{A}/Realm/SavedVariables")
+    got = lay.classify(f"{A_SHAPED}/Realm/SavedVariables")
     assert isinstance(got, Unclassified)
 
 
@@ -471,7 +474,7 @@ def test_symlinks_outside_the_install_are_reported_not_followed_constructed(
         tmp_path,
         {
             "Interface/AddOns/Real/Real.toc": REAL_TOC,
-            f"{A}/SavedVariables/Mine.lua": b"x",
+            f"{A_SHAPED}/SavedVariables/Mine.lua": b"x",
         },
     )
     outside = _tree(
@@ -486,7 +489,7 @@ def test_symlinks_outside_the_install_are_reported_not_followed_constructed(
     )
     _symlink(flavor / "Interface/AddOns/Linked", outside / "AddonSrc", directory=True)
     _symlink(flavor / "Interface/AddOns/Real/Other.toc", outside / "secret.toc")
-    _symlink(flavor / f"{A}/SavedVariables/Foo.lua", outside / "Foo.lua")
+    _symlink(flavor / f"{A_SHAPED}/SavedVariables/Foo.lua", outside / "Foo.lua")
     _symlink(flavor / "Fonts", outside / "fonts", directory=True)
     _symlink(flavor / "Interface/Skin.blp", outside / "Foo.lua")
 
@@ -497,7 +500,7 @@ def test_symlinks_outside_the_install_are_reported_not_followed_constructed(
     assert set(links) == {
         "Interface/AddOns/Linked",
         "Interface/AddOns/Real/Other.toc",
-        f"{A}/SavedVariables/Foo.lua",
+        f"{A_SHAPED}/SavedVariables/Foo.lua",
         "Fonts",
         "Interface/Skin.blp",
     }
@@ -730,10 +733,10 @@ def test_file_name_strings_with_lone_surrogates_survive_json_constructed() -> No
 
 @pytest.mark.skipif(sys.platform in ("darwin", "win32"), reason="needs byte file names")
 def test_undecodable_file_names_on_disk_constructed(tmp_path: Path) -> None:
-    _, flavor = _install(tmp_path, {f"{A}/SavedVariables/": b""})
+    _, flavor = _install(tmp_path, {f"{A_SHAPED}/SavedVariables/": b""})
     name = os.fsdecode(b"Caf\xe9.lua")  # a lone surrogate where the byte was
     try:
-        (flavor / A / "SavedVariables" / name).write_bytes(b"x")
+        (flavor / A_SHAPED / "SavedVariables" / name).write_bytes(b"x")
     except (OSError, UnicodeEncodeError) as exc:
         pytest.skip(f"file system refuses non-UTF-8 names: {exc}")
     inv = Layout(flavor).inventory()

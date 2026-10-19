@@ -130,6 +130,16 @@ def identities(root: Path | None) -> Identities:
                     found.characters.add(character.first_name)
                     if character.second_name:
                         found.realms.add(character.second_name)
+        # M13-50: a folder under WTF/Account/ that is no account folder may
+        # still be named after one (an old-style account folder with no
+        # character yet), so its name is redacted as before. The client's own
+        # WTF/Account/SavedVariables/ names no one: redacting it would turn
+        # `## SavedVariablesPerCharacter:` into `<ACCOUNT>PerCharacter`.
+        found.accounts.update(
+            name
+            for name in (path.rsplit("/", 1)[-1] for path in walk.not_accounts)
+            if name.casefold() != _SAVED_VARIABLES
+        )
         for f in walk.wtf_files:
             if f.name.casefold() in _CONFIG_NAMES:
                 _harvest(lay.flavor_path / f.path, found)
@@ -166,6 +176,8 @@ def _account_names(folders: tuple[str, ...], found: Identities) -> None:
         if folded[i] != "wtf" or folded[i + 1] != "account":
             continue
         below = folders[i + 2 :]
+        if below[0].casefold() == _SAVED_VARIABLES:
+            continue  # M13-50: the client's own folder, no account's name
         found.accounts.add(below[0])
         if len(below) < 2 or below[1].casefold() == _SAVED_VARIABLES:
             continue

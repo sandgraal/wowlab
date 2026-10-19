@@ -199,6 +199,44 @@ tier = "—"
 module = "`layout`"
 match = ["WTF/Account/"]
 
+# M13-50: the client's own folder beside the account folders. These rows
+# come before the `<ACCOUNT>` rows, which would match it first otherwise.
+[[entry]]
+id = "client-savedvariables-folder"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Account/SavedVariables/`"
+what = "Not an account folder. Seen 2026-10-18 on the owner's Forever beta install (directory listing, not captured): the client writes Blizzard SavedVariables here (`Blizzard_GamepadSmartNavigation.lua`, `Blizzard_PTRFeedbackGlue.lua`, `Blizzard_SavedSets.lua`, `Blizzard_SettingsDefinitions_Shared.lua`), each with a `.lua.bak`, at times that do not match the account folder's latest saves; when it writes them and whether it reads them back are **[verify]**"
+written_by = "Client"
+edit = "—"
+tier = "—"
+module = "`layout`"
+match = ["WTF/Account/SavedVariables/"]
+
+[[entry]]
+id = "client-savedvariables"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Account/SavedVariables/<Addon>.lua`"
+what = "Blizzard saved state that belongs to no account (see `WTF/Account/SavedVariables/`)"
+written_by = "Client; when is **[verify]**"
+edit = "gate"
+tier = "A"
+module = "`luadata`"
+match = ["WTF/Account/SavedVariables/*.lua"]
+
+[[entry]]
+id = "client-savedvariables-backup"
+section = "flavor"
+base = "flavor"
+doc_path = "`WTF/Account/SavedVariables/<Addon>.lua.bak`"
+what = "Previous write of the same file **[verify]**"
+written_by = "Client"
+edit = "no"
+tier = "A (read)"
+module = "`luadata`"
+match = ["WTF/Account/SavedVariables/*.lua.bak"]
+
 [[entry]]
 id = "account-folder"
 section = "flavor"

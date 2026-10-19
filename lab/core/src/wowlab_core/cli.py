@@ -886,7 +886,11 @@ def _open(
 
 
 def _select_account(lay: layout.Layout, name: str | None) -> layout.Account:
-    accounts = lay.accounts()
+    """The account folder `name`, or the only one. Only account folders
+    count (M13-50): a stray folder under WTF/Account/ is neither chosen nor
+    counted, and naming it is refused with the accounts listed."""
+    walk = lay.wtf_walk()
+    accounts = walk.accounts
     names = ", ".join(a.folder for a in accounts) or "none"
     if name is not None:
         match = [a for a in accounts if a.folder == name] or [
@@ -894,8 +898,14 @@ def _select_account(lay: layout.Layout, name: str | None) -> layout.Account:
         ]
         if len(match) == 1:
             return match[0]
+        stray = [p for p in walk.not_accounts if p.rsplit("/", 1)[-1].casefold() == name.casefold()]
+        why = (
+            f"; {stray[0]} is {layout.not_account_note(stray[0].rsplit('/', 1)[-1])}"
+            if stray
+            else ""
+        )
         raise CliError(
-            f"no account folder {name!r} (accounts wowlab could look inside: {names})",
+            f"no account folder {name!r} (accounts wowlab could look inside: {names}){why}",
             EXIT_USAGE,
         )
     if len(accounts) == 1:
@@ -1790,12 +1800,14 @@ def _tree_items(
     marks = reparse if reparse is not None else _Reparse.of(inv, whole=False)
 
     items: dict[str, TreeItem] = {}
+    # M13-50: the folders under WTF/Account/ the walk did not take as accounts.
+    not_accounts = [p.rsplit("/", 1)[-1] for p in inv.not_accounts]
 
     def add(
         path: str, kind: Literal["file", "folder", "symlink"], size: int | None, note: str | None
     ) -> None:
         if path and path not in items:
-            found = lay.classify(path, is_dir=kind == "folder" or None)
+            found = lay.classify(path, is_dir=kind == "folder" or None, not_accounts=not_accounts)
             entry = found.entry if isinstance(found, layout.Classified) else None
             items[path] = TreeItem(
                 path=path,
@@ -1840,6 +1852,8 @@ def _tree_items(
             add(realm.path, "folder", None, note)
             for c in realm.characters:
                 add(c.path, "folder", None, "character folder")
+    for path in inv.not_accounts:
+        add(path, "folder", None, layout.not_account_note(path.rsplit("/", 1)[-1]))
     for f in inv.wtf_files:
         add(f.path, "file", f.size, None)
     for sv in inv.saved_variables:
@@ -2502,6 +2516,8 @@ _VIEWS: dict[str, Callable[[_At], list[_ViewSpec] | str]] = {
     "account-savedvariables": _sv_dump,
     "character-savedvariables": _sv_dump,
     "savedvariables-backup": _sv_dump,
+    "client-savedvariables": _sv_dump,
+    "client-savedvariables-backup": _sv_dump,
     "account-config-cache": _account_config,
     "account-bindings-cache": _account_binds,
     "account-macros-cache": _account_macros,
@@ -2914,7 +2930,9 @@ def explain(
             chosen = _select_flavor(inst, flavor)
             chosen_folder = chosen.folder
             in_flavor = layout.Layout.for_flavor(chosen, inst.root).classify(path)
-            if isinstance(in_flavor, layout.Classified):
+            if isinstance(in_flavor, layout.Classified) or layout.below_no_account(in_flavor):
+                # M13-50: below a folder of WTF/Account/ that is no account,
+                # the reason read in the flavor says why no row applies.
                 result = in_flavor
             elif on_root:
                 at_root = True  # M13-57: judged at the root, where it is
@@ -3163,8 +3181,9 @@ def sv_list(
     json_out: JsonOpt = False,
 ) -> None:
     """Every SavedVariables file, account-wide and per character. JSON: SvListReport."""
-    _, chosen, lay = _open(root, flavor)
-    files = list(lay.saved_variables())
+    inst, chosen, lay = _open(root, flavor)
+    walk = lay.wtf_walk()
+    files = list(walk.saved_variables)
     if account is not None or character is not None:
         acct = _select_account(lay, account)
         files = [f for f in files if f.account == acct.folder]
@@ -3175,7 +3194,13 @@ def sv_list(
                 for f in files
                 if f.realm_folder == char.realm_folder and f.character_folder == char.folder
             ]
-    report = SvListReport(flavor_folder=chosen.folder, files=files, notes=[_SV_TIMING])
+    given_root = str(inst.root) if root is not None and str(root) != "" else None
+    no_account = (
+        _no_account_notes(walk, chosen.folder, given_root)
+        if account is None and character is None
+        else []
+    )
+    report = SvListReport(flavor_folder=chosen.folder, files=files, notes=[_SV_TIMING, *no_account])
     if json_out:
         _emit(report)
         return
@@ -3187,6 +3212,28 @@ def sv_list(
         _say(f"{f.scope:<9}  {who:<32}  {_bytes(f.size):>14}  {f.path}{flags}")
     if files:
         _say(_SV_TIMING)
+    for line in no_account:
+        _say(line)
+
+
+def _no_account_notes(walk: layout.WtfWalk, flavor: str, root: str | None) -> list[str]:
+    """M13-50: one line per folder under WTF/Account/ that is no account and
+    holds files, which `sv list` leaves out (the client's own
+    `WTF/Account/SavedVariables/`, say). The `tree` command names the flavor
+    folder, and the install with --root when it was given, as `explain`'s
+    hints do."""
+    out = []
+    with_root = ["--root", root] if root is not None else []
+    for folder in walk.not_accounts:
+        n = sum(1 for f in walk.wtf_files if f.path.startswith(folder + "/"))
+        if n:
+            command = _hint(["tree", folder, "--flavor", flavor, *with_root], "").command
+            out.append(
+                f"{folder}/ holds {_plural(n, 'file')} that "
+                f"{'belongs' if n == 1 else 'belong'} to no account; "
+                f"`{command}` lists {'it' if n == 1 else 'them'}."
+            )
+    return out
 
 
 # The JSON shape of `sv dump --json`. Flat: every value is one row naming its
@@ -9009,7 +9056,7 @@ def ui_command() -> None:
 
     The server listens on 127.0.0.1 only, at a port the system picks, and
     answers only requests that carry the random token in the URL it opens.
-    It opens on the explorer: a flavor folder's files, each with whether
+    It opens on the explorer: the whole install's files, each with whether
     wowlab may edit it, and what a picked file is and who writes it. A
     second tab runs this wowlab's commands with --json. Commands that save only to
     wowlab's own data (snapshots, profiles, saved looks, the db2 cache,

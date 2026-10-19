@@ -121,6 +121,18 @@ SAMPLES: dict[str, tuple[str, str, filemap.Kind]] = {
         "file",
     ),
     "savedvariables-backup": ("flavor", f"{SV_DIR}/RareScanner.lua.bak", "file"),
+    # Constructed (the capture has none, M13-50): the client's own
+    # `WTF/Account/SavedVariables/`, as the owner's install shows it.
+    "client-savedvariables": (
+        "flavor",
+        "WTF/Account/SavedVariables/Blizzard_SavedSets.lua",
+        "file",
+    ),
+    "client-savedvariables-backup": (
+        "flavor",
+        "WTF/Account/SavedVariables/Blizzard_SavedSets.lua.bak",
+        "file",
+    ),
     "account-config-cache": ("flavor", f"WTF/Account/{ACCOUNT}/config-cache.wtf", "file"),
     "account-bindings-cache": ("flavor", f"WTF/Account/{ACCOUNT}/bindings-cache.wtf", "file"),
     "account-macros-cache": ("flavor", f"WTF/Account/{ACCOUNT}/macros-cache.txt", "file"),
@@ -215,6 +227,11 @@ def test_each_view_decodes_the_captured_file(root: Path, flavor: Path) -> None:
     shutil.copy2(  # constructed: the capture had no character bindings
         flavor / "WTF" / "Account" / ACCOUNT / "bindings-cache.wtf", char / "bindings-cache.wtf"
     )
+    # Constructed (M13-50): the client's own WTF/Account/SavedVariables/.
+    client = flavor / "WTF" / "Account" / "SavedVariables"
+    client.mkdir()
+    for name in ("Blizzard_SavedSets.lua", "Blizzard_SavedSets.lua.bak"):
+        (client / name).write_bytes(b"SavedSetsSaved = {}\n")
     paths = [
         ".build.info",
         FLAVOR,
@@ -223,6 +240,8 @@ def test_each_view_decodes_the_captured_file(root: Path, flavor: Path) -> None:
         SYNDICATOR,
         f"WTF/Account/{ACCOUNT}/1/Labchard-Labrealmg/SavedVariables/WowLab.lua",
         f"{SV_DIR}/RareScanner.lua.bak",
+        "WTF/Account/SavedVariables/Blizzard_SavedSets.lua",
+        "WTF/Account/SavedVariables/Blizzard_SavedSets.lua.bak",
         f"WTF/Account/{ACCOUNT}/config-cache.wtf",
         f"WTF/Account/{ACCOUNT}/bindings-cache.wtf",
         f"WTF/Account/{ACCOUNT}/macros-cache.txt",
