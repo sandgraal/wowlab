@@ -23,7 +23,9 @@ are not followed, nor are the pet and stance bars, an addon's buttons, or a
 key bound straight to a spell, macro or click (the record leaves those
 commands out and counts them). Only spell slots count: an item's use logs
 the item's spell, which no slot record ties to the item, and a macro slot
-holds a macro index, not what the macro casts.
+holds a macro index, not what the macro casts. The slot rule (`BAR_PAGES`,
+`UNFOLLOWED_SLOTS`, `command_slot`) and the spellbook lookup are
+`wowlab_core.keymap`'s since M14-06, re-exported here unchanged.
 
 A cast matches the slots that hold its exact spell id. A cast at an id no
 slot holds falls back to the slots whose spell the character's spellbook
@@ -68,9 +70,7 @@ may reach the spell, and may be cheaper.
 
 from __future__ import annotations
 
-import re
 import tomllib
-from collections.abc import Mapping, Sequence
 from importlib import resources
 from pathlib import Path
 from typing import Any, Literal
@@ -79,6 +79,15 @@ import platformdirs
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from wowlab_core import combatlog, labaddon, snapshot
+from wowlab_core.keymap import (
+    BAR_PAGES,
+    GET_RECORD,
+    UNFOLLOWED_SLOTS,
+    command_slot,
+    spellbook,
+)
+from wowlab_core.keymap import dropped as _dropped
+from wowlab_core.keymap import held as _held
 
 __all__ = [
     "BAR_PAGES",
@@ -116,29 +125,6 @@ COSTS_LIMIT = 1024 * 1024  # a cost table is a few KiB; a bigger file is refused
 Report = Literal["frequent-on-high-cost", "cast-without-bind", "bound-never-cast"]
 REPORTS: tuple[Report, ...] = ("frequent-on-high-cost", "cast-without-bind", "bound-never-cast")
 
-# The default UI's action buttons: binding command prefix to the page its bar
-# shows (Blizzard's ActionButton and MultiActionBar frames) **[verify]**. The
-# real record is consistent with pages 5 and 6 only; see the module docstring.
-BAR_PAGES: Mapping[str, int] = {
-    "ACTIONBUTTON": 1,
-    "MULTIACTIONBAR3BUTTON": 3,  # right bar
-    "MULTIACTIONBAR4BUTTON": 4,  # right bar 2
-    "MULTIACTIONBAR2BUTTON": 5,  # bottom right bar
-    "MULTIACTIONBAR1BUTTON": 6,  # bottom left bar
-    "MULTIACTIONBAR5BUTTON": 13,  # unconfirmed on Forever
-    "MULTIACTIONBAR6BUTTON": 14,
-    "MULTIACTIONBAR7BUTTON": 15,
-}
-_BUTTON = re.compile(r"(ACTIONBUTTON|MULTIACTIONBAR[1-7]BUTTON)([1-9]|1[0-2])")
-
-# Main-bar pages the coach does not follow **[verify]**: page 2 (paging, as
-# `ACTIONPAGE2` or SHIFT-MOUSEWHEEL show it) and pages 7 to 10 (the bars a
-# form, stance or stealth swaps in), and pages 11 and 12 (slots 121 to 144,
-# the possess, override or vehicle bars where the client has them; whether
-# Forever has them is unknown). The main bar's keys reach them only while
-# that page is shown.
-UNFOLLOWED_SLOTS = frozenset(range(13, 25)) | frozenset(range(73, 145))
-
 MODIFIERS = ("ALT", "CTRL", "SHIFT", "META")
 _SIDES = ("L", "R")
 
@@ -152,10 +138,6 @@ _UNFOLLOWED_DETAIL = (
     "vehicle bar, which the coach does not follow"
 )
 
-GET_RECORD = (
-    "install or update the lab-addon with the client closed (wowlab addon install lab), log "
-    "in on this character, then log out or /reload; schema 3 is needed"
-)
 _ACTIONBARS_NEEDS = frozenset({"GetActionInfo"})
 _BINDINGS_NEEDS = frozenset({"GetNumBindings", "GetBinding", "GetBindingKey"})
 
@@ -400,31 +382,6 @@ class CoachResult(_Model):
     caveats: list[str]  # what may make a report wrong without making it unjudgeable
 
 
-def command_slot(command: str) -> int | None:
-    """The action slot a binding command presses, by the default UI's
-    numbering (`BAR_PAGES`), or None for any other command."""
-    match = _BUTTON.fullmatch(command)
-    if match is None:
-        return None
-    return (BAR_PAGES[match.group(1)] - 1) * 12 + int(match.group(2))
-
-
-def _dropped(probes: Sequence[labaddon.ApiProbe], needs: frozenset[str]) -> list[str]:
-    counted = [p for p in probes if p.api not in labaddon.LOOKED_UP]
-    errors = sum(p.errors for p in counted)
-    secret = sum(p.secret for p in counted)
-    out: list[str] = []
-    if errors or secret:
-        out.append(
-            f"{errors} call(s) raised an error and {secret} value(s) were dropped as secret "
-            "or untestable"
-        )
-    missing = sorted(p.api for p in probes if p.api in needs and not p.present)
-    if missing:
-        out.append(f"{', '.join(missing)} not present")
-    return out
-
-
 def _sections(
     record: labaddon.CharDB | None, no_record: str
 ) -> tuple[labaddon.ActionBars, labaddon.Bindings] | str:
@@ -460,33 +417,8 @@ def _sections(
     return bars, binds
 
 
-def _spellbook(
-    record: labaddon.CharDB | None,
-) -> tuple[dict[int, str], dict[int, str], str | None]:
-    """Spell id to name and to subtext from the spellbook record, and why it is not there."""
-    if not isinstance(record, labaddon.CharDBV3) or record.spellbook is None:
-        return {}, {}, "no spellbook record"
-    if isinstance(record.spellbook, labaddon.AbsentProbedSection):
-        return {}, {}, f"no spellbook record (the section is absent: {record.spellbook.absent})"
-    names: dict[int, str] = {}
-    subtexts: dict[int, str] = {}
-    for i in record.spellbook.list_:
-        if i.spell_id is None:
-            continue
-        if i.spell_name is not None:
-            names[i.spell_id] = i.spell_name
-        if i.subtext is not None:
-            subtexts[i.spell_id] = i.subtext
-    return names, subtexts, None
-
-
 def _cheapest(keys: list[KeyCost]) -> list[KeyCost]:
     return sorted(keys, key=lambda k: (k.cost, k.key))
-
-
-def _held(spell_id: int, subtexts: Mapping[int, str]) -> str:
-    sub = subtexts.get(spell_id)
-    return f"{sub} ({spell_id})" if sub else str(spell_id)
 
 
 def coach(
@@ -498,7 +430,7 @@ def coach(
     no_log: str = "no combat log",
 ) -> CoachResult:
     """The three reports for one log's casts and one character's record."""
-    names, subtexts, no_book = _spellbook(record)
+    names, subtexts, no_book = spellbook(record)
     sections = _sections(record, no_record)
     total = counts.mine if counts is not None else 0
     cannot: list[CannotJudge] = []

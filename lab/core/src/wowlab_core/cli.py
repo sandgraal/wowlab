@@ -137,6 +137,7 @@ from wowlab_core import (
     guard,
     install,
     itemlink,
+    keymap,
     labaddon,
     layout,
     longpath,
@@ -7720,6 +7721,257 @@ def char_gear(
             _say(note)
     for note in _CHAR_NOTES:
         _say(note)
+
+
+class CharBindsFile(_Out):
+    """One `bindings-cache.wtf` `char binds` looked for."""
+
+    scope: Literal["account", "character"]
+    path: str | None  # relative to the flavor folder; None: there is no such file
+    mtime_ns: int | None
+    bind_lines: int
+    unknown_lines: int  # lines that are not bind lines: kept, not read
+    note: str
+
+
+class CharBindsReport(_Out):
+    """`wowlab char binds --json`: every key of the account and character
+    `bindings-cache.wtf` and of the lab-addon's bindings record, with the
+    action slot each presses and what the record says the slot holds
+    (`keymap.KeyRow`), the filled slots no key reaches, and the record's two
+    left-out counts. Without a usable action-bar record `cannot_place` says
+    why, and the slot rows say "cannot place: no action-bar record"."""
+
+    flavor_folder: str
+    account: str
+    character: str | None  # "<realm folder>/<character folder>"; None: no character chosen
+    chosen_by: Literal["--character", "latest"] | None
+    files: list[CharBindsFile]
+    record_file: str | None  # the character's WowLab.lua: bindings, action bars, spellbook
+    record_mtime_ns: int | None
+    record_schema: int | None
+    record_error: str | None  # why no WowLab.lua was read
+    keys: list[keymap.KeyRow]
+    unreached_slots: list[keymap.UnreachedSlot]
+    commands_left_out: int | None  # counts in the record's bindings section; None without one
+    keys_left_out: int | None
+    cannot_place: str | None
+    cannot_compare: str | None
+    notes: list[str]
+
+
+def _char_binds_file(
+    lay: layout.Layout, acct: layout.Account, folder: tuple[str, str] | None
+) -> tuple[CharBindsFile, wtfconfig.BindingsDocument | None]:
+    """The account file (`folder` None) or one character folder's file."""
+    files = [
+        f
+        for f in lay.wtf_files()
+        if f.account == acct.folder and f.name.casefold() == "bindings-cache.wtf"
+    ]
+    if folder is None:
+        found = [f for f in files if f.scope == "account"]
+        scope: Literal["account", "character"] = "account"
+    else:
+        found = [
+            f
+            for f in files
+            if f.scope == "character" and (f.realm_folder, f.character_folder) == folder
+        ]
+        scope = "character"
+    target = found[0] if found else None
+    doc = wtfconfig.read_bindings(lay.flavor_path / target.path) if target else None
+    note = _ACCOUNT_BINDINGS if scope == "account" else _NO_CHARACTER_BINDINGS
+    if scope == "character" and doc is not None:
+        note = _bindings_note("character", True)
+    return (
+        CharBindsFile(
+            scope=scope,
+            path=target.path if target else None,
+            mtime_ns=target.mtime_ns if target else None,
+            bind_lines=len(doc.bindings) if doc else 0,
+            unknown_lines=len(doc.unknown_lines()) if doc else 0,
+            note=note,
+        ),
+        doc,
+    )
+
+
+@char_app.command("binds")
+@_handled
+def char_binds(
+    character: CharacterOpt = None,
+    account: AccountOpt = None,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+) -> None:
+    """What each key does for one character: the account and character
+    bindings-cache.wtf and the keys the lab-addon recorded (schema 3), each key
+    with the action slot its command presses (the main bar at page 1, the page
+    shown with no form, stance or stealth active) and what the record says
+    that slot holds, where the files and the record
+    disagree, and the filled slots no key reaches. Without --character, the
+    character whose WowLab.lua was written last. Reads only. JSON: CharBindsReport."""
+    _, chosen, lay = _open(root, flavor)
+    acct = _select_account(lay, account)
+    target, how, record, record_error = _coach_record(lay, acct, character)
+    folder: tuple[str, str] | None = None
+    if target is not None and target.realm_folder and target.character_folder:
+        folder = (target.realm_folder, target.character_folder)
+    elif character is not None:
+        char = _select_character(acct, character)
+        folder = (char.realm_folder, char.folder)
+    account_file, account_doc = _char_binds_file(lay, acct, None)
+    files = [account_file]
+    character_doc = None
+    if folder is not None:
+        character_file, character_doc = _char_binds_file(lay, acct, folder)
+        files.append(character_file)
+    no_record = (
+        f"no lab-addon record: {record_error}"
+        if record_error is not None
+        else f"no lab-addon record ({keymap.GET_RECORD})"
+    )
+    found = keymap.join_record(
+        account=account_doc, character=character_doc, record=record, no_record=no_record
+    )
+    report = CharBindsReport(
+        flavor_folder=chosen.folder,
+        account=acct.folder,
+        character=f"{folder[0]}/{folder[1]}" if folder is not None else None,
+        chosen_by=how if how is not None else ("--character" if character is not None else None),
+        files=files,
+        record_file=target.path if target else None,
+        record_mtime_ns=target.mtime_ns if target else None,
+        record_schema=record.schema_ if record is not None else None,
+        record_error=record_error,
+        keys=found.keys,
+        unreached_slots=found.unreached_slots,
+        commands_left_out=found.commands_left_out,
+        keys_left_out=found.keys_left_out,
+        cannot_place=found.cannot_place,
+        cannot_compare=found.cannot_compare,
+        notes=[*found.notes, _CHAR_NOTES[0]],
+    )
+    if json_out:
+        _emit(report)
+        return
+    _say_char_binds(report)
+
+
+def _source_words(row: keymap.KeyRow) -> str:
+    files = ", ".join(s for s in row.sources if s != "record")
+    if row.agreement is None:
+        return ", ".join(row.sources)
+    if row.agreement == "both":
+        return f"{files} and record agree"
+    if row.agreement == "cleared":
+        return f"{files}: cleared; the record has no command on the key"
+    if row.agreement == "file only":
+        return f"{files} only: disagrees with the record"
+    if row.agreement == "not in a file":
+        return "record only (no file line for this key)"
+    return "record only: disagrees with the files"
+
+
+def _say_char_binds(report: CharBindsReport) -> None:
+    if report.character is None:
+        _say(
+            f"Character: none in account {report.account} has a {labaddon.LAB_FILE_NAME}; "
+            "the account bindings only (choose a character with --character)"
+        )
+    else:
+        picked = " (written last; choose another with --character)" * (report.chosen_by == "latest")
+        _say(f"Character: {report.character} in account {report.account}{picked}")
+    if report.record_file is None:
+        _say(f"Record: none ({report.record_error or keymap.GET_RECORD})")
+    elif report.record_error is not None:
+        _say(f"Record: {report.record_file} not read ({report.record_error})")
+    else:
+        assert report.record_mtime_ns is not None
+        _say(
+            f"Record: {report.record_file} (schema {report.record_schema}), written "
+            f"{_local_time(report.record_mtime_ns)} (the file's modification time)"
+        )
+    for f in report.files:
+        label = "Account bindings" if f.scope == "account" else "Character bindings"
+        if f.path is None or f.mtime_ns is None:
+            _say(f"{label}: no bindings-cache.wtf {f.note}")
+            continue
+        unknown = f"; {_plural(f.unknown_lines, 'other line')}, kept" * bool(f.unknown_lines)
+        _say(
+            f"{label}: {f.path} ({_plural(f.bind_lines, 'bind line')}{unknown}), written "
+            f"{_local_time(f.mtime_ns)} {f.note}"
+        )
+    # Without a record read, the Record line above already says why.
+    read = report.record_file is not None and report.record_error is None
+    if read and isinstance(report.record_schema, int) and report.record_schema < 3:
+        _say(
+            "Cannot place keys on action slots or compare the files with the record: schema "
+            f"{report.record_schema} has no action-bar or bindings record ({keymap.GET_RECORD})"
+        )
+    elif read:
+        if report.cannot_place is not None:
+            _say(f"Cannot place keys on action slots: {report.cannot_place}")
+        if report.cannot_compare is not None:
+            _say(f"Cannot compare the files with the record: {report.cannot_compare}")
+    tally = ""
+    if report.cannot_compare is None:
+        count = {a: sum(1 for k in report.keys if k.agreement == a) for a in _AGREEMENTS}
+        tally = (
+            f" ({count['both']} in a file and the record, {count['file only']} only in a file, "
+            f"{count['record only']} only in the record with a file line putting the key on "
+            f"another command, {count['not in a file']} only in the record with no file line "
+            f"for the key, {count['cleared']} cleared)"
+        )
+    _say(f"Keys: {len(report.keys)}{tally}")
+    if any(k.command.startswith("ACTIONBUTTON") and k.slot is not None for k in report.keys):
+        _say(
+            "  Main-bar keys (ACTIONBUTTON1 to 12) are read at page 1, the page shown with no "
+            "form, stance or stealth active; another page they may show is not followed."
+        )
+    generic = False
+    pad = f"  {'':<16} {'':<26} {'':>4}  "
+    for k in report.keys:
+        slot = str(k.slot) if k.slot is not None else "-"
+        _say(f"  {k.key:<16} {k.command:<26} {slot:>4}  {k.does}  ({_source_words(k)})")
+        if k.page_note is not None and "unconfirmed" in k.page_note:
+            _say(f"{pad}{k.page_note}")
+        if k.note == keymap.NOT_IN_A_FILE_NOTE:
+            generic = True
+        elif k.note is not None and k.disagrees:
+            _say(f"{pad}{k.note}")
+    if generic:
+        _say(f"  Only in the record, no file line for the key: {keymap.WHY_NOT_IN_A_FILE}.")
+    if report.cannot_place is None:
+        reached = [u for u in report.unreached_slots if not u.unfollowed_page]
+        paged = [u for u in report.unreached_slots if u.unfollowed_page]
+        _say(f"Filled slots no key reaches on the page its bar shows by default: {len(reached)}")
+        for u in reached:
+            _say(f"  slot {u.slot:>3}  {u.does}  ({u.page_note})")
+        if paged:
+            _say(f"Filled slots on main-bar pages that are not followed: {len(paged)}")
+            for u in paged:
+                _say(f"  slot {u.slot:>3}  {u.does}  ({u.page_note})")
+    if report.commands_left_out is not None and report.keys_left_out is not None:
+        _say(
+            "Left out of the bindings record, counted with no list: "
+            f"{_plural(report.commands_left_out, 'command')} not named in plain upper case "
+            "(a key bound straight to a spell, macro, item or click may be one), and "
+            f"{_plural(report.keys_left_out, 'key')} not printable ASCII."
+        )
+    for note in report.notes:
+        _say(note)
+
+
+_AGREEMENTS: tuple[keymap.Agreement, ...] = (
+    "both",
+    "file only",
+    "record only",
+    "not in a file",
+    "cleared",
+)
 
 
 # ─── looks ───────────────────────────────────────────────────────────────────
