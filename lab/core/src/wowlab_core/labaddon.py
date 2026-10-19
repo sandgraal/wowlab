@@ -3106,13 +3106,8 @@ def _identity_line(char: CharDB) -> str:
         if got.race_id is not None
         else f"race id absent ({got.race_id_absent})"
     )
-    raw = (
-        f"UnitSex {got.sex_raw}"
-        if got.sex_raw is not None
-        else f"UnitSex absent: {got.sex_raw_absent}"
-    )
-    if got.sex is not None:
-        body = f"body type {got.sex} (Enum.UnitSex, from {raw})"
+    if got.sex is not None:  # derived, so sex_raw is there
+        body = f"body type {got.sex} (Enum.UnitSex, from UnitSex {got.sex_raw})"
     else:
         body = f"body type absent ({got.sex_absent})"
     return f"Identity: {klass}, {race}, {body}"
