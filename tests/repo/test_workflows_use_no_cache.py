@@ -45,13 +45,13 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 
 CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
-UPLOAD = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
-DOWNLOAD = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+UPLOAD = "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
+DOWNLOAD = "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
 PATHS_FILTER = "dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d"
 SETUP_UV = "astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884"
 ACTIONLINT = "raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7"
 TRIVY = "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25"
-CLAUDE = "anthropics/claude-code-action@1d6de8cb0c237e7c15e9e1bdf973826ebae490cc"
+CLAUDE = "anthropics/claude-code-action@f27be6b65a4652f08a2ba3cff79114829b588967"
 
 # What each action does with the Actions cache at the pinned commit, as read
 # from its action.yml on 2026-10-18 (M13-42):
