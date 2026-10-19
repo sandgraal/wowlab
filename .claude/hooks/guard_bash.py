@@ -135,6 +135,26 @@ def _check_gh(seg: list[str]) -> str | None:
         return "--admin bypasses branch protection; satisfy the required checks and threads."
     if args[:1] == ["api"]:
         joined = " ".join(args)
+        # A query passed as `-F query=@<file>` (or `-f`) is read from that file
+        # and judged like an inline one, so the file route cannot carry a
+        # mutation past the allowlist. A file that cannot be read is refused:
+        # write it first, then run the call (2026-10-19, M14-02 notes).
+        for j, a in enumerate(args):
+            spec = ""
+            if a in ("-F", "-f", "--field", "--raw-field") and j + 1 < len(args):
+                spec = args[j + 1]
+            elif a.startswith(("-F", "-f")) and len(a) > 2 and not a.startswith("--"):
+                spec = a[2:]
+            elif a.startswith(("--field=", "--raw-field=")):
+                spec = a.split("=", 1)[1]
+            if spec.startswith("query=@"):
+                try:
+                    joined += " " + Path(spec[len("query=@") :]).read_text(encoding="utf-8")
+                except OSError:
+                    return (
+                        "gh api graphql with query=@<file> reads the file to check it for "
+                        "mutations; write the file first, then run the call."
+                    )
         is_mutation = "graphql" in args and "mutation" in joined.lower()
         if is_mutation and not any(m in joined for m in _ALLOWED_MUTATIONS):
             return (
