@@ -1122,8 +1122,7 @@ Found 2026-10-19 in the code review of M14-09. The Keys panel prints `char binds
 
 ---
 ## [ ] M13-79 — The secret scan's reach: every pushed branch, or the PR's range
-
-**Size:** XS · **Depends on:** nothing · **Owner decision**
+**Size:** XS · **Depends on:** nothing · **owner** (a decision first)
 
 Found 2026-10-19 when #307 went red through no change of its own. The `Secret scan (gitleaks)` job checks out with `fetch-depth: 0` and runs `gitleaks git .`, which scans every ref the checkout fetched, so a hex content hash in one branch's fixture (#312, M15-03) failed the required check on every open PR at once. #315 fixed that instance with a per-line allowlist on `main` for the three CASC hash fields. The job's reach itself is a choice: the whole-repository net catches a leak in any branch the moment it is pushed, and a secret committed and later deleted still needs rotating (the job's own comment); the PR-range scan keeps one branch's fixture from blocking the others. The owner rules; if the net stays, the fix for the next such hash is another narrow line regex, never a `paths` key (gitleaks 8.30.1 skips the whole file on one).
 
@@ -1131,12 +1130,11 @@ Found 2026-10-19 when #307 went red through no change of its own. The `Secret sc
 
 ---
 ## [ ] M13-80 — `looks import-char` reads the class from the identity record
-
 **Size:** XS · **Depends on:** M15-01
 
-Noted by the M15-01 implementer, 2026-10-19. `looks import-char` prints `_NO_CLASS_REMARK` because no record carried the character's class; since schema 4 (M15-01) `identity.class_id` and `identity.class_file` do. Read them when the record is schema 4, keep the remark for older schemas, and say in the output which it was. Text output otherwise byte-identical to `main`; `--json` gains the class fields if the report lacks them, listed in the release notes (M13-47's guard).
+Noted by the M15-01 implementer, 2026-10-19. `looks import-char` prints `_NO_CLASS_REMARK` because no record carried the character's class; since schema 4 (M15-01) `identity.class_id` and `identity.class_file` do. Read them when the record is schema 4, keep the remark for older schemas, and say in the output which it was. `--class` still wins when given; when it disagrees with the record, say so in one line and use `--class` (the owner asked for it); the record's `class_id` is checked against the tables the way `--class` is. Text output otherwise byte-identical to `main`; `--json` gains the class fields if the report lacks them, listed in the release notes (M13-47's guard).
 
-**Acceptance:** the real `macos-70450` fixtures (Dangling-Participle MAGE, Sangraal-Sett WARLOCK) print the class and no remark; the schema-3 fixtures print the remark unchanged; byte-identity as stated; `make ci` green; reviewed by `domain-reviewer` and `code-reviewer`. User-facing: `looks import-char` output; the wiki's `looks` page.
+**Acceptance:** the real `macos-70450` Sangraal-Sett fixture (WARLOCK, with a carried customization record) prints the class and no remark; Dangling-Participle (no customization record) still exits 1 with the unchanged "nothing to import" line; the schema-3 fixtures print the remark unchanged; a constructed disagreement between `--class` and the record is reported as stated; byte-identity as stated; `make ci` green; reviewed by `domain-reviewer` and `code-reviewer`. User-facing: `looks import-char` output; the wiki's `looks` page.
 
 ---
 
