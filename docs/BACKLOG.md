@@ -1226,7 +1226,7 @@ The conductor writes `docs/handoffs/M14-review.md` per `docs/LAB_PLAN.md` §11: 
 
 # M15 — character-studio, the data half (Wave 6)
 
-Picked by the owner on 2026-10-19 after the Wave 5 review (`docs/handoffs/M14-review.md`): **character-studio**, split into two waves because it is size L. Wave 6 is the data half: reading the install's game data archives read-only (the ADR the second plan PR brings; L7 stands, `Data/` is never edited), the model, skin and texture decoders, the table joins that turn a character's record into its model and texture files, and a CLI that extracts them under the data directory; Wave 7 is planned as the viewer in the Character tab. The plan section (`docs/LAB_PLAN.md` §17) and the tickets after M15-02 follow the format research of 2026-10-19 in a second docs PR; this header, M15-01 and M15-02 land first because they need nothing from it. The owner also asked for the dressing-room link the same day (`docs/LAB_IDEAS.md` **dressing-room-link**); it is M15-02, behind the one addon field it needs. L1 to L8 apply. The `ui` tickets of this wave collide on the templates like M14's did and run one at a time.
+Picked by the owner on 2026-10-19 after the Wave 5 review (`docs/handoffs/M14-review.md`): **character-studio**, split into two waves because it is size L. Wave 6 is the data half: reading the install's game data archives read-only (ADR-0033; L7 stands, `Data/` is never edited), the model, skin and texture decoders, the table joins that turn a character's record into its model and texture files, and a CLI that extracts them under the data directory; Wave 7 is planned as the viewer in the Character tab (ADR-0034). The plan section is `docs/LAB_PLAN.md` §17, written from the format research of 2026-10-19 (the client is at 1.60.1.70450 since that day); M15-01 and M15-02 landed first because they need nothing from it, and M15-03 to M15-12 follow §17.9's order. The owner also asked for the dressing-room link the same day (`docs/LAB_IDEAS.md` **dressing-room-link**); it is M15-02, behind the one addon field it needs. L1 to L8 apply. The `ui` tickets of this wave collide on the templates like M14's did and run one at a time.
 
 ## [ ] M15-01 — lab-addon schema 4: the character's identity (race, body type, class)
 **Size:** S · **Depends on:** nothing
@@ -1245,5 +1245,93 @@ The addon's record holds a race id only inside `customization`, which exists onl
 The Character tab renders the field under the gear table as one button, **See it dressed**: an `<a>` in `page.html` with `target="_blank"` and `rel="noopener noreferrer"` as static markup, whose `href` the page sets from the report's `url` only after `new URL(url)` parses, its `protocol` is `https:` and its `origin` equals, exactly, the one site origin held as a constant in `page.js`. That constant is the one place `://` may appear in the page body (`test_no_external_url_appears_in_the_page` gains that exemption, listed as `_EXTERNAL`), and the assignment is the one `.href` sink the explorer sink tests allow; nothing else in either test changes. For the fallback, the item list with a Copy button. The CSP is unchanged: a navigation the player starts is not governed by it, and the page and the server make no request to the site. `README.md` (the trust-model lines, 17 and 129 on `main`) and `SECURITY.md` (line 60) say the only network traffic is wago.tools; each gains one clause, "and a link you click opens in your own browser", pinned by `tests/scripts/test_readme.py`'s text as the other README sentences are.
 
 **Acceptance:** the builder's output equals the recorded example for the fixture character (a labelled derived fixture: the example address and the identity and gear it was built from, no asset bytes); the fallback on an absent `identity`, on an unknown version band and on a character with no placeable item; a labelled constructed case at the builder's typed input (an item id of 0 or negative, a bonus-id list of a thousand entries, a race id of 10⁹) yields the fallback, never a malformed address; the page test shows the button's `href` equals the report's `url`, and that `https://www.example.test/`, a lookalike (`https://<site>.evil.example/`), a userinfo form (`https://<site>@evil.example/`), `javascript:` and `data:` urls are each left unrendered as a link; the two test exemptions are exactly the one constant and the one assignment; no request leaves the page (the existing allowlist tests); the README and SECURITY sentences pinned; `make ci` green. Reviewed by `security-reviewer` and `code-reviewer`. User-facing: the button; `char gear --json`'s new field; the README and SECURITY sentences; the wiki's `wowlab ui`, `char` and `security` pages. The owner tries the link on a real character and records whether it rendered (the **[verify]** in §16.3).
+
+---
+
+## [ ] M15-03 — `casc`: the build config and the local index
+**Size:** S · **Depends on:** nothing
+
+§17.1 steps 1 and 2; `docs/LAB_FORMATS.md` §10. `wowlab_core.casc` opens a flavor's `Data/` read-only (L1: never `shmem`, `index.lock.0` or any file for writing; no lock held): reads the build key from `.build.info` through `install`, the build config (`root`, `encoding`), and every `Data/data/*.idx` into one lookup from the first nine bytes of an encoding key to (archive, offset, size), the newest version per bucket when more than one exists (reported; **[verify]**). Typed errors for a missing or malformed file, never a crash. A `CascIndexReport` model (build, config keys, bucket count, entry count, versions taken, open time).
+
+**Acceptance:** constructed fixtures (labelled): a two-bucket index with two versions of one bucket, a malformed header, an entry at the 16-byte boundary; a derived fixture from the owner's install (bucket count, entry count, the versions, a handful of key → (archive, offset, size) rows, no bytes) with a provenance row, made by `scripts/casc_facts.py` (new, read-only); `@live` tests on the install; the lookup of 1 M entries in under 2 s on the owner's machine (measured in the report); `make ci` green. Reviewed by `code-reviewer` and `security-reviewer` (the first module to open `Data/`: L1, no writes, no locks, no `shmem`). User-facing: none yet.
+
+---
+
+## [ ] M15-04 — `casc`: BLTE
+**Size:** S · **Depends on:** M15-03
+
+§17.1 step 3; `docs/LAB_FORMATS.md` §10. The archive record header and the BLTE decoder: the chunk table, blocks `N` and `Z` decoded with the per-block MD5 checked, `4`, `F` and `E` refused with typed errors (`UnsupportedBlockMode`, `EncryptedContent(key_name)`), a bounded output size (a stated cap, over which the read refuses), and a `mmap(ACCESS_READ)` over the archive.
+
+**Acceptance:** constructed fixtures (labelled): a BLTE with `N` and `Z` blocks whose decoded bytes are known; one with an `E` block; one with a `4` block; one whose chunk MD5 is wrong (refused); one over the cap (refused); a derived fixture from the owner's install (a file's record header fields, block modes and decoded MD5); `@live` tests; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer` (hostile archives: the decoder never allocates more than the cap, never recurses on `F`).
+
+---
+
+## [ ] M15-05 — `casc`: encoding, root, and `CascSource.read`
+**Size:** M · **Depends on:** M15-04
+
+§17.1 steps 4 and 5 and the targets. The encoding file (page index, `bisect`, one-page scan; no full dictionary), the root file in versions 1 and 2 (the flag words, locale and platform filtering with the locale and platform discovered from the install, never a constant: L6; `Encrypted` blocks listed, not read), and `CascSource.read(fdid) -> bytes` with the content-key MD5 check and the one re-open on mismatch while the client runs. `CascSource.stat(fdid)` reports *local*, *not downloaded*, *encrypted* or *unknown id*. **Performance target (§6.4):** open in ≤ 5 s, 300 reads in ≤ 10 s, resident memory measured; a miss is a stop-and-ask (§17.1), not a dependency.
+
+**Acceptance:** constructed root v1 and v2 (NoNameHash, Encrypted, a skipped locale), a two-page encoding; derived fixtures (header fields, counts, a handful of fdid → ckey → ekey rows, the three timings); `@live` tests including the MD5 check on ten real files and the three stat states; the timings in the report; `make ci` green. Reviewed by `code-reviewer`, `security-reviewer` and `domain-reviewer` (the locale and platform filtering on Forever; which files a macOS client skips).
+
+---
+
+## [ ] M15-06 — `wowlab casc stat` and `casc cat`
+**Size:** S · **Depends on:** M15-05
+
+§17.1 "What it writes". `wowlab casc stat --fdid N [--json]` prints the file's state and, when local, its size and content key; `wowlab casc cat --fdid N --out PATH` writes the decoded bytes, with `--out` confined to the data directory's `casc/<build>/` or stdout (`-`), never elsewhere (a path outside is refused; the install is never a target); `CascStatReport`. The data directory layout `casc/<build>/` is created on first use and never overwritten across builds (L5).
+
+**Acceptance:** `stat` on the three states and an unknown id; `cat` to the data directory and to stdout; a traversal `--out` refused; `--out` naming the install refused; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer` (`--out` confinement). User-facing: two new commands; the wiki's command reference.
+
+---
+
+## [ ] M15-07 — `blp`: textures to RGBA and PNG
+**Size:** S · **Depends on:** M15-05
+
+§17.2; `docs/LAB_FORMATS.md` §11. `wowlab_core.blp` decodes mip 0 of a BLP2 (DXT1, DXT3, DXT5; palette with 1-, 4- and 8-bit alpha; BGRA) to RGBA rows, refuses BC5 and any other encoding with a typed error, computes block sizes rather than trusting the stored mip sizes, and `wowlab_core.png` writes PNG with the stdlib. A 1024² DXT1 decode in ≤ 0.5 s on the owner's machine.
+
+**Acceptance:** constructed 4×4 and 8×8 textures of each encoding with known RGBA (labelled); a derived fixture from the owner's install (a texture's header fields, encoding, size, mip count, the MD5 of the decoded RGBA); `@live` decode of three real textures; the PNG re-read by a stdlib parser in the test; the timing; `make ci` green. Reviewed by `code-reviewer`.
+
+---
+
+## [ ] M15-08 — `m2`: models and skins
+**Size:** M · **Depends on:** M15-05
+
+§17.3; `docs/LAB_FORMATS.md` §12. `wowlab_core.m2` reads the chunked M2 (`MD21`, `SFID`, `TXID`; other chunks listed by tag and skipped), the header arrays it needs (vertices, textures, attachments; bones counted, not read), and the `.skin` file (lookup, indices, sections with the geoset id and the level offset, batches); bounded by counts and offsets checked against the chunk size, never past it. Models of a version outside the wiki's table are read with a note, not refused (272 here).
+
+**Acceptance:** a constructed minimal M2 (one triangle, one texture, `TXID`, `SFID`) and skin (two sections, one with level > 0) with known values (labelled); hostile constructed cases (an offset past the chunk, a count of 2³²); a derived fixture for `humanmale_hd` and `humanfemale_hd` (version, chunk tags and sizes, counts, texture types, the `TXID` ids, section count and geoset ids; no bytes); `@live` tests; `make ci` green. Reviewed by `code-reviewer` and `domain-reviewer` (texture types, geoset ids, what version 272 keeps inside the M2).
+
+---
+
+## [ ] M15-09 — `renderplan`: the character to its files and rules
+**Size:** M · **Depends on:** M15-01, M15-05
+
+§17.4. `wowlab_core.renderplan` builds a `RenderPlan` from the lab-addon's `identity` and `customization` records and `char gear`'s items through the game tables of §17.4 (fetched and cached by `gamedata` per build, ADR-0022; the three unpublished tables skipped): the body model id, the geoset set with the slot rules and priorities, the texture layers (customization materials with their sections, layers and blend modes; item pieces by component section), the attachments and collection models with their race, sex and class filters, each file's `stat` from `casc`. Without a `customization` record the defaults, with a note. Transmog is not rendered; the item's own look is. The bonus-id rule (type 7, lowest priority wins) is marked **[verify]** in the report until the owner checks one real link.
+
+**Acceptance:** the plan for the fixture character (identity from the 70450 capture, gear from its record) against recorded wago CSV slices, asserted row by row (geosets, layers, attachments, file ids); a labelled constructed character with a helmet (hair hidden), a cloak, a robe (the trouser priority), a shirt under chest (the sleeve priority), and an item whose bonus ids select a second appearance; every unsupported customization element listed; a file that is not local listed as such; `make ci` green. Reviewed by `domain-reviewer` (the tables, the geoset rules, what Forever's data lacks) and `code-reviewer`. User-facing: none until M15-11.
+
+---
+
+## [ ] M15-10 — `compositor`: the body texture
+**Size:** M · **Depends on:** M15-07, M15-09
+
+§17.5. `wowlab_core.compositor` composes the body texture from the plan's layers into the layout's canvas: section rectangles, layer order, the blend modes (alpha-over, multiply, overlay, screen; others refused with the mode named, **[verify]**), rows as byte slices; hair and eyes left as separate textures. Target: a 2048×1024 composite in ≤ 3 s on the owner's machine.
+
+**Acceptance:** constructed 8×8 layers with known results per blend mode (labelled); the fixture character's composite MD5 as a derived fixture, with the inputs' ids; a layer outside its section refused; the timing; `make ci` green. Reviewed by `code-reviewer`.
+
+---
+
+## [ ] M15-11 — `gltf` and `wowlab char model`
+**Size:** M · **Depends on:** M15-06, M15-08, M15-10
+
+§17.6. `wowlab_core.gltf` writes glTF 2.0 binary with the stdlib (nodes, meshes, float32 attributes, uint32 indices, PNG materials, the Z-up to Y-up swap with its signs **[verify]**); `wowlab char model [--character] [--account] [--root] [--flavor] [--out] [--json]` runs plan → files → composite → GLB into `<data>/casc/<build>/characters/<character>.glb` and its PNGs, `--out` confined like `casc cat`; `CharModelReport` (the plan summary, each file's state, sizes, timings). A read of the install and a write of wowlab's own data: no `guard`, no `--yes`.
+
+**Acceptance:** the GLB re-parsed by a stdlib reader in the test (chunk layout, accessors, materials, node count equal to the plan's models); the fixture character's GLB facts as a derived fixture (counts and MDs of the buffers); a run on a character whose body model is not local ends with exit 1 and the file named; `--out` confinement; `--json` validating; `make ci` green. Reviewed by `security-reviewer` (the write target) and `code-reviewer`. User-facing: a new command; the wiki's `char` page and the command reference. The owner opens the GLB in any glTF viewer and records what it looked like (the **[verify]** on the axis signs).
+
+---
+
+## [ ] M15-12 — Wave 6 review
+**Size:** S · **Depends on:** M15-02, M15-11
+
+The conductor writes `docs/handoffs/M15-review.md` per `docs/LAB_PLAN.md` §11: what shipped, what the install taught (streaming counts, encryption, timings against the targets), the state of every **[verify]** in §17.7 after the owner's live runs, and the Wave 7 plan (§17.8) as the recommended next wave with ADR-0034 ready.
 
 ---
