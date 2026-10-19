@@ -149,7 +149,7 @@ def test_a_root_link_with_several_flavors_has_no_flavor_hint_constructed(tmp_pat
         assert rel_text == ab_text.replace(str(root / LINK), LINK)
 
 
-def test_a_path_only_inside_the_flavor_is_still_read_there(tmp_path: Path) -> None:
+def test_a_path_only_inside_the_flavor_is_still_read_there_constructed(tmp_path: Path) -> None:
     """Control: nothing at the root by that name, so it is read in the flavor."""
     root = _install(tmp_path)
 
