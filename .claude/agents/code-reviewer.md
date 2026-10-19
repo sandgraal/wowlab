@@ -59,7 +59,7 @@ own internal consistency.
   `ctypes`/FFI, except the one owner-permitted site `ui/_winjob.py` (a
   Windows Job Object for the server's own child runs; ADR-0029 ruling of
   2026-10-16), which must stay within that ruling; nothing that reads memory, injects, sniffs or automates
-  input; nothing that touches `Data/` or an executable.
+  input; nothing that writes `Data/` or an executable (reads only through `casc`, ADR-0033).
 - **L8.** Parsers are graded on real fixtures with index rows; constructed
   inputs are labelled and limited to hostile and boundary cases. Nothing
   hits a live service. No test needs a real install.
