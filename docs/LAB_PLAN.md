@@ -997,6 +997,17 @@ form with a plain spelling (`explain PATH`, `sv dump FILE`, `sv merge FILE`)
 is taken by that plain spelling, so `sv dump --json`'s `file` and
 `explain`'s `query` name it plainly.
 
+*Amended 2026-10-18 (M13-52, owner decision; M13-58):* a snapshot manifest
+keeps a link's target text as `readlink` answered it, `\\?\` prefix
+included on Windows, because `guard` and `profiles` compare that text raw
+to raw and it is evidence of what the disk said; the two printers that show
+a stored target (`snap show` and `profile save`/`profile show`) print it
+through `longpath.plain_text` on Windows, relative text as stored, and
+every `--json` keeps the raw string. The plain-path readers above also
+include `labaddon`'s `WowLab.lua` reads (`char list`, `char show`, the
+survey) and `tree PATH` / `tree --install PATH`, which take a `\\?\`
+argument with a plain spelling by that spelling.
+
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 
 The only module that writes into an install (L2, ADR-0021).

@@ -106,6 +106,8 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 ---
 
+**Note (2026-10-18, M13-55; Proposed):** the capture tool's kept set as listed in the 2026-10-17 amendment (the account folder, the owner's own GUIDs, `--extra-name` strings) also covers the value of every `accountName` CVar it reads, rewritten as an account pseudonym and refused glued into a longer word; `accountList` entries follow once their separator is known (M13-62). No change to what may appear in the repository.
+
 ## ADR-0020 — The core is a flavor-agnostic Python package in the uv workspace
 
 **Status:** Accepted (2026-09-21; proposed 2026-09-20)

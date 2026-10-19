@@ -819,7 +819,7 @@ Found in the code review of #248 (M13-37), on `main` already. `install._read_fla
 
 ---
 
-## [ ] M13-47 — A new `--json` model fails CI until the release notes list it
+## [x] M13-47 — A new `--json` model fails CI until the release notes list it
 **Size:** XS · **Depends on:** M13-11
 
 Found while merging #246. The release notes' `--json` paragraph names every model a command's help names, and the review probe `lab/core/tests/review/test_m13_11_release_notes_json_models_incomplete.py` checks that, but it only fires on the release branch: M13-08 added `BindsCoachReport` to `main` after the review, the probe passed on the branch and failed on the merged tree, and the conductor fixed the notes by hand before the tag. Move the check into `tests/scripts/test_release.py` so it runs on every PR: every model name that `gen_command_reference.json_models` reports is listed in `.github/release-notes.md`, and every listed name exists. A PR that adds a `--json` model then fails CI until it also adds the line, which is the ADR-0031 rule for `--json` changes. Keep the review probe or fold it in; say which.
@@ -828,7 +828,7 @@ Found while merging #246. The release notes' `--json` paragraph names every mode
 
 ---
 
-## [ ] M13-48 — `snap restore`: a mode-only change to an addon executable
+## [x] M13-48 — `snap restore`: a mode-only change to an addon executable
 **Size:** XS · **Depends on:** M13-38. *Owner decision 2026-10-18: option (b).* The behaviour stays (a mode-only change to an addon executable still refuses the whole restore, exit 3); the restore prints the gate's line plus the advice line M13-38 added for `--paths` (name the other files with `--paths`, or reinstall the addon). `guard.py` is untouched.
 
 Found in the code review of #249 (M13-38). `guard._unchanged_executable` treats the permission bits as part of "matches", so an addon executable whose bytes are unchanged but whose mode changed (a `chmod 644 → 755`) still refuses a whole restore with exit 3 and the gate's line alone; the advice line M13-38 added runs only for `--paths`. Rare (an addon update changes the bytes too) and it fails safe, but the `--help` promise reads as if any change were counted and skipped. Two M13-30 review probes pin the current behaviour (`test_m13_30_screenshots_restore_ignores_executable_mode.py`, lines 71–90) and stay unedited under option (b).
@@ -878,7 +878,7 @@ Found 2026-10-17 on the owner's install. `WTF/Account/` there holds the account 
 
 ---
 
-## [ ] M13-51 — The first-run survey prints `\\?\` link targets on Windows
+## [x] M13-51 — The first-run survey prints `\\?\` link targets on Windows
 **Size:** XS · **Depends on:** M13-43
 
 Found in the code review of #253 (M13-43), unverified on Windows. `firstrun._link_target` returns `str(longpath.readlink(path))` raw, and the survey prints `{link.path} -> {target}` and fills `SyncHint.link_target` from it; on Windows an absolute link target comes back `\\?\C:\…`, against §6.9's M13-15 amendment (paths are plain everywhere the owner sees them, the first-run survey named). Strip the prefix with `longpath.plain_text` where the text has a plain spelling, keep relative text as is (as M13-43 did in `layout.link_facts`), Windows only; constructed Windows test with an absolute and a relative link; byte-identical `doctor` output on macOS and Linux.
@@ -887,7 +887,7 @@ Found in the code review of #253 (M13-43), unverified on Windows. `firstrun._lin
 
 ---
 
-## [ ] M13-52 — Snapshot manifests store raw `\\?\` link targets on Windows
+## [x] M13-52 — Snapshot manifests store raw `\\?\` link targets on Windows
 **Size:** S · **Depends on:** M13-15, M13-43
 
 *Owner decision 2026-10-18: keep the raw text in the manifest, strip on display.* The manifest keeps what `os.readlink` returned (evidence of what the disk said; `guard._same_link` and `profiles.py` compare raw to raw, unchanged, so no grader ticket is needed). The surfaces that print a stored target are `snap show` and `_print_profile` (`profile save`, `profile show`); `snap verify`, `snap list` and the restore plan print none. In text those two print the target through `longpath.plain_text` as `tree` does since M13-43, Windows only, relative text kept as stored; `--json` keeps the raw string, since it mirrors the manifest and a script may compare it. The explorer shows what `explain --json` carries, which has no stored target today.
@@ -898,7 +898,7 @@ Found in the code review of #253 (M13-43), unverified on Windows. `snapshot._dir
 
 ---
 
-## [ ] M13-55 — The capture tool hunts the values of blanked identity settings in other files
+## [x] M13-55 — The capture tool hunts the values of blanked identity settings in other files
 **Size:** XS · **Depends on:** M13-49
 
 Found in the security review of #257 (M13-49), pre-existing. `scripts/lab_capture.py` blanks `accountName`, `accountList`, `realmName` and `lastCharacterGuid` in `Config.wtf`, but its harvest (`_HARVEST_RE`) reads only `lastCharacterGuid` (and, until M13-49 merges, `realmName`) into the identity map, so the value of `accountName` (on current clients usually an email address, caught by the email check; on older ones an account name) or an `accountList` entry that also appears in a SavedVariables value is written out unchanged with exit 0. Add the `accountName` value (and, once its separator is known, each `accountList` entry; the format reference does not give it, so capture it from a real `Config.wtf` first and mark it **[verify]**) to the identity map as account-type strings (rewritten in contents, refused glued into a longer word), as the account folder is today. Labelled constructed test: `SET accountName "SECRETACCT"` in `Config.wtf` and `"SECRETACCT"` in a SavedVariables value: blanked in one, rewritten in the other, provenance count up by one.
@@ -921,11 +921,13 @@ Found in the domain review of #258 (M13-45), both pre-existing or outside that t
 
 Found in the code review of #258 (M13-45), on `main` since M13-29. With one flavor installed, `explain Foo` for a relative path with no row at the install root is re-judged inside that flavor (cli.py around 2844–2856), so a link named `Foo` at the install root reports `link: false` and "wowlab does not know what this file is", while the absolute spelling reports the link. M13-45 fixes this for `_*_` names in `not_taken`; extend the same rule to any root entry that exists at the root (a link, a file or a folder that `lstat` finds there): judge it at the root, never inside a flavor. Labelled constructed test with a root link in both spellings; `explain` output for paths that do exist inside the flavor byte-identical to `main`.
 
+*Conductor ruling 2026-10-18 (from the #274 review, where "judge it at the root, never inside a flavor" collided with the byte-identity line):* the root rule applies only when the lookup inside the flavor also finds no row, and an explicit `--flavor` that names a real flavor and finds a row inside wins; a link in the middle of the typed path counts as found at the root (the parts are walked with `lstat` and the walk stops at the first link, never reading through it).
+
 **Acceptance:** the test passes; byte-identity on the install fixtures; `make ci` green; reviewed by `code-reviewer`.
 
 ---
 
-## [ ] M13-58 — `labaddon` reads `WowLab.lua` by its plain path; `tree PATH` echoes a `\\?\` argument
+## [x] M13-58 — `labaddon` reads `WowLab.lua` by its plain path; `tree PATH` echoes a `\\?\` argument
 **Size:** S · **Depends on:** M13-44
 
 Found in the code review of #260 (M13-44). (1) `labaddon.py` (around lines 1635 and 1686) still `os.lstat`s the lab-addon's `WowLab.lua` under `WTF/Account/…` by its plain path, so on Windows with long paths off, past the limit, every character's file shows as an error row ("cannot read") in `char list`, which reaches those lines through `labaddon.survey` (`_Reader.read`, `_grew_past`); `read_char` and `read_account` already go through `snapshot.read_regular_file`'s long-path spelling, so `char show`, `looks import-char` and the binds coach are not affected (by reading; not run on Windows). Route it through `longpath` as M13-44 did for the other readers, with a Windows test under the long-paths step and an every-platform "no `\\?\` in `char list`/`char show` output" test. (2) `tree PATH` with a `\\?\` argument on Windows hits `_tree_prefix`'s "is not inside" usage error and echoes the prefix; apply `cli._plain_arg` there as `explain` does. The reviewer also noted that M13-44T did not grade the `_read_sibling` containment check past `MAX_PATH`; the implementer's own junction test covers it, and the security review confirmed it. If the owner wants an independent grader for that check (`luadata.py` is load-bearing), file M13-58T for it; otherwise this ticket needs none.
@@ -934,10 +936,12 @@ Found in the code review of #260 (M13-44). (1) `labaddon.py` (around lines 1635 
 
 ---
 
-## [ ] M13-59 — `claude-review.yml`: the review hits its 30-turn cap before a verdict
+## [x] M13-59 — `claude-review.yml`: the review hits its 30-turn cap before a verdict
 **Size:** S · **Depends on:** nothing
 
 Found 2026-10-18 on #265 (error after 2m58s, a partial report posted: "`git` and `gh` could not run in this sandbox; `.git/config` is unreadable") and #266 (error after 3m24s, nothing posted; the log ends `Reached maximum number of turns (30)`). Two causes, both measured by the review's own run on #267 (its inline finding there). (1) The model has no diff. The checkout is `fetch-depth: 1` with `persist-credentials: false` (lines 58 and 59) and the workflow denies the checkout's `.git/config` on purpose (its comment around line 106) so the action's token, written later, never reaches the model; `--allowedTools` (line 186) allows `Bash(gh pr diff:*)` and no `git`, and `gh pr diff` fails twice over: `gh` runs `git` to find the repository and hits the `.git/config` denial, and with `-R sandgraal/wowlab` it then fails on `error connecting to api.github.com`, because the sandbox has no network. So the model reads whole files to reconstruct the diff and spends its turns. (2) For a PR that touches `.claude/`, `CLAUDE.md`, `.mcp.json` or the action's other config paths, the files on disk are not the PR's: the action puts the base version back before the model starts (the log line `Restoring .claude, .mcp.json, .claude.json, .gitmodules, .ripgreprc, CLAUDE.md, CLAUDE.local.md, .husky from origin/main (PR head is untrusted)`, logged before `Running Claude Code`), so the working tree shows `M .claude/agents/pr-shepherd.md` with `main`'s content, and the prompt's "the files on disk — the PR branch is checked out" (line 144) is false for exactly the files a conductor-lane PR changes; no number of turns helps there. Fix in the workflow, not by loosening anything: a step that runs before the action, with `persist-credentials` left false (the repository is public: fetch the base anonymously, or use `fetch-depth: 2` and `git diff --no-ext-diff --no-textconv HEAD^1 HEAD` on the merge ref), writes `git diff --stat` and the unified diff to a file under the workspace outside `.git/` and outside every restored path, capped in size (say 400 KiB, with a "truncated" line); the prompt names that file as the diff and stops claiming the branch is on disk for the restored paths (`.claude/`, `CLAUDE.md`, `.mcp.json`, …). `--max-turns 30` stays unless the measured runs still need more, in which case it is raised to the number they needed, stated in the PR body. The job stays non-required.
+
+*Note 2026-10-18 (#272, merged 0b55917):* the review action skips itself on any PR that edits `claude-review.yml` ("the workflow file must have identical content to the version on the default branch"), so the PR could not measure itself; its diff step ran (31435 bytes written, git 2.55.0). The three measured runs are taken on later PRs (the next `lab/` PR rebased onto main, a docs-only PR, and the conductor's M13-60 `.claude/` PR) and recorded here; `--max-turns 30` stays until they exist.
 
 **Acceptance:** three runs, recorded in the PR body with their turn counts from the action log: a docs-only PR, a PR that touches `lab/`, and a PR that touches `.claude/` whose verdict cites the PR's lines and not `main`'s; `persist-credentials` is still false and the token still never reaches the model's environment (the existing scrub is unchanged, and the security review says so); `make ci` green; reviewed by `security-reviewer` (`.github/**`) and `code-reviewer`.
 
@@ -951,6 +955,69 @@ Found 2026-10-18 on #265 (error after 2m58s, a partial report posted: "`git` and
 Found 2026-10-18 by the shepherd on #266, the first merge through the GitHub MCP tools. The Merge section of `.claude/agents/pr-shepherd.md` ends with a cleanup step run from the main checkout (`git worktree remove`, `git branch -D`), and Claude Code's worktree isolation, not a repo hook (`guard_bash.py` allows the command), refuses any command from an isolated agent that `cd`s to the main checkout; the shepherd's own worktree also showed as locked. The definition now tells the shepherd to report its worktree path and skip the step (2026-10-18). Decide the lasting rule. Default: the shepherd never cleans up; the harness's auto-clean of unchanged worktrees covers the common case, and the conductor removes a changed one after the merge from the main checkout; the definition's cleanup step is rewritten to say so. Alternative: none in the repository; the refusal is Claude Code's, so any exception is an owner settings question, not a hook change.
 
 **Acceptance:** the shepherd definition's cleanup step matches the rule chosen and no longer names a step the shepherd cannot run; the Cloud sessions paragraph states lessons (1) to (6), one sentence each, with the poll-script template, and no longer says "Try `gh` first"; `make hooks-test` green; `scripts/check_frontmatter.py` clean; reviewed by `code-reviewer`.
+
+---
+
+## [ ] M13-61 — The capture tool follows a symlinked `WTF/` or `WTF/Account/` past its identity harvest
+**Size:** S · **Depends on:** M13-55
+
+Found in the security review of #269 (M13-55), on `main` before it. `scripts/lab_capture.py`'s discovery (`folders()`/`named()`, around lines 2776–2786) skips symlinked folders, but the planner reaches the same files through `child()`/`descend()` (around 1732–1747), which follow symlinks, and `Planner.add` refuses a symlink only at the final file. With `_retail_/WTF` a symlink to a directory outside the install holding `SET accountName "SECRETACCT"`, account `123456789#1` and an SV file containing `SECRETACCT`, the capture exits 0 with the account folder and the value unscrubbed (reproduced against main's tool too). Players symlink `WTF` to sync settings, so the harvest M13-55 added is skipped silently on exactly those installs; only the GUID check has a fallback refusal. Fix: make discovery and planning agree, failing closed: discovery stops with a `CaptureError` when `WTF/` or `WTF/Account/` is a symlink (or the planner applies the same symlink exclusion at every level). Labelled constructed test with the symlinked `WTF` tree: exit 2, nothing written, the value not printed.
+
+**Acceptance:** the test passes; existing capture tests unchanged; `make ci` green; reviewed by `security-reviewer` and `code-reviewer`.
+
+---
+
+## [ ] M13-62 — The capture tool hunts `accountList` entries
+**Size:** XS · **Depends on:** M13-55 · **owner** (needs a slice of the owner's `Config.wtf`)
+
+Left **[verify]** by M13-55: `accountList` is blanked in config files but its entries are not hunted elsewhere, because the entry separator is not in `docs/LAB_FORMATS.md` and the only real fixture holds the CVar blank. The owner pastes the `SET accountList` line of a real `Config.wtf` with the entries replaced by `A`, `B` (the separator kept); the conductor records the separator with a dated **[verify]** note in `docs/LAB_FORMATS.md` §5; then an implementer splits the value loosely (on any run of characters outside `[A-Za-z0-9._#@-]`, dropping a leading `!`) and adds each piece the way an `accountName` value is added (M13-55), with a labelled constructed test.
+
+**Acceptance:** the separator recorded; the test passes; `make ci` green; reviewed by `security-reviewer`.
+
+---
+
+## [ ] M13-63 — `check_wiki` decodes percent-encoding before the personal-data matchers
+**Size:** XS · **Depends on:** M13-53
+
+Found in the security review of #277 (M13-53), pre-existing. `check_privacy` reads raw lines, `wiki_diagnose.Redactor.line` too, and `_resolve` decodes a link target once and only for the withhold decision: `[x](123456789%231)` is withheld in the message but exits 1 (the page goes out in the `wiki-daily-unchecked` artifact), `[x](123456789%25231)` prints the digits, and `123456789%231` as plain text exits 0. The runner holds nothing private, so an encoded identifier can only come from an already-public input or from the model, which is why this is low; the backstop should still see it. Fix in `personal_kinds`: also match a percent-decoded form of the text, decoding repeatedly (capped) until it stops changing, so the privacy check, the withhold decision and the redactor agree. Labelled constructed tests for single and double encoding, exit 3.
+
+**Acceptance:** the tests pass; exit codes otherwise unchanged; `make ci` green; reviewed by `security-reviewer`.
+
+---
+
+## [ ] M13-64 — `check_wiki` and `Player-<n>-<hex>` GUIDs
+**Size:** XS · **Depends on:** M13-53 · **owner** (a decision first)
+
+Found in the security review of #277 (M13-53). `check_wiki` has no matcher for `Player-<n>-<hex>` GUIDs: `[x](Player-1234-0ABCDEF0)` exits 1 and prints the GUID, the bare GUID as text passes, and `wiki_diagnose` does not redact it. The owner's own GUIDs are in ADR-0019's kept set but never reach the runner, and the scrubbed placeholder GUIDs in the repository would be false positives. The owner decides: either record in the `check_wiki` docstring and under ADR-0019 that the wiki gate does not match GUIDs, or add a GUID matcher that exempts the placeholder ranges. Then an implementer does the one chosen.
+
+**Acceptance:** the decision recorded; if a matcher, labelled constructed tests and `make ci` green; reviewed by `security-reviewer`.
+
+---
+
+## [ ] M13-65 — CI hygiene: pin the actionlint binary, show skipped tests on Windows, note the old cache entries
+**Size:** XS · **Depends on:** M13-42
+
+Three small items from the reviews of #278 (M13-42) and #276 (M13-51). (1) `ci.yml` runs `raven-actions/actionlint` with its default `version: latest`, so the binary is downloaded unpinned and unchecked on every run, and shellcheck or pyflakes may be installed unpinned too; pin `version:` and verify the download as the gitleaks job does. (2) `windows.yml`'s parallel and serial pytest steps run `-q` without `-rs`, so a Windows-only test that skips is invisible in the log (M13-51 had to prove its two end-to-end tests ran from pass counts); add `-rs` (the long-paths step already has `-rxXs`). (3) Owner item, not CI: cache entries saved for `main` before M13-42 stay until GitHub evicts them; `gh cache delete --all` once clears them.
+
+**Acceptance:** actionlint pinned and checksummed; `-rs` on both steps and a Windows run showing its skip list; `make ci` green; reviewed by `code-reviewer`.
+
+---
+
+## [ ] M13-66 — Link-target display: `snap show` prints `-> None` for an unreadable target; `doctor` and `tree` spell the same link differently
+**Size:** XS · **Depends on:** M13-52, M13-51 · **owner** (the second half is a choice)
+
+(1) From #271 (M13-52): `cli._stored_target(None)` returns `None`, so `snap show` and `_print_profile` print `-> None` for an entry whose target could not be read, as on `main` before it; `firstrun.py` prints `(target unreadable)` in the same situation. Print the same words. (2) From #276 (M13-51), pre-existing on every platform: `layout.link_facts` (`tree`) prints a link's raw stored text (`./Account`, `../Interface/`) while `firstrun._link_target` (`doctor`'s survey) prints it after `Path` normalises it (`Account`, `../Interface`). Making them agree changes one command's bytes; the owner picks which (raw as stored is what §6.9 promises for `tree`; the survey's form was never promised). Then the implementer aligns the other and the byte-identity graders that pin it are updated with a dated note.
+
+**Acceptance:** `(target unreadable)` in both printers with a labelled constructed test; the owner's choice recorded here; both commands print the same text for the same link; `make ci` green; reviewed by `code-reviewer`.
+
+---
+
+## [ ] M13-67 — `claude-review.yml`: the model reads the PR's `AGENTS.md`
+**Size:** XS · **Depends on:** M13-59
+
+Found in the security review of #272 (M13-59), pre-existing. The review prompt says "Read AGENTS.md first", but `AGENTS.md` is not one of the paths the action restores from `main` before the model starts, so the model reads the PR's copy, and a hostile PR could weaken the invariants it is graded against. Offset today because the prompt restates L1 to L8 inline and the change would show in the diff. Fix in the workflow: add `AGENTS.md` (and `docs/AGENT_WORKFLOW.md` if the prompt cites it) to the restore list if the action's input allows it, otherwise have the diff step copy `main`'s `AGENTS.md` beside the diff file and point the prompt at that copy, saying the on-disk one is the PR's.
+
+**Acceptance:** a test in `tests/repo/` asserts the prompt points at a base copy; `persist-credentials` still false and the scrub unchanged; `make ci` green; reviewed by `security-reviewer` and `code-reviewer`.
 
 ---
 
