@@ -744,6 +744,24 @@ def _bytes(n: int) -> str:
     return f"{n:,} byte" + ("" if n == 1 else "s")
 
 
+CONFIRM_DECLINED = "Nothing was changed."
+"""The last line `_confirm` prints on stderr when it gets no yes, before the
+command exits 1. `wowlab ui` reads a plan run of a command with no
+`--dry-run` (`undo`, `sv merge`) by it: that run is the leaf with `--json`,
+no `--yes` and stdin closed, so `_confirm` gets no answer, and the text plan
+is what stderr holds before this line (docs/LAB_PLAN.md §16.1, M14-03)."""
+
+EXPECT_FIELDS: dict[tuple[str, ...], str] = {
+    ("undo",): "undone",
+    ("sv", "merge"): "target_sha256",
+}
+"""For each command that confirms through `_confirm` and declares `--expect`:
+the field of its `--json` report whose value, passed back as `--expect`,
+makes a later run refuse (exit 3) unless it would apply the same plan. The
+journal record `undo` would undo; the SHA-256 `sv merge` read its target
+with (§16.1, "applies the plan that was shown")."""
+
+
 def _confirm(question: str, yes: bool) -> None:
     if yes:
         return
@@ -753,7 +771,7 @@ def _confirm(question: str, yes: bool) -> None:
         agreed = False
         _note("")
     if not agreed:
-        _note("Nothing was changed.")
+        _note(CONFIRM_DECLINED)
         raise typer.Exit(EXIT_ERROR)
 
 
@@ -3563,6 +3581,9 @@ class SvMergeReport(_Out):
     written: bool
     transaction: str | None  # the journal record of the write (`wowlab undo` reverses it)
     notes: list[str]  # the warnings and caveats the text output prints
+    # The target's SHA-256 as this run read it, before the merge: `--expect`
+    # compares a later run's with it (M14-03).
+    target_sha256: str
 
 
 _MERGE_PROVEN = (
@@ -4116,6 +4137,16 @@ def sv_merge(
             "--force-loader-check", help="Merge even when the SavedVariables loader check refuses."
         ),
     ] = False,
+    expect: Annotated[
+        str | None,
+        typer.Option(
+            "--expect",
+            metavar="SHA256",
+            help="Write only if the target still has this SHA-256 (target_sha256 in an "
+            "earlier run's --json): else refused, exit 3, nothing written. For a plan "
+            "shown by one run and confirmed by another.",
+        ),
+    ] = None,
     account: AccountOpt = None,
     yes: YesOpt = False,
     root: RootOpt = None,
@@ -4192,6 +4223,17 @@ def sv_merge(
     base_id = store.resolve_id(base) if base is not None else None
     target_path = lay.flavor_path / target.path
     ours_bytes = _read_sv(target_path)
+    expected = hashlib.sha256(ours_bytes).hexdigest()
+    if expect is not None and expect != expected:
+        # Final already: this run would merge into other bytes than the plan
+        # it is to confirm. The same compare is made again under the write
+        # gate's lock, below, for a change made after this read.
+        raise CliError(
+            f"{target.path} has SHA-256 {expected}, not the expected {expect}: it changed "
+            "after the plan was made, so nothing was written; run the command again to see "
+            "the new plan",
+            EXIT_REFUSED,
+        )
     if source_char is not None:
         found = _character_sv(files, acct, source_char, _sv_name(target))
         if found is None:
@@ -4255,6 +4297,7 @@ def sv_merge(
             written=written,
             transaction=transaction,
             notes=[*notes, _MERGE_PROVEN] if written else notes,
+            target_sha256=expected,
         )
 
     def finish(done: SvMergeReport, line: str) -> None:
@@ -4289,7 +4332,6 @@ def sv_merge(
         if json_out:
             _emit(report(written=False))
         raise
-    expected = hashlib.sha256(ours_bytes).hexdigest()
     with guard.transaction(chosen, label=f"sv merge {target.path}", store=store.path) as tx:
         if is_lab_file:
             # The next loader check compares from what this write leaves
@@ -4304,6 +4346,14 @@ def sv_merge(
                     "nothing was written"
                 ) from exc
         tx.write(target.path, data)
+        if expect is not None and tx.plan[0].before != expect:
+            # Under the write gate's locks: raising here rolls the write back.
+            raise CliError(
+                f"{target.path} changed after the plan was made (its SHA-256 is "
+                f"{tx.plan[0].before}, not the expected {expect}), so the merge was rolled "
+                "back; run the command again to see the new plan",
+                EXIT_REFUSED,
+            )
         if [item.before for item in tx.plan] != [expected]:
             raise CliError(
                 f"{target.path} changed after it was read, so the merge was rolled back; "
@@ -6488,7 +6538,20 @@ def snap_restore(
 
 @app.command()
 @_handled
-def undo(yes: YesOpt = False, json_out: JsonOpt = False) -> None:
+def undo(
+    yes: YesOpt = False,
+    expect: Annotated[
+        str | None,
+        typer.Option(
+            "--expect",
+            metavar="JOURNAL_ID",
+            help="Undo only if the most recent journal record is this one (undone in an "
+            "earlier run's --json): else refused, exit 3, nothing undone. For a plan shown "
+            "by one run and confirmed by another.",
+        ),
+    ] = None,
+    json_out: JsonOpt = False,
+) -> None:
     """Undo the most recent change made through the write gate (a restore, or an
     earlier undo), from the snapshot taken before it. JSON: UndoReport.
 
@@ -6497,6 +6560,16 @@ def undo(yes: YesOpt = False, json_out: JsonOpt = False) -> None:
     its store lock (`guard.undo(expected_id=...)`), so a change journaled
     after that re-read is refused too: only the record shown is undone."""
     records = guard.history()
+    if expect is not None and (not records or records[-1].id != expect):
+        # The journal only grows, so a mismatch is final; `guard.undo` makes
+        # the same compare again under its store lock, below.
+        newest = records[-1].id if records else "none: the journal is empty"
+        raise CliError(
+            f"the most recent journal record is {newest}, not the expected {expect}: "
+            "another change was journaled after the plan was made, so nothing was undone; "
+            "run the command again to see the new plan",
+            EXIT_REFUSED,
+        )
     if not records:
         raise CliError("nothing to undo: the write gate's journal is empty")
     last = records[-1]
@@ -6546,8 +6619,10 @@ def undo(yes: YesOpt = False, json_out: JsonOpt = False) -> None:
     if not now or now[-1].id != last.id:
         raise CliError(
             "the journal changed after the plan was shown; nothing was undone, run the "
-            "command again to see the new plan"
+            "command again to see the new plan",
+            EXIT_ERROR if expect is None else EXIT_REFUSED,
         )
+    # With --expect, `last.id` is `expect` (checked above).
     guard.undo(expected_id=last.id)
     done = report(applied=True, transaction=guard.history()[-1].id)
     if json_out:

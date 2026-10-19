@@ -29,28 +29,45 @@ the home folder and path separator so the page can show home as `~`. `POST
 /api/run` runs one leaf. Its argv is built only from the parameters the leaf
 declares: options as `--name=value`, so a value is never read as an option,
 arguments after `--`, flags given or not, never through a shell. Refused
-(403 `excluded`, ADR-0029 amendment and owner rulings of 2026-10-15): every
-leaf that declares `--yes` (read from the tree) and does not yet go through
-the confirm step, `ui` itself, `log tail` with `follow` (a run must end) and
-`looks page` with `out` (it can create a file anywhere outside an install).
+(403 `excluded`, ADR-0029 amendment and owner rulings of 2026-10-15): a leaf
+that declares `--yes` (read from the tree) whose plan run has none of the
+three shapes below (none on 2026-10-19), `ui` itself, `log tail` with
+`follow` (a run must end) and `looks page` with `out` (it can create a file
+anywhere outside an install).
 
-The confirm step (ADR-0029 "Writes", §16.1, M14-02). A leaf that declares
-`--yes` and is in `_CONFIRM_READY` (`snap gc` and `doctor` here) is never run
-with `--yes` from a form: its `yes` (and `dry_run`) parameter is the
-server's, not the page's. A request with no `confirm` makes the *plan run*,
-whose shape the server reads from the tree: a leaf that declares `--dry-run`
-runs with `--dry-run --json`, and its marker is a JSON report with `dry_run:
-true`; `doctor` runs with `--json`, and its marker is `first_run.outcome ==
-"not_asked"` with `first_run.chosen` set. Only a run that exited 0, whole,
-with its shape's marker gets a one-time token (`secrets`), bound here to the
-exact argv it confirms, spent on first use and kept only in memory. A
-request carrying `confirm: <token>` spends it, rebuilds the plan argv from
-its own `command` and `params`, and runs the bound confirmed argv only when
-the two plan argvs are equal: the plan argv with `--dry-run` taken out and
-`--yes` added as its own element after `--json` (and before any `--`, so it
-is never read as an argument). An unknown, spent or mismatched token answers
-403 `confirm` and runs nothing. The server writes nothing itself: the
-confirmed run is the CLI's, and every change it causes is the CLI's (L2).
+The confirm step (ADR-0029 "Writes", §16.1, M14-02, M14-03). A leaf that
+declares `--yes` is never run with `--yes` from a form: its `yes` (and
+`dry_run`, and for the declined shape `expect`) parameter is the server's,
+not the page's. A request with no `confirm` makes the *plan run*, whose
+shape the server reads from what the leaf declares, never from a list: a
+leaf that declares `--dry-run` (`snap gc`, `snap restore`, `profile apply`,
+`addon install`, `addon remove`) runs with `--dry-run --json`, and its
+marker is a JSON report with `dry_run: true`, exit 0; `doctor` runs with
+`--json`, and its marker is `first_run.outcome == "not_asked"` with
+`first_run.chosen` set, exit 0; a leaf with no `--dry-run` that declares
+`--expect` and whose pin field the CLI exports in `cli.EXPECT_FIELDS`
+(`undo`, `sv merge`: the *declined* shape) runs with `--json` alone, and its
+marker is exit 1 with stderr's last line exactly `cli.CONFIRM_DECLINED`
+(`_confirm` got no answer on the closed stdin) and stdout one JSON report
+whose pin field holds a well-formed value. Only a whole run with its shape's
+marker gets a one-time token (`secrets`), bound here to the exact argv it
+confirms, spent on first use and kept only in memory. A request carrying
+`confirm: <token>` spends it, rebuilds the plan argv from its own `command`
+and `params`, and runs the bound confirmed argv only when the two plan argvs
+are equal: the plan argv with `--dry-run` taken out and `--yes` added as its
+own element after `--json` (and before any `--`, so it is never read as an
+argument), and for the declined shape `--expect=<pin>` after it, with the
+pin read here from the plan's own report: `undo` is refused (exit 3) if
+another record was journaled after the plan, `sv merge` if its target file
+changed (its source is not pinned; M13-74). The dry-run shape carries no
+pin: its confirmed run applies what is there at confirm time, after the
+pre-write snapshot. An unknown, spent or mismatched token answers 403
+`confirm` and runs nothing. A confirmed run's result names the journal
+record its report names, with the `wowlab undo` hint, and a confirmed run
+killed at its limit says what to do (`_KILLED_NOTE`, or
+`_KILLED_STORE_NOTE` for `snap gc` and `doctor`). The server writes
+nothing itself: the confirmed run is the CLI's, and every change it causes
+is the CLI's (L2).
 
 At most `MAX_CONCURRENT_RUNS` run at once (503
 `busy` past that). Each run has a timeout and an output cap, read as a stream
@@ -133,24 +150,25 @@ _DRAIN_GRACE_S = 2.0
 _CLOSE_WAIT_S = 10.0
 _POLL_S = 0.05
 
-# The reason ADR-0029's 2026-10-15 amendment gives, word for word; the parity
-# test (M13-26) holds it to that.
-_EXCLUDED_YES = "confirm flow: M14"
+# A `--yes` leaf whose plan run has none of §16.1's three shapes is refused
+# until it declares what a plan of it is (none does on 2026-10-19).
+_EXCLUDED_YES = "--yes with no plan run the UI can confirm"
 _EXCLUDED_UI = "the UI itself"
 
 _JSON = "--json"
 _YES = "--yes"
 _DRY_RUN = "--dry-run"
+_EXPECT = "--expect"
 _DOCTOR = ("doctor",)
-# The `--yes` leaves that go through the confirm step. M14-02 proves the
-# mechanism on the two whose worst case is wowlab's own store (§16.1);
-# M14-03 adds the six install writes. Every other `--yes` leaf stays
-# excluded with `_EXCLUDED_YES`, and a new one is excluded until it is named
-# here.
-_CONFIRM_READY: frozenset[tuple[str, ...]] = frozenset({("snap", "gc"), _DOCTOR})
-# The plan-run shapes (§16.1), as `/api/commands` names them.
+# The plan-run shapes (§16.1), as `/api/commands` names them. Which one a
+# `--yes` leaf has is read from what it declares (`_confirm_shape`); the set
+# of leaves is the tree's, never listed here.
 _SHAPE_DRY_RUN = "dry_run"
 _SHAPE_DOCTOR = "doctor"
+_SHAPE_DECLINED = "declined"
+# What a pin (the `--expect` value read from a declined plan's report) may
+# be: a journal record id or a SHA-256 fit it, and it never starts with `-`.
+_PIN = re.compile(r"\A[0-9A-Za-z][0-9A-Za-z._-]{0,127}\Z")
 # Refusal code for an unknown, spent or mismatched confirm token.
 _CONFIRM_REFUSED = "confirm"
 # The longest confirm token read; `secrets.token_urlsafe(32)` is 43 characters.
@@ -253,12 +271,38 @@ class _Leaf:
     json_opt: str | None
     excluded: str | None
     # The plan-run shape of a `--yes` leaf that goes through the confirm step
-    # (`_SHAPE_DRY_RUN` or `_SHAPE_DOCTOR`); None for every other leaf.
+    # (`_SHAPE_DRY_RUN`, `_SHAPE_DOCTOR` or `_SHAPE_DECLINED`); None for
+    # every other leaf.
     confirm: str | None = None
+    # For `_SHAPE_DECLINED`: the field of the plan's report whose value the
+    # confirmed run passes back as `--expect` (`cli.EXPECT_FIELDS`).
+    pin: str | None = None
 
 
 def _opts(param: Any) -> list[str]:
     return [*getattr(param, "opts", ()), *getattr(param, "secondary_opts", ())]
+
+
+@functools.cache
+def _cli_contract() -> tuple[str, Mapping[tuple[str, ...], str]]:
+    """What the CLI exports for the declined shape (§16.1): the line
+    `_confirm` ends a declined run with, and the report field each command
+    that declares `--expect` names its pin in."""
+    from wowlab_core import cli
+
+    return cli.CONFIRM_DECLINED, dict(cli.EXPECT_FIELDS)
+
+
+def _value_option(param: Any, opt: str) -> bool:
+    """Whether `param` is an option that takes exactly one value at `opt`."""
+    return (
+        not getattr(param, "is_flag", False)
+        and getattr(param, "param_type_name", "") == "option"
+        and opt in getattr(param, "opts", ())
+        and getattr(param, "nargs", 1) == 1
+        and not getattr(param, "multiple", False)
+        and not getattr(param, "count", False)
+    )
 
 
 def _plain_flag(param: Any, opt: str) -> bool:
@@ -274,19 +318,28 @@ def _plain_flag(param: Any, opt: str) -> bool:
 
 
 def _confirm_shape(
-    path: tuple[str, ...], json_opt: str | None, yes: Any, dry_run: Any | None
+    path: tuple[str, ...],
+    json_opt: str | None,
+    yes: Any,
+    dry_run: Any | None,
+    expect: Any | None,
 ) -> str | None:
     """The plan-run shape of a `--yes` leaf, read from what it declares
-    (§16.1), or None when it does not go through the confirm step yet: it is
-    not in `_CONFIRM_READY`, has no `--json` to read a marker from, or its
-    `--yes` (or `--dry-run`) is not a plain flag. `_confirm`'s decline marker
-    (`undo`, `sv merge`) is M14-03's third shape and is not read here."""
-    if path not in _CONFIRM_READY or json_opt is None or not _plain_flag(yes, _YES):
+    (§16.1), or None when it has none (it is then excluded): a leaf with no
+    `--json` to read a marker from, or whose `--yes` is not a plain flag,
+    has none. Else: a plain `--dry-run` flag is the dry-run shape (`--dry-run
+    --json`); `doctor` is its own; a leaf with no `--dry-run` that declares
+    a one-value `--expect` and whose report field for it the CLI exports
+    (`cli.EXPECT_FIELDS`) is the declined shape (`--json` alone, ended by
+    `_confirm`'s `cli.CONFIRM_DECLINED`). Nothing else."""
+    if json_opt is None or not _plain_flag(yes, _YES):
         return None
     if dry_run is not None:
         return _SHAPE_DRY_RUN if _plain_flag(dry_run, _DRY_RUN) else None
     if path == _DOCTOR:
         return _SHAPE_DOCTOR
+    if expect is not None and _value_option(expect, _EXPECT) and path in _cli_contract()[1]:
+        return _SHAPE_DECLINED
     return None
 
 
@@ -333,33 +386,49 @@ def _read_tree(root: Any) -> dict[tuple[str, ...], _Leaf]:
         json_opt: str | None = None
         yes: list[Any] = []
         dry_run: list[Any] = []
+        expect: list[Any] = []
         for param in getattr(command, "params", ()):
             opts = _opts(param)
             if _YES in opts:
                 yes.append(param)
             if _DRY_RUN in opts:
                 dry_run.append(param)
+            if _EXPECT in opts:
+                expect.append(param)
             if _JSON in opts:
                 json_opt = _JSON
                 continue  # the server adds it itself; it is not a parameter here
             params[str(param.name)] = _read_param(param)
         excluded = None
         confirm = None
+        pin = None
         if yes:
-            if len(yes) == 1 and len(dry_run) <= 1:
-                confirm = _confirm_shape(path, json_opt, yes[0], dry_run[0] if dry_run else None)
+            if len(yes) == 1 and len(dry_run) <= 1 and len(expect) <= 1:
+                confirm = _confirm_shape(
+                    path,
+                    json_opt,
+                    yes[0],
+                    dry_run[0] if dry_run else None,
+                    expect[0] if expect else None,
+                )
             if confirm is None:
                 excluded = _EXCLUDED_YES
             else:
                 # The server adds these itself, as it adds `--json`: the
-                # plan run never carries `--yes`, and only a token adds it.
-                for param in (*yes, *(dry_run if confirm == _SHAPE_DRY_RUN else ())):
+                # plan run never carries `--yes`, and only a token adds it,
+                # with the `--expect` value read from the plan's own report.
+                own = [*yes, *(dry_run if confirm == _SHAPE_DRY_RUN else ())]
+                if confirm == _SHAPE_DECLINED:
+                    own += expect
+                    pin = _cli_contract()[1][path]
+                for param in own:
                     params.pop(str(param.name), None)
         if path == ("ui",):
             excluded = _EXCLUDED_UI
             confirm = None
+            pin = None
         help_text = str(getattr(command, "help", None) or "").strip()
-        leaves[path] = _Leaf(path, help_text, params, json_opt, excluded, confirm)
+        leaves[path] = _Leaf(path, help_text, params, json_opt, excluded, confirm, pin)
     return leaves
 
 
@@ -437,16 +506,23 @@ class _Argv:
 
     def plan(self) -> list[str]:
         """What runs for a request with no token: for a leaf of the dry-run
-        shape `--dry-run --json`, else `--json` alone; never `--yes`."""
+        shape `--dry-run --json`, else `--json` alone; never `--yes`, never
+        `--expect`."""
         dry_run = [_DRY_RUN] if self.shape == _SHAPE_DRY_RUN else []
         return [*self.head, *dry_run, *self._json(), *self.tail]
 
-    def confirmed(self) -> list[str]:
+    def confirmed(self, pin: str | None = None) -> list[str]:
         """The plan with `--dry-run` taken out and `--yes` added as its own
-        element after `--json`: the last element when there is no `--`."""
+        element after `--json`: the last element when there is no `--`. For
+        the declined shape, `--expect=<pin>` follows `--yes`, with the pin
+        read from the plan's report; it has no confirmed run without one."""
         if self.shape is None:
             raise ValueError("only a leaf of the confirm step has a confirmed run")
-        return [*self.head, *self._json(), _YES, *self.tail]
+        if self.shape != _SHAPE_DECLINED:
+            return [*self.head, *self._json(), _YES, *self.tail]
+        if pin is None or not _PIN.fullmatch(pin):
+            raise ValueError("a confirmed run of the declined shape needs its plan's pin")
+        return [*self.head, *self._json(), _YES, f"{_EXPECT}={pin}", *self.tail]
 
 
 def _build_argv(leaf: _Leaf, params: Mapping[str, object]) -> list[str]:
@@ -609,33 +685,74 @@ class _Run:
     def report(self) -> dict[str, Any] | None:
         """The JSON object the run printed on stdout, when it exited 0, whole
         (no timeout, nothing cut), and stdout is exactly one JSON object;
-        else None. A marker is read only from this."""
-        if self.exit_code != 0 or self.timed_out or self.truncated:
+        else None. A marker of the dry-run or doctor shape is read only from
+        this."""
+        if self.exit_code != 0:
+            return None
+        return self._object()
+
+    def declined(self) -> dict[str, Any] | None:
+        """The declined shape's marker (§16.1): the run exited 1, whole, its
+        stderr's last line is exactly `cli.CONFIRM_DECLINED` (what `_confirm`
+        prints when it gets no answer), and stdout is exactly one JSON
+        object, the report printed with it; that report, else None. Exit 1
+        without that last line (unresolved conflicts, an error), and every
+        other exit, are not the marker."""
+        if self.exit_code != 1:
+            return None
+        stderr = self._text(self.stderr)
+        if stderr is None:
+            return None
+        lines = stderr.replace("\r\n", "\n").split("\n")
+        if len(lines) < 2 or lines[-1] != "" or lines[-2] != _cli_contract()[0]:
+            return None
+        return self._object()
+
+    def _object(self) -> dict[str, Any] | None:
+        if self.timed_out or self.truncated:
+            return None
+        text = self._text(self.stdout)
+        if text is None:
             return None
         try:
-            # The pieces are the inside of a JSON string (`_json_text`).
-            text = json.loads(b'"' + b"".join(self.stdout) + b'"')
             value = json.loads(text)
         except (ValueError, RecursionError):
             return None
         return value if isinstance(value, dict) else None
+
+    @staticmethod
+    def _text(pieces: list[bytes]) -> str | None:
+        """What one stream printed: the pieces are the inside of a JSON
+        string (`_json_text`)."""
+        try:
+            text = json.loads(b'"' + b"".join(pieces) + b'"')
+        except (ValueError, RecursionError):
+            return None
+        return text if isinstance(text, str) else None
 
 
 @dataclass(frozen=True)
 class _Offer:
     """What a plan run ended with, read in Python (§14.5 D3): whether it
     ended with its shape's marker, the sentence the page shows beside the
-    plan, and the parameter the player must fill to be offered Confirm."""
+    plan, the parameter the player must fill to be offered Confirm, and for
+    the declined shape the pin its confirmed run passes as `--expect`."""
 
     marked: bool
     note: str | None = None
     needs: str | None = None
+    pin: str | None = None
 
 
-def _offer(leaf: _Leaf, report: Mapping[str, Any] | None) -> _Offer:
+def _offer(leaf: _Leaf, run: _Run) -> _Offer:
     """The plan run's outcome by its shape's marker (§16.1). Anything that is
-    not the marker, an exit other than 0 (a refusal, exit 3, included) or
-    output that is not one whole JSON object, offers nothing."""
+    not the marker offers nothing: for the dry-run and doctor shapes an exit
+    other than 0 (a refusal, exit 3, included) or output that is not one
+    whole JSON object; for the declined shape anything but exit 1 ended by
+    `_confirm`'s line with a report that names a well-formed pin."""
+    if leaf.confirm == _SHAPE_DECLINED:
+        return _declined_offer(leaf, run.declined())
+    report = run.report()
     if report is None:
         return _Offer(False)
     if leaf.confirm == _SHAPE_DRY_RUN:
@@ -659,6 +776,79 @@ def _offer(leaf: _Leaf, report: Mapping[str, Any] | None) -> _Offer:
                 "flavor",
             )
     return _Offer(False)
+
+
+def _declined_offer(leaf: _Leaf, report: Mapping[str, Any] | None) -> _Offer:
+    """A declined plan (`undo`, `sv merge`): offered only when its report
+    names the pin in the field the CLI exports for it; the UI never confirms
+    one of these without `--expect` (§16.1)."""
+    if report is None or leaf.pin is None:
+        return _Offer(False)
+    pin = report.get(leaf.pin)
+    if not isinstance(pin, str) or not _PIN.fullmatch(pin):
+        return _Offer(False)
+    check = _PIN_CHECKS.get(
+        leaf.pin, "if that no longer matches by then, it is refused (exit 3) and nothing is changed"
+    )
+    return _Offer(
+        True,
+        "The plan is what the command printed on stderr before it asked. Confirm runs it "
+        f"with --yes and --expect {pin}: {check}.",
+        pin=pin,
+    )
+
+
+# What `--expect` checks, by the report field its pin is read from, in the
+# words the offer uses: exactly what the CLI compares, nothing more. `sv
+# merge` pins its target only, not its source (M13-74 follows that up).
+_PIN_CHECKS: Mapping[str, str] = {
+    "undone": (
+        "if another change has been journaled since this plan, it is refused (exit 3) and "
+        "nothing is undone"
+    ),
+    "target_sha256": (
+        "if the target file has changed by then, it is refused (exit 3) and nothing is written"
+    ),
+}
+
+# The sentence beside a confirmed run that was killed (its time limit or its
+# output cap) before it ended. M14-03 decides this case (§16.1): a `guard`
+# transaction cannot roll back in a process that was killed, but the lock is
+# the OS's and goes with the process, the journal record is written before
+# the first change, and the snapshot taken before it holds every file.
+_KILLED_NOTE = (
+    "It was stopped before it finished, so it may have changed some files and not others. "
+    "A change through the write gate releases its lock when its process ends, and the "
+    "snapshot it took before its first change holds every file as it was: show the plan of "
+    "undo, and if the record it names is this command's (state open), Confirm there puts "
+    "back what it changed."
+)
+# The same for a leaf of the step that changes only wowlab's own store and
+# never goes through the write gate: it takes no pre-write snapshot and
+# journals nothing, so there is nothing to undo.
+_KILLED_STORE_NOTE = (
+    "It was stopped before it finished. It changes only wowlab's own store, never your "
+    "game files, and its lock was released when its process ended: run it again."
+)
+# The leaves of the step whose confirmed run writes only the store (§16.1:
+# `snap gc` removes unreferenced objects, `doctor --yes` takes a first
+# snapshot). Any other leaf of the step gets `_KILLED_NOTE`.
+_STORE_ONLY: frozenset[tuple[str, ...]] = frozenset({("snap", "gc"), _DOCTOR})
+
+
+def _confirmed_note(leaf: _Leaf, run: _Run) -> str | None:
+    """The sentence beside a confirmed run (§16.1): the journal record it
+    made and the `wowlab undo` hint, when its report names one; what to do
+    when it was killed, by whether it writes the install; else nothing
+    (`snap gc` and `doctor` make no record, and a refusal is shown as the
+    CLI printed it)."""
+    if run.timed_out or run.truncated:
+        return _KILLED_STORE_NOTE if leaf.path in _STORE_ONLY else _KILLED_NOTE
+    report = run.report()
+    record = report.get("transaction") if report is not None else None
+    if isinstance(record, str) and _PIN.fullmatch(record):
+        return f"Journaled as {record}. `wowlab undo` reverses it."
+    return None
 
 
 def _dry_run_note(leaf: _Leaf, report: Mapping[str, Any]) -> str | None:
@@ -860,8 +1050,10 @@ class UiServer(http.server.ThreadingHTTPServer):
             plan = built.plan()
             run = self.run(plan)
             if leaf.confirm is not None:
-                offer = _offer(leaf, run.report())
-                minted = self._mint(plan, built.confirmed()) if offer.marked else None
+                offer = _offer(leaf, run)
+                # The confirmed argv is made here, from the plan's own report
+                # (its pin), never from the request that confirms it.
+                minted = self._mint(plan, built.confirmed(offer.pin)) if offer.marked else None
                 run.confirm = {
                     "stage": "plan",
                     "token": minted,
@@ -882,7 +1074,12 @@ class UiServer(http.server.ThreadingHTTPServer):
             if tuple(_build(leaf, params).plan()) != shown:
                 raise _RefusedError(403, _CONFIRM_REFUSED)
             run = self._start(list(confirmed))
-        run.confirm = {"stage": "confirmed", "token": None, "note": None, "needs": None}
+        run.confirm = {
+            "stage": "confirmed",
+            "token": None,
+            "note": _confirmed_note(leaf, run),
+            "needs": None,
+        }
         return run
 
     def _mint(self, plan: Sequence[str], confirmed: Sequence[str]) -> str:

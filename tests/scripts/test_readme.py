@@ -41,14 +41,18 @@ FIRST_COMMANDS = ("wowlab doctor", "wowlab ui", "wowlab snap create")
 # ADR-0031's human half for macOS: the owner's recorded first run on a real install.
 MACOS_RECORD = ROOT / "docs" / "handoffs" / "M13-10-macos.md"
 # What `wowlab ui` runs (ui/__init__.py, ADR-0029's owner rulings of 2026-10-15,
-# and the confirm step on `snap gc` and `doctor --yes`, M14-02).
+# and the confirm step on every `--yes` command, M14-02 and M14-03).
 UI_RUNS = (
-    "It runs every wowlab command except the six that change your install, `ui` "
-    "itself, `log tail --follow` and `looks page --out`: the commands that read, the "
-    "ones that save only to wowlab's own data (snapshots, profiles, saved looks, the "
-    "game-table cache, pages), and `snap gc` and `doctor --yes`, which change only "
-    "that store and run only after you confirm the plan they show. None of them "
-    "writes game files."
+    "It runs every wowlab command except `ui` itself, `log tail --follow` and "
+    "`looks page --out`. The commands that read, and the ones that save only to "
+    "wowlab's own data (snapshots, profiles, saved looks, the game-table cache, "
+    "pages), run directly. A command that asks before changing anything (`--yes`) "
+    "runs first as a plan that changes nothing, and runs for real only when you "
+    "confirm the plan it shows: `snap gc` and `doctor --yes` change only wowlab's "
+    "own store, and `snap restore`, `undo`, `profile apply`, `sv merge`, `addon "
+    "install` and `addon remove` change your install through the same write gate as "
+    "on the command line, which takes a snapshot first, so `wowlab undo` reverses "
+    "them."
 )
 
 
@@ -153,7 +157,7 @@ def test_macos_is_supported_only_with_a_recorded_first_run() -> None:
 
 def test_the_ui_statements_the_owner_rulings_require() -> None:
     screen = _first_screen()
-    assert "`wowlab ui` never changes game files." in screen
+    assert "`wowlab ui` changes game files only when you confirm a plan it showed you." in screen
     assert UI_RUNS in screen
     # One description of what the UI runs, used everywhere it is described.
     assert _readme().count(UI_RUNS) == 2

@@ -61,6 +61,12 @@ with open({replies!r}, encoding="utf-8") as f:
     replies = json.load(f)
 reply = replies["confirmed" if "--yes" in argv else "plan"]
 sys.stdout.write(reply["stdout"])
+sys.stdout.flush()
+sys.stderr.write(reply.get("stderr", ""))
+sys.stderr.flush()
+if reply.get("sleep"):
+    import time
+    time.sleep(reply["sleep"])
 sys.exit(reply["code"])
 """
 
@@ -71,15 +77,25 @@ class Recorder:
     calls_file: Path
     replies_file: Path
 
-    def reply(self, plan: object, code: int = 0, confirmed: object = None, ccode: int = 0) -> None:
+    def reply(
+        self,
+        plan: object,
+        code: int = 0,
+        confirmed: object = None,
+        ccode: int = 0,
+        *,
+        stderr: str = "",
+        csleep: float = 0,
+    ) -> None:
         def text(value: object) -> str:
             return value if isinstance(value, str) else json.dumps(value)
 
         replies = {
-            "plan": {"stdout": text(plan), "code": code},
+            "plan": {"stdout": text(plan), "code": code, "stderr": stderr},
             "confirmed": {
                 "stdout": text({"done": True} if confirmed is None else confirmed),
                 "code": ccode,
+                "sleep": csleep,
             },
         }
         self.replies_file.write_text(json.dumps(replies), encoding="utf-8")
@@ -422,24 +438,18 @@ def test_tokens_expire_with_the_server(recorder: Recorder) -> None:
         assert _confirm(second, GC, token) == (403, {"error": "confirm"})
 
 
-# ─── leaves still excluded ───────────────────────────────────────────────────
-
-_STILL_EXCLUDED = [
-    ("snap", "restore"),
-    ("undo",),
-    ("profile", "apply"),
-    ("sv", "merge"),
-    ("addon", "install"),
-    ("addon", "remove"),
-]
+# ─── an excluded leaf ────────────────────────────────────────────────────────
+#
+# Since M14-03 every `--yes` leaf is in the step (test_ui_confirm_writes.py);
+# `ui` is the one excluded leaf left, and a token does not open it either.
 
 
-@pytest.mark.parametrize("path", _STILL_EXCLUDED, ids=" ".join)
-def test_a_yes_leaf_still_excluded_is_refused_before_anything_runs(
+@pytest.mark.parametrize("path", [("ui",)], ids=" ".join)
+def test_an_excluded_leaf_is_refused_before_anything_runs(
     server: ui.UiServer, recorder: Recorder, path: tuple[str, ...]
 ) -> None:
     listed = {tuple(c["path"]): c for c in _commands(server)}
-    assert listed[path]["excluded"] == "confirm flow: M14"
+    assert listed[path]["excluded"] == "the UI itself"
     assert listed[path]["confirm"] is None
     for params in ({}, {"yes": True}, {"dry_run": True}):
         status, payload = _post(server, {"command": list(path), "params": params})
