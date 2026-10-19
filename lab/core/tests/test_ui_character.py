@@ -1,5 +1,9 @@
 """The Character tab of `wowlab ui`: picker, header, gear (M14-08, §16.3).
 
+The keys and macros panels (M14-09) are graded in
+`test_ui_character_panels.py`, on this harness; a pick here asks for all
+three of the character's reads.
+
 The page is driven under Node with the stand-in DOM of `test_ui_explorer.py`
 (HTML sinks throw; navigation, attributes outside the closed set and
 forbidden elements are trapped), fed what the real CLI printed through the
@@ -60,7 +64,9 @@ NEWER = "1/Labchard-Labrealmg"  # written later here, though it sorts second by 
 OLDER = "1/Labcharb-Labrealmf"
 NEWER_NS = 1_760_000_000_000_000_000
 OLDER_NS = 1_750_000_000_000_000_000
-READS = {("char", "list"), ("char", "gear")}
+# The four read commands the tab runs (M14-09 added the last two).
+READS = {("char", "list"), ("char", "gear"), ("char", "binds"), ("char", "macros")}
+PICK_READS = (["char", "gear"], ["char", "binds"], ["char", "macros"])
 
 
 # ─── the harness: the first stage's, with this tab's steps ───────────────────
@@ -138,7 +144,16 @@ _STEPS = r"""
         // Every control in the tab, used: each listener fired, until nothing new appears.
         const before = requests.length;
         const done = new Set();
-        const scope = () => { const v = ids["character-view"]; return [v, ...v.all()]; };
+        // The stand-in DOM keeps page.html's elements as separate roots, so
+        // the tab's own controls (the picker, the M14-09 filters) are reached
+        // by their ids, with everything the script drew inside them.
+        const scope = () => {
+          const out = [];
+          for (const [id, e] of Object.entries(ids)) {
+            if (id === "character-view" || id.startsWith("char-")) out.push(e, ...e.all());
+          }
+          return out;
+        };
         for (let round = 0; round < 10; round++) {
           const fresh = scope().filter((e) => !done.has(e));
           if (!fresh.length) break;
@@ -199,30 +214,37 @@ def timed(install: Path) -> Path:
 
 
 def _gear_params(character: str) -> dict[str, Any]:
-    """What the page sends `char gear` for a row of `char list`."""
+    """What the page sends `char gear`, `char binds` and `char macros` for a
+    row of `char list`."""
     return {"character": character, "account": ACCOUNT, "flavor": FLAVOR}
+
+
+def _pick_requests(character: str) -> list[dict[str, Any]]:
+    """The three runs one pick asks for, in the order the page sends them."""
+    return [{"command": c, "params": _gear_params(character)} for c in PICK_READS]
 
 
 def _scenario(
     server: Any, steps: list[dict[str, Any]], gear_for: list[str], *, listed: bool = True
 ) -> dict[str, Any]:
-    """The command list, `char list` (unless not `listed`) and `char gear`
-    for each character in `gear_for`, as the real CLI printed them through
-    the real server. The explorer's runs are not held: its tree says so and
-    the tab is unaffected."""
+    """The command list, `char list` (unless not `listed`) and `char gear`,
+    `char binds` and `char macros` for each character in `gear_for`, as the
+    real CLI printed them through the real server. The explorer's runs are
+    not held: its tree says so and the tab is unaffected."""
     runs = []
     if listed:
         stdout = _stdout(server, ["char", "list"], {})
         runs.append({"command": ["char", "list"], "params": {}, "stdout": stdout})
     for character in gear_for:
         params = _gear_params(character)
-        runs.append(
-            {
-                "command": ["char", "gear"],
-                "params": params,
-                "stdout": _stdout(server, ["char", "gear"], params),
-            }
-        )
+        for command in PICK_READS:
+            runs.append(
+                {
+                    "command": list(command),
+                    "params": params,
+                    "stdout": _stdout(server, list(command), params),
+                }
+            )
     return {
         "ids": _page_ids(),
         "sep": os.sep,
@@ -302,7 +324,7 @@ def test_the_picker_lists_the_characters_latest_written_first(
     # The first (latest) is read at once, with the folders the list gave.
     assert [r["body"] for r in view["newRequests"]] == [
         {"command": ["char", "list"], "params": {}},
-        {"command": ["char", "gear"], "params": _gear_params(NEWER)},
+        *_pick_requests(NEWER),
     ]
     assert view["status"] == "" and not view["statusError"]
 
@@ -333,9 +355,7 @@ def test_the_gear_rows_match_char_gear_for_the_picked_one(
             assert row["expanded"] == "false"
         assert all(d["hidden"] for d in step["details"])
     # The second pick asked for the second character, and only for it.
-    assert [r["body"] for r in out["steps"][1]["newRequests"]] == [
-        {"command": ["char", "gear"], "params": _gear_params(OLDER)}
-    ]
+    assert [r["body"] for r in out["steps"][1]["newRequests"]] == _pick_requests(OLDER)
 
 
 def test_the_header_carries_spec_averages_and_the_notes(
@@ -390,9 +410,7 @@ def test_the_detail_row_carries_the_raw_link_and_copies_it(
     assert all(r["expanded"] in ("false", None) for r in closed["rows"])
 
 
-def test_the_tab_runs_only_char_list_and_char_gear(
-    server: Any, timed: Path, tmp_path: Path
-) -> None:
+def test_the_tab_runs_only_the_four_char_reads(server: Any, timed: Path, tmp_path: Path) -> None:
     steps = [{"char_tab": True}, {"pick": 1}, {"pick": 0}, {"char_activate": True}]
     scenario = _scenario(server, steps, [NEWER, OLDER])
     out = _drive(tmp_path / "node", scenario)
@@ -400,18 +418,18 @@ def test_the_tab_runs_only_char_list_and_char_gear(
     assert asked, "the tab ran something"
     for body in asked:
         assert tuple(body["command"]) in READS, body
-        if body["command"] == ["char", "gear"]:
+        if body["command"] != ["char", "list"]:
             assert body["params"] in (_gear_params(NEWER), _gear_params(OLDER)), body
     # `char list` is read once, however often the tab is used.
     assert sum(1 for b in asked if b["command"] == ["char", "list"]) == 1
     # Every request the page made in the whole run is one the page makes
-    # anyway (the command list, the explorer's tree) or one of the two.
+    # anyway (the command list, the explorer's tree) or one of the four.
     for request in out["requests"]:
         if request["body"] is None:
             assert request["url"].startswith("/api/commands?"), request
         else:
             assert tuple(request["body"]["command"]) in READS | {("tree",)}, request
-    # Both are read commands the server offers, not excluded and not a
+    # All four are read commands the server offers, not excluded and not a
     # confirm-step command.
     offered = {tuple(c["path"]): c for c in scenario["commands"]["commands"]}
     for path in READS:
@@ -475,10 +493,8 @@ def test_a_list_with_an_unreadable_file_lists_the_rest_constructed(
     assert bad["text"].endswith(": not read") and bad["title"]
     assert good["disabled"] is False and good["text"].startswith(OLDER.split("/")[1])
     # The readable one is read; the CLI's stderr is the status.
-    gear_asked = [
-        r["body"] for r in view["newRequests"] if r["body"]["command"] == ["char", "gear"]
-    ]
-    assert gear_asked == [{"command": ["char", "gear"], "params": _gear_params(OLDER)}]
+    picked = [r["body"] for r in view["newRequests"] if r["body"]["command"] != ["char", "list"]]
+    assert picked == _pick_requests(OLDER)
     assert view["statusError"] and view["status"] == reply["stderr"].strip()
     assert len(view["rows"]) == 19
 

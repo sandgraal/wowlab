@@ -12,8 +12,9 @@
 //   token, and Confirm sends that token with the plan's own command and
 //   parameters; a confirmed run shows the server's note (its journal record
 //   and the `wowlab undo` hint) and never another Confirm;
-// - the character (M14-08): a picker from `char list --json` and the gear of
-//   the one picked from `char gear --json`;
+// - the character (M14-08, M14-09): a picker from `char list --json`, and
+//   for the one picked its gear from `char gear --json`, its keys from
+//   `char binds --json` and its macros from `char macros --json`;
 // - the looks page (M14-04): `looks page --json`, then the file it wrote,
 //   read from /api/looks-page and shown in a sandboxed frame, as its document.
 // It holds no game rules and no file-map logic (§14.5 D3): every fact, the
@@ -1035,14 +1036,20 @@
   // an item's is its `name`, and its colour is a class built from its
   // `colour` code (`colourClass`) that the server's stylesheet paints from
   // the slot table. This script holds no slot table and no quality table.
-  // Those two read commands are the only ones this tab runs. The keys and
-  // macros panels (M14-09) join #char-panels.
+  // The keys and macros panels (M14-09) lay out `char binds --json` and
+  // `char macros --json` for the same character: every word about a key or
+  // a macro (what a key does, whether the sources agree, where a macro may
+  // sit, a finding) is the report's, and the two filters read the report's
+  // own fields (`disagrees`, `findings`). Those four read commands are the
+  // only ones this tab runs, and nothing in it edits anything.
 
   const character = {
     asked: null, // the one `char list` run; asked again after a failure
     entries: [], // its characters, latest-written first
     flavor: null, // the flavor folder it read
     seq: 0, // bumped by every pick, so a reply that arrives late draws nothing
+    binds: null, // the picked character's CharBindsReport, for the keys filters
+    macros: null, // its CharMacrosReport, for the findings filter
     // What `char list` said on stderr when it exited with an error (a row it
     // could not read, a place it could not look inside): the status line
     // keeps it while characters are read.
@@ -1158,36 +1165,56 @@
     }
     charNote();
     picker.value = String(first);
-    loadGear(character.entries[first]);
+    pickCharacter(character.entries[first]);
   }
 
   byId("char-picker").addEventListener("change", () => {
     const at = byId("char-picker").value;
     if (!/^[0-9]+$/.test(at)) return;
     const entry = character.entries[Number(at)];
-    if (readable(entry)) loadGear(entry);
+    if (readable(entry)) pickCharacter(entry);
   });
 
-  async function loadGear(entry) {
+  // The one pick handler: it clears all three panels, then asks for the
+  // gear, the keys and the macros of the character picked, one run after
+  // the other, each drawn when its reply comes and only if no later pick was
+  // made since (`seq`). One run at a time: a pick never holds more than one
+  // of the server's few run slots (`MAX_CONCURRENT_RUNS`, 503 `busy` past
+  // them), and a pick left behind stops after the run it is waiting for.
+  async function pickCharacter(entry) {
     const seq = ++character.seq;
-    const header = byId("char-header");
-    const body = byId("char-gear");
-    header.replaceChildren(make("h2", visible(entry.label)));
-    body.replaceChildren();
-    charSay("Reading the gear of " + visible(entry.label) + "…", false);
+    byId("char-header").replaceChildren(make("h2", visible(entry.label)));
+    byId("char-gear").replaceChildren();
+    byId("char-keys").replaceChildren();
+    byId("char-macros").replaceChildren();
+    character.binds = null;
+    character.macros = null;
+    charSay("Reading the gear, keys and macros of " + visible(entry.label) + "…", false);
     // `--character` takes `<realm or digits folder>/<character folder>`.
     const params = { character: entry.realm_folder + "/" + entry.label, account: entry.account };
     if (character.flavor) params.flavor = character.flavor;
+    for (const load of [loadGear, loadKeys, loadMacros]) {
+      await load(entry, params, seq);
+      if (seq !== character.seq) return;
+    }
+    charNote();
+  }
+
+  // A refusal or any other error, in the CLI's own words, in `box`.
+  function charError(box, reply, command) {
+    const text = reply.error ? shown(reply.error) : "wowlab " + command + " printed something this page does not know.";
+    const error = make("p", text);
+    error.className = "char-error";
+    box.replaceChildren(error);
+  }
+
+  async function loadGear(entry, params, seq) {
     const reply = await runJson(["char", "gear"], params);
     if (seq !== character.seq) return;
-    charNote();
     const report = reply.data;
     if (reply.error || !report || !Array.isArray(report.slots) || !Array.isArray(report.empty_slots)) {
       // A refusal, a record with no gear, or any other error: the CLI's text.
-      const text = reply.error ? shown(reply.error) : "wowlab char gear printed something this page does not know.";
-      const error = make("p", text);
-      error.className = "char-error";
-      body.appendChild(error);
+      charError(byId("char-gear"), reply, "char gear");
       return;
     }
     drawCharHeader(entry, report);
@@ -1346,6 +1373,409 @@
     tr.appendChild(cell);
     return tr;
   }
+
+  // ─── the keys and macros panels (M14-09, §16.3) ───
+  // Laid out from `char binds --json` and `char macros --json`. A key's
+  // words (`does`, `agreement`, `note`, a slot's `page_note`), a macro's
+  // placement `reason`, a finding's `detail` and every note are the
+  // report's; this script decides nothing about a key or a macro. Macro
+  // bodies, macro names and spell names are player text: textContent only,
+  // control characters shown as codes, and a `|c` escape or a tag in them is
+  // only text.
+
+  function texts(value) {
+    return (Array.isArray(value) ? value : []).filter((n) => typeof n === "string");
+  }
+
+  function objects(value) {
+    return (Array.isArray(value) ? value : []).filter((n) => n && typeof n === "object");
+  }
+
+  function plural(n, one, many) {
+    return typeof n === "number" ? count(n, one, many) : "? " + many;
+  }
+
+  // Where a panel's data came from: the record and each file, each with the
+  // file's time, as the CLI's text names them.
+  function recordFact(list, report) {
+    let value;
+    if (typeof report.record_file !== "string") {
+      value = "none" + (typeof report.record_error === "string" ? " (" + shown(report.record_error) + ")" : "");
+    } else if (typeof report.record_error === "string") {
+      value = shown(report.record_file) + " not read (" + shown(report.record_error) + ")";
+    } else {
+      value =
+        shown(report.record_file) + " (schema " + numberWords(report.record_schema) + "), written " +
+        localTime(report.record_mtime_ns) + " (the file's modification time)";
+    }
+    charFact(list, "Record", value);
+  }
+
+  function scopeLabel(scope, what) {
+    const word = typeof scope === "string" ? visible(scope) : "?";
+    return word.charAt(0).toUpperCase() + word.slice(1) + " " + what;
+  }
+
+  function bindingsFacts(list, files, withCounts) {
+    for (const file of objects(files)) {
+      const label = scopeLabel(file.scope, "bindings");
+      const note = typeof file.note === "string" && file.note ? " " + shown(file.note) : "";
+      if (typeof file.path !== "string") {
+        charFact(list, label, "no bindings-cache.wtf" + note);
+        continue;
+      }
+      let value = shown(file.path);
+      if (withCounts) {
+        value += " (" + plural(file.bind_lines, "bind line", "bind lines");
+        if (typeof file.unknown_lines === "number" && file.unknown_lines) {
+          value += "; " + plural(file.unknown_lines, "other line", "other lines") + ", kept";
+        }
+        value += ")";
+      }
+      charFact(list, label, value + ", written " + localTime(file.mtime_ns) + note);
+    }
+  }
+
+  function charSources(report, withMacros) {
+    const list = make("dl");
+    list.className = "char-facts char-sources";
+    recordFact(list, report);
+    if (withMacros) {
+      for (const file of objects(report.files)) {
+        const label = scopeLabel(file.scope, "macros");
+        if (typeof file.path !== "string") {
+          charFact(list, label, "no macros-cache.txt");
+          continue;
+        }
+        let value = plural(file.macros, "macro", "macros") + " in " + shown(file.path);
+        if (typeof file.unknown_lines === "number" && file.unknown_lines) {
+          value += ", " + plural(file.unknown_lines, "line", "lines") + " outside any macro not read";
+        }
+        charFact(list, label, value + ", written " + localTime(file.mtime_ns));
+      }
+      bindingsFacts(list, report.bindings_files, false);
+    } else {
+      bindingsFacts(list, report.files, true);
+    }
+    return list;
+  }
+
+  function charNotes(notes) {
+    const list = make("ul");
+    list.className = "char-notes";
+    for (const note of texts(notes)) list.appendChild(make("li", shown(note)));
+    return list;
+  }
+
+  function charLine(text, className) {
+    const line = make("p", text);
+    line.className = className;
+    return line;
+  }
+
+  // "n keys." or "Showing k of n keys."
+  function shownOf(kept, all, one, many) {
+    const total = plural(all, one, many);
+    return kept === all ? total + "." : "Showing " + kept + " of " + total + ".";
+  }
+
+  // ─── keys ───
+
+  async function loadKeys(entry, params, seq) {
+    const reply = await runJson(["char", "binds"], params);
+    if (seq !== character.seq) return;
+    const report = reply.data;
+    if (reply.error || !report || !Array.isArray(report.keys) || !Array.isArray(report.unreached_slots)) {
+      charError(byId("char-keys"), reply, "char binds");
+      return;
+    }
+    character.binds = { report: report, rows: null, count: null, shared: new Set() };
+    drawKeys(report);
+  }
+
+  function drawKeys(report) {
+    const box = byId("char-keys");
+    box.replaceChildren(charSources(report, false));
+    if (typeof report.cannot_place === "string") {
+      box.appendChild(charLine("Cannot place keys on action slots: " + shown(report.cannot_place), "char-cannot"));
+    }
+    if (typeof report.cannot_compare === "string") {
+      box.appendChild(charLine("Cannot compare the files with the record: " + shown(report.cannot_compare), "char-cannot"));
+    }
+    const counted = charLine("", "char-count");
+    const table = make("table");
+    table.className = "char-table";
+    const head = make("thead");
+    const titles = make("tr");
+    for (const title of ["Key", "Command", "Slot", "What it does", "Source"]) titles.appendChild(make("th", title));
+    head.appendChild(titles);
+    const rows = make("tbody");
+    table.append(head, rows);
+    box.append(counted, table, sharedNotes(report), drawUnreached(report));
+    if (typeof report.commands_left_out === "number" && typeof report.keys_left_out === "number") {
+      // `char binds`'s own sentence, word for word (`_say_char_binds` in
+      // cli.py): the report carries the two counts and not the words.
+      box.appendChild(
+        charLine(
+          "Left out of the bindings record, counted with no list: " +
+            plural(report.commands_left_out, "command", "commands") +
+            " not named in plain upper case (a key bound straight to a spell, macro, item or click may be one), and " +
+            plural(report.keys_left_out, "key", "keys") + " not printable ASCII.",
+          "char-line",
+        ),
+      );
+    }
+    box.appendChild(charNotes(report.notes));
+    character.binds.rows = rows;
+    character.binds.count = counted;
+    filterKeys();
+  }
+
+  // The rows the two filters keep: "Disagreements only" keeps the rows the
+  // report marks `disagrees`; Find keeps the rows whose key, command, words
+  // or sources hold the text, in any case.
+  function keptKeys(report) {
+    const needle = byId("char-keys-filter").value.trim().toLowerCase();
+    const onlyDisagreeing = byId("char-keys-disagree").checked === true;
+    return objects(report.keys).filter((row) => {
+      if (onlyDisagreeing && row.disagrees !== true) return false;
+      if (!needle) return true;
+      const hay = [row.key, row.command, row.does, ...texts(row.sources)]
+        .filter((s) => typeof s === "string")
+        .join("\n")
+        .toLowerCase();
+      return hay.includes(needle);
+    });
+  }
+
+  function filterKeys() {
+    const drawn = character.binds;
+    if (!drawn || !drawn.rows) return;
+    const all = objects(drawn.report.keys);
+    const kept = keptKeys(drawn.report);
+    drawn.rows.replaceChildren();
+    for (const row of kept) drawn.rows.appendChild(keyRow(row, drawn.shared));
+    drawn.count.textContent = shownOf(kept.length, all.length, "key", "keys");
+    if (!all.length) drawn.rows.appendChild(noKeyRow("No key in the files or the record."));
+    else if (!kept.length) drawn.rows.appendChild(noKeyRow("No key matches the filters."));
+  }
+
+  function noKeyRow(text) {
+    const tr = make("tr");
+    const cell = make("td", text);
+    cell.colSpan = 5;
+    cell.className = "char-none";
+    tr.appendChild(cell);
+    return tr;
+  }
+
+  // A row note the report gives to more than one row that does not
+  // disagree (on the capture, 128 rows "not in a bindings file: …"): said
+  // once under the table with how many rows carry it, and kept in those
+  // rows' tooltips. `character.binds.shared` holds them for `keyRow`.
+  function sharedNotes(report) {
+    const counts = new Map();
+    for (const row of objects(report.keys)) {
+      if (row.disagrees === true || typeof row.note !== "string" || !row.note) continue;
+      counts.set(row.note, (counts.get(row.note) || 0) + 1);
+    }
+    const list = make("ul");
+    list.className = "char-notes char-row-notes";
+    for (const [note, n] of counts) {
+      if (n < 2) continue;
+      character.binds.shared.add(note);
+      list.appendChild(make("li", "On " + count(n, "key", "keys") + ": " + shown(note)));
+    }
+    return list;
+  }
+
+  function keyRow(row, shared) {
+    const tr = make("tr");
+    tr.className = "key-row";
+    if (row.disagrees === true) tr.classList.add("key-disagrees");
+    const key = make("td", visible(String(row.key)));
+    key.className = "key-key";
+    const command = make("td", visible(String(row.command)));
+    command.className = "key-command";
+    const slot = make("td", typeof row.slot === "number" ? String(row.slot) : "-");
+    slot.className = "key-slot";
+    if (typeof row.page_note === "string") slot.title = visible(row.page_note);
+    const does = make("td", visible(String(row.does)));
+    does.className = "key-does";
+    const source = make("td", texts(row.sources).map(visible).join(", "));
+    source.className = "key-source";
+    if (typeof row.agreement === "string") source.appendChild(make("small", visible(row.agreement)));
+    if (row.disagrees === true) {
+      const mark = make("strong", "disagrees");
+      mark.className = "key-disagree-mark";
+      source.appendChild(mark);
+    }
+    if (typeof row.note === "string" && row.note) {
+      // A note is shown in its row, unless the same words are on several
+      // rows that do not disagree: then they are said once under the table
+      // (`sharedNotes`) and the row keeps them in its tooltip. A
+      // disagreement's note names the other row, so it is always shown.
+      if (row.disagrees !== true && shared.has(row.note)) source.title = visible(row.note);
+      else source.appendChild(make("small", visible(row.note)));
+    }
+    tr.append(key, command, slot, does, source);
+    return tr;
+  }
+
+  function drawUnreached(report) {
+    const box = make("div");
+    box.className = "char-unreached";
+    if (typeof report.cannot_place === "string") return box;
+    const slots = objects(report.unreached_slots);
+    const groups = [
+      ["Filled slots no key reaches on the page its bar shows by default", slots.filter((u) => u.unfollowed_page !== true)],
+      ["Filled slots on main-bar pages that are not followed", slots.filter((u) => u.unfollowed_page === true)],
+    ];
+    groups.forEach(([title, list], at) => {
+      if (at > 0 && !list.length) return;
+      box.appendChild(make("h4", title + ": " + list.length));
+      const items = make("ul");
+      items.className = "char-slots";
+      for (const u of list) {
+        const where = typeof u.page_note === "string" ? " (" + visible(u.page_note) + ")" : "";
+        items.appendChild(make("li", "slot " + numberWords(u.slot) + ": " + visible(String(u.does)) + where));
+      }
+      box.appendChild(items);
+    });
+    return box;
+  }
+
+  byId("char-keys-filter").addEventListener("input", () => filterKeys());
+  byId("char-keys-disagree").addEventListener("change", () => filterKeys());
+
+  // ─── macros ───
+
+  async function loadMacros(entry, params, seq) {
+    const reply = await runJson(["char", "macros"], params);
+    if (seq !== character.seq) return;
+    const report = reply.data;
+    if (reply.error || !report || !Array.isArray(report.macros) || !Array.isArray(report.cannot_judge)) {
+      charError(byId("char-macros"), reply, "char macros");
+      return;
+    }
+    character.macros = { report: report, list: null, count: null };
+    drawMacros(report);
+  }
+
+  function drawMacros(report) {
+    const box = byId("char-macros");
+    box.replaceChildren(charSources(report, true));
+    const counted = charLine("", "char-count");
+    const list = make("div");
+    list.className = "macro-list";
+    box.append(counted, list);
+    const judged = objects(report.cannot_judge);
+    box.appendChild(make("h4", "Cannot judge for any macro: " + judged.length));
+    const items = make("ul");
+    items.className = "char-slots";
+    for (const c of judged) items.appendChild(make("li", visible(String(c.rule)) + ": " + shown(String(c.reason))));
+    box.append(items, charNotes(report.notes));
+    character.macros.list = list;
+    character.macros.count = counted;
+    filterMacros();
+  }
+
+  // "Findings only" keeps the macros the checker found something in.
+  function filterMacros() {
+    const drawn = character.macros;
+    if (!drawn || !drawn.list) return;
+    const all = objects(drawn.report.macros);
+    const onlyFindings = byId("char-macros-findings").checked === true;
+    const kept = all.filter((m) => !onlyFindings || objects(m.findings).length > 0);
+    drawn.list.replaceChildren();
+    for (const m of kept) drawn.list.appendChild(macroCard(m, drawn.report.keys_incomplete));
+    drawn.count.textContent = shownOf(kept.length, all.length, "macro", "macros");
+    if (!all.length) drawn.list.appendChild(charLine("No macro in these files.", "char-none"));
+    else if (!kept.length) drawn.list.appendChild(charLine("No macro here has a finding.", "char-none"));
+  }
+
+  function macroCard(m, keysIncomplete) {
+    const card = make("article");
+    card.className = "macro";
+    const title = make("h4", visible(String(m.scope)) + " macro " + numberWords(m.position) + " ");
+    const name = make("span", visible(String(m.name)));
+    name.className = "macro-name";
+    title.appendChild(name);
+    card.appendChild(title);
+    let facts =
+      "id " + visible(String(m.id)) + ", icon " + visible(String(m.icon)) + ", line " + numberWords(m.line) +
+      " of " + shown(String(m.file)) + ", " + plural(m.characters, "character", "characters") + ", " +
+      plural(m.bytes, "byte", "bytes");
+    if (m.complete === false) facts += " (the file ends before this macro's END)";
+    card.appendChild(charLine(facts, "macro-facts"));
+    // The body, one element a line, as text.
+    const lines = texts(m.body_lines);
+    const body = make("div");
+    body.className = "macro-body";
+    for (const text of lines) {
+      const one = make("code", visible(text));
+      one.className = "macro-line";
+      body.appendChild(one);
+    }
+    if (!lines.length) body.appendChild(charLine("no body lines", "char-none"));
+    card.append(body, placementBox(m.placement, keysIncomplete));
+    const found = objects(m.findings);
+    const judged = objects(m.cannot_judge);
+    if (!found.length && !judged.length) {
+      card.appendChild(charLine("No finding.", "macro-clean"));
+      return card;
+    }
+    const list = make("ul");
+    list.className = "macro-findings";
+    for (const f of found) {
+      const item = make("li", "finding " + visible(String(f.rule)) + " (line " + numberWords(f.line) + "): " + visible(String(f.detail)));
+      item.className = "macro-finding";
+      list.appendChild(item);
+    }
+    for (const c of judged) {
+      const item = make("li", "cannot judge " + visible(String(c.rule)) + " (line " + numberWords(c.line) + "): " + visible(String(c.reason)));
+      item.className = "macro-cannot";
+      list.appendChild(item);
+    }
+    card.appendChild(list);
+    return card;
+  }
+
+  // Where the macro may sit and the keys that reach each slot, as the
+  // placement gives them: a slot's keys are the placement's own `keys`
+  // whose `slot` is that slot, the way the CLI's text lists them.
+  function placementBox(placement, keysIncomplete) {
+    const box = make("div");
+    box.className = "macro-placement";
+    const p = placement && typeof placement === "object" ? placement : {};
+    const status = visible(String(p.status));
+    box.appendChild(charLine("Placement: " + status + ": " + visible(String(p.reason)), "macro-reason"));
+    const keys = objects(p.keys);
+    const slots = objects(p.slots);
+    if (!slots.length) return box;
+    const list = make("ul");
+    list.className = "macro-slots";
+    for (const s of slots) {
+      const item = make("li", "may sit at slot " + numberWords(s.slot) + " (" + status + "): " + visible(String(s.page_note)));
+      const under = make("ul");
+      const reach = keys.filter((k) => k.slot === s.slot);
+      if (!reach.length) {
+        const among = typeof keysIncomplete === "string" ? ", among the keys read (" + shown(keysIncomplete) + ")" : "";
+        under.appendChild(make("li", "no key reaches it on the page its bar shows by default" + among));
+      }
+      for (const k of reach) {
+        const key = make("li", "key " + visible(String(k.key)) + " (" + visible(String(k.command)) + "; " + texts(k.sources).map(visible).join(", ") + ")");
+        key.className = "macro-key";
+        under.appendChild(key);
+      }
+      item.appendChild(under);
+      list.appendChild(item);
+    }
+    box.appendChild(list);
+    return box;
+  }
+
+  byId("char-macros-findings").addEventListener("change", () => filterMacros());
 
   // ─── the looks tab (M14-04, §16.3) ───
   // "Write the page" runs `looks page` (no parameters: its default place

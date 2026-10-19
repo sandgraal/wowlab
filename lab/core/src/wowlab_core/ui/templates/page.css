@@ -259,6 +259,39 @@ pre:empty { display: none; }
 .gear-detail dd { margin: 0; overflow-wrap: anywhere; unicode-bidi: isolate; }
 .gear-link { font-family: var(--mono); font-size: 0.85rem; overflow-wrap: anywhere; unicode-bidi: isolate; }
 .gear-table .copy { margin-left: 0.6rem; cursor: pointer; padding: 0.05rem 0.6rem; color: #e3bb55; background: #3a2d18; border: 1px solid #9a7426; border-radius: 4px; font-weight: 600; }
+/* the keys and macros panels (M14-09): the files and record they read, a
+   table of keys, the slots no key reaches, the macros with their bodies as
+   lines, and the read-only note under each. Player text (macro bodies and
+   names, spell names) is isolated so a bidi mark in it cannot reorder the
+   page. */
+.char-panel > h3 { margin-top: 0; }
+.char-filters { padding: 0; margin: 0 0 0.5rem; }
+.char-sources { font-size: 0.92rem; }
+.char-cannot { color: var(--muted); font-style: italic; overflow-wrap: anywhere; }
+.char-count { margin: 0.5rem 0 0.3rem; color: var(--muted); }
+.char-line { overflow-wrap: anywhere; }
+.char-none { color: var(--muted); font-style: italic; }
+.char-read-only { margin: 0.75rem 0 0; padding-top: 0.5rem; border-top: 1px dotted var(--gold-deep); color: var(--muted); font-size: 0.9rem; }
+.char-panel h4 { margin: 0.75rem 0 0.3rem; color: var(--gold); font-size: 1rem; }
+.char-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+.char-table th { text-align: left; padding: 0.3rem 0.5rem; color: var(--gold); border-bottom: 1px solid var(--gold-deep); }
+.char-table td { padding: 0.2rem 0.5rem; border-top: 1px solid var(--panel-edge); vertical-align: baseline; overflow-wrap: anywhere; unicode-bidi: isolate; }
+.char-table small { display: block; color: var(--muted); }
+.key-key, .key-command, .key-slot { font-family: var(--mono); white-space: nowrap; }
+.key-slot { text-align: right; }
+.key-row.key-disagrees { background: var(--selected); }
+.key-disagree-mark { display: block; color: var(--error); }
+.char-slots { margin: 0.2rem 0 0.6rem; padding-left: 1.2rem; overflow-wrap: anywhere; unicode-bidi: isolate; }
+.macro { margin: 0 0 0.9rem; padding: 0.5rem 0.75rem; border: 1px solid var(--gold-deep); border-radius: 4px; background: var(--panel-edge); }
+.macro h4 { margin: 0 0 0.2rem; }
+.macro-name { color: var(--text); unicode-bidi: isolate; overflow-wrap: anywhere; }
+.macro-facts { margin: 0 0 0.4rem; color: var(--muted); font-size: 0.88rem; overflow-wrap: anywhere; }
+.macro-body { margin: 0 0 0.4rem; padding: 0.35rem 0.6rem; background: var(--field); color: var(--field-text); border-radius: 3px; }
+.macro-line { display: block; font-family: var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: isolate; }
+.macro-placement p, .macro-findings, .macro-slots { margin: 0.2rem 0; overflow-wrap: anywhere; }
+.macro-findings, .macro-slots { padding-left: 1.2rem; }
+.macro-finding { color: var(--error); }
+.macro-clean { margin: 0.2rem 0; color: var(--muted); }
 /* the Looks tab (M14-04): the page `looks page` wrote, in a sandboxed srcdoc
    frame on a light backing, as it is drawn on its own. */
 #looks-write { padding: 0.3rem 1.2rem; cursor: pointer; color: var(--gold); background: var(--selected); border: 1px solid var(--trim); border-radius: 4px; font-weight: 600; }
