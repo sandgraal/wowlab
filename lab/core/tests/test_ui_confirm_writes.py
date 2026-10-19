@@ -12,7 +12,9 @@ exit 3.
 
 Two kinds of run, none touching a real install:
 - the recorder of `test_ui_confirm` (constructed) for what the server makes
-  of an outcome: which ones mint a token, what the confirmed argv is;
+  of an outcome: which ones mint a token, what the confirmed argv is. Its
+  stderr is written untranslated (`_RAW_STDERR`), so the line ends a case
+  names are the bytes the server reads, on every platform;
 - the real CLI, through a shim that redirects the user data directory into
   `tmp_path`, empties the process table (constructed: no client is running)
   and logs the argv it was given, on the captured tree (`fixtures/macos/`)
@@ -28,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 import threading
 from collections.abc import Iterator
@@ -103,6 +106,14 @@ def server(recorder: Recorder) -> Iterator[ui.UiServer]:
         yield served
 
 
+# Python's text-mode stderr turns each `\n` into `os.linesep` on the way to
+# the pipe: `\r\n` on Windows, and `\r\n` itself into `\r\r\n`. With no
+# translation, a case's stderr reaches the server byte for byte, so the LF
+# cases are LF and the CRLF case is CRLF on every platform. What the real
+# CLI writes, translation included, is graded by the real-CLI tests below.
+_RAW_STDERR = "import sys\nsys.stderr.reconfigure(newline='')\n"
+
+
 @pytest.fixture
 def recorder(tmp_path: Path) -> Recorder:
     from test_ui_confirm import _RECORDER
@@ -110,7 +121,8 @@ def recorder(tmp_path: Path) -> Recorder:
     calls = tmp_path / "m14-03-calls.jsonl"
     replies = tmp_path / "m14-03-replies.json"
     script = tmp_path / "m14_03_fake_wowlab_constructed.py"
-    script.write_text(_RECORDER.format(calls=str(calls), replies=str(replies)), encoding="utf-8")
+    body = _RECORDER.format(calls=str(calls), replies=str(replies))
+    script.write_text(_RAW_STDERR + body, encoding="utf-8")
     rec = Recorder([sys.executable, str(script)], calls, replies)
     rec.reply({"dry_run": True})
     return rec
@@ -586,8 +598,10 @@ def test_sv_merge_through_the_ui(real: Real) -> None:
     before = target.read_bytes()
     plan = real.plan(MERGE, params)
     assert plan["exit_code"] == 1
-    # The plan is the stderr text before `_confirm`'s line.
-    assert plan["stderr"].endswith(f"Write the merge? [y/N]:\n{cli.CONFIRM_DECLINED}\n")
+    # The plan is the stderr text before `_confirm`'s line. The CLI writes
+    # stderr in text mode, so its line end is the platform's.
+    eol = os.linesep
+    assert plan["stderr"].endswith(f"Write the merge? [y/N]:{eol}{cli.CONFIRM_DECLINED}{eol}")
     assert f"replace  {DBM}" in plan["stderr"]
     shown = json.loads(plan["stdout"])
     assert shown["written"] is False
@@ -612,7 +626,8 @@ def test_undo_through_the_ui(real: Real) -> None:
     installed = _state(real.root)
     plan = real.plan(UNDO, {})
     assert plan["exit_code"] == 1
-    assert plan["stderr"].endswith(f"Undo it? [y/N]:\n{cli.CONFIRM_DECLINED}\n")
+    eol = os.linesep  # the CLI's stderr is text mode
+    assert plan["stderr"].endswith(f"Undo it? [y/N]:{eol}{cli.CONFIRM_DECLINED}{eol}")
     assert plan["stderr"].startswith(f"Undo {real.history()[-1].id} (")
     assert _state(real.root) == installed  # the plan changed nothing
     token = _token(plan)
@@ -708,5 +723,5 @@ def test_a_guard_refusal_reaches_the_page_as_exit_3_with_no_token(real: Real) ->
 def test_nothing_to_undo_offers_no_confirm(real: Real) -> None:
     plan = real.plan(UNDO, {})
     assert plan["exit_code"] == 1
-    assert not plan["stderr"].endswith(f"{cli.CONFIRM_DECLINED}\n")
+    assert not plan["stderr"].endswith(f"{cli.CONFIRM_DECLINED}{os.linesep}")
     assert _token(plan) is None
