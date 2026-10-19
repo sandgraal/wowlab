@@ -728,7 +728,8 @@ Dated entries, newest last. Each names the fixture that prompted it.
   it cannot". The reason here is the second `BARBER_SHOP_OPEN` after the
   Accept. A later
   ticket could keep an applied record through a following open, which would
-  be schema 4 with its own capture. `looks import-char` keeps saying "as of
+  be schema 4 (now schema 5; schema 4 is M15-01's) with its own capture.
+  `looks import-char` keeps saying "as of
   the last barber-shop open", which is still true.
 - **2026-10-17, §8, `SPELL_CAST_SUCCESS` layout and the unit-flag fields,
   Forever 1.60.1 (M13-08; fixture

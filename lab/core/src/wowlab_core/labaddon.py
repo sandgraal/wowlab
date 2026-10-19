@@ -1606,7 +1606,7 @@ class CharacterFile(BaseModel):
     place: Place = "file"
     mtime_ns: int | None
     summary: str | None = None
-    record: CharDBV1 | CharDBV2 | CharDBV3 | None = None
+    record: CharDBV1 | CharDBV2 | CharDBV3 | CharDBV4 | None = None
     error: str | None = None
     same_as: FsText | None = None
 
@@ -3107,10 +3107,25 @@ def _identity_line(char: CharDB) -> str:
         else f"race id absent ({got.race_id_absent})"
     )
     if got.sex is not None:  # derived, so sex_raw is there
-        body = f"body type {got.sex} (Enum.UnitSex, from UnitSex {got.sex_raw})"
+        body = (
+            f"body type {got.sex} (Enum.UnitSex, from UnitSex {got.sex_raw}; the game's own "
+            "screens may number body types differently [verify])"
+        )
     else:
         body = f"body type absent ({got.sex_absent})"
-    return f"Identity: {klass}, {race}, {body}"
+    # The events on the same line, as `_absent` puts them on an absent
+    # section's line, so `identity` stays one line of text.
+    events = ""
+    section = char.identity if isinstance(char, CharDBV4) else None
+    if isinstance(section, Identity) and section.events_unregistered is not None:
+        if section.events_unregistered:
+            events = (
+                "; events the client did not know (so the section was not refreshed on that "
+                f"change): {', '.join(section.events_unregistered)}"
+            )
+        else:
+            events = f"; {ALL_EVENTS_REGISTERED}"
+    return f"Identity: {klass}, {race}, {body}{events}"
 
 
 def describe(char: CharDB) -> list[str]:

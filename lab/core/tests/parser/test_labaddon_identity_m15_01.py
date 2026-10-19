@@ -141,7 +141,7 @@ def test_constructed_text_gains_exactly_one_line() -> None:
     added = [line for line in as_4 if line not in as_3]
     assert added == [
         "Identity: class WARLOCK (class id 9), race id 5, body type 0 (Enum.UnitSex, from "
-        "UnitSex 2)"
+        "UnitSex 2; the game's own screens may number body types differently [verify])"
     ]
     assert len(as_4) == len(as_3) + 1
     spec = next(i for i, line in enumerate(as_4) if line.startswith("Spec:"))
@@ -335,3 +335,24 @@ def test_charidentity_holds_exactly_one_of_value_and_reason() -> None:
             class_id=1,
             class_file="WARRIOR",
         )
+
+
+@pytest.mark.parametrize(
+    ("events", "words"),
+    [
+        ([], "; all its change events registered"),
+        (
+            ["BARBER_SHOP_APPEARANCE_APPLIED"],
+            "; events the client did not know (so the section was not refreshed on that "
+            "change): BARBER_SHOP_APPEARANCE_APPLIED",
+        ),
+    ],
+    ids=["constructed-all-registered", "constructed-refused"],
+)
+def test_identity_line_carries_the_events_on_the_same_line(events: list[str], words: str) -> None:
+    as_3 = labaddon.describe(labaddon.load_char(_raw(RECORD_70425)))
+    as_4 = labaddon.describe(labaddon.load_char(_v4({**GOOD, "events_unregistered": events})))
+    added = [line for line in as_4 if line not in as_3]
+    assert len(added) == 1 and len(as_4) == len(as_3) + 1
+    assert added[0].startswith("Identity: class WARLOCK (class id 9), race id 5, body type 0")
+    assert added[0].endswith(words)

@@ -1940,7 +1940,7 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   `talents.class`, `talents.legacy`, `customization`,
   `collections.mounts`, `collections.toys`, `collections.pets`,
   `collections.appearances`, `currencies`, `professions` (and, since schema
-  3, `spellbook`, `actionbars`, `bindings`). The list is
+  3, `spellbook`, `actionbars`, `bindings`; since schema 4, `identity`). The list is
   saved in `WowLabCharDB`, per character, as `skip = { "<section key>", ... }` (strings in
   section order, left out when empty; the reader keeps it as a list of
   strings and ignores a key it does not know) and read at `ADDON_LOADED`,
@@ -2199,12 +2199,14 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   return of `UnitSex("player")` as the client gives it), `class_id` and
   `class_file` (the third and second returns of `UnitClass("player")`), each
   exactly one of the value and `<field>_absent`, a reason. It is gathered on
-  entering the world and after an applied barber-shop change, and can be
-  switched off like any section. The reader derives `sex`, the barber
+  entering the world and again on `BARBER_SHOP_APPEARANCE_APPLIED` (the
+  event's firing is confirmed by the 70425 capture; that `UnitSex` already
+  gives the new body type at that gather is **[verify]**, not tested by the
+  M15-01 capture), and can be switched off like any section. The reader derives `sex`, the barber
   shop's `Enum.UnitSex` value, from `sex_raw` (2 to 0, 3 to 1, anything else
   absent with the reason "UnitSex returned <n>"), since
   `C_BarberShop.GetCurrentCharacterData`, which `customization` reads,
-  answers only in the barber shop. Every API is **[verify]** until the
+  is called only in the barber shop (how it answers outside is untested). Every API is **[verify]** until the
   owner's capture (`docs/handoffs/M15-01.md`). The reader reads schema 1 to
   3 files exactly as before, with `identity` absent; the next change is
   schema 5. `CharShowReport` (after `record`) and `CharGearReport` (after

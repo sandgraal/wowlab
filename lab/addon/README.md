@@ -94,8 +94,10 @@ file as schema 3, and `probe.loads` keeps rising across that write.
 
 Schema 4 (M15-01) is schema 3 with one new section, `identity`; nothing
 else changed. The Lab reads schema 1, 2 and 3 files exactly as before and
-reports their `identity` as absent ("the record is schema n; `identity` is
-recorded from schema 4"), and refuses a schema it does not know. The first
+reports every `identity` value as absent with the reason "the record is
+schema n; identity is recorded from schema 4 (the lab-addon from M15-01:
+install it with wowlab addon install lab, then log in and out on this
+character)", and refuses a schema it does not know. The first
 logout with the M15-01 addon rewrites the file as schema 4, and
 `probe.loads` keeps rising across that write.
 
@@ -153,16 +155,22 @@ Notes on the fields:
   `absent = "no barber-shop visit recorded with the addon enabled"`.
 - `identity` (schema 4, M15-01): the character's race, body type and
   class, gathered on entering the world (after the 15 s window, like every
-  on-world section) and again after `BARBER_SHOP_APPEARANCE_APPLIED`, since
-  a body type can change in the barber shop. Each value is exactly one of
-  the value and `<field>_absent`:
+  on-world section) and again on `BARBER_SHOP_APPEARANCE_APPLIED`, since
+  a body type can change in the barber shop. That the event fires is
+  confirmed (70425, M11-29 capture: `events_received` 1); that `UnitSex`
+  already returns the new body type when the debounced gather runs 2 s
+  after it is **[verify]**, and not tested by the M15-01 capture. If that
+  gather is too early, the logout write does not gather again (the section
+  is no longer dirty), so the file keeps the old value until the next
+  login. Each value is exactly one of the value and `<field>_absent`:
   - `race_id`: the third return of `UnitRace("player")`, as
     `Customization.lua` reads it; the name and file token are not kept.
   - `sex_raw`: the first return of `UnitSex("player")` as the client gives
     it: 1 unknown, 2 male, 3 female (from memory, **[verify]**). The addon
     does not map it. `customization.sex` comes from
-    `C_BarberShop.GetCurrentCharacterData`, which answers only in the
-    barber shop, so it cannot serve here.
+    `C_BarberShop.GetCurrentCharacterData`, which `customization` calls
+    only in the barber shop (how it answers outside is untested), so it
+    does not serve here.
   - `class_id` and `class_file`: the third and second returns of
     `UnitClass("player")` (the class id and the client's file token, such
     as `WARLOCK`); the localized class name is not kept.
@@ -680,8 +688,8 @@ on from one, fails the test until someone lists it on purpose.
 | `C_BarberShop.GetCurrentCharacterData` | customization: `sex` only (name fields never read) | ran on 70058 (M11-23 capture: `sex` 0, no name stored); `sex` 1 not yet seen: [verify] | yes |
 | `C_BarberShop.GetViewingChrModel` | customization: chr model id, or `chr_model_id_absent`: how the call went (schema 2, M11-29) | [verify]: no number on 70058 (M11-23 capture); returned nil on 70425 (M11-29 capture); why stays open | yes |
 | `UnitRace` | customization and identity: race id (third return only) | ran on 70058 (M11-23 capture: `race_id` 5); the drop on a race change is untested; in `identity` (schema 4): [verify] | yes |
-| `UnitSex` | identity: `sex_raw`, the first return as the client gives it (1 unknown, 2 male, 3 female, from memory) | [verify] | not checked: the kit's list was not consulted for M15-01 |
-| `UnitClass` | identity: class file and class id (second and third returns; the localized name is never kept) | [verify] | not checked: the kit's list was not consulted for M15-01 |
+| `UnitSex` | identity: `sex_raw`, the first return as the client gives it (1 unknown, 2 male, 3 female, from memory) | [verify] | yes |
+| `UnitClass` | identity: class file and class id (second and third returns; the localized name is never kept) | [verify] | yes |
 | `C_MountJournal.GetMountIDs` | mounts: every mount id, unfiltered | [verify] | yes |
 | `C_MountJournal.GetMountInfoByID` | mounts: isCollected (11th return) | [verify] | yes |
 | `C_ToyBox.GetNumFilteredToys` | toys: rows through the current filter | [verify] | yes |

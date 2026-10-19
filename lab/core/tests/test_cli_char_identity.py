@@ -108,7 +108,8 @@ def test_constructed_schema_4_char_show(flavor: Path) -> None:
     line = next(x for x in before.splitlines() if x.startswith("Identity:"))
     assert line == (
         "Identity: class WARLOCK (class id 9), race id 5, body type 1 (Enum.UnitSex, from "
-        "UnitSex 3)"
+        "UnitSex 3; the game's own screens may number body types differently [verify]); all "
+        "its change events registered"
     )
     report = cli.CharShowReport.model_validate_json(ok("char", "show", "--json").stdout)
     assert isinstance(report.record, labaddon.CharDBV4)
@@ -130,7 +131,8 @@ def test_constructed_schema_4_char_show_text_is_schema_3_plus_one_line(flavor: P
     extra = [x for x in as_4 if x not in as_3]
     assert extra == [
         "Identity: class WARLOCK (class id 9), race id 5, body type 1 (Enum.UnitSex, from "
-        "UnitSex 3)"
+        "UnitSex 3; the game's own screens may number body types differently [verify]); all "
+        "its change events registered"
     ]
     as_4.remove(extra[0])
     assert as_4 == as_3

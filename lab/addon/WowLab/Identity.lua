@@ -2,9 +2,11 @@
 -- amendment of 2026-10-19): race id, body type and class, so a reader that
 -- needs them (the dressing-room link, M15-02) does not depend on a
 -- barber-shop visit. Gathered on entering the world like the other on-world
--- sections, and again after an applied barber-shop change (a body type can
--- change there), so the record written at logout or /reload is the one the
--- client gave last.
+-- sections, and again on BARBER_SHOP_APPEARANCE_APPLIED (a body type can
+-- change there). That the event fires is confirmed (70425, M11-29 capture);
+-- that UnitSex already gives the new body type at the debounced gather 2 s
+-- after it is [verify], and not tested by the M15-01 capture: a gather that
+-- is too early is not repeated at logout (the section is no longer dirty).
 --
 -- Each value is exactly one of the value and `<field>_absent`, a reason
 -- naming the API and what it did; nothing is guessed:
@@ -14,7 +16,8 @@
 --   (1 unknown, 2 male, 3 female, from memory: [verify]). The addon does not
 --   map it; the Lab's reader derives the barber shop's Enum.UnitSex value
 --   (0/1) from it, so the raw value is kept. C_BarberShop's `sex`, which
---   Customization.lua records, answers only in the barber shop.
+--   Customization.lua records, is called only in the barber shop (how it
+--   answers outside is untested).
 -- - class_id and class_file: the third and second returns of
 --   UnitClass("player"). The first (the localized class name) is not kept.
 --
