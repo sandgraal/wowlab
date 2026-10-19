@@ -1054,6 +1054,24 @@ Found 2026-10-19 in the code review of #287 (M14-06), on `main` before it. `laba
 
 ---
 
+## [ ] M13-71 — `guard_bash.py`: a GraphQL body passed with `--input`, and the mutation allowlist as a substring match
+**Size:** XS · **Depends on:** nothing
+
+Found 2026-10-19 in the code review of #289, on `main` before it. (1) `_check_gh` reads a query given inline or as `query=@<file>` (since #289) but never a JSON body passed with `gh api graphql --input <file>`, so `{"query":"mutation{mergePullRequest…}"}` in that file passes the guard. (2) The allowlist is a substring match over the command text plus the query text: a file holding `mutation{mergePullRequest(…)} # resolveReviewThread`, or an inline query with an allowed name placed in any argument, passes. Read `--input` bodies the way `query=@` files are read (JSON, the `query` key), and match the mutation's field names in the parsed text (the identifiers that follow `mutation{` or `mutation(...){`) against the allowlist instead of searching the whole string. Harness tests for both, under 3.12 and 3.9, stdlib only.
+
+**Acceptance:** the tests pass; `make hooks-test` green; `scripts/check_frontmatter.py` clean; reviewed by `code-reviewer`. Conductor lane (harness).
+
+---
+
+## [ ] M13-72 — `char list --json` carries every full record; the Character tab's colour grep exempts `page.css`
+**Size:** XS · **Depends on:** nothing
+
+Found 2026-10-19 in the code review of #290 (M14-08), on `main` before it. (1) `char list --json` is called with `keep_records=json_out` and so prints every character's full record (about 50 KB per low-level character on the capture; 100,632 bytes for two), while the Character tab's picker needs only the label, the folders, the time and the error. A large roster of high-level characters could approach the UI's 16 MiB output cap and leave the tab saying the page cannot hold the output; not verified on real high-level records. Decide between a lighter `char list --json` (a `--brief` flag, or records dropped by default under the UI) and a documented bound; `char list` text output byte-identical to `main`, and `--json` unchanged unless a flag asks. (2) `test_the_templates_hold_no_slot_name_and_no_colour_code` in `test_ui_character.py` skips six-digit colours in `page.css` because of `--field: #ffffff`; exempt that one value instead and check the quality words in the stylesheet too, so a stylesheet colour table keyed by quality word cannot pass the test.
+
+**Acceptance:** the decision for (1) stated in the report and recorded here by the conductor; the test for (2) catches `#a335ee` and a quality word added to `page.css`; byte-identity as stated; `make ci` green; reviewed by `code-reviewer`.
+
+---
+
 # M14 — `wowlab ui`: the confirm flow, and the character (Wave 5)
 
 Spec: `docs/LAB_PLAN.md` §16 (2026-10-18). Decisions: ADR-0029 (accepted) for the confirm flow; ADR-0032 (Proposed, the model's access to the data) binds nothing here and is for the wave after. Owner request of 2026-10-18: the player's character in the UI, with equipped gear, key bindings and macros, read-only in this wave and built so that a later wave can change and optimize them from the UI (§16.5). **Every ticket below depends on M14-01**, which waits for the twelve M13 follow-ups of the owner's 2026-10-18 pick; nothing in M14 is dispatched before they are on `main`. L1 to L8 apply; no ticket writes into an install outside the confirm flow's `guard` commands, no ticket adds a network request, and no ticket puts a game rule in JavaScript (§14.5 D3). `wowlab_core.ui` left the graders-first set on 2026-10-17, so no ticket here has a `T` twin. The five tickets that edit `ui/__init__.py` and the templates (M14-02, M14-03, M14-04, M14-08, M14-09) collide on those files, so the conductor dispatches them one at a time in that order (§16.7); the CLI tickets run beside them. *Owner pick 2026-10-18 ("want the gear view sooner"):* the UI queue runs M14-02, then M14-08, then M14-03, M14-04, M14-09; M14-05 is dispatched with M14-02 the moment M14-01 closes, so the Character tab's gear view is the first new screen. *Exception recorded 2026-10-18:* on the owner's word, M14-05 was dispatched a few hours before M14-01 closed, the one departure from "nothing in M14 is dispatched before they are on `main`".
@@ -1069,12 +1087,14 @@ The conductor's own ticket, the gate the owner set on 2026-10-18. When the twelv
 
 ---
 
-## [ ] M14-02 — The confirm flow: the mechanism, on `snap gc` and `doctor --yes`
+## [x] M14-02 — The confirm flow: the mechanism, on `snap gc` and `doctor --yes`
 **Size:** M · **Depends on:** M14-01
 
 ADR-0029 "Writes", built on the two `--yes` commands whose worst case is wowlab's own store (§16.1), which between them exercise two of the three plan shapes §16.1 defines. `POST /api/run` on a `--yes` leaf makes the plan run: for a leaf that declares `--dry-run` (`snap gc` here; `snap restore`, `profile apply`, `addon install`, `addon remove` in M14-03) the argv is the leaf's with `--dry-run --json`, and the marker is the JSON report with `dry_run: true`; for `doctor` the argv is `doctor --json` without `--yes`, and the marker is `first_run.outcome == "not_asked"` **with `first_run.flavor` set** (*the field is `first_run.chosen`; corrected 2026-10-18 in the build*) (a plan run never returns `choose_flavor`: on a multi-flavor install it returns `not_asked` with no flavor, `firstrun.py` around line 911, and a confirmed run would exit 2; that case is shown with a `--flavor` field and no token; anything else offers nothing). The shape is chosen in Python from the Click tree (does the leaf declare `--dry-run`; is it `doctor`), never by the page. Only a run that ended with its shape's marker returns the plan with a one-time confirm token minted for that run: random (`secrets`), bound server-side to the exact confirmed argv, spent on first use, and expiring with the server. Any other outcome, exit 3 included, is returned as the CLI printed it with no token. A second request carrying the token runs the confirmed argv: the plan argv with `--dry-run` removed and `--yes` appended as a separate argument; a different argv, a reused token or an unknown token is refused (403) and nothing runs. The page shows the plan, a Confirm button, the result, and only the hint the CLI prints (neither `snap gc` nor `doctor` prints an `undo` hint, and the page offers none for them). A dry-run report with nothing to remove still carries `dry_run: true`, so Confirm is offered for a run that changes nothing; that is harmless, and the page says "nothing to remove" from the report rather than hiding the button. The third shape, `_confirm`'s decline marker for `undo` and `sv merge`, is M14-03's. The exclusion list loses "confirm flow: M14" for these two leaves, keeps it for the other six, and the parity test gains ADR-0029's assertion that every `--yes` command goes through the confirm step. The server still writes nothing itself (L2).
 
 **Acceptance:** tests for: a plan run never carries `--yes` and runs with stdin closed; `snap gc`'s plan run carries `--dry-run --json` and a token is minted only for a report with `dry_run: true`; `doctor`'s plan run carries `--json` and a token is minted only for `not_asked` with a flavor set, never for `not_asked` without one on a constructed two-flavor install, a problems exit or exit 3; a token confirms exactly once and only its own argv; the confirmed argv is the plan argv with `--dry-run` removed and `--yes` appended as its own element, otherwise byte-identical; a `--yes` leaf that is still excluded is refused before anything runs; the parity test's new assertion fails when a `--yes` leaf skips the step (a dummy leaf in the test). `make ci` green. Reviewed by `security-reviewer` and `code-reviewer`. User-facing: the Commands tab can run `snap gc` and `doctor --yes`; the wiki's `wowlab ui` page.
+
+*Follow-up merged 2026-10-19 (#291, 826ce3d):* the plan run's child was started with `stdin=subprocess.DEVNULL`; on Windows the NUL device is a character device, so `sys.stdin.isatty()` was True in the child and `cli._interactive()` counted a UI run as interactive (latent: every UI run carries `--json`). The child now gets a pipe whose writing end the server closes right after `Popen`, before the suspended Windows child is resumed, so "stdin closed" in §16.1 holds on every platform. Windows on `main` at 826ce3d is green; the test that failed on #288's Windows run passes there.
 
 ---
 
@@ -1100,7 +1120,7 @@ ADR-0029 "Richer views … are embedded", by the route §16.3 gives. A Looks ent
 
 ---
 
-## [ ] M14-05 — `wowlab char gear`, and `wowlab_core.itemlink`
+## [x] M14-05 — `wowlab char gear`, and `wowlab_core.itemlink`
 **Size:** S · **Depends on:** M14-01
 
 §16.2. A new lossless parser `wowlab_core.itemlink` for the item-link string the lab-addon records: colour code (named and hex forms), the `|Hitem:` payload split on `:` with the item id first and every later field kept raw and also named where community documentation names it (enchant, gems, suffix, unique, level, specialization, upgrade, bonus count and bonus ids; all **[verify]** in `docs/LAB_FORMATS.md` §4.2, dated), the bracketed name, and the raw string. Graded on every link in the committed `WowLab.lua` fixtures (`macos/`, `macos-70058/`, `macos-70425/`: 38 links, all in the named `|cnIQn:` colour form, none with a crafter), with the round-trip `raw == input`; constructed links only for the boundary and hostile cases (the unobserved `|cffRRGGBB` form, no closing `|h`, a GUID-shaped crafter field, a field count past the longest seen), labelled. A shipped data file `gear_slots.toml` maps slot numbers to names and colour codes to quality words, marked **[verify]** on Forever, overridable from the user config directory as the coach's cost table is, and the output says it is a default. The command `wowlab char gear [--character] [--account] [--root] [--flavor] [--json]` (the four options exactly as `char show` declares them) prints the slots in the client's order and the averages; `--json` is `CharGearReport` as §16.2 lists it. Names come from the bracketed text only; nothing is fetched. `char show` is unchanged, text and JSON.
@@ -1109,7 +1129,7 @@ ADR-0029 "Richer views … are embedded", by the route §16.3 gives. A Looks ent
 
 ---
 
-## [ ] M14-06 — `wowlab_core.keymap`, and `wowlab char binds`
+## [x] M14-06 — `wowlab_core.keymap`, and `wowlab char binds`
 **Size:** M · **Depends on:** M14-01
 
 §16.2. Lift the key-to-slot-to-spell join out of `bindscoach` (`command_slot`, `_spellbook`, `_held`, the default-page rule of GLOSSARY "Action slot") into `wowlab_core.keymap`, and make `binds coach` use it with its text and `--json` byte-identical to `main` on the fixtures and the constructed logs. The module takes the bindings (the account and character `BindingsDocument`s, and the addon's `Bindings` section), the `ActionBars` and `Spellbook` sections, and answers per key: command, slot, what the slot holds (type, id, spell name and rank subtext from the spellbook; a macro, item, flyout or equipment set by id), and the sources that said so, marking disagreement between file and record rather than choosing. The command `wowlab char binds [--character] [--account] [--root] [--flavor] [--json]` (the four options as `char show` declares them) prints the table, the unreached filled slots and the record's `commands_left_out` and `keys_left_out` counts (they are counts in `labaddon.Bindings`, not lists); `--json` is `CharBindsReport`. Without a schema-3 record it prints the file rows with "cannot place: no action-bar record", exit 0.
@@ -1127,12 +1147,14 @@ ADR-0029 "Richer views … are embedded", by the route §16.3 gives. A Looks ent
 
 ---
 
-## [ ] M14-08 — The Character tab: picker, header, gear
+## [x] M14-08 — The Character tab: picker, header, gear
 **Size:** M · **Depends on:** M14-05, M14-02
 
 §16.3. A fourth tab, Character. A picker from `char list --json` (latest-written first, the folder label and the file's local time), a header from `char gear --json` (character, spec id, equipped and overall average item level, and the two notes `char show` prints), and the gear in the client's slot order: slot name, item name in its quality colour, item level; a detail row on click with item id, enchant, gems, bonus ids and the raw link with a copy button. Empty slots drawn empty; a record with no `gear` shows the command's reason; a refusal or error shows the CLI's text. Every name and colour comes from the model; the JavaScript holds no slot table and no quality table (a test greps the templates for the slot names and colour codes of `gear_slots.toml` and finds none). All text through `textContent`; the tab runs only `char list` and `char gear`.
 
 **Acceptance:** UI tests in the style of `test_ui_explorer.py`: the tab appears, the picker lists the fixture characters, the gear rows match `char gear --json` for the picked one, the detail row carries the raw link, and no request other than the two read commands is made; the grep test; `make ci` green. Reviewed by `security-reviewer` (the templates) and `code-reviewer`. User-facing: the Character tab; the wiki's `wowlab ui` page.
+
+*Noted 2026-10-19 (from the #290 reviews, both CLEAN; merged 9f47b7a):* the colour drawn for a slot comes from CSS rules the server builds from the **shipped** `gear_slots.toml` only, under the CSP hash; the model carries the code and the quality word. A player's own `gear_slots.toml` that remaps a code shows the player's word in the shipped colour, which the table's comment says. That meets §14.5 D3 but reads a little differently from this ticket's "every name and colour comes from the model"; the owner may want the wording either way (owner item). `aria-live="polite"` sits on the whole gear panel while `#char-status` already has `role="status"`, so a screen reader may read all nineteen rows on every pick: M14-09's to narrow. The grep test exempts `page.css` from the six-digit colour check because of `--field: #ffffff`; tightening it to that one value and checking the quality words in the stylesheet too is M13-72's.
 
 ---
 
@@ -1142,6 +1164,8 @@ ADR-0029 "Richer views … are embedded", by the route §16.3 gives. A Looks ent
 §16.3. Two panels under the picked character. Keys: `char binds --json` as a table (key, command, what it does, source), a text filter, a "disagreements only" filter and the unreached-slots list. Macros: `char macros --json`, each with its body as lines, where it sits and which keys reach it, and its findings in the checker's words, with a "findings only" filter. Both panels name the files and the record they came from with their times. Macro bodies and spell names are player text, rendered with `textContent` and never as markup. The tab still offers no edit control; a note under each panel says the panel is read-only in this version and that changes are a later wave (§16.5).
 
 **Acceptance:** UI tests: the panels draw the fixture character's rows and the filters narrow them as the model says; a labelled constructed body with `<script>` and `|c` sequences renders as text; only read commands are requested; `make ci` green. Reviewed by `security-reviewer` and `code-reviewer`. User-facing: the Character tab's two panels; the wiki's `wowlab ui` page.
+
+*Noted 2026-10-19 (from the #290 code review of M14-08):* `loadGear` in `page.js` does three jobs (handles the pick, holds the `seq` guard that drops a late reply, clears the header); this ticket lifts them into one pick handler that drives all three panels. The tab's intro paragraph says it "runs `char list` and `char gear` and nothing else" and the explorer allowlist test names exactly those two leaves; both change here. The tab reads the default flavor only, while the Explorer has a flavor picker; say in the report whether the Character tab should follow it, and leave it to the owner if the answer changes a deliverable. Narrow the `aria-live` region (see the M14-08 note).
 
 ---
 
