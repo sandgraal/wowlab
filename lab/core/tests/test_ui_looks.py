@@ -437,7 +437,8 @@ def test_the_frame_has_exactly_sandbox_allow_scripts_and_no_src(served: Any) -> 
     # The script never sets the frame's `src`, `sandbox` or any attribute
     # on it, and fills it only through `srcdoc`, with the route's text.
     script = (_TEMPLATES / "page.js").read_text(encoding="utf-8")
-    assert re.findall(r"\bframe\.([a-zA-Z]+)\s*=(?!=)", script) == ["srcdoc", "hidden"]
+    # Hidden at the start of a press (review of M14-04, C1), then filled and shown.
+    assert re.findall(r"\bframe\.([a-zA-Z]+)\s*=(?!=)", script) == ["hidden", "srcdoc", "hidden"]
     assert "frame.srcdoc = read.page;" in script
     assert re.search(r"\.sandbox\b|[\"']sandbox[\"']", script) is None
 
@@ -491,6 +492,22 @@ def test_the_csp_names_the_hashes_of_the_current_looks_templates(
     assert data == [{"type": "application/json", "id": lookspage.DATA_ELEMENT_ID}]
     own = lookspage.content_security_policy()
     assert directives["script-src"][1] in own and directives["style-src"][1] in own
+
+
+_BASE_URL_READS = ("baseURI", "document.URL", "documentURI", "ancestorOrigins", "location.href")
+
+
+def test_no_script_the_frame_may_run_reads_the_opened_url(served: Any) -> None:
+    """A `srcdoc` document takes its base URL from the page that holds it, so
+    inside the frame `document.baseURI` is the opened URL, token and all
+    (security review of M14-04, S1). The frame may run only the two scripts
+    the CSP hashes, `lookspage._SCRIPT` and the shell's own `page.js`; neither
+    reads that URL by any of these names."""
+    [(_, own_script)] = _tags(_shell(served).body.decode("utf-8")).scripts
+    assert own_script == (_TEMPLATES / "page.js").read_text(encoding="utf-8")
+    for name, script in (("lookspage._SCRIPT", lookspage._SCRIPT), ("page.js", own_script)):
+        for read in _BASE_URL_READS:
+            assert read not in script, (name, read)
 
 
 def test_every_route_response_keeps_frame_ancestors_none(served: Any, user_data: Path) -> None:
@@ -736,4 +753,5 @@ def test_a_refused_read_shows_the_servers_word_and_no_frame_constructed(
     [written] = out["steps"]
     assert _asked(written) == ["/api/run", ROUTE]
     assert "not_a_page" in written["status"] and written["statusError"] is True
+    assert "through a link" in written["status"], "a linked page says why"
     assert written["srcdoc"] is None and written["frameHidden"] is True

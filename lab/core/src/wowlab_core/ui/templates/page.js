@@ -1391,7 +1391,13 @@
     } catch (error) {
       return { error: "The request failed: " + error };
     }
-    if (!reply.ok) return { error: "The server did not show the page: " + (result.error || reply.status) };
+    if (!reply.ok) {
+      let error = "The server did not show the page: " + (result.error || reply.status);
+      if (result.error === "not_a_page") {
+        error += ". The server shows only a real file that wowlab wrote there, never one through a link (a symlink or junction).";
+      }
+      return { error: error };
+    }
     if (!result || typeof result.page !== "string") return { error: "The server sent something this page does not know." };
     return { page: result.page };
   }
@@ -1401,6 +1407,9 @@
     const button = byId("looks-write");
     const frame = byId("looks-frame");
     button.disabled = true;
+    // A page an earlier press showed is hidden until this press shows its
+    // own, so a failure is never drawn above an older page.
+    frame.hidden = true;
     try {
       looksSay("Writing the looks page…", false);
       // Exit 1 with a report: the page was written, and some look files

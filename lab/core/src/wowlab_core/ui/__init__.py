@@ -48,6 +48,14 @@ shell's `script-src` and `style-src` also name the hashes of
 `lookspage._SCRIPT` and `lookspage._STYLE`, computed from those templates at
 start; nothing else is added, and `frame-ancestors 'none'` stays on every
 response. The page's own meta CSP still applies inside the frame.
+Two residuals are known and accepted for review (M14-04): a file planted as
+`pages/looks.html` could carry the shell's own `page.js`, whose hash the CSP
+also names, and run it in the frame's opaque origin, where it has no token
+and every request it makes carries `Origin: null` and is refused; and a
+`srcdoc` frame takes its base URL from the page that holds it, so inside the
+frame `document.baseURI` is the opened URL, token included, which neither
+script the frame may run (`lookspage._SCRIPT`, `page.js`) reads, as
+`test_ui_looks.py` checks.
 
 The confirm step (ADR-0029 "Writes", §16.1, M14-02, M14-03). A leaf that
 declares `--yes` is never run with `--yes` from a form: its `yes` (and
