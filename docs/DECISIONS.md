@@ -315,7 +315,7 @@ The decision itself is unchanged. This amendment only stages it, so that the fir
 - Adding a language stays exactly as hard as before; only the reason that has to be given changes with the purpose.
 - A later wave that wants TypeScript, a 3D viewer or a CASC binding writes an ADR naming where it lives and how it is tested. The owner decides.
 
-**Amended by (2026-10-19; Proposed):** ADR-0034 admits one vendored third-party JavaScript library (three.js, pinned) under its own rules; ADR-0033 keeps the CASC reader in Python, so no binding is admitted.
+**Amended by (2026-10-19; Accepted with ADR-0034 the same day):** ADR-0034 admits one vendored third-party JavaScript library (three.js, pinned) under its own rules; ADR-0033 keeps the CASC reader in Python, so no binding is admitted.
 
 ---
 
@@ -381,7 +381,7 @@ Stage two amends ADR-0019 ("never uploads anything it reads" and "the only netwo
 
 ## ADR-0033 — The Lab reads the install's game data archives; how their parsers are graded
 
-**Status:** Proposed (2026-10-19). The owner chose the direction in session ("1 yes do this. 2 all three.") before this text was refined from the research pass; acceptance of the text is the owner's word on the plan PR.
+**Status:** Accepted (2026-10-19; proposed 2026-10-19) — owner decision in session ("accept ADR-0033 and ADR-0034", after the reviewed text of PR #305); the status edit was made by the conductor on the owner's explicit instruction
 
 **Context:** On 2026-10-19 the owner picked **character-studio** as the next wave (`docs/LAB_IDEAS.md`): the player's character rendered in the browser from the player's own game files. The models and textures live in the client's CASC archives under `Data/`, which nothing in the Lab has opened: every module so far reads the configuration tree, the lab-addon's record and the public game tables (ADR-0022). ADR-0023 already says the Lab "reads anything in the install" and writes only what the client treats as user configuration, and L7 forbids editing anything under `Data/` or bypassing the client's integrity checks. Reading the archives therefore needs no change of scope, but it needs three decisions: how they are read, where what is read goes, and how parsers of formats whose real files are Blizzard's assets are graded under L8, which wants real captures in the repository.
 
@@ -402,7 +402,7 @@ The owner asked whether `Data/` could also be edited. The conductor recommended 
 
 ## ADR-0034 — A pinned three.js, vendored inside the package and served by the UI, draws the character in `wowlab ui`
 
-**Status:** Proposed (2026-10-19). The owner chose the direction in session ("3 three.js … go ahead with all of your suggestions") before this text was refined from the research pass; acceptance of the text is the owner's word on the plan PR.
+**Status:** Accepted (2026-10-19; proposed 2026-10-19) — owner decision in session ("accept ADR-0033 and ADR-0034", after the reviewed text of PR #305); the status edit was made by the conductor on the owner's explicit instruction
 
 **Context:** ADR-0030 admits HTML, CSS and plain JavaScript only as template text inside the Python package with no build step, and says a 3D viewer needs an ADR naming where it lives, how it is tested and what it may not do. Rendering a character needs a WebGL scene graph, materials, a glTF loader and camera controls; writing those by hand is weeks of code that an MIT-licensed library already provides.
 

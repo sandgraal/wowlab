@@ -4059,7 +4059,7 @@ turns a recorded character into a standard glTF file under the data
 directory, headless and graded by pytest, with no 3D on screen. Wave 7
 (§17.8) puts it in the Character tab. Decisions: ADR-0033 (the archives are
 read, read-only, in pure Python; how asset-format parsers are graded) and
-ADR-0034 (a vendored three.js for Wave 7), both proposed on 2026-10-19 on the owner's direction and in force when the owner accepts them on the plan PR. The owner asked whether `Data/` could also be edited; L7 stands
+ADR-0034 (a vendored three.js for Wave 7), both accepted by the owner on 2026-10-19 after the plan PR's reviews. The owner asked whether `Data/` could also be edited; L7 stands
 as written and the reasons are in ADR-0033. L1 to L8 apply to every
 ticket, with L8's asset-format exception. The dressing-room link
 (M15-01, M15-02; §16.3's 2026-10-19 amendment) opened the wave because it
