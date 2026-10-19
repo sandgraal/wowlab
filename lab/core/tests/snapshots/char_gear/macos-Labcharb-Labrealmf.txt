@@ -1,0 +1,31 @@
+Character: 1/Labcharb-Labrealmf in account 90000001#6
+File: WTF/Account/90000001#6/1/Labcharb-Labrealmf/SavedVariables/WowLab.lua
+Written: <local time> (the file's modification time)
+Spec: id 1482 (index 1, from C_SpecializationInfo)
+Gear (slots 1 to 19 as the client numbers them, 9 filled):
+  slot  1 Head       empty
+  slot  2 Neck       empty
+  slot  3 Shoulder   empty
+  slot  4 Shirt      Apprentice's Shirt: Common, item level 1, item 6096
+  slot  5 Chest      Soft Wool Vest: Common, item level 5, item 4916
+  slot  6 Waist      Frayed Belt: Poor, item level 3, item 3363
+  slot  7 Legs       Ancestral Woollies: Uncommon, item level 13, item 3291
+  slot  8 Feet       Patchwork Shoes: Poor, item level 10, item 1427
+  slot  9 Wrist      Mogra's Friendship Bracelet: Uncommon, item level 10, item 281269
+  slot 10 Hands      Frayed Gloves: Poor, item level 3, item 1377
+  slot 11 Finger 1   empty
+  slot 12 Finger 2   empty
+  slot 13 Trinket 1  empty
+  slot 14 Trinket 2  empty
+  slot 15 Back       Pioneer Cloak: Common, item level 9, item 6520
+  slot 16 Main Hand  Primitive Walking Stick: Common, item level 5, item 5778
+  slot 17 Off Hand   empty
+  slot 18 Ranged     empty
+  slot 19 Tabard     empty
+Averages (GetAverageItemLevel, as the client returns them): equipped 2.375, overall 2.375 (best owned, bags included; Retail meaning, from memory), pvp 2.375
+Item levels from C_Item.GetCurrentItemLevel.
+Slot names and quality words: the shipped default <shipped gear_slots.toml>. To use your own, copy it to <user gear_slots.toml> (create the folder if it is missing) and edit it.
+Item names are each link's bracketed text; nothing is fetched. The link fields past the item id (enchant, gems, suffix, specialization, bonus ids, upgrade) are named as community documentation names them [verify].
+Item levels and the averages are the client's figures as recorded, never derived from bonus ids. The averages are GetAverageItemLevel's returns, not the mean of the item levels listed, and how the client computes them is not known.
+WowLab.lua is written at logout, /reload or a clean exit (a crash writes nothing): this is the character as of that save, not the session in progress.
+The addon records no time; the time shown is the file's modification time.

@@ -34,6 +34,10 @@ For engineers who do not play World of Warcraft. Several of these are named misl
 
 **Enchant** — a permanent stat modifier applied to certain slots. Independent of the item's own identity.
 
+**Item quality** — the rarity tier an item is shown in (Poor grey, Common white, Uncommon green, Rare blue, Epic purple, and higher tiers). **It is a display colour, not a power rating**: a green item can out-level a blue one. An item link carries it only as its colour code (`|cnIQ2:` on Forever, `|cff1eff00` in Retail's older form); the word for each code is community documentation, shipped in `gear_slots.toml` and **[verify]** on Forever (`docs/LAB_FORMATS.md`, 2026-10-18). Not the same as a crafted item's quality tier (stars).
+
+**Item link** — the string the client gives for an item instance, `|c<colour>|Hitem:<fields>|h[<name>]|h|r`. The `:`-separated fields after the item id carry the instance's enchant, gems, bonus ids and more, so two links with the same item id can be different items (see Bonus IDs). The bracketed name is display text in the client's language, not an identifier.
+
 **Crafted item** — player-made gear with a quality tier (1-5 stars) and player-chosen stat allocation, carried on the item instance rather than the base item. Two crafted items with the same ID can have completely different stats.
 
 **Embellishment** — a special effect applied to crafted gear. Characters are limited to a small number equipped at once, which makes them a constrained optimization problem rather than a simple "best item" pick.

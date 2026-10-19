@@ -763,3 +763,34 @@ Dated entries, newest last. Each names the fixture that prompted it.
   (whether a charmed player's casts carry "mine"); auto-repeat spells (a
   wand's Shoot or Auto Shot may log one `SPELL_CAST_SUCCESS` per shot); a
   log holding more than one of the player's characters.
+- **2026-10-18, §4.2, the item link the lab-addon records in
+  `gear.slots[].link` (M14-05; the four committed per-character
+  `WowLab.lua` files: `macos/` two characters, 70009; `macos-70058/`;
+  `macos-70425/`).** 38 links, every one of the shape
+  `|c<colour>|Hitem:<payload>|h[<name>]|h|r`, in the named colour form
+  `|cnIQ0:`, `|cnIQ1:` or `|cnIQ2:`; the hex form `|cffRRGGBB` is
+  unobserved on Forever (it is Retail's older form) and `wowlab_core.itemlink`
+  reads it from a constructed test only. The payload has 19, 20 or 22
+  `:`-separated fields, which fit the field order community documentation
+  gives (warcraft.wiki.gg, "ItemLink"), **[verify]** on Forever except where
+  noted: 0 item id; 1 enchant; 2 to 5 gems; 6 suffix; 7 unique id; 8 link
+  level; 9 specialization; 10 the modifier mask (older documentation: the
+  upgrade type); 11 the item context; 12 the bonus-id count, then that many
+  bonus ids; then the modifier count and that many `type:value` pairs; three
+  relic groups (a count and that many bonus ids each); the crafter GUID; the
+  extra enchant. With that order every count in every link fits the payload
+  exactly (19 fields with no bonus id and no modifier, 20 with one bonus id,
+  22 with one bonus id and one pair, e.g. `…:1:1:12720:1:28:5256:::::`).
+  Fields 1 to 7 are empty in all 38. Field 9 equals the record's `spec.id`
+  on all 38 (1482 and 1490, as the M11-03 table found); field 8 is 10, 13
+  or 15, the character's level where the fixture index gives it (10 and 13
+  at 70009, 15 at 70425; the 70058 row gives none, and its links say 13),
+  which fits "link level" being the character's level. The modifier pair
+  seen is type 28 with values 5244 to 5256; what type 28 means is
+  **[verify]**. Field 11 holds 1, 11 or 75 where filled. The crafter field
+  is empty in every link, the 70425 cloak (slot 15, `crafter_removed =
+  true`) included: the addon blanked a GUID-shaped run there, so on 70425 a
+  worn item did carry one, which answers the M11-03 row "Forever fills the
+  crafter field" in part (the field position the GUID had is not kept, since
+  the addon removes the run). The bracketed name is the only name source;
+  nothing is looked up.

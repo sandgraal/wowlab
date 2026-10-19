@@ -133,8 +133,10 @@ from wowlab_core import (
     firstrun,
     gamedata,
     gaps,
+    gear,
     guard,
     install,
+    itemlink,
     labaddon,
     layout,
     longpath,
@@ -7524,6 +7526,190 @@ def char_list(
         _note("wowlab: could not look inside {}: {}", place.path, place.reason)
     if unseen or any(e.error is not None for e in entries):
         raise typer.Exit(EXIT_ERROR)
+
+
+class CharGearReport(_Out):
+    """`wowlab char gear --json`: one character's equipped gear from the
+    lab-addon's `gear` record, slot by slot in the client's slot order, each
+    link decoded by `itemlink` with the raw link beside it, the slot names and
+    quality words from the slot table (`gear_slots.toml`, a default unless
+    the notes say otherwise), and `GetAverageItemLevel` as recorded."""
+
+    character: str  # "<realm folder>/<character folder>"
+    file: str  # relative to the flavor folder
+    mtime_ns: int
+    spec: gear.GearSpec
+    average: gear.GearAverage
+    slots: list[gear.GearSlot]
+    empty_slots: list[gear.EmptySlot]
+    notes: list[str]
+
+
+_GEAR_NAMES_NOTE = (
+    "Item names are each link's bracketed text; nothing is fetched. The link fields past the "
+    "item id (enchant, gems, suffix, specialization, bonus ids, upgrade) are named as "
+    "community documentation names them [verify]."
+)
+_GEAR_LEVEL_NOTE = (
+    "Item levels and the averages are the client's figures as recorded, never derived from "
+    "bonus ids. The averages are GetAverageItemLevel's returns, not the mean of the item "
+    "levels listed, and how the client computes them is not known."
+)
+
+
+def _gear_table_note(source: gear.SlotTableSource) -> str:
+    if source.source == "default":
+        return (
+            f"Slot names and quality words: the shipped default {gear.SLOTS_FILE}, community "
+            "documentation for Retail, [verify] on Forever; a gear_slots.toml in wowlab's user "
+            "config folder replaces any value it sets."
+        )
+    return (
+        f"Slot names and quality words: your {gear.SLOTS_FILE} in wowlab's user config folder, "
+        "over the shipped default."
+    )
+
+
+def _no_gear(record: labaddon.CharDB, path: str) -> str | None:
+    """Why `record` has no gear to show, or None when it has."""
+    section = record.gear
+    if section is None:
+        return f"no gear in {path}: {labaddon.NOT_IN_FILE}"
+    if isinstance(section, labaddon.AbsentSection):
+        why = section.absent
+        if why == labaddon.SWITCHED_OFF:
+            why += "; /wowlab unskip gear in the game switches it back on from the next /reload"
+        return f"no gear in {path}: the lab-addon recorded it as absent ({why})"
+    return None
+
+
+def _slot_label(n: int, name: str | None) -> str:
+    return f"slot {n:>2} {name if name is not None else '(no name in the slot table)'}"
+
+
+def _gear_line(s: gear.GearSlot) -> str:
+    quality = s.quality if s.quality is not None else f"colour {s.colour} not in the slot table"
+    level = "item level not returned" if s.item_level is None else f"item level {s.item_level}"
+    item = "no item id" if s.item_id is None else f"item {s.item_id}"
+    parts = [f"{s.name}: {quality}, {level}, {item}"]
+    if s.enchant_id:
+        parts.append(f"enchant {s.enchant_id}")
+    if s.gem_ids:
+        parts.append("gems " + ", ".join(str(g) for g in s.gem_ids))
+    if s.suffix_id:
+        parts.append(f"suffix {s.suffix_id}")
+    if s.bonus_ids:
+        parts.append("bonus ids " + ", ".join(str(b) for b in s.bonus_ids))
+    if s.crafter_removed:
+        parts.append("crafter GUID removed from the link")
+    return "; ".join(parts)
+
+
+def _num_words(value: labaddon.Number | None) -> str:
+    return "not returned" if value is None else str(value)
+
+
+@char_app.command("gear")
+@_handled
+def char_gear(
+    character: CharacterOpt = None,
+    account: AccountOpt = None,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+) -> None:
+    """The equipped gear the lab-addon recorded for one character, slot by slot
+    in the client's order, with the item levels and averages the client gave.
+    Without --character, the character whose WowLab.lua was written last. Names
+    are the links' own text; nothing is fetched. Slot names and quality words
+    come from a table you can override. A record without gear exits 1. Reads
+    only. JSON: CharGearReport."""
+    _, _, lay = _open(root, flavor)
+    acct = _select_account(lay, account)
+    files = [f for f in lay.saved_variables() if f.account == acct.folder and _is_lab_file(f)]
+    target, how, tie = _lab_char_file(acct, files, character)
+    record = labaddon.read_char(lay.flavor_path / target.path)
+    missing = _no_gear(record, target.path)
+    if missing is not None:
+        raise CliError(missing)
+    section = record.gear
+    assert isinstance(section, labaddon.Gear)  # _no_gear said so
+    try:
+        table = gear.load_slot_table()
+    except gear.SlotTableError as exc:
+        raise CliError(f"the slot table cannot be used: {exc}") from exc
+    try:
+        filled, empty = gear.rows(section, table.table)
+    except itemlink.ItemLinkError as exc:  # the record reader admits no such link
+        raise CliError(f"{target.path}: an item link wowlab cannot read: {exc}") from exc
+    notes = list(_CHAR_NOTES)
+    if how == "latest":
+        notes.append(
+            "The character is the one whose WowLab.lua has the newest modification time; "
+            "choose another with --character."
+        )
+    notes += [_gear_table_note(table), _GEAR_NAMES_NOTE, _GEAR_LEVEL_NOTE]
+    report = CharGearReport(
+        character=f"{target.realm_folder}/{target.character_folder}",
+        file=target.path,
+        mtime_ns=target.mtime_ns,
+        spec=gear.spec_of(record),
+        average=gear.average_of(section),
+        slots=filled,
+        empty_slots=empty,
+        notes=notes,
+    )
+    if json_out:
+        _emit(report)
+        return
+    _say(f"Character: {report.character} in account {acct.folder}{_picked_words(how, tie)}")
+    _say(f"File: {target.path}")
+    _say(f"Written: {_local_time(target.mtime_ns)} (the file's modification time)")
+    spec = report.spec
+    if spec.absent is not None:
+        _say(f"Spec: {spec.absent}")
+    else:
+        ident = "id not returned" if spec.id is None else f"id {spec.id}"
+        index = "index not returned" if spec.index is None else f"index {spec.index}"
+        _say(f"Spec: {ident} ({index}, from {spec.api})")
+    _say(
+        f"Gear (slots {section.first_slot} to {section.last_slot} as the client numbers them, "
+        f"{len(filled)} filled):"
+    )
+    by_slot: list[tuple[int, str, str]] = [
+        (s.slot, _slot_label(s.slot, s.slot_name), _gear_line(s)) for s in filled
+    ]
+    by_slot += [(e.slot, _slot_label(e.slot, e.slot_name), "empty") for e in empty]
+    width = max((len(label) for _, label, _ in by_slot), default=0)
+    for _, label, what in sorted(by_slot, key=lambda row: row[0]):
+        _say(f"  {label:<{width}}  {what}")
+    average = report.average
+    if average.absent is not None:
+        _say(f"Averages: GetAverageItemLevel {average.absent}")
+    else:
+        _say(
+            f"Averages (GetAverageItemLevel, as the client returns them): equipped "
+            f"{_num_words(average.equipped)}, overall {_num_words(average.overall)} (best "
+            f"owned, bags included; Retail meaning, from memory), pvp {_num_words(average.pvp)}"
+        )
+    apis = sorted({s.item_level_api for s in filled if s.item_level_api is not None})
+    if apis:
+        _say(f"Item levels from {', '.join(apis)}.")
+    if table.source == "default":
+        _say(
+            f"Slot names and quality words: the shipped default {table.shipped}. To use your "
+            f"own, copy it to {table.user_file} (create the folder if it is missing) and edit it."
+        )
+    else:
+        _say(
+            f"Slot names and quality words: your table {table.user_file}, over the shipped "
+            f"default {table.shipped}"
+        )
+    for note in notes[len(_CHAR_NOTES) :]:
+        if note != _gear_table_note(table):
+            _say(note)
+    for note in _CHAR_NOTES:
+        _say(note)
 
 
 # ─── looks ───────────────────────────────────────────────────────────────────

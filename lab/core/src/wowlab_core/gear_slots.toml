@@ -1,0 +1,57 @@
+# Slot names and quality words for `wowlab char gear` (docs/LAB_PLAN.md §16.2, M14-05).
+#
+# Game knowledge the client does not write into the lab-addon's record, so it
+# ships as a default. Both tables are community documentation for Retail
+# (warcraft.wiki.gg, "InventorySlotId" and "ItemQuality"), marked [verify] on
+# Forever. The slot numbers 4 to 11 and 15 to 18 agree with what the committed
+# captures hold in them (a shirt in 4, a cloak in 15, a wand in 18, ...); the
+# rest, and every quality word, are not yet checked against Forever.
+#
+# To use your own: copy this file to `gear_slots.toml` in wowlab's user config
+# folder (`wowlab char gear` prints both paths) and edit it. Each value you
+# set replaces the one here; anything you leave out keeps its value from this
+# file.
+
+[slots]
+# The client's slot number = the name shown for it.
+1 = "Head"
+2 = "Neck"
+3 = "Shoulder"
+4 = "Shirt"
+5 = "Chest"
+6 = "Waist"
+7 = "Legs"
+8 = "Feet"
+9 = "Wrist"
+10 = "Hands"
+11 = "Finger 1"
+12 = "Finger 2"
+13 = "Trinket 1"
+14 = "Trinket 2"
+15 = "Back"
+16 = "Main Hand"
+17 = "Off Hand"
+18 = "Ranged"
+19 = "Tabard"
+
+[quality]
+# A link's colour code, as written between `|c` and `|H`, = the quality word.
+# The named form (`|cnIQ2:`) is what Forever writes; the hex form
+# (`|cffRRGGBB`) is Retail's older one, kept for links from elsewhere.
+"nIQ0:" = "Poor"
+"nIQ1:" = "Common"
+"nIQ2:" = "Uncommon"
+"nIQ3:" = "Rare"
+"nIQ4:" = "Epic"
+"nIQ5:" = "Legendary"
+"nIQ6:" = "Artifact"
+"nIQ7:" = "Heirloom"
+"nIQ8:" = "WoW Token"
+"ff9d9d9d" = "Poor"
+"ffffffff" = "Common"
+"ff1eff00" = "Uncommon"
+"ff0070dd" = "Rare"
+"ffa335ee" = "Epic"
+"ffff8000" = "Legendary"
+"ffe6cc80" = "Artifact"
+"ff00ccff" = "Heirloom"
