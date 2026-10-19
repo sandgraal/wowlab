@@ -553,7 +553,7 @@ Dated entries, newest last. Each names the fixture that prompted it.
 
   | §13.1 item | Result | What Forever returned |
   |---|---|---|
-  | Forever fills the crafter field of an item link (`crafter_removed`) | still open | 18 equipped items over two characters: `crafter_removed = false` on every slot and no GUID-shaped run in any link. Whether any of them is player-crafted was not checked against game data, so the capture cannot tell "Forever leaves the field empty" from "nothing crafted was worn"; it needs a worn item the owner knows a player crafted. |
+  | Forever fills the crafter field of an item link (`crafter_removed`) | still open | 18 equipped items over two characters: `crafter_removed = false` on every slot and no GUID-shaped run in any link. Whether any of them is player-crafted was not checked against game data, so the capture cannot tell "Forever leaves the field empty" from "nothing crafted was worn"; it needs a worn item the owner knows a player crafted. 2026-10-18: answered in part for 70425 by the item-link entry of that date below (one slot with `crafter_removed = true`; its crafter field is blank because the addon removed the GUID). |
   | A ranged slot on Forever | confirmed | `INVSLOT_FIRST_EQUIPPED` 1 and `INVSLOT_LAST_EQUIPPED` 19; the first character has a wand in slot 18 (the second has nothing there) |
   | Per-slot item level and the equipped average as the client reports them | answered in part: the API returns values; what the average means on Forever is open | `C_Item.GetCurrentItemLevel` gave a level on every filled slot; `GetAverageItemLevel` returns one value three times (3.3125, 2.375). Forever's character sheet shows no item level (owner, 2026-09-28), so nothing in the UI backs `average.equipped` and the reader must not call it the character-sheet figure. Neither value is the mean of the slot levels over filled, 16 or 19 slots (sums 85, and 58 without the shirt). Both values times 16 are whole numbers (53, 38), which fits a 16-slot divisor over per-item levels other than those recorded (hypothesis). How the client computes it is open |
   | `talents.class` through `C_ClassTalents.GetActiveConfigID()` then `C_Traits` | confirmed | a config of `type` 4 with one tree (`system_id` 10; 52 and 54 nodes), trait currency 3820 (`spent` = `max_quantity` = 4 at level 13, 1 at level 10), and an export string from `C_Traits.GenerateImportString`. `last_selected_config` is neither written nor absent with a reason on either character: `GetLastSelectedSavedConfigID` exists and a spec id was there, so the call returned no number or failed inside `ns.Call` (M11-04 must allow the key to be missing). Hypothesis, from Retail memory: it returns nil when no saved loadout was ever selected |
@@ -763,3 +763,48 @@ Dated entries, newest last. Each names the fixture that prompted it.
   (whether a charmed player's casts carry "mine"); auto-repeat spells (a
   wand's Shoot or Auto Shot may log one `SPELL_CAST_SUCCESS` per shot); a
   log holding more than one of the player's characters.
+- **2026-10-18, §4.2, the item link the lab-addon records in
+  `gear.slots[].link` (M14-05; the four committed per-character
+  `WowLab.lua` files: `macos/` two characters, 70009; `macos-70058/`;
+  `macos-70425/`).** 38 links, every one of the shape
+  `|c<colour>|Hitem:<payload>|h[<name>]|h|r`, in the named colour form
+  `|cnIQ0:`, `|cnIQ1:` or `|cnIQ2:`; the hex form `|cffRRGGBB` is
+  unobserved on Forever (it is the hex form other clients write,
+  **[verify]**) and `wowlab_core.itemlink`
+  reads it from a constructed test only. The payload has 19, 20 or 22
+  `:`-separated fields, which fit the field order community documentation
+  gives (warcraft.wiki.gg, "ItemLink"), **[verify]** on Forever except where
+  noted: 0 item id; 1 enchant; 2 to 5 gems; 6 suffix; 7 unique id; 8 link
+  level; 9 specialization; 10 the modifier mask (older documentation: the
+  upgrade type); 11 the item context; 12 the bonus-id count, then that many
+  bonus ids; then the modifier count and that many `type:value` pairs; three
+  relic groups (a count and that many bonus ids each); the crafter GUID; the
+  extra enchant. With that order every count in every link fits the payload
+  exactly (19 fields with no bonus id and no modifier, 20 with one bonus id,
+  22 with one bonus id and one pair, e.g. `…:1:1:12720:1:28:5256:::::`).
+  Fields 1 to 7 are empty in all 38. Field 9 equals the record's `spec.id`
+  on all 38 (1482 and 1490, as the M11-03 table found); field 8 is 10, 13
+  or 15, the character's level where the fixture index gives it (10 and 13
+  at 70009, 15 at 70425; the 70058 row gives none, and its links say 13),
+  which fits "link level" being the character's level. The modifier pair
+  seen is type 28 with values 5244 to 5256; what type 28 means is
+  **[verify]**. Field 11 holds 1, 11 or 75 where filled. Field 10 is empty
+  on all 38, so the modifier mask (`upgrade.mask` in `char gear --json`) has
+  never been seen filled. The suffix field (6) is empty on every "of the X"
+  item, while the bonus ids repeat per suffix (12720 on both "of the Owl"
+  items, 12745 on the four "of the Sorcerer", 12748 "of the Physician",
+  12730 "of Spirit"), so on Forever the suffix appears to travel as a bonus
+  id **[verify]**. The crafter field is empty in every link, the 70425
+  cloak (slot 15, item 2310 Embossed Leather Cloak, a Leatherworking item
+  by community documentation **[verify]**, `crafter_removed = true`)
+  included: the addon blanked a GUID-shaped run there, so on 70425 a worn
+  item did carry one, which answers the M11-03 row "Forever fills the
+  crafter field" in part. `Gear.lua` removes only the `Player-…` text and
+  keeps the colons, so every field stays in place; what cannot be told is
+  which of the empty fields held it. The bracketed name is the only name
+  source; nothing is looked up. The averages (`GetAverageItemLevel`):
+  `equipped`, `overall` and `pvp` are equal in all four records. On 70425
+  9.5 = 152/16, the sum of the recorded levels of slots 1 to 17 without the
+  shirt (the ranged slot left out) over 16; both 70009 records fall below
+  that rule (3.3125 against 71/16, 2.375 against 58/16). That supports "how
+  the client computes it is not known" (M11-03 table) and settles nothing.

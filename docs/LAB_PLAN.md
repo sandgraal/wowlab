@@ -3846,7 +3846,11 @@ bodies and item names are player text and are never interpreted as markup.
   documentation, and the parser keeps every field raw. The specialization
   field matched `spec.id` in the 70009 captures (`docs/LAB_FORMATS.md`,
   M11-23 follow-up table, "Spec found by testing for the API") and again in
-  the 70425 capture (`:15:1490:`).
+  the 70425 capture (`:15:1490:`). Note, 2026-10-18 (M14-05): "none with
+  a crafter" holds for the links as stored, but one 70425 slot (15) has
+  `crafter_removed = true`: its crafter field is blank because the addon
+  removed a GUID-shaped run before storing the link (`docs/LAB_FORMATS.md`,
+  item-link entry of that date).
 - **Slot names and quality words** are game knowledge the client does not
   write into the record. They ship as a data file with **[verify]** marks,
   overridable from the user config directory as `binds_coach_costs.toml`

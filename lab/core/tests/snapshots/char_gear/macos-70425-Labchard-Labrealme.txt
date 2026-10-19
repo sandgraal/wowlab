@@ -1,0 +1,32 @@
+Character: 1/Labchard-Labrealme in account 90000001#6
+File: WTF/Account/90000001#6/1/Labchard-Labrealme/SavedVariables/WowLab.lua
+Written: <local time> (the file's modification time)
+Spec: id 1490 (index 1, from C_SpecializationInfo)
+Gear (slots 1 to 19 as the client numbers them, 11 filled):
+  slot  1 Head       empty
+  slot  2 Neck       empty
+  slot  3 Shoulder   empty
+  slot  4 Shirt      empty
+  slot  5 Chest      Simple Blouse of the Owl: Uncommon, item level 15, item 9749; bonus ids 12720
+  slot  6 Waist      Willow Belt of the Sorcerer: Uncommon, item level 16, item 6539; bonus ids 12745
+  slot  7 Legs       Simple Britches of the Physician: Uncommon, item level 14, item 9747; bonus ids 12748
+  slot  8 Feet       Aboriginal Footwraps of the Sorcerer: Uncommon, item level 16, item 14114; bonus ids 12745
+  slot  9 Wrist      Ritual Bands of the Sorcerer: Uncommon, item level 18, item 14122; bonus ids 12745
+  slot 10 Hands      Willow Gloves of the Sorcerer: Uncommon, item level 16, item 6541; bonus ids 12745
+  slot 11 Finger 1   Bounty Hunter's Ring: Uncommon, item level 20, item 5351
+  slot 12 Finger 2   empty
+  slot 13 Trinket 1  empty
+  slot 14 Trinket 2  empty
+  slot 15 Back       Embossed Leather Cloak: Uncommon, item level 13, item 2310; crafter GUID removed from the link
+  slot 16 Main Hand  Curved Dagger of the Owl: Uncommon, item level 14, item 2632; bonus ids 12720
+  slot 17 Off Hand   Beaded Orb of Spirit: Uncommon, item level 10, item 15969; bonus ids 12730
+  slot 18 Ranged     Shadow Wand: Uncommon, item level 14, item 5071
+  slot 19 Tabard     empty
+Averages (GetAverageItemLevel, as the client returns them): equipped 9.5, overall 9.5, pvp 9.5
+Item levels from C_Item.GetCurrentItemLevel.
+Slot names and quality words: the shipped default <shipped gear_slots.toml>, community documentation for Retail, [verify] on Forever. To use your own, copy it to <user gear_slots.toml> (create the folder if it is missing) and edit it.
+Item names are each link's bracketed text; nothing is fetched. The link fields past the item id (enchant, gems, suffix, specialization, bonus ids) are named as community documentation names them [verify]; "upgrade" (field 10 and the modifier pairs) is the older documentation's name for those fields, and the upgrade track itself is carried in bonus ids.
+Item levels and the averages are the client's figures as recorded, never derived from bonus ids. The averages are GetAverageItemLevel's returns, not the mean of the item levels listed, and how the client computes them is not known.
+overall: on Retail, the best items owned, bags included (community documentation, [verify] on Forever).
+WowLab.lua is written at logout, /reload or a clean exit (a crash writes nothing): this is the character as of that save, not the session in progress.
+The addon records no time; the time shown is the file's modification time.
