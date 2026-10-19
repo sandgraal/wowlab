@@ -1030,6 +1030,8 @@ Moved out of M13-59's acceptance by the conductor's ruling of 2026-10-18: the re
 
 *Run 3, `.claude/` (2026-10-18, #283 at dea8d11):* https://github.com/sandgraal/wowlab/actions/runs/39183084322, about 1 min 50 s job wall time (model `duration_ms` 70825, `num_turns` 11), the diff step wrote 15515 bytes (not truncated), the log without "Reached maximum number of turns", verdict FINDINGS(1) low that cited the PR's own lines of `pr-shepherd.md` (read from `.claude-pr/`), not main's. Run 2 (`lab/`) is still owed.
 
+*Run 2, `lab/` (2026-10-19, #286 M14-02 at d73111e, the ui server and templates):* https://github.com/sandgraal/wowlab/actions/runs/39207309491, failure after 2 min 55 s (`duration_ms` 175301, `num_turns` 36): the diff file was read but the review ran past `--max-turns 30` and posted no verdict. First measured need above the cap; a second `lab/` run (M14-05's PR) is read before the cap is raised, and the raise goes in a CI change under this ticket.
+
 **Acceptance:** the three runs recorded here with run URLs; `--max-turns` left or raised with the measured reason; no code change beyond that; reviewed by `code-reviewer`.
 
 ---
