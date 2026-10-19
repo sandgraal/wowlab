@@ -119,10 +119,15 @@ to 40, nine review follow-ups filed). One test-only fix outside M14: M13-75
   widening was tested on the branch (the original assertion fails, so the
   widening was needed) and answered "seen by the reviewers, not held". The
   2026-10-17 rule held: none of the three held a merge on its own.
-- **Windows went red on `main` once**, from M14-03's new tests, and was
-  green again the same day: the ticket was filed and dispatched the moment
-  the red run was read, ahead of the frontier, and its fix never touched
-  `lab/core/src/`.
+- **Windows went red on `main` twice**, both times from new tests, both
+  times green again within hours: M14-03's confirm tests expected LF stderr
+  from the child (M13-75, #298), and a Looks test wrote its constructed
+  page with `write_text`, which gave the header CRLF (M13-78, #301). Each
+  ticket was filed and fixed the moment the red run was read, ahead of the
+  frontier, and neither fix touched `lab/core/src/`. The second one slipped
+  through because the shepherd merged M14-04 while its own Windows job was
+  still running; the job is not required, and the rule stands, but a
+  shepherd could wait for it on a `lab/**` PR when nothing else is queued.
 - **Two usage-limit resets and several network resets** cut agents off
   mid-task; every one resumed by message with its worktree intact. The
   M13-60 rule (the shepherd never cleans up; the conductor does) worked
@@ -130,7 +135,9 @@ to 40, nine review follow-ups filed). One test-only fix outside M14: M13-75
 - **Review rounds.** M14-07 needed two (nine domain findings on wording
   and attribution, none wrong; two code findings); M14-03 one (six, all
   wording but one design question ruled a follow-up); M14-04 one (two
-  low); M14-09 <n>. No ticket reached the third-round stop.
+  low); M14-09 two (four code findings, one major: two quick picks started
+  six runs against the server's four slots; then one trivial deletion). No
+  ticket reached the third-round stop.
 
 ## Effort against the plan
 
@@ -144,15 +151,16 @@ does.
 
 ## Follow-ups filed, not yet picked
 
-From this wave's reviews, all open on `main` (M13-70 to M13-76):
+From this wave's reviews, open on `main` (M13-70 to M13-77; M13-75 and
+M13-78, the two Windows test fixes, are already merged):
 `labaddon.ActionBars` admits duplicate slots (M13-70); the shell guard's
 `--input` bodies and substring allowlist (M13-71); `char list --json`
 carries every full record under the Character tab (M13-72); `char binds`
 with case-variant `WowLab.lua` files (M13-73); `sv merge --expect` pins the
 merged bytes (M13-74); `wowlab ui --help` still describes the v0.1 UI
 (M13-76); `CharBindsReport` carries the left-out sentence the Keys panel
-copies from the CLI (M13-77). The earlier M13-61 to M13-69 follow-ups are also still open; three
-of them (M13-62, M13-64, M13-66) wait on the owner.
+copies from the CLI (M13-77). The earlier M13-61 to M13-69 follow-ups are
+also still open; three of them (M13-62, M13-64, M13-66) wait on the owner.
 
 ## Owner actions outstanding
 
