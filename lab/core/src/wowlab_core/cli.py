@@ -7550,7 +7550,7 @@ _GEAR_NAMES_NOTE = (
     "item id (enchant, gems, suffix, specialization, bonus ids) are named as community "
     'documentation names them [verify]; "upgrade" (field 10 and the modifier pairs) is the '
     "older documentation's name for those fields, and the upgrade track itself is carried in "
-    "bonus ids (GLOSSARY, Upgrade track)."
+    "bonus ids."
 )
 _GEAR_LEVEL_NOTE = (
     "Item levels and the averages are the client's figures as recorded, never derived from "

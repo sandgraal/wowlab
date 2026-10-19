@@ -328,7 +328,7 @@
     "WowLab.lua is written at logout, /reload or a clean exit (a crash writes nothing): this is the character as of that save, not the session in progress.",
     "The addon records no time; the time shown is the file's modification time.",
     "Slot names and quality words: the shipped default gear_slots.toml, community documentation for Retail, [verify] on Forever; a gear_slots.toml in wowlab's user config folder replaces any value it sets.",
-    "Item names are each link's bracketed text; nothing is fetched. The link fields past the item id (enchant, gems, suffix, specialization, bonus ids) are named as community documentation names them [verify]; \"upgrade\" (field 10 and the modifier pairs) is the older documentation's name for those fields, and the upgrade track itself is carried in bonus ids (GLOSSARY, Upgrade track).",
+    "Item names are each link's bracketed text; nothing is fetched. The link fields past the item id (enchant, gems, suffix, specialization, bonus ids) are named as community documentation names them [verify]; \"upgrade\" (field 10 and the modifier pairs) is the older documentation's name for those fields, and the upgrade track itself is carried in bonus ids.",
     "Item levels and the averages are the client's figures as recorded, never derived from bonus ids. The averages are GetAverageItemLevel's returns, not the mean of the item levels listed, and how the client computes them is not known.",
     "overall: on Retail, the best items owned, bags included (community documentation, [verify] on Forever)."
   ]
