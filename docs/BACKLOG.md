@@ -1156,7 +1156,7 @@ ADR-0029 "Richer views … are embedded", by the route §16.3 gives. A Looks ent
 
 ---
 
-## [ ] M14-07 — `wowlab char macros`
+## [x] M14-07 — `wowlab char macros`
 **Size:** S · **Depends on:** M14-06
 
 §16.2. `wowlab char macros [--character] [--account] [--root] [--flavor] [--json]` (the four options as `char show` declares them): every record of the account and character `macros-cache.txt` (through `wtfconfig`, as `macros list` reads them), each with its placement and the `macros check` findings for it (the checker's rules called, not copied; their wording unchanged). Which action-slot macro id names which file record is **[verify]** (§15.2), so placement has three states (§16.2): `unconfirmed`, the slots and keys the candidate rule (macro index when the slot has no subtype) would give, printed as "may sit at slot n (unconfirmed)"; `none`, no candidate; and `confirmed`, which is in the model but which no rule in M14 emits: it is reserved for the ticket that follows the capture and the dated amendment in `docs/LAB_FORMATS.md` §7. The ticket writes the owner's capture step that would settle it as a runbook, `docs/handoffs/M14-macro-place.md`, in the style of `docs/handoffs/M13-05.md`. `--json` is `CharMacrosReport`. `macros list` and `macros check` are unchanged.
