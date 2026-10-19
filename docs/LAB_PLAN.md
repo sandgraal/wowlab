@@ -3791,6 +3791,8 @@ parity test needs no new exclusion. Each is a new leaf command, so each
 ticket names the wiki page that documents it (`docs/AGENT_WORKFLOW.md`, "A
 new command and the wiki"). `char show` is unchanged.
 
+*Amended 2026-10-19 (M14-06, the final `CharBindsReport`):* `flavor_folder`, `account`, `character`, `chosen_by`, `files[{scope, path, mtime_ns, bind_lines, unknown_lines, note}]`, `record_file`, `record_mtime_ns`, `record_schema`, `record_error`, `keys[{key, command, slot, page_note, holds{type, id, sub_type, name, subtext} | null, does, sources, agreement ("both" | "file only" | "record only" | "not in a file" | "cleared" | null), disagrees, note}]`, `unreached_slots[{slot, page_note, unfollowed_page, holds, does}]`, `commands_left_out`, `keys_left_out`, `cannot_place`, `cannot_compare`, `notes`. One row per (key, command); a key only the record names and no file line mentions is "not in a file", not a disagreement; a file and the record putting one key on different commands mark both rows as disagreeing and name each other. M14-09's keys panel reads `does`, `agreement`, `disagrees`, `unreached_slots[].unfollowed_page` and `cannot_place`.
+
 ### 16.3 The character in the UI
 
 A fourth tab, **Character**, beside Explorer, Gaps and Commands, drawn
