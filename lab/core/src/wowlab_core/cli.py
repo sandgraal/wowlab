@@ -1282,10 +1282,10 @@ def _doctor(
                 )
             )
         if not inst.flavors:
+            # With folders not taken, the refusal's words, each reason
+            # included, so the text and `--json` say why (M13-56).
             problems.append(
-                f"{inst.root} {install.NO_READABLE_FLAVOR}"
-                if inst.not_taken
-                else f"{inst.root} has no flavor folders"
+                _no_flavors(inst) if inst.not_taken else f"{inst.root} has no flavor folders"
             )
         client = _client_report(inst)
 
@@ -1388,6 +1388,12 @@ def _print_doctor(report: DoctorReport) -> None:
     else:
         _say("  no transactions in the journal")
     _say("  (`wowlab snap verify` re-hashes every stored object)")
+    # Why the command exits 1, as `problems` says it in `--json` (M13-56):
+    # without this, a run that skips the first run said nothing.
+    if report.problems:
+        _say("Problems:")
+        for problem in report.problems:
+            _say(f"  {problem}")
 
 
 def _doctor_redacted(root: Path | None, offline: bool, names: list[str]) -> DoctorReport:
