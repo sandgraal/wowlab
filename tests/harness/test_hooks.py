@@ -607,3 +607,19 @@ def test_guard_bash_query_file_follows_cd_and_refuses_a_same_line_write(tmp_path
         ),
         "its own command",
     )
+
+
+def test_guard_bash_query_file_written_outside_a_nested_shell_is_refused(tmp_path: Path) -> None:
+    """A write on the outer line is seen by the gh call inside bash -c or sh -c."""
+    stale = tmp_path / "threads.graphql"
+    stale.write_text("query{viewer{login}}")
+    for shell in ("bash -c", "sh -c"):
+        assert_blocked(
+            run_hook(
+                "guard_bash.py",
+                bash(
+                    f"printf '%s' 'mutation{{x}}' > {stale} && {shell} \"gh api graphql -F query=@{stale}\""
+                ),
+            ),
+            "its own command",
+        )

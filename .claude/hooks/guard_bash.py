@@ -297,7 +297,13 @@ def _cd_target(seg: list[str], cwd: str) -> str | None:
     return os.path.normpath(expanded if Path(expanded).is_absolute() else str(Path(cwd) / expanded))
 
 
-def _inspect(command: str, cwd: str, agent_type: str | None = None, depth: int = 0) -> None:
+def _inspect(
+    command: str,
+    cwd: str,
+    agent_type: str | None = None,
+    depth: int = 0,
+    outer_written: frozenset[str] = frozenset(),
+) -> None:
     if depth > 3:
         deny(EVENT, "command nests shells too deeply to inspect; flatten it.")
     segments = split_segments(command)
@@ -307,7 +313,7 @@ def _inspect(command: str, cwd: str, agent_type: str | None = None, depth: int =
     # Every path this command line writes, with the cd chain followed, so a
     # gh api graphql query file written earlier in the same line is refused:
     # the hook reads the file before the shell runs (2026-10-19, M14-02 notes).
-    written: set[str] = set()
+    written: set[str] = set(outer_written)
     scan_cwd = cwd
     for seg in segments:
         for target in _write_targets(seg, scan_cwd):
@@ -318,7 +324,7 @@ def _inspect(command: str, cwd: str, agent_type: str | None = None, depth: int =
         scan_cwd = _cd_target(seg, scan_cwd) or scan_cwd
     for seg in segments:
         for inner in inner_commands(seg):
-            _inspect(inner, cwd, agent_type, depth + 1)
+            _inspect(inner, cwd, agent_type, depth + 1, frozenset(written))
         for reason in (
             _check_git(seg),
             _check_gh(seg, cwd, frozenset(written)),
