@@ -4015,7 +4015,7 @@ M14-01 ─┬─ M14-02 confirm (store) ─┬─ M14-03 confirm (installs) ─�
                                       └──────────────────────┴─────────┴─ M14-09 tab: keys, macros ─┴─ M14-10 review
 ```
 
-*Opened 2026-10-18 at dafd223 (M14-01: the twelve M13 follow-ups merged, #269–#281; the `--yes` set is the eight of §16.1; `lab (windows)` green on `main`).* *Amended 2026-10-18 (owner: "want the gear view sooner"):* the UI queue is M14-02, M14-08, M14-03, M14-04, M14-09, so the Character tab's gear view lands before the install-write confirmations and the looks page; the dependency graph is unchanged.
+*Opened 2026-10-18 at dafd223 (M14-01: the twelve M13 follow-ups merged, #269–#281; the `--yes` set is the eight of §16.1; `lab (windows)` green on `main`).* *Amended 2026-10-18 (owner: "want the gear view sooner"):* the UI queue is M14-02, M14-08, M14-03, M14-04, M14-09, so the Character tab's gear view lands before the install-write confirmations and the looks page; the dependency graph is unchanged. *Amended 2026-10-18 (owner: "want the gear view sooner"):* the UI queue is M14-02, M14-08, M14-03, M14-04, M14-09, so the Character tab's gear view lands before the install-write confirmations and the looks page; the dependency graph is unchanged.
 
 M14-02, M14-05 and M14-06 are independent and dispatch together. Every
 ticket that touches `ui/__init__.py` or the templates (M14-02, M14-03,
