@@ -191,8 +191,19 @@ def _under_the_flavor_list(text: str, line: str) -> None:
             "read), so nothing in it is snapshotted; run wowlab doctor again, and once it "
             f"is listed as a flavor: wowlab snap create --flavor {EMPTY}",
         ),
+        (  # M13-54
+            "folder_changed",
+            install.NOT_A_FLAVOR_FOLDER_CHANGED,
+            f"{EMPTY} could not be read as a flavor (it changed as it was read), so "
+            "nothing in it is snapshotted; run wowlab doctor again, and once it is listed "
+            f"as a flavor: wowlab snap create --flavor {EMPTY}",
+        ),
     ],
-    ids=["not-checked-constructed", "flavor-info-changed-constructed"],
+    ids=[
+        "not-checked-constructed",
+        "flavor-info-changed-constructed",
+        "folder-changed-constructed",
+    ],
 )
 def test_a_first_run_names_a_folder_it_could_not_read_beside_a_real_flavor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reason: str, note: str, line: str

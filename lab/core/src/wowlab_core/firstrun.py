@@ -392,10 +392,10 @@ def _link_line(entry: install.NotTaken) -> str:
 
 
 def _unread_line(entry: install.NotTaken) -> str:
-    """A `_..._` folder whose `lstat` was refused, or whose `.flavor.info`
-    changed as it was read: it may be a flavor, and nothing in it is
-    snapshotted (M13-56)."""
-    if entry.reason == "flavor_info_changed":
+    """A `_..._` folder whose `lstat` was refused, or which (or whose
+    `.flavor.info`) changed as it was read: it may be a flavor, and nothing
+    in it is snapshotted (M13-56, M13-54)."""
+    if entry.reason in ("flavor_info_changed", "folder_changed"):
         why = install.not_taken_why(entry).removesuffix("; run the command again")
         remedy = "run wowlab doctor again"
     else:
@@ -423,14 +423,15 @@ def beside_lines(inst: install.Install) -> list[str]:
     """For a first run that found a flavor: each `_..._` folder beside it
     that is not snapshotted although the client may play from it, under the
     flavor list (M13-56). A link gets the words `not_taken_lines` gives it;
-    a folder that could not be checked, or whose `.flavor.info` changed as
-    it was read, says so and what to do. A folder with no `.flavor.info` is
-    not repeated here: `doctor` lists it above with its note."""
+    a folder that could not be checked, or which (or whose `.flavor.info`)
+    changed as it was read, says so and what to do. A folder with no
+    `.flavor.info` is not repeated here: `doctor` lists it above with its
+    note."""
     lines: list[str] = []
     for n in inst.not_taken:
         if n.reason == "link":
             lines.append(_link_line(n))
-        elif n.reason in ("not_checked", "flavor_info_changed"):
+        elif n.reason in ("not_checked", "flavor_info_changed", "folder_changed"):
             lines.append(_unread_line(n))
     return lines
 

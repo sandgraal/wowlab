@@ -58,10 +58,20 @@ def _to_other_file(info: Path, target: Path) -> None:
     ext4 a file created just after an unlink may get the freed inode back,
     and a new file with the old (device, inode) is not told apart by the
     identity check (`snapshot.open_regular_file`). That case reads a regular
-    file in the folder, never a link, so M13-46 leaves it; closing it would
-    need a directory descriptor."""
+    file in the folder, never a link, so M13-46 leaves it; M13-54's folder
+    descriptor does not change that (the file is still one in the scanned
+    folder)."""
     info.rename(target.parent / "m13-46-original.flavor.info")
     info.write_bytes(REAL_FLAVOR_INFO)
+
+
+def _names(info: Path, path: Path, dir_fd: int | None) -> bool:
+    """`open_regular_file` was asked for `info`: by its path, or (POSIX,
+    M13-54) by its name relative to a descriptor on the folder that holds it."""
+    if dir_fd is None:
+        return path == info
+    held, there = os.fstat(dir_fd), os.lstat(info.parent)
+    return path == Path(info.name) and (held.st_dev, held.st_ino) == (there.st_dev, there.st_ino)
 
 
 _SWAPS = [
@@ -144,10 +154,11 @@ def test_swapped_between_the_lstat_and_the_open_is_refused(
     opened: list[str] = []
 
     def open_regular_file(path: Path, **kwargs: Any) -> tuple[int, os.stat_result]:
-        if path == info:
+        racing = _names(info, path, kwargs.get("dir_fd"))
+        if racing:
             swap(info, target)
         fd, st = real_open(path, **kwargs)
-        opened.append(str(path))
+        opened.append(str(info if racing else path))
         return fd, st
 
     monkeypatch.setattr(snapshot, "open_regular_file", open_regular_file)

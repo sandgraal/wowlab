@@ -371,7 +371,8 @@ def test_a_flavor_info_refused_at_the_read_changed_never_a_link(
     real_open = snapshot.open_regular_file
 
     def open_regular_file(path: Path, **kwargs: Any) -> Any:
-        if path == info:
+        # By its path, or (POSIX, M13-54) by its name in the folder's descriptor.
+        if path == info or (kwargs.get("dir_fd") is not None and path == Path(info.name)):
             if swap == "link":
                 info.unlink()
                 info.symlink_to(tmp_path / "elsewhere" / "retail" / ".flavor.info")
@@ -403,6 +404,7 @@ def test_a_flavor_info_refused_at_the_read_changed_never_a_link(
     [
         ("not_checked", "not taken as a flavor folder (it could not be checked: refused)"),
         ("flavor_info_changed", install.NOT_A_FLAVOR_CHANGED),
+        ("folder_changed", install.NOT_A_FLAVOR_FOLDER_CHANGED),  # M13-54
     ],
 )
 def test_tree_and_gaps_give_a_folder_its_own_note_constructed(
