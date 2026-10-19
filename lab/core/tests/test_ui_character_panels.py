@@ -13,10 +13,13 @@ test ids. That character is written last, so the tab picks it first.
 
 Cases labelled `constructed` are boundary or hostile inputs (L8): a
 character `bindings-cache.wtf` that puts key 1 on another command (so two
-rows disagree), a `macros-cache.txt` of made-up macros (no player's macro
-name or body), macro bodies holding `<script>`, `|c` escapes and control
-characters, a refusal, a failed run, and report text replaced with markup.
-Nothing reads or writes a real install.
+rows disagree) or a key on each macro slot, a `macros-cache.txt` of made-up
+macros (no player's macro name or body), macro bodies holding `<script>`,
+`|c` escapes and control characters, the schema-3 record with one filled
+slot moved to an unfollowed main-bar page, a macro slot's id changed, or its
+bindings section made absent (`_record`), a refusal, a failed run, a busy
+server, and report text replaced with markup. Nothing reads or writes a real
+install.
 """
 
 from __future__ import annotations
@@ -34,14 +37,18 @@ import test_ui_explorer as first_stage
 from test_ui_character import (
     ACCOUNT,
     NEWER,
+    OLDER,
+    PICK_READS,
     READS,
     _gear_params,
     _local,
     _pick_requests,
-    _scenario,
     _tab_requests,
 )
 from test_ui_explorer import FLAVOR, IMG, LSEP, RLO, _node, _page, _run
+from typer.testing import CliRunner
+
+from wowlab_core import cli, keymap, ui
 
 home = first_stage.home
 install = first_stage.install
@@ -79,7 +86,8 @@ function panelsView() {
     keysHeads: keys.all().filter((e) => e.tagName === "h4").map((e) => e.textContent),
     unreached: find(keys, "char-slots").map((ul) => ul.children.map((li) => li.textContent)),
     keysErrors: find(keys, "char-error").map((e) => e.textContent),
-    keysNotes: find(keys, "char-notes").flatMap((ul) => ul.children.map((li) => li.textContent)),
+    keysLines: find(keys, "char-line").map((e) => e.textContent),
+    keysNotes: find(keys, "char-notes").filter((ul) => !has(ul, "char-row-notes")).flatMap((ul) => ul.children.map((li) => li.textContent)),
     keysText: keys.textContent,
     macrosFacts: facts(macros),
     macrosCount: one(macros, "char-count"),
@@ -100,24 +108,45 @@ function panelsView() {
     macrosNotes: find(macros, "char-notes").flatMap((ul) => ul.children.map((li) => li.textContent)),
     macrosText: macros.textContent,
     gearRows: ids["char-gear"].all().filter((e) => e.tagName === "tr" && has(e, "gear-row")).length,
+    gearErrors: find(ids["char-gear"], "char-error").map((e) => e.textContent),
     gearNames: ids["char-gear"].all().filter((e) => has(e, "gear-name")).map((e) => e._text),
     header: ids["char-header"].all().filter((e) => e.tagName === "h2").map((e) => e.textContent),
     status: ids["char-status"].textContent,
+    rowNotes: find(keys, "char-row-notes").flatMap((ul) => ul.children.map((li) => li.textContent)),
+    flight: { max: flight.max, started: flight.started.slice(), busy: flight.busy.slice() },
     buttons: Object.entries(ids).filter(([id]) => id.startsWith("char-")).flatMap(([, e]) => e.all())
       .filter((e) => ["button", "input", "textarea", "select"].includes(e.tagName)).map((e) => e.tagName + "." + e.className),
   };
 }
-// Replies the scenario slows down (`slow`): answered after `ms` on the
-// harness's virtual clock, so a later pick's replies come first.
+// The server's run slots (`max_runs`, ui.MAX_CONCURRENT_RUNS): a run asked
+// for while that many are in flight is refused `busy`, as the server does
+// (503; the page reads any refusal the same way). Replies the scenario slows
+// down (`slow`) are answered after `ms` on the harness's virtual clock, so a
+// later pick's replies can come first. `flight` records every run started,
+// the most in flight at once, and every run refused busy.
+const flight = { now: 0, max: 0, started: [], busy: [] };
 const quickFetch = ctx.fetch;
 ctx.fetch = async (url, opts) => {
   const body = opts && opts.body ? JSON.parse(opts.body) : null;
-  for (const slow of (body && scenario.slow) || []) {
-    if (canon(slow.command) === canon(body.command) && canon(slow.params) === canon(body.params || {})) {
-      await new Promise((done) => addTimer(done, slow.ms, false));
-    }
+  if (!String(url).startsWith("/api/run?")) return quickFetch(url, opts);
+  if (scenario.max_runs && flight.now >= scenario.max_runs) {
+    requests.push({ url: String(url), body: body });
+    flight.busy.push(body);
+    return answer({ error: "busy" }, false);
   }
-  return quickFetch(url, opts);
+  flight.now++;
+  flight.max = Math.max(flight.max, flight.now);
+  flight.started.push(body);
+  try {
+    for (const slow of scenario.slow || []) {
+      if (canon(slow.command) === canon(body.command) && canon(slow.params) === canon(body.params || {})) {
+        await new Promise((done) => addTimer(done, slow.ms, false));
+      }
+    }
+    return await quickFetch(url, opts);
+  } finally {
+    flight.now--;
+  }
 };
 """
 
@@ -186,6 +215,54 @@ def picked(timed: Path) -> Path:
     shutil.copy2(SCHEMA_3, target)
     os.utime(target, ns=(PICKED_NS, PICKED_NS))
     return timed
+
+
+def _scenario(
+    server: Any, steps: list[dict[str, Any]], gear_for: list[str], *, listed: bool = True
+) -> dict[str, Any]:
+    """The gear tab's scenario, with the server's run limit in the stand-in
+    fetch: past `ui.MAX_CONCURRENT_RUNS` runs in flight, a run is refused
+    `busy`."""
+    scenario = gear_tab._scenario(server, steps, gear_for, listed=listed)
+    scenario["max_runs"] = ui.MAX_CONCURRENT_RUNS
+    return scenario
+
+
+def _record(root: Path, *, absent_bindings: bool = False, two_slots: bool = False) -> None:
+    """Constructed: PICKED's record with its filled slot 50 moved to 74, a
+    main-bar page that is not followed (`keymap.UNFOLLOWED_SLOTS`), so one
+    unreached slot has `unfollowed_page`; with `absent_bindings`, its
+    bindings section replaced by an absent one, so there is no bindings
+    record and `keys_incomplete` is set; with `two_slots`, its macro slot 64
+    holding 140 as slot 65 does (it holds 149), so the macro the candidate
+    numbering gives 140 may sit at two slots."""
+    text = SCHEMA_3.read_text(encoding="utf-8")
+    assert text.count('["slot"] = 50,\n') == 1
+    text = text.replace('["slot"] = 50,\n', '["slot"] = 74,\n')
+    if two_slots:
+        held = '["id"] = 149,\n["type"] = "macro",\n["slot"] = 64,\n'
+        assert text.count(held) == 1
+        text = text.replace(held, held.replace("149", "140"))
+    if absent_bindings:
+        lines = text.split("\n")
+        start = lines.index('["bindings"] = {')
+        depth, end = 0, start
+        for end in range(start, len(lines)):
+            if lines[end].endswith("{"):
+                depth += 1
+            elif lines[end] in ("}", "},"):
+                depth -= 1
+                if depth == 0:
+                    break
+        lines[start : end + 1] = [
+            '["bindings"] = {',
+            '["absent"] = "constructed: not gathered",',
+            "},",
+        ]
+        text = "\n".join(lines)
+    target = root / FLAVOR / CHAR_DIR / "SavedVariables" / "WowLab.lua"
+    target.write_text(text, encoding="utf-8")
+    os.utime(target, ns=(PICKED_NS, PICKED_NS))
 
 
 def _run_report(scenario: dict[str, Any], command: str, character: str) -> dict[str, Any]:
@@ -290,7 +367,21 @@ def test_the_keys_panel_draws_the_rows_of_char_binds_cross_capture(
         [f"slot {u['slot']}: {u['does']} ({u['page_note']})" for u in reached]
     ]
     assert view["keysNotes"] == report["notes"]
-    assert "Left out of the bindings record, counted with no list: 1 command" in view["keysText"]
+    # The note 128 rows share, said once as text, with how many rows have it
+    # (the rows keep it in their tooltips).
+    shared = [k for k in report["keys"] if k["note"] == keymap.NOT_IN_A_FILE_NOTE]
+    assert len(shared) == 128
+    assert view["rowNotes"] == [f"On 128 keys: {keymap.NOT_IN_A_FILE_NOTE}"]
+    assert view["keysText"].count(keymap.WHY_NOT_IN_A_FILE) == 1
+    # The left-out counts in `char binds`'s own sentence, word for word.
+    params = _gear_params(PICKED)
+    args = ["char", "binds", "--character", params["character"], "--account", params["account"]]
+    text = CliRunner().invoke(cli.app, [*args, "--flavor", params["flavor"]])
+    assert text.exit_code == 0, text.stdout
+    [left_out] = [ln for ln in text.stdout.splitlines() if ln.startswith("Left out of")]
+    assert "(a key bound straight to a spell, macro, item or click may be one)" in left_out
+    lines = [ln for ln in view["keysLines"] if ln.startswith("Left out of")]
+    assert lines == [left_out]
 
 
 def test_the_text_filter_narrows_as_the_model_says_cross_capture(
@@ -464,23 +555,49 @@ def _twenty_nine(root: Path) -> None:
     """Constructed: 29 character macros, as many as the 70425 capture's file
     had, so the candidate numbering reads slots 64 (index 149) and 65 (140)
     as the 29th and the 20th. Macro 3 casts a spell not in the record's
-    spellbook, so it alone has a finding."""
+    spellbook, so it alone has a finding; macro 5 is 135 characters in 265
+    UTF-8 bytes, so the length rule cannot judge it, and it has no finding."""
     records = []
     for n in range(1, 30):
-        body = "/cast Lab Constructed Spell" if n == 3 else f"/say lab test {n}"
+        body = f"/say lab test {n}"
+        if n == 3:
+            body = "/cast Lab Constructed Spell"
+        elif n == 5:
+            body = "/say " + "\u00e9" * 130
         records.append(_macro(n, f"Lab {n:02d}", body))
     _put_macros(root, *records)
+
+
+def _placed_slots(macro: dict[str, Any], keys_incomplete: str | None) -> list[dict[str, Any]]:
+    """What a card shows under its placement, from the placement itself."""
+    p = macro["placement"]
+    among = f", among the keys read ({keys_incomplete})" if keys_incomplete else ""
+    out = []
+    for s in p["slots"]:
+        reach = [k for k in p["keys"] if k["slot"] == s["slot"]]
+        keys = [f"key {k['key']} ({k['command']}; {_sources(k)})" for k in reach] or [
+            f"no key reaches it on the page its bar shows by default{among}"
+        ]
+        out.append(
+            {"text": f"may sit at slot {s['slot']} ({p['status']}): {s['page_note']}", "keys": keys}
+        )
+    return out
 
 
 def test_placement_and_the_findings_filter_constructed(
     server: Any, picked: Path, tmp_path: Path
 ) -> None:
     _twenty_nine(picked)
+    _record(picked, two_slots=True)
+    # Constructed: a character bindings file with a key on each macro slot.
+    (picked / FLAVOR / CHAR_DIR / "bindings-cache.wtf").write_bytes(
+        b"bind CTRL-4 MULTIACTIONBAR1BUTTON4\r\nbind CTRL-5 MULTIACTIONBAR1BUTTON5\r\n"
+    )
     steps = [{"char_tab": True}, {"panels": True}, {"findings": True}, {"findings": False}]
     scenario = _scenario(server, steps, [PICKED])
     out = _drive(tmp_path / "node", scenario)
     report = _run_report(scenario, "macros", PICKED)
-    assert len(report["macros"]) == 29
+    assert len(report["macros"]) == 29 and report["keys_incomplete"] is None
     view = out["steps"][1]
     assert view["macrosCount"] == "29 macros."
     assert [c["name"] for c in view["macros"]] == [m["name"] for m in report["macros"]]
@@ -488,31 +605,53 @@ def test_placement_and_the_findings_filter_constructed(
     for card, macro in zip(view["macros"], report["macros"], strict=True):
         p = macro["placement"]
         assert card["reason"] == f"Placement: {p['status']}: {p['reason']}"
-        expected = []
-        for s in p["slots"]:
-            reach = [k for k in p["keys"] if k["slot"] == s["slot"]]
-            keys = [f"key {k['key']} ({k['command']}; {_sources(k)})" for k in reach] or [
-                "no key reaches it on the page its bar shows by default"
-            ]
-            expected.append(
-                {
-                    "text": f"may sit at slot {s['slot']} ({p['status']}): {s['page_note']}",
-                    "keys": keys,
-                }
-            )
+        expected = _placed_slots(macro, report["keys_incomplete"])
         assert card["slots"] == expected, macro["name"]
         placed += bool(expected)
+        assert card["findings"] == [
+            f"finding {f['rule']} (line {f['line']}): {f['detail']}" for f in macro["findings"]
+        ]
+        assert card["cannot"] == [
+            f"cannot judge {c['rule']} (line {c['line']}): {c['reason']}"
+            for c in macro["cannot_judge"]
+        ]
         clean = not macro["findings"] and not macro["cannot_judge"]
         assert (card["clean"] == "No finding.") is clean, macro["name"]
-    assert placed == 2
+    assert placed == 1
+    # Macro 20 may sit at two slots; each shows the key that reaches it, and
+    # only that key.
+    cards = {c["name"]: c for c in view["macros"]}
+    assert [s["keys"] for s in cards["Lab 20"]["slots"]] == [
+        ["key CTRL-4 (MULTIACTIONBAR1BUTTON4; character file)"],
+        ["key CTRL-5 (MULTIACTIONBAR1BUTTON5; character file)"],
+    ]
+    # Macro 5: a cannot-judge entry of its own and no finding.
+    five = next(m for m in report["macros"] if m["position"] == 5)
+    assert not five["findings"] and [c["rule"] for c in five["cannot_judge"]] == ["length"]
+    assert cards["Lab 05"]["cannot"] and cards["Lab 05"]["clean"] is None
+    # The keys panel: the filled slot moved to 74 is unreached on a main-bar
+    # page that is not followed, listed in its own group.
+    binds = _run_report(scenario, "binds", PICKED)
+    reached = [u for u in binds["unreached_slots"] if not u["unfollowed_page"]]
+    paged = [u for u in binds["unreached_slots"] if u["unfollowed_page"]]
+    assert [u["slot"] for u in paged] == [74] and reached
+    assert [h for h in view["keysHeads"] if h.startswith("Filled slots")] == [
+        f"Filled slots no key reaches on the page its bar shows by default: {len(reached)}",
+        "Filled slots on main-bar pages that are not followed: 1",
+    ]
+    assert view["unreached"] == [
+        [f"slot {u['slot']}: {u['does']} ({u['page_note']})" for u in group]
+        for group in (reached, paged)
+    ]
     slots = {
         m["position"]: [s["slot"] for s in m["placement"]["slots"]]
         for m in report["macros"]
         if m["placement"]["slots"]
     }
-    assert slots == {20: [65], 29: [64]}
+    assert slots == {20: [64, 65]}
     assert all(m["placement"]["status"] in ("unconfirmed", "none") for m in report["macros"])
-    # "Findings only" keeps the macros the checker found something in.
+    # "Findings only" keeps the macros the checker found something in, and
+    # not macro 5, which has a cannot-judge entry only.
     found = [m for m in report["macros"] if m["findings"]]
     assert [m["position"] for m in found] == [3]
     only = out["steps"][2]
@@ -523,6 +662,26 @@ def test_placement_and_the_findings_filter_constructed(
     ]
     assert only["newRequests"] == [], "a filter runs nothing"
     assert len(out["steps"][3]["macros"]) == 29
+
+
+def test_a_slot_no_key_reaches_names_why_keys_may_be_missing_constructed(
+    server: Any, picked: Path, tmp_path: Path
+) -> None:
+    """With no bindings record (the section absent), `keys_incomplete` says
+    why a key may be missing, and a slot no key reaches says so with it."""
+    _twenty_nine(picked)
+    _record(picked, absent_bindings=True)
+    scenario = _scenario(server, [{"char_tab": True}, {"panels": True}], [PICKED])
+    out = _drive(tmp_path / "node", scenario)
+    report = _run_report(scenario, "macros", PICKED)
+    why = report["keys_incomplete"]
+    assert isinstance(why, str) and why.startswith("there is no bindings record")
+    cards = {c["name"]: c for c in out["steps"][1]["macros"]}
+    for macro in report["macros"]:
+        assert cards[macro["name"]]["slots"] == _placed_slots(macro, why), macro["name"]
+    assert cards["Lab 20"]["slots"][0]["keys"] == [
+        f"no key reaches it on the page its bar shows by default, among the keys read ({why})"
+    ]
 
 
 def test_findings_only_with_no_finding_says_so_constructed(
@@ -609,8 +768,11 @@ def test_a_late_reply_from_an_earlier_pick_draws_nothing_cross_capture(
     server: Any, picked: Path, tmp_path: Path
 ) -> None:
     """The one pick handler holds the `seq` guard for all three panels: the
-    replies for a character picked and then left arrive after those of the
-    one picked next, and none of them is drawn."""
+    reply for a character picked and then left arrives after those of the
+    one picked next and is not drawn, and the pick left behind asks for
+    nothing more. A pick runs its three reads one at a time, so two quick
+    picks never hold more than two of the server's run slots, and none is
+    refused `busy` (the stand-in fetch refuses past `MAX_CONCURRENT_RUNS`)."""
     steps = [{"char_tab": True}, {"picks": [1, 0]}]
     scenario = _scenario(server, steps, [PICKED, NEWER])
     scenario["slow"] = [
@@ -619,12 +781,12 @@ def test_a_late_reply_from_an_earlier_pick_draws_nothing_cross_capture(
     ]
     out = _drive(tmp_path / "node", scenario)
     view = out["steps"][1]
-    # Both picks asked; the earlier one's replies came last.
-    asked = [r["body"] for r in view["newRequests"]]
-    assert sorted(map(json.dumps, asked)) == sorted(
-        map(json.dumps, _pick_requests(NEWER) + _pick_requests(PICKED))
-    )
-    assert asked[-3:] == _pick_requests(NEWER)
+    # After the tab's own first pick (PICKED, the latest-written), the pick
+    # left behind asked for its gear only, and the next for its three reads.
+    started = [b for b in view["flight"]["started"] if b["command"] in PICK_READS]
+    assert started == (_pick_requests(PICKED) + _pick_requests(NEWER)[:1] + _pick_requests(PICKED))
+    assert view["flight"]["busy"] == [] and view["flight"]["max"] <= 2
+    assert view["keysErrors"] == [] and view["macrosErrors"] == []
     binds = _run_report(scenario, "binds", PICKED)
     gear = _run_report(scenario, "gear", PICKED)
     assert view["header"] == [PICKED.split("/")[1]]
@@ -632,6 +794,55 @@ def test_a_late_reply_from_an_earlier_pick_draws_nothing_cross_capture(
     assert [r["own"] for r in view["keyRows"]] == [_key_cells(k) for k in binds["keys"]]
     assert [c["name"] for c in view["macros"]] == ["PolyArc"]
     assert view["status"] == ""
+
+
+def test_three_quick_picks_stay_inside_the_servers_run_slots_cross_capture(
+    server: Any, picked: Path, tmp_path: Path
+) -> None:
+    """Three picks in a row, the first two slow: one run each in flight at
+    most, none refused `busy`, and the last pick's three reads all drawn."""
+    steps = [{"char_tab": True}, {"picks": [1, 2, 0]}]
+    scenario = _scenario(server, steps, [PICKED, NEWER, OLDER])
+    scenario["slow"] = [
+        {"command": command, "params": _gear_params(who), "ms": 500}
+        for who in (NEWER, OLDER)
+        for command in (["char", "gear"], ["char", "binds"], ["char", "macros"])
+    ]
+    out = _drive(tmp_path / "node", scenario)
+    view = out["steps"][1]
+    assert view["flight"]["busy"] == [] and view["flight"]["max"] <= 3
+    assert ui.MAX_CONCURRENT_RUNS >= 3
+    started = [b for b in view["flight"]["started"] if b["command"] in PICK_READS]
+    assert (
+        started
+        == (
+            _pick_requests(PICKED)  # the tab's own first pick
+            + _pick_requests(NEWER)[:1]
+            + _pick_requests(OLDER)[:1]
+            + _pick_requests(PICKED)
+        )
+    )
+    binds = _run_report(scenario, "binds", PICKED)
+    assert [r["own"] for r in view["keyRows"]] == [_key_cells(k) for k in binds["keys"]]
+    assert [c["name"] for c in view["macros"]] == ["PolyArc"] and view["gearRows"] == 19
+
+
+def test_a_busy_refusal_is_shown_in_its_panel_constructed(
+    server: Any, picked: Path, tmp_path: Path
+) -> None:
+    """The refusal path of the run limit, with the stand-in's limit set to
+    one slot and that slot held by a slow run of the pick left behind: each
+    run of the new pick is refused `busy`, and each panel says so in the
+    server's word. Nothing retries: picking again asks again."""
+    steps = [{"char_tab": True}, {"picks": [1, 0]}]
+    scenario = _scenario(server, steps, [PICKED, NEWER])
+    scenario["max_runs"] = 1
+    scenario["slow"] = [{"command": ["char", "gear"], "params": _gear_params(NEWER), "ms": 500}]
+    out = _drive(tmp_path / "node", scenario)
+    view = out["steps"][1]
+    assert view["flight"]["busy"] == _pick_requests(PICKED)
+    assert view["gearErrors"] == view["keysErrors"] == view["macrosErrors"] == ["Refused: busy"]
+    assert view["gearRows"] == 0 and view["keyRows"] == [] and view["macros"] == []
 
 
 # ─── errors: the CLI's text, in the panel it belongs to ──────────────────────

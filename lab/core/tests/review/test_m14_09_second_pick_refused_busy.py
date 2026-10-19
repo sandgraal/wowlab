@@ -46,14 +46,21 @@ def _post(server: Any, body: dict[str, Any], out: dict[str, int], tag: str) -> N
 
 
 def _pick(server: Any, character: str, out: dict[str, int], tag: str) -> list[threading.Thread]:
-    """One pick, as the page makes it: its three runs started together."""
-    threads = []
-    for body in _pick_requests(character):
-        name = f"{tag} {' '.join(body['command'])}"
-        thread = threading.Thread(target=_post, args=(server, body, out, name))
-        thread.start()
-        threads.append(thread)
-    return threads
+    """One pick, as the page makes it. Before fix round 1 the page started a
+    pick's three runs together (this probe started three threads). Since fix
+    round 1 `pickCharacter` awaits each run before the next, so a pick is one
+    thread posting its three runs in order. That is an upper bound on the
+    page: the real page also stops a pick left behind after its current run,
+    which this thread does not. Changed by the implementer in fix round 1;
+    the assertions are unchanged."""
+
+    def one_after_another() -> None:
+        for body in _pick_requests(character):
+            _post(server, body, out, f"{tag} {' '.join(body['command'])}")
+
+    thread = threading.Thread(target=one_after_another)
+    thread.start()
+    return [thread]
 
 
 def test_one_pick_alone_gets_all_three_runs(server: Any, picked: Path) -> None:

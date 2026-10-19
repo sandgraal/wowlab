@@ -1176,9 +1176,12 @@
   });
 
   // The one pick handler: it clears all three panels, then asks for the
-  // gear, the keys and the macros of the character picked, each drawn when
-  // its reply comes, and only if no later pick was made since (`seq`).
-  function pickCharacter(entry) {
+  // gear, the keys and the macros of the character picked, one run after
+  // the other, each drawn when its reply comes and only if no later pick was
+  // made since (`seq`). One run at a time: a pick never holds more than one
+  // of the server's few run slots (`MAX_CONCURRENT_RUNS`, 503 `busy` past
+  // them), and a pick left behind stops after the run it is waiting for.
+  async function pickCharacter(entry) {
     const seq = ++character.seq;
     byId("char-header").replaceChildren(make("h2", visible(entry.label)));
     byId("char-gear").replaceChildren();
@@ -1190,10 +1193,11 @@
     // `--character` takes `<realm or digits folder>/<character folder>`.
     const params = { character: entry.realm_folder + "/" + entry.label, account: entry.account };
     if (character.flavor) params.flavor = character.flavor;
-    const asked = [loadGear(entry, params, seq), loadKeys(params, seq), loadMacros(params, seq)];
-    Promise.all(asked).then(() => {
-      if (seq === character.seq) charNote();
-    });
+    for (const load of [loadGear, loadKeys, loadMacros]) {
+      await load(entry, params, seq);
+      if (seq !== character.seq) return;
+    }
+    charNote();
   }
 
   // A refusal or any other error, in the CLI's own words, in `box`.
@@ -1477,7 +1481,7 @@
 
   // ─── keys ───
 
-  async function loadKeys(params, seq) {
+  async function loadKeys(entry, params, seq) {
     const reply = await runJson(["char", "binds"], params);
     if (seq !== character.seq) return;
     const report = reply.data;
@@ -1485,7 +1489,7 @@
       charError(byId("char-keys"), reply, "char binds");
       return;
     }
-    character.binds = { report: report, rows: null, count: null };
+    character.binds = { report: report, rows: null, count: null, shared: new Set() };
     drawKeys(report);
   }
 
@@ -1507,12 +1511,15 @@
     head.appendChild(titles);
     const rows = make("tbody");
     table.append(head, rows);
-    box.append(counted, table, drawUnreached(report));
+    box.append(counted, table, sharedNotes(report), drawUnreached(report));
     if (typeof report.commands_left_out === "number" && typeof report.keys_left_out === "number") {
+      // `char binds`'s own sentence, word for word (`_say_char_binds` in
+      // cli.py): the report carries the two counts and not the words.
       box.appendChild(
         charLine(
           "Left out of the bindings record, counted with no list: " +
-            plural(report.commands_left_out, "command", "commands") + " not named in plain upper case, and " +
+            plural(report.commands_left_out, "command", "commands") +
+            " not named in plain upper case (a key bound straight to a spell, macro, item or click may be one), and " +
             plural(report.keys_left_out, "key", "keys") + " not printable ASCII.",
           "char-line",
         ),
@@ -1547,7 +1554,7 @@
     const all = objects(drawn.report.keys);
     const kept = keptKeys(drawn.report);
     drawn.rows.replaceChildren();
-    for (const row of kept) drawn.rows.appendChild(keyRow(row));
+    for (const row of kept) drawn.rows.appendChild(keyRow(row, drawn.shared));
     drawn.count.textContent = shownOf(kept.length, all.length, "key", "keys");
     if (!all.length) drawn.rows.appendChild(noKeyRow("No key in the files or the record."));
     else if (!kept.length) drawn.rows.appendChild(noKeyRow("No key matches the filters."));
@@ -1562,7 +1569,27 @@
     return tr;
   }
 
-  function keyRow(row) {
+  // A row note the report gives to more than one row that does not
+  // disagree (on the capture, 128 rows "not in a bindings file: …"): said
+  // once under the table with how many rows carry it, and kept in those
+  // rows' tooltips. `character.binds.shared` holds them for `keyRow`.
+  function sharedNotes(report) {
+    const counts = new Map();
+    for (const row of objects(report.keys)) {
+      if (row.disagrees === true || typeof row.note !== "string" || !row.note) continue;
+      counts.set(row.note, (counts.get(row.note) || 0) + 1);
+    }
+    const list = make("ul");
+    list.className = "char-notes char-row-notes";
+    for (const [note, n] of counts) {
+      if (n < 2) continue;
+      character.binds.shared.add(note);
+      list.appendChild(make("li", "On " + count(n, "key", "keys") + ": " + shown(note)));
+    }
+    return list;
+  }
+
+  function keyRow(row, shared) {
     const tr = make("tr");
     tr.className = "key-row";
     if (row.disagrees === true) tr.classList.add("key-disagrees");
@@ -1584,11 +1611,12 @@
       source.appendChild(mark);
     }
     if (typeof row.note === "string" && row.note) {
-      // A disagreement's note names the other row: shown. Any other note is
-      // the same words on many rows: on the pointer only, and once in the
-      // report's notes.
-      if (row.disagrees === true) source.appendChild(make("small", visible(row.note)));
-      else source.title = visible(row.note);
+      // A note is shown in its row, unless the same words are on several
+      // rows that do not disagree: then they are said once under the table
+      // (`sharedNotes`) and the row keeps them in its tooltip. A
+      // disagreement's note names the other row, so it is always shown.
+      if (row.disagrees !== true && shared.has(row.note)) source.title = visible(row.note);
+      else source.appendChild(make("small", visible(row.note)));
     }
     tr.append(key, command, slot, does, source);
     return tr;
@@ -1622,7 +1650,7 @@
 
   // ─── macros ───
 
-  async function loadMacros(params, seq) {
+  async function loadMacros(entry, params, seq) {
     const reply = await runJson(["char", "macros"], params);
     if (seq !== character.seq) return;
     const report = reply.data;
