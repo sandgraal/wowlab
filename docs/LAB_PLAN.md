@@ -4059,8 +4059,7 @@ turns a recorded character into a standard glTF file under the data
 directory, headless and graded by pytest, with no 3D on screen. Wave 7
 (§17.8) puts it in the Character tab. Decisions: ADR-0033 (the archives are
 read, read-only, in pure Python; how asset-format parsers are graded) and
-ADR-0034 (a vendored three.js for Wave 7), both accepted by the owner on
-2026-10-19. The owner asked whether `Data/` could also be edited; L7 stands
+ADR-0034 (a vendored three.js for Wave 7), both proposed on 2026-10-19 on the owner's direction and in force when the owner accepts them on the plan PR. The owner asked whether `Data/` could also be edited; L7 stands
 as written and the reasons are in ADR-0033. L1 to L8 apply to every
 ticket, with L8's asset-format exception. The dressing-room link
 (M15-01, M15-02; §16.3's 2026-10-19 amendment) opened the wave because it
@@ -4187,8 +4186,7 @@ decoder returns mip 0 as RGBA rows and a PNG writer (stdlib: `zlib`,
 used. Two sources disagree on the DXT choice: the wiki says the alpha
 type alone decides (0 → DXT1, 1 → DXT3, 7 → DXT5), wow.export says the
 alpha depth decides first (`alphaDepth > 1 ? (alphaType == 7 ? DXT5 :
-DXT3) : DXT1`); they differ for depth 8 with type 0 and for depth 1 with
-type 1, so the decoder refuses, naming both values, any texture where the
+DXT3) : DXT1`); they differ for depth 8 with type 0, depth 1 with type 1, depth 4 with type 0, depth 0 with type 1, and depth 0 or 1 with type 7, so the decoder refuses, naming both values, any texture where the
 two rules disagree, until a real texture settles it (**[verify]**; the
 derived fixtures record both fields). Palette and BGRA are implemented
 from the wiki with the 4-bit alpha case **[verify]**; BC5 (alpha type 11)
@@ -4345,8 +4343,8 @@ choice enum; the HD body models of every race keeping their bones inside
 (no `SKID`); the per-slot geoset-group table and the default geoset rule;
 how a browser's CSP admits the vendored modules (Wave 7, ADR-0034);
 whether the install streams at all (the middle of §17.1's four states);
-whether and when the client fetches a file it lacks; which `.idx` version
-wins; the Windows handle question; the DXT rule conflict; the
+whether and when the client fetches a file it lacks; the Windows handle
+question; the DXT rule conflict; the
 `TextureFileData` usage type; whether the tables describe how Forever's
 playable races look (the owner's look at the GLB settles it); whether
 Forever has transmog in game at all; the rest pose.
@@ -4354,8 +4352,7 @@ Forever has transmog in game at all; the rest pose.
 ### 17.8 Wave 7, sketched (the viewer; not M15 tickets)
 
 ADR-0034: a pinned three.js (r185, the last release with official
-minified builds, plus `GLTFLoader`, `OrbitControls` and
-`BufferGeometryUtils` from its `examples/jsm`, about 944 KB) vendored
+minified builds, plus `GLTFLoader`, `OrbitControls` and the loader's two imports, `BufferGeometryUtils` and `SkeletonUtils`, from its `examples/jsm`, about 955 KB) vendored
 inside the package and served as ES modules by the UI through an import
 map, admitted by the CSP by hash (or by a scoped `'self'` on the owner's
 ruling after the browser check, **[verify]**); a

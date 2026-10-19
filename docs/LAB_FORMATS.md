@@ -346,8 +346,7 @@ colour encoding (1 palette, 2 DXT, 3 BGRA), alpha depth (0, 1, 4, 8),
 alpha type, has-mips, width, height, sixteen mip offsets and sizes; then a
 1024-byte palette (256 BGRX). The DXT choice: the wiki says the alpha type decides (0 DXT1, 1 DXT3, 7
 DXT5), wow.export says alpha depth first (`alphaDepth > 1 ? (alphaType ==
-7 ? DXT5 : DXT3) : DXT1`); the two differ for depth 8 with type 0 and depth
-1 with type 1 (**[verify]**; the Lab refuses such a texture naming both);
+7 ? DXT5 : DXT3) : DXT1`); the two differ for depth 8 with type 0, depth 1 with type 1, depth 4 with type 0, depth 0 with type 1, and depth 0 or 1 with type 7 (**[verify]**; the Lab refuses such a texture naming both);
 some stored mip sizes are wrong, so the block size is computed. Palette
 alpha: 1 bit per pixel LSB-first, 4 bits (**[verify]**, the wiki is
 incomplete), or 8 bits. BC5 (alpha type 11, the header's "preferred format" byte) is refused. Every

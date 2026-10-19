@@ -66,7 +66,7 @@ these is mis-specified; stop and report.
 **L8 — Real fixtures.** Any parser of an external format is graded against
 real captures with a provenance row (ADR-0012). Constructed inputs are
 allowed only for hostile-input and boundary tests, and are labelled as such.
-One exception, granted by the owner on 2026-10-19 (ADR-0033): a parser of
+One exception, proposed on 2026-10-19 and in force when the owner accepts ADR-0033 on its plan PR: a parser of
 an asset format whose real files are Blizzard's (the build config, the
 CASC index, encoding and root files, BLTE, M2 and skin, BLP) is graded on constructed files,
 on *derived* fixtures (what was read from a real file, never its bytes,
