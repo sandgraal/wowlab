@@ -225,7 +225,7 @@ closes the ADR-0029 amendment's open route.
    grammar is fixed, and it is the first thing the owner can use with a
    model.
 3. **A cleanup half-wave.** The fifteen open M13 follow-ups (M13-61 to
-   M13-77 less the merged M13-68, M13-75 and M13-78; twelve after the three
+   M13-77 less the merged M13-68 and M13-75; twelve after the three
    with the owner), M13-74 first since it closes a
    gap in a shipped write command; each is XS or S and most are one
    review. Worth doing before the writers land, since M13-70 and M13-73
