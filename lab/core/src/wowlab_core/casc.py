@@ -11,18 +11,23 @@ product in the install; only the build config is per product.
    `key = value` text whose MD5 is its own name (checked), with `root` (a
    content key) and `encoding` (a content key and an encoding key).
 2. **The local index.** Every `Data/data/<bucket:2><version:8>.idx`, the
-   newest version number per bucket (the client's `shmem`, which names the
-   current one, is not read; whether the newest always wins is **[verify]**,
-   §17.7), so each bucket's versions not taken are reported. Each file is a
-   header (its size, a Jenkins `hashlittle` of it, version 7, the bucket,
-   and the field-size spec `4/5/9/30`), then, at the next 16-byte boundary,
+   newest version number per bucket (the client's `shmem`, said to name the
+   current one **[verify]**, is not read; whether the newest always wins is
+   **[verify]**, §17.7), so each bucket's versions not taken are reported,
+   as are a bucket with no file and an `.idx`-like name not taken. Each file
+   is a header (its size, a Jenkins `hashlittle` of it, version 7, the
+   bucket, an extra byte held to 0, and the field-size spec `4/5/9/30`),
+   then, at the next 16-byte boundary,
    the entries block (its size, a hash chained entry by entry with
    `hashlittle2`) of 18-byte entries: the first nine bytes of an encoding
    key, a five-byte big-endian field (ten bits of archive number, thirty of
    offset) and a four-byte little-endian size. Both hashes are checked and
    the spec is read and held to `4/5/9/30`, so a half-written or unknown
    file is refused (`CascMalformedError`, `CascUnsupportedError`), never
-   read around.
+   read around. Each file also holds one entry per archive whose key's
+   bucket is the one before the file's (LAB_FORMATS §10, amendment of
+   2026-10-19); they are counted per bucket, with any other entry outside its
+   key's bucket, and a lookup searches only the key's own bucket.
 
 Reads only (L1, ADR-0033): every file is opened read-only without following
 a final link (`snapshot.read_regular_file`), read whole into memory with a
@@ -41,7 +46,8 @@ entries for an install). It is a chain, entry after entry, within a file,
 but the sixteen files are independent, so `_entries_hashes` runs the sixteen
 chains side by side, one 64-bit lane each, inside Python integers: one pass
 of about 66,000 steps instead of a million (§17.1's target: the index in at
-most 2 s).
+most 2 s). The steps run in windows of `_WINDOW`, so the lane buffers stay
+the same small size whatever a file's length.
 """
 
 from __future__ import annotations
@@ -64,6 +70,7 @@ from wowlab_core.install import BuildInfoRow, Flavor, Install, is_link
 __all__ = [
     "BUCKETS",
     "KEY_BYTES",
+    "BucketMissingError",
     "BucketVersion",
     "BuildConfig",
     "BuildRowError",
@@ -102,15 +109,28 @@ _SPEC = (4, 5, KEY_BYTES, 30)
 _ENTRY = _SPEC[0] + _SPEC[1] + _SPEC[2]  # 18
 _OFFSET_BITS = _SPEC[3]
 _OFFSET_MASK = (1 << _OFFSET_BITS) - 1
-_HEADER_FIELDS = struct.Struct("<HBBBBBBQ")  # version, bucket, extra, spec x4, max archive size
+_HEADER_FIELDS = struct.Struct("<HBBBBBBQ")  # version, bucket, extra, spec x4, a u64
 _MAX_HEADER = 0x100  # a header hash size past this is refused as malformed
 _INDEX_NAME = re.compile(r"([0-9a-f]{2})([0-9a-f]{8})\.idx")
+# A name that looks like an index file but is not one the reader takes
+# (another letter case, a suffix after `.idx`): listed in the report, unread.
+_INDEX_LIKE = re.compile(r".*\.idx.*", re.IGNORECASE)
 _HEX_KEY = re.compile(r"[0-9a-f]{32}")
+# The size, and the offset step, of the entries found one bucket on
+# (LAB_FORMATS §10, amendment of 2026-10-19): a 30-byte record header alone.
+_RECORD_HEADER = 30
 
 # Read bounds: the files at 70450 are 1,245,184 bytes (each index) and 59,537
 # bytes (the build config); a file far past these is refused, not read.
-_INDEX_LIMIT = 64 * 1024 * 1024
+_INDEX_LIMIT = 8 * 1024 * 1024
 _CONFIG_LIMIT = 4 * 1024 * 1024
+# Steps of the side-by-side entries hash per pass (`_entries_hashes`): its
+# lane buffers are 5 x _WINDOW x lanes x 8 bytes, 2.6 MB for sixteen lanes.
+_WINDOW = 4096
+# A `Version` tail longer than this is no build number (CPython refuses an
+# `int()` of thousands of digits).
+_BUILD_DIGITS = 10
+_RETRY = "; the Battle.net app or the client may be writing it: close both and try again"
 
 
 # ─── errors ──────────────────────────────────────────────────────────────────
@@ -140,6 +160,15 @@ class CascMissingError(CascError):
     """A file or folder the read needs is not there."""
 
 
+class BucketMissingError(CascMissingError):
+    """A lookup's key falls in a bucket the local index has no file for, so
+    whether the key is local cannot be said (not the same as "not listed")."""
+
+    def __init__(self, message: str, bucket: int) -> None:
+        super().__init__(message)
+        self.bucket = bucket
+
+
 class CascUnreadableError(CascError):
     """A file or folder is there but cannot be read as one: the operating
     system refused, it is a link, it is not a regular file (or folder), or it
@@ -153,7 +182,8 @@ class CascMalformedError(CascError):
 
 class CascUnsupportedError(CascError):
     """A well-formed file in a version or layout this reader does not know
-    (an index version other than 7, a spec other than `4/5/9/30`)."""
+    (an index version other than 7, a spec other than `4/5/9/30`, a
+    non-zero extra byte, a bucket past sixteen)."""
 
 
 # ─── models ──────────────────────────────────────────────────────────────────
@@ -195,9 +225,15 @@ class BucketVersion(BaseModel):
     entries: int
     header_size: int
     header_hash: int
-    extra_bytes: int  # the header's byte after the bucket; 0 at 70450
+    extra_bytes: int  # the header's byte after the bucket; held to 0 (0 at 70450)
     entries_hash: int
-    max_archive_size: int
+    header_u64: int  # the header's last field: 1023 x 2**30 at 70450; meaning [verify]
+    # Entries whose key's bucket is the one before this file's, each a
+    # 30-byte record header at offset 30 x this bucket (one per archive at
+    # 70450; LAB_FORMATS §10, amendment of 2026-10-19), and any other entry
+    # outside its key's bucket (none at 70450). `find` finds neither.
+    entries_from_previous_bucket: int
+    entries_out_of_place: int
     not_taken: tuple[int, ...]  # older version numbers of this bucket, newest first
 
 
@@ -219,6 +255,12 @@ class CascIndexReport(BaseModel):
     # Buckets with more than one version on disk, where the newest was taken
     # (**[verify]**: `shmem` is not read).
     newest_taken: tuple[int, ...]
+    # Buckets with no `.idx` file at all: a lookup there raises
+    # `BucketMissingError` rather than answering "not listed".
+    missing_buckets: tuple[int, ...]
+    # `.idx`-like names in `Data/data` that are not `<bucket:2><version:8>.idx`
+    # in lowercase hex (another letter case, a suffix): not opened.
+    skipped_files: tuple[str, ...]
     index_seconds: float  # reading and checking every `.idx`
     open_seconds: float  # the whole open: the build config and the index
 
@@ -231,10 +273,12 @@ class IndexFile:
         "entries",
         "entries_hash",
         "extra",
+        "from_previous",
         "header_hash",
         "header_size",
+        "header_u64",
         "keys",
-        "max_size",
+        "out_of_place",
         "version",
     )
 
@@ -247,7 +291,7 @@ class IndexFile:
         header_hash: int,
         extra: int,
         entries_hash: int,
-        max_size: int,
+        header_u64: int,
         entries: bytes,
     ) -> None:
         self.bucket = bucket
@@ -256,17 +300,22 @@ class IndexFile:
         self.extra = extra
         self.header_hash = header_hash
         self.entries_hash = entries_hash
-        self.max_size = max_size
+        self.header_u64 = header_u64
         self.entries = entries
-        self.keys: list[bytes] = []  # filled when the file is checked
+        # Filled when the file is checked (`_check_entries`).
+        self.keys: list[bytes] = []
+        self.from_previous = 0
+        self.out_of_place = 0
 
 
 class CascIndex:
     """The lookup from the first nine bytes of an encoding key to where its
-    data is, over every bucket taken. Holds bytes only; no file is open."""
+    data is, over every bucket taken. Holds bytes only; no file is open.
+    `skipped` lists the `.idx`-like names in `Data/data` not taken."""
 
-    def __init__(self, files: Sequence[IndexFile]) -> None:
+    def __init__(self, files: Sequence[IndexFile], skipped: Sequence[str] = ()) -> None:
         self._files: dict[int, IndexFile] = {f.bucket: f for f in files}
+        self.skipped: tuple[str, ...] = tuple(sorted(skipped))
 
     def __len__(self) -> int:
         return sum(len(f.keys) for f in self._files.values())
@@ -275,20 +324,32 @@ class CascIndex:
     def buckets(self) -> tuple[int, ...]:
         return tuple(sorted(self._files))
 
+    @property
+    def missing_buckets(self) -> tuple[int, ...]:
+        """The buckets with no `.idx` file."""
+        return tuple(b for b in range(BUCKETS) if b not in self._files)
+
     def find(self, ekey: bytes) -> IndexEntry | None:
         """Where `ekey` (an encoding key, or at least its first nine bytes)
         is, or `None` when the local index does not list it. The file
-        searched is the one of `bucket_of(ekey)`. (Each file at 70450 also
-        holds 65 entries whose key's bucket is the one before it, each of
-        size 30 at offset 30 times the file's bucket in one archive: the
-        archives' segment headers by their look, **[verify]**; no content
-        key is among them, and this lookup does not find them.)"""
+        searched is the one of `bucket_of(ekey)`; when the index has no file
+        for that bucket, `BucketMissingError` is raised, as "not listed"
+        could not be said. (Each file at 70450 also holds 65 entries whose
+        key's bucket is the one before it, each of size 30 at offset 30
+        times the file's bucket in one archive: the archives' segment headers
+        by their look, **[verify]**. None holds a file's data: size 30 is the
+        record header alone. This lookup does not find them.)"""
         if len(ekey) < KEY_BYTES:
             raise ValueError(f"an index key is {KEY_BYTES} bytes; got {len(ekey)}")
         key = bytes(ekey[:KEY_BYTES])
-        file = self._files.get(bucket_of(key))
+        bucket = bucket_of(key)
+        file = self._files.get(bucket)
         if file is None:
-            return None
+            raise BucketMissingError(
+                f"the local index has no file for bucket {bucket}, so whether the key "
+                "is local cannot be said",
+                bucket,
+            )
         i = bisect.bisect_left(file.keys, key)
         if i == len(file.keys) or file.keys[i] != key:
             return None
@@ -424,76 +485,82 @@ def _entries_hashes(blocks: Sequence[bytes]) -> list[int]:
     if steps == 0:
         return results
     stride = lanes * _LANE_BYTES
-    # words[j]: step k, lane i at byte (k * lanes + i) * 8, the j-th
-    # little-endian word of that lane's k-th entry (the fifth is the last two
-    # bytes, zero-padded, as lookup3 reads an 18-byte key's tail).
-    words = [bytearray(steps * stride) for _ in range(5)]
-    for lane, block in enumerate(blocks):
-        n = counts[lane]
-        if n == 0:
-            continue
-        for j in range(5):
-            for i in range(4 if j < 4 else 2):
-                start = lane * _LANE_BYTES + i
-                words[j][start : start + n * stride : stride] = block[j * 4 + i :: _ENTRY]
     m = sum(_M32 << (64 * i) for i in range(lanes))
     h = sum(1 << (32 + 64 * i) for i in range(lanes))
     init = sum((0xDEADBEEF + _ENTRY) << (64 * i) for i in range(lanes))
     ends: dict[int, list[int]] = {}
     for lane, n in enumerate(counts):
         ends.setdefault(n, []).append(lane)
-    w0, w1, w2, w3, w4 = (memoryview(w) for w in words)
     fb = int.from_bytes
     pc = pb = 0
-    for k in range(steps):
-        s = k * stride
-        e = s + stride
-        a = (init + pc) & m
-        c = (a + pb) & m
-        b = (a + fb(w1[s:e], "little")) & m
-        a = (a + fb(w0[s:e], "little")) & m
-        c = (c + fb(w2[s:e], "little")) & m
-        # mix
-        a = ((a | h) - c) & m
-        a ^= ((c << 4) | (c >> 28)) & m
-        c = (c + b) & m
-        b = ((b | h) - a) & m
-        b ^= ((a << 6) | (a >> 26)) & m
-        a = (a + c) & m
-        c = ((c | h) - b) & m
-        c ^= ((b << 8) | (b >> 24)) & m
-        b = (b + a) & m
-        a = ((a | h) - c) & m
-        a ^= ((c << 16) | (c >> 16)) & m
-        c = (c + b) & m
-        b = ((b | h) - a) & m
-        b ^= ((a << 19) | (a >> 13)) & m
-        a = (a + c) & m
-        c = ((c | h) - b) & m
-        c ^= ((b << 4) | (b >> 28)) & m
-        b = (b + a) & m
-        # the six-byte tail, then final
-        a = (a + fb(w3[s:e], "little")) & m
-        b = (b + fb(w4[s:e], "little")) & m
-        c ^= b
-        c = ((c | h) - (((b << 14) | (b >> 18)) & m)) & m
-        a ^= c
-        a = ((a | h) - (((c << 11) | (c >> 21)) & m)) & m
-        b ^= a
-        b = ((b | h) - (((a << 25) | (a >> 7)) & m)) & m
-        c ^= b
-        c = ((c | h) - (((b << 16) | (b >> 16)) & m)) & m
-        a ^= c
-        a = ((a | h) - (((c << 4) | (c >> 28)) & m)) & m
-        b ^= a
-        b = ((b | h) - (((a << 14) | (a >> 18)) & m)) & m
-        c ^= b
-        c = ((c | h) - (((b << 24) | (b >> 8)) & m)) & m
-        pc, pb = c, b
-        done = ends.get(k + 1)
-        if done is not None:
-            for lane in done:
-                results[lane] = (pc >> (64 * lane)) & _M32
+    for first in range(0, steps, _WINDOW):
+        span = min(_WINDOW, steps - first)
+        # words[j]: step k of this window, lane i at byte (k * lanes + i) * 8,
+        # the j-th little-endian word of that lane's entry (the fifth is the
+        # last two bytes, zero-padded, as lookup3 reads an 18-byte key's
+        # tail). Fresh each window, so a lane past its last entry reads zeros.
+        words = [bytearray(span * stride) for _ in range(5)]
+        for lane, block in enumerate(blocks):
+            n = min(counts[lane] - first, span)
+            if n <= 0:
+                continue
+            part = block[first * _ENTRY : (first + n) * _ENTRY]
+            for j in range(5):
+                for i in range(4 if j < 4 else 2):
+                    start = lane * _LANE_BYTES + i
+                    words[j][start : start + n * stride : stride] = part[j * 4 + i :: _ENTRY]
+        w0, w1, w2, w3, w4 = (memoryview(w) for w in words)
+        for k in range(span):
+            s = k * stride
+            e = s + stride
+            a = (init + pc) & m
+            c = (a + pb) & m
+            b = (a + fb(w1[s:e], "little")) & m
+            a = (a + fb(w0[s:e], "little")) & m
+            c = (c + fb(w2[s:e], "little")) & m
+            # mix
+            a = ((a | h) - c) & m
+            a ^= ((c << 4) | (c >> 28)) & m
+            c = (c + b) & m
+            b = ((b | h) - a) & m
+            b ^= ((a << 6) | (a >> 26)) & m
+            a = (a + c) & m
+            c = ((c | h) - b) & m
+            c ^= ((b << 8) | (b >> 24)) & m
+            b = (b + a) & m
+            a = ((a | h) - c) & m
+            a ^= ((c << 16) | (c >> 16)) & m
+            c = (c + b) & m
+            b = ((b | h) - a) & m
+            b ^= ((a << 19) | (a >> 13)) & m
+            a = (a + c) & m
+            c = ((c | h) - b) & m
+            c ^= ((b << 4) | (b >> 28)) & m
+            b = (b + a) & m
+            # the six-byte tail, then final
+            a = (a + fb(w3[s:e], "little")) & m
+            b = (b + fb(w4[s:e], "little")) & m
+            c ^= b
+            c = ((c | h) - (((b << 14) | (b >> 18)) & m)) & m
+            a ^= c
+            a = ((a | h) - (((c << 11) | (c >> 21)) & m)) & m
+            b ^= a
+            b = ((b | h) - (((a << 25) | (a >> 7)) & m)) & m
+            c ^= b
+            c = ((c | h) - (((b << 16) | (b >> 16)) & m)) & m
+            a ^= c
+            a = ((a | h) - (((c << 4) | (c >> 28)) & m)) & m
+            b ^= a
+            b = ((b | h) - (((a << 14) | (a >> 18)) & m)) & m
+            c ^= b
+            c = ((c | h) - (((b << 24) | (b >> 8)) & m)) & m
+            pc, pb = c, b
+            done = ends.get(first + k + 1)
+            if done is not None:
+                for lane in done:
+                    results[lane] = (pc >> (64 * lane)) & _M32
+        for view in (w0, w1, w2, w3, w4):
+            view.release()
     return results
 
 
@@ -528,7 +595,8 @@ def _read(path: Path, limit: int) -> bytes:
 
 def _build_number(version: str) -> int | None:
     last = version.rsplit(".", 1)[-1].strip()
-    return int(last) if last.isascii() and last.isdecimal() else None
+    ok = last.isascii() and last.isdecimal() and len(last) <= _BUILD_DIGITS
+    return int(last) if ok else None
 
 
 def select_build_row(install: Install, flavor: Flavor | str) -> tuple[Flavor, BuildInfoRow]:
@@ -551,11 +619,23 @@ def select_build_row(install: Install, flavor: Flavor | str) -> tuple[Flavor, Bu
             0,
             flavor.path,
         )
-    rows = [r for r in install.products if (r.product or "").strip() == product and r.is_active]
+    mine = [r for r in install.products if (r.product or "").strip() == product]
+    rows = [r for r in mine if r.is_active]
     if len(rows) != 1:
+        if not mine:
+            saw = f".build.info has no row for the product {product!r}"
+        else:
+            branches = ", ".join((r.branch or "").strip() or "(empty)" for r in mine)
+            cells = ", ".join(repr(r.active or "") for r in mine)
+            active = "none is" if not rows else f"{len(rows)} are"
+            plural = "s" if len(mine) != 1 else ""
+            saw = (
+                f".build.info has {len(mine)} row{plural} for the product {product!r} "
+                f"(branches {branches}; Active cells {cells}), and {active} Active"
+            )
         raise BuildRowError(
-            f".build.info has {len(rows)} Active rows for the product {product!r}; "
-            "exactly one is needed, and none is guessed",
+            f"{saw}. wowlab reads the build of the one Active row and does not pick "
+            "between rows (`wowlab install show` lists them).",
             product,
             len(rows),
             install.root / ".build.info",
@@ -668,9 +748,9 @@ def parse_index_file(data: bytes, bucket: int, version: int, name: str = "") -> 
     got = hashlittle(header)
     if got != header_hash:
         raise CascMalformedError(
-            f"{name}: header hash {got:#010x}, the file says {header_hash:#010x}", path
+            f"{name}: header hash {got:#010x}, the file says {header_hash:#010x}{_RETRY}", path
         )
-    idx_version, idx_bucket, extra, *spec, max_size = _HEADER_FIELDS.unpack_from(header, 0)
+    idx_version, idx_bucket, extra, *spec, header_u64 = _HEADER_FIELDS.unpack_from(header, 0)
     if idx_version != _INDEX_VERSION:
         raise CascUnsupportedError(
             f"{name}: index version {idx_version}; this reader knows {_INDEX_VERSION}", path
@@ -680,6 +760,10 @@ def parse_index_file(data: bytes, bucket: int, version: int, name: str = "") -> 
             f"{name}: entry spec {'/'.join(map(str, spec))}; this reader knows "
             f"{'/'.join(map(str, _SPEC))}",
             path,
+        )
+    if extra != 0:
+        raise CascUnsupportedError(
+            f"{name}: extra byte {extra}; this reader knows 0 (its meaning is [verify])", path
         )
     if idx_bucket != bucket:
         raise CascMalformedError(
@@ -707,7 +791,7 @@ def parse_index_file(data: bytes, bucket: int, version: int, name: str = "") -> 
         header_hash=header_hash,
         extra=extra,
         entries_hash=entries_hash,
-        max_size=max_size,
+        header_u64=header_u64,
         entries=data[start : start + entries_size],
     )
 
@@ -715,15 +799,50 @@ def parse_index_file(data: bytes, bucket: int, version: int, name: str = "") -> 
 _KEYS = struct.Struct(f"{KEY_BYTES}s{_ENTRY - KEY_BYTES}x")
 
 
+def _key_buckets(entries: bytes) -> bytes:
+    """`bucket_of` of every entry's key, one byte each, for the whole block
+    at once: the nine key-byte columns XORed as big integers."""
+    n = len(entries) // _ENTRY
+    if n == 0:
+        return b""
+    x = 0
+    for j in range(KEY_BYTES):
+        x ^= int.from_bytes(entries[j::_ENTRY], "big")
+    nibbles = int.from_bytes(b"\x0f" * n, "big")
+    return ((x & nibbles) ^ ((x >> 4) & nibbles)).to_bytes(n, "big")
+
+
+def _placement(file: IndexFile) -> tuple[int, int]:
+    """(entries from the previous bucket, other entries out of place). An
+    entry whose key's bucket is not the file's counts in the first when its
+    key's bucket is the one before and it is a 30-byte record header at
+    offset 30 x the file's bucket; any other counts in the second."""
+    previous = (file.bucket - 1) % BUCKETS
+    not_here = re.compile(b"[^%s]" % re.escape(bytes([file.bucket])))
+    buckets = _key_buckets(file.entries)
+    from_previous = out_of_place = 0
+    for found in not_here.finditer(buckets):
+        i = found.start()
+        entry = _entry_at(file.entries, i)
+        header = entry.size == _RECORD_HEADER and entry.offset == _RECORD_HEADER * file.bucket
+        if buckets[i] == previous and header:
+            from_previous += 1
+        else:
+            out_of_place += 1
+    return from_previous, out_of_place
+
+
 def _check_entries(files: Sequence[IndexFile], names: Sequence[str], data_dir: Path) -> None:
     """Every file's entries hash, and its keys in strictly rising order (the
-    lookup's binary search relies on it; every file at 70450 is so)."""
+    lookup's binary search relies on it; every file at 70450 is so); then
+    the entries outside their key's bucket are counted (`_placement`)."""
     for file, got, name in zip(
         files, _entries_hashes([f.entries for f in files]), names, strict=True
     ):
         if got != file.entries_hash:
             raise CascMalformedError(
-                f"{name}: entries hash {got:#010x}, the file says {file.entries_hash:#010x}",
+                f"{name}: entries hash {got:#010x}, the file says "
+                f"{file.entries_hash:#010x}{_RETRY}",
                 data_dir / name,
             )
         keys = list(map(operator.itemgetter(0), _KEYS.iter_unpack(file.entries)))
@@ -732,6 +851,7 @@ def _check_entries(files: Sequence[IndexFile], names: Sequence[str], data_dir: P
                 f"{name}: the entries are not in strictly rising key order", data_dir / name
             )
         file.keys = keys
+        file.from_previous, file.out_of_place = _placement(file)
 
 
 def load_index(root: Path) -> tuple[CascIndex, tuple[BucketVersion, ...]]:
@@ -747,10 +867,15 @@ def load_index(root: Path) -> tuple[CascIndex, tuple[BucketVersion, ...]]:
             f"cannot list {data_dir} ({exc.strerror or exc})", data_dir
         ) from exc
     found: dict[int, list[int]] = {}
+    skipped: list[str] = []
     for name in names:
         match = _INDEX_NAME.fullmatch(name)
         if match is None:
-            continue  # data.NNN, shmem, index.lock.0, the .lru file: not opened
+            # data.NNN, shmem, index.lock.0, the .lru file: not opened. An
+            # `.idx`-like name is listed in the report, and not opened either.
+            if _INDEX_LIKE.fullmatch(name):
+                skipped.append(name)
+            continue
         bucket, version = int(match[1], 16), int(match[2], 16)
         if bucket >= BUCKETS:
             raise CascUnsupportedError(
@@ -778,12 +903,14 @@ def load_index(root: Path) -> tuple[CascIndex, tuple[BucketVersion, ...]]:
             header_hash=f.header_hash,
             extra_bytes=f.extra,
             entries_hash=f.entries_hash,
-            max_archive_size=f.max_size,
+            header_u64=f.header_u64,
+            entries_from_previous_bucket=f.from_previous,
+            entries_out_of_place=f.out_of_place,
             not_taken=tuple(sorted((v for v in found[f.bucket] if v != f.version), reverse=True)),
         )
         for f, name in zip(files, taken_names, strict=True)
     )
-    return CascIndex(files), versions
+    return CascIndex(files, skipped), versions
 
 
 def open_storage(install: Install, flavor: Flavor | str) -> CascStorage:
@@ -811,6 +938,8 @@ def open_storage(install: Install, flavor: Flavor | str) -> CascStorage:
         entry_count=sum(v.entries for v in versions),
         versions=versions,
         newest_taken=tuple(v.bucket for v in versions if v.not_taken),
+        missing_buckets=index.missing_buckets,
+        skipped_files=index.skipped,
         index_seconds=round(finished - index_started, 3),
         open_seconds=round(finished - started, 3),
     )

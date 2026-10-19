@@ -313,6 +313,31 @@ the owner's install at 1.60.1.70450 on 2026-10-19 (read-only).
   client (streaming) both write the index files and the archives. Also present: `index.lock.0`, an `.lru` file,
   `Data/indices/*.index` (CDN indexes, unused locally), `ecache/`
   (**[verify]** what it is).
+  *Amended 2026-10-19 (M15-03; derived fixture
+  `lab/core/tests/fixtures/macos-70450/derived/casc-index.json`, read from
+  the owner's install at 1.60.1.70450; reference only, no change to the
+  lookup).* The files are named `<bucket:2><version:8>.idx` in lowercase
+  hex, one version per bucket here (versions 0x5e to 0x68). The 16-byte
+  header is: u16 version 7, u8 bucket, u8 extra byte (0 in every file;
+  meaning **[verify]**), the spec `4/5/9/30`, then a u64 that is
+  1,098,437,885,952 = 1023 × 2^30 in every file. That cannot be one
+  archive's size when offsets have 30 bits; its meaning is **[verify]**.
+  The header hash is lookup3 `hashlittle`, seed 0, over the 16 header
+  bytes. The entries hash is the `pc` of `hashlittle2` chained over each
+  18-byte entry in turn, each seeded with the previous `(pc, pb)`,
+  starting from `(0, 0)`. Each file is 1,245,184 bytes, zero after the
+  entries. Keys rise strictly with no repeats (other builds **[verify]**).
+  An entry's size includes the archive's 30-byte record header. The local
+  build config's MD5 equals its name. **The bucket rule above has an
+  exception.** Each file also holds one entry per archive (65 per file,
+  1,040 in all) whose key's bucket is the one *before* the file's. Each is
+  size 30 at offset 30 × the file's bucket. Its key is two varying bytes
+  then `00 55 21 69 b0 19 89`. The 30-byte record at that offset repeats
+  the key, reversed, in its hash field, and no BLTE follows it. These are
+  the record headers at the head of every archive ("segment headers", from
+  memory, **[verify]**). Every other entry (1,041,954) is in its own
+  bucket. A lookup searches only the key's own bucket, so it never finds
+  these, and none of them holds a file's data.
 - **`data.NNN`**: at the index offset a 30-byte record header (the BLTE
   hash reversed, size, flags, two checksums), then BLTE of `size - 30`.
 - **BLTE**: `BLTE`, a big-endian header size; when non-zero, a chunk table

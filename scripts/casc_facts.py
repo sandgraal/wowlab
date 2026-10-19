@@ -6,11 +6,13 @@
 Opens one flavor's build in the install's `Data/` through `wowlab_core.casc`
 (read-only: every file is read into memory and closed; `shmem` and
 `index.lock.0` are never opened) and writes, as JSON, what was read: the
-product, version and build, the build and config keys, the size the build
-config gives the encoding file, the bucket and entry counts, each bucket's
-taken `.idx` version with its header facts and stored hashes and the
-versions not taken, how many of each file's entries have a key whose bucket
-is the one before the file's (`entries_one_bucket_on`), and a handful of
+product, version and build, the build and config keys, the two sizes the
+build config gives the encoding file (`encoding-size`: decoded, then
+encoded), the bucket and entry counts, the buckets with no file and the
+`.idx`-like names not taken, each bucket's taken `.idx` version with its
+header facts, stored hashes, versions not taken and the counts of entries
+outside their key's bucket (`entries_from_previous_bucket`,
+`entries_out_of_place`, as `casc` reports them), and a handful of
 key -> (archive, offset, size) rows: the encoding file's, the first and last
 entry of buckets 0, 7 and 15 whose key is in that bucket, and the first entry
 of bucket 0 whose key is not. Never
@@ -43,6 +45,7 @@ from wowlab_core.install import InstallError, discover
 INSTALL_MARKER = ".build.info"
 SCHEMA = 1
 SAMPLE_BUCKETS = (0, 7, 15)
+MAX_SIZE_DIGITS = 20  # a u64 has at most 20 decimal digits
 
 
 class FactsError(Exception):
@@ -73,15 +76,24 @@ def _row(key: bytes, file_bucket: int, entry: casc.IndexEntry, why: str) -> dict
     }
 
 
+def _size(text: str) -> int | None:
+    """A size cell as an integer, or None when it is not a short decimal."""
+    ok = text.isascii() and text.isdecimal() and len(text) <= MAX_SIZE_DIGITS
+    return int(text) if ok else None
+
+
 def facts(storage: casc.CascStorage, flavor_folder: str, captured: str) -> dict[str, Any]:
     """The derived record of one opened build."""
     report = storage.report
     index = storage.index
     pairs = dict(storage.config.pairs)
-    encoding_sizes = pairs.get("encoding-size", "").split()
+    sizes = [_size(s) for s in pairs.get("encoding-size", "").split()]
     rows: list[dict[str, Any]] = []
     ekey = bytes.fromhex(report.encoding_ekey)
-    found = index.find(ekey)
+    try:
+        found = index.find(ekey)
+    except casc.BucketMissingError:
+        found = None
     if found is not None:
         rows.append(
             _row(
@@ -102,12 +114,6 @@ def facts(storage: casc.CascStorage, flavor_folder: str, captured: str) -> dict[
     if shifted:
         key, entry = index.entry_at(0, shifted[0])
         rows.append(_row(key, 0, entry, "first entry of bucket 0 whose key is not in it"))
-    one_on = {
-        v.bucket: sum(
-            1 for k in index.keys(v.bucket) if (casc.bucket_of(k) + 1) % casc.BUCKETS == v.bucket
-        )
-        for v in report.versions
-    }
     return {
         "schema": SCHEMA,
         "kind": "casc-index-derived",
@@ -121,13 +127,16 @@ def facts(storage: casc.CascStorage, flavor_folder: str, captured: str) -> dict[
         "root": report.root,
         "encoding_ckey": report.encoding_ckey,
         "encoding_ekey": report.encoding_ekey,
-        "encoding_size": [int(s) for s in encoding_sizes if s.isdecimal()],
+        "encoding_size": {
+            "decoded": sizes[0] if len(sizes) == 2 else None,
+            "encoded": sizes[1] if len(sizes) == 2 else None,
+        },
         "bucket_count": report.bucket_count,
         "entry_count": report.entry_count,
         "newest_taken": list(report.newest_taken),
-        "versions": [
-            {**v.model_dump(), "entries_one_bucket_on": one_on[v.bucket]} for v in report.versions
-        ],
+        "missing_buckets": list(report.missing_buckets),
+        "skipped_files": list(report.skipped_files),
+        "versions": [v.model_dump() for v in report.versions],
         "key_rows": rows,
     }
 

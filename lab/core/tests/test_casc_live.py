@@ -3,19 +3,22 @@ run in CI (ADR-0012):
 
     WOWLAB_WOW_ROOT=<the install> uv run pytest -m live lab/core/tests/test_casc_live.py
 
-Close the client first: it rewrites the index while it streams. The tests
+Close the client first, and let the Battle.net app finish any update or
+repair (it writes Data/data too): both rewrite the index. The tests
 compare the install with the derived fixture
 (`fixtures/macos-70450/derived/casc-index.json`) and are skipped when the
 install has patched past that build. They also hold §17.1's first target
 (the index loaded in at most 2 s) and L1: nothing opened but the build
-config and the taken `.idx` files, every one read-only and closed; no file
-under `Data/` changed by the read.
+config and the taken `.idx` files, every one read-only and closed, by any
+API (the "open" audit event); no file under `Data/data` changed by the
+read.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +39,21 @@ def _root() -> Path:
     return Path(value)
 
 
+# Every open in the process raises the "open" audit event, whatever API it
+# goes through. The hook cannot be removed, so it records only while armed.
+_AUDIT: list[list[tuple[str, int]]] = []
+
+
+def _audit(event: str, args: tuple[Any, ...]) -> None:
+    if event == "open" and _AUDIT:
+        path, _mode, flags = args
+        if isinstance(path, (str, bytes, os.PathLike)):
+            _AUDIT[-1].append((os.fsdecode(path), flags if isinstance(flags, int) else 0))
+
+
+sys.addaudithook(_audit)
+
+
 def _state(folder: Path) -> dict[str, tuple[int, int]]:
     return {p.name: (p.stat().st_size, p.stat().st_mtime_ns) for p in folder.iterdir()}
 
@@ -47,15 +65,27 @@ def test_live_index_matches_the_derived_fixture(monkeypatch: pytest.MonkeyPatch)
     data = root / "Data" / "data"
     before = _state(data)
     opened: list[tuple[str, int]] = []
-    real_open = os.open
+    still_open: set[int] = set()
+    real_open, real_close = os.open, os.close
 
-    def spy(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
-        opened.append((os.fsdecode(path), flags))
-        return real_open(path, flags, *args, **kwargs)
+    def spy_open(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        fd = real_open(path, flags, *args, **kwargs)
+        still_open.add(fd)
+        return fd
 
-    monkeypatch.setattr(os, "open", spy)
-    storage = casc.open_storage(install, FACTS["flavor"])
-    monkeypatch.undo()
+    def spy_close(fd: int) -> None:
+        still_open.discard(fd)
+        real_close(fd)
+
+    monkeypatch.setattr(os, "open", spy_open)
+    monkeypatch.setattr(os, "close", spy_close)
+    _AUDIT.append(opened)
+    try:
+        storage = casc.open_storage(install, FACTS["flavor"])
+    finally:
+        _AUDIT.remove(opened)
+        monkeypatch.undo()
+    assert not still_open, f"descriptors left open: {still_open}"
 
     report = storage.report
     names = {Path(p).name for p, _ in opened}
@@ -78,11 +108,10 @@ def test_live_index_matches_the_derived_fixture(monkeypatch: pytest.MonkeyPatch)
         FACTS["bucket_count"],
         FACTS["entry_count"],
     )
+    assert list(report.missing_buckets) == FACTS["missing_buckets"]
+    assert list(report.skipped_files) == FACTS["skipped_files"]
     for got, want in zip(report.versions, FACTS["versions"], strict=True):
-        dumped = got.model_dump()
-        assert {k: dumped[k] for k in dumped} == {
-            k: (tuple(v) if isinstance(v, list) else v) for k, v in want.items() if k in dumped
-        }
+        assert got.model_dump(mode="json") == want
     for row in FACTS["key_rows"]:
         key = bytes.fromhex(row["key"])
         want_entry = casc.IndexEntry(archive=row["archive"], offset=row["offset"], size=row["size"])

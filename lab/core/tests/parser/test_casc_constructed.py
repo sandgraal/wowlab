@@ -126,7 +126,10 @@ def test_two_buckets_two_versions_of_one_take_the_newest_constructed(tmp_path: P
     )
     assert index.find(old[1][0]) is None  # only in the older version
     assert index.find(other[0][0]) == casc.IndexEntry(archive=2, offset=60, size=20)
-    assert index.find(key_in(7, rng)) is None  # no file for that bucket
+    with pytest.raises(casc.BucketMissingError, match="no file for bucket 7") as caught:
+        index.find(key_in(7, rng))  # no file for that bucket: not "not listed"
+    assert caught.value.bucket == 7
+    assert index.missing_buckets == tuple(b for b in range(16) if b not in (4, 11))
     with pytest.raises(ValueError, match="9 bytes"):
         index.find(b"short")
 
@@ -176,8 +179,123 @@ def test_names_that_are_not_idx_files_are_not_opened_constructed(tmp_path: Path)
             "shmem": b"not an index",
         },
     )
-    _, versions = casc.load_index(root)
+    index, versions = casc.load_index(root)
     assert [(v.bucket, v.version) for v in versions] == [(1, 1)]
+    # The `.idx`-like names are listed as skipped; `shmem` is not.
+    assert index.skipped == ("0100000002.idx.bak", "0100000003.IDX", "01000003.idx")
+
+
+def test_entries_outside_their_keys_bucket_are_counted_constructed(tmp_path: Path) -> None:
+    """In bucket 5's file: two record-header entries whose key's bucket is 4
+    (size 30, offset 150 = 30 x 5), and two others outside their key's
+    bucket (one of bucket 4 with the wrong offset, one of bucket 9). All are
+    counted; none is found by `find`, which searches the key's own bucket."""
+    rng = random.Random(55)
+    own = (key_in(5, rng), 3, 999, 77)
+    headers = [(key_in(4, rng), a, 150, 30) for a in (0, 1)]
+    odd = [(key_in(4, rng), 2, 151, 30), (key_in(9, rng), 2, 150, 30)]
+    blob = idx_bytes(5, [own, *headers, *odd])
+    index, versions = casc.load_index(_write(tmp_path, {idx_name(5, 1): blob}))
+    assert (versions[0].entries_from_previous_bucket, versions[0].entries_out_of_place) == (2, 2)
+    assert index.find(own[0]) == casc.IndexEntry(archive=3, offset=999, size=77)
+    with pytest.raises(casc.BucketMissingError):
+        index.find(headers[0][0])
+
+
+def test_key_buckets_for_a_whole_block_equal_bucket_of_constructed() -> None:
+    rng = random.Random(4)
+    keys = [rng.randbytes(9) for _ in range(500)]
+    blob = entry_bytes((k, 0, 0, 0) for k in keys)
+    assert casc._key_buckets(blob) == bytes(casc.bucket_of(k) for k in keys)
+    assert casc._key_buckets(b"") == b""
+
+
+@pytest.mark.parametrize(
+    ("version", "build"),
+    [("1.2.3.4567", 4567), ("1.2.3." + "9" * 10, 9_999_999_999), ("1.2.3." + "9" * 11, None)],
+    ids=["build", "ten-digits", "eleven-digits"],
+)
+def test_a_long_version_tail_is_no_build_number_constructed(
+    version: str, build: int | None
+) -> None:
+    assert casc._build_number(version) == build
+
+
+def test_a_five_thousand_digit_version_tail_is_no_build_number_constructed() -> None:
+    """CPython refuses `int()` past 4300 digits with an untyped ValueError."""
+    assert casc._build_number("1.2.3." + "7" * 5000) is None
+
+
+def _rising_key(bucket: int, i: int) -> bytes:
+    """The i-th of a rising run of keys in `bucket`: eight bytes of `i`,
+    then the byte that folds the XOR to `bucket` (fold(x ^ b) = bucket for
+    b = x ^ bucket, since fold(bucket) = bucket for a bucket below 16)."""
+    head = i.to_bytes(8, "big")
+    x = 0
+    for byte in head:
+        x ^= byte
+    return head + bytes([x ^ bucket])
+
+
+def _near_limit_install(tmp_path: Path, n: int) -> Path:
+    """Bucket 6: `n` entries with a valid header and a wrong entries hash;
+    every other bucket: one good entry."""
+    rng = random.Random(81)
+    files = {
+        idx_name(6, 1): idx_bytes(
+            6, [(_rising_key(6, i), 0, i, 1) for i in range(n)], entries_hash=1
+        )
+    }
+    for b in (*range(6), *range(7, 16)):
+        files[idx_name(b, 1)] = idx_bytes(b, [(key_in(b, rng), 0, 0, 1)])
+    return _write(tmp_path, files)
+
+
+@pytest.mark.serial
+def test_a_header_valid_index_near_the_limit_hashes_in_window_sized_buffers_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file just under the 8 MiB limit (466,000 entries), with a valid
+    header and a wrong entries hash, beside fifteen one-entry files: it is
+    refused, and no lane buffer is larger than one window's
+    (4096 steps x 16 lanes x 8 bytes); before the fix each was sized by the
+    longest file (466,000 x 128 bytes, five of them, about 300 MB)."""
+    n = (casc._INDEX_LIMIT - 64) // 18
+    root = _near_limit_install(tmp_path, n)
+    assert (root / "Data" / "data" / idx_name(6, 1)).stat().st_size <= casc._INDEX_LIMIT
+    sizes: list[int] = []
+
+    def spy(size: int) -> bytearray:
+        sizes.append(size)
+        return bytearray(size)
+
+    monkeypatch.setattr(casc, "bytearray", spy, raising=False)
+    with pytest.raises(casc.CascMalformedError, match=r"0600000001\.idx: entries hash"):
+        casc.load_index(root)
+    assert sizes and max(sizes) <= casc._WINDOW * 16 * 8
+    assert len(sizes) == 5 * -(-n // casc._WINDOW)
+
+
+@pytest.mark.serial
+def test_the_entries_hash_peak_memory_does_not_grow_with_the_file_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Measured with tracemalloc, on a window of 64 steps so the run stays
+    short under tracing: 12,000 entries in one file (216 KB) beside fifteen
+    one-entry files. The buffers sized by the file would be 5 x 12,000 x
+    128 bytes = 7.7 MB; by the window they are 41 KB."""
+    import tracemalloc
+
+    monkeypatch.setattr(casc, "_WINDOW", 64)
+    root = _near_limit_install(tmp_path, 12_000)
+    tracemalloc.start()
+    try:
+        with pytest.raises(casc.CascMalformedError, match="entries hash"):
+            casc.load_index(root)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 2 * 1024 * 1024, peak
 
 
 # ─── refusals ────────────────────────────────────────────────────────────────
@@ -203,6 +321,7 @@ def _flip(blob: bytes, at: int) -> bytes:
         (idx_bytes(6, _GOOD, version=6), casc.CascUnsupportedError, "index version 6"),
         (idx_bytes(6, _GOOD, spec=(4, 5, 9, 31)), casc.CascUnsupportedError, "4/5/9/31"),
         (idx_bytes(6, _GOOD, spec=(4, 6, 9, 30)), casc.CascUnsupportedError, "4/6/9/30"),
+        (idx_bytes(6, _GOOD, extra=1), casc.CascUnsupportedError, "extra byte 1"),
         (idx_bytes(7, _GOOD), casc.CascMalformedError, "says bucket 7"),
         (idx_bytes(6, _GOOD)[:40], casc.CascMalformedError, "runs past the end"),
         (idx_bytes(6, _GOOD)[:32], casc.CascMalformedError, "no entries block"),
@@ -223,6 +342,7 @@ def _flip(blob: bytes, at: int) -> bytes:
         "version-6",
         "offset-bits-31",
         "offset-bytes-6",
+        "extra-byte-not-zero",
         "bucket-not-the-names",
         "entries-past-end",
         "no-entries-block",
@@ -369,22 +489,49 @@ def test_a_build_key_that_is_not_hex_names_no_path_constructed(tmp_path: Path, k
 # ─── the build row ───────────────────────────────────────────────────────────
 
 
+_RULE = (
+    ". wowlab reads the build of the one Active row and does not pick between rows "
+    "(`wowlab install show` lists them)."
+)
+
+
 @pytest.mark.parametrize(
-    ("rows", "count"),
+    ("rows", "count", "saw"),
     [
-        ([("0", PRODUCT)], 0),
-        ([("1", "wow_other_product")], 0),
-        ([("1", PRODUCT), ("1", PRODUCT)], 2),
-        ([("1", PRODUCT), ("2", PRODUCT), ("1", "wow_other_product")], 2),
+        (
+            [("0", PRODUCT)],
+            0,
+            f".build.info has 1 row for the product '{PRODUCT}' (branches us; Active cells "
+            "'0'), and none is Active",
+        ),
+        (
+            [("1", "wow_other_product")],
+            0,
+            f".build.info has no row for the product '{PRODUCT}'",
+        ),
+        (
+            [("1", PRODUCT), ("1", PRODUCT)],
+            2,
+            f".build.info has 2 rows for the product '{PRODUCT}' (branches us, us; Active "
+            "cells '1', '1'), and 2 are Active",
+        ),
+        (
+            [("1", PRODUCT), ("2", PRODUCT), ("0", PRODUCT), ("1", "wow_other_product")],
+            2,
+            f".build.info has 3 rows for the product '{PRODUCT}' (branches us, us, us; "
+            "Active cells '1', '2', '0'), and 2 are Active",
+        ),
     ],
-    ids=["inactive", "other-product-only", "two-active", "two-active-and-another"],
+    ids=["inactive", "other-product-only", "two-active", "two-active-one-not"],
 )
 def test_a_product_without_exactly_one_active_row_is_refused_constructed(
-    tmp_path: Path, rows: list[tuple[str, str]], count: int
+    tmp_path: Path, rows: list[tuple[str, str]], count: int, saw: str
 ) -> None:
+    """The refusal says what it saw and that wowlab does not pick."""
     root, _ = make_install(tmp_path, rows=rows)
-    with pytest.raises(casc.BuildRowError, match=f"has {count} Active rows") as caught:
+    with pytest.raises(casc.BuildRowError) as caught:
         casc.open_storage(read_install(root), FLAVOR)
+    assert str(caught.value) == saw + _RULE
     assert (caught.value.product, caught.value.count) == (PRODUCT, count)
 
 
@@ -424,17 +571,33 @@ def test_an_active_row_without_a_build_key_is_refused_constructed(tmp_path: Path
 # ─── the whole open, and L1 ──────────────────────────────────────────────────
 
 
+# Every open in the process raises the "open" audit event (`os.open`,
+# `open()`, `io.open`, `Path.read_bytes` alike). The hook cannot be removed
+# once added, so it is added once and records only while `_AUDIT` is set.
+_AUDIT: list[list[tuple[str, int]]] = []
+
+
+def _audit(event: str, args: tuple[object, ...]) -> None:
+    if event == "open" and _AUDIT:
+        path, _mode, flags = args
+        if isinstance(path, (str, bytes, os.PathLike)):
+            _AUDIT[-1].append((os.fsdecode(path), flags if isinstance(flags, int) else 0))
+
+
+sys.addaudithook(_audit)
+
+
 @pytest.fixture
-def opened(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[tuple[str, int, int]]]:
-    """Every `os.open` while the test runs: (path, flags, descriptor); and
-    every descriptor closed is dropped from `still_open`."""
-    calls: list[tuple[str, int, int]] = []
+def opened(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[tuple[str, int]]]:
+    """Every open while the test runs, by any API: (path, flags), from the
+    "open" audit event. Every descriptor `os.open` returns must also be
+    closed by `os.close` before the test ends."""
+    calls: list[tuple[str, int]] = []
     real_open, real_close = os.open, os.close
     still_open: set[int] = set()
 
     def spy_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
         fd = real_open(path, flags, *args, **kwargs)  # type: ignore[arg-type]
-        calls.append((os.fsdecode(path), flags, fd))  # type: ignore[arg-type]
         still_open.add(fd)
         return fd
 
@@ -444,14 +607,37 @@ def opened(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[tuple[str, int, int
 
     monkeypatch.setattr(os, "open", spy_open)
     monkeypatch.setattr(os, "close", spy_close)
-    yield calls
+    _AUDIT.append(calls)
+    try:
+        yield calls
+    finally:
+        _AUDIT.remove(calls)
     assert not still_open, f"descriptors left open: {still_open}"
 
 
-def test_open_storage_reads_only_what_it_needs_and_writes_nothing_constructed(
-    tmp_path: Path, opened: list[tuple[str, int, int]]
+_WRITING = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
+
+
+def test_the_open_spy_sees_every_kind_of_open_constructed(
+    tmp_path: Path, opened: list[tuple[str, int]]
 ) -> None:
+    """The spy itself: `open()`, `Path.read_bytes` and a write are seen."""
+    (tmp_path / "a").write_bytes(b"x")
+    (tmp_path / "a").read_bytes()
+    with open(tmp_path / "a", "rb"):  # noqa: PTH123
+        pass
+    assert [Path(p).name for p, _ in opened] == ["a", "a", "a"]
+    assert opened[0][1] & _WRITING and not opened[1][1] & _WRITING
+
+
+def test_open_storage_reads_only_what_it_needs_and_writes_nothing_constructed(
+    tmp_path: Path, opened: list[tuple[str, int]]
+) -> None:
+    rng = random.Random(8)
     root, indexes = make_install(tmp_path)
+    # A second, older version of bucket 9, which must never be opened.
+    older = idx_name(9, 0)
+    (root / "Data" / "data" / older).write_bytes(idx_bytes(9, [(key_in(9, rng), 0, 0, 1)]))
     install = read_install(root)
     before = tree_state(root)
     opened.clear()
@@ -459,16 +645,18 @@ def test_open_storage_reads_only_what_it_needs_and_writes_nothing_constructed(
     storage = casc.open_storage(install, FLAVOR)
 
     assert tree_state(root) == before
-    names = sorted(Path(p).name for p, _, _ in opened)
+    names = sorted(Path(p).name for p, _ in opened)
     assert names == sorted([storage.config.key, *indexes])
-    writing = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
-    assert all(flags & writing == 0 for _, flags, _ in opened)
+    assert older not in names
+    assert all(flags & _WRITING == 0 for _, flags in opened)
     report = storage.report
     assert (report.product, report.version, report.build) == (PRODUCT, "9.8.7.65432", 65432)
     assert report.build_key == storage.config.key == storage.row.build_key
     assert (report.root, report.encoding_ckey) == ("ab" * 16, "cd" * 16)
     assert (report.bucket_count, report.entry_count) == (2, 10)
-    assert [v.bucket for v in report.versions] == [3, 9] and report.newest_taken == ()
+    assert [v.bucket for v in report.versions] == [3, 9] and report.newest_taken == (9,)
+    assert report.missing_buckets == tuple(b for b in range(16) if b not in (3, 9))
+    assert report.skipped_files == ()
     assert 0 <= report.index_seconds <= report.open_seconds
     ekey = bytes.fromhex(report.encoding_ekey)
     assert storage.index.find(ekey) == casc.IndexEntry(archive=0, offset=64, size=1000)

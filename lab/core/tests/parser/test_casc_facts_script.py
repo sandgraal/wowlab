@@ -46,8 +46,9 @@ def test_writes_the_derived_record_constructed(tmp_path: Path) -> None:
     record = json.loads(out.read_text(encoding="utf-8"))
     assert (record["product"], record["flavor"], record["build"]) == (PRODUCT, FLAVOR, 65432)
     assert (record["bucket_count"], record["entry_count"]) == (2, 10)
-    assert record["encoding_size"] == [1000, 970]
-    assert [v["entries_one_bucket_on"] for v in record["versions"]] == [0, 0]
+    assert record["encoding_size"] == {"decoded": 1000, "encoded": 970}
+    assert [v["entries_from_previous_bucket"] for v in record["versions"]] == [0, 0]
+    assert record["missing_buckets"] == [b for b in range(16) if b not in (3, 9)]
     assert record["key_rows"][0]["why"] == "the build config's encoding key"
     assert record["key_rows"][0]["size"] == 1000
     text = out.read_text(encoding="utf-8")

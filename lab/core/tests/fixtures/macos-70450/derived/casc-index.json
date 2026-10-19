@@ -11,13 +11,15 @@
   "root": "8a0ca94be2f6ace93991c04ca6e19b57",
   "encoding_ckey": "c441a5427cb86b23bbfb6ed9c6cf0114",
   "encoding_ekey": "9a0263e06fdace8ab940a4a45a8e28fb",
-  "encoding_size": [
-    141574945,
-    141273036
-  ],
+  "encoding_size": {
+    "decoded": 141574945,
+    "encoded": 141273036
+  },
   "bucket_count": 16,
   "entry_count": 1042994,
   "newest_taken": [],
+  "missing_buckets": [],
+  "skipped_files": [],
   "versions": [
     {
       "bucket": 0,
@@ -28,9 +30,10 @@
       "header_hash": 465568875,
       "extra_bytes": 0,
       "entries_hash": 1109814715,
-      "max_archive_size": 1098437885952,
-      "not_taken": [],
-      "entries_one_bucket_on": 65
+      "header_u64": 1098437885952,
+      "entries_from_previous_bucket": 65,
+      "entries_out_of_place": 0,
+      "not_taken": []
     },
     {
       "bucket": 1,
@@ -41,9 +44,10 @@
       "header_hash": 3326962010,
       "extra_bytes": 0,
       "entries_hash": 3737791939,
-      "max_archive_size": 1098437885952,
-      "not_taken": [],
-      "entries_one_bucket_on": 65
+      "header_u64": 1098437885952,
+      "entries_from_previous_bucket": 65,
+      "entries_out_of_place": 0,
+      "not_taken": []
     },
     {
       "bucket": 2,
@@ -54,9 +58,10 @@
       "header_hash": 3088530149,
       "extra_bytes": 0,
       "entries_hash": 4215355155,
-      "max_archive_size": 1098437885952,
-      "not_taken": [],
-      "entries_one_bucket_on": 65
+      "header_u64": 1098437885952,
+      "entries_from_previous_bucket": 65,
+      "entries_out_of_place": 0,
+      "not_taken": []
     },
     {
       "bucket": 3,
@@ -67,9 +72,10 @@
       "header_hash": 3308204093,
       "extra_bytes": 0,
       "entries_hash": 1545991194,
-      "max_archive_size": 1098437885952,
-      "not_taken": [],
-      "entries_one_bucket_on": 65
+      "header_u64": 1098437885952,
+      "entries_from_previous_bucket": 65,
+      "entries_out_of_place": 0,
+      "not_taken": []
     },
     {
       "bucket": 4,
@@ -80,9 +86,10 @@
       "header_hash": 1680983878,
       "extra_bytes": 0,
       "entries_hash": 104852885,
-      "max_archive_size": 1098437885952,
-      "not_taken": [],
-      "entries_one_bucket_on": 65
+      "header_u64": 1098437885952,
+      "entries_from_previous_bucket": 65,
+      "entries_out_of_place": 0,
+      "not_taken": []
     },
     {
       "bucket": 5,
@@ -93,9 +100,10 @@
       "header_hash": 2673576580,
       "extra_bytes": 0,
       "entries_hash": 2242266952,
-      "max_archive_size": 1098437885952,
-      "not_taken": [],
-      "entries_one_bucket_on": 65
+      "header_u64": 1098437885952,
+      "entries_from_previous_bucket": 65,
+      "entries_out_of_place": 0,
+      "not_taken": []
     },
     {
       "bucket": 6,
@@ -106,9 +114,10 @@
       "header_hash": 829643301,
       "extra_bytes": 0,
       "entries_hash": 3455887017,
-      "max_archive_size": 1098437885952,
-      "not_taken": [],
-      "entries_one_bucket_on": 65
+      "header_u64": 1098437885952,
+      "entries_from_previous_bucket": 65,
+      "entries_out_of_place": 0,
+      "not_taken": []
     },
     {
       "bucket": 7,
@@ -119,9 +128,10 @@
       "header_hash": 1490842185,
       "extra_bytes": 0,
       "entries_hash": 1865467053,
-      "max_archive_size": 1098437885952,
-      "not_taken": [],
-      "entries_one_bucket_on": 65
+      "header_u64": 1098437885952,
+      "entries_from_previous_bucket": 65,
+      "entries_out_of_place": 0,
+      "not_taken": []
     },
     {
       "bucket": 8,
@@ -132,9 +142,10 @@
       "header_hash": 2118043058,
       "extra_bytes": 0,
       "entries_hash": 2556766127,
-      "max_archive_size": 1098437885952,
-      "not_taken": [],
-      "entries_one_bucket_on": 65
+      "header_u64": 1098437885952,
+      "entries_from_previous_bucket": 65,
+      "entries_out_of_place": 0,
+      "not_taken": []
     },
     {
       "bucket": 9,
@@ -145,9 +156,10 @@
       "header_hash": 1779091025,
       "extra_bytes": 0,
       "entries_hash": 1688604668,
-      "max_archive_size": 1098437885952,
-      "not_taken": [],
-      "entries_one_bucket_on": 65
+      "header_u64": 1098437885952,
+      "entries_from_previous_bucket": 65,
+      "entries_out_of_place": 0,
+      "not_taken": []
     },
     {
       "bucket": 10,
@@ -158,9 +170,10 @@
       "header_hash": 4160003988,
       "extra_bytes": 0,
       "entries_hash": 2185357153,
-      "max_archive_size": 1098437885952,
-      "not_taken": [],
-      "entries_one_bucket_on": 65
+      "header_u64": 1098437885952,
+      "entries_from_previous_bucket": 65,
+      "entries_out_of_place": 0,
+      "not_taken": []
     },
     {
       "bucket": 11,
@@ -171,9 +184,10 @@
       "header_hash": 2366275691,
       "extra_bytes": 0,
       "entries_hash": 3802092568,
-      "max_archive_size": 1098437885952,
-      "not_taken": [],
-      "entries_one_bucket_on": 65
+      "header_u64": 1098437885952,
+      "entries_from_previous_bucket": 65,
+      "entries_out_of_place": 0,
+      "not_taken": []
     },
     {
       "bucket": 12,
@@ -184,9 +198,10 @@
       "header_hash": 3644665935,
       "extra_bytes": 0,
       "entries_hash": 3982600482,
-      "max_archive_size": 1098437885952,
-      "not_taken": [],
-      "entries_one_bucket_on": 65
+      "header_u64": 1098437885952,
+      "entries_from_previous_bucket": 65,
+      "entries_out_of_place": 0,
+      "not_taken": []
     },
     {
       "bucket": 13,
@@ -197,9 +212,10 @@
       "header_hash": 589147616,
       "extra_bytes": 0,
       "entries_hash": 647267064,
-      "max_archive_size": 1098437885952,
-      "not_taken": [],
-      "entries_one_bucket_on": 65
+      "header_u64": 1098437885952,
+      "entries_from_previous_bucket": 65,
+      "entries_out_of_place": 0,
+      "not_taken": []
     },
     {
       "bucket": 14,
@@ -210,9 +226,10 @@
       "header_hash": 2125269784,
       "extra_bytes": 0,
       "entries_hash": 519571993,
-      "max_archive_size": 1098437885952,
-      "not_taken": [],
-      "entries_one_bucket_on": 65
+      "header_u64": 1098437885952,
+      "entries_from_previous_bucket": 65,
+      "entries_out_of_place": 0,
+      "not_taken": []
     },
     {
       "bucket": 15,
@@ -223,9 +240,10 @@
       "header_hash": 238716241,
       "extra_bytes": 0,
       "entries_hash": 999666661,
-      "max_archive_size": 1098437885952,
-      "not_taken": [],
-      "entries_one_bucket_on": 65
+      "header_u64": 1098437885952,
+      "entries_from_previous_bucket": 65,
+      "entries_out_of_place": 0,
+      "not_taken": []
     }
   ],
   "key_rows": [

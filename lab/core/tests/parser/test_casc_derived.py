@@ -45,6 +45,7 @@ def test_sixteen_buckets_one_version_each_and_the_counts_add_up() -> None:
     assert [v["bucket"] for v in versions] == list(range(casc.BUCKETS))
     assert sum(v["entries"] for v in versions) == FACTS["entry_count"] == 1_042_994
     assert FACTS["newest_taken"] == [] and all(v["not_taken"] == [] for v in versions)
+    assert FACTS["missing_buckets"] == [] and FACTS["skipped_files"] == []
     for v in versions:
         assert v["file"] == f"{v['bucket']:02x}{v['version']:08x}.idx"
 
@@ -52,17 +53,16 @@ def test_sixteen_buckets_one_version_each_and_the_counts_add_up() -> None:
 @pytest.mark.parametrize("bucket", range(16))
 def test_the_header_hash_the_agent_stored_is_hashlittle_of_the_header(bucket: int) -> None:
     """Version 7, the bucket, the extra byte, the spec 4/5/9/30 and the
-    maximum archive size, as the reader lays them out, hash to what the file
-    on disk stored."""
+    header's last u64 (1023 x 2**30 here; its meaning is [verify]), as the
+    reader lays them out, hash to what the file on disk stored."""
     v = FACTS["versions"][bucket]
     assert v["header_size"] == 16
-    header = struct.pack(
-        "<HBBBBBBQ", 7, bucket, v["extra_bytes"], 4, 5, 9, 30, v["max_archive_size"]
-    )
+    header = struct.pack("<HBBBBBBQ", 7, bucket, v["extra_bytes"], 4, 5, 9, 30, v["header_u64"])
     assert casc.hashlittle(header) == v["header_hash"]
+    assert v["header_u64"] == 1023 << 30
 
 
-def test_every_content_key_was_in_the_bucket_its_bytes_give() -> None:
+def test_every_sampled_key_was_in_the_bucket_its_bytes_give() -> None:
     rows = [r for r in FACTS["key_rows"] if "whose key is not" not in r["why"]]
     assert len(rows) == 7
     for row in rows:
@@ -71,8 +71,10 @@ def test_every_content_key_was_in_the_bucket_its_bytes_give() -> None:
 
 def test_the_shifted_entries_sit_one_bucket_on() -> None:
     """65 entries in each file have a key whose bucket is the one before
-    the file's (segment headers by their look, **[verify]**)."""
-    assert all(v["entries_one_bucket_on"] == 65 for v in FACTS["versions"])
+    the file's (segment headers by their look, **[verify]**); no other entry
+    is outside its key's bucket."""
+    assert all(v["entries_from_previous_bucket"] == 65 for v in FACTS["versions"])
+    assert all(v["entries_out_of_place"] == 0 for v in FACTS["versions"])
     (row,) = [r for r in FACTS["key_rows"] if "whose key is not" in r["why"]]
     key = bytes.fromhex(row["key"])
     assert (casc.bucket_of(key) + 1) % casc.BUCKETS == row["file_bucket"]
@@ -83,7 +85,7 @@ def test_the_shifted_entries_sit_one_bucket_on() -> None:
 def test_the_encoding_files_entry_is_its_encoded_size_and_a_record_header() -> None:
     (row,) = [r for r in FACTS["key_rows"] if r["why"] == "the build config's encoding key"]
     assert row["key"] == FACTS["encoding_ekey"][: casc.KEY_BYTES * 2]
-    assert row["size"] == FACTS["encoding_size"][1] + RECORD_HEADER
+    assert row["size"] == FACTS["encoding_size"]["encoded"] + RECORD_HEADER
 
 
 def test_every_key_row_fits_the_entry_fields() -> None:

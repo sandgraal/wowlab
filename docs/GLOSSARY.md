@@ -130,6 +130,14 @@ Anything weekly is anchored to the character's region, never to the local machin
 
 **CASC** — the content-addressed archive format of `Data/`. Files are addressed by content hash and by numeric *FileDataID*; names come from a community-maintained *listfile*, which has gaps. Some content is encrypted until Blizzard releases a key.
 
+**Content key (CKey)** — the MD5 of a file's decoded bytes. It names *what* a file is, whatever its compression. The root file maps a file data id to a content key, and the content key is how a read is checked (a decoded file whose MD5 is not its content key is wrong). It is not where the file is.
+
+**Encoding key (EKey)** — the MD5 of a file's *stored* form (its BLTE, compressed and perhaps encrypted). It names *how* the file is kept. One content key may have several encoding keys (an encrypted and a plain copy, for one); the encoding file maps one to the other. The local index (`Data/data/*.idx`) holds only the **first nine bytes** of an encoding key, never a content key, so a lookup there takes an encoding key (`docs/LAB_FORMATS.md` §10).
+
+**Bucket (CASC index)** — one of the sixteen `.idx` files a key's entry is filed in, chosen from the key's first nine bytes (XORed together, then the two nibbles of that XORed). Each bucket has its own versioned file (`<bucket:2><version:8>.idx`); the newest version is the one read (**[verify]**). The archives' own record headers are filed one bucket on from their key's (`docs/LAB_FORMATS.md` §10, amendment of 2026-10-19). Not related to any game term.
+
+**Build config** — the `key = value` text file `Data/config/<k[0:2]>/<k[2:4]>/<k>`, named by its own MD5 (the `Build Key` cell of the product's `.build.info` row). It names the build's root and encoding files and more. Per product; the rest of `Data/` is shared. Written by the Battle.net app, never edited (L7).
+
 **DB2** — the client's static data tables (items, spells, customization options, maps, …), one schema per build. Community definitions (WoWDBDefs) give the columns names.
 
 **Hotfix cache** — `Cache/ADB/<locale>/DBCache.bin`: row-level corrections to DB2 tables pushed by the server at login. Exports of DB2 tables do not include them.
