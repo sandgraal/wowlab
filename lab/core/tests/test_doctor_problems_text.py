@@ -29,7 +29,7 @@ from test_not_taken import (
     userdata,  # noqa: F401  (autouse: the store lives in tmp_path)
 )
 
-from wowlab_core import install
+from wowlab_core import firstrun, install, longpath
 from wowlab_core.install import NotTaken
 
 
@@ -181,14 +181,15 @@ def _under_the_flavor_list(text: str, line: str) -> None:
             "not_checked",
             "not taken as a flavor folder (it could not be checked: refused)",
             f"{EMPTY} could not be read as a flavor (it could not be checked: refused), so "
-            "nothing in it is snapshotted; check that you can open it, then run wowlab "
-            "doctor again.",
+            "nothing in it is snapshotted; check that you can open it, run wowlab doctor "
+            f"again, and once it is listed as a flavor: wowlab snap create --flavor {EMPTY}",
         ),
         (
             "flavor_info_changed",
             install.NOT_A_FLAVOR_CHANGED,
             f"{EMPTY} could not be read as a flavor (its .flavor.info changed as it was "
-            "read), so nothing in it is snapshotted; run wowlab doctor again.",
+            "read), so nothing in it is snapshotted; run wowlab doctor again, and once it "
+            f"is listed as a flavor: wowlab snap create --flavor {EMPTY}",
         ),
     ],
     ids=["not-checked-constructed", "flavor-info-changed-constructed"],
@@ -208,26 +209,50 @@ def test_a_first_run_names_a_folder_it_could_not_read_beside_a_real_flavor(
     _under_the_flavor_list(text, _link_line(target).removesuffix("\n"))
 
 
-def test_a_link_whose_target_cannot_be_read_says_how_to_find_it_constructed(
+_UNKNOWN_LINK = (
+    f"{LINKED} is a link (where it points is unknown), not followed, so its WTF (settings "
+    "and SavedVariables), Interface and Fonts are not snapshotted: "
+    f"{install.NOT_TAKEN_LINK}. Back up the folder it points to yourself."
+)
+_FIND_HINT = (
+    " To see where it points: `dir /AL` in the folder that holds it shows a junction's or "
+    "symbolic link's target; a link made in WSL shows its target with `ls -l` inside WSL."
+)
+
+
+def _unknown_link_entry() -> NotTaken:
+    note = f"link (where it points is unknown), not followed; {install.NOT_A_FLAVOR_LINK}"
+    return NotTaken(name=LINKED, reason="link", target=None, note=note)
+
+
+def test_a_link_whose_target_cannot_be_read_constructed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A WCI link or a WSL symlink: `readlink` cannot read it, so the line
-    says where to look. The JSON names it in `not_taken`, not in the first
-    run's `not_snapshotted`, which lists flavor folders only."""
+    """A WCI link or a WSL symlink: `readlink` cannot read it. The hint of
+    where to look is given on Windows only, where such links exist. The JSON
+    names the link in `not_taken`, not in the first run's `not_snapshotted`,
+    which lists flavor folders only."""
     root, _ = _install(tmp_path)
-    note = f"link (where it points is unknown), not followed; {install.NOT_A_FLAVOR_LINK}"
-    _stood(monkeypatch, root, LINKED, NotTaken(name=LINKED, reason="link", target=None, note=note))
+    _stood(monkeypatch, root, LINKED, _unknown_link_entry())
 
     text = _run("doctor", "--offline", "--root", str(root)).stdout
     data = json.loads(_run("doctor", "--offline", "--json", "--root", str(root)).stdout)
 
-    _under_the_flavor_list(
-        text,
-        f"{LINKED} is a link (where it points is unknown), not followed, so its WTF (settings "
-        "and SavedVariables), Interface and Fonts are not snapshotted: "
-        f"{install.NOT_TAKEN_LINK}. Back up the folder it points to yourself. To see where "
-        "it points: the folder's Properties in File Explorer, or `dir /AL` in the folder "
-        "that holds it.",
-    )
+    _under_the_flavor_list(text, _UNKNOWN_LINK + (_FIND_HINT if longpath.ON_WINDOWS else ""))
     assert data["first_run"]["not_snapshotted"] == [FLAVOR]  # no snapshot taken; no link
     assert [n["name"] for n in data["not_taken"]] == [LINKED]
+
+
+@pytest.mark.parametrize("windows", [True, False], ids=["windows", "elsewhere"])
+def test_the_hint_for_an_unreadable_link_is_given_on_windows_only_constructed(
+    monkeypatch: pytest.MonkeyPatch, windows: bool
+) -> None:
+    """The line alone, with the platform stood in: patching `ON_WINDOWS` for a
+    whole `doctor` run would change how every path is spelled."""
+    monkeypatch.setattr(longpath, "ON_WINDOWS", windows)
+    readable = NotTaken(name=LINKED, reason="link", target="D:\\Games\\retail", note="")
+
+    got = firstrun._link_line(_unknown_link_entry())
+
+    assert got == _UNKNOWN_LINK + (_FIND_HINT if windows else "")
+    assert "To see where it points" not in firstrun._link_line(readable)

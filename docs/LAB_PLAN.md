@@ -306,11 +306,15 @@ run gives it ("<name> is a link to <target>, not followed, so its WTF
 Back up the folder it points to yourself."); for `not_checked` and
 `flavor_info_changed`, "<name> could not be read as a flavor (<why>), so
 nothing in it is snapshotted; " and what to do ("check that you can open
-it, then run wowlab doctor again", or "run wowlab doctor again"). A folder
-with no `.flavor.info` is not repeated there. A link whose target cannot be
-read (a WCI link or a WSL symlink) adds, in both first-run cases, "To see
-where it points: the folder's Properties in File Explorer, or `dir /AL` in
-the folder that holds it." `FirstRunReport.not_snapshotted` stays flavor
+it, run wowlab doctor again", or "run wowlab doctor again"), then ", and
+once it is listed as a flavor: wowlab snap create --flavor <name>" (once
+`doctor --yes` has snapshotted the readable flavor, the next `doctor` is not
+a first run and neither offers a snapshot nor says this folder has none). A
+folder with no `.flavor.info` is not repeated there. On Windows, a link
+whose target cannot be read (a WCI link or a WSL symlink) adds, in both
+first-run cases, "To see where it points: `dir /AL` in the folder that
+holds it shows a junction's or symbolic link's target; a link made in WSL
+shows its target with `ls -l` inside WSL." `FirstRunReport.not_snapshotted` stays flavor
 folders only; `--json` readers find links and the other folders in
 `doctor`'s `not_taken`.
 

@@ -370,11 +370,12 @@ def _sync_lines(scan: FlavorScan, wtf_is_link: bool) -> list[str]:
     return lines
 
 
-# Said, for a link whose target cannot be read (a WCI link or a WSL symlink
-# on Windows: `os.readlink` reads neither), how the player can find it.
+# Said on Windows, for a link whose target cannot be read (a WCI link or a
+# WSL symlink: `os.readlink` reads neither), where the player may find it.
+# Hedged: `dir /AL` shows a target only for a junction or a symbolic link.
 _FIND_TARGET = (
-    " To see where it points: the folder's Properties in File Explorer, or "
-    "`dir /AL` in the folder that holds it."
+    " To see where it points: `dir /AL` in the folder that holds it shows a junction's "
+    "or symbolic link's target; a link made in WSL shows its target with `ls -l` inside WSL."
 )
 
 
@@ -386,7 +387,7 @@ def _link_line(entry: install.NotTaken) -> str:
         f"{entry.name} is a {install.not_taken_why(entry)}, so its WTF (settings and "
         "SavedVariables), Interface and Fonts are not snapshotted: "
         f"{install.NOT_TAKEN_LINK}. Back up the folder it points to yourself."
-        + (_FIND_TARGET if entry.target is None else "")
+        + (_FIND_TARGET if entry.target is None and longpath.ON_WINDOWS else "")
     )
 
 
@@ -399,10 +400,13 @@ def _unread_line(entry: install.NotTaken) -> str:
         remedy = "run wowlab doctor again"
     else:
         why = install.not_taken_why(entry)
-        remedy = "check that you can open it, then run wowlab doctor again"
+        remedy = "check that you can open it, run wowlab doctor again"
+    # A later `doctor` is no longer a first run once a snapshot is taken, so
+    # it neither offers one nor says this folder has none: name the command.
     return (
         f"{entry.name} could not be read as a flavor ({why}), so nothing in it is "
-        f"snapshotted; {remedy}."
+        f"snapshotted; {remedy}, and once it is listed as a flavor: wowlab snap create "
+        f"--flavor {entry.name}"
     )
 
 
