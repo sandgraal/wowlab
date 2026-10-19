@@ -4163,9 +4163,7 @@ is out of both waves.
 
 **What it writes:** nothing inside the install (L1). Decoded files go under
 the data directory, `casc/<product>-<build>/`, keyed by product and build
-(two products may share a version string) and never overwritten (L5), as
-`wowlab casc cat --fdid N --out` or the cache the later modules share; both
-parts are discovered strings checked as safe folder names. One subfolder is
+(two products may share a version string) and never overwritten (L5): `wowlab casc cat --fdid N` writes `files/<fdid>-<ckey8>.bin` there by default (the content key's first eight hex digits in the name, so a patched file lands beside the old one; a repeat with the same key writes nothing and says so), `--out` may name another path inside the same folder or stdout, and the later modules share the same cache; both parts of the folder name are discovered strings checked as safe folder names. One subfolder is
 exempt from never-overwrite: `characters/`, which holds derived output
 that `char model` re-makes on request (§17.6).
 
