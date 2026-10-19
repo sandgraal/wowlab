@@ -1145,7 +1145,7 @@ The confirmed run must apply the plan that was shown (§16.1, "applies the plan 
 
 ---
 
-## [ ] M14-04 — `looks page` embedded in the UI
+## [x] M14-04 — `looks page` embedded in the UI
 **Size:** S · **Depends on:** M14-02
 
 ADR-0029 "Richer views … are embedded", by the route §16.3 gives. A Looks entry in the UI runs `looks page` (its default output under the data directory's `pages/`; `--out` stays refused, owner ruling 2026-10-15), then reads the written file through a token-checked API route whose path the server builds under `pages/` itself, never from a request parameter, and shows the text in an `iframe` with `sandbox="allow-scripts"` (no `allow-same-origin`) and `srcdoc`. The `srcdoc` document inherits the UI's CSP, so the UI's `script-src` and `style-src` gain the hashes of `lookspage._SCRIPT` and `lookspage._STYLE`, computed from the templates at start the way `lookspage` computes them for its own page; nothing else is added, no response header is loosened, `frame-ancestors 'none'` stays on every response, and the token still never leaves the opened URL. Whether a `srcdoc` frame loads under the UI's `default-src 'none'` with no `frame-src` is checked once by the implementer in a real browser (Chromium and one other), with the result pasted in the PR body; the repository's tests grade the markup and the CSP, not the browser (ADR-0027). If the frame is blocked, or the security review finds the route unsound, the fallback is the file's path with a copy button, as the CLI prints it, and the owner is asked for a ruling; the ticket does not invent a third route.
