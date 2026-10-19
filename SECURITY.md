@@ -58,8 +58,14 @@ not a pseudonym. If you find one of these in a fixture, do this:
   input automation (ADR-0023). `psutil` lists processes and nothing else.
   Code that crosses that line is a vulnerability, whatever its intent.
 - **Nothing leaves the machine.** The only network traffic is downloading
-  public game tables, and a link you click opens in your own browser.
-  Anything that transmits data read from an install is a vulnerability.
+  public game tables, and a link you click opens in your own browser,
+  carrying your character's race, body type, class, level and equipped item
+  and bonus ids to that site. Anything that transmits data read from an
+  install is a vulnerability, with one exception: that link. The Character
+  tab's dressing-room address (ADR-0019 and ADR-0031, amendments of
+  2026-10-19) holds those public game ids and nothing else (no name, realm,
+  account, path or token); wowlab never requests it, and only the player's
+  click sends it, from the player's own browser.
 - **Secrets.** The project needs no credentials. gitleaks runs on every
   commit and on full history in CI; push protection is enabled.
 - **CI.** Workflow permissions are least-privilege; secrets are unavailable

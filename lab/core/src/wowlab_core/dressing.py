@@ -33,7 +33,7 @@ from collections.abc import Mapping, Sequence
 from importlib import resources
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from wowlab_core import gear, labaddon
 
@@ -61,6 +61,10 @@ _PATH = re.compile(r"(?:/[a-z0-9-]{1,64}){1,4}")
 _FIELD = re.compile(r"([a-z_]{1,32})(?:\.([0-9]{1,2}))?")
 _HASH = re.compile(r"[0-9A-Za-z]{1,4096}")
 DELIMITER = "|"
+# Bounds on the template, so a damaged file is refused before it is expanded
+# (the shipped one has 78 entries, one a group of 4 repeated 50 times, 277 in all).
+_MAX_REPEAT = 1000
+_MAX_SEGMENTS = 1024
 
 
 class _Model(BaseModel):
@@ -121,8 +125,8 @@ class Slot(_Model):
 
 
 class Group(_Model):
-    repeat: int
-    segments: list[str]
+    repeat: int = Field(ge=1, le=_MAX_REPEAT)
+    segments: list[str] = Field(min_length=1, max_length=_MAX_SEGMENTS)
 
 
 class Codec(_Model):
@@ -133,8 +137,8 @@ class Codec(_Model):
     delimiter: str
     delimiter_run: str
     trim_trailing_zeros: bool
-    template: list[str]
-    segments: int
+    template: list[str] = Field(min_length=1, max_length=_MAX_SEGMENTS)
+    segments: int = Field(ge=1, le=_MAX_SEGMENTS * 10)
     key: list[str]
     long: list[str]
     groups: dict[str, Group]
@@ -153,6 +157,14 @@ class Codec(_Model):
             raise ValueError("the three markers must differ")
         if set(self.key) & set(self.long):
             raise ValueError("a field cannot be both key and long")
+        # The length first, from the counts, so a large repeat is refused
+        # before anything is expanded.
+        length = sum(
+            len(self.groups[t].segments) * self.groups[t].repeat if t in self.groups else 1
+            for t in self.template
+        )
+        if length != self.segments:
+            raise ValueError(f"the template expands to {length} segments, not {self.segments}")
         expanded = _expand(self)
         if len(expanded) != self.segments:
             raise ValueError(
@@ -245,14 +257,30 @@ def _kind(codec: Codec, segment: str) -> str:
 
 def parse_sites(text: str) -> Sites:
     """The sites file from TOML text. Raises `SitesError`."""
+    if len(text) > _SIZE_LIMIT:
+        raise SitesError(f"larger than {_SIZE_LIMIT} characters")
     try:
         data: dict[str, Any] = tomllib.loads(text)
-        for band in data.get("band", []):
+        bands = data.get("band", [])
+        if not isinstance(bands, list):
+            raise SitesError("[[band]] must be an array of tables")
+        for band in bands:
             if isinstance(band, dict) and "from" in band:
                 band["from_"] = band.pop("from")
         return Sites.model_validate(data)
-    except (tomllib.TOMLDecodeError, ValidationError, ValueError) as exc:
-        raise SitesError(str(exc)) from exc
+    except SitesError:
+        raise
+    # RecursionError: tomllib on deeply nested arrays; MemoryError and
+    # TypeError: anything else a damaged file reaches. None escapes `build`.
+    except (
+        tomllib.TOMLDecodeError,
+        ValidationError,
+        ValueError,
+        TypeError,
+        RecursionError,
+        MemoryError,
+    ) as exc:
+        raise SitesError(f"{type(exc).__name__}: {exc}"[:500]) from exc
 
 
 @functools.cache

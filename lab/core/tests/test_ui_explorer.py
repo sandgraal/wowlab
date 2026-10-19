@@ -397,7 +397,7 @@ _HTML_SINKS = [
 LOOKS_SRCDOC = "frame.srcdoc = read.page;"
 # The one URL sink (M15-02): the dressing-room link's href, set only to an
 # address that parsed, is https: and has exactly DRESSING_ORIGIN as its
-# origin (test_ui_character.py drives it with hostile addresses).
+# origin (test_ui_dressing.py drives it with hostile addresses).
 DRESSING_HREF = "link.href = checked;"
 
 

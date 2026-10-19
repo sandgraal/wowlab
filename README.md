@@ -25,7 +25,7 @@
 
 - **Read-only by default.** Looking at your install never writes to it: no temp, cache or lock file.
 - **Every command that changes files in your install asks first** (unless you pass `--yes`), refuses while the game is running, and goes through one write gate that takes a snapshot before it writes. `wowlab undo` reverses the change.
-- **Nothing is uploaded.** The only network traffic is to [wago.tools](https://wago.tools), for public game data, and a link you click opens in your own browser. `wowlab doctor` downloads its list of game versions (`wowlab doctor --offline` skips that). `db2` and `looks` download game tables, sending your game's version number to ask for the matching ones; they have no `--offline`. Nothing else from your install is sent, and commands that use no game data make no request.
+- **Nothing is uploaded.** The only network traffic is to [wago.tools](https://wago.tools), for public game data, and a link you click opens in your own browser, carrying your character's race, body type, class, level and equipped item and bonus ids to that site. `wowlab doctor` downloads its list of game versions (`wowlab doctor --offline` skips that). `db2` and `looks` download game tables, sending your game's version number to ask for the matching ones; they have no `--offline`. Nothing else from your install is sent, and commands that use no game data make no request.
 - **It never touches the game itself:** no game memory, no `Data/` or program files, no key presses. Addon data is read as data, never run.
 
 **📦 Install** (you need [uv](https://docs.astral.sh/uv/); it brings Python 3.12):
@@ -133,7 +133,7 @@ It runs every wowlab command except `ui` itself, `log tail --follow` and `looks 
 | | Feature | Command |
 |---|---|---|
 | 🧩 | **The lab-addon.** wowlab's own small in-game addon records a character's gear, talents, customization, collections, currencies and professions (never a name) when you log out or `/reload`, and wowlab reads them back offline. | `wowlab addon install lab` · `wowlab char show` |
-| 🧙 | **The Character tab** 🆕. Pick a character in the browser view and see its gear with item-quality colours, every key and what it does, and every macro with the checker's findings. Read-only: it never changes a file. | `wowlab ui` |
+| 🧙 | **The Character tab** 🆕. Pick a character in the browser view and see its gear with item-quality colours, every key and what it does, and every macro with the checker's findings, and a **See it dressed** link that opens an outside dressing room in your own browser. Read-only: it never changes a file. | `wowlab ui` |
 | 🎒 | **Gear, keys and macros from the command line** 🆕. The same three views as text or JSON. | `wowlab char gear` · `char binds` · `char macros` |
 | 🧹 | **Macro checker.** Broken spell names, overlong and duplicate macros, macros on no action bar. | `wowlab macros check` |
 | 🎹 | **Keybind coach.** From your own combat log: spells cast often on awkward keys, spells cast with no bind, and binds never used. Read-only, with an editable "awkward key" table. | `wowlab binds coach` |
@@ -180,7 +180,7 @@ Snapshot store: ~/Library/Application Support/wowlab/store (not created yet)
 | 🚪 | **One door for every change.** | Anything wowlab writes goes through a single *write gate*. The gate refuses while the game is running, takes a snapshot first, records what it did, and replaces files atomically. There is no "force" switch that skips any of that. |
 | 🚫 | **No Lua is ever run.** | Addon data is read as data by a strict parser. Functions or code in a saved file are refused, never executed. |
 | 🧱 | **Nothing is lost.** | The parsers keep every byte they don't understand. An unedited file comes back byte for byte. |
-| 🏠 | **Stays on your machine.** | No accounts, no server, no uploads. The only network access is to wago.tools, for public game data: the version list `wowlab doctor` checks (`--offline` skips it) and the game tables `db2` and `looks` download, which send your game's version number, and a link you click opens in your own browser. |
+| 🏠 | **Stays on your machine.** | No accounts, no server, no uploads. The only network access is to wago.tools, for public game data: the version list `wowlab doctor` checks (`--offline` skips it) and the game tables `db2` and `looks` download, which send your game's version number, and a link you click opens in your own browser, carrying your character's race, body type, class, level and equipped item and bonus ids to that site. |
 | ⛔ | **Clearly out of bounds, permanently.** | No memory reading, no injection, no packet tampering, no input automation, no touching game `Data/` or executables, no bypassing integrity checks ([ADR-0023](docs/DECISIONS.md)). wowlab only changes what the game itself treats as your settings. |
 
 ## ⚙️ How it works
@@ -235,13 +235,13 @@ Thirty days after the first release, the owner checks GitHub's own counts (no te
 
 ## 🔮 What's planned next
 
-These are specified or ticketed. Each is built only after the owner's go-ahead, and none of them is on `main` yet.
+These are specified or ticketed. Each is built only after the owner's go-ahead, and none of them is on `main` yet, except the first step below.
 
 ### 🎭 See your character in its gear
 
 The owner's ask: *see the character model with its gear, like the character screen in the game.* It comes in two steps.
 
-- **The quick step: a "See it dressed" button.** The addon is to record your race, body type and class, and the Character tab is to gain a button that opens an outside dressing room in your own browser, built from the public item ids already in your record. wowlab itself makes no request, and the link carries no name, realm or account. It waits on an owner ruling that a link you click may open a third-party page.
+- **The quick step, on `main`: a "See it dressed" button.** The addon records your race, body type and class, and the Character tab has a button under the gear table that opens Wowhead's dressing room in your own browser, at an address built from that and the item and bonus ids already in your record (`wowlab char gear --json` gives it as `dressing`). wowlab itself makes no request; the link carries your character's race, body type, class, level and equipped item and bonus ids, never a name, realm or account. When there is no address (no identity in the record, a game version the room is not known for, nothing the room can place), the tab lists the item ids with a Copy button instead. Whether the room draws a Forever character's items is still to be tried.
 - **The full step: the character studio.** Your character drawn in the browser from your own game files. Wave 6 is the data half, ticketed as M15-03 onward: reading the install's game archives with a pure-Python reader (read-only; `Data/` is never edited, [ADR-0033](docs/DECISIONS.md)), decoding models, skins and textures, joining the game tables that turn a character's record into its model, and a command that extracts them to wowlab's own data folder. Wave 7 is planned as the viewer in the Character tab, drawn by a pinned copy of three.js that ships inside the package, so the page makes no request to a CDN ([ADR-0034](docs/DECISIONS.md)). None of this is built yet, so today's promise still holds: wowlab does not read `Data/`. The README's wording changes when the first reader ships.
 
 ### 🛠️ Fix your keys and macros, with help

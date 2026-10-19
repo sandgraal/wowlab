@@ -93,15 +93,10 @@ the test that uses them, and are labelled `constructed` (invariant L8).
   It is not an install file: `tests/parser/test_layout_fixtures.py` leaves
   it out of the captured tree, so a run folder holding only derived
   fixtures is not a files-only run. Its `scrub` cell says what the record
-  leaves out.
-- **Derived fixtures** (2026-10-19). A record of what was read or seen,
-  never the bytes of the thing itself, sits in its build's run folder under
-  `derived/` and its kind ends in `-derived`. It is not an install file:
-  `tests/parser/test_layout_fixtures.py` leaves it out of the captured tree.
-  Another is `macos-70450/derived/dressing-room.json` (M15-02): two
-  outside dressing-room addresses the site's own encoder made for this
-  run's characters, with the inputs they were made from and what the site
-  showed when it opened them.
+  leaves out. Beside `casc-index.json`, `macos-70450/derived/dressing-room.json`
+  (M15-02) records two outside dressing-room addresses the site's own
+  encoder made for this run's characters, the inputs they were made from
+  and what the site showed when it opened them.
 
 Runbook for the owner's capture: `docs/handoffs/M10-03.md`.
 

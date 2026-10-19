@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import random
 import re
+import time
 import tomllib
 from importlib import resources
 from pathlib import Path
@@ -378,6 +379,41 @@ def _broken(edit: str, to: str) -> str:
 def test_a_broken_sites_file_is_refused_constructed(edit: str, to: str) -> None:
     with pytest.raises(dressing.SitesError):
         dressing.parse_sites(_broken(edit, to))
+
+
+# Damaged files that reached past the validation (security review of M15-02):
+# each must be refused as `SitesError`, quickly, and so cannot escape `build`.
+_DAMAGED = [
+    ("band not an array", "[[band]]\nfrom", "[unused]\nfrom"),
+    ("arrays 20,000 deep", "[site]", "deep = " + "[" * 20000 + "]" * 20000 + "\n[site]"),
+    ("repeat 10**13", "repeat = 50", "repeat = 10000000000000"),
+    ("repeat 10**8", "repeat = 50", "repeat = 100000000"),
+    ("repeat 0", "repeat = 50", "repeat = 0"),
+]
+
+
+@pytest.mark.parametrize(
+    ("edit", "to"),
+    [case[1:] for case in _DAMAGED],
+    ids=[f"constructed: {case[0]}" for case in _DAMAGED],
+)
+def test_a_damaged_sites_file_is_refused_quickly_constructed(
+    edit: str, to: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    text = _broken(edit, to)
+    if to.startswith("[unused]"):
+        text = "band = 5\n" + text  # a top-level key, before the first table
+    assert len(text.encode("utf-8")) < 64 * 1024
+    started = time.monotonic()
+    with pytest.raises(dressing.SitesError):
+        dressing.parse_sites(text)
+    assert time.monotonic() - started < 2.0
+    # And `build` turns the same damage into the fallback.
+    monkeypatch.setattr(dressing, "load_sites", lambda: dressing.parse_sites(text))
+    identity, slots, level = _real()
+    built = dressing.build(identity, slots, version=VERSION, level=level)
+    assert isinstance(built, dressing.DressingItems)
+    assert "cannot be used" in built.note
 
 
 def test_the_shipped_file_parses_and_lists_one_room_per_label() -> None:
