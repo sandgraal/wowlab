@@ -5,14 +5,11 @@ description: Verify the current wowlab branch (lint, the tests the diff touches,
 
 Ship the current branch.
 
-1. Verify as `.claude/agents/implementer.md` ("Verify before reporting")
-   says, and show the real tail of each output: `make lint` (and `make
-   lint-lua` for `lab/addon`), the tests the diff touches, and `make
-   test-fast` once it exists. Run the full `make ci` instead when the diff
-   touches `guard.py`, `luadata.py`, a format parser, `conftest.py`, the root
-   `pyproject.toml`, `Makefile`, `uv.lock`, `tests/harness`, `.claude/hooks` or
-   `.github/`. The PR's CI is the proof of the full suite. Any failure stops
-   here; report it instead of shipping.
+1. Verify exactly as `.claude/agents/implementer.md` ("Verify before
+   reporting") says: its lists decide what runs, from `make lint` and the
+   tests the diff touches up to the full `make ci` for the files it names.
+   Show the real tail of each output. The PR's CI is the proof of the full
+   suite. Any failure stops here; report it instead of shipping.
 2. Run the ticket's own acceptance command(s) (from `docs/BACKLOG.md`) and
    keep the output for the PR body.
 3. Commit as `type(scope): summary (M10-04)`. The lint gate and gitleaks run

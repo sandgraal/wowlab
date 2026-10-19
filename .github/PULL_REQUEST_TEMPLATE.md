@@ -6,7 +6,7 @@
 
 <!-- One line per criterion from docs/BACKLOG.md: criterion → command → result -->
 
-- [ ] CI green on this PR; local proof per `docs/AGENT_WORKFLOW.md` pasted (`make lint`, the tests the diff touches, `make test-fast` once it exists; `make ci` when the diff touches `guard.py`, `luadata.py`, a parser, `conftest.py`, `pyproject.toml`, `Makefile`, `uv.lock`, hooks or `.github/`)
+- [ ] CI green on this PR; local verification pasted as `.claude/agents/implementer.md` ("Verify before reporting") requires: lint, the tests the diff touches, `make test-fast` once it exists, and the full `make ci` for the files it names
 - [ ] Ticket acceptance command(s) run (paste output)
 - [ ] `luadata.py`, `guard.py` or another parser changed? `make test-parser` green and graders activated by marker deletion only
 - [ ] New external-format parsing? Real, scrubbed fixture with a provenance row
