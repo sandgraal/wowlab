@@ -61,6 +61,7 @@ __all__ = [
     "GET_RECORD",
     "NOT_IN_A_FILE_NOTE",
     "UNFOLLOWED_SLOTS",
+    "WHY_NOT_IN_A_FILE",
     "Agreement",
     "Holds",
     "KeyMap",
@@ -118,10 +119,12 @@ GET_RECORD = (
     "in on this character, then log out or /reload; schema 3 is needed"
 )
 CANNOT_PLACE = "cannot place: no action-bar record"
-NOT_IN_A_FILE_NOTE = (
-    "not in a bindings file: the file may hold only the changes from the client's defaults, "
-    "or may not have been rewritten since the key was set [verify]"
+# Why a key the record has may be in no file line, said once in the text form.
+WHY_NOT_IN_A_FILE = (
+    "the file may hold only the changes from the client's defaults, or may not have been "
+    "rewritten since the key was set [verify]"
 )
+NOT_IN_A_FILE_NOTE = f"not in a bindings file: {WHY_NOT_IN_A_FILE}"
 # What else shows a main-bar page than page 1 (`UNFOLLOWED_SLOTS`).
 _OTHER_PAGES = "paging, a form, stance or stealth, or a possess, override or vehicle bar [verify]"
 _PET = re.compile(r"BONUSACTIONBUTTON([1-9]|10)")
@@ -490,7 +493,12 @@ def join(
                 others = [(c, s) for c, s in file_keys.get(key, []) if c != command]
                 if others:
                     agreement = "record only"
-                    note = "; ".join(f"the {s} has {key} on {c}" for c, s in others)
+                    note = "; ".join(
+                        f"the {s} clears {key} ({_CLEARED})"
+                        if c == _CLEARED
+                        else f"the {s} has {key} on {c}"
+                        for c, s in others
+                    )
                 else:
                     agreement = "not in a file"
                     note = NOT_IN_A_FILE_NOTE

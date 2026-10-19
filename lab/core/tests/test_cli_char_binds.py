@@ -26,7 +26,7 @@ import platformdirs
 import pytest
 from typer.testing import CliRunner
 
-from wowlab_core import cli, install, keymap
+from wowlab_core import cli, install
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 CAPTURE = FIXTURES / "macos"
@@ -165,7 +165,9 @@ def test_char_binds_text_has_the_table_unreached_slots_and_counts_cross_capture(
         "(Racial, spell 7744)  (account file and record agree)"
     ) in lines
     assert (
-        f"  Only in the record, no file line for the key: {keymap.NOT_IN_A_FILE_NOTE}."
+        "  Only in the record, no file line for the key: the file may hold only the changes "
+        "from the client's defaults, or may not have been rewritten since the key was set "
+        "[verify]."
     ) in lines
     assert "Filled slots no key reaches on the page its bar shows by default: 11" in lines
     assert (

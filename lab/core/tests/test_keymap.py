@@ -226,6 +226,11 @@ def test_a_record_only_key_is_marked_and_not_chosen_constructed() -> None:
     three = row(km, "3", "ACTIONBUTTON3")
     assert (three.agreement, three.disagrees) == ("record only", True)
     assert three.note == "the account file has 3 on TOGGLEBACKPACK"
+    # A file line clearing key 2 is said as a clear, not as a command named NONE.
+    km = keymap.join_record(account=None, character=lines("2 NONE"), record=real_record())
+    two = row(km, "2", "ACTIONBUTTON2")
+    assert (two.agreement, two.disagrees) == ("record only", True)
+    assert two.note == "the character file clears 2 (NONE)"
 
 
 def test_a_key_on_a_paged_slot_constructed() -> None:

@@ -7943,7 +7943,7 @@ def _say_char_binds(report: CharBindsReport) -> None:
         elif k.note is not None and k.disagrees:
             _say(f"{pad}{k.note}")
     if generic:
-        _say(f"  Only in the record, no file line for the key: {keymap.NOT_IN_A_FILE_NOTE}.")
+        _say(f"  Only in the record, no file line for the key: {keymap.WHY_NOT_IN_A_FILE}.")
     if report.cannot_place is None:
         reached = [u for u in report.unreached_slots if not u.unfollowed_page]
         paged = [u for u in report.unreached_slots if u.unfollowed_page]
