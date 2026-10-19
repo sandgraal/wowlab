@@ -47,7 +47,7 @@ to add one.
 |---|---|---|---|---|---|
 | `.build.info` | Installed products, versions, build keys | Battle.net agent on install/patch | no | A (read) | `install` |
 | `.product.db`, `.patch.result`, `Launcher.db` | Agent state | Battle.net agent | no | — | none |
-| `Data/config/`, `Data/data/`, `Data/indices/` | CASC storage: build/CDN configs, archive blobs (`data.NNN`), index files (`*.idx`) | Agent; client streams into it | no | A (read, later wave) | `casc` (Wave 6, M15-03 to M15-05; read-only, ADR-0033); none before |
+| `Data/config/`, `Data/data/`, `Data/indices/` | CASC storage: build/CDN configs, archive blobs (`data.NNN`), index files (`*.idx`) | Agent; client streams into it | no | A (read, later wave) | none in Wave 1 |
 | `Data/`, anything under it not in the row above | Shared game data. Editing anything under `Data/` is out of scope permanently (LAB_PLAN L7) | Agent; client streams into it | no | — | none |
 | `World of Warcraft Launcher.exe` / `.app` | Launchers | Agent | no | — | none |
 | `.DS_Store`, `._*`, `Thumbs.db`, `desktop.ini` (anywhere) | Folder view metadata the operating system's file browser leaves behind, not the client's; `._*` are macOS AppleDouble files on volumes without extended attributes **[verify]**. `layout` lists them apart from everything else | Finder (macOS), Explorer (Windows) | no | — | none |
