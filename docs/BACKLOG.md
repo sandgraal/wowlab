@@ -1116,7 +1116,7 @@ ADR-0029 "Writes", built on the two `--yes` commands whose worst case is wowlab'
 
 ---
 
-## [ ] M14-03 — The confirm flow: the six install writes, and `--expect` on `undo` and `sv merge`
+## [x] M14-03 — The confirm flow: the six install writes, and `--expect` on `undo` and `sv merge`
 **Size:** M · **Depends on:** M14-02
 
 `snap restore`, `undo`, `profile apply`, `sv merge`, `addon install` and `addon remove` behind M14-02's mechanism. The set is derived from the Click tree at test time, not listed in code. The four that declare `--dry-run` use M14-02's first shape unchanged. `undo` and `sv merge` declare no `--dry-run` and confirm through `cli._confirm`, so this ticket adds §16.1's third shape: the plan run is the leaf with `--json`, no `--yes` and stdin closed; the CLI writes the text plan to stderr, `_confirm` gets no answer, and the run ends with `Nothing was changed.` and exit 1; the server recognises that ending by a constant the CLI exports (this ticket adds the constant beside `_confirm` and makes `_confirm` print it), and the plan shown is the stderr text before it. A refusal (exit 3, the client running or the store busy) is shown as the CLI prints it and offers no confirm. After the run the result shows the journal id and the `wowlab undo` hint. The exclusion list is then `ui` alone, the two refused parameters (`log tail --follow`, `looks page --out`) stay refused, and the reason string "confirm flow: M14" leaves the code.
