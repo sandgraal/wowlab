@@ -105,8 +105,8 @@ folder name as `wowlab char list` prints it.
    /dump MAX_ACCOUNT_MACROS, MAX_CHARACTER_MACROS
    ```
 
-   These are the client's own indices, which settle the numbering even if
-   the drag step below goes wrong.
+   These are the client's own indices. They settle which index each macro
+   has; the drag step shows whether a slot's id is that index.
 6. **Drag each onto an empty button of the main action bar** (the bottom
    bar, on its first page): `wowlab acct` on one, `zz wowlab one` on
    another, `aa wowlab two` on a third. Note the three button numbers,
@@ -207,7 +207,11 @@ Also say:
 It compares each button's id with the macro's place in the files. If the
 id on `wowlab acct`'s button is that macro's position in the account file,
 and the ids on the other two buttons are 120 plus each macro's position in
-the character file, the candidate numbering holds as `char macros` uses it. If the ids follow the
+the character file, the candidate numbering holds as `char macros` uses it.
+If you did step 1.5, it also compares the `/dump` indices with the file
+positions, and the button ids with the `/dump` indices; if `aa wowlab two`
+went to General because the character tab was full, it is checked against
+the account numbering instead. If the ids follow the
 macro window's order or the hex ids instead, the rule is that one. The
 result goes into `docs/LAB_FORMATS.md` §7 as a dated amendment, with the
 capture committed if you made one, and a ticket then builds the rule that
