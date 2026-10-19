@@ -733,10 +733,10 @@ def test_file_name_strings_with_lone_surrogates_survive_json_constructed() -> No
 
 @pytest.mark.skipif(sys.platform in ("darwin", "win32"), reason="needs byte file names")
 def test_undecodable_file_names_on_disk_constructed(tmp_path: Path) -> None:
-    _, flavor = _install(tmp_path, {f"{A}/SavedVariables/": b""})
+    _, flavor = _install(tmp_path, {f"{A_SHAPED}/SavedVariables/": b""})
     name = os.fsdecode(b"Caf\xe9.lua")  # a lone surrogate where the byte was
     try:
-        (flavor / A / "SavedVariables" / name).write_bytes(b"x")
+        (flavor / A_SHAPED / "SavedVariables" / name).write_bytes(b"x")
     except (OSError, UnicodeEncodeError) as exc:
         pytest.skip(f"file system refuses non-UTF-8 names: {exc}")
     inv = Layout(flavor).inventory()
