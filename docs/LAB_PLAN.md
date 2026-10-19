@@ -4015,6 +4015,8 @@ M14-01 ─┬─ M14-02 confirm (store) ─┬─ M14-03 confirm (installs) ─�
                                       └──────────────────────┴─────────┴─ M14-09 tab: keys, macros ─┴─ M14-10 review
 ```
 
+*Amended 2026-10-18 (owner: "want the gear view sooner"):* the UI queue is M14-02, M14-08, M14-03, M14-04, M14-09, so the Character tab's gear view lands before the install-write confirmations and the looks page; the dependency graph is unchanged.
+
 M14-02, M14-05 and M14-06 are independent and dispatch together. Every
 ticket that touches `ui/__init__.py` or the templates (M14-02, M14-03,
 M14-04, M14-08, M14-09) edits the same three files, which is the named

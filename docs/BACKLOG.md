@@ -907,7 +907,7 @@ Found in the security review of #257 (M13-49), pre-existing. `scripts/lab_captur
 
 ---
 
-## [ ] M13-56 — `doctor` prints its `problems` in text, and the first run names a linked flavor beside a real one
+## [x] M13-56 — `doctor` prints its `problems` in text, and the first run names a linked flavor beside a real one
 **Size:** XS · **Depends on:** M13-45
 
 Found in the domain review of #258 (M13-45), both pre-existing or outside that ticket's scope. (1) `doctor --json` carries `problems` (for example "<root> has no flavor folders"), but `_print_doctor` never prints them in text, so a run that skips the first run (`--redact`, or any run once a snapshot exists) exits 1 with no line saying why. Print each problem in text, and when the no-flavor problem is raised with `not_taken` entries, include their reasons in the string so text and `--json` agree. (2) The first run on an install with a real flavor beside a linked `_*_` folder says nothing about the link; M13-45 covers only the case where the link is the only flavor. Print the same "<name> is a link to <target>, not followed, so its WTF (settings and SavedVariables), Interface and Fonts are not snapshotted … Back up the folder it points to yourself" line under the flavor list in that case too. Labelled constructed tests for both; `doctor` text for an install with no problems and no links byte-identical to `main`.
@@ -988,7 +988,7 @@ Found 2026-10-18 in the security review of #277 (M13-53), pre-existing. `check_p
 ## [ ] M13-64 — `check_wiki` and `Player-<n>-<hex>` GUIDs
 **Size:** XS · **Depends on:** M13-53 · **owner** (a decision first)
 
-Found 2026-10-18 in the security review of #277 (M13-53). `check_wiki` has no matcher for `Player-<n>-<hex>` GUIDs: `[x](Player-1234-0ABCDEF0)` exits 1 and prints the GUID, the bare GUID as text passes, and `wiki_diagnose` does not redact it. The owner's own GUIDs are in ADR-0019's kept set but never reach the runner, and the scrubbed placeholder GUIDs in the repository would be false positives. The owner decides: either record in the `check_wiki` docstring and under ADR-0019 that the wiki gate does not match GUIDs, or add a GUID matcher that exempts the placeholder ranges. Then an implementer does the one chosen.
+Found 2026-10-18 in the security review of #277 (M13-53). `check_wiki` has no matcher for `Player-<n>-<hex>` GUIDs: `[x](Player-1234-0ABCDEF0)` exits 1 and prints the GUID, the bare GUID as text passes, and `wiki_diagnose` does not redact it. The owner's own GUIDs are in the set ADR-0019 keeps scrubbed but never reach the runner, and the scrubbed placeholder GUIDs in the repository would be false positives. The owner decides: either record in the `check_wiki` docstring and under ADR-0019 that the wiki gate does not match GUIDs, or add a GUID matcher that exempts the placeholder ranges. Then an implementer does the one chosen.
 
 **Acceptance:** the decision recorded; if a matcher, labelled constructed tests and `make ci` green; reviewed by `security-reviewer`.
 
@@ -1026,13 +1026,24 @@ Found 2026-10-18 in the security review of #272 (M13-59), pre-existing. The revi
 
 Moved out of M13-59's acceptance by the conductor's ruling of 2026-10-18: the review action skips itself on a PR that edits `claude-review.yml`, so #272 could not measure itself. Record, in this ticket's text when it is ticked, the `review` job's conclusion, its turn count from the action log ("Reached maximum number of turns" present or absent) and whether the verdict cites the PR's lines, for three later PRs: a docs-only PR, a PR that touches `lab/`, and a PR that touches `.claude/` (#283, M13-60, is the first, once it is marked ready: the job runs only on `opened` and `ready_for_review`, never on a draft). If a run still hits the 30-turn cap, raise `--max-turns` to the number the runs needed in a follow-up CI change, stated in its PR body.
 
+*Run 1, docs-only (2026-10-18, #282 at 8288594):* https://github.com/sandgraal/wowlab/actions/runs/39182931070, 40 s, verdict CLEAN, no findings, the log without "Reached maximum number of turns"; the review read `.pr-review/pr.diff` (5 files, not truncated) and cited the PR's lines.
+
 **Acceptance:** the three runs recorded here with run URLs; `--max-turns` left or raised with the measured reason; no code change beyond that; reviewed by `code-reviewer`.
+
+---
+
+## [ ] M13-69 — `filemap gaps` and symlink entry ids classify without the account list
+**Size:** XS · **Depends on:** M13-50
+
+Found 2026-10-18 in the code review of #280 (M13-50). `gaps.py` and `Symlink.entry_id` still classify through `fm.classify` alone, so below a folder of `WTF/Account/` that `layout` does not take as an account (the client's `SavedVariables/`, a leftover old-style folder) a file whose name matches an account row (`config-cache.wtf`, a nested `SavedVariables/<x>.lua`) still gets that row there, while `explain`, `tree --explain` and the walk give it none since M13-50: `filemap gaps` says "every path the walk reached has a row" where `explain` says "no file-map row". For what the client writes there (`Blizzard_*.lua` and `.lua.bak`) the two agree. Route both through `_pick` with the walk's `not_accounts`, as `Layout.classify` does; labelled constructed test with the client's folder holding a stray `config-cache.wtf`; `filemap gaps` output on the install fixtures byte-identical to `main`.
+
+**Acceptance:** the test passes; byte-identity on the fixtures; `make ci` green; reviewed by `code-reviewer`.
 
 ---
 
 # M14 — `wowlab ui`: the confirm flow, and the character (Wave 5)
 
-Spec: `docs/LAB_PLAN.md` §16 (2026-10-18). Decisions: ADR-0029 (accepted) for the confirm flow; ADR-0032 (Proposed, the model's access to the data) binds nothing here and is for the wave after. Owner request of 2026-10-18: the player's character in the UI, with equipped gear, key bindings and macros, read-only in this wave and built so that a later wave can change and optimize them from the UI (§16.5). **Every ticket below depends on M14-01**, which waits for the twelve M13 follow-ups of the owner's 2026-10-18 pick; nothing in M14 is dispatched before they are on `main`. L1 to L8 apply; no ticket writes into an install outside the confirm flow's `guard` commands, no ticket adds a network request, and no ticket puts a game rule in JavaScript (§14.5 D3). `wowlab_core.ui` left the graders-first set on 2026-10-17, so no ticket here has a `T` twin. The five tickets that edit `ui/__init__.py` and the templates (M14-02, M14-03, M14-04, M14-08, M14-09) collide on those files, so the conductor dispatches them one at a time in that order (§16.7); the CLI tickets run beside them.
+Spec: `docs/LAB_PLAN.md` §16 (2026-10-18). Decisions: ADR-0029 (accepted) for the confirm flow; ADR-0032 (Proposed, the model's access to the data) binds nothing here and is for the wave after. Owner request of 2026-10-18: the player's character in the UI, with equipped gear, key bindings and macros, read-only in this wave and built so that a later wave can change and optimize them from the UI (§16.5). **Every ticket below depends on M14-01**, which waits for the twelve M13 follow-ups of the owner's 2026-10-18 pick; nothing in M14 is dispatched before they are on `main`. L1 to L8 apply; no ticket writes into an install outside the confirm flow's `guard` commands, no ticket adds a network request, and no ticket puts a game rule in JavaScript (§14.5 D3). `wowlab_core.ui` left the graders-first set on 2026-10-17, so no ticket here has a `T` twin. The five tickets that edit `ui/__init__.py` and the templates (M14-02, M14-03, M14-04, M14-08, M14-09) collide on those files, so the conductor dispatches them one at a time in that order (§16.7); the CLI tickets run beside them. *Owner pick 2026-10-18 ("want the gear view sooner"):* the UI queue runs M14-02, then M14-08, then M14-03, M14-04, M14-09; M14-05 is dispatched with M14-02 the moment M14-01 closes, so the Character tab's gear view is the first new screen.
 
 ## [ ] M14-01 — Wave 5 opens: the M13 follow-ups are on `main`
 **Size:** XS · **Depends on:** M13-42, M13-47, M13-48, M13-50, M13-51, M13-52, M13-53, M13-54, M13-55, M13-56, M13-57, M13-58
