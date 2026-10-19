@@ -45,9 +45,12 @@ __all__ = [
     "SlotTableError",
     "SlotTableSource",
     "average_of",
+    "colour_class",
+    "colour_rgb",
     "load_slot_table",
     "parse_slot_table",
     "rows",
+    "shipped_slot_table",
     "shipped_slots_path",
     "spec_of",
     "user_slots_path",
@@ -58,6 +61,7 @@ SLOTS_LIMIT = 1024 * 1024  # a slot table is about 2 KiB; a bigger file is refus
 SLOT_MAX = 1000  # the client numbers equipment slots from 1 to 19 on Forever (M11-03)
 _TEXT = re.compile(r"[\x20-\x7e]{1,64}")
 _COLOUR = re.compile(r"[0-9A-Za-z:]{1,16}")  # the colour codes `labaddon.ItemLink` admits
+_HEX_CODE = re.compile(r"[0-9A-Fa-f]{8}")  # `|cAARRGGBB`: alpha, then the colour
 _SECTIONS = ("slots", "quality")
 
 
@@ -158,15 +162,21 @@ def parse_slot_table(text: str, base: SlotTable | None = None) -> SlotTable:
     return SlotTable(slots=dict(sorted(slots.items())), quality=quality)
 
 
+def shipped_slot_table() -> SlotTable:
+    """The table shipped with the package, without the player's file. Raises
+    `SlotTableError` naming the file (a packaging fault, not the player's)."""
+    text = resources.files("wowlab_core").joinpath(SLOTS_FILE).read_text(encoding="utf-8")
+    try:
+        return parse_slot_table(text)
+    except SlotTableError as exc:
+        raise SlotTableError(f"{shipped_slots_path()}: {exc}") from exc
+
+
 def load_slot_table() -> SlotTableSource:
     """The shipped table, with the player's own file over it when there is
     one. Raises `SlotTableError` naming the file at fault."""
     shipped = shipped_slots_path()
-    text = resources.files("wowlab_core").joinpath(SLOTS_FILE).read_text(encoding="utf-8")
-    try:
-        table = parse_slot_table(text)
-    except SlotTableError as exc:  # a packaging fault, not the player's
-        raise SlotTableError(f"{shipped}: {exc}") from exc
+    table = shipped_slot_table()
     user = user_slots_path()
     if not user.exists() and not user.is_symlink():
         return SlotTableSource(source="default", shipped=shipped, user_file=str(user), table=table)
@@ -187,6 +197,34 @@ def quality_word(colour: str, table: SlotTable) -> str | None:
     for code, word in table.quality.items():
         if code.casefold() == folded:
             return word
+    return None
+
+
+def colour_class(colour: str) -> str | None:
+    """The class name `wowlab ui` gives an item name drawn in `colour` (a
+    colour code as written between `|c` and `|H`): `colour-`, then the code
+    with its letters in lower case and `:` written `_`, so `nIQ2:` is
+    `colour-niq2_` and `ff1EFF00` is `colour-ff1eff00`. None for a code no
+    slot table could hold. The page's script builds the same name from a
+    report's `colour` (`colourClass` in `ui/templates/page.js`, M14-08)."""
+    if not _COLOUR.fullmatch(colour):
+        return None
+    return "colour-" + colour.lower().replace(":", "_")
+
+
+def colour_rgb(colour: str, table: SlotTable) -> str | None:
+    """The six hex digits (`rrggbb`, lower case) a colour code is drawn in: a
+    hex code's own (`ffRRGGBB`, alpha first), or, for a named code (`nIQ4:`),
+    those of the table's first hex code with the same quality word. None when
+    there is neither (the shipped table has no hex code for "WoW Token")."""
+    if _HEX_CODE.fullmatch(colour):
+        return colour[2:].lower()
+    word = quality_word(colour, table)
+    if word is None:
+        return None
+    for code, other in table.quality.items():
+        if other == word and _HEX_CODE.fullmatch(code):
+            return code[2:].lower()
     return None
 
 

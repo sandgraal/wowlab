@@ -40,7 +40,10 @@
 # A link's colour code, as written between `|c` and `|H`, = the quality word.
 # The named form (`|cnIQ2:`) is what Forever writes; the hex form
 # (`|cffRRGGBB`) is the hex form other clients write [verify], kept for links
-# from elsewhere.
+# from elsewhere. `wowlab ui` draws an item name in its code's colour: a hex
+# code's own, and for a named code, that of the hex code with the same word
+# (so `nIQ4:` is drawn as `ffa335ee`). It takes the colours from this shipped
+# file only; a code only your own file names is drawn in the text colour.
 "nIQ0:" = "Poor"
 "nIQ1:" = "Common"
 "nIQ2:" = "Uncommon"
