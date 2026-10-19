@@ -50,7 +50,9 @@ below is the same whichever tool runs it. Learned on #266 and #267
   '<line>' … > <scratchpad>/<ticket>/poll.sh` (each line as one
   single-quoted argument, so no line may contain a single quote: the jq
   filters below are double-quoted for that reason, with their inner quotes
-  escaped), and run it with `bash <file> <sha>`, each line below one
+  escaped), and run it with `bash <file> <sha>` (the Bash tool stops a
+  foreground call after at most 600 s, so a slow run needs the call
+  repeated; each repeat is still one blocking call), each line below one
   argument. The lines:
   `#!/usr/bin/env bash`,
   `set -eu`,

@@ -208,9 +208,10 @@ other ticket moving.
   to the main checkout; M13-60, 2026-10-18), and the harness auto-cleans
   a worktree it finds unchanged. The conductor checks `git worktree list`
   once per session for leftovers.
-- `gh pr merge` from inside an agent worktree prints "'main' is already used
-  by worktree" when it tries to check out `main` locally. The merge on GitHub
-  has already happened; confirm it with `git log origin/main -1`.
+- `gh pr merge` from inside an agent worktree may print "not on any branch"
+  or a similar local-checkout error after the merge (M13-60 dropped the
+  `--delete-branch` flag that used to make it check out `main`). The merge
+  on GitHub has already happened; confirm it with `git log origin/main -1`.
 
 ## Guardrails and their limits
 
