@@ -122,11 +122,12 @@ rejected push, `git fetch` and read what is on the remote before you
 ## 2. Watch loop — until merged or blocked
 
 You never receive an external wake-up; a backgrounded poller will not
-resume you. Every wait is one blocking call:
-`gh pr checks <n> --watch --fail-fast` (blocks until checks resolve) or a
-`while … sleep 300 … done` inside a single Bash call (local sessions; in
-a cloud session neither works, see **Waiting** above). Do not spin faster
-than ~5 minutes.
+resume you. Every wait is one blocking call: `gh pr checks <n> --watch
+--fail-fast` (blocks until checks resolve; GraphQL-backed, so not in a
+cloud session), or the poll script from **Waiting** above run with
+`bash <file> <sha>` (an inline `while … sleep 300 … done` is refused by
+the Bash tool under worktree isolation, local or cloud). Do not spin
+faster than ~5 minutes.
 
 Then:
 ```
