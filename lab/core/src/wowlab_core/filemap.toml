@@ -75,11 +75,11 @@ id = "casc-data"
 section = "root"
 base = "root"
 doc_path = "`Data/config/`, `Data/data/`, `Data/indices/`"
-what = "CASC storage: build/CDN configs, archive blobs (`data.NNN`), index files (`*.idx`)"
+what = "CASC storage: build/CDN configs, archive blobs (`data.NNN`), index files (`*.idx`). Never edited: out of scope permanently (L7); patches and Scan and Repair restore it."
 written_by = "Agent; client streams into it"
 edit = "no"
-tier = "A (read, later wave)"
-module = "none in Wave 1"
+tier = "A (read)"
+module = "`casc` (the build config and `Data/data/*.idx`, read-only; never `shmem` or `index.lock.0`)"
 match = [
   "Data/config/", "Data/config/**",
   "Data/data/", "Data/data/**",
