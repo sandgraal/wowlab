@@ -8,6 +8,18 @@
     "api": "C_SpecializationInfo",
     "absent": null
   },
+  "identity": {
+    "race_id": null,
+    "race_id_absent": "the record is schema 1; identity is recorded from schema 4 (the lab-addon from M15-01: install it with wowlab addon install lab, then log in and out on this character)",
+    "sex": null,
+    "sex_absent": "the record is schema 1; identity is recorded from schema 4 (the lab-addon from M15-01: install it with wowlab addon install lab, then log in and out on this character)",
+    "sex_raw": null,
+    "sex_raw_absent": "the record is schema 1; identity is recorded from schema 4 (the lab-addon from M15-01: install it with wowlab addon install lab, then log in and out on this character)",
+    "class_id": null,
+    "class_id_absent": "the record is schema 1; identity is recorded from schema 4 (the lab-addon from M15-01: install it with wowlab addon install lab, then log in and out on this character)",
+    "class_file": null,
+    "class_file_absent": "the record is schema 1; identity is recorded from schema 4 (the lab-addon from M15-01: install it with wowlab addon install lab, then log in and out on this character)"
+  },
   "average": {
     "equipped": 2.375,
     "overall": 2.375,
