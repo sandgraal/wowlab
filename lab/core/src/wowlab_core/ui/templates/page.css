@@ -259,3 +259,14 @@ pre:empty { display: none; }
 .gear-detail dd { margin: 0; overflow-wrap: anywhere; unicode-bidi: isolate; }
 .gear-link { font-family: var(--mono); font-size: 0.85rem; overflow-wrap: anywhere; unicode-bidi: isolate; }
 .gear-table .copy { margin-left: 0.6rem; cursor: pointer; padding: 0.05rem 0.6rem; color: #e3bb55; background: #3a2d18; border: 1px solid #9a7426; border-radius: 4px; font-weight: 600; }
+/* the Looks tab (M14-04): the page `looks page` wrote, in a sandboxed srcdoc
+   frame on a light backing, as it is drawn on its own. */
+#looks-write { padding: 0.3rem 1.2rem; cursor: pointer; color: var(--gold); background: var(--selected); border: 1px solid var(--trim); border-radius: 4px; font-weight: 600; }
+#looks-write:disabled { color: var(--muted); cursor: not-allowed; }
+#looks-status { margin: 0; color: var(--muted); flex-basis: 100%; overflow-wrap: anywhere; white-space: pre-wrap; }
+#looks-status:empty { display: none; }
+#looks-status.error { color: var(--error); }
+.looks-where { margin: 0 0 0.75rem; color: var(--muted); overflow-wrap: anywhere; }
+.looks-where code { unicode-bidi: isolate; }
+.looks-where .copy { margin-left: 0.6rem; cursor: pointer; padding: 0.05rem 0.6rem; color: var(--gold); background: var(--selected); border: 1px solid var(--trim); border-radius: 4px; font-weight: 600; }
+.looks-frame { display: block; width: 100%; height: 80vh; border: 1px solid var(--gold-deep); border-radius: 4px; background: #fff; }

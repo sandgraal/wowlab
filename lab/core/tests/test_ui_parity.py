@@ -973,7 +973,11 @@ def test_the_page_draws_forms_from_the_command_list_with_text_only() -> None:
     script = _template("page.js")
     assert '"/api/commands"' in script
     assert '"/api/run"' in script
-    assert _HTML_SINKS.findall(script) == []
+    # The one sink (M14-04): the Looks frame's `srcdoc`, sandboxed with
+    # scripts only, given the text /api/looks-page sent (test_ui_looks.py).
+    looks_srcdoc = "frame.srcdoc = read.page;"
+    assert script.count(looks_srcdoc) == 1
+    assert _HTML_SINKS.findall(script.replace(looks_srcdoc, "")) == []
 
 
 def test_every_element_the_script_looks_up_is_in_the_page() -> None:

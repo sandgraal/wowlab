@@ -985,10 +985,17 @@ def test_a_refused_command_is_never_offered_constructed(
         # (security review, round 1 on #226).
         _only_copy_and_preview(used)
         assert used["newRequests"] == [], (view, used["newRequests"])
-    named = {tuple(v["command"]) for v in refused}
+    # A command refused whole is never run; one refused for a parameter
+    # (`looks page --out`, `log tail --follow`) is never run with it. The
+    # Looks tab's own `looks page` (M14-04), with no parameter, is allowed.
+    whole = {tuple(v["command"]) for v in refused if not v["params"]}
+    by_param = {(tuple(v["command"]), name) for v in refused for name in v["params"]}
     for request in out["requests"]:
         if request["body"] is not None:
-            assert tuple(request["body"]["command"]) not in named, request
+            command = tuple(request["body"]["command"])
+            assert command not in whole, request
+            for name in request["body"].get("params", {}):
+                assert (command, name) not in by_param, request
 
 
 def test_whether_a_view_is_offered_comes_from_the_command_list_constructed(
@@ -1057,7 +1064,9 @@ def test_a_refused_first_view_is_not_replaced_by_the_next_constructed(
     assert pane["previewButtons"] == 0, pane
     _only_copy_and_preview(used)
     assert used["newRequests"] == [], used["newRequests"]
-    assert not _runs_of(out, ["cvar", "list"]) and not _runs_of(out, ["looks", "page"])
+    assert not _runs_of(out, ["cvar", "list"])
+    # The Looks tab (M14-04) runs `looks page` with no parameter; never with `out`.
+    assert all("out" not in run.get("params", {}) for run in _runs_of(out, ["looks", "page"]))
 
 
 def test_a_hostile_preview_draws_as_inert_text_constructed(

@@ -24,6 +24,7 @@
 <button id="tab-gaps" class="tab" type="button" role="tab" aria-selected="false" aria-controls="gaps-view">Gaps</button>
 <button id="tab-commands" class="tab" type="button" role="tab" aria-selected="false" aria-controls="commands-view">Commands</button>
 <button id="tab-character" class="tab" type="button" role="tab" aria-selected="false" aria-controls="character-view">Character</button>
+<button id="tab-looks" class="tab" type="button" role="tab" aria-selected="false" aria-controls="looks-view">Looks</button>
 </nav>
 </header>
 <main>
@@ -89,6 +90,15 @@
 <div id="char-gear"></div>
 </section>
 </div>
+</section>
+<section id="looks-view" role="tabpanel" aria-labelledby="tab-looks" hidden>
+<p class="intro">The page <code>wowlab looks page</code> writes: the races, body types, classes and customization options of the build's tables, and your saved looks checked against that build. Write the page runs that command, which writes <code>pages/looks.html</code> in wowlab's own data folder and never touches your game folder, then shows that file here. It runs in a closed frame: only its own script, no network requests, and nothing it can reach on this page.</p>
+<div class="toolbar panel">
+<button id="looks-write" type="button">Write the page</button>
+<p id="looks-status" role="status"></p>
+</div>
+<div id="looks-where" class="looks-where" hidden></div>
+<iframe id="looks-frame" class="looks-frame" sandbox="allow-scripts" title="The looks page" hidden></iframe>
 </section>
 </main>
 <script><!--wowlab:script--></script>
