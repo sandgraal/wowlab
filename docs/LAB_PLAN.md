@@ -3651,7 +3651,9 @@ CLI printed it with no Confirm:
   offered. A plan run without `--yes` never returns `choose_flavor`: on an
   install with several flavors it returns `not_asked` with `flavor` unset
   (`firstrun.run`), and the confirmed `--yes` run would then exit 2. So
-  the marker is `not_asked` **with `flavor` set** (exit 0); `not_asked`
+  the marker is `not_asked` **with `flavor` set** (exit 0; *corrected
+  2026-10-18, M14-02: the report's field is `first_run.chosen`, and the
+  marker reads it*); `not_asked`
   without a flavor is shown with a `--flavor` field to fill and no token,
   and any other outcome offers nothing. (Automated review of #265, finding
   2, 2026-10-18.)
