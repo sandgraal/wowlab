@@ -23,8 +23,13 @@ writer) waits on an owner test (M13-07). Wave 5 (M14, specified
 and, at the owner's request, the character in the UI: gear, keys and
 macros, read-only, the first slice of **char-planner**'s "view consolidated
 state"; the apply halves of **keybind-coach** and **macro-doctor** and the
-model-assisted step are planned in §16.5 and ADR-0032 (Proposed) for the
-wave after.
+model-assisted step are planned in §16.5 and ADR-0032 (accepted 2026-10-18)
+for a later wave. Wave 6 (M15, picked 2026-10-19, `docs/LAB_PLAN.md` §17):
+**character-studio**'s data half, which is **casc-source** plus the model,
+skin and texture decoders and the table joins that turn a character's
+record into its model and texture files, with **dressing-room-link** as
+the first visible piece; Wave 7 is planned as the viewer half (ADR-0033,
+ADR-0034).
 
 Two things from the original brainstorm are deliberately absent: anything
 needing memory access, injection, packets or a modified `Data/` (ADR-0023),
