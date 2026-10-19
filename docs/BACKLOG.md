@@ -1062,6 +1062,7 @@ Found 2026-10-19 in the code review of #289, on `main` before it. (1) `_check_gh
 **Acceptance:** the tests pass; `make hooks-test` green; `scripts/check_frontmatter.py` clean; reviewed by `code-reviewer`. Conductor lane (harness).
 
 ---
+
 ## [ ] M13-72 — `char list --json` carries every full record; the Character tab's colour grep exempts `page.css`
 **Size:** XS · **Depends on:** nothing
 
