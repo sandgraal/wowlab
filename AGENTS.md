@@ -66,6 +66,13 @@ these is mis-specified; stop and report.
 **L8 — Real fixtures.** Any parser of an external format is graded against
 real captures with a provenance row (ADR-0012). Constructed inputs are
 allowed only for hostile-input and boundary tests, and are labelled as such.
+One exception, granted by the owner on 2026-10-19 (ADR-0033, accepted): a parser of
+an asset format whose real files are Blizzard's (the build config, the
+CASC index, encoding and root files, BLTE, M2 and skin, BLP) is graded on constructed files,
+on *derived* fixtures (what was read from a real file, never its bytes,
+with a provenance row) and on `@live` tests against the owner's install
+that CI never runs, all three together. No asset byte enters the
+repository.
 
 ## Where truth lives
 
@@ -144,7 +151,7 @@ verified (ADR-0030):
 - Python for everything in the Lab.
 - Lua only under `lab/addon/`, run only by the game client (ADR-0026).
 - HTML, CSS and plain JavaScript only as template text inside the package,
-  with no build step (ADR-0027, ADR-0029).
+  with no build step (ADR-0027, ADR-0029); one pinned, vendored third-party JavaScript library for the viewer under ADR-0034 (accepted 2026-10-19, not yet built).
 
 Any other language, runtime or build toolchain needs a new ADR; one added
 for performance in the core also carries measurements (ADR-0020). Runtime dependencies are limited

@@ -1753,6 +1753,12 @@ yet, and a fixture produced by the thing under test proves nothing).
   disk, so the check is never an empty job.
 - `luadata.py` and `guard.py` follow the `[TEST]` / `[IMPL]` separation: the
   graders land first as `xfail(strict=True)`.
+- Asset formats (ADR-0033, L8's exception): `scripts/casc_facts.py`,
+  read-only, writes a *derived* fixture per real file as JSON (file data
+  id, size, chunk table, counts, section hashes, the decoded values a test
+  asserts) with a provenance row in `lab/core/tests/fixtures/README.md`;
+  the parsers are graded on those, on labelled constructed files, and on
+  `@live` tests against the owner's install that CI never runs.
 - `guard` is tested against a synthetic install tree built in `tmp_path`
   (our own format, so constructed input is legitimate) with a fake process
   probe injected. No test writes to a real install. No test needs a real
@@ -4041,3 +4047,335 @@ decision 2026-10-17), so no M14 ticket has a `T` twin; `security-reviewer`
 reviews every ticket that touches the server or its templates, and
 `domain-reviewer` every one that tells the player what a slot, key or macro
 is. v0.2 carries all of M14 and the `--json` changes M13-47 guards.
+
+## 17. Wave 6 (M15): character-studio, the data half
+
+Picked by the owner on 2026-10-19 after the Wave 5 review
+(`docs/handoffs/M14-review.md`): **character-studio** from
+`docs/LAB_IDEAS.md`, the player's character rendered in the browser from
+the player's own game files, with its gear. It is size L, so it is two
+waves. This wave is the data half: it ends in `wowlab char model`, which
+turns a recorded character into a standard glTF file under the data
+directory, headless and graded by pytest, with no 3D on screen. Wave 7
+(§17.8) puts it in the Character tab. Decisions: ADR-0033 (the archives are
+read, read-only, in pure Python; how asset-format parsers are graded) and
+ADR-0034 (a vendored three.js for Wave 7), both accepted by the owner on 2026-10-19 after the plan PR's reviews. The owner asked whether `Data/` could also be edited; L7 stands
+as written and the reasons are in ADR-0033. L1 to L8 apply to every
+ticket, with L8's asset-format exception. The dressing-room link
+(M15-01, M15-02; §16.3's 2026-10-19 amendment) opened the wave because it
+needs nothing below.
+
+Everything in this section rests on a read-only research pass of
+2026-10-19 against the owner's install, then at build 1.60.1.70450 (the Battle.net agent patched the client from 70425 that day), and on the reference wiki
+(wowdev.wiki) and the MIT-licensed wow.export as the cross-check. Every
+number quoted is measured there; every claim from memory is **[verify]**
+(§17.7). Code is written clean-room from the wiki and WoWDBDefs; nothing is
+copied from TACT.Net (GPL-3.0) or WoWFormatLib (no licence).
+
+### 17.1 `casc` — the install's archives, read-only (ADR-0033)
+
+`wowlab_core.casc` opens the install's `Data/`, which every product in the
+install shares (`docs/LAB_FILE_MAP.md`; only the build config is per
+product), and reads a file by its file data id for one flavor's build. The
+chain, every step of it already parsed by the research spike with the
+stdlib only (`struct`, `zlib`, `hashlib`, `bisect`, `array`):
+
+1. **`.build.info`** (the Lab's `install` module already reads it): the
+   flavor's `.flavor.info` gives the product, which picks the `Active` row
+   of `.build.info` (a count other than one is reported, never guessed);
+   that row's build key names `Data/config/<k[0:2]>/<k[2:4]>/<k>`, the
+   build config, `key = value` text, with `root` (a content key) and
+   `encoding` (a content key and an encoding key). The Battle.net agent
+   writes `.build.info` and the configs; the game client reads them.
+2. **The local index**, `Data/data/*.idx`: sixteen buckets, one file
+   version per bucket on this install (1,042,994 entries for the whole
+   install, every product together, read in 1.0 s); each 18-byte entry
+   maps the first nine bytes of an encoding key to archive number, offset
+   and size (the five-byte big-endian field: ten bits of archive, thirty
+   of offset). The bucket of a key: `x = k[0] ^ … ^ k[8]`,
+   `bucket = (x & 0xF) ^ (x >> 4)`. The header's hash and the entries'
+   hash are checked, and the `4/5/9/30` spec is read from the header, so a
+   half-written file is refused. `shmem` (recreated by the game client at
+   start; a template after an agent update) and `index.lock.0` are never
+   opened for writing, never created, never locked, and `shmem` is not read
+   either: which `.idx` version wins when two of one bucket exist is
+   **[verify]** (the spike found one; the reader takes the newest by version
+   number, as CascLib does from memory, and says so in its report). The
+   index files are read into memory and closed at once.
+3. **The archive** `data.NNN` at that offset: a 30-byte record header,
+   then **BLTE**: a chunk table and blocks, each with a mode byte: `N` raw,
+   `Z` zlib, `4` LZ4, `F` recursive, `E` encrypted. The reader decodes `N`
+   and `Z`; `4`, `F` and `E` raise typed errors (`UnsupportedBlockMode`,
+   `EncryptedContent(key_name)`) and are reported, never guessed and never
+   decrypted (ADR-0033: no key list, no `DBCache.bin` scraping). The spike
+   met 4,775 blocks: `N` and `Z` only. An archive is opened for the length
+   of one read and closed; no handle or memory map outlives a command, so
+   the agent or the client can replace or extend a file at any time (on
+   Windows an open handle or mapping would block that; a Windows `@live`
+   check, **[verify]**).
+4. **Encoding** (141.6 MB decoded in 0.2 s) maps a content key to its
+   encoding keys: one content key may have several (an encrypted and a
+   plain copy, for one), and the reader tries each against the index; a
+   22-byte header, a page index, 4 KB pages; a lookup is a `bisect` over
+   the page index and a scan of one page. No two-million-entry dictionary
+   is built.
+5. **Root** (50.5 MB, parsed in 0.6 s; **version 2** here, the format of
+   11.1.0+) maps file data ids to content keys in blocks with locale and
+   content flags; blocks for other locales and platforms are skipped (the
+   `0x108` mask on macOS, `0x110` on Windows, and `LowViolence` `0x80`),
+   the locale read from `.build.info`'s `Tags` column and the platform from
+   the install's own layout (the client bundle on macOS, the executable on
+   Windows), never a constant (L6); a file in a block flagged `Encrypted`
+   (26 of 916) is tried through its other encoding keys before it is
+   reported encrypted. Whether any of the player's own gear is encrypted
+   is **[verify]**; none was met.
+
+**Integrity for free.** The root's content key is the MD5 of the decoded
+file, so every read is checked against it; on a mismatch the reader
+re-opens the index once and reports if it persists, on every read, since
+the agent (patches, background downloads, Scan and Repair) and the client
+(streaming) both write `.idx` files and archives.
+
+**Performance targets (§6.4, ADR-0020):** the index loaded in at most
+2 s; open in at most 5 s; three hundred files read in at most 10 s;
+resident memory measured and reported in the ticket (the spike: open 1.9 s
+on Python 3.9; the 29.7 MB `humanmale_hd.m2`, its skin and three textures
+in under 0.2 s; RSS not measured, expected a few hundred MB from the
+encoding bytes and the two indexes; a sorted `array` with `bisect` is the
+first optimisation). Missing a target is a stop-and-ask, not a C
+extension. Windows is unmeasured: the research ran on macOS only.
+
+**Four states for a file.** A file data id the plan asks for is *local*
+(in the root and the index), *not in your client's local files* (in this
+product's root but not in the index: content the client has not fetched;
+whether and when it would is **[verify]**), *not part of this game
+version's files* (a table row for content this product does not ship: not
+in the root at all), or *encrypted*. The research sampled 300
+`ModelFileData` rows: 178 local, 119 not in the root, 3 in the root but
+not local; the 300 `TextureFileData` rows (128 local) were not split that
+way, and 73 of the 77 `ChrModel` rows had local models (which races
+Forever lets a player choose is not checked). So "the install streams" is
+**[verify]** until the middle group is shown to be large; what is settled
+is that the player's own gear, which the client has drawn, is expected
+local, that the Lab never fetches from Blizzard's CDN (ADR-0033: no
+network source is added), and that an outfit designer over arbitrary items
+is out of both waves.
+
+**What it writes:** nothing inside the install (L1). Decoded files go under
+the data directory, `casc/<product>-<build>/`, keyed by product and build
+(two products may share a version string) and never overwritten (L5): `wowlab casc cat --fdid N` writes `files/<fdid>-<ckey8>.bin` there by default (the content key's first eight hex digits in the name, so a patched file lands beside the old one; a repeat with the same key writes nothing and says so), `--out` may name another path inside the same folder or stdout, and the later modules share the same cache; both parts of the folder name are discovered strings checked as safe folder names. One subfolder is
+exempt from never-overwrite: `characters/`, which holds derived output
+that `char model` re-makes on request (§17.6).
+
+**In the UI.** `wowlab ui` offers every command the CLI tree has (§15.6),
+so `casc stat` appears in the Commands tab as a plain read when M15-06
+merges, and `casc cat` and `char model` appear with their `--out` refused
+as `looks page --out` is (owner ruling of 2026-10-15) and binary output to
+stdout refused: in the UI they write only to their default place under the
+data directory. Each ticket states this and gets `security-reviewer` for
+the exposure.
+
+### 17.2 `blp` — textures
+
+BLP2: a 148-byte header (encoding 1 palette, 2 DXT, 3 BGRA; alpha depth 0,
+1, 4 or 8; mip offsets and sizes), a 1024-byte palette, then mips. The
+decoder returns mip 0 as RGBA rows and a PNG writer (stdlib: `zlib`,
+`crc32`) writes it. DXT1 and DXT5 are what every character texture sampled
+used. Two sources disagree on the DXT choice: the wiki says the alpha
+type alone decides (0 → DXT1, 1 → DXT3, 7 → DXT5), wow.export says the
+alpha depth decides first (`alphaDepth > 1 ? (alphaType == 7 ? DXT5 :
+DXT3) : DXT1`); they differ for depth 8 with type 0, depth 1 with type 1, depth 4 with type 0, depth 0 with type 1, and depth 0 or 1 with type 7, so the decoder refuses, naming both values, any texture where the
+two rules disagree, until a real texture settles it (**[verify]**; the
+derived fixtures record both fields). Palette and BGRA are implemented
+from the wiki with the 4-bit alpha case **[verify]**; BC5 (alpha type 11)
+is refused with a typed error. The header's width and height bound every allocation (a
+stated cap; hostile headers are refused). **Target:** a 1024² DXT1 decode
+in at most 0.5 s (measured 0.15 s in pure Python).
+
+### 17.3 `m2` — models and skins
+
+The modern chunked M2 (`MD21`, `SFID`, `TXID`, `AFID`, `BFID`, `LDV1`,
+`TXAC` and later chunks kept unread): the header's arrays at their fixed
+offsets (vertices at 0x3C, 48 bytes each, Z-up; textures at 0x50, type and
+flags; attachments at 0xF0), the skin file data ids from `SFID`, the
+texture file data ids from `TXID` for type-0 textures. The `.skin` file:
+the vertex lookup, the triangle indices, and the sections, whose
+`skinSectionId` is the **geoset id** (`group * 100 + value`), with
+`Level << 16` added to `indexStart` as wow.export does (the wiki says "to
+startTriangle and alike"; at 70450 only the index start overflows, the
+vertex lookup having 37,813 entries). The HD body models
+on this build are version 272 (inside the wiki's table: MoP/WoD, and the
+start of the 272–274 range for Legion to Shadowlands; a version above 274
+is read with a note) with their bones and attachments inside the M2 (`humanmale_hd`: 215 bones, 45 attachments, 113 sections, 11 textures
+with types 1, 6, 2, 15, 16, 18, 17, 19 and three type-0; no `SKID` chunk,
+**[verify]** for every race). **No bones are
+read in this wave:** the vertices are stored in the bind pose (the rest
+pose, not the in-game stand; the wiki's M2 page, **[verify]**), so a static
+render needs none and the player is told the render is the rest pose; a
+posed render is a Wave 7 option (§17.8). Texture types 15 to 18 (guild
+tabard colours and emblem) are left blank with a note, since the Lab holds
+no guild data; type 2 (the cape) comes from the item's model material
+resources.
+
+### 17.4 The render plan
+
+`wowlab_core.renderplan` turns a recorded character into the list of files
+and rules a renderer needs, through the game tables the Lab already fetches
+from wago.tools per build (ADR-0022, §6.6; about twenty tables, 23 MB of
+CSV per build, cached by build). Inputs: the lab-addon's `identity`
+(M15-01) and `customization` records, and the equipped items' item ids and
+bonus ids from `char gear`.
+
+- **Body:** `ChrRaceXChrModel` (race, sex) → `ChrModel` (its texture
+  layout, its `DisplayID`) → `CreatureDisplayInfo` → `CreatureModelData`
+  → the body M2's file data id.
+- **Customization:** the recorded choices → `ChrCustomizationElement` →
+  a geoset (`ChrCustomizationGeoset`, `type * 100 + id`) or a material
+  (`ChrCustomizationMaterial` → `TextureFileData`, the diffuse row chosen
+  by `UsageType` (**[verify]** which value), placed by
+  `ChrModelTextureLayer` and `CharComponentTextureSections`), an element
+  taken only when its `RelatedChrCustomizationChoiceID` is satisfied (face
+  and skin materials depend on another choice). Skinned models, bone sets
+  and display-info choices are listed as unsupported, as wow.export lists
+  them. `ChrCustomizationCondModel` is not published for this build (HTTP
+  400) and is skipped. Without a `customization` record (it exists only
+  after a barber-shop visit with the addon on; the shop works on Forever
+  since 70058, and `chr_model_id` may be absent because
+  `GetViewingChrModel` returned nil, M11-29) the plan uses the model's
+  default choices and says so, and a record older than a paid change that
+  kept the race is stale without the Lab knowing (the addon README), so the
+  report carries the record's date.
+- **Gear:** item id and bonus ids → `ItemBonus` type 7 (APPEARANCE:
+  `Value[0]` the appearance modifier, `Value[1]` the priority, lowest
+  wins; from TrinityCore, **[verify]** against a real link) →
+  `ItemModifiedAppearance` (modifier 0 preferred, else the lowest) →
+  `ItemAppearance` → `ItemDisplayInfo` (at 70450 `ItemBonus` is 31 KB,
+  so most links carry no bonus ids and use modifier 0): geoset groups per
+  slot (the wow.export table after WoW Model Viewer: head 27 and 21,
+  shoulders 26, shirt 8 and 10, chest 8, 10, 13, 22 and 28, belt 18, legs
+  11, 9 and 13, feet 5 and 20, hands 4 and 23, back 15, tabard 12;
+  **[verify]**), where a group value `v` selects geoset `group * 100 + 1 +
+  v`, feet's `0` selecting `2` (the `+1` and the feet case are **[verify]**
+  against wow.export's `calculateEquipmentGeosets`), attachment geoset
+  groups, helmet visibility, model resources → `ModelFileData` filtered by
+  `ComponentModelFileData` (race, sex, class, position), model textures →
+  `TextureFileData`, body-texture pieces → `ItemDisplayInfoMaterialRes`
+  (component section 0 to 8) filtered by `ComponentTextureFileData`; both
+  filters fall back through `ChrModel`'s `ModelFallbackChrModelID`,
+  `TextureFallbackChrModelID` and `HelmVisFallbackChrModelID` and the
+  any-race, any-sex rows. Helmets hide hair and ears through
+  `HelmetGeosetData`. `HelmetGeosetVisData` is not published for this build
+  and is not needed; the appearance modifier is an id, not a table. **Transmog is not rendered:** the addon
+  records none (`C_TransmogCollection` crashed Forever, M11-20), so the
+  item's own look is drawn.
+- **Geosets:** the default set is geoset id 0, every id of 100 or more
+  with `id % 100 == 1`, and group 32, with groups 17 and 35 hidden
+  (**[verify]**: wow.export compares decimal strings, so its hide rule also
+  catches ids 17 and 35 in group 0, the hairstyles; the Lab states the
+  rule numerically and does not port the quirk); then the customization
+  geosets; then per slot the item's groups (`group * 100 + 1 + v`, the `+1`
+  **[verify]**) with the sleeve and trouser priorities (gloves over chest
+  over shirt for group 8; chest over shirt for group 10; chest over pants
+  for group 13).
+- **Attachments:** head → 11, shoulders → 6 and 5, back → 12, main hand →
+  1, off hand → 2 or shield 0; the ranged slot (18: bow, gun, crossbow,
+  wand, thrown; a relic has no model), which Classic-era characters carry,
+  is listed as unsupported in this wave and shown in the report; in the bind pose an attached model sits at
+  the attachment's position **[verify]**. "Collection" armour models (the
+  modern chest, legs, boots and gloves) are skinned to the body and sit at
+  the origin in the bind pose **[verify]**.
+- **The report** lists every file by id in one of §17.1's four states, so
+  the renderer and the player know what is missing, and carries the dates
+  it rests on: the gear as of the record's last logout or `/reload`, the
+  look as of the last barber visit.
+
+### 17.5 The body texture
+
+`wowlab_core.compositor` builds the body texture in Python so pytest grades
+it: a canvas of the layout's size (2048×1024 for layout 103), the
+customization materials drawn into their section rectangles in layer
+order with their blend modes (alpha-over, multiply, overlay, screen as
+wow.export's shader does; the full enum is **[verify]**), then the item
+pieces over them. Rows are composed as byte slices. Hair and eyes are
+separate materials and stay separate textures. **Target:** a 2048×1024
+composite in at most 3 s.
+
+### 17.6 `gltf` and `wowlab char model`
+
+`wowlab_core.gltf` writes glTF 2.0 binary (`.glb`): one node per model
+(the body with its collection pieces; each attached model at its
+attachment position), POSITION, NORMAL, TEXCOORD_0 as float32, uint32
+indices, one PNG material per texture, Y-up (the Z-up swap, axis signs
+**[verify]** in the first viewer ticket). Stdlib only, about two hundred
+lines; a round-trip parser in the tests checks the structure. `wowlab char
+model [--character] [--account] [--root] [--flavor] [--out] [--json]` runs
+the whole chain and writes
+`<data>/casc/<product>-<build>/characters/<account>/<realm>-<character>.glb` plus its
+PNGs, the folder and file names taken from the install's own folder names
+and checked as safe names; `characters/` is re-made on request (the L5
+exemption of §17.1), so a run after a gear change replaces the file.
+`--json` is `CharModelReport` (the plan, every file's state, the sizes,
+the timings, and the two as-of dates); the text output says "as of your
+last logout or /reload" and "look as of <date>", and that the render is
+the rest pose. It is a read of the install and a write of wowlab's own data
+(no `guard`, no `--yes`); it appears in the Commands tab when it merges,
+with `--out` refused there (§17.1, "In the UI"), and the Wave 7 viewer runs
+it the same way.
+
+### 17.7 What is known, and what is [verify]
+
+Measured on the owner's install at 70450: the layout of `Data/`; root
+version 2; 1,244,477 file data ids after locale and platform filtering;
+no encrypted or LZ4 block met; the open and read timings; the streaming
+counts; `humanmale_hd` and `humanfemale_hd` version 272 with bones
+inside; layout 103's sections; every character texture DXT1 or DXT5 with
+mips. From memory or from another project, **[verify]** until a test on
+the install says so: which `.idx` version wins when two exist; whether LZ4
+ever appears; whether any player gear is encrypted; the bonus-id
+semantics (TrinityCore); the `+1` in the item geoset value; attachment
+positions being model-space in the bind pose; collection models at the
+origin; the blend-mode enum; the 4-bit palette alpha; the M2 vertex count
+against the skin's (226,301 against 37,813: LOD skins, probably); the
+axis signs for Y-up; why the client's `ecache/` folder exists; the DXT
+choice enum; the HD body models of every race keeping their bones inside
+(no `SKID`); the per-slot geoset-group table and the default geoset rule;
+how a browser's CSP admits the vendored modules (Wave 7, ADR-0034);
+whether the install streams at all (the middle of §17.1's four states);
+whether and when the client fetches a file it lacks; the Windows handle
+question; the DXT rule conflict; the
+`TextureFileData` usage type; whether the tables describe how Forever's
+playable races look (the owner's look at the GLB settles it); whether
+Forever has transmog in game at all; the rest pose.
+
+### 17.8 Wave 7, sketched (the viewer; not M15 tickets)
+
+ADR-0034: a pinned three.js (r185, the last release with official
+minified builds, plus `GLTFLoader`, `OrbitControls` and the loader's two imports, `BufferGeometryUtils` and `SkeletonUtils`, from its `examples/jsm`, about 955 KB) vendored
+inside the package and served as ES modules by the UI through an import
+map, admitted by the CSP by hash (or by a scoped `'self'` on the owner's
+ruling after the browser check, **[verify]**); a
+token-checked route that serves the character's `.glb` and PNGs from the
+data directory by a path the server builds; a viewer panel on the
+Character tab (scene, orbit, lights) that runs `char model` as a plain
+run; attachments; collection models and helmet hiding; the four file-state notices of §17.1 and the default-look notice; and, optional, the Stand
+pose (bones, `AFID` animation files, skinning), an M of its own. The
+outfit designer, transmog and animation stay out of both waves.
+
+### 17.9 Tickets and order
+
+M15-01 (the identity record) and M15-02 (the dressing-room link) are on
+`main`'s backlog already. The rest, in `docs/BACKLOG.md`: M15-03 the
+config and index reader, M15-04 BLTE, M15-05 encoding, root and
+`CascSource.read` with the performance target, M15-06 `wowlab casc stat`
+and `cat`, M15-07 BLP, M15-08 M2 and skin, M15-09 the render plan's body
+and customization half, M15-13 its gear half, M15-10 the compositor,
+M15-11 glTF and `char model`, M15-12 the wave review.
+M15-03 → M15-04 → M15-05 → M15-06 are sequential (each reads through the
+last); M15-07 and M15-08 need only M15-05; M15-09 (the body and the
+customization) needs M15-01 and M15-05 (for `stat`) and the tables;
+M15-13 (the gear chain) needs M15-09; M15-10 needs M15-07, M15-09 and
+M15-13; M15-11 needs all of them. M15-02 runs beside the chain. M15-01,
+M15-06 and M15-11 all edit `cli.py` and are dispatched so that no two are
+in flight at once. Every parser ticket carries the three fixture
+layers of ADR-0033, and the live tests are on the owner's list after each
+merge.
