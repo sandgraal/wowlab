@@ -276,7 +276,8 @@ def _tab_requests(out: dict[str, Any], start: int) -> list[dict[str, Any]]:
 def test_the_character_tab_is_the_fourth_and_starts_hidden(server: Any) -> None:
     body = _page(server).body.decode("utf-8")
     tabs = re.findall(r'<button id="tab-([a-z]+)" class="tab"[^>]*role="tab"', body)
-    assert tabs == ["explorer", "gaps", "commands", "character"]
+    # The Looks tab (M14-04) comes after it.
+    assert tabs[:4] == ["explorer", "gaps", "commands", "character"]
     assert re.search(r'<section id="character-view"[^>]*\bhidden\b', body)
     for name in ("char-picker", "char-status", "char-header", "char-gear", "char-panels"):
         assert f'id="{name}"' in body, name

@@ -96,7 +96,7 @@ from typing import Any
 import pytest
 import typer
 
-from wowlab_core import filemap, ui
+from wowlab_core import filemap, lookspage, ui
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 CAPTURE = FIXTURES / "macos"
@@ -262,8 +262,11 @@ def test_the_explorer_page_is_served_with_a_csp_that_hashes_it(server: Any) -> N
     assert body.count("<script") == 1 and body.count("<style") == 1
     directives = _directives(reply.headers["Content-Security-Policy"])
     assert directives["default-src"] == ["'none'"]
-    assert directives["script-src"] == [_sha(scripts[0])]
-    assert directives["style-src"] == [_sha(styles[0])]
+    # M14-04: the Looks view's srcdoc frame runs under this CSP, so the looks
+    # page's own script and style are named too, and nothing else
+    # (test_ui_looks.py grades those two hashes against the templates).
+    assert directives["script-src"] == [_sha(scripts[0]), _sha(lookspage._SCRIPT)]
+    assert directives["style-src"] == [_sha(styles[0]), _sha(lookspage._STYLE)]
     assert directives["connect-src"] == ["'self'"]
     assert directives["frame-ancestors"] == ["'none'"]
     assert directives["form-action"] == ["'none'"]  # round 1 on #226
@@ -300,14 +303,28 @@ _EXTERNAL = [
 ]
 
 
+# The one frame (M14-04): the Looks view's, sandboxed with scripts only and
+# filled through `srcdoc`, never `src` (test_ui_looks.py grades its markup).
+LOOKS_FRAME = (
+    '<iframe id="looks-frame" class="looks-frame" sandbox="allow-scripts" '
+    'title="The looks page" hidden></iframe>'
+)
+
+
 def test_no_external_url_appears_in_the_page(server: Any) -> None:
-    body = _page(server).body.decode("utf-8").lower()
+    body = _page(server).body.decode("utf-8")
+    assert body.count(LOOKS_FRAME) == 1
+    body = body.replace(LOOKS_FRAME, "").lower()
     for marker in _EXTERNAL:
         assert marker not in body, marker
     # Every request the script makes goes to the server's own API, by path.
     script = _script()
     assert script.count("fetch(") == script.count('fetch(api("/api/')
-    assert set(re.findall(r'fetch\(api\("([^"]+)"\)', script)) == {"/api/commands", "/api/run"}
+    assert set(re.findall(r'fetch\(api\("([^"]+)"\)', script)) == {
+        "/api/commands",
+        "/api/run",
+        "/api/looks-page",
+    }
     for sink in (
         "XMLHttpRequest",
         "WebSocket",
@@ -361,8 +378,16 @@ _HTML_SINKS = [
 ]
 
 
+# The one HTML sink the script has (M14-04): the Looks frame's `srcdoc`, given
+# the text /api/looks-page sent. The frame is sandboxed (scripts only, an
+# origin of its own), so the page's markup never reaches this document.
+LOOKS_SRCDOC = "frame.srcdoc = read.page;"
+
+
 def test_the_script_writes_text_only(server: Any) -> None:
     script = _script()
+    assert script.count(LOOKS_SRCDOC) == 1
+    script = script.replace(LOOKS_SRCDOC, "")
     for sink in _HTML_SINKS:
         assert sink not in script, sink
     # No handler set as an `on<event>` property (security review, round 2
@@ -424,7 +449,9 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
     # literal here; its own graders are in test_ui_explorer_stage2.py. The
     # Character tab (M14-08) runs `char list` and `char gear`, both read
     # commands; that only that tab runs them is graded in
-    # test_ui_character.py.
+    # test_ui_character.py. The Looks tab (M14-04) runs `looks page`, which
+    # writes only under the data folder's pages/ (owner ruling 2026-10-15);
+    # that it never passes `out` is graded in test_ui_looks.py.
     assert {("tree",), ("explain",)} <= used, used
     assert used <= {
         ("install", "show"),
@@ -433,6 +460,7 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         ("filemap", "gaps"),
         ("char", "list"),
         ("char", "gear"),
+        ("looks", "page"),
     }, used
     for path in used:
         assert path in offered, path

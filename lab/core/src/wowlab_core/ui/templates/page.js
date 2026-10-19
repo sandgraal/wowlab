@@ -1,5 +1,5 @@
 "use strict";
-// The page of `wowlab ui` (ADR-0029, §15.6). Four views:
+// The page of `wowlab ui` (ADR-0029, §15.6). Five views:
 // - the explorer (M13-25, M13-27): the tree of the whole install from
 //   `tree --install --explain --json`, and the detail of one path from
 //   `explain --json`: its verdict, its snapshot facts, the hints to copy,
@@ -13,7 +13,9 @@
 //   parameters; a confirmed run shows the server's note (its journal record
 //   and the `wowlab undo` hint) and never another Confirm;
 // - the character (M14-08): a picker from `char list --json` and the gear of
-//   the one picked from `char gear --json`.
+//   the one picked from `char gear --json`;
+// - the looks page (M14-04): `looks page --json`, then the file it wrote,
+//   read from /api/looks-page and shown in a sandboxed frame, as its document.
 // It holds no game rules and no file-map logic (§14.5 D3): every fact, the
 // verdict's level and words included, comes from the CLI's JSON, and this
 // script only lays it out. Nothing read from a run is ever parsed as HTML:
@@ -1345,10 +1347,100 @@
     return tr;
   }
 
+  // ─── the looks tab (M14-04, §16.3) ───
+  // "Write the page" runs `looks page` (no parameters: its default place
+  // under the data folder's pages/, never `--out`), then reads that file
+  // from /api/looks-page, whose path the server builds itself, and puts the
+  // text in #looks-frame as its document. The frame is sandboxed with
+  // allow-scripts alone, so the page runs its own script (allowed by hash in
+  // the server's CSP) in an origin of its own, and reaches nothing here.
+  // The page's text goes nowhere else: never into this document.
+
+  const looks = { seq: 0 };
+
+  function looksSay(text, isError) {
+    const node = byId("looks-status");
+    node.textContent = text;
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  function count(n, one, many) {
+    return String(n) + " " + (n === 1 ? one : many);
+  }
+
+  // Where the page is, as the CLI prints it, with a Copy button.
+  function drawWhere(path) {
+    const box = byId("looks-where");
+    box.replaceChildren();
+    if (typeof path !== "string" || !path) {
+      box.hidden = true;
+      return;
+    }
+    const text = make("code", shown(path));
+    box.append("Written to ", text, copyButton(path, "Copy the page's path"));
+    box.hidden = false;
+  }
+
+  // The page's text from the server, or {error}.
+  async function readLooksPage() {
+    let reply;
+    let result;
+    try {
+      reply = await fetch(api("/api/looks-page"), { cache: "no-store", credentials: "omit" });
+      result = await reply.json();
+    } catch (error) {
+      return { error: "The request failed: " + error };
+    }
+    if (!reply.ok) return { error: "The server did not show the page: " + (result.error || reply.status) };
+    if (!result || typeof result.page !== "string") return { error: "The server sent something this page does not know." };
+    return { page: result.page };
+  }
+
+  async function writeLooks() {
+    const seq = ++looks.seq;
+    const button = byId("looks-write");
+    const frame = byId("looks-frame");
+    button.disabled = true;
+    try {
+      looksSay("Writing the looks page…", false);
+      // Exit 1 with a report: the page was written, and some look files
+      // are damaged (the CLI names them on stderr).
+      const reply = await runJson(["looks", "page"], {}, true);
+      if (seq !== looks.seq) return;
+      const report = reply.data;
+      if (!report || typeof report.path !== "string") {
+        drawWhere(null);
+        looksSay(reply.error ? shown(reply.error) : "wowlab looks page printed something this page does not know.", true);
+        return;
+      }
+      drawWhere(report.path);
+      const read = await readLooksPage();
+      if (seq !== looks.seq) return;
+      if (read.error) {
+        looksSay(read.error, true);
+        return;
+      }
+      frame.srcdoc = read.page;
+      frame.hidden = false;
+      const lines = [
+        "Wrote the looks page for build " + visible(String(report.build)) + ": " +
+          count(report.races, "race", "races") + ", " + count(report.views, "view", "views") + ", " +
+          count(report.looks, "saved look", "saved looks") + ".",
+      ];
+      for (const remark of Array.isArray(report.remarks) ? report.remarks : []) lines.push(shown(String(remark)));
+      if (reply.error) lines.push(shown(reply.error));
+      looksSay(lines.join("\n"), Boolean(reply.error));
+    } finally {
+      if (seq === looks.seq) button.disabled = false;
+    }
+  }
+
+  byId("looks-write").addEventListener("click", () => writeLooks());
+
   // ─── tabs ───
 
   function showTab(name) {
-    for (const which of ["explorer", "gaps", "commands", "character"]) {
+    for (const which of ["explorer", "gaps", "commands", "character", "looks"]) {
       const on = which === name;
       byId("tab-" + which).setAttribute("aria-selected", on ? "true" : "false");
       byId(which + "-view").hidden = !on;
@@ -1360,6 +1452,7 @@
   byId("tab-gaps").addEventListener("click", () => showTab("gaps"));
   byId("tab-commands").addEventListener("click", () => showTab("commands"));
   byId("tab-character").addEventListener("click", () => showTab("character"));
+  byId("tab-looks").addEventListener("click", () => showTab("looks"));
 
   // ─── the command list ───
 

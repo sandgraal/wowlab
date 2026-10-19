@@ -1,7 +1,7 @@
 """ui: the `wowlab ui` server, a local UI over the CLI (ADR-0029, §15.6, M13-24).
 
 One `http.server.ThreadingHTTPServer`, bound to `127.0.0.1` on a port the
-OS picks, serving one page shell and two JSON endpoints for as long as
+OS picks, serving one page shell and three JSON endpoints for as long as
 `wowlab ui` runs. It runs CLI commands as subprocesses of the same `wowlab`,
 with `--json`, and writes nothing itself: no file, no log line.
 
@@ -34,6 +34,20 @@ that declares `--yes` (read from the tree) whose plan run has none of the
 three shapes below (none on 2026-10-19), `ui` itself, `log tail` with
 `follow` (a run must end) and `looks page` with `out` (it can create a file
 anywhere outside an install).
+
+The looks page (M14-04, ADR-0029 "embedded", §16.3). `GET /api/looks-page`
+answers `{"page": <text>}`: the file `looks page` writes by default,
+`lookspage.default_page_path()` under the user data directory's `pages/`.
+The server builds that path itself; a request carries the token and nothing
+else (400 `bad_request` for any other query field), so no request names a
+file. It is read only, never through a link, and only when it begins as
+every page `lookspage` writes begins (`_looks_page_body`). The page puts the
+text in an `iframe` with `sandbox="allow-scripts"` (no `allow-same-origin`)
+and `srcdoc`. A `srcdoc` document runs under this server's CSP, so the
+shell's `script-src` and `style-src` also name the hashes of
+`lookspage._SCRIPT` and `lookspage._STYLE`, computed from those templates at
+start; nothing else is added, and `frame-ancestors 'none'` stays on every
+response. The page's own meta CSP still applies inside the frame.
 
 The confirm step (ADR-0029 "Writes", §16.1, M14-02, M14-03). A leaf that
 declares `--yes` is never run with `--yes` from a form: its `yes` (and
@@ -104,6 +118,7 @@ import re
 import secrets
 import signal
 import socketserver
+import stat
 import subprocess
 import sys
 import threading
@@ -215,9 +230,23 @@ def _colour_rules() -> str:
     return "\n".join(rules) + "\n"
 
 
+def _looks_sources() -> tuple[str, str]:
+    """The hash sources of the looks page's own script and style
+    (`lookspage._SCRIPT`, `lookspage._STYLE`), hashed as `lookspage` hashes
+    them for its own CSP (SHA-256 of the UTF-8 text). The Looks view shows
+    that page in a `srcdoc` frame (M14-04, §16.3), and a `srcdoc` document
+    runs under the CSP of the page that holds it, so the shell's CSP names
+    these two and nothing else of it. Its JSON block is
+    `type="application/json"` and runs nothing."""
+    from wowlab_core import lookspage
+
+    return _hash_source(lookspage._SCRIPT), _hash_source(lookspage._STYLE)
+
+
 @functools.cache
 def _shell() -> tuple[bytes, str]:
-    """The page (its script and style inline) and the CSP that allows them."""
+    """The page (its script and style inline) and the CSP that allows them,
+    and the looks page's script and style for the Looks view's frame."""
     style = _template("page.css") + _colour_rules()
     script = _template("page.js")
     page = (
@@ -225,11 +254,12 @@ def _shell() -> tuple[bytes, str]:
         .replace("<!--wowlab:style-->", style)
         .replace("<!--wowlab:script-->", script)
     )
+    looks_script, looks_style = _looks_sources()
     csp = "; ".join(
         [
             "default-src 'none'",
-            f"script-src {_hash_source(script)}",
-            f"style-src {_hash_source(style)}",
+            f"script-src {_hash_source(script)} {looks_script}",
+            f"style-src {_hash_source(style)} {looks_style}",
             "connect-src 'self'",
             "img-src 'self'",
             "frame-ancestors 'none'",
@@ -245,6 +275,82 @@ def static_files() -> Mapping[str, bytes]:
     it is template text from this package's `templates/` folder, but for the
     colour rules made from the shipped slot table (`_colour_rules`)."""
     return {"/": _shell()[0]}
+
+
+# ─── the looks page (M14-04, §16.3) ──────────────────────────────────────────
+
+
+def _is_link(path: Path) -> bool:
+    """`path` itself is a symlink, or on Windows a junction (not followed)."""
+    try:
+        st = path.lstat()
+    except (OSError, ValueError):
+        return False
+    if stat.S_ISLNK(st.st_mode):
+        return True
+    try:
+        return path.is_junction()
+    except OSError:
+        return True
+
+
+def _looks_page_body(cap: int) -> bytes:
+    """The `/api/looks-page` body: `{"page": <text>}`, the page `wowlab looks
+    page` last wrote to its default place. The path is
+    `lookspage.default_page_path()`, built here; nothing in a request names
+    it. Read only, without blocking, and never through a link: refused
+    (`_RefusedError`) when `pages/` or the file is a link, when the file is
+    not a regular file, does not begin with `lookspage.PAGE_HEADER`, is not
+    UTF-8, or its body would pass `cap` bytes; 404 `no_page` when there is
+    none. The text is escaped as a run's output is (`_json_text`)."""
+    from wowlab_core import lookspage
+
+    path = lookspage.default_page_path()
+    if _is_link(path.parent) or _is_link(path):
+        raise _RefusedError(403, "not_a_page")
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_NOCTTY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
+    try:
+        fd = os.open(path, flags)
+    except FileNotFoundError:
+        raise _RefusedError(404, "no_page") from None
+    except (OSError, ValueError):
+        raise _RefusedError(403, "not_a_page") from None
+    chunks: list[bytes] = []
+    size = 0
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise _RefusedError(403, "not_a_page")
+        while size <= cap:
+            chunk = os.read(fd, _READ_CHUNK)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+    except OSError:
+        raise _RefusedError(403, "not_a_page") from None
+    finally:
+        os.close(fd)
+    if size > cap:
+        raise _RefusedError(403, "too_large")
+    data = b"".join(chunks)
+    del chunks
+    if not data.startswith(lookspage.PAGE_HEADER):
+        raise _RefusedError(403, "not_a_page")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise _RefusedError(403, "not_a_page") from None
+    del data
+    body = b'{"page": "' + _json_text(text) + b'"}'
+    if len(body) > cap:
+        raise _RefusedError(403, "too_large")
+    return body
 
 
 # ─── the Click tree ──────────────────────────────────────────────────────────
@@ -1184,6 +1290,8 @@ class UiServer(http.server.ThreadingHTTPServer):
 # ─── requests ────────────────────────────────────────────────────────────────
 
 _DIGITS = re.compile(r"[0-9]+")
+# The one route that reads a file: the page `looks page` wrote (M14-04).
+_LOOKS_PAGE = "/api/looks-page"
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
@@ -1283,10 +1391,27 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._reply(200, files[path], "text/html; charset=utf-8")
         elif path == "/api/commands":
             self._reply(200, self.server.commands_body, "application/json")
+        elif path == _LOOKS_PAGE:
+            self._looks_page()
         elif path == "/api/run":
             self._error(405, "method_not_allowed")
         else:
             self._error(404, "not_found")
+
+    def _looks_page(self) -> None:
+        """`GET /api/looks-page`: the token and nothing else in the query,
+        so no request can name a file; the path is the server's own."""
+        query = self.path.partition("?")[2].partition("#")[0]
+        names = {name for name, _ in urllib.parse.parse_qsl(query, keep_blank_values=True)}
+        if names != {"token"}:
+            self._error(400, "bad_request")
+            return
+        try:
+            body = _looks_page_body(self.server.output_cap_bytes)
+        except _RefusedError as refused:
+            self._error(refused.status, refused.code)
+            return
+        self._reply(200, body, "application/json; charset=utf-8")
 
     def do_HEAD(self) -> None:
         self.do_GET()
@@ -1300,7 +1425,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if path is None:
             return
         if path != "/api/run":
-            if path in static_files():
+            if path in static_files() or path == _LOOKS_PAGE:
                 self._error(405, "method_not_allowed")
             else:
                 self._error(404, "not_found")
