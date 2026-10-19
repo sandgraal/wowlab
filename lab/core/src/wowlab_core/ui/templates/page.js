@@ -1174,7 +1174,14 @@
       const stage = result.confirm && result.confirm.stage;
       const head = stage === "plan" ? "Plan, nothing was changed: exit code " : stage === "confirmed" ? "Confirmed: exit code " : "Exit code ";
       say(head + result.exit_code + (notes.length ? " (" + notes.join(", ") + ")" : ""));
-      if (stage === "plan") showOffer(result.confirm, command, body.params);
+      // A field changed while the plan ran: the form no longer says what was
+      // planned, so nothing is offered until the plan is shown again.
+      if (stage === "plan" && JSON.stringify(collect()) === JSON.stringify(body.params)) {
+        showOffer(result.confirm, command, body.params);
+      } else if (stage === "plan") {
+        byId("confirm-note").textContent = "A field changed while the plan ran: show the plan again to be offered Confirm.";
+        byId("confirm-box").hidden = false;
+      }
     } catch (error) {
       if (seq === runSeq) say("The request failed: " + error);
     } finally {

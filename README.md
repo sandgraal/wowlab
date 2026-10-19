@@ -45,7 +45,7 @@ It picks a free port on this machine only, opens your browser on a link that car
 
 - **Explorer.** Your install as a tree, one folder at a time. Most files carry a badge such as *wowlab can edit*, *wowlab won't touch* or *unknown*; a link, a file the server may overwrite, and the one folder wowlab never uses get their own. Click a file for what it is, who writes it, its file-map row, and whether the copy on disk still matches your latest snapshot. Below that, the commands that act on the file, written for your shell; **Copy** gives the exact line. For a file wowlab has a read command for (settings, binds, macros, saved data, the addon list, the install, the combat log), **Preview** runs it and shows the result as a tree.
 - **Gaps.** The files the file map does not know yet, grouped by folder, the same list as `wowlab filemap gaps`.
-- **Commands.** Runs this wowlab's commands with `--json` and shows the result: the commands that read, and the ones that save only to wowlab's own data. The ones that change game files, or ask before changing anything, are greyed out in this version.
+- **Commands.** Runs this wowlab's commands with `--json` and shows the result: the commands that read, and the ones that save only to wowlab's own data. `snap gc` and `doctor --yes`, which ask before changing wowlab's own store, run first as a plan that changes nothing, and run for real only when you press **Confirm** under it. The ones that change game files, and the other commands that ask before changing anything, are greyed out in this version.
 
 **🗺️ Platforms:**
 
