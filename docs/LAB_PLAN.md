@@ -4067,8 +4067,7 @@ ticket, with L8's asset-format exception. The dressing-room link
 needs nothing below.
 
 Everything in this section rests on a read-only research pass of
-2026-10-19 against the owner's install, then at build 1.60.1.70450 (the
-client patched from 70425 that day), and on the reference wiki
+2026-10-19 against the owner's install, then at build 1.60.1.70450 (the Battle.net agent patched the client from 70425 that day), and on the reference wiki
 (wowdev.wiki) and the MIT-licensed wow.export as the cross-check. Every
 number quoted is measured there; every claim from memory is **[verify]**
 (§17.7). Code is written clean-room from the wiki and WoWDBDefs; nothing is
@@ -4363,8 +4362,7 @@ ruling after the browser check, **[verify]**); a
 token-checked route that serves the character's `.glb` and PNGs from the
 data directory by a path the server builds; a viewer panel on the
 Character tab (scene, orbit, lights) that runs `char model` as a plain
-run; attachments; collection models and helmet hiding; the "not downloaded
-by your client yet" and "default look" notices; and, optional, the Stand
+run; attachments; collection models and helmet hiding; the four file-state notices of §17.1 and the default-look notice; and, optional, the Stand
 pose (bones, `AFID` animation files, skinning), an M of its own. The
 outfit designer, transmog and animation stay out of both waves.
 
