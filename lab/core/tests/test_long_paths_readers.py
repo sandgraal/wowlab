@@ -7,13 +7,16 @@ each failed past the 240-character plain limit: `profiles`, `luadata`'s
 sibling reads, `pathfacts`, `gaps`, `addoninstall`, `combatlog.find_logs` and
 `follow`, and the `cli` sites of `tree`, `explain`, `sv dump`, `sv merge`,
 `log tail` and `snap restore`. `luadata`'s graders are M13-44T's (in
-`test_long_paths_windows.py`); this module is the rest.
+`test_long_paths_windows.py`); this module is the rest. M13-58 added
+`labaddon.survey`'s `lstat`s (`char list`), `char show`, and `tree PATH`
+with PATH in `\\\\?\\` form.
 
 Two parts:
 
 - **Every platform** (`test_constructed_*_names_no_extended_length_path`):
   one test per command (`profile`, `sv merge`, `explain`, `addon`,
-  `filemap gaps`, `log tail`), each run twice, once with the root (and any
+  `filemap gaps`, `log tail`, `char list` and `char show`, `tree PATH`),
+  each run twice, once with the root (and any
   path argument) plain and once in the `\\\\?\\` spelling `longpath.plain`
   strips. Both print the same and no `\\\\?\\` reaches stdout or stderr
   (§6.9 as amended for M13-15: paths are plain everywhere they are shown).
@@ -60,6 +63,7 @@ from wowlab_core import (
     cli,
     combatlog,
     install,
+    labaddon,
     longpath,
     luadata,
     pathfacts,
@@ -382,6 +386,79 @@ def test_constructed_addon_output_names_no_extended_length_path(
     assert addoninstall._installed(tree.flavor)[0] == [], "installed, then removed"
 
 
+@pytest.mark.parametrize("json_out", [False, True], ids=["text", "json"])
+def test_constructed_char_output_names_no_extended_length_path(
+    build: Callable[[bool], Tree], json_out: bool
+) -> None:
+    """`char list` and `char show` (the newest file, and one named by
+    `--character`) with the root handed over in `\\\\?\\` form print what
+    they print with the plain root, and name no prefix (M13-58)."""
+    tree = build(False)
+    extra = ["--json"] if json_out else []
+    for argv in (
+        ["char", "list"],
+        ["char", "show"],
+        ["char", "show", "--character", CHAR_B],
+    ):
+        plain = _same_both_ways(
+            lambda root, _f, argv=argv: [*argv, "--root", str(root), *extra], tree
+        )
+        assert plain.exit_code == 0, (argv, plain.stdout, plain.stderr)
+    if json_out:
+        report = cli.CharListReport.model_validate_json(
+            _ok(_invoke("char", "list", "--root", str(_x(tree.root)), "--json")).stdout
+        )
+        assert sorted(c.file for c in report.characters) == sorted(
+            f"{ACCT}/1/{who}/SavedVariables/WowLab.lua" for who in (CHAR_A, CHAR_B)
+        )
+        assert all(c.error is None and c.summary for c in report.characters), report
+
+
+@pytest.mark.parametrize("json_out", [False, True], ids=["text", "json"])
+def test_constructed_char_list_refused_row_advice_names_the_root_plainly(
+    build: Callable[[bool], Tree], json_out: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A row refused on the listing's total size bound ends with the
+    `wowlab char show --root ...` command that reads it alone; with the root
+    handed over in `\\\\?\\` form that command names it plainly (M13-58).
+    The 1-byte bound is constructed, so every file is over it."""
+    survey = labaddon.survey
+
+    def small(*args: Any, **kwargs: Any) -> labaddon.AllCharacters:
+        return survey(*args, **{**kwargs, "budget": 1})
+
+    monkeypatch.setattr(labaddon, "survey", small)
+    tree = build(False)
+    extra = ["--json"] if json_out else []
+    plain = _same_both_ways(lambda root, _f: ["char", "list", "--root", str(root), *extra], tree)
+    assert plain.exit_code == 1, (plain.stdout, plain.stderr)
+    assert "wowlab char show --root" in plain.stdout, plain.stdout
+
+
+@pytest.mark.parametrize("install_flag", [False, True], ids=["flavor", "install"])
+def test_constructed_tree_path_argument_names_no_extended_length_path(
+    build: Callable[[bool], Tree], install_flag: bool
+) -> None:
+    """`tree PATH` with PATH absolute, and the root, handed over in `\\\\?\\`
+    form lists what it lists for the plain ones, and never echoes the prefix
+    (M13-58; on Windows it used to be refused as "not inside" the flavor
+    folder, the message naming the prefix)."""
+    tree = build(False)
+    for extra in ([], ["--json"]):
+        plain = _same_both_ways(
+            lambda root, flavor, extra=extra: [
+                "tree",
+                "--root",
+                str(root),
+                *(["--install", str(flavor)] if install_flag else [str(flavor / "WTF")]),
+                *extra,
+            ],
+            tree,
+        )
+        assert plain.exit_code == 0, (plain.stdout, plain.stderr)
+        assert "Config.wtf" in plain.stdout, plain.stdout
+
+
 # ─── Windows, long paths off ─────────────────────────────────────────────────
 
 
@@ -589,6 +666,80 @@ def test_constructed_windows_tree_past_max_path(deep: Tree, short: Tree) -> None
         assert found["install_root"] == str(deep.root)
         expected = _json(["tree", "--root", str(short.root), *extra])
         assert _without(found, "install_root") == _without(expected, "install_root")
+
+
+@WINDOWS_LONG
+def test_constructed_windows_tree_path_in_extended_form_past_max_path(deep: Tree) -> None:
+    """`tree PATH` (and `tree --install PATH`) with PATH an absolute path past
+    `MAX_PATH` in `\\\\?\\` form lists what it lists for PATH plain, with no
+    error and no prefix (M13-58: it was refused as not inside the folder)."""
+    for extra, where in (([], deep.at("WTF")), (["--install"], deep.flavor)):
+        found = _json(["tree", "--root", str(deep.root), *extra, str(_x(where))])
+        assert found["errors"] == [] and found["items"], found
+        assert found == _json(["tree", "--root", str(deep.root), *extra, str(where)])
+
+
+# labaddon and char list / char show (M13-58)
+
+
+@WINDOWS_LONG
+def test_constructed_windows_char_list_past_max_path(deep: Tree, short: Tree) -> None:
+    """`char list` (`labaddon.survey`'s `lstat` of each `WowLab.lua`) on an
+    install past `MAX_PATH` lists every character's file as read, as it
+    does at a short root, in text and in JSON."""
+    found = _json(["char", "list", "--root", str(deep.root)])
+    assert len(found["characters"]) == 2, found
+    assert all(c["error"] is None and c["summary"] for c in found["characters"]), found
+    assert found["not_looked_at"] == []
+    assert found == _json(["char", "list", "--root", str(short.root)])
+    text = _ok(_invoke("char", "list", "--root", str(deep.root)))
+    _no_extended(text)
+    assert text.stdout == _ok(_invoke("char", "list", "--root", str(short.root))).stdout
+
+
+@WINDOWS_LONG
+def test_constructed_windows_char_show_past_max_path(deep: Tree, short: Tree) -> None:
+    """`char show` (the newest file, and one named by `--character`) reads a
+    `WowLab.lua` past `MAX_PATH` as it reads it at a short root."""
+    for extra in ([], ["--character", CHAR_B]):
+        found = _json(["char", "show", "--root", str(deep.root), *extra])
+        assert found["record"], found
+        assert found == _json(["char", "show", "--root", str(short.root), *extra])
+
+
+@WINDOWS_LONG
+def test_constructed_windows_survey_grew_past_reaches_a_file_past_max_path(deep: Tree) -> None:
+    """`_grew_past` (whether a file grew past what was left as it was read)
+    `lstat`s a file past `MAX_PATH` instead of taking the refusal for "not
+    there"."""
+    path = deep.at(f"{ACCT}/1/{CHAR_A}/SavedVariables/{labaddon.LAB_FILE_NAME}")
+    size = _x(path).stat().st_size
+    assert labaddon._grew_past(path, size - 1) is True
+    assert labaddon._grew_past(path, size) is False
+
+
+@WINDOWS_LONG
+def test_constructed_windows_char_list_refused_row_advice_past_max_path(
+    deep: Tree, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A row refused on the total size bound (constructed: 1 byte) past
+    `MAX_PATH`, with the root handed over in `\\\\?\\` form: the refusal is
+    the bound's, not "cannot read", and its `char show` advice names the
+    root plainly."""
+    survey = labaddon.survey
+
+    def small(*args: Any, **kwargs: Any) -> labaddon.AllCharacters:
+        return survey(*args, **{**kwargs, "budget": 1})
+
+    monkeypatch.setattr(labaddon, "survey", small)
+    result = _invoke("char", "list", "--root", str(_x(deep.root)), "--json")
+    _no_extended(result)
+    assert result.exit_code == 1, (result.stdout, result.stderr)
+    rows = cli.CharListReport.model_validate_json(result.stdout).characters
+    assert len(rows) == 2
+    for row in rows:
+        assert row.error is not None and "total size bound" in row.error, row
+        assert "wowlab char show --root" in row.error and str(deep.root) in row.error, row
 
 
 # gaps
