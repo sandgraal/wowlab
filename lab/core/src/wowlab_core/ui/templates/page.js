@@ -7,9 +7,11 @@
 // - the gaps (M13-27): what `filemap gaps --json` reports;
 // - the commands the server read from the CLI's Click tree, a field for each
 //   declared parameter, and what one run printed. A command the server marks
-//   `confirm` (M14-02) runs first as its plan; the server alone decides
-//   whether the plan may be confirmed, by handing back a one-time token, and
-//   Confirm sends that token with the plan's own command and parameters;
+//   `confirm` (M14-02, M14-03) runs first as its plan; the server alone
+//   decides whether the plan may be confirmed, by handing back a one-time
+//   token, and Confirm sends that token with the plan's own command and
+//   parameters; a confirmed run shows the server's note (its journal record
+//   and the `wowlab undo` hint) and never another Confirm;
 // - the character (M14-08): a picker from `char list --json` and the gear of
 //   the one picked from `char gear --json`.
 // It holds no game rules and no file-map logic (§14.5 D3): every fact, the
@@ -1518,6 +1520,11 @@
         showOffer(result.confirm, command, body.params);
       } else if (stage === "plan") {
         byId("confirm-note").textContent = "A field changed while the plan ran: show the plan again to be offered Confirm.";
+        byId("confirm-box").hidden = false;
+      } else if (stage === "confirmed" && typeof result.confirm.note === "string" && result.confirm.note) {
+        // The journal record and the `wowlab undo` hint, or what to do after
+        // a run stopped at its limit (M14-03); never a Confirm.
+        byId("confirm-note").textContent = shown(result.confirm.note);
         byId("confirm-box").hidden = false;
       }
     } catch (error) {
