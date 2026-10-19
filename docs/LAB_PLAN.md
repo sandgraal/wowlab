@@ -290,16 +290,29 @@ other link prints as before.
 *Amended 2026-10-18 (M13-56):* `doctor`'s no-flavor problem, when
 `not_taken` is not empty, is the refusal's words in full, "not taken:
 <name> (<reason>), ..." and, for a link, `install.NOT_TAKEN_LINK` included,
-so `--json` says why as the text does. The text of `doctor` ends with
-"Problems:" and one indented line per entry of `problems` whenever there is
-one (a run that skips the first run, under `--redact` or once a snapshot of
-the install exists, exited 1 with no line saying why); with no problem
-nothing is added. A first run that finds a flavor prints, under the flavor
-list, the line the link-only first run gives each linked folder ("<name> is
-a link to <target>, not followed, so its WTF (settings and SavedVariables),
-Interface and Fonts are not snapshotted: ... Back up the folder it points to
-yourself."), unindented; a folder not taken for another reason is not
-repeated there.
+so `--json` says why as the text does. Whenever `problems` is not empty, the
+text of `doctor` prints "Problems:" and one indented line per entry after
+the snapshot-store lines and before any first-run section (a run that skips
+the first run, under `--redact` or once a snapshot of the install exists,
+exited 1 with no line saying why); with no problem nothing is added. A
+failed first snapshot's "first snapshot: <error>" is added to `problems`
+after that block is printed, so it is never in it; the first run has
+already said "The snapshot could not be taken: ..." (or the write gate's
+refusal). A first run that finds a flavor prints, unindented under the
+flavor list, one line per folder of `not_taken` that the client may play
+from (`firstrun.beside_lines`): for a link, the line the link-only first
+run gives it ("<name> is a link to <target>, not followed, so its WTF
+(settings and SavedVariables), Interface and Fonts are not snapshotted: ...
+Back up the folder it points to yourself."); for `not_checked` and
+`flavor_info_changed`, "<name> could not be read as a flavor (<why>), so
+nothing in it is snapshotted; " and what to do ("check that you can open
+it, then run wowlab doctor again", or "run wowlab doctor again"). A folder
+with no `.flavor.info` is not repeated there. A link whose target cannot be
+read (a WCI link or a WSL symlink) adds, in both first-run cases, "To see
+where it points: the folder's Properties in File Explorer, or `dir /AL` in
+the folder that holds it." `FirstRunReport.not_snapshotted` stays flavor
+folders only; `--json` readers find links and the other folders in
+`doctor`'s `not_taken`.
 
 ### 6.2 `layout` — typed walk of a flavor (M10-06)
 

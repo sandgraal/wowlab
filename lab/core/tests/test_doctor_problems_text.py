@@ -18,6 +18,7 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
 from test_not_taken import (
     EMPTY,
     FLAVOR,
@@ -29,6 +30,7 @@ from test_not_taken import (
 )
 
 from wowlab_core import install
+from wowlab_core.install import NotTaken
 
 
 def _no_readable(root: Path, target: Path, *, empty: bool) -> str:
@@ -99,7 +101,7 @@ def test_a_first_run_with_only_a_link_lists_the_problem_too_constructed(tmp_path
     assert _problems_block(data["problems"]) in text
 
 
-def test_with_nothing_not_taken_the_problem_keeps_its_old_words(tmp_path: Path) -> None:
+def test_with_nothing_not_taken_the_problem_keeps_its_old_words_constructed(tmp_path: Path) -> None:
     root = tmp_path / "wow"
     root.mkdir()
     shutil.copy2(Path(__file__).parent / "fixtures" / "macos" / ".build.info", root / ".build.info")
@@ -143,7 +145,7 @@ def test_a_first_run_names_a_linked_folder_beside_a_real_flavor_constructed(
     assert "Problems:" not in text
 
 
-def test_a_first_run_with_no_link_beside_its_flavor_says_nothing_of_links(
+def test_a_first_run_with_no_link_beside_its_flavor_says_nothing_of_links_constructed(
     tmp_path: Path,
 ) -> None:
     root, _ = _install(tmp_path, empty=True)
@@ -153,3 +155,79 @@ def test_a_first_run_with_no_link_beside_its_flavor_says_nothing_of_links(
 
     assert " is a link to " not in text
     assert "Back up the folder it points to yourself" not in text
+
+
+def _stood(monkeypatch: pytest.MonkeyPatch, root: Path, name: str, entry: NotTaken) -> None:
+    """Discovery of `root` with the entry for `name` in `not_taken` replaced
+    by `entry` (constructed: a refused `lstat`, a race, and a link `readlink`
+    cannot read are not captured; `test_not_taken` builds each for real)."""
+    real = install.read_install(root)
+    taken = tuple(entry if n.name == name else n for n in real.not_taken)
+    stood = real.model_copy(update={"not_taken": taken})
+    monkeypatch.setattr(install, "discover", lambda *a, **k: stood)
+
+
+def _under_the_flavor_list(text: str, line: str) -> None:
+    scan = text.index(f"\nFlavor {FLAVOR} (")
+    at = text.index(f"\n{line}\n")
+    assert scan < at < text.index("\nTo take a first snapshot: ")
+    assert text.count(line) == 1
+
+
+@pytest.mark.parametrize(
+    ("reason", "note", "line"),
+    [
+        (
+            "not_checked",
+            "not taken as a flavor folder (it could not be checked: refused)",
+            f"{EMPTY} could not be read as a flavor (it could not be checked: refused), so "
+            "nothing in it is snapshotted; check that you can open it, then run wowlab "
+            "doctor again.",
+        ),
+        (
+            "flavor_info_changed",
+            install.NOT_A_FLAVOR_CHANGED,
+            f"{EMPTY} could not be read as a flavor (its .flavor.info changed as it was "
+            "read), so nothing in it is snapshotted; run wowlab doctor again.",
+        ),
+    ],
+    ids=["not-checked-constructed", "flavor-info-changed-constructed"],
+)
+def test_a_first_run_names_a_folder_it_could_not_read_beside_a_real_flavor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reason: str, note: str, line: str
+) -> None:
+    """Such a folder may be a flavor the client plays from: the first run
+    says nothing in it is snapshotted and what to do, beside the link line."""
+    root, target = _install(tmp_path, empty=True)
+    entry = NotTaken(name=EMPTY, reason=reason, target=None, note=note)  # type: ignore[arg-type]
+    _stood(monkeypatch, root, EMPTY, entry)
+
+    text = _run("doctor", "--offline", "--root", str(root)).stdout
+
+    _under_the_flavor_list(text, line)
+    _under_the_flavor_list(text, _link_line(target).removesuffix("\n"))
+
+
+def test_a_link_whose_target_cannot_be_read_says_how_to_find_it_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A WCI link or a WSL symlink: `readlink` cannot read it, so the line
+    says where to look. The JSON names it in `not_taken`, not in the first
+    run's `not_snapshotted`, which lists flavor folders only."""
+    root, _ = _install(tmp_path)
+    note = f"link (where it points is unknown), not followed; {install.NOT_A_FLAVOR_LINK}"
+    _stood(monkeypatch, root, LINKED, NotTaken(name=LINKED, reason="link", target=None, note=note))
+
+    text = _run("doctor", "--offline", "--root", str(root)).stdout
+    data = json.loads(_run("doctor", "--offline", "--json", "--root", str(root)).stdout)
+
+    _under_the_flavor_list(
+        text,
+        f"{LINKED} is a link (where it points is unknown), not followed, so its WTF (settings "
+        "and SavedVariables), Interface and Fonts are not snapshotted: "
+        f"{install.NOT_TAKEN_LINK}. Back up the folder it points to yourself. To see where "
+        "it points: the folder's Properties in File Explorer, or `dir /AL` in the folder "
+        "that holds it.",
+    )
+    assert data["first_run"]["not_snapshotted"] == [FLAVOR]  # no snapshot taken; no link
+    assert [n["name"] for n in data["not_taken"]] == [LINKED]

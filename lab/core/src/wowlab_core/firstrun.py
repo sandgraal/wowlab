@@ -34,7 +34,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path, PurePath
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from wowlab_core import guard, install, layout, longpath, snapshot
 from wowlab_core.snapshot import VerifyReport
@@ -52,11 +52,11 @@ __all__ = [
     "SubtreeScan",
     "SyncHint",
     "Unreadable",
+    "beside_lines",
     "estimate_seconds",
     "flavor_label",
     "intro_lines",
     "is_first_run",
-    "link_lines",
     "not_taken_lines",
     "pointing_lines",
     "run",
@@ -210,7 +210,13 @@ class FirstRunReport(_Out):
     verify: VerifyReport | None
     error: str | None
     refused: bool  # the error is the write gate's refusal (exit 3)
-    not_snapshotted: list[str]  # the other flavor folders, still without a snapshot
+    # The other flavor folders, still without a snapshot (M13-56: flavors
+    # only; a link or another folder not taken as a flavor is in doctor's
+    # `not_taken`, though the first-run text names it).
+    not_snapshotted: list[str] = Field(
+        description="The other flavor folders, still without a snapshot. Flavor folders "
+        "only: links and other folders not taken as flavors are in doctor's not_taken."
+    )
     undo: str  # the last line of the text output
 
 
@@ -364,6 +370,14 @@ def _sync_lines(scan: FlavorScan, wtf_is_link: bool) -> list[str]:
     return lines
 
 
+# Said, for a link whose target cannot be read (a WCI link or a WSL symlink
+# on Windows: `os.readlink` reads neither), how the player can find it.
+_FIND_TARGET = (
+    " To see where it points: the folder's Properties in File Explorer, or "
+    "`dir /AL` in the folder that holds it."
+)
+
+
 def _link_line(entry: install.NotTaken) -> str:
     """A linked `_..._` folder: never followed, so nothing in it is
     snapshotted; the player backs up the folder it points to, as for a
@@ -372,6 +386,23 @@ def _link_line(entry: install.NotTaken) -> str:
         f"{entry.name} is a {install.not_taken_why(entry)}, so its WTF (settings and "
         "SavedVariables), Interface and Fonts are not snapshotted: "
         f"{install.NOT_TAKEN_LINK}. Back up the folder it points to yourself."
+        + (_FIND_TARGET if entry.target is None else "")
+    )
+
+
+def _unread_line(entry: install.NotTaken) -> str:
+    """A `_..._` folder whose `lstat` was refused, or whose `.flavor.info`
+    changed as it was read: it may be a flavor, and nothing in it is
+    snapshotted (M13-56)."""
+    if entry.reason == "flavor_info_changed":
+        why = install.not_taken_why(entry).removesuffix("; run the command again")
+        remedy = "run wowlab doctor again"
+    else:
+        why = install.not_taken_why(entry)
+        remedy = "check that you can open it, then run wowlab doctor again"
+    return (
+        f"{entry.name} could not be read as a flavor ({why}), so nothing in it is "
+        f"snapshotted; {remedy}."
     )
 
 
@@ -384,12 +415,20 @@ def not_taken_lines(inst: install.Install) -> list[str]:
     ]
 
 
-def link_lines(inst: install.Install) -> list[str]:
-    """For a first run that found a flavor: each linked `_..._` folder beside
-    it, under the flavor list, in the words `not_taken_lines` gives it
-    (M13-56). A folder not taken for another reason is not repeated here:
-    `doctor` lists it above with its note."""
-    return [_link_line(n) for n in inst.not_taken if n.reason == "link"]
+def beside_lines(inst: install.Install) -> list[str]:
+    """For a first run that found a flavor: each `_..._` folder beside it
+    that is not snapshotted although the client may play from it, under the
+    flavor list (M13-56). A link gets the words `not_taken_lines` gives it;
+    a folder that could not be checked, or whose `.flavor.info` changed as
+    it was read, says so and what to do. A folder with no `.flavor.info` is
+    not repeated here: `doctor` lists it above with its note."""
+    lines: list[str] = []
+    for n in inst.not_taken:
+        if n.reason == "link":
+            lines.append(_link_line(n))
+        elif n.reason in ("not_checked", "flavor_info_changed"):
+            lines.append(_unread_line(n))
+    return lines
 
 
 def scan_lines(scan: FlavorScan, number: int, count: int) -> list[str]:
@@ -908,7 +947,7 @@ def run(
     for n, scan in enumerate(scans, 1):
         for line in scan_lines(scan, n, len(scans)):
             say(line)
-    for line in link_lines(inst):
+    for line in beside_lines(inst):
         say(line)
 
     def estimate(flavor: install.Flavor) -> str:
