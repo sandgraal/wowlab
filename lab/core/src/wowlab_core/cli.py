@@ -2816,6 +2816,18 @@ def _plain_arg(text: str) -> str:
     return longpath.plain_text(text) if longpath.ON_WINDOWS else text
 
 
+def _stored_target(target: str | None) -> str | None:
+    """A link target as a manifest stores it (`snapshot.Entry.target`, what
+    `readlink` answered), for display: on Windows without the extended-length
+    prefix an absolute target is answered with, where it has a plain spelling
+    (`longpath.plain_text`, as `tree` shows a link, M13-43). The manifest
+    keeps the raw text, which `guard` and `profiles` compare raw to raw; a
+    relative target, and any target off Windows, is shown as stored (M13-52)."""
+    if target is None or not longpath.ON_WINDOWS:
+        return target
+    return longpath.plain_text(target)
+
+
 @app.command()
 @_handled
 def explain(
@@ -5543,7 +5555,7 @@ def snap_show(
         _say("  Whether the client was running was not known when this was taken.")
     for e in manifest.entries:
         if e.kind == "symlink":
-            _say(f"  {e.path} -> {e.target} (link, recorded, not followed)")
+            _say(f"  {e.path} -> {_stored_target(e.target)} (link, recorded, not followed)")
         else:
             _say(f"  {e.path}  {_bytes(e.size)}  {(e.sha256 or '')[:12]}")
 
@@ -6550,7 +6562,7 @@ def _print_profile(report: ProfileReport, *, saved: bool) -> None:
     _say(f"  {s.subtrees} subtree(s), {s.files} file(s), {_bytes(s.bytes)}")
     for e in report.entries:
         if e.kind == "symlink":
-            _say(f"  {e.path} -> {e.target} (link, recorded, not followed)")
+            _say(f"  {e.path} -> {_stored_target(e.target)} (link, recorded, not followed)")
         else:
             _say(f"  {e.path}  {_bytes(e.size)}")
     for n in report.notes:
