@@ -1,8 +1,10 @@
 """`explain` of an entry at the install root, typed relatively (M13-57).
 
-A relative path with no file-map row that an `lstat` finds at the install
-root (a link, a file, a folder) is judged there, as its absolute spelling
-is, and never re-read inside the only flavor folder.
+A relative path with no file-map row at the install root or in the flavor
+folder, that a walk of `lstat`s from the root finds there (a link, a file,
+a folder, or a path through a link there), is judged at the root, as its
+absolute spelling is. A row inside the flavor (the only one, or the one
+`--flavor` names) wins, as on main.
 
 The install is the captured tree (`fixtures/macos/`) copied into `tmp_path`,
 its flavor folder named as its provenance row says (`_classic_beta_`), and
@@ -154,3 +156,36 @@ def test_a_path_only_inside_the_flavor_is_still_read_there(tmp_path: Path) -> No
     data = json.loads(_run("explain", "WTF/Config.wtf", "--root", str(root), "--json").stdout)
 
     assert (data["result"]["base"], data["result"]["flavor_folder"]) == ("flavor", FLAVOR)
+
+
+def test_a_missing_path_in_a_real_root_folder_is_read_as_on_main_constructed(
+    tmp_path: Path,
+) -> None:
+    """`Stuff/missing.txt`: the root folder `Stuff` is there, nothing is at
+    the path itself and no link is on the way, so it is read as it would be
+    with no `Stuff` at the root at all."""
+    root = _install(tmp_path)
+    args = ("explain", "Stuff/missing.txt", "--root", str(root))
+
+    with_folder = (_run(*args).stdout, _run(*args, "--json").stdout)
+    (root / "Stuff").rmdir()
+    without = (_run(*args).stdout, _run(*args, "--json").stdout)
+
+    assert with_folder == without
+
+
+def test_a_row_in_a_named_flavor_wins_over_a_root_entry_constructed(tmp_path: Path) -> None:
+    """A stray `WTF/Config.wtf` at the root, several flavors: `--flavor`
+    still reads the path in that flavor, where it has a row, and without
+    `--flavor` the hint to pass one stays."""
+    root = _install(tmp_path, second=True)
+    (root / "WTF").mkdir()
+    (root / "WTF" / "Config.wtf").write_bytes(b"constructed: a stray at the install root\n")
+
+    named = json.loads(
+        _run("explain", "WTF/Config.wtf", "--flavor", SECOND, "--root", str(root), "--json").stdout
+    )
+    text = _run("explain", "WTF/Config.wtf", "--root", str(root)).stdout
+
+    assert (named["result"]["base"], named["result"]["flavor_folder"]) == ("flavor", SECOND)
+    assert "pass --flavor to read PATH inside one of them" in text

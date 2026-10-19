@@ -2810,15 +2810,22 @@ def _not_taken_at(
 
 
 def _found_at_root(inst: install.Install, found: layout.Classified | layout.Unclassified) -> bool:
-    """Whether an `lstat` finds an entry (a link, a file, a folder) at an
-    install-root path (M13-57). Such a path is judged at the root, where it
-    is, never re-read inside a flavor folder."""
+    """Whether an install-root path is there (M13-57): walking down from the
+    root one `lstat` at a time, as `layout.absent` does, every part is found,
+    or a link is (a path through a link at the root is there, as its
+    absolute spelling says; the link is never followed to find out). Any
+    error on the way is "not there", and the path is read as on main."""
     if found.base != "root" or not found.path:
         return False
-    try:
-        longpath.lstat(Path(inst.root).joinpath(*[p for p in found.path.split("/") if p]))
-    except (OSError, ValueError):
-        return False
+    current = Path(inst.root)
+    for part in (p for p in found.path.split("/") if p):
+        current = current / part
+        try:
+            st = longpath.lstat(current)
+        except (OSError, ValueError):
+            return False
+        if layout.is_link(current, st):
+            return True
     return True
 
 
@@ -2867,36 +2874,42 @@ def explain(
         # at the install root, where that folder is; it is not re-read in a
         # flavor folder.
         taken_root = _not_taken_at(inst, result) is not None
-        # M13-57: so does a path with no row that is there at the install
-        # root (a link, a file or a folder `lstat` finds there).
+        # M13-57: so does a path with no row either way (at the root or in
+        # the flavor) that is there at the install root: a link, a file or
+        # a folder, or a path through a link there. A row in the flavor wins.
         on_root = (
             not taken_root
             and isinstance(result, layout.Unclassified)
             and _found_at_root(inst, result)
         )
-        at_root = taken_root or on_root
-        if flavor is not None and (
-            on_root or (taken_root and _not_taken_named(inst, flavor) is None)
-        ):
+        at_root = taken_root
+        if taken_root and flavor is not None and _not_taken_named(inst, flavor) is None:
             # The path is not read in it, but a `--flavor` that names no
-            # flavor is refused as on main (for a path under a folder not
-            # taken, naming that folder is accepted, M13-45).
+            # folder at all is refused as on main.
             _select_flavor(inst, flavor)
         if (
             isinstance(result, layout.Unclassified)
             and (flavor or len(inst.flavors) == 1)
-            and not at_root
+            and not taken_root
         ):
             chosen = _select_flavor(inst, flavor)
             chosen_folder = chosen.folder
             in_flavor = layout.Layout.for_flavor(chosen, inst.root).classify(path)
             if isinstance(in_flavor, layout.Classified):
                 result = in_flavor
+            elif on_root:
+                at_root = True  # M13-57: judged at the root, where it is
             elif result.base == "root" and result.path and in_flavor.base == "flavor":
                 # No row either way: the verdict reads the path inside the
                 # chosen flavor, so every spelling of a flavor path gets the
                 # same one. `result` stays the install-root lookup, as on main.
                 judged = in_flavor
+        elif on_root:
+            # Several flavors, none chosen: `--flavor` would not read it in
+            # one unless that flavor has a row for it (M13-57).
+            at_root = not any(
+                isinstance(lay.classify(path), layout.Classified) for lay in layout.layouts(inst)
+            )
     if judged is None:
         judged = result
     folder, link, placeholder = _path_kind(inst.root, judged, path)
