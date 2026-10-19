@@ -21,8 +21,9 @@
 -- - class_id and class_file: the third and second returns of
 --   UnitClass("player"). The first (the localized class name) is not kept.
 --
--- All [verify] until an owner capture shows them ran (lab/addon/README.md,
--- API status; docs/handoffs/M15-01.md).
+-- All three ran on 70450 (M15-01 capture; lab/addon/README.md, API status;
+-- docs/LAB_FORMATS.md, amendment of 2026-10-19). UnitSex 3 and 1 are not
+-- yet seen: [verify].
 
 local _, ns = ...
 

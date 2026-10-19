@@ -2206,8 +2206,10 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   shop's `Enum.UnitSex` value, from `sex_raw` (2 to 0, 3 to 1, anything else
   absent with the reason "UnitSex returned <n>"), since
   `C_BarberShop.GetCurrentCharacterData`, which `customization` reads,
-  is called only in the barber shop (how it answers outside is untested). Every API is **[verify]** until the
-  owner's capture (`docs/handoffs/M15-01.md`). The reader reads schema 1 to
+  is called only in the barber shop (how it answers outside is untested). All three APIs ran in the
+  owner's 70450 captures (`docs/handoffs/M15-01.md`, fixture root
+  `macos-70450/`, `docs/LAB_FORMATS.md` amendment of 2026-10-19): `UnitSex`
+  2 maps to `Enum.UnitSex` 0 there; `UnitSex` 3 and 1 stay **[verify]**. The reader reads schema 1 to
   3 files exactly as before, with `identity` absent; the next change is
   schema 5. `CharShowReport` (after `record`) and `CharGearReport` (after
   `spec`) gain one field each, `identity` (`labaddon.CharIdentity`:

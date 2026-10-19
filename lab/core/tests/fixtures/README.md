@@ -174,7 +174,7 @@ the client:
   the folders `1/Dangling-Participle` and `1/Sangraal-Sett` are the real
   ones; no earlier run's pseudonym is claimed to be either. Both
   characters are of the first body type, so `UnitSex` 3 (the second body
-  type) is still unobserved.
+  type, from memory) is still unobserved.
 - Combat logs from part 3 on are captured with shifted timestamps (M10-02
   follow-up 5, `timestamps-shifted`): every stamp and the file name moved by
   one secret offset per log, format kept, so neither the date nor the time

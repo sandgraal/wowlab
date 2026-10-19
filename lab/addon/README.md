@@ -162,7 +162,8 @@ Notes on the fields:
   after it is **[verify]**, and not tested by the M15-01 capture. If that
   gather is too early, the logout write does not gather again (the section
   is no longer dirty), so the file keeps the old value until the next
-  login. Each value is exactly one of the value and `<field>_absent`:
+  loading screen or `/reload` (each `PLAYER_ENTERING_WORLD` gathers it
+  again). Each value is exactly one of the value and `<field>_absent`:
   - `race_id`: the third return of `UnitRace("player")`, as
     `Customization.lua` reads it; the name and file token are not kept.
   - `sex_raw`: the first return of `UnitSex("player")` as the client gives
@@ -687,9 +688,9 @@ on from one, fails the test until someone lists it on purpose.
 | `C_BarberShop.GetAvailableCustomizations` | customization: options, choices, current index | ran on 70058 (M11-23 capture: seven options with choices) and 70425 (M11-29 capture: `currentChoiceIndex` 1-based, confirmed against the swatch picked); other builds: [verify] | yes |
 | `C_BarberShop.GetCurrentCharacterData` | customization: `sex` only (name fields never read) | ran on 70058 (M11-23 capture: `sex` 0, no name stored); `sex` 1 not yet seen: [verify] | yes |
 | `C_BarberShop.GetViewingChrModel` | customization: chr model id, or `chr_model_id_absent`: how the call went (schema 2, M11-29) | [verify]: no number on 70058 (M11-23 capture); returned nil on 70425 (M11-29 capture); why stays open | yes |
-| `UnitRace` | customization and identity: race id (third return only) | ran on 70058 (M11-23 capture: `race_id` 5); the drop on a race change is untested; in `identity` (schema 4): [verify] | yes |
-| `UnitSex` | identity: `sex_raw`, the first return as the client gives it (1 unknown, 2 male, 3 female, from memory) | [verify] | yes |
-| `UnitClass` | identity: class file and class id (second and third returns; the localized name is never kept) | [verify] | yes |
+| `UnitRace` | customization and identity: race id (third return only) | ran on 70058 (M11-23 capture: `race_id` 5) and on 70450 (M15-01 capture: `identity.race_id` 2 and 5, matching the owner's report); the drop on a race change is untested: [verify] | yes |
+| `UnitSex` | identity: `sex_raw`, the first return as the client gives it (1 unknown, 2 male, 3 female, from memory) | ran on 70450 (M15-01 capture: 2 on two first-body-type characters, which `Enum.UnitSex` 0 matches on one with a carried barber record); UnitSex 3 not yet seen: [verify] | yes |
+| `UnitClass` | identity: class file and class id (second and third returns; the localized name is never kept) | ran on 70450 (M15-01 capture: (8, `MAGE`) and (9, `WARLOCK`), matching the owner's report); other classes: [verify] | yes |
 | `C_MountJournal.GetMountIDs` | mounts: every mount id, unfiltered | [verify] | yes |
 | `C_MountJournal.GetMountInfoByID` | mounts: isCollected (11th return) | [verify] | yes |
 | `C_ToyBox.GetNumFilteredToys` | toys: rows through the current filter | [verify] | yes |
