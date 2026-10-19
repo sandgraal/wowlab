@@ -59,6 +59,10 @@ FILES_ONLY_RUNS: dict[str, str] = {
         "M13-05: only the two WowLab.lua files committed; the run's .build.info "
         "tags cell was not safe to publish, and .flavor.info alone is no root"
     ),
+    "macos-70450": (
+        "M15-01: only the three WowLab.lua files committed (the account one and two "
+        "characters'), laid out as macos-70425 is"
+    ),
 }
 INSTALL_ROOTS = sorted(p for p in PLATFORMS if (FIXTURES / p / ".build.info").is_file())
 BORROWED_ROOT = "macos"

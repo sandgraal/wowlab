@@ -76,26 +76,26 @@ def _refused(raw: object, *fragments: str) -> str:
 # ─── schema ──────────────────────────────────────────────────────────────────
 
 
-# Schema 2 is known since M11-29 and schema 3 since M13-05, so the first unknown
-# schema is 4.
+# Schema 2 is known since M11-29, schema 3 since M13-05 and schema 4 since M15-01,
+# so the first unknown schema is 5.
 
 
-def test_constructed_schema_4_is_refused_with_a_clear_message() -> None:
+def test_constructed_schema_5_is_refused_with_a_clear_message() -> None:
     raw = _base()
-    raw["schema"] = 4
-    message = _refused(raw, "schema 4", "knows schema 1, 2, 3 only", "nothing was read")
+    raw["schema"] = 5
+    message = _refused(raw, "schema 5", "knows schema 1, 2, 3, 4 only", "nothing was read")
     assert "another version of the lab-addon" in message
 
 
-def test_constructed_schema_4_file_is_refused_from_lua_text() -> None:
-    data = b'\r\nWowLabCharDB = {\r\n["schema"] = 4,\r\n["gear"] = {\r\n},\r\n}\r\n'
-    with pytest.raises(labaddon.LabAddonError, match="schema 4"):
+def test_constructed_schema_5_file_is_refused_from_lua_text() -> None:
+    data = b'\r\nWowLabCharDB = {\r\n["schema"] = 5,\r\n["gear"] = {\r\n},\r\n}\r\n'
+    with pytest.raises(labaddon.LabAddonError, match="schema 5"):
         labaddon.parse_char(data)
 
 
-def test_constructed_account_schema_4_is_refused() -> None:
-    data = b'\r\nWowLabDB = {\r\n["schema"] = 4,\r\n}\r\n'
-    with pytest.raises(labaddon.LabAddonError, match="WowLabDB is schema 4"):
+def test_constructed_account_schema_5_is_refused() -> None:
+    data = b'\r\nWowLabDB = {\r\n["schema"] = 5,\r\n}\r\n'
+    with pytest.raises(labaddon.LabAddonError, match="WowLabDB is schema 5"):
         labaddon.parse_account(data)
 
 

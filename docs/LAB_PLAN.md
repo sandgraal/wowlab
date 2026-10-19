@@ -1946,7 +1946,7 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   `talents.class`, `talents.legacy`, `customization`,
   `collections.mounts`, `collections.toys`, `collections.pets`,
   `collections.appearances`, `currencies`, `professions` (and, since schema
-  3, `spellbook`, `actionbars`, `bindings`). The list is
+  3, `spellbook`, `actionbars`, `bindings`; since schema 4, `identity`). The list is
   saved in `WowLabCharDB`, per character, as `skip = { "<section key>", ... }` (strings in
   section order, left out when empty; the reader keeps it as a list of
   strings and ignores a key it does not know) and read at `ADDON_LOADED`,
@@ -2197,6 +2197,32 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   Schema 1 may change after M11-03. Edits from the capture land before
   M11-04 starts; after M11-04 merges, any change is a new schema (schema 2
   is M11-29's and schema 3 is M13-05's, above; the next change is schema 4).
+
+  Amended 2026-10-19 (M15-01; §16.3's amendment of the same date): schema 4.
+  `WowLabCharDB` and `WowLabDB` are written with `schema = 4`, and schema 4
+  is schema 3 plus one section, `identity` (`lab/addon/WowLab/Identity.lua`):
+  `race_id` (the third return of `UnitRace("player")`), `sex_raw` (the first
+  return of `UnitSex("player")` as the client gives it), `class_id` and
+  `class_file` (the third and second returns of `UnitClass("player")`), each
+  exactly one of the value and `<field>_absent`, a reason. It is gathered on
+  entering the world and again on `BARBER_SHOP_APPEARANCE_APPLIED` (the
+  event's firing is confirmed by the 70425 capture; that `UnitSex` already
+  gives the new body type at that gather is **[verify]**, not tested by the
+  M15-01 capture), and can be switched off like any section. The reader derives `sex`, the barber
+  shop's `Enum.UnitSex` value, from `sex_raw` (2 to 0, 3 to 1, anything else
+  absent with the reason "UnitSex returned <n>"), since
+  `C_BarberShop.GetCurrentCharacterData`, which `customization` reads,
+  is called only in the barber shop (how it answers outside is untested). All three APIs ran in the
+  owner's 70450 captures (`docs/handoffs/M15-01.md`, fixture root
+  `macos-70450/`, `docs/LAB_FORMATS.md` amendment of 2026-10-19): `UnitSex`
+  2 maps to `Enum.UnitSex` 0 there; `UnitSex` 3 and 1 stay **[verify]**. The reader reads schema 1 to
+  3 files exactly as before, with `identity` absent; the next change is
+  schema 5. `CharShowReport` (after `record`) and `CharGearReport` (after
+  `spec`) gain one field each, `identity` (`labaddon.CharIdentity`:
+  `race_id`, `sex`, `sex_raw`, `class_id`, `class_file`, each with its
+  `_absent` reason), and `char show` prints one `Identity:` line after the
+  spec for a schema-4 record; nothing else in either command's output
+  changes.
 - **Install** `wowlab addon install lab` / `wowlab addon remove lab`: copies
   the addon into `Interface/AddOns/WowLab/` through a `guard` transaction
   (client closed, snapshot first, undoable), filling the TOC's

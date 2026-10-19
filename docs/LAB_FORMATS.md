@@ -820,7 +820,8 @@ Dated entries, newest last. Each names the fixture that prompted it.
   it cannot". The reason here is the second `BARBER_SHOP_OPEN` after the
   Accept. A later
   ticket could keep an applied record through a following open, which would
-  be schema 4 with its own capture. `looks import-char` keeps saying "as of
+  be schema 4 (now schema 5; schema 4 is M15-01's) with its own capture.
+  `looks import-char` keeps saying "as of
   the last barber-shop open", which is still true.
 - **2026-10-17, §8, `SPELL_CAST_SUCCESS` layout and the unit-flag fields,
   Forever 1.60.1 (M13-08; fixture
@@ -900,3 +901,30 @@ Dated entries, newest last. Each names the fixture that prompted it.
   shirt (the ranged slot left out) over 16; both 70009 records fall below
   that rule (3.3125 against 71/16, 2.375 against 58/16). That supports "how
   the client computes it is not known" (M11-03 table) and settles nothing.
+- **2026-10-19, lab-addon schema 4, `identity` (M15-01; fixture root
+  `macos-70450/`, two owner captures on 1.60.1.70450 of
+  `1/Dangling-Participle` and `1/Sangraal-Sett`).** `UnitRace`, `UnitSex`
+  and `UnitClass` all ran: both records hold `race_id`, `sex_raw`,
+  `class_id` and `class_file` with no `_absent` reason, and
+  `events_unregistered = {}`. `UnitClass` gave (8, `MAGE`) and (9,
+  `WARLOCK`), with `UnitRace` race 2 and race 5, matching the owner's report
+  (an Orc mage, an Undead warlock). `UnitSex` gave 2 on both, two
+  characters of the first body type. That 2 corresponds to `Enum.UnitSex` 0
+  is settled on `Sangraal-Sett` by its carried `customization` record
+  (`race_id` 5, `sex` 0, from `C_BarberShop.GetCurrentCharacterData`), and
+  by the M11-23 table join (race 5 `Sex` 0 is `ChrModel` 9, the first body
+  type), with one caveat: the two values come from different sessions and
+  builds. The carried `sex` 0 was recorded at load 1 (`recorded_load` 1),
+  most likely the 70425 session; `identity` is from load 2 on 70450. They
+  describe the same body if, as is most likely, the carried record is from
+  the M11-29 visit, which changed hair colour only; `recorded_load` 1 shows
+  no barber visit with the addon since, and nothing in the record shows a
+  body-type change at that visit.
+  `UnitSex` 3 (the second body type, from memory) and 1 ("unknown") are
+  still unobserved **[verify]**. `probe.loads` is 1 on `Dangling-Participle`
+  (a first load) and 2 on `Sangraal-Sett`; whether the count rose across a
+  first schema-4 write is still open, since no earlier file of either
+  character is committed under its name (the fixture index does not claim
+  `Sangraal-Sett` is the 70425 character). Still **[verify]**: whether
+  `UnitSex` gives the new body type at the gather 2 s after
+  `BARBER_SHOP_APPEARANCE_APPLIED` (not tested by this capture).
