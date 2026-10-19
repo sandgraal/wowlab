@@ -1,0 +1,270 @@
+{
+  "character": "1/Dangling-Participle",
+  "file": "WTF/Account/90000001#6/1/Dangling-Participle/SavedVariables/WowLab.lua",
+  "mtime_ns": 1700000000000000000,
+  "spec": {
+    "id": 1482,
+    "index": 1,
+    "api": "C_SpecializationInfo",
+    "absent": null
+  },
+  "identity": {
+    "race_id": 2,
+    "race_id_absent": null,
+    "sex": 0,
+    "sex_absent": null,
+    "sex_raw": 2,
+    "sex_raw_absent": null,
+    "class_id": 8,
+    "class_id_absent": null,
+    "class_file": "MAGE",
+    "class_file_absent": null
+  },
+  "average": {
+    "equipped": 2.375,
+    "overall": 2.375,
+    "pvp": 2.375,
+    "absent": null
+  },
+  "slots": [
+    {
+      "slot": 4,
+      "slot_name": "Shirt",
+      "raw_link": "|cnIQ1:|Hitem:6096::::::::10:1482::75:::::::|h[Apprentice's Shirt]|h|r",
+      "item_id": 6096,
+      "name": "Apprentice's Shirt",
+      "colour": "nIQ1:",
+      "quality": "Common",
+      "item_level": 1,
+      "item_level_api": "C_Item.GetCurrentItemLevel",
+      "enchant_id": null,
+      "gem_ids": [],
+      "suffix_id": null,
+      "spec_id": 1482,
+      "bonus_ids": [],
+      "upgrade": {
+        "mask": null,
+        "modifiers": []
+      },
+      "crafter_removed": false
+    },
+    {
+      "slot": 5,
+      "slot_name": "Chest",
+      "raw_link": "|cnIQ1:|Hitem:4916::::::::10:1482::11:::::::|h[Soft Wool Vest]|h|r",
+      "item_id": 4916,
+      "name": "Soft Wool Vest",
+      "colour": "nIQ1:",
+      "quality": "Common",
+      "item_level": 5,
+      "item_level_api": "C_Item.GetCurrentItemLevel",
+      "enchant_id": null,
+      "gem_ids": [],
+      "suffix_id": null,
+      "spec_id": 1482,
+      "bonus_ids": [],
+      "upgrade": {
+        "mask": null,
+        "modifiers": []
+      },
+      "crafter_removed": false
+    },
+    {
+      "slot": 6,
+      "slot_name": "Waist",
+      "raw_link": "|cnIQ0:|Hitem:3363::::::::10:1482:::::::::|h[Frayed Belt]|h|r",
+      "item_id": 3363,
+      "name": "Frayed Belt",
+      "colour": "nIQ0:",
+      "quality": "Poor",
+      "item_level": 3,
+      "item_level_api": "C_Item.GetCurrentItemLevel",
+      "enchant_id": null,
+      "gem_ids": [],
+      "suffix_id": null,
+      "spec_id": 1482,
+      "bonus_ids": [],
+      "upgrade": {
+        "mask": null,
+        "modifiers": []
+      },
+      "crafter_removed": false
+    },
+    {
+      "slot": 7,
+      "slot_name": "Legs",
+      "raw_link": "|cnIQ2:|Hitem:3291::::::::10:1482:::::::::|h[Ancestral Woollies]|h|r",
+      "item_id": 3291,
+      "name": "Ancestral Woollies",
+      "colour": "nIQ2:",
+      "quality": "Uncommon",
+      "item_level": 13,
+      "item_level_api": "C_Item.GetCurrentItemLevel",
+      "enchant_id": null,
+      "gem_ids": [],
+      "suffix_id": null,
+      "spec_id": 1482,
+      "bonus_ids": [],
+      "upgrade": {
+        "mask": null,
+        "modifiers": []
+      },
+      "crafter_removed": false
+    },
+    {
+      "slot": 8,
+      "slot_name": "Feet",
+      "raw_link": "|cnIQ0:|Hitem:1427::::::::10:1482:::::::::|h[Patchwork Shoes]|h|r",
+      "item_id": 1427,
+      "name": "Patchwork Shoes",
+      "colour": "nIQ0:",
+      "quality": "Poor",
+      "item_level": 10,
+      "item_level_api": "C_Item.GetCurrentItemLevel",
+      "enchant_id": null,
+      "gem_ids": [],
+      "suffix_id": null,
+      "spec_id": 1482,
+      "bonus_ids": [],
+      "upgrade": {
+        "mask": null,
+        "modifiers": []
+      },
+      "crafter_removed": false
+    },
+    {
+      "slot": 9,
+      "slot_name": "Wrist",
+      "raw_link": "|cnIQ2:|Hitem:281269::::::::10:1482::11:::::::|h[Mogra's Friendship Bracelet]|h|r",
+      "item_id": 281269,
+      "name": "Mogra's Friendship Bracelet",
+      "colour": "nIQ2:",
+      "quality": "Uncommon",
+      "item_level": 10,
+      "item_level_api": "C_Item.GetCurrentItemLevel",
+      "enchant_id": null,
+      "gem_ids": [],
+      "suffix_id": null,
+      "spec_id": 1482,
+      "bonus_ids": [],
+      "upgrade": {
+        "mask": null,
+        "modifiers": []
+      },
+      "crafter_removed": false
+    },
+    {
+      "slot": 10,
+      "slot_name": "Hands",
+      "raw_link": "|cnIQ0:|Hitem:1377::::::::10:1482:::::::::|h[Frayed Gloves]|h|r",
+      "item_id": 1377,
+      "name": "Frayed Gloves",
+      "colour": "nIQ0:",
+      "quality": "Poor",
+      "item_level": 3,
+      "item_level_api": "C_Item.GetCurrentItemLevel",
+      "enchant_id": null,
+      "gem_ids": [],
+      "suffix_id": null,
+      "spec_id": 1482,
+      "bonus_ids": [],
+      "upgrade": {
+        "mask": null,
+        "modifiers": []
+      },
+      "crafter_removed": false
+    },
+    {
+      "slot": 15,
+      "slot_name": "Back",
+      "raw_link": "|cnIQ1:|Hitem:6520::::::::10:1482:::::::::|h[Pioneer Cloak]|h|r",
+      "item_id": 6520,
+      "name": "Pioneer Cloak",
+      "colour": "nIQ1:",
+      "quality": "Common",
+      "item_level": 9,
+      "item_level_api": "C_Item.GetCurrentItemLevel",
+      "enchant_id": null,
+      "gem_ids": [],
+      "suffix_id": null,
+      "spec_id": 1482,
+      "bonus_ids": [],
+      "upgrade": {
+        "mask": null,
+        "modifiers": []
+      },
+      "crafter_removed": false
+    },
+    {
+      "slot": 16,
+      "slot_name": "Main Hand",
+      "raw_link": "|cnIQ1:|Hitem:5778::::::::10:1482::11:::::::|h[Primitive Walking Stick]|h|r",
+      "item_id": 5778,
+      "name": "Primitive Walking Stick",
+      "colour": "nIQ1:",
+      "quality": "Common",
+      "item_level": 5,
+      "item_level_api": "C_Item.GetCurrentItemLevel",
+      "enchant_id": null,
+      "gem_ids": [],
+      "suffix_id": null,
+      "spec_id": 1482,
+      "bonus_ids": [],
+      "upgrade": {
+        "mask": null,
+        "modifiers": []
+      },
+      "crafter_removed": false
+    }
+  ],
+  "empty_slots": [
+    {
+      "slot": 1,
+      "slot_name": "Head"
+    },
+    {
+      "slot": 2,
+      "slot_name": "Neck"
+    },
+    {
+      "slot": 3,
+      "slot_name": "Shoulder"
+    },
+    {
+      "slot": 11,
+      "slot_name": "Finger 1"
+    },
+    {
+      "slot": 12,
+      "slot_name": "Finger 2"
+    },
+    {
+      "slot": 13,
+      "slot_name": "Trinket 1"
+    },
+    {
+      "slot": 14,
+      "slot_name": "Trinket 2"
+    },
+    {
+      "slot": 17,
+      "slot_name": "Off Hand"
+    },
+    {
+      "slot": 18,
+      "slot_name": "Ranged"
+    },
+    {
+      "slot": 19,
+      "slot_name": "Tabard"
+    }
+  ],
+  "notes": [
+    "WowLab.lua is written at logout, /reload or a clean exit (a crash writes nothing): this is the character as of that save, not the session in progress.",
+    "The addon records no time; the time shown is the file's modification time.",
+    "Slot names and quality words: the shipped default gear_slots.toml, community documentation for Retail, [verify] on Forever; a gear_slots.toml in wowlab's user config folder replaces any value it sets.",
+    "Item names are each link's bracketed text; nothing is fetched. The link fields past the item id (enchant, gems, suffix, specialization, bonus ids) are named as community documentation names them [verify]; \"upgrade\" (field 10 and the modifier pairs) is the older documentation's name for those fields, and the upgrade track itself is carried in bonus ids.",
+    "Item levels and the averages are the client's figures as recorded, never derived from bonus ids. The averages are GetAverageItemLevel's returns, not the mean of the item levels listed, and how the client computes them is not known.",
+    "overall: on Retail, the best items owned, bags included (community documentation, [verify] on Forever)."
+  ]
+}

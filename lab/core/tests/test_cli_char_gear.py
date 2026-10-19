@@ -2,9 +2,11 @@
 
 Each install is a captured tree copied into `tmp_path` with its flavor
 folder named as its provenance row says (`_classic_beta_`): `macos/` (two
-characters, 70009), `macos-70058/`, and `macos-70425/`, whose rows say its
-files are classified inside the install root borrowed from `macos/` (its
-`.build.info` and `.flavor.info`). The text and `--json` of each character
+characters, 70009), `macos-70058/`, `macos-70425/` and `macos-70450/` (two
+characters, schema 4), whose rows say their files are classified inside the
+install root borrowed from `macos/` (its `.build.info` and `.flavor.info`).
+The two `macos-70450` text snapshots were written by `main`'s code before
+M15-02 changed `char gear`, so they prove its text is byte for byte as it was. The text and `--json` of each character
 are compared with snapshot files under `tests/snapshots/char_gear/`; the
 file times are set to one fixed instant, and the text's local time and the
 two slot-table paths are put back as placeholders before the comparison.
@@ -45,7 +47,11 @@ CASES = [
     ("macos", "1/Labcharb-Labrealmf"),
     ("macos-70058", "1/Labchard-Labrealmg"),
     ("macos-70425", "1/Labchard-Labrealme"),
+    ("macos-70450", "1/Dangling-Participle"),
+    ("macos-70450", "1/Sangraal-Sett"),
 ]
+# Runs committed without their own .build.info and .flavor.info (fixture index).
+FILES_ONLY = ("macos-70425", "macos-70450")
 _WRITTEN = re.compile(r"^Written: .* \(the file's modification time\)$", re.MULTILINE)
 
 runner = CliRunner()
@@ -64,7 +70,7 @@ def _install(tree: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path
     root = tmp_path / "World of Warcraft"
     root.mkdir()
     flavor = root / FLAVOR
-    if tree == "macos-70425":  # no .build.info or .flavor.info of its own (fixture index)
+    if tree in FILES_ONLY:  # no .build.info or .flavor.info of its own (fixture index)
         shutil.copy2(FIXTURES / "macos" / ".build.info", root / ".build.info")
         shutil.copytree(FIXTURES / tree / "forever", flavor)
         shutil.copy2(FIXTURES / "macos" / "forever" / ".flavor.info", flavor / ".flavor.info")
