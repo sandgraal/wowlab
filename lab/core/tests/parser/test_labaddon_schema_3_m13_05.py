@@ -232,7 +232,8 @@ def test_the_addon_source_lists_what_these_tests_use() -> None:
     ), PROBED
     assert len(COMBAT_REASONS) == 3, COMBAT_REASONS
     assert len(LEFT_OUT_REASONS) == 4, LEFT_OUT_REASONS
-    assert re.search(r"^ns\.SCHEMA = 3$", (ADDON / "Core.lua").read_text(), re.M)
+    # The addon writes schema 4 since M15-01; schema 4 keeps these sections.
+    assert re.search(r"^ns\.SCHEMA = 4$", (ADDON / "Core.lua").read_text(), re.M)
 
 
 def test_every_probed_api_the_addon_writes_is_one_the_reader_takes() -> None:

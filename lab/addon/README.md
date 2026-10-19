@@ -11,14 +11,14 @@ wrote (M11-04).
 
 Records this character's equipped gear, spec, class talents, Legacy-tree candidates,
 barber-shop choices, collections, currencies, professions, spellbook, action
-bars and key bindings into
+bars, key bindings and the character's race, body type and class into
 `WowLabCharDB` (`## SavedVariablesPerCharacter`) as a versioned table
-(`schema = 3` since M13-05; 2 since M11-29), written by the client at logout, `/reload` or a
+(`schema = 4` since M15-01; 3 since M13-05; 2 since M11-29), written by the client at logout, `/reload` or a
 clean exit. `/wowlab save` refreshes the tables in memory only; a crash
 writes nothing.
 `/wowlab skip <section>` and `/wowlab unskip <section>` switch one section
 off and on ("Switching a section off" below).
-`WowLabDB` (`## SavedVariables`) holds only `{ schema = 3 }` until a capture
+`WowLabDB` (`## SavedVariables`) holds only `{ schema = 4 }` until a capture
 shows which data is account-wide. The addon writes one schema number into
 both variables.
 
@@ -35,11 +35,11 @@ both variables.
   interface number or the flavor. A section the client cannot provide is
   `{ absent = "<reason>" }`.
 
-### Table layout (schema 3)
+### Table layout (schema 4)
 
 ```
 WowLabCharDB = {
-  schema = 3,
+  schema = 4,
   probe = { loads = <n>, lost = true? },      -- carried across sessions, with customization; lost: this load only
   skip = { "<section key>", ... },            -- sections the owner switched off; left out when none (M11-21)
   client = { version, build, interface },     -- GetBuildInfo(); its date is not kept
@@ -64,6 +64,8 @@ WowLabCharDB = {
                 list = { { slot, skill_line, type, action_id, spell_id, spell_name, subtext, passive, off_spec } }, probes },
   actionbars = { first_slot, last_slot, slots = { { slot, type, id, sub_type } }, probes },
   bindings = { binding_set, account_bindings, character_bindings, commands, commands_left_out, keys_left_out, list = { { command, keys = { "<key>", ... } } }, probes },
+  -- schema 4 (M15-01); each value is exactly one of <field> and <field>_absent:
+  identity = { race_id | race_id_absent, sex_raw | sex_raw_absent, class_id | class_id_absent, class_file | class_file_absent },
 }
 probes = { { api, present, calls, errors, answered, secret } }  -- one per API the section asks, in a fixed order, then issecretvalue, C_Secrets, canaccessvalue
 <config> = { id, type, trees = { { id, system_id, currencies = { { id, quantity, max_quantity, spent } }, nodes = { { id, ranks_purchased, active_rank, current_rank, max_ranks, is_visible, entries, sub_tree, active_entry, active_entry_rank } } } } }
@@ -89,6 +91,13 @@ Lab reads schema 1 and 2 files exactly as before (a new section's key in one
 of them is an unknown key, and refused when it holds text), and refuses a
 schema it does not know. The first logout with the M13-05 addon rewrites the
 file as schema 3, and `probe.loads` keeps rising across that write.
+
+Schema 4 (M15-01) is schema 3 with one new section, `identity`; nothing
+else changed. The Lab reads schema 1, 2 and 3 files exactly as before and
+reports their `identity` as absent ("the record is schema n; `identity` is
+recorded from schema 4"), and refuses a schema it does not know. The first
+logout with the M15-01 addon rewrites the file as schema 4, and
+`probe.loads` keeps rising across that write.
 
 Notes on the fields:
 
@@ -142,6 +151,39 @@ Notes on the fields:
   matches the character (race only: a paid change that keeps the race is
   invisible to the addon). Without any record the section is
   `absent = "no barber-shop visit recorded with the addon enabled"`.
+- `identity` (schema 4, M15-01): the character's race, body type and
+  class, gathered on entering the world (after the 15 s window, like every
+  on-world section) and again after `BARBER_SHOP_APPEARANCE_APPLIED`, since
+  a body type can change in the barber shop. Each value is exactly one of
+  the value and `<field>_absent`:
+  - `race_id`: the third return of `UnitRace("player")`, as
+    `Customization.lua` reads it; the name and file token are not kept.
+  - `sex_raw`: the first return of `UnitSex("player")` as the client gives
+    it: 1 unknown, 2 male, 3 female (from memory, **[verify]**). The addon
+    does not map it. `customization.sex` comes from
+    `C_BarberShop.GetCurrentCharacterData`, which answers only in the
+    barber shop, so it cannot serve here.
+  - `class_id` and `class_file`: the third and second returns of
+    `UnitClass("player")` (the class id and the client's file token, such
+    as `WARLOCK`); the localized class name is not kept.
+
+  The reasons, as the addon writes them:
+  - `"the client has no UnitRace function"`
+  - `"the third return of UnitRace was not a number"`
+  - `"the client has no UnitSex function"`
+  - `"the first return of UnitSex was not a number"`
+  - `"the client has no UnitClass function"` (on both class fields)
+  - `"the third return of UnitClass was not a number"`
+  - `"the second return of UnitClass was not a non-empty string"`
+
+  The Lab's reader (`wowlab_core.labaddon.identity_of`) derives `sex`, the
+  barber shop's `Enum.UnitSex` convention (0 male, 1 female, as
+  `customization.sex` holds it), from `sex_raw` by one mapping: 2 to 0, 3
+  to 1, and anything else absent with the reason `"UnitSex returned <n>"`.
+  A value the reader cannot take (a race or class id that is not a whole
+  number from 1 to 2147483647, a `sex_raw` that is not a whole number, a
+  class file that is not 1 to 32 capital letters or underscores) is set
+  aside with a reason instead of refusing the file.
 - `customization` in schema 2 (M11-29). In the M11-23 capture
   (1.60.1.70058), after one applied change, the record's last write came
   from an open (`recorded_at = "open"`), and it had no `chr_model_id`; the
@@ -410,7 +452,8 @@ saved list. `customization` also gets `events_received` the same way
 session) is written with its plain "switched off by the owner" reason and
 nothing else. `collections.appearances` has no events, so its reason gets
 nothing added. After M11-04, any change to the format is a new schema:
-M11-29's is schema 2, M13-05's is schema 3, and the next one is schema 4.
+M11-29's is schema 2, M13-05's is schema 3, M15-01's is schema 4, and the
+next one is schema 5.
 
 ### Switching a section off
 
@@ -444,6 +487,7 @@ hold several sections:
 - `Currencies.lua`: `currencies`
 - `Professions.lua`: `professions`
 - `Actions.lua`: `spellbook`, `actionbars`, `bindings`
+- `Identity.lua`: `identity`
 - `Core.lua` holds no section: events, tables and the slash command.
 
 The list is saved as `WowLabCharDB.skip = { "<section key>", ... }` (section
@@ -635,7 +679,9 @@ on from one, fails the test until someone lists it on purpose.
 | `C_BarberShop.GetAvailableCustomizations` | customization: options, choices, current index | ran on 70058 (M11-23 capture: seven options with choices) and 70425 (M11-29 capture: `currentChoiceIndex` 1-based, confirmed against the swatch picked); other builds: [verify] | yes |
 | `C_BarberShop.GetCurrentCharacterData` | customization: `sex` only (name fields never read) | ran on 70058 (M11-23 capture: `sex` 0, no name stored); `sex` 1 not yet seen: [verify] | yes |
 | `C_BarberShop.GetViewingChrModel` | customization: chr model id, or `chr_model_id_absent`: how the call went (schema 2, M11-29) | [verify]: no number on 70058 (M11-23 capture); returned nil on 70425 (M11-29 capture); why stays open | yes |
-| `UnitRace` | customization: race id (third return only) | ran on 70058 (M11-23 capture: `race_id` 5); the drop on a race change is untested: [verify] | yes |
+| `UnitRace` | customization and identity: race id (third return only) | ran on 70058 (M11-23 capture: `race_id` 5); the drop on a race change is untested; in `identity` (schema 4): [verify] | yes |
+| `UnitSex` | identity: `sex_raw`, the first return as the client gives it (1 unknown, 2 male, 3 female, from memory) | [verify] | not checked: the kit's list was not consulted for M15-01 |
+| `UnitClass` | identity: class file and class id (second and third returns; the localized name is never kept) | [verify] | not checked: the kit's list was not consulted for M15-01 |
 | `C_MountJournal.GetMountIDs` | mounts: every mount id, unfiltered | [verify] | yes |
 | `C_MountJournal.GetMountInfoByID` | mounts: isCollected (11th return) | [verify] | yes |
 | `C_ToyBox.GetNumFilteredToys` | toys: rows through the current filter | [verify] | yes |

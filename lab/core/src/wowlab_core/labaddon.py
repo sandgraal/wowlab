@@ -54,6 +54,14 @@ What the models accept (M11-03 capture, `docs/LAB_FORMATS.md` amendment of
   only) and `bindings` (binding command to keys), each with `probes`, what
   each API it asked did. Schema 1 and 2 files are read exactly as before: a
   new section's key in one is an unknown key (refused when it holds text).
+- Schema 4 (M15-01) is schema 3 plus one section, `identity`: `race_id`,
+  `sex_raw` (`UnitSex()`'s value, kept raw), `class_id` and `class_file`,
+  each exactly one of the value and `<field>_absent`. Unlike every other
+  field, a value there that does not fit is set aside with a reason
+  (`<field>_set_aside`) instead of refusing the file. `identity_of` gives
+  the reports' `CharIdentity`, deriving `sex` (`Enum.UnitSex`) from
+  `sex_raw` by `UNIT_SEX_TO_ENUM`; a schema 1 to 3 record reports every
+  value absent. Schema 1 to 3 files are read exactly as before.
 - A section the owner switched off (M11-21) is an absent record with the
   addon's reason; `WowLabCharDB.skip` is kept as a list of section keys, and
   a key this reader does not know is kept but ignored (`skip_known`).
@@ -117,6 +125,8 @@ __all__ = [
     "A_FOLDER",
     "CHAR_SCHEMAS",
     "CHAR_VARIABLE",
+    "IDENTITY_FIELDS",
+    "ID_MAX",
     "LAB_FILE_NAME",
     "MAX_IMPORT_CHOICES",
     "MAX_SURVEY_BYTES",
@@ -127,6 +137,7 @@ __all__ = [
     "REASON_LIMIT",
     "SECTION_KEYS",
     "SWITCHED_OFF",
+    "UNIT_SEX_TO_ENUM",
     "AbsentConfig",
     "AbsentCurrency",
     "AbsentCustomizationV2",
@@ -137,6 +148,7 @@ __all__ = [
     "AccountDBV1",
     "AccountDBV2",
     "AccountDBV3",
+    "AccountDBV4",
     "ActionBars",
     "ActionSlot",
     "AllCharacters",
@@ -147,12 +159,15 @@ __all__ = [
     "CharDBV1",
     "CharDBV2",
     "CharDBV3",
+    "CharDBV4",
+    "CharIdentity",
     "CharacterFile",
     "ClassTalents",
     "ClippedReason",
     "Customization",
     "CustomizationImport",
     "CustomizationV2",
+    "Identity",
     "LabAddonError",
     "LegacyConfig",
     "LegacyTalents",
@@ -170,6 +185,7 @@ __all__ = [
     "customization_loads_ago",
     "describe",
     "describe_account",
+    "identity_of",
     "is_lab_file_name",
     "legacy_headline",
     "load_account",
@@ -206,6 +222,8 @@ SECTION_KEYS: tuple[str, ...] = (
     "spellbook",
     "actionbars",
     "bindings",
+    # Schema 4 (M15-01).
+    "identity",
 )
 
 # The addon's absent reason for a section in the skip list (Core.lua).
@@ -462,6 +480,9 @@ class _Record(BaseModel):
     )
 
     reason_fields: ClassVar[tuple[str, ...]] = ()
+    # Other keys only this reader writes (`Identity`'s `_set_aside`), left
+    # out of a dump when unset, as `_clipped` is.
+    reader_flags: ClassVar[tuple[str, ...]] = ()
 
     @model_validator(mode="before")
     @classmethod
@@ -501,6 +522,9 @@ class _Record(BaseModel):
         if isinstance(out, dict):
             for name in self.reason_fields:
                 flag = name + CLIPPED_SUFFIX
+                if flag in out and out[flag] is None:
+                    del out[flag]
+            for flag in self.reader_flags:
                 if flag in out and out[flag] is None:
                     del out[flag]
         return out
@@ -1270,19 +1294,141 @@ class AccountDBV3(_Record):
     schema_: Literal[3] = Field(alias="schema")
 
 
-# A character or account document of any schema this reader knows.
-CharDB = CharDBV1 | CharDBV2 | CharDBV3
-AccountDB = AccountDBV1 | AccountDBV2 | AccountDBV3
+# ─── schema 4 (M15-01) ───────────────────────────────────────────────────────
 
-CHAR_SCHEMAS: Mapping[int, type[CharDBV1] | type[CharDBV2] | type[CharDBV3]] = {
+# The values of `identity`, each written as exactly one of `<field>` and
+# `<field>_absent` (lab/addon/WowLab/Identity.lua).
+IDENTITY_FIELDS: tuple[str, ...] = ("race_id", "sex_raw", "class_id", "class_file")
+# A race or class id is a DB2 row id: a whole number from 1 to the largest
+# 32-bit signed integer (the id column's width, not a count of races or
+# classes, so no game data is assumed).
+ID_MAX = 2**31 - 1
+SET_ASIDE_SUFFIX = "_set_aside"
+_CLASS_FILE = re.compile(r"[A-Z_]{1,32}")
+# What each value must be, as the set-aside reason says it.
+_IDENTITY_SHAPES: dict[str, str] = {
+    "race_id": f"a whole number from 1 to {ID_MAX}",
+    "sex_raw": f"a whole number from {-INT_BOUND} to {INT_BOUND}",
+    "class_id": f"a whole number from 1 to {ID_MAX}",
+    "class_file": "1 to 32 capital letters or underscores",
+}
+ClassFile = Annotated[str, StringConstraints(pattern=r"^[A-Z_]{1,32}$")]
+
+
+def _identity_fits(name: str, value: object) -> bool:
+    if name == "class_file":
+        return isinstance(value, str) and _CLASS_FILE.fullmatch(value) is not None
+    if isinstance(value, bool) or not isinstance(value, int):
+        return False
+    if name == "sex_raw":
+        return _in_bound(value)
+    return 1 <= value <= ID_MAX
+
+
+class Identity(_Section):
+    """`identity` (schema 4, M15-01): the character's race, body type and
+    class as the client answered on entering the world (and after an applied
+    barber-shop change). Each of `race_id` (the third return of
+    `UnitRace("player")`), `sex_raw` (the first return of `UnitSex("player")`
+    as the client gives it: 1 unknown, 2 male, 3 female, from memory
+    [verify]), `class_id` and `class_file` (the third and second returns of
+    `UnitClass("player")`) is written as exactly one of the value and
+    `<field>_absent`, the addon's reason.
+
+    A value this reader cannot take is set aside instead of refusing the
+    file (M15-01): a race or class id that is not a whole number from 1 to
+    ID_MAX, a `sex_raw` that is not a whole number within INT_BOUND, a class
+    file that is not 1 to 32 capital letters or underscores, a value written
+    beside its own `_absent` reason, or an `_absent` that is not a non-empty
+    text. What was set aside is dropped, never echoed, and
+    `<field>_set_aside` says why; only this reader writes that key, so one
+    in the file is refused, as `_clipped` is. `identity_of` turns the record
+    into the reports' `CharIdentity`."""
+
+    reason_fields: ClassVar[tuple[str, ...]] = tuple(f"{f}_absent" for f in IDENTITY_FIELDS)
+    reader_flags: ClassVar[tuple[str, ...]] = tuple(f + SET_ASIDE_SUFFIX for f in IDENTITY_FIELDS)
+
+    race_id: Int | None = None
+    race_id_absent: Reason | None = None
+    race_id_absent_clipped: ClippedReason | None = None
+    race_id_set_aside: Reason | None = None
+    sex_raw: Int | None = None
+    sex_raw_absent: Reason | None = None
+    sex_raw_absent_clipped: ClippedReason | None = None
+    sex_raw_set_aside: Reason | None = None
+    class_id: Int | None = None
+    class_id_absent: Reason | None = None
+    class_id_absent_clipped: ClippedReason | None = None
+    class_id_set_aside: Reason | None = None
+    class_file: ClassFile | None = None
+    class_file_absent: Reason | None = None
+    class_file_absent_clipped: ClippedReason | None = None
+    class_file_set_aside: Reason | None = None
+
+    @classmethod
+    def _clip(cls, data: dict[Any, Any], from_file: bool) -> dict[Any, Any]:
+        data = dict(data)
+        for name in IDENTITY_FIELDS:
+            flag = name + SET_ASIDE_SUFFIX
+            if from_file and flag in data:
+                raise ValueError(f"{flag} is written by this reader, never by the addon")
+            if flag in data:  # this reader's own output, read again (--json)
+                continue
+            # None is a key not written (a Lua table holds no nil; only
+            # this reader's own --json output, read again, has one).
+            absent = f"{name}_absent"
+            why: list[str] = []
+            reason = data.get(absent)
+            if reason is not None and not (isinstance(reason, str) and reason):
+                del data[absent]
+                why.append(f"{absent} is not a non-empty text")
+            if data.get(name) is not None:
+                if not _identity_fits(name, data[name]):
+                    del data[name]
+                    why.append(f"{name} is not {_IDENTITY_SHAPES[name]}")
+                elif data.get(absent) is not None:
+                    del data[name]
+                    why.append(f"{name} is written beside {absent}")
+            if why:
+                data[flag] = "; ".join(why) + "; set aside by the reader"
+        return super()._clip(data, from_file)
+
+
+class AccountDBV4(_Record):
+    """`WowLabDB`, schema 4: as schema 1, only the number differs."""
+
+    schema_: Literal[4] = Field(alias="schema")
+
+
+class CharDBV4(CharDBV3):
+    """`WowLabCharDB`, schema 4 (M15-01): schema 3 plus one section,
+    `identity` (`Identity`, or absent with the addon's reason). Every other
+    section is read exactly as in schema 3, and a schema-4 record is a
+    `CharDBV3` to every reader of the schema-3 sections."""
+
+    schema_: Literal[4] = Field(alias="schema")  # type: ignore[assignment]
+    identity: (
+        Annotated[Annotated[Identity, Tag(_P)] | Annotated[AbsentSection, Tag(_A)], _SPLIT] | None
+    ) = None
+
+
+# A character or account document of any schema this reader knows.
+CharDB = CharDBV1 | CharDBV2 | CharDBV3 | CharDBV4
+AccountDB = AccountDBV1 | AccountDBV2 | AccountDBV3 | AccountDBV4
+
+CHAR_SCHEMAS: Mapping[int, type[CharDBV1] | type[CharDBV2] | type[CharDBV3] | type[CharDBV4]] = {
     1: CharDBV1,
     2: CharDBV2,
     3: CharDBV3,
+    4: CharDBV4,
 }
-ACCOUNT_SCHEMAS: Mapping[int, type[AccountDBV1] | type[AccountDBV2] | type[AccountDBV3]] = {
+ACCOUNT_SCHEMAS: Mapping[
+    int, type[AccountDBV1] | type[AccountDBV2] | type[AccountDBV3] | type[AccountDBV4]
+] = {
     1: AccountDBV1,
     2: AccountDBV2,
     3: AccountDBV3,
+    4: AccountDBV4,
 }
 
 
@@ -1987,6 +2133,106 @@ def customization_loads_ago(char: CharDB) -> int | None:
         return None
     ago = char.probe.loads - record.recorded_load
     return ago if ago >= 0 else None
+
+
+# `UnitSex()`'s value to the barber shop's `Enum.UnitSex` (0 male, 1 female,
+# as `customization.sex` holds it), M15-01: UnitSex gives 2 for male and 3
+# for female (and 1 for unknown), from memory [verify]. Any other value
+# leaves `sex` absent with "UnitSex returned <n>"; nothing else is mapped.
+UNIT_SEX_TO_ENUM: Mapping[int, int] = {2: 0, 3: 1}
+
+
+class CharIdentity(BaseModel):
+    """The character's identity as `char show --json` and `char gear --json`
+    report it (`identity`, M15-01), from the record's `identity` section
+    (schema 4). Each value is exactly one of the value and `<field>_absent`,
+    a reason: the addon's, the reader's (a value it set aside, a section
+    switched off or missing), or, for a record of schema 1 to 3, that the
+    schema has no identity.
+
+    `race_id`, `sex_raw`, `class_id` and `class_file` are the record's.
+    `sex` is derived from `sex_raw` by `UNIT_SEX_TO_ENUM` (2 to 0, 3 to 1),
+    so it reads as `customization.sex` does (`Enum.UnitSex`); any other
+    `sex_raw` leaves it absent with "UnitSex returned <n>", and the raw
+    value is kept beside it."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    race_id: int | None = None
+    race_id_absent: str | None = None
+    sex: int | None = None
+    sex_absent: str | None = None
+    sex_raw: int | None = None
+    sex_raw_absent: str | None = None
+    class_id: int | None = None
+    class_id_absent: str | None = None
+    class_file: str | None = None
+    class_file_absent: str | None = None
+
+    @model_validator(mode="after")
+    def _value_or_reason(self) -> Self:
+        for name in ("race_id", "sex", "sex_raw", "class_id", "class_file"):
+            has_value = getattr(self, name) is not None
+            has_reason = getattr(self, f"{name}_absent") is not None
+            if has_value == has_reason:
+                raise ValueError(f"exactly one of {name} and {name}_absent is set")
+        return self
+
+
+def _all_absent(reason: str) -> CharIdentity:
+    return CharIdentity(
+        race_id_absent=reason,
+        sex_absent=reason,
+        sex_raw_absent=reason,
+        class_id_absent=reason,
+        class_file_absent=reason,
+    )
+
+
+def _identity_reason(record: Identity, name: str) -> str:
+    """Why `record` holds no `name`: the addon's reason, what the reader set
+    aside, or that the record holds neither."""
+    reason: str | None = getattr(record, f"{name}_absent")
+    set_aside: str | None = getattr(record, name + SET_ASIDE_SUFFIX)
+    if reason is not None:
+        text = reason + _clip_words(getattr(record, f"{name}_absent_clipped"))
+        return f"{text} ({set_aside})" if set_aside is not None else text
+    if set_aside is not None:
+        return set_aside
+    return f"the record holds neither {name} nor {name}_absent"
+
+
+def identity_of(char: CharDB) -> CharIdentity:
+    """The character's identity from its record (M15-01); never raises for a
+    record the models read. A record of schema 1 to 3 has none, and says so
+    for every value."""
+    if not isinstance(char, CharDBV4):
+        return _all_absent(
+            f"the record is schema {char.schema_}; identity is recorded from schema 4 "
+            "(the lab-addon from M15-01: install it with wowlab addon install lab, then log "
+            "in and out on this character)"
+        )
+    section = char.identity
+    if section is None:
+        return _all_absent(f"identity is {NOT_IN_FILE}")
+    if isinstance(section, AbsentSection):
+        return _all_absent(f"the identity section is {_absent(section, events_shown=False)}")
+    out: dict[str, int | str | None] = {}
+    for name in IDENTITY_FIELDS:
+        value = getattr(section, name)
+        out[name] = value
+        out[f"{name}_absent"] = None if value is not None else _identity_reason(section, name)
+    raw = section.sex_raw
+    if raw is None:
+        out["sex"] = None
+        out["sex_absent"] = f"no sex_raw to derive it from: {out['sex_raw_absent']}"
+    elif raw in UNIT_SEX_TO_ENUM:
+        out["sex"] = UNIT_SEX_TO_ENUM[raw]
+        out["sex_absent"] = None
+    else:
+        out["sex"] = None
+        out["sex_absent"] = f"UnitSex returned {raw}"
+    return CharIdentity.model_validate(out)
 
 
 # More choices than any model's options (about 20 on 70009's playable
@@ -2843,6 +3089,35 @@ def _section(label: str, record: object, present: Any) -> list[str]:
     return lines
 
 
+def _identity_line(char: CharDB) -> str:
+    """`identity` (schema 4) in one line: the class and race the client gave,
+    and the body type; an absent value with its reason."""
+    got = identity_of(char)
+    if got.class_file is not None and got.class_id is not None:
+        klass = f"class {got.class_file} (class id {got.class_id})"
+    elif got.class_file is not None:
+        klass = f"class {got.class_file} (class id absent: {got.class_id_absent})"
+    elif got.class_id is not None:
+        klass = f"class id {got.class_id} (class file absent: {got.class_file_absent})"
+    else:
+        klass = f"class absent ({got.class_id_absent}; {got.class_file_absent})"
+    race = (
+        f"race id {got.race_id}"
+        if got.race_id is not None
+        else f"race id absent ({got.race_id_absent})"
+    )
+    raw = (
+        f"UnitSex {got.sex_raw}"
+        if got.sex_raw is not None
+        else f"UnitSex absent: {got.sex_raw_absent}"
+    )
+    if got.sex is not None:
+        body = f"body type {got.sex} (Enum.UnitSex, from {raw})"
+    else:
+        body = f"body type absent ({got.sex_absent})"
+    return f"Identity: {klass}, {race}, {body}"
+
+
 def describe(char: CharDB) -> list[str]:
     """The text lines `wowlab char show` prints for a character record."""
     lines: list[str] = []
@@ -2878,6 +3153,8 @@ def describe(char: CharDB) -> list[str]:
     lines.append("")
     lines += _section("Gear", char.gear, _gear)
     lines += _section("Spec", char.spec, _spec)
+    if isinstance(char, CharDBV4):
+        lines += _section("Identity", char.identity, lambda _: [_identity_line(char)])
     talents = char.talents
     lines += _section("Class talents", talents.class_ if talents else None, _class_talents)
     class_config = _class_config(talents) if talents else None
