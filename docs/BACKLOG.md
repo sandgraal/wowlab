@@ -1021,7 +1021,7 @@ Found 2026-10-18 in the security review of #272 (M13-59), pre-existing. The revi
 
 ---
 
-## [ ] M13-68 — Record the three measured runs of the review job
+## [x] M13-68 — Record the three measured runs of the review job
 **Size:** XS · **Depends on:** M13-59
 
 Moved out of M13-59's acceptance by the conductor's ruling of 2026-10-18: the review action skips itself on a PR that edits `claude-review.yml`, so #272 could not measure itself. Record, in this ticket's text when it is ticked, the `review` job's conclusion, its turn count from the action log ("Reached maximum number of turns" present or absent) and whether the verdict cites the PR's lines, for three later PRs: a docs-only PR, a PR that touches `lab/`, and a PR that touches `.claude/` (#283, M13-60, is the first, once it is marked ready: the job runs only on `opened` and `ready_for_review`, never on a draft). If a run still hits the 30-turn cap, raise `--max-turns` to the number the runs needed in a follow-up CI change, stated in its PR body.
@@ -1031,6 +1031,8 @@ Moved out of M13-59's acceptance by the conductor's ruling of 2026-10-18: the re
 *Run 3, `.claude/` (2026-10-18, #283 at dea8d11):* https://github.com/sandgraal/wowlab/actions/runs/39183084322, about 1 min 50 s job wall time (model `duration_ms` 70825, `num_turns` 11), the diff step wrote 15515 bytes (not truncated), the log without "Reached maximum number of turns", verdict FINDINGS(1) low that cited the PR's own lines of `pr-shepherd.md` (read from `.claude-pr/`), not main's. Run 2 (`lab/`) is still owed.
 
 *Run 2, `lab/` (2026-10-19, two PRs):* #286 M14-05 at 9f79ef9 (a new parser, a new command, eight snapshots; the diff step wrote 136927 bytes): https://github.com/sandgraal/wowlab/actions/runs/39207309491, failure, 3 min 24 s job wall time (model `duration_ms` 151011, `num_turns` 36), the diff file read but the review ran past `--max-turns 30` and posted no verdict; #288 M14-02 at d73111e (the ui server and templates, about 2150 diff lines): https://github.com/sandgraal/wowlab/actions/runs/39207994475, success, 2 min 54 s job wall time, verdict CLEAN within the cap. One `lab/` PR in two needed more than 30 turns; the raise (to 40, say) goes in a CI change under this ticket once a third `lab/` run is read.
+
+*Run 2, `lab/`, third PR (2026-10-19):* #292 M14-07 at 54fd434 (a new module, a new command, a runbook; the diff step wrote 77541 bytes): https://github.com/sandgraal/wowlab/actions/runs/39240814654, 3 min 22 s job wall time (model `duration_ms` 166673, `num_turns` 38, result `subtype` `success`, `is_error` false), verdict FINDINGS(1), one inline thread (the runbook's step list skipped an item; fixed f66e528). The job's conclusion is `failure` because the action fails a run whose `num_turns` is over `--max-turns` even when the model finished: the log says "Claude reported a successful result after 38 turns, exceeding the configured maximum of 30", and #286's run 39207309491 fails the same way at 36 turns. So two of the three `lab/` runs went past 30 turns, and the workflow does not skip or shrink the work on a big diff: it truncates `.pr-review/pr.diff` at 409600 bytes and tells the model to read the rest from disk, which costs turns rather than saving them. **Decision (conductor, 2026-10-19):** raise `--max-turns` to 40 in `.github/workflows/claude-review.yml`, in this PR. 40 covers both measured overruns (36 and 38) with a margin; the two docs-side runs used 10 and 11 turns, so the raise costs them nothing; a `lab/` run's wall time is about 3.5 minutes, so ten more turns bound the extra cost. Revisit if a `lab/` run goes past 40. *First correction (2026-10-19, from the #295 review):* an earlier draft of this paragraph read the `failure` as the action failing on posted findings and said the job skips itself over 400 KiB; both were wrong, and the decision was re-made from the log.
 
 **Acceptance:** the three runs recorded here with run URLs; `--max-turns` left or raised with the measured reason; no code change beyond that; reviewed by `code-reviewer`.
 
@@ -1069,6 +1071,22 @@ Found 2026-10-19 in the code review of #289, on `main` before it. (1) `_check_gh
 Found 2026-10-19 in the code review of #290 (M14-08), on `main` before it. (1) `char list --json` is called with `keep_records=json_out` and so prints every character's full record (about 50 KB per low-level character on the capture; 100,632 bytes for two), while the Character tab's picker needs only the label, the folders, the time and the error. A large roster of high-level characters could approach the UI's 16 MiB output cap and leave the tab saying the page cannot hold the output; not verified on real high-level records. Decide between a lighter `char list --json` (a `--brief` flag, or records dropped by default under the UI) and a documented bound; `char list` text output byte-identical to `main`, and `--json` unchanged unless a flag asks. (2) `test_the_templates_hold_no_slot_name_and_no_colour_code` in `test_ui_character.py` skips six-digit colours in `page.css` because of `--field: #ffffff`; exempt that one value instead and check the quality words in the stylesheet too, so a stylesheet colour table keyed by quality word cannot pass the test.
 
 **Acceptance:** the decision for (1) stated in the report and recorded here by the conductor; the test for (2) catches `#a335ee` and a quality word added to `page.css`; byte-identity as stated; `make ci` green; reviewed by `code-reviewer`.
+
+---
+## [ ] M13-73 — `char binds` with case-variant `WowLab.lua` files and no `--character`
+**Size:** XS · **Depends on:** nothing
+
+Found 2026-10-19 in the M14-07 reviews (both reviewers, off that branch), on `main` before it. When the latest character folder holds two `WowLab.lua` files that differ only in case, `_coach_record` returns no target with a `record_error`, and `char binds` without `--character` reports `character: null` and says "none in account … has a WowLab.lua", which is false: the folder has one, and it could not be told apart. `char macros` (M14-07) now keeps the latest folder as the character with `chosen_by` "latest" and gives `macros check`'s own reason ("no spellbook record: the WowLab.lua was not read"); make `char binds` do the same, with the same fallback rule (`cli.char_macros`'s `folder`/`how` fallback, the latest rule of `_lab_char_file`). Labelled constructed test that skips where the volume folds case, as `test_case_variant_records_read_nothing_as_macros_check_says_constructed` does; `char binds` output on the fixtures byte-identical to `main`.
+
+**Acceptance:** the test passes on a case-sensitive runner (CI Linux); byte-identity on the fixtures; `make ci` green; reviewed by `code-reviewer`.
+
+---
+## [ ] M13-74 — `sv merge --expect` pins the merged bytes, not only the target
+**Size:** S · **Depends on:** M14-03
+
+Found 2026-10-19 in the security review of M14-03 (ruled a follow-up by the conductor: the ticket named the target's sha256 as the pin and allowed one new JSON field). `sv merge --from CHARACTER` reads its source from a live file, and the client rewrites the played character's per-character files at logout, not the target's. So between the plan the page showed and the confirmed run the source can change while the target does not; `--expect <target sha256>` passes and the confirmed run writes values the page never showed (§16.1 "applies the plan that was shown"). A `--from` or `--base` snapshot given as an id prefix can likewise resolve to a different snapshot if the store changes in between. Pin what the merge will write: the merge report gains `merged_sha256` (the sha256 of the bytes `tx.write` will receive) beside `target_sha256`; `--expect` takes `<target>:<merged>` (or a second option, decided in the report) and the confirmed run refuses with exit 3 unless both match, the second check made inside the transaction against `tx.plan[0].before` and the bytes passed to `tx.write`; the UI passes both back. The security-reviewer's probe `lab/core/tests/review/test_m14_03_sv_merge_confirms_a_source_the_page_never_showed.py` (xfail on `main` after M14-03) is activated by marker deletion only. Text output byte-identical to `main` without `--expect`; `--json` gains that one field, listed in the release notes.
+
+**Acceptance:** the probe passes once activated; the drift test for a changed source (constructed, labelled); byte-identity as stated; `make ci` green; reviewed by `security-reviewer` and `code-reviewer`. User-facing: `sv merge --json`, the wiki's `sv merge` page.
 
 ---
 
@@ -1138,7 +1156,7 @@ ADR-0029 "Richer views … are embedded", by the route §16.3 gives. A Looks ent
 
 ---
 
-## [ ] M14-07 — `wowlab char macros`
+## [x] M14-07 — `wowlab char macros`
 **Size:** S · **Depends on:** M14-06
 
 §16.2. `wowlab char macros [--character] [--account] [--root] [--flavor] [--json]` (the four options as `char show` declares them): every record of the account and character `macros-cache.txt` (through `wtfconfig`, as `macros list` reads them), each with its placement and the `macros check` findings for it (the checker's rules called, not copied; their wording unchanged). Which action-slot macro id names which file record is **[verify]** (§15.2), so placement has three states (§16.2): `unconfirmed`, the slots and keys the candidate rule (macro index when the slot has no subtype) would give, printed as "may sit at slot n (unconfirmed)"; `none`, no candidate; and `confirmed`, which is in the model but which no rule in M14 emits: it is reserved for the ticket that follows the capture and the dated amendment in `docs/LAB_FORMATS.md` §7. The ticket writes the owner's capture step that would settle it as a runbook, `docs/handoffs/M14-macro-place.md`, in the style of `docs/handoffs/M13-05.md`. `--json` is `CharMacrosReport`. `macros list` and `macros check` are unchanged.
