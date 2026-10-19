@@ -1321,6 +1321,14 @@ gate does. Naming one with `--paths` is refused with the gate's reason,
 followed by one line: name the other files with `--paths`, or (for the
 `addon-executable` row) reinstall the addon to get its executable back.
 `guard` is unchanged.
+*Amended 2026-10-18 (M13-48, the owner's option (b)):* the behaviour above
+stays, and a whole restore that the gate refuses because its reason names
+an executable in this flavor now prints the same advice line after the
+gate's line, exit 3, nothing written. That covers an executable whose
+content matches but whose permission bits do not, a link or a folder where
+the file was, a name spelled otherwise (a case variant), and an executable
+outside `AddOns/`, which gets the shorter line without the reinstall advice.
+A reserved name is refused for its name, so it gets the gate's line alone.
 
 *Amended 2026-09-29 (M11-30):* text output is terminal-safe. No C0
 control (tab and line feed included), no DEL, no C1 control and no Unicode
