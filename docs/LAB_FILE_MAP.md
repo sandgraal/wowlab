@@ -67,6 +67,9 @@ scope permanently (LAB_PLAN L7).
 | `WTF/` | This flavor's configuration and SavedVariables | Client | — | — | `layout` |
 | `WTF/Config.wtf` | Machine-wide CVars: graphics, sound, locale, last account | Client on exit and on some setting changes | gate | A | `wtfconfig` |
 | `WTF/Account/` | Parent of the account folders | Client | — | — | `layout` |
+| `WTF/Account/SavedVariables/` | Not an account folder. Seen 2026-10-18 on the owner's Forever beta install (directory listing, not captured): the client writes Blizzard SavedVariables here (`Blizzard_GamepadSmartNavigation.lua`, `Blizzard_PTRFeedbackGlue.lua`, `Blizzard_SavedSets.lua`, `Blizzard_SettingsDefinitions_Shared.lua`), each with a `.lua.bak`, in saves that did not write the account folder's own; when it writes them and whether it reads them back are **[verify]** | Client | — | — | `layout` |
+| `WTF/Account/SavedVariables/<Addon>.lua` | Blizzard saved state that belongs to no account (row above) | Client **[verify]** when | gate | A | `luadata` |
+| `WTF/Account/SavedVariables/<Addon>.lua.bak` | Previous write of the same file **[verify]** | Client | no | A (read) | `luadata` |
 | `WTF/Account/<ACCOUNT>/` | One folder per game account that logged in on this machine; the `#<n>` suffix numbers the game accounts under one Battle.net account **[verify]**. Folder name identifies the account; scrub in fixtures | Client | — | — | `layout` |
 | `WTF/Account/<ACCOUNT>/SavedVariables.lua` | Blizzard UI's own account-wide saved state | Client on logout / `/reload` | gate | A | `luadata` |
 | `WTF/Account/<ACCOUNT>/SavedVariables/`, `…/<Character>/SavedVariables/` | One file per addon that saves data, plus its `.lua.bak`; account-wide (`## SavedVariables:`) or per character (`## SavedVariablesPerCharacter:`) depending on where the folder sits | Client | — | — | `layout` |
@@ -155,6 +158,14 @@ as unclassified. (Added 2026-09-22, M10-06.)
   On 1.60.1.70009 (M11-03, 2026-09-28) the `<First>-<Second>` folder holds
   an `AddOns.txt` as well (staged capture, not committed, **[verify]**);
   `layout` must expect `AddOns.txt` in either folder or both.
+- **Which folders under `WTF/Account/` are accounts (2026-10-18, M13-50):**
+  `layout` takes a folder as an account when its name has the `<digits>#<n>`
+  shape of a current client's account folder, or when it holds a realm or
+  digits folder with a character folder inside (an account folder under an
+  old account name). Any other folder is reported as not taken as an
+  account, and the files below it belong to no account.
+  `WTF/Account/SavedVariables/` is one such folder, and the client writes it
+  itself (row above).
 - A patch can reset `Interface/` overrides' effect and can change any format
   here. `snapshot` manifests record the flavor version so a diff across a
   patch says so.

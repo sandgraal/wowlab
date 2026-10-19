@@ -25,10 +25,15 @@ Account folder shapes (LAB_FILE_MAP "Folder shape", GLOSSARY "Second name"):
 Not every folder under `WTF/Account/` is an account (M13-50): one is an
 account folder when its name has the `<digits>#<n>` shape of a current
 client's account folder, or when it holds a character folder (a realm or
-digits folder with a folder inside other than `SavedVariables/`). Any other
-(a stray `WTF/Account/SavedVariables/`, say) is named in `not_accounts` and
+digits folder with a folder inside other than `SavedVariables/`; an account
+folder under an old account name). Any other is named in `not_accounts` and
 is no `Account`; a file below it is a `WtfFile` of scope `other` with no
-account, never a SavedVariables file of an account.
+account, never a SavedVariables file of an account, and gets no account row
+of the file map. One such folder is the client's own:
+`WTF/Account/SavedVariables/`, where the client writes Blizzard
+SavedVariables that belong to no account (`Blizzard_*.lua`, each with a
+`.lua.bak`; when it writes them and whether it reads them back are
+**[verify]**), which has file-map rows of its own.
 
 Reads only (L1): directories are listed, files are `lstat`ed, and TOC files
 are opened for reading. Nothing is created anywhere. A link is never
@@ -61,7 +66,7 @@ from __future__ import annotations
 import os
 import re
 import stat
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath
 from typing import Annotated, Any, Literal
@@ -118,6 +123,16 @@ _ACCOUNT = "Account"
 _SAVED_VARIABLES = "SavedVariables"
 # M13-50: the name of a current client's account folder, `<digits>#<n>`.
 _ACCOUNT_NAME = re.compile(r"[0-9]+#[0-9]+")
+# M13-50: what `tree` and the account choice say about a folder under
+# `WTF/Account/` that is not taken as an account folder.
+NOT_TAKEN_AS_ACCOUNT = (
+    "not taken as an account folder: its name is not like 12345678#1 and it holds no "
+    "realm folder with a character folder inside"
+)
+CLIENT_SAVED_VARIABLES = (
+    "not an account folder: the client's own folder of Blizzard SavedVariables that "
+    "belong to no account"
+)
 _OS_METADATA = "os-metadata"  # file-map entry id
 _BLIZZARD_SV = "SavedVariables.lua"
 _INTERFACE = "Interface"
@@ -447,6 +462,93 @@ def _is_saved_variables_name(name: str) -> bool:
     return name.casefold() == _SAVED_VARIABLES.casefold()
 
 
+def not_account_note(folder: str) -> str:
+    """M13-50: what a folder under `WTF/Account/` that is no account folder is,
+    in words: the client's own `SavedVariables/`, or any other folder not
+    taken as an account."""
+    return CLIENT_SAVED_VARIABLES if _is_saved_variables_name(folder) else NOT_TAKEN_AS_ACCOUNT
+
+
+def below_no_account(found: Classified | Unclassified) -> bool:
+    """M13-50: whether `found` has no row because the account rows that
+    matched it do not apply: it lies below a folder of `WTF/Account/` that is
+    no account folder (the reason says which, and why)."""
+    return isinstance(found, Unclassified) and any(
+        f" is {words}" in found.reason for words in (NOT_TAKEN_AS_ACCOUNT, CLIENT_SAVED_VARIABLES)
+    )
+
+
+def _account_row(entry: FileMapEntry) -> bool:
+    """M13-50: whether a file-map row describes something in an account
+    folder (one of its patterns starts `WTF/Account/*`) and lets the gate
+    write it: a row that says "no" is kept wherever it matches, so a path
+    below a folder that is no account never becomes more editable."""
+    if entry.edit == "no":
+        return False
+    return any(
+        tuple(seg.casefold() for seg in p.split("/")[:3]) == ("wtf", "account", "*")
+        for p in entry.match
+    )
+
+
+def _pick(
+    fm: _filemap.FileMap,
+    parts: tuple[str, ...],
+    base: Literal["root", "flavor"],
+    kind: _filemap.Kind,
+    not_account: Callable[[str], bool],
+) -> tuple[FileMapEntry | None, bool]:
+    """The file-map row of `parts` and whether an account row was left out
+    (M13-50): below `WTF/Account/<X>/` where `not_account(X)`, the rows of an
+    account folder do not apply. `not_account` is asked only when an
+    account row would win."""
+    found = fm.matches(parts, base, kind)
+    if (
+        base == "flavor"
+        and len(parts) >= 3
+        and parts[0].casefold() == _WTF.casefold()
+        and parts[1].casefold() == _ACCOUNT.casefold()
+        and found
+        and _account_row(found[0])
+        and not_account(parts[2])
+    ):
+        kept = [e for e in found if not _account_row(e)]
+        return (kept[0] if kept else None), True
+    return (found[0] if found else None), False
+
+
+def _real_dirs(path: Path) -> list[str]:
+    """The names of the real folders (no links) directly inside `path`;
+    none when it cannot be listed."""
+    out: list[str] = []
+    try:
+        listed = list(longpath.entries(path))
+    except OSError:
+        return out
+    for e in listed:
+        try:
+            st = lstat_entry(e)
+        except OSError:
+            continue
+        if stat.S_ISDIR(st.st_mode) and not is_link(path / e.name, st):
+            out.append(e.name)
+    return out
+
+
+def _not_account_on_disk(folder: Path) -> bool:
+    """M13-50: whether `folder` (a `WTF/Account/<X>`) is a real folder on
+    disk that is no account folder, by the rule `Layout.accounts()` uses. A
+    folder that is not there, or is a link, is not judged: False."""
+    try:
+        st = longpath.lstat(folder)
+    except OSError:
+        return False
+    if not stat.S_ISDIR(st.st_mode) or is_link(folder, st):
+        return False
+    realms = ((r, _real_dirs(folder / r)) for r in _real_dirs(folder))
+    return not _is_account_folder(folder.name, realms)
+
+
 def _is_account_folder(name: str, realms: Iterable[tuple[str, Iterable[str]]]) -> bool:
     """M13-50: whether a folder under `WTF/Account/` is an account folder:
     its name has the `<digits>#<n>` shape, or one of `realms` (each sub-folder
@@ -667,8 +769,15 @@ class Layout:
         if gate_refuses_stat(st):
             report.reparse_points.append(ReparsePoint(path=_rel_text(rel)))
 
-    def _entry_id(self, rel: tuple[str, ...], is_dir: bool) -> str | None:
-        found = self._filemap.classify(rel, "flavor", "dir" if is_dir else "file")
+    def _entry_id(
+        self,
+        rel: tuple[str, ...],
+        is_dir: bool,
+        not_account: Callable[[str], bool] = lambda _: False,
+    ) -> str | None:
+        """The file-map row's id; below a folder of `WTF/Account/` for which
+        `not_account` holds, no account row (M13-50)."""
+        found, _ = _pick(self._filemap, rel, "flavor", "dir" if is_dir else "file", not_account)
         return found.id if found else None
 
     def _os_metadata(self, e: _Entry, report: _Report) -> bool:
@@ -858,7 +967,7 @@ class Layout:
             character_folder=character,
             size=e.size,
             mtime_ns=e.mtime_ns,
-            entry_id=self._entry_id(e.rel, False),
+            entry_id=self._entry_id(e.rel, False, lambda name: name not in accounts),
         )
 
     # ── Interface ──────────────────────────────────────────────────────────
@@ -1142,19 +1251,28 @@ class Layout:
         return tuple(self._child((), name, report) or name for name in names)
 
     def classify(
-        self, path: Path | str, *, is_dir: bool | None = None
+        self,
+        path: Path | str,
+        *,
+        is_dir: bool | None = None,
+        not_accounts: Iterable[str] | None = None,
     ) -> Classified | Unclassified:
         """The file-map entry for `path`: absolute, or relative to the flavor
         folder. A path inside the install root but outside this flavor is
-        matched against the install-root rows."""
+        matched against the install-root rows. Below a folder of
+        `WTF/Account/` that is no account folder, no account row applies
+        (M13-50): `not_accounts` names those folders (as `Inventory`'s, the
+        last part of each path), or, None, each is judged on disk."""
         p = Path(path)
         absolute = p if p.is_absolute() else self.flavor_path / p
+        names = None if not_accounts is None else frozenset(not_accounts)
         return _classify(
             absolute,
             self.install_root,
             {self.flavor_folder},
             _dir_hint(path, is_dir),
             probe=is_dir is None,
+            not_accounts=names,
         )
 
 
@@ -1348,7 +1466,13 @@ def _no_row_reason(
 
 
 def _classify(
-    path: Path, root: Path, flavor_folders: set[str], is_dir: bool | None, *, probe: bool
+    path: Path,
+    root: Path,
+    flavor_folders: set[str],
+    is_dir: bool | None,
+    *,
+    probe: bool,
+    not_accounts: frozenset[str] | None = None,
 ) -> Classified | Unclassified:
     target = _normalize(path)
     root = _normalize(root)
@@ -1368,9 +1492,24 @@ def _classify(
     flavor = _flavor_spelling(rel[0], root, flavor_folders)
     if flavor is not None:
         sub = rel[1:]
-        found = fm.classify(sub, "flavor", kind)
+
+        def not_account(name: str) -> bool:
+            if not_accounts is not None:
+                return name in not_accounts
+            return _not_account_on_disk(root.joinpath(flavor, *sub[:2], name))
+
+        found, dropped = _pick(fm, sub, "flavor", kind, not_account)
         if found is not None:
             return Classified(path=_rel_text(sub), base="flavor", flavor_folder=flavor, entry=found)
+        if dropped:
+            # M13-50: the account rows matched, but the folder is no account.
+            why = f"{_rel_text(sub[:3])} is {not_account_note(sub[2])}"
+            return Unclassified(
+                path=_rel_text(sub),
+                base="flavor",
+                flavor_folder=flavor,
+                reason=f"{NOT_FOUND}, and {why}" if absent else why,
+            )
         return Unclassified(
             path=_rel_text(sub),
             base="flavor",

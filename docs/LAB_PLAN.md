@@ -293,6 +293,15 @@ Pure read. Produces the inventory every later tool starts from:
 
 - `accounts()` → account folders under `WTF/Account/`, each with its realms
   and characters (`WTF/Account/<ACCOUNT>/<Realm>/<Character>/`).
+  *Amended 2026-10-18 (M13-50):* a folder there is an account folder when its
+  name has the `<digits>#<n>` shape of a current client's account folder, or
+  when it holds a realm or digits folder with a character folder inside (an
+  old account name). Any other folder (the client's own
+  `WTF/Account/SavedVariables/`, `docs/LAB_FILE_MAP.md`) is no account: it is
+  named in `Inventory.not_accounts` and `WtfWalk.not_accounts`, the files
+  below it are WTF files of scope `other` with no account, and no account
+  row of the file map applies to them (`Layout.is_account_folder` judges one
+  folder alone).
 - `saved_variables(scope=...)` → every SavedVariables file with its scope
   (`account` or `character`), owning addon name, size and mtime. Includes the
   Blizzard-owned `SavedVariables.lua` files and `*.lua.bak` siblings, flagged.
