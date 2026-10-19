@@ -7808,8 +7808,9 @@ def char_binds(
 ) -> None:
     """What each key does for one character: the account and character
     bindings-cache.wtf and the keys the lab-addon recorded (schema 3), each key
-    with the action slot its command presses on the bar's default page and
-    what the record says that slot holds, where the files and the record
+    with the action slot its command presses (the main bar at page 1, the page
+    shown with no form, stance or stealth active) and what the record says
+    that slot holds, where the files and the record
     disagree, and the filled slots no key reaches. Without --character, the
     character whose WowLab.lua was written last. Reads only. JSON: CharBindsReport."""
     _, chosen, lay = _open(root, flavor)
@@ -7869,6 +7870,8 @@ def _source_words(row: keymap.KeyRow) -> str:
         return f"{files}: cleared; the record has no command on the key"
     if row.agreement == "file only":
         return f"{files} only: disagrees with the record"
+    if row.agreement == "not in a file":
+        return "record only (no file line for this key)"
     return "record only: disagrees with the files"
 
 
@@ -7918,23 +7921,33 @@ def _say_char_binds(report: CharBindsReport) -> None:
         count = {a: sum(1 for k in report.keys if k.agreement == a) for a in _AGREEMENTS}
         tally = (
             f" ({count['both']} in a file and the record, {count['file only']} only in a file, "
-            f"{count['record only']} only in the record, {count['cleared']} cleared)"
+            f"{count['record only']} only in the record with a file line putting the key on "
+            f"another command, {count['not in a file']} only in the record with no file line "
+            f"for the key, {count['cleared']} cleared)"
         )
     _say(f"Keys: {len(report.keys)}{tally}")
+    if any(k.command.startswith("ACTIONBUTTON") and k.slot is not None for k in report.keys):
+        _say(
+            "  Main-bar keys (ACTIONBUTTON1 to 12) are read at page 1, the page shown with no "
+            "form, stance or stealth active; another page they may show is not followed."
+        )
     generic = False
+    pad = f"  {'':<16} {'':<26} {'':>4}  "
     for k in report.keys:
         slot = str(k.slot) if k.slot is not None else "-"
         _say(f"  {k.key:<16} {k.command:<26} {slot:>4}  {k.does}  ({_source_words(k)})")
-        if k.note == keymap.RECORD_ONLY_NOTE:
+        if k.page_note is not None and "unconfirmed" in k.page_note:
+            _say(f"{pad}{k.page_note}")
+        if k.note == keymap.NOT_IN_A_FILE_NOTE:
             generic = True
         elif k.note is not None and k.disagrees:
-            _say(f"  {'':<16} {'':<26} {'':>4}  {k.note}")
+            _say(f"{pad}{k.note}")
     if generic:
-        _say(f"  Only in the record: {keymap.RECORD_ONLY_NOTE}.")
+        _say(f"  Only in the record, no file line for the key: {keymap.NOT_IN_A_FILE_NOTE}.")
     if report.cannot_place is None:
         reached = [u for u in report.unreached_slots if not u.unfollowed_page]
         paged = [u for u in report.unreached_slots if u.unfollowed_page]
-        _say(f"Filled slots no key reaches: {len(reached)}")
+        _say(f"Filled slots no key reaches on the page its bar shows by default: {len(reached)}")
         for u in reached:
             _say(f"  slot {u.slot:>3}  {u.does}  ({u.page_note})")
         if paged:
@@ -7952,7 +7965,13 @@ def _say_char_binds(report: CharBindsReport) -> None:
         _say(note)
 
 
-_AGREEMENTS: tuple[keymap.Agreement, ...] = ("both", "file only", "record only", "cleared")
+_AGREEMENTS: tuple[keymap.Agreement, ...] = (
+    "both",
+    "file only",
+    "record only",
+    "not in a file",
+    "cleared",
+)
 
 
 # ─── looks ───────────────────────────────────────────────────────────────────

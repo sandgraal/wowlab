@@ -105,7 +105,7 @@ def _state(path: Path) -> dict[str, tuple[bytes | None, int]]:
     return out
 
 
-def test_char_binds_json_131_keys_3_agree_11_unreached_cross_capture(
+def test_char_binds_json_131_keys_3_agree_128_not_in_a_file_0_disagree_11_unreached_cross_capture(
     root: Path, record: Path
 ) -> None:
     before = _state(root)
@@ -125,7 +125,8 @@ def test_char_binds_json_131_keys_3_agree_11_unreached_cross_capture(
     ]
     assert len(rep.keys) == 131
     assert sum(1 for k in rep.keys if k.agreement == "both") == 3
-    assert sum(1 for k in rep.keys if k.disagrees) == 128
+    assert sum(1 for k in rep.keys if k.agreement == "not in a file") == 128
+    assert sum(1 for k in rep.keys if k.disagrees) == 0
     assert [u.slot for u in rep.unreached_slots] == [49, 50, *range(64, 73)]
     assert (rep.commands_left_out, rep.keys_left_out) == (1, 0)
     assert (rep.cannot_place, rep.cannot_compare) == (None, None)
@@ -142,19 +143,31 @@ def test_char_binds_text_has_the_table_unreached_slots_and_counts_cross_capture(
     assert lines[2].startswith(f"Account bindings: {ACCOUNT_FILE} (3 bind lines), written ")
     assert lines[3].startswith("Character bindings: no bindings-cache.wtf (a character has")
     assert (
-        "Keys: 131 (3 in a file and the record, 0 only in a file, 128 only in the record, "
-        "0 cleared)"
+        "Keys: 131 (3 in a file and the record, 0 only in a file, 0 only in the record with a "
+        "file line putting the key on another command, 128 only in the record with no file "
+        "line for the key, 0 cleared)"
+    ) in lines
+    assert (
+        "  Main-bar keys (ACTIONBUTTON1 to 12) are read at page 1, the page shown with no "
+        "form, stance or stealth active; another page they may show is not followed."
     ) in lines
     assert (
         "  1                ACTIONBUTTON1                 1  casts Immolate (Rank 2, spell 707)"
-        "  (record only: disagrees with the files)"
+        "  (record only (no file line for this key))"
     ) in lines
+    assert (
+        "  SHIFT-6          ACTIONPAGE6                   -  shows main-bar page 6"
+        "  (record only (no file line for this key))"
+    ) in lines
+    assert "disagrees" not in text
     assert (
         "  Q                MULTIACTIONBAR1BUTTON1       61  casts Will of the Forsaken "
         "(Racial, spell 7744)  (account file and record agree)"
     ) in lines
-    assert f"  Only in the record: {keymap.RECORD_ONLY_NOTE}." in lines
-    assert "Filled slots no key reaches: 11" in lines
+    assert (
+        f"  Only in the record, no file line for the key: {keymap.NOT_IN_A_FILE_NOTE}."
+    ) in lines
+    assert "Filled slots no key reaches on the page its bar shows by default: 11" in lines
     assert (
         "  slot  64  runs macro 149 (a macro index [verify]); the record keeps no macro name or "
         "body  (bottom left bar button 4, page 6)"
@@ -191,6 +204,8 @@ def test_a_schema_1_record_gives_the_file_rows_cannot_place(root: Path) -> None:
     )
     assert "MULTIACTIONBAR1BUTTON1       61  cannot place: no action-bar record" in text
     assert "Filled slots no key reaches" not in text
+    assert "Without a bindings record only the files' lines are listed" in text
+    assert "Neither is taken as the truth" not in text
 
 
 def test_a_character_without_a_record_gives_the_file_rows_exit_0(root: Path) -> None:
@@ -213,11 +228,12 @@ def test_a_character_bindings_file_is_read_beside_the_account_one_constructed(
 ) -> None:
     (flavor / CHAR_DIR / "bindings-cache.wtf").write_bytes(
         b"bind Q MULTIACTIONBAR1BUTTON1\r\nbind CTRL-F11 TOGGLEBACKPACK\r\n"
+        b"bind 1 MULTIACTIONBAR5BUTTON1\r\n"
     )
     rep = report("--character", CHARACTER)
     assert [(f.scope, f.path, f.bind_lines) for f in rep.files] == [
         ("account", ACCOUNT_FILE, 3),
-        ("character", f"{CHAR_DIR}/bindings-cache.wtf", 2),
+        ("character", f"{CHAR_DIR}/bindings-cache.wtf", 3),
     ]
     q = next(k for k in rep.keys if k.key == "Q")
     assert q.sources == ["account file", "character file", "record"]
@@ -229,3 +245,18 @@ def test_a_character_bindings_file_is_read_beside_the_account_one_constructed(
         "slot  (character file only: disagrees with the record)"
     ) in text
     assert "the record has no command on CTRL-F11" in text
+    # Key 1 is on ACTIONBUTTON1 in the record and on bar 5 in the file: both rows
+    # disagree, and the unconfirmed bar's page note is printed under its row.
+    lines = text.splitlines()
+    bar5 = lines.index(
+        "  1                MULTIACTIONBAR5BUTTON1      145  empty slot (nothing recorded in it)"
+        "  (character file only: disagrees with the record)"
+    )
+    assert lines[bar5 + 1].endswith(
+        "bar 5 button 1, page 13 (unconfirmed: no capture has had a key on this bar)"
+    )
+    assert lines[bar5 + 2].endswith("the record has 1 on ACTIONBUTTON1")
+    assert (
+        "  1                ACTIONBUTTON1                 1  casts Immolate (Rank 2, spell 707)"
+        "  (record only: disagrees with the files)"
+    ) in lines

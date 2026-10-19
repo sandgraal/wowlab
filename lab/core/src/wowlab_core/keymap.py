@@ -16,8 +16,8 @@ slot"). That numbering is the default UI's **[verify]**. The real record is
 consistent with it and proves no more: `MULTIACTIONBAR1BUTTON1` to `3` hold
 keys and slots 61 to 63 hold spells, and slots 49 and 50 fit page 5; no
 `MULTIACTIONBAR5` to `7` command has had a key in a capture, so bars 5 to 7
-are unconfirmed. The main bar is read at its default page, page 1, only. Its
-other pages (`UNFOLLOWED_SLOTS`: page 2, and the pages forms, stances and
+are unconfirmed. The main bar is read at page 1 only, the page shown with no
+form, stance or stealth active. Its other pages (`UNFOLLOWED_SLOTS`: page 2, and the pages forms, stances and
 stealth show, and the possess, override or vehicle bars) are not followed,
 nor are the pet and stance bars, an addon's buttons, or a key bound straight
 to a spell, macro or click (the record leaves those commands out and counts
@@ -27,18 +27,21 @@ Two sources of keys. The bindings file is what the client last wrote; the
 record is what `GetBindingKey` returned at the lab-addon's last save. Neither
 is taken as the truth (§16.4): each row is one key on one command, with the
 sources that said so, and where the file and the record disagree (a key in a
-file the record does not have on that command, or the reverse) the row says
-so rather than choosing. The file may hold only the changes from the
-client's defaults (docs/LAB_FORMATS.md, 2026-10-16, item 8, **[verify]**),
-so a key only in the record is a disagreement to show, not by itself an
-error. A file line `bind KEY NONE` may clear the key **[verify]**: when the
-record has no command on that key, the row is `cleared`, not a disagreement.
+file the record does not have on that command, or a key the record has on a
+command while a file has it on another) the row says so rather than
+choosing. A key the record has and no file line names is not a
+disagreement: the file may hold only the changes from the client's
+defaults, or may not have been rewritten since the key was set
+(docs/LAB_FORMATS.md, 2026-10-16, item 8, **[verify]**), so the row is
+`not in a file`. A file line `bind KEY NONE` may clear the key
+**[verify]**: when the record has no command on that key, the row is
+`cleared`, not a disagreement.
 
 What a slot holds is the record's `type`, `id` and `sub_type`, kept as the
 client gave them. A spell is named from the spellbook record, with its rank
 subtext; a macro, item, flyout or equipment set is given by id only (a macro
 slot never carries the macro's name or body, and an equipment-set slot keeps
-no id). Without a usable action-bar record, the slot a command presses is
+no id, the set's id being its name **[verify]**). Without a usable action-bar record, the slot a command presses is
 still given, and what it holds is "cannot place".
 """
 
@@ -56,7 +59,7 @@ __all__ = [
     "BAR_PAGES",
     "CANNOT_PLACE",
     "GET_RECORD",
-    "RECORD_ONLY_NOTE",
+    "NOT_IN_A_FILE_NOTE",
     "UNFOLLOWED_SLOTS",
     "Agreement",
     "Holds",
@@ -115,9 +118,15 @@ GET_RECORD = (
     "in on this character, then log out or /reload; schema 3 is needed"
 )
 CANNOT_PLACE = "cannot place: no action-bar record"
-RECORD_ONLY_NOTE = (
-    "not in a bindings file, which may hold only the changes from the client's defaults [verify]"
+NOT_IN_A_FILE_NOTE = (
+    "not in a bindings file: the file may hold only the changes from the client's defaults, "
+    "or may not have been rewritten since the key was set [verify]"
 )
+# What else shows a main-bar page than page 1 (`UNFOLLOWED_SLOTS`).
+_OTHER_PAGES = "paging, a form, stance or stealth, or a possess, override or vehicle bar [verify]"
+_PET = re.compile(r"BONUSACTIONBUTTON([1-9]|10)")
+_STANCE = re.compile(r"SHAPESHIFTBUTTON([1-9]|10)")
+_PAGE = re.compile(r"ACTIONPAGE([1-6])")
 
 # The record keeps a command only by a plain upper-case name and a key only
 # as printable ASCII without a space (`labaddon.BindingCommand`,
@@ -155,12 +164,25 @@ def _command_page_note(command: str) -> str | None:
     where = f"{_BAR_NAMES[prefix]} button {button}, page {page}"
     if prefix == "ACTIONBUTTON":
         return (
-            f"{where}, the main bar's default page; a form, stance, stealth or paging shows "
-            "another page, and the key then presses that page's slot (not followed)"
+            f"{where}, the page shown with no form, stance or stealth active; {_OTHER_PAGES} "
+            "shows another page, and the key then presses that page's slot (not followed)"
         )
     if prefix in _UNCONFIRMED_BARS:
         return f"{where} (unconfirmed: no capture has had a key on this bar)"
     return where
+
+
+def _command_words(command: str) -> str:
+    """What a binding command that presses no followed action slot does."""
+    if command == _CLEARED:
+        return "clears the key (NONE) [verify]"
+    if match := _PET.fullmatch(command):
+        return f"pet bar button {match.group(1)} (not followed) [verify]"
+    if match := _STANCE.fullmatch(command):
+        return f"stance bar button {match.group(1)} (not followed) [verify]"
+    if match := _PAGE.fullmatch(command):
+        return f"shows main-bar page {match.group(1)}"
+    return "a binding command, not an action slot"
 
 
 def slot_page_note(slot: int) -> str:
@@ -175,8 +197,8 @@ def slot_page_note(slot: int) -> str:
             return where
     if slot in UNFOLLOWED_SLOTS:
         return (
-            f"page {page}, button {button}: a main-bar page shown by paging, a form, stance or "
-            "stealth, or a possess, override or vehicle bar [verify], which is not followed; "
+            f"page {page}, button {button}: a main-bar page shown by {_OTHER_PAGES}, which is "
+            "not followed; "
             f"the main bar's button {button} key presses it only while that page is shown"
         )
     return f"page {page}, button {button}: no bar of the default UI shows this page"
@@ -240,9 +262,11 @@ def held(spell_id: int, subtexts: Mapping[int, str]) -> str:
 Source = Literal["account file", "character file", "record"]
 _SOURCES: tuple[Source, ...] = ("account file", "character file", "record")
 # Whether the files and the record agree on one key on one command: both have
-# it; only a file, or only the record, has it (a disagreement); or a file line
-# `bind KEY NONE` and the record has no command on that key (cleared).
-Agreement = Literal["both", "file only", "record only", "cleared"]
+# it; only a file has it, or only the record while a file has the key on
+# another command (a disagreement); only the record, with no file line for the
+# key (not a disagreement); or a file line `bind KEY NONE` and the record has
+# no command on that key (cleared).
+Agreement = Literal["both", "file only", "record only", "not in a file", "cleared"]
 
 
 class Holds(_Model):
@@ -258,7 +282,8 @@ class Holds(_Model):
 
 class KeyRow(_Model):
     """One key on one binding command. `slot` is the action slot the
-    command presses on its bar's default page (None: not an action button);
+    command presses on the page `BAR_PAGES` gives its bar (None: not an
+    action button);
     `holds` is what the record says that slot held (None: an empty slot, no
     action-bar record, or not an action button); `does` says it in words.
     `agreement` is None when there is no bindings record to compare with."""
@@ -271,12 +296,13 @@ class KeyRow(_Model):
     does: str
     sources: list[Source]
     agreement: Agreement | None
-    disagrees: bool  # agreement is "file only" or "record only"
+    disagrees: bool  # agreement is "file only" or "record only"; not "not in a file"
     note: str | None
 
 
 class UnreachedSlot(_Model):
-    """A filled slot no key in any source reaches on its bar's default page."""
+    """A filled slot no key in any source reaches on the page `BAR_PAGES`
+    gives its bar."""
 
     slot: int
     page_note: str
@@ -329,7 +355,7 @@ def _does(holds: Holds) -> str:
     if kind == "flyout":
         return f"opens flyout{number}"
     if kind == "equipmentset":
-        return "equips an equipment set (the record keeps no id: a set's id is its name)"
+        return "equips an equipment set (the record keeps no id: a set's id is its name [verify])"
     if kind is None:
         return f"holds something{number} the record gave no type for"
     sub = f" ({holds.sub_type})" if holds.sub_type else ""
@@ -437,11 +463,7 @@ def join(
         slot = command_slot(command)
         holds: Holds | None = None
         if slot is None:
-            does = (
-                "clears the key (NONE) [verify]"
-                if command == _CLEARED
-                else "a binding command, not an action slot"
-            )
+            does = _command_words(command)
         elif bars is None:
             does = CANNOT_PLACE
         elif slot in filled:
@@ -465,12 +487,13 @@ def join(
                     agreement = "file only"
                     note = _file_note(key, command, record_keys)
             else:
-                agreement = "record only"
                 others = [(c, s) for c, s in file_keys.get(key, []) if c != command]
                 if others:
+                    agreement = "record only"
                     note = "; ".join(f"the {s} has {key} on {c}" for c, s in others)
                 else:
-                    note = RECORD_ONLY_NOTE
+                    agreement = "not in a file"
+                    note = NOT_IN_A_FILE_NOTE
         rows.append(
             KeyRow(
                 key=key,
@@ -502,13 +525,22 @@ def join(
 
     notes = [
         "A key reaches an action slot through the default UI's action buttons: button n of the "
-        "bar showing page p is slot (p - 1) x 12 + n [verify]. The main bar is read at its "
-        "default page, page 1, only; its other pages (forms, stances, stealth, paging), the pet "
-        "and stance bars and an addon's buttons are not followed.",
-        "The bindings files are what the client last wrote; the record is what GetBindingKey "
-        "returned at the lab-addon's last save. Neither is taken as the truth: each row names "
-        "the sources that have that key on that command, and says where they disagree.",
+        "bar showing page p is slot (p - 1) x 12 + n [verify]. The main bar is read at page 1 "
+        "only, the page shown with no form, stance or stealth active; the pages shown by "
+        f"{_OTHER_PAGES}, the pet and stance bars and an addon's buttons are not followed.",
     ]
+    if cannot_compare is None:
+        notes.append(
+            "The bindings files are what the client last wrote; the record is what "
+            "GetBindingKey returned at the lab-addon's last save. Neither is taken as the "
+            "truth: each row names the sources that have that key on that command, and says "
+            "where they disagree."
+        )
+    else:
+        notes.append(
+            "Without a bindings record only the files' lines are listed; a file may leave out "
+            "keys at the client's defaults [verify], so keys not listed may still be bound."
+        )
     if bars_note is not None:
         notes.append(bars_note)
     if binds_note is not None:

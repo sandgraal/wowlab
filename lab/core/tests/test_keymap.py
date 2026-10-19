@@ -71,7 +71,9 @@ def with_slots(
 # ─── the real record ─────────────────────────────────────────────────────────
 
 
-def test_schema3_record_alone_gives_131_keys_on_124_commands_15_on_slots_11_unreached() -> None:
+def test_schema3_record_alone_131_keys_124_commands_15_on_slots_131_not_in_a_file_11_unreached() -> (
+    None
+):
     rec = real_record()
     km = keymap.join_record(account=None, character=None, record=rec)
     assert isinstance(rec.bindings, labaddon.Bindings)
@@ -80,7 +82,7 @@ def test_schema3_record_alone_gives_131_keys_on_124_commands_15_on_slots_11_unre
     assert len({r.command for r in km.keys}) == 124
     assert sum(1 for r in km.keys if r.slot is not None) == 15
     assert all(r.sources == ["record"] for r in km.keys)
-    assert all(r.agreement == "record only" and r.disagrees for r in km.keys)
+    assert all(r.agreement == "not in a file" and not r.disagrees for r in km.keys)
     assert (km.commands_left_out, km.keys_left_out) == (1, 0)
     assert (km.cannot_place, km.cannot_compare) == (None, None)
     assert [u.slot for u in km.unreached_slots] == [49, 50, *range(64, 73)]
@@ -107,17 +109,26 @@ def test_schema3_slots_hold_what_the_bars_and_spellbook_say_12_main_bar_3_bottom
         type="spell", id=707, sub_type="spell", name="Immolate", subtext="Rank 2"
     )
     assert one.page_note is not None and one.page_note.startswith(
-        "main bar button 1, page 1, the main bar's default page"
+        "main bar button 1, page 1, the page shown with no form, stance or stealth active; "
+        "paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] "
+        "shows another page"
     )
     assert row(km, "Q", "MULTIACTIONBAR1BUTTON1").page_note == "bottom left bar button 1, page 6"
     # A command that is no action button presses no slot.
     stance = row(km, "CTRL-F1", "SHAPESHIFTBUTTON1")
     assert (stance.slot, stance.holds, stance.page_note) == (None, None, None)
+    assert stance.does == "stance bar button 1 (not followed) [verify]"
+    assert (
+        row(km, "CTRL-1", "BONUSACTIONBUTTON1").does == "pet bar button 1 (not followed) [verify]"
+    )
+    assert row(km, "SHIFT-6", "ACTIONPAGE6").does == "shows main-bar page 6"
+    assert row(km, "M", "TOGGLEWORLDMAP").does == "a binding command, not an action slot"
 
 
-def test_schema3_and_the_account_file_3_agree_128_record_only_cross_capture() -> None:
+def test_schema3_and_the_account_file_3_agree_128_not_in_a_file_0_disagree_cross_capture() -> None:
     km = keymap.join_record(account=real_file(), character=None, record=real_record())
-    assert Counter(r.agreement for r in km.keys) == {"both": 3, "record only": 128}
+    assert Counter(r.agreement for r in km.keys) == {"both": 3, "not in a file": 128}
+    assert not any(r.disagrees for r in km.keys)
     both = [(r.key, r.command, r.sources) for r in km.keys if r.agreement == "both"]
     assert both == [
         ("Q", "MULTIACTIONBAR1BUTTON1", ["account file", "record"]),
@@ -125,7 +136,11 @@ def test_schema3_and_the_account_file_3_agree_128_record_only_cross_capture() ->
         ("E", "MULTIACTIONBAR1BUTTON3", ["account file", "record"]),
     ]
     assert all(not r.disagrees and r.note is None for r in km.keys if r.agreement == "both")
-    assert {r.note for r in km.keys if r.agreement == "record only"} == {keymap.RECORD_ONLY_NOTE}
+    assert {r.note for r in km.keys if r.agreement == "not in a file"} == {
+        keymap.NOT_IN_A_FILE_NOTE
+    }
+    # With a record to compare, the notes say neither source is the truth.
+    assert any(n.startswith("The bindings files are what the client last wrote") for n in km.notes)
 
 
 def test_the_two_macro_slots_64_65_are_given_by_index_and_no_name() -> None:
@@ -194,10 +209,23 @@ def test_a_record_only_key_is_marked_and_not_chosen_constructed() -> None:
     km = keymap.join_record(
         account=lines("Q MULTIACTIONBAR1BUTTON1"), character=None, record=real_record()
     )
+    # No file line names key 2: the record alone has it, and that is no disagreement.
     two = row(km, "2", "ACTIONBUTTON2")
-    assert (two.sources, two.agreement, two.disagrees) == (["record"], "record only", True)
-    assert two.note == keymap.RECORD_ONLY_NOTE
+    assert (two.sources, two.agreement, two.disagrees) == (["record"], "not in a file", False)
+    assert (
+        two.note
+        == keymap.NOT_IN_A_FILE_NOTE
+        == (
+            "not in a bindings file: the file may hold only the changes from the client's "
+            "defaults, or may not have been rewritten since the key was set [verify]"
+        )
+    )
     assert two.does == "casts Corruption (Rank 1, spell 172)"
+    # A file line puts key 3 on another command: the record's row disagrees.
+    km = keymap.join_record(account=lines("3 TOGGLEBACKPACK"), character=None, record=real_record())
+    three = row(km, "3", "ACTIONBUTTON3")
+    assert (three.agreement, three.disagrees) == ("record only", True)
+    assert three.note == "the account file has 3 on TOGGLEBACKPACK"
 
 
 def test_a_key_on_a_paged_slot_constructed() -> None:
@@ -318,6 +346,11 @@ def test_without_a_schema_3_record_the_file_rows_cannot_be_placed() -> None:
     )
     assert km.cannot_compare is not None and km.cannot_compare.startswith("no bindings record")
     assert (km.unreached_slots, km.commands_left_out, km.keys_left_out) == ([], None, None)
+    assert not any(n.startswith("The bindings files are what") for n in km.notes)
+    assert (
+        "Without a bindings record only the files' lines are listed; a file may leave out "
+        "keys at the client's defaults [verify], so keys not listed may still be bound."
+    ) in km.notes
     none = keymap.join_record(account=real_file(), character=None, record=None)
     assert none.cannot_place is not None and none.cannot_place.startswith("no lab-addon record")
     assert [r.does for r in none.keys] == [keymap.CANNOT_PLACE] * 3
@@ -362,7 +395,7 @@ def test_an_incomplete_bar_record_is_said_constructed() -> None:
         (
             "equipmentset",
             None,
-            "equips an equipment set (the record keeps no id: a set's id is its name)",
+            "equips an equipment set (the record keeps no id: a set's id is its name [verify])",
         ),
         ("companion", 7, "holds companion 7"),
     ],
