@@ -11,8 +11,8 @@ evening ("want the gear view sooner"): `char gear` was dispatched before
 the gate closed, and the Character tab came before the six install writes.
 
 **Every build ticket is on `main`.** M14-02 to M14-09 merged between
-2026-10-19 00:30 and <M14-09 merge time>; this review is M14-10, the last
-ticket. Dispatch stops here until the owner picks the next wave (§11).
+2026-10-19 00:30 and 12:37 local time (16:37 UTC); this review is M14-10,
+the last ticket. Dispatch stops here until the owner picks the next wave (§11).
 
 ## What shipped
 
@@ -60,11 +60,13 @@ In merge order, with the squash commit on `main`:
   chrome-headless-shell 153 and in WebKit (Safari 27's engine): the frame
   loads under `default-src 'none'` with no `frame-src`, the looks script
   runs, and the frame cannot reach its parent, storage or the network.
-- **M14-09 the Character tab: keys and macros** (<#PR, sha>). The Keys
+- **M14-09 the Character tab: keys and macros** (#300, ce60361). The Keys
   table with its text and "disagreements only" filters and the unreached
   slots; the Macros cards with bodies as lines, candidate placement, the
   keys that reach each slot, the checker's findings and a "findings only"
-  filter; both read-only, with the note §16.5 asks for.
+  filter; both read-only, with the note §16.5 asks for. A pick runs its
+  three reads one after another, so two quick picks never exceed the
+  server's four run slots.
 
 Docs and harness PRs of the wave: #285, #289, #293, #295, #296, #299
 (ticks, the dated amendments of §16.1 and §16.2 as built, the `ui` rule's

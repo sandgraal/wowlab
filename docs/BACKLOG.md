@@ -1208,7 +1208,7 @@ ADR-0029 "Richer views … are embedded", by the route §16.3 gives. A Looks ent
 
 ---
 
-## [ ] M14-09 — The Character tab: keys and macros
+## [x] M14-09 — The Character tab: keys and macros
 **Size:** M · **Depends on:** M14-06, M14-07, M14-08
 
 §16.3. Two panels under the picked character. Keys: `char binds --json` as a table (key, command, what it does, source), a text filter, a "disagreements only" filter and the unreached-slots list. Macros: `char macros --json`, each with its body as lines, where it sits and which keys reach it, and its findings in the checker's words, with a "findings only" filter. Both panels name the files and the record they came from with their times. Macro bodies and spell names are player text, rendered with `textContent` and never as markup. The tab still offers no edit control; a note under each panel says the panel is read-only in this version and that changes are a later wave (§16.5).
@@ -1219,7 +1219,7 @@ ADR-0029 "Richer views … are embedded", by the route §16.3 gives. A Looks ent
 
 ---
 
-## [ ] M14-10 — Wave 5 review
+## [x] M14-10 — Wave 5 review
 **Size:** S · **Depends on:** M14-03, M14-04, M14-09
 
 The conductor writes `docs/handoffs/M14-review.md` per `docs/LAB_PLAN.md` §11: what shipped, what the two persistence tests answered if the owner has run them, the state of ADR-0032, and a recommended next wave, of which §16.5 (F2 to F5) is the first candidate.
