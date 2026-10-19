@@ -1282,10 +1282,10 @@ def _doctor(
                 )
             )
         if not inst.flavors:
+            # With folders not taken, the refusal's words, each reason
+            # included, so the text and `--json` say why (M13-56).
             problems.append(
-                f"{inst.root} {install.NO_READABLE_FLAVOR}"
-                if inst.not_taken
-                else f"{inst.root} has no flavor folders"
+                _no_flavors(inst) if inst.not_taken else f"{inst.root} has no flavor folders"
             )
         client = _client_report(inst)
 
@@ -1388,6 +1388,12 @@ def _print_doctor(report: DoctorReport) -> None:
     else:
         _say("  no transactions in the journal")
     _say("  (`wowlab snap verify` re-hashes every stored object)")
+    # Why the command exits 1, as `problems` says it in `--json` (M13-56):
+    # without this, a run that skips the first run said nothing.
+    if report.problems:
+        _say("Problems:")
+        for problem in report.problems:
+            _say(f"  {problem}")
 
 
 def _doctor_redacted(root: Path | None, offline: bool, names: list[str]) -> DoctorReport:
@@ -2012,6 +2018,7 @@ def _tree_prefix(path: str | None, base: Path) -> str:
     """`tree`'s PATH argument, relative to `base` and `/`-separated."""
     if not path:
         return ""
+    path = _plain_arg(path)  # a `\\?\` spelling taken plainly, as `explain` does (M13-58)
     given = Path(path)
     if given.is_absolute():
         try:
@@ -2809,11 +2816,43 @@ def _not_taken_at(
     return _not_taken_named(inst, found.path.split("/", 1)[0])
 
 
+def _found_at_root(inst: install.Install, found: layout.Classified | layout.Unclassified) -> bool:
+    """Whether an install-root path is there (M13-57): walking down from the
+    root one `lstat` at a time, as `layout.absent` does, every part is found,
+    or a link is (a path through a link at the root is there, as its
+    absolute spelling says; the link is never followed to find out). Any
+    error on the way is "not there", and the path is read as on main."""
+    if found.base != "root" or not found.path:
+        return False
+    current = Path(inst.root)
+    for part in (p for p in found.path.split("/") if p):
+        current = current / part
+        try:
+            st = longpath.lstat(current)
+        except (OSError, ValueError):
+            return False
+        if layout.is_link(current, st):
+            return True
+    return True
+
+
 def _plain_arg(text: str) -> str:
     """A path argument as typed, except that on Windows a `\\\\?\\` spelling
     with a plain one is taken by that (`longpath.plain_text`), so no output,
     report or message echoes the prefix (M13-44)."""
     return longpath.plain_text(text) if longpath.ON_WINDOWS else text
+
+
+def _stored_target(target: str | None) -> str | None:
+    """A link target as a manifest stores it (`snapshot.Entry.target`, what
+    `readlink` answered), for display: on Windows without the extended-length
+    prefix an absolute target is answered with, where it has a plain spelling
+    (`longpath.plain_text`, as `tree` shows a link, M13-43). The manifest
+    keeps the raw text, which `guard` and `profiles` compare raw to raw; a
+    relative target, and any target off Windows, is shown as stored (M13-52)."""
+    if target is None or not longpath.ON_WINDOWS:
+        return target
+    return longpath.plain_text(target)
 
 
 @app.command()
@@ -2839,6 +2878,7 @@ def explain(
     judged: layout.Classified | layout.Unclassified | None = None
     here = Path.cwd() / given
     relative = False
+    at_root = False  # a relative path judged at the install root only
     # The flavor folder a relative path is read in (M13-29): `--flavor`, or
     # the only one; None with several and none chosen.
     chosen_folder = inst.flavors[0].folder if len(inst.flavors) == 1 else None
@@ -2852,26 +2892,43 @@ def explain(
         # M13-45: a path under a `_..._` folder discovery did not take stays
         # at the install root, where that folder is; it is not re-read in a
         # flavor folder.
-        at_root = _not_taken_at(inst, result) is not None
-        if at_root and flavor is not None and _not_taken_named(inst, flavor) is None:
+        taken_root = _not_taken_at(inst, result) is not None
+        # M13-57: so does a path with no row either way (at the root or in
+        # the flavor) that is there at the install root: a link, a file or
+        # a folder, or a path through a link there. A row in the flavor wins.
+        on_root = (
+            not taken_root
+            and isinstance(result, layout.Unclassified)
+            and _found_at_root(inst, result)
+        )
+        at_root = taken_root
+        if taken_root and flavor is not None and _not_taken_named(inst, flavor) is None:
             # The path is not read in it, but a `--flavor` that names no
             # folder at all is refused as on main.
             _select_flavor(inst, flavor)
         if (
             isinstance(result, layout.Unclassified)
             and (flavor or len(inst.flavors) == 1)
-            and not at_root
+            and not taken_root
         ):
             chosen = _select_flavor(inst, flavor)
             chosen_folder = chosen.folder
             in_flavor = layout.Layout.for_flavor(chosen, inst.root).classify(path)
             if isinstance(in_flavor, layout.Classified):
                 result = in_flavor
+            elif on_root:
+                at_root = True  # M13-57: judged at the root, where it is
             elif result.base == "root" and result.path and in_flavor.base == "flavor":
                 # No row either way: the verdict reads the path inside the
                 # chosen flavor, so every spelling of a flavor path gets the
                 # same one. `result` stays the install-root lookup, as on main.
                 judged = in_flavor
+        elif on_root:
+            # Several flavors, none chosen: `--flavor` would not read it in
+            # one unless that flavor has a row for it (M13-57).
+            at_root = not any(
+                isinstance(lay.classify(path), layout.Classified) for lay in layout.layouts(inst)
+            )
     if judged is None:
         judged = result
     folder, link, placeholder = _path_kind(inst.root, judged, path)
@@ -2946,7 +3003,13 @@ def explain(
             _say(f"{path}: no file-map row{where}: {result.reason}")
         if taken is not None:
             _say(f"  {taken.name}: {taken.note}")
-        if len(inst.flavors) > 1 and flavor is None and not given.is_absolute() and not nowhere:
+        if (
+            len(inst.flavors) > 1
+            and flavor is None
+            and not given.is_absolute()
+            and not nowhere
+            and not at_root  # M13-57: `--flavor` would not read it in one
+        ):
             _say("  (with several flavors, pass --flavor to read PATH inside one of them)")
         _say_detail(report, captured)
         return
@@ -5543,7 +5606,7 @@ def snap_show(
         _say("  Whether the client was running was not known when this was taken.")
     for e in manifest.entries:
         if e.kind == "symlink":
-            _say(f"  {e.path} -> {e.target} (link, recorded, not followed)")
+            _say(f"  {e.path} -> {_stored_target(e.target)} (link, recorded, not followed)")
         else:
             _say(f"  {e.path}  {_bytes(e.size)}  {(e.sha256 or '')[:12]}")
 
@@ -6258,13 +6321,23 @@ def snap_restore(
             # or that went missing is skipped by its row: the gate never
             # writes one, and would refuse the whole restore for it (M13-38).
             rest, executables = _changed_executables(lay, rest, inst.root, folder)
-            if not aside and not executables:
-                tx.restore(manifest.id)
-            else:
-                if any(not e.path.startswith(folder + "/") for e in rest):
-                    tx.restore(manifest.id)  # refused: a path outside this flavor
-                names, left = _names_for_whole(rest, inst.root, folder)
-                tx.restore(manifest.id, names)
+            try:
+                if not aside and not executables:
+                    tx.restore(manifest.id)
+                else:
+                    if any(not e.path.startswith(folder + "/") for e in rest):
+                        tx.restore(manifest.id)  # refused: a path outside this flavor
+                    names, left = _names_for_whole(rest, inst.root, folder)
+                    tx.restore(manifest.id, names)
+            except guard.PathNotAllowedError as exc:
+                # An executable the gate still refuses (its bytes are the
+                # snapshot's but its mode is not, or a link or a folder
+                # stands where it was) refuses the whole restore; say what
+                # the owner can do, as --paths does (M13-48).
+                prefix = folder + "/"
+                held = [e.path.removeprefix(prefix) for e in rest if e.path.startswith(prefix)]
+                _executable_note(lay, held, exc)
+                raise
         whole_plan = tx.plan
     skipped: list[SkippedPath] = []
     plan = list(whole_plan)
@@ -6540,7 +6613,7 @@ def _print_profile(report: ProfileReport, *, saved: bool) -> None:
     _say(f"  {s.subtrees} subtree(s), {s.files} file(s), {_bytes(s.bytes)}")
     for e in report.entries:
         if e.kind == "symlink":
-            _say(f"  {e.path} -> {e.target} (link, recorded, not followed)")
+            _say(f"  {e.path} -> {_stored_target(e.target)} (link, recorded, not followed)")
         else:
             _say(f"  {e.path}  {_bytes(e.size)}")
     for n in report.notes:

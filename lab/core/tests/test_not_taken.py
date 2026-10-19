@@ -286,7 +286,11 @@ def test_the_first_run_says_a_linked_flavor_folder_is_not_snapshotted(tmp_path: 
         f"SavedVariables), Interface and Fonts are not snapshotted: "
         f"{install.NOT_TAKEN_LINK}. Back up the folder it points to yourself.\n"
     ) in result.stdout
-    assert f"{root} {install.NO_READABLE_FLAVOR}" in data["problems"]
+    # M13-56: the problem carries each reason, as the refusal does.
+    assert data["problems"] == [
+        f"{root} {install.NO_READABLE_FLAVOR}; not taken: {LINKED} (link to {target}, "
+        f"not followed); {install.NOT_TAKEN_LINK}"
+    ]
     assert f"{root} has no flavor folders" not in data["problems"]
 
 

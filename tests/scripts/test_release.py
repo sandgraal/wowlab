@@ -5,7 +5,10 @@ and pin what `security-reviewer` signs off on: the trigger, the token's
 reach (read-only everywhere, `contents: write` on the release job only),
 action commits pinned, no secret but the job token, and the version check
 standing between a tag and a release. The script tests grade
-`scripts/release_check.py`, which does the checking.
+`scripts/release_check.py`, which does the checking. The last section
+(M13-47) keeps the release notes' `--json` model list in step with the
+models the CLI's help names, on every PR rather than only on a release
+branch.
 
 Every archive and `pyproject.toml` built here is `constructed` (L8, boundary
 cases): a wheel or sdist holding only the members the check reads (the
@@ -28,7 +31,7 @@ from typing import Any
 
 import pytest
 import yaml
-from test_check_wiki import _load
+from test_check_wiki import _load, gen
 
 rc = _load("release_check")
 
@@ -698,3 +701,97 @@ def test_constructed_an_unknown_placeholder_or_a_wrong_tag_fails(tmp_path: Path)
     args = ["notes", "--tag", "v0.1.1", "--version", "0.1.0", "--repository", "sandgraal/wowlab"]
     assert rc.main([*args, "--template", str(TEMPLATE), "--out", str(out)]) == 1
     assert not out.exists()
+
+
+# ─── the notes' `--json` model list (M13-47, folds the M13-11 review probe) ───
+#
+# The notes' `--json` paragraph lists every model a command's help names
+# (`gen_command_reference.json_models`, the command reference's rule).
+# ADR-0031 measures later releases' "Changes to `--json` output" against it,
+# so a PR that adds a `--json` model fails here until it adds the name. A
+# help name `module.Name` counts as listed when `Name` or `module.Name` is.
+# The real notes and the real Click tree are read as they are; the
+# `constructed` cases mutate a copy in memory, never the file.
+
+_JSON_PARAGRAPH = "**`--json`.**"
+# A code span holding exactly one name by the generator's own rule
+# (`_MODEL_NAME`: digits allowed, an optional `module.` prefix), so any name
+# `json_models` can report can also be read from the notes.
+_BACKTICKED = re.compile(rf"`({gen._MODEL_NAME.pattern})`")
+
+
+def _listed(text: str) -> set[str]:
+    """The backticked names in the notes' `--json` paragraph."""
+    assert _JSON_PARAGRAPH in text, "the notes have no `--json` paragraph"
+    paragraph = text.split(_JSON_PARAGRAPH, 1)[1].split("\n## ", 1)[0]
+    return set(_BACKTICKED.findall(paragraph))
+
+
+def _named_by_help() -> dict[str, list[str]]:
+    """Each leaf command's full name, and the models its help names."""
+    return {name: gen.json_models(cmd) for name, cmd in gen.iter_leaves(gen.root_command())}
+
+
+def _missing(named: dict[str, list[str]], listed: set[str]) -> list[str]:
+    """`command: Model` for each model a help names that the notes leave out."""
+    return sorted(
+        f"{command}: {model}"
+        for command, models in named.items()
+        for model in models
+        if model not in listed and model.rsplit(".", 1)[-1] not in listed
+    )
+
+
+def _unknown(named: dict[str, list[str]], listed: set[str]) -> list[str]:
+    """Each name the notes list that no command's help names."""
+    known = {
+        form
+        for models in named.values()
+        for model in models
+        for form in (model, model.rsplit(".", 1)[-1])
+    }
+    return sorted(listed - known)
+
+
+def test_the_notes_list_every_json_model_the_help_names() -> None:
+    named = _named_by_help()
+    listed = _listed(TEMPLATE.read_text(encoding="utf-8"))
+    # Positive control: the paragraph was found and the tree was walked.
+    assert len(listed) >= 30
+    assert "DoctorReport" in named["wowlab doctor"]
+    assert "DoctorReport" in listed
+    assert _missing(named, listed) == []
+
+
+def test_every_model_the_notes_list_is_one_the_help_names() -> None:
+    assert _unknown(_named_by_help(), _listed(TEMPLATE.read_text(encoding="utf-8"))) == []
+
+
+def test_constructed_a_model_dropped_from_the_notes_fails() -> None:
+    """Mutation: the real notes with `BindsCoachReport` (M13-08) cut out."""
+    text = TEMPLATE.read_text(encoding="utf-8")
+    assert "`BindsCoachReport`, " in text
+    mutated = text.replace("`BindsCoachReport`, ", "", 1)
+    named = _named_by_help()
+    commands = sorted(c for c, models in named.items() if "BindsCoachReport" in models)
+    assert commands
+    assert _missing(named, _listed(mutated)) == [f"{c}: BindsCoachReport" for c in commands]
+
+
+def test_constructed_a_new_help_model_not_in_the_notes_fails() -> None:
+    """Mutation: an invented command whose help names invented models."""
+    named = {**_named_by_help(), "wowlab invented": ["InventedReport", "snapshot.InventedManifest"]}
+    listed = _listed(TEMPLATE.read_text(encoding="utf-8"))
+    assert _missing(named, listed) == [
+        "wowlab invented: InventedReport",
+        "wowlab invented: snapshot.InventedManifest",
+    ]
+    # Listing the last part of a dotted name is enough.
+    assert _missing(named, listed | {"InventedReport", "InventedManifest"}) == []
+
+
+def test_constructed_a_name_the_help_no_longer_names_fails() -> None:
+    """Mutation: the real notes with an invented, retired model added."""
+    text = TEMPLATE.read_text(encoding="utf-8")
+    mutated = text.replace(_JSON_PARAGRAPH, f"{_JSON_PARAGRAPH} (`RetiredReport`)", 1)
+    assert _unknown(_named_by_help(), _listed(mutated)) == ["RetiredReport"]

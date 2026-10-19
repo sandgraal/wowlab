@@ -38,7 +38,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from wowlab_core import labaddon, luadata, snapshot
+from wowlab_core import labaddon, longpath, luadata, snapshot
 from wowlab_core.layout import Layout, Limits
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -721,7 +721,11 @@ def test_constructed_inode_zero_is_never_taken_for_a_hard_link(
         return os.stat_result((*fields, int(st.st_atime), int(st.st_mtime), int(st.st_ctime)))
 
     real = snapshot.read_regular_file
-    monkeypatch.setattr(labaddon, "os", types.SimpleNamespace(lstat=lstat_ino_0))
+    # labaddon's lstat goes through longpath since M13-58; only its view is faked.
+    fake = types.SimpleNamespace(
+        lstat=lstat_ino_0, ON_WINDOWS=longpath.ON_WINDOWS, plain_text=longpath.plain_text
+    )
+    monkeypatch.setattr(labaddon, "longpath", fake)
     monkeypatch.setattr(
         snapshot, "read_regular_file", lambda path, **kw: real(path, limit=kw["limit"])
     )

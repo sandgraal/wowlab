@@ -287,6 +287,37 @@ otherwise); a link there, or a path inside one, prints the verdict's words
 first, and any path under such a folder then prints `<name>: <note>`. Every
 other link prints as before.
 
+*Amended 2026-10-18 (M13-56):* `doctor`'s no-flavor problem, when
+`not_taken` is not empty, is the refusal's words in full, "not taken:
+<name> (<reason>), ..." and, for a link, `install.NOT_TAKEN_LINK` included,
+so `--json` says why as the text does. Whenever `problems` is not empty, the
+text of `doctor` prints "Problems:" and one indented line per entry after
+the snapshot-store lines and before any first-run section (a run that skips
+the first run, under `--redact` or once a snapshot of the install exists,
+exited 1 with no line saying why); with no problem nothing is added. A
+failed first snapshot's "first snapshot: <error>" is added to `problems`
+after that block is printed, so it is never in it; the first run has
+already said "The snapshot could not be taken: ..." (or the write gate's
+refusal). A first run that finds a flavor prints, unindented under the
+flavor list, one line per folder of `not_taken` that the client may play
+from (`firstrun.beside_lines`): for a link, the line the link-only first
+run gives it ("<name> is a link to <target>, not followed, so its WTF
+(settings and SavedVariables), Interface and Fonts are not snapshotted: ...
+Back up the folder it points to yourself."); for `not_checked` and
+`flavor_info_changed`, "<name> could not be read as a flavor (<why>), so
+nothing in it is snapshotted; " and what to do ("check that you can open
+it, run wowlab doctor again", or "run wowlab doctor again"), then ", and
+once it is listed as a flavor: wowlab snap create --flavor <name>" (once
+`doctor --yes` has snapshotted the readable flavor, the next `doctor` is not
+a first run and neither offers a snapshot nor says this folder has none). A
+folder with no `.flavor.info` is not repeated there. On Windows, a link
+whose target cannot be read (a WCI link or a WSL symlink) adds, in both
+first-run cases, "To see where it points: `dir /AL` in the folder that
+holds it shows a junction's or symbolic link's target; a link made in WSL
+shows its target with `ls -l` inside WSL." `FirstRunReport.not_snapshotted` stays flavor
+folders only; `--json` readers find links and the other folders in
+`doctor`'s `not_taken`.
+
 *Amended 2026-10-18 (M13-54):* `O_NOFOLLOW` (M13-46) guards only the last
 component of a path, so a `_*_` folder swapped for a link to a directory
 between the scan and the read of its `.flavor.info` was read through. The
@@ -309,7 +340,12 @@ in `other_dirs` with the new `not_taken` reason **`folder_changed`**, note
 `install.NOT_A_FLAVOR_FOLDER_CHANGED` ("not taken as a flavor folder (it
 changed as it was read; run the command again)"), never worded as a link:
 what took its place may be a real folder. When the folder changed, that
-reason is given even if its `.flavor.info` was refused too. On Windows
+reason is given even if its `.flavor.info` was refused too. The first
+run's line for a folder beside a flavor (M13-56, `firstrun.beside_lines`)
+treats it as `flavor_info_changed`: "<name> could not be read as a flavor
+(it changed as it was read), so nothing in it is snapshotted; run wowlab
+doctor again, and once it is listed as a flavor: wowlab snap create
+--flavor <name>". On Windows
 (no `O_NOFOLLOW`, no `dir_fd`), and in the POSIX case just named, there is
 no descriptor and the two `lstat`s are the floor. What that floor leaves
 open: a folder swapped for a link (a junction, say), or for another real
@@ -1368,6 +1404,14 @@ gate does. Naming one with `--paths` is refused with the gate's reason,
 followed by one line: name the other files with `--paths`, or (for the
 `addon-executable` row) reinstall the addon to get its executable back.
 `guard` is unchanged.
+*Amended 2026-10-18 (M13-48, the owner's option (b)):* the behaviour above
+stays, and a whole restore that the gate refuses because its reason names
+an executable in this flavor now prints the same advice line after the
+gate's line, exit 3, nothing written. That covers an executable whose
+content matches but whose permission bits do not, a link or a folder where
+the file was, a name spelled otherwise (a case variant), and an executable
+outside `AddOns/`, which gets the shorter line without the reinstall advice.
+A reserved name is refused for its name, so it gets the gate's line alone.
 
 *Amended 2026-09-29 (M11-30):* text output is terminal-safe. No C0
 control (tab and line feed included), no DEL, no C1 control and no Unicode
@@ -1489,7 +1533,13 @@ never edited. Every capture passes through `scripts/lab_capture.py`, which
   names, realm names and the second name of a Forever `<First>-<Second>`
   folder are no longer rewritten; they pass through as they are, in paths
   and in contents. The digits-only Forever group folder keeps its path-only
-  numeric pseudonym,
+  numeric pseudonym. *Amended 2026-10-18 (M13-55):* the value of every
+  `accountName` CVar in a `Config.wtf` or `config-cache.wtf` is rewritten
+  the same way, as an account, wherever else it appears (one account per
+  casing-folded value; an email address in it is left to the email
+  refusal; a value under five letters that has a separator in it stops the
+  capture). `accountList` is blanked but its entries are not yet hunted:
+  its separator is unconfirmed **[verify]**,
 - drops or blanks CVars known to carry identity (`accountName`,
   `accountList`, `lastCharacterGuid`, `portal` stays) per a deny-list kept in
   the tool and extended as found (`realmName` stays on it and is blanked),
@@ -1512,7 +1562,8 @@ never edited. Every capture passes through `scripts/lab_capture.py`, which
 - records what it rewrote in the provenance row (`identity-rewritten`,
   `cvars-dropped: n`). *Amended 2026-10-17 (M13-49):* `identity-rewritten`
   counts only rewrites of the kept set (account folders, `--extra-name`
-  strings); a path whose only rewrite is the account or group folder still
+  strings, and since 2026-10-18 (M13-55) `accountName` values); a
+  path whose only rewrite is the account or group folder still
   reads `identity-rewritten: path only`. Committed fixtures and their rows
   keep their pseudonyms (ADR-0012).
 

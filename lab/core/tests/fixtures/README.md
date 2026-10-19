@@ -103,7 +103,8 @@ date `identity-rewritten: n` counts only rewrites of the account folder and
 `--extra-name` strings, and `path only` means only the account or the
 digits group folder was rewritten in the path; before it, both also counted
 character and realm names. Rows from before and after the date do not
-compare on this cell. The tool
+compare on this cell. *Amended 2026-10-18 (M13-55):* it also counts
+rewrites of the `accountName` value found in a config file. The tool
 prints each row ready to paste. Run it with
 `--kind <flavor folder>=<flavor-kind>` and the `file` cell is already the
 final path: move `incoming/<platform>/` up one level and the rows match.

@@ -34,7 +34,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path, PurePath
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from wowlab_core import guard, install, layout, longpath, snapshot
 from wowlab_core.snapshot import VerifyReport
@@ -52,6 +52,7 @@ __all__ = [
     "SubtreeScan",
     "SyncHint",
     "Unreadable",
+    "beside_lines",
     "estimate_seconds",
     "flavor_label",
     "intro_lines",
@@ -209,7 +210,13 @@ class FirstRunReport(_Out):
     verify: VerifyReport | None
     error: str | None
     refused: bool  # the error is the write gate's refusal (exit 3)
-    not_snapshotted: list[str]  # the other flavor folders, still without a snapshot
+    # The other flavor folders, still without a snapshot (M13-56: flavors
+    # only; a link or another folder not taken as a flavor is in doctor's
+    # `not_taken`, though the first-run text names it).
+    not_snapshotted: list[str] = Field(
+        description="The other flavor folders, still without a snapshot. Flavor folders "
+        "only: links and other folders not taken as flavors are in doctor's not_taken."
+    )
     undo: str  # the last line of the text output
 
 
@@ -363,21 +370,69 @@ def _sync_lines(scan: FlavorScan, wtf_is_link: bool) -> list[str]:
     return lines
 
 
+# Said on Windows, for a link whose target cannot be read (a WCI link or a
+# WSL symlink: `os.readlink` reads neither), where the player may find it.
+# Hedged: `dir /AL` shows a target only for a junction or a symbolic link.
+_FIND_TARGET = (
+    " To see where it points: `dir /AL` in the folder that holds it shows a junction's "
+    "or symbolic link's target; a link made in WSL shows its target with `ls -l` inside WSL."
+)
+
+
+def _link_line(entry: install.NotTaken) -> str:
+    """A linked `_..._` folder: never followed, so nothing in it is
+    snapshotted; the player backs up the folder it points to, as for a
+    linked `WTF` (`_sync_lines`)."""
+    return (
+        f"{entry.name} is a {install.not_taken_why(entry)}, so its WTF (settings and "
+        "SavedVariables), Interface and Fonts are not snapshotted: "
+        f"{install.NOT_TAKEN_LINK}. Back up the folder it points to yourself."
+        + (_FIND_TARGET if entry.target is None and longpath.ON_WINDOWS else "")
+    )
+
+
+def _unread_line(entry: install.NotTaken) -> str:
+    """A `_..._` folder whose `lstat` was refused, or which (or whose
+    `.flavor.info`) changed as it was read: it may be a flavor, and nothing
+    in it is snapshotted (M13-56, M13-54)."""
+    if entry.reason in ("flavor_info_changed", "folder_changed"):
+        why = install.not_taken_why(entry).removesuffix("; run the command again")
+        remedy = "run wowlab doctor again"
+    else:
+        why = install.not_taken_why(entry)
+        remedy = "check that you can open it, run wowlab doctor again"
+    # A later `doctor` is no longer a first run once a snapshot is taken, so
+    # it neither offers one nor says this folder has none: name the command.
+    return (
+        f"{entry.name} could not be read as a flavor ({why}), so nothing in it is "
+        f"snapshotted; {remedy}, and once it is listed as a flavor: wowlab snap create "
+        f"--flavor {entry.name}"
+    )
+
+
 def not_taken_lines(inst: install.Install) -> list[str]:
     """Why each folder named `_..._` was not taken as a flavor, for a first
-    run that found none (M13-45). A link is never followed, so nothing in
-    it is snapshotted; the player backs up the folder it points to, as for
-    a linked `WTF` (`_sync_lines`)."""
+    run that found none (M13-45)."""
+    return [
+        f"  {_link_line(n)}" if n.reason == "link" else f"  {n.name}: {n.note}"
+        for n in inst.not_taken
+    ]
+
+
+def beside_lines(inst: install.Install) -> list[str]:
+    """For a first run that found a flavor: each `_..._` folder beside it
+    that is not snapshotted although the client may play from it, under the
+    flavor list (M13-56). A link gets the words `not_taken_lines` gives it;
+    a folder that could not be checked, or which (or whose `.flavor.info`)
+    changed as it was read, says so and what to do. A folder with no
+    `.flavor.info` is not repeated here: `doctor` lists it above with its
+    note."""
     lines: list[str] = []
     for n in inst.not_taken:
         if n.reason == "link":
-            lines.append(
-                f"  {n.name} is a {install.not_taken_why(n)}, so its WTF (settings and "
-                "SavedVariables), Interface and Fonts are not snapshotted: "
-                f"{install.NOT_TAKEN_LINK}. Back up the folder it points to yourself."
-            )
-        else:
-            lines.append(f"  {n.name}: {n.note}")
+            lines.append(_link_line(n))
+        elif n.reason in ("not_checked", "flavor_info_changed", "folder_changed"):
+            lines.append(_unread_line(n))
     return lines
 
 
@@ -547,10 +602,15 @@ def _is_online_only_dir(st: os.stat_result) -> bool:
 
 
 def _link_target(path: Path) -> str | None:
+    """The link's target text, as the survey prints it. On Windows an
+    absolute target comes back `\\\\?\\C:\\...`: shown plain where it has a
+    plain spelling, as every path is (M13-15, M13-51); a relative text has no
+    prefix and is kept as it is."""
     try:
-        return str(longpath.readlink(path))
+        target = str(longpath.readlink(path))
     except (OSError, ValueError):
         return None
+    return longpath.plain_text(target) if longpath.ON_WINDOWS else target
 
 
 def _is_conflict(name: str) -> bool:
@@ -897,6 +957,8 @@ def run(
     for n, scan in enumerate(scans, 1):
         for line in scan_lines(scan, n, len(scans)):
             say(line)
+    for line in beside_lines(inst):
+        say(line)
 
     def estimate(flavor: install.Flavor) -> str:
         return _duration(next(s for s in scans if s.folder == flavor.folder).estimated_seconds)
