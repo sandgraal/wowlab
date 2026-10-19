@@ -13,6 +13,14 @@ on:
 # windows.yml and is not required (ADR-0014 amendments of 2026-10-15).
 # Renaming a job means
 # changing the ruleset and re-applying it with scripts/bootstrap-github.sh.
+#
+# No job restores or saves an Actions cache (M13-42). The cache is shared
+# by every workflow running in main's scope, including the two that run a
+# model with a token whose cache mode is write (claude.yml, wiki-daily.yml),
+# so an entry these jobs restored could have been written by that model.
+# setup-uv runs with `enable-cache: false` (omitted means `auto`, which
+# caches), actionlint and trivy with `cache: false` (both default to true),
+# and tests/repo/test_workflows_use_no_cache.py holds every workflow to it.
 permissions:
   contents: read
 
@@ -75,7 +83,7 @@ jobs:
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         with:
           version: ${{ env.UV_VERSION }}
-          enable-cache: true
+          enable-cache: false
       - name: Install
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         run: uv sync --frozen
@@ -126,7 +134,7 @@ jobs:
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         with:
           version: ${{ env.UV_VERSION }}
-          enable-cache: true
+          enable-cache: false
       - name: Generate a decimal-comma locale (serializer determinism graders)
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         run: sudo locale-gen de_DE.UTF-8
@@ -165,7 +173,7 @@ jobs:
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         with:
           version: ${{ env.UV_VERSION }}
-          enable-cache: true
+          enable-cache: false
       - name: Install
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         run: uv sync --frozen
@@ -197,7 +205,7 @@ jobs:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
-          enable-cache: true
+          enable-cache: false
       - name: Hook tests (python ${{ matrix.python }})
         run: uv run --python ${{ matrix.python }} --isolated --no-project --with pytest -- pytest -q tests/harness
       - name: Hooks lint clean (ruff, mypy at 3.10 floor)
@@ -215,6 +223,9 @@ jobs:
       - name: actionlint
         if: matrix.python == '3.12'
         uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
+        with:
+          # Its default restores the actionlint binary from the Actions cache.
+          cache: false
 
   gitleaks:
     name: Secret scan (gitleaks)
@@ -282,6 +293,9 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"
+          # Its default restores the trivy binary (setup-trivy) and its
+          # vulnerability database from the Actions cache.
+          cache: false
       - name: Doc-only PR — skipped
         if: needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true'
         run: echo "doc-only PR — trivy skipped"

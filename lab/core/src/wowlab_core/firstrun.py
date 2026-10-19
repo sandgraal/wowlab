@@ -547,10 +547,15 @@ def _is_online_only_dir(st: os.stat_result) -> bool:
 
 
 def _link_target(path: Path) -> str | None:
+    """The link's target text, as the survey prints it. On Windows an
+    absolute target comes back `\\\\?\\C:\\...`: shown plain where it has a
+    plain spelling, as every path is (M13-15, M13-51); a relative text has no
+    prefix and is kept as it is."""
     try:
-        return str(longpath.readlink(path))
+        target = str(longpath.readlink(path))
     except (OSError, ValueError):
         return None
+    return longpath.plain_text(target) if longpath.ON_WINDOWS else target
 
 
 def _is_conflict(name: str) -> bool:

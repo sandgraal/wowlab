@@ -166,9 +166,12 @@ _HOME_PATH = re.compile(
     r"|[A-Za-z]:[\\/]+(?:Users|Documents and Settings)(?:[\\/]|$))",
     re.IGNORECASE,
 )
-_ACCOUNT_FOLDER = re.compile(r"(?<![\w#])\d{5,}#\d{1,2}(?!\w)|Account[\\/]+\d+(?![\w-])", re.I)
+# The account-folder and BattleTag lookbehinds refuse only a letter or a
+# digit (`[^\W_]`): after `#` (`#123456789#1`, `Home#Abc#1234`, an anchor)
+# or `_` (`Page_123456789#1`) the identifier is still found (M13-53).
+_ACCOUNT_FOLDER = re.compile(r"(?<![^\W_])\d{5,}#\d{1,2}(?!\w)|Account[\\/]+\d+(?![\w-])", re.I)
 _EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?!\w)")
-_BATTLETAG = re.compile(r"(?<![\w#])[^\W\d_]\w{2,11}#\d{4,6}(?!\w)")
+_BATTLETAG = re.compile(r"(?<![^\W_])[^\W\d_]\w{2,11}#\d{4,6}(?!\w)")
 _CREDENTIAL = re.compile(
     r"(?:sk-ant-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})"
     r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"
@@ -581,6 +584,10 @@ class Checker:
         dest = _destination(target)
         if not dest or _SCHEME.match(dest) or dest.startswith("//"):
             return
+        # A target holding personal data anywhere is never quoted, whichever
+        # part of it is missing: `123456789#1` splits into a clean-looking
+        # page part and an anchor (M13-53).
+        withhold = bool(personal_kinds(dest) or personal_kinds(unquote(dest)))
         page_part, _, anchor = dest.partition("#")
         page_part = unquote(page_part.split("?", 1)[0]).strip()
         if page_part.startswith("./"):
@@ -593,7 +600,7 @@ class Checker:
                 name += ".md"
             found = self.pages.get(name)
             if found is None:
-                shown = self.quote(page_part)
+                shown = None if withhold else self.quote(page_part)
                 similar = [p for p in self.pages if p.lower() == name.lower()]
                 hint = f" (a page differs only in case: {self.at(similar[0])})" if similar else ""
                 if shown is None:
@@ -604,7 +611,7 @@ class Checker:
         anchor = unquote(anchor)
         assert found is not None
         if anchor and anchor not in found.anchors and anchor.lower() not in found.anchors:
-            shown = self.quote(f"{found.stem}#{anchor}")
+            shown = None if withhold else self.quote(f"{found.stem}#{anchor}")
             if shown is None:
                 self.fail(where, "link to an anchor that does not exist (anchor withheld)")
             else:

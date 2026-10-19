@@ -7,7 +7,9 @@
 Copies the capture set of `docs/handoffs/M10-03.md` out of a World of Warcraft
 install and scrubs identity from it per `docs/LAB_PLAN.md` §8:
 
-- the account folder (`<digits>#<n>`, or an older account-name folder) and
+- the account folder (`<digits>#<n>`, or an older account-name folder), the
+  value of every `accountName` CVar in a `Config.wtf` or `config-cache.wtf`
+  (M13-55; an email address is left to the email refusal below), and
   each `--extra-name` (the owner's real name, a guild name) become stable
   pseudonyms, in paths and in file contents (same input, same pseudonym, whole
   capture set). Character names, realm names and the second name of the
@@ -536,12 +538,17 @@ class Identity:
         realm_aliases: Iterable[str] = (),
         loose: Iterable[str] = (),
         groups: Iterable[str] = (),
+        account_names: Iterable[str] = (),
     ) -> None:
         """`realm_aliases`: other spellings of a realm in `realms` (a grouped
         folder's casing), given that realm's pseudonym. `loose`: second names of
         `<First>-<Second>` folders, hunted with a space, apostrophe or hyphen
         between any two letters. `groups`: digits-only group folders, given
-        path-only numeric pseudonyms.
+        path-only numeric pseudonyms. `account_names`: `accountName` CVar values
+        (M13-55), scrubbed as account folders are; numbered after the folders,
+        so adding one never renumbers a folder's pseudonym. One that is a
+        folder's name or another value in another casing is an alias of it:
+        same pseudonym, counted once.
         """
         self.names: dict[str, str] = {}
         self._show_names = show_names
@@ -567,8 +574,22 @@ class Identity:
             self._add_name(character, _shaped(character, "Labchar", i), "character")
         for i, extra in enumerate(self._ordered(extras)):
             self._add_name(extra, _shaped(extra, "Labname", i), "extra name")
-        for i, account in enumerate(self._ordered(accounts)):
+        ordered_accounts = self._ordered(accounts)
+        for i, account in enumerate(ordered_accounts):
             self._add_account(account, i)
+        # One account per casefold: a value that is a folder's name, or an earlier
+        # value, in another casing is that account's, and its own spelling is
+        # registered with that account's pseudonym.
+        first_spelling = {account.casefold(): account for account in ordered_accounts}
+        index = len(ordered_accounts)
+        for name in self._ordered(account_names):
+            self._check_account_value(name)
+            first = first_spelling.setdefault(name.casefold(), name)
+            if first != name:
+                self._add_account_alias(name, first)
+            elif name not in self.names:
+                self._add_account(name, index)
+                index += 1
 
         canonical = sorted({guid.upper() for guid in guids})
         self.guids: dict[bytes, bytes] = {
@@ -760,6 +781,36 @@ class Identity:
             # The bare account number, but never inside a longer number.
             self._token(numbered.group(1), number, "number")
             self._survivor_form(numbered.group(1), "number")
+
+    def _check_account_value(self, real: str) -> None:
+        """Refuse an `accountName` value whose other spellings nothing hunts.
+
+        A name of EMBEDDED_MIN_CHARS letters or more is hunted with its
+        separators dropped, anywhere (`_folded_hits`); a shorter one only as a
+        whole word as written. A short one with a separator in it (`Jo Al`)
+        would leave `Jo-Al` and `JoAl` unhunted, so it stops the capture.
+        """
+        folded = _hunt_fold(real)
+        letters = _LOOSE_DROPPED.sub("", folded)
+        if letters != folded and len(letters) < EMBEDDED_MIN_CHARS:
+            shown = (
+                repr(real) if self._show_names else f"an accountName value ({len(real)} characters)"
+            )
+            raise CaptureError(
+                f"{shown} is short and has a separator in it, so its other spellings "
+                "cannot be hunted safely; nothing is captured"
+            )
+
+    def _add_account_alias(self, alias: str, real: str) -> None:
+        """`alias`, another casing of the account `real`, gets `real`'s pseudonym."""
+        pseudonym = self.names[real]
+        self._fold_sources.append(alias)
+        pairs: list[tuple[str, str]] = []
+        for normal in ("NFC", "NFD"):
+            pair = (unicodedata.normalize(normal, alias), unicodedata.normalize(normal, pseudonym))
+            if pair not in pairs:
+                pairs.append(pair)
+        self._register(pairs, "account")
 
     # ── scrubbing ──
 
@@ -2714,9 +2765,37 @@ def provenance_row(outcome: Outcome, platform: str, captured_by: str, consent: s
 
 # ─── identity discovery ──────────────────────────────────────────────────────
 
+# The CVars whose values join the identity map: group 1 the name, group 2 the
+# value. `accountList` is blanked but not harvested: its separator is not in
+# the format reference and no unblanked capture shows it (M13-55, [verify]).
+# What an accountName piece may hold once everything but letters and digits is
+# trimmed from its ends. Anything else inside it (`Jo.Al`, `a|b`) would stay in
+# the hunted token, so the bare name would match nothing: the capture stops.
+_ACCOUNT_VALUE_INNER = frozenset(" -'_#")
 _HARVEST_RE = re.compile(
-    _LINE_START + rb'SET[ \t]+lastCharacterGuid[ \t]+"([^"\r\n]*)"', re.IGNORECASE
+    _LINE_START + rb'SET[ \t]+(lastCharacterGuid|accountName)[ \t]+"([^"\r\n]*)"',
+    re.IGNORECASE,
 )
+
+
+def _trim_account_piece(text: str) -> str:
+    """`text` without anything but letters and digits at either end (quotes,
+    guillemets, `|`, `.`, `!` around a name beside an email address). Fails
+    closed: a piece that still holds anything outside letters, digits and
+    `_ACCOUNT_VALUE_INNER` stops the capture."""
+    start, end = 0, len(text)
+    while start < end and not text[start].isalnum():
+        start += 1
+    while end > start and not text[end - 1].isalnum():
+        end -= 1
+    piece = text[start:end]
+    if any(not c.isalnum() and c not in _ACCOUNT_VALUE_INNER for c in piece):
+        raise CaptureError(
+            f"an accountName value holds a character other than a letter, a digit or "
+            f"one of {''.join(sorted(_ACCOUNT_VALUE_INNER))!r} inside a name, so its "
+            "spellings cannot be hunted safely; nothing is captured"
+        )
+    return piece
 
 
 def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Namespace) -> Identity:
@@ -2724,7 +2803,10 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
 
     Since the ADR-0019 amendment of 2026-10-17 (M13-49) that is the account
     folders, the `--extra-name` strings and the owner's own player GUIDs (and
-    the digits-only group folders, as path-only numbers). Character names,
+    the digits-only group folders, as path-only numbers); since M13-55 also
+    each `accountName` value a config file holds, as an account (an email
+    address in it is left out: the email refusal already stops it everywhere).
+    Character names,
     realm names and the second name of a `<First>-<Second>` folder are
     public and pass through as they are; the character and realm folders are
     still walked, because their config files hold the owner's
@@ -2793,18 +2875,36 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
                     configs.extend(config_files(listed(character)))
 
     guids: set[bytes] = {g.encode() for g in args.own_guid or []}
+    account_names: set[str] = set()
     for config in configs:
         try:
             data = read_bytes(config)
         except OSError as error:
             raise CaptureError(
                 f"a Config.wtf or config-cache.wtf could not be read ({type(error).__name__}); "
-                "its lastCharacterGuid would be missing from the identity map, "
-                "so nothing is captured"
+                "its lastCharacterGuid and accountName would be missing from the identity "
+                "map, so nothing is captured"
             ) from None
         for m in _HARVEST_RE.finditer(data):
-            if GUID_RE.fullmatch(m.group(1)):
-                guids.add(m.group(1))
+            value = m.group(2)
+            if m.group(1).lower() == b"lastcharacterguid":
+                if GUID_RE.fullmatch(value):
+                    guids.add(value)
+                continue
+            # An email address is left to the email refusal, which stops it in
+            # every file; whatever else the value holds (`Real Name <a@b.c>`) is
+            # hunted, each piece around an address on its own.
+            for raw in EMAIL_RE.split(value):
+                try:
+                    text = unicodedata.normalize("NFC", raw.decode("utf-8"))
+                except UnicodeDecodeError:
+                    raise CaptureError(
+                        "an accountName value in a config file is not UTF-8, so it cannot be "
+                        "added to the identity map; nothing is captured"
+                    ) from None
+                piece = _trim_account_piece(text)
+                if piece:
+                    account_names.add(piece)
 
     own: set[tuple[bytes, bytes]] = set()
     for character_name, realm_name in pairs:
@@ -2834,6 +2934,7 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
         cvars=(*IDENTITY_CVARS, *(args.blank_cvar or [])),
         show_names=args.show_map,
         groups=groups,
+        account_names=account_names,
     )
 
 

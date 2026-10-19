@@ -165,8 +165,9 @@ def test_constructed_identity_map_is_broken_down_for_a_sanity_check(
     install: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert capture(install, tmp_path / "incoming", "--dry-run", "--extra-name", "Some Guild") == 0
+    # 2 accounts: the account folder and Config.wtf's accountName value (M13-55).
     assert (
-        "identity map: 2 names (1 accounts, 1 extra; character and realm names are kept "
+        "identity map: 3 names (2 accounts, 1 extra; character and realm names are kept "
         "as they are), 1 own GUIDs, 8 CVars blanked"
     ) in capsys.readouterr().out
 

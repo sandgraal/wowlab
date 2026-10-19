@@ -1461,7 +1461,13 @@ never edited. Every capture passes through `scripts/lab_capture.py`, which
   names, realm names and the second name of a Forever `<First>-<Second>`
   folder are no longer rewritten; they pass through as they are, in paths
   and in contents. The digits-only Forever group folder keeps its path-only
-  numeric pseudonym,
+  numeric pseudonym. *Amended 2026-10-18 (M13-55):* the value of every
+  `accountName` CVar in a `Config.wtf` or `config-cache.wtf` is rewritten
+  the same way, as an account, wherever else it appears (one account per
+  casing-folded value; an email address in it is left to the email
+  refusal; a value under five letters that has a separator in it stops the
+  capture). `accountList` is blanked but its entries are not yet hunted:
+  its separator is unconfirmed **[verify]**,
 - drops or blanks CVars known to carry identity (`accountName`,
   `accountList`, `lastCharacterGuid`, `portal` stays) per a deny-list kept in
   the tool and extended as found (`realmName` stays on it and is blanked),
@@ -1484,7 +1490,8 @@ never edited. Every capture passes through `scripts/lab_capture.py`, which
 - records what it rewrote in the provenance row (`identity-rewritten`,
   `cvars-dropped: n`). *Amended 2026-10-17 (M13-49):* `identity-rewritten`
   counts only rewrites of the kept set (account folders, `--extra-name`
-  strings); a path whose only rewrite is the account or group folder still
+  strings, and since 2026-10-18 (M13-55) `accountName` values); a
+  path whose only rewrite is the account or group folder still
   reads `identity-rewritten: path only`. Committed fixtures and their rows
   keep their pseudonyms (ADR-0012).
 
