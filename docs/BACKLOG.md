@@ -1071,6 +1071,14 @@ Found 2026-10-19 in the code review of #290 (M14-08), on `main` before it. (1) `
 **Acceptance:** the decision for (1) stated in the report and recorded here by the conductor; the test for (2) catches `#a335ee` and a quality word added to `page.css`; byte-identity as stated; `make ci` green; reviewed by `code-reviewer`.
 
 ---
+## [ ] M13-73 — `char binds` with case-variant `WowLab.lua` files and no `--character`
+**Size:** XS · **Depends on:** nothing
+
+Found 2026-10-19 in the M14-07 reviews (both reviewers, off that branch), on `main` before it. When the latest character folder holds two `WowLab.lua` files that differ only in case, `_coach_record` returns no target with a `record_error`, and `char binds` without `--character` reports `character: null` and says "none in account … has a WowLab.lua", which is false: the folder has one, and it could not be told apart. `char macros` (M14-07) now keeps the latest folder as the character with `chosen_by` "latest" and gives `macros check`'s own reason ("no spellbook record: the WowLab.lua was not read"); make `char binds` do the same, with the same fallback rule (`cli.char_macros`'s `folder`/`how` fallback, the latest rule of `_lab_char_file`). Labelled constructed test that skips where the volume folds case, as `test_case_variant_records_read_nothing_as_macros_check_says_constructed` does; `char binds` output on the fixtures byte-identical to `main`.
+
+**Acceptance:** the test passes on a case-sensitive runner (CI Linux); byte-identity on the fixtures; `make ci` green; reviewed by `code-reviewer`.
+
+---
 
 # M14 — `wowlab ui`: the confirm flow, and the character (Wave 5)
 
