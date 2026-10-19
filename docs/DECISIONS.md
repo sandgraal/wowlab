@@ -374,3 +374,43 @@ Stage two amends ADR-0019 ("never uploads anything it reads" and "the only netwo
 - Stage two adds the first outbound request that carries install data, a key on disk in the user config directory, and a provider API that will change under us. It is one command, one switch and one sentence in the README, and `security-reviewer` owns it.
 - The proposal validator becomes a load-bearing file in the ADR-0013 sense if the owner says so: it stands between a model's text and a `guard` write. The conductor raises that when F3 is ticketed.
 - If the owner accepts stage one only, the `--send` option is not built and the README sentence does not change. If the owner leaves this ADR Proposed, §16.5 F4 is not ticketed and the read-only character view (M14) is unaffected.
+
+---
+
+## ADR-0033 — The Lab reads the install's game data archives; how their parsers are graded
+
+**Status:** Accepted (2026-10-19; proposed 2026-10-19) — owner decision in session ("1 yes do this. 2 all three."); the status edit was made by the conductor on the owner's explicit instruction
+
+**Context:** On 2026-10-19 the owner picked **character-studio** as the next wave (`docs/LAB_IDEAS.md`): the player's character rendered in the browser from the player's own game files. The models and textures live in the client's CASC archives under `Data/`, which nothing in the Lab has opened: every module so far reads the configuration tree, the lab-addon's record and the public game tables (ADR-0022). ADR-0023 already says the Lab "reads anything in the install" and writes only what the client treats as user configuration, and L7 forbids editing anything under `Data/` or bypassing the client's integrity checks. Reading the archives therefore needs no change of scope, but it needs three decisions: how they are read, where what is read goes, and how parsers of formats whose real files are Blizzard's assets are graded under L8, which wants real captures in the repository.
+
+The owner asked whether `Data/` could also be edited. The conductor recommended against it, and the owner's instruction was to go ahead with the recommendations: the modern client has no override mechanism, so an edit means patching the archives, which Battle.net's repair reverts and the client's integrity checks and Warden treat as tampering; the Lab is installed by other players (ADR-0031) and a tool that patches game files is a different product; and every change to how a character looks that the owner wants is reachable through rendering any gear or customization (equipped or not) and through the game's own systems. L7 stands as written.
+
+**Decision:**
+1. **A pure-Python CASC reader, read-only.** `wowlab_core.casc` opens the install's `Data/` with the same rules as every other module (L1): files are opened read-only and memory-mapped where useful; no temp file, cache, lock or index is written inside the install; nothing is decrypted that needs a key the Lab does not have (such files are reported as unavailable, never fetched). It resolves a file data id through the build's configuration, root, encoding and index files to the archive bytes and decodes BLTE. There is no bridge to an outside tool (wow.export or CascLib): that would be a second runtime, and ADR-0030 would want its own ADR; a later ADR may add one with measurements if Python misses a stated target (§6.4).
+2. **Extracted files live under the user data directory, keyed by build (L5).** Anything the Lab decodes from the archives (a model, a texture, a glTF it writes) is stored under the data directory in a per-build folder and is never overwritten by another build. Nothing extracted is ever uploaded (ADR-0019, ADR-0031) and nothing extracted is ever redistributed by the Lab: the files stay on the player's machine, and the Lab's own package ships none of them.
+3. **Grading parsers of asset formats: an L8 exception, in three layers.** Game assets (models, skins, textures, the archive index and root files) are Blizzard's and never enter the repository, so for the formats this wave parses (CASC's index, encoding and root files; BLTE; M2 and its skin files; BLP) L8's "real capture with a provenance row" is met in three ways together: (a) **constructed** files, small and labelled as such, for structure, boundaries and hostile input; (b) **derived** fixtures: for each real file a parser is graded on, a JSON record of what was read from it, never the bytes: its file data id, size, chunk table, counts, hashes of its sections, and the decoded values a test asserts, with a provenance row naming the build and the capture date, produced by a script in `scripts/` from the owner's install; (c) **live** tests marked `@pytest.mark.live` that open the owner's install and are run by hand, never in CI (ADR-0012's rule for wago.tools applies). A parser is not done until it has all three. No other format gets this exception without a new owner decision.
+
+**Consequences:**
+- L1 and L7 are untouched: the reader opens the archives read-only and the Lab still writes only to the user-configuration subtrees through `guard`.
+- `AGENTS.md`'s L8 gains a sentence naming this exception for asset formats, and `docs/LAB_PLAN.md` §9 gains the derived-fixture script.
+- The reader is the first module whose correctness cannot be shown in CI on real data. The derived fixtures carry that weight; the conductor keeps the live tests on the owner's TODO list after any CASC change, as `make test-parser` is for `luadata.py`.
+- The first wave on this base (§17) is data-only: no file from the archives reaches a browser until the viewer ADR (ADR-0034) is built on.
+
+---
+
+## ADR-0034 — A pinned three.js, vendored as template text, draws the character in `wowlab ui`
+
+**Status:** Accepted (2026-10-19; proposed 2026-10-19) — owner decision in session ("3 three.js … go ahead with all of your suggestions"); the status edit was made by the conductor on the owner's explicit instruction
+
+**Context:** ADR-0030 admits HTML, CSS and plain JavaScript only as template text inside the Python package with no build step, and says a 3D viewer needs an ADR naming where it lives, how it is tested and what it may not do. Rendering a character needs a WebGL scene graph, materials, a glTF loader and camera controls; writing those by hand is weeks of code that an MIT-licensed library already provides.
+
+**Decision:**
+1. **What is admitted.** One pinned release of **three.js** (MIT), as the distributed module build and the glTF loader and orbit-controls add-ons it needs, copied unchanged into the package under `wowlab_core/ui/templates/vendor/` with its LICENSE file beside it. No bundler, no npm at build or run time: the files are template text like `page.js`, served by the UI server under the same CSP as the page, each with its own hash in `script-src`.
+2. **How it is verified.** A test holds the SHA-256 of each vendored file and the release tag it came from; `scripts/check_vendor.py` compares the files with the upstream release artefact when run by hand (never in CI, ADR-0012). Upgrading the pin is a PR that changes the hashes and says why.
+3. **What it may not do.** The vendored code is never edited. It loads only what the Lab's server serves (glTF and textures the Lab wrote under the data directory, read through token-checked routes the server builds; never a request parameter path), makes no request outside the server, and the page's own code keeps the §14.5 D3 rule: no game rule in JavaScript; which geosets are shown, which textures are composited and which items attach is decided in Python and written into the glTF.
+4. **Python writes the glTF.** `wowlab_core.gltf` writes standard glTF 2.0 (`.glb`) with stdlib only; the browser side converts nothing.
+
+**Consequences:**
+- The package grows by the library's size (about 1 MB); the wheel stays well under PyPI's limits. The README names the licence.
+- The CSP gains one hash per vendored file and nothing else; `frame-ancestors 'none'` and the token rules of ADR-0029 are unchanged.
+- A later wave that needs animation or a different library writes an amendment here.
