@@ -175,3 +175,51 @@ def test_constructed_schema_4_hostile_identity_still_shows(flavor: Path) -> None
     assert "five" not in out
     gear_data = json.loads(ok("char", "gear", "--json").stdout)
     assert gear_data["identity"]["sex_raw"] == 1 and gear_data["identity"]["sex"] is None
+
+
+# ─── the owner's schema-4 captures (macos-70450, 2026-10-19) ─────────────────
+
+
+@pytest.fixture
+def flavor_70450(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """`macos-70450/` is files-only (fixture index), classified inside the
+    install root borrowed from `macos/`, as `macos-70425/` is."""
+    root = tmp_path / "World of Warcraft"
+    root.mkdir()
+    flavor = root / FLAVOR
+    shutil.copy2(FIXTURES / "macos" / ".build.info", root / ".build.info")
+    shutil.copytree(FIXTURES / "macos-70450" / "forever", flavor)
+    shutil.copy2(FIXTURES / "macos" / "forever" / ".flavor.info", flavor / ".flavor.info")
+    monkeypatch.setenv(install.ENV_ROOT, str(root))
+    monkeypatch.chdir(tmp_path)
+    return flavor
+
+
+@pytest.mark.parametrize(
+    ("folder", "race", "klass", "file"),
+    [("Dangling-Participle", 2, 8, "MAGE"), ("Sangraal-Sett", 5, 9, "WARLOCK")],
+)
+def test_real_schema_4_char_show_and_gear_carry_identity(
+    flavor_70450: Path, folder: str, race: int, klass: int, file: str
+) -> None:
+    expected = labaddon.CharIdentity(
+        race_id=race, sex=0, sex_raw=2, class_id=klass, class_file=file
+    )
+    show = json.loads(ok("char", "show", "--character", folder, "--json").stdout)
+    assert list(show) == SHOW_FIELDS
+    report = cli.CharShowReport.model_validate(show)
+    assert isinstance(report.record, labaddon.CharDBV4)
+    assert report.identity == expected
+    gear = json.loads(ok("char", "gear", "--character", folder, "--json").stdout)
+    assert list(gear)[:5] == ["character", "file", "mtime_ns", "spec", "identity"]
+    assert cli.CharGearReport.model_validate(gear).identity == expected
+    text = ok("char", "show", "--character", folder).stdout
+    assert text.count("Identity:") == 1
+    assert f"Identity: class {file} (class id {klass}), race id {race}, body type 0" in text
+
+
+def test_real_schema_4_char_list_json_revalidates(flavor_70450: Path) -> None:
+    result = ok("char", "list", "--json")
+    assert result.stderr == ""
+    report = cli.CharListReport.model_validate_json(result.stdout)
+    assert sorted(type(c.record).__name__ for c in report.characters) == ["CharDBV4", "CharDBV4"]

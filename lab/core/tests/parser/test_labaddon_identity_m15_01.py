@@ -10,12 +10,13 @@ The real schema-1 and schema-3 captures are read unchanged and report
 `identity` absent. No real schema-2 capture exists (the M11-29 addon's
 first capture was already schema 3), so schema 2 is the real M11-23 record
 with `schema` set to 2, as `test_labaddon_barber_record_m11_29.py` builds it.
-No real schema-4 capture exists yet either: it is the owner's step
-(`docs/handoffs/M15-01.md`); until it is committed with its provenance row,
-schema 4 is graded on the real M13-05 record (1.60.1.70425, index row in
-`fixtures/README.md`) with `schema` set to 4 and an `identity` table added
-in the shape the addon's source writes. Every such case is `constructed`
-in its test id (L8: boundary and hostile cases). The reasons are read from
+Schema 4 is graded on the owner's two real captures (1.60.1.70450,
+2026-10-19, `macos-70450/`, index rows in `fixtures/README.md`):
+Dangling-Participle, an Orc mage, and Sangraal-Sett, an Undead warlock, both
+of the first body type, so `sex_raw` 3 is still unobserved. The boundary and
+hostile cases start from the real M13-05 record (1.60.1.70425) with `schema`
+set to 4 and an `identity` table added in the shape the addon's source
+writes; each is `constructed` in its test id (L8). The reasons are read from
 `Identity.lua`, not typed here, so the reader and the addon cannot drift.
 """
 
@@ -49,6 +50,13 @@ REAL = {
     "schema-3-70425": RECORD_70425,
 }
 FIELDS = ("race_id", "sex", "sex_raw", "class_id", "class_file")
+SCHEMA_4 = "macos-70450/forever/WTF/Account/90000001#6"
+# (character folder, race id, class id, class file) as the owner reported
+# each character (both the first body type: UnitSex 2, Enum.UnitSex 0).
+REAL_4 = [
+    ("Dangling-Participle", 2, 8, "MAGE"),
+    ("Sangraal-Sett", 5, 9, "WARLOCK"),
+]
 
 
 def _raw(relative: str) -> dict[str, Any]:
@@ -147,6 +155,51 @@ def test_constructed_text_gains_exactly_one_line() -> None:
     spec = next(i for i, line in enumerate(as_4) if line.startswith("Spec:"))
     assert as_4.index(added[0]) > spec
     assert [line for line in as_4 if line != added[0]] == as_3
+
+
+# ─── schema 4: the owner's captures ─────────────────────────────────────────
+
+
+@pytest.mark.parametrize(("folder", "race", "klass", "file"), REAL_4, ids=[r[0] for r in REAL_4])
+def test_real_schema_4_capture_identity(folder: str, race: int, klass: int, file: str) -> None:
+    data = (FIXTURES / SCHEMA_4 / "1" / folder / "SavedVariables" / "WowLab.lua").read_bytes()
+    char = labaddon.parse_char(data)
+    assert type(char) is labaddon.CharDBV4
+    assert labaddon.unknown_keys(char) == []
+    section = char.identity
+    assert isinstance(section, labaddon.Identity)
+    assert section.events_unregistered == []
+    for name in labaddon.IDENTITY_FIELDS:
+        assert getattr(section, f"{name}_absent") is None
+        assert getattr(section, f"{name}_set_aside") is None
+    got = labaddon.identity_of(char)
+    assert got == labaddon.CharIdentity(
+        race_id=race, sex=0, sex_raw=2, class_id=klass, class_file=file
+    )
+    lines = [line for line in labaddon.describe(char) if line.startswith("Identity:")]
+    assert lines == [
+        f"Identity: class {file} (class id {klass}), race id {race}, body type 0 "
+        "(Enum.UnitSex, from UnitSex 2; the game's own screens may number body types "
+        "differently [verify]); all its change events registered"
+    ]
+
+
+def test_real_schema_4_identity_agrees_with_the_carried_barber_record() -> None:
+    """Sangraal-Sett's carried customization record (C_BarberShop's `sex`,
+    Enum.UnitSex) agrees with identity: the same race id, and `sex` 0 where
+    `sex_raw` is 2, the first real evidence for the 2 -> 0 mapping."""
+    data = (FIXTURES / SCHEMA_4 / "1/Sangraal-Sett/SavedVariables/WowLab.lua").read_bytes()
+    char = labaddon.parse_char(data)
+    record = char.customization
+    assert isinstance(record, labaddon.Customization) and record.carried is True
+    got = labaddon.identity_of(char)
+    assert record.race_id == got.race_id == 5
+    assert record.sex == got.sex == 0 and got.sex_raw == 2
+
+
+def test_real_schema_4_account_file() -> None:
+    data = (FIXTURES / SCHEMA_4 / "SavedVariables" / "WowLab.lua").read_bytes()
+    assert type(labaddon.parse_account(data)) is labaddon.AccountDBV4
 
 
 # ─── schema 4 ────────────────────────────────────────────────────────────────
