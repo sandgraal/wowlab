@@ -46,7 +46,13 @@ def _index() -> dict[str, dict[str, str]]:
 
 
 INDEX_ROWS = _index()
-INSTALL_FILES = sorted(p for p in INDEX_ROWS if p.split("/", 1)[0] not in NOT_INSTALL)
+# A derived fixture (kind `*-derived`, ADR-0033) is a record of what was read
+# from an install file, not a file of the install: it is never classified.
+INSTALL_FILES = sorted(
+    p
+    for p, row in INDEX_ROWS.items()
+    if p.split("/", 1)[0] not in NOT_INSTALL and not row["kind"].endswith("-derived")
+)
 PLATFORMS = sorted({p.split("/", 1)[0] for p in INSTALL_FILES})
 # A run committed without its `.build.info` and `.flavor.info` is no install
 # root, so it is not read in place. The end-to-end test classifies its files
