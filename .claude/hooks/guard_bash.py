@@ -124,7 +124,7 @@ def _check_git(seg: list[str]) -> str | None:
     return None
 
 
-def _check_gh(seg: list[str]) -> str | None:
+def _check_gh(seg: list[str], cwd: str = "", written: frozenset[str] = frozenset()) -> str | None:
     i = command_position(seg, "gh")
     if i is None:
         return None
@@ -135,6 +135,37 @@ def _check_gh(seg: list[str]) -> str | None:
         return "--admin bypasses branch protection; satisfy the required checks and threads."
     if args[:1] == ["api"]:
         joined = " ".join(args)
+        # A query passed as `-F query=@<file>` (or `-f`) is read from that file
+        # and judged like an inline one, so the file route cannot carry a
+        # mutation past the allowlist. A file that cannot be read is refused:
+        # write it first, then run the call (2026-10-19, M14-02 notes).
+        for j, a in enumerate(args):
+            spec = ""
+            if a in ("-F", "-f", "--field", "--raw-field") and j + 1 < len(args):
+                spec = args[j + 1]
+            elif a.startswith(("-F", "-f")) and len(a) > 2 and not a.startswith("--"):
+                spec = a[2:]
+            elif a.startswith(("--field=", "--raw-field=")):
+                spec = a.split("=", 1)[1]
+            if spec.startswith("query=@"):
+                raw = spec[len("query=@") :]
+                expanded, ok = expand_vars(raw, cwd) if cwd else (raw, True)
+                path = Path(expanded)
+                if cwd and not path.is_absolute():
+                    path = Path(cwd) / path
+                if not ok or os.path.normpath(str(path)) in written:
+                    return (
+                        "gh api graphql with query=@<file> is checked against the file as it is "
+                        "now; write the file in its own command, with a literal path, then run "
+                        "the call."
+                    )
+                try:
+                    joined += " " + path.read_text(encoding="utf-8")
+                except OSError:
+                    return (
+                        "gh api graphql with query=@<file> reads the file to check it for "
+                        "mutations; write the file first, then run the call."
+                    )
         is_mutation = "graphql" in args and "mutation" in joined.lower()
         if is_mutation and not any(m in joined for m in _ALLOWED_MUTATIONS):
             return (
@@ -266,17 +297,39 @@ def _cd_target(seg: list[str], cwd: str) -> str | None:
     return os.path.normpath(expanded if Path(expanded).is_absolute() else str(Path(cwd) / expanded))
 
 
-def _inspect(command: str, cwd: str, agent_type: str | None = None, depth: int = 0) -> None:
+def _inspect(
+    command: str,
+    cwd: str,
+    agent_type: str | None = None,
+    depth: int = 0,
+    outer_written: frozenset[str] = frozenset(),
+) -> None:
     if depth > 3:
         deny(EVENT, "command nests shells too deeply to inspect; flatten it.")
     segments = split_segments(command)
     if segments is None:
         deny(EVENT, "command could not be tokenised (unbalanced quote?); rewrite it plainly.")
         return
+    # Every path this command line writes, with the cd chain followed, so a
+    # gh api graphql query file written earlier in the same line is refused:
+    # the hook reads the file before the shell runs (2026-10-19, M14-02 notes).
+    written: set[str] = set(outer_written)
+    scan_cwd = cwd
+    for seg in segments:
+        for target in _write_targets(seg, scan_cwd):
+            expanded, ok = expand_vars(target, scan_cwd)
+            if ok:
+                full = expanded if Path(expanded).is_absolute() else str(Path(scan_cwd) / expanded)
+                written.add(os.path.normpath(full))
+        scan_cwd = _cd_target(seg, scan_cwd) or scan_cwd
     for seg in segments:
         for inner in inner_commands(seg):
-            _inspect(inner, cwd, agent_type, depth + 1)
-        for reason in (_check_git(seg), _check_gh(seg), _check_destructive(seg, cwd)):
+            _inspect(inner, cwd, agent_type, depth + 1, frozenset(written))
+        for reason in (
+            _check_git(seg),
+            _check_gh(seg, cwd, frozenset(written)),
+            _check_destructive(seg, cwd),
+        ):
             if reason:
                 deny(EVENT, reason)
         for target in _write_targets(seg, cwd):

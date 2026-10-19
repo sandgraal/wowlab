@@ -556,3 +556,70 @@ def test_session_start_prints_every_eligible_ticket_and_cuts_blocked_at_eight(
     assert result.stdout.count("  ready   ") == 9
     assert result.stdout.count("  blocked ") == 8
     assert "blocked M10-18 Blocked 18" not in result.stdout
+
+
+def test_guard_bash_reads_a_graphql_query_file_for_mutations(tmp_path: Path) -> None:
+    """`-F query=@file` is judged like an inline query (2026-10-19, M14-02 notes)."""
+    blocked = tmp_path / "blocked.graphql"
+    blocked.write_text(
+        'mutation{deleteRepositoryRuleset(input:{repositoryRulesetId:"x"}){clientMutationId}}'
+    )
+    assert_blocked(
+        run_hook("guard_bash.py", bash(f"gh api graphql -F query=@{blocked} -f o=sandgraal")),
+        "GraphQL mutations",
+    )
+    allowed = tmp_path / "allowed.graphql"
+    allowed.write_text("mutation($t:ID!){resolveReviewThread(input:{threadId:$t}){thread{id}}}")
+    assert_allowed(run_hook("guard_bash.py", bash(f"gh api graphql -F query=@{allowed} -f t=x")))
+    query = tmp_path / "query.graphql"
+    query.write_text('query($o:String!){repository(owner:$o,name:"wowlab"){name}}')
+    assert_allowed(
+        run_hook("guard_bash.py", bash(f"gh api graphql -f query=@{query} -f o=sandgraal"))
+    )
+    missing = tmp_path / "missing.graphql"
+    assert_blocked(
+        run_hook("guard_bash.py", bash(f"gh api graphql -F query=@{missing}")),
+        "write the file first",
+    )
+
+
+def test_guard_bash_query_file_follows_cd_and_refuses_a_same_line_write(tmp_path: Path) -> None:
+    """The query file is resolved against the tracked cwd, and a file this command line writes is refused."""
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / "q.graphql").write_text(
+        'mutation{deleteRepositoryRuleset(input:{repositoryRulesetId:"x"}){clientMutationId}}'
+    )
+    (tmp_path / "q.graphql").write_text("query{viewer{login}}")
+    assert_blocked(
+        run_hook(
+            "guard_bash.py",
+            bash(f"cd {sub} && gh api graphql -F query=@q.graphql", cwd=str(tmp_path)),
+        ),
+        "GraphQL mutations",
+    )
+    stale = tmp_path / "threads.graphql"
+    stale.write_text("query{viewer{login}}")
+    assert_blocked(
+        run_hook(
+            "guard_bash.py",
+            bash(f"printf '%s' 'mutation{{x}}' > {stale} && gh api graphql -F query=@{stale}"),
+        ),
+        "its own command",
+    )
+
+
+def test_guard_bash_query_file_written_outside_a_nested_shell_is_refused(tmp_path: Path) -> None:
+    """A write on the outer line is seen by the gh call inside bash -c or sh -c."""
+    stale = tmp_path / "threads.graphql"
+    stale.write_text("query{viewer{login}}")
+    for shell in ("bash -c", "sh -c"):
+        assert_blocked(
+            run_hook(
+                "guard_bash.py",
+                bash(
+                    f"printf '%s' 'mutation{{x}}' > {stale} && {shell} \"gh api graphql -F query=@{stale}\""
+                ),
+            ),
+            "its own command",
+        )

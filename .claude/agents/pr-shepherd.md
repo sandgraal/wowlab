@@ -134,8 +134,20 @@ faster than ~5 minutes.
 Then:
 ```
 gh pr view <n> --json mergeStateStatus,mergeable,reviewDecision,statusCheckRollup
-gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100){nodes{id isResolved isOutdated path line comments(first:20){nodes{author{login} body url}}}}}}}' -f o=sandgraal -f r=wowlab -F n=<n>
+printf '%s\n' 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100){nodes{id isResolved isOutdated path line comments(first:20){nodes{author{login} body url}}}}}}}' > <scratchpad>/<ticket>/threads.graphql
+gh api graphql -F query=@<scratchpad>/<ticket>/threads.graphql -f o=sandgraal -f r=wowlab -F n=<n>
 ```
+
+Under worktree isolation the Bash tool refuses a `gh api graphql` call
+whose inline query carries `$`-variables or quoted strings ("too complex
+to verify"), which is every thread query and mutation above. Put the
+query in a file in your scratchpad and pass it as
+`-F query=@<file> -f o=sandgraal -f r=wowlab -F n=<n>` (the variables as
+`-f`/`-F` fields); the repository's shell guard reads that file and
+applies the same rule as for an inline query, so only the reply and
+resolve mutations pass, and a file that does not exist yet is refused.
+REST `gh api` POSTs to repository endpoints are blocked by the guard;
+threads are answered through GraphQL or the MCP tools only.
 
 **What you may change.** You run after the independent review, so nothing you
 commit is graded. Yours: PR title and body, thread replies, clean rebases,
