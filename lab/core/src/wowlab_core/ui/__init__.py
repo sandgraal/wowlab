@@ -909,15 +909,23 @@ class UiServer(http.server.ThreadingHTTPServer):
             with self._runs_lock:
                 if self._closing.is_set():
                     raise _RefusedError(503, "closing")
+                # stdin is a pipe whose writing end is closed at once: the
+                # run reads end of file and is not a terminal on every
+                # platform. DEVNULL is not enough: on Windows the NUL device
+                # is a character device, and `isatty()` is True for it, so a
+                # command that asks only at a terminal would think it could.
                 process = subprocess.Popen(
                     [*self.wowlab_argv, *argv],
-                    stdin=subprocess.DEVNULL,
+                    stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     env=env,
                     shell=False,
                     **tree.popen_kwargs(),
                 )
+                assert process.stdin is not None
+                with contextlib.suppress(OSError):
+                    process.stdin.close()
                 self._runs.add(process.pid)
             try:
                 tree.started(process)

@@ -173,7 +173,9 @@ def test_a_plan_run_never_carries_yes_and_runs_with_stdin_closed(
     _plan(server, path)
     (call,) = recorder.calls()
     assert "--yes" not in call["argv"] and "-y" not in call["argv"], call["argv"]
-    assert call["stdin"] == "" and call["tty"] is False  # DEVNULL: end of file at once
+    # End of file at once, and no terminal on any platform (on Windows the
+    # NUL device would report a terminal, so the server gives a closed pipe).
+    assert call["stdin"] == "" and call["tty"] is False
     # A form cannot set `--yes` (or `--dry-run`) itself: they are the server's.
     for params in ({"yes": True}, {"yes": False}, {"dry_run": True}):
         status, payload = _post(server, {"command": list(path), "params": params})
