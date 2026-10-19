@@ -117,7 +117,7 @@ jobs:
       - name: Hand it on
         if: github.ref == 'refs/heads/main'
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wiki-daily-previous-report
           path: previous/
@@ -208,7 +208,7 @@ jobs:
       - name: The previous run's gate report
         if: steps.plan.outcome == 'success' && github.ref == 'refs/heads/main'
         continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: wiki-daily-previous-report
           path: ${{ runner.temp }}/previous
@@ -376,7 +376,7 @@ jobs:
       - name: Improve the wiki (Claude)
         id: claude
         if: steps.secret.outputs.present == 'true'
-        uses: anthropics/claude-code-action@1d6de8cb0c237e7c15e9e1bdf973826ebae490cc # v1.0.248
+        uses: anthropics/claude-code-action@f27be6b65a4652f08a2ba3cff79114829b588967 # v1.0.252
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Agent mode takes a token instead of minting one through OIDC, so
@@ -516,7 +516,7 @@ jobs:
       - name: Hand the pages to the gates
         id: handoff
         if: always() && steps.withhold.outcome == 'success' && steps.outside.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wiki-daily-unchecked
           path: handoff/
@@ -607,7 +607,7 @@ jobs:
       - name: Download the pages
         id: download
         if: needs.improve.outputs.handoff == 'success'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: wiki-daily-unchecked
           path: incoming
@@ -746,7 +746,7 @@ jobs:
       - name: Upload the gate report
         id: report
         if: always() && steps.gate.outputs.report == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wiki-daily-report
           path: report/check.txt
@@ -766,7 +766,7 @@ jobs:
       - name: Upload the pages and the wiki diff
         id: pages
         if: always() && steps.gate.outputs.pages == 'true' && steps.stage.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wiki-daily-pages
           path: out/
@@ -831,7 +831,7 @@ jobs:
             exit 1
           fi
       # The pages gates passed, by the id its upload returned.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.gates.outputs.pages_id }}
           path: incoming
@@ -913,7 +913,7 @@ jobs:
       # Present only when the gate found no personal data (see "Gate result").
       # By the id gates' upload returned: an artifact of the same name from
       # anywhere else in the run never reaches the issue.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: needs.gates.outputs.report_id != ''
         continue-on-error: true
         with:
