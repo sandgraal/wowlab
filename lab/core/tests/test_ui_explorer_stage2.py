@@ -926,7 +926,9 @@ def _refused_views(listed: dict[str, Any]) -> list[dict[str, Any]]:
     the page reads, so a new one is covered too."""
     views = []
     for command in listed["commands"]:
-        if command["excluded"]:
+        # A command of the confirm step (M14-02) runs from the Commands tab
+        # only, so a view naming it is not offered either.
+        if command["excluded"] or command.get("confirm"):
             views.append({"command": command["path"], "params": {}})
         for param in command["params"]:
             if param["refused"]:
@@ -949,7 +951,7 @@ def test_a_refused_command_is_never_offered_constructed(
     paths = {tuple(v["command"]) for v in refused}
     for must in (("snap", "restore"), ("undo",), ("doctor",), ("looks", "page"), ("log", "tail")):
         assert must in paths, must
-    assert len([c for c in listed["commands"] if c["excluded"]]) >= 8
+    assert len([c for c in listed["commands"] if c["excluded"] or c.get("confirm")]) >= 8
     tree = json.loads(_stdout(server, ["tree"], {"explain": True, "flavor": FLAVOR}))
     control = "WTF/Config.wtf"  # positive control: its real view is offered
     files = sorted(

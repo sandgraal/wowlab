@@ -6,7 +6,10 @@
 //   and a Preview that runs its first view and draws the JSON;
 // - the gaps (M13-27): what `filemap gaps --json` reports;
 // - the commands the server read from the CLI's Click tree, a field for each
-//   declared parameter, and what one run printed.
+//   declared parameter, and what one run printed. A command the server marks
+//   `confirm` (M14-02) runs first as its plan; the server alone decides
+//   whether the plan may be confirmed, by handing back a one-time token, and
+//   Confirm sends that token with the plan's own command and parameters.
 // It holds no game rules and no file-map logic (§14.5 D3): every fact, the
 // verdict's level and words included, comes from the CLI's JSON, and this
 // script only lays it out. Nothing read from a run is ever parsed as HTML:
@@ -17,6 +20,12 @@
   const byId = (id) => document.getElementById(id);
   let current = null;
   let inputs = [];
+  // The plan the server offered Confirm for: its command, the parameters it
+  // ran with (sent back as they were, never read from the form again), and
+  // its token. Cleared before any other run, and once used.
+  let pending = null;
+  // Bumped by every pick and run, so a reply that arrives late draws nothing.
+  let runSeq = 0;
   let home = "";
   let sep = "/";
 
@@ -555,7 +564,8 @@
   function offered(view) {
     if (!view || !Array.isArray(view.command) || !view.params || typeof view.params !== "object") return false;
     const command = offeredCommands.find((c) => samePath(c.path, view.command));
-    if (!command || command.excluded) return false;
+    // A command of the confirm step runs from the Commands tab only.
+    if (!command || command.excluded || command.confirm) return false;
     const params = Array.isArray(command.params) ? command.params : [];
     for (const name of Object.keys(view.params)) {
       const param = params.find((p) => p.name === name);
@@ -1036,11 +1046,51 @@
     box.appendChild(label);
     box.appendChild(input);
     if (param.help) box.appendChild(make("small", param.help));
-    inputs.push({ param: param, input: input });
+    inputs.push({ param: param, input: input, box: box });
     return box;
   }
 
+  // ─── the confirm step (M14-02) ───
+
+  function clearConfirm() {
+    pending = null;
+    byId("confirm-box").hidden = true;
+    byId("confirm-note").textContent = "";
+    const button = byId("confirm");
+    button.hidden = true;
+    button.disabled = true;
+    for (const { box } of inputs) box.classList.remove("needed");
+  }
+
+  // What the server said about a plan run: its note, a Confirm when it
+  // minted a token, and the field to fill when it named one. The page adds
+  // no rule of its own: no token, no Confirm.
+  function showOffer(offer, command, params) {
+    if (!offer || offer.stage !== "plan") return;
+    const note = typeof offer.note === "string" ? offer.note : "";
+    const token = typeof offer.token === "string" && offer.token ? offer.token : null;
+    if (!note && !token) return;
+    byId("confirm-note").textContent = shown(note);
+    byId("confirm-box").hidden = false;
+    if (token) {
+      pending = { command: command, params: params, token: token };
+      const button = byId("confirm");
+      button.hidden = false;
+      button.disabled = false;
+    }
+    if (typeof offer.needs === "string") {
+      for (const { param, input, box } of inputs) {
+        if (param.name === offer.needs) {
+          box.classList.add("needed");
+          input.focus();
+        }
+      }
+    }
+  }
+
   function pick(command, button) {
+    runSeq += 1;
+    clearConfirm();
     current = command;
     inputs = [];
     for (const other of byId("commands").querySelectorAll("button")) {
@@ -1061,6 +1111,7 @@
       }
     }
     byId("run").disabled = false;
+    byId("run").textContent = command.confirm ? "Show the plan" : "Run";
     showResult(null);
     byId("stderr").textContent = "";
     say("");
@@ -1081,11 +1132,24 @@
     return params;
   }
 
-  async function run() {
+  // One run from the form, or, with `confirming`, the confirmed run of the
+  // plan the server offered: the same command and parameters, and its token.
+  async function run(confirming) {
     if (current === null) return;
+    const command = current;
+    let body;
+    if (confirming) {
+      if (pending === null || pending.command !== command) return;
+      body = { command: command.path, params: pending.params, confirm: pending.token };
+    } else {
+      body = { command: command.path, params: collect() };
+    }
+    clearConfirm();
+    const seq = ++runSeq;
     const button = byId("run");
     button.disabled = true;
-    say("Running wowlab " + current.path.join(" ") + "…");
+    const what = "wowlab " + command.path.join(" ");
+    say(confirming ? "Running " + what + " --yes…" : command.confirm ? "Planning " + what + "…" : "Running " + what + "…");
     showResult(null);
     byId("stderr").textContent = "";
     try {
@@ -1094,9 +1158,10 @@
         cache: "no-store",
         credentials: "omit",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command: current.path, params: collect() }),
+        body: JSON.stringify(body),
       });
       const result = await reply.json();
+      if (seq !== runSeq) return;
       if (!reply.ok) {
         say("Refused: " + (result.error || reply.status));
         return;
@@ -1106,11 +1171,14 @@
       const notes = [];
       if (result.timed_out) notes.push("stopped at its time limit");
       if (result.truncated) notes.push("output cut at its size limit");
-      say("Exit code " + result.exit_code + (notes.length ? " (" + notes.join(", ") + ")" : ""));
+      const stage = result.confirm && result.confirm.stage;
+      const head = stage === "plan" ? "Plan, nothing was changed: exit code " : stage === "confirmed" ? "Confirmed: exit code " : "Exit code ";
+      say(head + result.exit_code + (notes.length ? " (" + notes.join(", ") + ")" : ""));
+      if (stage === "plan") showOffer(result.confirm, command, body.params);
     } catch (error) {
-      say("The request failed: " + error);
+      if (seq === runSeq) say("The request failed: " + error);
     } finally {
-      button.disabled = false;
+      if (seq === runSeq) button.disabled = false;
     }
   }
 
@@ -1276,6 +1344,14 @@
     raw.hidden = false;
   }
 
-  byId("run").addEventListener("click", run);
+  byId("run").addEventListener("click", () => run(false));
+  byId("confirm").addEventListener("click", () => run(true));
+  // A field changed after the plan: the plan shown is no longer the form's,
+  // so its Confirm goes until the plan is shown again.
+  for (const event of ["input", "change"]) {
+    byId("fields").addEventListener(event, () => {
+      if (pending !== null) clearConfirm();
+    });
+  }
   load();
 })();

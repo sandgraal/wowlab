@@ -33,7 +33,7 @@ wowlab ui            # the explorer in your browser: every file in your install,
 wowlab snap create   # snapshot your setup before you experiment
 ```
 
-`wowlab ui` never changes game files. It runs every wowlab command except those that take `--yes`, `ui` itself, `log tail --follow` and `looks page --out`: the commands that read, and the ones that save only to wowlab's own data (snapshots, profiles, saved looks, the game-table cache, pages), never to game files. It listens only on this machine, behind a random token in the link it opens. **On a shared Linux machine**, other accounts can see that link, token included, in their process listing for a while (a newly started browser can keep it in its command line).
+`wowlab ui` never changes game files. It runs every wowlab command except the six that change your install, `ui` itself, `log tail --follow` and `looks page --out`: the commands that read, the ones that save only to wowlab's own data (snapshots, profiles, saved looks, the game-table cache, pages), and `snap gc` and `doctor --yes`, which change only that store and run only after you confirm the plan they show. None of them writes game files. It listens only on this machine, behind a random token in the link it opens. **On a shared Linux machine**, other accounts can see that link, token included, in their process listing for a while (a newly started browser can keep it in its command line).
 
 **🖥️ Using the explorer:**
 
@@ -75,7 +75,7 @@ It picks a free port on this machine only, opens your browser on a link that car
 | | Feature | Command |
 |---|---|---|
 | 🔍 | **Explain any file.** Every path in your install mapped: what it is, who writes it, when, and whether wowlab may edit it. | `wowlab explain PATH` · `wowlab tree --explain` |
-| 🖥️ | **The explorer in your browser.** A local page, served only to this machine, that shows every file in your install, one folder at a time, with whether each is safe to touch, what it is and who writes it. It runs every wowlab command except those that take `--yes`, `ui` itself, `log tail --follow` and `looks page --out`: the commands that read, and the ones that save only to wowlab's own data (snapshots, profiles, saved looks, the game-table cache, pages), never to game files. | `wowlab ui` |
+| 🖥️ | **The explorer in your browser.** A local page, served only to this machine, that shows every file in your install, one folder at a time, with whether each is safe to touch, what it is and who writes it. It runs every wowlab command except the six that change your install, `ui` itself, `log tail --follow` and `looks page --out`: the commands that read, the ones that save only to wowlab's own data (snapshots, profiles, saved looks, the game-table cache, pages), and `snap gc` and `doctor --yes`, which change only that store and run only after you confirm the plan they show. None of them writes game files. | `wowlab ui` |
 | 🩺 | **Health check and first run.** Finds your install, its flavors and versions, whether the game is running, and your server-sync settings. On a first run it says what wowlab will and won't do and offers a first snapshot. `--redact` prints output safe to paste into an issue. | `wowlab doctor` · `wowlab doctor --redact` |
 | 📸 | **Snapshots.** Save your whole setup (settings, keybinds, macros, addons and their saved data) and compare any two snapshots, down to the individual addon setting. | `wowlab snap create` · `snap diff A B` |
 | ↩️ | **Undo, for real.** Put a snapshot back, or undo the last change. You see the plan first, and it refuses while the game is running. | `wowlab snap restore` · `wowlab undo` |
@@ -163,7 +163,7 @@ wowlab grows in **waves**: the owner picks each one after reviewing the last. **
 |---|---|---|
 | 🪟 | **Windows, tested** | CI already runs the test suite on Windows. Windows is called supported once a person has run the first run on a real Windows install; v0.1 ships with it untested. |
 
-After that, Wave 5 adds to `wowlab ui` the commands that ask before changing anything (`--yes`), each behind the same confirm step as the CLI, and is aimed at the second public release.
+After that, Wave 5 adds to `wowlab ui` the commands that ask before changing anything (`--yes`), each behind a confirm step: the plan first, then Confirm. `snap gc` and `doctor --yes` have it on `main`; the six that change your install follow. Wave 5 is aimed at the second public release.
 
 Thirty days after the first release, the owner checks GitHub's own counts (no telemetry). If they show little use beyond the owner, meaning fewer than 50 downloads or fewer than 5 issues or discussions from other people, the owner may freeze the public side: releases stay up, no new public features are added, and wowlab goes back to being a personal lab. The plan and its tickets: [`docs/LAB_PLAN.md`](docs/LAB_PLAN.md) §15 and [`docs/BACKLOG.md`](docs/BACKLOG.md).
 
