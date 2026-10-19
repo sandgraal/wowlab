@@ -18,6 +18,6 @@ useDefault = true
 # No `paths` key: see the header. Added 2026-10-19 on main because the CI job
 # scans every pushed ref, so one branch's fixture turned every PR's scan red.
 [[allowlists]]
-description = "CASC content hashes in derived fixtures"
+description = "CASC content-hash lines: build_key, encoding_ckey, encoding_ekey (any file, whole line only)"
 regexTarget = "line"
 regexes = ['''^\s*"(build_key|encoding_ckey|encoding_ekey)": "[0-9a-f]{32}",?$''']
