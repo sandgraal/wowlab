@@ -1089,6 +1089,22 @@ Found 2026-10-19 in the security review of M14-03 (ruled a follow-up by the cond
 **Acceptance:** the probe passes once activated; the drift test for a changed source (constructed, labelled); byte-identity as stated; `make ci` green; reviewed by `security-reviewer` and `code-reviewer`. User-facing: `sv merge --json`, the wiki's `sv merge` page.
 
 ---
+## [x] M13-75 — Windows red on `main` at 22b80ce: the M14-03 tests expect LF stderr from the child
+**Size:** XS · **Depends on:** nothing
+
+`lab (windows)` on `main` is red since 22b80ce (#294, M14-03): https://github.com/sandgraal/wowlab/actions/runs/39246867130. 25 failures, all in the new tests: 21 cases of `test_undo_mints_a_token_only_for_exit_1_ended_by_the_declined_line` plus `test_undo_through_the_ui`, `test_the_ui_sends_expect_on_undo_from_the_plans_own_report` and `test_sv_merge_through_the_ui` in `lab/core/tests/test_ui_confirm_writes.py`, and `test_a_resolved_plan_prints_the_text_as_data` in `lab/core/tests/review/test_m14_03_declined_marker_not_forged_by_sv_content.py`. Each fails on an LF-only expectation of the child's stderr (an equality at `test_ui_confirm_writes.py:182` and `:292`, an `endswith` at `:590` and `:615`, a split on `\n` in the review test): the child's stderr comes back as `'plan\r\nUndo…\r\n'` where the test expects `'plan\nUndo…\n'`, because the recorder child and the real CLI write stderr in text mode and Windows turns `\n` into `\r\n`. The server's `_Run.declined()` already normalises CRLF before checking the marker, so the mechanism is right and the tests' expectations are wrong on Windows. *Corrected 2026-10-19 by the build:* for the one constructed CRLF case the literal `\r\n` the recorder wrote was itself translated to `\r\r\n` on Windows, so no token would have been minted there; the stderr assertion failed first and hid it. The fix makes the recorder write stderr untranslated (`sys.stderr.reconfigure(newline='')`), so every case reaches the server byte for byte on every platform, and the real-CLI tests expect `os.linesep`. Fix the tests, not the server: build the expected stderr from what the child actually wrote (`os.linesep`, or normalise both sides as `declined()` does), keep the constructed CRLF case meaningful on both platforms, and never skip the test on Windows (M13-43 precedent, `.claude/rules/lab.md`). Dispatched the moment the red run was read, 2026-10-19, ahead of the frontier.
+
+**Acceptance:** the five tests pass on the PR's `lab (windows)` job and on macOS and Linux; no change under `lab/core/src/`; `make ci` green; reviewed by `code-reviewer`.
+
+---
+## [ ] M13-76 — `wowlab ui --help` still describes the v0.1 UI
+**Size:** XS · **Depends on:** M14-04
+
+Found 2026-10-19 in the code review of M14-04, on `main` before it. The `ui_command` docstring in `cli.py` says only `snap gc` and `doctor` run behind a Confirm and that commands that change game files "are not offered in this version"; since M14-03 every `--yes` command runs through the confirm step, and the docstring names neither the Character tab (M14-08) nor the Looks tab (M14-04). Rewrite it to match `main` after M14-04 (the five tabs; plan then Confirm for every `--yes` command; `undo` and `sv merge` refuse on drift, the others apply what is there after the snapshot; `--out` and `--follow` refused), in the CLI's own voice; the generated command reference and the wiki's `wowlab ui` page follow it. Text output of every other command byte-identical to `main`.
+
+**Acceptance:** `wowlab ui --help` says what the UI does on `main`; `tests/scripts/test_readme.py`-style pin if one exists for the reference; `make ci` green; reviewed by `code-reviewer`. User-facing: `wowlab ui --help`, the command reference, the wiki's `wowlab ui` page.
+
+---
 
 # M14 — `wowlab ui`: the confirm flow, and the character (Wave 5)
 
@@ -1129,7 +1145,7 @@ The confirmed run must apply the plan that was shown (§16.1, "applies the plan 
 
 ---
 
-## [ ] M14-04 — `looks page` embedded in the UI
+## [x] M14-04 — `looks page` embedded in the UI
 **Size:** S · **Depends on:** M14-02
 
 ADR-0029 "Richer views … are embedded", by the route §16.3 gives. A Looks entry in the UI runs `looks page` (its default output under the data directory's `pages/`; `--out` stays refused, owner ruling 2026-10-15), then reads the written file through a token-checked API route whose path the server builds under `pages/` itself, never from a request parameter, and shows the text in an `iframe` with `sandbox="allow-scripts"` (no `allow-same-origin`) and `srcdoc`. The `srcdoc` document inherits the UI's CSP, so the UI's `script-src` and `style-src` gain the hashes of `lookspage._SCRIPT` and `lookspage._STYLE`, computed from the templates at start the way `lookspage` computes them for its own page; nothing else is added, no response header is loosened, `frame-ancestors 'none'` stays on every response, and the token still never leaves the opened URL. Whether a `srcdoc` frame loads under the UI's `default-src 'none'` with no `frame-src` is checked once by the implementer in a real browser (Chromium and one other), with the result pasted in the PR body; the repository's tests grade the markup and the CSP, not the browser (ADR-0027). If the frame is blocked, or the security review finds the route unsound, the fallback is the file's path with a copy button, as the CLI prints it, and the owner is asked for a ruling; the ticket does not invent a third route.
