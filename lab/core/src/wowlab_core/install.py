@@ -646,12 +646,18 @@ def _read_build_info(root: Path, source: Source, probed: os.stat_result) -> byte
     the open never blocks, so a FIFO or device put there after the check is
     refused at once rather than waited on, and a file that is not the one
     checked is refused too. A `.build.info` that is a link to a regular file
-    is taken as `_probe` takes it (followed, as before M13-54): the file it
-    resolves to is opened, and held to be the file `probed` saw."""
+    is taken as `_probe` takes it (followed, as before M13-54): the path it
+    resolves to is `lstat`ed and must name the file `probed` saw before it is
+    opened, and the opened file is held to it again."""
     path = root / BUILD_INFO
     try:
         if _snapshot_link(longpath.lstat(path)):
             path = Path(longpath.realpath(path))
+            # The resolved path must still name the checked file before it is
+            # opened at all, so a device swapped in there is not even opened.
+            now = longpath.lstat(path)
+            if (now.st_dev, now.st_ino) != (probed.st_dev, probed.st_ino):
+                raise snapshot.UnsafeReadError(f"{path} is not the file that was checked")
         return snapshot.read_regular_file(path, expect=probed)
     except snapshot.UnsafeReadError as exc:  # not the regular file checked
         raise NotAnInstallError(root, source, "unreadable", _BUILD_INFO_CHANGED) from exc
@@ -760,28 +766,61 @@ def _same_folder(directory: Path, scanned: os.stat_result) -> bool:
     )
 
 
+def _scan_denied_listing(scanned: os.stat_result) -> bool:
+    """The scan's `lstat` of the folder already gave this user no read
+    permission by its mode bits (owner, group or other, whichever applies),
+    so an open for reading is refused for the folder itself, not for
+    something put in its place. False for the superuser."""
+    if sys.platform == "win32":
+        return False
+    uid = os.geteuid()
+    if uid == 0:
+        return False
+    if scanned.st_uid == uid:
+        bit = stat.S_IRUSR
+    elif scanned.st_gid == os.getegid() or scanned.st_gid in os.getgroups():
+        bit = stat.S_IRGRP
+    else:
+        bit = stat.S_IROTH
+    return not scanned.st_mode & bit
+
+
 def _open_folder(directory: Path, scanned: os.stat_result) -> int | None:
     """A descriptor on `directory`, opened with `O_DIRECTORY | O_NOFOLLOW` and
     held to be the directory the scan saw by `fstat`; None where there are no
-    folder descriptors (`_folder_fds`), or where the folder may be searched
-    but not listed (an open for reading is refused, as `lstat` of a file in
-    it is not), so the `lstat` each side of the read is all that holds it.
+    folder descriptors (`_folder_fds`), so the `lstat` each side of the read
+    is all that holds it.
+
+    The descriptor is opened for search only where the platform can
+    (`O_SEARCH` on macOS and the BSDs, `O_PATH` on Linux), so a folder that
+    may be searched but not listed is held like any other, and any refusal
+    is a changed folder (M13-54 review: a fallback on `EACCES` let a
+    directory with no permissions, put in the folder's place for a moment,
+    force the read by path). Where neither exists the open is for reading,
+    and a refusal falls back to the `lstat` floor only when the scan's own
+    `lstat` already denied this user read permission on the folder.
     Raises `OSError` when it is a link now (`ELOOP`, or `ENOTDIR` on some
-    systems), not a directory, gone, or another directory."""
+    systems), not a directory, gone, another directory, or refused."""
     if not _folder_fds():
         return None
     try:
-        # Read-only, flags spelled in the call so the write-site scan sees them.
-        # `_folder_fds` holds only where `os.O_NOFOLLOW` exists.
+        # Never for writing; the flags are spelled in the call so the
+        # write-site scan sees them. `_folder_fds` holds only where
+        # `os.O_NOFOLLOW` exists.
         fd = os.open(
             longpath.extended(directory),
             os.O_RDONLY
             | os.O_DIRECTORY
             | getattr(os, "O_NOFOLLOW", 0)
-            | getattr(os, "O_CLOEXEC", 0),
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_SEARCH", 0)
+            | getattr(os, "O_PATH", 0),
         )
     except PermissionError:
-        return None
+        searchable = hasattr(os, "O_SEARCH") or hasattr(os, "O_PATH")
+        if not searchable and _scan_denied_listing(scanned):
+            return None
+        raise
     try:
         st = os.fstat(fd)
         if (st.st_dev, st.st_ino) != (scanned.st_dev, scanned.st_ino):

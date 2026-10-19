@@ -293,23 +293,30 @@ between the scan and the read of its `.flavor.info` was read through. The
 read now holds the folder to the directory the scan `lstat`ed (same device
 and inode, a directory, no link by `is_link`): the folder is `lstat`ed again
 just before and just after the read. On POSIX it is also opened with
-`O_DIRECTORY | O_NOFOLLOW`, the descriptor's `fstat` checked against the
-scan's `lstat`, and `.flavor.info` `lstat`ed and opened relative to that
-descriptor (`snapshot.open_regular_file(..., dir_fd=)`), so nothing put in
-the folder's place is ever opened. A folder that fails any of these is named
+`O_DIRECTORY | O_NOFOLLOW`, for search only where the platform can
+(`O_SEARCH` on macOS and the BSDs, `O_PATH` on Linux, so a folder that may
+be searched but not listed is held like any other), the descriptor's `fstat`
+checked against the scan's `lstat`, and `.flavor.info` `lstat`ed and opened
+relative to that descriptor (`snapshot.open_regular_file(..., dir_fd=)`), so
+nothing put in the folder's place is ever opened. A refused open is a changed
+folder, never a reason to read by path (M13-54 review: a directory with no
+permissions put in the folder's place for a moment would otherwise force the
+read by path, and a link swapped in next would be read through). Where
+neither search flag exists the open is for reading, and a refusal falls back
+to the `lstat` floor below only when the scan's own `lstat` already denied
+this user read permission on the folder. A folder that fails any of these is named
 in `other_dirs` with the new `not_taken` reason **`folder_changed`**, note
 `install.NOT_A_FLAVOR_FOLDER_CHANGED` ("not taken as a flavor folder (it
 changed as it was read; run the command again)"), never worded as a link:
 what took its place may be a real folder. When the folder changed, that
-reason is given even if its `.flavor.info` was refused too. On Windows, and
-on POSIX for a folder that may be searched but not listed (an open for a
-descriptor is refused there, where a file in it can still be read, as
-before), there is no descriptor and the two `lstat`s are the floor. What
-that floor leaves open: a folder swapped for a link (a junction, say) and
-swapped back again, both between the two `lstat`s, i.e. during the read of
-one short file. `.flavor.info`'s own `lstat` and open would then both go
-through the link and agree, so up to 4096 bytes of the file at the link's
-target would be read as the folder's product code. It takes two renames in
+reason is given even if its `.flavor.info` was refused too. On Windows
+(no `O_NOFOLLOW`, no `dir_fd`), and in the POSIX case just named, there is
+no descriptor and the two `lstat`s are the floor. What that floor leaves
+open: a folder swapped for a link (a junction, say), or for another real
+directory, and swapped back again, both between the two `lstat`s, i.e.
+during the read of one short file. `.flavor.info`'s own `lstat` and open
+would then both name the file in what stood there and agree, so up to 4096
+bytes of it would be read as the folder's product code. It takes two renames in
 the install root inside that window by a process that may already write
 there; nothing is written, the folder is reported under its own name, and
 every later command (`layout`, `tree`, `filemap`) judges the folder again by
@@ -320,8 +327,9 @@ so a FIFO or device put there between the two blocked discovery for ever. It
 is now read by `snapshot.read_regular_file` with that `stat` as `expect`:
 the open never blocks, the descriptor must be a regular file and the file
 the check saw. A `.build.info` that is a link to a regular file is still
-followed, as the check follows it (the path it resolves to is opened and
-held to the checked file). One that changed between the check and the read
+followed, as the check follows it: the path it resolves to is `lstat`ed
+and must name the checked file before it is opened, and the opened file is
+held to it again. One that changed between the check and the read
 raises `NotAnInstallError` with `reason` `unreadable` and the words "cannot
 read .build.info (it changed as it was read; run the command again)". The
 discovery output of an unchanged install is byte for byte what it was.
