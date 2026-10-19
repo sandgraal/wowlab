@@ -37,7 +37,7 @@ DIFF_FILE = ".pr-review/pr.diff"
 CAP = 400 * 1024
 # What the pinned action restores from the base branch before the model
 # starts (SENSITIVE_PATHS in src/github/operations/restore-config.ts at
-# 1d6de8cb0c237e7c15e9e1bdf973826ebae490cc), and where it saves the PR's copy.
+# f27be6b65a4652f08a2ba3cff79114829b588967), and where it saves the PR's copy.
 RESTORED = (
     ".claude",
     ".mcp.json",
