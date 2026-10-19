@@ -229,7 +229,9 @@ wowlab ui
 It picks a free port, listens only on this machine, and opens your
 browser on a link that carries a random token; if no browser opens, the
 link is printed once, so paste it. Stop it with Ctrl-C. It reads the
-install exactly as the other commands do and writes nothing there.
+install exactly as the other commands do and writes nothing there itself:
+a command that changes files runs first as a plan, and runs for real,
+through the same write gate, only when you press Confirm under that plan.
 `wowlab ui` takes no `--root`: when your install is not in a default
 location, set `WOWLAB_WOW_ROOT` first (above), or the page says no install
 was found and lists where it looked.

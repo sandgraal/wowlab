@@ -1318,25 +1318,20 @@ def test_every_run_has_a_timeout_and_a_cap_that_cannot_be_turned_off(
 # ─── refused commands: every `--yes` leaf, and `ui` ──────────────────────────
 
 
-def test_every_yes_leaf_of_the_real_tree_and_ui_are_refused(real: Any, recorder: Recorder) -> None:
-    """Every `--yes` leaf but the two of the confirm step (M14-02: `snap gc`
-    and `doctor`, graded in test_ui_confirm.py) is refused; those two refuse
-    a `yes` from the form."""
+def test_every_yes_leaf_of_the_real_tree_refuses_yes_and_ui_is_refused(
+    real: Any, recorder: Recorder
+) -> None:
+    """Every `--yes` leaf goes through the confirm step (M14-02, M14-03;
+    graded in test_ui_confirm.py and test_ui_confirm_writes.py), so each
+    refuses a `yes` from the form before anything runs; `ui` is refused."""
     leaves = dict(_leaves(_real_tree()))
-    confirm_step = {("snap", "gc"), ("doctor",)}
     every = {path for path, cmd in leaves.items() if _declares_yes(cmd)}
-    assert confirm_step <= every
-    refused = sorted(every - confirm_step)
-    assert ("snap", "restore") in refused
+    assert {("snap", "gc"), ("doctor",), ("snap", "restore"), ("undo",)} <= every
     assert ("ui",) in leaves
-    for path in sorted(confirm_step):
+    for path in sorted(every):
         for params in ({"yes": True}, {"yes": False}):
             reply = _run(real, path, params)
             assert (reply.status, reply.error()) == (403, "unknown_parameter"), (path, params)
-    for path in refused:
-        for params in ({}, {"yes": True}, {"yes": False}):
-            reply = _run(real, path, params)
-            assert (reply.status, reply.error()) == (403, "excluded"), (path, params)
     reply = _run(real, ["ui"], {})
     assert (reply.status, reply.error()) == (403, "excluded")
     assert recorder.calls() == []
