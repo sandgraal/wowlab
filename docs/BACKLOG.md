@@ -1105,6 +1105,14 @@ Found 2026-10-19 in the code review of M14-04, on `main` before it. The `ui_comm
 **Acceptance:** `wowlab ui --help` says what the UI does on `main`; `tests/scripts/test_readme.py`-style pin if one exists for the reference; `make ci` green; reviewed by `code-reviewer`. User-facing: `wowlab ui --help`, the command reference, the wiki's `wowlab ui` page.
 
 ---
+## [ ] M13-77 — `CharBindsReport` carries the left-out sentence it prints
+**Size:** XS · **Depends on:** M14-09
+
+Found 2026-10-19 in the code review of M14-09. The Keys panel prints `char binds`'s "Left out of the bindings record …" sentence, caveat included ("a key bound straight to a spell, macro, item or click may be one"), but no report field carries it: `CharBindsReport` has only `commands_left_out` and `keys_left_out`, so the page copies the CLI's prose word for word and a test holds the two equal (§14.5 D3, §15.6 data flow). Add the sentence to the report (one field, `left_out_note`, or the two counts each with their words), make the CLI's text form and the page read it from there, and drop the copied prose from `page.js`. `--json` gains exactly that field, listed in the release notes (M13-47's guard); text output byte-identical to `main`.
+
+**Acceptance:** the page's line equals the report field; `page.js` holds no copy of the sentence; byte-identity as stated; `make ci` green; reviewed by `code-reviewer`. User-facing: `char binds --json` gains a field; the wiki's `char` page.
+
+---
 
 # M14 — `wowlab ui`: the confirm flow, and the character (Wave 5)
 

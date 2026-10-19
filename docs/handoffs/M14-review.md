@@ -150,7 +150,8 @@ From this wave's reviews, all open on `main` (M13-70 to M13-76):
 carries every full record under the Character tab (M13-72); `char binds`
 with case-variant `WowLab.lua` files (M13-73); `sv merge --expect` pins the
 merged bytes (M13-74); `wowlab ui --help` still describes the v0.1 UI
-(M13-76). The earlier M13-61 to M13-69 follow-ups are also still open; three
+(M13-76); `CharBindsReport` carries the left-out sentence the Keys panel
+copies from the CLI (M13-77). The earlier M13-61 to M13-69 follow-ups are also still open; three
 of them (M13-62, M13-64, M13-66) wait on the owner.
 
 ## Owner actions outstanding
