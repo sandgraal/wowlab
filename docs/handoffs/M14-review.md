@@ -5,13 +5,13 @@ ADR-0024 and ticket M14-10. Wave 5 was picked on 2026-10-18: finish the
 twelve M13 follow-ups, then M14, the confirm flow in `wowlab ui` and the
 player's character in it (§16, ADR-0029 amended, ADR-0032 accepted with
 both stages). The plan section and the ten tickets M14-01 to M14-10 landed
-in #282; the wave opened at dafd223 when the twelfth follow-up merged
+in #265 (d03b18b, 2026-10-18); the wave opened at dafd223 when the twelfth follow-up merged
 (M14-01, 2026-10-18 late evening). The owner reordered the wave the same
 evening ("want the gear view sooner"): `char gear` was dispatched before
 the gate closed, and the Character tab came before the six install writes.
 
 **Every build ticket is on `main`.** M14-02 to M14-09 merged between
-2026-10-19 00:30 and 12:37 local time (16:37 UTC); this review is M14-10,
+2026-10-19 02:19 and 12:37 local time (06:19 to 16:37 UTC); this review is M14-10,
 the last ticket. Dispatch stops here until the owner picks the next wave (§11).
 
 ## What shipped
@@ -71,8 +71,10 @@ In merge order, with the squash commit on `main`:
 Docs and harness PRs of the wave: #285, #289, #293, #295, #296, #299
 (ticks, the dated amendments of §16.1 and §16.2 as built, the `ui` rule's
 confirm step, M13-68's three measured runs and the review job's cap raised
-to 40, nine review follow-ups filed). One test-only fix outside M14: M13-75
-(#298, 1b4bdc6), the Windows red that M14-03's tests caused.
+to 40, seven review follow-ups filed, M13-69 to M13-74 and M13-76). Two
+test-only fixes outside M14 merged during the wave: M13-75 (#298, 1b4bdc6),
+the Windows red that M14-03's tests caused, and M13-78 (#301, aa81e73), the
+Windows red that a Looks test caused.
 
 ## What was learned about the client and the platforms
 
@@ -84,16 +86,18 @@ to 40, nine review follow-ups filed). One test-only fix outside M14: M13-75
   the client's order. `char macros` therefore prints every placement as a
   candidate with **[verify]**, and the runbook names three macros so file
   order, window order and id order can be told apart. The runbook also
-  asks for the cap: 29 character macros is more than Classic's 18, so
-  Forever's cap is not Classic's.
-- **A stale `macros-cache.txt` moves every candidate.** The file is written
-  at logout; the lab-addon's record is written on `/reload` too. One record
-  missing from the file shifts the position of every later one, which is
-  exactly what the 70425 capture showed. The CLI says so.
+  asks for the cap, since the 29 records in the character file are more
+  than the 18 the Classic clients allow (from memory, **[verify]**).
+- **A stale `macros-cache.txt` moves every candidate.** Whether the client
+  rewrites the file at logout on Forever is still **[verify]** (LAB_FORMATS
+  item 7, the runbook's question 3); the lab-addon's record is written on
+  `/reload` too. The 70425 capture had a macro the owner placed in neither
+  file, so the file may predate the session, and one record missing from it
+  shifts the position of every later candidate. The CLI says so.
 - **`sv merge`'s source is live.** The client rewrites the played
   character's per-character files at logout, not the target's, so a merge
   planned before a logout and confirmed after can take values the page
-  never showed. M13-74 pins the merged bytes too.
+  never showed. M13-74, open, will pin the merged bytes too.
 - **Windows: NUL is a character device**, so `isatty()` is true on a child
   whose stdin is `DEVNULL`; and a child's text-mode stderr arrives with
   CRLF. Both bit this wave (#291, M13-75), both are now pinned by tests
@@ -108,9 +112,10 @@ to 40, nine review follow-ups filed). One test-only fix outside M14: M13-75
 ## What was learned about running the wave
 
 - **The review job's cap was the measured problem, not the model.** Two
-  of three `lab/` runs ended with a verdict and still failed the job,
-  because the action fails a run whose `num_turns` exceeds `--max-turns`
-  even after a successful result. The conductor first misread that as a
+  of three `lab/` runs finished with a successful result past 30 turns and
+  still failed the job, because the action fails a run whose `num_turns`
+  exceeds `--max-turns` even then; only the second of the two (#292) had
+  posted its verdict before the job was failed. The conductor first misread that as a
   failure on findings; the #295 review caught it from the log's `##[error]`
   lines. Lesson recorded: read the action's error lines before
   interpreting a job conclusion. The cap is 40 now.
@@ -161,7 +166,7 @@ carries every full record under the Character tab (M13-72); `char binds`
 with case-variant `WowLab.lua` files (M13-73); `sv merge --expect` pins the
 merged bytes (M13-74); `wowlab ui --help` still describes the v0.1 UI
 (M13-76); `CharBindsReport` carries the left-out sentence the Keys panel
-copies from the CLI (M13-77). The earlier M13-61 to M13-69 follow-ups are
+copies from the CLI (M13-77). The earlier M13-61 to M13-67 and M13-69 are
 also still open; three of them (M13-62, M13-64, M13-66) wait on the owner.
 
 ## Owner actions outstanding
@@ -177,11 +182,15 @@ also still open; three of them (M13-62, M13-64, M13-66) wait on the owner.
   folder only; a player with two flavor folders sees one roster. Whether it
   follows the Explorer's flavor picker is a small change that the M14-09
   implementer left to the owner.
-- **Gear colours.** The colour drawn for a slot comes from the shipped
+- **Gear colours.** The colour drawn for an item name comes from the shipped
   table, never the player's own `gear_slots.toml`; the player's file
   changes the word, not the colour. The M14-08 ticket said "every name and
   colour comes from the model"; say whether the wording or the behaviour
   should change.
+- **The two persistence tests have not been run**, so nothing they would
+  answer is in `docs/LAB_FORMATS.md` yet. **ADR-0032** is accepted with both
+  stages; neither stage is built, and nothing in this wave sends anything
+  anywhere.
 - **Two capture steps, both runbooks on `main`:** `docs/handoffs/
   M14-macro-place.md` (settles macro placement) and `docs/handoffs/
   M14-binds-persist.md` with `M13-07.md` (the persistence tests, §16.5 F1).
@@ -215,8 +224,9 @@ closes the ADR-0029 amendment's open route.
    network, no key, no ADR change. It can run beside item 1 once F3's
    grammar is fixed, and it is the first thing the owner can use with a
    model.
-3. **A cleanup half-wave.** The sixteen open M13 follow-ups (M13-61 to
-   M13-76 less the three with the owner), M13-74 first since it closes a
+3. **A cleanup half-wave.** The fifteen open M13 follow-ups (M13-61 to
+   M13-77 less the merged M13-68, M13-75 and M13-78; twelve after the three
+   with the owner), M13-74 first since it closes a
    gap in a shipped write command; each is XS or S and most are one
    review. Worth doing before the writers land, since M13-70 and M13-73
    touch the data the writers will read.

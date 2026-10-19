@@ -1113,10 +1113,10 @@ Found 2026-10-19 in the code review of M14-09. The Keys panel prints `char binds
 **Acceptance:** the page's line equals the report field; `page.js` holds no copy of the sentence; byte-identity as stated; `make ci` green; reviewed by `code-reviewer`. User-facing: `char binds --json` gains a field; the wiki's `char` page.
 
 ---
-## [ ] M13-78 — Windows red on `main` at 02eb034: a Looks test writes its page with CRLF
+## [x] M13-78 — Windows red on `main` at 02eb034: a Looks test writes its page with CRLF
 **Size:** XS · **Depends on:** nothing
 
-`lab (windows)` on `main` is red at 02eb034 (https://github.com/sandgraal/wowlab/actions/runs/39259958422), the first run after M14-04 (#297, whose own Windows job the shepherd could not read before merging). One failure: `test_ui_looks.py::test_the_path_is_the_one_lookspage_names`, 403 where 200 is expected. The test writes its constructed page with `write_text`, which on Windows turns `lookspage.PAGE_HEADER`'s newlines into CRLF, so the route's prefix check refuses the file as `not_a_page`. The real page is written by `looks page` in bytes and was never affected. Fix the five constructed pages in the test file to `write_bytes`; nothing under `lab/core/src/`. Filed and fixed by the conductor in the XS lane the moment the red run was read, 2026-10-19.
+`lab (windows)` on `main` is red at 02eb034 (https://github.com/sandgraal/wowlab/actions/runs/39259958422), the first run after M14-04 (#297, whose own Windows job the shepherd could not read before merging). One failure: `test_ui_looks.py::test_the_path_is_the_one_lookspage_names`, 403 where 200 is expected. The test writes its constructed page with `write_text`, which on Windows turns `lookspage.PAGE_HEADER`'s newlines into CRLF, so the route's prefix check refuses the file as `not_a_page`. The real page is written by `looks page` in bytes and was never affected. Fix the four write sites in the test file (seven constructed pages) to `write_bytes`; nothing under `lab/core/src/`. Filed and fixed by the conductor in the XS lane the moment the red run was read, 2026-10-19.
 
 **Acceptance:** the test passes on the PR's `lab (windows)` job and on macOS and Linux; no change under `lab/core/src/`; `make ci` green; reviewed by `code-reviewer`.
 
