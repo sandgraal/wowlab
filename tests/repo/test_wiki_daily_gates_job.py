@@ -66,8 +66,9 @@ PINNED = re.compile(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}")
 # Every action wiki-daily may use, at the commit reviewed for caching (M13-39).
 # None of them restores or saves an Actions cache as configured here. A bump
 # of claude-code-action means re-checking that its action.yml still runs its
-# nested oven-sh/setup-bun with `no-cache: true` (at f27be6b, v1.0.252, it does, and
-# that is the only action it nests).
+# nested oven-sh/setup-bun with `no-cache: true` (at f27be6b, v1.0.252, re-read
+# on 2026-10-19 for #309, it does, and that is the only action it nests;
+# upload-artifact and download-artifact were re-read the same day).
 CACHE_REVIEWED = frozenset(
     {
         "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",

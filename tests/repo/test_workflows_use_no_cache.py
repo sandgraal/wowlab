@@ -68,6 +68,8 @@ CLAUDE = "anthropics/claude-code-action@f27be6b65a4652f08a2ba3cff79114829b588967
 #   which no workflow here does).
 # A bump of any of them means re-reading its action.yml and any action it
 # nests before changing the commit here.
+# upload-artifact, download-artifact and claude-code-action were re-read at
+# their current pins on 2026-10-19 (#309): the same as above.
 CACHE_OFF: Mapping[str, str] = {
     SETUP_UV: "enable-cache",
     ACTIONLINT: "cache",
