@@ -308,15 +308,15 @@ def _looks_page_body(cap: int) -> bytes:
     path = lookspage.default_page_path()
     if _is_link(path.parent) or _is_link(path):
         raise _RefusedError(403, "not_a_page")
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_NONBLOCK", 0)
-        | getattr(os, "O_NOCTTY", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-        | getattr(os, "O_BINARY", 0)
-    )
     try:
-        fd = os.open(path, flags)
+        fd = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_NOCTTY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_BINARY", 0),
+        )
     except FileNotFoundError:
         raise _RefusedError(404, "no_page") from None
     except (OSError, ValueError):
