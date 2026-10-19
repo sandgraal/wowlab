@@ -8025,6 +8025,9 @@ class CharMacrosReport(_Out):
     record_error: str | None  # why no WowLab.lua was read
     macros: list[CharMacro]
     cannot_judge: list[macrocheck.CannotJudge]
+    # Why a key bound in the client may be missing from the placements' keys
+    # (`keymap.KeyMap.keys_incomplete`); None when the bindings record is complete.
+    keys_incomplete: str | None
     notes: list[str]
 
 
@@ -8077,6 +8080,20 @@ def char_macros(
     elif character is not None:
         char = _select_character(acct, character)
         folder = (char.realm_folder, char.folder)
+    lab_files = [
+        f
+        for f in lay.saved_variables()
+        if f.account == acct.folder and f.scope == "character" and _is_lab_file(f)
+    ]
+    if folder is None and lab_files:
+        # The latest folder's files could not be told apart (case variants):
+        # it is still the character `char show` would take.
+        top = max(lab_files, key=lambda f: (f.mtime_ns, f.path))
+        if top.realm_folder and top.character_folder:
+            folder, how = (top.realm_folder, top.character_folder), "latest"
+    unread = folder is not None and any(
+        (f.realm_folder, f.character_folder) == folder for f in lab_files
+    )
     who = f"{folder[0]}/{folder[1]}" if folder is not None else None
     files: list[CharMacrosFile] = []
     sources: list[macrocheck.SourceMacro] = []
@@ -8105,8 +8122,10 @@ def char_macros(
         no_bars = f"no action-bar record (schema {record.schema_} has none; {keymap.GET_RECORD})"
     else:
         bars, no_bars = None, no_record
-    if record is None and target is not None:
-        no_book = f"no spellbook record: {target.path} was not read"
+    if record is None and (target is not None or unread):
+        # `macros check`'s words for a record it found and could not read.
+        place = target.path if target is not None else "the WowLab.lua"
+        no_book = f"no spellbook record: {place} was not read"
     elif folder is None:
         no_book = "no spellbook record (no character chosen; use --character)"
     else:
@@ -8154,9 +8173,10 @@ def char_macros(
         record_error=record_error,
         macros=macros,
         cannot_judge=[c for c in checked.cannot_judge if c.macro is None],
+        keys_incomplete=keys.keys_incomplete,
         notes=[
             macroplace.CANDIDATE_RULE,
-            keys.notes[0],
+            *keys.notes,
             f"Length: counted in {macrocheck.LENGTH_UNIT}; the client's limit is "
             f"{macrocheck.LENGTH_LIMIT}, and whether it counts characters or bytes is [verify].",
             *_MACROS_CHECK_NOTES,
@@ -8168,13 +8188,14 @@ def char_macros(
     _say_char_macros(report)
 
 
-def _placement_lines(p: macroplace.Placement) -> list[str]:
+def _placement_lines(p: macroplace.Placement, keys_incomplete: str | None) -> list[str]:
     lines = [f"placement: {p.status}: {p.reason}"]
     for s in p.slots:
         lines.append(f"may sit at slot {s.slot} ({p.status}): {s.page_note}")
         reach = [k for k in p.keys if k.slot == s.slot]
         if not reach:
-            lines.append("  no key reaches it on the page its bar shows by default")
+            among = f", among the keys read ({keys_incomplete})" if keys_incomplete else ""
+            lines.append(f"  no key reaches it on the page its bar shows by default{among}")
         for k in reach:
             lines.append(f"  key {k.key} ({k.command}; {_source_words(k)})")
     return lines
@@ -8229,7 +8250,7 @@ def _say_char_macros(report: CharMacrosReport) -> None:
         )
         for line in m.body_lines:
             _say(f"      {line}")
-        for line in _placement_lines(m.placement):
+        for line in _placement_lines(m.placement, report.keys_incomplete):
             _say(f"    {line}")
         for finding in m.findings:
             _say(f"    finding {finding.rule} (line {finding.line}): {finding.detail}")

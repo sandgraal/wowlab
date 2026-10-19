@@ -23,10 +23,13 @@ capture with macro slots (Forever 1.60.1.70425) had two, with ids 149 and
 put on a bar in that session was in neither macros file, so the file may not
 have been rewritten at that logout.
 
-`char macros` uses a candidate numbering, Retail's, from memory: account
-macros are indices 1 to 120 in the account file's order, and character
-macros follow from 121 in the character file's order. Three questions are
-open:
+`char macros` uses a candidate numbering: account macros are indices 1 to
+120 and character macros follow from 121. The 120 offset is Retail's, from
+memory **[verify]**; counting the records in each file's order is this
+tool's assumption **[verify]** (the client may keep macros sorted by name,
+for one). Because it counts positions in the file, a stale
+`macros-cache.txt` with one record missing moves every later candidate.
+Three questions are open:
 
 1. Is that the numbering on your client: account macros from 1, character
    macros from 121?
@@ -59,16 +62,16 @@ folder name as `wowlab char list` prints it.
    uv run wowlab snap create -m "before the macro placement test"
    ```
 
-4. Note how many macros each file has now, and each file's modification
-   time:
+4. Note how many macros each file has now, and when each was written. The
+   first lines of this command say both, as `Account macros: <n> macros in
+   <file>, written <time>` and `Character macros: …`:
 
    ```bash
-   uv run wowlab macros list
-   uv run wowlab macros list --character <Character>
+   uv run wowlab char macros --character <Character>
    ```
 
-   Write down the two counts (account, character). You don't need to note
-   any macro's name or text.
+   Write down the two counts and the two times. You don't need to note any
+   macro's name or text.
 
 ## 1. In game, on one character
 
@@ -81,26 +84,46 @@ folder name as `wowlab char list` prints it.
    - first `zz wowlab one`, text `/sit`;
    - then `aa wowlab two`, text `/kneel`.
 
-   Pick any icon. Note, from top-left, which position the window shows each
-   of the three in its tab (for example "acct: 5th of 5; zz: 30th of 31;
-   aa: 1st of 31"). If the window sorts by name, `aa wowlab two` comes
-   first although you made it last.
-4. **Drag each onto an empty button of the main action bar** (the bottom
+   Pick any icon. If the character tab refuses a new macro, write down the
+   count it stopped at (that count is the cap, which the next session
+   needs), make `aa wowlab two` in General instead, and say so in the
+   report.
+
+   Note, from top-left, which position the window shows each of the three
+   in its tab and how many the tab holds (for example, illustrative only,
+   "acct: 5th of 5"). If the window sorts by name, `aa wowlab two` comes
+   before `zz wowlab one` although you made it last.
+5. **Optional, if your client allows it** (the names and `/dump` on Forever
+   are from memory, **[verify]**; if a line errors, skip this step). Type in
+   chat, one at a time, and write down what each prints:
+
+   ```
+   /dump GetMacroIndexByName("wowlab acct")
+   /dump GetMacroIndexByName("zz wowlab one")
+   /dump GetMacroIndexByName("aa wowlab two")
+   /dump GetNumMacros()
+   /dump MAX_ACCOUNT_MACROS, MAX_CHARACTER_MACROS
+   ```
+
+   These are the client's own indices, which settle the numbering even if
+   the drag step below goes wrong.
+6. **Drag each onto an empty button of the main action bar** (the bottom
    bar, on its first page): `wowlab acct` on one, `zz wowlab one` on
    another, `aa wowlab two` on a third. Note the three button numbers,
    counting from the left (button 1 is the one bound to the `1` key). If the
    main bar has no three free buttons, use another bar and name it.
-5. Don't click the macros, and don't change bars or forms after this.
-6. **Log out cleanly**, then exit the client. The files are only complete
+7. Don't click the macros, and don't change bars or forms after this.
+8. **Log out cleanly**, then exit the client. The files are only complete
    after logout.
 
 ## 2. Read what the client wrote (client closed)
 
-1. Are the new macros in the files? Run the two `macros list` commands of
-   step 0.4 again. Write down the new counts, whether `wowlab acct` is in
-   the account list and the other two in the character list, and their
-   positions in each list (the list shows the file's order). Note whether
-   each file's modification time changed.
+1. Are the new macros in the files? Run the `char macros` command of step
+   0.4 again (it is also step 2.3). Write down the two counts and
+   times from its first lines, and whether each time changed. Then find
+   the three new macros in its list: each is printed as `account macro <n>
+   "wowlab acct"` or `character macro <n> "…"`, where `<n>` is its
+   position in the file. Write down each `<n>`, or "missing".
 2. What the record says the three buttons hold. This prints one row per
    key; the rows for your three buttons' keys (`ACTIONBUTTON<n>` for main
    bar button n) say "runs macro <id>":
@@ -163,15 +186,17 @@ by the server at the next login when macro sync is on.
 
 One row per macro. Values are what you saw, not what you expected.
 
-| Macro | Tab | Position in the macro window | Position in `macros list` after logout (or "missing") | Bar and button | Id `char binds` shows for that button | `char macros` placement line(s) |
-|---|---|---|---|---|---|---|
-| `wowlab acct` | General | | | | | |
-| `zz wowlab one` | character | | | | | |
-| `aa wowlab two` | character | | | | | |
+| Macro | Tab | Position in the macro window | Position `<n>` in `char macros` after logout (or "missing") | `/dump` index (optional step 1.5) | Bar and button | Id `char binds` shows for that button | `char macros` placement line(s) |
+|---|---|---|---|---|---|---|---|
+| `wowlab acct` | General | | | | | | |
+| `zz wowlab one` | character | | | | | | |
+| `aa wowlab two` | character | | | | | | |
 
 Also say:
-- the macro counts of step 0.4 and of step 2.1, and whether each file's
-  modification time changed at logout;
+- the macro counts and written times of step 0.4 and of step 2.1, and whether each
+  time changed at logout; if the character tab refused a macro, the count it stopped at;
+- what `GetNumMacros()` and `MAX_ACCOUNT_MACROS, MAX_CHARACTER_MACROS`
+  printed in step 1.5, or that you skipped it (and the error, if one came);
 - whether you needed the second login of section 2;
 - the flavor and client build (`wowlab doctor` prints both), and whether
   `synchronizeMacros` is on (`doctor` prints it);

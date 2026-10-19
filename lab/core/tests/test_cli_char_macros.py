@@ -175,7 +175,7 @@ def test_char_macros_on_the_fixture_install_with_no_record_places_nothing(root: 
     assert m.body_lines == ["/castsequence Arcane Intellect, Polymorph"]
     assert m.bytes == m.characters == 41
     assert m.placement.status == "none"
-    assert (m.placement.index, m.placement.slots, m.placement.keys) == (121, [], [])
+    assert (m.placement.candidate_index, m.placement.slots, m.placement.keys) == (121, [], [])
     assert m.placement.reason.startswith("cannot place: no action-bar record: no lab-addon record")
     assert m.findings == [] and m.cannot_judge == []
     assert [c.rule for c in rep.cannot_judge] == ["spell-not-in-spellbook", "not-on-action-bar"]
@@ -199,7 +199,7 @@ def test_char_macros_json_1_macro_none_2_findings_cross_capture(flavor: Path, ro
     assert rep.record_mtime_ns == (flavor / RECORD).stat().st_mtime_ns
     [m] = rep.macros
     assert m.placement.status == "none"
-    assert m.placement.index == 121  # character macro 1 in the candidate numbering
+    assert m.placement.candidate_index == 121  # character macro 1 in the candidate numbering
     assert m.placement.reason == (
         "no macro slot with no subtype on the action bars (slots 1 to 180) holds index 121, "
         "which the candidate numbering [verify] gives character macro 1; under another "
@@ -242,7 +242,9 @@ def test_char_macros_text_on_the_fixture_install_cross_capture(flavor: Path) -> 
     assert macroplace.CANDIDATE_RULE in lines
 
 
-def test_char_macros_without_character_takes_the_latest_record(flavor: Path) -> None:
+def test_char_macros_without_character_takes_the_latest_record_cross_capture_constructed(
+    flavor: Path,
+) -> None:
     record = _put_record(flavor)
     newest = max(p.stat().st_mtime_ns for p in flavor.rglob("WowLab.lua"))
     os.utime(record, ns=(newest + 10**9, newest + 10**9))
@@ -252,7 +254,7 @@ def test_char_macros_without_character_takes_the_latest_record(flavor: Path) -> 
     assert "(written last; choose another with --character)" in ok("char", "macros").stdout
 
 
-def test_a_schema_1_record_places_nothing(root: Path) -> None:
+def test_a_schema_1_record_places_nothing_constructed(root: Path) -> None:
     _put_macros(
         root / FLAVOR,
         _macro(1, "Lab one", "/say lab one"),
@@ -280,7 +282,7 @@ def test_unconfirmed_with_one_candidate_slot_and_a_key_constructed(flavor: Path)
     placed = {p: m.placement for p, m in by.items() if m.placement.status != "none"}
     assert sorted(placed) == [("character", 20), ("character", 29)]
     twenty_nine = placed[("character", 29)]
-    assert (twenty_nine.status, twenty_nine.index) == ("unconfirmed", 149)
+    assert (twenty_nine.status, twenty_nine.candidate_index) == ("unconfirmed", 149)
     assert [(s.slot, s.page_note, s.unfollowed_page) for s in twenty_nine.slots] == [
         (64, "bottom left bar button 4, page 6", False)
     ]
@@ -292,7 +294,7 @@ def test_unconfirmed_with_one_candidate_slot_and_a_key_constructed(flavor: Path)
         "[verify], and slot 64 holds a macro with index 149 and no subtype"
     )
     twenty = placed[("character", 20)]
-    assert (twenty.index, [s.slot for s in twenty.slots], twenty.keys) == (140, [65], [])
+    assert (twenty.candidate_index, [s.slot for s in twenty.slots], twenty.keys) == (140, [65], [])
     assert by[("character", 1)].placement.status == "none"
     text = ok("char", "macros", "--character", CHARACTER).stdout
     assert "Macros: 29 (2 with a candidate slot, 27 with none; 0 findings)" in text
@@ -313,7 +315,11 @@ def test_unconfirmed_with_two_candidate_slots_constructed(flavor: Path) -> None:
     rep = report("--character", CHARACTER)
     by = _by_position(rep)
     p = by[("character", 29)].placement
-    assert (p.status, p.index, [s.slot for s in p.slots]) == ("unconfirmed", 149, [64, 65])
+    assert (p.status, p.candidate_index, [s.slot for s in p.slots]) == (
+        "unconfirmed",
+        149,
+        [64, 65],
+    )
     assert p.reason.endswith("slots 64, 65 hold a macro with index 149 and no subtype")
     assert by[("character", 20)].placement.status == "none"
     assert sum(1 for m in rep.macros if m.placement.status != "none") == 1
@@ -395,13 +401,123 @@ def test_an_account_macro_is_placed_by_its_own_numbering_constructed(flavor: Pat
     )
     rep = report("--character", CHARACTER)
     by = _by_position(rep)
-    assert [(p, m.placement.index, m.placement.status) for p, m in by.items()] == [
+    assert [(p, m.placement.candidate_index, m.placement.status) for p, m in by.items()] == [
         (("account", 1), 1, "none"),
         (("account", 2), 2, "unconfirmed"),
         (("character", 1), 121, "none"),
         (("character", 2), 122, "none"),
     ]
     assert [s.slot for s in by[("account", 2)].placement.slots] == [65]
+
+
+_BARS_PROBE = b'["api"] = "GetActionInfo",\r\n["calls"] = 180,\r\n["errors"] = 0,'
+
+
+def test_unconfirmed_on_incomplete_bars_says_a_subtype_may_be_dropped_constructed(
+    flavor: Path,
+) -> None:
+    data = SCHEMA_3.read_bytes()
+    assert data.count(_BARS_PROBE) == 1
+    _put_record(flavor, data.replace(_BARS_PROBE, _BARS_PROBE.replace(b"= 0,", b"= 20,")))
+    _twenty_nine(flavor)
+    p = _by_position(report("--character", CHARACTER))[("character", 29)].placement
+    assert (p.status, [s.slot for s in p.slots]) == ("unconfirmed", [64])
+    assert p.reason.endswith(
+        "; the action-bar record is incomplete (20 call(s) raised an error and 0 value(s) were "
+        "dropped as secret or untestable), so a slot given here may be one whose subtype was "
+        "dropped, and another macro slot may be missing"
+    )
+
+
+def test_notes_carry_every_keymap_note_and_keys_are_complete_cross_capture(flavor: Path) -> None:
+    _put_record(flavor)
+    rep = report("--character", CHARACTER)
+    assert rep.keys_incomplete is None  # the record's bindings section is complete
+    record = labaddon.read_char(flavor / RECORD)
+    with_record = keymap.join_record(account=None, character=None, record=record)
+    assert len(with_record.notes) == 2
+    assert rep.notes[1:3] == with_record.notes
+
+
+def test_no_bindings_record_qualifies_no_key_reaches_it_constructed(
+    flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Constructed: the real record read with its bindings section replaced
+    by an absent one, so the keys are the files' lines only."""
+    _put_record(flavor)
+    _twenty_nine(flavor)
+    original = labaddon.read_char
+
+    def no_bindings(path: Path) -> labaddon.CharDB:
+        record = original(path)
+        absent = labaddon.AbsentProbedSection(absent="constructed: not gathered")
+        return record.model_copy(update={"bindings": absent})
+
+    monkeypatch.setattr(labaddon, "read_char", no_bindings)
+    rep = report("--character", CHARACTER)
+    assert rep.keys_incomplete is not None
+    assert rep.keys_incomplete.startswith("there is no bindings record")
+    assert any("keys not listed may still be bound" in n for n in rep.notes)
+    text = ok("char", "macros", "--character", CHARACTER).stdout
+    assert (
+        "      no key reaches it on the page its bar shows by default, among the keys read "
+        f"({rep.keys_incomplete})\n"
+    ) in text
+
+
+def _folds_case(where: Path) -> bool:
+    probe = where / "case-probe"
+    probe.mkdir()
+    try:
+        return (where / "CASE-PROBE").exists()
+    finally:
+        probe.rmdir()
+
+
+def _case_variants(flavor: Path) -> None:
+    """Constructed: two case variants of WowLab.lua and none spelled exactly,
+    so no record is read (`labaddon.choose_lab_file`)."""
+    folder = flavor / CHAR_DIR / "SavedVariables"
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in ("wowlab.lua", "WOWLAB.lua"):
+        (folder / name).write_bytes(SCHEMA_3.read_bytes())
+    for other in flavor.rglob("WowLab.lua"):
+        if "SavedVariables" in other.parts and other.parent.parent.name != ACCOUNT:
+            os.utime(other, ns=(10**18, 10**18))
+    newest = 2 * 10**18
+    for name in ("wowlab.lua", "WOWLAB.lua"):
+        os.utime(folder / name, ns=(newest, newest))
+
+
+def test_case_variant_records_read_nothing_as_macros_check_says_constructed(
+    flavor: Path, tmp_path: Path
+) -> None:
+    if _folds_case(tmp_path):
+        pytest.skip("the temporary directory's volume folds case")
+    _case_variants(flavor)
+    checked = cli.MacrosCheckReport.model_validate_json(
+        ok("macros", "check", "--character", CHARACTER, "--json").stdout
+    )
+    for args in (("--character", CHARACTER), ()):
+        rep = report(*args)
+        assert rep.character == f"1/{CHARACTER}"
+        assert rep.record_file is None and rep.record_error is not None
+        assert "none was read" in rep.record_error
+        assert [(c.rule, c.reason) for c in rep.cannot_judge] == [
+            (c.rule, c.reason) for c in checked.cannot_judge if c.macro is None
+        ]
+        assert rep.cannot_judge[0].reason == "no spellbook record: the WowLab.lua was not read"
+        assert "has a WowLab.lua" not in ok("char", "macros", *args).stdout.splitlines()[0]
+
+
+def test_no_record_reasons_match_macros_check_on_the_fixture_install(root: Path) -> None:
+    checked = cli.MacrosCheckReport.model_validate_json(
+        ok("macros", "check", "--character", CHARACTER, "--json").stdout
+    )
+    rep = report("--character", CHARACTER)
+    assert [(c.rule, c.reason) for c in rep.cannot_judge] == [
+        (c.rule, c.reason) for c in checked.cannot_judge if c.macro is None
+    ]
 
 
 # ─── no output carries `confirmed` ───────────────────────────────────────────
@@ -496,7 +612,7 @@ def test_place_on_the_real_record_gives_two_unconfirmed() -> None:
 
 def test_place_past_the_account_indices_constructed() -> None:
     [p] = macroplace.place([("account", 121)], _bars(), [])
-    assert (p.status, p.index) == ("none", None)
+    assert (p.status, p.candidate_index) == ("none", None)
     assert p.reason.startswith("account macro 121 is past the 120 indices")
 
 

@@ -24,14 +24,18 @@ is a candidate, never a fact:
   and the dated amendment to `docs/LAB_FORMATS.md` §7 that records the rule
   the capture settles.
 
-The candidate numbering is Retail's, from memory **[verify]**: account
-macros are indices 1 to `ACCOUNT_MACROS` in the order of the account file's
-records, and character macros follow from `ACCOUNT_MACROS + 1` in the order
-of the character file's records. In the one capture with macro slots (build
-70425) the character file's 29 records had ids `...01` to `...1D` in file
-order, and the two macro slots held 149 and 140, which this numbering reads
-as the character file's 29th and 20th records; that capture did not show
-which macros the owner had put there.
+The candidate numbering: account macros are indices 1 to `ACCOUNT_MACROS`
+and character macros follow from `ACCOUNT_MACROS + 1`. The offset of 120 is
+Retail's, from memory **[verify]** (`docs/LAB_FORMATS.md`, 2026-10-16, item
+7); counting the records in each file's order is this tool's assumption
+**[verify]** (the client may number macros in another order, by name for
+one). In the one capture with macro slots (build 70425) the character file
+had 29 records with ids `...01` to `...1D` (their order in the file is not
+recorded), and the two macro slots held 149 and 140, which this numbering
+reads as the character file's 29th and 20th records; that capture did not
+show which macros the owner had put there. Because every candidate counts
+positions in the file, one record missing from a stale `macros-cache.txt`
+(or one still listed after it was deleted) moves every later candidate.
 """
 
 from __future__ import annotations
@@ -65,10 +69,12 @@ Status = Literal["confirmed", "unconfirmed", "none"]
 CANDIDATE_RULE = (
     "An action slot holding a macro keeps an id only, never the macro's name or body. With no "
     "subtype the id is taken to be the macro index [verify], and which macro of "
-    "macros-cache.txt an index names is not known [verify]: the candidate numbering is "
-    f"Retail's, from memory (account macros 1 to {ACCOUNT_MACROS} in the account file's order, "
-    f"character macros from {ACCOUNT_MACROS + 1} in the character file's order). Every slot "
-    "given here is a candidate only."
+    "macros-cache.txt an index names is not known [verify]. The candidate numbering gives "
+    f"account macros 1 to {ACCOUNT_MACROS} and character macros from {ACCOUNT_MACROS + 1}: the "
+    f"offset of {ACCOUNT_MACROS} is Retail's, from memory [verify]; counting the records in "
+    "each file's order is this tool's assumption [verify]. Every slot given here is a "
+    "candidate only. If macros-cache.txt is older than the record, positions in it, and so "
+    "every candidate here, may be off."
 )
 
 _ACTIONBARS_NEEDS = frozenset({"GetActionInfo"})
@@ -88,14 +94,14 @@ class PlacedSlot(_Model):
 
 
 class Placement(_Model):
-    """Where one macro may sit. `index` is the macro index the candidate
-    numbering gives the record (None: it gives none); `slots` are the
-    macro slots with no subtype holding that index, and `keys` the
-    `keymap` rows whose command presses one of them; `reason` says why, in
-    words."""
+    """Where one macro may sit. `candidate_index` is the index the candidate
+    numbering gives the record, not the client's (None: it gives none);
+    `slots` are the macro slots with no subtype holding that index, and
+    `keys` the `keymap` rows whose command presses one of them; `reason`
+    says why, in words."""
 
     status: Status
-    index: int | None
+    candidate_index: int | None
     slots: list[PlacedSlot]
     keys: list[keymap.KeyRow]
     reason: str
@@ -115,7 +121,8 @@ def candidate_index(scope: MacroScope, position: int) -> int | None:
 def _bars(
     section: labaddon.ActionBars | labaddon.AbsentProbedSection | None, no_bars: str
 ) -> tuple[labaddon.ActionBars | None, str | None]:
-    """The action bars, or why there are none; and, with bars, what they may lack."""
+    """The action bars, or why there are none; and, with bars, what the
+    record says it dropped (the words inside "incomplete (...)"), or None."""
     if section is None:
         return None, no_bars
     if isinstance(section, labaddon.AbsentProbedSection):
@@ -124,13 +131,7 @@ def _bars(
     untyped = sum(1 for s in section.slots if s.type is None)
     if untyped:
         why.append(f"{untyped} slot(s) have no type")
-    lacks = (
-        f"the action-bar record is incomplete ({'; '.join(why)}), so a macro slot may be one "
-        "of those dropped"
-        if why
-        else None
-    )
-    return section, lacks
+    return section, "; ".join(why) if why else None
 
 
 def _words(slots: Sequence[int]) -> str:
@@ -155,7 +156,7 @@ def place(
         return [
             Placement(
                 status="none",
-                index=candidate_index(scope, position),
+                candidate_index=candidate_index(scope, position),
                 slots=[],
                 keys=[],
                 reason=reason,
@@ -184,10 +185,17 @@ def place(
                 f"{_words(found)} {'holds' if len(found) == 1 else 'hold'} a macro with index "
                 f"{index} and no subtype"
             )
+            if why is not None:
+                # The addon stores a subtype dropped as secret as nil, so a
+                # slot given here may hold a macro shown by a spell or item.
+                reason += (
+                    f"; the action-bar record is incomplete ({why}), so a slot given here may "
+                    "be one whose subtype was dropped, and another macro slot may be missing"
+                )
             out.append(
                 Placement(
                     status="unconfirmed",
-                    index=index,
+                    candidate_index=index,
                     slots=[
                         PlacedSlot(
                             slot=n,
@@ -221,9 +229,18 @@ def place(
                 "macro"
             )
         if why is not None:
-            parts.append(why)
+            parts.append(
+                f"the action-bar record is incomplete ({why}), so a macro slot may be one of "
+                "those dropped"
+            )
         out.append(
-            Placement(status="none", index=index, slots=[], keys=[], reason="; ".join(parts))
+            Placement(
+                status="none",
+                candidate_index=index,
+                slots=[],
+                keys=[],
+                reason="; ".join(parts),
+            )
         )
     return out
 
