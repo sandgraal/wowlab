@@ -321,6 +321,9 @@ class KeyMap(_Model):
     keys_left_out: int | None
     cannot_place: str | None  # why there is no action-bar record to place keys with
     cannot_compare: str | None  # why there is no bindings record to compare the files with
+    # Why a key bound in the client may be missing from `keys` (no bindings
+    # record, or one that dropped values); None when the record is complete.
+    keys_incomplete: str | None
     notes: list[str]
 
 
@@ -562,6 +565,14 @@ def join(
         keys_left_out=binds.keys_left_out if binds is not None else None,
         cannot_place=cannot_place,
         cannot_compare=cannot_compare,
+        keys_incomplete=(
+            "there is no bindings record, so only the files' lines are read, and a file may "
+            "leave out keys at the client's defaults [verify]"
+            if cannot_compare is not None
+            else "the bindings record is incomplete, so a key may be one it dropped"
+            if binds_note is not None
+            else None
+        ),
         notes=notes,
     )
 

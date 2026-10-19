@@ -146,6 +146,7 @@ from wowlab_core import (
     lookstore,
     luadata,
     macrocheck,
+    macroplace,
     pathfacts,
     process,
     profiles,
@@ -7972,6 +7973,294 @@ _AGREEMENTS: tuple[keymap.Agreement, ...] = (
     "not in a file",
     "cleared",
 )
+
+
+class CharMacrosFile(_Out):
+    """One `macros-cache.txt` `char macros` looked for."""
+
+    scope: macrocheck.MacroScope
+    path: str | None  # relative to the flavor folder; None: there is no such file
+    mtime_ns: int | None
+    macros: int
+    unknown_lines: int  # lines outside any macro: kept, not read
+
+
+class CharMacro(_Out):
+    """One macro record (`macros list`'s `MacroItem`, with its scope, file
+    and `VER` line), where it may sit (`macroplace.Placement`), and what
+    `macros check`'s rules said about it, in the checker's words."""
+
+    scope: macrocheck.MacroScope
+    file: str  # relative to the flavor folder
+    position: int  # 1-based, in its file's order
+    line: int  # 1-based line of the VER header in its file
+    id: str
+    name: str
+    icon: str
+    body_lines: list[str]
+    complete: bool  # False: the file ends before this macro's END
+    bytes: int
+    characters: int
+    placement: macroplace.Placement
+    findings: list[macrocheck.Finding]
+    cannot_judge: list[macrocheck.CannotJudge]
+
+
+class CharMacrosReport(_Out):
+    """`wowlab char macros --json`: every record of the account and character
+    `macros-cache.txt`, each with the action slots the candidate numbering
+    puts it at and the keys that reach them (`macroplace`, never more than
+    `unconfirmed`), and the `macros check` findings for it. `cannot_judge`
+    holds what the checker could not judge for any macro."""
+
+    flavor_folder: str
+    account: str
+    character: str | None  # "<realm folder>/<character folder>"; None: no character chosen
+    chosen_by: Literal["--character", "latest"] | None
+    files: list[CharMacrosFile]
+    bindings_files: list[CharBindsFile]  # where the keys come from, with the record
+    record_file: str | None  # the character's WowLab.lua: action bars, bindings, spellbook
+    record_mtime_ns: int | None
+    record_schema: int | None
+    record_error: str | None  # why no WowLab.lua was read
+    macros: list[CharMacro]
+    cannot_judge: list[macrocheck.CannotJudge]
+    # Why a key bound in the client may be missing from the placements' keys
+    # (`keymap.KeyMap.keys_incomplete`); None when the bindings record is complete.
+    keys_incomplete: str | None
+    notes: list[str]
+
+
+def _char_macros_file(
+    lay: layout.Layout, acct: layout.Account, folder: tuple[str, str] | None
+) -> tuple[CharMacrosFile, list[macrocheck.SourceMacro]]:
+    """The account file (`folder` None) or one character folder's file, read
+    as `macros check` reads it."""
+    scope: macrocheck.MacroScope = "account" if folder is None else "character"
+    who = None if folder is None else f"{folder[0]}/{folder[1]}"
+    _, found = _wtf_file(lay, "macros-cache.txt", scope, acct.folder, who)
+    if found is None:
+        return CharMacrosFile(scope=scope, path=None, mtime_ns=None, macros=0, unknown_lines=0), []
+    data = snapshot.read_regular_file(lay.flavor_path / found.path, limit=_MACROS_LIMIT)
+    doc = wtfconfig.parse_macros(data)
+    return (
+        CharMacrosFile(
+            scope=scope,
+            path=found.path,
+            mtime_ns=found.mtime_ns,
+            macros=len(doc.macros),
+            unknown_lines=len(doc.unknown_lines()),
+        ),
+        [macrocheck.SourceMacro(scope=scope, file=found.path, macro=m) for m in doc.macros],
+    )
+
+
+@char_app.command("macros")
+@_handled
+def char_macros(
+    character: CharacterOpt = None,
+    account: AccountOpt = None,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+) -> None:
+    """The macros of the account and one character's macros-cache.txt, each
+    with the action slots it may sit at and the keys that reach them, and
+    what macros check finds in it. Which file macro a macro slot names is
+    not known, so a slot is only ever "may sit at slot n (unconfirmed)".
+    The slots and keys come from the lab-addon record (schema 3). Without
+    --character, the character whose WowLab.lua was written last. Reads
+    only. JSON: CharMacrosReport."""
+    _, chosen, lay = _open(root, flavor)
+    acct = _select_account(lay, account)
+    target, how, record, record_error = _coach_record(lay, acct, character)
+    folder: tuple[str, str] | None = None
+    if target is not None and target.realm_folder and target.character_folder:
+        folder = (target.realm_folder, target.character_folder)
+    elif character is not None:
+        char = _select_character(acct, character)
+        folder = (char.realm_folder, char.folder)
+    lab_files = [
+        f
+        for f in lay.saved_variables()
+        if f.account == acct.folder and f.scope == "character" and _is_lab_file(f)
+    ]
+    if folder is None and lab_files:
+        # The latest folder's files could not be told apart (case variants):
+        # it is still the character `char show` would take.
+        top = max(lab_files, key=lambda f: (f.mtime_ns, f.path))
+        if top.realm_folder and top.character_folder:
+            folder, how = (top.realm_folder, top.character_folder), "latest"
+    unread = folder is not None and any(
+        (f.realm_folder, f.character_folder) == folder for f in lab_files
+    )
+    who = f"{folder[0]}/{folder[1]}" if folder is not None else None
+    files: list[CharMacrosFile] = []
+    sources: list[macrocheck.SourceMacro] = []
+    for where in (None, folder) if folder is not None else (None,):
+        found, read = _char_macros_file(lay, acct, where)
+        files.append(found)
+        sources.extend(read)
+    account_bindings, account_doc = _char_binds_file(lay, acct, None)
+    bindings_files = [account_bindings]
+    character_doc = None
+    if folder is not None:
+        character_bindings, character_doc = _char_binds_file(lay, acct, folder)
+        bindings_files.append(character_bindings)
+    no_record = (
+        f"no lab-addon record: {record_error}"
+        if record_error is not None
+        else f"no lab-addon record ({keymap.GET_RECORD})"
+    )
+    keys = keymap.join_record(
+        account=account_doc, character=character_doc, record=record, no_record=no_record
+    )
+    if isinstance(record, labaddon.CharDBV3):
+        bars, no_bars = record.actionbars, f"no action-bar record ({keymap.GET_RECORD})"
+    elif record is not None:
+        bars = None
+        no_bars = f"no action-bar record (schema {record.schema_} has none; {keymap.GET_RECORD})"
+    else:
+        bars, no_bars = None, no_record
+    if record is None and (target is not None or unread):
+        # `macros check`'s words for a record it found and could not read.
+        place = target.path if target is not None else "the WowLab.lua"
+        no_book = f"no spellbook record: {place} was not read"
+    elif folder is None:
+        no_book = "no spellbook record (no character chosen; use --character)"
+    else:
+        no_book = macrocheck.NO_RECORD
+    checked = macrocheck.check(sources, record, character=who, no_record=no_book)
+    positions: dict[macrocheck.MacroScope, int] = {"account": 0, "character": 0}
+    order: list[tuple[macroplace.MacroScope, int]] = []
+    for s in sources:
+        positions[s.scope] += 1
+        order.append((s.scope, positions[s.scope]))
+    placed = macroplace.place(order, bars, keys.keys, no_bars=no_bars)
+    macros: list[CharMacro] = []
+    for s, (_, position), placement, counted in zip(
+        sources, order, placed, checked.macros, strict=True
+    ):
+        ref = macrocheck.MacroRef(scope=s.scope, id=s.macro.macro_id, line=counted.line)
+        macros.append(
+            CharMacro(
+                scope=s.scope,
+                file=s.file,
+                position=position,
+                line=counted.line,
+                id=s.macro.macro_id,
+                name=s.macro.name,
+                icon=s.macro.icon,
+                body_lines=list(s.macro.body_lines),
+                complete=s.macro.complete,
+                bytes=counted.bytes,
+                characters=counted.characters,
+                placement=placement,
+                findings=[f for f in checked.findings if f.macro == ref],
+                cannot_judge=[c for c in checked.cannot_judge if c.macro == ref],
+            )
+        )
+    report = CharMacrosReport(
+        flavor_folder=chosen.folder,
+        account=acct.folder,
+        character=who,
+        chosen_by=how if how is not None else ("--character" if character is not None else None),
+        files=files,
+        bindings_files=bindings_files,
+        record_file=target.path if target else None,
+        record_mtime_ns=target.mtime_ns if target else None,
+        record_schema=record.schema_ if record is not None else None,
+        record_error=record_error,
+        macros=macros,
+        cannot_judge=[c for c in checked.cannot_judge if c.macro is None],
+        keys_incomplete=keys.keys_incomplete,
+        notes=[
+            macroplace.CANDIDATE_RULE,
+            *keys.notes,
+            f"Length: counted in {macrocheck.LENGTH_UNIT}; the client's limit is "
+            f"{macrocheck.LENGTH_LIMIT}, and whether it counts characters or bytes is [verify].",
+            *_MACROS_CHECK_NOTES,
+        ],
+    )
+    if json_out:
+        _emit(report)
+        return
+    _say_char_macros(report)
+
+
+def _placement_lines(p: macroplace.Placement, keys_incomplete: str | None) -> list[str]:
+    lines = [f"placement: {p.status}: {p.reason}"]
+    for s in p.slots:
+        lines.append(f"may sit at slot {s.slot} ({p.status}): {s.page_note}")
+        reach = [k for k in p.keys if k.slot == s.slot]
+        if not reach:
+            among = f", among the keys read ({keys_incomplete})" if keys_incomplete else ""
+            lines.append(f"  no key reaches it on the page its bar shows by default{among}")
+        for k in reach:
+            lines.append(f"  key {k.key} ({k.command}; {_source_words(k)})")
+    return lines
+
+
+def _say_char_macros(report: CharMacrosReport) -> None:
+    if report.character is None:
+        _say(
+            f"Character: none in account {report.account} has a {labaddon.LAB_FILE_NAME}; "
+            "the account macros only (choose a character with --character)"
+        )
+    else:
+        picked = " (written last; choose another with --character)" * (report.chosen_by == "latest")
+        _say(f"Character: {report.character} in account {report.account}{picked}")
+    if report.record_file is None:
+        _say(f"Record: none ({report.record_error or keymap.GET_RECORD})")
+    elif report.record_error is not None:
+        _say(f"Record: {report.record_file} not read ({report.record_error})")
+    else:
+        assert report.record_mtime_ns is not None
+        _say(
+            f"Record: {report.record_file} (schema {report.record_schema}), written "
+            f"{_local_time(report.record_mtime_ns)} (the file's modification time)"
+        )
+    for f in report.files:
+        label = f"{f.scope.capitalize()} macros"
+        if f.path is None or f.mtime_ns is None:
+            _say(f"{label}: no macros-cache.txt")
+            continue
+        unknown = f", {f.unknown_lines} line(s) outside any macro not read" * bool(f.unknown_lines)
+        _say(
+            f"{label}: {_plural(f.macros, 'macro')} in {f.path}{unknown}, written "
+            f"{_local_time(f.mtime_ns)}"
+        )
+    for b in report.bindings_files:
+        label = "Account bindings" if b.scope == "account" else "Character bindings"
+        if b.path is None or b.mtime_ns is None:
+            _say(f"{label}: no bindings-cache.wtf")
+        else:
+            _say(f"{label}: {b.path}, written {_local_time(b.mtime_ns)}")
+    may_sit = sum(1 for m in report.macros if m.placement.status != "none")
+    found = sum(len(m.findings) for m in report.macros)
+    _say(
+        f"Macros: {len(report.macros)} ({may_sit} with a candidate slot, "
+        f"{len(report.macros) - may_sit} with none; {_plural(found, 'finding')})"
+    )
+    for m in report.macros:
+        cut = " (the file ends before this macro's END)" * (not m.complete)
+        _say(
+            f'  {m.scope} macro {m.position} "{m.name}" (id {m.id}, icon {m.icon}, line {m.line}, '
+            f"{_plural(m.characters, 'character')}){cut}"
+        )
+        for line in m.body_lines:
+            _say(f"      {line}")
+        for line in _placement_lines(m.placement, report.keys_incomplete):
+            _say(f"    {line}")
+        for finding in m.findings:
+            _say(f"    finding {finding.rule} (line {finding.line}): {finding.detail}")
+        for c in m.cannot_judge:
+            _say(f"    cannot judge {c.rule} (line {c.line}): {c.reason}")
+    _say(f"Cannot judge for any macro: {len(report.cannot_judge)}")
+    for c in report.cannot_judge:
+        _say(f"  {c.rule}: {c.reason}")
+    for note in report.notes:
+        _say(note)
 
 
 # ─── looks ───────────────────────────────────────────────────────────────────
