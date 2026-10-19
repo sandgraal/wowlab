@@ -3843,6 +3843,8 @@ bodies and item names are player text and are never interpreted as markup.
   deferred (§14.8) and there is no `talents` command to embed; it returns
   with char-planner.
 
+*Amended 2026-10-19 (M15-01, the first Wave 6 ticket, owner's ask of the same day):* the Character tab gains one button under the gear table, **See it dressed**, which opens, in the player's own browser, an outside dressing room (Wowhead's for the client's flavor **[verify]**) at an address the server builds from the picked character's race and class ids and its equipped items' item ids and bonus ids, the fields `char gear --json` already carries. The address holds no name, realm, account, path or token. The Lab makes no request: the page renders an `<a href>` with `target="_blank"` and `rel="noopener noreferrer"`, the CSP is unchanged, and clicking is the player's act (ADR-0019 and ADR-0031 amendments of 2026-10-19). The address grammar is not documented by the site, so the builder is graded on recorded examples with a provenance row and fails closed: when the gear has no item the builder can place, or the site's grammar is unknown for this flavor, the button is replaced by the same list of item ids with a Copy button. Whether a Forever-era character's items render there is **[verify]** until the owner tries it.
+
 ### 16.4 What is known, and what is [verify]
 
 - **Item links.** `docs/LAB_FORMATS.md` §4.2 and its amendments: the
