@@ -7,10 +7,11 @@ another directory, or `.build.info` for a FIFO, a link or another file, at
 one point between the check and the read, by wrapping the call that comes
 just before that point.
 
-Every test runs twice: with `O_NOFOLLOW` (POSIX: the folder is held by a
-descriptor opened `O_DIRECTORY | O_NOFOLLOW`) and with
-`snapshot._O_NOFOLLOW` set to 0, the stand-in for Windows, where there are
-no folder descriptors and the folder is `lstat`ed each side of the read.
+Every test runs twice: on the platform as it is (POSIX: the folder is held
+by a descriptor opened `O_DIRECTORY | O_NOFOLLOW`; Windows: no descriptor)
+and with `snapshot._O_NOFOLLOW` set to 0, the stand-in for Windows, where
+there are no folder descriptors and the folder is `lstat`ed each side of
+the read. Which of the two a run took is asked of `install._folder_fds`.
 A 5 s alarm stops any test whose read would block.
 """
 
@@ -66,11 +67,16 @@ def _alarm() -> Iterator[None]:
         signal.signal(signal.SIGALRM, previous)
 
 
-@pytest.fixture(params=[True, False], ids=["o-nofollow", "no-o-nofollow"])
+@pytest.fixture(params=[True, False], ids=["platform", "no-o-nofollow"])
 def nofollow(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> bool:
+    """True when the folder is held by a descriptor in this run: the
+    platform as it is (POSIX: yes; Windows, which has no `O_NOFOLLOW` and no
+    `dir_fd`: no), or with `snapshot._O_NOFOLLOW` set to 0, the stand-in for
+    Windows (no). Asked of `install._folder_fds`, never assumed from the id,
+    so on Windows both runs take the `lstat` floor and say so."""
     if not request.param:
         monkeypatch.setattr(snapshot, "_O_NOFOLLOW", 0)
-    return bool(request.param)
+    return install_mod._folder_fds()
 
 
 def _install(base: Path) -> Path:
