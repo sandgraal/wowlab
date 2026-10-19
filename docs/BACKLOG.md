@@ -860,7 +860,7 @@ Found while building and reviewing M13-49 (#257), both pre-existing on `main`. (
 
 ---
 
-## [ ] M13-54 — Discovery can still read through a flavor folder swapped for a link after the scan
+## [x] M13-54 — Discovery can still read through a flavor folder swapped for a link after the scan
 **Size:** S · **Depends on:** M13-46
 
 Found in the code review of #256 (M13-46), on `main` before it too. `O_NOFOLLOW` guards only the last path component: a `_*_` folder replaced by a link to a directory between `_scan_children` and `_read_flavor_product` is read through (`flavors` held the link target's product in a constructed probe), against §6.1's M13-37 amendment. Closing it needs a directory descriptor on POSIX (`O_DIRECTORY|O_NOFOLLOW` on the flavor folder, an identity check against the scan's `lstat`, then `open_regular_file` with `dir_fd`) and a stated answer for Windows, where `os.open` has no `dir_fd` (an `lstat` of the folder each side of the read is the likely floor). Same family, same fix pattern: the root `.build.info` is `stat`-then-`read_bytes`, so a FIFO or device swapped in between blocks discovery forever; reuse `snapshot.read_regular_file(..., expect=…)` there. Labelled constructed tests for both, with the POSIX and the Windows paths exercised as M13-46's race tests do. The spec amendment (§6.1) names what the Windows floor leaves open.
