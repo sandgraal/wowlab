@@ -79,7 +79,7 @@
 </div>
 </section>
 <section id="character-view" role="tabpanel" aria-labelledby="tab-character" hidden>
-<p class="intro">One character as the lab-addon last saved it: the file it wrote at logout or <code>/reload</code>, never the session in progress, beside the key bindings and macros the client last wrote. Read only: this tab runs <code>wowlab char list</code>, <code>wowlab char gear</code>, <code>wowlab char binds</code> and <code>wowlab char macros</code> and nothing else. An item's name is its link's own text, and nothing is fetched.</p>
+<p class="intro">One character as the lab-addon last saved it: the file it wrote at logout or <code>/reload</code>, never the session in progress, beside the key bindings and macros the client last wrote. Read only: this tab runs <code>wowlab char list</code>, <code>wowlab char gear</code>, <code>wowlab char binds</code> and <code>wowlab char macros</code> and nothing else. An item's name is its link's own text, and nothing is fetched. <strong>See it dressed</strong> opens an outside dressing room in your own browser, and only when you click it; this page makes no request to it.</p>
 <div class="toolbar panel">
 <label>Character <select id="char-picker" disabled></select></label>
 <p id="char-status" role="status"></p>
@@ -88,6 +88,11 @@
 <section id="char-gear-panel" class="panel char-panel">
 <div id="char-header"></div>
 <div id="char-gear"></div>
+<div id="char-dressing" class="char-dressing" hidden>
+<a id="char-dressing-link" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>See it dressed</a>
+<p id="char-dressing-note" class="dressing-note"></p>
+<div id="char-dressing-items" class="dressing-items" hidden></div>
+</div>
 </section>
 <section id="char-keys-panel" class="panel char-panel" aria-labelledby="char-keys-title">
 <h3 id="char-keys-title">Keys</h3>

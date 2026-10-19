@@ -1,0 +1,55 @@
+{
+  "what": "Two dressing-room addresses recorded on 2026-10-19 for the two schema-4 characters of this run (M15-02). Each was made by the site's own encoder (WH.calc.encode.template, hash version 15) in the room's page from the inputs listed, then opened in the room, which decoded it into exactly those inputs. No byte of any file from the install or the site is here: only the inputs, the address and what the site showed.",
+  "site": "Wowhead",
+  "room": "forever",
+  "recorded": "2026-10-19",
+  "client_version": "1.60.1.70450",
+  "render": "The 3D model did not draw in the browser the examples were tried in (a default figure; WebGL2 present; cause not found). Whether it draws in a player's own browser is the owner's check (docs/LAB_PLAN.md §16.3, [verify]).",
+  "examples": [
+    {
+      "record": "macos-70450/forever/WTF/Account/90000001#6/1/Dangling-Participle/SavedVariables/WowLab.lua",
+      "race_id": 2,
+      "gender": 0,
+      "class_id": 8,
+      "level": 10,
+      "slots": [
+        {"room": 3, "game": 15, "item_id": 6520, "bonus_id": 0},
+        {"room": 4, "game": 5, "item_id": 4916, "bonus_id": 0},
+        {"room": 5, "game": 4, "item_id": 6096, "bonus_id": 0},
+        {"room": 7, "game": 9, "item_id": 281269, "bonus_id": 0},
+        {"room": 8, "game": 10, "item_id": 1377, "bonus_id": 0},
+        {"room": 9, "game": 6, "item_id": 3363, "bonus_id": 0},
+        {"room": 10, "game": 7, "item_id": 3291, "bonus_id": 0},
+        {"room": 11, "game": 8, "item_id": 1427, "bonus_id": 0},
+        {"room": 12, "game": 16, "item_id": 5778, "bonus_id": 0}
+      ],
+      "left_out_game_slots": [],
+      "address": "https://www.wowhead.com/forever/dressing-room#fM80R0a89c877Qz2L808zTO808zSo87czpEj808AK808558084K808LE808zHl87s",
+      "site_showed": "Equipped: all nine items, in Back, Chest, Shirt, Wrist, Hands, Waist, Legs, Feet and Two-Hand; page state race 2, gender 0, class 8, level 10; an Orc race icon.",
+      "site_rewrote_to": "https://www.wowhead.com/forever/dressing-room#fM80R0a89c8u8oV8G8ol8I8o28N8ks8rb8MKS8Mx4808MSD8ATK8fk8M1A877xz2L808zTO808zSo87czpEj808AK808558084K808LE808zHl87s"
+    },
+    {
+      "record": "macos-70450/forever/WTF/Account/90000001#6/1/Sangraal-Sett/SavedVariables/WowLab.lua",
+      "race_id": 5,
+      "gender": 0,
+      "class_id": 9,
+      "level": 15,
+      "slots": [
+        {"room": 3, "game": 15, "item_id": 2310, "bonus_id": 0},
+        {"room": 4, "game": 5, "item_id": 9749, "bonus_id": 12720},
+        {"room": 7, "game": 9, "item_id": 14122, "bonus_id": 12745},
+        {"room": 8, "game": 10, "item_id": 6541, "bonus_id": 12745},
+        {"room": 9, "game": 6, "item_id": 6539, "bonus_id": 12745},
+        {"room": 10, "game": 7, "item_id": 9747, "bonus_id": 12748},
+        {"room": 11, "game": 8, "item_id": 14114, "bonus_id": 12745},
+        {"room": 12, "game": 16, "item_id": 2632, "bonus_id": 12720},
+        {"room": 13, "game": 17, "item_id": 15969, "bonus_id": 12730},
+        {"room": 14, "game": 18, "item_id": 5071, "bonus_id": 0}
+      ],
+      "left_out_game_slots": [11],
+      "address": "https://www.wowhead.com/forever/dressing-room#fV80s0f89c877QDU808MZV8cPh87mmqn8cPK8z2P8cPK8z2K8cPK8MZc8cPQ8mqG8cPK8PN8cPh808mKu8cPn808zyp87c",
+      "site_showed": "Equipped: all ten items with their suffixed names, in Back, Chest, Wrist, Hands, Waist, Legs, Feet, One-Hand, Held In Off-hand and Ranged; page state race 5, gender 0, class 9, level 15; an Undead race icon.",
+      "site_rewrote_to": null
+    }
+  ]
+}

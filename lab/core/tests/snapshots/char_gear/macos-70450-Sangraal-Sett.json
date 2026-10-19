@@ -343,5 +343,10 @@
     "Item names are each link's bracketed text; nothing is fetched. The link fields past the item id (enchant, gems, suffix, specialization, bonus ids) are named as community documentation names them [verify]; \"upgrade\" (field 10 and the modifier pairs) is the older documentation's name for those fields, and the upgrade track itself is carried in bonus ids.",
     "Item levels and the averages are the client's figures as recorded, never derived from bonus ids. The averages are GetAverageItemLevel's returns, not the mean of the item levels listed, and how the client computes them is not known.",
     "overall: on Retail, the best items owned, bags included (community documentation, [verify] on Forever)."
-  ]
+  ],
+  "dressing": {
+    "url": "https://www.wowhead.com/forever/dressing-room#fV80s0f89c877QDU808MZV8cPh87mmqn8cPK8z2P8cPK8z2K8cPK8MZc8cPQ8mqG8cPK8PN8cPh808mKu8cPn808zyp87c",
+    "site": "Wowhead",
+    "note": "Opens Wowhead's forever dressing room in your browser when you click it; wowlab itself sends nothing. The address holds race 5, body type 0, class 9, level 15 (the record's), and the item id and first bonus id of 10 equipped items. Left out, with no slot in the room: slot 11 Finger 1. The look is the room's default for the race (the record's customization is not passed). Whether the room draws this client's items is [verify]."
+  }
 }

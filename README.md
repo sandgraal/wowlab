@@ -25,7 +25,7 @@
 
 - **Read-only by default.** Looking at your install never writes to it: no temp, cache or lock file.
 - **Every command that changes files in your install asks first** (unless you pass `--yes`), refuses while the game is running, and goes through one write gate that takes a snapshot before it writes. `wowlab undo` reverses the change.
-- **Nothing is uploaded.** The only network traffic is to [wago.tools](https://wago.tools), for public game data. `wowlab doctor` downloads its list of game versions (`wowlab doctor --offline` skips that). `db2` and `looks` download game tables, sending your game's version number to ask for the matching ones; they have no `--offline`. Nothing else from your install is sent, and commands that use no game data make no request.
+- **Nothing is uploaded.** The only network traffic is to [wago.tools](https://wago.tools), for public game data, and a link you click opens in your own browser. `wowlab doctor` downloads its list of game versions (`wowlab doctor --offline` skips that). `db2` and `looks` download game tables, sending your game's version number to ask for the matching ones; they have no `--offline`. Nothing else from your install is sent, and commands that use no game data make no request.
 - **It never touches the game itself:** no game memory, no `Data/` or program files, no key presses. Addon data is read as data, never run.
 
 **📦 Install** (you need [uv](https://docs.astral.sh/uv/); it brings Python 3.12):
@@ -180,7 +180,7 @@ Snapshot store: ~/Library/Application Support/wowlab/store (not created yet)
 | 🚪 | **One door for every change.** | Anything wowlab writes goes through a single *write gate*. The gate refuses while the game is running, takes a snapshot first, records what it did, and replaces files atomically. There is no "force" switch that skips any of that. |
 | 🚫 | **No Lua is ever run.** | Addon data is read as data by a strict parser. Functions or code in a saved file are refused, never executed. |
 | 🧱 | **Nothing is lost.** | The parsers keep every byte they don't understand. An unedited file comes back byte for byte. |
-| 🏠 | **Stays on your machine.** | No accounts, no server, no uploads. The only network access is to wago.tools, for public game data: the version list `wowlab doctor` checks (`--offline` skips it) and the game tables `db2` and `looks` download, which send your game's version number. |
+| 🏠 | **Stays on your machine.** | No accounts, no server, no uploads. The only network access is to wago.tools, for public game data: the version list `wowlab doctor` checks (`--offline` skips it) and the game tables `db2` and `looks` download, which send your game's version number, and a link you click opens in your own browser. |
 | ⛔ | **Clearly out of bounds, permanently.** | No memory reading, no injection, no packet tampering, no input automation, no touching game `Data/` or executables, no bypassing integrity checks ([ADR-0023](docs/DECISIONS.md)). wowlab only changes what the game itself treats as your settings. |
 
 ## ⚙️ How it works

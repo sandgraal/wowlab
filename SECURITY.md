@@ -58,8 +58,8 @@ not a pseudonym. If you find one of these in a fixture, do this:
   input automation (ADR-0023). `psutil` lists processes and nothing else.
   Code that crosses that line is a vulnerability, whatever its intent.
 - **Nothing leaves the machine.** The only network traffic is downloading
-  public game tables. Anything that transmits data read from an install is
-  a vulnerability.
+  public game tables, and a link you click opens in your own browser.
+  Anything that transmits data read from an install is a vulnerability.
 - **Secrets.** The project needs no credentials. gitleaks runs on every
   commit and on full history in CI; push protection is enabled.
 - **CI.** Workflow permissions are least-privilege; secrets are unavailable
