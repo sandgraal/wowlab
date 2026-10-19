@@ -19,8 +19,10 @@ real browser is reported in the PR.
 
 Owner of this file: test-writer, since the audit of 2026-10-16 (M13-25 was
 exempted from graders-first; the terms were a test-writer audit and
-takeover). The implementer does not edit it; a grader that is wrong is
-reported.
+takeover). Since the owner decision of 2026-10-17 (AGENTS.md) `wowlab_core.ui`
+is out of the graders-first set and its tests are the implementer's, graded
+by the reviewers; M14-08 widened one set here (the Character tab's two read
+commands).
 
 What the audit added:
 - The page's behaviour, driven under Node with a stand-in DOM whose HTML
@@ -419,9 +421,19 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
     }
     # M13-25 runs the first three; M13-27 adds `filemap gaps` and may drop
     # `install show`. A Preview runs a view's command, which is data, not a
-    # literal here; its own graders are in test_ui_explorer_stage2.py.
+    # literal here; its own graders are in test_ui_explorer_stage2.py. The
+    # Character tab (M14-08) runs `char list` and `char gear`, both read
+    # commands; that only that tab runs them is graded in
+    # test_ui_character.py.
     assert {("tree",), ("explain",)} <= used, used
-    assert used <= {("install", "show"), ("tree",), ("explain",), ("filemap", "gaps")}, used
+    assert used <= {
+        ("install", "show"),
+        ("tree",),
+        ("explain",),
+        ("filemap", "gaps"),
+        ("char", "list"),
+        ("char", "gear"),
+    }, used
     for path in used:
         assert path in offered, path
         assert offered[path]["excluded"] is None, path

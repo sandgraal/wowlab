@@ -23,6 +23,7 @@
 <button id="tab-explorer" class="tab" type="button" role="tab" aria-selected="true" aria-controls="explorer-view">Explorer</button>
 <button id="tab-gaps" class="tab" type="button" role="tab" aria-selected="false" aria-controls="gaps-view">Gaps</button>
 <button id="tab-commands" class="tab" type="button" role="tab" aria-selected="false" aria-controls="commands-view">Commands</button>
+<button id="tab-character" class="tab" type="button" role="tab" aria-selected="false" aria-controls="character-view">Character</button>
 </nav>
 </header>
 <main>
@@ -73,6 +74,19 @@
 <div id="result-tree" class="jt" hidden></div>
 <details id="result-raw" class="jt-raw" hidden><summary>Output as printed</summary><pre id="stdout"></pre></details>
 <pre id="stderr"></pre>
+</section>
+</div>
+</section>
+<section id="character-view" role="tabpanel" aria-labelledby="tab-character" hidden>
+<p class="intro">One character as the lab-addon last saved it: the file it wrote at logout or <code>/reload</code>, never the session in progress. Read only: this tab runs <code>wowlab char list</code> and <code>wowlab char gear</code> and nothing else. An item's name is its link's own text, and nothing is fetched.</p>
+<div class="toolbar panel">
+<label>Character <select id="char-picker" disabled></select></label>
+<p id="char-status" role="status"></p>
+</div>
+<div id="char-panels" class="char-panels">
+<section id="char-gear-panel" class="panel char-panel" aria-live="polite">
+<div id="char-header"></div>
+<div id="char-gear"></div>
 </section>
 </div>
 </section>

@@ -225,3 +225,37 @@ pre:empty { display: none; }
 .gap-places, .gap-section ul { margin: 0.2rem 0 0.4rem; padding-left: 1.4rem; }
 .gap-place, .gap-not-entered, .gap-link { overflow-wrap: anywhere; unicode-bidi: isolate; }
 .gap-examples { color: var(--muted); font-family: var(--mono); font-size: 0.85rem; }
+/* the Character tab (M14-08): the picker, the header and the gear. The gear
+   sits on a dark backing in both schemes, as in the game, so an item name
+   keeps its quality colour; those rules are not in this file: the server adds
+   them from the shipped gear_slots.toml. Names are bold and large (AA for
+   large text: 3:1). The keys and macros panels (M14-09) join .char-panels. */
+#char-status { margin: 0; color: var(--muted); flex-basis: 100%; overflow-wrap: anywhere; }
+#char-status:empty { display: none; }
+#char-status.error { color: var(--error); }
+.char-panels { display: flex; flex-direction: column; gap: 1rem; }
+.char-panel { min-width: 0; padding: 0.75rem 1rem 1rem; }
+.char-panel h2 { margin: 0 0 0.25rem; color: var(--gold); font-size: 1.35rem; overflow-wrap: anywhere; unicode-bidi: isolate; }
+.char-panel h3 { margin: 0.75rem 0 0.4rem; color: var(--gold); font-size: 1.1rem; }
+.char-facts { margin: 0.4rem 0; display: grid; grid-template-columns: max-content 1fr; gap: 0.2rem 1rem; }
+.char-facts dt { color: var(--gold); font-weight: 600; }
+.char-facts dd { margin: 0; overflow-wrap: anywhere; unicode-bidi: isolate; }
+.char-notes { margin: 0.4rem 0 0.6rem; padding-left: 1.2rem; color: var(--muted); font-size: 0.9rem; }
+.char-error { color: var(--error); overflow-wrap: anywhere; white-space: pre-wrap; }
+.gear-table { width: 100%; max-width: 60rem; border-collapse: collapse; color: #ede4cf; background: #120e09; border: 1px solid #9a7426; }
+.gear-table th { text-align: left; padding: 0.3rem 0.6rem; color: #e3bb55; border-bottom: 1px solid #9a7426; }
+.gear-table td { padding: 0.2rem 0.6rem; border-top: 1px solid #2d2418; vertical-align: baseline; }
+.gear-slot { color: #b8ab90; white-space: nowrap; }
+.gear-level { text-align: right; font-family: var(--mono); white-space: nowrap; }
+.gear-name {
+  font-family: var(--serif); font-size: 1.2rem; font-weight: 700; text-align: left; cursor: pointer;
+  padding: 0; color: #ede4cf; background: none; border: none; overflow-wrap: anywhere; unicode-bidi: isolate;
+}
+.gear-name[aria-expanded="true"] { text-decoration: underline; }
+.gear-empty { color: #b8ab90; font-style: italic; }
+.gear-detail td { padding: 0.35rem 0.6rem 0.7rem 1.5rem; background: #1b1610; }
+.gear-detail dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 0.2rem 1rem; }
+.gear-detail dt { color: #e3bb55; font-weight: 600; }
+.gear-detail dd { margin: 0; overflow-wrap: anywhere; unicode-bidi: isolate; }
+.gear-link { font-family: var(--mono); font-size: 0.85rem; overflow-wrap: anywhere; unicode-bidi: isolate; }
+.gear-table .copy { margin-left: 0.6rem; cursor: pointer; padding: 0.05rem 0.6rem; color: #e3bb55; background: #3a2d18; border: 1px solid #9a7426; border-radius: 4px; font-weight: 600; }

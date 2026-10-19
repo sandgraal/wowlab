@@ -18,7 +18,11 @@ response, refusals and errors included, carries the same
 Content-Security-Policy, which allows the server itself and the page's own
 inline script and style by hash, and nothing else, and no CORS header. The
 page shell is template text in this package (`templates/`), assembled into
-one document: a `<script src>` would be a request without the token.
+one document: a `<script src>` would be a request without the token. Its
+style has one part that is not template text: the rules that draw an item
+name in its quality colour, made from the shipped `gear_slots.toml` (the
+Character tab, M14-08), so neither the script nor the stylesheet holds a
+colour table.
 
 `GET /api/commands` lists the leaves of the Click tree read at start, with
 the home folder and path separator so the page can show home as `~`. `POST
@@ -175,10 +179,28 @@ def _hash_source(text: str) -> str:
     return "'sha256-" + base64.b64encode(digest).decode("ascii") + "'"
 
 
+def _colour_rules() -> str:
+    """One rule per colour code of the shipped slot table that has a colour:
+    an item name of that code (class `gear.colour_class`) is drawn in
+    `gear.colour_rgb`'s colour. Only the shipped table is read, never the
+    player's (the page reads nothing from the home folder): a code only the
+    player's table names is drawn in the text colour. Both helpers return
+    only `[0-9a-z_-]` and hex digits, so a rule cannot carry anything else."""
+    from wowlab_core import gear
+
+    table = gear.shipped_slot_table()
+    rules = ["/* item names in their quality colour, from the shipped gear_slots.toml */"]
+    for code in table.quality:
+        name, rgb = gear.colour_class(code), gear.colour_rgb(code, table)
+        if name is not None and rgb is not None:
+            rules.append(f".gear-name.{name} {{ color: #{rgb}; }}")
+    return "\n".join(rules) + "\n"
+
+
 @functools.cache
 def _shell() -> tuple[bytes, str]:
     """The page (its script and style inline) and the CSP that allows them."""
-    style = _template("page.css")
+    style = _template("page.css") + _colour_rules()
     script = _template("page.js")
     page = (
         _template("page.html")
@@ -202,7 +224,8 @@ def _shell() -> tuple[bytes, str]:
 
 def static_files() -> Mapping[str, bytes]:
     """Every URL path served as a static file, with its exact bytes. All of
-    it is template text from this package's `templates/` folder."""
+    it is template text from this package's `templates/` folder, but for the
+    colour rules made from the shipped slot table (`_colour_rules`)."""
     return {"/": _shell()[0]}
 
 

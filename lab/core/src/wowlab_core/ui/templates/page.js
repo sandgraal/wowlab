@@ -1,5 +1,5 @@
 "use strict";
-// The page of `wowlab ui` (ADR-0029, §15.6). Three views:
+// The page of `wowlab ui` (ADR-0029, §15.6). Four views:
 // - the explorer (M13-25, M13-27): the tree of the whole install from
 //   `tree --install --explain --json`, and the detail of one path from
 //   `explain --json`: its verdict, its snapshot facts, the hints to copy,
@@ -9,7 +9,9 @@
 //   declared parameter, and what one run printed. A command the server marks
 //   `confirm` (M14-02) runs first as its plan; the server alone decides
 //   whether the plan may be confirmed, by handing back a one-time token, and
-//   Confirm sends that token with the plan's own command and parameters.
+//   Confirm sends that token with the plan's own command and parameters;
+// - the character (M14-08): a picker from `char list --json` and the gear of
+//   the one picked from `char gear --json`.
 // It holds no game rules and no file-map logic (§14.5 D3): every fact, the
 // verdict's level and words included, comes from the CLI's JSON, and this
 // script only lays it out. Nothing read from a run is ever parsed as HTML:
@@ -114,8 +116,10 @@
   // ─── running one command ───
 
   // One run through /api/run: {data} with the parsed --json output, or
-  // {error} with what to tell the player.
-  async function runJson(command, params) {
+  // {error} with what to tell the player. With `partial`, a run that ended
+  // with an error and still printed its JSON report gives both (`char list`
+  // lists the characters it could read and exits 1 for the others).
+  async function runJson(command, params, partial) {
     let reply;
     let result;
     try {
@@ -135,7 +139,16 @@
     if (result.truncated) return { error: "wowlab " + command.join(" ") + " printed more than the page can hold." };
     if (result.exit_code !== 0) {
       const text = String(result.stderr || "").trim();
-      return { error: text || "wowlab " + command.join(" ") + " ended with exit code " + result.exit_code + "." };
+      const error = text || "wowlab " + command.join(" ") + " ended with exit code " + result.exit_code + ".";
+      if (partial) {
+        try {
+          const data = JSON.parse(result.stdout);
+          if (data && typeof data === "object") return { data: data, error: error };
+        } catch (_) {
+          // no report: the error alone
+        }
+      }
+      return { error: error };
     }
     try {
       return { data: JSON.parse(result.stdout) };
@@ -505,11 +518,21 @@
     const shell = make("span", "Shell: " + visible(String(hint.shell || "")) + label);
     shell.className = "hint-shell";
     box.appendChild(shell);
+    box.appendChild(copyButton(hint.command, "Copy this command"));
+    if (typeof hint.does === "string" && hint.does) {
+      const does = make("p", shown(hint.does));
+      does.className = "hint-does";
+      box.appendChild(does);
+    }
+    return box;
+  }
+
+  // A Copy button that puts `text` on the clipboard exactly as given.
+  function copyButton(text, label) {
     const copy = make("button", "Copy");
     copy.type = "button";
     copy.className = "copy";
-    copy.setAttribute("aria-label", "Copy this command");
-    const text = hint.command;
+    copy.setAttribute("aria-label", label);
     copy.addEventListener("click", async () => {
       let done = false;
       try {
@@ -525,13 +548,7 @@
         copy.textContent = "Copy";
       }, 2000);
     });
-    box.appendChild(copy);
-    if (typeof hint.does === "string" && hint.does) {
-      const does = make("p", shown(hint.does));
-      does.className = "hint-does";
-      box.appendChild(does);
-    }
-    return box;
+    return copy;
   }
 
   function drawHints(hints) {
@@ -685,7 +702,7 @@
     const folder = byId("flavor").value;
     if (!explorer.root || !explorer.flavors.includes(folder)) return;
     for (const path of firstOpen(folder)) explorer.open.add(path);
-    // Back to the blank choice, so picking the same folder again reopens it.
+    // Return to the blank choice, so picking the same folder again reopens it.
     byId("flavor").value = "";
     drawTree();
   });
@@ -1007,19 +1024,340 @@
     }
   }
 
+  // ─── the character tab (M14-08, §16.3) ───
+  // A picker from `char list --json`, latest-written first, and for the
+  // character picked, a header and its gear from `char gear --json`. Every
+  // name and colour comes from the report: a slot's name is its `slot_name`,
+  // an item's is its `name`, and its colour is a class built from its
+  // `colour` code (`colourClass`) that the server's stylesheet paints from
+  // the slot table. This script holds no slot table and no quality table.
+  // Those two read commands are the only ones this tab runs. The keys and
+  // macros panels (M14-09) join #char-panels.
+
+  const character = {
+    asked: null, // the one `char list` run; asked again after a failure
+    entries: [], // its characters, latest-written first
+    flavor: null, // the flavor folder it read
+    seq: 0, // bumped by every pick, so a reply that arrives late draws nothing
+    // What `char list` said on stderr when it exited with an error (a row it
+    // could not read, a place it could not look inside): the status line
+    // keeps it while characters are read.
+    note: "",
+  };
+
+  function charSay(text, isError) {
+    const node = byId("char-status");
+    node.textContent = text;
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  function charNote() {
+    charSay(character.note, Boolean(character.note));
+  }
+
+  // A file time (`mtime_ns`) in the browser's local time, written as the
+  // CLI's text writes it, without the offset.
+  function localTime(ns) {
+    if (typeof ns !== "number" || !Number.isFinite(ns)) return "time unknown";
+    const when = new Date(Math.floor(ns / 1e6));
+    if (Number.isNaN(when.getTime())) return "time unknown";
+    const two = (n) => String(n).padStart(2, "0");
+    return (
+      when.getFullYear() + "-" + two(when.getMonth() + 1) + "-" + two(when.getDate()) + " " +
+      two(when.getHours()) + ":" + two(when.getMinutes()) + ":" + two(when.getSeconds())
+    );
+  }
+
+  // A row `char gear` can be asked about: read, with its folders named.
+  function readable(entry) {
+    return (
+      Boolean(entry) && (entry.error === null || entry.error === undefined) &&
+      typeof entry.label === "string" && typeof entry.realm_folder === "string" && typeof entry.account === "string"
+    );
+  }
+
+  // Latest-written first; rows with no time last; ties by account and folder.
+  function latestFirst(entries) {
+    const time = (e) => (typeof e.mtime_ns === "number" ? e.mtime_ns : null);
+    const path = (e) => String(e.account) + "/" + String(e.realm_folder) + "/" + String(e.label);
+    return entries.slice().sort((a, b) => {
+      const ta = time(a);
+      const tb = time(b);
+      if (ta !== tb) {
+        if (ta === null) return 1;
+        if (tb === null) return -1;
+        return tb - ta;
+      }
+      return path(a) < path(b) ? -1 : path(a) > path(b) ? 1 : 0;
+    });
+  }
+
+  // The folder label, with its realm (or digits) folder and account when
+  // another row has the same label, and the file's time.
+  function pickLabel(entry, counts) {
+    let text = visible(String(entry.label));
+    if (counts.get(entry.label) > 1) {
+      text += " (" + visible(String(entry.realm_folder)) + ", account " + visible(String(entry.account)) + ")";
+    }
+    if (!readable(entry)) return text + ": not read";
+    return text + ", written " + localTime(entry.mtime_ns);
+  }
+
+  function loadCharacters() {
+    if (!character.asked) {
+      character.asked = (async () => {
+        charSay("Reading the lab-addon's files…", false);
+        const reply = await runJson(["char", "list"], {}, true);
+        const report = reply.data;
+        if (!report || !Array.isArray(report.characters)) {
+          character.asked = null;
+          charSay(reply.error ? shown(reply.error) : "wowlab char list printed something this page does not know.", true);
+          return;
+        }
+        character.note = reply.error ? shown(reply.error) : "";
+        fillPicker(report);
+      })();
+    }
+    return character.asked;
+  }
+
+  function fillPicker(report) {
+    const picker = byId("char-picker");
+    picker.replaceChildren();
+    character.flavor = typeof report.flavor_folder === "string" ? report.flavor_folder : null;
+    character.entries = latestFirst(report.characters.filter((e) => e && typeof e === "object"));
+    const counts = new Map();
+    for (const entry of character.entries) counts.set(entry.label, (counts.get(entry.label) || 0) + 1);
+    character.entries.forEach((entry, at) => {
+      const option = make("option", pickLabel(entry, counts));
+      option.value = String(at);
+      if (!readable(entry)) {
+        option.disabled = true;
+        if (typeof entry.error === "string") option.title = shown(entry.error);
+      }
+      picker.appendChild(option);
+    });
+    const first = character.entries.findIndex(readable);
+    picker.disabled = first < 0;
+    if (first < 0 && character.note) {
+      charNote();
+      return;
+    }
+    if (first < 0) {
+      charSay(
+        character.entries.length
+          ? "No character's file here could be read."
+          : "wowlab char list found no character folder with a lab-addon save. Run it in a terminal for what to do.",
+        false,
+      );
+      return;
+    }
+    charNote();
+    picker.value = String(first);
+    loadGear(character.entries[first]);
+  }
+
+  byId("char-picker").addEventListener("change", () => {
+    const at = byId("char-picker").value;
+    if (!/^[0-9]+$/.test(at)) return;
+    const entry = character.entries[Number(at)];
+    if (readable(entry)) loadGear(entry);
+  });
+
+  async function loadGear(entry) {
+    const seq = ++character.seq;
+    const header = byId("char-header");
+    const body = byId("char-gear");
+    header.replaceChildren(make("h2", visible(entry.label)));
+    body.replaceChildren();
+    charSay("Reading the gear of " + visible(entry.label) + "…", false);
+    // `--character` takes `<realm or digits folder>/<character folder>`.
+    const params = { character: entry.realm_folder + "/" + entry.label, account: entry.account };
+    if (character.flavor) params.flavor = character.flavor;
+    const reply = await runJson(["char", "gear"], params);
+    if (seq !== character.seq) return;
+    charNote();
+    const report = reply.data;
+    if (reply.error || !report || !Array.isArray(report.slots) || !Array.isArray(report.empty_slots)) {
+      // A refusal, a record with no gear, or any other error: the CLI's text.
+      const text = reply.error ? shown(reply.error) : "wowlab char gear printed something this page does not know.";
+      const error = make("p", text);
+      error.className = "char-error";
+      body.appendChild(error);
+      return;
+    }
+    drawCharHeader(entry, report);
+    drawGear(report);
+  }
+
+  function charFact(list, label, value) {
+    list.appendChild(make("dt", label));
+    list.appendChild(make("dd", value));
+  }
+
+  function numberWords(value) {
+    return typeof value === "number" ? String(value) : "not returned";
+  }
+
+  function drawCharHeader(entry, report) {
+    const header = byId("char-header");
+    header.replaceChildren(make("h2", visible(entry.label)));
+    const facts = make("dl");
+    facts.className = "char-facts";
+    charFact(facts, "Character folder", visible(String(report.character)));
+    const spec = report.spec && typeof report.spec === "object" ? report.spec : {};
+    if (typeof spec.absent === "string") charFact(facts, "Spec", visible(spec.absent));
+    else charFact(facts, "Spec id", numberWords(spec.id));
+    const average = report.average && typeof report.average === "object" ? report.average : {};
+    if (typeof average.absent === "string") {
+      charFact(facts, "Average item level", "absent (" + visible(average.absent) + ")");
+    } else {
+      charFact(facts, "Average item level, equipped", numberWords(average.equipped));
+      charFact(facts, "Average item level, overall", numberWords(average.overall));
+    }
+    charFact(facts, "File", shown(String(report.file)));
+    charFact(facts, "Written", localTime(report.mtime_ns) + " (the file's modification time)");
+    header.appendChild(facts);
+    const notes = (Array.isArray(report.notes) ? report.notes : []).filter((n) => typeof n === "string");
+    if (notes.length) {
+      const list = make("ul");
+      list.className = "char-notes";
+      for (const note of notes) list.appendChild(make("li", shown(note)));
+      header.appendChild(list);
+    }
+  }
+
+  // The class the server's stylesheet paints an item name with: the colour
+  // code with its letters in lower case and ":" written "_", as
+  // `gear.colour_class` builds it. A code with no rule keeps the text colour.
+  function colourClass(code) {
+    if (typeof code !== "string" || !/^[0-9A-Za-z:]{1,16}$/.test(code)) return "";
+    return "colour-" + code.toLowerCase().replace(/:/g, "_");
+  }
+
+  function slotLabel(entry) {
+    return typeof entry.slot_name === "string" && entry.slot_name ? visible(entry.slot_name) : "Slot " + entry.slot;
+  }
+
+  function idList(value) {
+    const ids = (Array.isArray(value) ? value : []).filter((n) => typeof n === "number");
+    return ids.length ? ids.map(String).join(", ") : "none";
+  }
+
+  function drawGear(report) {
+    const body = byId("char-gear");
+    body.replaceChildren();
+    // The client's slot order: filled and empty slots by the slot number.
+    const rows = [];
+    for (const slot of report.slots) if (slot && typeof slot.slot === "number") rows.push({ slot: slot, filled: true });
+    for (const slot of report.empty_slots) if (slot && typeof slot.slot === "number") rows.push({ slot: slot, filled: false });
+    rows.sort((a, b) => a.slot.slot - b.slot.slot);
+    body.appendChild(make("h3", "Gear"));
+    const table = make("table");
+    table.className = "gear-table";
+    const head = make("thead");
+    const titles = make("tr");
+    for (const title of ["Slot", "Item", "Item level"]) titles.appendChild(make("th", title));
+    head.appendChild(titles);
+    const rowsBox = make("tbody");
+    for (const row of rows) {
+      if (row.filled) gearRow(rowsBox, row.slot);
+      else emptyRow(rowsBox, row.slot);
+    }
+    table.append(head, rowsBox);
+    body.appendChild(table);
+  }
+
+  function emptyRow(box, slot) {
+    const tr = make("tr");
+    tr.className = "gear-row gear-row-empty";
+    const name = make("td", slotLabel(slot));
+    name.className = "gear-slot";
+    const item = make("td", "empty");
+    item.className = "gear-empty";
+    const level = make("td");
+    level.className = "gear-level";
+    tr.append(name, item, level);
+    box.appendChild(tr);
+  }
+
+  // A filled slot, and its detail row, drawn hidden and shown by a click on
+  // the item's name.
+  function gearRow(box, slot) {
+    const tr = make("tr");
+    tr.className = "gear-row";
+    const slotCell = make("td", slotLabel(slot));
+    slotCell.className = "gear-slot";
+    const itemCell = make("td");
+    const name = make("button", visible(String(slot.name)));
+    name.type = "button";
+    name.className = "gear-name";
+    const colour = colourClass(slot.colour);
+    if (colour) name.classList.add(colour);
+    name.setAttribute("aria-expanded", "false");
+    // The quality in words too, for a screen reader and a pointer.
+    if (typeof slot.quality === "string" && slot.quality) {
+      name.title = visible(slot.quality);
+      name.appendChild(unseen(" (" + visible(slot.quality) + ")"));
+    }
+    itemCell.appendChild(name);
+    const level = make("td", numberWords(slot.item_level));
+    level.className = "gear-level";
+    tr.append(slotCell, itemCell, level);
+    const detail = gearDetail(slot);
+    name.addEventListener("click", () => {
+      detail.hidden = !detail.hidden;
+      name.setAttribute("aria-expanded", detail.hidden ? "false" : "true");
+    });
+    box.append(tr, detail);
+  }
+
+  function gearDetail(slot) {
+    const tr = make("tr");
+    tr.className = "gear-detail";
+    tr.hidden = true;
+    const cell = make("td");
+    cell.colSpan = 3;
+    const list = make("dl");
+    charFact(list, "Item id", typeof slot.item_id === "number" ? String(slot.item_id) : "not in the link");
+    const code = visible(String(slot.colour));
+    charFact(
+      list,
+      "Quality",
+      typeof slot.quality === "string" && slot.quality
+        ? visible(slot.quality) + " (colour code " + code + ")"
+        : "colour code " + code + " is not in the slot table",
+    );
+    charFact(list, "Enchant", typeof slot.enchant_id === "number" ? String(slot.enchant_id) : "none");
+    charFact(list, "Gems", idList(slot.gem_ids));
+    charFact(list, "Bonus ids", idList(slot.bonus_ids));
+    if (slot.crafter_removed === true) charFact(list, "Crafter", "the crafter's GUID was removed from this link");
+    list.appendChild(make("dt", "Link"));
+    const link = make("dd");
+    const raw = make("code", visible(String(slot.raw_link)));
+    raw.className = "gear-link";
+    link.append(raw, copyButton(String(slot.raw_link), "Copy this item link"));
+    list.appendChild(link);
+    cell.appendChild(list);
+    tr.appendChild(cell);
+    return tr;
+  }
+
   // ─── tabs ───
 
   function showTab(name) {
-    for (const which of ["explorer", "gaps", "commands"]) {
+    for (const which of ["explorer", "gaps", "commands", "character"]) {
       const on = which === name;
       byId("tab-" + which).setAttribute("aria-selected", on ? "true" : "false");
       byId(which + "-view").hidden = !on;
     }
     if (name === "gaps") loadGaps();
+    if (name === "character") loadCharacters();
   }
   byId("tab-explorer").addEventListener("click", () => showTab("explorer"));
   byId("tab-gaps").addEventListener("click", () => showTab("gaps"));
   byId("tab-commands").addEventListener("click", () => showTab("commands"));
+  byId("tab-character").addEventListener("click", () => showTab("character"));
 
   // ─── the command list ───
 
