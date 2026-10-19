@@ -31,37 +31,67 @@ text (in place of `gh pr create`, which also goes through GraphQL);
 and `resolve_review_thread` for threads; `update_pull_request` for the body
 and the draft flag; `merge_pull_request` with `merge_method: squash`,
 `expectedHeadSha` set to the head you verified, and `commit_title` the PR
-title with ` (#<n>)`. Try `gh` first; the moment it answers 403 or
-"GraphQL", switch and do not retry `gh`. The merge rule below is the same
-whichever tool runs it. Learned on #266 (2026-10-18):
+title with ` (#<n>)`. In a cloud session, which the conductor's dispatch
+names, use the MCP tools for state, threads and the merge from the start;
+use `gh` only for REST reads and for `gh run rerun <id> --failed` (the one
+infra-flake re-run, a REST write the guard allows and no MCP tool covers),
+and `git` for git; the GraphQL 403 is never hit that way. The merge rule
+below is the same whichever tool runs it. Learned on #266 and #267
+(2026-10-18, M13-60):
 - **Waiting.** `gh pr checks --watch` is GraphQL-backed. A long foreground
   `sleep` and an inline `while … --jq '…select(…)' … done` loop are refused
   by Claude Code's Bash tool, not by `.claude/hooks/` (the repo's guard
-  allows both). Poll from a script file under your scratchpad subfolder,
-  at most every five minutes, with the REST call
-  `gh api repos/sandgraal/wowlab/commits/<sha>/check-runs --jq '.check_runs[] | [.name,.status,.conclusion] | @tsv'`,
-  or call `pull_request_read` `get_check_runs` between steps.
+  allows both). Poll from a script file, at most every five minutes, or
+  call `pull_request_read` `get_check_runs` between steps. A
+  worktree-isolated agent's Bash tool also refuses compound one-liners
+  ("too complex to verify that it stays inside the worktree") and you have
+  no Write tool, so make the script with two plain calls, first
+  `mkdir -p <scratchpad>/<ticket>` and then one `printf '%s\n' '<line>'
+  '<line>' … > <scratchpad>/<ticket>/poll.sh` (each line as one
+  single-quoted argument, so no line may contain a single quote: the jq
+  filters below are double-quoted for that reason, with their inner quotes
+  escaped), and run it with `bash <file> <sha>`, each line below one
+  argument. The lines:
+  `#!/usr/bin/env bash`,
+  `set -eu`,
+  `sha="$1"`,
+  `while true; do`,
+  `  gh api "repos/sandgraal/wowlab/commits/$sha/check-runs" --jq ".check_runs[] | [.name,.status,.conclusion] | @tsv"`,
+  `  if ! gh api "repos/sandgraal/wowlab/commits/$sha/check-runs" --jq ".check_runs[] | select(.status != \"completed\") | .name" | grep -q .; then break; fi`,
+  `  sleep 300`,
+  `done`.
+  The script ends when no check run is still queued or in progress; that
+  is not the same as green, and right after a push it may end on a partial
+  list (next bullet): read the names and conclusions it printed.
 - **Required or not.** Neither route flags a check as required. Cross-check
   the names against `required_status_checks[].context` in
   `.github/rulesets/main.json`; anything not listed there (`review`,
   `lab (macos)`, `lab (windows)`, `Detect doc-only changes`) never holds
-  the merge.
+  the merge. `get_check_runs` right after a push may list only `review`;
+  the required jobs appear a minute or two later, so an empty or partial
+  list is not green, and the set is complete only when every
+  `required_status_checks[].context` of the ruleset is present.
+- **The current head only.** A new push cancels the in-flight CI run and
+  the old head's jobs read `cancelled`; re-read the head sha with `get`
+  before every verdict and judge only the current head. A hold, or any
+  conductor message between tool calls, means re-fetching the head and the
+  thread list before continuing, since both can move during the hold.
 - **State words.** `pull_request_read` `get` gives `mergeable_state`:
   `blocked` while a required check is pending **or has failed** (read the
   check runs to tell which, and a failed required check is the "Failing
   required check" case below, not a wait), `unstable` when only a
   non-required check failed, `clean` otherwise; it has no `reviewDecision`
   or `statusCheckRollup`. `unstable` and `clean` mean the checks allow it.
-- **Threads by REST.** The 403 names REST routes that replace the GraphQL
-  thread queries: `GET repos/{owner}/{repo}/pulls/{n}/ccr/review_threads`
-  and `POST …/ccr/comments/{id}/resolve`. The MCP tools do the same; use
-  whichever answers.
-- **Cleanup.** Claude Code's worktree isolation (not a repo hook) refuses
-  a `cd` to the main checkout, so the cleanup step below cannot run from a
-  cloud session; the auto-clean of unchanged worktrees covers it. Report
-  your worktree path and skip the step (M13-60 decides the lasting rule).
-  The repository deletes the remote branch on merge
-  (`delete_branch_on_merge`); do not try to delete it yourself.
+- **Threads by REST.** `GET repos/{owner}/{repo}/pulls/{n}/ccr/review_threads`
+  lists the threads without GraphQL; `resolve_review_thread` resolves one
+  and `add_reply_to_pull_request_comment` answers one. A bot thread the
+  conductor has already answered (the reply shows under the owner's
+  account) needs no second reply: resolve it only if that reply settles
+  it, and leave it open if it says the thread is routed to the
+  implementer, as the routing rule requires.
+- **Cleanup.** None by you, anywhere: see the Merge section. The
+  repository deletes the remote branch on merge (`delete_branch_on_merge`);
+  do not try to delete it yourself.
 
 Work in the branch's worktree (`pwd`, `git branch --show-current`). If
 `uv` is not found: `export PATH="$HOME/.local/bin:$PATH"`. The scratchpad
@@ -92,11 +122,12 @@ rejected push, `git fetch` and read what is on the remote before you
 ## 2. Watch loop — until merged or blocked
 
 You never receive an external wake-up; a backgrounded poller will not
-resume you. Every wait is one blocking call:
-`gh pr checks <n> --watch --fail-fast` (blocks until checks resolve) or a
-`while … sleep 300 … done` inside a single Bash call (local sessions; in
-a cloud session neither works, see **Waiting** above). Do not spin faster
-than ~5 minutes.
+resume you. Every wait is one blocking call: `gh pr checks <n> --watch
+--fail-fast` (blocks until checks resolve; GraphQL-backed, so not in a
+cloud session), or the poll script from **Waiting** above run with
+`bash <file> <sha>` (an inline `while … sleep 300 … done` is refused by
+the Bash tool under worktree isolation, local or cloud). Do not spin
+faster than ~5 minutes.
 
 Then:
 ```
@@ -178,21 +209,25 @@ the failing test ids from `gh run view <id> --log-failed`, on the report's
 `checks:` line, so the conductor can file it (`windows.yml`'s header: a
 red run on `main` is a bug to fix next, and a red run on the PR is how it
 is seen first). Then
-`gh pr merge <n> --squash --delete-branch` (never `--admin`). Confirm:
+`gh pr merge <n> --squash` (never `--admin`, and no `--delete-branch`: the
+repository deletes the remote branch on merge, and the local half of that
+flag is the cleanup you never do). Confirm:
 `git fetch origin main && git log origin/main -1 --format=%H%n%s`. Do not
 edit `docs/BACKLOG.md`; the conductor batches ticks.
 
-`gh pr merge` may print "fatal: 'main' is already used by worktree …": it
-tried to check out `main` locally after the merge. Ignore it once the
-confirm step above shows your squash commit on `origin/main`.
+`gh pr merge` may print "not on any branch" or a similar local-checkout
+error after the merge. Ignore it once the confirm step above shows your
+squash commit on `origin/main`.
 
-Then clean up, only after that confirmation. From the main checkout
-(`git worktree list` names it; `cd` there by absolute path), run
-`git worktree remove <your worktree path>`, then
-`git branch -D <branch> <worktree-agent-… branch>` for the branch you merged
-and the worktree's own branch if one exists. Never remove a worktree you were
-not dispatched into, and never use `--force` on a worktree with uncommitted
-changes; report it under follow-ups instead.
+You never clean up (lasting rule, M13-60, 2026-10-18). Claude Code's
+worktree isolation, not a repo hook, refuses any command from an isolated
+agent that `cd`s to the main checkout, so `git worktree remove` and
+`git branch -D` cannot run from where you are; every shepherd that tried on
+2026-10-18, local or cloud, was refused. The harness auto-cleans a worktree
+it finds unchanged, and the conductor removes the rest from the main
+checkout after the merge, the implementer's worktree with the merged
+branch included. Report your worktree path and, if you committed anything
+in it, say so, under `cleanup:` in the report.
 
 ## Report — final message
 
@@ -203,5 +238,5 @@ threads: <n> resolved (<n> fixed, <n> answered), <n> open
 checks: all required green @ <sha> | <which failed and why>; non-required: <none failed | job, run url, failing test ids>
 rebases: <n>   lockfile regenerations: <n>
 follow-ups worth a ticket: <bullets, or none>
-cleanup: worktree removed, branches deleted | <what is left and why>
+cleanup: worktree <path> left for the conductor (<unchanged | commits of mine: …>)
 ```
