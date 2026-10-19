@@ -1,9 +1,23 @@
 # Extends the default gitleaks ruleset. Every file is scanned, fixtures
 # included: a capture from a real install must never carry a credential, and
-# gitleaks is what proves it. There is no allowlist. If scrubbed fixture
-# output trips a rule for a benign reason, add a narrow per-line regex here
-# with the reason beside it (ticket M10-02), never a per-file exemption.
+# gitleaks is what proves it. There is no file exemption: a `paths` key on a
+# global allowlist makes gitleaks skip the whole file before it reads a line
+# (seen with 8.30.1, 2026-10-19). If scrubbed fixture output trips a rule for
+# a benign reason, add a narrow per-line regex here with the reason beside it
+# (ticket M10-02), never a per-file exemption.
 title = "wowlab"
 
 [extend]
 useDefault = true
+
+# Derived CASC fixtures (M15-03, ADR-0033): the build key and the encoding
+# file's content and encoding keys are 32-hex-digit MD5 content hashes of
+# public game files (wago.tools lists the build config by the same key), not
+# credentials; `generic-api-key` reads `"..._key": "<hex>"` as one. Only
+# these three field names, only a whole line holding 32 lowercase hex digits.
+# No `paths` key: see the header. Added 2026-10-19 on main because the CI job
+# scans every pushed ref, so one branch's fixture turned every PR's scan red.
+[[allowlists]]
+description = "CASC content hashes in derived fixtures"
+regexTarget = "line"
+regexes = ['''^\s*"(build_key|encoding_ckey|encoding_ekey)": "[0-9a-f]{32}",?$''']
