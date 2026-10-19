@@ -122,8 +122,9 @@ ADRs and tickets in one docs PR; dispatch resumes when it merges.
 
 ## Definition of done
 
-CI green (all required checks); `make ci` output pasted; every acceptance
-criterion has proof; new external-format parsing has a real, scrubbed
+CI green (all required checks); the local proof pasted (`make lint`, the
+tests the diff touches, `make test-fast` once it exists; the full `make ci`
+where the amendment below requires it); every acceptance criterion has proof; new external-format parsing has a real, scrubbed
 fixture with a provenance row; any change to a load-bearing file has
 `make test-parser` and the full suite green and graders activated by marker
 deletion only; nothing writes into an install outside `guard`, and no test
@@ -159,6 +160,8 @@ start of each `/conduct` session and before writing a wave review, it reads
 the latest runs on `main`, and a red one becomes a ticket at the front of the
 frontier. A ticket that touches path handling, `guard`, `snapshot` or
 `process` runs it on its branch before merge.
+
+*Amendment (2026-10-19, owner decision):* the `implementer` and `/ship` no longer run the full `make ci` on every ticket. They run `make lint` (and `make lint-lua` for `lab/addon`), the tests the diff touches and `make test-fast` (M13-79; skipped until the target exists), and the PR's CI is the proof of the full suite, which the shepherd already waits for. The full local `make ci` stays for a diff that touches `guard.py`, `luadata.py`, a format parser, `conftest.py`, the root `pyproject.toml`, `Makefile`, `uv.lock`, `tests/harness`, `.claude/hooks` or `.github/`; AGENTS.md's rules for `guard.py` (the full suite) and for parsers (`make test-parser`) are unchanged. Reviewers are unchanged (one `make ci`, first round, 2026-10-17). *Cost audit, 2026-10-19:* the full suite is about 18 minutes of CI pytest on ubuntu (927 s parallel plus 153 s serial) and 13 on macOS (641 s plus 145 s), and on the owner's Mac it hung, filled the temp dir and the per-worktree `.venv`s, and flaked its load-sensitive probes (M13-31, M13-79). Of the nine failed `ci.yml` runs among the latest 150 (2026-10-18 23:31 to 2026-10-19 21:34 UTC), none was on `main`, and judged from the failing test names none was a regression in a suite far from the diff: five failed in tests of the area the diff itself changed (one of them a reviewer probe), which the touched tests cover; two were load-sensitive (a CPU budget, the UI's run slots), which a loaded local run is worst at; one was the secret scan, and one a Dependabot bump, neither of which an agent runs locally. That is one day of history, and the classification is by test name, not by diff. The price is that a failure only the full suite would catch first shows on CI, one round of about 18 minutes. If that happens twice in a month, restore the full local run and say so here.
 
 *Amendment (2026-10-17, owner decision):* the job also runs on a pull request that touches `lab/**`, `uv.lock`, the root `pyproject.toml` or `conftest.py`, or the workflow itself, still not required, so a POSIX-only test assumption shows on the PR instead of turning `main` red after the merge (M13-36 and M13-43 were found that way). The on-demand run is still the way to get a verdict on a branch without a PR.
 

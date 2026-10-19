@@ -1,12 +1,18 @@
 ---
 name: ship
-description: Verify the current wowlab branch with the full CI set, commit in the project format, push, and open or update a draft PR with the proof the reviewers need.
+description: Verify the current wowlab branch (lint, the tests the diff touches, make test-fast; the full make ci only for the files that need it), commit in the project format, push, and open or update a draft PR with the proof the reviewers need.
 ---
 
 Ship the current branch.
 
-1. `make ci` — lint, tests, parser suite, hook tests — and show the real
-   tail of the output. Any failure stops here; report it instead of shipping.
+1. Verify as `.claude/agents/implementer.md` ("Verify before reporting")
+   says, and show the real tail of each output: `make lint` (and `make
+   lint-lua` for `lab/addon`), the tests the diff touches, and `make
+   test-fast` once it exists. Run the full `make ci` instead when the diff
+   touches `guard.py`, `luadata.py`, a format parser, `conftest.py`, the root
+   `pyproject.toml`, `Makefile`, `uv.lock`, `tests/harness`, `.claude/hooks` or
+   `.github/`. The PR's CI is the proof of the full suite. Any failure stops
+   here; report it instead of shipping.
 2. Run the ticket's own acceptance command(s) (from `docs/BACKLOG.md`) and
    keep the output for the PR body.
 3. Commit as `type(scope): summary (M10-04)`. The lint gate and gitleaks run

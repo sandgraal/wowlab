@@ -69,10 +69,29 @@ return facts in the report format below, not prose.
 
 ## Verify before reporting
 
-Run and paste the tail of the real output of `make ci` (lint, tests, parser
-suite, hook tests). If the ticket has its own acceptance command (a timing
-run, a transcript, a round-trip loop), run that too and paste it. Any
-failure: fix it or report it; never hide it.
+Run these and paste the tail of the real output of each. The PR's CI is the
+proof of the full suite (owner decision, 2026-10-19; `docs/AGENT_WORKFLOW.md`,
+Definition of done), so the full local run is kept for the cases below.
+
+1. `make lint`, and `make lint-lua` when you touched `lab/addon`.
+2. The tests your diff touches: every test file you added or changed, and
+   the tests that exercise each source module you changed (`grep -rl` the
+   module name under `lab/core/tests` and `tests`). One process, no `-n`,
+   with the Bash tool's timeout set: `uv run pytest <files> -q -p
+   no:cacheprovider`. List the files you chose in the report.
+3. `make test-fast`, once the target exists (`make -n test-fast` succeeds;
+   it arrives with M13-79). Until then, skip it.
+
+Run the full `make ci` instead when your diff touches `guard.py` or
+`luadata.py` (AGENTS.md: the full suite and `make test-parser`), any format
+parser (`make test-parser`), `conftest.py`, the root `pyproject.toml`,
+`Makefile` or `uv.lock`, `tests/harness` or `.claude/hooks` (`make
+hooks-test`), or anything under `.github/`. When unsure, run it. A run that
+hangs is stopped by the timeout, never with `pkill`.
+
+If the ticket has its own acceptance command (a timing run, a transcript, a
+round-trip loop), run that too and paste it. Any failure: fix it or report
+it; never hide it.
 
 Then `git push -u origin <branch>` and verify it landed:
 `git ls-remote origin <branch>` must show your HEAD sha (this volume has
