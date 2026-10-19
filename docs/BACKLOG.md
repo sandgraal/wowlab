@@ -1081,6 +1081,14 @@ Found 2026-10-19 in the M14-07 reviews (both reviewers, off that branch), on `ma
 **Acceptance:** the test passes on a case-sensitive runner (CI Linux); byte-identity on the fixtures; `make ci` green; reviewed by `code-reviewer`.
 
 ---
+## [ ] M13-74 — `sv merge --expect` pins the merged bytes, not only the target
+**Size:** S · **Depends on:** M14-03
+
+Found 2026-10-19 in the security review of M14-03 (ruled a follow-up by the conductor: the ticket named the target's sha256 as the pin and allowed one new JSON field). `sv merge --from CHARACTER` reads its source from a live file, and the client rewrites the played character's per-character files at logout, not the target's. So between the plan the page showed and the confirmed run the source can change while the target does not; `--expect <target sha256>` passes and the confirmed run writes values the page never showed (§16.1 "applies the plan that was shown"). A `--from` or `--base` snapshot given as an id prefix can likewise resolve to a different snapshot if the store changes in between. Pin what the merge will write: the merge report gains `merged_sha256` (the sha256 of the bytes `tx.write` will receive) beside `target_sha256`; `--expect` takes `<target>:<merged>` (or a second option, decided in the report) and the confirmed run refuses with exit 3 unless both match, the second check made inside the transaction against `tx.plan[0].before` and the bytes passed to `tx.write`; the UI passes both back. The security-reviewer's probe `lab/core/tests/review/test_m14_03_sv_merge_confirms_a_source_the_page_never_showed.py` (xfail on `main` after M14-03) is activated by marker deletion only. Text output byte-identical to `main` without `--expect`; `--json` gains that one field, listed in the release notes.
+
+**Acceptance:** the probe passes once activated; the drift test for a changed source (constructed, labelled); byte-identity as stated; `make ci` green; reviewed by `security-reviewer` and `code-reviewer`. User-facing: `sv merge --json`, the wiki's `sv merge` page.
+
+---
 
 # M14 — `wowlab ui`: the confirm flow, and the character (Wave 5)
 
