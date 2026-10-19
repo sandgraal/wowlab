@@ -166,11 +166,12 @@ _HOME_PATH = re.compile(
     r"|[A-Za-z]:[\\/]+(?:Users|Documents and Settings)(?:[\\/]|$))",
     re.IGNORECASE,
 )
-# No `#` in the lookbehind: `#123456789#1` and `Home#123456789#1` are the
-# account folder as an anchor (M13-53).
-_ACCOUNT_FOLDER = re.compile(r"(?<!\w)\d{5,}#\d{1,2}(?!\w)|Account[\\/]+\d+(?![\w-])", re.I)
+# The account-folder and BattleTag lookbehinds refuse only a letter or a
+# digit (`[^\W_]`): after `#` (`#123456789#1`, `Home#Abc#1234`, an anchor)
+# or `_` (`Page_123456789#1`) the identifier is still found (M13-53).
+_ACCOUNT_FOLDER = re.compile(r"(?<![^\W_])\d{5,}#\d{1,2}(?!\w)|Account[\\/]+\d+(?![\w-])", re.I)
 _EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?!\w)")
-_BATTLETAG = re.compile(r"(?<![\w#])[^\W\d_]\w{2,11}#\d{4,6}(?!\w)")
+_BATTLETAG = re.compile(r"(?<![^\W_])[^\W\d_]\w{2,11}#\d{4,6}(?!\w)")
 _CREDENTIAL = re.compile(
     r"(?:sk-ant-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})"
     r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"
