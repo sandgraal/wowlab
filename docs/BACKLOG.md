@@ -1050,6 +1050,8 @@ Spec: `docs/LAB_PLAN.md` §16 (2026-10-18). Decisions: ADR-0029 (accepted) for t
 
 The conductor's own ticket, the gate the owner set on 2026-10-18. When the twelve are merged: read the latest `lab (windows)` runs on `main` and file anything red at the front of the frontier; re-read the `--yes` set from the Click tree and record it in §16.1 if it differs from the eight named there; record the opening commit in §16.7; if the owner has reported the two persistence tests (`docs/handoffs/M13-07.md` and `docs/handoffs/M14-binds-persist.md`, the latter written 2026-10-18 at the owner's request), write their dated amendments into `docs/LAB_FORMATS.md` §6 and §7; tick this heading in the same `docs` PR. No source change.
 
+*Gate facts (2026-10-18, conductor):* the `--yes` set read from the Click tree through the explorer's own reader is the eight §16.1 names (`addon install`, `addon remove`, `doctor`, `profile apply`, `snap gc`, `snap restore`, `sv merge`, `undo`), unchanged; the owner has not yet reported the two persistence tests (`docs/handoffs/M13-07.md`, `docs/handoffs/M14-binds-persist.md`), so no §6/§7 amendment is written; `lab (windows)` on `main` was green on cd4d69d (M13-60) and 8af4469; the run on 1ca383a (M13-54) and the opening commit are recorded when M13-50 merges. M14-05 was dispatched ahead of this gate on the owner's word ("want the gear view sooner").
+
 **Acceptance:** §16 carries the commit and any correction to the `--yes` set; the amendments are in if the tests were reported; the heading is ticked.
 
 ---
