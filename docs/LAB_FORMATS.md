@@ -288,6 +288,98 @@ Recorded, not specified. The fixture for the builds endpoint and for one
 small table's CSV export are the reference for `gamedata`
 (`docs/DATA_SOURCES.md`).
 
+## 10. The install's archives: `.build.info`, `Data/config`, `.idx`, `data.NNN`, BLTE, encoding, root (M15-03 to M15-05)
+
+Reference: https://wowdev.wiki/CASC, https://wowdev.wiki/TACT and
+https://wowdev.wiki/BLTE; wow.export (MIT) as the cross-check. Measured on
+the owner's install at 1.60.1.70450 on 2026-10-19 (read-only).
+
+- **`.build.info`**: a pipe-separated table with `Name!TYPE:n` headers;
+  `Build Key` names the build config at `Data/config/<k[0:2]>/<k[2:4]>/<k>`,
+  `key = value` text; `root` is a content key, `encoding` a content key and
+  an encoding key. The Battle.net agent writes `.build.info` and the
+  configs; the product row is picked by `.flavor.info`'s product.
+- **`Data/data/*.idx`**: a header (hash size, hash, `Unk0 = 7`, bucket,
+  the spec `4/5/9/30`), then at the next 16-byte boundary the entries
+  block (size, hash) of 18-byte records: nine key bytes (the first nine of
+  the encoding key), a five-byte big-endian offset field (ten bits archive
+  number, thirty bits offset), a four-byte little-endian size. Sixteen
+  buckets, shared by every product in the install (the counts below are
+  for the whole install); the bucket of a key: `x = k0 ^ k1 ^ … ^ k8`,
+  `bucket = (x & 0xF) ^ (x >> 4)`. `shmem`, recreated by the game client at
+  start and only a template after an agent update, lists the current
+  version per bucket **[verify]**; the Lab neither reads nor writes it and
+  takes the newest version per bucket. The agent (patches, repair) and the
+  client (streaming) both write the index files and the archives. Also present: `index.lock.0`, an `.lru` file,
+  `Data/indices/*.index` (CDN indexes, unused locally), `ecache/`
+  (**[verify]** what it is).
+- **`data.NNN`**: at the index offset a 30-byte record header (the BLTE
+  hash reversed, size, flags, two checksums), then BLTE of `size - 30`.
+- **BLTE**: `BLTE`, a big-endian header size; when non-zero, a chunk table
+  (`0x0F`, a 24-bit count, then per block compressed size, decompressed
+  size, MD5) and the blocks, each starting with a mode byte: `N` raw, `Z`
+  zlib, `4` LZ4 (**[verify]** whether WoW ever uses it; refused), `F`
+  recursive (deprecated; refused), `E` encrypted (key name, IV, Salsa20 or
+  ARC4; refused and reported, never decrypted). Met at 70450: `N` and `Z`
+  only.
+- **Encoding**: a 22-byte header (`EN`, version 1, hash sizes, page sizes
+  in KB big-endian, page counts, flags, ESpec block size), the ESpec
+  strings, a page index of first content key plus MD5 per page, then 4 KB
+  pages of entries (key count, a 40-bit big-endian size, the content key,
+  the encoding keys: one content key may have several, an encrypted and a
+  plain copy for one). 141.6 MB decoded at 70450.
+- **Root**: magic `MFST` (bytes `TSFM`), header size, version, total and
+  named file counts; blocks of (count, flags, int32 file-id deltas with the
+  first absolute, MD5 content keys, optional 64-bit name hashes). Version 2
+  (11.1.0+): locale flags, two flag words and a byte combined as
+  `f1 | f2 | (f3 << 17)`; `Encrypted` is `0x8000000`, `LowViolence` `0x80`; a macOS client skips
+  `flags & 0x108`, Windows `flags & 0x110`, and wow.export skips
+  `LowViolence` too; enUS is locale `0x2`. At 70450:
+  version 2, 2,433,102 records in 916 blocks, 26 flagged encrypted,
+  1,244,477 ids after filtering. The content key is the MD5 of the decoded
+  file.
+
+## 11. BLP textures (M15-07)
+
+Reference: https://wowdev.wiki/BLP. `BLP2`, version 1, a 148-byte header:
+colour encoding (1 palette, 2 DXT, 3 BGRA), alpha depth (0, 1, 4, 8),
+alpha type, has-mips, width, height, sixteen mip offsets and sizes; then a
+1024-byte palette (256 BGRX). The DXT choice: the wiki says the alpha type decides (0 DXT1, 1 DXT3, 7
+DXT5), wow.export says alpha depth first (`alphaDepth > 1 ? (alphaType ==
+7 ? DXT5 : DXT3) : DXT1`); the two differ for depth 8 with type 0, depth 1 with type 1, depth 4 with type 0, depth 0 with type 1, and depth 0 or 1 with type 7 (**[verify]**; the Lab refuses such a texture naming both);
+some stored mip sizes are wrong, so the block size is computed. Palette
+alpha: 1 bit per pixel LSB-first, 4 bits (**[verify]**, the wiki is
+incomplete), or 8 bits. BC5 (alpha type 11, the header's "preferred format" byte) is refused. Every
+character texture sampled at 70450 was DXT1 or DXT5 with mips, 128² to
+512².
+
+## 12. M2 models and `.skin` files (M15-08)
+
+Reference: https://wowdev.wiki/M2 and https://wowdev.wiki/M2/.skin. The
+chunked form: `MD21` holds the whole MD20 blob with offsets relative to its
+data; `SFID` the skin file ids (views, then LODs); `TXID` the texture file
+ids (type-0 textures); `AFID`, `BFID`, `SKID`, `LDV1`, `TXAC` and the
+later chunks (`EXP2` … `TEXL`) are kept unread. MD20 header arrays
+(`count, offset`): bones at 0x2C, vertices at 0x3C (48 bytes: position,
+four bone weights, four bone indices, normal, two UV pairs; Z-up),
+skin-profile count at 0x44, textures at 0x50 (16 bytes: type, flags, a
+filename array; types 1 body skin, 2 object skin, 6 hair, 19 eyes, …),
+materials at 0x70, texture combos at 0x80, attachments at 0xF0 (id, bone,
+position), the attachment lookup at 0xF8. The wiki's version table runs to
+274; the HD body models at 70450 are version 272, inside it (MoP/WoD and the
+start of the Legion to Shadowlands range), with bones and attachments
+inside the M2 and no `SKID` (**[verify]** for every race).
+`.skin`: `SKIN`, the vertex lookup (uint16), the indices (uint16
+triangles), bones, the sections (48 bytes: `skinSectionId` = the geoset
+id as `group * 100 + value`, level, vertex start and count, index start
+and count, …; `level << 16` is added to the index start, "and alike" per
+the wiki; at 70450 only the index start overflows), the batches
+(24 bytes: flags, priority plane, shader id, section index, geoset
+index, colour index, material index, material layer, texture count, texture
+combo index, …). `humanmale_hd` skin 0 at 70450: 113 sections, 147,966
+indices, levels 0 to 2, a 37,813-entry identity lookup against 226,301
+header vertices (**[verify]** why: LOD skins, probably).
+
 ## Amendments
 
 Dated entries, newest last. Each names the fixture that prompted it.

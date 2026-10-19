@@ -23,8 +23,13 @@ writer) waits on an owner test (M13-07). Wave 5 (M14, specified
 and, at the owner's request, the character in the UI: gear, keys and
 macros, read-only, the first slice of **char-planner**'s "view consolidated
 state"; the apply halves of **keybind-coach** and **macro-doctor** and the
-model-assisted step are planned in §16.5 and ADR-0032 (Proposed) for the
-wave after.
+model-assisted step are planned in §16.5 and ADR-0032 (accepted 2026-10-18)
+for a later wave. Wave 6 (M15, picked 2026-10-19, `docs/LAB_PLAN.md` §17):
+**character-studio**'s data half, which is **casc-source** plus the model,
+skin and texture decoders and the table joins that turn a character's
+record into its model and texture files, with **dressing-room-link** as
+the first visible piece; Wave 7 is planned as the viewer half (ADR-0033,
+ADR-0034).
 
 Two things from the original brainstorm are deliberately absent: anything
 needing memory access, injection, packets or a modified `Data/` (ADR-0023),
@@ -54,7 +59,7 @@ repository if the owner ever wants it.
 | **db2lake** | DuckDB over cached DB2 tables with typed columns and a SQL REPL; cross-build joins | A | gamedata | WoWDBDefs typing, DuckDB loader | S |
 | **build-diff** | Scheduled diff of chosen tables between builds with a readable changelog (beta builds move fast) | A | gamedata | diff + report, a scheduled workflow | S |
 | **hotfix-reader** | Decode `Cache/ADB/DBCache.bin` and overlay hotfixes on tables | A | layout, gamedata | DBCache parser | M |
-| **casc-source** | Read files straight from the install's `Data/` (needed by everything 3D) | A | install, gamedata `Source` | CASC binding or a wow.export CLI bridge | M |
+| **casc-source** *(picked 2026-10-19 as Wave 6's base, `docs/LAB_PLAN.md` §17.1; ADR-0033 chose a pure-Python reader, no binding and no bridge; the spike ran on macOS only)* | Read files straight from the install's `Data/` (needed by everything 3D) | A | install, gamedata `Source` | CASC binding or a wow.export CLI bridge | M |
 | **azeroth-graph** | Item ↔ spell ↔ quest ↔ NPC ↔ zone relationships queryable as a graph | A | db2lake | relationship extraction | M |
 | **quest-recorder** | lab-addon records givers, turn-ins, objectives and coordinates for Forever's new quests (the client tables only carry the quest IDs, which is why Questie is missing them); output as JSON, plus an export in the format Questie takes corrections in | A | lab-addon, luadata, db2lake | recorder schema, exporter | M (est.) |
 | **market-memory** | Price history and supply shocks: keep your own auction-house scans over time (Auctionator's saved price data is already on the install) and cross them with build-diff, so a recipe change in a patch is linked to a price change; alert when datamined changes will move prices you care about. Whether the scan data holds seller names is **[verify]**; none are kept | A | luadata, build-diff, db2lake | price store, change-to-price linker | M |
@@ -63,7 +68,7 @@ repository if the owner ever wants it.
 
 | Idea | What it is | Tier | Needs | New | Size |
 |---|---|---|---|---|---|
-| **customization-sandbox** | Browse every race's customization options from the `ChrCustomization*` tables; save and compare looks; starts as data-only, gains a viewer when casc-source exists. The data-only half shipped in Wave 2 (M11-05 to M11-07); importing a character's current look waits on a capture, because the barber shop UI did not open in-world on Forever (2026-09-28, M11-23) | A | gamedata | option model; later a viewer | S → M |
+| **customization-sandbox** | Browse every race's customization options from the `ChrCustomization*` tables; save and compare looks; starts as data-only, gains a viewer when casc-source exists. The data-only half shipped in Wave 2 (M11-05 to M11-07); importing a character's current look waited on a capture, because the barber shop UI did not open in-world on Forever on 2026-09-28 (M11-23); it did on 70058 and 70425 (`docs/LAB_FORMATS.md`'s barber amendment, M11-29) | A | gamedata | option model; later a viewer | S → M |
 | **look-from-image** | Match a concept image to your character: extract its palette and find the nearest customization choices and collected appearance sources. Not strictly data-only: colour matching needs the icon or texture images, from casc-source or an outside icon host **[verify]**. The collected-appearances half is blocked: `C_TransmogCollection.GetCategoryAppearances` crashed the Forever client (M11-20, 2026-09-28) and needs a safe source first | A | customization-sandbox, lab-addon (collections), casc-source | palette extraction, colour matching | S → M |
 | **dressing-room-link** *(owner's ask, 2026-10-19: "see the character model with their gear like the char screen in the game"; the cheap half, character-studio is the full one)* | A button on the Character tab that opens, in the player's own browser, an outside dressing room (Wowhead's, which has one per client flavor **[verify]**) at a URL built from the item ids and bonus ids the lab-addon's record already holds, so the character is drawn there in its current gear. The Lab makes no request itself: the player clicks, and the URL carries public game ids only, never a name, realm or account. Needs a dated ruling under ADR-0019 and ADR-0031 that a player-clicked link to a third-party page is allowed (the UI's CSP stays as it is; a link needs no loosening); the site's URL grammar is undocumented and may change, so the builder is graded on recorded examples and fails closed to a copyable list of item ids; whether a Forever-era character's items render there is **[verify]** until tried | A | itemlink, gear (M14-05), ui (M14-08) | URL builder, the ADR ruling | S |
 | **character-studio** | Your character rendered in the browser from your own game files, with gear and transmog; outfit designer | A | casc-source, gamedata, luadata | M2/BLP → glTF pipeline, three.js viewer | L |
