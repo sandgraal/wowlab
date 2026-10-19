@@ -916,8 +916,10 @@ Dated entries, newest last. Each names the fixture that prompted it.
   type), with one caveat: the two values come from different sessions and
   builds. The carried `sex` 0 was recorded at load 1 (`recorded_load` 1),
   most likely the 70425 session; `identity` is from load 2 on 70450. They
-  describe the same body because the M11-29 barber visit changed hair colour
-  only, and `recorded_load` 1 shows no barber visit with the addon since.
+  describe the same body if, as is most likely, the carried record is from
+  the M11-29 visit, which changed hair colour only; `recorded_load` 1 shows
+  no barber visit with the addon since, and nothing in the record shows a
+  body-type change at that visit.
   `UnitSex` 3 (the second body type, from memory) and 1 ("unknown") are
   still unobserved **[verify]**. `probe.loads` is 1 on `Dangling-Participle`
   (a first load) and 2 on `Sangraal-Sett`; whether the count rose across a
