@@ -1,4 +1,4 @@
-"""Constructed CASC files for the `casc` tests (M15-03). Everything here is
+"""Constructed CASC files for the `casc` tests (M15-03, M15-04). Everything here is
 `constructed` (L8, ADR-0033 layer a): no byte of a real install file. The
 shapes follow `docs/LAB_FORMATS.md` §10, and the derived fixture
 (`fixtures/macos-70450/derived/casc-index.json`) for the values a real
@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import random
 import struct
+import zlib
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
@@ -162,3 +163,87 @@ def tree_state(root: Path) -> dict[str, tuple[int, int]]:
         p.relative_to(root).as_posix(): (p.stat().st_size, p.stat().st_mtime_ns)
         for p in sorted(root.rglob("*"))
     }
+
+
+# ─── archive records and BLTE (M15-04) ──────────────────────────────────────
+
+CHECKSUM_A_SEED = 0x3D6BE971  # LAB_FORMATS §10, amendment of 2026-10-19
+RECORD_HEADER = 30
+
+Block = tuple[bytes, int]  # a block's stored bytes (mode byte first), its decoded size
+
+
+def n_block(payload: bytes) -> Block:
+    return b"N" + payload, len(payload)
+
+
+def z_block(payload: bytes, level: int = 6) -> Block:
+    return b"Z" + zlib.compress(payload, level), len(payload)
+
+
+def e_block(
+    key_name: bytes = bytes.fromhex("3ecb6a1278505050"),
+    iv: bytes = b"\x01\x02\x03\x04\x05\x06\x07\x08",
+    cipher: bytes = b"S",
+    data: bytes = b"\xa5" * 40,
+    decoded: int = 39,
+) -> Block:
+    """An `E` block as 70450 has them: key-name length 8, the key name
+    (stored little-endian), IV length 8, the IV, the cipher byte, then the
+    encrypted bytes (random-looking filler here)."""
+    body = bytes([len(key_name)]) + key_name + bytes([len(iv)]) + iv + cipher + data
+    return b"E" + body, decoded
+
+
+def blte(
+    blocks: Sequence[Block],
+    *,
+    table: bool = True,
+    flag: int = 0x0F,
+    md5s: Sequence[bytes | None] | None = None,
+    decoded: Sequence[int | None] | None = None,
+    encoded: Sequence[int | None] | None = None,
+    header_size: int | None = None,
+    count: int | None = None,
+) -> bytes:
+    """A BLTE: magic, header size, then either one block with no chunk
+    table (`table=False`), or the chunk table (flag, 24-bit count, per block
+    stored size, decoded size, MD5 of the stored bytes) and the blocks.
+    Any row field may be overridden (None keeps the true value)."""
+    body = b"".join(b for b, _ in blocks)
+    if not table:
+        (only,) = blocks
+        return b"BLTE" + struct.pack(">I", 0) + only[0]
+    rows = b""
+    for i, (stored, size) in enumerate(blocks):
+        enc = len(stored) if encoded is None or encoded[i] is None else encoded[i]
+        dec = size if decoded is None or decoded[i] is None else decoded[i]
+        digest = hashlib.md5(stored, usedforsecurity=False).digest()
+        if md5s is not None and md5s[i] is not None:
+            digest = md5s[i]  # type: ignore[assignment]
+        rows += struct.pack(">II16s", enc, dec, digest)
+    n = len(blocks) if count is None else count
+    hs = 12 + 24 * len(blocks) if header_size is None else header_size
+    return b"BLTE" + struct.pack(">I", hs) + bytes([flag]) + n.to_bytes(3, "big") + rows + body
+
+
+def record(
+    key: bytes,
+    data: bytes,
+    *,
+    size: int | None = None,
+    flags: bytes = b"\x00\x00",
+    checksum_a: int | None = None,
+    checksum_b: int = 0x12345678,
+    full_key: bool = False,
+) -> bytes:
+    """An archive record: the 30-byte header (the key read back to front in
+    the 16-byte hash field: nine bytes and seven zeros, or all sixteen with
+    `full_key`, the two forms met at 70450; the size with the header; the
+    flags; checksum A, lookup3 of the 22 bytes before it seeded 0x3D6BE971;
+    checksum B, not checked), then `data`."""
+    field = (key[:16] if full_key else key[:9] + bytes(7))[::-1]
+    total = RECORD_HEADER + len(data) if size is None else size
+    head = field + struct.pack("<I", total) + flags
+    a = casc.hashlittle(head, CHECKSUM_A_SEED) if checksum_a is None else checksum_a
+    return head + struct.pack("<II", a, checksum_b) + data

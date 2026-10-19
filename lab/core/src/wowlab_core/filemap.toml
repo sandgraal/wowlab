@@ -79,7 +79,7 @@ what = "CASC storage: build/CDN configs, archive blobs (`data.NNN`), index files
 written_by = "Agent; client streams into it"
 edit = "no"
 tier = "A (read)"
-module = "`casc` (the build config and `Data/data/*.idx`, read-only; never `shmem` or `index.lock.0`)"
+module = "`casc` (the build config, `Data/data/*.idx`, and one record's range of a `data.NNN` archive per read, read-only; never `shmem` or `index.lock.0`)"
 match = [
   "Data/config/", "Data/config/**",
   "Data/data/", "Data/data/**",

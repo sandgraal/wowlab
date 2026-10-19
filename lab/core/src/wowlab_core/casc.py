@@ -1,5 +1,6 @@
-"""casc: the build config and the local index of the install's archives
-(docs/LAB_PLAN.md §17.1 steps 1 and 2, ADR-0033, M15-03).
+"""casc: the build config, the local index and the archives' BLTE records
+of the install's game data (docs/LAB_PLAN.md §17.1 steps 1 to 3, ADR-0033,
+M15-03 and M15-04).
 
 Formats: `docs/LAB_FORMATS.md` §10. The install's `Data/` is shared by every
 product in the install; only the build config is per product.
@@ -28,15 +29,31 @@ product in the install; only the build config is per product.
    bucket is the one before the file's (LAB_FORMATS §10, amendment of
    2026-10-19); they are counted per bucket, with any other entry outside its
    key's bucket, and a lookup searches only the key's own bucket.
+3. **The archive record and BLTE.** At an entry's offset in
+   `Data/data/data.<archive:03d>` is a 30-byte record header (the encoding
+   key read back to front, the record's size, two flag bytes, two
+   checksums; `parse_record_header` checks the first and the size against
+   the index entry and the first checksum against lookup3), then BLTE: a
+   chunk table and blocks, each led by a mode byte. `N` (plain) and `Z`
+   (zlib) are decoded, each block's MD5 checked first; `4` and `F` are
+   refused with `UnsupportedBlockMode` (an `F` block is never decoded, so
+   never recursed into), and `E` with `EncryptedContent` and its key name:
+   nothing is decrypted. Every size is checked against the bytes there and
+   the decoded size against a stated cap (`DECODE_LIMIT`) before anything
+   is decoded or allocated (`decode_blte`). The archive is opened for one
+   ranged read and closed (`read_record`).
 
 Reads only (L1, ADR-0033): every file is opened read-only without following
-a final link (`snapshot.read_regular_file`), read whole into memory with a
-size bound, and closed before the next is opened, so no handle or mapping
-outlives the call; nothing is created, locked or written anywhere, and
-`shmem` and `index.lock.0` are never opened. A folder on the way (`Data`,
-`Data/data`, `Data/config` and the key's two levels) that is a link is
-refused rather than followed. Whether a handle held for one read can still
-block the agent or the client on Windows is a §17.7 **[verify]**.
+a final link (`snapshot.open_regular_file`, the open under
+`snapshot.read_regular_file`), read into memory with a size bound (an index
+file or the build config whole; an archive only the one record's range,
+`read_record`), and closed before the next is opened, so no handle or
+mapping outlives the call (no `mmap` anywhere); nothing is created, locked
+or written anywhere, and `shmem` and `index.lock.0` are never opened. A
+folder on the way (`Data`, `Data/data`, `Data/config` and the key's two
+levels) that is a link is refused rather than followed. Whether a handle
+held for one read can still block the agent or the client on Windows is a
+§17.7 **[verify]**.
 
 Nothing about a flavor is known here (L6): the product, the version and the
 build key come from the install's own files.
@@ -55,12 +72,15 @@ from __future__ import annotations
 import bisect
 import hashlib
 import operator
+import os
 import re
 import stat
 import struct
 import time
-from collections.abc import Sequence
+import zlib
+from collections.abc import Buffer, Sequence
 from pathlib import Path
+from typing import NoReturn
 
 from pydantic import BaseModel, ConfigDict
 
@@ -68,8 +88,13 @@ from wowlab_core import longpath, snapshot
 from wowlab_core.install import BuildInfoRow, Flavor, Install, is_link
 
 __all__ = [
+    "BLOCK_LIMIT",
     "BUCKETS",
+    "DECODE_LIMIT",
     "KEY_BYTES",
+    "RECORD_HEADER_SIZE",
+    "BlteBlock",
+    "BlteLayout",
     "BucketMissingError",
     "BucketVersion",
     "BuildConfig",
@@ -80,19 +105,29 @@ __all__ = [
     "CascMalformedError",
     "CascMissingError",
     "CascStorage",
+    "CascTooLargeError",
     "CascUnreadableError",
     "CascUnsupportedError",
+    "EncryptedContent",
     "IndexEntry",
     "IndexFile",
+    "RecordHeader",
+    "UnsupportedBlockMode",
+    "archive_path",
     "bucket_of",
     "build_config_path",
+    "decode_blte",
     "hashlittle",
     "hashlittle2",
     "load_index",
     "open_storage",
+    "parse_blte",
     "parse_build_config",
     "parse_index_file",
+    "parse_record_header",
     "read_build_config",
+    "read_encoded",
+    "read_record",
     "select_build_row",
 ]
 
@@ -116,9 +151,38 @@ _INDEX_NAME = re.compile(r"([0-9a-f]{2})([0-9a-f]{8})\.idx")
 # (another letter case, a suffix after `.idx`): listed in the report, unread.
 _INDEX_LIKE = re.compile(r".*\.idx.*", re.IGNORECASE)
 _HEX_KEY = re.compile(r"[0-9a-f]{32}")
-# The size, and the offset step, of the entries found one bucket on
-# (LAB_FORMATS §10, amendment of 2026-10-19): a 30-byte record header alone.
-_RECORD_HEADER = 30
+# The archive record header before each BLTE (LAB_FORMATS §10); also the
+# size, and the offset step, of the entries found one bucket on (amendment
+# of 2026-10-19): a record header alone.
+RECORD_HEADER_SIZE = 30
+_RECORD_HEADER = RECORD_HEADER_SIZE
+# The record header's fields: the hash field (16 bytes), the record's size
+# (header included, little-endian), two flag bytes, checksum A, checksum B.
+_RECORD_FIELDS = struct.Struct("<16sI2sII")
+# Checksum A is lookup3 `hashlittle` of the 22 bytes before it from this
+# seed (every record sampled at 70450 matched; LAB_FORMATS §10 amendment of
+# 2026-10-19). Checksum B depends on where the record is; its algorithm is
+# [verify], so it is reported and not checked.
+_CHECKSUM_A_SEED = 0x3D6BE971
+_CHECKSUM_A_SPAN = 22
+
+# The cap on one read (`decode_blte`, `read_record`): a record whose stored
+# BLTE or whose declared decoded size is over it is refused before it is read
+# or decoded. The largest file the Lab reads at 70450 is the encoding file,
+# 141.6 MB decoded (LAB_FORMATS §10); the cap leaves room above it.
+DECODE_LIMIT = 256 * 1024 * 1024
+_BLTE_MAGIC = b"BLTE"
+_BLTE_PREAMBLE = 8  # the magic and the big-endian header size
+_CHUNK_TABLE_FLAG = 0x0F
+_CHUNK_TABLE_HEAD = 4  # the flag byte and a 24-bit big-endian block count
+_CHUNK_ENTRY = struct.Struct(">II16s")  # encoded size, decoded size, MD5
+# The most blocks one chunk table may list. Every row becomes a small object,
+# so the count bounds what the table costs before any block is read: at most
+# a few tens of MB here. The most in any of the 1,041,954 records at 70450 is
+# 913 (a survey of every record's header, M15-04).
+BLOCK_LIMIT = 65_536
+_MODE_PLAIN = ord("N")
+_MODE_ZLIB = ord("Z")
 
 # Read bounds: the files at 70450 are 1,245,184 bytes (each index) and 59,537
 # bytes (the build config); a file far past these is refused, not read.
@@ -183,7 +247,49 @@ class CascMalformedError(CascError):
 class CascUnsupportedError(CascError):
     """A well-formed file in a version or layout this reader does not know
     (an index version other than 7, a spec other than `4/5/9/30`, a
-    non-zero extra byte, a bucket past sixteen)."""
+    non-zero extra byte, a bucket past sixteen, a BLTE chunk table flag
+    other than `0x0F`)."""
+
+
+class UnsupportedBlockMode(CascUnsupportedError):  # noqa: N818 - name fixed by LAB_PLAN §17.1
+    """A BLTE block whose mode this reader does not decode: `4` (LZ4), `F`
+    (a BLTE nested in the block; never recursed into) or a mode byte the
+    format does not name. `mode` is the byte as one character (or `\\xNN`),
+    `block` the block's place in the chunk table, from 0."""
+
+    def __init__(self, message: str, mode: str, block: int, path: Path | None = None) -> None:
+        super().__init__(message, path)
+        self.mode = mode
+        self.block = block
+
+
+class EncryptedContent(CascError):  # noqa: N818 - name fixed by docs/LAB_PLAN.md §17.1
+    """A BLTE block in mode `E`: encrypted with the key `key_name` (the
+    eight key-name bytes as a little-endian number in sixteen hex digits,
+    the form the published key lists use). Nothing is decrypted (ADR-0033):
+    no key list is held and none is looked for. `cipher` is the block's
+    cipher byte (`S` Salsa20, `A` ARC4) as one character."""
+
+    def __init__(
+        self, message: str, key_name: str, block: int, cipher: str, path: Path | None = None
+    ) -> None:
+        super().__init__(message, path)
+        self.key_name = key_name
+        self.block = block
+        self.cipher = cipher
+
+
+class CascTooLargeError(CascError):
+    """A record over one of the read's caps: its stored size or the decoded
+    size its chunk table declares (`limit`, in bytes), or its chunk table's
+    block count (`BLOCK_LIMIT`). `size` is what the record has. Refused
+    before the bytes are read, the rows are unpacked or the output is
+    allocated."""
+
+    def __init__(self, message: str, size: int, limit: int, path: Path | None = None) -> None:
+        super().__init__(message, path)
+        self.size = size
+        self.limit = limit
 
 
 # ─── models ──────────────────────────────────────────────────────────────────
@@ -263,6 +369,54 @@ class CascIndexReport(BaseModel):
     skipped_files: tuple[str, ...]
     index_seconds: float  # reading and checking every `.idx`
     open_seconds: float  # the whole open: the build config and the index
+
+
+class RecordHeader(BaseModel):
+    """The 30 bytes before a record's BLTE in an archive (LAB_FORMATS §10).
+    `hash_field` is the field read back to front, lowercase hex: it starts
+    with the nine bytes the index holds; at 70450 most records hold only
+    those, the other seven zero, and some the whole encoding key (its MD5
+    of the BLTE header, a 2026-10-19 amendment). `size` includes these 30
+    bytes. `flags` is the two flag bytes in hex (`0000` on the data records
+    met at 70450, `0100` on the archive's own segment headers; meaning
+    [verify]). `checksum_a` is checked; `checksum_b` is not (its algorithm
+    is [verify])."""
+
+    model_config = ConfigDict(frozen=True)
+
+    hash_field: str
+    size: int
+    flags: str
+    checksum_a: int
+    checksum_b: int
+
+
+class BlteBlock(BaseModel):
+    """One chunk-table row: the block's stored size (its mode byte
+    included), its decoded size, the MD5 of its stored bytes (lowercase
+    hex) and its mode byte (one character, or `\\xNN` for a byte that is not
+    printable ASCII). In a BLTE without a chunk table the one block has no
+    declared size and no MD5 (both None)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    encoded_size: int
+    decoded_size: int | None
+    md5: str | None
+    mode: str
+
+
+class BlteLayout(BaseModel):
+    """A BLTE's header: its size (0 when there is no chunk table, in which
+    case the one block is the rest of the data, its decoded size unknown
+    until decoded, `decoded_size` None) and its blocks in order."""
+
+    model_config = ConfigDict(frozen=True)
+
+    header_size: int
+    blocks: tuple[BlteBlock, ...]
+    encoded_size: int  # the whole BLTE, magic to the last block
+    decoded_size: int | None
 
 
 class IndexFile:
@@ -944,3 +1098,359 @@ def open_storage(install: Install, flavor: Flavor | str) -> CascStorage:
         open_seconds=round(finished - started, 3),
     )
     return CascStorage(Path(root), row, config, index, report)
+
+
+# ─── archives and BLTE (M15-04) ──────────────────────────────────────────────
+
+
+def _octets(data: Buffer) -> memoryview:
+    """`data` as a flat view of unsigned bytes, whatever buffer it is."""
+    view = memoryview(data)
+    return view if view.format == "B" and view.ndim == 1 else view.cast("B")
+
+
+def _mode_text(byte: int) -> str:
+    """A mode or cipher byte as one character, or `\\xNN` when it is not
+    printable ASCII."""
+    return chr(byte) if 0x20 < byte < 0x7F else f"\\x{byte:02x}"
+
+
+def archive_path(root: Path, archive: int) -> Path:
+    """`Data/data/data.<archive:03d>` under the install `root`."""
+    return root / _DATA / _DATA_DATA / f"data.{archive:03d}"
+
+
+def parse_record_header(
+    data: Buffer, key: bytes, entry: IndexEntry, path: Path | None = None
+) -> RecordHeader:
+    """The 30-byte record header at the start of `data`, checked against
+    the index: its hash field, read back to front, starts with the nine
+    bytes of `key`; its size is the entry's; its checksum A is lookup3
+    `hashlittle` of the 22 bytes before it, seeded `0x3D6BE971`. A
+    mismatch means the index and the archive disagree (one of them was
+    rewritten since the index was read) and is refused, never read around."""
+    view = _octets(data)
+    if len(view) < RECORD_HEADER_SIZE:
+        raise CascMalformedError(
+            f"a record header is {RECORD_HEADER_SIZE} bytes; {len(view)} are there", path
+        )
+    field, size, flags, checksum_a, checksum_b = _RECORD_FIELDS.unpack_from(view, 0)
+    stored = field[::-1]
+    want = bytes(key[:KEY_BYTES])
+    if stored[:KEY_BYTES] != want:
+        raise CascMalformedError(
+            f"the record at offset {entry.offset} of archive {entry.archive} is for the key "
+            f"{stored[:KEY_BYTES].hex()}, not {want.hex()}{_RETRY}",
+            path,
+        )
+    if size != entry.size:
+        raise CascMalformedError(
+            f"the record header says {size} bytes, the index {entry.size}{_RETRY}", path
+        )
+    got = hashlittle(bytes(view[:_CHECKSUM_A_SPAN]), _CHECKSUM_A_SEED)
+    if got != checksum_a:
+        raise CascMalformedError(
+            f"the record header's checksum is {checksum_a:#010x}, its bytes give "
+            f"{got:#010x}{_RETRY}",
+            path,
+        )
+    return RecordHeader(
+        hash_field=stored.hex(),
+        size=size,
+        flags=flags.hex(),
+        checksum_a=checksum_a,
+        checksum_b=checksum_b,
+    )
+
+
+def parse_blte(data: Buffer, path: Path | None = None) -> BlteLayout:
+    """A BLTE's header and chunk table (LAB_FORMATS §10), every size
+    checked against the bytes there before any block is touched: the magic,
+    a header size that is 0 (one block, the rest of the data) or exactly
+    the flag byte `0x0F`, a 24-bit block count (at most `BLOCK_LIMIT`) and
+    that many 24-byte rows (stored size, decoded size, MD5), inside the
+    data; each block at least
+    its mode byte; the stored sizes adding up to exactly the bytes after the
+    header. Nothing is decoded and nothing is allocated past the rows."""
+    view = _octets(data)
+    n = len(view)
+    if n < _BLTE_PREAMBLE:
+        raise CascMalformedError(f"a BLTE of {n} bytes has no room for its header", path)
+    if view[:4] != _BLTE_MAGIC:
+        # One record at 70450 is not BLTE: the build config's `patch`
+        # manifest, stored as it is (magic `PA`; LAB_FORMATS §10).
+        raise CascUnsupportedError(
+            f"the record is not BLTE (it starts {bytes(view[:4])!r}); this reader decodes "
+            "BLTE only",
+            path,
+        )
+    (header_size,) = struct.unpack_from(">I", view, 4)
+    if header_size == 0:
+        if n == _BLTE_PREAMBLE:
+            raise CascMalformedError("a BLTE with no chunk table and no block", path)
+        only = BlteBlock(
+            encoded_size=n - _BLTE_PREAMBLE,
+            decoded_size=None,
+            md5=None,
+            mode=_mode_text(view[_BLTE_PREAMBLE]),
+        )
+        return BlteLayout(header_size=0, blocks=(only,), encoded_size=n, decoded_size=None)
+    table = _BLTE_PREAMBLE + _CHUNK_TABLE_HEAD
+    if header_size < table:
+        raise CascMalformedError(f"a BLTE header of {header_size} bytes holds no chunk table", path)
+    if header_size > n:
+        raise CascMalformedError(
+            f"the BLTE header ({header_size} bytes) runs past the end of the data ({n} bytes)",
+            path,
+        )
+    flag = view[_BLTE_PREAMBLE]
+    if flag != _CHUNK_TABLE_FLAG:
+        raise CascUnsupportedError(
+            f"a BLTE chunk table flag {flag:#04x}; this reader knows {_CHUNK_TABLE_FLAG:#04x}", path
+        )
+    count = int.from_bytes(view[_BLTE_PREAMBLE + 1 : table], "big")
+    if count == 0:
+        raise CascMalformedError("a BLTE chunk table of no blocks", path)
+    if count > BLOCK_LIMIT:
+        raise CascTooLargeError(
+            f"a BLTE chunk table of {count} blocks, over the reader's {BLOCK_LIMIT}",
+            count,
+            BLOCK_LIMIT,
+            path,
+        )
+    if header_size != table + count * _CHUNK_ENTRY.size:
+        raise CascMalformedError(
+            f"a BLTE header of {header_size} bytes cannot hold {count} chunk rows "
+            f"({table + count * _CHUNK_ENTRY.size} bytes)",
+            path,
+        )
+    rows = [_CHUNK_ENTRY.unpack_from(view, table + i * _CHUNK_ENTRY.size) for i in range(count)]
+    stored = sum(r[0] for r in rows)
+    if header_size + stored != n:
+        raise CascMalformedError(
+            f"the chunk table's stored sizes add up to {stored} bytes; the BLTE holds "
+            f"{n - header_size} after its header",
+            path,
+        )
+    blocks: list[BlteBlock] = []
+    at = header_size
+    for i, (encoded, decoded, digest) in enumerate(rows):
+        if encoded == 0:
+            raise CascMalformedError(f"block {i} is 0 bytes: no room for its mode byte", path)
+        blocks.append(
+            BlteBlock(
+                encoded_size=encoded,
+                decoded_size=decoded,
+                md5=digest.hex(),
+                mode=_mode_text(view[at]),
+            )
+        )
+        at += encoded
+    return BlteLayout(
+        header_size=header_size,
+        blocks=tuple(blocks),
+        encoded_size=n,
+        decoded_size=sum(r[1] for r in rows),
+    )
+
+
+def _refuse_mode(block: memoryview, i: int, path: Path | None) -> NoReturn:
+    """Raise for a block whose mode is not `N` or `Z`: `E` names its key,
+    the rest are unsupported. The block's payload is never decoded."""
+    mode = block[0]
+    if mode != ord("E"):
+        text = _mode_text(mode)
+        what = {"4": "LZ4", "F": "a nested BLTE, which is never recursed into"}.get(text, "")
+        raise UnsupportedBlockMode(
+            f"block {i} is in mode {text!r}{f' ({what})' if what else ''}; this reader "
+            "decodes 'N' and 'Z' only",
+            text,
+            i,
+            path,
+        )
+    # E: key-name length, key name, IV length, IV, cipher byte, then the data.
+    body = block[1:]
+    key_len = body[0] if len(body) else 0
+    iv_at = 1 + key_len
+    if key_len == 0 or iv_at >= len(body):
+        raise CascMalformedError(f"block {i} is encrypted, and its key name is cut short", path)
+    cipher_at = iv_at + 1 + body[iv_at]
+    if cipher_at >= len(body):
+        raise CascMalformedError(f"block {i} is encrypted, and its header is cut short", path)
+    key_name = bytes(body[1:iv_at])[::-1].hex().upper()
+    cipher = _mode_text(body[cipher_at])
+    raise EncryptedContent(
+        f"block {i} is encrypted with the key {key_name} (cipher {cipher!r}); wowlab does "
+        "not decrypt (ADR-0033)",
+        key_name,
+        i,
+        cipher,
+        path,
+    )
+
+
+def _inflate(block: memoryview, want: int | None, room: int, i: int, path: Path | None) -> bytes:
+    """A `Z` block's payload inflated, never past `want + 1` bytes (or
+    `room + 1` when the size is not declared): exactly `want` bytes, one
+    whole zlib stream, nothing after it."""
+    inflater = zlib.decompressobj()
+    bound = (room if want is None else want) + 1
+    try:
+        out = inflater.decompress(block, bound)
+    except zlib.error as exc:
+        raise CascMalformedError(f"block {i} is not a zlib stream ({exc})", path) from None
+    if want is None and len(out) > room:
+        raise CascTooLargeError(
+            f"block {i} inflates past the read's cap of {room} bytes", len(out), room, path
+        )
+    if want is not None and len(out) > want:
+        raise CascMalformedError(f"block {i} inflates past its declared {want} bytes", path)
+    if not inflater.eof:
+        raise CascMalformedError(f"block {i}'s zlib stream is cut short", path)
+    if inflater.unused_data:
+        raise CascMalformedError(f"block {i} has bytes after its zlib stream", path)
+    if want is not None and len(out) != want:
+        raise CascMalformedError(
+            f"block {i} inflates to {len(out)} bytes; the chunk table says {want}", path
+        )
+    return out
+
+
+def decode_blte(data: Buffer, *, limit: int = DECODE_LIMIT, path: Path | None = None) -> bytes:
+    """The decoded bytes of one BLTE (`parse_blte` for its layout).
+
+    Before anything is decoded or allocated: the declared decoded size is
+    held to `limit` (`CascTooLargeError`), and every block is checked: its
+    stored bytes' MD5 against the chunk table (`CascMalformedError`), then
+    its mode: `N` and `Z` pass; `E` raises `EncryptedContent` with its key
+    name; `4`, `F` and any other byte raise `UnsupportedBlockMode` (an `F`
+    block's payload is never parsed, so a nested BLTE is never recursed
+    into). Then each block is decoded: `N` is its bytes after the mode byte,
+    exactly its declared size; `Z` is one zlib stream inflated to exactly
+    its declared size and never a byte past it. A BLTE without a chunk
+    table has one block, no MD5 and no declared size; it is held to
+    `limit` as it is decoded. A Lab read is checked by the file's content
+    key (M15-05) and these MD5s, never by its encoding key."""
+    view = _octets(data)
+    layout = parse_blte(view, path)
+    if layout.decoded_size is not None and layout.decoded_size > limit:
+        raise CascTooLargeError(
+            f"the BLTE decodes to {layout.decoded_size} bytes, over the read's cap of {limit}",
+            layout.decoded_size,
+            limit,
+            path,
+        )
+    spans: list[memoryview] = []
+    at = layout.header_size or _BLTE_PREAMBLE
+    for i, row in enumerate(layout.blocks):
+        block = view[at : at + row.encoded_size]
+        at += row.encoded_size
+        if row.md5 is not None:
+            got = hashlib.md5(block, usedforsecurity=False).hexdigest()
+            if got != row.md5:
+                raise CascMalformedError(
+                    f"block {i}'s MD5 is {got}; the chunk table says {row.md5}{_RETRY}", path
+                )
+        if block[0] not in (_MODE_PLAIN, _MODE_ZLIB):
+            _refuse_mode(block, i, path)
+        spans.append(block)
+    parts: list[Buffer] = []
+    for i, (row, block) in enumerate(zip(layout.blocks, spans, strict=True)):
+        payload = block[1:]
+        if block[0] == _MODE_PLAIN:
+            if row.decoded_size is None and len(payload) > limit:
+                raise CascTooLargeError(
+                    f"block {i} holds {len(payload)} bytes, over the read's cap of {limit}",
+                    len(payload),
+                    limit,
+                    path,
+                )
+            if row.decoded_size is not None and len(payload) != row.decoded_size:
+                raise CascMalformedError(
+                    f"block {i} is plain and holds {len(payload)} bytes; the chunk table "
+                    f"says {row.decoded_size}",
+                    path,
+                )
+            parts.append(payload)
+        else:
+            parts.append(_inflate(payload, row.decoded_size, limit, i, path))
+    return b"".join(parts)
+
+
+def read_record(root: Path, entry: IndexEntry, *, limit: int = DECODE_LIMIT) -> bytes:
+    """The bytes of one archive record (its 30-byte header and its BLTE)
+    that `entry` names, read from `Data/data/data.<archive:03d>` under the
+    install `root`.
+
+    A ranged read, as bounded as `snapshot.read_regular_file`: the archive
+    is opened with `snapshot.open_regular_file` (read-only, a final link
+    refused, a regular file only), the record's range is checked against
+    the file's size, the range alone is read (never more than `entry.size`
+    bytes, itself held to `limit` plus the header before the open), and the
+    descriptor is closed on every path. No `mmap`; no handle outlives the
+    call."""
+    for folder in (root / _DATA, root / _DATA / _DATA_DATA):
+        _check_dir(folder)
+    path = archive_path(root, entry.archive)
+    if entry.size < RECORD_HEADER_SIZE:
+        raise CascMalformedError(
+            f"an index entry of {entry.size} bytes cannot hold a record header", path
+        )
+    if entry.size - RECORD_HEADER_SIZE > limit:
+        raise CascTooLargeError(
+            f"the record holds {entry.size - RECORD_HEADER_SIZE} bytes of BLTE, over the "
+            f"read's cap of {limit}",
+            entry.size - RECORD_HEADER_SIZE,
+            limit,
+            path,
+        )
+    try:
+        fd, st = snapshot.open_regular_file(path)
+    except FileNotFoundError:
+        raise CascMissingError(f"{path} is not there", path) from None
+    except snapshot.UnsafeReadError as exc:
+        raise CascUnreadableError(f"cannot read {path} ({exc})", path) from exc
+    except OSError as exc:  # refused, or a link (ELOOP)
+        raise CascUnreadableError(f"cannot read {path} ({exc.strerror or exc})", path) from exc
+    chunks: list[bytes] = []
+    total = 0
+    try:
+        end = entry.offset + entry.size
+        if end > st.st_size:
+            raise CascMalformedError(
+                f"the record ends at byte {end}, past the end of {path.name} "
+                f"({st.st_size} bytes){_RETRY}",
+                path,
+            )
+        os.lseek(fd, entry.offset, os.SEEK_SET)
+        while total < entry.size:
+            chunk = os.read(fd, entry.size - total)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+    except OSError as exc:
+        raise CascUnreadableError(f"cannot read {path} ({exc.strerror or exc})", path) from exc
+    finally:
+        os.close(fd)
+    if total < entry.size:
+        raise CascMalformedError(
+            f"{path.name} ended {entry.size - total} bytes into the record{_RETRY}", path
+        )
+    return b"".join(chunks)
+
+
+def read_encoded(storage: CascStorage, ekey: bytes, *, limit: int = DECODE_LIMIT) -> bytes | None:
+    """The decoded bytes of the file whose encoding key is `ekey` (at least
+    its first nine bytes), or `None` when the local index does not list it
+    (`BucketMissingError` when its bucket has no index file). The record
+    header is checked against the index (`parse_record_header`) and the
+    BLTE decoded under `limit` (`decode_blte`)."""
+    entry = storage.index.find(ekey)
+    if entry is None:
+        return None
+    path = archive_path(storage.root, entry.archive)
+    record = read_record(storage.root, entry, limit=limit)
+    view = memoryview(record)
+    parse_record_header(view, ekey, entry, path)
+    return decode_blte(view[RECORD_HEADER_SIZE:], limit=limit, path=path)

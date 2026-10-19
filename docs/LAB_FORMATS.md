@@ -347,6 +347,42 @@ the owner's install at 1.60.1.70450 on 2026-10-19 (read-only).
   recursive (deprecated; refused), `E` encrypted (key name, IV, Salsa20 or
   ARC4; refused and reported, never decrypted). Met at 70450: `N` and `Z`
   only.
+  *Amended 2026-10-19 (M15-04; derived fixture
+  `lab/core/tests/fixtures/macos-70450/derived/casc-blte.json`, read from
+  the owner's install at 1.60.1.70450; the reader follows the fixture, and
+  nothing the ticket delivers changes).* **The 30-byte record header** is
+  the hash field (16 bytes), a u32 little-endian size that includes the 30
+  bytes, two flag bytes, checksum A (u32 LE) and checksum B (u32 LE). Read
+  back to front, the hash field starts with the nine bytes the index
+  holds. In most records the other seven are zero; in some (71 of the
+  4,079 sampled) they are the rest of the encoding key. Checksum A is lookup3
+  `hashlittle` of the 22 bytes before it, seed `0x3D6BE971`, on every
+  record sampled. Checksum B depends on the record's place and was not
+  reproduced (**[verify]**); the reader reports it and does not check it.
+  The flag bytes are `00 00` on every data record sampled and `01 00` on
+  the archives' segment headers, whose hash field is all sixteen bytes,
+  ending `…00552169b0198954679edc74b430` read back to front (meaning
+  **[verify]**). **The encoding key of a chunked file is the MD5 of its BLTE
+  header**: the magic through the last chunk row, not the whole stored
+  file. This holds for the encoding file, whose full key the build config
+  names, for every whole-key record header and for the nine index bytes of
+  every record sampled. Every record sampled has a chunk table (flag `0x0F`,
+  header size `12 + 24 × blocks`; none without one) whose stored sizes add
+  up to exactly the record. A chunk row's MD5 is of the block's stored
+  bytes, mode byte included. **`E` blocks are met at 70450** (the "`N` and
+  `Z` only" above was the research spike's 4,775 blocks of the files it
+  read). A census of every 256th own-bucket record (4,079 records, 6,510
+  blocks) found 5,520 `Z`, 971 `N` and 19 `E` blocks, the `E` ones in 9
+  records, and no `4` or `F`. Every `E` block met has a key-name length of
+  8, the key name stored little-endian, an IV length of **8** (not the 4
+  sometimes documented) and cipher `S` (Salsa20). A read-only survey of the
+  first 42 bytes of every one of the 1,041,954 own-bucket records on the
+  same day (not in the fixture) found every header matching its index key
+  and checksum A, at most 913 blocks in one chunk table, and **one record
+  that is not BLTE**: the build config's `patch` manifest (magic `PA`),
+  stored as it is; the reader refuses it as unsupported. The encoding file is 7
+  blocks (`N Z N N N N Z`); it read and decoded in 0.36 s on the owner's
+  machine, 0.23 s of it decoding.
 - **Encoding**: a 22-byte header (`EN`, version 1, hash sizes, page sizes
   in KB big-endian, page counts, flags, ESpec block size), the ESpec
   strings, a page index of first content key plus MD5 per page, then 4 KB
