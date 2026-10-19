@@ -1121,6 +1121,24 @@ Found 2026-10-19 in the code review of M14-09. The Keys panel prints `char binds
 **Acceptance:** the test passes on the PR's `lab (windows)` job and on macOS and Linux; no change under `lab/core/src/`; `make ci` green; reviewed by `code-reviewer`.
 
 ---
+## [ ] M13-79 — The secret scan's reach: every pushed branch, or the PR's range
+
+**Size:** XS · **Depends on:** nothing · **Owner decision**
+
+Found 2026-10-19 when #307 went red through no change of its own. The `Secret scan (gitleaks)` job checks out with `fetch-depth: 0` and runs `gitleaks git .`, which scans every ref the checkout fetched, so a hex content hash in one branch's fixture (#312, M15-03) failed the required check on every open PR at once. #315 fixed that instance with a per-line allowlist on `main` for the three CASC hash fields. The job's reach itself is a choice: the whole-repository net catches a leak in any branch the moment it is pushed, and a secret committed and later deleted still needs rotating (the job's own comment); the PR-range scan keeps one branch's fixture from blocking the others. The owner rules; if the net stays, the fix for the next such hash is another narrow line regex, never a `paths` key (gitleaks 8.30.1 skips the whole file on one).
+
+**Acceptance:** a dated line in `.github/workflows/ci.yml` beside the scan step recording the ruling; if the range changes, `tests/repo/test_workflows_use_no_cache.py` and the workflow tests still pass and the PR's own gitleaks job is green; reviewed by `security-reviewer`. User-facing: none.
+
+---
+## [ ] M13-80 — `looks import-char` reads the class from the identity record
+
+**Size:** XS · **Depends on:** M15-01
+
+Noted by the M15-01 implementer, 2026-10-19. `looks import-char` prints `_NO_CLASS_REMARK` because no record carried the character's class; since schema 4 (M15-01) `identity.class_id` and `identity.class_file` do. Read them when the record is schema 4, keep the remark for older schemas, and say in the output which it was. Text output otherwise byte-identical to `main`; `--json` gains the class fields if the report lacks them, listed in the release notes (M13-47's guard).
+
+**Acceptance:** the real `macos-70450` fixtures (Dangling-Participle MAGE, Sangraal-Sett WARLOCK) print the class and no remark; the schema-3 fixtures print the remark unchanged; byte-identity as stated; `make ci` green; reviewed by `domain-reviewer` and `code-reviewer`. User-facing: `looks import-char` output; the wiki's `looks` page.
+
+---
 
 # M14 — `wowlab ui`: the confirm flow, and the character (Wave 5)
 
@@ -1228,7 +1246,7 @@ The conductor writes `docs/handoffs/M14-review.md` per `docs/LAB_PLAN.md` §11: 
 
 Picked by the owner on 2026-10-19 after the Wave 5 review (`docs/handoffs/M14-review.md`): **character-studio**, split into two waves because it is size L. Wave 6 is the data half: reading the install's game data archives read-only (ADR-0033; L7 stands, `Data/` is never edited), the model, skin and texture decoders, the table joins that turn a character's record into its model and texture files, and a CLI that extracts them under the data directory; Wave 7 is planned as the viewer in the Character tab (ADR-0034). The plan section is `docs/LAB_PLAN.md` §17, written from the format research of 2026-10-19 (the client is at 1.60.1.70450 since that day); M15-01 and M15-02 landed first because they need nothing from it, and M15-03 to M15-12 follow §17.9's order. The owner also asked for the dressing-room link the same day (`docs/LAB_IDEAS.md` **dressing-room-link**); it is M15-02, behind the one addon field it needs. L1 to L8 apply. The `ui` tickets of this wave collide on the templates like M14's did and run one at a time.
 
-## [ ] M15-01 — lab-addon schema 4: the character's identity (race, body type, class)
+## [x] M15-01 — lab-addon schema 4: the character's identity (race, body type, class)
 **Size:** S · **Depends on:** nothing
 
 The addon's record holds a race id only inside `customization`, which exists only after a barber-shop visit, and no class at all (`cli.py`'s `_NO_CLASS_REMARK`). Add an `identity` table to the record, written on the same events as the rest (`PLAYER_ENTERING_WORLD`, logout, `/reload`; `lab/addon/README.md`): `race_id` (the third return of `UnitRace("player")`, as `Customization.lua` reads it), `sex_raw` (the first return of `UnitSex("player")` as the client gives it: 1 unknown, 2 male, 3 female, **[verify]**; `Customization.lua`'s `sex` comes from the barber-shop API, which answers only there, so it is not used here), `class_id` and `class_file` (the third and second returns of `UnitClass("player")`), each absent with a reason when its API is missing, never guessed. The reader derives `sex` in the record's `Enum.UnitSex` convention (0/1) from `sex_raw` through a mapping written in `lab/addon/README.md` (2 → 0, 3 → 1, anything else → absent with the value named), so the raw value is kept and nothing is guessed. *Corrected 2026-10-19 after the #304 review: the first text named no API for `sex` that works outside the barber shop.* Bump `schema` to 4; every existing schema (1 to 3) stays readable and reports `identity` as absent. `labaddon.py` gains the reader and `CharShowReport`/`CharGearReport` gain one field each, `identity` (`{race_id, sex, sex_raw, class_id, class_file}` with absent reasons), listed in the release notes (M13-47's guard); text output byte-identical to `main` except one new line in `char show` naming the class and race when present. The implementer writes `docs/handoffs/M15-01.md` in the style of `docs/handoffs/M13-05.md`: the owner installs the updated addon through `wowlab addon install`, logs in and out once per character, and the capture goes through `scripts/lab_capture.py` into a new fixture root with a provenance row (L8; this is the addon's own format, so a real capture is the fixture).
@@ -1248,7 +1266,7 @@ The Character tab renders the field under the gear table as one button, **See it
 
 ---
 
-## [ ] M15-03 — `casc`: the build config and the local index
+## [x] M15-03 — `casc`: the build config and the local index
 **Size:** S · **Depends on:** nothing
 
 §17.1 steps 1 and 2; `docs/LAB_FORMATS.md` §10. `wowlab_core.casc` opens the install's shared `Data/` read-only for one flavor's build (L1: nothing is written, created or locked; `shmem` and `index.lock.0` are neither read nor written; every file is read into memory and closed, no handle outliving a command): reads the product's `Active` row of `.build.info` through `install` (the product from `.flavor.info`; a row count other than one reported, never guessed), the build config (`root`, `encoding`), and every `Data/data/*.idx` into one lookup from the first nine bytes of an encoding key to (archive, offset, size), the header and entries hashes checked and the `4/5/9/30` spec read from the header, the newest version per bucket when more than one exists (reported; **[verify]**). Typed errors for a missing or malformed file, never a crash. A `CascIndexReport` model (product, build, config keys, bucket count, entry count, versions taken, open time). The file map's `Data/config/`, `Data/data/`, `Data/indices/` row names `casc` as its reader in the package's data file (the one `docs/LAB_FILE_MAP.md` is generated from; the doc is regenerated, never edited by hand). No handle or mapping outlives a command, which is the design that covers Windows (§17.1); whether a handle open for one read can still block the agent or the client there is a §17.7 **[verify]** on the owner's list, not this ticket's to prove (no Windows install is at hand, ADR-0031).
