@@ -135,7 +135,7 @@ def _plant_other(user_data: Path) -> list[Path]:
     """Pages that are not `pages/looks.html`, each holding MARKER: beside it,
     in a sub-folder, in the data folder outside `pages/`, and next to the
     data folder (constructed)."""
-    text = lookspage.PAGE_HEADER.decode() + MARKER + "</html>\n"
+    data = lookspage.PAGE_HEADER + MARKER.encode() + b"</html>\n"
     planted = [
         _pages(user_data) / "other.html",
         _pages(user_data) / "sub" / "looks.html",
@@ -144,7 +144,7 @@ def _plant_other(user_data: Path) -> list[Path]:
     ]
     for path in planted:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
+        path.write_bytes(data)
     return planted
 
 
@@ -245,7 +245,7 @@ def test_the_path_is_the_one_lookspage_names(
     _, page = _written()
     elsewhere = tmp_path / "moved" / "pages" / "looks.html"
     elsewhere.parent.mkdir(parents=True)
-    elsewhere.write_text(lookspage.PAGE_HEADER.decode() + MARKER, encoding="utf-8")
+    elsewhere.write_bytes(lookspage.PAGE_HEADER + MARKER.encode())
     monkeypatch.setattr(lookspage, "default_page_path", lambda: elsewhere)
     reply = _route(served)
     assert reply.status == 200 and MARKER in reply.json()["page"]
@@ -258,7 +258,7 @@ def test_a_link_is_not_followed_constructed(served: Any, user_data: Path, tmp_pa
     to a file that begins like a page."""
     _written()
     target = tmp_path / "linked.html"
-    target.write_text(lookspage.PAGE_HEADER.decode() + MARKER, encoding="utf-8")
+    target.write_bytes(lookspage.PAGE_HEADER + MARKER.encode())
     page = _pages(user_data) / "looks.html"
     page.unlink()
     page.symlink_to(target)
@@ -269,7 +269,7 @@ def test_a_link_is_not_followed_constructed(served: Any, user_data: Path, tmp_pa
     page.unlink()
     real = tmp_path / "real-pages"
     real.mkdir()
-    (real / "looks.html").write_text(lookspage.PAGE_HEADER.decode() + MARKER, encoding="utf-8")
+    (real / "looks.html").write_bytes(lookspage.PAGE_HEADER + MARKER.encode())
     _pages(user_data).rmdir()
     _pages(user_data).symlink_to(real, target_is_directory=True)
     reply = _route(served)
