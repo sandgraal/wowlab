@@ -447,9 +447,9 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
     # M13-25 runs the first three; M13-27 adds `filemap gaps` and may drop
     # `install show`. A Preview runs a view's command, which is data, not a
     # literal here; its own graders are in test_ui_explorer_stage2.py. The
-    # Character tab (M14-08) runs `char list` and `char gear`, both read
-    # commands; that only that tab runs them is graded in
-    # test_ui_character.py. The Looks tab (M14-04) runs `looks page`, which
+    # Character tab runs `char list` and `char gear` (M14-08), and `char
+    # binds` and `char macros` (M14-09), all four read commands; that only
+    # that tab runs them is graded in test_ui_character.py. The Looks tab (M14-04) runs `looks page`, which
     # writes only under the data folder's pages/ (owner ruling 2026-10-15);
     # that it never passes `out` is graded in test_ui_looks.py.
     assert {("tree",), ("explain",)} <= used, used
@@ -460,6 +460,8 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         ("filemap", "gaps"),
         ("char", "list"),
         ("char", "gear"),
+        ("char", "binds"),
+        ("char", "macros"),
         ("looks", "page"),
     }, used
     for path in used:

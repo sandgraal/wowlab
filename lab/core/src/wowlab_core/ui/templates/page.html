@@ -79,15 +79,32 @@
 </div>
 </section>
 <section id="character-view" role="tabpanel" aria-labelledby="tab-character" hidden>
-<p class="intro">One character as the lab-addon last saved it: the file it wrote at logout or <code>/reload</code>, never the session in progress. Read only: this tab runs <code>wowlab char list</code> and <code>wowlab char gear</code> and nothing else. An item's name is its link's own text, and nothing is fetched.</p>
+<p class="intro">One character as the lab-addon last saved it: the file it wrote at logout or <code>/reload</code>, never the session in progress, beside the key bindings and macros the client last wrote. Read only: this tab runs <code>wowlab char list</code>, <code>wowlab char gear</code>, <code>wowlab char binds</code> and <code>wowlab char macros</code> and nothing else. An item's name is its link's own text, and nothing is fetched.</p>
 <div class="toolbar panel">
 <label>Character <select id="char-picker" disabled></select></label>
 <p id="char-status" role="status"></p>
 </div>
 <div id="char-panels" class="char-panels">
-<section id="char-gear-panel" class="panel char-panel" aria-live="polite">
+<section id="char-gear-panel" class="panel char-panel">
 <div id="char-header"></div>
 <div id="char-gear"></div>
+</section>
+<section id="char-keys-panel" class="panel char-panel" aria-labelledby="char-keys-title">
+<h3 id="char-keys-title">Keys</h3>
+<div class="toolbar char-filters">
+<label>Find <input id="char-keys-filter" type="search" placeholder="key, command or what it does" autocomplete="off" spellcheck="false"></label>
+<label class="check"><input id="char-keys-disagree" type="checkbox"> Disagreements only</label>
+</div>
+<div id="char-keys"></div>
+<p class="char-read-only">Read only in this version: this panel changes no binding. Changing keys from here is planned for a later wave.</p>
+</section>
+<section id="char-macros-panel" class="panel char-panel" aria-labelledby="char-macros-title">
+<h3 id="char-macros-title">Macros</h3>
+<div class="toolbar char-filters">
+<label class="check"><input id="char-macros-findings" type="checkbox"> Findings only</label>
+</div>
+<div id="char-macros"></div>
+<p class="char-read-only">Read only in this version: this panel changes no macro. Changing macros from here is planned for a later wave.</p>
 </section>
 </div>
 </section>
