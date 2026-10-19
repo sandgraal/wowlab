@@ -140,3 +140,19 @@ def test_constructed_a_bad_user_file_names_the_file(user_config: Path) -> None:
     with pytest.raises(gear.SlotTableError, match="a name is 1 to 64") as caught:
         gear.load_slot_table()
     assert str(path) in str(caught.value)
+
+
+def test_constructed_a_slot_key_with_many_leading_zeros_is_its_number() -> None:
+    """Review round 1: the length is judged without leading zeros, and no
+    conversion meets CPython's 4300-digit limit."""
+    table = gear.parse_slot_table(f'[slots]\n"{"0" * 5000}1" = "Helm"\n')
+    assert table.slots == {1: "Helm"}
+    with pytest.raises(gear.SlotTableError, match="not a slot number"):
+        gear.parse_slot_table(f'[slots]\n"{"0" * 5000}" = "Zero"\n')
+
+
+def test_constructed_a_named_code_in_another_case_replaces_the_shipped_one() -> None:
+    shipped = gear.load_slot_table().table
+    table = gear.parse_slot_table('[quality]\n"niq2:" = "Green"\n', shipped)
+    assert gear.quality_word("nIQ2:", table) == "Green"
+    assert [c for c in table.quality if c.casefold() == "niq2:"] == ["niq2:"]

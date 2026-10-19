@@ -122,16 +122,24 @@ def parse_slot_table(text: str, base: SlotTable | None = None) -> SlotTable:
         seen: dict[str, str] = {}
         for key, value in part.items():
             if section == "slots":
-                if not key.isascii() or not key.isdigit() or not 1 <= int(key) <= SLOT_MAX:
+                # The length first: `int` refuses a run past 4300 digits with
+                # a bare ValueError, and no slot number needs more than four.
+                digits = key.lstrip("0")
+                if (
+                    not key.isascii()
+                    or not key.isdigit()
+                    or len(digits) > len(str(SLOT_MAX))
+                    or not 1 <= int(digits or "0") <= SLOT_MAX
+                ):
                     raise SlotTableError(
                         f"[slots]: {key!r} is not a slot number (a whole number from 1 to "
                         f"{SLOT_MAX})"
                     )
-                number = str(int(key))
+                number = digits
                 if number in seen:
                     raise SlotTableError(f"[slots]: {seen[number]!r} and {key!r} are one slot")
                 seen[number] = key
-                slots[int(key)] = _text(f"[slots] {key}", value)
+                slots[int(digits)] = _text(f"[slots] {key}", value)
             else:
                 if not _COLOUR.fullmatch(key):
                     raise SlotTableError(
@@ -142,7 +150,11 @@ def parse_slot_table(text: str, base: SlotTable | None = None) -> SlotTable:
                 if folded in seen:
                     raise SlotTableError(f"[quality]: {seen[folded]!r} and {key!r} are one code")
                 seen[folded] = key
-                quality[key] = _text(f"[quality] {key}", value)
+                word = _text(f"[quality] {key}", value)
+                # A code given in another letter case replaces the one it folds to.
+                for code in [c for c in quality if c.casefold() == folded]:
+                    del quality[code]
+                quality[key] = word
     return SlotTable(slots=dict(sorted(slots.items())), quality=quality)
 
 
@@ -182,9 +194,13 @@ def quality_word(colour: str, table: SlotTable) -> str | None:
 
 
 class GearUpgrade(_Model):
-    """The link's upgrade fields as the payload orders them, **[verify]**:
-    field 10 (the modifier mask; older documentation: the upgrade type) and
-    the `type:value` modifier pairs after the bonus ids."""
+    """Field 10 and the `type:value` modifier pairs after the bonus ids, as
+    the payload orders them, **[verify]**. "Upgrade" is only the older
+    documentation's name for them (field 10 as the upgrade type); current
+    documentation calls field 10 the modifier mask, and an item's upgrade
+    track is carried in its bonus ids (GLOSSARY, "Upgrade track"). Field 10
+    is empty in all 38 committed links, so `mask` has never been seen
+    filled."""
 
     mask: int | None
     modifiers: list[itemlink.LinkModifier]

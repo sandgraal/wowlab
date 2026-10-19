@@ -13,8 +13,8 @@ Shape (docs/LAB_FORMATS.md §4.2 and its amendments, 2026-09-28 and
 
 - `colour` is the text between `|c` and `|H`, kept as written. Two forms
   are known: the named form `nIQ<n>:` (`|cnIQ2:`, the only form in the
-  committed captures) and the hex form `AARRGGBB` (`|cff1eff00`, Retail's
-  older form, unobserved on Forever). Anything else is kept with form
+  committed captures) and the hex form `AARRGGBB` (`|cff1eff00`, the hex form
+  other clients write **[verify]**, unobserved on Forever). Anything else is kept with form
   `other`; what a colour means is the slot table's business
   (`gear_slots.toml`), not the parser's.
 - `payload` is split on `:` into `fields`, every one kept raw. Field 0 is

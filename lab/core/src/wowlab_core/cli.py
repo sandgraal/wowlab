@@ -7547,13 +7547,19 @@ class CharGearReport(_Out):
 
 _GEAR_NAMES_NOTE = (
     "Item names are each link's bracketed text; nothing is fetched. The link fields past the "
-    "item id (enchant, gems, suffix, specialization, bonus ids, upgrade) are named as "
-    "community documentation names them [verify]."
+    "item id (enchant, gems, suffix, specialization, bonus ids) are named as community "
+    'documentation names them [verify]; "upgrade" (field 10 and the modifier pairs) is the '
+    "older documentation's name for those fields, and the upgrade track itself is carried in "
+    "bonus ids (GLOSSARY, Upgrade track)."
 )
 _GEAR_LEVEL_NOTE = (
     "Item levels and the averages are the client's figures as recorded, never derived from "
     "bonus ids. The averages are GetAverageItemLevel's returns, not the mean of the item "
     "levels listed, and how the client computes them is not known."
+)
+_GEAR_OVERALL_NOTE = (
+    "overall: on Retail, the best items owned, bags included (community documentation, "
+    "[verify] on Forever)."
 )
 
 
@@ -7578,7 +7584,10 @@ def _no_gear(record: labaddon.CharDB, path: str) -> str | None:
     if isinstance(section, labaddon.AbsentSection):
         why = section.absent
         if why == labaddon.SWITCHED_OFF:
-            why += "; /wowlab unskip gear in the game switches it back on from the next /reload"
+            why += (
+                "; type /wowlab unskip gear in the game on this character, then /reload; the "
+                "gear is in the file from the save after that (the next /reload or logout)"
+            )
         return f"no gear in {path}: the lab-addon recorded it as absent ({why})"
     return None
 
@@ -7648,7 +7657,7 @@ def char_gear(
             "The character is the one whose WowLab.lua has the newest modification time; "
             "choose another with --character."
         )
-    notes += [_gear_table_note(table), _GEAR_NAMES_NOTE, _GEAR_LEVEL_NOTE]
+    notes += [_gear_table_note(table), _GEAR_NAMES_NOTE, _GEAR_LEVEL_NOTE, _GEAR_OVERALL_NOTE]
     report = CharGearReport(
         character=f"{target.realm_folder}/{target.character_folder}",
         file=target.path,
@@ -7685,19 +7694,20 @@ def char_gear(
         _say(f"  {label:<{width}}  {what}")
     average = report.average
     if average.absent is not None:
-        _say(f"Averages: GetAverageItemLevel {average.absent}")
+        _say(f"Averages: absent ({average.absent})")
     else:
         _say(
             f"Averages (GetAverageItemLevel, as the client returns them): equipped "
-            f"{_num_words(average.equipped)}, overall {_num_words(average.overall)} (best "
-            f"owned, bags included; Retail meaning, from memory), pvp {_num_words(average.pvp)}"
+            f"{_num_words(average.equipped)}, overall {_num_words(average.overall)}, pvp "
+            f"{_num_words(average.pvp)}"
         )
     apis = sorted({s.item_level_api for s in filled if s.item_level_api is not None})
     if apis:
         _say(f"Item levels from {', '.join(apis)}.")
     if table.source == "default":
         _say(
-            f"Slot names and quality words: the shipped default {table.shipped}. To use your "
+            f"Slot names and quality words: the shipped default {table.shipped}, community "
+            "documentation for Retail, [verify] on Forever. To use your "
             f"own, copy it to {table.user_file} (create the folder if it is missing) and edit it."
         )
     else:

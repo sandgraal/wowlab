@@ -13,7 +13,9 @@
 # file.
 
 [slots]
-# The client's slot number = the name shown for it.
+# The client's slot number = the name shown for it. "Finger 1/2" and
+# "Trinket 1/2" are wowlab's labels: the client labels both slots of a pair
+# "Finger" or "Trinket".
 1 = "Head"
 2 = "Neck"
 3 = "Shoulder"
@@ -31,13 +33,14 @@
 15 = "Back"
 16 = "Main Hand"
 17 = "Off Hand"
-18 = "Ranged"
+18 = "Ranged"   # may hold a relic (libram, idol, totem) for some classes [verify]
 19 = "Tabard"
 
 [quality]
 # A link's colour code, as written between `|c` and `|H`, = the quality word.
 # The named form (`|cnIQ2:`) is what Forever writes; the hex form
-# (`|cffRRGGBB`) is Retail's older one, kept for links from elsewhere.
+# (`|cffRRGGBB`) is the hex form other clients write [verify], kept for links
+# from elsewhere.
 "nIQ0:" = "Poor"
 "nIQ1:" = "Common"
 "nIQ2:" = "Uncommon"
@@ -54,4 +57,4 @@
 "ffa335ee" = "Epic"
 "ffff8000" = "Legendary"
 "ffe6cc80" = "Artifact"
-"ff00ccff" = "Heirloom"
+"ff00ccff" = "Heirloom"   # also the WoW Token's colour; listed once, as Heirloom
