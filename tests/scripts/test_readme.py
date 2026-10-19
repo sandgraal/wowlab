@@ -40,12 +40,15 @@ WIKI = "https://github.com/sandgraal/wowlab/wiki"
 FIRST_COMMANDS = ("wowlab doctor", "wowlab ui", "wowlab snap create")
 # ADR-0031's human half for macOS: the owner's recorded first run on a real install.
 MACOS_RECORD = ROOT / "docs" / "handoffs" / "M13-10-macos.md"
-# What `wowlab ui` runs (ui/__init__.py and ADR-0029's owner rulings of 2026-10-15).
+# What `wowlab ui` runs (ui/__init__.py, ADR-0029's owner rulings of 2026-10-15,
+# and the confirm step on `snap gc` and `doctor --yes`, M14-02).
 UI_RUNS = (
-    "It runs every wowlab command except those that take `--yes`, `ui` itself, "
-    "`log tail --follow` and `looks page --out`: the commands that read, and the ones "
-    "that save only to wowlab's own data (snapshots, profiles, saved looks, the "
-    "game-table cache, pages), never to game files."
+    "It runs every wowlab command except the six that change your install, `ui` "
+    "itself, `log tail --follow` and `looks page --out`: the commands that read, the "
+    "ones that save only to wowlab's own data (snapshots, profiles, saved looks, the "
+    "game-table cache, pages), and `snap gc` and `doctor --yes`, which change only "
+    "that store and run only after you confirm the plan they show. None of them "
+    "writes game files."
 )
 
 

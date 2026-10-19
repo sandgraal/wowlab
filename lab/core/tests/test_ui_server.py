@@ -92,7 +92,8 @@ The HTTP surface:
 - A refusal answers 403 with the JSON body ``{"error": <code>}``:
   ``"token"``, ``"host"``, ``"origin"`` for the request checks;
   ``"not_a_command"`` when ``command`` is not the path of a leaf of the tree;
-  ``"excluded"`` for a leaf that declares ``--yes``, for ``ui``, for
+  ``"excluded"`` for a leaf that declares ``--yes`` (since M14-02, one not
+  in the confirm step; see test_ui_confirm.py), for ``ui``, for
   ``log tail`` with ``follow`` true (a run must end), and for ``looks page``
   with an ``out`` parameter of any value (it can create a file anywhere
   outside an install; review of #198);
@@ -1318,10 +1319,20 @@ def test_every_run_has_a_timeout_and_a_cap_that_cannot_be_turned_off(
 
 
 def test_every_yes_leaf_of_the_real_tree_and_ui_are_refused(real: Any, recorder: Recorder) -> None:
+    """Every `--yes` leaf but the two of the confirm step (M14-02: `snap gc`
+    and `doctor`, graded in test_ui_confirm.py) is refused; those two refuse
+    a `yes` from the form."""
     leaves = dict(_leaves(_real_tree()))
-    refused = sorted(path for path, cmd in leaves.items() if _declares_yes(cmd))
-    assert ("doctor",) in refused
+    confirm_step = {("snap", "gc"), ("doctor",)}
+    every = {path for path, cmd in leaves.items() if _declares_yes(cmd)}
+    assert confirm_step <= every
+    refused = sorted(every - confirm_step)
+    assert ("snap", "restore") in refused
     assert ("ui",) in leaves
+    for path in sorted(confirm_step):
+        for params in ({"yes": True}, {"yes": False}):
+            reply = _run(real, path, params)
+            assert (reply.status, reply.error()) == (403, "unknown_parameter"), (path, params)
     for path in refused:
         for params in ({}, {"yes": True}, {"yes": False}):
             reply = _run(real, path, params)

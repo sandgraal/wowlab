@@ -11,8 +11,12 @@ the required `quality` job, with the rest of `lab/core/tests`.
   Otherwise it sits in an exclusion list below, with a written reason.
 - The exclusion lists are checked both ways: every entry names a real leaf or
   a declared, offered parameter, and the server gives the same reason.
-- Every leaf that declares `--yes` is excluded with "confirm flow: M14". The
-  set is read from the Click tree here, not counted, and holds `doctor`.
+- Every leaf that declares `--yes` goes through the confirm step (ADR-0029,
+  "Parity"; M14-02): it is in `CONFIRM_STEP` and the server runs it only as
+  a plan, never with `--yes` from a form, or it is excluded with "confirm
+  flow: M14". The set is read from the Click tree here, not counted, and
+  holds `doctor` and `snap gc`. A dummy `--yes` leaf the server is made to
+  run without the step fails this check.
 - `ui` itself is excluded.
 - `looks page --out` and `log tail --follow` are refused.
 - A dummy command added to the tree in the test appears in the UI, runs, and
@@ -25,11 +29,15 @@ constructed stand-in (`_ECHO`) that prints its argv as JSON, so a run proves
 what the server would have run without running it.
 
 Owner of this file: `test-writer` (audit of 2026-10-16; M13-26 was exempted
-from graders-first on that date). The implementer does not edit it.
+from graders-first on that date). Since the owner decision of 2026-10-17
+(AGENTS.md) `wowlab_core.ui` is out of the graders-first set and its tests
+are the implementer's; M14-02 added the confirm-step check and
+`CONFIRM_STEP`.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import http.client
 import json
 import re
@@ -49,7 +57,18 @@ from wowlab_core import ui
 
 CONFIRM_FLOW = "confirm flow: M14"
 """ADR-0029 amendment (2026-10-15): the reason for every leaf that declares
-`--yes`. Those leaves are found in the tree, never listed by hand."""
+`--yes` and is not in `CONFIRM_STEP`. Those leaves are found in the tree,
+never listed by hand."""
+
+CONFIRM_STEP: Mapping[tuple[str, ...], str] = {
+    # M14-02 (§16.1): the two whose worst case is wowlab's own store.
+    ("snap", "gc"): "dry_run",
+    ("doctor",): "doctor",
+}
+"""The `--yes` leaves that go through the confirm step, each with the shape
+of its plan run: "dry_run" (the leaf declares `--dry-run`; the plan runs
+with `--dry-run --json`) or "doctor" (`--json` alone). M14-03 adds the six
+install writes."""
 
 EXCLUDED: Mapping[tuple[str, ...], str] = {
     # The server must not start another server, or itself.
@@ -109,6 +128,24 @@ def _declared_params(cmd: Any) -> dict[str, Any]:
 
 def _declared(cmd: Any) -> set[str]:
     return set(_declared_params(cmd))
+
+
+def _declares_dry_run(cmd: Any) -> bool:
+    return any("--dry-run" in _opts(param) for param in cmd.params)
+
+
+def _server_added(cmd: Any, shape: str | None) -> dict[str, Any]:
+    """The parameters the server sets itself on a leaf of the confirm step,
+    so not ones the form offers: `--yes`, and `--dry-run` for the dry-run
+    shape. Empty for any other leaf."""
+    if shape is None:
+        return {}
+    added = {}
+    for param in cmd.params:
+        opts = _opts(param)
+        if "--yes" in opts or (shape == "dry_run" and "--dry-run" in opts):
+            added[str(param.name)] = param
+    return added
 
 
 def _click_shape(param: Any) -> tuple[str, bool, bool]:
@@ -247,9 +284,15 @@ def bad() -> Iterator[_Served]:
 
 
 def _expected_exclusions(
-    tree: Any, excluded: Mapping[tuple[str, ...], str] = EXCLUDED
+    tree: Any,
+    excluded: Mapping[tuple[str, ...], str] = EXCLUDED,
+    confirm_step: Mapping[tuple[str, ...], str] = CONFIRM_STEP,
 ) -> dict[tuple[str, ...], str]:
-    expected = {path: CONFIRM_FLOW for path, cmd in _leaves(tree) if _declares_yes(cmd)}
+    expected = {
+        path: CONFIRM_FLOW
+        for path, cmd in _leaves(tree)
+        if _declares_yes(cmd) and path not in confirm_step
+    }
     expected.update(excluded)
     return expected
 
@@ -303,9 +346,11 @@ def _parity_problems(
     served: _Served,
     excluded: Mapping[tuple[str, ...], str] = EXCLUDED,
     refused: Mapping[tuple[str, ...], Mapping[str, str]] = REFUSED_PARAMS,
+    confirm_step: Mapping[tuple[str, ...], str] = CONFIRM_STEP,
 ) -> list[str]:
     """Every leaf of `tree` is reachable in the UI or excluded with its reason,
-    and every list entry is real. Returns what is wrong, empty when nothing."""
+    every `--yes` leaf goes through the confirm step, and every list entry is
+    real. Returns what is wrong, empty when nothing."""
     leaves = dict(_leaves(tree))
     listed = served.commands()
     problems: list[str] = []
@@ -314,7 +359,8 @@ def _parity_problems(
     for path in sorted(set(listed) - set(leaves)):
         problems.append(f"{' '.join(path)}: listed but not a leaf")
     problems += _list_problems(tree, served, excluded, refused)
-    want_excluded = _expected_exclusions(tree, excluded)
+    problems += _confirm_problems(tree, served, confirm_step)
+    want_excluded = _expected_exclusions(tree, excluded, confirm_step)
     for path, cmd in leaves.items():
         if path not in listed:
             continue
@@ -332,6 +378,8 @@ def _parity_problems(
         if not _declares_json(cmd):
             problems.append(f"{name}: declares no --json, so the UI has no JSON to show")
         declared = _declared_params(cmd)
+        for added in _server_added(cmd, confirm_step.get(path)):
+            declared.pop(added)
         offered = {p["name"]: p for p in item["params"]}
         for missing in sorted(set(declared) - set(offered)):
             problems.append(f"{name}: declares {missing!r} but the form cannot offer it")
@@ -362,6 +410,91 @@ def _parity_problems(
                 problems.append(f"{name}: {pname} refused {param['refused']!r}, want {want!r}")
             if param["required"] and param["refused"]:
                 problems.append(f"{name}: {pname} is required and refused, so unreachable")
+    return problems
+
+
+def _shape_in_tree(path: tuple[str, ...], cmd: Any) -> str | None:
+    """The plan-run shape §16.1 gives a `--yes` leaf, from what it declares."""
+    if _declares_dry_run(cmd):
+        return "dry_run"
+    return "doctor" if path == ("doctor",) else None
+
+
+def _confirm_problems(
+    tree: Any, served: _Served, confirm_step: Mapping[tuple[str, ...], str]
+) -> list[str]:
+    """ADR-0029 "Parity": every `--yes` command goes through the confirm
+    step. A leaf of `confirm_step` is listed with its shape and without its
+    `--yes` (or `--dry-run`); a run of it is its plan, which never carries
+    `--yes` and carries `--dry-run` exactly for the dry-run shape; a request
+    that sets `yes`, or brings a token the server never minted, runs
+    nothing. Every other `--yes` leaf is excluded and refuses to run. No
+    leaf without `--yes` claims the step."""
+    leaves = dict(_leaves(tree))
+    listed = served.commands()
+    problems: list[str] = []
+    for path in sorted(confirm_step):
+        if path not in leaves or not _declares_yes(leaves[path]):
+            problems.append(f"CONFIRM_STEP {' '.join(path)}: not a leaf that declares --yes")
+    for path, cmd in leaves.items():
+        if path not in listed:
+            continue
+        item = listed[path]
+        name = " ".join(path)
+        if not _declares_yes(cmd):
+            if item.get("confirm") is not None:
+                problems.append(f"{name}: claims the confirm step and declares no --yes")
+            continue
+        shape = confirm_step.get(path)
+        if shape is None:
+            if item["excluded"] is None:
+                problems.append(f"{name}: declares --yes and skips the confirm step")
+            if item.get("confirm") is not None:
+                problems.append(f"{name}: in the confirm step, but not in CONFIRM_STEP")
+        else:
+            if item["excluded"] is not None or item.get("confirm") != shape:
+                problems.append(
+                    f"{name}: excluded {item['excluded']!r}, confirm {item.get('confirm')!r}; "
+                    f"want the confirm step, shape {shape!r}"
+                )
+            if _shape_in_tree(path, cmd) != shape:
+                problems.append(f"{name}: the tree gives shape {_shape_in_tree(path, cmd)!r}")
+        offered = {p["name"] for p in item["params"]}
+        for added in _server_added(cmd, shape):
+            if added in offered:
+                problems.append(f"{name}: offers {added!r}, which only the server sets")
+        # A request that sets `--yes` itself never runs.
+        yes_names = [str(p.name) for p in cmd.params if "--yes" in _opts(p)]
+        for yes_name in yes_names:
+            status, payload = served.run(path, {yes_name: True})
+            if status == 200:
+                problems.append(f"{name}: a request that sets {yes_name!r} ran: {payload}")
+        # Nor does a token the server never minted.
+        status, _ = served.request(
+            "POST", "/api/run", {"command": list(path), "params": {}, "confirm": "x" * 43}
+        )
+        if status == 200:
+            problems.append(f"{name}: a made-up confirm token ran")
+        status, payload = served.run(path, {})
+        if shape is None:
+            if status == 200:
+                problems.append(f"{name}: ran without the confirm step")
+            continue
+        if status != 200:
+            problems.append(f"{name}: its plan run answered {status} {payload}")
+            continue
+        offer = payload.get("confirm")
+        if not isinstance(offer, dict) or offer.get("stage") != "plan":
+            problems.append(f"{name}: its run is not reported as a plan: {offer!r}")
+        argv = json.loads(payload["stdout"])
+        parsed, _, _ = cmd.make_parser(Context(cmd)).parse_args(argv[len(path) :])
+        for yes_name in yes_names:
+            if parsed.get(yes_name):
+                problems.append(f"{name}: its plan run carries --yes: {argv}")
+        if _JSON_OPT not in argv:
+            problems.append(f"{name}: its plan run carries no --json: {argv}")
+        if ("--dry-run" in argv) != (shape == "dry_run"):
+            problems.append(f"{name}: --dry-run in its plan run is not its shape's: {argv}")
     return problems
 
 
@@ -416,17 +549,85 @@ def test_every_refused_param_is_declared_and_offered_with_the_servers_reason(
                 )
 
 
-def test_every_yes_leaf_is_excluded_for_the_confirm_flow_and_doctor_is_one(real: _Served) -> None:
+def test_every_yes_leaf_goes_through_the_confirm_step_or_is_excluded_for_it(
+    real: _Served,
+) -> None:
+    """ADR-0029 "Parity" (M14-02): `snap gc` and `doctor` go through the
+    confirm step; every other `--yes` leaf is still excluded and refused."""
     tree = _real_tree()
     yes = {path for path, cmd in _leaves(tree) if _declares_yes(cmd)}
-    assert ("doctor",) in yes
+    assert {("doctor",), ("snap", "gc")} <= yes
+    assert set(CONFIRM_STEP) <= yes
+    assert _confirm_problems(tree, real, CONFIRM_STEP) == []
     listed = real.commands()
-    assert {path for path, item in listed.items() if item["excluded"] == CONFIRM_FLOW} == yes
-    for path in sorted(yes):
+    still = yes - set(CONFIRM_STEP)
+    assert still, "M14-03's six are still excluded"
+    assert {path for path, item in listed.items() if item["excluded"] == CONFIRM_FLOW} == still
+    assert {path for path, item in listed.items() if item["confirm"]} == set(CONFIRM_STEP)
+    for path in sorted(still):
         status, payload = real.run(path, {})
         assert (status, payload) == (403, {"error": "excluded"}), path
         status, payload = real.run(path, {"yes": True})
         assert (status, payload) == (403, {"error": "excluded"}), path
+    for path in sorted(CONFIRM_STEP):
+        status, payload = real.run(path, {"yes": True})
+        assert (status, payload) == (403, {"error": "unknown_parameter"}), path
+
+
+def _skipping(tree: Any, path: tuple[str, ...], **change: Any) -> _Served:
+    """A server for `tree` whose leaf at `path` is altered as a broken server
+    would hold it (constructed): the parity check must catch it."""
+    served = _Served(tree)
+    server = served.server
+    server.leaves[path] = dataclasses.replace(server.leaves[path], **change)
+    server.commands_body = ui._commands_body(server.leaves)
+    return served
+
+
+@pytest.mark.parametrize(
+    ("change", "fragment"),
+    [
+        ({"excluded": None}, "parity-dummy-writes: declares --yes and skips the confirm step"),
+        ({"excluded": None}, "parity-dummy-writes: a request that sets 'yes' ran"),
+        ({"excluded": None}, "parity-dummy-writes: ran without the confirm step"),
+        (
+            {"excluded": None, "confirm": "dry_run"},
+            "parity-dummy-writes: in the confirm step, but not in CONFIRM_STEP",
+        ),
+    ],
+    ids=[
+        "constructed: a --yes leaf run as a plain leaf",
+        "constructed: its --yes reachable from a form",
+        "constructed: it runs with no plan",
+        "constructed: a leaf the step does not name",
+    ],
+)
+def test_the_confirm_step_check_fails_when_a_yes_leaf_skips_it(
+    change: dict[str, Any], fragment: str
+) -> None:
+    tree = _tree_with_dummies()
+    path = ("parity-dummy-writes",)
+    served = _skipping(tree, path, **change)
+    try:
+        problems = _parity_problems(tree, served)
+    finally:
+        served.close()
+    assert any(fragment in p for p in problems), problems
+
+
+def test_the_confirm_step_check_fails_when_a_named_leaf_is_excluded() -> None:
+    """CONFIRM_STEP naming a leaf the server still excludes is caught too
+    (constructed: the list widened by the test)."""
+    tree = _tree_with_dummies()
+    served = _Served(tree)
+    try:
+        step = {**CONFIRM_STEP, ("parity-dummy-writes",): "doctor"}
+        problems = _parity_problems(tree, served, confirm_step=step)
+    finally:
+        served.close()
+    assert any(
+        p.startswith("parity-dummy-writes: excluded 'confirm flow: M14'") for p in problems
+    ), problems
 
 
 def test_ui_itself_is_excluded(real: _Served) -> None:
@@ -501,6 +702,10 @@ def test_a_run_reaches_every_offered_parameter_when_click_parses_it_back(
     assert leftover == [], argv
     json_names = {str(p.name) for p in cmd.params if _JSON_OPT in _opts(p)}
     got = {k: (list(v) if isinstance(v, tuple) else v) for k, v in parsed.items()}
+    # A leaf of the confirm step runs its plan: the server adds `--dry-run`
+    # for the dry-run shape, and never `--yes`.
+    if CONFIRM_STEP.get(path) == "dry_run":
+        want.update({str(p.name): True for p in cmd.params if "--dry-run" in _opts(p)})
     assert {k: v for k, v in got.items() if k not in json_names} == want, argv
     assert [got.get(n) for n in json_names] == [True] * len(json_names), argv
 
@@ -589,8 +794,8 @@ _BAD_CASES: list[tuple[str, Mapping[tuple[str, ...], str], dict[Any, Any], str]]
     (
         "REFUSED_PARAMS on an excluded leaf",
         EXCLUDED,
-        {**REFUSED_PARAMS, ("doctor",): {"root": "moot"}},
-        "REFUSED_PARAMS doctor: the leaf is excluded",
+        {**REFUSED_PARAMS, ("snap", "restore"): {"root": "moot"}},
+        "REFUSED_PARAMS snap restore: the leaf is excluded",
     ),
     (
         "REFUSED_PARAMS names an undeclared parameter",

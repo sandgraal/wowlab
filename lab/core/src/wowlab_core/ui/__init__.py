@@ -26,9 +26,29 @@ the home folder and path separator so the page can show home as `~`. `POST
 declares: options as `--name=value`, so a value is never read as an option,
 arguments after `--`, flags given or not, never through a shell. Refused
 (403 `excluded`, ADR-0029 amendment and owner rulings of 2026-10-15): every
-leaf that declares `--yes` (read from the tree), `ui` itself, `log tail` with
-`follow` (a run must end) and `looks page` with `out` (it can create a file
-anywhere outside an install). At most `MAX_CONCURRENT_RUNS` run at once (503
+leaf that declares `--yes` (read from the tree) and does not yet go through
+the confirm step, `ui` itself, `log tail` with `follow` (a run must end) and
+`looks page` with `out` (it can create a file anywhere outside an install).
+
+The confirm step (ADR-0029 "Writes", §16.1, M14-02). A leaf that declares
+`--yes` and is in `_CONFIRM_READY` (`snap gc` and `doctor` here) is never run
+with `--yes` from a form: its `yes` (and `dry_run`) parameter is the
+server's, not the page's. A request with no `confirm` makes the *plan run*,
+whose shape the server reads from the tree: a leaf that declares `--dry-run`
+runs with `--dry-run --json`, and its marker is a JSON report with `dry_run:
+true`; `doctor` runs with `--json`, and its marker is `first_run.outcome ==
+"not_asked"` with `first_run.chosen` set. Only a run that exited 0, whole,
+with its shape's marker gets a one-time token (`secrets`), bound here to the
+exact argv it confirms, spent on first use and kept only in memory. A
+request carrying `confirm: <token>` spends it, rebuilds the plan argv from
+its own `command` and `params`, and runs the bound confirmed argv only when
+the two plan argvs are equal: the plan argv with `--dry-run` taken out and
+`--yes` added as its own element after `--json` (and before any `--`, so it
+is never read as an argument). An unknown, spent or mismatched token answers
+403 `confirm` and runs nothing. The server writes nothing itself: the
+confirmed run is the CLI's, and every change it causes is the CLI's (L2).
+
+At most `MAX_CONCURRENT_RUNS` run at once (503
 `busy` past that). Each run has a timeout and an output cap, read as a stream
 and counted on the encoded response. The run's whole process tree,
 grandchildren included, is killed at exactly three points: when the run
@@ -50,6 +70,7 @@ from __future__ import annotations
 
 import base64
 import codecs
+import collections
 import contextlib
 import functools
 import hashlib
@@ -67,7 +88,7 @@ import sys
 import threading
 import time
 import urllib.parse
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any, override
@@ -79,6 +100,7 @@ __all__ = [
     "DEFAULT_TIMEOUT_S",
     "MAX_BODY_BYTES",
     "MAX_CONCURRENT_RUNS",
+    "MAX_PENDING_CONFIRMS",
     "UiServer",
     "make_server",
     "static_files",
@@ -111,6 +133,27 @@ _POLL_S = 0.05
 # test (M13-26) holds it to that.
 _EXCLUDED_YES = "confirm flow: M14"
 _EXCLUDED_UI = "the UI itself"
+
+_JSON = "--json"
+_YES = "--yes"
+_DRY_RUN = "--dry-run"
+_DOCTOR = ("doctor",)
+# The `--yes` leaves that go through the confirm step. M14-02 proves the
+# mechanism on the two whose worst case is wowlab's own store (§16.1);
+# M14-03 adds the six install writes. Every other `--yes` leaf stays
+# excluded with `_EXCLUDED_YES`, and a new one is excluded until it is named
+# here.
+_CONFIRM_READY: frozenset[tuple[str, ...]] = frozenset({("snap", "gc"), _DOCTOR})
+# The plan-run shapes (§16.1), as `/api/commands` names them.
+_SHAPE_DRY_RUN = "dry_run"
+_SHAPE_DOCTOR = "doctor"
+# Refusal code for an unknown, spent or mismatched confirm token.
+_CONFIRM_REFUSED = "confirm"
+# The longest confirm token read; `secrets.token_urlsafe(32)` is 43 characters.
+_MAX_CONFIRM_TOKEN = 128
+
+MAX_PENDING_CONFIRMS: int = 32
+"""Confirm tokens kept at once; minting one more forgets the oldest."""
 # Parameters refused on a leaf that otherwise runs, by leaf path: whether
 # only a true value is refused (else any value is), and why. Owner rulings
 # of 2026-10-15.
@@ -186,10 +229,42 @@ class _Leaf:
     params: Mapping[str, _Param]
     json_opt: str | None
     excluded: str | None
+    # The plan-run shape of a `--yes` leaf that goes through the confirm step
+    # (`_SHAPE_DRY_RUN` or `_SHAPE_DOCTOR`); None for every other leaf.
+    confirm: str | None = None
 
 
 def _opts(param: Any) -> list[str]:
     return [*getattr(param, "opts", ()), *getattr(param, "secondary_opts", ())]
+
+
+def _plain_flag(param: Any, opt: str) -> bool:
+    """Whether `param` is a flag that giving `opt` alone turns on: no
+    `--no-…` twin, no count, no other flag value."""
+    return (
+        bool(getattr(param, "is_flag", False))
+        and opt in getattr(param, "opts", ())
+        and not getattr(param, "secondary_opts", ())
+        and getattr(param, "flag_value", True) is True
+        and not getattr(param, "count", False)
+    )
+
+
+def _confirm_shape(
+    path: tuple[str, ...], json_opt: str | None, yes: Any, dry_run: Any | None
+) -> str | None:
+    """The plan-run shape of a `--yes` leaf, read from what it declares
+    (§16.1), or None when it does not go through the confirm step yet: it is
+    not in `_CONFIRM_READY`, has no `--json` to read a marker from, or its
+    `--yes` (or `--dry-run`) is not a plain flag. `_confirm`'s decline marker
+    (`undo`, `sv merge`) is M14-03's third shape and is not read here."""
+    if path not in _CONFIRM_READY or json_opt is None or not _plain_flag(yes, _YES):
+        return None
+    if dry_run is not None:
+        return _SHAPE_DRY_RUN if _plain_flag(dry_run, _DRY_RUN) else None
+    if path == _DOCTOR:
+        return _SHAPE_DOCTOR
+    return None
 
 
 def _read_param(param: Any) -> _Param:
@@ -233,20 +308,35 @@ def _read_tree(root: Any) -> dict[tuple[str, ...], _Leaf]:
     for path, command in _leaves(root):
         params: dict[str, _Param] = {}
         json_opt: str | None = None
-        declares_yes = False
+        yes: list[Any] = []
+        dry_run: list[Any] = []
         for param in getattr(command, "params", ()):
             opts = _opts(param)
-            if "--yes" in opts:
-                declares_yes = True
-            if "--json" in opts:
-                json_opt = "--json"
+            if _YES in opts:
+                yes.append(param)
+            if _DRY_RUN in opts:
+                dry_run.append(param)
+            if _JSON in opts:
+                json_opt = _JSON
                 continue  # the server adds it itself; it is not a parameter here
             params[str(param.name)] = _read_param(param)
-        excluded = _EXCLUDED_YES if declares_yes else None
+        excluded = None
+        confirm = None
+        if yes:
+            if len(yes) == 1 and len(dry_run) <= 1:
+                confirm = _confirm_shape(path, json_opt, yes[0], dry_run[0] if dry_run else None)
+            if confirm is None:
+                excluded = _EXCLUDED_YES
+            else:
+                # The server adds these itself, as it adds `--json`: the
+                # plan run never carries `--yes`, and only a token adds it.
+                for param in (*yes, *(dry_run if confirm == _SHAPE_DRY_RUN else ())):
+                    params.pop(str(param.name), None)
         if path == ("ui",):
             excluded = _EXCLUDED_UI
+            confirm = None
         help_text = str(getattr(command, "help", None) or "").strip()
-        leaves[path] = _Leaf(path, help_text, params, json_opt, excluded)
+        leaves[path] = _Leaf(path, help_text, params, json_opt, excluded, confirm)
     return leaves
 
 
@@ -266,6 +356,7 @@ def _describe(leaf: _Leaf) -> dict[str, Any]:
         "path": list(leaf.path),
         "help": leaf.help,
         "excluded": leaf.excluded,
+        "confirm": leaf.confirm,
         "params": [
             {
                 "name": p.name,
@@ -306,8 +397,44 @@ def _text(value: object) -> str:
     return text
 
 
+@dataclass(frozen=True)
+class _Argv:
+    """One run's argv after the `wowlab` prefix, from declared parameters
+    only, in the three places the server puts its own options: `head` (the
+    leaf's path and the options given), then the server's options, then
+    `tail` (`--` and the arguments, or nothing)."""
+
+    head: tuple[str, ...]
+    json_opt: str | None
+    tail: tuple[str, ...]
+    shape: str | None
+
+    def _json(self) -> list[str]:
+        return [self.json_opt] if self.json_opt is not None else []
+
+    def plan(self) -> list[str]:
+        """What runs for a request with no token: for a leaf of the dry-run
+        shape `--dry-run --json`, else `--json` alone; never `--yes`."""
+        dry_run = [_DRY_RUN] if self.shape == _SHAPE_DRY_RUN else []
+        return [*self.head, *dry_run, *self._json(), *self.tail]
+
+    def confirmed(self) -> list[str]:
+        """The plan with `--dry-run` taken out and `--yes` added as its own
+        element after `--json`: the last element when there is no `--`."""
+        if self.shape is None:
+            raise ValueError("only a leaf of the confirm step has a confirmed run")
+        return [*self.head, *self._json(), _YES, *self.tail]
+
+
 def _build_argv(leaf: _Leaf, params: Mapping[str, object]) -> list[str]:
-    """The argv after the `wowlab` prefix, from declared parameters only."""
+    """The argv after the `wowlab` prefix, from declared parameters only (for
+    a leaf of the confirm step, its plan run)."""
+    return _build(leaf, params).plan()
+
+
+def _build(leaf: _Leaf, params: Mapping[str, object]) -> _Argv:
+    """`_build_argv` in its parts, so the plan and its confirmed run are the
+    same request's."""
     if leaf.excluded is not None:
         raise _RefusedError(403, "excluded")
     for key in params:
@@ -347,12 +474,8 @@ def _build_argv(leaf: _Leaf, params: Mapping[str, object]) -> list[str]:
             arguments.extend(values)
         else:
             options.extend(f"{param.opt}={v}" for v in values)
-    argv = [*leaf.path, *options]
-    if leaf.json_opt is not None:
-        argv.append(leaf.json_opt)
-    if arguments:
-        argv += ["--", *arguments]
-    return argv
+    tail = ("--", *arguments) if arguments else ()
+    return _Argv((*leaf.path, *options), leaf.json_opt, tail, leaf.confirm)
 
 
 # ─── running one command ─────────────────────────────────────────────────────
@@ -445,6 +568,8 @@ class _Run:
     stderr: list[bytes]
     timed_out: bool
     truncated: bool
+    # For a leaf of the confirm step: what the page is offered (`_Confirm`).
+    confirm: Mapping[str, object] | None = None
 
     def response(self) -> list[bytes]:
         """The JSON body, in pieces, never joined into one copy."""
@@ -452,7 +577,81 @@ class _Run:
             f'{{"exit_code": {self.exit_code}, "timed_out": {json.dumps(self.timed_out)}, '
             f'"truncated": {json.dumps(self.truncated)}, "stdout": "'
         )
-        return [head.encode("ascii"), *self.stdout, b'", "stderr": "', *self.stderr, b'"}']
+        end = b'"}'
+        if self.confirm is not None:
+            offer = json.dumps(self.confirm, ensure_ascii=True).translate(_JSON_EXTRA_ESCAPES)
+            end = b'", "confirm": ' + offer.encode("ascii") + b"}"
+        return [head.encode("ascii"), *self.stdout, b'", "stderr": "', *self.stderr, end]
+
+    def report(self) -> dict[str, Any] | None:
+        """The JSON object the run printed on stdout, when it exited 0, whole
+        (no timeout, nothing cut), and stdout is exactly one JSON object;
+        else None. A marker is read only from this."""
+        if self.exit_code != 0 or self.timed_out or self.truncated:
+            return None
+        try:
+            # The pieces are the inside of a JSON string (`_json_text`).
+            text = json.loads(b'"' + b"".join(self.stdout) + b'"')
+            value = json.loads(text)
+        except (ValueError, RecursionError):
+            return None
+        return value if isinstance(value, dict) else None
+
+
+@dataclass(frozen=True)
+class _Offer:
+    """What a plan run ended with, read in Python (§14.5 D3): whether it
+    ended with its shape's marker, the sentence the page shows beside the
+    plan, and the parameter the player must fill to be offered Confirm."""
+
+    marked: bool
+    note: str | None = None
+    needs: str | None = None
+
+
+def _offer(leaf: _Leaf, report: Mapping[str, Any] | None) -> _Offer:
+    """The plan run's outcome by its shape's marker (§16.1). Anything that is
+    not the marker, an exit other than 0 (a refusal, exit 3, included) or
+    output that is not one whole JSON object, offers nothing."""
+    if report is None:
+        return _Offer(False)
+    if leaf.confirm == _SHAPE_DRY_RUN:
+        if report.get("dry_run") is not True:
+            return _Offer(False)
+        return _Offer(True, _dry_run_note(leaf, report))
+    if leaf.confirm == _SHAPE_DOCTOR:
+        first = report.get("first_run")
+        if not isinstance(first, Mapping) or first.get("outcome") != "not_asked":
+            return _Offer(False)
+        chosen = first.get("chosen")
+        if isinstance(chosen, str) and chosen:
+            return _Offer(True, f"Confirm takes a first snapshot of {chosen} into wowlab's store.")
+        if chosen is None and "flavor" in leaf.params:
+            # Several flavors and none named: a confirmed run would exit 2
+            # (`firstrun.run` returns `choose_flavor` under `--yes`).
+            return _Offer(
+                False,
+                "Several flavors are installed: name one in --flavor and run the plan "
+                "again to be offered Confirm.",
+                "flavor",
+            )
+    return _Offer(False)
+
+
+def _dry_run_note(leaf: _Leaf, report: Mapping[str, Any]) -> str | None:
+    """The sentence beside a dry-run plan, from its report. `snap gc`: what
+    it found to remove, or that there is nothing; Confirm is offered either
+    way (a confirmed run that finds nothing changes nothing)."""
+    if leaf.path == ("snap", "gc"):
+        found = report.get("unreferenced")
+        if isinstance(found, list) and not found:
+            return "Nothing to remove. Confirm runs it anyway, and it changes nothing."
+        if isinstance(found, list):
+            return (
+                f"{len(found)} stored object(s) nothing keeps. Confirm removes what "
+                "nothing keeps when it runs; a snapshot taken meanwhile keeps its own."
+            )
+    return None
 
 
 _KILL = getattr(signal, "SIGKILL", signal.SIGTERM)
@@ -531,6 +730,24 @@ def _positive_bytes(value: object) -> int:
     return value
 
 
+def _commands_body(leaves: Mapping[tuple[str, ...], _Leaf]) -> bytes:
+    """The `/api/commands` body. The home folder is data from the machine,
+    like a file name: escaped as a run's output is. `<`, `>` and `&` occur
+    only inside JSON strings, so translating the whole document is safe."""
+    return (
+        json.dumps(
+            {
+                "commands": [_describe(leaf) for leaf in leaves.values()],
+                "home": _home(),
+                "sep": os.sep,
+            },
+            ensure_ascii=True,
+        )
+        .translate(_JSON_EXTRA_ESCAPES)
+        .encode("ascii")
+    )
+
+
 class UiServer(http.server.ThreadingHTTPServer):
     """The `wowlab ui` server. Built by `make_server`, bound and not yet
     serving."""
@@ -557,25 +774,17 @@ class UiServer(http.server.ThreadingHTTPServer):
         self._closing = threading.Event()
         self._idle = threading.Condition(self._runs_lock)
         self._slots = threading.BoundedSemaphore(MAX_CONCURRENT_RUNS)
+        # Confirm tokens not yet spent: token -> (the plan argv it was minted
+        # for, the confirmed argv it runs). In memory only, so they expire
+        # with the server.
+        self._confirms: collections.OrderedDict[str, tuple[tuple[str, ...], tuple[str, ...]]]
+        self._confirms = collections.OrderedDict()
+        self._confirms_lock = threading.Lock()
         super().__init__((_LOOPBACK, 0), _Handler)
         self.port = int(self.server_address[1])
         self.url = f"http://{_LOOPBACK}:{self.port}/?token={self.token}"
         self.hosts = frozenset({f"{_LOOPBACK}:{self.port}", f"localhost:{self.port}"})
-        # The home folder is data from the machine, like a file name: escaped
-        # as a run's output is. `<`, `>` and `&` occur only inside JSON
-        # strings, so translating the whole document is safe.
-        self.commands_body = (
-            json.dumps(
-                {
-                    "commands": [_describe(leaf) for leaf in leaves.values()],
-                    "home": _home(),
-                    "sep": os.sep,
-                },
-                ensure_ascii=True,
-            )
-            .translate(_JSON_EXTRA_ESCAPES)
-            .encode("ascii")
-        )
+        self.commands_body = _commands_body(leaves)
 
     @override
     def server_bind(self) -> None:
@@ -595,6 +804,8 @@ class UiServer(http.server.ThreadingHTTPServer):
         """Stop accepting, then kill every run in progress with its whole
         tree and wait (bounded) for them to end."""
         self._closing.set()
+        with self._confirms_lock:
+            self._confirms.clear()
         super().server_close()
         deadline = time.monotonic() + _CLOSE_WAIT_S
         with self._idle:
@@ -603,12 +814,68 @@ class UiServer(http.server.ThreadingHTTPServer):
 
     def run(self, argv: list[str]) -> _Run:
         """One run of `wowlab` with `argv`, bounded in time and output."""
+        with self._slot():
+            return self._start(argv)
+
+    @contextlib.contextmanager
+    def _slot(self) -> Iterator[None]:
         if not self._slots.acquire(blocking=False):
             raise _RefusedError(503, "busy")
         try:
-            return self._start(argv)
+            yield
         finally:
             self._slots.release()
+
+    def run_leaf(self, leaf: _Leaf, params: Mapping[str, object], token: str | None) -> _Run:
+        """One request's run. With no token, the leaf's own run, or its plan
+        run for a leaf of the confirm step, which mints a token only when it
+        ends with its shape's marker. With a token, the confirmed run that
+        token was minted for, and only when this request's plan argv is the
+        one it was minted for; else 403 `confirm`, and nothing runs."""
+        if token is None:
+            built = _build(leaf, params)
+            plan = built.plan()
+            run = self.run(plan)
+            if leaf.confirm is not None:
+                offer = _offer(leaf, run.report())
+                minted = self._mint(plan, built.confirmed()) if offer.marked else None
+                run.confirm = {
+                    "stage": "plan",
+                    "token": minted,
+                    "note": offer.note,
+                    "needs": offer.needs,
+                }
+            return run
+        # The slot first, so that a busy server does not spend a token.
+        with self._slot():
+            bound = self._spend(token)
+            if bound is None:
+                raise _RefusedError(403, _CONFIRM_REFUSED)
+            if leaf.confirm is None:
+                # An excluded leaf is refused as it is without a token.
+                code = "excluded" if leaf.excluded is not None else _CONFIRM_REFUSED
+                raise _RefusedError(403, code)
+            shown, confirmed = bound
+            if tuple(_build(leaf, params).plan()) != shown:
+                raise _RefusedError(403, _CONFIRM_REFUSED)
+            run = self._start(list(confirmed))
+        run.confirm = {"stage": "confirmed", "token": None, "note": None, "needs": None}
+        return run
+
+    def _mint(self, plan: Sequence[str], confirmed: Sequence[str]) -> str:
+        """A one-time token for `confirmed`, bound to the plan it was shown as."""
+        token = secrets.token_urlsafe(32)
+        with self._confirms_lock:
+            self._confirms[token] = (tuple(plan), tuple(confirmed))
+            while len(self._confirms) > MAX_PENDING_CONFIRMS:
+                self._confirms.popitem(last=False)
+        return token
+
+    def _spend(self, token: str) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+        """The argvs a token was minted for, forgotten as they are read: a
+        token is spent the first time it is presented, matched or not."""
+        with self._confirms_lock:
+            return self._confirms.pop(token, None)
 
     def _start(self, argv: list[str]) -> _Run:
         capture = _Capture(self.output_cap_bytes)
@@ -865,10 +1132,17 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             raise _RefusedError(400, "bad_request")
         if not isinstance(params, dict):
             raise _RefusedError(400, "bad_request")
+        token = request.get("confirm")
+        if "confirm" in request and (
+            not isinstance(token, str) or not 0 < len(token) <= _MAX_CONFIRM_TOKEN
+        ):
+            raise _RefusedError(400, "bad_request")
         leaf = self.server.leaves.get(tuple(command))
         if leaf is None:
+            if token is not None:
+                self.server._spend(token)  # presented, so spent
             raise _RefusedError(403, "not_a_command")
-        return self.server.run(_build_argv(leaf, params))
+        return self.server.run_leaf(leaf, params, token)
 
 
 # ─── the entry point ─────────────────────────────────────────────────────────

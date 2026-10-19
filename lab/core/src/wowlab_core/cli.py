@@ -9258,10 +9258,11 @@ def ui_command() -> None:
     wowlab's own data (snapshots, profiles, saved looks, the db2 cache,
     pages) are offered; some of them overwrite what they saved before (for
     example looks import-char --replace), and none of them touches the game
-    folder. Commands that change your game files, or that ask before
-    changing anything (--yes), are not offered in this version. If no
-    browser opens, the
-    URL is printed once on stdout."""
+    folder. snap gc and doctor, which ask before changing wowlab's own store
+    (--yes), run first as a plan that changes nothing, and run for real only
+    when you press Confirm under it. Commands that change your game files,
+    and the other commands that take --yes, are not offered in this
+    version. If no browser opens, the URL is printed once on stdout."""
     # The browser is opened on a thread: `webbrowser` waits for a browser it
     # runs in the foreground (a text browser, or a `BROWSER` program), and
     # that browser's request must find the server already serving. What it

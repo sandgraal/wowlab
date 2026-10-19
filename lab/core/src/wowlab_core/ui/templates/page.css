@@ -188,6 +188,12 @@ main { padding: 1rem 1.25rem 2rem; }
 .field input[type="text"], .field textarea { width: 100%; max-width: 40rem; }
 #run { padding: 0.3rem 1.2rem; cursor: pointer; color: var(--gold); background: var(--selected); border: 1px solid var(--trim); border-radius: 4px; font-weight: 600; }
 #run:disabled { color: var(--muted); cursor: not-allowed; }
+/* the confirm step (M14-02): the plan's note and its one Confirm */
+.confirm-box { margin: 0.5rem 0; padding: 0.5rem 0.75rem; border: 1px solid var(--trim); border-radius: 4px; }
+.confirm-box p { margin: 0 0 0.4rem; }
+#confirm { padding: 0.3rem 1.2rem; cursor: pointer; color: var(--gold); background: var(--selected); border: 2px solid var(--gold); border-radius: 4px; font-weight: 700; }
+#confirm:disabled { color: var(--muted); cursor: not-allowed; }
+.field.needed input { outline: 2px solid var(--gold); }
 pre { background: var(--field); color: var(--field-text); border: 1px solid var(--gold-deep); padding: 0.5rem; overflow: auto; max-height: 60vh; white-space: pre-wrap; word-break: break-word; }
 pre:empty { display: none; }
 #stderr { color: var(--error); }

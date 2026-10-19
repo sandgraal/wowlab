@@ -57,7 +57,7 @@
 <div id="gaps-body"></div>
 </section>
 <section id="commands-view" role="tabpanel" aria-labelledby="tab-commands" hidden>
-<p class="intro">Runs the commands of the <code>wowlab</code> you started, on this machine only. Commands that save only to wowlab's own data (snapshots, profiles, saved looks, the db2 cache, pages) are offered, and none of them touches the game folder. Commands that change your game files, or that ask before changing anything (<code>--yes</code>), are not offered in this version.</p>
+<p class="intro">Runs the commands of the <code>wowlab</code> you started, on this machine only. Commands that save only to wowlab's own data (snapshots, profiles, saved looks, the db2 cache, pages) are offered, and none of them touches the game folder. A command that asks before changing anything (<code>--yes</code>) runs first as a plan, which changes nothing, and runs for real only when you press Confirm under that plan; in this version that is <code>snap gc</code> and <code>doctor</code>, which change only wowlab's own store. Commands that change your game files are not offered in this version.</p>
 <div class="commands-body">
 <nav id="commands" class="panel" aria-label="Commands"></nav>
 <section id="detail" class="panel" aria-live="polite">
@@ -66,6 +66,10 @@
 <div id="fields"></div>
 <button id="run" type="button" disabled>Run</button>
 <p id="status"></p>
+<div id="confirm-box" class="confirm-box" hidden>
+<p id="confirm-note"></p>
+<button id="confirm" type="button" hidden>Confirm</button>
+</div>
 <div id="result-tree" class="jt" hidden></div>
 <details id="result-raw" class="jt-raw" hidden><summary>Output as printed</summary><pre id="stdout"></pre></details>
 <pre id="stderr"></pre>
