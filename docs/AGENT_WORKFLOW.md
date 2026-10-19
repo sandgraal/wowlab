@@ -201,9 +201,13 @@ other ticket moving.
   `.git/hooks/pre-commit` to point at *one* worktree's `.venv`, and removing
   that worktree breaks every commit in every checkout — this happened.
 - Remove a worktree after its PR merges (`git worktree remove <path>`).
-  The pr-shepherd does it after a confirmed merge, together with the local
-  branch and the `worktree-agent-*` branch; the conductor checks
-  `git worktree list` once per session for leftovers.
+  The conductor does it from the main checkout after a confirmed merge,
+  for the implementer's, the reviewers' and the shepherd's worktrees,
+  together with the merged branch and each `worktree-agent-*` branch; an
+  isolated agent cannot (Claude Code's worktree isolation refuses a `cd`
+  to the main checkout; M13-60, 2026-10-18), and the harness auto-cleans
+  a worktree it finds unchanged. The conductor checks `git worktree list`
+  once per session for leftovers.
 - `gh pr merge` from inside an agent worktree prints "'main' is already used
   by worktree" when it tries to check out `main` locally. The merge on GitHub
   has already happened; confirm it with `git log origin/main -1`.

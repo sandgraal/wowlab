@@ -104,15 +104,21 @@ still defining"), not "might conflict".
   naming the reports, and it answers "seen by the reviewers, not held";
   otherwise route it like any finding (owner decision, 2026-10-17).
 - All verdicts clean → `pr-shepherd` (background, in that worktree) with all
-  reports; it marks the PR ready and drives it to merged.
+  reports; it marks the PR ready and drives it to merged. When this
+  session runs in the cloud, say so in the shepherd's dispatch ("this is a
+  cloud session"): its definition then uses the GitHub MCP tools from the
+  start instead of `gh`'s GraphQL commands.
 - `NEEDS_IMPLEMENTER:` → forward to the branch's author (the implementer,
   or `test-writer` on a `-tests` branch); on "pushed",
   `code-reviewer` (plus the area reviewers the touched files call for) on
   the new commits with the thread or run URLs attached; all clean →
   re-dispatch the shepherd. Nothing that changes behaviour merges ungraded.
 - `MERGED <sha>` → verify on `origin/main`, tick the tracker, note the tick
-  for the end-of-session `docs(backlog)` PR, `git worktree remove` the
-  agent's worktree, and **dispatch the newly unblocked tickets in the same
+  for the end-of-session `docs(backlog)` PR, clean up from the main
+  checkout (`git worktree remove` for the implementer's, the reviewers'
+  and the shepherd's worktrees, then `git branch -D` for the merged branch
+  and each `worktree-agent-*` branch; the shepherd never does this,
+  M13-60), and **dispatch the newly unblocked tickets in the same
   turn**. Recompute the frontier after every merge.
 
 While waiting, do not poll agents; the harness notifies you. Use

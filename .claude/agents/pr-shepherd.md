@@ -47,17 +47,22 @@ below is the same whichever tool runs it. Learned on #266 and #267
   ("too complex to verify that it stays inside the worktree") and you have
   no Write tool, so make the script with two plain calls, first
   `mkdir -p <scratchpad>/<ticket>` and then one `printf '%s\n' '<line>'
-  '<line>' … > <scratchpad>/<ticket>/poll.sh` (the `'%s\n'` format, because
-  the jq command carries quotes and `%`), and run it with `bash <file>`.
-  The lines:
+  '<line>' … > <scratchpad>/<ticket>/poll.sh` (each line as one
+  single-quoted argument, so no line may contain a single quote: the jq
+  filters below are double-quoted for that reason, with their inner quotes
+  escaped), and run it with `bash <file> <sha>`, each line below one
+  argument. The lines:
   `#!/usr/bin/env bash`,
   `set -eu`,
   `sha="$1"`,
   `while true; do`,
-  `  gh api "repos/sandgraal/wowlab/commits/$sha/check-runs" --jq '.check_runs[] | [.name,.status,.conclusion] | @tsv'`,
-  `  if ! gh api "repos/sandgraal/wowlab/commits/$sha/check-runs" --jq '.check_runs[] | select(.status != "completed") | .name' | grep -q .; then break; fi`,
+  `  gh api "repos/sandgraal/wowlab/commits/$sha/check-runs" --jq ".check_runs[] | [.name,.status,.conclusion] | @tsv"`,
+  `  if ! gh api "repos/sandgraal/wowlab/commits/$sha/check-runs" --jq ".check_runs[] | select(.status != \"completed\") | .name" | grep -q .; then break; fi`,
   `  sleep 300`,
   `done`.
+  The script ends when no check run is still queued or in progress; that
+  is not the same as green, and right after a push it may end on a partial
+  list (next bullet): read the names and conclusions it printed.
 - **Required or not.** Neither route flags a check as required. Cross-check
   the names against `required_status_checks[].context` in
   `.github/rulesets/main.json`; anything not listed there (`review`,
@@ -203,13 +208,15 @@ the failing test ids from `gh run view <id> --log-failed`, on the report's
 `checks:` line, so the conductor can file it (`windows.yml`'s header: a
 red run on `main` is a bug to fix next, and a red run on the PR is how it
 is seen first). Then
-`gh pr merge <n> --squash --delete-branch` (never `--admin`). Confirm:
+`gh pr merge <n> --squash` (never `--admin`, and no `--delete-branch`: the
+repository deletes the remote branch on merge, and the local half of that
+flag is the cleanup you never do). Confirm:
 `git fetch origin main && git log origin/main -1 --format=%H%n%s`. Do not
 edit `docs/BACKLOG.md`; the conductor batches ticks.
 
-`gh pr merge` may print "fatal: 'main' is already used by worktree …": it
-tried to check out `main` locally after the merge. Ignore it once the
-confirm step above shows your squash commit on `origin/main`.
+`gh pr merge` may print "not on any branch" or a similar local-checkout
+error after the merge. Ignore it once the confirm step above shows your
+squash commit on `origin/main`.
 
 You never clean up (lasting rule, M13-60, 2026-10-18). Claude Code's
 worktree isolation, not a repo hook, refuses any command from an isolated
