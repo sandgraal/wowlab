@@ -35,7 +35,7 @@ import platformdirs
 import pytest
 from typer.testing import CliRunner
 
-from wowlab_core import cli, doctorredact, install, layout
+from wowlab_core import cli, doctorredact, install, layout, profiles, snapshot
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 CAPTURE = FIXTURES / "macos"
@@ -306,10 +306,18 @@ def test_constructed_profile_preset_skips_the_client_folder(client: Path) -> Non
 
 # ─── what the read commands say about the client's folder ────────────────────
 
-SV_FOOTER = (
-    f"{CLIENT_DIR}/ holds {len(CLIENT_FILES)} files that belong to no account; "
-    f"`wowlab tree {CLIENT_DIR}` lists them."
-)
+
+def _footer(*root: str) -> str:
+    # The command is spelled as `explain`'s hints are: --flavor always, and
+    # --root when it was given, quoted for this platform's shell.
+    command = cli._hint(["tree", CLIENT_DIR, "--flavor", FLAVOR, *root], "").command
+    return (
+        f"{CLIENT_DIR}/ holds {len(CLIENT_FILES)} files that belong to no account; "
+        f"`{command}` lists them."
+    )
+
+
+SV_FOOTER = _footer()
 
 
 def test_constructed_sv_list_says_what_it_leaves_out(client: Path) -> None:
@@ -317,6 +325,8 @@ def test_constructed_sv_list_says_what_it_leaves_out(client: Path) -> None:
     assert report.files
     assert not [f for f in report.files if f.path.startswith(CLIENT_DIR + "/")]
     assert report.notes == [cli._SV_TIMING, SV_FOOTER]
+    if not SV_FOOTER.count("'"):  # the POSIX spelling, for a reader of this test
+        assert f"`wowlab tree {CLIENT_DIR} --flavor {FLAVOR}` lists them." in SV_FOOTER
     text = ok("sv", "list").stdout
     assert text.splitlines()[-1] == SV_FOOTER
     assert f"{CLIENT_DIR}/Blizzard" not in text
@@ -325,6 +335,14 @@ def test_constructed_sv_list_says_what_it_leaves_out(client: Path) -> None:
         ok("sv", "list", "--account", ACCOUNT, "--json").stdout
     )
     assert narrowed.notes == [cli._SV_TIMING]
+
+
+def test_constructed_sv_list_footer_repeats_a_given_root(root: Path, client: Path) -> None:
+    report = cli.SvListReport.model_validate_json(
+        ok("sv", "list", "--root", str(root), "--json").stdout
+    )
+    inst = install.discover(root)
+    assert report.notes == [cli._SV_TIMING, _footer("--root", str(inst.root))]
 
 
 def test_constructed_sv_list_without_the_folder_has_no_footer(root: Path) -> None:
@@ -420,6 +438,47 @@ def test_constructed_redaction_keeps_old_style_names_and_leaves_the_client_folde
     assert OLD_STYLE in found.accounts
     assert ACCOUNT in found.accounts
     assert not [a for a in found.accounts if a.casefold() == CLIENT.casefold()]
+
+
+def test_constructed_redaction_from_a_snapshot_leaves_the_client_folder(
+    root: Path, tmp_path: Path
+) -> None:
+    # Another install, snapshotted into the same store: its manifest names
+    # the client's folder and an old-style account folder, neither on disk here.
+    other = tmp_path / "Other WoW"
+    _write(other / "_x_/WTF/Account/SavedVariables", {"Blizzard_SavedSets.lua": b"x = 1\n"})
+    _write(other / "_x_/WTF/Account/savedvariables/Inner", {"a.txt": b""})
+    _write(other / "_x_/WTF/Account/OTHERACCT", {"config-cache.wtf": b'SET a "1"\n'})
+    snapshot.SnapshotStore().create(other, ["_x_/WTF"])
+    found = doctorredact.identities(root)
+    assert "OTHERACCT" in found.accounts
+    assert not [a for a in found.accounts if a.casefold() == CLIENT.casefold()]
+    assert "Inner" not in found.realms | found.characters | found.accounts
+
+
+# ─── rows that say "no" stay below a folder that is no account ───────────────
+
+
+def test_constructed_edit_no_row_is_kept_below_a_folder_that_is_no_account(
+    root: Path, flavor: Path
+) -> None:
+    backup = "WTF/Account/Backup/SavedVariables/Foo.lua.bak"
+    _write(flavor, {backup: b"x = 1\n", "WTF/Account/Backup/SavedVariables/Foo.lua": b"x = 1\n"})
+    lay = _layout(root)
+    assert lay.inventory().not_accounts == ("WTF/Account/Backup",)
+    ids = {f.path: f.entry_id for f in lay.wtf_files()}
+    # The client's previous write keeps its "no" row: nothing below a folder
+    # that is no account becomes more editable.
+    assert ids[backup] == "savedvariables-backup"
+    assert ids["WTF/Account/Backup/SavedVariables/Foo.lua"] is None
+    found = lay.classify(backup)
+    assert isinstance(found, layout.Classified) and found.entry.edit == "no"
+    assert profiles._edit_no(lay, backup) is not None
+    assert profiles._edit_no(lay, "WTF/Account/Backup/SavedVariables/Foo.lua") is None
+    tree = cli.TreeReport.model_validate_json(ok("tree", "--explain", "--json").stdout)
+    item = {i.path: i for i in tree.items}[backup]
+    assert item.explained is not None and item.explained.entry_id == "savedvariables-backup"
+    assert item.verdict.level == "no"
 
 
 def test_ui_help_says_the_whole_install() -> None:

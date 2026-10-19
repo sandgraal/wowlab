@@ -3131,7 +3131,7 @@ def sv_list(
     json_out: JsonOpt = False,
 ) -> None:
     """Every SavedVariables file, account-wide and per character. JSON: SvListReport."""
-    _, chosen, lay = _open(root, flavor)
+    inst, chosen, lay = _open(root, flavor)
     walk = lay.wtf_walk()
     files = list(walk.saved_variables)
     if account is not None or character is not None:
@@ -3144,7 +3144,12 @@ def sv_list(
                 for f in files
                 if f.realm_folder == char.realm_folder and f.character_folder == char.folder
             ]
-    no_account = _no_account_notes(walk) if account is None and character is None else []
+    given_root = str(inst.root) if root is not None and str(root) != "" else None
+    no_account = (
+        _no_account_notes(walk, chosen.folder, given_root)
+        if account is None and character is None
+        else []
+    )
     report = SvListReport(flavor_folder=chosen.folder, files=files, notes=[_SV_TIMING, *no_account])
     if json_out:
         _emit(report)
@@ -3161,16 +3166,18 @@ def sv_list(
         _say(line)
 
 
-def _no_account_notes(walk: layout.WtfWalk) -> list[str]:
+def _no_account_notes(walk: layout.WtfWalk, flavor: str, root: str | None) -> list[str]:
     """M13-50: one line per folder under WTF/Account/ that is no account and
     holds files, which `sv list` leaves out (the client's own
-    `WTF/Account/SavedVariables/`, say)."""
+    `WTF/Account/SavedVariables/`, say). The `tree` command names the flavor
+    folder, and the install with --root when it was given, as `explain`'s
+    hints do."""
     out = []
+    with_root = ["--root", root] if root is not None else []
     for folder in walk.not_accounts:
         n = sum(1 for f in walk.wtf_files if f.path.startswith(folder + "/"))
         if n:
-            line = ["wowlab", "tree", folder]
-            command = _powershell_join(line) if _shell() == "powershell" else shlex.join(line)
+            command = _hint(["tree", folder, "--flavor", flavor, *with_root], "").command
             out.append(
                 f"{folder}/ holds {_plural(n, 'file')} that "
                 f"{'belongs' if n == 1 else 'belong'} to no account; "
