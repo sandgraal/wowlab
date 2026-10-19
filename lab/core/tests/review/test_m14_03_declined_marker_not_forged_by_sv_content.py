@@ -12,6 +12,7 @@ escaped as data, with the genuine `_confirm` line last.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -62,7 +63,8 @@ def test_a_resolved_plan_prints_the_text_as_data(real: Real) -> None:  # noqa: F
     params["take"] = SOURCE_SIDE
     plan = real.plan(MERGE, params)
     assert plan["exit_code"] == 1, plan["stderr"]
-    lines = plan["stderr"].split("\n")
+    # The CLI writes stderr in text mode: its line end is the platform's.
+    lines = plan["stderr"].split(os.linesep)
     # Only the genuine last line is the marker text alone.
     assert lines[-1] == "" and lines[-2] == cli.CONFIRM_DECLINED
     assert cli.CONFIRM_DECLINED not in lines[:-2], plan["stderr"]
