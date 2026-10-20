@@ -108,6 +108,40 @@ def test_the_first_screen_states_the_trust_model() -> None:
         assert phrase in screen, phrase
 
 
+# ADR-0019's and ADR-0031's amendments of 2026-10-19 (M15-02): a link the
+# player clicks (the Character tab's dressing-room link) is their browser's
+# traffic, not wowlab's; each trust-model sentence says so.
+# The clause says what the click carries: the address's public game ids. It
+# promises nothing about what the site does with them (its own script reads
+# the address's fragment).
+LINK_CLAUSE = (
+    "and a link you click opens in your own browser, carrying your character's race, "
+    "body type, class, level and equipped item and bonus ids to that site"
+)
+SECURITY = ROOT / "SECURITY.md"
+
+
+def test_the_trust_model_sentences_name_the_clicked_link() -> None:
+    screen = _first_screen()
+    assert (
+        "- **Nothing is uploaded.** The only network traffic is to [wago.tools]"
+        "(https://wago.tools), for public game data, " + LINK_CLAUSE + "." in screen
+    )
+    row = next(line for line in _readme().splitlines() if "**Stays on your machine.**" in line)
+    assert "The only network access is to wago.tools" in row
+    assert row.endswith("which send your game's version number, " + LINK_CLAUSE + ". |")
+    security = " ".join(SECURITY.read_text(encoding="utf-8").split())
+    assert (
+        "**Nothing leaves the machine.** The only network traffic is downloading public game "
+        "tables, " + LINK_CLAUSE + "." in security
+    )
+    # The rule's one exception is named where the rule is.
+    assert (
+        "Anything that transmits data read from an install is a vulnerability, with one "
+        "exception: that link." in security
+    )
+
+
 def _jobs(name: str) -> dict[str, Any]:
     data = yaml.safe_load((WORKFLOWS / name).read_text(encoding="utf-8"))
     jobs = data["jobs"]

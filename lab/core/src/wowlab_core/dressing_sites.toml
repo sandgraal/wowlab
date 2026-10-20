@@ -1,0 +1,229 @@
+# The outside dressing room `wowlab char gear --json` links to, as `dressing`
+# (M15-02; docs/LAB_PLAN.md §16.3, amendment of 2026-10-19; ADR-0019 and
+# ADR-0031, amendments of 2026-10-19). Read by `wowlab_core.dressing`.
+#
+# Data, not code. The site's address grammar is not documented anywhere: it
+# was read on 2026-10-19 from the site's own pages and scripts (the room's
+# version switcher, its `Calc.js` codec and its `DressingRoom.js` template)
+# and checked against the two examples in [[example]], made by the site's own
+# encoder and decoded by the site. When the site changes it, the builder's
+# tests on those examples are what notice, and this file is what changes.
+#
+# L6: nothing here names a flavor folder, a product code or a build. The room
+# is chosen by the client's version, which `wowlab install show` discovers in
+# `.build.info`, through [[band]]; a version no band covers gets no link,
+# only the list of item ids.
+#
+# The page holds the site's origin once more, as the one constant it checks
+# the link against before it shows it (ui/templates/page.js); a test keeps
+# the two equal.
+
+[site]
+name = "Wowhead"
+origin = "https://www.wowhead.com"
+# The level the room is given when the record has none (the talents
+# section's `player_level`, written by the lab-addon). The level only changes
+# what the room shows beside the model. 100 is what the room fills in for a
+# new character [verify].
+default_level = 100
+
+# The site's rooms, one per game version, keyed by the site's own version
+# label, each the path after the origin (read from the room's version switcher
+# on 2026-10-19). The address is the origin, the path, "#" and the hash.
+[rooms]
+retail = "/dressing-room"
+ptr = "/ptr/dressing-room"
+forever = "/forever/dressing-room"
+classic = "/classic/dressing-room"
+classic-ptr = "/classic-ptr/dressing-room"
+tbc = "/tbc/dressing-room"
+mop-classic = "/mop-classic/dressing-room"
+
+# Which room a client version opens: versions from `from` (included) up to
+# `below` (excluded), compared part by part as numbers. The owner may rule on
+# this table. Only what was tried is listed:
+# - "forever": a 1.60.1 client's characters, both [[example]]s; their items
+#   and race decoded there. Not the whole major version 1, because a Classic
+#   Era client is a 1.x version too (1.15, from memory [verify]) and was not
+#   tried. Whether a later Forever version keeps this room is [verify].
+[[band]]
+from = "1.60"
+below = "2"
+room = "forever"
+
+# Bounds on what the builder passes. An identity or item outside them gets
+# no link, only the list of item ids: they are larger than anything the game
+# uses, so a record holding one is damaged or hostile.
+[limits]
+race_id = 1000  # the playable races' ids reach 96 (ChrRaces from wago.tools, 2026-09-28)
+item_id = 2147483647  # the client's ids are 32-bit
+bonus_id = 2147483647
+bonus_ids_per_item = 32  # the captures hold at most one per item
+level = 1000
+
+# The room's equipment slots (`room`), each with the client's inventory slot
+# whose item it takes (`game`, as `char gear` numbers them). The room has no
+# slot for the neck (2), the rings (11, 12) or the trinkets (13, 14): those
+# items are left out. Read from the site's slot table and confirmed by both
+# [[example]]s' equipped lists (the wand in 18 shows as "Ranged").
+[[slot]]
+room = 1
+game = 1
+name = "head"
+
+[[slot]]
+room = 2
+game = 3
+name = "shoulders"
+
+[[slot]]
+room = 3
+game = 15
+name = "back"
+
+[[slot]]
+room = 4
+game = 5
+name = "chest"
+
+[[slot]]
+room = 5
+game = 4
+name = "shirt"
+
+[[slot]]
+room = 6
+game = 19
+name = "tabard"
+
+[[slot]]
+room = 7
+game = 9
+name = "wrists"
+
+[[slot]]
+room = 8
+game = 10
+name = "hands"
+
+[[slot]]
+room = 9
+game = 6
+name = "waist"
+
+[[slot]]
+room = 10
+game = 7
+name = "legs"
+
+[[slot]]
+room = 11
+game = 8
+name = "feet"
+
+[[slot]]
+room = 12
+game = 16
+name = "main hand"
+
+[[slot]]
+room = 13
+game = 17
+name = "off hand"
+
+[[slot]]
+room = 14
+game = 18
+name = "ranged"
+
+# The hash (the site's calculator codec, `WH.calc`, hash version 15).
+#
+# A value is written in `alphabet`: `key` fields as one character
+# (alphabet[0] to alphabet[largest_value]); `long` fields in base
+# `largest_value`, most significant digit first, where a digit may equal
+# `largest_value` itself (3364 is "60") because the site's encoder divides
+# only while the value is above it. `delimiter` separates fields where the
+# template has "|". Then two passes shorten the text, in this order:
+# a run of two or more "0" becomes `zero_run` and the run's length as a
+# value (`zero_run` twice and the length less `largest_value` past it); then
+# a run of two or more "08" pairs becomes `delimiter_run` and the number of
+# pairs the same way. The characters after alphabet[largest_value] are the
+# three markers, so a marker never reads as a value. Before both passes, with
+# `trim_trailing_zeros`, the 0s at the very end are dropped: both
+# [[example]]s, made by the site's encoder, end without the final
+# `separate_shoulders` 0 (found by M15-02 on those examples, 2026-10-19; the
+# notes the codec was read from did not list it).
+[codec]
+version = 15
+alphabet = "0zMcmVokRsaqbdrfwihuGINALpTjnyxtgevElBCDFHJKOPQSUWXYZ123456789"
+largest_value = 58
+zero_run = "9"
+delimiter = "8"
+delimiter_run = "7"
+trim_trailing_zeros = true
+# The template's segments, in order: a field, "|" (the delimiter), or a
+# group from [codec.groups] written its `repeat` times. A field `item.3` is
+# the `item` of room slot 3; every field the builder does not fill is 0.
+# Room slots 12 and 13 carry an enchant too, always 0 here: what the site
+# expects there was not checked [verify].
+template = [
+  "version", "race", "|",
+  "gender", "class", "specialization", "level", "|",
+  "npc_options", "pepe", "mount", "|",
+  "customization",
+  "item.1", "|", "bonus.1", "|",
+  "item.2", "|", "bonus.2", "|",
+  "item.3", "|", "bonus.3", "|",
+  "item.4", "|", "bonus.4", "|",
+  "item.5", "|", "bonus.5", "|",
+  "item.6", "|", "bonus.6", "|",
+  "item.7", "|", "bonus.7", "|",
+  "item.8", "|", "bonus.8", "|",
+  "item.9", "|", "bonus.9", "|",
+  "item.10", "|", "bonus.10", "|",
+  "item.11", "|", "bonus.11", "|",
+  "item.12", "|", "bonus.12", "|", "enchant.12", "|",
+  "item.13", "|", "bonus.13", "|", "enchant.13", "|",
+  "item.14", "|", "bonus.14", "|",
+  "artifact_main", "|", "artifact_off", "|", "separate_shoulders",
+]
+# The expanded template's length, as the site's template has it.
+segments = 277
+# Each field's kind, by the name before any ".".
+key = [
+  "version", "gender", "class", "specialization", "npc_options", "pepe",
+  "artifact_main", "artifact_off", "separate_shoulders",
+]
+long = ["race", "level", "mount", "option", "choice", "item", "bonus", "enchant"]
+
+# The 50 customization choices, left at 0: the room then shows the race's
+# default look (and rewrites the address with its own choices once loaded).
+[codec.groups.customization]
+repeat = 50
+segments = ["option", "|", "choice", "|"]
+
+# Where the grammar was checked: addresses made on 2026-10-19 by the site's
+# own encoder (WH.calc.encode.template) in the room's page, then opened in
+# the room, which decoded them into exactly these inputs. The characters'
+# records and the full client version are in the derived fixture
+# `derived/dressing-room.json` of the M15-01 run under lab/core/tests/fixtures/
+# and its row in that folder's README.md. The 3D model did not draw in the
+# browser the examples were tried in (a default figure); whether it draws in
+# a player's own browser is the owner's check [verify].
+[[example]]
+site = "Wowhead"
+room = "forever"
+recorded = "2026-10-19"
+client = "1.60.1"
+built_from = "race 2, gender 0, class 8, level 10; room slots 3, 4, 5, 7, 8, 9, 10, 11 and 12 with items 6520, 4916, 6096, 281269, 1377, 3363, 3291, 1427 and 5778, no bonus ids"
+address = "https://www.wowhead.com/forever/dressing-room#fM80R0a89c877Qz2L808zTO808zSo87czpEj808AK808558084K808LE808zHl87s"
+showed = "an Orc, male; class 8, level 10; the nine items in Back, Chest, Shirt, Wrist, Hands, Waist, Legs, Feet and Two-Hand"
+
+[[example]]
+site = "Wowhead"
+room = "forever"
+recorded = "2026-10-19"
+client = "1.60.1"
+built_from = "race 5, gender 0, class 9, level 15; room slots 3, 4, 7, 8, 9, 10, 11, 12, 13 and 14 with items 2310, 9749, 14122, 6541, 6539, 9747, 14114, 2632, 15969 and 5071 and bonus ids 0, 12720, 12745, 12745, 12745, 12748, 12745, 12720, 12730 and 0"
+address = "https://www.wowhead.com/forever/dressing-room#fV80s0f89c877QDU808MZV8cPh87mmqn8cPK8z2P8cPK8z2K8cPK8MZc8cPQ8mqG8cPK8PN8cPh808mKu8cPn808zyp87c"
+showed = "an Undead, male; class 9, level 15; the ten items with their suffixed names (so the bonus id is honoured) in Back, Chest, Wrist, Hands, Waist, Legs, Feet, One-Hand, Held In Off-hand and Ranged"

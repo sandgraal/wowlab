@@ -990,6 +990,10 @@ def test_every_element_the_script_looks_up_is_in_the_page() -> None:
 
 
 def test_no_template_names_another_origin() -> None:
+    # The one exception (M15-02): the dressing-room origin page.js checks the
+    # link's address against (test_ui_explorer.py, DRESSING_ORIGIN).
+    origin = 'const DRESSING_ORIGIN = "https://www.wowhead.com";'
+    assert _template("page.js").count(origin) == 1
     for name in ("page.html", "page.js", "page.css"):
-        text = _template(name)
+        text = _template(name).replace(origin, "")
         assert re.search(r"(?i)\b(?:https?:|wss?:|ftp:)//|[\"'(]\s*//[a-z0-9]", text) is None, name

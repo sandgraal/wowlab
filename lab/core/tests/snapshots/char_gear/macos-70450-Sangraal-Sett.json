@@ -1,0 +1,352 @@
+{
+  "character": "1/Sangraal-Sett",
+  "file": "WTF/Account/90000001#6/1/Sangraal-Sett/SavedVariables/WowLab.lua",
+  "mtime_ns": 1700000000000000000,
+  "spec": {
+    "id": 1490,
+    "index": 1,
+    "api": "C_SpecializationInfo",
+    "absent": null
+  },
+  "identity": {
+    "race_id": 5,
+    "race_id_absent": null,
+    "sex": 0,
+    "sex_absent": null,
+    "sex_raw": 2,
+    "sex_raw_absent": null,
+    "class_id": 9,
+    "class_id_absent": null,
+    "class_file": "WARLOCK",
+    "class_file_absent": null
+  },
+  "average": {
+    "equipped": 9.5,
+    "overall": 9.5,
+    "pvp": 9.5,
+    "absent": null
+  },
+  "slots": [
+    {
+      "slot": 5,
+      "slot_name": "Chest",
+      "raw_link": "|cnIQ2:|Hitem:9749::::::::15:1490::1:1:12720:1:28:5256:::::|h[Simple Blouse of the Owl]|h|r",
+      "item_id": 9749,
+      "name": "Simple Blouse of the Owl",
+      "colour": "nIQ2:",
+      "quality": "Uncommon",
+      "item_level": 15,
+      "item_level_api": "C_Item.GetCurrentItemLevel",
+      "enchant_id": null,
+      "gem_ids": [],
+      "suffix_id": null,
+      "spec_id": 1490,
+      "bonus_ids": [
+        12720
+      ],
+      "upgrade": {
+        "mask": null,
+        "modifiers": [
+          {
+            "type": 28,
+            "value": 5256,
+            "raw": [
+              "28",
+              "5256"
+            ]
+          }
+        ]
+      },
+      "crafter_removed": false
+    },
+    {
+      "slot": 6,
+      "slot_name": "Waist",
+      "raw_link": "|cnIQ2:|Hitem:6539::::::::15:1490::1:1:12745::::::|h[Willow Belt of the Sorcerer]|h|r",
+      "item_id": 6539,
+      "name": "Willow Belt of the Sorcerer",
+      "colour": "nIQ2:",
+      "quality": "Uncommon",
+      "item_level": 16,
+      "item_level_api": "C_Item.GetCurrentItemLevel",
+      "enchant_id": null,
+      "gem_ids": [],
+      "suffix_id": null,
+      "spec_id": 1490,
+      "bonus_ids": [
+        12745
+      ],
+      "upgrade": {
+        "mask": null,
+        "modifiers": []
+      },
+      "crafter_removed": false
+    },
+    {
+      "slot": 7,
+      "slot_name": "Legs",
+      "raw_link": "|cnIQ2:|Hitem:9747::::::::15:1490:::1:12748::::::|h[Simple Britches of the Physician]|h|r",
+      "item_id": 9747,
+      "name": "Simple Britches of the Physician",
+      "colour": "nIQ2:",
+      "quality": "Uncommon",
+      "item_level": 14,
+      "item_level_api": "C_Item.GetCurrentItemLevel",
+      "enchant_id": null,
+      "gem_ids": [],
+      "suffix_id": null,
+      "spec_id": 1490,
+      "bonus_ids": [
+        12748
+      ],
+      "upgrade": {
+        "mask": null,
+        "modifiers": []
+      },
+      "crafter_removed": false
+    },
+    {
+      "slot": 8,
+      "slot_name": "Feet",
+      "raw_link": "|cnIQ2:|Hitem:14114::::::::15:1490:::1:12745::::::|h[Aboriginal Footwraps of the Sorcerer]|h|r",
+      "item_id": 14114,
+      "name": "Aboriginal Footwraps of the Sorcerer",
+      "colour": "nIQ2:",
+      "quality": "Uncommon",
+      "item_level": 16,
+      "item_level_api": "C_Item.GetCurrentItemLevel",
+      "enchant_id": null,
+      "gem_ids": [],
+      "suffix_id": null,
+      "spec_id": 1490,
+      "bonus_ids": [
+        12745
+      ],
+      "upgrade": {
+        "mask": null,
+        "modifiers": []
+      },
+      "crafter_removed": false
+    },
+    {
+      "slot": 9,
+      "slot_name": "Wrist",
+      "raw_link": "|cnIQ2:|Hitem:14122::::::::15:1490::1:1:12745:1:28:5254:::::|h[Ritual Bands of the Sorcerer]|h|r",
+      "item_id": 14122,
+      "name": "Ritual Bands of the Sorcerer",
+      "colour": "nIQ2:",
+      "quality": "Uncommon",
+      "item_level": 18,
+      "item_level_api": "C_Item.GetCurrentItemLevel",
+      "enchant_id": null,
+      "gem_ids": [],
+      "suffix_id": null,
+      "spec_id": 1490,
+      "bonus_ids": [
+        12745
+      ],
+      "upgrade": {
+        "mask": null,
+        "modifiers": [
+          {
+            "type": 28,
+            "value": 5254,
+            "raw": [
+              "28",
+              "5254"
+            ]
+          }
+        ]
+      },
+      "crafter_removed": false
+    },
+    {
+      "slot": 10,
+      "slot_name": "Hands",
+      "raw_link": "|cnIQ2:|Hitem:6541::::::::15:1490:::1:12745::::::|h[Willow Gloves of the Sorcerer]|h|r",
+      "item_id": 6541,
+      "name": "Willow Gloves of the Sorcerer",
+      "colour": "nIQ2:",
+      "quality": "Uncommon",
+      "item_level": 16,
+      "item_level_api": "C_Item.GetCurrentItemLevel",
+      "enchant_id": null,
+      "gem_ids": [],
+      "suffix_id": null,
+      "spec_id": 1490,
+      "bonus_ids": [
+        12745
+      ],
+      "upgrade": {
+        "mask": null,
+        "modifiers": []
+      },
+      "crafter_removed": false
+    },
+    {
+      "slot": 11,
+      "slot_name": "Finger 1",
+      "raw_link": "|cnIQ2:|Hitem:5351::::::::15:1490::11:::::::|h[Bounty Hunter's Ring]|h|r",
+      "item_id": 5351,
+      "name": "Bounty Hunter's Ring",
+      "colour": "nIQ2:",
+      "quality": "Uncommon",
+      "item_level": 20,
+      "item_level_api": "C_Item.GetCurrentItemLevel",
+      "enchant_id": null,
+      "gem_ids": [],
+      "suffix_id": null,
+      "spec_id": 1490,
+      "bonus_ids": [],
+      "upgrade": {
+        "mask": null,
+        "modifiers": []
+      },
+      "crafter_removed": false
+    },
+    {
+      "slot": 15,
+      "slot_name": "Back",
+      "raw_link": "|cnIQ2:|Hitem:2310::::::::15:1490:::::::::|h[Embossed Leather Cloak]|h|r",
+      "item_id": 2310,
+      "name": "Embossed Leather Cloak",
+      "colour": "nIQ2:",
+      "quality": "Uncommon",
+      "item_level": 13,
+      "item_level_api": "C_Item.GetCurrentItemLevel",
+      "enchant_id": null,
+      "gem_ids": [],
+      "suffix_id": null,
+      "spec_id": 1490,
+      "bonus_ids": [],
+      "upgrade": {
+        "mask": null,
+        "modifiers": []
+      },
+      "crafter_removed": true
+    },
+    {
+      "slot": 16,
+      "slot_name": "Main Hand",
+      "raw_link": "|cnIQ2:|Hitem:2632::::::::15:1490::1:1:12720:1:28:5244:::::|h[Curved Dagger of the Owl]|h|r",
+      "item_id": 2632,
+      "name": "Curved Dagger of the Owl",
+      "colour": "nIQ2:",
+      "quality": "Uncommon",
+      "item_level": 14,
+      "item_level_api": "C_Item.GetCurrentItemLevel",
+      "enchant_id": null,
+      "gem_ids": [],
+      "suffix_id": null,
+      "spec_id": 1490,
+      "bonus_ids": [
+        12720
+      ],
+      "upgrade": {
+        "mask": null,
+        "modifiers": [
+          {
+            "type": 28,
+            "value": 5244,
+            "raw": [
+              "28",
+              "5244"
+            ]
+          }
+        ]
+      },
+      "crafter_removed": false
+    },
+    {
+      "slot": 17,
+      "slot_name": "Off Hand",
+      "raw_link": "|cnIQ2:|Hitem:15969::::::::15:1490:::1:12730::::::|h[Beaded Orb of Spirit]|h|r",
+      "item_id": 15969,
+      "name": "Beaded Orb of Spirit",
+      "colour": "nIQ2:",
+      "quality": "Uncommon",
+      "item_level": 10,
+      "item_level_api": "C_Item.GetCurrentItemLevel",
+      "enchant_id": null,
+      "gem_ids": [],
+      "suffix_id": null,
+      "spec_id": 1490,
+      "bonus_ids": [
+        12730
+      ],
+      "upgrade": {
+        "mask": null,
+        "modifiers": []
+      },
+      "crafter_removed": false
+    },
+    {
+      "slot": 18,
+      "slot_name": "Ranged",
+      "raw_link": "|cnIQ2:|Hitem:5071::::::::15:1490:::::::::|h[Shadow Wand]|h|r",
+      "item_id": 5071,
+      "name": "Shadow Wand",
+      "colour": "nIQ2:",
+      "quality": "Uncommon",
+      "item_level": 14,
+      "item_level_api": "C_Item.GetCurrentItemLevel",
+      "enchant_id": null,
+      "gem_ids": [],
+      "suffix_id": null,
+      "spec_id": 1490,
+      "bonus_ids": [],
+      "upgrade": {
+        "mask": null,
+        "modifiers": []
+      },
+      "crafter_removed": false
+    }
+  ],
+  "empty_slots": [
+    {
+      "slot": 1,
+      "slot_name": "Head"
+    },
+    {
+      "slot": 2,
+      "slot_name": "Neck"
+    },
+    {
+      "slot": 3,
+      "slot_name": "Shoulder"
+    },
+    {
+      "slot": 4,
+      "slot_name": "Shirt"
+    },
+    {
+      "slot": 12,
+      "slot_name": "Finger 2"
+    },
+    {
+      "slot": 13,
+      "slot_name": "Trinket 1"
+    },
+    {
+      "slot": 14,
+      "slot_name": "Trinket 2"
+    },
+    {
+      "slot": 19,
+      "slot_name": "Tabard"
+    }
+  ],
+  "notes": [
+    "WowLab.lua is written at logout, /reload or a clean exit (a crash writes nothing): this is the character as of that save, not the session in progress.",
+    "The addon records no time; the time shown is the file's modification time.",
+    "Slot names and quality words: the shipped default gear_slots.toml, community documentation for Retail, [verify] on Forever; a gear_slots.toml in wowlab's user config folder replaces any value it sets.",
+    "Item names are each link's bracketed text; nothing is fetched. The link fields past the item id (enchant, gems, suffix, specialization, bonus ids) are named as community documentation names them [verify]; \"upgrade\" (field 10 and the modifier pairs) is the older documentation's name for those fields, and the upgrade track itself is carried in bonus ids.",
+    "Item levels and the averages are the client's figures as recorded, never derived from bonus ids. The averages are GetAverageItemLevel's returns, not the mean of the item levels listed, and how the client computes them is not known.",
+    "overall: on Retail, the best items owned, bags included (community documentation, [verify] on Forever)."
+  ],
+  "dressing": {
+    "url": "https://www.wowhead.com/forever/dressing-room#fV80s0f89c877QDU808MZV8cPh87mmqn8cPK8z2P8cPK8z2K8cPK8MZc8cPQ8mqG8cPK8PN8cPh808mKu8cPn808zyp87c",
+    "site": "Wowhead",
+    "note": "Opens Wowhead's forever dressing room in your browser when you click it; wowlab itself sends nothing. The address holds race 5, body type 0, class 9, level 15 (the record's), and the item ids of 10 equipped items, each with its bonus id when it has one. Left out, with no slot in the room: slot 11 Finger 1. The look is the room's default for the race (the record's customization is not passed). Whether the room draws this client's items is [verify]."
+  }
+}

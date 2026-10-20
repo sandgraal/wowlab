@@ -259,6 +259,14 @@ pre:empty { display: none; }
 .gear-detail dd { margin: 0; overflow-wrap: anywhere; unicode-bidi: isolate; }
 .gear-link { font-family: var(--mono); font-size: 0.85rem; overflow-wrap: anywhere; unicode-bidi: isolate; }
 .gear-table .copy { margin-left: 0.6rem; cursor: pointer; padding: 0.05rem 0.6rem; color: #e3bb55; background: #3a2d18; border: 1px solid #9a7426; border-radius: 4px; font-weight: 600; }
+/* the dressing-room link under the gear (M15-02): a link drawn as a button,
+   its note, or the item ids to copy when there is no link. */
+.char-dressing { margin-top: 0.75rem; max-width: 60rem; }
+.dressing-link { display: inline-block; padding: 0.3rem 0.9rem; color: #e3bb55; background: #3a2d18; border: 1px solid #9a7426; border-radius: 4px; font-weight: 600; text-decoration: none; }
+.dressing-link:hover, .dressing-link:focus-visible { background: #4a3a1f; }
+.dressing-note { margin: 0.4rem 0 0; font-size: 0.92rem; overflow-wrap: anywhere; }
+.dressing-ids { font-family: var(--mono); font-size: 0.85rem; overflow-wrap: anywhere; }
+.dressing-items .copy { margin-left: 0.6rem; cursor: pointer; padding: 0.05rem 0.6rem; color: #e3bb55; background: #3a2d18; border: 1px solid #9a7426; border-radius: 4px; font-weight: 600; }
 /* the keys and macros panels (M14-09): the files and record they read, a
    table of keys, the slots no key reaches, the macros with their bodies as
    lines, and the read-only note under each. Player text (macro bodies and

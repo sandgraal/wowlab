@@ -130,6 +130,7 @@ from wowlab_core import (
     bindscoach,
     combatlog,
     doctorredact,
+    dressing,
     firstrun,
     gamedata,
     gaps,
@@ -7632,6 +7633,9 @@ class CharGearReport(_Out):
     slots: list[gear.GearSlot]
     empty_slots: list[gear.EmptySlot]
     notes: list[str]
+    # The outside dressing room's address for this character, or the item ids
+    # to paste into one when there is none (M15-02, `dressing.build`).
+    dressing: dressing.DressingLink | dressing.DressingItems
 
 
 _GEAR_NAMES_NOTE = (
@@ -7722,7 +7726,7 @@ def char_gear(
     are the links' own text; nothing is fetched. Slot names and quality words
     come from a table you can override. A record without gear exits 1. Reads
     only. JSON: CharGearReport."""
-    _, _, lay = _open(root, flavor)
+    _, chosen, lay = _open(root, flavor)
     acct = _select_account(lay, account)
     files = [f for f in lay.saved_variables() if f.account == acct.folder and _is_lab_file(f)]
     target, how, tie = _lab_char_file(acct, files, character)
@@ -7747,16 +7751,20 @@ def char_gear(
             "choose another with --character."
         )
     notes += [_gear_table_note(table), _GEAR_NAMES_NOTE, _GEAR_LEVEL_NOTE, _GEAR_OVERALL_NOTE]
+    identity = labaddon.identity_of(record)
     report = CharGearReport(
         character=f"{target.realm_folder}/{target.character_folder}",
         file=target.path,
         mtime_ns=target.mtime_ns,
         spec=gear.spec_of(record),
-        identity=labaddon.identity_of(record),
+        identity=identity,
         average=gear.average_of(section),
         slots=filled,
         empty_slots=empty,
         notes=notes,
+        dressing=dressing.build(
+            identity, filled, version=chosen.version, level=dressing.level_of(record)
+        ),
     )
     if json_out:
         _emit(report)
