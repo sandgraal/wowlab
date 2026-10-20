@@ -97,7 +97,7 @@ the workflow document point here.
      treats it as docs-only), so for such a diff these runs are the only
      proof there is.
 3. `make test-fast`, once the target exists (`make -n test-fast` succeeds;
-   it arrives with M13-79). Until then, skip it.
+   it arrives with M13-81). Until then, skip it.
 
 Run the full `make ci` instead when your diff touches `guard.py` or
 `luadata.py` (AGENTS.md: the full suite and `make test-parser`), any format
