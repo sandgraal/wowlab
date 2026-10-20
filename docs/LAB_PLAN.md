@@ -4136,7 +4136,11 @@ stdlib only (`struct`, `zlib`, `hashlib`, `bisect`, `array`):
    and `Z`; `4`, `F` and `E` raise typed errors (`UnsupportedBlockMode`,
    `EncryptedContent(key_name)`) and are reported, never guessed and never
    decrypted (ADR-0033: no key list, no `DBCache.bin` scraping). The spike
-   met 4,775 blocks: `N` and `Z` only. An archive is opened for the length
+   met 4,775 blocks: `N` and `Z` only; a later census found `E` blocks too
+   (M15-04, 2026-10-19: 19 Salsa20 blocks in 9 of 4,079 sampled records of
+   the install's archives, every product's records the local index lists;
+   `docs/LAB_FORMATS.md` §10, amendment of 2026-10-19), and still no `4` or
+   `F`. An archive is opened for the length
    of one read and closed; no handle or memory map outlives a command, so
    the agent or the client can replace or extend a file at any time (on
    Windows an open handle or mapping would block that; a Windows `@live`
@@ -4354,7 +4358,9 @@ it the same way.
 
 Measured on the owner's install at 70450: the layout of `Data/`; root
 version 2; 1,244,477 file data ids after locale and platform filtering;
-no encrypted or LZ4 block met; the open and read timings; the streaming
+encrypted (`E`, Salsa20) blocks met in 9 of 4,079 sampled records of
+the install's archives and no LZ4 or `F` block (`docs/LAB_FORMATS.md` §10,
+amendment of 2026-10-19); the open and read timings; the streaming
 counts; `humanmale_hd` and `humanfemale_hd` version 272 with bones
 inside; layout 103's sections; every character texture DXT1 or DXT5 with
 mips. From memory or from another project, **[verify]** until a test on

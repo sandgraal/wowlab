@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import random
 import sys
 from pathlib import Path
@@ -164,6 +165,31 @@ def test_writes_the_blte_record_constructed(
     assert census["blocks_by_mode"] == {"E": 1, "N": 1, "Z": 2}
     assert census["refused"] == {"EncryptedContent": 1} and census["decoded"] == 2
     assert census["encrypted_key_names"] == {"50505078126ACB3E": 1}
+    assert census["e_block_shapes"] == {"key_name_bytes=8 iv_bytes=8 cipher=S": 1}
+    assert census["header_md5_starts_with_key"] == 0  # constructed keys are random, not MD5s
     assert (census["records"], census["hash_field_full"], census["step"]) == (3, 1, 1)
     text = out.read_text(encoding="utf-8")
     assert str(tmp_path) not in text and "speech" not in text
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="no symbolic links here")
+def test_refuses_an_output_reached_through_a_link_into_the_install_constructed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--out` whose folder is a link into the install, and `--out` that is
+    itself a link (dangling or into the install): refused, nothing written
+    anywhere."""
+    root, _ = make_install(tmp_path / "install")
+    before = tree_state(root)
+    try:
+        (tmp_path / "into").symlink_to(root / "Data", target_is_directory=True)
+        (tmp_path / "dangling.json").symlink_to(root / "Data" / "facts.json")
+    except OSError:
+        pytest.skip("cannot create a symbolic link here")
+    assert _run(root, tmp_path / "into" / "facts.json") == 1
+    assert "inside a game install" in capsys.readouterr().err
+    assert _run(root, tmp_path / "dangling.json") == 1
+    assert "is a link" in capsys.readouterr().err
+    assert tree_state(root) == before
+    assert not (root / "Data" / "facts.json").exists()
+    assert not (tmp_path / "dangling.json").exists()

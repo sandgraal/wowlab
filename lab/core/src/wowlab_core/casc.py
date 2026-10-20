@@ -42,8 +42,19 @@ product in the install; only the build config is per product.
    the stored and decoded sizes against a stated cap (`DECODE_LIMIT`, 256
    MiB) and the block count against another (`BLOCK_LIMIT`) before
    anything is decoded or allocated (`decode_blte`); a `Z` block is never
-   inflated a byte past its declared size. The archive is opened for one
-   bounded, ranged read and closed (`read_record`).
+   inflated a byte past its declared size. The decoded bytes go into one
+   buffer of the declared size, each `Z` block inflated into its slice in
+   steps of `_STEP` (1 MiB), so the peak of a decode is that buffer (at
+   most the cap) plus about three steps (zlib grows its own buffer to the
+   step inside one call, and the step's bytes are live while they are
+   copied in; measured with tracemalloc: a 16 MiB file decodes at a peak
+   of 19.2 MiB), beside the stored record the caller holds (itself at most
+   the cap, so a read's whole footprint is at most twice the cap plus
+   about 3 MiB, and in practice the record is much smaller than its
+   decoded bytes). A BLTE without a chunk
+   table (none met) is inflated once to measure, bounded at the cap, and
+   once more into an exact buffer. The archive is opened for one bounded,
+   ranged read and closed (`read_record`).
 
 Reads only (L1, ADR-0033): every file is opened read-only without following
 a final link (`snapshot.open_regular_file`, the open under
@@ -185,6 +196,8 @@ _CHUNK_ENTRY = struct.Struct(">II16s")  # encoded size, decoded size, MD5
 BLOCK_LIMIT = 65_536
 _MODE_PLAIN = ord("N")
 _MODE_ZLIB = ord("Z")
+_KEY_NAME_BYTES = 8  # an `E` block's key name: eight bytes, in every block met
+_STEP = 1 << 20  # a `Z` block is inflated in steps of this many bytes
 
 # Read bounds: the files at 70450 are 1,245,184 bytes (each index) and 59,537
 # bytes (the build config); a file far past these is refused, not read.
@@ -266,9 +279,12 @@ class UnsupportedBlockMode(CascUnsupportedError):  # noqa: N818 - name fixed by 
 
 
 class EncryptedContent(CascError):  # noqa: N818 - name fixed by docs/LAB_PLAN.md §17.1
-    """A BLTE block in mode `E`: encrypted with the key `key_name` (the
-    eight key-name bytes as a little-endian number in sixteen hex digits,
-    the form the published key lists use). Nothing is decrypted (ADR-0033):
+    """A BLTE block in mode `E`: encrypted with the key `key_name`: the
+    block's eight key-name bytes read as a little-endian number, in sixteen
+    hex digits, which is how community tools print a key name (CascLib and
+    wow.export, from memory; **[verify]**). A key-name length other than
+    eight is refused as malformed before this is raised, so the name is
+    never a run of the block's own bytes. Nothing is decrypted (ADR-0033):
     no key list is held and none is looked for. `cipher` is the block's
     cipher byte (`S` Salsa20, `A` ARC4) as one character."""
 
@@ -1106,9 +1122,19 @@ def open_storage(install: Install, flavor: Flavor | str) -> CascStorage:
 
 
 def _octets(data: Buffer) -> memoryview:
-    """`data` as a flat view of unsigned bytes, whatever buffer it is."""
+    """`data` as a flat, contiguous view of unsigned bytes, whatever buffer
+    it is (a strided or multi-dimensional view is copied once)."""
     view = memoryview(data)
+    if not view.c_contiguous:
+        view = memoryview(view.tobytes())
     return view if view.format == "B" and view.ndim == 1 else view.cast("B")
+
+
+def _check_limit(limit: int) -> None:
+    """A read's cap is a whole number of bytes: a negative one would turn
+    into "no bound" inside zlib, so it is refused outright."""
+    if limit < 0:
+        raise ValueError(f"the read's cap is {limit}; it must be 0 or more")
 
 
 def _mode_text(byte: int) -> str:
@@ -1273,9 +1299,17 @@ def _refuse_mode(block: memoryview, i: int, path: Path | None) -> NoReturn:
         )
     # E: key-name length, key name, IV length, IV, cipher byte, then the data.
     body = block[1:]
-    key_len = body[0] if len(body) else 0
+    if not len(body):
+        raise CascMalformedError(f"block {i} is encrypted, and its key name is cut short", path)
+    key_len = body[0]
+    if key_len != _KEY_NAME_BYTES:
+        raise CascMalformedError(
+            f"block {i} is encrypted, and its key name is {key_len} bytes; a key name is "
+            f"{_KEY_NAME_BYTES}",
+            path,
+        )
     iv_at = 1 + key_len
-    if key_len == 0 or iv_at >= len(body):
+    if iv_at >= len(body):
         raise CascMalformedError(f"block {i} is encrypted, and its key name is cut short", path)
     cipher_at = iv_at + 1 + body[iv_at]
     if cipher_at >= len(body):
@@ -1292,35 +1326,75 @@ def _refuse_mode(block: memoryview, i: int, path: Path | None) -> NoReturn:
     )
 
 
-def _inflate(block: memoryview, want: int | None, room: int, i: int, path: Path | None) -> bytes:
-    """A `Z` block's payload inflated, never past `want + 1` bytes (or
-    `room + 1` when the size is not declared): exactly `want` bytes, one
-    whole zlib stream, nothing after it."""
+def _inflate_into(
+    out: bytearray, at: int, block: memoryview, want: int, i: int, path: Path | None
+) -> None:
+    """Inflate a `Z` block's payload into `out[at : at + want]`, in steps of
+    at most `_STEP` bytes, never asking zlib for a byte past `want + 1`:
+    exactly `want` bytes, one whole zlib stream, nothing after it."""
     inflater = zlib.decompressobj()
-    bound = (room if want is None else want) + 1
+    produced = 0
+    data: bytes | memoryview = block
     try:
-        out = inflater.decompress(block, bound)
+        while True:
+            room = want + 1 - produced
+            chunk = inflater.decompress(data, min(_STEP, room))
+            if chunk:
+                if produced + len(chunk) > want:
+                    raise CascMalformedError(
+                        f"block {i} inflates past its declared {want} bytes", path
+                    )
+                out[at + produced : at + produced + len(chunk)] = chunk
+                produced += len(chunk)
+            if inflater.eof:
+                break
+            data = inflater.unconsumed_tail
+            if not data:
+                raise CascMalformedError(f"block {i}'s zlib stream is cut short", path)
     except zlib.error as exc:
         raise CascMalformedError(f"block {i} is not a zlib stream ({exc})", path) from None
-    if want is None and len(out) > room:
-        raise CascTooLargeError(
-            f"block {i} inflates past the read's cap of {room} bytes", len(out), room, path
-        )
-    if want is not None and len(out) > want:
-        raise CascMalformedError(f"block {i} inflates past its declared {want} bytes", path)
-    if not inflater.eof:
-        raise CascMalformedError(f"block {i}'s zlib stream is cut short", path)
     if inflater.unused_data:
         raise CascMalformedError(f"block {i} has bytes after its zlib stream", path)
-    if want is not None and len(out) != want:
+    if produced != want:
         raise CascMalformedError(
-            f"block {i} inflates to {len(out)} bytes; the chunk table says {want}", path
+            f"block {i} inflates to {produced} bytes; the chunk table says {want}", path
         )
-    return out
 
 
-def decode_blte(data: Buffer, *, limit: int = DECODE_LIMIT, path: Path | None = None) -> bytes:
-    """The decoded bytes of one BLTE (`parse_blte` for its layout).
+def _measure(block: memoryview, limit: int, i: int, path: Path | None) -> int:
+    """How many bytes a `Z` block without a declared size inflates to, found
+    in steps of at most `_STEP` bytes that are thrown away, stopping as
+    soon as `limit` is passed (`CascTooLargeError`). One whole zlib
+    stream, nothing after it."""
+    inflater = zlib.decompressobj()
+    produced = 0
+    data: bytes | memoryview = block
+    try:
+        while True:
+            chunk = inflater.decompress(data, min(_STEP, limit + 1 - produced))
+            produced += len(chunk)
+            if produced > limit:
+                raise CascTooLargeError(
+                    f"block {i} inflates past the read's cap of {limit} bytes",
+                    produced,
+                    limit,
+                    path,
+                )
+            if inflater.eof:
+                break
+            data = inflater.unconsumed_tail
+            if not data:
+                raise CascMalformedError(f"block {i}'s zlib stream is cut short", path)
+    except zlib.error as exc:
+        raise CascMalformedError(f"block {i} is not a zlib stream ({exc})", path) from None
+    if inflater.unused_data:
+        raise CascMalformedError(f"block {i} has bytes after its zlib stream", path)
+    return produced
+
+
+def decode_blte(data: Buffer, *, limit: int = DECODE_LIMIT, path: Path | None = None) -> bytearray:
+    """The decoded bytes of one BLTE (`parse_blte` for its layout), as one
+    `bytearray` of exactly the decoded size, returned without a copy.
 
     Before anything is decoded or allocated: the declared decoded size is
     held to `limit` (`CascTooLargeError`), and every block is checked: its
@@ -1329,11 +1403,15 @@ def decode_blte(data: Buffer, *, limit: int = DECODE_LIMIT, path: Path | None = 
     name; `4`, `F` and any other byte raise `UnsupportedBlockMode` (an `F`
     block's payload is never parsed, so a nested BLTE is never recursed
     into). Then each block is decoded: `N` is its bytes after the mode byte,
-    exactly its declared size; `Z` is one zlib stream inflated to exactly
-    its declared size and never a byte past it. A BLTE without a chunk
-    table has one block, no MD5 and no declared size; it is held to
-    `limit` as it is decoded. A Lab read is checked by the file's content
-    key (M15-05) and these MD5s, never by its encoding key."""
+    exactly its declared size; `Z` is one zlib stream inflated in steps
+    straight into its slice of the output, to exactly its declared size and
+    never a byte past it, so the peak is the output plus one step. A BLTE
+    without a chunk table has one block, no MD5 and no declared size; a
+    `Z` block there is inflated once to measure (bounded at `limit`) and
+    once more into an exact buffer. A `limit` below 0 is a `ValueError`. A
+    Lab read is checked by the file's content key (M15-05) and these MD5s,
+    never by its encoding key."""
+    _check_limit(limit)
     view = _octets(data)
     layout = parse_blte(view, path)
     if layout.decoded_size is not None and layout.decoded_size > limit:
@@ -1357,27 +1435,35 @@ def decode_blte(data: Buffer, *, limit: int = DECODE_LIMIT, path: Path | None = 
         if block[0] not in (_MODE_PLAIN, _MODE_ZLIB):
             _refuse_mode(block, i, path)
         spans.append(block)
-    parts: list[Buffer] = []
+    if layout.decoded_size is not None:
+        out = bytearray(layout.decoded_size)
+    else:
+        (only,) = spans
+        if only[0] == _MODE_PLAIN:
+            size = len(only) - 1
+            if size > limit:
+                raise CascTooLargeError(
+                    f"block 0 holds {size} bytes, over the read's cap of {limit}", size, limit, path
+                )
+        else:
+            size = _measure(only[1:], limit, 0, path)
+        out = bytearray(size)
+    at = 0
     for i, (row, block) in enumerate(zip(layout.blocks, spans, strict=True)):
         payload = block[1:]
+        want = len(out) - at if row.decoded_size is None else row.decoded_size
         if block[0] == _MODE_PLAIN:
-            if row.decoded_size is None and len(payload) > limit:
-                raise CascTooLargeError(
-                    f"block {i} holds {len(payload)} bytes, over the read's cap of {limit}",
-                    len(payload),
-                    limit,
-                    path,
-                )
-            if row.decoded_size is not None and len(payload) != row.decoded_size:
+            if len(payload) != want:
                 raise CascMalformedError(
                     f"block {i} is plain and holds {len(payload)} bytes; the chunk table "
-                    f"says {row.decoded_size}",
+                    f"says {want}",
                     path,
                 )
-            parts.append(payload)
+            out[at : at + want] = payload
         else:
-            parts.append(_inflate(payload, row.decoded_size, limit, i, path))
-    return b"".join(parts)
+            _inflate_into(out, at, payload, want, i, path)
+        at += want
+    return out
 
 
 def read_record(root: Path, entry: IndexEntry, *, limit: int = DECODE_LIMIT) -> bytes:
@@ -1392,6 +1478,7 @@ def read_record(root: Path, entry: IndexEntry, *, limit: int = DECODE_LIMIT) -> 
     bytes, itself held to `limit` plus the header before the open), and the
     descriptor is closed on every path. No `mmap`; no handle outlives the
     call."""
+    _check_limit(limit)
     for folder in (root / _DATA, root / _DATA / _DATA_DATA):
         _check_dir(folder)
     path = archive_path(root, entry.archive)
@@ -1443,12 +1530,16 @@ def read_record(root: Path, entry: IndexEntry, *, limit: int = DECODE_LIMIT) -> 
     return b"".join(chunks)
 
 
-def read_encoded(storage: CascStorage, ekey: bytes, *, limit: int = DECODE_LIMIT) -> bytes | None:
+def read_encoded(
+    storage: CascStorage, ekey: bytes, *, limit: int = DECODE_LIMIT
+) -> bytearray | None:
     """The decoded bytes of the file whose encoding key is `ekey` (at least
-    its first nine bytes), or `None` when the local index does not list it
-    (`BucketMissingError` when its bucket has no index file). The record
-    header is checked against the index (`parse_record_header`) and the
-    BLTE decoded under `limit` (`decode_blte`)."""
+    its first nine bytes), as `decode_blte` returns them, or `None` when
+    the local index does not list it (`BucketMissingError` when its bucket
+    has no index file). The record header is checked against the index
+    (`parse_record_header`) and the BLTE decoded under `limit`
+    (`decode_blte`)."""
+    _check_limit(limit)
     entry = storage.index.find(ekey)
     if entry is None:
         return None

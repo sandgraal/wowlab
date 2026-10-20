@@ -75,7 +75,7 @@
         "decoded_size": 141574945,
         "decoded_md5": "c441a5427cb86b23bbfb6ed9c6cf0114"
       },
-      "decode_seconds": 0.226
+      "decode_seconds": 0.321
     },
     {
       "why": "first own-bucket record of bucket 0 whose header holds the whole encoding key",
@@ -185,6 +185,7 @@
     },
     "hash_field_full": 71,
     "chunkless": 0,
+    "header_md5_starts_with_key": 4079,
     "flags": {
       "0000": 4079
     },
@@ -201,6 +202,9 @@
     "encrypted_key_names": {
       "0DA4670DB36FB2A9": 7,
       "D2C028CB7AC14D0B": 2
+    },
+    "e_block_shapes": {
+      "key_name_bytes=8 iv_bytes=8 cipher=S": 19
     }
   }
 }

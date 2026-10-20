@@ -81,6 +81,11 @@ def test_decode_takes_any_byte_buffer_constructed() -> None:
     assert casc.decode_blte(memoryview(data)) == want
     padded = b"xx" + data
     assert casc.decode_blte(memoryview(padded)[2:]) == want
+    doubled = bytes(b for x in data for b in (x, 0))
+    assert casc.decode_blte(memoryview(doubled)[::2]) == want  # strided: copied once
+    assert casc.decode_blte(memoryview(data).cast("B", (len(data), 1))) == want
+    out = casc.decode_blte(data)
+    assert isinstance(out, bytearray) and len(out) == len(want)
 
 
 # ─── refused modes ───────────────────────────────────────────────────────────
@@ -106,13 +111,27 @@ def test_an_e_block_with_an_arc4_cipher_and_a_four_byte_iv_constructed() -> None
 
 @pytest.mark.parametrize(
     "body",
-    [b"", b"\x00", b"\x08" + bytes(7), b"\x08" + bytes(8), b"\x08" + bytes(8) + b"\x08" + bytes(8)],
-    ids=["empty", "no-key", "short-key", "no-iv", "no-cipher"],
+    [b"", b"\x08" + bytes(7), b"\x08" + bytes(8), b"\x08" + bytes(8) + b"\x08" + bytes(8)],
+    ids=["empty", "short-key", "no-iv", "no-cipher"],
 )
 def test_a_cut_short_e_block_is_malformed_constructed(body: bytes) -> None:
     data = blte([(b"E" + body, 10)])
     with pytest.raises(casc.CascMalformedError, match="encrypted"):
         casc.decode_blte(data)
+
+
+@pytest.mark.parametrize("key_len", [0, 1, 7, 9, 16, 255], ids=["0", "1", "7", "9", "16", "255"])
+def test_a_key_name_that_is_not_eight_bytes_is_malformed_not_a_key_name_constructed(
+    key_len: int,
+) -> None:
+    """A 255-byte "key name" would put 510 hex digits of the block's own
+    bytes into `EncryptedContent.key_name`, and through `casc_facts.py`
+    into a fixture (ADR-0033): refused as malformed before the key name is
+    read, whatever follows."""
+    data = blte([e_block(key_name=bytes(range(key_len)))])
+    with pytest.raises(casc.CascMalformedError, match=f"key name is {key_len} bytes") as caught:
+        casc.decode_blte(data)
+    assert not isinstance(caught.value, casc.EncryptedContent)
 
 
 @pytest.mark.parametrize(
@@ -371,31 +390,85 @@ def test_over_a_small_cap_and_at_it_constructed() -> None:
         casc.decode_blte(data, limit=size - 1)
 
 
+STEP = 1 << 20  # the inflate step (`casc._STEP`); a decode's peak is its output + about 3 steps
+BOMB = zlib.compress(bytes(64 * 1024 * 1024), 9)  # 64 MiB of zeros, about 64 KB stored
+
+
+def _peak(data: bytes, limit: int) -> tuple[int, BaseException | None]:
+    """The tracemalloc peak of one decode, and what it raised."""
+    tracemalloc.start()
+    try:
+        try:
+            casc.decode_blte(data, limit=limit)
+        except casc.CascError as exc:
+            raised: BaseException | None = exc
+        else:
+            raised = None
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    return peak, raised
+
+
 def test_a_zlib_bomb_never_inflates_past_its_declared_size_constructed() -> None:
-    """64 MiB of zeros in about 64 KB of zlib, declared as 100 bytes: the
-    inflate stops at 101 bytes and the block is refused."""
-    bomb = zlib.compress(bytes(64 * 1024 * 1024), 9)
-    tracemalloc.start()
-    try:
-        with pytest.raises(casc.CascMalformedError, match="past its declared 100"):
-            casc.decode_blte(blte([(b"Z" + bomb, 100)]))
-        _, peak = tracemalloc.get_traced_memory()
-    finally:
-        tracemalloc.stop()
-    assert peak < 4 * 1024 * 1024, peak
+    """64 MiB of zeros declared as 100 bytes: the inflate stops at 101
+    bytes; the peak is the input plus a few steps."""
+    peak, raised = _peak(blte([(b"Z" + BOMB, 100)]), casc.DECODE_LIMIT)
+    assert isinstance(raised, casc.CascMalformedError) and "past its declared 100" in str(raised)
+    assert peak < len(BOMB) + 4 * STEP, peak
 
 
-def test_a_chunkless_zlib_bomb_stops_at_the_cap_constructed() -> None:
-    bomb = zlib.compress(bytes(64 * 1024 * 1024), 9)
-    tracemalloc.start()
-    try:
-        with pytest.raises(casc.CascTooLargeError) as caught:
-            casc.decode_blte(blte([(b"Z" + bomb, 0)], table=False), limit=1 << 20)
-        _, peak = tracemalloc.get_traced_memory()
-    finally:
-        tracemalloc.stop()
-    assert caught.value.limit == 1 << 20
-    assert peak < 4 * 1024 * 1024, peak
+@pytest.mark.parametrize("cap", [1 << 20, 8 << 20], ids=["1MiB", "8MiB"])
+def test_a_chunkless_zlib_bomb_stops_at_the_cap_within_one_step_constructed(cap: int) -> None:
+    """Without a chunk table the block is measured in steps that are thrown
+    away: the peak is a few steps plus the input, whatever the cap."""
+    peak, raised = _peak(blte([(b"Z" + BOMB, 0)], table=False), cap)
+    assert isinstance(raised, casc.CascTooLargeError) and raised.limit == cap
+    assert peak < len(BOMB) + 4 * STEP, peak
+
+
+def test_the_peak_of_a_decode_is_the_output_plus_a_few_steps_constructed() -> None:
+    """A legitimate file at the cap: 16 MiB in 4,096 zlib blocks of 4 KiB
+    and in one 16 MiB block; the peak is the output plus the input plus a
+    few steps (zlib grows its own buffer to the step inside one call, and
+    the step's bytes are live while they are copied in), never twice the
+    output."""
+    cap = 16 << 20
+    small = [z_block(bytes([i % 251]) * 4096) for i in range(4096)]
+    big = [z_block(bytes(cap), 9)]
+    for blocks in (small, big):
+        data = blte(blocks)
+        peak, raised = _peak(data, cap)
+        assert raised is None
+        assert peak < cap + len(data) + 4 * STEP, (peak, len(data))
+
+
+def test_a_chunkless_file_is_measured_then_decoded_exactly_constructed() -> None:
+    plain = bytes(range(256)) * 4096  # 1 MiB, incompressible-ish
+    data = blte([z_block(plain)], table=False)
+    peak, raised = _peak(data, len(plain))
+    assert raised is None
+    assert casc.decode_blte(data, limit=len(plain)) == plain
+    assert peak < len(plain) + len(data) + 4 * STEP, peak
+    with pytest.raises(casc.CascTooLargeError):
+        casc.decode_blte(data, limit=len(plain) - 1)
+
+
+def test_a_negative_cap_is_refused_before_anything_is_read_constructed(tmp_path: Path) -> None:
+    """zlib reads a `max_length` of 0 as "no bound", so a negative cap
+    (which would reach it as `limit + 1`) is a ValueError, not a decode."""
+    data = blte([(b"Z" + BOMB, 0)], table=False)
+    for limit in (-1, -2, -(1 << 40)):
+        with pytest.raises(ValueError, match="must be 0 or more"):
+            casc.decode_blte(data, limit=limit)
+    root, storage, files = _install(tmp_path)
+    entry = storage.index.find(files["good"][0])
+    assert entry is not None
+    with pytest.raises(ValueError, match="must be 0 or more"):
+        casc.read_record(root, entry, limit=-1)
+    with pytest.raises(ValueError, match="must be 0 or more"):
+        casc.read_encoded(storage, files["good"][0], limit=-1)
+    assert casc.decode_blte(blte([n_block(b"")]), limit=0) == b""
 
 
 def test_a_chunkless_plain_block_over_the_cap_is_refused_constructed() -> None:

@@ -183,3 +183,19 @@ def test_the_census_met_n_z_and_e_only() -> None:
     assert census["flags"] == {"0000": census["records"]}
     assert sum(census["records_by_block_count"].values()) == census["records"]
     assert 0 < census["hash_field_full"] < census["records"]
+
+
+def test_every_e_block_has_an_eight_byte_key_name_an_eight_byte_iv_and_salsa20() -> None:
+    """All 19 `E` blocks, read from each block's own prefix (not only the
+    first one of a record, where the decoder stops)."""
+    census = FACTS["census"]
+    assert census["e_block_shapes"] == {
+        "key_name_bytes=8 iv_bytes=8 cipher=S": census["blocks_by_mode"]["E"]
+    }
+
+
+def test_every_sampled_records_index_key_starts_the_md5_of_its_blte_header() -> None:
+    """The EKey definition on every record sampled, not only the three with
+    a recorded chunk table."""
+    census = FACTS["census"]
+    assert census["header_md5_starts_with_key"] == census["records"] == 4079

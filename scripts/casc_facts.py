@@ -33,8 +33,10 @@ first own-bucket record of bucket 0, in key order, whose header holds the
 whole encoding key, and the first one whose BLTE holds an encrypted block;
 the record headers of two archive segment headers (the shifted index rows);
 and a census of every 256th own-bucket entry of every bucket (block modes,
-block counts, flags, refusals, encrypted key names). Never a byte of a
-file: sizes, hashes, modes and names only.
+block counts, flags, refusals, encrypted key names; for every `E` block its
+key-name length, IV length and cipher byte; how many record headers' nine
+index bytes are the start of the MD5 of the record's BLTE header). Never a
+byte of a file: sizes, hashes, modes and names only.
 
 The install is `--root`, else `WOWLAB_WOW_ROOT`, else the platform default
 (`wowlab_core.install.discover`). Never print or commit its path: the JSON
@@ -74,7 +76,11 @@ class FactsError(Exception):
 
 
 def refuse_install(out: Path) -> None:
-    """Refuse an output path inside a game install, every link resolved."""
+    """Refuse an output path inside a game install, every link resolved,
+    and an output path that is itself a link (its target is not looked
+    at: a link is never written through)."""
+    if out.is_symlink():
+        raise FactsError("--out is a link; a fixture is written to a plain path")
     try:
         parent = out.parent.resolve()
     except (OSError, RuntimeError) as exc:
@@ -275,6 +281,36 @@ def _segment_headers(storage: casc.CascStorage) -> list[dict[str, Any]]:
     return rows
 
 
+def _e_block_shapes(blte: memoryview, layout: casc.BlteLayout) -> list[tuple[int, int, str]]:
+    """(key-name length, IV length, cipher byte) of every `E` block in the
+    BLTE, read from each block's own prefix (the decoder stops at the
+    first `E` block, so this sees them all). A block cut short gives -1."""
+    shapes: list[tuple[int, int, str]] = []
+    at = layout.header_size or 8
+    for block in layout.blocks:
+        if block.mode == "E":
+            body = blte[at + 1 : at + block.encoded_size]
+            try:
+                key_len = body[0]
+                iv_len = body[1 + key_len]
+                cipher = chr(body[2 + key_len + iv_len])
+            except IndexError:
+                shapes.append((-1, -1, "?"))
+            else:
+                shapes.append((key_len, iv_len, cipher))
+        at += block.encoded_size
+    return shapes
+
+
+def _header_md5_starts_with_key(blte: memoryview, layout: casc.BlteLayout, key: bytes) -> bool:
+    """Whether the first nine bytes of the MD5 of the BLTE header (magic
+    through the last chunk row) are the record's nine index bytes."""
+    if layout.header_size == 0:
+        return False
+    digest = hashlib.md5(blte[: layout.header_size], usedforsecurity=False).digest()
+    return digest[: casc.KEY_BYTES] == key[: casc.KEY_BYTES]
+
+
 def _census(storage: casc.CascStorage) -> dict[str, Any]:
     """Every CENSUS_STEP-th own-bucket entry of every bucket: read, header
     checked, BLTE laid out and decoded (or refused)."""
@@ -284,7 +320,8 @@ def _census(storage: casc.CascStorage) -> dict[str, Any]:
     flags: Counter[str] = Counter()
     refused: Counter[str] = Counter()
     key_names: Counter[str] = Counter()
-    records = decoded = full = chunkless = over_cap = 0
+    e_shapes: Counter[str] = Counter()
+    records = decoded = full = chunkless = over_cap = header_md5_is_key = 0
     for bucket in index.buckets:
         for i in _own(index, bucket)[::CENSUS_STEP]:
             key, entry = index.entry_at(bucket, i)
@@ -298,6 +335,10 @@ def _census(storage: casc.CascStorage) -> dict[str, Any]:
             full += _full_hash_field(header)
             layout = casc.parse_blte(data[casc.RECORD_HEADER_SIZE :])
             chunkless += layout.header_size == 0
+            blte = data[casc.RECORD_HEADER_SIZE :]
+            header_md5_is_key += _header_md5_starts_with_key(blte, layout, key)
+            for key_len, iv_len, cipher in _e_block_shapes(blte, layout):
+                e_shapes[f"key_name_bytes={key_len} iv_bytes={iv_len} cipher={cipher}"] += 1
             n = len(layout.blocks)
             counts["1" if n == 1 else "2-9" if n < 10 else "10-99" if n < 100 else "100+"] += 1
             modes.update(b.mode for b in layout.blocks)
@@ -316,10 +357,12 @@ def _census(storage: casc.CascStorage) -> dict[str, Any]:
         "refused": dict(sorted(refused.items())),
         "hash_field_full": full,
         "chunkless": chunkless,
+        "header_md5_starts_with_key": header_md5_is_key,
         "flags": dict(sorted(flags.items())),
         "blocks_by_mode": dict(sorted(modes.items())),
         "records_by_block_count": dict(sorted(counts.items())),
         "encrypted_key_names": dict(sorted(key_names.items())),
+        "e_block_shapes": dict(sorted(e_shapes.items())),
     }
 
 
