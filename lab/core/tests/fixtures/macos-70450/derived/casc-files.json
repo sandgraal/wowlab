@@ -9,6 +9,7 @@
   "build": 70450,
   "locale": "enUS",
   "locale_from": "install",
+  "speech_locale": "enUS",
   "locale_flag": 2,
   "platform": "macos",
   "platform_from": "install",
@@ -54,6 +55,7 @@
         6
       ]
     ],
+    "empty_blocks": 0,
     "locale": "enUS",
     "locale_flag": 2,
     "platform": "macos",
@@ -86,6 +88,12 @@
       "local + local, same content": 624,
       "local + local, different content": 515,
       "local (0x1) + local, different content": 22
+    },
+    "locale_flags_of_two_local_rows_without_0x1": {
+      "0x202 + 0x173f6": 474,
+      "0x242 + 0x173f6": 31,
+      "0x246 + 0x173f6": 9,
+      "0x232 + 0x173f6": 1
     }
   },
   "rows": [
@@ -393,7 +401,7 @@
       "encoding_hashes": [],
       "encryption_names": [],
       "root_content_flags": [],
-      "note": "the root lists it only for another locale or platform, or a low-violence client (content flags 0x2080000, locale flags 0x14000)"
+      "note": "the root lists it only for another language or platform, or for a low-violence client, so this client does not load it (content flags 0x2080000, locale flags 0x14000)"
     },
     {
       "why": "the first id taken with no copy in the local index",
@@ -411,10 +419,10 @@
       "root_content_flags": [
         "0x12080001"
       ],
-      "note": null
+      "note": "listed only in root rows with content bit 0x1 (meaning [verify]); at 70450 the client fetched none of those rows' content"
     },
     {
-      "why": "the first id the root does not list, said to be in no table",
+      "why": "the first id the root does not list, asked with in_table=False (the script's choice: no game table was looked up)",
       "fdid": 1,
       "state": "unknown_id",
       "words": "unknown id",
@@ -423,7 +431,7 @@
       "encoding_hashes": [],
       "encryption_names": [],
       "root_content_flags": [],
-      "note": "the root does not list it"
+      "note": "the root does not list it, and the caller says no game table names it"
     },
     {
       "why": "the first sampled ModelFileData id in state local",
@@ -467,6 +475,7 @@
   ],
   "model_file_data": {
     "source": "gamedata (wago.tools, cached under the data directory)",
+    "version": "1.60.1.70450",
     "ids_in_table": 121131,
     "sampled": 300,
     "states": {
@@ -475,23 +484,23 @@
     }
   },
   "timings": {
-    "index_seconds": 0.462,
-    "encoding_seconds": 0.511,
-    "root_seconds": 0.354,
-    "open_seconds": 1.329,
+    "index_seconds": 0.465,
+    "encoding_seconds": 0.528,
+    "root_seconds": 0.356,
+    "open_seconds": 1.352,
     "reads": {
       "files": 300,
       "what": "every (rows taken // 300)-th row taken, in file order, each id once",
       "bytes": 22610797,
       "refused": {},
-      "seconds": 0.2
+      "seconds": 0.216
     },
     "model_reads": {
       "files": 157,
       "what": "every local file of the ModelFileData sample",
       "bytes": 23461816,
       "refused": {},
-      "seconds": 0.122
+      "seconds": 0.114
     }
   },
   "memory": {

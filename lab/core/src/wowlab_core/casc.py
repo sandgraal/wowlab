@@ -69,12 +69,14 @@ product in the install; only the build config is per product.
    flags miss the platform's mask (`0x108` on macOS, `0x110` on Windows;
    the platform from the flavor folder's layout, `platform_of`) and it is
    not `LowViolence`. Ids are kept in an `array` per block and keys in one
-   buffer. `open_source` does steps 1 to 5; `CascSource.read(fdid)` tries
-   an id's rows (plain blocks first, then rows without bit `0x1`) and their
-   encoding keys, passes over an encrypted copy for the next, and checks
-   the decoded bytes against the content key, reading the index again once
-   on a mismatch; `CascSource.stat(fdid)` names §17.1's state without
-   decoding. Its peak resident memory on the owner's install at 70450 is
+   buffer; a block of no rows is counted and kept nowhere. `open_source`
+   does steps 1 to 5; `CascSource.read(fdid)` tries an id's rows (plain
+   blocks first, then rows without bit `0x1`) and their encoding keys,
+   checks the decoded bytes against the content key, reads the index
+   again at most once per call, and passes over a copy that is encrypted,
+   still does not match or is not decodable for the next, raising only
+   when none gives the file; `CascSource.stat(fdid)` names §17.1's state
+   without decoding. Its peak resident memory on the owner's install at 70450 is
    about 560 MB, most of it the encoding file decoded beside its record
    (`casc-files.json`).
 
@@ -136,6 +138,7 @@ __all__ = [
     "ROOT_DO_NOT_LOAD",
     "ROOT_ENCRYPTED",
     "ROOT_FLAG_1",
+    "ROOT_INSTALL",
     "ROOT_LOAD_ON_MACOS",
     "ROOT_LOAD_ON_WINDOWS",
     "ROOT_LOW_VIOLENCE",
@@ -185,6 +188,7 @@ __all__ = [
     "hashlittle2",
     "load_index",
     "locale_of",
+    "locales_of",
     "mode_text",
     "open_source",
     "open_storage",
@@ -1658,6 +1662,11 @@ ROOT_NO_NAME_HASH = 0x10000000
 # client did not fetch those rows' content (LAB_FORMATS §10, amendment of
 # 2026-10-19). So rows without it are tried first.
 ROOT_FLAG_1 = 0x1
+# Bit 0x4 is `Install` in wowdev.wiki's table (from memory, **[verify]**):
+# possibly a file the Battle.net app writes loose outside the archives. At
+# 70450, 4 of the 20 ids with no local copy are in one macOS-only block
+# carrying it (LAB_FORMATS §10, amendment of 2026-10-19).
+ROOT_INSTALL = 0x4
 
 Platform = Literal["macos", "windows"]
 FoundFrom = Literal["install", "given"]  # where a locale or a platform came from
@@ -1919,7 +1928,10 @@ def parse_encoding(data: bytes | bytearray, path: Path | None = None) -> Encodin
 class RootReport(BaseModel):
     """What the root file held and what the filter took. `skipped_blocks`
     counts the blocks left out by why (`locale`, `platform`,
-    `low_violence`; the first reason that applies, in that order)."""
+    `low_violence`; the first reason that applies, in that order).
+    `empty_blocks` counts the blocks of no rows, which are neither taken nor
+    skipped and keep no place in the tables (so a root of millions of them
+    costs nothing per lookup)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -1934,6 +1946,7 @@ class RootReport(BaseModel):
     encrypted_blocks: int
     encrypted_blocks_taken: int
     skipped_blocks: tuple[tuple[str, int], ...]
+    empty_blocks: int
     locale: str
     locale_flag: int
     platform: str
@@ -2017,13 +2030,13 @@ class RootTable:
         comes twice); for derived fixtures and tests."""
         return iter(self._ids)
 
-    def rows(self) -> Iterator[tuple[int, bytes, int]]:
-        """(file data id, content key, content flags) of every row taken,
-        block by block; for derived fixtures and tests."""
+    def rows(self) -> Iterator[tuple[int, bytes, int, int]]:
+        """(file data id, content key, content flags, locale flags) of every
+        row taken, block by block; for derived fixtures and tests."""
         for span in self._taken:
             for i in range(span.lo, span.hi):
                 ckey = bytes(self._ckeys[i * _HASH_BYTES : (i + 1) * _HASH_BYTES])
-                yield self._ids[i], ckey, span.content
+                yield self._ids[i], ckey, span.content, span.locale
 
     def skipped_rows(self) -> Iterator[tuple[int, int, int]]:
         """(file data id, content flags, locale flags) of every row of the
@@ -2112,7 +2125,7 @@ def parse_root(
     taken: list[_Span] = []
     skipped: list[_Span] = []
     reasons: dict[str, int] = {}
-    records = encrypted = encrypted_taken = blocks = 0
+    records = encrypted = encrypted_taken = blocks = empty = 0
     pos = header_size
     while pos < n:
         if n - pos < head.size:
@@ -2123,6 +2136,10 @@ def parse_root(
             count, locales, f1, f2, f3 = _ROOT_V2_BLOCK.unpack_from(view, pos)
             content = f1 | f2 | (f3 << 17)
         pos += head.size
+        if count == 0:
+            empty += 1
+            blocks += 1
+            continue
         per = 4 + _HASH_BYTES + (0 if nameless and content & ROOT_NO_NAME_HASH else _NAME_HASH)
         need = count * per
         if need > n - pos:
@@ -2158,6 +2175,7 @@ def parse_root(
         encrypted_blocks=encrypted,
         encrypted_blocks_taken=encrypted_taken,
         skipped_blocks=tuple(sorted(reasons.items())),
+        empty_blocks=empty,
         locale=locale,
         locale_flag=flag,
         platform=platform,
@@ -2165,27 +2183,40 @@ def parse_root(
     return RootTable(report, ids, ckeys, taken, skipped_ids, skipped)
 
 
-def locale_of(tags: str | None) -> str:
-    """The locale the Active row's `Tags` cell names: the token before
-    `text?` in one of its `:`-separated groups (`… xxYY text?`), else the
-    one before `speech?`. Refused with `CascLocaleError` when there is none
-    or it is not in `LOCALE_FLAGS`; the message never repeats the cell."""
-    for suffix in ("text?", "speech?"):
-        for group in (tags or "").split(":"):
-            tokens = group.split()
-            if len(tokens) < 2 or tokens[-1] != suffix:
-                continue
-            if not _LOCALE_SHAPE.fullmatch(tokens[-2]):
-                continue
-            if tokens[-2] not in LOCALE_FLAGS:
-                raise CascLocaleError(
-                    f"the build's locale {tokens[-2]!r} is not one this reader knows"
-                )
+def _tagged_locale(tags: str | None, suffix: str) -> str | None:
+    """The locale token before `suffix` (`text?` or `speech?`) in the first
+    `:`-separated group of `tags` that ends so, or None."""
+    for group in (tags or "").split(":"):
+        tokens = group.split()
+        if len(tokens) >= 2 and tokens[-1] == suffix and _LOCALE_SHAPE.fullmatch(tokens[-2]):
             return tokens[-2]
-    raise CascLocaleError(
-        "the Active row's Tags cell in .build.info names no locale (a token such as "
-        "'xxYY text?'), so the root cannot be filtered"
-    )
+    return None
+
+
+def locales_of(tags: str | None) -> tuple[str, str | None]:
+    """The text locale and the speech locale the Active row's `Tags` cell
+    names: the tokens before `text?` and `speech?` in its `:`-separated
+    groups (`… xxYY text?`). The text locale is the one the root is filtered
+    by; when the cell has no `text?` group the speech locale stands in for
+    it. Refused with `CascLocaleError` when there is neither, or the one used
+    is not in `LOCALE_FLAGS`; the message never repeats the cell (it holds a
+    geo-IP token). The speech locale is None when the cell names none."""
+    text = _tagged_locale(tags, "text?")
+    speech = _tagged_locale(tags, "speech?")
+    used = text or speech
+    if used is None:
+        raise CascLocaleError(
+            "the Active row's Tags cell in .build.info names no locale (a token such as "
+            "'xxYY text?'), so the root cannot be filtered"
+        )
+    if used not in LOCALE_FLAGS:
+        raise CascLocaleError(f"the build's locale {used!r} is not one this reader knows")
+    return used, speech
+
+
+def locale_of(tags: str | None) -> str:
+    """The locale the root is filtered by: `locales_of`'s first."""
+    return locales_of(tags)[0]
 
 
 def platform_of(flavor_dir: Path) -> Platform:
@@ -2247,8 +2278,12 @@ class CascSourceReport(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     index: CascIndexReport
-    locale: str
+    locale: str  # the text locale: the root is filtered by it alone
     locale_from: FoundFrom  # `install`: the Active row's Tags cell
+    # The speech locale the Tags cell names (None when none, or the locale
+    # was given). When it differs from `locale`, files the root lists only
+    # for it are `not_in_build` here, and `stat` says so in its note.
+    speech_locale: str | None
     platform: str
     platform_from: FoundFrom  # `install`: the flavor folder's layout
     encoding: EncodingHeader
@@ -2302,7 +2337,10 @@ class CascSource:
         blocks not flagged `Encrypted` before the rest, so a plain copy is
         tried first; within each, rows without `ROOT_FLAG_1` before rows
         with it (the content this client fetched, at 70450); otherwise file
-        order (a stable sort)."""
+        order (a stable sort): two local rows of different content in
+        blocks alike in those flags (515 ids at 70450) give the first in the
+        file, wow.export's rule from memory (**[verify]**: the client may
+        pick the narrower locale's block)."""
         if not 0 <= fdid < _FDID_LIMIT:
             return []
         return sorted(
@@ -2313,7 +2351,7 @@ class CascSource:
             ),
         )
 
-    def _absent(self, fdid: int, in_table: bool) -> CascFileStat:
+    def _absent(self, fdid: int, in_table: bool | None) -> CascFileStat:
         """The stat of an id the root takes no row for."""
         if not 0 <= fdid < _FDID_LIMIT:
             return CascFileStat(
@@ -2326,15 +2364,32 @@ class CascSource:
         if others:
             flags = "; ".join(f"content flags {c:#x}, locale flags {lo:#x}" for c, lo in others)
             note = (
-                "the root lists it only for another locale or platform, or a low-violence "
-                f"client ({flags})"
+                "the root lists it only for another language or platform, or for a "
+                f"low-violence client, so this client does not load it ({flags})"
             )
+            speech = self.report.speech_locale
+            if speech is not None and speech != self.report.locale:
+                bit = LOCALE_FLAGS.get(speech, 0)
+                if any(lo & bit for _, lo in others):
+                    note += (
+                        f"; it is listed for the speech locale {speech}, and the root is "
+                        f"filtered by the text locale {self.report.locale} alone"
+                    )
             return CascFileStat(
                 fdid=fdid, state="not_in_build", words=STATE_WORDS["not_in_build"], note=note
             )
-        state: FileState = "not_in_build" if in_table else "unknown_id"
+        if in_table is False:
+            return CascFileStat(
+                fdid=fdid,
+                state="unknown_id",
+                words=STATE_WORDS["unknown_id"],
+                note="the root does not list it, and the caller says no game table names it",
+            )
+        note = "the root does not list it"
+        if in_table is None:
+            note += "; whether a game table names it was not checked"
         return CascFileStat(
-            fdid=fdid, state=state, words=STATE_WORDS[state], note="the root does not list it"
+            fdid=fdid, state="not_in_build", words=STATE_WORDS["not_in_build"], note=note
         )
 
     def _probe(self, ekey: bytes, limit: int) -> tuple[IndexEntry, str | None] | None:
@@ -2372,17 +2427,23 @@ class CascSource:
             self._reopen()
             return self._probe(ekey, limit), True
 
-    def stat(self, fdid: int, *, in_table: bool = True, limit: int = DECODE_LIMIT) -> CascFileStat:
+    def stat(
+        self, fdid: int, *, in_table: bool | None = None, limit: int = DECODE_LIMIT
+    ) -> CascFileStat:
         """Where `fdid` stands: `local` (a root row whose content key has an
         encoding key in the local index, with no encrypted block),
         `encrypted` (every local copy has an encrypted block: a file in an
         `Encrypted` root block is tried through its other rows and keys
-        first), `not_local` (in the root, no copy in the local index),
-        `not_in_build` (no root row for this locale and platform) or, when
-        the caller says the id is in no table (`in_table=False`) and the
-        root does not list it at all, `unknown_id`. An id outside int32's
-        non-negative range is always `unknown_id`. Reads each candidate
-        record's header and chunk table; decodes nothing."""
+        first), `not_local` (in the root, no copy in the local index) or
+        `not_in_build` (no root row for this locale and platform). An id the
+        root does not list is `unknown_id` only when the caller vouches that
+        no game table names it (`in_table=False`); with `in_table=None` (not
+        checked) or `True` it is `not_in_build`, the note saying which. An id
+        outside int32's non-negative range is always `unknown_id`. Reads
+        each candidate record's header and chunk table; decodes nothing. A
+        candidate the index and its archive still disagree on after the one
+        re-read, or one that is not BLTE, is passed over for the next; the
+        first such error is raised when no candidate is local."""
         _check_limit(limit)
         hits = self._hits(fdid)
         if not hits:
@@ -2390,6 +2451,7 @@ class CascSource:
         ckeys = tuple(dict.fromkeys(h.ckey for h in hits))
         ekeys: list[bytes] = []
         names: list[str] = []
+        failed: CascError | None = None
         unlisted = 0
         reopened = False
         for ckey in ckeys:
@@ -2399,7 +2461,14 @@ class CascSource:
                 continue
             for ekey in row.ekeys:
                 ekeys.append(ekey)
-                probed, reopened = self._probe_once(ekey, limit, reopened)
+                try:
+                    probed, reopened = self._probe_once(ekey, limit, reopened)
+                except CascMalformedError as exc:  # raised only after the re-read
+                    failed, reopened = failed or exc, True
+                    continue
+                except CascUnsupportedError as exc:
+                    failed = failed or exc
+                    continue
                 if probed is None:
                     continue
                 if probed[1] is not None:
@@ -2416,10 +2485,23 @@ class CascSource:
                     encoding_keys=tuple(e.hex() for e in ekeys),
                     key_names=tuple(dict.fromkeys(names)),
                 )
+        if failed is not None:
+            raise failed
         state: FileState = "encrypted" if names else "not_local"
-        note = None
+        notes: list[str] = []
         if unlisted:
-            note = f"{unlisted} of its content keys are not in the encoding file"
+            notes.append(f"{unlisted} of its content keys are not in the encoding file")
+        if state == "not_local":
+            if all(h.content_flags & ROOT_FLAG_1 for h in hits):
+                notes.append(
+                    "listed only in root rows with content bit 0x1 (meaning [verify]); at "
+                    "70450 the client fetched none of those rows' content"
+                )
+            if any(h.content_flags & ROOT_INSTALL for h in hits):
+                notes.append(
+                    "flagged Install (meaning [verify]): it may exist as a loose file in the "
+                    "flavor folder rather than in the archives"
+                )
         return CascFileStat(
             fdid=fdid,
             state=state,
@@ -2428,26 +2510,33 @@ class CascSource:
             content_keys=tuple(c.hex() for c in ckeys),
             encoding_keys=tuple(e.hex() for e in ekeys),
             key_names=tuple(dict.fromkeys(names)),
-            note=note,
+            note="; ".join(notes) or None,
         )
 
     def read(self, fdid: int, *, limit: int = DECODE_LIMIT) -> bytearray:
         """The decoded bytes of `fdid` as one `bytearray`, `decode_blte`'s
         own buffer, not copied (a `bytes` copy would double the peak at the
         cap), whose MD5 is its content key: checked on every read. The root
-        rows are tried, plain blocks first, then each content key's encoding
-        keys in the encoding file's order; an encrypted copy is passed over
-        for the next. Raises `EncryptedContent` (the first met) when every
-        local copy is encrypted, `FileUnavailable` when none is local or the
-        root does not list the id, and `ContentMismatch` when the bytes do
-        not match their content key after the one re-read of the index."""
+        rows are tried in `_hits`' order, then each content key's encoding
+        keys in the encoding file's order. A copy that is encrypted, that
+        still does not match its content key (or that the index and its
+        archive still disagree on) after the one re-read of the index, or
+        whose BLTE this reader does not decode, is passed over for the next
+        candidate; the index is read again at most once per call. When no
+        candidate gives the file, the first error met is raised, in this
+        order: `ContentMismatch`, another `CascMalformedError`, a
+        `CascUnsupportedError`, `EncryptedContent`; else `FileUnavailable`
+        (none local, or the root does not list the id)."""
         _check_limit(limit)
         hits = self._hits(fdid)
         if not hits:
-            absent = self._absent(fdid, True)
+            absent = self._absent(fdid, None)
             raise FileUnavailable(
                 f"file {fdid} is {absent.words}: {absent.note}", fdid, absent.state
             )
+        mismatch: ContentMismatch | None = None
+        malformed: CascMalformedError | None = None
+        unsupported: CascUnsupportedError | None = None
         encrypted: EncryptedContent | None = None
         reopened = False
         for ckey in dict.fromkeys(h.ckey for h in hits):
@@ -2460,10 +2549,20 @@ class CascSource:
                 except EncryptedContent as exc:
                     encrypted = encrypted or exc
                     continue
+                except ContentMismatch as exc:
+                    mismatch, reopened = mismatch or exc, True
+                    continue
+                except CascMalformedError as exc:
+                    malformed, reopened = malformed or exc, True
+                    continue
+                except CascUnsupportedError as exc:
+                    unsupported = unsupported or exc
+                    continue
                 if data is not None:
                     return data
-        if encrypted is not None:
-            raise encrypted
+        for first in (mismatch, malformed, unsupported, encrypted):
+            if first is not None:
+                raise first
         raise FileUnavailable(
             f"file {fdid} is {STATE_WORDS['not_local']}: no copy of it is in the local index",
             fdid,
@@ -2479,8 +2578,6 @@ class CascSource:
         while True:
             try:
                 data = read_encoded(self.storage, ekey, limit=limit)
-            except EncryptedContent:
-                raise
             except CascMalformedError:
                 if reopened:
                     raise
@@ -2509,21 +2606,28 @@ def _read_by_ckey(
     storage: CascStorage, ckey: str, ekeys: Sequence[bytes], what: str
 ) -> tuple[bytearray, bytes]:
     """A file the build config names by content key (the encoding file, the
-    root), read through the first of `ekeys` the index lists and checked
-    against `ckey`, the index read again once on a disagreement or a
-    mismatch. Returns the bytes and the encoding key they were read by."""
+    root), read through the first of `ekeys` that gives bytes matching
+    `ckey`. The index is read again at most once, on a disagreement or a
+    mismatch; a key that still fails is passed over for the next, and the
+    first failure is raised when none gives the file. Returns the bytes and
+    the encoding key they were read by."""
     folder = archive_path(storage.root, 0).parent
     reopened = False
+    failed: CascError | None = None
     for ekey in ekeys:
         while True:
             try:
                 data = read_encoded(storage, ekey)
-            except CascMalformedError:
+            except CascMalformedError as exc:
                 if reopened:
-                    raise
+                    failed = failed or exc
+                    break
                 _reload_index(storage)
                 reopened = True
                 continue
+            except CascUnsupportedError as exc:
+                failed = failed or exc
+                break
             if data is None:
                 break
             got = _md5_hex(data)
@@ -2531,15 +2635,18 @@ def _read_by_ckey(
                 return data, ekey
             del data
             if reopened:
-                raise ContentMismatch(
+                failed = failed or ContentMismatch(
                     f"the {what} decodes to bytes whose MD5 is {got}, not its content key "
                     f"{ckey}{_RETRY}",
                     ckey,
                     got,
                     folder,
                 )
+                break
             _reload_index(storage)
             reopened = True
+    if failed is not None:
+        raise failed
     raise CascMissingError(f"the {what} ({ckey}) is not in the local index{_RETRY}", folder)
 
 
@@ -2561,7 +2668,9 @@ def open_source(
     flavor, row = select_build_row(install, flavor)
     locale_from: FoundFrom = "given" if locale else "install"
     platform_from: FoundFrom = "given" if platform else "install"
-    locale = locale or locale_of(row.tags)
+    speech: str | None = None
+    if not locale:
+        locale, speech = locales_of(row.tags)
     platform = platform or platform_of(flavor.path)
     storage = open_storage(install, flavor)
     config = storage.config
@@ -2586,6 +2695,7 @@ def open_source(
         index=storage.report,
         locale=locale,
         locale_from=locale_from,
+        speech_locale=speech,
         platform=platform,
         platform_from=platform_from,
         encoding=encoding.header,

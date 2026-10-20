@@ -436,17 +436,28 @@ the owner's install at 1.60.1.70450 on 2026-10-19 (read-only).
   and the other row's present, and no id has only its `0x1` row local
   when the other is absent: this client did not fetch the `0x1` rows'
   content, so the reader tries rows without the bit first (`casc`'s
-  `ROOT_FLAG_1`). Rows in blocks flagged `Encrypted` are tried after plain
-  ones; one such file at 70450 (id 874570) has only an encrypted copy,
+  `ROOT_FLAG_1`). 515 more ids have two local rows of different content,
+  neither with `0x1`; in every one the first row in the file is from a
+  narrow-locale block (`0x202`, enUS and enGB, with at most two more
+  locales) and the second from the block of every locale (`0x173f6`). The
+  reader returns the first, wow.export's rule from memory; whether the
+  client picks the narrower block too is **[verify]**. Rows in blocks
+  flagged `Encrypted` are tried after plain ones; one such file at 70450 (id 874570) has only an encrypted copy,
   under a key name not met in M15-04's census (`4A65D29877A83715`).
   **Streaming (§17.1's middle state):** of the 1,243,524 ids taken, 20
-  have no copy in the local index (16 listed only in `0x1` blocks); a
+  have no copy in the local index: 16 listed only in `0x1` blocks and 4 in
+  one macOS-only block (`0x10660014`) whose flags include `0x4`, `Install`
+  in wowdev.wiki's table from memory (**[verify]**: possibly files the
+  Battle.net app writes loose outside the archives); a
   sample of 300 `ModelFileData` ids splits 157 local, 143 not in the root,
   none in the root but absent (the research spike's 3 were probably the
   `0x1` rows of ids whose other row is local). **Locale:** `.build.info`'s
   `Tags` cell is `:`-separated groups of space-separated tokens, each
-  group ending in a locale and `speech?` or `text?`; the reader takes the
-  `text?` group's locale (enUS here) and never records the rest of the
+  group ending in a locale and `speech?` or `text?`; the reader filters
+  the root by the `text?` group's locale alone (enUS here; the `speech?`
+  group's stands in when there is no `text?` group), reports the `speech?`
+  group's locale beside it (enUS here too) and names it in `stat`'s note
+  when a file is listed only for it, and never records the rest of the
   cell, which holds a geo-IP token.
 
 ## 11. BLP textures (M15-07)

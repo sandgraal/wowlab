@@ -43,9 +43,9 @@ byte of a file: sizes, hashes, modes and names only.
 
 With `--files` the record is of `casc.open_source` (the encoding file and
 the root, filtered for the build's locale and the flavor folder's
-platform): the locale and platform and where each came from (never the
-`Tags` cell itself), the encoding header and how many content keys have
-one, two, … encoding keys, the root's report with the counts the filter
+platform): the locale and platform and where each came from, and the
+speech locale the `Tags` cell names (never the rest of the cell), the
+encoding header and how many content keys have one, two, … encoding keys, the root's report with the counts the filter
 gives (unique ids, with and without `LowViolence`, ids in more than one
 block and the flags of those blocks), a census of every root row taken
 against the local index (how many ids have no local copy: §17.1's middle
@@ -468,19 +468,25 @@ def _file_row(
     return row
 
 
-def _model_ids(path: Path | None, version: str) -> tuple[list[int], str]:
+def _model_ids(path: Path | None, version: str) -> tuple[list[int], str, str | None]:
     """The `FileDataID` column of `ModelFileData` at `version`: from `path`
     (a CSV), else through `gamedata` (its cache under the data directory,
-    or one fetch from wago.tools, as any `wowlab` table read does)."""
+    or one fetch from wago.tools, as any `wowlab` table read does); where
+    it came from; and the build the table is of (gamedata's own record of
+    the fetch, else the build asked for; None for a CSV)."""
+    table_build: str | None = None
     if path is not None:
         with path.open(encoding="utf-8", newline="") as handle:
             rows = list(csv.DictReader(handle))
         where = "a CSV given with --model-table"
     else:
-        rows = list(gamedata.GameData().rows("ModelFileData", version))
+        data = gamedata.GameData()
+        rows = list(data.rows("ModelFileData", version))
+        sidecar = data.sidecar("ModelFileData", version)
+        table_build = sidecar.build if sidecar is not None else version
         where = "gamedata (wago.tools, cached under the data directory)"
     ids = sorted({int(r["FileDataID"]) for r in rows if r.get("FileDataID", "").isdecimal()})
-    return ids, where
+    return ids, where, table_build
 
 
 def _sample(values: Sequence[int], n: int) -> list[int]:
@@ -504,6 +510,8 @@ def _timed_reads(source: casc.CascSource, ids: Sequence[int]) -> tuple[int, dict
             refused["encrypted"] += 1
         except casc.FileUnavailable as exc:
             refused[exc.state] += 1
+        except casc.CascError as exc:
+            refused[type(exc).__name__] += 1
     return total, dict(sorted(refused.items())), time.perf_counter() - started
 
 
@@ -514,19 +522,29 @@ def _local_census(source: casc.CascSource) -> tuple[dict[str, Any], int | None]:
     copy and how many none (§17.1's middle state), with the root flags of
     the rows of those with none; for ids with more than one row, which rows
     are local (in file order, each with its block's `0x1` bit) and whether
-    the rows' content differs; and the first id with no local copy."""
+    the rows' content differs; for ids with two or more local rows of
+    different content, none with bit 0x1, the locale flags of those rows
+    (in file order); and the first id with no local copy."""
     index = source.storage.index
     lookup = source.encoding.lookup
-    local: dict[int, list[tuple[bool, bytes, int]]] = {}
-    for fdid, ckey, flags in source.root.rows():
+    local: dict[int, list[tuple[bool, bytes, int, int]]] = {}
+    for fdid, ckey, flags, locales in source.root.rows():
         row = lookup(ckey)
         here = row is not None and any(index.find(e) is not None for e in row.ekeys)
-        local.setdefault(fdid, []).append((here, ckey, flags))
+        local.setdefault(fdid, []).append((here, ckey, flags, locales))
     some = sum(1 for v in local.values() if any(x[0] for x in v))
     none = sorted(f for f, v in local.items() if not any(x[0] for x in v))
     none_flags: Counter[str] = Counter(" + ".join(f"{x[2]:#x}" for x in local[f]) for f in none)
     patterns: Counter[str] = Counter()
+    locale_pairs: Counter[str] = Counter()
     for v in local.values():
+        present = [x for x in v if x[0]]
+        if (
+            len(present) > 1
+            and len({x[1] for x in present}) > 1
+            and not any(x[2] & casc.ROOT_FLAG_1 for x in present)
+        ):
+            locale_pairs[" + ".join(f"{x[3]:#x}" for x in present)] += 1
         if len(v) > 1:
             rows = " + ".join(
                 f"{'local' if x[0] else 'absent'}{' (0x1)' if x[2] & 0x1 else ''}" for x in v
@@ -542,6 +560,7 @@ def _local_census(source: casc.CascSource) -> tuple[dict[str, Any], int | None]:
             "with_no_local_copy": len(none),
             "flags_of_ids_with_no_local_copy": dict(none_flags.most_common()),
             "ids_in_more_than_one_block": dict(patterns.most_common()),
+            "locale_flags_of_two_local_rows_without_0x1": dict(locale_pairs.most_common()),
         },
         none[0] if none else None,
     )
@@ -623,12 +642,13 @@ def files_facts(
         _file_row(
             source,
             absent,
-            "the first id the root does not list, said to be in no table",
+            "the first id the root does not list, asked with in_table=False (the script's "
+            "choice: no game table was looked up)",
             in_table=False,
         )
     )
 
-    model_ids, model_source = _model_ids(model_table, report.index.version)
+    model_ids, model_source, model_build = _model_ids(model_table, report.index.version)
     sampled = _sample(model_ids, 300)
     states: Counter[str] = Counter()
     examples: dict[str, int] = {}
@@ -654,6 +674,7 @@ def files_facts(
         "build": report.index.build,
         "locale": report.locale,
         "locale_from": report.locale_from,
+        "speech_locale": report.speech_locale,
         "locale_flag": report.root.locale_flag,
         "platform": report.platform,
         "platform_from": report.platform_from,
@@ -679,6 +700,7 @@ def files_facts(
         "rows": rows,
         "model_file_data": {
             "source": model_source,
+            "version": model_build,
             "ids_in_table": len(model_ids),
             "sampled": len(sampled),
             "states": dict(sorted(states.items())),

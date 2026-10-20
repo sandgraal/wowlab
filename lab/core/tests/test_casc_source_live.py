@@ -162,7 +162,7 @@ def test_live_every_recorded_file_has_its_state_and_its_bytes(
 ) -> None:
     checked = 0
     for row in FACTS["rows"]:
-        in_table = row["state"] != "unknown_id"
+        in_table = False if row["state"] == "unknown_id" else None
         stat = source.stat(row["fdid"], in_table=in_table)
         assert (stat.state, stat.words) == (row["state"], row["words"]), row["why"]
         assert stat.content_key == row["content_hash"]
@@ -213,11 +213,12 @@ def test_live_the_model_file_data_sample_splits_as_recorded(
 ) -> None:
     script = FACTS_SCRIPT
     try:
-        ids, _where = script._model_ids(None, FACTS["version"])
+        ids, _where, build = script._model_ids(None, FACTS["version"])
     except GameDataError as exc:
         pytest.skip(f"ModelFileData could not be had: {exc}")
     sample = script._sample(ids, 300)
     assert len(ids) == FACTS["model_file_data"]["ids_in_table"]
+    assert build == FACTS["model_file_data"]["version"]
     states: dict[str, int] = {}
     for fdid in sample:
         state = source.stat(fdid).state

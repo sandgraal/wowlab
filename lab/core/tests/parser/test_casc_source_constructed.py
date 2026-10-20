@@ -20,6 +20,7 @@ import os
 import random
 import struct
 import sys
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -208,7 +209,8 @@ def test_a_root_is_read_and_filtered_constructed(version: int) -> None:
     assert [h.ckey for h in table.find(7)] == _keys([7])
     assert table.find(900)[0].ckey == _keys([900])[0]  # read past a block with no name hashes
     assert sorted(f for f, _, _ in table.skipped_rows()) == [7, 300, 400, 500]
-    assert [f for f, _, _ in table.rows()] == list(table.ids())
+    assert [f for f, _, _, _ in table.rows()] == list(table.ids())
+    assert r.empty_blocks == 0
 
 
 def test_windows_skips_the_mac_only_block_not_the_windows_one_constructed() -> None:
@@ -599,10 +601,18 @@ def test_the_states_of_files_not_read_constructed(tmp_path: Path) -> None:
         "not_in_build",
         "not part of this game version's files",
     )
-    assert french.note is not None and "another locale" in french.note
+    assert french.note is not None
+    assert french.note.startswith("the root lists it only for another language or platform")
+    assert "so this client does not load it" in french.note
     absent = source.stat(12345)
-    assert absent.state == "not_in_build" and absent.note == "the root does not list it"
-    assert source.stat(12345, in_table=False).state == "unknown_id"
+    assert absent.state == "not_in_build"
+    assert absent.note == "the root does not list it; whether a game table names it was not checked"
+    vouched = source.stat(12345, in_table=True)
+    assert (vouched.state, vouched.note) == ("not_in_build", "the root does not list it")
+    unknown = source.stat(12345, in_table=False)
+    assert unknown.state == "unknown_id"
+    assert unknown.note == "the root does not list it, and the caller says no game table names it"
+    assert source.stat(2_000_000_000).state == "not_in_build"
     assert source.stat(built.ids["french"], in_table=False).state == "not_in_build"
     assert source.stat(built.ids["plain"], in_table=False).state == "local"
     for fdid in (-1, 2**31, 2**40):
@@ -783,3 +793,148 @@ def test_open_says_when_the_encoding_file_is_not_local_constructed(
     monkeypatch.setattr(casc, "read_encoded", lambda *a, **k: None)
     with pytest.raises(casc.CascMissingError, match="encoding file"):
         built.open()
+
+
+# ─── fix round 1: a failing copy passed over, notes, empty blocks, speech ───
+
+WANTED = b"the right bytes " * 30
+WRONG = b"bytes of another file " * 10
+
+
+def _fallback_install(tmp: Path, tags: str | None = None) -> tuple[Path, dict[str, int]]:
+    """Ids whose first copy fails and a later one is good: `corrupt` (its
+    first encoding key's record decodes to other bytes), `rows` (its first
+    root row's only copy is corrupt, its second row good); `odd`, whose one
+    copy has an LZ4 block; ids with no local copy: `flag1` (only a 0x1
+    row), `install` (an Install-flagged row); `deDE` (only in a deDE
+    block)."""
+    rng = random.Random(1507)
+
+    def ek(bucket: int) -> bytes:
+        return key_in(bucket, rng) + rng.randbytes(7)
+
+    bad, good, lz4, bad3 = ek(1), ek(2), ek(3), ek(7)
+    missing = ek(1)
+    other = ckey_of(b"another row's content")
+    stored = [
+        (bad, blte([n_block(WRONG)])),
+        (good, blte([z_block(WANTED)])),
+        (lz4, blte([n_block(b"x"), (b"4" + b"\x00" * 9, 9)])),
+        (bad3, blte([n_block(WRONG)])),
+    ]
+    ids = {"corrupt": 1, "odd": 2, "rows": 3, "flag1": 4, "install": 5, "deDE": 6}
+    rows: list[EncodingRow] = [
+        (ckey_of(WANTED), len(WANTED), [bad, good]),
+        (ckey_of(b"odd"), 10, [lz4]),
+        (other, len(WRONG), [bad3]),
+        (ckey_of(b"unfetched"), 9, [missing]),
+    ]
+    blocks = [
+        ([ids["rows"]], [other], 0, ALL),
+        (
+            [ids["corrupt"], ids["odd"], ids["rows"]],
+            [ckey_of(WANTED), ckey_of(b"odd"), ckey_of(WANTED)],
+            0,
+            ENUS,
+        ),
+        ([ids["flag1"]], [ckey_of(b"unfetched")], casc.ROOT_FLAG_1, ALL),
+        ([ids["install"]], [ckey_of(b"unfetched")], casc.ROOT_INSTALL, ALL),
+        ([ids["deDE"]], [ckey_of(WANTED)], 0, 0x20),
+    ]
+    root = make_source_install(
+        tmp, stored=stored, encoding_rows=rows, root_blocks=blocks, rng=rng, tags=tags
+    )
+    return root, ids
+
+
+def _open(root: Path) -> casc.CascSource:
+    return casc.open_source(read_install(root), FLAVOR)
+
+
+def test_a_copy_that_still_mismatches_is_passed_over_for_the_next_key_constructed(
+    tmp_path: Path,
+) -> None:
+    root, ids = _fallback_install(tmp_path)
+    source = _open(root)
+    assert source.read(ids["corrupt"]) == WANTED
+    assert source.reopens == 1  # one re-read for the call, then the next key
+
+
+def test_a_copy_that_still_mismatches_is_passed_over_for_the_next_row_constructed(
+    tmp_path: Path,
+) -> None:
+    root, ids = _fallback_install(tmp_path)
+    source = _open(root)
+    assert source.read(ids["rows"]) == WANTED
+    assert source.reopens == 1
+
+
+def test_content_mismatch_only_when_no_candidate_matches_constructed(tmp_path: Path) -> None:
+    root, ids = _fallback_install(tmp_path)
+    source = _open(root)
+    found = source.encoding.lookup(ckey_of(WANTED))
+    assert found is not None
+    bad_only = encoding_bytes([[(ckey_of(WANTED), len(WANTED), [found.ekeys[0]])]])
+    source.encoding = casc.parse_encoding(bad_only)
+    with pytest.raises(casc.ContentMismatch) as caught:
+        source.read(ids["corrupt"])
+    assert caught.value.content_key == ckey_of(WANTED).hex()
+    assert source.reopens == 1
+
+
+def test_an_unsupported_copy_is_raised_when_it_is_the_only_one_constructed(
+    tmp_path: Path,
+) -> None:
+    root, ids = _fallback_install(tmp_path)
+    source = _open(root)
+    with pytest.raises(casc.UnsupportedBlockMode):
+        source.read(ids["odd"])
+    assert source.reopens == 0
+    assert source.stat(ids["odd"]).state == "local"  # stat decodes nothing
+
+
+def test_not_local_notes_name_the_flags_constructed(tmp_path: Path) -> None:
+    root, ids = _fallback_install(tmp_path)
+    source = _open(root)
+    flag1 = source.stat(ids["flag1"])
+    assert flag1.state == "not_local" and flag1.note is not None
+    assert "content bit 0x1" in flag1.note and "Install" not in flag1.note
+    install = source.stat(ids["install"])
+    assert install.state == "not_local" and install.note is not None
+    assert "loose file in the flavor folder" in install.note and "0x1" not in install.note
+
+
+def test_the_speech_locale_is_reported_and_named_in_the_note_constructed(
+    tmp_path: Path,
+) -> None:
+    tags = f"OSX {GEO} deDE speech?:OSX {GEO} enUS text?"
+    root, ids = _fallback_install(tmp_path, tags=tags)
+    source = _open(root)
+    assert (source.report.locale, source.report.speech_locale) == ("enUS", "deDE")
+    stat = source.stat(ids["deDE"])
+    assert stat.state == "not_in_build" and stat.note is not None
+    assert "speech locale deDE" in stat.note and "text locale enUS alone" in stat.note
+    assert GEO not in source.report.model_dump_json()
+
+
+def test_locales_of_reads_both_groups_constructed() -> None:
+    assert casc.locales_of(f"OSX {GEO} deDE speech?:OSX {GEO} enUS text?") == ("enUS", "deDE")
+    assert casc.locales_of("enGB speech?:") == ("enGB", "enGB")
+    assert casc.locales_of("frFR text?") == ("frFR", None)
+
+
+def test_a_million_empty_blocks_keep_no_place_constructed() -> None:
+    """Hostile: blocks of no rows get no span, so a lookup costs what the
+    real blocks make it cost, and the parse stays linear."""
+    head = struct.pack("<4sIIII", b"TSFM", 24, 2, 2, 2) + bytes(4)
+    empty = struct.pack("<IIIIB", 0, ALL, 0, 0, 0)
+    real = root_bytes([([1, 2], _keys([1, 2]), 0, ALL)])[24:]
+    data = head + empty * 1_000_000 + real
+    started = time.perf_counter()
+    table = casc.parse_root(data, locale="enUS", platform="macos")
+    seconds = time.perf_counter() - started
+    r = table.report
+    assert (r.blocks, r.empty_blocks, r.blocks_taken) == (1_000_001, 1_000_000, 1)
+    assert len(table._taken) == 1 and table._skipped == []
+    assert table.find(2)[0].ckey == _keys([1, 2])[1]
+    assert seconds < 10, f"{seconds:.2f} s for a million empty blocks"

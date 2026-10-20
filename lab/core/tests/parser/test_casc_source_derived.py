@@ -83,7 +83,7 @@ def test_the_roots_counts_add_up() -> None:
     assert root["records"] == root["total_files"]
     skipped = dict(root["skipped_blocks"])
     assert set(skipped) <= {"locale", "platform", "low_violence"}
-    assert root["blocks_taken"] + sum(skipped.values()) == root["blocks"]
+    assert root["blocks_taken"] + sum(skipped.values()) + root["empty_blocks"] == root["blocks"]
     assert root["encrypted_blocks_taken"] <= root["encrypted_blocks"]
     assert root["unique_ids_taken"] <= root["records_taken"] <= root["records"]
     dups = sum(root["flags_of_ids_in_more_than_one_block"].values())
@@ -128,10 +128,13 @@ def test_the_files_not_read_say_why() -> None:
     (not_local,) = _rows("not_local")
     assert not_local["encoding_hashes"] and "index" not in not_local
     skipped, from_models = _rows("not_in_build")
-    assert skipped["note"].startswith("the root lists it only for another locale")
-    assert from_models["note"] == "the root does not list it"
+    assert skipped["note"].startswith("the root lists it only for another language or platform")
+    assert from_models["note"] == "the root does not list it"  # asked as a table's id
     (unknown,) = _rows("unknown_id")
-    assert unknown["note"] == "the root does not list it" and unknown["root_content_flags"] == []
+    assert unknown["note"].endswith("the caller says no game table names it")
+    assert "no game table was looked up" in unknown["why"]  # the script's choice
+    assert unknown["root_content_flags"] == []
+    assert not_local["note"].startswith("listed only in root rows with content bit 0x1")
 
 
 def test_the_census_settles_the_streaming_question() -> None:
@@ -142,6 +145,7 @@ def test_the_census_settles_the_streaming_question() -> None:
     assert census["with_a_local_copy"] + census["with_no_local_copy"] == census["unique_ids"]
     assert census["with_no_local_copy"] == 20
     models = FACTS["model_file_data"]
+    assert models["version"] == FACTS["version"]
     assert sum(models["states"].values()) == models["sampled"] == 300
     assert models["states"] == {"local": 157, "not_in_build": 143}
 
@@ -170,3 +174,27 @@ def test_the_targets_were_met_on_the_day() -> None:
     assert t["reads"]["files"] == 300 and t["reads"]["seconds"] <= 10
     memory = FACTS["memory"]
     assert memory["peak_rss_mb_after_open"] > 0 and memory["reopens"] == 0
+
+
+def test_the_twenty_absent_ids_are_the_0x1_rows_and_the_install_flagged_block() -> None:
+    """20 = 16 ids listed only in 0x1 rows + 4 in one block flagged Install
+    (0x4, meaning [verify])."""
+    flags = FACTS["local_census"]["flags_of_ids_with_no_local_copy"]
+    assert sum(flags.values()) == FACTS["local_census"]["with_no_local_copy"]
+    only_0x1 = sum(n for f, n in flags.items() if int(f, 16) & casc.ROOT_FLAG_1)
+    install = sum(n for f, n in flags.items() if int(f, 16) & casc.ROOT_INSTALL)
+    assert (only_0x1, install) == (16, 4)
+
+
+def test_two_local_rows_without_0x1_pair_a_narrow_locale_block_with_a_wide_one() -> None:
+    """The 515 ids whose two local rows differ, neither with bit 0x1: the
+    first row in file order (the one read) is from the narrower block
+    (enUS and enGB, 0x202, plus at most a few), the second from the block of
+    every locale; whether the client picks the narrower is [verify]."""
+    pairs = FACTS["local_census"]["locale_flags_of_two_local_rows_without_0x1"]
+    patterns = FACTS["local_census"]["ids_in_more_than_one_block"]
+    assert sum(pairs.values()) == patterns["local + local, different content"]
+    for pair in pairs:
+        first, second = (int(x, 16) for x in pair.split(" + "))
+        assert first & FACTS["locale_flag"] and second & FACTS["locale_flag"]
+        assert bin(first).count("1") < bin(second).count("1")

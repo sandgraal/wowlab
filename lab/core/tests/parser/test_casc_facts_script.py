@@ -263,18 +263,21 @@ def test_writes_the_files_record_constructed(tmp_path: Path) -> None:
         ids["french"],
         "not_in_build",
     )
-    assert states["the first id the root does not list, said to be in no table"] == (
-        1,
-        "unknown_id",
-    )
+    unknown = next(r for r in facts["rows"] if r["state"] == "unknown_id")
+    assert unknown["fdid"] == 1 and "in_table=False" in unknown["why"]
+    assert unknown["note"].endswith("the caller says no game table names it")
     local = [r for r in facts["rows"] if r["state"] == "local"]
     assert local and all(r["decoded_md5_is_content_hash"] for r in local)
     other = next(r for r in local if r["fdid"] == ids["other"])
     assert other["content_hash"] == hashlib.md5(b"second " * 40).hexdigest()
     assert facts["model_file_data"]["states"] == {"local": 1, "not_in_build": 2, "not_local": 1}
     assert facts["model_file_data"]["source"] == "a CSV given with --model-table"
+    assert facts["model_file_data"]["version"] is None
+    assert facts["speech_locale"] == "enUS"  # the constructed Tags cell: "enUS speech?:"
+    assert facts["root"]["empty_blocks"] == 0
+    assert census["locale_flags_of_two_local_rows_without_0x1"] == {}
     reads = facts["timings"]["reads"]
     assert reads["files"] == 4 and reads["refused"] == {"encrypted": 1, "not_local": 1}
     text = out.read_text(encoding="utf-8")
-    assert str(tmp_path) not in text and "speech" not in text
+    assert str(tmp_path) not in text and "speech?" not in text
     assert '_key"' not in text  # field names say hash: gitleaks reads no credential
