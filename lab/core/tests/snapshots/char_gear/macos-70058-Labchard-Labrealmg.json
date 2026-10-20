@@ -290,5 +290,19 @@
     "Item names are each link's bracketed text; nothing is fetched. The link fields past the item id (enchant, gems, suffix, specialization, bonus ids) are named as community documentation names them [verify]; \"upgrade\" (field 10 and the modifier pairs) is the older documentation's name for those fields, and the upgrade track itself is carried in bonus ids.",
     "Item levels and the averages are the client's figures as recorded, never derived from bonus ids. The averages are GetAverageItemLevel's returns, not the mean of the item levels listed, and how the client computes them is not known.",
     "overall: on Retail, the best items owned, bags included (community documentation, [verify] on Forever)."
-  ]
+  ],
+  "dressing": {
+    "items": [
+      "9749",
+      "11848",
+      "9747",
+      "3274",
+      "3365",
+      "1377",
+      "6514",
+      "2632",
+      "5071"
+    ],
+    "note": "No dressing-room link: the room needs the race, body type and class, and the record has no race_id: the record is schema 1; identity is recorded from schema 4 (the lab-addon from M15-01: install it with wowlab addon install lab, then log in and out on this character). The item ids are listed instead, in slot order, to paste into a dressing room yourself."
+  }
 }

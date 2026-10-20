@@ -311,10 +311,23 @@ LOOKS_FRAME = (
 )
 
 
+# The one outside origin the page may name (M15-02): the constant page.js
+# checks the dressing-room link against before it sets the link's href. It
+# is the only `://` in the page; a link to it opens only on the player's click
+# (ADR-0019's and ADR-0031's amendments of 2026-10-19).
+DRESSING_ORIGIN = 'const DRESSING_ORIGIN = "https://www.wowhead.com";'
+# The check itself parses the address with the URL constructor, whose name,
+# lower-cased, reads as CSS's `url(`; it constructs a parser and fetches
+# nothing.
+DRESSING_PARSE = "parsed = new URL(value);"
+
+
 def test_no_external_url_appears_in_the_page(server: Any) -> None:
     body = _page(server).body.decode("utf-8")
     assert body.count(LOOKS_FRAME) == 1
-    body = body.replace(LOOKS_FRAME, "").lower()
+    assert body.count(DRESSING_ORIGIN) == 1 and body.count(DRESSING_PARSE) == 1
+    body = body.replace(LOOKS_FRAME, "").replace(DRESSING_ORIGIN, "")
+    body = body.replace(DRESSING_PARSE, "").lower()
     for marker in _EXTERNAL:
         assert marker not in body, marker
     # Every request the script makes goes to the server's own API, by path.
@@ -382,12 +395,17 @@ _HTML_SINKS = [
 # the text /api/looks-page sent. The frame is sandboxed (scripts only, an
 # origin of its own), so the page's markup never reaches this document.
 LOOKS_SRCDOC = "frame.srcdoc = read.page;"
+# The one URL sink (M15-02): the dressing-room link's href, set only to an
+# address that parsed, is https: and has exactly DRESSING_ORIGIN as its
+# origin (test_ui_dressing.py drives it with hostile addresses).
+DRESSING_HREF = "link.href = checked;"
 
 
 def test_the_script_writes_text_only(server: Any) -> None:
     script = _script()
     assert script.count(LOOKS_SRCDOC) == 1
-    script = script.replace(LOOKS_SRCDOC, "")
+    assert script.count(DRESSING_HREF) == 1
+    script = script.replace(LOOKS_SRCDOC, "").replace(DRESSING_HREF, "")
     for sink in _HTML_SINKS:
         assert sink not in script, sink
     # No handler set as an `on<event>` property (security review, round 2
