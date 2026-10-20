@@ -238,12 +238,12 @@ def test_constructed_damaged_file_json_still_validates_exit_1(flavor: Path) -> N
 
 
 def test_constructed_unknown_schema_is_named_and_the_rest_listed(flavor: Path) -> None:
-    _lab_file(flavor, SECOND).write_bytes(b'\r\nWowLabCharDB = {\r\n["schema"] = 4,\r\n}\r\n')
+    _lab_file(flavor, SECOND).write_bytes(b'\r\nWowLabCharDB = {\r\n["schema"] = 5,\r\n}\r\n')
     result = run("char", "list")
     assert result.exit_code == 1
     rows = dict(_rows(result.stdout))
     assert rows[SECOND] == (
-        "not read: WowLabCharDB is schema 4, and this reader knows schema 1, 2, 3 only: it was "
+        "not read: WowLabCharDB is schema 5, and this reader knows schema 1, 2, 3, 4 only: it was "
         "written by another version of the lab-addon; nothing was read"
     )
     assert rows[FIRST] == "schema 1, saved by client 1.60.1.70009, spec id 1490"
