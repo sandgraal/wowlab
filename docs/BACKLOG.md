@@ -1138,7 +1138,7 @@ Noted by the M15-01 implementer, 2026-10-19. `looks import-char` prints `_NO_CLA
 
 ---
 
-## [ ] M13-79 — A lighter local test run: `make test-fast`, a hang guard, and temp-dir cleanup
+## [ ] M13-81 — A lighter local test run: `make test-fast`, a hang guard, and temp-dir cleanup
 **Size:** S · **Depends on:** nothing
 
 Filed by the conductor on 2026-10-19 at the owner's request: pytest "keeps getting stuck, takes up too much space on my local drive and is generally a long running nuisance". What the repository and the machine show:
