@@ -1253,7 +1253,7 @@ The addon's record holds a race id only inside `customization`, which exists onl
 
 ---
 
-## [ ] M15-02 — The Character tab's dressing-room link
+## [x] M15-02 — The Character tab's dressing-room link
 **Size:** S · **Depends on:** M15-01, M14-09
 
 §16.3's 2026-10-19 amendment; `docs/LAB_IDEAS.md` **dressing-room-link**; ADR-0019's and ADR-0031's amendments of 2026-10-19 (Proposed). `wowlab_core.dressing` builds, from a `CharGearReport` (`identity.race_id`, `identity.sex`, `identity.class_id`, and the equipped slots' `item_id` and `bonus_ids`), the address of an outside dressing room, as a pure function with no network. The site's address grammar is worked out from recorded example addresses and kept in a shipped data file, `dressing_sites.toml`, with a provenance row per example (the site, the date, the client version the example was made on, the example and what it showed), marked **[verify]** where the Forever client is a guess. **L6:** the file never names a flavor folder, product code or build; its entries are keyed by the site's own version label (the site has one dressing room per game version, from memory **[verify]**), and the builder picks the label from the client's major version as `wowlab install show`'s discovery reads it from `.build.info`, through a table in the same file (`major version band → site label`) that the owner may rule on; an unlisted band is the fallback, never a guess. The builder returns the fallback, the ordered list of item ids as text, when the site label is unknown, when `identity` is absent, or when no equipped item can be placed. `char gear --json` gains exactly one field, `dressing` (`{url, site, note}` or `{items, note}`), listed in the release notes; text output byte-identical to `main`.
@@ -1273,7 +1273,7 @@ The Character tab renders the field under the gear table as one button, **See it
 
 ---
 
-## [ ] M15-04 — `casc`: BLTE
+## [x] M15-04 — `casc`: BLTE
 **Size:** S · **Depends on:** M15-03
 
 §17.1 step 3; `docs/LAB_FORMATS.md` §10. The archive record header and the BLTE decoder: the chunk table, blocks `N` and `Z` decoded with the per-block MD5 checked, `4`, `F` and `E` refused with typed errors (`UnsupportedBlockMode`, `EncryptedContent(key_name)`), a bounded output size (a stated cap, over which the read refuses), and an archive opened for the length of one read and closed (no `mmap` held across reads).
