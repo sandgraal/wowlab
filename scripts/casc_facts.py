@@ -293,7 +293,7 @@ def _e_block_shapes(blte: memoryview, layout: casc.BlteLayout) -> list[tuple[int
             try:
                 key_len = body[0]
                 iv_len = body[1 + key_len]
-                cipher = chr(body[2 + key_len + iv_len])
+                cipher = casc.mode_text(body[2 + key_len + iv_len])
             except IndexError:
                 shapes.append((-1, -1, "?"))
             else:

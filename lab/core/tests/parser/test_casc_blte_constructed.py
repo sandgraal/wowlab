@@ -16,6 +16,7 @@ import mmap
 import os
 import random
 import sys
+import time
 import tracemalloc
 import zlib
 from collections.abc import Iterator
@@ -441,6 +442,28 @@ def test_the_peak_of_a_decode_is_the_output_plus_a_few_steps_constructed() -> No
         peak, raised = _peak(data, cap)
         assert raised is None
         assert peak < cap + len(data) + 4 * STEP, (peak, len(data))
+
+
+RANDOM = random.Random(1504).randbytes(64 * 1024 * 1024)  # incompressible, 64 MiB
+RANDOM_Z = zlib.compress(RANDOM, 1)  # stored larger than it decodes
+
+
+@pytest.mark.parametrize("table", [True, False], ids=["chunked", "chunkless"])
+def test_an_incompressible_64_mib_block_decodes_in_linear_time_and_memory_constructed(
+    table: bool,
+) -> None:
+    """zlib copies back the input it did not use; fed the whole block each
+    step, a 64 MiB incompressible block peaked near 192 MiB in quadratic
+    time. Fed bounded slices, the peak is the output plus a few steps (the
+    input is the caller's and not counted: it was allocated before)."""
+    data = blte([(b"Z" + RANDOM_Z, len(RANDOM))], table=table)
+    started = time.perf_counter()
+    peak, raised = _peak(data, casc.DECODE_LIMIT)
+    seconds = time.perf_counter() - started
+    assert raised is None
+    assert peak < len(RANDOM) + 4 * STEP, peak
+    assert seconds < 10, seconds
+    assert casc.decode_blte(data) == RANDOM
 
 
 def test_a_chunkless_file_is_measured_then_decoded_exactly_constructed() -> None:

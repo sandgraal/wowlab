@@ -44,7 +44,8 @@ product in the install; only the build config is per product.
    anything is decoded or allocated (`decode_blte`); a `Z` block is never
    inflated a byte past its declared size. The decoded bytes go into one
    buffer of the declared size, each `Z` block inflated into its slice in
-   steps of `_STEP` (1 MiB), so the peak of a decode is that buffer (at
+   steps of `_STEP` (1 MiB), fed to zlib in slices of `_FEED` (64 KiB),
+   so the peak of a decode is that buffer (at
    most the cap) plus about three steps (zlib grows its own buffer to the
    step inside one call, and the step's bytes are live while they are
    copied in; measured with tracemalloc: a 16 MiB file decodes at a peak
@@ -91,7 +92,7 @@ import stat
 import struct
 import time
 import zlib
-from collections.abc import Buffer, Sequence
+from collections.abc import Buffer, Callable, Iterator, Sequence
 from pathlib import Path
 from typing import NoReturn
 
@@ -133,6 +134,7 @@ __all__ = [
     "hashlittle",
     "hashlittle2",
     "load_index",
+    "mode_text",
     "open_storage",
     "parse_blte",
     "parse_build_config",
@@ -198,6 +200,9 @@ _MODE_PLAIN = ord("N")
 _MODE_ZLIB = ord("Z")
 _KEY_NAME_BYTES = 8  # an `E` block's key name: eight bytes, in every block met
 _STEP = 1 << 20  # a `Z` block is inflated in steps of this many bytes
+# ...and fed to zlib in slices of this many: zlib copies back what it did
+# not use, so the copy is never more than one slice.
+_FEED = 64 * 1024
 
 # Read bounds: the files at 70450 are 1,245,184 bytes (each index) and 59,537
 # bytes (the build config); a file far past these is refused, not read.
@@ -1137,7 +1142,7 @@ def _check_limit(limit: int) -> None:
         raise ValueError(f"the read's cap is {limit}; it must be 0 or more")
 
 
-def _mode_text(byte: int) -> str:
+def mode_text(byte: int) -> str:
     """A mode or cipher byte as one character, or `\\xNN` when it is not
     printable ASCII."""
     return chr(byte) if 0x20 < byte < 0x7F else f"\\x{byte:02x}"
@@ -1221,7 +1226,7 @@ def parse_blte(data: Buffer, path: Path | None = None) -> BlteLayout:
             encoded_size=n - _BLTE_PREAMBLE,
             decoded_size=None,
             md5=None,
-            mode=_mode_text(view[_BLTE_PREAMBLE]),
+            mode=mode_text(view[_BLTE_PREAMBLE]),
         )
         return BlteLayout(header_size=0, blocks=(only,), encoded_size=n, decoded_size=None)
     table = _BLTE_PREAMBLE + _CHUNK_TABLE_HEAD
@@ -1271,7 +1276,7 @@ def parse_blte(data: Buffer, path: Path | None = None) -> BlteLayout:
                 encoded_size=encoded,
                 decoded_size=decoded,
                 md5=digest.hex(),
-                mode=_mode_text(view[at]),
+                mode=mode_text(view[at]),
             )
         )
         at += encoded
@@ -1288,7 +1293,7 @@ def _refuse_mode(block: memoryview, i: int, path: Path | None) -> NoReturn:
     the rest are unsupported. The block's payload is never decoded."""
     mode = block[0]
     if mode != ord("E"):
-        text = _mode_text(mode)
+        text = mode_text(mode)
         what = {"4": "LZ4", "F": "a nested BLTE, which is never recursed into"}.get(text, "")
         raise UnsupportedBlockMode(
             f"block {i} is in mode {text!r}{f' ({what})' if what else ''}; this reader "
@@ -1315,7 +1320,7 @@ def _refuse_mode(block: memoryview, i: int, path: Path | None) -> NoReturn:
     if cipher_at >= len(body):
         raise CascMalformedError(f"block {i} is encrypted, and its header is cut short", path)
     key_name = bytes(body[1:iv_at])[::-1].hex().upper()
-    cipher = _mode_text(body[cipher_at])
+    cipher = mode_text(body[cipher_at])
     raise EncryptedContent(
         f"block {i} is encrypted with the key {key_name} (cipher {cipher!r}); wowlab does "
         "not decrypt (ADR-0033)",
@@ -1326,35 +1331,55 @@ def _refuse_mode(block: memoryview, i: int, path: Path | None) -> NoReturn:
     )
 
 
+def _inflate_steps(
+    block: memoryview, room: Callable[[], int], i: int, path: Path | None
+) -> Iterator[bytes]:
+    """The inflated bytes of a `Z` block's payload, step by step: each step
+    asks zlib for at most `min(_STEP, room())` bytes and hands it at most one
+    `_FEED`-byte slice of the payload (the next slice only once zlib has used
+    the last; otherwise what it left of it), so neither the output of a step
+    nor zlib's copy of unused input ever grows with the block, and the work
+    is linear in its size. One whole zlib stream, nothing after it: a stream
+    that ends before the payload does is refused, as is one the payload ends
+    first."""
+    inflater = zlib.decompressobj()
+    pos = 0
+    pending: bytes | memoryview = b""
+    try:
+        while True:
+            if not pending:
+                if pos >= len(block):
+                    raise CascMalformedError(f"block {i}'s zlib stream is cut short", path)
+                pending = block[pos : pos + _FEED]
+                pos += len(pending)
+            chunk = inflater.decompress(pending, min(_STEP, room()))
+            pending = inflater.unconsumed_tail
+            if chunk:
+                yield chunk
+            if inflater.eof:
+                break
+    except zlib.error as exc:
+        raise CascMalformedError(f"block {i} is not a zlib stream ({exc})", path) from None
+    if inflater.unused_data or pos < len(block):
+        raise CascMalformedError(f"block {i} has bytes after its zlib stream", path)
+
+
 def _inflate_into(
     out: bytearray, at: int, block: memoryview, want: int, i: int, path: Path | None
 ) -> None:
-    """Inflate a `Z` block's payload into `out[at : at + want]`, in steps of
-    at most `_STEP` bytes, never asking zlib for a byte past `want + 1`:
-    exactly `want` bytes, one whole zlib stream, nothing after it."""
-    inflater = zlib.decompressobj()
+    """Inflate a `Z` block's payload into `out[at : at + want]` (by
+    `_inflate_steps`), never asking zlib for a byte past `want + 1`: exactly
+    `want` bytes."""
     produced = 0
-    data: bytes | memoryview = block
-    try:
-        while True:
-            room = want + 1 - produced
-            chunk = inflater.decompress(data, min(_STEP, room))
-            if chunk:
-                if produced + len(chunk) > want:
-                    raise CascMalformedError(
-                        f"block {i} inflates past its declared {want} bytes", path
-                    )
-                out[at + produced : at + produced + len(chunk)] = chunk
-                produced += len(chunk)
-            if inflater.eof:
-                break
-            data = inflater.unconsumed_tail
-            if not data:
-                raise CascMalformedError(f"block {i}'s zlib stream is cut short", path)
-    except zlib.error as exc:
-        raise CascMalformedError(f"block {i} is not a zlib stream ({exc})", path) from None
-    if inflater.unused_data:
-        raise CascMalformedError(f"block {i} has bytes after its zlib stream", path)
+
+    def room() -> int:
+        return want + 1 - produced
+
+    for chunk in _inflate_steps(block, room, i, path):
+        if produced + len(chunk) > want:
+            raise CascMalformedError(f"block {i} inflates past its declared {want} bytes", path)
+        out[at + produced : at + produced + len(chunk)] = chunk
+        produced += len(chunk)
     if produced != want:
         raise CascMalformedError(
             f"block {i} inflates to {produced} bytes; the chunk table says {want}", path
@@ -1363,32 +1388,19 @@ def _inflate_into(
 
 def _measure(block: memoryview, limit: int, i: int, path: Path | None) -> int:
     """How many bytes a `Z` block without a declared size inflates to, found
-    in steps of at most `_STEP` bytes that are thrown away, stopping as
-    soon as `limit` is passed (`CascTooLargeError`). One whole zlib
-    stream, nothing after it."""
-    inflater = zlib.decompressobj()
+    by `_inflate_steps` with the steps thrown away, stopping as soon as
+    `limit` is passed (`CascTooLargeError`)."""
     produced = 0
-    data: bytes | memoryview = block
-    try:
-        while True:
-            chunk = inflater.decompress(data, min(_STEP, limit + 1 - produced))
-            produced += len(chunk)
-            if produced > limit:
-                raise CascTooLargeError(
-                    f"block {i} inflates past the read's cap of {limit} bytes",
-                    produced,
-                    limit,
-                    path,
-                )
-            if inflater.eof:
-                break
-            data = inflater.unconsumed_tail
-            if not data:
-                raise CascMalformedError(f"block {i}'s zlib stream is cut short", path)
-    except zlib.error as exc:
-        raise CascMalformedError(f"block {i} is not a zlib stream ({exc})", path) from None
-    if inflater.unused_data:
-        raise CascMalformedError(f"block {i} has bytes after its zlib stream", path)
+
+    def room() -> int:
+        return limit + 1 - produced
+
+    for chunk in _inflate_steps(block, room, i, path):
+        produced += len(chunk)
+        if produced > limit:
+            raise CascTooLargeError(
+                f"block {i} inflates past the read's cap of {limit} bytes", produced, limit, path
+            )
     return produced
 
 
