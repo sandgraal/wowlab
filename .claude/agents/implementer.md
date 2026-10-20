@@ -83,13 +83,19 @@ the workflow document point here.
    - every test file you added or changed;
    - the tests that import each source module you changed:
      `grep -rlE 'wowlab_core(\.<mod>\b| import .*\b<mod>\b)' lab/core/tests tests`
-     (not the bare module name, which matches most of the suite). If that
-     selects more than 40 files, run your own test files and the always-run
-     set below, leave the rest to CI, and say so in the report;
+     (not the bare module name, which matches most of the suite), and
+     always `lab/core/tests/test_<mod>*.py`, the module's own tests. If the
+     import grep selects more than 40 files, run your own test files, each
+     module's own tests and the always-run set below, leave the rest to CI,
+     and say so in the report. The grep does not see a test that reaches a
+     module only through a test helper (`import test_ui_...`) or through a
+     multi-line `from wowlab_core import (`; CI runs those;
    - always, for every diff: `tests/repo` and `lab/core/tests/test_write_sites.py`
      (the repo-wide write-site, no-FFI and every-file scans; 294 tests, about
      30 seconds);
    - `make test-parser` when the diff touches `lab/core/tests/fixtures/**`;
+   - `tests/scripts/test_release.py` when it touches `.github/rulesets/` or
+     `.github/release-notes.md`;
    - `lab/core/tests/test_filemap.py` when it touches `docs/LAB_FILE_MAP.md`
      or `filemap.toml`; `tests/addon` when it touches `lab/addon/` or
      `docs/LAB_*.md`; `tests/scripts/test_readme.py` when it touches
