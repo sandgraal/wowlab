@@ -25,6 +25,11 @@
   const token = new URLSearchParams(window.location.search).get("token") || "";
   const api = (path) => path + "?token=" + encodeURIComponent(token);
   const byId = (id) => document.getElementById(id);
+  // The one outside origin the page may link to (M15-02; ADR-0019's and
+  // ADR-0031's amendments of 2026-10-19): the dressing room `char gear --json`
+  // builds an address for, as `dressing_sites.toml` names it. The page never
+  // requests it; a link to it opens in the player's browser on a click.
+  const DRESSING_ORIGIN = "https://www.wowhead.com";
   let current = null;
   let inputs = [];
   // The plan the server offered Confirm for: its command, the parameters it
@@ -1185,6 +1190,7 @@
     const seq = ++character.seq;
     byId("char-header").replaceChildren(make("h2", visible(entry.label)));
     byId("char-gear").replaceChildren();
+    clearDressing();
     byId("char-keys").replaceChildren();
     byId("char-macros").replaceChildren();
     character.binds = null;
@@ -1219,6 +1225,7 @@
     }
     drawCharHeader(entry, report);
     drawGear(report);
+    drawDressing(report.dressing);
   }
 
   function charFact(list, label, value) {
@@ -1372,6 +1379,67 @@
     cell.appendChild(list);
     tr.appendChild(cell);
     return tr;
+  }
+
+  // ─── the dressing-room link (M15-02, §16.3's amendment of 2026-10-19) ───
+  // `dressing` is `{url, site, note}` or `{items, note}`. The address becomes
+  // the static link's href only when it parses, is https: and its origin is
+  // exactly DRESSING_ORIGIN, and only as the parser writes it back (no
+  // userinfo, nothing the parser would change); anything else leaves the
+  // link hidden with no href, and says so. The fallback is the item ids as
+  // text, with a Copy button.
+  function dressingAddress(value) {
+    if (typeof value !== "string") return null;
+    let parsed = null;
+    try {
+      parsed = new URL(value);
+    } catch (_) {
+      return null;
+    }
+    if (parsed.protocol !== "https:" || parsed.origin !== DRESSING_ORIGIN) return null;
+    if (parsed.username !== "" || parsed.password !== "" || parsed.toString() !== value) return null;
+    return value;
+  }
+
+  function clearDressing() {
+    const link = byId("char-dressing-link");
+    link.removeAttribute("href");
+    link.hidden = true;
+    link.title = "";
+    byId("char-dressing-note").textContent = "";
+    byId("char-dressing-items").replaceChildren();
+    byId("char-dressing-items").hidden = true;
+    byId("char-dressing").hidden = true;
+  }
+
+  function drawDressing(dressing) {
+    clearDressing();
+    if (!dressing || typeof dressing !== "object") return;
+    const note = typeof dressing.note === "string" ? visible(dressing.note) : "";
+    byId("char-dressing").hidden = false;
+    if (typeof dressing.url === "string") {
+      const checked = dressingAddress(dressing.url);
+      if (checked === null) {
+        byId("char-dressing-note").textContent =
+          "The dressing-room address in the report is not one this page links to, so no link is shown.";
+        return;
+      }
+      const link = byId("char-dressing-link");
+      link.href = checked;
+      link.title = "Opens " + visible(String(dressing.site)) + "'s dressing room in a new tab";
+      link.hidden = false;
+      byId("char-dressing-note").textContent = note;
+      return;
+    }
+    byId("char-dressing-note").textContent = note;
+    const items = (Array.isArray(dressing.items) ? dressing.items : []).filter((i) => typeof i === "string");
+    if (!items.length) return;
+    const box = byId("char-dressing-items");
+    const text = items.map(visible).join(" ");
+    const ids = make("code", text);
+    ids.className = "dressing-ids";
+    box.append(make("span", "Item ids: "), ids, copyButton(text, "Copy the item ids"));
+    box.hidden = false;
   }
 
   // ─── the keys and macros panels (M14-09, §16.3) ───
