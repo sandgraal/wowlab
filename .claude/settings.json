@@ -8,6 +8,8 @@
       "Bash(make test)",
       "Bash(make test-parser)",
       "Bash(make hooks-test)",
+      "Bash(make lint-lua)",
+      "Bash(make -n test-fast)",
       "Bash(make ci)",
       "Bash(make setup)",
       "Bash(uv sync:*)",
