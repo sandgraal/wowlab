@@ -413,6 +413,41 @@ the owner's install at 1.60.1.70450 on 2026-10-19 (read-only).
   version 2, 2,433,102 records in 916 blocks, 26 flagged encrypted,
   1,244,477 ids after filtering. The content key is the MD5 of the decoded
   file.
+  *Amended 2026-10-19 (M15-05; derived fixture
+  `lab/core/tests/fixtures/macos-70450/derived/casc-files.json`, read from
+  the owner's install at 1.60.1.70450; the reader follows the fixture).*
+  **Encoding:** the header reads `EN`, version 1, hash sizes 16 and 16,
+  pages of 4 KiB, 20,647 content-key pages and 13,554 encoding-key spec
+  pages, flags 0, an ESpec block of 393,134 bytes; the pages end 61 bytes
+  before the decoded size the build config gives (the encoding file's own
+  ESpec string, from memory **[verify]**). Every page's MD5 matched its
+  page index row. Of 2,209,148 content keys, one has two encoding keys and
+  the rest one. **Root:** the version-2 block header is count, locale
+  flags, two flag words and a flag byte, in that order (17 bytes); the
+  blocks give rising ids, each delta at least 0. Taken for enUS on macOS:
+  454 of 916 blocks (446 skipped for the locale, 6 for the platform mask,
+  10 for `LowViolence`), 1,341,067 rows, 1,243,524 unique ids. **The
+  1,244,477 above is the count with `LowViolence` kept**; the reader skips
+  it, as the ticket and wow.export do. 97,543 ids have rows in two blocks
+  taken; 96,919 of those rows differ in content, and in almost every case
+  one of the two blocks carries bit `0x1` of the content flags (meaning
+  **[verify]**; it is not one of the flags named above). Checked against the
+  local index, the content of the `0x1` row is absent for 96,382 of them
+  and the other row's present, and no id has only its `0x1` row local
+  when the other is absent: this client did not fetch the `0x1` rows'
+  content, so the reader tries rows without the bit first (`casc`'s
+  `ROOT_FLAG_1`). Rows in blocks flagged `Encrypted` are tried after plain
+  ones; one such file at 70450 (id 874570) has only an encrypted copy,
+  under a key name not met in M15-04's census (`4A65D29877A83715`).
+  **Streaming (§17.1's middle state):** of the 1,243,524 ids taken, 20
+  have no copy in the local index (16 listed only in `0x1` blocks); a
+  sample of 300 `ModelFileData` ids splits 157 local, 143 not in the root,
+  none in the root but absent (the research spike's 3 were probably the
+  `0x1` rows of ids whose other row is local). **Locale:** `.build.info`'s
+  `Tags` cell is `:`-separated groups of space-separated tokens, each
+  group ending in a locale and `speech?` or `text?`; the reader takes the
+  `text?` group's locale (enUS here) and never records the rest of the
+  cell, which holds a geo-IP token.
 
 ## 11. BLP textures (M15-07)
 

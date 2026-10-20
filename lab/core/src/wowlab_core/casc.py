@@ -1,6 +1,6 @@
-"""casc: the build config, the local index and the archives' BLTE records
-of the install's game data (docs/LAB_PLAN.md §17.1 steps 1 to 3, ADR-0033,
-M15-03 and M15-04).
+"""casc: the build config, the local index, the archives' BLTE records, the
+encoding and root files and reads by file data id of the install's game data
+(docs/LAB_PLAN.md §17.1 steps 1 to 5, ADR-0033, M15-03 to M15-05).
 
 Formats: `docs/LAB_FORMATS.md` §10. The install's `Data/` is shared by every
 product in the install; only the build config is per product.
@@ -56,6 +56,27 @@ product in the install; only the build config is per product.
    table (none met) is inflated once to measure, bounded at the cap, and
    once more into an exact buffer. The archive is opened for one bounded,
    ranged read and closed (`read_record`).
+4. **Encoding.** The build config names the encoding file by content key
+   and encoding key; it is read by the second, checked by the first and
+   cut to its content-key pages (`parse_encoding`). A lookup is a `bisect`
+   over the page index and a scan of one page, its MD5 checked: no
+   dictionary of two million keys. One content key may have several
+   encoding keys; each is tried against the index.
+5. **Root.** The build config names the root by content key; its encoding
+   keys come from the encoding file. Versions 1 and 2 are read
+   (`parse_root`); a block is taken when its locale flags include the
+   build's locale (the Active row's `Tags` cell, `locale_of`), its content
+   flags miss the platform's mask (`0x108` on macOS, `0x110` on Windows;
+   the platform from the flavor folder's layout, `platform_of`) and it is
+   not `LowViolence`. Ids are kept in an `array` per block and keys in one
+   buffer. `open_source` does steps 1 to 5; `CascSource.read(fdid)` tries
+   an id's rows (plain blocks first, then rows without bit `0x1`) and their
+   encoding keys, passes over an encrypted copy for the next, and checks
+   the decoded bytes against the content key, reading the index again once
+   on a mismatch; `CascSource.stat(fdid)` names §17.1's state without
+   decoding. Its peak resident memory on the owner's install at 70450 is
+   about 560 MB, most of it the encoding file decoded beside its record
+   (`casc-files.json`).
 
 Reads only (L1, ADR-0033): every file is opened read-only without following
 a final link (`snapshot.open_regular_file`, the open under
@@ -85,16 +106,19 @@ from __future__ import annotations
 
 import bisect
 import hashlib
+import itertools
 import operator
 import os
 import re
 import stat
 import struct
+import sys
 import time
 import zlib
+from array import array
 from collections.abc import Buffer, Callable, Iterator, Sequence
 from pathlib import Path
-from typing import NoReturn
+from typing import Literal, NoReturn
 
 from pydantic import BaseModel, ConfigDict
 
@@ -106,7 +130,17 @@ __all__ = [
     "BUCKETS",
     "DECODE_LIMIT",
     "KEY_BYTES",
+    "LOCALE_FLAGS",
+    "PLATFORM_SKIP",
     "RECORD_HEADER_SIZE",
+    "ROOT_DO_NOT_LOAD",
+    "ROOT_ENCRYPTED",
+    "ROOT_FLAG_1",
+    "ROOT_LOAD_ON_MACOS",
+    "ROOT_LOAD_ON_WINDOWS",
+    "ROOT_LOW_VIOLENCE",
+    "ROOT_NO_NAME_HASH",
+    "STATE_WORDS",
     "BlteBlock",
     "BlteLayout",
     "BucketMissingError",
@@ -114,18 +148,34 @@ __all__ = [
     "BuildConfig",
     "BuildRowError",
     "CascError",
+    "CascFileStat",
     "CascIndex",
     "CascIndexReport",
+    "CascLocaleError",
     "CascMalformedError",
     "CascMissingError",
+    "CascPlatformError",
+    "CascSource",
+    "CascSourceReport",
     "CascStorage",
     "CascTooLargeError",
     "CascUnreadableError",
     "CascUnsupportedError",
+    "ContentMismatch",
+    "EncodingEntry",
+    "EncodingHeader",
+    "EncodingTable",
     "EncryptedContent",
+    "FileState",
+    "FileUnavailable",
+    "FoundFrom",
     "IndexEntry",
     "IndexFile",
+    "Platform",
     "RecordHeader",
+    "RootHit",
+    "RootReport",
+    "RootTable",
     "UnsupportedBlockMode",
     "archive_path",
     "bucket_of",
@@ -134,12 +184,17 @@ __all__ = [
     "hashlittle",
     "hashlittle2",
     "load_index",
+    "locale_of",
     "mode_text",
+    "open_source",
     "open_storage",
     "parse_blte",
     "parse_build_config",
+    "parse_encoding",
     "parse_index_file",
     "parse_record_header",
+    "parse_root",
+    "platform_of",
     "read_build_config",
     "read_encoded",
     "read_record",
@@ -1560,3 +1615,985 @@ def read_encoded(
     view = memoryview(record)
     parse_record_header(view, ekey, entry, path)
     return decode_blte(view[RECORD_HEADER_SIZE:], limit=limit, path=path)
+
+
+# ─── encoding, root and the source (M15-05) ──────────────────────────────────
+
+# The encoding file (LAB_FORMATS §10): a 22-byte big-endian header (`EN`,
+# version, the two hash sizes, the two page sizes in KiB, the two page
+# counts, a flags byte, the ESpec block's size), the ESpec strings, the
+# content-key page index (first content key, page MD5), the content-key
+# pages, then the encoding-key spec pages, which this reader does not need.
+_ENCODING_MAGIC = b"EN"
+_ENCODING_HEADER = struct.Struct(">2sBBBHHIIBI")
+_ENCODING_VERSION = 1
+_HASH_BYTES = 16  # an MD5: the content and encoding keys at 70450
+_ENTRY_HEAD = 1 + 5 + _HASH_BYTES  # key count, 40-bit size, content key
+_KIB = 1024
+
+# The root file (LAB_FORMATS §10): magic `MFST` (bytes `TSFM`), the header
+# size, the version, total and named file counts; then blocks of (count,
+# flags, ...) followed by `count` int32 file-id deltas, `count` content keys
+# and, unless the block says `NoNameHash` and the file has unnamed files,
+# `count` 64-bit name hashes.
+_ROOT_MAGIC = b"TSFM"
+_ROOT_HEADER = struct.Struct("<4sIIII")
+_ROOT_HEADER_SIZE = 24  # the header of versions 1 and 2, its padding included
+_ROOT_V1_BLOCK = struct.Struct("<III")  # count, content flags, locale flags
+_ROOT_V2_BLOCK = struct.Struct("<IIIIB")  # count, locale flags, flag word, flag word, flag byte
+_ROOT_VERSIONS = (1, 2)
+_NAME_HASH = 8
+
+# Root content flags (wowdev.wiki/TACT#Root; LAB_FORMATS §10). The values
+# are the format's, not a flavor's.
+ROOT_LOAD_ON_WINDOWS = 0x8
+ROOT_LOAD_ON_MACOS = 0x10
+ROOT_LOW_VIOLENCE = 0x80
+ROOT_DO_NOT_LOAD = 0x100
+ROOT_ENCRYPTED = 0x8000000
+ROOT_NO_NAME_HASH = 0x10000000
+# Bit 0x1 has no settled name (**[verify]**). At 70450, 96,382 file data ids
+# have two rows taken, one in a block with this bit and one without, of
+# different content, and only the one without it is in the local index: the
+# client did not fetch those rows' content (LAB_FORMATS §10, amendment of
+# 2026-10-19). So rows without it are tried first.
+ROOT_FLAG_1 = 0x1
+
+Platform = Literal["macos", "windows"]
+FoundFrom = Literal["install", "given"]  # where a locale or a platform came from
+# A client skips a root block whose content flags meet its platform's mask:
+# macOS `0x108` (Windows-only and do-not-load), Windows `0x110`.
+PLATFORM_SKIP: dict[str, int] = {
+    "macos": ROOT_LOAD_ON_WINDOWS | ROOT_DO_NOT_LOAD,
+    "windows": ROOT_LOAD_ON_MACOS | ROOT_DO_NOT_LOAD,
+}
+
+# Root locale flags by locale name (wowdev.wiki/TACT#Root, from memory
+# **[verify]** for every one but enUS, 0x2 at 70450). The locale a read
+# uses comes from the install (`locale_of`), never from here.
+LOCALE_FLAGS: dict[str, int] = {
+    "enUS": 0x2,
+    "koKR": 0x4,
+    "frFR": 0x10,
+    "deDE": 0x20,
+    "zhCN": 0x40,
+    "esES": 0x80,
+    "zhTW": 0x100,
+    "enGB": 0x200,
+    "enCN": 0x400,
+    "enTW": 0x800,
+    "esMX": 0x1000,
+    "ruRU": 0x2000,
+    "ptBR": 0x4000,
+    "itIT": 0x8000,
+    "ptPT": 0x10000,
+}
+_LOCALE_SHAPE = re.compile(r"[a-z]{2}[A-Z]{2}")
+_FDID_LIMIT = 1 << 31  # a file data id is a non-negative int32
+
+FileState = Literal["local", "not_local", "not_in_build", "encrypted", "unknown_id"]
+# §17.1's words for the four states, and the fifth for an id in no table.
+STATE_WORDS: dict[str, str] = {
+    "local": "local",
+    "not_local": "not in your client's local files",
+    "not_in_build": "not part of this game version's files",
+    "encrypted": "encrypted",
+    "unknown_id": "unknown id",
+}
+
+
+class CascLocaleError(CascError):
+    """The locale a read filters the root by cannot be said: the Active
+    row's `Tags` cell names no locale this reader knows. The message never
+    repeats the cell (it carries a geo-IP token)."""
+
+
+class CascPlatformError(CascError):
+    """The platform cannot be said from the flavor folder's layout: it has
+    neither a client bundle (`*.app`) nor an executable (`*.exe`), or both."""
+
+
+class FileUnavailable(CascError):  # noqa: N818 - one of §17.1's states, raised by `read`
+    """`CascSource.read` was asked for a file it cannot give: `state` is
+    `not_local`, `not_in_build` or `unknown_id` (an encrypted file raises
+    `EncryptedContent` instead), `fdid` the id asked for."""
+
+    def __init__(self, message: str, fdid: int, state: FileState) -> None:
+        super().__init__(message)
+        self.fdid = fdid
+        self.state: FileState = state
+
+
+class ContentMismatch(CascMalformedError):  # noqa: N818 - named for what it is
+    """A decoded file whose MD5 is not its content key, still so after the
+    index was read again once."""
+
+    def __init__(self, message: str, content_key: str, got: str, path: Path | None = None) -> None:
+        super().__init__(message, path)
+        self.content_key = content_key
+        self.got = got
+
+
+class EncodingHeader(BaseModel):
+    """The encoding file's 22-byte header. Page sizes are in bytes."""
+
+    model_config = ConfigDict(frozen=True)
+
+    version: int
+    ckey_size: int
+    ekey_size: int
+    ckey_page_size: int
+    espec_page_size: int
+    ckey_page_count: int
+    espec_page_count: int
+    flags: int
+    espec_size: int
+
+
+class EncodingEntry(BaseModel):
+    """One content key's row: the decoded size and its encoding keys, in
+    the file's order (one content key may have several)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    ckey: bytes
+    size: int
+    ekeys: tuple[bytes, ...]
+
+
+class EncodingTable:
+    """The content-key half of the encoding file, in memory: the page index
+    (each page's first content key, for `bisect`) and the pages. A lookup is
+    one `bisect` and a scan of one page, its MD5 checked first; no
+    dictionary of every key is built."""
+
+    def __init__(
+        self,
+        header: EncodingHeader,
+        data: bytes | bytearray,
+        first_keys: list[bytes],
+        index_at: int,
+        pages_at: int,
+        path: Path | None = None,
+    ) -> None:
+        self.header = header
+        self._data = data
+        self._first = first_keys
+        self._index_at = index_at
+        self._pages_at = pages_at
+        self._path = path
+
+    def __len__(self) -> int:
+        """The number of content-key pages."""
+        return len(self._first)
+
+    def lookup(self, ckey: bytes) -> EncodingEntry | None:
+        """The row of `ckey` (16 bytes), or `None` when the file lists no
+        such content key. The page is checked against its MD5 first; an
+        entry that runs past its page is refused."""
+        if len(ckey) != _HASH_BYTES:
+            raise ValueError(f"a content key is {_HASH_BYTES} bytes; got {len(ckey)}")
+        page = bisect.bisect_right(self._first, bytes(ckey)) - 1
+        if page < 0:
+            return None
+        size = self.header.ckey_page_size
+        start = self._pages_at + page * size
+        with memoryview(self._data) as whole:
+            view = whole[start : start + size]
+            at = self._index_at + page * 2 * _HASH_BYTES + _HASH_BYTES
+            if hashlib.md5(view, usedforsecurity=False).digest() != whole[at : at + _HASH_BYTES]:
+                raise CascMalformedError(
+                    f"the encoding file's content-key page {page} does not match its MD5",
+                    self._path,
+                )
+            pos = 0
+            while pos < size:
+                count = view[pos]
+                if count == 0:
+                    break  # the rest of the page is padding
+                end = pos + _ENTRY_HEAD + count * _HASH_BYTES
+                if end > size:
+                    raise CascMalformedError(
+                        f"an entry of the encoding file's page {page} runs past the page",
+                        self._path,
+                    )
+                if view[pos + 6 : pos + _ENTRY_HEAD] == ckey:
+                    ekeys = tuple(
+                        bytes(view[e : e + _HASH_BYTES])
+                        for e in range(pos + _ENTRY_HEAD, end, _HASH_BYTES)
+                    )
+                    file_size = int.from_bytes(view[pos + 1 : pos + 6], "big")
+                    return EncodingEntry(ckey=bytes(ckey), size=file_size, ekeys=ekeys)
+                pos = end
+        return None
+
+    def key_counts(self) -> dict[int, int]:
+        """How many content keys have one encoding key, two, …, over every
+        page, each page's MD5 checked; for derived fixtures and tests."""
+        counts: dict[int, int] = {}
+        size = self.header.ckey_page_size
+        with memoryview(self._data) as whole:
+            for page in range(len(self._first)):
+                start = self._pages_at + page * size
+                view = whole[start : start + size]
+                at = self._index_at + page * 2 * _HASH_BYTES + _HASH_BYTES
+                if (
+                    hashlib.md5(view, usedforsecurity=False).digest()
+                    != whole[at : at + _HASH_BYTES]
+                ):
+                    raise CascMalformedError(
+                        f"the encoding file's content-key page {page} does not match its MD5",
+                        self._path,
+                    )
+                pos = 0
+                while pos < size and view[pos]:
+                    count = view[pos]
+                    counts[count] = counts.get(count, 0) + 1
+                    pos += _ENTRY_HEAD + count * _HASH_BYTES
+                if pos > size:
+                    raise CascMalformedError(
+                        f"an entry of the encoding file's page {page} runs past the page",
+                        self._path,
+                    )
+        return dict(sorted(counts.items()))
+
+
+def parse_encoding(data: bytes | bytearray, path: Path | None = None) -> EncodingTable:
+    """The encoding file's header, page index and content-key pages, every
+    size checked before anything is read: the magic and version 1, 16-byte
+    hashes, a content-key page size that is not zero, the ESpec block, the
+    page index and the pages inside the data, and the page index's first
+    keys strictly rising (`bisect` relies on it). A `bytearray` is cut, in
+    place, to the end of the content-key pages: the encoding-key spec pages
+    are not needed (at 70450, 56 MB of the 141.6)."""
+    n = len(data)
+    if n < _ENCODING_HEADER.size:
+        raise CascMalformedError(f"an encoding file of {n} bytes has no room for its header", path)
+    magic, version, ck, ek, ck_kib, es_kib, ck_pages, es_pages, flags, espec = (
+        _ENCODING_HEADER.unpack_from(data, 0)
+    )
+    if magic != _ENCODING_MAGIC:
+        raise CascMalformedError(f"not an encoding file (it starts {bytes(magic)!r})", path)
+    if version != _ENCODING_VERSION:
+        raise CascUnsupportedError(
+            f"encoding version {version}; this reader knows {_ENCODING_VERSION}", path
+        )
+    if (ck, ek) != (_HASH_BYTES, _HASH_BYTES):
+        raise CascUnsupportedError(
+            f"encoding hash sizes {ck} and {ek}; this reader knows {_HASH_BYTES}", path
+        )
+    if ck_kib == 0:
+        raise CascMalformedError("the encoding file's content-key page size is zero", path)
+    header = EncodingHeader(
+        version=version,
+        ckey_size=ck,
+        ekey_size=ek,
+        ckey_page_size=ck_kib * _KIB,
+        espec_page_size=es_kib * _KIB,
+        ckey_page_count=ck_pages,
+        espec_page_count=es_pages,
+        flags=flags,
+        espec_size=espec,
+    )
+    index_at = _ENCODING_HEADER.size + espec
+    pages_at = index_at + ck_pages * 2 * _HASH_BYTES
+    end = pages_at + ck_pages * header.ckey_page_size
+    if end > n:
+        raise CascMalformedError(
+            f"the encoding file's {ck_pages} content-key pages end at byte {end}, past its "
+            f"{n} bytes",
+            path,
+        )
+    first = [
+        bytes(data[at : at + _HASH_BYTES]) for at in range(index_at, pages_at, 2 * _HASH_BYTES)
+    ]
+    if not all(map(operator.lt, first, first[1:])):
+        raise CascMalformedError(
+            "the encoding file's page index is not in strictly rising key order", path
+        )
+    if isinstance(data, bytearray):
+        del data[end:]
+    return EncodingTable(header, data, first, index_at, pages_at, path)
+
+
+class RootReport(BaseModel):
+    """What the root file held and what the filter took. `skipped_blocks`
+    counts the blocks left out by why (`locale`, `platform`,
+    `low_violence`; the first reason that applies, in that order)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    version: int
+    header_size: int
+    total_files: int
+    named_files: int
+    blocks: int
+    records: int
+    blocks_taken: int
+    records_taken: int
+    encrypted_blocks: int
+    encrypted_blocks_taken: int
+    skipped_blocks: tuple[tuple[str, int], ...]
+    locale: str
+    locale_flag: int
+    platform: str
+
+
+class RootHit(BaseModel):
+    """One root row taken for a file data id: its content key and its
+    block's content and locale flags."""
+
+    model_config = ConfigDict(frozen=True)
+
+    ckey: bytes
+    content_flags: int
+    locale_flags: int
+
+
+class _Span:
+    """One block's run of rows in a `RootTable`'s arrays."""
+
+    __slots__ = ("content", "hi", "lo", "locale")
+
+    def __init__(self, lo: int, hi: int, content: int, locale: int) -> None:
+        self.lo = lo
+        self.hi = hi
+        self.content = content
+        self.locale = locale
+
+
+class RootTable:
+    """The root's rows for one locale and platform: the file data ids of
+    every block taken, one rising run per block, in an `array`, and their
+    content keys in one buffer; and the ids of the blocks skipped, without
+    their keys, so a file the filter left out can be told from one the root
+    never had. No per-row object is kept."""
+
+    def __init__(
+        self,
+        report: RootReport,
+        ids: array[int],
+        ckeys: bytearray,
+        taken: list[_Span],
+        skipped_ids: array[int],
+        skipped: list[_Span],
+    ) -> None:
+        self.report = report
+        self._ids = ids
+        self._ckeys = ckeys
+        self._taken = taken
+        self._skipped_ids = skipped_ids
+        self._skipped = skipped
+
+    def __len__(self) -> int:
+        """The rows taken (an id in two blocks counts twice)."""
+        return len(self._ids)
+
+    def find(self, fdid: int) -> list[RootHit]:
+        """Every row taken for `fdid`, in file order (one per block taken
+        that lists it)."""
+        hits: list[RootHit] = []
+        for span in self._taken:
+            i = bisect.bisect_left(self._ids, fdid, span.lo, span.hi)
+            if i < span.hi and self._ids[i] == fdid:
+                ckey = bytes(self._ckeys[i * _HASH_BYTES : (i + 1) * _HASH_BYTES])
+                hits.append(
+                    RootHit(ckey=ckey, content_flags=span.content, locale_flags=span.locale)
+                )
+        return hits
+
+    def skipped_flags(self, fdid: int) -> list[tuple[int, int]]:
+        """(content flags, locale flags) of every skipped block that lists
+        `fdid`."""
+        found: list[tuple[int, int]] = []
+        for span in self._skipped:
+            i = bisect.bisect_left(self._skipped_ids, fdid, span.lo, span.hi)
+            if i < span.hi and self._skipped_ids[i] == fdid:
+                found.append((span.content, span.locale))
+        return found
+
+    def ids(self) -> Iterator[int]:
+        """Every file data id taken, block by block (an id in two blocks
+        comes twice); for derived fixtures and tests."""
+        return iter(self._ids)
+
+    def rows(self) -> Iterator[tuple[int, bytes, int]]:
+        """(file data id, content key, content flags) of every row taken,
+        block by block; for derived fixtures and tests."""
+        for span in self._taken:
+            for i in range(span.lo, span.hi):
+                ckey = bytes(self._ckeys[i * _HASH_BYTES : (i + 1) * _HASH_BYTES])
+                yield self._ids[i], ckey, span.content
+
+    def skipped_rows(self) -> Iterator[tuple[int, int, int]]:
+        """(file data id, content flags, locale flags) of every row of the
+        blocks skipped, block by block; for derived fixtures and tests."""
+        for span in self._skipped:
+            for fdid in self._skipped_ids[span.lo : span.hi]:
+                yield fdid, span.content, span.locale
+
+
+def _block_ids(deltas: memoryview, block: int, path: Path | None) -> array[int]:
+    """A block's file data ids from its int32 deltas: the first is the id,
+    each next one the last plus one plus its delta. A negative delta (ids
+    that would not rise) or an id past int32 is refused."""
+    raw = array("i")
+    raw.frombytes(deltas)
+    if sys.byteorder != "little":
+        raw.byteswap()
+    if raw and min(raw) < 0:
+        raise CascMalformedError(f"root block {block} has a negative file id delta", path)
+    try:
+        return array(
+            "i",
+            itertools.islice(
+                itertools.accumulate(map(operator.add, raw, itertools.repeat(1)), initial=-1),
+                1,
+                None,
+            ),
+        )
+    except OverflowError:
+        raise CascMalformedError(f"root block {block} has a file id past int32", path) from None
+
+
+def _skip_reason(locales: int, content: int, flag: int, mask: int) -> str | None:
+    if not locales & flag:
+        return "locale"
+    if content & mask:
+        return "platform"
+    if content & ROOT_LOW_VIOLENCE:
+        return "low_violence"
+    return None
+
+
+def parse_root(
+    data: Buffer, *, locale: str, platform: Platform, path: Path | None = None
+) -> RootTable:
+    """The root file (LAB_FORMATS §10), versions 1 and 2, filtered for one
+    locale and platform: a block is taken when its locale flags include
+    `locale`'s, its content flags miss `platform`'s mask (`PLATFORM_SKIP`)
+    and it is not `LowViolence`. Each block's size is checked against the
+    bytes left before any of it is read (a count of 2**32 is refused, never
+    allocated), and its ids must rise. Version 2's content flags are its two
+    flag words and its flag byte, `f1 | f2 | (f3 << 17)`."""
+    flag = LOCALE_FLAGS.get(locale)
+    if flag is None:
+        raise CascLocaleError(f"the locale {locale!r} is not one this reader knows")
+    mask = PLATFORM_SKIP.get(platform)
+    if mask is None:
+        raise CascPlatformError(f"the platform {platform!r} is not one this reader knows")
+    view = _octets(data)
+    n = len(view)
+    if n < _ROOT_HEADER.size:
+        raise CascMalformedError(f"a root file of {n} bytes has no room for its header", path)
+    magic, header_size, version, total, named = _ROOT_HEADER.unpack_from(view, 0)
+    if magic != _ROOT_MAGIC:
+        raise CascUnsupportedError(
+            f"the root file starts {bytes(magic)!r}, not the MFST header this reader knows", path
+        )
+    if header_size < _ROOT_HEADER_SIZE:
+        raise CascUnsupportedError(
+            f"a root header of {header_size} bytes (an MFST root before version 1); this "
+            "reader knows versions 1 and 2",
+            path,
+        )
+    if header_size > n:
+        raise CascMalformedError(
+            f"the root header ({header_size} bytes) runs past the end of the file ({n} bytes)",
+            path,
+        )
+    if version not in _ROOT_VERSIONS:
+        raise CascUnsupportedError(f"root version {version}; this reader knows 1 and 2", path)
+    nameless = total != named
+    head = _ROOT_V1_BLOCK if version == 1 else _ROOT_V2_BLOCK
+    ids: array[int] = array("i")
+    skipped_ids: array[int] = array("i")
+    ckeys = bytearray()
+    taken: list[_Span] = []
+    skipped: list[_Span] = []
+    reasons: dict[str, int] = {}
+    records = encrypted = encrypted_taken = blocks = 0
+    pos = header_size
+    while pos < n:
+        if n - pos < head.size:
+            raise CascMalformedError(f"root block {blocks}'s header is cut short", path)
+        if version == 1:
+            count, content, locales = _ROOT_V1_BLOCK.unpack_from(view, pos)
+        else:
+            count, locales, f1, f2, f3 = _ROOT_V2_BLOCK.unpack_from(view, pos)
+            content = f1 | f2 | (f3 << 17)
+        pos += head.size
+        per = 4 + _HASH_BYTES + (0 if nameless and content & ROOT_NO_NAME_HASH else _NAME_HASH)
+        need = count * per
+        if need > n - pos:
+            raise CascMalformedError(
+                f"root block {blocks} lists {count} files ({need} bytes); {n - pos} bytes remain",
+                path,
+            )
+        block_ids = _block_ids(view[pos : pos + 4 * count], blocks, path)
+        keys_at = pos + 4 * count
+        pos += need
+        records += count
+        encrypted += bool(content & ROOT_ENCRYPTED)
+        why = _skip_reason(locales, content, flag, mask)
+        if why is None:
+            taken.append(_Span(len(ids), len(ids) + count, content, locales))
+            ids.extend(block_ids)
+            ckeys += view[keys_at : keys_at + _HASH_BYTES * count]
+            encrypted_taken += bool(content & ROOT_ENCRYPTED)
+        else:
+            reasons[why] = reasons.get(why, 0) + 1
+            skipped.append(_Span(len(skipped_ids), len(skipped_ids) + count, content, locales))
+            skipped_ids.extend(block_ids)
+        blocks += 1
+    report = RootReport(
+        version=version,
+        header_size=header_size,
+        total_files=total,
+        named_files=named,
+        blocks=blocks,
+        records=records,
+        blocks_taken=len(taken),
+        records_taken=len(ids),
+        encrypted_blocks=encrypted,
+        encrypted_blocks_taken=encrypted_taken,
+        skipped_blocks=tuple(sorted(reasons.items())),
+        locale=locale,
+        locale_flag=flag,
+        platform=platform,
+    )
+    return RootTable(report, ids, ckeys, taken, skipped_ids, skipped)
+
+
+def locale_of(tags: str | None) -> str:
+    """The locale the Active row's `Tags` cell names: the token before
+    `text?` in one of its `:`-separated groups (`… xxYY text?`), else the
+    one before `speech?`. Refused with `CascLocaleError` when there is none
+    or it is not in `LOCALE_FLAGS`; the message never repeats the cell."""
+    for suffix in ("text?", "speech?"):
+        for group in (tags or "").split(":"):
+            tokens = group.split()
+            if len(tokens) < 2 or tokens[-1] != suffix:
+                continue
+            if not _LOCALE_SHAPE.fullmatch(tokens[-2]):
+                continue
+            if tokens[-2] not in LOCALE_FLAGS:
+                raise CascLocaleError(
+                    f"the build's locale {tokens[-2]!r} is not one this reader knows"
+                )
+            return tokens[-2]
+    raise CascLocaleError(
+        "the Active row's Tags cell in .build.info names no locale (a token such as "
+        "'xxYY text?'), so the root cannot be filtered"
+    )
+
+
+def platform_of(flavor_dir: Path) -> Platform:
+    """The platform a flavor folder's layout shows: `macos` for a client
+    bundle (a `*.app` folder), `windows` for an executable (a `*.exe`
+    file). Neither or both is refused with `CascPlatformError`. Names only:
+    nothing in the folder is opened, and a link is not followed."""
+    try:
+        found = longpath.entries(flavor_dir)
+    except OSError as exc:
+        raise CascUnreadableError(
+            f"cannot list {flavor_dir} ({exc.strerror or exc})", flavor_dir
+        ) from exc
+    mac = win = False
+    for entry in found:
+        name = entry.name.casefold()
+        mac = mac or (name.endswith(".app") and entry.is_dir(follow_symlinks=False))
+        win = win or (name.endswith(".exe") and entry.is_file(follow_symlinks=False))
+    if mac != win:
+        return "macos" if mac else "windows"
+    seen = (
+        "both a client bundle (.app) and an executable (.exe)"
+        if mac
+        else "neither a client bundle (.app) nor an executable (.exe)"
+    )
+    raise CascPlatformError(
+        f"the flavor folder {flavor_dir.name!r} has {seen}, so which root blocks this "
+        "client loads cannot be said",
+        flavor_dir,
+    )
+
+
+class CascFileStat(BaseModel):
+    """Where one file data id stands (§17.1's four states, and `unknown_id`
+    for an id the caller says is in no table and the root does not list).
+    When local: the content key, the encoding key the local index lists and
+    the decoded size (the encoding file's). `key_names` are the encryption
+    key names met, one per encrypted local copy; `content_keys` and
+    `encoding_keys` every key tried, in order."""
+
+    model_config = ConfigDict(frozen=True)
+
+    fdid: int
+    state: FileState
+    words: str
+    content_key: str | None = None
+    encoding_key: str | None = None
+    size: int | None = None
+    content_keys: tuple[str, ...] = ()
+    encoding_keys: tuple[str, ...] = ()
+    key_names: tuple[str, ...] = ()
+    note: str | None = None
+
+
+class CascSourceReport(BaseModel):
+    """What opening a source found and how long each part took, in
+    seconds. Holds nothing of the `Tags` cell but the locale."""
+
+    model_config = ConfigDict(frozen=True)
+
+    index: CascIndexReport
+    locale: str
+    locale_from: FoundFrom  # `install`: the Active row's Tags cell
+    platform: str
+    platform_from: FoundFrom  # `install`: the flavor folder's layout
+    encoding: EncodingHeader
+    encoding_ekey: str  # the encoding key the encoding file was read by
+    root_ekey: str  # the encoding key the root file was read by
+    root: RootReport
+    encoding_seconds: float  # reading, decoding, checking and indexing the encoding file
+    root_seconds: float  # reading, decoding, checking and filtering the root
+    open_seconds: float  # the whole open
+
+
+def _md5_hex(data: Buffer) -> str:
+    return hashlib.md5(data, usedforsecurity=False).hexdigest()
+
+
+def _reload_index(storage: CascStorage) -> None:
+    """Read the local index again, in place (the one re-open on a mismatch)."""
+    storage.index, _ = load_index(storage.root)
+
+
+class CascSource:
+    """One flavor's build, readable by file data id: the storage (build
+    config and local index), the encoding table and the filtered root, all
+    in memory, no file open. `read` decodes a file and checks it by its
+    content key; `stat` says where a file stands without decoding it.
+
+    On a content-key mismatch, or a record the index and the archive
+    disagree on, the index is read again, once per call, and the read tried
+    again; a second failure is raised (the agent or the client may be
+    writing `Data/data`). `reopens` counts the re-reads."""
+
+    def __init__(
+        self,
+        storage: CascStorage,
+        encoding: EncodingTable,
+        root: RootTable,
+        report: CascSourceReport,
+    ) -> None:
+        self.storage = storage
+        self.encoding = encoding
+        self.root = root
+        self.report = report
+        self.reopens = 0
+
+    def _reopen(self) -> None:
+        _reload_index(self.storage)
+        self.reopens += 1
+
+    def _hits(self, fdid: int) -> list[RootHit]:
+        """The root rows of `fdid` in the order they are tried: rows of
+        blocks not flagged `Encrypted` before the rest, so a plain copy is
+        tried first; within each, rows without `ROOT_FLAG_1` before rows
+        with it (the content this client fetched, at 70450); otherwise file
+        order (a stable sort)."""
+        if not 0 <= fdid < _FDID_LIMIT:
+            return []
+        return sorted(
+            self.root.find(fdid),
+            key=lambda h: (
+                bool(h.content_flags & ROOT_ENCRYPTED),
+                bool(h.content_flags & ROOT_FLAG_1),
+            ),
+        )
+
+    def _absent(self, fdid: int, in_table: bool) -> CascFileStat:
+        """The stat of an id the root takes no row for."""
+        if not 0 <= fdid < _FDID_LIMIT:
+            return CascFileStat(
+                fdid=fdid,
+                state="unknown_id",
+                words=STATE_WORDS["unknown_id"],
+                note="a file data id is a whole number from 0 to 2**31 - 1",
+            )
+        others = self.root.skipped_flags(fdid)
+        if others:
+            flags = "; ".join(f"content flags {c:#x}, locale flags {lo:#x}" for c, lo in others)
+            note = (
+                "the root lists it only for another locale or platform, or a low-violence "
+                f"client ({flags})"
+            )
+            return CascFileStat(
+                fdid=fdid, state="not_in_build", words=STATE_WORDS["not_in_build"], note=note
+            )
+        state: FileState = "not_in_build" if in_table else "unknown_id"
+        return CascFileStat(
+            fdid=fdid, state=state, words=STATE_WORDS[state], note="the root does not list it"
+        )
+
+    def _probe(self, ekey: bytes, limit: int) -> tuple[IndexEntry, str | None] | None:
+        """`None` when `ekey` is not in the local index; else its entry and
+        the key name of its first encrypted block (None when it has none):
+        the record is read, its header checked and its chunk table read;
+        nothing is decoded."""
+        entry = self.storage.index.find(ekey)
+        if entry is None:
+            return None
+        path = archive_path(self.storage.root, entry.archive)
+        view = memoryview(read_record(self.storage.root, entry, limit=limit))
+        parse_record_header(view, ekey, entry, path)
+        blte = view[RECORD_HEADER_SIZE:]
+        layout = parse_blte(blte, path)
+        at = layout.header_size or _BLTE_PREAMBLE
+        for i, block in enumerate(layout.blocks):
+            if block.mode == "E":
+                try:
+                    _refuse_mode(blte[at : at + block.encoded_size], i, path)
+                except EncryptedContent as exc:
+                    return entry, exc.key_name
+            at += block.encoded_size
+        return entry, None
+
+    def _probe_once(
+        self, ekey: bytes, limit: int, reopened: bool
+    ) -> tuple[tuple[IndexEntry, str | None] | None, bool]:
+        """`_probe`, the index read again once on a disagreement."""
+        try:
+            return self._probe(ekey, limit), reopened
+        except CascMalformedError:
+            if reopened:
+                raise
+            self._reopen()
+            return self._probe(ekey, limit), True
+
+    def stat(self, fdid: int, *, in_table: bool = True, limit: int = DECODE_LIMIT) -> CascFileStat:
+        """Where `fdid` stands: `local` (a root row whose content key has an
+        encoding key in the local index, with no encrypted block),
+        `encrypted` (every local copy has an encrypted block: a file in an
+        `Encrypted` root block is tried through its other rows and keys
+        first), `not_local` (in the root, no copy in the local index),
+        `not_in_build` (no root row for this locale and platform) or, when
+        the caller says the id is in no table (`in_table=False`) and the
+        root does not list it at all, `unknown_id`. An id outside int32's
+        non-negative range is always `unknown_id`. Reads each candidate
+        record's header and chunk table; decodes nothing."""
+        _check_limit(limit)
+        hits = self._hits(fdid)
+        if not hits:
+            return self._absent(fdid, in_table)
+        ckeys = tuple(dict.fromkeys(h.ckey for h in hits))
+        ekeys: list[bytes] = []
+        names: list[str] = []
+        unlisted = 0
+        reopened = False
+        for ckey in ckeys:
+            row = self.encoding.lookup(ckey)
+            if row is None:
+                unlisted += 1
+                continue
+            for ekey in row.ekeys:
+                ekeys.append(ekey)
+                probed, reopened = self._probe_once(ekey, limit, reopened)
+                if probed is None:
+                    continue
+                if probed[1] is not None:
+                    names.append(probed[1])
+                    continue
+                return CascFileStat(
+                    fdid=fdid,
+                    state="local",
+                    words=STATE_WORDS["local"],
+                    content_key=ckey.hex(),
+                    encoding_key=ekey.hex(),
+                    size=row.size,
+                    content_keys=tuple(c.hex() for c in ckeys),
+                    encoding_keys=tuple(e.hex() for e in ekeys),
+                    key_names=tuple(dict.fromkeys(names)),
+                )
+        state: FileState = "encrypted" if names else "not_local"
+        note = None
+        if unlisted:
+            note = f"{unlisted} of its content keys are not in the encoding file"
+        return CascFileStat(
+            fdid=fdid,
+            state=state,
+            words=STATE_WORDS[state],
+            content_key=ckeys[0].hex(),
+            content_keys=tuple(c.hex() for c in ckeys),
+            encoding_keys=tuple(e.hex() for e in ekeys),
+            key_names=tuple(dict.fromkeys(names)),
+            note=note,
+        )
+
+    def read(self, fdid: int, *, limit: int = DECODE_LIMIT) -> bytearray:
+        """The decoded bytes of `fdid` as one `bytearray`, `decode_blte`'s
+        own buffer, not copied (a `bytes` copy would double the peak at the
+        cap), whose MD5 is its content key: checked on every read. The root
+        rows are tried, plain blocks first, then each content key's encoding
+        keys in the encoding file's order; an encrypted copy is passed over
+        for the next. Raises `EncryptedContent` (the first met) when every
+        local copy is encrypted, `FileUnavailable` when none is local or the
+        root does not list the id, and `ContentMismatch` when the bytes do
+        not match their content key after the one re-read of the index."""
+        _check_limit(limit)
+        hits = self._hits(fdid)
+        if not hits:
+            absent = self._absent(fdid, True)
+            raise FileUnavailable(
+                f"file {fdid} is {absent.words}: {absent.note}", fdid, absent.state
+            )
+        encrypted: EncryptedContent | None = None
+        reopened = False
+        for ckey in dict.fromkeys(h.ckey for h in hits):
+            row = self.encoding.lookup(ckey)
+            if row is None:
+                continue
+            for ekey in row.ekeys:
+                try:
+                    data, reopened = self._read_checked(ckey, ekey, limit, reopened, fdid)
+                except EncryptedContent as exc:
+                    encrypted = encrypted or exc
+                    continue
+                if data is not None:
+                    return data
+        if encrypted is not None:
+            raise encrypted
+        raise FileUnavailable(
+            f"file {fdid} is {STATE_WORDS['not_local']}: no copy of it is in the local index",
+            fdid,
+            "not_local",
+        )
+
+    def _read_checked(
+        self, ckey: bytes, ekey: bytes, limit: int, reopened: bool, fdid: int
+    ) -> tuple[bytearray | None, bool]:
+        """`ekey`'s decoded bytes checked against `ckey` (None when the
+        index does not list it), the index read again once, at most, on a
+        disagreement or a mismatch; and whether it has been."""
+        while True:
+            try:
+                data = read_encoded(self.storage, ekey, limit=limit)
+            except EncryptedContent:
+                raise
+            except CascMalformedError:
+                if reopened:
+                    raise
+                self._reopen()
+                reopened = True
+                continue
+            if data is None:
+                return None, reopened
+            got = _md5_hex(data)
+            if got == ckey.hex():
+                return data, reopened
+            del data
+            if reopened:
+                raise ContentMismatch(
+                    f"file {fdid} decodes to bytes whose MD5 is {got}, not its content key "
+                    f"{ckey.hex()}, after the index was read again{_RETRY}",
+                    ckey.hex(),
+                    got,
+                    archive_path(self.storage.root, 0).parent,
+                )
+            self._reopen()
+            reopened = True
+
+
+def _read_by_ckey(
+    storage: CascStorage, ckey: str, ekeys: Sequence[bytes], what: str
+) -> tuple[bytearray, bytes]:
+    """A file the build config names by content key (the encoding file, the
+    root), read through the first of `ekeys` the index lists and checked
+    against `ckey`, the index read again once on a disagreement or a
+    mismatch. Returns the bytes and the encoding key they were read by."""
+    folder = archive_path(storage.root, 0).parent
+    reopened = False
+    for ekey in ekeys:
+        while True:
+            try:
+                data = read_encoded(storage, ekey)
+            except CascMalformedError:
+                if reopened:
+                    raise
+                _reload_index(storage)
+                reopened = True
+                continue
+            if data is None:
+                break
+            got = _md5_hex(data)
+            if got == ckey:
+                return data, ekey
+            del data
+            if reopened:
+                raise ContentMismatch(
+                    f"the {what} decodes to bytes whose MD5 is {got}, not its content key "
+                    f"{ckey}{_RETRY}",
+                    ckey,
+                    got,
+                    folder,
+                )
+            _reload_index(storage)
+            reopened = True
+    raise CascMissingError(f"the {what} ({ckey}) is not in the local index{_RETRY}", folder)
+
+
+def open_source(
+    install: Install,
+    flavor: Flavor | str,
+    *,
+    locale: str | None = None,
+    platform: Platform | None = None,
+) -> CascSource:
+    """Open one flavor's build for reads by file data id: the storage
+    (`open_storage`), the encoding file (named by the build config, read by
+    its encoding key, checked by its content key) and the root (its content
+    key from the build config, its encoding keys from the encoding file,
+    checked the same way), filtered for the build's locale (`locale_of` the
+    Active row's `Tags`) and the flavor folder's platform (`platform_of`),
+    unless given. Every file is read and closed before this returns."""
+    started = time.perf_counter()
+    flavor, row = select_build_row(install, flavor)
+    locale_from: FoundFrom = "given" if locale else "install"
+    platform_from: FoundFrom = "given" if platform else "install"
+    locale = locale or locale_of(row.tags)
+    platform = platform or platform_of(flavor.path)
+    storage = open_storage(install, flavor)
+    config = storage.config
+    folder = archive_path(storage.root, 0).parent
+    encoding_started = time.perf_counter()
+    data, encoding_ekey = _read_by_ckey(
+        storage, config.encoding_ckey, [bytes.fromhex(config.encoding_ekey)], "encoding file"
+    )
+    encoding = parse_encoding(data, folder)
+    del data
+    root_started = time.perf_counter()
+    root_row = encoding.lookup(bytes.fromhex(config.root))
+    if root_row is None:
+        raise CascMalformedError(
+            f"the encoding file does not list the root's content key {config.root}", folder
+        )
+    root_data, root_ekey = _read_by_ckey(storage, config.root, root_row.ekeys, "root file")
+    root = parse_root(root_data, locale=locale, platform=platform, path=folder)
+    del root_data
+    finished = time.perf_counter()
+    report = CascSourceReport(
+        index=storage.report,
+        locale=locale,
+        locale_from=locale_from,
+        platform=platform,
+        platform_from=platform_from,
+        encoding=encoding.header,
+        encoding_ekey=encoding_ekey.hex(),
+        root_ekey=root_ekey.hex(),
+        root=root.report,
+        encoding_seconds=round(root_started - encoding_started, 3),
+        root_seconds=round(finished - root_started, 3),
+        open_seconds=round(finished - started, 3),
+    )
+    return CascSource(storage, encoding, root, report)
