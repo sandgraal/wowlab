@@ -1,0 +1,210 @@
+{
+  "schema": 1,
+  "kind": "casc-blte-derived",
+  "made_by": "scripts/casc_facts.py --blte",
+  "captured": "2026-10-19",
+  "flavor": "_classic_beta_",
+  "product": "wow_classic_beta",
+  "version": "1.60.1.70450",
+  "build": 70450,
+  "decode_limit": 268435456,
+  "records": [
+    {
+      "why": "the build config's encoding file",
+      "key": "9a0263e06fdace8ab9",
+      "archive": 0,
+      "offset": 613470176,
+      "size": 141273066,
+      "record_header": {
+        "hash_field": "9a0263e06fdace8ab900000000000000",
+        "size": 141273066,
+        "flags": "0000",
+        "checksum_a": 3295026902,
+        "checksum_b": 2132978560
+      },
+      "blte": {
+        "header_size": 180,
+        "encoded_size": 141273036,
+        "decoded_size": 141574945,
+        "blocks": [
+          {
+            "mode": "N",
+            "encoded_size": 23,
+            "decoded_size": 22,
+            "md5": "ea6ac28ef7fa50305b3ce5198007ac9b"
+          },
+          {
+            "mode": "Z",
+            "encoded_size": 91038,
+            "decoded_size": 393134,
+            "md5": "b978ee6b49007ec36603eb9190f890c3"
+          },
+          {
+            "mode": "N",
+            "encoded_size": 660705,
+            "decoded_size": 660704,
+            "md5": "06b6b59a6e884cf778ace576be9c1163"
+          },
+          {
+            "mode": "N",
+            "encoded_size": 84570113,
+            "decoded_size": 84570112,
+            "md5": "0014b767b86652dd5158220f023f6ef2"
+          },
+          {
+            "mode": "N",
+            "encoded_size": 433729,
+            "decoded_size": 433728,
+            "md5": "d3eed59e91f030fd95de4636aadeb99f"
+          },
+          {
+            "mode": "N",
+            "encoded_size": 55517185,
+            "decoded_size": 55517184,
+            "md5": "4d3de533ee5e0dc3d3e0e7c02ca6dece"
+          },
+          {
+            "mode": "Z",
+            "encoded_size": 63,
+            "decoded_size": 61,
+            "md5": "06334051e082da20b33cb8d20bc32918"
+          }
+        ]
+      },
+      "outcome": {
+        "decoded_size": 141574945,
+        "decoded_md5": "c441a5427cb86b23bbfb6ed9c6cf0114"
+      },
+      "decode_seconds": 0.321
+    },
+    {
+      "why": "first own-bucket record of bucket 0 whose header holds the whole encoding key",
+      "key": "0017a3cb54c1b70e24",
+      "archive": 3,
+      "offset": 830226403,
+      "size": 16948,
+      "record_header": {
+        "hash_field": "0017a3cb54c1b70e24af5384a6422a6a",
+        "size": 16948,
+        "flags": "0000",
+        "checksum_a": 1424275187,
+        "checksum_b": 3782784162
+      },
+      "blte": {
+        "header_size": 36,
+        "encoded_size": 16918,
+        "decoded_size": 33940,
+        "blocks": [
+          {
+            "mode": "Z",
+            "encoded_size": 16882,
+            "decoded_size": 33940,
+            "md5": "bace58c2f14f12834d092a97d355eb94"
+          }
+        ]
+      },
+      "outcome": {
+        "decoded_size": 33940,
+        "decoded_md5": "6bc94a03a5f36f245a1166866d09d808"
+      },
+      "decode_seconds": 0.0
+    },
+    {
+      "why": "first own-bucket record of bucket 0 with an encrypted block",
+      "key": "0006690c4101458181",
+      "archive": 3,
+      "offset": 971722853,
+      "size": 21207,
+      "record_header": {
+        "hash_field": "0006690c410145818100000000000000",
+        "size": 21207,
+        "flags": "0000",
+        "checksum_a": 2180661664,
+        "checksum_b": 59067847
+      },
+      "blte": {
+        "header_size": 36,
+        "encoded_size": 21177,
+        "decoded_size": 33940,
+        "blocks": [
+          {
+            "mode": "E",
+            "encoded_size": 21141,
+            "decoded_size": 33940,
+            "md5": "b47a9ad0f558286404d40017a623384c"
+          }
+        ]
+      },
+      "outcome": {
+        "error": "EncryptedContent",
+        "block": 0,
+        "key_name": "0DA4670DB36FB2A9",
+        "cipher": "S"
+      }
+    }
+  ],
+  "segment_headers": [
+    {
+      "why": "first entry of bucket 0 whose key is not in it",
+      "file_bucket": 0,
+      "key": "000100552169b01989",
+      "archive": 1,
+      "offset": 0,
+      "size": 30,
+      "record_header": {
+        "hash_field": "000100552169b0198954679edc74b430",
+        "size": 30,
+        "flags": "0100",
+        "checksum_a": 2841395946,
+        "checksum_b": 3028657111
+      }
+    },
+    {
+      "why": "first entry of bucket 15 whose key is not in it",
+      "file_bucket": 15,
+      "key": "000000552169b01989",
+      "archive": 0,
+      "offset": 450,
+      "size": 30,
+      "record_header": {
+        "hash_field": "000000552169b0198954679edc74b430",
+        "size": 30,
+        "flags": "0100",
+        "checksum_a": 3858091420,
+        "checksum_b": 2191208077
+      }
+    }
+  ],
+  "census": {
+    "step": 256,
+    "records": 4079,
+    "over_cap": 0,
+    "decoded": 4070,
+    "refused": {
+      "EncryptedContent": 9
+    },
+    "hash_field_full": 71,
+    "chunkless": 0,
+    "header_md5_starts_with_key": 4079,
+    "flags": {
+      "0000": 4079
+    },
+    "blocks_by_mode": {
+      "E": 19,
+      "N": 971,
+      "Z": 5520
+    },
+    "records_by_block_count": {
+      "1": 3531,
+      "10-99": 63,
+      "2-9": 485
+    },
+    "encrypted_key_names": {
+      "0DA4670DB36FB2A9": 7,
+      "D2C028CB7AC14D0B": 2
+    },
+    "e_block_shapes": {
+      "key_name_bytes=8 iv_bytes=8 cipher=S": 19
+    }
+  }
+}
