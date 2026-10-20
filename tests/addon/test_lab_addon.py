@@ -2278,6 +2278,8 @@ def test_skip_section_keys_are_the_plan_keys() -> None:
         "spellbook",
         "actionbars",
         "bindings",
+        # Schema 4 (M15-01).
+        "identity",
     }
 
 
@@ -2893,8 +2895,8 @@ def test_m11_29_schema_2_and_the_probe_survives_the_bump() -> None:
     `probe.loads` keeps rising across the bump."""
     flow = _core()
     rendered = _render(flow.tokens)
-    # Schema 3 since M13-05; the bump keeps every check below.
-    assert "ns . SCHEMA = 3" in rendered
+    # Schema 4 since M15-01 (3 since M13-05); the bump keeps every check below.
+    assert "ns . SCHEMA = 4" in rendered
     assert rendered.count("ns . SCHEMA =") == 1
     assert "local db = { schema = ns . SCHEMA , probe = copyProbe ( ) ," in _body(flow, "ns.Write")
     assert "WowLabDB = { schema = ns . SCHEMA }" in _body(flow, "ns.Write")
@@ -2933,9 +2935,10 @@ def test_m11_29_readme_and_plan_say_what_is_confirmed_and_what_stays_verify() ->
         assert "M11-29 capture step" in text
         assert "schema 2" in text
         assert "the schema stays 1" not in text.split("(M11-29")[-1]
-    # The README's layout is schema 3's since M13-05, and schema 1 is still read.
-    assert "### Table layout (schema 3)" in raw_readme
-    assert "  schema = 3," in raw_readme
+    # The README's layout is schema 4's since M15-01 (3's since M13-05), and
+    # schema 1 is still read.
+    assert "### Table layout (schema 4)" in raw_readme
+    assert "  schema = 4," in raw_readme
     assert "The Lab still reads schema 1 files" in readme
     # M4: the file shows only that the last write came from an open.
     for text in (readme, plan, formats):

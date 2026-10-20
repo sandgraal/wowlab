@@ -2,7 +2,7 @@
 --
 -- Runs in the game client only; the Lab never loads or runs this file. It
 -- gathers each section during the session (on entering the world and on the
--- section's change events) and writes the versioned tables (schema 3) into
+-- section's change events) and writes the versioned tables (schema 4) into
 -- its SavedVariables at PLAYER_LOGOUT. `/wowlab save` refreshes the tables in
 -- memory; the client writes the file at the next /reload, logout or clean
 -- exit, and a crash writes nothing. Only three things are carried from one
@@ -39,8 +39,10 @@ local ADDON_NAME, ns = ...
 -- ADDON_LOADED looks at the schema (the probe, the skip list and the carried
 -- customization record are read by key), so an older file's probe count keeps
 -- rising across the change, and the next write is schema 3 for both
--- variables.
-ns.SCHEMA = 3
+-- variables. Schema 4 (M15-01): schema 3 plus one section, `identity`
+-- (Identity.lua: race id, UnitSex's raw value, class id and file); nothing
+-- else changed, and an older file moves to schema 4 the same way.
+ns.SCHEMA = 4
 
 -- Sections, in the order they register (the file order in WowLab.toc).
 ns.sections = {}

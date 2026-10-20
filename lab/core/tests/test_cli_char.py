@@ -206,12 +206,12 @@ def test_constructed_unknown_character_is_a_usage_error(flavor: Path) -> None:
     assert "no character folder 'Nobody'" in result.stderr
 
 
-def test_constructed_schema_4_capture_is_refused(flavor: Path) -> None:
-    # Schema 2 is known since M11-29 and 3 since M13-05, so the first unknown is 4.
-    _lab_file(flavor, FIRST).write_bytes(b'\r\nWowLabCharDB = {\r\n["schema"] = 4,\r\n}\r\n')
+def test_constructed_schema_5_capture_is_refused(flavor: Path) -> None:
+    # Schema 2 is known since M11-29, 3 since M13-05 and 4 since M15-01, so the first unknown is 5.
+    _lab_file(flavor, FIRST).write_bytes(b'\r\nWowLabCharDB = {\r\n["schema"] = 5,\r\n}\r\n')
     result = run("char", "show", "--character", FIRST)
     assert result.exit_code == 1
-    assert "WowLabCharDB is schema 4, and this reader knows schema 1, 2, 3 only" in result.stderr
+    assert "WowLabCharDB is schema 5, and this reader knows schema 1, 2, 3, 4 only" in result.stderr
     assert result.stdout == ""
 
 

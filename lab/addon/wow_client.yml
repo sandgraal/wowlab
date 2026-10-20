@@ -41,6 +41,12 @@ globals:
   UnitRace:
     args:
       - type: string
+  UnitSex:
+    args:
+      - type: string
+  UnitClass:
+    args:
+      - type: string
 
   # --- Gear -------------------------------------------------------------------
   INVSLOT_FIRST_EQUIPPED:

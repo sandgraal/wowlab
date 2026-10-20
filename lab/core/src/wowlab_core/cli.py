@@ -7274,8 +7274,17 @@ class CharShowReport(_Out):
     file: str  # relative to the flavor folder
     mtime_ns: int
     account_file: str | None
-    account_record: labaddon.AccountDBV1 | labaddon.AccountDBV2 | labaddon.AccountDBV3 | None
-    record: labaddon.CharDBV1 | labaddon.CharDBV2 | labaddon.CharDBV3
+    account_record: (
+        labaddon.AccountDBV1
+        | labaddon.AccountDBV2
+        | labaddon.AccountDBV3
+        | labaddon.AccountDBV4
+        | None
+    )
+    record: labaddon.CharDBV1 | labaddon.CharDBV2 | labaddon.CharDBV3 | labaddon.CharDBV4
+    # The race, body type and class (M15-01): the record's `identity`
+    # (schema 4), every value absent with a reason for schema 1 to 3.
+    identity: labaddon.CharIdentity
     skip_known: list[str]  # section keys in `skip` this reader knows
     skip_ignored: list[str]  # the rest of `skip`, kept in `record` and ignored
     customization_loads_ago: int | None
@@ -7324,6 +7333,7 @@ def char_show(
         account_file=account_file.path if account_file else None,
         account_record=account_record,
         record=record,
+        identity=labaddon.identity_of(record),
         skip_known=known,
         skip_ignored=ignored,
         customization_loads_ago=labaddon.customization_loads_ago(record),
@@ -7616,6 +7626,8 @@ class CharGearReport(_Out):
     file: str  # relative to the flavor folder
     mtime_ns: int
     spec: gear.GearSpec
+    # The race, body type and class (M15-01), as `char show --json` gives it.
+    identity: labaddon.CharIdentity
     average: gear.GearAverage
     slots: list[gear.GearSlot]
     empty_slots: list[gear.EmptySlot]
@@ -7740,6 +7752,7 @@ def char_gear(
         file=target.path,
         mtime_ns=target.mtime_ns,
         spec=gear.spec_of(record),
+        identity=labaddon.identity_of(record),
         average=gear.average_of(section),
         slots=filled,
         empty_slots=empty,
