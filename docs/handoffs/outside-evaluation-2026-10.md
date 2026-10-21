@@ -45,7 +45,8 @@ owner accepted the same day (M16-01).
 
 Synthesis tickets not taken into M16:
 - EV-38 (outside captures) was declined (Q11).
-- EV-39 is done by the ADR-0032 amendment itself.
+- EV-39 is done by the ADR-0032 and ADR-0013 amendments and the dated
+  §16.5 amendment in `docs/LAB_PLAN.md`.
 - EV-44 and EV-45 belong to M15 and are noted in §17.9 for when it
   resumes.
 

@@ -59,7 +59,8 @@ by how long a session must hold state:
   is scoped to one ticket, review or PR. The top-level `docs/*.md` files
   together run to about 120K words (about 160K tokens; measured 2026-10-21),
   more than one agent needs. An agent reads the sections its ticket names
-  and greps the rest. `LAB_PLAN.md` alone is most of that. Each review on #34
+  and greps the rest. `LAB_PLAN.md` is the largest single file, at about
+  47K words. Each review on #34
   used about 30K tokens, so the standard window fits, and compacting early
   keeps later turns cheap. The conductor dispatches only
   the repo agents under `.claude/agents/`. Built-in types such as

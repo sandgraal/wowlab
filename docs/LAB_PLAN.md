@@ -4007,6 +4007,25 @@ direct write; the proposal goes through the validator and the confirm flow
 like one written by hand. Gear is never edited: the client owns it (ADR-
 0023).
 
+*Amendment (2026-10-21, owner decisions on the outside evaluation; ADR-0032
+and ADR-0013 amendments of the same date, accepted):* rules written before
+F3 and F4 are ticketed.
+- **F1.** The two persistence tests also ask whether the edit-mode cache is
+  kept, and whether `Config.wtf` is synced. They run on the launch client
+  (M16-05).
+- **F3.** Every macro line is classified. `/run`, `/script`, `/console`, and
+  `/click` on a frame the record does not list are code. A proposal that
+  adds or changes a code line is refused, unless the line is byte-identical
+  to one in the player's current macro. Labelled hostile cases cover each
+  verb. `wowlab_core.proposal` is load-bearing: a `[TEST]` ticket lands its
+  graders first (ADR-0013).
+- **F4, stage two.** The key is stored in the OS keychain, or in a file
+  created 0600 in a format `luadata` refuses. Only `https:` endpoints are
+  accepted, with no redirects. `char advise --send` is not offered by
+  `/api/run` until a confirm shape shows the exact request body. Other
+  players' names in macro lines are replaced with placeholders in the sent
+  packet.
+
 ### 16.6 Decisions for the owner
 
 Each has a default and the work is planned on it. *The owner accepted every
@@ -4497,7 +4516,8 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
    identity (dev, ino, mtime_ns) and invalidated by the transaction's own
    writes. The commit-time re-check is unchanged.
    - Target: a whole-restore check of 20,000 files with nothing to change
-     takes at most 5 s on the reference runner.
+     takes at most 5 s on the reference runner (GitHub's `ubuntu-latest`,
+     as M16-27's nightly job measures it; the PR path checks scaling only).
    - `sv dump --json` uses the C encoder.
    - The WTF parsers get byte and line budgets.
    - A leading BOM is kept as its own token (L4).
@@ -4528,14 +4548,16 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
    - The keybind views see addon action bars through stored
      `CLICK <frame>:<button>` commands.
 9. **The lab-addon, schema 5 (ADR-0026, amended 2026-10-21).**
-   - The chat line prints once per addon version.
+   - The chat line prints once per addon version, or after an unclean
+     session.
    - Probes sit behind `/wowlab debug`.
    - Gathering is marked dirty, and done out of combat at most once every
      30 to 60 s and at logout.
    - `CLICK` binding commands are stored.
    - A salted macro hash is stored only if the M14-macro-place runbook
      needs it.
-   - The reader accepts a newer minor schema's known sections.
+   - The reader reads schema 5, and still refuses a schema it does not
+     know (§13.1).
    - The installed TOC carries `## Version`. `doctor` says when the
      installed addon's interface is behind the client's.
 10. **Trust at rest and in transit.**
@@ -4580,8 +4602,9 @@ The panel's suggestions that the owner declined, or left for later:
    `[IMPL]` tickets (ADR-0013).
 4. Tickets that edit `cli.py` heavily (M16-14, M16-15, M16-16, M16-18,
    M16-19, M16-22) are dispatched so that no two are in flight at once.
-5. M16-05, the owner's launch capture, runs within 48 hours of the launch
-   date the owner confirms.
+5. M16-45 and M16-46 land before M16-05, so the launch capture is at
+   schema 5. M16-05, the owner's launch capture, runs within 48 hours of
+   the launch date the owner confirms.
 6. v0.2 is tagged when M16-03, M16-05 and the code tickets the conductor
    names in the review are merged.
 7. M16-47 is the wave review.

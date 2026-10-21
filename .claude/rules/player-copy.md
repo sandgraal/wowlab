@@ -13,7 +13,8 @@ paths:
 Owner decision, 2026-10-21 (`docs/handoffs/outside-evaluation-2026-10.md`,
 "Owner decisions", Q6). These rules apply to `--help` text, text output and
 page copy, meaning anything a player reads. `--json` is an interface and is
-exempt.
+exempt. In README.md and INSTALL.md they apply to the sections written for
+players; a contributor section may cite docs, ADRs and tickets.
 
 - The answer comes first. After it comes at most one caveat that applies to
   this result. Standing caveats go behind `--notes`, and the default output

@@ -1098,7 +1098,7 @@ Found 2026-10-19 in the security review of M14-03 (ruled a follow-up by the cond
 
 ---
 ## [ ] M13-76 — `wowlab ui --help` still describes the v0.1 UI
-**Size:** XS · **Depends on:** M14-04
+**Size:** XS · **Depends on:** M14-04, M16-02 (absorbed by M16-02, 2026-10-21; closes with it)
 
 Found 2026-10-19 in the code review of M14-04, on `main` before it. The `ui_command` docstring in `cli.py` says only `snap gc` and `doctor` run behind a Confirm and that commands that change game files "are not offered in this version"; since M14-03 every `--yes` command runs through the confirm step, and the docstring names neither the Character tab (M14-08) nor the Looks tab (M14-04). Rewrite it to match `main` after M14-04 (the five tabs; plan then Confirm for every `--yes` command; `undo` and `sv merge` refuse on drift, the others apply what is there after the snapshot; `--out` and `--follow` refused), in the CLI's own voice; the generated command reference and the wiki's `wowlab ui` page follow it. Text output of every other command byte-identical to `main`.
 
@@ -1320,7 +1320,7 @@ The Character tab renders the field under the gear table as one button, **See it
 ---
 
 ## [ ] M15-06 — `wowlab casc stat` and `casc cat`
-**Size:** S · **Depends on:** M15-05
+**Size:** S · **Depends on:** M15-05, M16-47 (paused for M16, owner decision 2026-10-21)
 
 §17.1 "What it writes". `wowlab casc stat --fdid N [--json]` prints the file's state in the words of §17.1's four states and, when local, its size and content key; `wowlab casc cat --fdid N [--out PATH]` writes the decoded bytes: without `--out`, to its default place, `casc/<product>-<build>/files/<fdid>-<ckey8>.bin` under the data directory (`ckey8` the first eight hex digits of the content key, so a patched file lands beside the old one and nothing is overwritten, L5); a second `cat` of a file already there with the same content key writes nothing and says "already extracted"; with `--out`, to a path confined to the same `casc/<product>-<build>/` folder, or to stdout (`-`); never elsewhere (a path outside is refused; the install is never a target); `CascStatReport`. The data directory layout `casc/<product>-<build>/` is created on first use and never overwritten across builds (L5). **In the UI** (§17.1, "In the UI"): both commands appear in the Commands tab when this merges; `stat` runs as a plain read; `cat`'s `--out` and its stdout form are refused there as `looks page --out` is, so from the UI it writes only to its default place under the data directory; the parity and allowlist tests say so.
 
@@ -1329,7 +1329,7 @@ The Character tab renders the field under the gear table as one button, **See it
 ---
 
 ## [ ] M15-07 — `blp`: textures to RGBA and PNG
-**Size:** S · **Depends on:** M15-05
+**Size:** S · **Depends on:** M15-05, M16-47 (paused for M16, owner decision 2026-10-21)
 
 §17.2; `docs/LAB_FORMATS.md` §11. `wowlab_core.blp` decodes mip 0 of a BLP2 (DXT1, DXT3, DXT5; palette with 1-, 4- and 8-bit alpha; BGRA) to RGBA rows, refuses BC5 and any other encoding with a typed error, refuses with both values named a texture where the wiki's and wow.export's DXT rules disagree (§17.2, **[verify]**), computes block sizes rather than trusting the stored mip sizes, and `wowlab_core.png` writes PNG with the stdlib. The header's width and height bound every allocation under a stated cap; a hostile header is refused. §17.2's target: a 1024² DXT1 decode in ≤ 0.5 s on the owner's machine.
 
@@ -1338,7 +1338,7 @@ The Character tab renders the field under the gear table as one button, **See it
 ---
 
 ## [ ] M15-08 — `m2`: models and skins
-**Size:** M · **Depends on:** M15-05
+**Size:** M · **Depends on:** M15-05, M16-47 (paused for M16, owner decision 2026-10-21)
 
 §17.3; `docs/LAB_FORMATS.md` §12. `wowlab_core.m2` reads the chunked M2 (`MD21`, `SFID`, `TXID`; other chunks listed by tag and skipped), the header arrays it needs (vertices, textures, attachments; bones counted, not read), and the `.skin` file (lookup, indices, sections with the geoset id and the level offset, batches); bounded by counts and offsets checked against the chunk size, never past it. A model whose version is above the wiki's table (274) is read with a note, not refused; 272, the HD body models here, is inside the table.
 
@@ -1347,7 +1347,7 @@ The Character tab renders the field under the gear table as one button, **See it
 ---
 
 ## [ ] M15-09 — `renderplan`: the body and its customization
-**Size:** M · **Depends on:** M15-01, M15-05
+**Size:** M · **Depends on:** M15-01, M15-05, M16-47 (paused for M16, owner decision 2026-10-21)
 
 §17.4, the body and customization bullets. `wowlab_core.renderplan` builds a `RenderPlan` from the lab-addon's `identity` and `customization` records through the game tables (fetched and cached by `gamedata` per build, ADR-0022; `ChrCustomizationCondModel` is unpublished for this build and skipped): the body model id (`ChrRaceXChrModel` → `ChrModel` → `CreatureDisplayInfo` → `CreatureModelData`), the default geoset set (§17.4's numeric rule: id 0, every id ≥ 100 with `id % 100 == 1`, group 32; groups 17 and 35 hidden) with the customization geosets applied, the customization texture layers (an element taken only when its `RelatedChrCustomizationChoiceID` is satisfied; the diffuse `TextureFileData` row by `UsageType`, **[verify]**; sections, layers and blend modes through `ChrModelTextureLayer` and `CharComponentTextureSections`), the `ChrModel` fallback ids applied where a row is missing, the unsupported element kinds listed, each file's `stat` from `casc` in the four states, and the look's as-of date from the record. Without a `customization` record the defaults, with a note. The gear chain is M15-13, which extends the same model.
 
@@ -1427,6 +1427,8 @@ These are the `Proposed` amendments of 2026-10-21 to ADR-0013 (the proposal vali
 - a refusal when no `into` is given, whose message names the option;
 - a pre-write snapshot of the target;
 - the allowlist and link refusals applied to the target;
+- the client check applied to the target: a client running from the target root refuses the write, whatever the source install's state (L2);
+- the target install's lock is taken, and a target root whose store overlaps the source's is refused;
 - `undo` of a restore into another target.
 
 Inputs are constructed and labelled. No flavor name appears in library-facing assertions beyond the test data (L6).
@@ -1457,6 +1459,7 @@ Reviewed by `code-reviewer`, `security-reviewer` and `domain-reviewer`. User-fac
 **Acceptance:**
 - An export and import round trip between two sandboxes is followed by an M16-03 restore. Until M16-03 merges, this criterion is checked with a same-root restore.
 - Hostile constructed archives are refused, labelled: path traversal, a duplicate id, a hash mismatch, an oversize entry.
+- `snap export <id> FILE` with `FILE` inside any install is refused (guard's `_refuse_inside_any_install`), and a test asserts the install is byte- and mtime-identical after every export (L1).
 - `make ci` is green.
 
 Reviewed by `code-reviewer` and `security-reviewer`. User-facing: two new commands; the wiki's snapshot page and command reference.
@@ -1524,15 +1527,24 @@ Reviewed by `code-reviewer` and `security-reviewer`. User-facing: `doctor`'s def
 
 ---
 
+## [ ] M16-09T — [TEST] `guard`: the pre-write snapshot records `kind=pre-write`
+**Size:** XS · **Depends on:** nothing · **Sources:** raider:F2
+
+Guard creates the pre-write snapshot (`store.create(... label="guard pre-write: …")`), so recording its kind changes what `guard` does (ADR-0013). Strict-xfail graders: every write's pre-write manifest carries `kind="pre-write"`; a `snap create` manifest carries `kind="user"`; nothing else in the manifest or journal changes.
+
+**Acceptance:** the graders fail as expected on `main`; `make ci` green. Written by `test-writer`, reviewed by `code-reviewer` and `security-reviewer`.
+
+---
+
 ## [ ] M16-09 — Snapshot kinds, restore hints and short references
-**Size:** S · **Depends on:** nothing · **Sources:** raider:F2, newcomer:F12 (EV-08)
+**Size:** S · **Depends on:** M16-09T · **Sources:** raider:F2, newcomer:F12 (EV-08)
 
 §18.1 item 3.
 - Each manifest records a `kind`. Manifests without one read as `user`, except that one whose id matches a journal's pre-write entry reads as `pre-write`.
 - `explain` and the Explorer compare against the newest `user`, `first-run` or `profile` snapshot. When the newest is a pre-write copy, they say in words what restoring it means.
 - `latest`, `latest-user`, `~N` and unique-suffix matching work in `snap show`, `snap diff` and `snap restore`.
 
-**Acceptance:** a regression test reproduces the panel's sequence (wipe, recover, `explain`) and asserts that the hint is not the pre-write id. `make ci` is green. Reviewed by `code-reviewer`. User-facing: `explain`, the Explorer, and the snapshot references.
+**Acceptance:** M16-09T's graders are activated by marker deletion only, and the full suite is green (`guard.py`). A regression test reproduces the panel's sequence (wipe, recover, `explain`) and asserts that the hint is not the pre-write id. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: `explain`, the Explorer, and the snapshot references.
 
 ---
 
@@ -1547,12 +1559,21 @@ Reviewed by `code-reviewer` and `security-reviewer`. User-facing: `doctor`'s def
 
 ---
 
+## [ ] M16-11T — [TEST] `guard`: a whole restore's plan lists what it leaves alone
+**Size:** XS · **Depends on:** nothing · **Sources:** qa:F2
+
+The restore plan is built in `guard` (`tx.restore`, `PlanItem`), so this changes what `guard` returns (ADR-0013). Strict-xfail graders: files added under the snapshot's subtrees since the snapshot appear in the plan as left-alone items; they are never written or deleted; a `--paths` restore lists none.
+
+**Acceptance:** the graders fail as expected on `main`; `make ci` green. Written by `test-writer`, reviewed by `code-reviewer` and `security-reviewer`.
+
+---
+
 ## [ ] M16-11 — A whole restore says what it leaves alone
-**Size:** S · **Depends on:** nothing · **Sources:** qa:F2 (EV-10)
+**Size:** S · **Depends on:** M16-11T · **Sources:** qa:F2 (EV-10)
 
 The plan lists, under a "left alone" heading, the files under the snapshot's subtrees that were added since the snapshot. README, `snap restore --help` and the wiki say that a whole restore never deletes them.
 
-**Acceptance:** a test adds a file after a snapshot and asserts the heading and the file. `make ci` is green. Reviewed by `code-reviewer`. User-facing: the `snap restore` plan.
+**Acceptance:** M16-11T's graders are activated by marker deletion only, and the full suite is green (`guard.py`). The CLI prints the heading. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: the `snap restore` plan.
 
 ---
 
@@ -1598,7 +1619,7 @@ Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the `sv merge` o
 **Size:** S · **Depends on:** nothing · **Sources:** designer:F6, newcomer:F3, writer:F4, F15, a11y:F13, addon-author:F14 (EV-14; owner Q6)
 
 §18.1 item 4; `.claude/rules/player-copy.md`.
-- A test walks every `--help` screen and the text output of the fixture sandbox's read commands. It rejects `M1\d-\d+`, `ADR-\d+`, `\[verify\]`, `LAB_PLAN`, `\bL[1-8]\b`, dotted module paths and `UPPER_SNAKE` constants.
+- A test walks every `--help` screen and the text output of the fixture sandbox's read commands. It rejects `M1\d-\d+`, `ADR-\d+`, `\[verify\]`, `LAB_PLAN`, `\bL[1-8]\b`, `wowlab_core.`-qualified names ("module paths"), and `UPPER_SNAKE` words. An allowlist admits environment variable names the player sets (`WOWLAB_WOW_ROOT`, `NO_COLOR`) and the game's own file and CVar names (`Config.wtf`, `WowLab.lua`, `SavedVariables`).
 - Every hit is fixed. `[verify]` renders as "(not yet confirmed)" at most once per report.
 - "JSON: X" moves to one shared footer.
 - `luadata` refusal reasons are mapped to plain words in the CLI layer, with the rule id kept in `--json`. `luadata.py` does not change.
@@ -1660,7 +1681,7 @@ Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the `sv merge` o
 ## [ ] M16-20 — README and INSTALL examples run as tests
 **Size:** S · **Depends on:** M16-18 · **Sources:** writer:F3, newcomer:F4 (EV-19)
 
-Every fenced command in README and INSTALL runs against the fixture sandbox in CI. A non-zero exit fails the test, and so does output that no longer matches the shown lines. Output that the docs trim is marked `…`.
+Every fenced `wowlab` command in README and INSTALL runs against the fixture sandbox in CI. A non-zero exit fails the test, and so does output that no longer matches the shown lines. Output that the docs trim is marked `…`. A block marked `<!-- not-run: <reason> -->` is skipped, and the test lists the skips: installs (`uv tool install`, `uvx`), anything that needs the network (ADR-0012: `doctor --check-builds`, `db2`, `looks` downloads, `gh attestation verify`), and commands that do not exit (`wowlab ui`, `log tail --follow`). A skip without a reason fails.
 
 **Acceptance:** the test is green on the updated docs. Reviewed by `code-reviewer`.
 
@@ -1695,7 +1716,7 @@ Every fenced command in README and INSTALL runs against the fixture sandbox in C
 **Size:** S · **Depends on:** nothing · **Sources:** architect:F1, raider:F14 (EV-05T)
 
 §18.1 item 6. Strict-xfail graders cover:
-- a constructed 8,000-file tree whose no-op whole-restore check meets the §18.1 target on the reference runner (`serial`);
+- the walk scales linearly: on constructed 2,000- and 8,000-file trees (`serial`), the no-op whole-restore check at 8,000 files takes at most 5× its time at 2,000 (today it is about 9×). The absolute §18.1 target is checked by M16-27's nightly job, not on the PR path;
 - a change of identity mid-transaction invalidates the memo;
 - a commit-time re-check still refuses a changed path;
 - an injected listing error is not cached.
@@ -1731,13 +1752,13 @@ Inputs are constructed and labelled.
 
 ---
 
-## [ ] M16-26T — [TEST] `luadata.read` through `open_regular_file`
+## [ ] M16-26T — [TEST] `luadata.read` and the `wtfconfig` readers through `open_regular_file`
 **Size:** S · **Depends on:** nothing · **Sources:** qa:F6, security:F3 (EV-24T)
 
 **Acceptance:** strict-xfail graders show:
-- a FIFO is refused without blocking;
-- a link that points out of the install is refused, as `tree` reports it;
-- a regular file reads as before.
+- a FIFO is refused without blocking, by `luadata.read` and by each `wtfconfig` `read_*`;
+- a link that points out of the install is refused, as `tree` reports it, by both;
+- a regular file reads as before, by both.
 
 Written by `test-writer`, and reviewed by `code-reviewer` and `security-reviewer`.
 
@@ -1910,7 +1931,7 @@ Uses the stdlib `random`, with fixed seeds and iteration counts, inside `make te
 ## [ ] M16-40 — CI enforces "graders activated by marker deletion only"
 **Size:** S · **Depends on:** nothing · **Sources:** qa:F16 (EV-37)
 
-On a PR that touches `luadata.py` or `guard.py`, a job fails if a tracked grader file has any hunk other than the removal of an `xfail(strict=True)` block. A matching `protect_paths` rule for the implementer is proposed to the owner as a harness edit.
+On a PR that touches a load-bearing file (ADR-0013: `luadata.py`, `guard.py`, and `proposal.py` once it exists), a job fails if a tracked grader file has any hunk other than the removal of an `xfail(strict=True)` block. A matching `protect_paths` rule for the implementer is proposed to the owner as a harness edit.
 
 **Acceptance:** tests of the job's script on a clean diff and on a weakening diff; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer`.
 
@@ -1970,6 +1991,8 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 - `CLICK <frame>:<button>` binding commands are stored, and nothing else non-plain is.
 - The salted macro hash is stored only if M16-05's macro-place answer needs it. The salt lives in the user data directory, never in the record.
 
+**Before dispatch:** `domain-reviewer` checks ADR-0026's `CLICK` premise. Some addons (GSE, for example) name secure buttons after text the player typed, so a `CLICK <name>:<button>` can carry it. If so, the ticket stores the command only when the frame belongs to an installed addon's declared frames, or the owner rules again.
+
 **Acceptance:** the static Lua tests and selene pass. One owner capture at schema 5 is added, with provenance rows. `make ci` is green. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer` (the hash and the salt). User-facing: in-game chat, and `/wowlab debug`.
 
 ---
@@ -1977,7 +2000,7 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 ## [ ] M16-46 — The reader for schema 5, and bar-addon binds in the keybind views
 **Size:** S · **Depends on:** M16-45 · **Sources:** raider:F4, addon-author:F10 (owner Q10)
 
-- `labaddon` reads schema 5. It accepts a newer minor schema's known sections and names the rest.
+- `labaddon` reads schema 5. A schema it does not know is still refused, as §13.1 says.
 - `char binds`, `binds list` and `binds coach` show `CLICK` binds as the addon button they press, named from the frame (no hard-coded addon names).
 
 **Acceptance:** graded on M16-45's capture and on the schema 1 to 4 fixtures, unchanged; `make ci` green. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the keybind views and the Character tab.
