@@ -41,6 +41,8 @@ owner accepted the same day (M16-01).
 | 10 Ideas slices | All three: addons check and sv orphans, every character folder in `char list`, and `CLICK` binds | M16-34, M16-35, M16-45, M16-46 |
 | 11 Captures | Neither a retail capture nor a Windows volunteer for now; the README states the limit | M16-05 (Forever only), M16-08 |
 | 12 ADR-0032 | Replace other players' names in the packet; the proposal validator becomes load-bearing | ADR-0032 and ADR-0013 amendments |
+| 9b Salt location (after review) | `addon install` copies the salt into the installed addon; never in SavedVariables | ADR-0026 later amendment; M16-45 |
+| 3b Gate and PyPI (after review) | PyPI downloads, from pypistats.org, count toward the download threshold | ADR-0031 later amendment; M16-32 |
 | 13 Housekeeping | Correct the CLAUDE.md size figure; fold amendments at each wave review | CLAUDE.md; §11 item 5 |
 
 Synthesis tickets not taken into M16:

@@ -1842,7 +1842,7 @@ Reviewed by `code-reviewer`. User-facing: the page's layout and contrast.
 - A 60-second terminal recording: snapshot, break something, `snap diff`, `undo`.
 - One post in each place the owner picks where Forever UI players and addon authors gather.
 - `release.yml` publishes the same wheel to PyPI through trusted publishing, and README and INSTALL show `uvx wowlab doctor`.
-- `docs/handoffs/M13-gate.md` records GitHub traffic and clones beside the gate's counts.
+- `docs/handoffs/M13-gate.md` records GitHub traffic and clones beside the gate's counts, and adds PyPI downloads from pypistats.org to the download count (ADR-0031, later amendment of 2026-10-21).
 
 **Acceptance:** the PyPI page shows v0.2 with the same SHA-256 as the GitHub asset. Reviewed by `code-reviewer` and `security-reviewer` (the workflow). User-facing: a new install path.
 
@@ -1989,7 +1989,7 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 - The `Constants` sweep runs once per session.
 - Change events mark sections dirty. Gathering runs out of combat, at most once every 30 to 60 s, and at logout.
 - `CLICK <frame>:<button>` binding commands are stored, and nothing else non-plain is.
-- The salted macro hash is stored only if M16-05's macro-place answer needs it. The salt lives in the user data directory, never in the record.
+- The salted macro hash is stored only if M16-05's macro-place answer needs it. The salt lives in the user data directory, and `addon install lab` copies it into a generated file in the installed addon. It is never written into SavedVariables (ADR-0026, later amendment of 2026-10-21).
 
 **Before dispatch:** `domain-reviewer` checks ADR-0026's `CLICK` premise. Some addons (GSE, for example) name secure buttons after text the player typed, so a `CLICK <name>:<button>` can carry it. If so, the ticket stores the command only when the frame belongs to an installed addon's declared frames, or the owner rules again.
 

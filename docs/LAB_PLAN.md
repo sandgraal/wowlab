@@ -4555,7 +4555,8 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
      30 to 60 s and at logout.
    - `CLICK` binding commands are stored.
    - A salted macro hash is stored only if the M14-macro-place runbook
-     needs it.
+     needs it. `addon install` copies the salt from the user data
+     directory into the installed addon; it is never in SavedVariables.
    - The reader reads schema 5, and still refuses a schema it does not
      know (§13.1).
    - The installed TOC carries `## Version`. `doctor` says when the
@@ -4576,7 +4577,7 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
     - GitHub Discussions open, and the release is announced where Forever
       UI players and addon authors gather.
     - The 30-day gate starts at v0.2 (ADR-0031, amended 2026-10-21; M13-13
-      follows).
+      follows). Its download count adds PyPI's, read from pypistats.org.
 12. **Tests the panel asked for.**
     - A seeded mutation test for `luadata` and the WTF parsers (graders
       only).
