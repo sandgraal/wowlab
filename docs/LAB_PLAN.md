@@ -4438,8 +4438,8 @@ Wave 6 pauses after M15-05 (§17.9) and resumes after v0.2 if the owner
 says so. The goal is a release that still works on the day Forever
 launches, and that a player can trust, read and find. L1 to L8 apply to
 every ticket. Nothing here moves an invariant. The ADR changes the wave
-depends on are dated amendments, `Proposed` until the owner accepts them:
-ADR-0013, ADR-0026, ADR-0031 and ADR-0032, all of 2026-10-21.
+depends on are dated amendments to ADR-0013, ADR-0026, ADR-0031 and
+ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
 
 ### 18.1 What the wave fixes
 

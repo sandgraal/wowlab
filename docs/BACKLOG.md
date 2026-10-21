@@ -1399,12 +1399,12 @@ Each ticket's **Sources** line names the panel findings it answers (`seat:F<n>`,
 
 ---
 
-## [ ] M16-01 — Owner: accept the four 2026-10-21 amendments
+## [x] M16-01 — Owner: accept the four 2026-10-21 amendments
 **Size:** XS · **owner** · **Depends on:** nothing
 
 These are the `Proposed` amendments of 2026-10-21 to ADR-0013 (the proposal validator joins the load-bearing set), ADR-0026 (`CLICK` binding commands, and the salted macro hash), ADR-0031 (the gate starts at v0.2; PyPI), and ADR-0032 (stage-two rules). The owner accepts each one or sends it back. The conductor makes the status edit on the owner's explicit instruction only.
 
-**Acceptance:** each amendment's status line records the decision. Dependants: M16-32's PyPI step waits for ADR-0031, M16-45 for ADR-0026, and the §16.5 F3 and F4 tickets for ADR-0013 and ADR-0032.
+**Acceptance:** each amendment's status line records the decision. Dependants: M16-32's PyPI step waits for ADR-0031, M16-45 for ADR-0026, and the §16.5 F3 and F4 tickets for ADR-0013 and ADR-0032. *Done 2026-10-21:* the owner accepted all four in session ("marked all amendments Accepted").
 
 ---
 

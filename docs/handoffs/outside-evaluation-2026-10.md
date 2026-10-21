@@ -24,8 +24,8 @@ Confirm them before acting on the dates.
 
 These are the owner's answers to the thirteen questions in §6 of the
 synthesis below. The resulting wave is `docs/LAB_PLAN.md` §18 and
-`docs/BACKLOG.md` M16. The ADR changes are amendments of 2026-10-21 and are
-`Proposed` until the owner accepts them (M16-01).
+`docs/BACKLOG.md` M16. The ADR changes are amendments of 2026-10-21, which the
+owner accepted the same day (M16-01).
 
 | Q | Decision | Where it lands |
 |---|---|---|
