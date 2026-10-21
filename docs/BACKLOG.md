@@ -1467,7 +1467,7 @@ Reviewed by `code-reviewer` and `security-reviewer`. User-facing: two new comman
 ---
 
 ## [ ] M16-05 — Owner: the launch-client session
-**Size:** S · **owner** · **Depends on:** the launch · **Sources:** product:F2, F6; raider:F5; addon-author:F5 (EV-03)
+**Size:** S · **owner** · **Depends on:** M16-45, M16-46, and the launch · **Sources:** product:F2, F6; raider:F5; addon-author:F5 (EV-03)
 
 Within 48 hours of the launch date the owner confirms, the owner reruns M10-03's runbook on the launch client and records:
 - the flavor folder, the product code and the interface number;
@@ -1775,7 +1775,7 @@ Written by `test-writer`, and reviewed by `code-reviewer` and `security-reviewer
 **Size:** S · **Depends on:** M16-23, M16-24 · **Sources:** architect:F9, addon-author:F12, qa:F9 (EV-25)
 
 - A §6.12 table of command-level targets (whole restore, `sv dump --json`, `sv merge`, `addons list`, `wowlab --version`), each given as a ratio to a calibration loop.
-- A nightly job, off the PR path, fails at 1.5× the baseline. It makes no live call (ADR-0012).
+- A nightly job on GitHub's `ubuntu-latest`, off the PR path, fails at 1.5× the baseline. It also runs §18.1's absolute check: a no-op whole-restore check of a constructed 20,000-file tree in at most 5 s. It makes no live call (ADR-0012).
 
 **Acceptance:** the job runs green once on `main`. Reviewed by `code-reviewer`.
 
@@ -1989,11 +1989,11 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 - The `Constants` sweep runs once per session.
 - Change events mark sections dirty. Gathering runs out of combat, at most once every 30 to 60 s, and at logout.
 - `CLICK <frame>:<button>` binding commands are stored, and nothing else non-plain is.
-- The salted macro hash is stored only if M16-05's macro-place answer needs it. The salt lives in the user data directory, and `addon install lab` copies it into a generated file in the installed addon. It is never written into SavedVariables (ADR-0026, later amendment of 2026-10-21).
+- No macro hash is stored in this ticket. If M16-05's macro-place answer needs one, M16-48 adds it.
 
 **Before dispatch:** `domain-reviewer` checks ADR-0026's `CLICK` premise. Some addons (GSE, for example) name secure buttons after text the player typed, so a `CLICK <name>:<button>` can carry it. If so, the ticket stores the command only when the frame belongs to an installed addon's declared frames, or the owner rules again.
 
-**Acceptance:** the static Lua tests and selene pass. One owner capture at schema 5 is added, with provenance rows. `make ci` is green. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer` (the hash and the salt). User-facing: in-game chat, and `/wowlab debug`.
+**Acceptance:** the static Lua tests and selene pass. One owner capture at schema 5 is added, with provenance rows. `make ci` is green. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer`. User-facing: in-game chat, and `/wowlab debug`.
 
 ---
 
@@ -2007,8 +2007,21 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 
 ---
 
+## [ ] M16-48 — The salted macro join key, if the launch session needs it
+**Size:** S · **Depends on:** M16-05, M16-46 · **Sources:** raider:F7 (owner Q9; ADR-0026 amendments of 2026-10-21)
+
+Built only if M16-05's macro-place answer cannot place macros without a join key; otherwise the conductor closes it with that answer cited. The work:
+- `wowlab addon install lab` creates the salt in the user data directory on first use (32 random bytes, file 0600) and copies it into a generated file in the installed `WowLab` folder. A reinstall keeps the same salt. `addon remove lab` removes the generated file.
+- The addon stores, per macro slot, the hash of name and body under that salt; never the text, never the salt, and nothing in SavedVariables but the hash.
+- `snap export` (M16-04) leaves the generated salt file out of the archive and says so, so an exported snapshot never carries both the salt and the hashes.
+- The reader matches hashes offline against `macros-cache.txt`.
+
+**Acceptance:** static Lua tests and selene pass; Python tests cover salt creation, reuse across reinstall, removal, and the export exclusion; one owner capture with provenance rows; `make ci` green. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer` (the salt's life cycle, and that pre-write snapshots in the local store may hold it). User-facing: `addon install lab` and `addon remove lab` write and remove one more file; `snap export`'s output names the exclusion.
+
+---
+
 ## [ ] M16-47 — M16 review
-**Size:** S · **Depends on:** every other M16 ticket
+**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48
 
 `docs/handoffs/M16-review.md` per §11, including §11 item 5's folding of the amendments. It also covers whether v0.2 is tagged, when the gate's clock started, and whether M15 resumes.
 

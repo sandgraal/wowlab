@@ -2,6 +2,7 @@
 paths:
   - "lab/core/src/wowlab_core/luadata.py"
   - "lab/core/src/wowlab_core/guard.py"
+  - "lab/core/src/wowlab_core/proposal.py"
   - "lab/core/src/wowlab_core/svmerge.py"
   - "lab/core/src/wowlab_core/profiles.py"
   - "lab/core/src/wowlab_core/ui/**"

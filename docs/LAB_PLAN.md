@@ -4554,9 +4554,10 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
    - Gathering is marked dirty, and done out of combat at most once every
      30 to 60 s and at logout.
    - `CLICK` binding commands are stored.
-   - A salted macro hash is stored only if the M14-macro-place runbook
-     needs it. `addon install` copies the salt from the user data
-     directory into the installed addon; it is never in SavedVariables.
+   - A salted macro hash is added afterwards by M16-48, only if the launch
+     session's macro-place answer needs it. `addon install` copies the salt
+     from the user data directory into the installed addon; it is never in
+     SavedVariables, and `snap export` leaves it out.
    - The reader reads schema 5, and still refuses a schema it does not
      know (§13.1).
    - The installed TOC carries `## Version`. `doctor` says when the
@@ -4599,12 +4600,12 @@ The panel's suggestions that the owner declined, or left for later:
    PyPI step and M16-45's schema 5. Nothing else waits on it.
 2. M16-02 goes first among the code tickets, because seven seats found the
    problem and the fix is the cheapest.
-3. The `[TEST]` twins (M16-03T, M16-23T, M16-26T) land before their
+3. The `[TEST]` twins (M16-03T, M16-09T, M16-11T, M16-23T, M16-26T) land before their
    `[IMPL]` tickets (ADR-0013).
 4. Tickets that edit `cli.py` heavily (M16-14, M16-15, M16-16, M16-18,
    M16-19, M16-22) are dispatched so that no two are in flight at once.
 5. M16-45 and M16-46 land before M16-05, so the launch capture is at
-   schema 5. M16-05, the owner's launch capture, runs within 48 hours of
+   schema 5; M16-48 follows M16-05 only if its answer needs the hash. M16-05, the owner's launch capture, runs within 48 hours of
    the launch date the owner confirms.
 6. v0.2 is tagged when M16-03, M16-05 and the code tickets the conductor
    names in the review are merged.
