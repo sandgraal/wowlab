@@ -17,7 +17,9 @@ Read this first, then `docs/LAB_PLAN.md` §18 and the M16 section of
 
 **#323** bumped certifi to 2026.10.19 for GHSA-6q48-6c7w-9gw2. Trivy fails on any branch cut before cd6f2c5 until it merges `main`.
 
-The frontier on `main`: 35 M16 tickets are ready. M16-01 is done (the owner accepted all the amendments). M15-05 is ready, and M15-06 to M15-09 are blocked on M16-47. M13-76 is blocked on M16-02, which absorbs it.
+The frontier's counts come from the backlog's ticks only. `session_start.py`'s `merged_ticket_ids` calls `gh pr list`, which uses GraphQL. Cloud sessions refuse GraphQL with a 403, so the function returns nothing there. Tick merged tickets promptly, or a merged ticket shows as ready again. This is a harness follow-up for the owner.
+
+The frontier on `main`: 49 tickets are eligible. 35 are M16, 13 are M13 follow-ups (M13-61 to M13-81), and the last is M15-05. M16-01 is done (the owner accepted all the amendments). M15-05 is ready. M15-06 to M15-09 wait on M15-05 and M16-47. M13-76 is blocked on M16-02, which absorbs it.
 
 ## Open PRs to settle before or beside the first batch
 
@@ -25,13 +27,21 @@ The frontier on `main`: 35 M16 tickets are ready. M16-01 is done (the owner acce
 |---|---|---|
 | #320 | M15-05 `casc` encoding/root, 5 behind `main` | Finish it (§17.9: Wave 6 pauses *after* M15-05). Merge `main` in, re-run the reviews per its ticket, merge. |
 | #321 | Wiki job's README one-liner, 2 behind | Check it is still true on `main`; merge or close. The next daily run replaces it if closed. |
-| #310, #311 | Dependabot groups, 12 behind; #311 rewrites `uv.lock` | `@dependabot rebase` (certifi changed `uv.lock`), then review as usual. |
+| #310, #311 | Dependabot groups, 12 behind; both change `uv.lock` | `@dependabot rebase` was requested on both on 2026-10-21 (certifi changed `uv.lock`). Review once rebased. |
 
 ## First batch
 
 Dispatch everything ready, with these exceptions.
 
 **Serial on `cli.py`.** Run M16-14, M16-15, M16-16, M16-18, M16-19 and M16-22 one at a time. Start with M16-15, because M16-16 depends on it.
+
+**The M13 follow-ups run beside M16.** They are small fixes to shipped behaviour. Four of them touch the same command as an M16 ticket, so pair or order each one:
+- M13-72 (`char list --json`) goes before M16-35, which changes `char list`.
+- M13-74 (`sv merge --expect`) lands with or before M16-12, as the synthesis asked.
+- M13-73 and M13-77 (`char binds`) go before M16-36 and M16-16.
+- M13-80 (the identity record in `looks import-char`) can share a reviewer with M16-31.
+
+M13-76 closes with M16-02. Dispatch the other M13 tickets freely.
 
 **Load-bearing twins first.**
 - M16-03T, M16-09T, M16-11T, M16-23T and M16-26T go to `test-writer`.
@@ -50,10 +60,14 @@ Dispatch everything ready, with these exceptions.
 
 ## Known environment notes
 
-- In a cloud container running as root, `tests/repo/test_wiki_daily_outside.py::…[read-only-as-user-fails]` fails. That failure is environmental and does not happen in CI. M13-81 should skip it under uid 0.
+- In a cloud container running as root, `tests/repo/test_wiki_daily_outside.py::…[read-only-as-user-fails]` fails. That failure is environmental and does not happen in CI. M13-81 part D (added 2026-10-21) skips it under uid 0.
 - `make ci` stops at `lint-lua` where selene is not installed. Run `make selene` first, or rely on CI.
 - Until M16-07 lands, `wowlab doctor` contacts wago.tools. Agents testing by hand pass `--offline` (ADR-0012).
-- The panel's sandbox kit is reusable for hands-on checks: `docs/handoffs/outside-evaluation-2026-10/_make_sandbox.sh` and `_brief.md`. The script builds an install from the real fixtures, with an isolated `HOME` and `XDG_*`. Its scratch path in the brief must be replaced.
+- The panel's sandbox script is reusable for hands-on checks:
+  - Run `eval "$(bash docs/handoffs/outside-evaluation-2026-10/_make_sandbox.sh <name> [macos-70450])"`.
+  - It builds an install from the real fixtures, with an isolated `HOME` and `XDG_*`, under `$WOWLAB_SANDBOXES`. That defaults to `$TMPDIR/wowlab-sandboxes`, never inside the checkout.
+  - Then run `wowlab` with `uv run --project <repo>`.
+  - `_brief.md` is the panel's historical brief. Its `$EVAL` and `/home/user/wowlab` paths were that container's.
 - The shell hook blocks a redirect to a path held in a variable (`> "$F"`). Use a literal path, a `python3 -c` write, or the Write tool.
 
 ## Owner actions outstanding
