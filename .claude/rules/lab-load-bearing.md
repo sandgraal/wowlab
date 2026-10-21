@@ -2,6 +2,7 @@
 paths:
   - "lab/core/src/wowlab_core/luadata.py"
   - "lab/core/src/wowlab_core/guard.py"
+  - "lab/core/src/wowlab_core/proposal.py"
   - "lab/core/src/wowlab_core/svmerge.py"
   - "lab/core/src/wowlab_core/profiles.py"
   - "lab/core/src/wowlab_core/ui/**"
@@ -10,7 +11,7 @@ paths:
 
 # Load-bearing files
 
-Every tool stands on these. `luadata.py` reads the owner's data, and `guard.py` is the only thing allowed to change it. Those two are the load-bearing set (ADR-0013), and the `[TEST]` / `[IMPL]` separation in `AGENTS.md` is mandatory for them. `svmerge.py` and `profiles.py` decide what `guard` writes back into the owner's files, and `wowlab_core.ui` (the `wowlab ui` server, ADR-0029, whether `ui.py` or a `ui/` package) opens a local port and runs CLI commands for the browser; they were in the set from 2026-09-29 and 2026-10-15 until the owner narrowed it on 2026-10-17. Their rules below still apply; their tests are the implementer's, graded by the reviewers. The bullets below that name `luadata.py` or `guard.py` apply to those files only.
+Every tool stands on these. `luadata.py` reads the owner's data, and `guard.py` is the only thing allowed to change it. Those two are the load-bearing set (ADR-0013); `proposal.py` joins them when §16.5 F3 creates it (ADR-0013 amendment, accepted 2026-10-21), and the `[TEST]` / `[IMPL]` separation in `AGENTS.md` is mandatory for them. `svmerge.py` and `profiles.py` decide what `guard` writes back into the owner's files, and `wowlab_core.ui` (the `wowlab ui` server, ADR-0029, whether `ui.py` or a `ui/` package) opens a local port and runs CLI commands for the browser; they were in the set from 2026-09-29 and 2026-10-15 until the owner narrowed it on 2026-10-17. Their rules below still apply; their tests are the implementer's, graded by the reviewers. The bullets below that name `luadata.py` or `guard.py` apply to those files only.
 
 - **Separation.** For `luadata.py` and `guard.py`, graders are written by `test-writer` and land on `main` first as `xfail(strict=True)`. Activate them by deleting the marker line only. Never edit a grader; if one is wrong, report it. A grader that already exists on `main` for another file in this list is activated the same way.
 - **`luadata.py`: data, never code.** Tables, strings, numbers, booleans, nil. Reject functions, calls, metatables, operators and bare identifiers with a line and column. Bounded depth, size and string length; over a bound raises, never truncates, never lets a `RecursionError` escape.
