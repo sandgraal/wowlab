@@ -56,9 +56,12 @@ by how long a session must hold state:
   Compaction mid-wave loses routing state, and that costs more than the
   larger context.
 - **`claude-opus-5-5` (standard): the repo's agents and the three workflows.** Each
-  is scoped to one ticket, review or PR. All of `docs/` is under 40K tokens,
-  and each review on #34 used about 30K, so the standard window fits, and
-  compacting early keeps later turns cheap. The conductor dispatches only
+  is scoped to one ticket, review or PR. The top-level `docs/*.md` files
+  together run to about 120K words (about 160K tokens; measured 2026-10-21),
+  more than one agent needs. An agent reads the sections its ticket names
+  and greps the rest. `LAB_PLAN.md` alone is most of that. Each review on #34
+  used about 30K tokens, so the standard window fits, and compacting early
+  keeps later turns cheap. The conductor dispatches only
   the repo agents under `.claude/agents/`. Built-in types such as
   `general-purpose` have no pin and would likely inherit the 1M session model.
 - **Do not read a fixture whole into context.** Grep it or read the slice

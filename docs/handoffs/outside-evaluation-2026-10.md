@@ -20,6 +20,35 @@ web pages and `gh api`. They are not checked against a second source: the
 Forever launch date, the beta close, and the download and star counts.
 Confirm them before acting on the dates.
 
+## Owner decisions (2026-10-21, in session)
+
+These are the owner's answers to the thirteen questions in §6 of the
+synthesis below. The resulting wave is `docs/LAB_PLAN.md` §18 and
+`docs/BACKLOG.md` M16. The ADR changes are amendments of 2026-10-21 and are
+`Proposed` until the owner accepts them (M16-01).
+
+| Q | Decision | Where it lands |
+|---|---|---|
+| 1 Wave order | Pause M15 after M15-05 and run M16, the launch edition, first | §17.9, §18, BACKLOG M16 |
+| 2 The gate | Restart the 30 days at a v0.2 verified on the launch client; thresholds unchanged | ADR-0031 amendment; M13-13 follows |
+| 3 Distribution | Publish to PyPI as well, and announce before the gate | ADR-0031 amendment; M16-32 |
+| 4 Restore across folders | Yes, to an explicit target only. Accounts are auto-mapped only when each side has exactly one | §18.1 item 1; M16-03T, M16-03, M16-04 |
+| 5 `doctor` and the network | Offline by default; `--check-builds` opts in | M16-07 |
+| 6 Player voice | `[verify]` reads "(not yet confirmed)"; caveats go behind `--notes`; a copy rule for agents | `.claude/rules/player-copy.md`; M16-15, M16-16 |
+| 7 Exit codes | `explain` of a missing path exits 1 | M16-18 |
+| 8 sv merge rulings | Change both: an array part merges as one value, and `--key` merges inside, with `--replace` for the old behaviour | M16-12 (amends §13.4) |
+| 9 The lab-addon | Schema 5 before launch; a salted macro hash is acceptable | ADR-0026 amendment; M16-45, M16-46 |
+| 10 Ideas slices | All three: addons check and sv orphans, every character folder in `char list`, and `CLICK` binds | M16-34, M16-35, M16-45, M16-46 |
+| 11 Captures | Neither a retail capture nor a Windows volunteer for now; the README states the limit | M16-05 (Forever only), M16-08 |
+| 12 ADR-0032 | Replace other players' names in the packet; the proposal validator becomes load-bearing | ADR-0032 and ADR-0013 amendments |
+| 13 Housekeeping | Correct the CLAUDE.md size figure; fold amendments at each wave review | CLAUDE.md; §11 item 5 |
+
+Synthesis tickets not taken into M16:
+- EV-38 (outside captures) was declined (Q11).
+- EV-39 is done by the ADR-0032 amendment itself.
+- EV-44 and EV-45 belong to M15 and are noted in §17.9 for when it
+  resumes.
+
 The rest of this document is the synthesis lead's text, unedited.
 
 ## Synthesis

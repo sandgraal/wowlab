@@ -1817,6 +1817,10 @@ game installed. M10-08, M10-09 and M10-10 do not wait on it.
    `docs/LAB_IDEAS.md` is built before that PR merges.
 4. Ideas are never pre-ticketed. An agent that finds itself building
    something from the ideas file without a ticket stops.
+5. *Owner decision, 2026-10-21:* at each wave review the conductor folds
+   that wave's dated amendments into the body of this plan, so the plan
+   reads as the current spec, and moves the amendment history into
+   `docs/handoffs/M<n>-plan-history.md`.
 
 ## 12. Open questions for the owner
 
@@ -4397,6 +4401,16 @@ outfit designer, transmog and animation stay out of both waves.
 
 ### 17.9 Tickets and order
 
+*Owner decision, 2026-10-21:* Wave 6 pauses after M15-05 for the
+launch edition (§18, M16). M15-06 to M15-13 resume after v0.2 ships,
+if the owner says so. Before M15-09, §17.4 names the one table-access
+path the render plan uses: `db2lake` (ADR-0028), or a typed
+`gamedata.Table` helper. It also states that geometry and pixels cross
+module boundaries as `bytes` or `memoryview` inside a Pydantic metadata
+model. If the owner wants `cli.py` split into a package, that split comes
+before M15-06. Source: `docs/handoffs/outside-evaluation-2026-10.md`,
+EV-44 and EV-45.
+
 M15-01 (the identity record) and M15-02 (the dressing-room link) are on
 `main`'s backlog already. The rest, in `docs/BACKLOG.md`: M15-03 the
 config and index reader, M15-04 BLTE, M15-05 encoding, root and
@@ -4413,3 +4427,161 @@ M15-06 and M15-11 all edit `cli.py` and are dispatched so that no two are
 in flight at once. Every parser ticket carries the three fixture
 layers of ADR-0033, and the live tests are on the owner's list after each
 merge.
+
+## 18. M16: v0.2, the launch edition
+
+Picked by the owner on 2026-10-21, after the outside evaluation panel
+(`docs/handoffs/outside-evaluation-2026-10.md`). That document holds the
+evidence behind every item below and the owner's answers to its thirteen
+questions. This wave is put in between the waves already planned:
+Wave 6 pauses after M15-05 (§17.9) and resumes after v0.2 if the owner
+says so. The goal is a release that still works on the day Forever
+launches, and that a player can trust, read and find. L1 to L8 apply to
+every ticket. Nothing here moves an invariant. The ADR changes the wave
+depends on are dated amendments, `Proposed` until the owner accepts them:
+ADR-0013, ADR-0026, ADR-0031 and ADR-0032, all of 2026-10-21.
+
+### 18.1 What the wave fixes
+
+1. **The launch rename.** A snapshot or profile taken of one flavor folder
+   can be restored into another flavor folder of the same install, or into
+   another install root. This happens only when the player names the target.
+   - `tx.restore(snapshot_id, paths=None, into=Target)` maps every path by
+     its path relative to the flavor folder, and the plan names both
+     folders.
+   - Account folders are mapped automatically only when each side has
+     exactly one. Otherwise the player gives the mapping.
+   - The target gets its own pre-write snapshot. The allowlist, link and
+     client checks apply to the target as they do to any write.
+   - Without `into`, a foreign snapshot is refused as now, and the refusal
+     names the option.
+   - Folder names come from the manifest and from discovery (L6).
+   - Snapshots also move between machines: `snap export` and `snap import`,
+     with every object hash verified before a manifest is added.
+2. **One sentence about what can change your files.** It appears
+   everywhere the page, the help, INSTALL.md and the wiki say it:
+   "Reading never changes anything. Six commands can change game files;
+   each shows a plan and runs only when you confirm, after a snapshot."
+   A test pins it. The network promise is one generated block in the same
+   way.
+   - `doctor` is **offline by default**.
+   - The wago.tools version check is opt-in, with `doctor --check-builds`.
+3. **Plans that say what they lose.**
+   - Plans and `snap diff` print key, macro and CVar changes by name for
+     the WTF text files.
+   - A whole restore lists what it leaves alone.
+   - `sv merge` lists every key it removes. Its rulings change: an array
+     part is merged as one value, and `--key X` merges inside `X`, with the
+     wholesale copy behind `--replace` (§13.4 is amended by M16-12).
+   - Each manifest records a `kind` (`user`, `first-run`, `profile` or
+     `pre-write`). A restore hint never offers a pre-write snapshot without
+     saying in words what restoring it means.
+   - `latest`, `latest-user` and `~N` resolve to snapshot ids.
+4. **Player-output contract (§6.11).** These rules are enforced by a test
+   and by `.claude/rules/player-copy.md`. `--json` is unchanged by
+   them:
+   - text output and `--help` carry no ticket id, ADR id, `L<n>`, doc path,
+     module path, constant name or model class name;
+   - `[verify]` renders as "(not yet confirmed)", at most once per report;
+   - the answer comes first, with at most one caveat for this result, and
+     standing caveats print behind `--notes`;
+   - `BrokenPipeError` is handled once at the entry point;
+   - under `--json`, an error is also an `ErrorReport` on stdout;
+   - `explain` of a path that is not there exits 1.
+5. **First contact.** `explain` and `sv dump` accept a bare name. Errors
+   name the next command to run. Every command shown in the README and
+   INSTALL.md runs in CI against the fixture sandbox. `doctor` ends with
+   next steps.
+6. **The write path at real-install scale (§6.10).** The gate keeps a
+   per-transaction directory-listing memo, keyed by the directory's
+   identity (dev, ino, mtime_ns) and invalidated by the transaction's own
+   writes. The commit-time re-check is unchanged.
+   - Target: a whole-restore check of 20,000 files with nothing to change
+     takes at most 5 s on the reference runner.
+   - `sv dump --json` uses the C encoder.
+   - The WTF parsers get byte and line budgets.
+   - A leading BOM is kept as its own token (L4).
+   - Command-level targets are checked by a nightly job, never on the PR
+     path.
+7. **The UI's consent moment and accessibility (§16.1, §15.6).** The plan
+   is shown above Confirm as lines that Python computes (`plan_lines`),
+   and the JSON tree becomes a collapsed "Details".
+   - Confirm's accessible name says what it does.
+   - Exit codes are shown as words. A plan run that did not end with its
+     marker is never labelled "Plan".
+   - A live region holds one sentence, never a result. Focus survives a
+     redraw.
+   - A declared ARIA role brings its keyboard model, or the role is
+     dropped.
+   - Focus rings are at least 3:1 against every background, and the page
+     reflows at 320 CSS px.
+   - The Character header uses player terms: level, class and spec names.
+8. **Addons and alts.** These are owner picks from `docs/LAB_IDEAS.md`
+   (addon-audit, sv-health, alt-dashboard), each the first slice.
+   - `wowlab addons check` reports, per addon: the interface against the
+     discovered one, missing dependencies, `LoadOnDemand`, the version, and
+     which characters enable it.
+   - `sv list --orphans` lists SavedVariables that no installed TOC
+     declares.
+   - `char list` lists every character folder, with "no lab record" where
+     there is no `WowLab.lua`.
+   - The keybind views see addon action bars through stored
+     `CLICK <frame>:<button>` commands.
+9. **The lab-addon, schema 5 (ADR-0026, amended 2026-10-21).**
+   - The chat line prints once per addon version.
+   - Probes sit behind `/wowlab debug`.
+   - Gathering is marked dirty, and done out of combat at most once every
+     30 to 60 s and at logout.
+   - `CLICK` binding commands are stored.
+   - A salted macro hash is stored only if the M14-macro-place runbook
+     needs it.
+   - The reader accepts a newer minor schema's known sections.
+   - The installed TOC carries `## Version`. `doctor` says when the
+     installed addon's interface is behind the client's.
+10. **Trust at rest and in transit.**
+    - The store is created 0700, and its files 0600.
+    - From the UI, `sv dump` refuses a path outside the install, and the
+      token leaves the URL.
+    - Releases carry build-provenance attestation, and runtime dependencies
+      get major upper bounds.
+    - The capture tool flags free text.
+    - The wheel also goes to PyPI (ADR-0031, amended 2026-10-21).
+11. **Found and measured.**
+    - The README's first screen leads with the one job the panel agreed on:
+      snapshot before you break it, see what changed, undo.
+    - Contributor setup moves to `CONTRIBUTING.md`.
+    - `main` reports a `.dev0` version.
+    - GitHub Discussions open, and the release is announced where Forever
+      UI players and addon authors gather.
+    - The 30-day gate starts at v0.2 (ADR-0031, amended 2026-10-21; M13-13
+      follows).
+12. **Tests the panel asked for.**
+    - A seeded mutation test for `luadata` and the WTF parsers (graders
+      only).
+    - CI enforcement of "graders activated by marker deletion only".
+    - An owner-run `@live` L1 sweep before each release.
+
+The panel's suggestions that the owner declined, or left for later:
+- retail and Windows volunteer captures (the README states the limit
+  instead);
+- a frozen binary (ADR-0031);
+- an in-game "restore my bars";
+- scoping the pre-write snapshot (L2);
+- `--allow-unreadable` (L2);
+- a browser harness in CI (ADR-0030).
+
+### 18.2 Order
+
+1. M16-01 (the owner's acceptance of the four amendments) gates M16-32's
+   PyPI step and M16-45's schema 5. Nothing else waits on it.
+2. M16-02 goes first among the code tickets, because seven seats found the
+   problem and the fix is the cheapest.
+3. The `[TEST]` twins (M16-03T, M16-23T, M16-26T) land before their
+   `[IMPL]` tickets (ADR-0013).
+4. Tickets that edit `cli.py` heavily (M16-14, M16-15, M16-16, M16-18,
+   M16-19, M16-22) are dispatched so that no two are in flight at once.
+5. M16-05, the owner's launch capture, runs within 48 hours of the launch
+   date the owner confirms.
+6. v0.2 is tagged when M16-03, M16-05 and the code tickets the conductor
+   names in the review are merged.
+7. M16-47 is the wave review.
