@@ -1980,7 +1980,7 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 
 ---
 
-## [ ] M16-45 — lab-addon schema 5: quieter, with `CLICK` binds and the macro join key
+## [ ] M16-45 — lab-addon schema 5: quieter, with `CLICK` binds
 **Size:** M · **Depends on:** M16-01 (ADR-0026) · **Sources:** addon-author:F6, F7, F8, F9, F10, raider:F4, F7 (EV-46; owner Q9, Q10)
 
 §18.1 item 9.
@@ -2008,7 +2008,7 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 ---
 
 ## [ ] M16-48 — The salted macro join key, if the launch session needs it
-**Size:** S · **Depends on:** M16-05, M16-46 · **Sources:** raider:F7 (owner Q9; ADR-0026 amendments of 2026-10-21)
+**Size:** S · **Depends on:** M16-04, M16-05, M16-46 · **Sources:** raider:F7 (owner Q9; ADR-0026 amendments of 2026-10-21)
 
 Built only if M16-05's macro-place answer cannot place macros without a join key; otherwise the conductor closes it with that answer cited. The work:
 - `wowlab addon install lab` creates the salt in the user data directory on first use (32 random bytes, file 0600) and copies it into a generated file in the installed `WowLab` folder. A reinstall keeps the same salt. `addon remove lab` removes the generated file.
