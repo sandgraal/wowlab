@@ -67,11 +67,12 @@ jobs:
       # Two passes (M13-18): everything not `serial` across the runner's
       # cores, then the RSS and CPU-time budget tests (`serial`, marked in
       # conftest.py) alone. A command-line -m replaces the one in addopts,
-      # so both keep `not live`.
+      # so both keep `not live`. `-rs` lists every skip and its reason, so a
+      # Windows-only test that skipped shows in the log (M13-65).
       - name: pytest lab/core/tests (parallel)
-        run: uv run --frozen pytest -q -n auto --dist worksteal -m "not live and not serial" lab/core/tests
+        run: uv run --frozen pytest -q -rs -n auto --dist worksteal -m "not live and not serial" lab/core/tests
       - name: pytest lab/core/tests (serial)
-        run: uv run --frozen pytest -q -m "serial and not live" lab/core/tests
+        run: uv run --frozen pytest -q -rs -m "serial and not live" lab/core/tests
       # Long paths off (M13-15T): the default on many player PCs. The runner
       # image turns them on, so the module skips in the passes above. These
       # steps run whatever the passes above did, turn the setting off for new

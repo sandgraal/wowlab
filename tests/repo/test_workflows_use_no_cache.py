@@ -49,7 +49,6 @@ UPLOAD = "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
 DOWNLOAD = "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
 PATHS_FILTER = "dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d"
 SETUP_UV = "astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884"
-ACTIONLINT = "raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7"
 TRIVY = "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25"
 CLAUDE = "anthropics/claude-code-action@f27be6b65a4652f08a2ba3cff79114829b588967"
 
@@ -57,8 +56,6 @@ CLAUDE = "anthropics/claude-code-action@f27be6b65a4652f08a2ba3cff79114829b588967
 # from its action.yml on 2026-10-18 (M13-42):
 # - checkout, upload-artifact, download-artifact, paths-filter: nothing.
 # - setup-uv: `enable-cache` defaults to `auto` (on, on hosted runners).
-# - actionlint: `cache` defaults to true and restores the actionlint binary
-#   with a nested actions/cache step.
 # - trivy-action: `cache` defaults to true; it restores the trivy database
 #   with a nested actions/cache step and passes the input to its nested
 #   aquasecurity/setup-trivy@3fb12ec, which restores and saves the trivy
@@ -70,16 +67,18 @@ CLAUDE = "anthropics/claude-code-action@f27be6b65a4652f08a2ba3cff79114829b588967
 # nests before changing the commit here.
 # upload-artifact, download-artifact and claude-code-action were re-read at
 # their current pins on 2026-10-19 (#309): the same as above.
+# raven-actions/actionlint left ci.yml on 2026-10-22 (M13-65): the job now
+# downloads a pinned actionlint release and checks its sha256, as it does
+# gitleaks (tests/repo/test_workflow_tool_downloads.py).
 CACHE_OFF: Mapping[str, str] = {
     SETUP_UV: "enable-cache",
-    ACTIONLINT: "cache",
     TRIVY: "cache",
 }
 
 # The actions each workflow may use, exactly: a missing entry fails, and so
 # does an entry the workflow no longer uses.
 ALLOWED: Mapping[str, frozenset[str]] = {
-    "ci.yml": frozenset({CHECKOUT, PATHS_FILTER, SETUP_UV, ACTIONLINT, TRIVY}),
+    "ci.yml": frozenset({CHECKOUT, PATHS_FILTER, SETUP_UV, TRIVY}),
     "claude-review.yml": frozenset({CHECKOUT, CLAUDE}),
     "claude.yml": frozenset({CHECKOUT, CLAUDE}),
     "release.yml": frozenset({CHECKOUT, SETUP_UV, UPLOAD, DOWNLOAD}),
@@ -264,7 +263,7 @@ def test_a_cache_input_is_caught(uses: str, key: str, value: object) -> None:
     assert _kinds(_findings("release.yml", workflow, allowed)) == {"cache-input"}
 
 
-@pytest.mark.parametrize("uses", [ACTIONLINT, TRIVY])
+@pytest.mark.parametrize("uses", [TRIVY])
 def test_an_action_whose_cache_is_on_by_default_must_turn_it_off(uses: str) -> None:
     for value in ("<omitted>", True, "true"):
         workflow = _mutated("ci.yml")
