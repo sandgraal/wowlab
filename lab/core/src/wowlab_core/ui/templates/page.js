@@ -1580,18 +1580,9 @@
     const rows = make("tbody");
     table.append(head, rows);
     box.append(counted, table, sharedNotes(report), drawUnreached(report));
-    if (typeof report.commands_left_out === "number" && typeof report.keys_left_out === "number") {
-      // `char binds`'s own sentence, word for word (`_say_char_binds` in
-      // cli.py): the report carries the two counts and not the words.
-      box.appendChild(
-        charLine(
-          "Left out of the bindings record, counted with no list: " +
-            plural(report.commands_left_out, "command", "commands") +
-            " not named in plain upper case (a key bound straight to a spell, macro, item or click may be one), and " +
-            plural(report.keys_left_out, "key", "keys") + " not printable ASCII.",
-          "char-line",
-        ),
-      );
+    if (typeof report.left_out_note === "string") {
+      // The record's two left-out counts in the report's own sentence.
+      box.appendChild(charLine(report.left_out_note, "char-line"));
     }
     box.appendChild(charNotes(report.notes));
     character.binds.rows = rows;
