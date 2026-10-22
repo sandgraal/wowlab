@@ -9892,21 +9892,22 @@ def ui_command() -> None:
 
     The server listens on 127.0.0.1 only, at a port the system picks, and
     answers only requests that carry the random token in the URL it opens.
-    It has five tabs. Explorer shows the whole install's files, each with
-    whether wowlab may edit it, and what a picked file is and who writes
-    it. Gaps lists the paths the file map does not describe. Commands runs
-    this wowlab's commands with --json. Character shows one character as
-    the lab-addon last saved it. Looks shows the page looks page writes.
+    The page has five tabs. Explorer shows the whole install's files, each
+    with whether wowlab may edit it, and what a picked file is and who
+    writes it. Gaps lists the paths the file map does not describe.
+    Commands runs this wowlab's commands with --json. Character shows one
+    character as the lab-addon last saved it. Looks shows the page that
+    `wowlab looks page` writes.
 
     On the Commands tab, a command that asks first (--yes) runs as a plan
     that changes nothing, and runs for real only when you press Confirm
     under it. snap gc and doctor change only wowlab's own store. The six
     that change game files are snap restore, undo, profile apply, sv merge,
-    addon install and addon remove. undo and sv merge refuse when something
-    changed after the plan; the others apply what is there when you
-    confirm, and undo reverses them. ui itself, log tail --follow and
-    looks page --out are not offered. If no browser opens, the URL is
-    printed once on stdout."""
+    addon install and addon remove, and `wowlab undo` reverses any of the
+    six. undo and sv merge refuse when something changed after the plan;
+    the others apply what is there when you confirm. ui itself, log tail
+    --follow and looks page --out are not offered. If no browser opens,
+    the URL is printed once on stdout."""
     # The browser is opened on a thread: `webbrowser` waits for a browser it
     # runs in the foreground (a text browser, or a `BROWSER` program), and
     # that browser's request must find the server already serving. What it
