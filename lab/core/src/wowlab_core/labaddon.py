@@ -2359,7 +2359,7 @@ NOT_IN_FILE = (
 )
 MAX_QUANTITY_NOTE = (
     "  max_quantity is the client's figure; for class talents it has matched the points "
-    "earned at the character's level (M11-03), not the tree's final cap."
+    "earned at the character's level, not the tree's final cap."
 )
 ALL_EVENTS_REGISTERED = "all its change events registered"
 EVENTS_RECEIVED = (
@@ -3018,29 +3018,29 @@ def _action_bars(bars: ActionBars) -> list[str]:
 
 
 def _binding_set_words(record: Bindings) -> str:
-    """`binding_set`, named by the client's own ACCOUNT_BINDINGS and
-    CHARACTER_BINDINGS as the record holds them."""
+    """`binding_set`, named by the client's own account and character
+    binding-set numbers as the record holds them, in player words."""
     which = record.binding_set
     if which is None:
         return "not returned"
     if which == record.character_bindings:
-        return f"{which} (the character's: CHARACTER_BINDINGS is {which})"
+        return f"{which} (the character's own bindings)"
     if which == record.account_bindings:
-        return f"{which} (the account's: ACCOUNT_BINDINGS is {which})"
+        return f"{which} (the account's bindings)"
     known = ", ".join(
         f"{name} is {value}"
         for name, value in (
-            ("ACCOUNT_BINDINGS", record.account_bindings),
-            ("CHARACTER_BINDINGS", record.character_bindings),
+            ("the account's", record.account_bindings),
+            ("the character's", record.character_bindings),
         )
         if value is not None
     )
     if not known:
         return (
-            f"{which} (the client's raw value; ACCOUNT_BINDINGS and CHARACTER_BINDINGS "
-            "not recorded)"
+            f"{which} (the client's raw value; which number is the account's and which "
+            "the character's was not recorded)"
         )
-    return f"{which} (the client's raw value, neither set by name: {known})"
+    return f"{which} (the client's raw value, neither set: {known})"
 
 
 def _bindings(record: Bindings) -> list[str]:

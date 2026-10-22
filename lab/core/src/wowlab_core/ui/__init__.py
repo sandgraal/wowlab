@@ -541,7 +541,9 @@ def _read_tree(root: Any) -> dict[tuple[str, ...], _Leaf]:
             excluded = _EXCLUDED_UI
             confirm = None
             pin = None
-        help_text = str(getattr(command, "help", None) or "").strip()
+        # What `--help` prints: Click cuts the help at a form feed, after
+        # which the command names its --json model for the command reference.
+        help_text = str(getattr(command, "help", None) or "").split("\f", 1)[0].strip()
         leaves[path] = _Leaf(path, help_text, params, json_opt, excluded, confirm, pin)
     return leaves
 

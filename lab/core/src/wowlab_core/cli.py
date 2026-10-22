@@ -28,7 +28,9 @@ install has exactly one. Nothing about a flavor is known here (L6): folder
 names, products and versions come from discovery.
 
 JSON: each data command's output validates against the Pydantic model named
-in its help (the models are defined below, or are the library's own). Text
+in its docstring after a form feed, which `--help` does not print and the
+generated command reference does (the models are defined below, or are the
+library's own); its help ends with one shared footer instead (M16-15). Text
 that came from file names or file bytes and is not valid UTF-8 is written in
 JSON with the scheme `layout` and `snapshot` use (a lone surrogate becomes
 NUL followed by four hex digits); snapshot manifests are written with
@@ -230,13 +232,31 @@ class _WowlabContext(Context):
             _click_error(exc)
 
 
+# The one footer of every command that takes --json (M16-15).
+JSON_FOOTER = "With --json the output is JSON; the wiki's CLI Reference page lists its fields."
+
+
 class _WowlabGroup(TyperGroup):
     """The root command: a click error (an unknown option, an extra argument,
     a bad value), whose message can hold the user's own arguments, is
     printed by `_click_error` instead of click. Subcommands are parsed and
-    run inside the root's `invoke`, so this covers them too."""
+    run inside the root's `invoke`, so this covers them too.
+
+    Every command that takes `--json` ends its help with one shared footer,
+    `JSON_FOOTER`, rather than naming its model there: the model is named
+    after a form feed in the command's docstring, which `--help` does not
+    print and the generated command reference reads (M16-15)."""
 
     context_class = _WowlabContext
+
+    def __init__(self, **attrs: Any) -> None:
+        super().__init__(**attrs)
+        pending: list[Any] = list(self.commands.values())
+        while pending:
+            cmd = pending.pop()
+            pending.extend(getattr(cmd, "commands", {}).values())
+            if any("--json" in getattr(p, "opts", ()) for p in cmd.params):
+                cmd.epilog = JSON_FOOTER
 
     def make_context(
         self,
@@ -259,6 +279,7 @@ class _WowlabGroup(TyperGroup):
 
 app = _WowlabApp(
     name="wowlab",
+    context_settings={"help_option_names": ["-h", "--help"]},
     help="Local-only toolchain over a World of Warcraft install.",
     no_args_is_help=True,
     add_completion=False,
@@ -306,24 +327,40 @@ profile_app = typer.Typer(
 filemap_app = typer.Typer(
     help="The file map: what every path in an install is.", no_args_is_help=True
 )
-app.add_typer(install_app, name="install")
-app.add_typer(filemap_app, name="filemap")
-app.add_typer(sv_app, name="sv")
-app.add_typer(cvar_app, name="cvar")
-app.add_typer(binds_app, name="binds")
-app.add_typer(macros_app, name="macros")
-app.add_typer(addons_app, name="addons")
-app.add_typer(addon_app, name="addon")
-app.add_typer(db2_app, name="db2")
-app.add_typer(snap_app, name="snap")
-app.add_typer(log_app, name="log")
-app.add_typer(profile_app, name="profile")
-app.add_typer(looks_app, name="looks")
+app.add_typer(install_app, name="install", short_help="The install and its flavors.")
+app.add_typer(
+    filemap_app, name="filemap", short_help="The file map: what each path in an install is."
+)
+app.add_typer(sv_app, name="sv", short_help="SavedVariables files: list, dump and merge.")
+app.add_typer(cvar_app, name="cvar", short_help="CVars in Config.wtf and config-cache.wtf.")
+app.add_typer(
+    binds_app, name="binds", short_help="Key bindings, and a coach that reads your combat log."
+)
+app.add_typer(
+    macros_app,
+    name="macros",
+    short_help="Macros in macros-cache.txt, and a check for common mistakes.",
+)
+app.add_typer(addons_app, name="addons", short_help="Folders under Interface/AddOns/.")
+app.add_typer(addon_app, name="addon", short_help="Install or remove the lab-addon.")
+app.add_typer(db2_app, name="db2", short_help="Game data tables from wago.tools, cached by build.")
+app.add_typer(
+    snap_app, name="snap", short_help="Snapshots of your settings, addons and saved data."
+)
+app.add_typer(log_app, name="log", short_help="The combat log (read only).")
+app.add_typer(
+    profile_app, name="profile", short_help="Save and apply named sets of UI settings files."
+)
+app.add_typer(
+    looks_app, name="looks", short_help="Character customization: races, options and saved looks."
+)
 char_app = typer.Typer(
     help="Characters as the lab-addon recorded them in WowLab.lua (read only).",
     no_args_is_help=True,
 )
-app.add_typer(char_app, name="char")
+app.add_typer(
+    char_app, name="char", short_help="Characters as the lab-addon recorded them (read only)."
+)
 
 
 # ─── options ─────────────────────────────────────────────────────────────────
@@ -415,15 +452,93 @@ def _safe(text: str) -> str:
     return _UNSAFE.sub(_escape, text)
 
 
+# Player copy (M16-15, docs/LAB_PLAN.md §18.1 item 4): text output carries
+# no spec vocabulary. The library's notes keep it, because they are also
+# `--json` fields and `--json` does not change, so it is rendered here, as
+# each line is written: the first `[verify]` of one run reads "(not yet
+# confirmed)" and any later one is left out, and a parenthesised pointer
+# into the spec (a ticket id, `LAB_PLAN L7`, a doc path, `GLOSSARY`) is left
+# out. Text written raw (`_say_raw`) is install data and is never changed.
+NOT_CONFIRMED = "(not yet confirmed)"
+_VERIFY = re.compile(
+    r"(?P<lead>[ \t]?)(?:\(\*{0,2}\[verify\]\*{0,2}\)|\*{0,2}\[verify\]\*{0,2})", re.IGNORECASE
+)
+_SPEC_POINTER = re.compile(
+    r"[ \t]?\((?:(?:M1\d-\d+|ADR-\d+)(?:,[^()]*)?|LAB_PLAN L[1-8]|L[1-8]|GLOSSARY|docs/[^()]*"
+    r"|§[^()]*)\)"
+)
+
+
+class _Report:
+    """One run: whether "(not yet confirmed)" was printed yet, and whether
+    it is a `--json` run, whose stderr is left as the library wrote it."""
+
+    confirmed_shown = False
+    json = False
+
+
+def _new_report(json_out: bool = False) -> None:
+    """A new run: its first `[verify]` will read "(not yet confirmed)"."""
+    _Report.confirmed_shown = False
+    _Report.json = json_out
+
+
+def _player_copy(text: str) -> str:
+    """`text` with the spec's markers in player words (see `NOT_CONFIRMED`);
+    as it is in a `--json` run."""
+    if _Report.json:
+        return text
+    if "[" in text:
+
+        def verify(match: re.Match[str]) -> str:
+            if _Report.confirmed_shown:
+                return ""
+            _Report.confirmed_shown = True
+            return match.group("lead") + NOT_CONFIRMED
+
+        text = _VERIFY.sub(verify, text)
+    if "(" in text:
+        text = _SPEC_POINTER.sub("", text)
+    return text
+
+
+# The file map's "read by" names wowlab's modules; text output names what
+# they are (M16-15). `--json` keeps the module names.
+_READER_WORDS = {
+    "casc": "the game-data archive reader",
+    "combatlog": "the combat-log reader",
+    "install": "install discovery",
+    "layout": "the install walk",
+    "luadata": "the SavedVariables reader",
+    "process": "the client check",
+    "snapshot": "snapshots",
+    "toc": "the TOC reader",
+    "wtfconfig": "the WTF settings reader",
+}
+
+
+def _reader_words(module: str) -> str:
+    """A file-map row's "read by" in player words: each module named in
+    backticks becomes what it is, and the project's wave is left out."""
+    words = re.sub(r"`([a-z_]+)`", lambda m: _READER_WORDS.get(m.group(1), m.group(0)), module)
+    return re.sub(r" in Wave \d+", "", words)
+
+
 def _say(text: str = "") -> None:
-    """One line on stdout, escaped by `_safe`."""
+    """One line on stdout, escaped by `_safe`, in player words (`_player_copy`)."""
+    typer.echo(_safe(_player_copy(text)))
+
+
+def _say_raw(text: str = "") -> None:
+    """One line of install data on stdout, escaped by `_safe` and otherwise as read."""
     typer.echo(_safe(text))
 
 
 def _say_err(text: str = "") -> None:
-    """One line on stderr, escaped by `_safe`: `_say` for output that must
-    not mix with JSON on stdout, and for notes the library built."""
-    typer.echo(_safe(text), err=True)
+    """One line on stderr, escaped by `_safe`, in player words: `_say` for
+    output that must not mix with JSON on stdout, and for notes the library
+    built."""
+    typer.echo(_safe(_player_copy(text)), err=True)
 
 
 _FIELD = "{}"
@@ -450,7 +565,7 @@ def _note(message: str, *values: object) -> None:
     for value, part in zip(values, parts[1:], strict=True):
         out.append(_safe(str(value)))
         out.append("\n".join(_safe(line) for line in part.split("\n")))
-    typer.echo("".join(out), err=True)
+    typer.echo(_player_copy("".join(out)), err=True)
 
 
 def _fail(message: str, code: int, exc: BaseException | None = None) -> NoReturn:
@@ -481,7 +596,9 @@ def _click_error(exc: ClickException) -> NoReturn:
         if ctx is not None:
             lines.extend(ctx.get_usage().split("\n"))
             if ctx.command.get_help_option(ctx) is not None:
-                lines.append(f"Try '{ctx.command_path} {ctx.help_option_names[0]}' for help.")
+                names = ctx.help_option_names
+                hint = "--help" if "--help" in names else names[0]
+                lines.append(f"Try '{ctx.command_path} {hint}' for help.")
             lines.append("")
         lines.append(f"Error: {exc.format_message()}")
     for line in lines:
@@ -776,11 +893,55 @@ def _confirm(question: str, yes: bool) -> None:
         raise typer.Exit(EXIT_ERROR)
 
 
+# The parser's refusals in player words (M16-15). The parser's message names
+# the rule it applied (L3, a spec section); `--json` runs keep that message
+# on stderr, and `luadata` itself is unchanged.
+_LUA_REFUSAL_WORDS = {
+    "function definitions are rejected (L3)": "it holds a function, which saved data never "
+    "does (wowlab reads the file as data and never runs it)",
+    "calls are rejected (L3)": "it holds a function call, which saved data never does "
+    "(wowlab reads the file as data and never runs it)",
+    "bare identifiers are not values (L3)": "it holds a name where a value should be, which "
+    "saved data never does",
+    "long comments are rejected (§6.4)": "it holds a long comment (--[[ ]]), which the "
+    "client does not write",
+    "long-bracket strings are rejected (§6.4)": "it holds a long-bracket string ([[ ]]), "
+    "which the client does not write",
+    "a NUL byte is rejected (§4.3)": "it holds a NUL byte, which the client does not write",
+    "nil is legal only as a top-level value (§4.1)": "it holds nil inside a table, which "
+    "the client does not write",
+}
+_UTF8_BOM = b"\xef\xbb\xbf"
+
+
+def _lua_refusal_words(exc: luadata.LuaDataError) -> str:
+    """Why a SavedVariables file was refused, for a player: the two common
+    real causes (a file cut off during a save, and a byte-order mark a text
+    editor added) by name, and the parser's own rules in plain words."""
+    where = f"line {exc.line}, column {exc.column}"
+    if exc.offset == 0 and exc.token and _UTF8_BOM.startswith(exc.token[:3]):
+        why = (
+            "this file starts with a UTF-8 byte-order mark, which the client does not "
+            "write; a text editor may have added it"
+        )
+    elif exc.token == b"":
+        why = (
+            f"the file ends early, at {where}: it may have been cut off by a crash or a "
+            "full disk during a save"
+        )
+    else:
+        message = _LUA_REFUSAL_WORDS.get(exc.message, exc.message)
+        why = f"{message}, at {where}"
+    return f"not SavedVariables data wowlab can read: {why}"
+
+
 def _handled[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
     """Turn the library's typed errors into one line on stderr and an exit code."""
 
     @functools.wraps(fn)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        json_out = bool(kwargs.get("json_out"))
+        _new_report(json_out)
         try:
             return fn(*args, **kwargs)
         except guard.GuardError as exc:
@@ -788,14 +949,17 @@ def _handled[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
         except CliError as exc:
             _fail(str(exc), exc.code, exc)
         except luadata.LuaLimitError as exc:
+            limit = exc.message if json_out else exc.message.replace(" (MAX_COST)", "")
             _fail(
                 f"refused: this file is beyond what the SavedVariables parser will hold "
-                f"({exc.message}); nothing was printed",
+                f"({limit}); nothing was printed",
                 EXIT_ERROR,
                 exc,
             )
         except luadata.LuaDataError as exc:
-            _fail(f"not SavedVariables data the parser accepts: {exc}", EXIT_ERROR, exc)
+            if json_out:
+                _fail(f"not SavedVariables data the parser accepts: {exc}", EXIT_ERROR, exc)
+            _fail(_lua_refusal_words(exc), EXIT_ERROR, exc)
         except (
             install.InstallError,
             snapshot.SnapshotError,
@@ -1531,7 +1695,7 @@ def _no_text(_line: str) -> None:
     """`say` with --json: the first-run text is not printed."""
 
 
-@app.command()
+@app.command(short_help="Check the install, the client and the snapshot store.")
 @_handled
 def doctor(
     root: RootOpt = None,
@@ -1574,7 +1738,7 @@ def doctor(
         ),
     ] = None,
 ) -> None:
-    """Install, flavors, versions, whether the client runs, store health. JSON: DoctorReport.
+    """Install, flavors, versions, whether the client runs, store health.
 
     On a first run (the snapshot store holds no snapshot of this install) it
     also says what wowlab will and will not do, shows what a first snapshot
@@ -1584,8 +1748,10 @@ def doctor(
     store, and ends with how to undo.
 
     With --redact (or --redact-name) the first run is skipped: no intro, no
-    scan, no question, no snapshot, and `first_run` is null; --yes and
-    --flavor are refused with it (M13-09)."""
+    scan, no question, no snapshot; --yes and --flavor are refused with it.
+
+    \f
+    JSON: DoctorReport."""
     if redact or redact_name:
         if yes or flavor is not None:
             raise CliError(
@@ -1642,10 +1808,13 @@ def doctor(
 # ─── install show ────────────────────────────────────────────────────────────
 
 
-@install_app.command("show")
+@install_app.command("show", short_help="The install folder, its flavors and their versions.")
 @_handled
 def install_show(root: RootOpt = None, json_out: JsonOpt = False) -> None:
-    """The install root, its flavors and its .build.info rows. JSON: install.Install."""
+    """The install root, its flavors and its .build.info rows.
+
+    \f
+    JSON: install.Install."""
     try:
         inst, found_by = _discover(root)
     except install.InstallNotFoundError as exc:
@@ -1972,7 +2141,7 @@ def _ancestors(
     ]
 
 
-@app.command()
+@app.command(short_help="What a flavor folder holds: settings, addons, saved data.")
 @_handled
 def tree(
     path: Annotated[
@@ -1996,9 +2165,12 @@ def tree(
     json_out: JsonOpt = False,
 ) -> None:
     """Inventory of a flavor folder: WTF files, SavedVariables, addons, overrides,
-    areas (counted, not listed). JSON: TreeReport. With --install, the install
+    areas (counted, not listed). With --install, the install
     root's own entries (one level) and every flavor folder's inventory; each
-    item names its base and flavor folder. JSON: InstallTreeReport."""
+    item names its base and flavor folder.
+
+    \f
+    JSON: TreeReport; with --install, InstallTreeReport."""
     if whole_install:
         if flavor is not None:
             raise CliError("--install covers every flavor folder; leave out --flavor", EXIT_USAGE)
@@ -2232,7 +2404,7 @@ def _tree_install(path: str | None, explain: bool, root: Path | None, json_out: 
 # ─── filemap gaps ────────────────────────────────────────────────────────────
 
 
-@filemap_app.command("gaps")
+@filemap_app.command("gaps", short_help="Paths no file-map row describes, grouped and ranked.")
 @_handled
 def filemap_gaps(root: RootOpt = None, json_out: JsonOpt = False) -> None:
     """Where the file map is thin: paths with no file-map row, and paths only
@@ -2244,7 +2416,10 @@ def filemap_gaps(root: RootOpt = None, json_out: JsonOpt = False) -> None:
     `Interface/AddOns/<Addon>/`, the rest of `Interface/`) is labelled by that
     row and not looked inside, so an addon unpacked one folder too deep, or
     stray files under Interface/, are not reported; the folders not entered
-    are listed. JSON: gaps.GapReport."""
+    are listed.
+
+    \f
+    JSON: gaps.GapReport."""
     inst, _ = _discover(root)
     report = gaps.find_gaps(inst)
     if json_out:
@@ -2894,7 +3069,7 @@ def _stored_target(target: str | None) -> str | None:
     return longpath.plain_text(target)
 
 
-@app.command()
+@app.command(short_help="What a file is, who writes it, whether wowlab may edit it.")
 @_handled
 def explain(
     path: Annotated[
@@ -2909,6 +3084,8 @@ def explain(
     json_out: JsonOpt = False,
 ) -> None:
     """What a path in the install is, who writes it, whether wowlab may edit it.
+
+    \f
     JSON: ExplainReport."""
     inst, _ = _discover(root)
     path = _plain_arg(path)
@@ -3061,7 +3238,7 @@ def explain(
     _say(f"  written by:   {_plain(e.written_by)}")
     _say(f"  edit:         {report.verdict.words}")
     _say(f"  tier:         {tier_words(e.tier)}")
-    _say(f"  read by:      {e.module}")
+    _say(f"  read by:      {_reader_words(e.module)}")
     _say(f"  file-map row: {e.id} ({e.doc_path})")
     if taken is not None:  # no install-root row matches below `_..._` today
         _say(f"  {taken.name}: {taken.note}")
@@ -3194,7 +3371,7 @@ class SvListReport(_Out):
     notes: list[str]  # the caveats the text output prints
 
 
-@sv_app.command("list")
+@sv_app.command("list", short_help="Every SavedVariables file, account-wide and per character.")
 @_handled
 def sv_list(
     account: AccountOpt = None,
@@ -3203,7 +3380,10 @@ def sv_list(
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
 ) -> None:
-    """Every SavedVariables file, account-wide and per character. JSON: SvListReport."""
+    """Every SavedVariables file, account-wide and per character.
+
+    \f
+    JSON: SvListReport."""
     inst, chosen, lay = _open(root, flavor)
     walk = lay.wtf_walk()
     files = list(walk.saved_variables)
@@ -3518,7 +3698,7 @@ def _sv_file(path: str, root: Path | None, flavor: str | None) -> Path:
     return lay.flavor_path / given
 
 
-@sv_app.command("dump")
+@sv_app.command("dump", short_help="One SavedVariables file as data, value by value.")
 @_handled
 def sv_dump(
     file: Annotated[
@@ -3541,7 +3721,10 @@ def sv_dump(
     json_out: JsonOpt = False,
 ) -> None:
     """A SavedVariables file as data: one `path = value` line per value, in file
-    order. Parsed by `luadata`, never run as code. JSON: SvDumpReport."""
+    order. Read as data, never run as code.
+
+    \f
+    JSON: SvDumpReport."""
     target = _sv_file(file, root, flavor)
     doc = luadata.read(target)
     if path is not None:
@@ -3550,14 +3733,14 @@ def sv_dump(
             _stream_dump(str(target), path, _rows([("path", path, value)]))
         else:
             for p, v in _flatten(path, value):
-                _say(f"{p} = {v}")
+                _say_raw(f"{p} = {v}")
     elif json_out:
         tops = [("variable", a.name, a.value) for a in doc.assignments]
         _stream_dump(str(target), None, _rows(tops))
     else:
         for a in doc.assignments:
             for p, v in _flatten(a.name, a.value):
-                _say(f"{p} = {v}")
+                _say_raw(f"{p} = {v}")
     _note(_SV_TIMING)
 
 
@@ -4084,7 +4267,9 @@ def _print_merge(show: Callable[[str], None], report: SvMergeReport) -> None:
             show(f"    {t.path} = {t.value}")
 
 
-@sv_app.command("merge")
+@sv_app.command(
+    "merge", short_help="Merge one SavedVariables file into a character's (asks first)."
+)
 @_handled
 def sv_merge(
     file: Annotated[
@@ -4156,7 +4341,7 @@ def sv_merge(
 ) -> None:
     """Merge one SavedVariables file into a character's copy, by key path, and
     write it through the write gate (client closed, snapshot first, `wowlab undo`
-    reverses it). Parsed and written as data by `luadata`, never run.
+    reverses it). Read and written as data, never run.
 
     Two-way (--from a character or a snapshot): every key whose values differ is a
     conflict. Three-way (--from SNAPSHOT --base SNAPSHOT): a change on one side is
@@ -4166,7 +4351,10 @@ def sv_merge(
     shared by every character, so merging it from another character is refused
     (exit 2); use --from SNAPSHOT, or --key SRC=DST to copy between the per-character
     keys an addon keeps inside it. Before writing, the --into character's WowLab.lua
-    is checked for a SavedVariables loader failure (exit 3). JSON: SvMergeReport."""
+    is checked for a SavedVariables loader failure (exit 3).
+
+    \f
+    JSON: SvMergeReport."""
     keys = list(key or [])
     try:
         same_path = svmerge.check_keys(keys)
@@ -4450,7 +4638,7 @@ def _no_file(what: str, target: _Target) -> str:
     return f"No {what}{who}."
 
 
-@cvar_app.command("list")
+@cvar_app.command("list", short_help="Every CVar set in one config file.")
 @_handled
 def cvar_list(
     scope: ScopeOpt = "global",
@@ -4460,7 +4648,10 @@ def cvar_list(
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
 ) -> None:
-    """Every SET line of one config file. JSON: CVarListReport."""
+    """Every SET line of one config file.
+
+    \f
+    JSON: CVarListReport."""
     _, _, lay = _open(root, flavor)
     target, rel, doc = _read_config(lay, scope, account, character)
     cvars = (
@@ -4492,7 +4683,7 @@ def cvar_list(
     _say(_WHAT_THE_FILE_SAYS)
 
 
-@cvar_app.command("get")
+@cvar_app.command("get", short_help="One CVar's value in one config file.")
 @_handled
 def cvar_get(
     name: Annotated[str, typer.Argument(help="CVar name; compared without case.")],
@@ -4503,7 +4694,10 @@ def cvar_get(
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
 ) -> None:
-    """One CVar's value in one config file. JSON: CVarGetReport."""
+    """One CVar's value in one config file.
+
+    \f
+    JSON: CVarGetReport."""
     _, _, lay = _open(root, flavor)
     target, rel, doc = _read_config(lay, scope, account, character)
     found = doc.get(name) if doc else None
@@ -4568,7 +4762,7 @@ class BindsReport(_Out):
     notes: list[str]  # the caveats the text output prints
 
 
-@binds_app.command("list")
+@binds_app.command("list", short_help="Key bindings of the account or of one character.")
 @_handled
 def binds_list(
     account: AccountOpt = None,
@@ -4578,6 +4772,8 @@ def binds_list(
     json_out: JsonOpt = False,
 ) -> None:
     """Key bindings of the account, or of one character with --character.
+
+    \f
     JSON: BindsReport."""
     _, _, lay = _open(root, flavor)
     scope: Scope = "character" if character is not None else "account"
@@ -4726,7 +4922,9 @@ LogNameOpt = Annotated[
 ]
 
 
-@binds_app.command("coach")
+@binds_app.command(
+    "coach", short_help="Spells you cast often on costly keys, and keys you never use."
+)
 @_handled
 def binds_coach(
     account: AccountOpt = None,
@@ -4739,9 +4937,11 @@ def binds_coach(
     """Coach your key bindings from a combat log (the newest, or --log): spells you
     cast often on high-cost keys, spells you cast with no key, and keys bound to spells
     you did not cast in that log. Keys reach spells through the lab-addon's record of
-    the action bars and bindings (schema 3) of one character: --character, or the one
+    the action bars and bindings of one character: --character, or the one
     whose WowLab.lua was written last. Combat logging must be on (/combatlog) for a log
     to exist. What a key costs is an opinion, from a table you can override. Reads only.
+
+    \f
     JSON: BindsCoachReport."""
     _, chosen, lay = _open(root, flavor)
     acct = _select_account(lay, account)
@@ -4919,7 +5119,7 @@ class MacrosReport(_Out):
     notes: list[str]  # the caveats the text output prints
 
 
-@macros_app.command("list")
+@macros_app.command("list", short_help="Account macros, or one character's.")
 @_handled
 def macros_list(
     account: AccountOpt = None,
@@ -4928,7 +5128,10 @@ def macros_list(
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
 ) -> None:
-    """Account macros, or one character's with --character. JSON: MacrosReport."""
+    """Account macros, or one character's with --character.
+
+    \f
+    JSON: MacrosReport."""
     _, _, lay = _open(root, flavor)
     scope: Scope = "character" if character is not None else "account"
     target, found = _wtf_file(lay, "macros-cache.txt", scope, account, character)
@@ -5044,7 +5247,7 @@ def _check_record(
         return target.path, None, str(exc)
 
 
-@macros_app.command("check")
+@macros_app.command("check", short_help="Check macros for common mistakes.")
 @_handled
 def macros_check(
     account: AccountOpt = None,
@@ -5056,10 +5259,13 @@ def macros_check(
     """Check the account's macros, and one character's with --character, for
     a body over 255, a spell not in the spellbook, a macro on no action bar,
     duplicate names or bodies, unbalanced [ ] and a #showtooltip (or #show,
-    the same rule assumed, [verify]) that is not the first line. The
-    spellbook and action bars come from the character's lab-addon record
-    (schema 3); without it, or when the record says it dropped values, those
-    two rules say "cannot judge". Reads only. JSON: MacrosCheckReport."""
+    the same rule assumed, not yet confirmed) that is not the first line. The
+    spellbook and action bars come from the character's lab-addon record;
+    without it, or when the record says it dropped values, those
+    two rules say "cannot judge". Reads only.
+
+    \f
+    JSON: MacrosCheckReport."""
     _, chosen, lay = _open(root, flavor)
     acct = _select_account(lay, account)
     scopes: list[macrocheck.MacroScope] = (
@@ -5178,10 +5384,13 @@ class AddonsReport(_Out):
     addons: list[layout.Addon]
 
 
-@addons_app.command("list")
+@addons_app.command("list", short_help="Every folder under Interface/AddOns/ with its TOC files.")
 @_handled
 def addons_list(root: RootOpt = None, flavor: FlavorOpt = None, json_out: JsonOpt = False) -> None:
-    """Every folder under Interface/AddOns/ with its TOC files. JSON: AddonsReport."""
+    """Every folder under Interface/AddOns/ with its TOC files.
+
+    \f
+    JSON: AddonsReport."""
     _, chosen, lay = _open(root, flavor)
     addons = list(lay.addons())
     report = AddonsReport(flavor_folder=chosen.folder, addons=addons)
@@ -5333,7 +5542,7 @@ def _follow_log(
         stream.close()
 
 
-@log_app.command("tail")
+@log_app.command("tail", short_help="The last lines of the newest combat log.")
 @_handled
 def log_tail(
     follow: Annotated[
@@ -5360,6 +5569,8 @@ def log_tail(
     json_out: JsonOpt = False,
 ) -> None:
     """The last lines of the newest combat log (Logs/WoWCombatLog*.txt), tokenized.
+
+    \f
     JSON: LogTailReport; with --follow, one LogTailLine per line of output."""
     _, _, lay = _open(root, flavor)
     logs = _logs_dir(lay)
@@ -5442,7 +5653,7 @@ def _check_table_key(data: gamedata.GameData, table: str, build: str) -> None:
         raise CliError(str(exc), EXIT_USAGE) from exc
 
 
-@db2_app.command("builds")
+@db2_app.command("builds", short_help="Products and versions as wago.tools lists them.")
 @_handled
 def db2_builds(
     product: Annotated[
@@ -5450,7 +5661,10 @@ def db2_builds(
     ] = None,
     json_out: JsonOpt = False,
 ) -> None:
-    """Products and their versions as wago.tools lists them. JSON: BuildsReport."""
+    """Products and their versions as wago.tools lists them.
+
+    \f
+    JSON: BuildsReport."""
     with _open_gamedata() as data:
         listing = data.builds()
     if product is not None:
@@ -5470,7 +5684,7 @@ def db2_builds(
         _say(f"{b.version}{when}")
 
 
-@db2_app.command("fetch")
+@db2_app.command("fetch", short_help="Download one table for one version into the cache.")
 @_handled
 def db2_fetch(
     table: Annotated[str, typer.Argument(help="Table name, e.g. ChrClasses.")],
@@ -5480,7 +5694,10 @@ def db2_fetch(
     json_out: JsonOpt = False,
 ) -> None:
     """Download one table for one version into the cache (never replaced once
-    there). JSON: FetchReport."""
+    there).
+
+    \f
+    JSON: FetchReport."""
     version = _build_for(build, root, flavor)
     with _open_gamedata() as data:
         _check_table_key(data, table, version)
@@ -5497,7 +5714,7 @@ def db2_fetch(
         )
 
 
-@db2_app.command("head")
+@db2_app.command("head", short_help="The first rows of a table, as CSV.")
 @_handled
 def db2_head(
     table: Annotated[str, typer.Argument(help="Table name, e.g. ChrClasses.")],
@@ -5507,7 +5724,10 @@ def db2_head(
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
 ) -> None:
-    """The first rows of a table (fetched first if needed), as CSV. JSON: HeadReport."""
+    """The first rows of a table (fetched first if needed), as CSV.
+
+    \f
+    JSON: HeadReport."""
     version = _build_for(build, root, flavor)
     got: list[dict[str, str]] = []
     with _open_gamedata() as data:
@@ -5592,7 +5812,7 @@ def _client_running(inst: install.Install, chosen: install.Flavor) -> bool | Non
 GC_GRACE_SECONDS = 3600.0
 
 
-@snap_app.command("create")
+@snap_app.command("create", short_help="Snapshot settings, addons and saved data into the store.")
 @_handled
 def snap_create(
     message: Annotated[str, typer.Option("-m", "--message", help="A label for the snapshot.")] = "",
@@ -5610,7 +5830,10 @@ def snap_create(
 ) -> None:
     """Snapshot a flavor's WTF/, Interface/ and Fonts/ into the store (reads the
     install only). Labels starting with `profile:` or `deleted-profile:` are
-    `wowlab profile`'s and are refused. JSON: the manifest (snapshot.Manifest)."""
+    `wowlab profile`'s and are refused.
+
+    \f
+    JSON: the manifest (snapshot.Manifest)."""
     if message.startswith(profiles.RESERVED_LABEL_PREFIXES):
         raise CliError(
             f"labels starting with {' or '.join(profiles.RESERVED_LABEL_PREFIXES)} belong to "
@@ -5650,10 +5873,12 @@ def snap_create(
     _say(f"  {s.files} file(s), {_bytes(s.bytes)}")
 
 
-@snap_app.command("list")
+@snap_app.command("list", short_help="Every snapshot, oldest first.")
 @_handled
 def snap_list(json_out: JsonOpt = False) -> None:
     """Every snapshot, oldest first; names each damaged manifest and then exits 1.
+
+    \f
     JSON: SnapListReport."""
     listing = snapshot.SnapshotStore().list_lenient()
     report = SnapListReport(
@@ -5681,13 +5906,16 @@ def snap_list(json_out: JsonOpt = False) -> None:
         raise typer.Exit(EXIT_ERROR)
 
 
-@snap_app.command("show")
+@snap_app.command("show", short_help="One snapshot and every path in it.")
 @_handled
 def snap_show(
     snapshot_id: Annotated[str, typer.Argument(metavar="ID", help="Id or unique prefix.")],
     json_out: JsonOpt = False,
 ) -> None:
-    """One snapshot and every path in it. JSON: the manifest (snapshot.Manifest)."""
+    """One snapshot and every path in it.
+
+    \f
+    JSON: the manifest (snapshot.Manifest)."""
     manifest = snapshot.SnapshotStore().show(snapshot_id)
     if json_out:
         _emit_manifest(manifest)
@@ -5784,7 +6012,7 @@ def _lua_diff(
     return changes, None
 
 
-@snap_app.command("diff")
+@snap_app.command("diff", short_help="What changed between two snapshots.")
 @_handled
 def snap_diff(
     a: Annotated[str, typer.Argument(metavar="A", help="Older snapshot id or prefix.")],
@@ -5792,7 +6020,10 @@ def snap_diff(
     json_out: JsonOpt = False,
 ) -> None:
     """Files added, removed and changed from A to B; for SavedVariables that
-    parse, which values changed. JSON: DiffReport."""
+    parse, which values changed.
+
+    \f
+    JSON: DiffReport."""
     store = snapshot.SnapshotStore()
     diff = store.diff(a, b)
     a_version = store.show(diff.a).flavor_version
@@ -5840,11 +6071,14 @@ def snap_diff(
         _say(f"  mode     {m.path} ({m.before.mode:o} -> {m.after.mode:o})")
 
 
-@snap_app.command("verify")
+@snap_app.command("verify", short_help="Check every stored file and snapshot.")
 @_handled
 def snap_verify(json_out: JsonOpt = False) -> None:
     """Re-hash every stored object and check every manifest. Exits 1 on any
-    problem. JSON: snapshot.VerifyReport."""
+    problem.
+
+    \f
+    JSON: snapshot.VerifyReport."""
     report = snapshot.SnapshotStore().verify()
     if json_out:
         _emit(report)
@@ -5871,7 +6105,7 @@ def snap_verify(json_out: JsonOpt = False) -> None:
         raise typer.Exit(EXIT_ERROR)
 
 
-@snap_app.command("gc")
+@snap_app.command("gc", short_help="Remove stored files no snapshot needs any more (asks first).")
 @_handled
 def snap_gc(
     dry_run: Annotated[
@@ -5881,14 +6115,17 @@ def snap_gc(
     json_out: JsonOpt = False,
 ) -> None:
     """Remove stored objects that nothing keeps, once they are older than an
-    hour (GC_GRACE_SECONDS, in case a snapshot is being written). Kept: every
+    hour (in case a snapshot is being written). Kept: every
     object a snapshot refers to, and what each committed write left in a
     character's WowLab.lua (the lab-addon's per-character file, in any
     install), which the SavedVariables loader check of `sv merge` compares
     from. Anything else a write left, such as what a `snap restore` or
     profile apply wrote from a snapshot since deleted, is collected. Holds
     the store lock for the whole run, so no transaction or `snap create`
-    runs meanwhile. JSON: snapshot.GcReport."""
+    runs meanwhile.
+
+    \f
+    JSON: snapshot.GcReport."""
     store = snapshot.SnapshotStore()
     if not store.path.is_dir():
         report = snapshot.GcReport(dry_run=True, unreferenced=(), unreferenced_bytes=0, removed=())
@@ -6340,7 +6577,9 @@ def _executable_note(lay: layout.Layout, named: Sequence[str], exc: Exception) -
         return
 
 
-@snap_app.command("restore")
+@snap_app.command(
+    "restore", short_help="Put back files from a snapshot (asks first; undo reverses it)."
+)
 @_handled
 def snap_restore(
     snapshot_id: Annotated[str, typer.Argument(metavar="ID", help="Id or unique prefix.")],
@@ -6374,7 +6613,10 @@ def snap_restore(
     writes one, so reinstall the addon to get it back. Screenshots in a snapshot taken with
     `snap create --screenshots` are never restored (wowlab never writes
     Screenshots/, not even with --paths): a whole restore leaves them in the
-    snapshot, counts them, and restores the rest. JSON: RestoreReport."""
+    snapshot, counts them, and restores the rest.
+
+    \f
+    JSON: RestoreReport."""
     store = snapshot.SnapshotStore()
     manifest = store.show(snapshot_id)
     inst, _ = _discover(root)
@@ -6537,7 +6779,7 @@ def snap_restore(
         say(n)
 
 
-@app.command()
+@app.command(short_help="Undo the last change wowlab made to your game files.")
 @_handled
 def undo(
     yes: YesOpt = False,
@@ -6545,7 +6787,7 @@ def undo(
         str | None,
         typer.Option(
             "--expect",
-            metavar="JOURNAL_ID",
+            metavar="ID",
             help="Undo only if the most recent journal record is this one (undone in an "
             "earlier run's --json): else refused, exit 3, nothing undone. For a plan shown "
             "by one run and confirmed by another.",
@@ -6554,12 +6796,15 @@ def undo(
     json_out: JsonOpt = False,
 ) -> None:
     """Undo the most recent change made through the write gate (a restore, or an
-    earlier undo), from the snapshot taken before it. JSON: UndoReport.
+    earlier undo), from the snapshot taken before it.
 
     The journal is read again after you answer, and the undo is refused if
     its most recent record changed meanwhile. The gate compares again under
-    its store lock (`guard.undo(expected_id=...)`), so a change journaled
-    after that re-read is refused too: only the record shown is undone."""
+    its store lock, so a change journaled
+    after that re-read is refused too: only the record shown is undone.
+
+    \f
+    JSON: UndoReport."""
     records = guard.history()
     if expect is not None and (not records or records[-1].id != expect):
         # The journal only grows, so a mismatch is final; `guard.undo` makes
@@ -6770,7 +7015,7 @@ SubtreeOpt = Annotated[
 NameArg = Annotated[str, typer.Argument(metavar="NAME", help="The profile's name.")]
 
 
-@profile_app.command("save")
+@profile_app.command("save", short_help="Save a profile of your UI settings files.")
 @_handled
 def profile_save(
     name: NameArg,
@@ -6792,7 +7037,10 @@ def profile_save(
     Interface/AddOns, say) is held as the link, not what is behind it, and the
     output says so. Action-bar contents and talents are not in these files (the
     server keeps them; not yet verified on this client), so no profile saves or
-    restores them. JSON: ProfileReport."""
+    restores them.
+
+    \f
+    JSON: ProfileReport."""
     if bool(preset) == bool(subtree):
         raise CliError("give --preset or --subtree (not both)", EXIT_USAGE)
     try:
@@ -6827,10 +7075,12 @@ def profile_save(
         _print_profile(report, saved=True)
 
 
-@profile_app.command("list")
+@profile_app.command("list", short_help="Every profile, oldest first.")
 @_handled
 def profile_list(json_out: JsonOpt = False) -> None:
     """Every profile, oldest first; names each damaged manifest and then exits 1.
+
+    \f
     JSON: ProfileListReport."""
     found = profiles.listing(snapshot.SnapshotStore())
     report = ProfileListReport(
@@ -6853,11 +7103,14 @@ def profile_list(json_out: JsonOpt = False) -> None:
         raise typer.Exit(EXIT_ERROR)
 
 
-@profile_app.command("show")
+@profile_app.command("show", short_help="One profile and every file in it.")
 @_handled
 def profile_show(name: NameArg, json_out: JsonOpt = False) -> None:
     """One profile and every file in it, with the notes `save` gave (a saved
-    subtree that was a link is held as the link). JSON: ProfileReport."""
+    subtree that was a link is held as the link).
+
+    \f
+    JSON: ProfileReport."""
     report = _profile_report(profiles.find(snapshot.SnapshotStore(), name))
     if json_out:
         _emit(report)
@@ -6865,11 +7118,13 @@ def profile_show(name: NameArg, json_out: JsonOpt = False) -> None:
         _print_profile(report, saved=False)
 
 
-@profile_app.command("delete")
+@profile_app.command("delete", short_help="Delete a profile (its snapshot stays).")
 @_handled
 def profile_delete(name: NameArg, json_out: JsonOpt = False) -> None:
     """Delete a profile. Its snapshot stays in the store (snapshots are immutable),
     relabelled `deleted-profile:NAME`. Changes nothing in the install.
+
+    \f
     JSON: ProfileDeleteReport."""
     relabelled = profiles.delete(snapshot.SnapshotStore(), name)
     report = ProfileDeleteReport(name=name, relabelled=[_summary(m) for m in relabelled])
@@ -6907,7 +7162,9 @@ def _print_apply_plan(show: Callable[[str], None], plan: profiles.ApplyPlan) -> 
         show(n)
 
 
-@profile_app.command("apply")
+@profile_app.command(
+    "apply", short_help="Put a profile's files back (asks first; undo reverses it)."
+)
 @_handled
 def profile_apply(
     name: NameArg,
@@ -6937,7 +7194,10 @@ def profile_apply(
     alone, and so is anything the write gate will not write or delete (an
     executable); both are listed. Action-bar contents and talents are not in
     these files (the server keeps them; not yet verified on this client), so no
-    profile saves or restores them. JSON: ProfileApplyReport."""
+    profile saves or restores them.
+
+    \f
+    JSON: ProfileApplyReport."""
     store = snapshot.SnapshotStore()
     profile = profiles.find(store, name)
     manifest = profile.manifest
@@ -7081,7 +7341,7 @@ def _print_left(show: Callable[[str], None], left: Sequence[addoninstall.LeftPat
             show(f"    {lp.path}  ({lp.reason})")
 
 
-@addon_app.command("install")
+@addon_app.command("install", short_help="Copy the lab-addon into the game (asks first).")
 @_handled
 def addon_install(
     name: AddonArg,
@@ -7095,15 +7355,18 @@ def addon_install(
     write gate: the client must be closed, a pre-write snapshot is taken first, and
     `wowlab undo` reverses it.
 
-    The sources are lab/addon/WowLab/ in the wowlab checkout wowlab runs from, else
-    the copy bundled in the installed wowlab package (wowlab_core/_addon/WowLab/),
-    and nothing else; the plan names the folder it read.
+    The files come from the wowlab you are running: its source checkout when
+    it runs from one, else the copy installed with it, and nothing else; the
+    plan names the folder it read.
 
     The TOC's ## Interface: is filled from the flavor's discovered version by the
     patch-number rule; after a client update that changes the first three parts of
     the version, run this again. Only WowLab.toc and the .lua files it lists are
     copied. Over an existing copy only changed files are written, and files not in
-    the sources are deleted. JSON: AddonInstallReport."""
+    the sources are deleted.
+
+    \f
+    JSON: AddonInstallReport."""
     _lab_addon(name)
     inst, _ = _discover(root)
     chosen = _select_flavor(inst, flavor)
@@ -7182,7 +7445,7 @@ def addon_install(
         _say(addoninstall.LOAD_NOTE)
 
 
-@addon_app.command("remove")
+@addon_app.command("remove", short_help="Delete the lab-addon's files from the game (asks first).")
 @_handled
 def addon_remove(
     name: AddonArg,
@@ -7199,7 +7462,10 @@ def addon_remove(
 
     Its SavedVariables (WowLab.lua and WowLab.lua.bak under WTF/, holding WowLabDB
     and each character's WowLabCharDB) are never touched: they are the captures.
-    The folder stays; the gate deletes files, not folders. JSON: AddonRemoveReport."""
+    The folder stays; the gate deletes files, not folders.
+
+    \f
+    JSON: AddonRemoveReport."""
     _lab_addon(name)
     inst, _ = _discover(root)
     chosen = _select_flavor(inst, flavor)
@@ -7301,7 +7567,7 @@ def _local_time(mtime_ns: int) -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S %z", time.localtime(mtime_ns // 1_000_000_000))
 
 
-@char_app.command("show")
+@char_app.command("show", short_help="What the lab-addon recorded for one character.")
 @_handled
 def char_show(
     character: CharacterOpt = None,
@@ -7312,6 +7578,8 @@ def char_show(
 ) -> None:
     """What the lab-addon recorded for one character, from its WowLab.lua.
     Without --character, the character whose WowLab.lua was written last.
+
+    \f
     JSON: CharShowReport."""
     _, chosen, lay = _open(root, flavor)
     acct = _select_account(lay, account)
@@ -7508,7 +7776,7 @@ def _hidden_account(lay: layout.Layout, name: str) -> list[labaddon.NotLookedAt]
     return [n for n in found if n.account is None or n.account.casefold() == name.casefold()]
 
 
-@char_app.command("list")
+@char_app.command("list", short_help="Every character with a lab-addon record.")
 @_handled
 def char_list(
     account: Annotated[
@@ -7523,7 +7791,10 @@ def char_list(
     --account names one: when the file was last written, and its schema, the
     client that saved it and the spec, or why it could not be read. A file or
     place wowlab could not read or look inside is named on stderr and the
-    command then exits 1; the others are still listed. JSON: CharListReport."""
+    command then exits 1; the others are still listed.
+
+    \f
+    JSON: CharListReport."""
     _, chosen, lay = _open(root, flavor)
     acct_folder: str | None = None
     hidden: list[labaddon.NotLookedAt] | None = None
@@ -7711,7 +7982,7 @@ def _num_words(value: labaddon.Number | None) -> str:
     return "not returned" if value is None else str(value)
 
 
-@char_app.command("gear")
+@char_app.command("gear", short_help="One character's equipped gear and item levels.")
 @_handled
 def char_gear(
     character: CharacterOpt = None,
@@ -7725,7 +7996,10 @@ def char_gear(
     Without --character, the character whose WowLab.lua was written last. Names
     are the links' own text; nothing is fetched. Slot names and quality words
     come from a table you can override. A record without gear exits 1. Reads
-    only. JSON: CharGearReport."""
+    only.
+
+    \f
+    JSON: CharGearReport."""
     _, chosen, lay = _open(root, flavor)
     acct = _select_account(lay, account)
     files = [f for f in lay.saved_variables() if f.account == acct.folder and _is_lab_file(f)]
@@ -7805,7 +8079,7 @@ def char_gear(
     if table.source == "default":
         _say(
             f"Slot names and quality words: the shipped default {table.shipped}, community "
-            "documentation for Retail, [verify] on Forever. To use your "
+            "documentation for Retail, not yet confirmed on Forever. To use your "
             f"own, copy it to {table.user_file} (create the folder if it is missing) and edit it."
         )
     else:
@@ -7815,7 +8089,8 @@ def char_gear(
         )
     for note in notes[len(_CHAR_NOTES) :]:
         if note != _gear_table_note(table):
-            _say(note)
+            # The marker stands for an adjective here; said in words (M16-15).
+            _say(note.replace("[verify] on Forever", "not yet confirmed on Forever"))
     for note in _CHAR_NOTES:
         _say(note)
 
@@ -7894,7 +8169,7 @@ def _char_binds_file(
     )
 
 
-@char_app.command("binds")
+@char_app.command("binds", short_help="What each key does for one character.")
 @_handled
 def char_binds(
     character: CharacterOpt = None,
@@ -7904,12 +8179,15 @@ def char_binds(
     json_out: JsonOpt = False,
 ) -> None:
     """What each key does for one character: the account and character
-    bindings-cache.wtf and the keys the lab-addon recorded (schema 3), each key
+    bindings-cache.wtf and the keys the lab-addon recorded, each key
     with the action slot its command presses (the main bar at page 1, the page
     shown with no form, stance or stealth active) and what the record says
     that slot holds, where the files and the record
     disagree, and the filled slots no key reaches. Without --character, the
-    character whose WowLab.lua was written last. Reads only. JSON: CharBindsReport."""
+    character whose WowLab.lua was written last. Reads only.
+
+    \f
+    JSON: CharBindsReport."""
     _, chosen, lay = _open(root, flavor)
     acct = _select_account(lay, account)
     target, how, record, record_error = _coach_record(lay, acct, character)
@@ -8151,7 +8429,7 @@ def _char_macros_file(
     )
 
 
-@char_app.command("macros")
+@char_app.command("macros", short_help="One character's macros, their action slots and keys.")
 @_handled
 def char_macros(
     character: CharacterOpt = None,
@@ -8164,9 +8442,12 @@ def char_macros(
     with the action slots it may sit at and the keys that reach them, and
     what macros check finds in it. Which file macro a macro slot names is
     not known, so a slot is only ever "may sit at slot n (unconfirmed)".
-    The slots and keys come from the lab-addon record (schema 3). Without
+    The slots and keys come from the lab-addon record. Without
     --character, the character whose WowLab.lua was written last. Reads
-    only. JSON: CharMacrosReport."""
+    only.
+
+    \f
+    JSON: CharMacrosReport."""
     _, chosen, lay = _open(root, flavor)
     acct = _select_account(lay, account)
     target, how, record, record_error = _coach_record(lay, acct, character)
@@ -8539,8 +8820,7 @@ SexOpt = Annotated[
     str | None,
     typer.Option(
         "--sex",
-        help="Body type as the tables number it (ChrRaceXChrModel.Sex): 0 or 1; "
-        "'male' and 'female' are read as 0 and 1.",
+        help="Body type as the tables number it: 0 or 1; 'male' and 'female' are read as 0 and 1.",
     ),
 ]
 ClassOpt = Annotated[
@@ -8903,7 +9183,7 @@ def _print_look(report: LookReport, *, heading: str) -> None:
         _say(remark)
 
 
-@looks_app.command("races")
+@looks_app.command("races", short_help="Playable races and their body types.")
 @_handled
 def looks_races(
     build: LooksBuildOpt = None,
@@ -8912,6 +9192,8 @@ def looks_races(
     json_out: JsonOpt = False,
 ) -> None:
     """Races the build's tables flag as playable, with their body types.
+
+    \f
     JSON: LooksRacesReport."""
     with _open_gamedata() as data:
         version, remarks = _looks_build(data, build, root, flavor)
@@ -9038,7 +9320,7 @@ def _options_for_body(
     )
 
 
-@looks_app.command("options")
+@looks_app.command("options", short_help="A race's customization options and choices.")
 @_handled
 def looks_options(
     race: Annotated[str, typer.Argument(help="Race id or name, as `looks races` lists it.")],
@@ -9051,7 +9333,10 @@ def looks_options(
 ) -> None:
     """A race's options and choices per body type (every body type unless --sex),
     for a class when --class is given, with what the tables say about each
-    choice: refusals, "needs <unlock>" and other notes. JSON: LooksOptionsReport."""
+    choice: refusals, "needs <unlock>" and other notes.
+
+    \f
+    JSON: LooksOptionsReport."""
     body_type = _parse_sex(sex)
     with _open_gamedata() as data:
         version, remarks = _looks_build(data, build, root, flavor)
@@ -9107,7 +9392,7 @@ def looks_options(
         _say(n)
 
 
-@looks_app.command("save")
+@looks_app.command("save", short_help="Check a look against the tables and save it.")
 @_handled
 def looks_save(
     name: LookNameArg,
@@ -9116,7 +9401,7 @@ def looks_save(
         str,
         typer.Option(
             "--sex",
-            help="Body type (ChrRaceXChrModel.Sex): 0 or 1; 'male' and 'female' read as 0 and 1.",
+            help="Body type: 0 or 1; 'male' and 'female' read as 0 and 1.",
         ),
     ],
     choice: Annotated[
@@ -9138,7 +9423,10 @@ def looks_save(
     """Check a look against the build's tables and save it under the user data
     directory (never in an install). A look the tables refuse is not saved
     (exit 1); notes ("needs <unlock>", "unknown to build ...") are shown and do
-    not stop the save. JSON: LookReport."""
+    not stop the save.
+
+    \f
+    JSON: LookReport."""
     try:
         lookstore.check_name(name)
     except lookstore.LookStoreError as exc:
@@ -9174,7 +9462,7 @@ def looks_save(
         _print_look(report, heading="Saved look")
 
 
-@looks_app.command("show")
+@looks_app.command("show", short_help="One saved look, or every saved look, with its verdict.")
 @_handled
 def looks_show(
     name: Annotated[
@@ -9188,6 +9476,8 @@ def looks_show(
 ) -> None:
     """One saved look checked against the build's tables, or every saved look
     with its verdict; names each damaged file and then exits 1.
+
+    \f
     JSON: LookReport with NAME, else LooksListReport."""
     store = lookstore.LookStore()
     try:
@@ -9266,7 +9556,7 @@ def looks_show(
         raise typer.Exit(EXIT_ERROR)
 
 
-@looks_app.command("compare")
+@looks_app.command("compare", short_help="Two saved looks side by side.")
 @_handled
 def looks_compare(
     a: Annotated[str, typer.Argument(metavar="A", help="A saved look.")],
@@ -9277,6 +9567,8 @@ def looks_compare(
     json_out: JsonOpt = False,
 ) -> None:
     """Two saved looks side by side, both checked against one build's tables.
+
+    \f
     JSON: LooksCompareReport."""
     store = lookstore.LookStore()
     try:
@@ -9464,7 +9756,7 @@ def _import_remarks(
     return remarks
 
 
-@looks_app.command("import-char")
+@looks_app.command("import-char", short_help="Save a character's recorded customization as a look.")
 @_handled
 def looks_import_char(
     name: LookNameArg,
@@ -9485,7 +9777,10 @@ def looks_import_char(
     only); without --character, the one written last. A character with no
     recorded visit gets the addon's reason (exit 1). The look is checked like
     `looks save`: one the tables refuse is not saved (exit 1); an id the
-    tables lack is noted "(possibly a hotfix)". JSON: LooksImportReport."""
+    tables lack is noted "(possibly a hotfix)".
+
+    \f
+    JSON: LooksImportReport."""
     try:
         lookstore.check_name(name)
     except lookstore.LookStoreError as exc:
@@ -9806,7 +10101,7 @@ def _looks_page_data(
     )
 
 
-@looks_app.command("page")
+@looks_app.command("page", short_help="Write an HTML page to browse the tables and saved looks.")
 @_handled
 def looks_page(
     out: Annotated[
@@ -9826,7 +10121,10 @@ def looks_page(
     races, body types, classes, options and choices of the build's tables, with
     what the tables say about each choice, and to view the saved looks checked
     against that build. Never written into an install; names each damaged look
-    file and then exits 1, as `looks show` does. JSON: LooksPageReport."""
+    file and then exits 1, as `looks show` does.
+
+    \f
+    JSON: LooksPageReport."""
     target = out if out is not None else lookspage.default_page_path()
     try:
         # Before any work: a refused --out costs nothing and writes nothing.
@@ -9883,9 +10181,9 @@ def looks_page(
 _BROWSER_WAIT_S = 1.0
 
 
-@app.command("ui")
+@app.command("ui", short_help="Open the local UI in your browser.")
 def ui_command() -> None:
-    """Open the local UI in your browser and serve it until Ctrl-C (ADR-0029).
+    """Open the local UI in your browser and serve it until Ctrl-C.
 
     The server listens on 127.0.0.1 only, at a port the system picks, and
     answers only requests that carry the random token in the URL it opens.
@@ -9974,4 +10272,5 @@ def main(
     ] = False,
 ) -> None:
     """Local-only toolchain over a World of Warcraft install."""
+    _new_report()
     ctx.with_resource(_library_log_on_stderr())

@@ -24,9 +24,9 @@ Gear (slots 1 to 19 as the client numbers them, 9 filled):
   slot 19 Tabard     empty
 Averages (GetAverageItemLevel, as the client returns them): equipped 3.3125, overall 3.3125, pvp 3.3125
 Item levels from C_Item.GetCurrentItemLevel.
-Slot names and quality words: the shipped default <shipped gear_slots.toml>, community documentation for Retail, [verify] on Forever. To use your own, copy it to <user gear_slots.toml> (create the folder if it is missing) and edit it.
-Item names are each link's bracketed text; nothing is fetched. The link fields past the item id (enchant, gems, suffix, specialization, bonus ids) are named as community documentation names them [verify]; "upgrade" (field 10 and the modifier pairs) is the older documentation's name for those fields, and the upgrade track itself is carried in bonus ids.
+Slot names and quality words: the shipped default <shipped gear_slots.toml>, community documentation for Retail, not yet confirmed on Forever. To use your own, copy it to <user gear_slots.toml> (create the folder if it is missing) and edit it.
+Item names are each link's bracketed text; nothing is fetched. The link fields past the item id (enchant, gems, suffix, specialization, bonus ids) are named as community documentation names them (not yet confirmed); "upgrade" (field 10 and the modifier pairs) is the older documentation's name for those fields, and the upgrade track itself is carried in bonus ids.
 Item levels and the averages are the client's figures as recorded, never derived from bonus ids. The averages are GetAverageItemLevel's returns, not the mean of the item levels listed, and how the client computes them is not known.
-overall: on Retail, the best items owned, bags included (community documentation, [verify] on Forever).
+overall: on Retail, the best items owned, bags included (community documentation, not yet confirmed on Forever).
 WowLab.lua is written at logout, /reload or a clean exit (a crash writes nothing): this is the character as of that save, not the session in progress.
 The addon records no time; the time shown is the file's modification time.

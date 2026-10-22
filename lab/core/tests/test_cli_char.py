@@ -292,7 +292,7 @@ def test_constructed_schema_3_capture_is_shown(flavor: Path) -> None:
         "  left out: 1 command of those listed not a plain upper-case name (text after the name, "
         "as in MACRO x, or other characters; never asked about), 0 keys not printable ASCII",
         "  a key bound straight to a spell, macro, item or click may not be listed by GetBinding "
-        "at all [verify]",
+        "at all (not yet confirmed)",  # the run's first [verify] (M16-15)
         "  probes: none recorded",
     ], added
     assert [line for line in after.splitlines() if line in before.splitlines()] == (

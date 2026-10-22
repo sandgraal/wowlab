@@ -33,6 +33,7 @@ from typing import Any
 
 import platformdirs
 import pytest
+from _player_copy import unmarked
 from typer.testing import CliRunner
 
 from wowlab_core import cli, install, keymap, labaddon, macroplace
@@ -53,8 +54,9 @@ SCHEMA_1_CHARACTER = "1/Labchard-Labrealmg"  # a schema-1 WowLab.lua (M11-03), n
 MAY_BE = (
     "it may be an item, a pet, mount or toy spell, or a spell learned after the record was saved"
 )
-# "confirmed" as a word of its own, not inside "unconfirmed".
-CONFIRMED = re.compile(r"(?<![A-Za-z])confirmed")
+# "confirmed" as a word of its own, not inside "unconfirmed", and not the
+# "(not yet confirmed)" that text output prints for a [verify] (M16-15).
+CONFIRMED = re.compile(r"(?<![A-Za-z])(?<!not yet )confirmed")
 
 runner = CliRunner()
 
@@ -239,7 +241,7 @@ def test_char_macros_text_on_the_fixture_install_cross_capture(flavor: Path) -> 
         f"spellbook record ({MAY_BE})"
     )
     assert "Cannot judge for any macro: 1" in lines
-    assert macroplace.CANDIDATE_RULE in lines
+    assert unmarked(macroplace.CANDIDATE_RULE) in [unmarked(line) for line in lines]
 
 
 def test_char_macros_without_character_takes_the_latest_record_cross_capture_constructed(
@@ -459,10 +461,10 @@ def test_no_bindings_record_qualifies_no_key_reaches_it_constructed(
     assert rep.keys_incomplete.startswith("there is no bindings record")
     assert any("keys not listed may still be bound" in n for n in rep.notes)
     text = ok("char", "macros", "--character", CHARACTER).stdout
-    assert (
+    assert unmarked(
         "      no key reaches it on the page its bar shows by default, among the keys read "
         f"({rep.keys_incomplete})\n"
-    ) in text
+    ) in unmarked(text)
 
 
 def _folds_case(where: Path) -> bool:
