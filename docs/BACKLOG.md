@@ -1432,7 +1432,7 @@ These are the `Proposed` amendments of 2026-10-21 to ADR-0013 (the proposal vali
 - a pre-write snapshot of the target;
 - the allowlist and link refusals applied to the target;
 - the client check applied to the target: a client running from the target root refuses the write, whatever the source install's state (L2);
-- the target install's lock is taken, and a target root whose store overlaps the source's is refused;
+- the target install's lock is taken, and a target root that overlaps the snapshot store, in either direction, is refused (§6.10, L1; wording clarified 2026-10-22 after review);
 - `undo` of a restore into another target.
 
 Inputs are constructed and labelled. No flavor name appears in library-facing assertions beyond the test data (L6).
@@ -2023,6 +2023,29 @@ Built only if M16-05's macro-place answer cannot place macros without a join key
 - The reader matches hashes offline against `macros-cache.txt`.
 
 **Acceptance:** static Lua tests and selene pass; Python tests cover salt creation, reuse across reinstall, removal, and the export exclusion; one owner capture with provenance rows; `make ci` green. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer` (the salt's life cycle, and that pre-write snapshots in the local store may hold it). User-facing: `addon install lab` and `addon remove lab` write and remove one more file; `snap export`'s output names the exclusion.
+
+---
+
+## [ ] M16-49T — [TEST] `luadata.read` and the `wtfconfig` readers refuse a parent-directory link out of the install
+**Size:** S · **Depends on:** M16-26 · **Sources:** the M16-26T security review (2026-10-22)
+
+Found in review on 2026-10-22, and not in M16-26's scope. `O_NOFOLLOW` checks only the last part of a path, and the readers take no install root. So `WTF -> ../Elsewhere` reads `Elsewhere/Config.wtf` while `tree` reports the `WTF` entry as "link, not followed". Strict-xfail graders, constructed and labelled, for `luadata.read` and each `wtfconfig` `read_*`, with the install root given:
+- a link in a parent directory that points out of the install is refused;
+- a link in a parent directory that stays inside the install is treated the same way `tree` treats it;
+- a regular path still reads byte for byte.
+
+They are skipped on Windows, or graded there through the junction monkeypatch of `test_snapshot_junctions.py`.
+
+**Acceptance:** the graders fail as expected on `main`, and `make test-parser` and `make ci` are green. Written by `test-writer`, and reviewed by `code-reviewer` and `security-reviewer`.
+
+---
+
+## [ ] M16-49 — [IMPL] The readers open from the install root, one component at a time
+**Size:** M · **Depends on:** M16-49T
+
+The readers' callers already know the install. Each reader takes the install root and opens component by component with `dir_fd` and `O_NOFOLLOW`; the M11-11 helper already accepts `dir_fd`. Callers without an install root (`sv dump` of a path outside any install) keep today's final-component check, and say so in their output.
+
+**Acceptance:** M16-49T's graders are activated by marker deletion only; the full suite is green (`luadata.py`); `make test-parser` is green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: a file reached through a linked folder is refused, with the folder named, and the wiki's safety page says so.
 
 ---
 
