@@ -467,7 +467,7 @@ def test_out_inside_an_install_is_refused_constructed(
     assert "refused:" in result.stderr
     assert "inside a game install" in result.stderr
     assert f"holds {marker}" in result.stderr
-    assert "generated pages never live in an install (L1)" in result.stderr
+    assert "generated pages never live in an install; nothing was written" in result.stderr
     assert "nothing was written" in result.stderr
     assert _tree(root) == before
     assert source.asked == []  # refused before any work

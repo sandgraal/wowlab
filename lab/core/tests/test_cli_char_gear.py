@@ -310,7 +310,7 @@ def test_char_gear_text_carries_the_tables_verify_and_the_overall_note(
     """Review round 1: the text says what the JSON notes say."""
     _install("macos-70425", tmp_path, monkeypatch)
     out = ok("char", "gear").stdout
-    assert "community documentation for Retail, [verify] on Forever" in out
+    assert "community documentation for Retail, not yet confirmed on Forever" in out
     assert "overall: on Retail, the best items owned, bags included" in out
     assert "from memory" not in out
     report = cli.CharGearReport.model_validate_json(ok("char", "gear", "--json").stdout)

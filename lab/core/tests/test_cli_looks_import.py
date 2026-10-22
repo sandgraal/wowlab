@@ -33,6 +33,7 @@ from typing import Any
 
 import platformdirs
 import pytest
+from _player_copy import unmarked
 from test_cli_looks import BUILD, EXPORTED_ONLY, HOTFIX_HINT, _Source
 from typer.testing import CliRunner
 
@@ -348,7 +349,7 @@ def test_show_and_compare_of_an_imported_look(visited: Path) -> None:
     ]
     assert shown.refused is False
     text = ok("looks", "show", "undead", "--build", BUILD).stdout
-    assert cli._IMPORTED_REMARK.format(name="undead") in text
+    assert unmarked(cli._IMPORTED_REMARK.format(name="undead")) in unmarked(text)
     assert "current" not in text.casefold()
     assert _import(visited, "undead2").exit_code == 0
     compared = cli.LooksCompareReport.model_validate_json(
@@ -358,15 +359,15 @@ def test_show_and_compare_of_an_imported_look(visited: Path) -> None:
     assert compared.different == []
     # M3: the compare text says which look was imported
     both = ok("looks", "compare", "undead", "undead2", "--build", BUILD).stdout
-    assert cli._IMPORTED_REMARK.format(name="undead") in both
-    assert cli._IMPORTED_REMARK.format(name="undead2") in both
+    assert unmarked(cli._IMPORTED_REMARK.format(name="undead")) in unmarked(both)
+    assert unmarked(cli._IMPORTED_REMARK.format(name="undead2")) in unmarked(both)
 
 
 def test_compare_text_names_only_the_imported_look(visited: Path) -> None:
     assert _import(visited, "undead").exit_code == 0
     assert run("looks", "save", "t", "--race", "5", "--sex", "0", "--build", BUILD).exit_code == 0
     both = ok("looks", "compare", "undead", "t", "--build", BUILD).stdout
-    assert cli._IMPORTED_REMARK.format(name="undead") in both
+    assert unmarked(cli._IMPORTED_REMARK.format(name="undead")) in unmarked(both)
     assert "Look t was imported" not in both
 
 
@@ -525,7 +526,7 @@ def test_origin_takes_only_the_two_values_constructed() -> None:
 def test_char_show_says_an_open_record_may_miss_an_applied_change(visited: Path) -> None:
     """M1: `char show` on the real record carries the open caveat."""
     text = ok("char", "show", "--root", str(visited)).stdout
-    assert f"  {labaddon.OPEN_RECORD_NOTE}\n" in text
+    assert unmarked(f"  {labaddon.OPEN_RECORD_NOTE}\n") in unmarked(text)
     assert labaddon.OPEN_RECORD_NOTE == (
         "Recorded when the barber shop opened: a change applied during that visit may not be "
         "in it [verify]."

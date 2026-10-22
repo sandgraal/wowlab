@@ -24,6 +24,7 @@ from typing import Any
 
 import platformdirs
 import pytest
+from _player_copy import unmarked
 from typer.testing import CliRunner
 
 from wowlab_core import cli, install
@@ -137,7 +138,7 @@ def test_char_binds_text_has_the_table_unreached_slots_and_counts_cross_capture(
     record: Path,
 ) -> None:
     text = ok("char", "binds", "--character", CHARACTER).stdout
-    lines = text.splitlines()
+    lines = unmarked(text).splitlines()  # M16-15: the run's markers, as `--json` has them
     assert lines[0] == f"Character: 1/{CHARACTER} in account {ACCOUNT}"
     assert lines[1].startswith(f"Record: {RECORD} (schema 3), written ")
     assert lines[2].startswith(f"Account bindings: {ACCOUNT_FILE} (3 bind lines), written ")
@@ -165,15 +166,21 @@ def test_char_binds_text_has_the_table_unreached_slots_and_counts_cross_capture(
         "(Racial, spell 7744)  (account file and record agree)"
     ) in lines
     assert (
-        "  Only in the record, no file line for the key: the file may hold only the changes "
-        "from the client's defaults, or may not have been rewritten since the key was set "
-        "[verify]."
-    ) in lines
+        unmarked(
+            "  Only in the record, no file line for the key: the file may hold only the changes "
+            "from the client's defaults, or may not have been rewritten since the key was set "
+            "[verify]."
+        )
+        in lines
+    )
     assert "Filled slots no key reaches on the page its bar shows by default: 11" in lines
     assert (
-        "  slot  64  runs macro 149 (a macro index [verify]); the record keeps no macro name or "
-        "body  (bottom left bar button 4, page 6)"
-    ) in lines
+        unmarked(
+            "  slot  64  runs macro 149 (a macro index [verify]); the record keeps no macro name or "
+            "body  (bottom left bar button 4, page 6)"
+        )
+        in lines
+    )
     assert (
         "Left out of the bindings record, counted with no list: 1 command not named in plain "
         "upper case (a key bound straight to a spell, macro, item or click may be one), and "
