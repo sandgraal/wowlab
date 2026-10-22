@@ -41,7 +41,7 @@ in this repository.
 make setup                                   # once
 git checkout -B m10/08-gamedata origin/main
 # … build …
-make ci                                      # must be green
+make ci                                      # what CI runs; agents verify lighter (.claude/agents/implementer.md)
 git commit -m "feat(gamedata): cache tables by build, never overwrite (M10-08)"
 gh pr create --draft --base main             # template asks for proof per criterion
 ```

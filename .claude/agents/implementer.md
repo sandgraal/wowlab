@@ -69,10 +69,53 @@ return facts in the report format below, not prose.
 
 ## Verify before reporting
 
-Run and paste the tail of the real output of `make ci` (lint, tests, parser
-suite, hook tests). If the ticket has its own acceptance command (a timing
-run, a transcript, a round-trip loop), run that too and paste it. Any
-failure: fix it or report it; never hide it.
+Run these and paste the tail of the real output of each. The PR's CI is the
+proof of the full suite (owner decision, 2026-10-19; `docs/AGENT_WORKFLOW.md`,
+"Local verification"), so the full local run is kept for the cases below.
+This section holds the one copy of the lists; `/ship`, the PR template and
+the workflow document point here.
+
+1. `make lint`, and `make lint-lua` when you touched `lab/addon`.
+2. The tests your diff touches, in one process, no `-n`, with the Bash
+   tool's timeout set: `uv run pytest <files> -q -p no:cacheprovider` (the
+   bare `uv run pytest`, which the permission list allows; never commit a
+   changed `uv.lock`). Pick the files like this:
+   - every test file you added or changed;
+   - the tests that import each source module you changed:
+     `grep -rlE 'wowlab_core(\.<mod>\b| import .*\b<mod>\b)' lab/core/tests tests`
+     (not the bare module name, which matches most of the suite), and
+     always `lab/core/tests/test_<mod>*.py`, the module's own tests. If the
+     import grep selects more than 40 files, run your own test files, each
+     module's own tests and the always-run set below, leave the rest to CI,
+     and say so in the report. The grep does not see a test that reaches a
+     module only through a test helper (`import test_ui_...`) or through a
+     multi-line `from wowlab_core import (`; CI runs those;
+   - always, for every diff: `tests/repo` and `lab/core/tests/test_write_sites.py`
+     (the repo-wide write-site, no-FFI and every-file scans; 294 tests, about
+     30 seconds);
+   - `make test-parser` when the diff touches `lab/core/tests/fixtures/**`;
+   - `tests/scripts/test_release.py` when it touches `.github/rulesets/` or
+     `.github/release-notes.md`;
+   - `lab/core/tests/test_filemap.py` when it touches `docs/LAB_FILE_MAP.md`
+     or `filemap.toml`; `tests/addon` when it touches `lab/addon/` or
+     `docs/LAB_*.md`; `tests/scripts/test_readme.py` when it touches
+     `README.md`. CI skips a diff that is only `docs/**/*.md` (`ci.yml`
+     treats it as docs-only), so for such a diff these runs are the only
+     proof there is.
+3. `make test-fast`, once the target exists (`make -n test-fast` succeeds;
+   it arrives with M13-81). Until then, skip it.
+
+Run the full `make ci` instead when your diff touches `guard.py` or
+`luadata.py` (AGENTS.md: the full suite and `make test-parser`), any format
+parser (`make test-parser`), `redact.py` or `scripts/lab_capture.py` (the
+scrub's identifier patterns), `conftest.py`, the root `pyproject.toml`,
+`Makefile` or `uv.lock`, `tests/harness` or `.claude/hooks` (`make
+hooks-test`), or anything under `.github/workflows/`. When unsure, run it. A
+run that hangs is stopped by the timeout, never with `pkill`.
+
+If the ticket has its own acceptance command (a timing run, a transcript, a
+round-trip loop), run that too and paste it. Any failure: fix it or report
+it; never hide it.
 
 Then `git push -u origin <branch>` and verify it landed:
 `git ls-remote origin <branch>` must show your HEAD sha (this volume has
@@ -86,6 +129,7 @@ branch: m10/08-gamedata-client   pushed: <sha>
 acceptance:
   - <criterion> → <command> → <one-line result>
 files: <list>
+local verification: <the commands run and the test files chosen, or make ci>
 graders activated: <files, or n/a>
 new runtime dependencies: <name + why the standard library does not do, or none>
 user-facing changes: <commands/options/output shapes/pages added or changed + wiki pages affected, or none>

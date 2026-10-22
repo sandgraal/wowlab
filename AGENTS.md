@@ -122,7 +122,8 @@ and no fix or re-check (owner decision, 2026-10-17).
   once; holding one back needs a named file or interface collision.
 - Test-writer / implementer separation is mandatory for the two load-bearing
   files, which rewrite the owner's data: `luadata.py` and `guard.py` under
-  `lab/core/src/wowlab_core/` (ADR-0013): a `[TEST]` ticket lands graders
+  `lab/core/src/wowlab_core/` (ADR-0013), joined by `proposal.py` when §16.5
+  F3 creates it (ADR-0013 amendment, accepted 2026-10-21): a `[TEST]` ticket lands graders
   before the `[IMPL]` ticket creates the file or changes what it does. The
   session that writes the code never writes, edits, or weakens the tests
   that grade it. *History:* the owner widened the set to `svmerge.py` and
