@@ -66,6 +66,8 @@ NEWER_NS = 1_760_000_000_000_000_000
 OLDER_NS = 1_750_000_000_000_000_000
 # The four read commands the tab runs (M14-09 added the last two).
 READS = {("char", "list"), ("char", "gear"), ("char", "binds"), ("char", "macros")}
+# The picker asks for no record (M13-72): `char list --json --brief`.
+LIST_PARAMS = {"brief": True}
 PICK_READS = (["char", "gear"], ["char", "binds"], ["char", "macros"])
 
 
@@ -233,8 +235,8 @@ def _scenario(
     not held: its tree says so and the tab is unaffected."""
     runs = []
     if listed:
-        stdout = _stdout(server, ["char", "list"], {})
-        runs.append({"command": ["char", "list"], "params": {}, "stdout": stdout})
+        stdout = _stdout(server, ["char", "list"], LIST_PARAMS)
+        runs.append({"command": ["char", "list"], "params": LIST_PARAMS, "stdout": stdout})
     for character in gear_for:
         params = _gear_params(character)
         for command in PICK_READS:
@@ -323,7 +325,7 @@ def test_the_picker_lists_the_characters_latest_written_first(
     assert not any(o["disabled"] for o in view["options"])
     # The first (latest) is read at once, with the folders the list gave.
     assert [r["body"] for r in view["newRequests"]] == [
-        {"command": ["char", "list"], "params": {}},
+        {"command": ["char", "list"], "params": LIST_PARAMS},
         *_pick_requests(NEWER),
     ]
     assert view["status"] == "" and not view["statusError"]
@@ -420,6 +422,8 @@ def test_the_tab_runs_only_the_four_char_reads(server: Any, timed: Path, tmp_pat
         assert tuple(body["command"]) in READS, body
         if body["command"] != ["char", "list"]:
             assert body["params"] in (_gear_params(NEWER), _gear_params(OLDER)), body
+        else:
+            assert body["params"] == LIST_PARAMS, body
     # `char list` is read once, however often the tab is used.
     assert sum(1 for b in asked if b["command"] == ["char", "list"]) == 1
     # Every request the page made in the whole run is one the page makes
@@ -482,10 +486,10 @@ def test_a_list_with_an_unreadable_file_lists_the_rest_constructed(
     broken = _lab_file(timed, NEWER)
     broken.write_bytes(b"WowLabCharDB = function() end\n")
     os.utime(broken, ns=(NEWER_NS, NEWER_NS))
-    reply = _run(server, ["char", "list"], {}).json()
+    reply = _run(server, ["char", "list"], LIST_PARAMS).json()
     assert reply["exit_code"] == 1 and reply["stdout"], reply["stderr"]
     scenario = _scenario(server, [{"char_tab": True}], [OLDER], listed=False)
-    scenario["held"].append({"command": ["char", "list"], "params": {}, "reply": reply})
+    scenario["held"].append({"command": ["char", "list"], "params": LIST_PARAMS, "reply": reply})
     out = _drive(tmp_path / "node", scenario)
     view = out["steps"][0]
     bad, good = view["options"]
@@ -505,7 +509,7 @@ def test_a_failed_list_shows_the_cli_text_and_is_asked_again_constructed(
     scenario = _scenario(server, [{"char_tab": True}, {"char_tab": True}], [], listed=False)
     failed = {"exit_code": 2, "timed_out": False, "truncated": False, "stdout": "",
               "stderr": "wowlab: m14-08 constructed failure\n"}  # fmt: skip
-    scenario["held"].append({"command": ["char", "list"], "params": {}, "reply": failed})
+    scenario["held"].append({"command": ["char", "list"], "params": LIST_PARAMS, "reply": failed})
     out = _drive(tmp_path / "node", scenario)
     for view in out["steps"]:
         assert view["status"] == "wowlab: m14-08 constructed failure" and view["statusError"]
@@ -555,33 +559,79 @@ def _templates() -> dict[str, str]:
     }
 
 
-def test_the_templates_hold_no_slot_name_and_no_colour_code() -> None:
-    """§16.3: the JavaScript holds no slot table and no quality table; the
-    names and colours come from the model and the server's rules."""
+# The one stylesheet value that is also a quality colour (Common's white):
+# the page's field background. Only this declaration is exempt (M13-72).
+_FIELD_WHITE = "--field: #ffffff;"
+
+
+def _table_leaks(templates: dict[str, str]) -> list[tuple[str, str]]:
+    """What of `gear_slots.toml` the templates hold, as (file, what) pairs:
+    a slot name, a quality code, a quality colour (in the stylesheet too,
+    `_FIELD_WHITE` excepted once), a quality word in the script (as written)
+    or the stylesheet (any case, its words joined by a space, `-` or `_`),
+    or a `.colour-` rule."""
     shipped = _shipped()
     names = sorted(set(shipped["slots"].values()))
     codes = sorted(shipped["quality"])
     words = sorted(set(shipped["quality"].values()))
-    assert len(names) == 19 and "Main Hand" in names and len(codes) >= 9
     rgbs = [c[2:] for c in codes if re.fullmatch(r"[0-9a-fA-F]{8}", c)]
-    for file, text in _templates().items():
+    found: list[tuple[str, str]] = []
+    for file, text in templates.items():
         for name in names:
-            assert re.search(rf"(?<![A-Za-z]){re.escape(name)}(?![A-Za-z])", text) is None, (
-                file,
-                name,
-            )
+            if re.search(rf"(?<![A-Za-z]){re.escape(name)}(?![A-Za-z])", text):
+                found.append((file, name))
         for code in codes:
-            assert code.lower() not in text.lower(), (file, code)
-        if file != "page.css":
-            for rgb in rgbs:
-                assert rgb.lower() not in text.lower(), (file, rgb)
-    script = _templates()["page.js"]
+            if code.lower() in text.lower():
+                found.append((file, code))
+        bare = text.replace(_FIELD_WHITE, "", 1) if file == "page.css" else text
+        for rgb in rgbs:
+            if rgb.lower() in bare.lower():
+                found.append((file, rgb))
+    script = templates["page.js"]
+    style = templates["page.css"]
     for word in words:
-        assert re.search(rf"(?<![A-Za-z]){re.escape(word)}(?![A-Za-z])", script) is None, word
+        if re.search(rf"(?<![A-Za-z]){re.escape(word)}(?![A-Za-z])", script):
+            found.append(("page.js", word))
+        spelled = r"[\s_-]*".join(re.escape(part) for part in word.split())
+        if re.search(rf"(?<![A-Za-z]){spelled}(?![A-Za-z])", style, re.IGNORECASE):
+            found.append(("page.css", word))
     # The stylesheet in the package paints no colour code: the rules are the
     # server's, made from the slot table.
-    assert ".colour-" not in _templates()["page.css"]
-    assert re.search(r"\.colour-", script) is None
+    for file, text in (("page.css", style), ("page.js", script)):
+        if ".colour-" in text:
+            found.append((file, ".colour-"))
+    return found
+
+
+def test_the_templates_hold_no_slot_name_and_no_colour_code() -> None:
+    """§16.3: the JavaScript holds no slot table and no quality table, and the
+    stylesheet no quality colour or word; the names and colours come from the
+    model and the server's rules."""
+    shipped = _shipped()
+    names = sorted(set(shipped["slots"].values()))
+    assert len(names) == 19 and "Main Hand" in names and len(shipped["quality"]) >= 9
+    templates = _templates()
+    assert _FIELD_WHITE in templates["page.css"]
+    assert _table_leaks(templates) == []
+
+
+@pytest.mark.parametrize(
+    ("added", "leak"),
+    [
+        (".gear-name.epic { color: #a335ee; }", "a335ee"),
+        (".gear-name.x { color: #A335EE; }", "a335ee"),
+        (".quality-epic { font-weight: bold; }", "Epic"),
+        ("[data-quality='Legendary'] { border: 0; }", "Legendary"),
+        (".wow-token { border: 0; }", "WoW Token"),
+        ("--other: #ffffff;", "ffffff"),
+    ],
+)
+def test_constructed_stylesheet_quality_colour_or_word_is_caught(added: str, leak: str) -> None:
+    """M13-72: a colour or a quality word added to `page.css` fails the
+    check above; only the one `--field` white is exempt."""
+    templates = _templates()
+    templates["page.css"] += "\n" + added + "\n"
+    assert ("page.css", leak) in _table_leaks(templates)
 
 
 def test_the_colour_rules_are_made_from_the_shipped_table(server: Any) -> None:
