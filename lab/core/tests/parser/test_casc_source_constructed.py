@@ -541,7 +541,9 @@ def test_read_returns_the_bytes_checked_by_their_content_key_constructed(
     before = tree_state(built.root)
     opened.clear()
     data = source.read(built.ids["plain"])
-    assert isinstance(data, bytearray) and data == PLAIN
+    assert isinstance(data, memoryview) and data.readonly and data == PLAIN
+    with pytest.raises(TypeError):
+        data[0] = 0  # §17.9: a read hands out no buffer the caller can change
     assert [Path(p).name for p, _ in opened] == ["data.001"]
     assert all(flags & _WRITING == 0 for _, flags in opened)
     assert tree_state(built.root) == before
@@ -898,10 +900,13 @@ def test_not_local_notes_name_the_flags_constructed(tmp_path: Path) -> None:
     source = _open(root)
     flag1 = source.stat(ids["flag1"])
     assert flag1.state == "not_local" and flag1.note is not None
-    assert "content bit 0x1" in flag1.note and "Install" not in flag1.note
+    assert flag1.note.startswith("listed only in root rows with content bit 0x1")
+    assert "loose file" not in flag1.note
+    assert "[verify]" not in flag1.note and "70450" not in flag1.note
     install = source.stat(ids["install"])
     assert install.state == "not_local" and install.note is not None
-    assert "loose file in the flavor folder" in install.note and "0x1" not in install.note
+    assert install.note.startswith("may be on disk as a loose file in the flavor folder")
+    assert "0x1" not in install.note and "[verify]" not in install.note
 
 
 def test_the_speech_locale_is_reported_and_named_in_the_note_constructed(
@@ -913,7 +918,11 @@ def test_the_speech_locale_is_reported_and_named_in_the_note_constructed(
     assert (source.report.locale, source.report.speech_locale) == ("enUS", "deDE")
     stat = source.stat(ids["deDE"])
     assert stat.state == "not_in_build" and stat.note is not None
-    assert "speech locale deDE" in stat.note and "text locale enUS alone" in stat.note
+    assert stat.note.startswith(
+        "listed for your speech language (deDE), which this reader does not filter by"
+    )
+    assert "(enUS) alone" in stat.note
+    assert "does not load it" not in stat.note
     assert GEO not in source.report.model_dump_json()
 
 
@@ -921,6 +930,19 @@ def test_locales_of_reads_both_groups_constructed() -> None:
     assert casc.locales_of(f"OSX {GEO} deDE speech?:OSX {GEO} enUS text?") == ("enUS", "deDE")
     assert casc.locales_of("enGB speech?:") == ("enGB", "enGB")
     assert casc.locales_of("frFR text?") == ("frFR", None)
+
+
+def test_too_many_blocks_with_rows_are_refused_constructed() -> None:
+    """Hostile: a root of one-row blocks, one past `ROOT_BLOCK_LIMIT`, is
+    refused before its spans make every lookup slow; at the limit it is
+    read (the root at 70450 has 916 blocks)."""
+    limit = casc.ROOT_BLOCK_LIMIT
+    key = _keys([1])
+    at_limit = root_bytes([([1], key, 0, ALL)] * limit)
+    assert casc.parse_root(at_limit, locale="enUS", platform="macos").report.blocks == limit
+    over = root_bytes([([1], key, 0, ALL)] * (limit + 1))
+    with pytest.raises(casc.CascMalformedError, match=f"more than {limit} blocks with rows"):
+        casc.parse_root(over, locale="enUS", platform="macos")
 
 
 def test_a_million_empty_blocks_keep_no_place_constructed() -> None:

@@ -135,6 +135,7 @@ __all__ = [
     "LOCALE_FLAGS",
     "PLATFORM_SKIP",
     "RECORD_HEADER_SIZE",
+    "ROOT_BLOCK_LIMIT",
     "ROOT_DO_NOT_LOAD",
     "ROOT_ENCRYPTED",
     "ROOT_FLAG_1",
@@ -1647,6 +1648,12 @@ _ROOT_V1_BLOCK = struct.Struct("<III")  # count, content flags, locale flags
 _ROOT_V2_BLOCK = struct.Struct("<IIIIB")  # count, locale flags, flag word, flag word, flag byte
 _ROOT_VERSIONS = (1, 2)
 _NAME_HASH = 8
+# The most root blocks with rows a root may have. Each becomes a span and
+# an `array`, and `RootTable.find` bisects every taken span, so a root of
+# many tiny blocks costs time and memory the bytes do not show (a constructed
+# 64 MiB root of one-row blocks took 5 s to parse, 9 s a lookup and 1.26 GB
+# resident). The root at 70450 has 916; empty blocks are counted, not kept.
+ROOT_BLOCK_LIMIT = 65_536
 
 # Root content flags (wowdev.wiki/TACT#Root; LAB_FORMATS §10). The values
 # are the format's, not a flavor's.
@@ -1658,9 +1665,10 @@ ROOT_ENCRYPTED = 0x8000000
 ROOT_NO_NAME_HASH = 0x10000000
 # Bit 0x1 has no settled name (**[verify]**). At 70450, 96,382 file data ids
 # have two rows taken, one in a block with this bit and one without, of
-# different content, and only the one without it is in the local index: the
-# client did not fetch those rows' content (LAB_FORMATS §10, amendment of
-# 2026-10-19). So rows without it are tried first.
+# different content, and for all but 22 of them only the one without it is
+# in the local index: the client fetched almost none of those rows' content
+# (LAB_FORMATS §10, amendment of 2026-10-19). So rows without it are tried
+# first.
 ROOT_FLAG_1 = 0x1
 # Bit 0x4 is `Install` in wowdev.wiki's table (from memory, **[verify]**):
 # possibly a file the Battle.net app writes loose outside the archives. At
@@ -2087,7 +2095,8 @@ def parse_root(
     `locale`'s, its content flags miss `platform`'s mask (`PLATFORM_SKIP`)
     and it is not `LowViolence`. Each block's size is checked against the
     bytes left before any of it is read (a count of 2**32 is refused, never
-    allocated), and its ids must rise. Version 2's content flags are its two
+    allocated), and its ids must rise. More than `ROOT_BLOCK_LIMIT` blocks
+    with rows are refused. Version 2's content flags are its two
     flag words and its flag byte, `f1 | f2 | (f3 << 17)`."""
     flag = LOCALE_FLAGS.get(locale)
     if flag is None:
@@ -2140,6 +2149,11 @@ def parse_root(
             empty += 1
             blocks += 1
             continue
+        if blocks - empty >= ROOT_BLOCK_LIMIT:
+            raise CascMalformedError(
+                f"the root has more than {ROOT_BLOCK_LIMIT} blocks with rows, the reader's limit",
+                path,
+            )
         per = 4 + _HASH_BYTES + (0 if nameless and content & ROOT_NO_NAME_HASH else _NAME_HASH)
         need = count * per
         if need > n - pos:
@@ -2363,18 +2377,21 @@ class CascSource:
         others = self.root.skipped_flags(fdid)
         if others:
             flags = "; ".join(f"content flags {c:#x}, locale flags {lo:#x}" for c, lo in others)
-            note = (
-                "the root lists it only for another language or platform, or for a "
-                f"low-violence client, so this client does not load it ({flags})"
-            )
             speech = self.report.speech_locale
-            if speech is not None and speech != self.report.locale:
-                bit = LOCALE_FLAGS.get(speech, 0)
-                if any(lo & bit for _, lo in others):
-                    note += (
-                        f"; it is listed for the speech locale {speech}, and the root is "
-                        f"filtered by the text locale {self.report.locale} alone"
-                    )
+            bit = LOCALE_FLAGS.get(speech, 0) if speech is not None else 0
+            if speech != self.report.locale and any(lo & bit for _, lo in others):
+                # The client may load it for its speech language; this reader
+                # filters by the text locale alone (LAB_FORMATS §10, [verify]).
+                note = (
+                    f"listed for your speech language ({speech}), which this reader does not "
+                    f"filter by: it reads the files for your text language "
+                    f"({self.report.locale}) alone ({flags})"
+                )
+            else:
+                note = (
+                    "the root lists it only for another language or platform, or for a "
+                    f"low-violence client, so this client does not load it ({flags})"
+                )
             return CascFileStat(
                 fdid=fdid, state="not_in_build", words=STATE_WORDS["not_in_build"], note=note
             )
@@ -2492,15 +2509,17 @@ class CascSource:
         if unlisted:
             notes.append(f"{unlisted} of its content keys are not in the encoding file")
         if state == "not_local":
+            if any(h.content_flags & ROOT_INSTALL for h in hits):
+                notes.insert(
+                    0,
+                    "may be on disk as a loose file in the flavor folder (for example inside "
+                    "the .app); not in the archives",
+                )
             if all(h.content_flags & ROOT_FLAG_1 for h in hits):
                 notes.append(
-                    "listed only in root rows with content bit 0x1 (meaning [verify]); at "
-                    "70450 the client fetched none of those rows' content"
-                )
-            if any(h.content_flags & ROOT_INSTALL for h in hits):
-                notes.append(
-                    "flagged Install (meaning [verify]): it may exist as a loose file in the "
-                    "flavor folder rather than in the archives"
+                    "listed only in root rows with content bit 0x1, whose meaning is not yet "
+                    "confirmed; on the install measured, the client had fetched almost none "
+                    "of those rows' content"
                 )
         return CascFileStat(
             fdid=fdid,
@@ -2513,10 +2532,11 @@ class CascSource:
             note="; ".join(notes) or None,
         )
 
-    def read(self, fdid: int, *, limit: int = DECODE_LIMIT) -> bytearray:
-        """The decoded bytes of `fdid` as one `bytearray`, `decode_blte`'s
-        own buffer, not copied (a `bytes` copy would double the peak at the
-        cap), whose MD5 is its content key: checked on every read. The root
+    def read(self, fdid: int, *, limit: int = DECODE_LIMIT) -> memoryview:
+        """The decoded bytes of `fdid` as a read-only `memoryview` of
+        `decode_blte`'s own buffer, not copied (a `bytes` copy would double
+        the peak at the cap; §17.9), whose MD5 is its content key: checked
+        on every read. The root
         rows are tried in `_hits`' order, then each content key's encoding
         keys in the encoding file's order. A copy that is encrypted, that
         still does not match its content key (or that the index and its
@@ -2559,7 +2579,7 @@ class CascSource:
                     unsupported = unsupported or exc
                     continue
                 if data is not None:
-                    return data
+                    return memoryview(data).toreadonly()
         for first in (mismatch, malformed, unsupported, encrypted):
             if first is not None:
                 raise first
