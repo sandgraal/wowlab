@@ -45,10 +45,15 @@ The seam these graders hold `guard` to
   snapshot holds entries under (`WTF/Account/<name>/...`); the target side
   is the set of folders under the target's `WTF/Account/`. When each side
   has exactly one, they are mapped without being asked; a sole target
-  account folder that is a link is refused like any link. Otherwise
-  (either side has more than one, or the target has none) a restore
-  without `accounts` is a `GuardError` whose message mentions accounts,
-  with nothing written. With `accounts` (conductor ruling R2, 2026-10-22):
+  account folder that is a link is refused like any link. When the
+  snapshot holds at least one account folder and (either side has more
+  than one, or the target has none), a restore without `accounts` is a
+  `GuardError` whose message mentions accounts, with nothing written. A
+  snapshot that holds no account folder restores without `accounts`,
+  whatever the target has, and creates no `WTF/Account/` folder; an
+  `accounts` mapping given for it names a source folder the snapshot does
+  not hold and is refused (R2 as amended, 2026-10-22). With `accounts`
+  (conductor ruling R2, 2026-10-22):
   a mapping that leaves out a source account folder the snapshot holds,
   or sends two source folders to one target folder, is refused, with
   "account" in the message and nothing written; a mapping that names a
@@ -490,7 +495,51 @@ BAD_MAPPINGS: tuple[tuple[str, tuple[str, ...], tuple[str, ...], dict[str, str]]
         (DST_ACCOUNT,),
         {SRC_ACCOUNT_2: DST_ACCOUNT},
     ),
+    (
+        # R2 as amended: a mapping given for a snapshot that holds no account
+        # folder names a source folder the snapshot does not hold.
+        "constructed-mapping-for-a-snapshot-without-accounts",
+        (),
+        (DST_ACCOUNT,),
+        {SRC_ACCOUNT: DST_ACCOUNT},
+    ),
 )
+
+
+@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
+@pytest.mark.parametrize(
+    "dst_accounts",
+    [
+        pytest.param((), id="constructed-target-without-account-folders"),
+        pytest.param((DST_ACCOUNT, DST_ACCOUNT_2), id="constructed-target-with-two"),
+    ],
+)
+def test_constructed_snapshot_without_account_folders_restores_without_a_mapping(
+    guard: Any, tmp_path: Path, store: SnapshotStore, idle: None, dst_accounts: tuple[str, ...]
+) -> None:
+    """R2 as amended (conductor ruling, 2026-10-22): the account rules apply
+    only when the snapshot holds an account folder. A CVar-only snapshot, or
+    one taken before the first login, restores without `accounts` whatever
+    the target has, and creates no `WTF/Account/` folder."""
+    world = tmp_path / "world"
+    source = make_install(world / "Source WoW", SOURCE_FOLDER, source_files())
+    snapshot_id = snapshot_of(store, source)
+    assert not any("/WTF/Account/" in e.path for e in store.show(snapshot_id).entries)
+    target = make_install(world / "Target WoW", TARGET_FOLDER, target_files(*dst_accounts))
+    account_dir = target.path / "WTF" / "Account"
+    accounts_before = content(account_dir) if account_dir.exists() else None
+    before = files_only(target.path)
+
+    with guard.transaction(target, label="no accounts", store=store.path) as tx:
+        tx.restore(snapshot_id, into=into(guard, target))
+
+    assert_restored(target, source_files(), {})
+    if accounts_before is None:
+        assert not account_dir.exists(), "no WTF/Account/ folder is created"
+    else:
+        assert content(account_dir) == accounts_before
+    expected = {rel for rel, data in source_files().items() if before.get(rel) != data}
+    assert set(changes(record_for(guard, store, "no accounts").paths)) == expected
 
 
 @pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
