@@ -14,20 +14,30 @@ then an `fstat` that must show a regular file), so:
 
 - a FIFO is refused at once with `UnsafeReadError` ("not a regular file"),
   the descriptor closed, and the FIFO left as it was;
-- a final link is not followed (`ELOOP` from the open, or `UnsafeReadError`
-  where the platform has no `O_NOFOLLOW`), whatever it points at;
+- a final-component link out of the install is refused (`ELOOP` from the
+  open, or `UnsafeReadError` where the platform has no `O_NOFOLLOW`; that
+  fallback is exercised on POSIX by setting `snapshot._O_NOFOLLOW` to 0);
 - a regular file reads as before: the document's bytes are the file's bytes
-  (L4).
+  (L4), through exactly one guarded open whose descriptor is closed when the
+  read returns or refuses;
+- `sv dump` on a FIFO or a final-component link exits non-zero with a
+  one-line message, not a traceback and not a hang.
 
-The regular-file cases read real captures (`fixtures/macos/forever/`, rows in
-`fixtures/README.md`, L8) copied into a synthetic install under `tmp_path`;
-they pass today and must keep passing, so they carry no marker. The FIFO and
-link cases are constructed hostile inputs (ids say `constructed`). A FIFO
-case never hangs the suite: the read runs in a daemon thread, and after
-`BOUND` seconds the grader opens the FIFO for writing so a blocked reader gets
-end-of-file, then fails the test. FIFO cases are skipped where `os.mkfifo` is
-missing (Windows); link cases are skipped on Windows, where making a link
-needs a privilege. Nothing here touches a real install.
+Not covered: a link in a *parent* directory of the path. `O_NOFOLLOW` checks
+only the last component, and these readers take no install root to open from
+component by component, so that is a follow-up ticket (owner's conductor
+ruling on M16-26T review round 1), not M16-26.
+
+The byte-identity cases read real captures (`fixtures/macos/forever/`, rows
+in `fixtures/README.md`, L8) copied into a synthetic install under
+`tmp_path`; they pass today and must keep passing, so they carry no marker.
+Everything else is constructed (ids say `constructed`) or grades how the real
+captures are opened. A FIFO case never hangs the suite: the read runs in a
+daemon thread, and after `BOUND` seconds the grader opens the FIFO for
+writing so a blocked reader gets end-of-file, then fails the test. FIFO cases
+are skipped where `os.mkfifo` is missing (Windows); link cases are skipped on
+Windows, where making a link needs a privilege. Nothing here touches a real
+install.
 """
 
 from __future__ import annotations
@@ -45,8 +55,9 @@ from pathlib import Path, PurePosixPath
 from typing import Any, NamedTuple
 
 import pytest
+from typer.testing import CliRunner
 
-from wowlab_core import luadata, wtfconfig
+from wowlab_core import cli, longpath, luadata, snapshot, wtfconfig
 from wowlab_core.snapshot import UnsafeReadError
 
 pytestmark = pytest.mark.parser
@@ -60,6 +71,9 @@ CAPTURE = FIXTURES / "macos" / "forever"
 BOUND = 3.0
 """Seconds a read may take before it counts as blocked. A non-blocking open
 of a FIFO returns in microseconds."""
+
+O_NONBLOCK: int = getattr(os, "O_NONBLOCK", 0)
+O_NOFOLLOW: int = getattr(os, "O_NOFOLLOW", 0)
 
 needs_fifo = pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs os.mkfifo (POSIX)")
 needs_symlink = pytest.mark.skipif(
@@ -80,28 +94,29 @@ READERS = [
     Reader(
         "luadata.read",
         PurePosixPath("WTF/Account/90000001#6/SavedVariables/Blizzard_AuctionHouseUI.lua"),
-        luadata.read,
+        lambda p: luadata.read(p),
         lambda doc: luadata.serialize(doc),
     ),
     Reader(
         "wtfconfig.read_config",
         PurePosixPath("WTF/Config.wtf"),
-        wtfconfig.read_config,
+        lambda p: wtfconfig.read_config(p),
         lambda doc: doc.to_bytes(),
     ),
     Reader(
         "wtfconfig.read_bindings",
         PurePosixPath("WTF/Account/90000001#6/bindings-cache.wtf"),
-        wtfconfig.read_bindings,
+        lambda p: wtfconfig.read_bindings(p),
         lambda doc: doc.to_bytes(),
     ),
     Reader(
         "wtfconfig.read_macros",
         PurePosixPath("WTF/Account/90000001#6/1/Labcharb-Labrealmd/macros-cache.txt"),
-        wtfconfig.read_macros,
+        lambda p: wtfconfig.read_macros(p),
         lambda doc: doc.to_bytes(),
     ),
 ]
+SV = READERS[0]
 
 
 def _ids(prefix: str) -> list[str]:
@@ -122,22 +137,74 @@ def _place(flavor: Path, rel: PurePosixPath) -> Path:
     return path
 
 
+def _copy_in(flavor: Path, reader: Reader) -> tuple[Path, bytes]:
+    source = CAPTURE.joinpath(*reader.rel.parts)
+    data = source.read_bytes()
+    assert data, f"{reader.rel} is an empty fixture; pick one with content"
+    path = _place(flavor, reader.rel)
+    shutil.copyfile(source, path)
+    return path, data
+
+
+def _link_out(flavor: Path, tmp_path: Path, reader: Reader) -> tuple[Path, Path]:
+    """A final-component link at the reader's path, to a sound copy of the
+    same real fixture outside the install (following it would parse)."""
+    outside = tmp_path / "Elsewhere" / reader.rel.name
+    outside.parent.mkdir(exist_ok=True)
+    shutil.copyfile(CAPTURE.joinpath(*reader.rel.parts), outside)
+    assert not outside.resolve().is_relative_to(flavor.parent.resolve())
+    link = _place(flavor, reader.rel)
+    link.symlink_to(outside)
+    return link, outside
+
+
 class OpenSpy:
-    """Records every `os.open` (path, fd) that succeeds."""
+    """Records every `os.open` that succeeds: (path, flags, fd)."""
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        self.calls: list[tuple[str, int]] = []
+        self.calls: list[tuple[str, int, int]] = []
         real = os.open
 
         def spy(path: Any, flags: int, mode: int = 0o777, *, dir_fd: int | None = None) -> int:
             fd = real(path, flags, mode, dir_fd=dir_fd)
-            self.calls.append((os.fspath(path), fd))
+            self.calls.append((os.fspath(path), flags, fd))
             return fd
 
         monkeypatch.setattr(os, "open", spy)
 
-    def fds_for(self, path: Path) -> list[int]:
-        return [fd for p, fd in self.calls if p == os.fspath(path)]
+    def for_path(self, path: Path) -> list[tuple[int, int]]:
+        """(flags, fd) of every open of `path`."""
+        return [(flags, fd) for p, flags, fd in self.calls if p == os.fspath(path)]
+
+
+def assert_closed(fds: list[int]) -> None:
+    for fd in fds:
+        with pytest.raises(OSError) as caught:
+            os.fstat(fd)
+        assert caught.value.errno == errno.EBADF, f"descriptor {fd} left open"
+
+
+def assert_one_guarded_open_closed(spy: OpenSpy, path: Path) -> None:
+    """Exactly one `os.open` of `path`, non-blocking and (where the platform
+    has it) not following a final link, and its descriptor closed."""
+    opens = spy.for_path(path)
+    assert len(opens) == 1, (
+        f"expected exactly one os.open of {path.name} through the guarded helper, saw {len(opens)}"
+    )
+    flags, fd = opens[0]
+    assert flags & O_NONBLOCK == O_NONBLOCK, "the open is non-blocking"
+    assert flags & O_NOFOLLOW == O_NOFOLLOW, "the open does not follow a final link"
+    assert_closed([fd])
+
+
+def _no_unguarded_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The plain `longpath` openers are not used for these reads any more."""
+
+    def refuse(*_: Any, **__: Any) -> Any:
+        raise AssertionError("read through the plain longpath opener, not the guarded helper")
+
+    monkeypatch.setattr(longpath, "open_read", refuse)
+    monkeypatch.setattr(longpath, "read_bytes", refuse)
 
 
 def _release(fifo: Path) -> None:
@@ -177,16 +244,13 @@ def bounded(action: Callable[[], Any], fifo: Path) -> BaseException | None:
     return outcome[0]
 
 
-# ─── a regular file reads as before (real fixtures; no marker) ──────────────
+# ─── a regular file reads as before (real fixtures) ─────────────────────────
 
 
 @pytest.mark.parametrize("reader", READERS, ids=_ids("real"))
 def test_a_regular_file_reads_as_before(reader: Reader, install: Path) -> None:
-    source = CAPTURE.joinpath(*reader.rel.parts)
-    data = source.read_bytes()
-    assert data, f"{reader.rel} is an empty fixture; pick one with content"
-    path = _place(install, reader.rel)
-    shutil.copyfile(source, path)
+    """The pin: passes today and after M16-26."""
+    path, data = _copy_in(install, reader)
     before = path.stat()
 
     document = reader.read(path)
@@ -200,11 +264,57 @@ def test_a_regular_file_reads_as_before(reader: Reader, install: Path) -> None:
 
 def test_real_luadata_read_keeps_taking_a_str_path(install: Path) -> None:
     """`luadata.read` is typed `str | Path`; the move keeps a `str` working."""
-    reader = READERS[0]
-    source = CAPTURE.joinpath(*reader.rel.parts)
-    path = _place(install, reader.rel)
-    shutil.copyfile(source, path)
-    assert luadata.serialize(luadata.read(str(path))) == source.read_bytes()
+    path, data = _copy_in(install, SV)
+    assert luadata.serialize(luadata.read(str(path))) == data
+
+
+@XFAIL
+@pytest.mark.parametrize("reader", READERS, ids=_ids("real-one-guarded-open"))
+def test_a_regular_file_is_read_through_one_guarded_open_and_closed(
+    reader: Reader, install: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No second, unguarded open after the helper's check, and no descriptor
+    left open on the success path."""
+    path, data = _copy_in(install, reader)
+    _no_unguarded_read(monkeypatch)
+    spy = OpenSpy(monkeypatch)
+
+    document = reader.read(path)
+
+    assert reader.to_bytes(document) == data
+    assert_one_guarded_open_closed(spy, path)
+
+
+@XFAIL
+def test_real_luadata_read_by_str_path_is_one_guarded_open_and_closed(
+    install: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path, data = _copy_in(install, SV)
+    _no_unguarded_read(monkeypatch)
+    spy = OpenSpy(monkeypatch)
+    assert luadata.serialize(luadata.read(str(path))) == data
+    assert_one_guarded_open_closed(spy, path)
+
+
+@XFAIL
+def test_constructed_oversized_luadata_read_is_refused_and_closed(
+    install: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real SavedVariables file over a lowered `MAX_FILE_BYTES` (constructed
+    boundary: the bound is patched down rather than a 256 MiB file built) is
+    refused with `LuaLimitError` before parsing, through the one guarded
+    open, and its descriptor is closed on that path too."""
+    path, data = _copy_in(install, SV)
+    monkeypatch.setattr(luadata, "MAX_FILE_BYTES", len(data) - 1)
+    _no_unguarded_read(monkeypatch)
+    spy = OpenSpy(monkeypatch)
+
+    with pytest.raises(luadata.LuaLimitError) as caught:
+        luadata.read(path)
+
+    assert (caught.value.line, caught.value.column) == (1, 1)
+    assert f"{len(data)} bytes" in str(caught.value)
+    assert_one_guarded_open_closed(spy, path)
 
 
 # ─── a FIFO is refused without blocking (constructed) ───────────────────────
@@ -226,34 +336,24 @@ def test_a_fifo_is_refused_without_blocking(
         f"{reader.name} on a FIFO: expected UnsafeReadError, got {raised!r}"
     )
     assert "not a regular file" in str(raised), str(raised)
-    fds = spy.fds_for(fifo)
+    fds = [fd for _, fd in spy.for_path(fifo)]
     assert fds, "the FIFO was opened (non-blocking) and then refused by its fstat"
-    for fd in fds:
-        with pytest.raises(OSError) as caught:
-            os.fstat(fd)
-        assert caught.value.errno == errno.EBADF, f"descriptor {fd} left open"
+    assert_closed(fds)
     assert stat.S_ISFIFO(fifo.lstat().st_mode), "the FIFO is left as it was"
 
 
-# ─── a link out of the install is not followed (constructed) ────────────────
+# ─── a final-component link out of the install is refused (constructed) ─────
 
 
 @needs_symlink
 @XFAIL
 @pytest.mark.parametrize("reader", READERS, ids=_ids("constructed-link-out"))
-def test_a_link_out_of_the_install_is_refused(
+def test_a_final_link_out_of_the_install_is_refused(
     reader: Reader, install: Path, tmp_path: Path
 ) -> None:
-    """The link's target is a sound copy of the same real fixture, outside the
-    install, so following it would parse; `tree` reports this entry as a link
-    outside the install, not followed, and the reader must agree."""
-    outside = tmp_path / "Elsewhere" / reader.rel.name
-    outside.parent.mkdir()
-    shutil.copyfile(CAPTURE.joinpath(*reader.rel.parts), outside)
-    install_root = install.parent
-    assert not outside.resolve().is_relative_to(install_root.resolve())
-    link = _place(install, reader.rel)
-    link.symlink_to(outside)
+    """`tree` reports this entry as a link outside the install, not followed;
+    the reader must agree."""
+    link, outside = _link_out(install, tmp_path, reader)
     target_before = outside.read_bytes()
 
     with pytest.raises(OSError) as caught:
@@ -266,3 +366,58 @@ def test_a_link_out_of_the_install_is_refused(
     assert not isinstance(exc, FileNotFoundError), "the link's target exists"
     assert link.is_symlink(), "the link is left as it was"
     assert outside.read_bytes() == target_before, "the target is left as it was"
+
+
+@needs_symlink
+@XFAIL
+@pytest.mark.parametrize("reader", READERS, ids=_ids("constructed-link-out-no-o-nofollow"))
+def test_without_o_nofollow_a_final_link_out_of_the_install_is_refused(
+    reader: Reader, install: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Windows path of the helper (no `O_NOFOLLOW`: the link is refused by
+    `lstat` before the open), exercised on POSIX."""
+    monkeypatch.setattr(snapshot, "_O_NOFOLLOW", 0)
+    link, outside = _link_out(install, tmp_path, reader)
+    spy = OpenSpy(monkeypatch)
+
+    with pytest.raises(UnsafeReadError, match="not a regular file"):
+        reader.read(link)
+
+    assert spy.for_path(link) == [], "nothing was opened through the link"
+    assert spy.for_path(outside) == [], "the target outside the install was not opened"
+
+
+# ─── sv dump refuses with a message (constructed) ───────────────────────────
+
+
+@needs_fifo
+@needs_symlink
+@XFAIL
+@pytest.mark.parametrize("kind", ["constructed-fifo", "constructed-link-out"])
+def test_sv_dump_refuses_a_fifo_or_a_final_link_with_a_message(
+    kind: str, install: Path, tmp_path: Path
+) -> None:
+    if kind == "constructed-fifo":
+        path = _place(install, SV.rel)
+        os.mkfifo(path)
+    else:
+        path, _ = _link_out(install, tmp_path, SV)
+    result: list[Any] = []
+
+    def dump() -> None:
+        result.append(CliRunner().invoke(cli.app, ["sv", "dump", str(path)]))
+
+    raised = bounded(dump, path)
+
+    assert raised is None, repr(raised)
+    outcome = result[0]
+    assert outcome.exit_code not in (0, None), (outcome.exit_code, outcome.stdout)
+    assert outcome.exception is None or isinstance(outcome.exception, SystemExit), (
+        f"an uncaught {outcome.exception!r}, not a refusal"
+    )
+    assert "Traceback" not in outcome.stdout + outcome.stderr
+    assert outcome.stdout == "", "nothing was dumped"
+    lines = outcome.stderr.strip().splitlines()
+    assert lines, "the refusal is said on stderr"
+    assert lines[0].startswith("wowlab: "), lines[0]
+    assert path.name in lines[0], lines[0]
