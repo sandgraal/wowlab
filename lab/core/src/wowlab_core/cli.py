@@ -4314,17 +4314,6 @@ def sv_merge(
         )
     )
     merged = hashlib.sha256(data).hexdigest() if data is not None else None
-    if expect_merged is not None and expect_merged != merged:
-        # The target is as the plan read it, but what this run would write is
-        # not what the plan showed: its source (a live character file, or a
-        # snapshot id prefix that now resolves elsewhere) changed (M13-74).
-        now = "has unresolved conflicts" if merged is None else f"would write SHA-256 {merged}"
-        raise CliError(
-            f"the merge into {target.path} {now}, not the expected {expect_merged}: what it "
-            "merges from changed after the plan was made, so nothing was written; run the "
-            "command again to see the new plan",
-            EXIT_REFUSED,
-        )
 
     def report(*, written: bool, transaction: str | None = None) -> SvMergeReport:
         return SvMergeReport(
@@ -4355,6 +4344,21 @@ def sv_merge(
             _say_err(n)
         _say(line)
 
+    if expect_merged is not None and expect_merged != merged:
+        # The target is as the plan read it, but what this run would write is
+        # not what the plan showed: its source (a live character file, or a
+        # snapshot id prefix that now resolves elsewhere) changed (M13-74).
+        # With --json the report of this run's plan is printed, so a caller
+        # sees what changed; nothing is written either way.
+        if json_out:
+            _emit(report(written=False))
+        now = "has unresolved conflicts" if merged is None else f"would write SHA-256 {merged}"
+        raise CliError(
+            f"the merge into {target.path} {now}, not the expected {expect_merged}: what it "
+            "merges from changed after the plan was made, so nothing was written; run the "
+            "command again to see the new plan",
+            EXIT_REFUSED,
+        )
     if data is None:
         finish(
             report(written=False),

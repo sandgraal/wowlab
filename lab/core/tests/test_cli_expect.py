@@ -235,7 +235,7 @@ def test_sv_merge_json_names_no_merged_sha256_when_conflicts_stop_it(flavor: Pat
     to name (constructed: one value differs between two characters' copies)."""
     _probe(flavor, DST).write_bytes(b'ProbeDB = {\n["x"] = 1,\n}\n')
     _probe(flavor, SRC).write_bytes(b'ProbeDB = {\n["x"] = 2,\n}\n')
-    result = run(*FROM, "--json")
+    result = run(*FROM[: FROM.index("--take")], "--json")
     assert result.exit_code == 1, _out(result)
     report = json.loads(result.stdout)
     assert report["merged_sha256"] is None and report["written"] is False
@@ -313,6 +313,14 @@ def test_sv_merge_expect_refuses_when_the_source_changed_constructed(flavor: Pat
         assert result.exit_code == 3, _out(result)
         assert shown["merged_sha256"] in result.stderr
         assert "nothing was written" in result.stderr
+        if "--json" in args:
+            # The report of what this run would have written, not the plan's.
+            now = json.loads(result.stdout)
+            assert now["written"] is False and now["transaction"] is None
+            assert now["target_sha256"] == shown["target_sha256"]
+            assert now["merged_sha256"] not in (None, shown["merged_sha256"])
+        else:
+            assert result.stdout == ""
     assert _probe(flavor, DST).read_bytes() == b'ProbeDB = {\n["x"] = 1,\n}\n'
     assert guard.history() == ()
 
