@@ -7901,7 +7901,8 @@ class CharBindsReport(_Out):
     `bindings-cache.wtf` and of the lab-addon's bindings record, with the
     action slot each presses and what the record says the slot holds
     (`keymap.KeyRow`), the filled slots no key reaches, and the record's two
-    left-out counts. Without a usable action-bar record `cannot_place` says
+    left-out counts with the sentence the text form prints for them
+    (`left_out_note`). Without a usable action-bar record `cannot_place` says
     why, and the slot rows say "cannot place: no action-bar record"."""
 
     flavor_folder: str
@@ -7917,6 +7918,7 @@ class CharBindsReport(_Out):
     unreached_slots: list[keymap.UnreachedSlot]
     commands_left_out: int | None  # counts in the record's bindings section; None without one
     keys_left_out: int | None
+    left_out_note: str | None  # the two counts in the words the text form prints; None without them
     cannot_place: str | None
     cannot_compare: str | None
     notes: list[str]
@@ -8023,6 +8025,7 @@ def char_binds(
         unreached_slots=found.unreached_slots,
         commands_left_out=found.commands_left_out,
         keys_left_out=found.keys_left_out,
+        left_out_note=_binds_left_out_note(found.commands_left_out, found.keys_left_out),
         cannot_place=found.cannot_place,
         cannot_compare=found.cannot_compare,
         notes=[*found.notes, _CHAR_NOTES[0]],
@@ -8031,6 +8034,19 @@ def char_binds(
         _emit(report)
         return
     _say_char_binds(report)
+
+
+def _binds_left_out_note(commands: int | None, keys: int | None) -> str | None:
+    """The record's two left-out counts as one sentence, which `char binds`
+    prints and `wowlab ui`'s Keys panel shows; None without both counts."""
+    if commands is None or keys is None:
+        return None
+    return (
+        "Left out of the bindings record, counted with no list: "
+        f"{_plural(commands, 'command')} not named in plain upper case "
+        "(a key bound straight to a spell, macro, item or click may be one), and "
+        f"{_plural(keys, 'key')} not printable ASCII."
+    )
 
 
 def _source_words(row: keymap.KeyRow) -> str:
@@ -8127,13 +8143,8 @@ def _say_char_binds(report: CharBindsReport) -> None:
             _say(f"Filled slots on main-bar pages that are not followed: {len(paged)}")
             for u in paged:
                 _say(f"  slot {u.slot:>3}  {u.does}  ({u.page_note})")
-    if report.commands_left_out is not None and report.keys_left_out is not None:
-        _say(
-            "Left out of the bindings record, counted with no list: "
-            f"{_plural(report.commands_left_out, 'command')} not named in plain upper case "
-            "(a key bound straight to a spell, macro, item or click may be one), and "
-            f"{_plural(report.keys_left_out, 'key')} not printable ASCII."
-        )
+    if report.left_out_note is not None:
+        _say(report.left_out_note)
     for note in report.notes:
         _say(note)
 
