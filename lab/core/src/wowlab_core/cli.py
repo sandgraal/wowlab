@@ -9961,21 +9961,29 @@ _BROWSER_WAIT_S = 1.0
 
 @app.command("ui")
 def ui_command() -> None:
-    """Open the local UI in your browser and serve it until Ctrl-C (ADR-0029).
+    """Open the local UI in your browser and serve it until Ctrl-C.
+
+    Reading never changes anything. Six commands can change game files;
+    each shows a plan and runs only when you confirm, after a snapshot.
 
     The server listens on 127.0.0.1 only, at a port the system picks, and
     answers only requests that carry the random token in the URL it opens.
-    It opens on the explorer: the whole install's files, each with whether
-    wowlab may edit it, and what a picked file is and who writes it. A
-    second tab runs this wowlab's commands with --json. Commands that save only to
-    wowlab's own data (snapshots, profiles, saved looks, the db2 cache,
-    pages) are offered; some of them overwrite what they saved before (for
-    example looks import-char --replace), and none of them touches the game
-    folder. snap gc and doctor, which ask before changing wowlab's own store
-    (--yes), run first as a plan that changes nothing, and run for real only
-    when you press Confirm under it. Commands that change your game files,
-    and the other commands that take --yes, are not offered in this
-    version. If no browser opens, the URL is printed once on stdout."""
+    The page has five tabs. Explorer shows the whole install's files, each
+    with whether wowlab may edit it, and what a picked file is and who
+    writes it. Gaps lists the paths the file map does not describe.
+    Commands runs this wowlab's commands with --json. Character shows one
+    character as the lab-addon last saved it. Looks shows the page that
+    `wowlab looks page` writes.
+
+    On the Commands tab, a command that asks first (--yes) runs as a plan
+    that changes nothing, and runs for real only when you press Confirm
+    under it. snap gc and doctor change only wowlab's own store. The six
+    that change game files are snap restore, undo, profile apply, sv merge,
+    addon install and addon remove, and `wowlab undo` reverses any of the
+    six. undo and sv merge refuse when something changed after the plan;
+    the others apply what is there when you confirm. ui itself, log tail
+    --follow and looks page --out are not offered. If no browser opens,
+    the URL is printed once on stdout."""
     # The browser is opened on a thread: `webbrowser` waits for a browser it
     # runs in the foreground (a text browser, or a `BROWSER` program), and
     # that browser's request must find the server already serving. What it
