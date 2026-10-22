@@ -19,7 +19,8 @@ on:
 # model with a token whose cache mode is write (claude.yml, wiki-daily.yml),
 # so an entry these jobs restored could have been written by that model.
 # setup-uv runs with `enable-cache: false` (omitted means `auto`, which
-# caches), actionlint and trivy with `cache: false` (both default to true),
+# caches), trivy with `cache: false` (it defaults to true), actionlint and
+# gitleaks are downloaded at a pinned release and checked against a sha256,
 # and tests/repo/test_workflows_use_no_cache.py holds every workflow to it.
 permissions:
   contents: read
@@ -220,12 +221,26 @@ jobs:
       - name: Agent, skill and rule frontmatter is well-formed
         if: matrix.python == '3.12'
         run: uv run --python 3.12 --isolated --no-project --with pyyaml -- python scripts/check_frontmatter.py
+      # actionlint at an exact release, checked against the sha256 in the
+      # release's actionlint_<version>_checksums.txt, as the gitleaks job does
+      # (M13-65). Same version as the pre-commit hook. It runs shellcheck on
+      # `run:` scripts from the runner image (nothing is installed for it);
+      # -pyflakes= turns pyflakes off: no step here uses `shell: python`, and
+      # an installed pyflakes would be unpinned.
+      - name: Install actionlint
+        if: matrix.python == '3.12'
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+        run: |
+          curl -sSfL -o /tmp/actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  /tmp/actionlint.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
+          sudo install /tmp/actionlint /usr/local/bin/actionlint
+          actionlint -version
       - name: actionlint
         if: matrix.python == '3.12'
-        uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
-        with:
-          # Its default restores the actionlint binary from the Actions cache.
-          cache: false
+        run: actionlint -color -pyflakes=
 
   gitleaks:
     name: Secret scan (gitleaks)
