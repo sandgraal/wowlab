@@ -1577,6 +1577,8 @@ The restore plan is built in `guard` (`tx.restore`, `PlanItem`), so this changes
 
 The plan lists, under a "left alone" heading, the files under the snapshot's subtrees that were added since the snapshot. README, `snap restore --help` and the wiki say that a whole restore never deletes them.
 
+**Seam, ruled 2026-10-22 in the M16-11T reviews.** In `guard`, the left-alone files are a read-only `tx.left_alone: tuple[str, ...]`, filled by a whole restore. They are not items in `tx.plan`, so `PlanItem`, `tx.plan` and every `--json` plan are unchanged. Putting them in `tx.plan` broke `profile apply`'s plan check in both reviewers' stand-ins. The walk lists regular files only, outside `Manifest.excluded`, and follows no link (use `SnapshotStore.list_tree`). The CLI prints the "left alone" heading from `tx.left_alone`. For a whole restore the CLI turns into a restore by name (skipped executables, set-aside screenshots), it computes the same list itself. Its dry-run plan must equal its commit plan, without weakening the comparison in `cli.py` (`if tx.plan != tuple(plan) or moved:`).
+
 **Acceptance:** M16-11T's graders are activated by marker deletion only, and the full suite is green (`guard.py`). The CLI prints the heading. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: the `snap restore` plan.
 
 ---
