@@ -429,17 +429,18 @@ the owner's install at 1.60.1.70450 on 2026-10-19 (read-only).
   10 for `LowViolence`), 1,341,067 rows, 1,243,524 unique ids. **The
   1,244,477 above is the count with `LowViolence` kept**; the reader skips
   it, as the ticket and wow.export do. 97,543 ids have rows in two blocks
-  taken; 96,919 of those rows differ in content, and in almost every case
+  taken; 96,919 of those ids differ in content, and in almost every case
   one of the two blocks carries bit `0x1` of the content flags (meaning
   **[verify]**; it is not one of the flags named above). Checked against the
   local index, the content of the `0x1` row is absent for 96,382 of them
   and the other row's present, and no id has only its `0x1` row local
   when the other is absent: this client did not fetch the `0x1` rows'
-  content, so the reader tries rows without the bit first (`casc`'s
+  content for 96,382 ids (22 have both rows local), so the reader tries rows without the bit first (`casc`'s
   `ROOT_FLAG_1`). 515 more ids have two local rows of different content,
   neither with `0x1`; in every one the first row in the file is from a
   narrow-locale block (`0x202`, enUS and enGB, with at most two more
-  locales) and the second from the block of every locale (`0x173f6`). The
+  locales) and the second from the all-shipped-locales block (`0x173f6`, which lacks enCN, enTW
+  and itIT). The
   reader returns the first, wow.export's rule from memory; whether the
   client picks the narrower block too is **[verify]**. Rows in blocks
   flagged `Encrypted` are tried after plain ones; one such file at 70450 (id 874570) has only an encrypted copy,
@@ -449,16 +450,24 @@ the owner's install at 1.60.1.70450 on 2026-10-19 (read-only).
   one macOS-only block (`0x10660014`) whose flags include `0x4`, `Install`
   in wowdev.wiki's table from memory (**[verify]**: possibly files the
   Battle.net app writes loose outside the archives); a
-  sample of 300 `ModelFileData` ids splits 157 local, 143 not in the root,
-  none in the root but absent (the research spike's 3 were probably the
-  `0x1` rows of ids whose other row is local). **Locale:** `.build.info`'s
+  sample of 300 `ModelFileData` ids splits 157 local, 143 with no row
+  taken for enUS on macOS, none in the root but absent (the research spike's 3 were probably the
+  `0x1` rows of ids whose other row is local). The reader's and
+  `scripts/casc_facts.py`'s `not_in_build` covers both an id with no root
+  row and one listed only in skipped blocks (another locale, the other
+  platform, `LowViolence`), which is wider than §17.1's definition; M15-06's
+  wording review starts from it. **Locale:** `.build.info`'s
   `Tags` cell is `:`-separated groups of space-separated tokens, each
   group ending in a locale and `speech?` or `text?`; the reader filters
   the root by the `text?` group's locale alone (enUS here; the `speech?`
   group's stands in when there is no `text?` group), reports the `speech?`
   group's locale beside it (enUS here too) and names it in `stat`'s note
   when a file is listed only for it, and never records the rest of the
-  cell, which holds a geo-IP token.
+  cell, which holds a geo-IP token. Such a file is still reported
+  `not_in_build`; its note leads with "listed for your speech language
+  (X), which this reader does not filter by" and does not say the client
+  skips it. Whether the client loads a file listed only for its speech
+  locale (spoken audio, for example) is **[verify]**.
 
 ## 11. BLP textures (M15-07)
 

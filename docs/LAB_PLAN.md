@@ -4218,9 +4218,10 @@ is out of both waves.
 *Note, 2026-10-19 (M15-05, `lab/core/tests/fixtures/macos-70450/derived/casc-files.json`):* the reader's
 census settles the question for this install at 70450. The middle state
 holds 20 of the 1,243,524 ids the root gives for enUS on macOS (16 listed
-only in rows with content bit `0x1`, whose content this client did not
-fetch; 4 in one block flagged `Install`, meaning **[verify]**), and none of
-300 sampled `ModelFileData` ids (157 local, 143 not in the root). The
+only in rows with content bit `0x1`, whose content this client had not
+fetched; 4 in one block flagged `Install`, meaning **[verify]**), and none of
+300 sampled `ModelFileData` ids (157 local, 143 with no row taken for
+enUS on macOS). The
 spike's "3 in the root but not local" were probably `0x1` rows of ids
 whose other row is local, which the reader now tries next. Whether a
 partly downloaded install shows more is **[verify]**.
@@ -4408,6 +4409,10 @@ axis signs for Y-up; why the client's `ecache/` folder exists; the DXT
 choice enum; the HD body models of every race keeping their bones inside
 (no `SKID`); the per-slot geoset-group table and the default geoset rule;
 how a browser's CSP admits the vendored modules (Wave 7, ADR-0034);
+whether root content flags carry architecture bits (x86_64 `0x40`, arm64
+`0x8000`, from memory) and whether an Apple-silicon client skips any root
+block beyond the `0x108` mask (*note, 2026-10-22, M15-05 review:*
+unchecked);
 whether the install streams at all (the middle of §17.1's four states;
 *note, 2026-10-19, M15-05:* at 70450 it holds 20 of 1,243,524 ids and 0
 of 300 sampled `ModelFileData` ids, so this install does not stream in
