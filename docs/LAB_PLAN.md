@@ -3259,6 +3259,15 @@ A static local page over every character's `WowLab.lua`.
   where character folders can be (named on stderr); any character folder
   inside it (them) is not listed", and with nothing listed it says so
   instead of giving install advice.
+  *Amended 2026-10-22 (M13-72):* `char list --json --brief` gives every
+  entry's `record` as null and keeps the rest of `CharListReport` (label,
+  folders, file, time, summary, error, `same_as`, `not_looked_at`, notes) as
+  plain `--json` gives it; `survey` is called with `keep_records=False`, so no
+  record is held in memory. Plain `--json` is unchanged and still carries
+  every record (about 50 KB for a low-level character on the capture), and
+  text output is the same with or without the flag. The UI's Character tab
+  (§16.3) asks for `--brief`, since its picker needs no record and a large
+  roster's records could approach the UI's output cap.
 - **Page** `wowlab char page [--out PATH] [--anonymize] [--offline]`: one
   static file (ADR-0027), a card per character: when the client last saved the
   file (a time from the file, not from the addon, which records none), the
@@ -3842,7 +3851,7 @@ offers no edit control in M14. All rendering uses `textContent`; macro
 bodies and item names are player text and are never interpreted as markup.
 
 - **M14-08, the character and its gear.** A character picker from `char
-  list --json` (folder labels, the file's time; the latest-written first),
+  list --json --brief` (no records, since M13-72; folder labels, the file's time; the latest-written first),
   a header (the character label, spec id, the equipped and overall average
   item level, and the two notes `char show` prints about what the file is),
   and the gear laid out in the client's slot order: slot name, item name in
