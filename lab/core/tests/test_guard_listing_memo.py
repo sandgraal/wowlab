@@ -40,6 +40,13 @@ What the graders hold the code to
   guard's read and its replace or unlink is still refused with
   `ChangedSinceSnapshotError` naming the path, the swapped-in state is left
   as it is, and the transaction does not commit.
+- The key is read before the listing: someone else's change that lands
+  right after a listing was read in full (the directory's mtime moves) is
+  seen by the next lookup, so an old listing is never kept under the new
+  key. Reading the key before and after, and keeping the listing only when
+  both agree, also satisfies this.
+- The memo lasts one transaction: a second transaction's first lookup lists
+  the directory again (`wowlab ui` is one long-running process).
 - A listing error is not cached: when listing a directory fails once
   (injected), that lookup raises a `GuardError` naming the path and carrying
   the injected error as a cause, and the next lookup in the same directory
@@ -68,6 +75,10 @@ target), it makes sure the directory's mtime moved, so that the key does
 change and the grader tests the memo, not the clock. The own-write cases do
 the opposite on purpose: the spec names the transaction's own writes as an
 invalidation of their own.
+Someone else's change within one clock tick is a known residual risk of
+§18.1's key, accepted by the conductor in review round 1 (2026-10-22) and
+not graded: on a case-insensitive volume it fails closed, and at worst it
+lets a case-variant sibling through, never a write outside the allowlist.
 
 The timing grader
 -----------------
@@ -148,8 +159,6 @@ AfterJournalFsync = OD.AfterJournalFsync
 EXTERNAL = OD.EXTERNAL
 _swap = OD._swap
 
-MARKER = "M16-23 not implemented"
-
 # The directory the per-directory graders work in, flavor-relative. It holds
 # `SAVED` (from the M10-11T tree) and the constructed files below.
 SV = SAVED.rsplit("/", 1)[0]
@@ -208,35 +217,83 @@ class InjectedListingError(PermissionError):
     """The listing failure a grader injects; recognisable in a cause chain."""
 
 
+class _ScandirAfter:
+    """The iterator `os.scandir` returned, which runs `action` once the
+    listing has been read to its end or closed, whichever comes first."""
+
+    def __init__(self, it: Any, action: Callable[[], None]) -> None:
+        self._it = it
+        self._action: Callable[[], None] | None = action
+
+    def _done(self) -> None:
+        action, self._action = self._action, None
+        if action is not None:
+            action()
+
+    def __iter__(self) -> _ScandirAfter:
+        return self
+
+    def __next__(self) -> Any:
+        try:
+            return next(self._it)
+        except StopIteration:
+            self._it.close()
+            self._done()
+            raise
+
+    def close(self) -> None:
+        self._it.close()
+        self._done()
+
+    def __enter__(self) -> _ScandirAfter:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+
 class Listings:
-    """Counts `os.listdir` / `os.scandir` calls per watched directory, and
-    makes the next `fail[d]` listings of directory `d` raise."""
+    """Counts `os.listdir` / `os.scandir` calls per watched directory, makes
+    the next `fail[d]` listings of directory `d` raise, and runs `after[d]`
+    once, right after the next listing of `d` has been read in full (after
+    `os.listdir` returns; when the `os.scandir` iterator is exhausted or
+    closed)."""
 
     def __init__(self, flavor: Flavor, *rels: str) -> None:
         self.flavor = flavor
         self._key = {_norm(flavor.path / rel if rel else flavor.path): rel for rel in rels}
         self.calls: Counter[str] = Counter()
         self.fail: Counter[str] = Counter()
+        self.after: dict[str, Callable[[], None]] = {}
         self.raised: list[BaseException] = []
 
     def arm(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(os, "listdir", self._wrap(os.listdir))
-        monkeypatch.setattr(os, "scandir", self._wrap(os.scandir))
+        monkeypatch.setattr(os, "listdir", self._wrap(os.listdir, scandir=False))
+        monkeypatch.setattr(os, "scandir", self._wrap(os.scandir, scandir=True))
 
-    def _wrap(self, real: Callable[..., Any]) -> Callable[..., Any]:
+    def _wrap(self, real: Callable[..., Any], *, scandir: bool) -> Callable[..., Any]:
         def call(*args: Any, **kwargs: Any) -> Any:
             where = args[0] if args else kwargs.get("path")
             rel = self._key.get(_norm(where))
-            if rel is not None:
-                self.calls[rel] += 1
-                if self.fail[rel] > 0:
-                    self.fail[rel] -= 1
-                    exc = InjectedListingError(
-                        errno.EACCES, "constructed: injected listing error", os.fspath(where)
-                    )
-                    self.raised.append(exc)
-                    raise exc
-            return real(*args, **kwargs)
+            if rel is None:
+                return real(*args, **kwargs)
+            self.calls[rel] += 1
+            if self.fail[rel] > 0:
+                self.fail[rel] -= 1
+                named = where if isinstance(where, int) or where is None else os.fspath(where)
+                exc = InjectedListingError(
+                    errno.EACCES, "constructed: injected listing error", named
+                )
+                self.raised.append(exc)
+                raise exc
+            result = real(*args, **kwargs)
+            action = self.after.pop(rel, None)
+            if action is None:
+                return result
+            if scandir:
+                return _ScandirAfter(result, action)
+            action()
+            return result
 
         return call
 
@@ -590,6 +647,79 @@ def test_constructed_the_transactions_own_writes_invalidate_the_memo(
         assert (directory / "ALPHA.lua").read_bytes() == WRITTEN
     record = next(r for r in guard.history(store=store) if r.label == "own")
     assert record.state == "committed", record.state
+
+
+@pytest.mark.parametrize("dry_run", [True, False], ids=["constructed-dry-run", "constructed-real"])
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-23 not implemented")
+def test_constructed_a_change_right_after_the_listing_is_not_stored_under_the_new_key(
+    guard: Any, tmp_path: Path, flavor: Flavor, idle: None, dry_run: bool
+) -> None:
+    """Someone else adds `Delta.lua` (the directory's mtime moves) right after
+    the first listing of `SV` has been read in full, before guard can read
+    `SV`'s identity again. A memo that lists first and reads the key after
+    would keep the old listing under the new key. The key is read before
+    the listing (or before and after, keeping the listing only when both
+    agree), so the next lookup lists again: `delta.lua` is refused with
+    `PathNotAllowedError` naming the path. Lookups after that are served
+    from the new listing."""
+    _put(flavor, SV_FILES)
+    store = tmp_path / "store"
+    directory = flavor.path / SV
+    target = f"{SV}/delta.lua"
+    first, *rest = sorted(SV_FILES)
+
+    def add_delta() -> None:
+        before_ns = directory.stat().st_mtime_ns
+        (directory / "Delta.lua").write_bytes(EXTERNAL)
+        _moved_on(directory, before_ns)
+
+    with guard.transaction(flavor, label="racy", store=store, dry_run=dry_run) as tx:
+        own = None if dry_run else _own_snapshot(guard, store, "racy")
+        with watching(flavor, SV) as listings:
+            listings.after[SV] = add_delta
+            _warm(tx, dry_run=dry_run, snapshot_id=own, rels=[first])
+            assert SV not in listings.after, "positive control: Delta.lua came after a listing"
+            assert (directory / "Delta.lua").exists()
+            with refused(guard, "PathNotAllowedError", naming=target):
+                tx.write(target, WRITTEN)
+            _warm(tx, dry_run=dry_run, snapshot_id=own, rels=rest)
+            assert listings.calls[SV] == 2, (
+                f"{SV} was listed {listings.calls[SV]} times; once before the change, once "
+                "after it, and the lookups after that are served from the memo"
+            )
+        assert all(item.path != target for item in tx.plan), tx.plan
+    assert "delta.lua" not in sorted(p.name for p in directory.iterdir())
+
+
+@pytest.mark.parametrize("dry_run", [True, False], ids=["constructed-dry-run", "constructed-real"])
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-23 not implemented")
+def test_constructed_the_memo_lasts_one_transaction(
+    guard: Any, tmp_path: Path, flavor: Flavor, idle: None, dry_run: bool
+) -> None:
+    """The memo is per transaction (§18.1 item 6), and `wowlab ui` runs for a
+    long time in one process: a second transaction's first lookup in `SV`
+    lists it again, although nothing changed in between, and its later
+    lookups are served from its own memo."""
+    _put(flavor, SV_FILES)
+    store = tmp_path / "store"
+    rels = sorted(SV_FILES)
+    listings = Listings(flavor, SV)
+    for n, label in enumerate(("first", "second"), start=1):
+        with guard.transaction(flavor, label=label, store=store, dry_run=dry_run) as tx:
+            own = None if dry_run else _own_snapshot(guard, store, label)
+            # Counted in the body only: the pre-write snapshot's walk is not a lookup.
+            with pytest.MonkeyPatch.context() as patched:
+                listings.arm(patched)
+                _warm(tx, dry_run=dry_run, snapshot_id=own, rels=rels[:1])
+                assert listings.calls[SV] == n, (
+                    f"transaction {label!r}: its first lookup in {SV} must list it "
+                    f"(listed {listings.calls[SV]} times in {n} transactions)"
+                )
+                _warm(tx, dry_run=dry_run, snapshot_id=own, rels=rels[1:])
+                assert listings.calls[SV] == n, (
+                    f"transaction {label!r}: {SV} was listed {listings.calls[SV]} times in "
+                    f"{n} transactions; within one it is listed once"
+                )
 
 
 # ─── 4. the commit-time re-check still refuses a changed path ────────────────
