@@ -2858,9 +2858,9 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
                 f"{where} is a symbolic link. The identity map is built only from real "
                 "folders inside the install, so the files under the link would be captured "
                 "unscrubbed; nothing is captured. To capture a WTF folder kept elsewhere "
-                "(for example one synced between machines), copy the flavor folder to a "
-                "staging install with the real WTF folder in place of the link (a copy that "
-                "follows links, such as `cp -RL`), and pass that staging install as --root"
+                "(for example one synced between machines), copy `.build.info` and the flavor "
+                "folders into a new folder with a copy that follows links (such as `cp -RL`), "
+                "and pass that folder as --root"
             )
 
     for folder in folders(listed(root)):

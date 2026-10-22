@@ -55,7 +55,12 @@ def _assert_refused(code: int, out: Path, capsys: pytest.CaptureFixture[str], wh
     assert not out.exists() or outputs(out) == {}
     assert f"{where} is a symbolic link" in printed.err
     assert "nothing is captured" in printed.err
-    assert "--root" in printed.err  # says how to capture it instead
+    # Says how to capture it instead: `.build.info` too, or every provenance
+    # row reads `client_version = unknown`.
+    err = " ".join(printed.err.split())
+    assert "copy `.build.info` and the flavor folders into a new folder" in err
+    assert "`cp -RL`" in err and "pass that folder as --root" in err
+    assert "staging" not in err  # the help text's word for --out
     assert ACCOUNT_NAME not in text and ACCOUNT not in text
     assert "OUTSIDETARGET" not in text  # the link's target is never printed
 
