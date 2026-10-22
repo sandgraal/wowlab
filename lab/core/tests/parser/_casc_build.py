@@ -247,3 +247,162 @@ def record(
     head = field + struct.pack("<I", total) + flags
     a = casc.hashlittle(head, CHECKSUM_A_SEED) if checksum_a is None else checksum_a
     return head + struct.pack("<II", a, checksum_b) + data
+
+
+# ─── encoding, root and a whole source (M15-05) ─────────────────────────────
+
+EncodingRow = tuple[bytes, int, Sequence[bytes]]  # content key, decoded size, encoding keys
+
+
+def encoding_page(rows: Sequence[EncodingRow], page_size: int) -> bytes:
+    """One content-key page: each row's key count, 40-bit big-endian size,
+    content key and encoding keys, then zeros to `page_size`."""
+    body = b"".join(
+        bytes([len(ekeys)]) + size.to_bytes(5, "big") + ckey + b"".join(ekeys)
+        for ckey, size, ekeys in rows
+    )
+    assert len(body) <= page_size, "rows do not fit the page"
+    return body + bytes(page_size - len(body))
+
+
+def encoding_bytes(
+    pages: Sequence[Sequence[EncodingRow]],
+    *,
+    page_kib: int = 1,
+    espec: bytes = b"z\x00n\x00",
+    version: int = 1,
+    hash_sizes: tuple[int, int] = (16, 16),
+    magic: bytes = b"EN",
+    page_md5s: Sequence[bytes | None] | None = None,
+    firsts: Sequence[bytes | None] | None = None,
+    page_count: int | None = None,
+    tail: bytes = b"\xee" * 40,
+) -> bytes:
+    """An encoding file (LAB_FORMATS §10): the 22-byte header, the ESpec
+    block, the page index (first content key, page MD5) and the pages as
+    given (each row list sorted by the caller), then `tail` standing for the
+    encoding-key spec pages, which the reader never reads."""
+    size = page_kib * 1024
+    blobs = [encoding_page(rows, size) for rows in pages]
+    index = b""
+    for i, (rows, blob) in enumerate(zip(pages, blobs, strict=True)):
+        first = rows[0][0] if rows else bytes(16)
+        if firsts is not None and firsts[i] is not None:
+            first = firsts[i]  # type: ignore[assignment]
+        digest = hashlib.md5(blob, usedforsecurity=False).digest()
+        if page_md5s is not None and page_md5s[i] is not None:
+            digest = page_md5s[i]  # type: ignore[assignment]
+        index += first + digest
+    count = len(pages) if page_count is None else page_count
+    header = struct.pack(
+        ">2sBBBHHIIBI", magic, version, *hash_sizes, page_kib, 1, count, 1, 0, len(espec)
+    )
+    return header + espec + index + b"".join(blobs) + tail
+
+
+RootBlock = tuple[Sequence[int], Sequence[bytes], int, int]  # ids, content keys, content, locale
+
+
+def root_bytes(
+    blocks: Sequence[RootBlock],
+    *,
+    version: int = 2,
+    total: int | None = None,
+    named: int | None = None,
+    header_size: int = 24,
+    magic: bytes = b"TSFM",
+    flag_parts: Sequence[tuple[int, int, int] | None] | None = None,
+    counts: Sequence[int | None] | None = None,
+) -> bytes:
+    """A root file (LAB_FORMATS §10): the MFST header, then per block its
+    header (version 1: count, content flags, locale flags; version 2: count,
+    locale flags, two flag words and a flag byte, here the content flags in
+    the first word unless `flag_parts` gives the three), the int32 id
+    deltas, the content keys and, unless the block is `NoNameHash` and the
+    file has unnamed files, an 8-byte name hash per row."""
+    rows = sum(len(ids) for ids, *_ in blocks)
+    total = rows if total is None else total
+    named = rows if named is None else named
+    out = struct.pack("<4sIIII", magic, header_size, version, total, named)
+    out += bytes(max(0, min(header_size, 64) - len(out)))  # a larger size is a lie
+    for i, (ids, ckeys, content, locale) in enumerate(blocks):
+        count = len(ids) if counts is None or counts[i] is None else counts[i]
+        if version == 1:
+            out += struct.pack("<III", count, content, locale)
+        else:
+            parts = (
+                (content, 0, 0) if flag_parts is None or flag_parts[i] is None else flag_parts[i]
+            )
+            out += struct.pack("<IIIIB", count, locale, *parts)  # type: ignore[misc]
+        last = -1
+        deltas = []
+        for fdid in ids:
+            deltas.append(fdid - last - 1)
+            last = fdid
+        out += struct.pack(f"<{len(ids)}i", *deltas) + b"".join(ckeys)
+        if not (total != named and content & 0x10000000):
+            out += b"".join(struct.pack("<Q", 0x1234_5678_9ABC_DEF0 + fdid) for fdid in ids)
+    return out
+
+
+def ckey_of(data: bytes) -> bytes:
+    return hashlib.md5(data, usedforsecurity=False).digest()
+
+
+class SourceFiles:
+    """What a constructed source holds: the install root and, by name,
+    each file's id and decoded bytes."""
+
+    def __init__(self, root: Path, files: dict[str, tuple[int, bytes]]) -> None:
+        self.root = root
+        self.files = files
+
+
+def make_source_install(
+    tmp: Path,
+    *,
+    stored: Sequence[tuple[bytes, bytes]],
+    encoding_rows: Sequence[EncodingRow],
+    root_blocks: Sequence[RootBlock],
+    rng: random.Random,
+    root_version: int = 2,
+    client: str = "Test Client.app",
+    tags: str | None = None,
+) -> Path:
+    """A constructed install whose build config names a real encoding file
+    and root: `stored` are (encoding key, BLTE) records put in `data.001`
+    with an index entry each; the encoding file lists `encoding_rows` plus
+    the root's row; the root holds `root_blocks`. The flavor folder gets a
+    `client` entry (a folder for `.app`, a file for `.exe`) so its platform
+    can be told. Returns the root."""
+    root_plain = root_bytes(root_blocks, version=root_version)
+    root_ekey = key_in(5, rng) + rng.randbytes(7)
+    rows = sorted([*encoding_rows, (ckey_of(root_plain), len(root_plain), [root_ekey])])
+    enc_plain = encoding_bytes([rows[: len(rows) // 2], rows[len(rows) // 2 :]])
+    enc_ekey = key_in(6, rng) + rng.randbytes(7)
+    records = [
+        *stored,
+        (root_ekey, blte([z_block(root_plain)])),
+        (enc_ekey, blte([n_block(enc_plain[:100]), z_block(enc_plain[100:])])),
+    ]
+    archive = bytearray(rng.randbytes(64))
+    entries: dict[int, list[Entry]] = {}
+    for ekey, data in records:
+        rec = record(ekey, data)
+        entries.setdefault(casc.bucket_of(ekey), []).append((ekey, 1, len(archive), len(rec)))
+        archive += rec + rng.randbytes(20)
+    config = build_config_text(ckey_of(root_plain).hex(), ckey_of(enc_plain).hex(), enc_ekey.hex())
+    indexes = {idx_name(b, 1): idx_bytes(b, e) for b, e in entries.items()}
+    root, _ = make_install(tmp, indexes=indexes, config=config)
+    (root / "Data" / "data" / "data.001").write_bytes(bytes(archive))
+    target = root / FLAVOR / client
+    if client.casefold().endswith(".app"):
+        target.mkdir()
+    else:
+        target.write_bytes(b"MZ")
+    if tags is not None:
+        info = root / ".build.info"
+        info.write_text(
+            info.read_text(encoding="utf-8").replace("enUS speech?:", tags), encoding="utf-8"
+        )
+    return root

@@ -67,11 +67,11 @@ leaf that declares `--dry-run` (`snap gc`, `snap restore`, `profile apply`,
 marker is a JSON report with `dry_run: true`, exit 0; `doctor` runs with
 `--json`, and its marker is `first_run.outcome == "not_asked"` with
 `first_run.chosen` set, exit 0; a leaf with no `--dry-run` that declares
-`--expect` and whose pin field the CLI exports in `cli.EXPECT_FIELDS`
+`--expect` and whose pin fields the CLI exports in `cli.EXPECT_FIELDS`
 (`undo`, `sv merge`: the *declined* shape) runs with `--json` alone, and its
 marker is exit 1 with stderr's last line exactly `cli.CONFIRM_DECLINED`
 (`_confirm` got no answer on the closed stdin) and stdout one JSON report
-whose pin field holds a well-formed value. Only a whole run with its shape's
+whose pin fields each hold a well-formed value. Only a whole run with its shape's
 marker gets a one-time token (`secrets`), bound here to the exact argv it
 confirms, spent on first use and kept only in memory. A request carrying
 `confirm: <token>` spends it, rebuilds the plan argv from its own `command`
@@ -79,9 +79,10 @@ and `params`, and runs the bound confirmed argv only when the two plan argvs
 are equal: the plan argv with `--dry-run` taken out and `--yes` added as its
 own element after `--json` (and before any `--`, so it is never read as an
 argument), and for the declined shape `--expect=<pin>` after it, with the
-pin read here from the plan's own report: `undo` is refused (exit 3) if
-another record was journaled after the plan, `sv merge` if its target file
-changed (its source is not pinned; M13-74). The dry-run shape carries no
+pin read here from the plan's own report (its pin fields joined by `:`):
+`undo` is refused (exit 3) if another record was journaled after the plan,
+`sv merge` if its target file changed or the bytes it would write are not
+the ones the plan would have written (M13-74). The dry-run shape carries no
 pin: its confirmed run applies what is there at confirm time, after the
 pre-write snapshot. An unknown, spent or mismatched token answers 403
 `confirm` and runs nothing. A confirmed run's result names the journal
@@ -189,9 +190,18 @@ _DOCTOR = ("doctor",)
 _SHAPE_DRY_RUN = "dry_run"
 _SHAPE_DOCTOR = "doctor"
 _SHAPE_DECLINED = "declined"
-# What a pin (the `--expect` value read from a declined plan's report) may
-# be: a journal record id or a SHA-256 fit it, and it never starts with `-`.
+# What one part of a pin (the `--expect` value read from a declined plan's
+# report, one part per pin field, joined by `:`) may be: a journal record id
+# or a SHA-256 fit it, and it never starts with `-`.
 _PIN = re.compile(r"\A[0-9A-Za-z][0-9A-Za-z._-]{0,127}\Z")
+_PIN_JOIN = ":"
+
+
+def _pin_ok(pin: str | None) -> bool:
+    """Whether `pin` is one or more well-formed parts joined by `:`."""
+    return pin is not None and all(_PIN.fullmatch(p) for p in pin.split(_PIN_JOIN))
+
+
 # Refusal code for an unknown, spent or mismatched confirm token.
 _CONFIRM_REFUSED = "confirm"
 # The longest confirm token read; `secrets.token_urlsafe(32)` is 43 characters.
@@ -388,9 +398,10 @@ class _Leaf:
     # (`_SHAPE_DRY_RUN`, `_SHAPE_DOCTOR` or `_SHAPE_DECLINED`); None for
     # every other leaf.
     confirm: str | None = None
-    # For `_SHAPE_DECLINED`: the field of the plan's report whose value the
-    # confirmed run passes back as `--expect` (`cli.EXPECT_FIELDS`).
-    pin: str | None = None
+    # For `_SHAPE_DECLINED`: the fields of the plan's report whose values,
+    # joined by `:`, the confirmed run passes back as `--expect`
+    # (`cli.EXPECT_FIELDS`).
+    pin: tuple[str, ...] | None = None
 
 
 def _opts(param: Any) -> list[str]:
@@ -398,9 +409,9 @@ def _opts(param: Any) -> list[str]:
 
 
 @functools.cache
-def _cli_contract() -> tuple[str, Mapping[tuple[str, ...], str]]:
+def _cli_contract() -> tuple[str, Mapping[tuple[str, ...], tuple[str, ...]]]:
     """What the CLI exports for the declined shape (§16.1): the line
-    `_confirm` ends a declined run with, and the report field each command
+    `_confirm` ends a declined run with, and the report fields each command
     that declares `--expect` names its pin in."""
     from wowlab_core import cli
 
@@ -634,7 +645,7 @@ class _Argv:
             raise ValueError("only a leaf of the confirm step has a confirmed run")
         if self.shape != _SHAPE_DECLINED:
             return [*self.head, *self._json(), _YES, *self.tail]
-        if pin is None or not _PIN.fullmatch(pin):
+        if not _pin_ok(pin):
             raise ValueError("a confirmed run of the declined shape needs its plan's pin")
         return [*self.head, *self._json(), _YES, f"{_EXPECT}={pin}", *self.tail]
 
@@ -898,9 +909,10 @@ def _declined_offer(leaf: _Leaf, report: Mapping[str, Any] | None) -> _Offer:
     one of these without `--expect` (§16.1)."""
     if report is None or leaf.pin is None:
         return _Offer(False)
-    pin = report.get(leaf.pin)
-    if not isinstance(pin, str) or not _PIN.fullmatch(pin):
+    parts = [report.get(field) for field in leaf.pin]
+    if not all(isinstance(p, str) and _PIN.fullmatch(p) for p in parts):
         return _Offer(False)
+    pin = _PIN_JOIN.join(str(p) for p in parts)
     check = _PIN_CHECKS.get(
         leaf.pin, "if that no longer matches by then, it is refused (exit 3) and nothing is changed"
     )
@@ -912,16 +924,18 @@ def _declined_offer(leaf: _Leaf, report: Mapping[str, Any] | None) -> _Offer:
     )
 
 
-# What `--expect` checks, by the report field its pin is read from, in the
+# What `--expect` checks, by the report fields its pin is read from, in the
 # words the offer uses: exactly what the CLI compares, nothing more. `sv
-# merge` pins its target only, not its source (M13-74 follows that up).
-_PIN_CHECKS: Mapping[str, str] = {
-    "undone": (
+# merge` pins its target and the bytes it would write, so a source that
+# changed after the plan is refused too (M13-74).
+_PIN_CHECKS: Mapping[tuple[str, ...], str] = {
+    ("undone",): (
         "if another change has been journaled since this plan, it is refused (exit 3) and "
         "nothing is undone"
     ),
-    "target_sha256": (
-        "if the target file has changed by then, it is refused (exit 3) and nothing is written"
+    ("target_sha256", "merged_sha256"): (
+        "if the target file has changed by then, or what it merges from has and it would "
+        "write other bytes than this plan, it is refused (exit 3) and nothing is written"
     ),
 }
 

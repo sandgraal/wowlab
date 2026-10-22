@@ -1350,7 +1350,7 @@ wowlab profile save|apply|list|show|delete …         # §13.3 (M11-08)
 wowlab addon install|remove lab [--dry-run] [--yes]  # §13.1 (M11-02)
 wowlab looks races|options|save|show|compare|page …  # §13.2 (M11-06, M11-07)
 wowlab char show [--character C] [--json]           # §13.1 (M11-04)
-wowlab char list [--account A] [--json]             # §14.4 (M12-09)
+wowlab char list [--account A] [--json] [--brief]   # §14.4 (M12-09)
 ```
 
 *Amended 2026-09-28:* the Wave 2 commands above are listed for
@@ -3259,6 +3259,15 @@ A static local page over every character's `WowLab.lua`.
   where character folders can be (named on stderr); any character folder
   inside it (them) is not listed", and with nothing listed it says so
   instead of giving install advice.
+  *Amended 2026-10-22 (M13-72):* `char list --json --brief` gives every
+  entry's `record` as null and keeps the rest of `CharListReport` (label,
+  folders, file, time, summary, error, `same_as`, `not_looked_at`, notes) as
+  plain `--json` gives it; `survey` is called with `keep_records=False`, so no
+  record is held in memory. Plain `--json` is unchanged and still carries
+  every record (about 50 KB for a low-level character on the capture), and
+  text output is the same with or without the flag. The UI's Character tab
+  (§16.3) asks for `--brief`, since its picker needs no record and a large
+  roster's records could approach the UI's output cap.
 - **Page** `wowlab char page [--out PATH] [--anonymize] [--offline]`: one
   static file (ADR-0027), a card per character: when the client last saved the
   file (a time from the file, not from the addon, which records none), the
@@ -3745,6 +3754,8 @@ than the one it showed.
 
 *Amended 2026-10-19 (M14-03, as built):* the server lists no confirm set; it reads each `--yes` leaf's shape from what the leaf declares (`--dry-run` → the first shape; `doctor` → the second; no `--dry-run` with a one-value `--expect` and a report field named in `cli.EXPECT_FIELDS` → the third, `cli.CONFIRM_DECLINED` as the exact last stderr line of an exit-1 run with one JSON object on stdout), so a future `--yes --dry-run --json` leaf joins the step with no UI change. The confirmed argv of the third shape is the plan argv plus `--yes` and `--expect=<pin>`, the pin read from the plan's own report when the token is minted (`undo`: the journal record id `undone`; `sv merge`: `target_sha256`), never from the confirm request; the pin is checked once before `guard`'s lock and again under it. Only those two commands refuse when something changed after the plan: `undo` on a newer journal record, `sv merge` on its target's bytes. The dry-run shape carries no pin: `snap restore` is held to its snapshot id and `--paths` and re-checks its plan inside the transaction, `addon install` and `addon remove` to the addon name, and `profile apply` to a profile name only, so its drift is captured by the pre-write snapshot, not pinned; each applies what is there at confirm time, after that snapshot. `sv merge`'s source is not pinned either (M13-74). A confirmed run killed at the UI's limit (120 s, or the output cap): the lock goes with the process, the snapshot taken before the first change holds every file, and the page says to show `undo`'s plan and confirm it only if the record it names is this command's, in state `open`; `snap gc` and `doctor` get a store-only sentence instead.
 
+*Amended 2026-10-22 (M13-74, as built):* `sv merge` pins what it writes, not only its target. Its report names `merged_sha256` beside `target_sha256`: the SHA-256 of the bytes `tx.write` receives (null when unresolved conflicts stop the merge). `cli.EXPECT_FIELDS` maps each command to a tuple of report fields, joined by `:` into the pin (`undo`: `undone`; `sv merge`: `target_sha256:merged_sha256`), and `sv merge --expect` takes only that two-part form (anything else exits 2). The confirmed run refuses with exit 3 unless both halves match: the target half before the lock and again against `tx.plan[0].before`, the merged half before the lock and again against `tx.plan[0].after`, the hash the gate took of the bytes it was handed. A source character that logged out between plan and confirm, or a `--from`/`--base` snapshot prefix that now names another snapshot, therefore changes the merged half and is refused. The sentence above that `sv merge`'s source is not pinned no longer holds.
+
 ### 16.2 The character: what the CLI adds
 
 The data flow is §15.6's: core to a CLI `--json` model to the UI, which
@@ -3842,7 +3853,7 @@ offers no edit control in M14. All rendering uses `textContent`; macro
 bodies and item names are player text and are never interpreted as markup.
 
 - **M14-08, the character and its gear.** A character picker from `char
-  list --json` (folder labels, the file's time; the latest-written first),
+  list --json --brief` (no records, since M13-72; folder labels, the file's time; the latest-written first),
   a header (the character label, spec id, the equipped and overall average
   item level, and the two notes `char show` prints about what the file is),
   and the gear laid out in the client's slot order: slot name, item name in
@@ -4215,6 +4226,16 @@ is that the player's own gear, which the client has drawn, is expected
 local, that the Lab never fetches from Blizzard's CDN (ADR-0033: no
 network source is added), and that an outfit designer over arbitrary items
 is out of both waves.
+*Note, 2026-10-19 (M15-05, `lab/core/tests/fixtures/macos-70450/derived/casc-files.json`):* the reader's
+census settles the question for this install at 70450. The middle state
+holds 20 of the 1,243,524 ids the root gives for enUS on macOS (16 listed
+only in rows with content bit `0x1`, whose content this client had not
+fetched; 4 in one block flagged `Install`, meaning **[verify]**), and none of
+300 sampled `ModelFileData` ids (157 local, 143 with no row taken for
+enUS on macOS). The
+spike's "3 in the root but not local" were probably `0x1` rows of ids
+whose other row is local, which the reader now tries next. Whether a
+partly downloaded install shows more is **[verify]**.
 
 **What it writes:** nothing inside the install (L1). Decoded files go under
 the data directory, `casc/<product>-<build>/`, keyed by product and build
@@ -4380,7 +4401,9 @@ it the same way.
 ### 17.7 What is known, and what is [verify]
 
 Measured on the owner's install at 70450: the layout of `Data/`; root
-version 2; 1,244,477 file data ids after locale and platform filtering;
+version 2; 1,244,477 file data ids after locale and platform filtering
+(*note, 2026-10-19, M15-05, `casc-files.json`:* that count keeps
+`LowViolence`; the reader skips it and takes 1,243,524);
 encrypted (`E`, Salsa20) blocks met in 9 of 4,079 sampled records of
 the install's archives and no LZ4 or `F` block (`docs/LAB_FORMATS.md` §10,
 amendment of 2026-10-19); the open and read timings; the streaming
@@ -4397,7 +4420,15 @@ axis signs for Y-up; why the client's `ecache/` folder exists; the DXT
 choice enum; the HD body models of every race keeping their bones inside
 (no `SKID`); the per-slot geoset-group table and the default geoset rule;
 how a browser's CSP admits the vendored modules (Wave 7, ADR-0034);
-whether the install streams at all (the middle of §17.1's four states);
+whether root content flags carry architecture bits (x86_64 `0x40`, arm64
+`0x8000`, from memory) and whether an Apple-silicon client skips any root
+block beyond the `0x108` mask (*note, 2026-10-22, M15-05 review:*
+unchecked);
+whether the install streams at all (the middle of §17.1's four states;
+*note, 2026-10-19, M15-05:* at 70450 it holds 20 of 1,243,524 ids and 0
+of 300 sampled `ModelFileData` ids, so this install does not stream in
+any way that matters here; a partly downloaded install is still
+**[verify]**);
 whether and when the client fetches a file it lacks; the Windows handle
 question; the DXT rule conflict; the
 `TextureFileData` usage type; whether the tables describe how Forever's
