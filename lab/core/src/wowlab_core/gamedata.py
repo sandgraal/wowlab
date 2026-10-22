@@ -598,7 +598,7 @@ def _refuse_install(path: Path) -> None:
         if (candidate / _INSTALL_MARKER).exists():
             raise CacheLocationError(
                 f"{path} is inside a game install ({candidate}); "
-                "the game data cache never lives in an install (L1)"
+                "the game data cache never lives in an install"
             )
 
 
@@ -619,7 +619,7 @@ def _writable_dir(path: Path, *, publishes_tables: bool = False) -> None:
 def _no_hard_links_error(directory: Path, cause: OSError) -> CacheLocationError:
     return CacheLocationError(
         f"{directory}: this filesystem does not support hard links ({cause}), so a table "
-        "cannot be published there without risking the replacement of a cached one (L5). "
+        "cannot be published there without risking the replacement of a cached one. "
         "Choose a cache directory on a filesystem with hard links: pass "
         "GameData(cache_dir=...), or move the user data directory off this volume."
     )

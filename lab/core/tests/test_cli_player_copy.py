@@ -489,6 +489,16 @@ def test_verify_reads_not_yet_confirmed_once_per_run_constructed() -> None:
     assert cli._player_copy("/run print(1) (keeps ()) [x]") == "/run print(1) (keeps ()) [x]"
     cli._new_report()
     assert cli._player_copy("[verify]") == CONFIRM
+    # A later marker the sentence needs reads in words; a quoted value is kept.
+    assert cli._player_copy("whether it counts bytes is [verify].") == (
+        "whether it counts bytes is not yet confirmed."
+    )
+    assert cli._player_copy("for Retail, [verify] on Forever") == (
+        "for Retail, not yet confirmed on Forever"
+    )
+    assert cli._player_copy("the record has 'Spell [verify] (L3)' [verify]") == (
+        "the record has 'Spell [verify] (L3)'"
+    )
     cli._new_report(json_out=True)
     assert cli._player_copy("(L3) [verify]") == "(L3) [verify]"
     cli._new_report()

@@ -454,15 +454,25 @@ def _safe(text: str) -> str:
 
 # Player copy (M16-15, docs/LAB_PLAN.md §18.1 item 4): text output carries
 # no spec vocabulary. The library's notes keep it, because they are also
-# `--json` fields and `--json` does not change, so it is rendered here, as
-# each line is written: the first `[verify]` of one run reads "(not yet
-# confirmed)" and any later one is left out, and a parenthesised pointer
-# into the spec (a ticket id, `LAB_PLAN L7`, a doc path, `GLOSSARY`) is left
-# out. Text written raw (`_say_raw`) is install data and is never changed.
+# `--json` fields and `--json` does not change, so it is rendered here by
+# `_player_copy`: the first `[verify]` of one run reads "(not yet
+# confirmed)"; a later one is left out where it tags a phrase and reads "not
+# yet confirmed" where the sentence needs it ("whether ... is [verify]");
+# and a parenthesised pointer into the spec (a ticket id, `LAB_PLAN L7`, a
+# doc path, `GLOSSARY`) is left out. Only wowlab's own words go through it:
+# a note, a file-map row, the text `_note` is given. A value read from the
+# install (a macro's name or body, a binding's command, a CVar value, a
+# path) never does, so it prints as the install holds it; a line that
+# mixes the two renders the note before the value is put in (`_player_copy`).
 NOT_CONFIRMED = "(not yet confirmed)"
 _VERIFY = re.compile(
-    r"(?P<lead>[ \t]?)(?:\(\*{0,2}\[verify\]\*{0,2}\)|\*{0,2}\[verify\]\*{0,2})", re.IGNORECASE
+    r"(?P<lead>[ \t]?)(?:(?P<alone>\(\*{0,2}\[verify\]\*{0,2}\))|\*{0,2}\[verify\]\*{0,2})",
+    re.IGNORECASE,
 )
+# A later marker the sentence needs: after a verb or a joining word, or
+# before a preposition ("[verify] on Forever").
+_NEEDED_AFTER = re.compile(r"(?:\b(?:is|are|was|were|be|been|and|or|but)|,)\s*$", re.IGNORECASE)
+_NEEDED_BEFORE = re.compile(r"\s*(?:on|for|past|against|in|at)\b", re.IGNORECASE)
 _SPEC_POINTER = re.compile(
     r"[ \t]?\((?:(?:M1\d-\d+|ADR-\d+)(?:,[^()]*)?|LAB_PLAN L[1-8]|L[1-8]|GLOSSARY|docs/[^()]*"
     r"|§[^()]*)\)"
@@ -483,16 +493,41 @@ def _new_report(json_out: bool = False) -> None:
     _Report.json = json_out
 
 
+def _later_marker(match: re.Match[str]) -> str:
+    """A `[verify]` after the run's first: left out, unless the sentence
+    needs it, where it reads "not yet confirmed" without the brackets."""
+    if match.group("alone") is None and (
+        _NEEDED_AFTER.search(match.string, 0, match.start())
+        or _NEEDED_BEFORE.match(match.string, match.end())
+    ):
+        return match.group("lead") + NOT_CONFIRMED.strip("()")
+    return ""
+
+
+# A value a library message quotes (`{name!r}`): a macro's spell name, a
+# table's option name. `_player_copy` leaves it as it is.
+_QUOTED = re.compile(r"""((?<![A-Za-z])'(?:[^'\\]|\\.)*'(?![A-Za-z])|"(?:[^"\\]|\\.)*")""")
+
+
 def _player_copy(text: str) -> str:
-    """`text` with the spec's markers in player words (see `NOT_CONFIRMED`);
-    as it is in a `--json` run."""
+    """wowlab's own `text` with the spec's markers in player words (see the
+    comment above `NOT_CONFIRMED`); as it is in a `--json` run. Never given
+    a line of install data; a value a message quotes is left as it is."""
     if _Report.json:
         return text
+    if "'" in text or '"' in text:
+        parts = _QUOTED.split(text)
+        return "".join(p if i % 2 else _render(p) for i, p in enumerate(parts))
+    return _render(text)
+
+
+def _render(text: str) -> str:
+    """`_player_copy` of text that quotes nothing."""
     if "[" in text:
 
         def verify(match: re.Match[str]) -> str:
             if _Report.confirmed_shown:
-                return ""
+                return _later_marker(match)
             _Report.confirmed_shown = True
             return match.group("lead") + NOT_CONFIRMED
 
@@ -525,20 +560,21 @@ def _reader_words(module: str) -> str:
 
 
 def _say(text: str = "") -> None:
-    """One line on stdout, escaped by `_safe`, in player words (`_player_copy`)."""
-    typer.echo(_safe(_player_copy(text)))
-
-
-def _say_raw(text: str = "") -> None:
-    """One line of install data on stdout, escaped by `_safe` and otherwise as read."""
+    """One line on stdout, escaped by `_safe`. Notes in it were rendered by
+    `_player_copy`; a value read from the install prints as it is."""
     typer.echo(_safe(text))
 
 
+def _say_note(text: str = "") -> None:
+    """One line of wowlab's own words on stdout (a note, a file-map row),
+    in player words (`_player_copy`) and escaped by `_safe`."""
+    typer.echo(_safe(_player_copy(text)))
+
+
 def _say_err(text: str = "") -> None:
-    """One line on stderr, escaped by `_safe`, in player words: `_say` for
-    output that must not mix with JSON on stdout, and for notes the library
-    built."""
-    typer.echo(_safe(_player_copy(text)), err=True)
+    """One line on stderr, escaped by `_safe`: `_say` for output that must
+    not mix with JSON on stdout."""
+    typer.echo(_safe(text), err=True)
 
 
 _FIELD = "{}"
@@ -547,7 +583,8 @@ _FIELD = "{}"
 def _note(message: str, *values: object) -> None:
     """A message on stderr.
 
-    `message` is this module's own text: its line breaks are kept, and every
+    `message` is this module's own text, in player words (`_player_copy`):
+    its line breaks are kept, and every
     other control, format or separator character is escaped. Anything from
     elsewhere (a path, a folder name, an error text) is never put into
     `message` by the caller: it is passed in `values`, and each value takes
@@ -561,11 +598,11 @@ def _note(message: str, *values: object) -> None:
         raise ValueError(
             f"_note: {len(parts) - 1} {_FIELD} field(s) in the message, {len(values)} value(s)"
         )
-    out = ["\n".join(_safe(line) for line in parts[0].split("\n"))]
+    out = ["\n".join(_safe(line) for line in _player_copy(parts[0]).split("\n"))]
     for value, part in zip(values, parts[1:], strict=True):
         out.append(_safe(str(value)))
-        out.append("\n".join(_safe(line) for line in part.split("\n")))
-    typer.echo(_player_copy("".join(out)), err=True)
+        out.append("\n".join(_safe(line) for line in _player_copy(part).split("\n")))
+    typer.echo("".join(out), err=True)
 
 
 def _fail(message: str, code: int, exc: BaseException | None = None) -> NoReturn:
@@ -930,7 +967,8 @@ def _lua_refusal_words(exc: luadata.LuaDataError) -> str:
             "full disk during a save"
         )
     else:
-        message = _LUA_REFUSAL_WORDS.get(exc.message, exc.message)
+        # The parser's own words, with no install value in them.
+        message = _LUA_REFUSAL_WORDS.get(exc.message) or _render(exc.message)
         why = f"{message}, at {where}"
     return f"not SavedVariables data wowlab can read: {why}"
 
@@ -2259,7 +2297,7 @@ def _say_tree_item(shown: str, item: TreeItem, explain: bool) -> None:
             _say("      no file-map row")
         else:
             e = item.explained
-            _say(f"      [{e.entry_id}] {_plain(e.what)}")
+            _say(f"      [{e.entry_id}] {_player_copy(_plain(e.what))}")
             _say(f"      written by: {_plain(e.written_by)}")
             _say(f"      edit: {e.verdict.words}")
 
@@ -3234,7 +3272,7 @@ def explain(
     e = result.entry
     base = f"in flavor folder {result.flavor_folder}" if result.base == "flavor" else "install root"
     _say(f"{result.path or '.'} ({base})")
-    _say(f"  what:         {_plain(e.what)}")
+    _say(f"  what:         {_player_copy(_plain(e.what))}")
     _say(f"  written by:   {_plain(e.written_by)}")
     _say(f"  edit:         {report.verdict.words}")
     _say(f"  tier:         {tier_words(e.tier)}")
@@ -3733,14 +3771,14 @@ def sv_dump(
             _stream_dump(str(target), path, _rows([("path", path, value)]))
         else:
             for p, v in _flatten(path, value):
-                _say_raw(f"{p} = {v}")
+                _say(f"{p} = {v}")
     elif json_out:
         tops = [("variable", a.name, a.value) for a in doc.assignments]
         _stream_dump(str(target), None, _rows(tops))
     else:
         for a in doc.assignments:
             for p, v in _flatten(a.name, a.value):
-                _say_raw(f"{p} = {v}")
+                _say(f"{p} = {v}")
     _note(_SV_TIMING)
 
 
@@ -4494,8 +4532,8 @@ def sv_merge(
             _emit(done)
             return
         _print_merge(_say, done)
-        for n in done.notes:
-            _say_err(n)
+        for n in done.notes:  # wowlab's own note in player words; any other as it is
+            _say_err(_player_copy(n) if n == _PROBE_KEPT else n)
         _say(line)
 
     if result.unresolved:
@@ -4796,14 +4834,14 @@ def binds_list(
     if doc is None:
         _say(_no_file("bindings-cache.wtf", target))
         if scope == "character":
-            _say(_NO_CHARACTER_BINDINGS)
+            _say_note(_NO_CHARACTER_BINDINGS)
         return
     _say(f"{report.file}:")
     for b in report.bindings:
         _say(f"  {b.key:<24} {b.action}")
     if report.unknown_lines:
         _say(f"  {report.unknown_lines} other line(s) are not bind lines and are not shown")
-    _say(report.notes[0])
+    _say_note(report.notes[0])
 
 
 _COMBATLOG_ON = (
@@ -5338,7 +5376,7 @@ def macros_check(
         _say(f"Spellbook and action bars: no lab-addon record ({hint})")
     else:
         _say(f"Spellbook and action bars: {report.record_file} (schema {report.record_schema})")
-    _say(
+    _say_note(
         f"Length: counted in {report.length_unit}; the client's limit is "
         f"{report.length_limit}, and whether it counts characters or bytes is [verify]"
     )
@@ -5351,19 +5389,19 @@ def macros_check(
     for finding in report.findings:
         _say(
             f"  {finding.rule}: {finding.macro.scope} macro {finding.macro.id} "
-            f'"{finding.name}" (line {finding.line}): {finding.detail}'
+            f'"{finding.name}" (line {finding.line}): {_player_copy(finding.detail)}'
         )
     _say(f"Cannot judge: {len(report.cannot_judge)}")
     for c in report.cannot_judge:
         if c.macro is None:
-            _say(f"  {c.rule}: {c.reason}")
+            _say(f"  {c.rule}: {_player_copy(c.reason)}")
         else:
             _say(
                 f"  {c.rule}: {c.macro.scope} macro {c.macro.id} "
-                f'"{c.name}" (line {c.line}): {c.reason}'
+                f'"{c.name}" (line {c.line}): {_player_copy(c.reason)}'
             )
     for note in report.notes:
-        _say(note)
+        _say_note(note)
 
 
 # ─── addons ──────────────────────────────────────────────────────────────────
@@ -7616,15 +7654,15 @@ def char_show(
     _say(f"File: {target.path}")
     _say(f"Written: {_local_time(target.mtime_ns)} (the file's modification time)")
     for line in labaddon.describe(record):
-        _say(line)
+        _say(_player_copy(line))
     _say()
     if account_record is None:
         _say(f"Account {labaddon.ACCOUNT_VARIABLE}: no account {labaddon.ADDON_NAME}.lua")
     else:
         for line in labaddon.describe_account(account_record):
-            _say(line)
+            _say(_player_copy(line))
     for note in _CHAR_NOTES:
-        _say(note)
+        _say_note(note)
 
 
 def _picked_words(how: Literal["--character", "latest"], tie: str) -> str:
@@ -7866,7 +7904,7 @@ def char_list(
         if unseen:
             _say(f"{_unseen_words(len(unseen))}.")
         for note in _CHAR_LIST_NOTES:
-            _say(note)
+            _say_note(note)
     for e in entries:
         if e.error is None:
             continue
@@ -8090,9 +8128,9 @@ def char_gear(
     for note in notes[len(_CHAR_NOTES) :]:
         if note != _gear_table_note(table):
             # The marker stands for an adjective here; said in words (M16-15).
-            _say(note.replace("[verify] on Forever", "not yet confirmed on Forever"))
+            _say_note(note.replace("[verify] on Forever", "not yet confirmed on Forever"))
     for note in _CHAR_NOTES:
-        _say(note)
+        _say_note(note)
 
 
 class CharBindsFile(_Out):
@@ -8272,12 +8310,12 @@ def _say_char_binds(report: CharBindsReport) -> None:
     for f in report.files:
         label = "Account bindings" if f.scope == "account" else "Character bindings"
         if f.path is None or f.mtime_ns is None:
-            _say(f"{label}: no bindings-cache.wtf {f.note}")
+            _say(f"{label}: no bindings-cache.wtf {_player_copy(f.note)}")
             continue
         unknown = f"; {_plural(f.unknown_lines, 'other line')}, kept" * bool(f.unknown_lines)
         _say(
             f"{label}: {f.path} ({_plural(f.bind_lines, 'bind line')}{unknown}), written "
-            f"{_local_time(f.mtime_ns)} {f.note}"
+            f"{_local_time(f.mtime_ns)} {_player_copy(f.note)}"
         )
     # Without a record read, the Record line above already says why.
     read = report.record_file is not None and report.record_error is None
@@ -8310,7 +8348,8 @@ def _say_char_binds(report: CharBindsReport) -> None:
     pad = f"  {'':<16} {'':<26} {'':>4}  "
     for k in report.keys:
         slot = str(k.slot) if k.slot is not None else "-"
-        _say(f"  {k.key:<16} {k.command:<26} {slot:>4}  {k.does}  ({_source_words(k)})")
+        does = _player_copy(k.does)
+        _say(f"  {k.key:<16} {k.command:<26} {slot:>4}  {does}  ({_source_words(k)})")
         if k.page_note is not None and "unconfirmed" in k.page_note:
             _say(f"{pad}{k.page_note}")
         if k.note == keymap.NOT_IN_A_FILE_NOTE:
@@ -8318,17 +8357,17 @@ def _say_char_binds(report: CharBindsReport) -> None:
         elif k.note is not None and k.disagrees:
             _say(f"{pad}{k.note}")
     if generic:
-        _say(f"  Only in the record, no file line for the key: {keymap.WHY_NOT_IN_A_FILE}.")
+        _say_note(f"  Only in the record, no file line for the key: {keymap.WHY_NOT_IN_A_FILE}.")
     if report.cannot_place is None:
         reached = [u for u in report.unreached_slots if not u.unfollowed_page]
         paged = [u for u in report.unreached_slots if u.unfollowed_page]
         _say(f"Filled slots no key reaches on the page its bar shows by default: {len(reached)}")
         for u in reached:
-            _say(f"  slot {u.slot:>3}  {u.does}  ({u.page_note})")
+            _say(f"  slot {u.slot:>3}  {_player_copy(u.does)}  ({u.page_note})")
         if paged:
             _say(f"Filled slots on main-bar pages that are not followed: {len(paged)}")
             for u in paged:
-                _say(f"  slot {u.slot:>3}  {u.does}  ({u.page_note})")
+                _say(f"  slot {u.slot:>3}  {_player_copy(u.does)}  ({u.page_note})")
     if report.commands_left_out is not None and report.keys_left_out is not None:
         _say(
             "Left out of the bindings record, counted with no list: "
@@ -8337,7 +8376,7 @@ def _say_char_binds(report: CharBindsReport) -> None:
             f"{_plural(report.keys_left_out, 'key')} not printable ASCII."
         )
     for note in report.notes:
-        _say(note)
+        _say_note(note)
 
 
 _AGREEMENTS: tuple[keymap.Agreement, ...] = (
@@ -8635,9 +8674,9 @@ def _say_char_macros(report: CharMacrosReport) -> None:
             _say(f"    cannot judge {c.rule} (line {c.line}): {c.reason}")
     _say(f"Cannot judge for any macro: {len(report.cannot_judge)}")
     for c in report.cannot_judge:
-        _say(f"  {c.rule}: {c.reason}")
+        _say(f"  {c.rule}: {_player_copy(c.reason)}")
     for note in report.notes:
-        _say(note)
+        _say_note(note)
 
 
 # ─── looks ───────────────────────────────────────────────────────────────────
@@ -9153,10 +9192,11 @@ def _ref_text(ref: LooksChoiceRef) -> str:
 def _print_findings(
     refusals: Sequence[looks.Finding], notes: Sequence[looks.Finding], pad: str
 ) -> None:
+    # A finding is the tables' words about the tables' ids and names.
     for f in refusals:
-        _say(f"{pad}refused: {f.message}")
+        _say(f"{pad}refused: {_player_copy(f.message)}")
     for f in notes:
-        _say(f"{pad}note: {f.message}")
+        _say(f"{pad}note: {_player_copy(f.message)}")
 
 
 def _print_look(report: LookReport, *, heading: str) -> None:
@@ -9179,8 +9219,8 @@ def _print_look(report: LookReport, *, heading: str) -> None:
     else:
         _say(f"  verdict:   not refused, {len(report.notes)} note(s)")
     _print_findings(report.refusals, report.notes, "    ")
-    for remark in report.remarks:
-        _say(remark)
+    for remark in report.remarks:  # a look's name holds no bracket or parenthesis
+        _say_note(remark)
 
 
 @looks_app.command("races", short_help="Playable races and their body types.")
@@ -9212,7 +9252,7 @@ def looks_races(
         bodies = ", ".join(f"{b.body_type} (model {b.chr_model_id})" for b in r.body_types)
         _say(f"  {r.id:>4}  {r.name}  [{side}]  body types {bodies or 'none'}")
     for n in report.notes:
-        _say(n)
+        _say_note(n)
 
 
 def _choice_text(choice: looks.Choice, subject: str, f: looks.Finding) -> str | None:
@@ -9389,7 +9429,7 @@ def looks_options(
                 _say(f"    {choice.id:>7}  {choice.name}".rstrip())
                 _print_findings(choice.refusals, choice.notes, "             ")
     for n in notes:
-        _say(n)
+        _say_note(n)
 
 
 @looks_app.command("save", short_help="Check a look against the tables and save it.")
