@@ -8235,6 +8235,17 @@ def char_binds(
     elif character is not None:
         char = _select_character(acct, character)
         folder = (char.realm_folder, char.folder)
+    if folder is None:
+        # The latest folder's files could not be told apart (case variants):
+        # it is still the character `char show` would take, as in `char macros`.
+        lab_files = [
+            f
+            for f in lay.saved_variables()
+            if f.account == acct.folder and f.scope == "character" and _is_lab_file(f)
+        ]
+        top = max(lab_files, key=lambda f: (f.mtime_ns, f.path), default=None)
+        if top is not None and top.realm_folder and top.character_folder:
+            folder, how = (top.realm_folder, top.character_folder), "latest"
     account_file, account_doc = _char_binds_file(lay, acct, None)
     files = [account_file]
     character_doc = None

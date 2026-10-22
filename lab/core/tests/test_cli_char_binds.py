@@ -228,6 +228,52 @@ def test_a_character_without_a_record_gives_the_file_rows_exit_0(root: Path) -> 
     assert "Cannot place keys" not in text  # the Record line already says why
 
 
+def _folds_case(where: Path) -> bool:
+    probe = where / "case-probe"
+    probe.mkdir()
+    try:
+        return (where / "CASE-PROBE").exists()
+    finally:
+        probe.rmdir()
+
+
+def test_case_variant_records_keep_the_latest_folder_as_char_macros_does_constructed(
+    flavor: Path, tmp_path: Path
+) -> None:
+    """Constructed (M13-73): CHARACTER's folder, written last, holds two case
+    variants of WowLab.lua and none spelled exactly, so no record is read.
+    Without --character that folder is still the character, chosen as the
+    latest, as `char macros` keeps it."""
+    if _folds_case(tmp_path):
+        pytest.skip("the temporary directory's volume folds case")
+    folder = flavor / CHAR_DIR / "SavedVariables"
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in ("wowlab.lua", "WOWLAB.lua"):
+        (folder / name).write_bytes(SCHEMA_3.read_bytes())
+    for other in flavor.rglob("WowLab.lua"):
+        if "SavedVariables" in other.parts and other.parent.parent.name != ACCOUNT:
+            os.utime(other, ns=(10**18, 10**18))
+    for name in ("wowlab.lua", "WOWLAB.lua"):
+        os.utime(folder / name, ns=(2 * 10**18, 2 * 10**18))
+    pinned = report("--character", CHARACTER)
+    latest = report()
+    assert latest.character == pinned.character == f"1/{CHARACTER}"
+    assert (pinned.chosen_by, latest.chosen_by) == ("--character", "latest")
+    for rep in (pinned, latest):
+        assert rep.record_file is None and rep.record_error is not None
+        assert "none was read" in rep.record_error
+        assert [f.scope for f in rep.files] == ["account", "character"]
+    assert latest.record_error == pinned.record_error
+    assert latest.keys == pinned.keys
+    lines = ok("char", "binds").stdout.splitlines()
+    assert "has a WowLab.lua" not in lines[0]
+    assert lines[0] == (
+        f"Character: 1/{CHARACTER} in account {ACCOUNT} "
+        "(written last; choose another with --character)"
+    )
+    assert lines[1] == f"Record: none ({latest.record_error})"
+
+
 def test_a_character_folder_that_does_not_exist_is_a_usage_error(root: Path) -> None:
     assert run("char", "binds", "--character", "Nobody-Nowhere").exit_code == 2
 
