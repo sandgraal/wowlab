@@ -1330,7 +1330,7 @@ never written.
 
 Restore into another target. `tx.restore(snapshot_id, paths=None, *, into=Target)` maps every path the snapshot holds by its path relative to the flavor folder, and does so only when the caller names the target. The plan names both folders. The target gets its own pre-write snapshot, and the allowlist, link and client checks apply to it as to any write. Without `into`, a foreign snapshot is refused as before. Folder names come from the manifest and from discovery, never from a constant (L6). The manifest's `flavor_folder` is untrusted input and is validated before it is used to map paths.
 
-The account rules below apply only when the snapshot holds at least one account folder. A snapshot with none, such as a CVar-only profile or a flavor captured before its first login, restores without a mapping and creates no account folder. Account folders are mapped automatically only when each side has exactly one. Otherwise the player gives the mapping, and these mappings are refused with the accounts named and nothing written:
+The account rules below apply only when the snapshot holds at least one account folder. A snapshot with none, such as a CVar-only profile or a flavor captured before its first login, restores without a mapping and creates no account folder. A mapping given for such a snapshot is refused. Account folders are mapped automatically only when each side has exactly one. Otherwise the player gives the mapping, and these mappings are refused with the accounts named and nothing written:
 - two source folders mapped to one target folder;
 - a mapping that leaves out a source account folder the snapshot holds;
 - no mapping, when the target has no account folder.
