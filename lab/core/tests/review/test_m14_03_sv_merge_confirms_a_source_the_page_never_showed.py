@@ -17,8 +17,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 TESTS = Path(__file__).resolve().parents[1]
 if str(TESTS) not in sys.path:
     sys.path.insert(0, str(TESTS))
@@ -36,9 +34,6 @@ def _sv(where: Real, char: str) -> Path:
     return base / "SavedVariables" / "Probe.lua"
 
 
-@pytest.mark.xfail(
-    strict=True, reason="M13-74: sv merge --expect pins only the target, not the source"
-)
 def test_a_source_changed_after_the_plan_is_refused(real: Real) -> None:  # noqa: F811
     _sv(real, DST).write_bytes(b'ProbeDB = {\n["x"] = 1,\n}\n')
     _sv(real, SRC).write_bytes(b'ProbeDB = {\n["x"] = 2,\n}\n')
