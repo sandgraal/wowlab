@@ -206,8 +206,8 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 **Amendment (2026-10-22, Proposed; the owner chose this rule in session on 2026-10-22, answering the conductor's question before M16-45 was dispatched; the status flip is the owner's):** to item (1) of the first 2026-10-21 amendment. Its premise, "the frame name belongs to an addon, not to text the player typed", is false in general. `domain-reviewer`'s pre-dispatch check found that GSE names its secure buttons after the sequence names the player typed, and `SetBindingClick` binds a key to any global frame name. Its fallback, storing only frames an installed addon declares, cannot be built, because no API lists an addon's frames. Item (1) is narrowed to this rule. For each command `c` that `GetBinding` returns and that passes the existing secret check, `c` is stored only when all three hold:
 - (a) `c` matches `^CLICK ([%a_][%w_]*):(%a%w*)$`, with a frame part of at most 64 bytes and a button part of at most 32 bytes;
-- (b) `_G[frame]` is a table, and `pcall(frame.GetAttribute, frame, "type")` returns exactly `"action"`;
-- (c) `pcall(frame.GetAttribute, frame, "action")` returns a number that passes `issecretvalue` where the client has it.
+- (b) `f = _G[frame]` is a table, and `pcall(f.GetAttribute, f, "type")` returns exactly `"action"`;
+- (c) `pcall(f.GetAttribute, f, "action")` returns a number for which `issecretvalue` returns false, where the client has it.
 
 When all three hold, the record keeps the command, the action slot number and the keys. When any fails, the command is counted in `commands_left_out` and in a new `clicks_left_out`, and nothing else is read from the frame. A button whose `type` is `action` presses one of the client's numbered action slots. Bar addons such as Bartender4, ElvUI and Dominos generate those buttons' names themselves; GSE, BindPad and `/run` targets are not of that type. A wrong guess therefore only leaves a button out, and no text the player typed is stored. Whether `GetBinding` lists `CLICK` commands at all is [verify]; the schema-5 capture settles it.
 
