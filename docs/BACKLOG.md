@@ -1072,8 +1072,10 @@ Found 2026-10-19 in the code review of #290 (M14-08), on `main` before it. (1) `
 
 **Acceptance:** the decision for (1) stated in the report and recorded here by the conductor; the test for (2) catches `#a335ee` and a quality word added to `page.css`; byte-identity as stated; `make ci` green; reviewed by `code-reviewer`.
 
+**Decision for (1), recorded 2026-10-22:** a new flag. `char list --json --brief` gives `record: null` on every entry and never holds records in memory. The Character tab runs `char list --json --brief`. Plain `--json` and text output are unchanged. On the capture, `--json` prints 100,632 bytes and `--json --brief` prints 1,475. `--brief` without `--json` is accepted and changes nothing.
+
 ---
-## [ ] M13-73 — `char binds` with case-variant `WowLab.lua` files and no `--character`
+## [x] M13-73 — `char binds` with case-variant `WowLab.lua` files and no `--character`
 **Size:** XS · **Depends on:** nothing
 
 Found 2026-10-19 in the M14-07 reviews (both reviewers, off that branch), on `main` before it. When the latest character folder holds two `WowLab.lua` files that differ only in case, `_coach_record` returns no target with a `record_error`, and `char binds` without `--character` reports `character: null` and says "none in account … has a WowLab.lua", which is false: the folder has one, and it could not be told apart. `char macros` (M14-07) now keeps the latest folder as the character with `chosen_by` "latest" and gives `macros check`'s own reason ("no spellbook record: the WowLab.lua was not read"); make `char binds` do the same, with the same fallback rule (`cli.char_macros`'s `folder`/`how` fallback, the latest rule of `_lab_char_file`). Labelled constructed test that skips where the volume folds case, as `test_case_variant_records_read_nothing_as_macros_check_says_constructed` does; `char binds` output on the fixtures byte-identical to `main`.
@@ -1430,8 +1432,17 @@ These are the `Proposed` amendments of 2026-10-21 to ADR-0013 (the proposal vali
 - a pre-write snapshot of the target;
 - the allowlist and link refusals applied to the target;
 - the client check applied to the target: a client running from the target root refuses the write, whatever the source install's state (L2);
-- the target install's lock is taken, and a target root whose store overlaps the source's is refused;
+- the target install's lock is taken, and a target root that overlaps the snapshot store, in either direction, is refused (§6.10, L1; wording clarified 2026-10-22 after review);
 - `undo` of a restore into another target.
+
+*Added 2026-10-22 from the reviews of PR #330.* The graders also cover the rules in the §6.10 amendment of the same date:
+- `paths=` names files in the snapshot's own spelling; the target-side spelling of a mapped account folder is refused and never planned as a delete.
+- A mapping of two source folders to one target folder is refused, and so is a mapping that leaves out a source account folder the snapshot holds.
+- A snapshot with no account folder restores without a mapping and creates none; a mapping given for it is refused.
+- A mapping value must be one plain folder name.
+- A sole target account folder that is a link is refused, whether it was mapped explicitly or automatically.
+- A forged manifest `flavor_folder` is refused with nothing written.
+- Malformed `--into-flavor` and `--map-account` values are refused.
 
 Inputs are constructed and labelled. No flavor name appears in library-facing assertions beyond the test data (L6).
 
@@ -1564,7 +1575,7 @@ Guard creates the pre-write snapshot (`store.create(... label="guard pre-write: 
 ## [ ] M16-11T — [TEST] `guard`: a whole restore's plan lists what it leaves alone
 **Size:** XS · **Depends on:** nothing · **Sources:** qa:F2
 
-The restore plan is built in `guard` (`tx.restore`, `PlanItem`), so this changes what `guard` returns (ADR-0013). Strict-xfail graders: files added under the snapshot's subtrees since the snapshot appear in the plan as left-alone items; they are never written or deleted; a `--paths` restore lists none.
+The restore plan is built in `guard` (`tx.restore`, `PlanItem`), so this changes what `guard` returns (ADR-0013). Strict-xfail graders: files added under the snapshot's subtrees since the snapshot appear in the plan as left-alone items; they are never written or deleted; a `--paths` restore lists none. *Seam amended 2026-10-22 (M16-11's "Seam" paragraph):* the left-alone files are a read-only `tx.left_alone` tuple, not items in `tx.plan`. The graders also cover links, a FIFO, excluded paths, and added executables and Edit-no files.
 
 **Acceptance:** the graders fail as expected on `main`; `make ci` green. Written by `test-writer`, reviewed by `code-reviewer` and `security-reviewer`.
 
@@ -1574,6 +1585,8 @@ The restore plan is built in `guard` (`tx.restore`, `PlanItem`), so this changes
 **Size:** S · **Depends on:** M16-11T · **Sources:** qa:F2 (EV-10)
 
 The plan lists, under a "left alone" heading, the files under the snapshot's subtrees that were added since the snapshot. README, `snap restore --help` and the wiki say that a whole restore never deletes them.
+
+**Seam, ruled 2026-10-22 in the M16-11T reviews.** In `guard`, the left-alone files are a read-only `tx.left_alone: tuple[str, ...]`, filled by a whole restore. They are not items in `tx.plan`, so `PlanItem`, `tx.plan` and every `--json` plan are unchanged. Putting them in `tx.plan` broke `profile apply`'s plan check in both reviewers' stand-ins. The walk lists regular files only, outside `Manifest.excluded`, and follows no link (use `SnapshotStore.list_tree`). The CLI prints the "left alone" heading from `tx.left_alone`. When the CLI turns a whole restore into a restore by name (skipped executables, set-aside screenshots), it computes the same list itself. Its dry-run plan must equal its commit plan, without weakening the comparison in `cli.py` (`if tx.plan != tuple(plan) or moved:`).
 
 **Acceptance:** M16-11T's graders are activated by marker deletion only, and the full suite is green (`guard.py`). The CLI prints the heading. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: the `snap restore` plan.
 
@@ -1990,10 +2003,12 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 - Probes and the control event sit behind `/wowlab debug`, off by default.
 - The `Constants` sweep runs once per session.
 - Change events mark sections dirty. Gathering runs out of combat, at most once every 30 to 60 s, and at logout.
-- `CLICK <frame>:<button>` binding commands are stored, and nothing else non-plain is.
+- `CLICK <frame>:<button>` binding commands are stored only under the rule in "Ruled 2026-10-22" below (an action-slot button); nothing else non-plain is.
 - No macro hash is stored in this ticket. If M16-05's macro-place answer needs one, M16-48 adds it.
 
 **Before dispatch:** `domain-reviewer` checks ADR-0026's `CLICK` premise. Some addons (GSE, for example) name secure buttons after text the player typed, so a `CLICK <name>:<button>` can carry it. If so, the ticket stores the command only when the frame belongs to an installed addon's declared frames, or the owner rules again.
+
+**Ruled 2026-10-22.** The check found the premise false (GSE) and the fallback unbuildable, and the owner ruled again in session. A `CLICK` command is stored only under the rule in ADR-0026's 2026-10-22 amendment: a bounded identifier pair, a frame whose `type` attribute is `"action"`, and a numeric `action` attribute. Every other `CLICK` is counted in `commands_left_out` and in a new `clicks_left_out`. Whether `GetBinding` lists `CLICK` commands at all is [verify]. If the capture shows it does not, the implementer reports it and does not build a key-by-key walk. The schema-5 capture includes one action-bar addon (Bartender4, ElvUI or Dominos) with at least one `CLICK` keybind, the positive case. Where possible it also includes a GSE sequence keybind or a `SetBindingClick` to a non-action button, the negative case: it is counted, and its name is absent from `WowLab.lua` by grep. Any player-typed name in a provenance row is a pseudonym.
 
 **Acceptance:** the static Lua tests and selene pass. One owner capture at schema 5 is added, with provenance rows. `make ci` is green. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer`. User-facing: in-game chat, and `/wowlab debug`.
 
@@ -2022,8 +2037,31 @@ Built only if M16-05's macro-place answer cannot place macros without a join key
 
 ---
 
+## [ ] M16-49T — [TEST] `luadata.read` and the `wtfconfig` readers refuse a parent-directory link out of the install
+**Size:** S · **Depends on:** M16-26 · **Sources:** the M16-26T security review (2026-10-22)
+
+Found in review on 2026-10-22, and not in M16-26's scope. `O_NOFOLLOW` checks only the last part of a path, and the readers take no install root. So `WTF -> ../Elsewhere` reads `Elsewhere/Config.wtf` while `tree` reports the `WTF` entry as "link, not followed". Strict-xfail graders, constructed and labelled, for `luadata.read` and each `wtfconfig` `read_*`, with the install root given:
+- a link in a parent directory that points out of the install is refused;
+- a link in a parent directory that stays inside the install is refused as well, as `tree` reports it ("link, not followed");
+- a regular path still reads byte for byte.
+
+They are skipped on Windows, or graded there through the junction monkeypatch of `test_snapshot_junctions.py`.
+
+**Acceptance:** the graders fail as expected on `main`, and `make test-parser` and `make ci` are green. Written by `test-writer`, and reviewed by `code-reviewer` and `security-reviewer`.
+
+---
+
+## [ ] M16-49 — [IMPL] The readers open from the install root, one component at a time
+**Size:** M · **Depends on:** M16-49T · **Sources:** the M16-26T security review (2026-10-22)
+
+The readers' callers already know the install. Each reader takes the install root and opens component by component with `dir_fd` and `O_NOFOLLOW`; the M11-11 helper already accepts `dir_fd`. Callers without an install root (`sv dump` of a path outside any install) keep today's final-component check, and say so in their output.
+
+**Acceptance:** M16-49T's graders are activated by marker deletion only; the full suite is green (`luadata.py`); `make test-parser` is green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: a file reached through a linked folder is refused, with the folder named, and the wiki's safety page says so. Commands given a path outside any install (`sv dump <path>`) say they checked the last part of the path only.
+
+---
+
 ## [ ] M16-47 — M16 review
-**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48
+**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49
 
 `docs/handoffs/M16-review.md` per §11, including §11 item 5's folding of the amendments. It also covers whether v0.2 is tagged, when the gate's clock started, and whether M15 resumes.
 

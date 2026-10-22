@@ -1326,6 +1326,22 @@ the resolved path is held to it): `undo()` and restore accept only a
 local absolute root (item 1), and a change `undo()` could not reverse is
 never written.
 
+*Amended 2026-10-22 (M16-03T review; text from the outside evaluation, 4(a) item 2, with the conductor's rulings on the review's open questions):*
+
+Restore into another target. `tx.restore(snapshot_id, paths=None, *, into=Target)` maps every path the snapshot holds by its path relative to the flavor folder, and does so only when the caller names the target. The plan names both folders. The target gets its own pre-write snapshot, and the allowlist, link and client checks apply to it as to any write. Without `into`, a foreign snapshot is refused as before, and the refusal names the option (`--into-flavor` or `--into-root`). Folder names come from the manifest and from discovery, never from a constant (L6). The manifest's `flavor_folder` is untrusted input. Before it is used to map paths it must be exactly one path component: not empty, `.` or `..`, with no separator, drive or NUL. Otherwise the restore is refused with nothing written.
+
+The account rules below apply only when the snapshot holds at least one account folder. A snapshot with none, such as a CVar-only profile or a flavor captured before its first login, restores without a mapping and creates no account folder. A mapping given for such a snapshot is refused. Account folders are mapped automatically only when each side has exactly one. Otherwise the player gives the mapping, and these mappings are refused with the accounts named and nothing written:
+- no mapping, when either side has more than one account folder;
+- no mapping, when the target has no account folder;
+- two source folders mapped to one target folder;
+- a mapping that leaves out a source account folder the snapshot holds. This applies to a `paths=` restore too: the mapping covers every account folder the snapshot holds, not only those the named paths touch.
+
+A mapping may name a target account folder that does not exist yet; the gate creates it like any allowlisted folder. A mapping value must be one plain folder name. A sole target account folder that is a link is refused.
+
+`paths=` names files in the snapshot's own spelling, the one `snap show` lists. A path in the target-side spelling of a mapped account folder is refused, and is never planned as a delete.
+
+The target root must not overlap the snapshot store in either direction (L1). A client running from the target refuses the write, whatever the source install's state.
+
 ### 6.11 CLI — `wowlab` (M10-14)
 
 ```
@@ -4586,7 +4602,7 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
    - Probes sit behind `/wowlab debug`.
    - Gathering is marked dirty, and done out of combat at most once every
      30 to 60 s and at logout.
-   - `CLICK` binding commands are stored.
+   - `CLICK` binding commands are stored. *Narrowed 2026-10-22 (ADR-0026 amendment of that date, Proposed):* only those whose frame is an action-slot button.
    - A salted macro hash is added afterwards by M16-48, only if the launch
      session's macro-place answer needs it. `addon install` copies the salt
      from the user data directory into the installed addon; it is never in
