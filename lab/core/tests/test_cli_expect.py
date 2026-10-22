@@ -10,6 +10,13 @@ again under the write gate's lock (`guard.undo(expected_id=...)`, and
 both behave as before; `--json` gains `target_sha256` on `SvMergeReport`
 and nothing on `UndoReport`, which already names its record in `undone`.
 
+M13-74: the target alone does not pin what `sv merge` writes (its source
+may be a live character file, or a snapshot id prefix), so the report also
+names `merged_sha256`, the SHA-256 of the bytes it would write, and
+`--expect` takes `TARGET:MERGED`; the second half is compared again inside
+the transaction against the hash the gate took of the bytes `tx.write`
+received.
+
 The install is the captured tree copied into `tmp_path` as `test_cli.py`
 builds it, the user data directory is redirected and the process table is a
 fake one (constructed: no client is running). Nothing reads or writes a real
@@ -19,6 +26,7 @@ install. The edits of a real file are constructed.
 # ruff: noqa: F811  (fixtures imported from test_cli are requested by name)
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 from pathlib import Path
@@ -74,13 +82,17 @@ def test_confirm_prints_the_exported_line_when_it_gets_no_yes(root: Path) -> Non
 
 
 def test_expect_fields_name_fields_of_the_reports() -> None:
-    assert cli.EXPECT_FIELDS == {("undo",): "undone", ("sv", "merge"): "target_sha256"}
+    assert cli.EXPECT_FIELDS == {
+        ("undo",): ("undone",),
+        ("sv", "merge"): ("target_sha256", "merged_sha256"),
+    }
     assert "undone" in cli.UndoReport.model_fields
-    assert "target_sha256" in cli.SvMergeReport.model_fields
+    assert {"target_sha256", "merged_sha256"} <= set(cli.SvMergeReport.model_fields)
 
 
-def test_json_gains_exactly_one_field_on_the_merge_report_and_none_on_undo() -> None:
-    """The models as on `main` before M14-03, field by field (ADR-0031)."""
+def test_json_gains_exactly_the_pin_fields_on_the_merge_report_and_none_on_undo() -> None:
+    """The models as on `main` before M14-03, field by field (ADR-0031):
+    M14-03 added `target_sha256`, M13-74 `merged_sha256`."""
     undo_before = [
         "undone",
         "label",
@@ -110,7 +122,11 @@ def test_json_gains_exactly_one_field_on_the_merge_report_and_none_on_undo() -> 
         "notes",
     ]
     assert list(cli.UndoReport.model_fields) == undo_before
-    assert list(cli.SvMergeReport.model_fields) == [*merge_before, "target_sha256"]
+    assert list(cli.SvMergeReport.model_fields) == [
+        *merge_before,
+        "target_sha256",
+        "merged_sha256",
+    ]
 
 
 # ─── undo --expect ───────────────────────────────────────────────────────────
@@ -183,37 +199,158 @@ def _flavor(root: Path) -> Any:
 # ─── sv merge --expect ───────────────────────────────────────────────────────
 
 
-def test_sv_merge_json_names_the_targets_sha256(flavor: Path) -> None:
-    before = (flavor / DBM).read_bytes()
-    result = run(*MERGE, "--json", input="")
+def _shown(*merge: str) -> dict[str, Any]:
+    """The declined plan run of `merge` (as `wowlab ui` makes it): its report."""
+    result = run(*merge, "--json", input="")
     assert result.exit_code == 1, _out(result)
     assert result.stderr.endswith(f"\n{cli.CONFIRM_DECLINED}\n")
-    report = json.loads(result.stdout.lstrip())
+    report: dict[str, Any] = json.loads(result.stdout.lstrip())
+    return report
+
+
+def _pin(report: dict[str, Any]) -> str:
+    return f"{report['target_sha256']}:{report['merged_sha256']}"
+
+
+def test_sv_merge_json_names_the_targets_sha256(flavor: Path) -> None:
+    before = (flavor / DBM).read_bytes()
+    report = _shown(*MERGE)
     assert report["target_sha256"] == hashlib.sha256(before).hexdigest()
     assert report["written"] is False
     assert (flavor / DBM).read_bytes() == before
 
 
+def test_sv_merge_json_names_the_sha256_of_the_bytes_it_writes(flavor: Path) -> None:
+    shown = _shown(*MERGE)["merged_sha256"]
+    assert isinstance(shown, str) and shown != hashlib.sha256(b"").hexdigest()
+    report = json.loads(ok(*MERGE, "--yes", "--json").stdout)
+    assert report["merged_sha256"] == shown
+    assert hashlib.sha256((flavor / DBM).read_bytes()).hexdigest() == shown
+    (record,) = guard.history()
+    assert [p.after for p in record.paths] == [shown]
+
+
+def test_sv_merge_json_names_no_merged_sha256_when_conflicts_stop_it(flavor: Path) -> None:
+    """Unresolved conflicts: nothing would be written, so there are no bytes
+    to name (constructed: one value differs between two characters' copies)."""
+    _probe(flavor, DST).write_bytes(b'ProbeDB = {\n["x"] = 1,\n}\n')
+    _probe(flavor, SRC).write_bytes(b'ProbeDB = {\n["x"] = 2,\n}\n')
+    result = run(*FROM, "--json")
+    assert result.exit_code == 1, _out(result)
+    report = json.loads(result.stdout)
+    assert report["merged_sha256"] is None and report["written"] is False
+
+
 def test_sv_merge_expect_writes_when_the_target_is_unchanged(flavor: Path) -> None:
     sha = hashlib.sha256((flavor / DBM).read_bytes()).hexdigest()
-    result = run(*MERGE, "--expect", sha, "--yes", "--json")
+    shown = _shown(*MERGE)
+    result = run(*MERGE, "--expect", _pin(shown), "--yes", "--json")
     assert result.exit_code == 0, _out(result)
     report = json.loads(result.stdout)
     assert report["written"] is True and report["target_sha256"] == sha
+    assert report["merged_sha256"] == shown["merged_sha256"]
     (record,) = guard.history()
     assert record.id == report["transaction"] and [p.before for p in record.paths] == [sha]
 
 
 def test_sv_merge_expect_refuses_when_the_target_changed(flavor: Path) -> None:
     target = flavor / DBM
-    shown = hashlib.sha256(target.read_bytes()).hexdigest()
+    pin = _pin(_shown(*MERGE))
+    shown = pin.partition(":")[0]
     changed = _change_unknown(target)
     for args in (["--yes"], ["--yes", "--json"], []):
-        result = run(*MERGE, "--expect", shown, *args)
+        result = run(*MERGE, "--expect", pin, *args)
         assert result.exit_code == 3, _out(result)
         assert shown in result.stderr and "nothing was written" in result.stderr
     assert target.read_bytes() == changed
     assert guard.history() == ()
+
+
+@pytest.mark.parametrize(
+    "given",
+    [
+        "c" * 64,  # the target alone (M14-03's form) does not pin what is written
+        "c" * 64 + ":",
+        ":" + "c" * 64,
+        "C" * 64 + ":" + "c" * 64,
+        "c" * 64 + ":" + "c" * 63,
+        "c" * 64 + ":" + "c" * 64 + ":" + "c" * 64,
+    ],
+)
+def test_sv_merge_expect_takes_target_colon_merged_only(flavor: Path, given: str) -> None:
+    """Constructed (boundary): a malformed `--expect` is a usage error,
+    before anything is read."""
+    before = (flavor / DBM).read_bytes()
+    result = run(*MERGE, "--expect", given, "--yes")
+    assert result.exit_code == 2, _out(result)
+    assert "TARGET:MERGED" in result.stderr
+    assert (flavor / DBM).read_bytes() == before
+    assert guard.history() == ()
+
+
+# A per-character file in two characters of the captured account; its
+# contents are constructed (the drift tests need a source that changes).
+SRC = "Labcharb-Labrealmf"
+DST = "Labchard-Labrealmg"
+FROM = ("sv", "merge", "M13Probe.lua", "--into", DST, "--from", SRC, "--take", "theirs")
+
+
+def _probe(flavor: Path, char: str) -> Path:
+    return flavor / "WTF" / "Account" / ACCOUNT / "1" / char / "SavedVariables" / "M13Probe.lua"
+
+
+def test_sv_merge_expect_refuses_when_the_source_changed_constructed(flavor: Path) -> None:
+    """The drift M13-74 closes: the source character's file is rewritten
+    (that character logged out) after the plan, the target is not. The
+    target half of the pin still matches; the merged half does not, so the
+    run is refused with exit 3 and nothing is written."""
+    _probe(flavor, DST).write_bytes(b'ProbeDB = {\n["x"] = 1,\n}\n')
+    _probe(flavor, SRC).write_bytes(b'ProbeDB = {\n["x"] = 2,\n}\n')
+    shown = _shown(*FROM)
+    _probe(flavor, SRC).write_bytes(b'ProbeDB = {\n["x"] = 3,\n}\n')
+    for args in (["--yes"], ["--yes", "--json"], []):
+        result = run(*FROM, "--expect", _pin(shown), *args)
+        assert result.exit_code == 3, _out(result)
+        assert shown["merged_sha256"] in result.stderr
+        assert "nothing was written" in result.stderr
+    assert _probe(flavor, DST).read_bytes() == b'ProbeDB = {\n["x"] = 1,\n}\n'
+    assert guard.history() == ()
+
+
+def test_sv_merge_expect_merged_is_compared_inside_the_transaction_constructed(
+    flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The second half of the pin is compared with the SHA-256 the gate took
+    of the bytes `tx.write` received, under its locks (constructed: a
+    transaction whose `write` is handed one byte more than the CLI passed).
+    Exit 3, the write rolled back."""
+    target = flavor / DBM
+    before = target.read_bytes()
+    shown = _shown(*MERGE)
+    real_transaction = guard.transaction
+
+    class Tampered:
+        def __init__(self, tx: Any) -> None:
+            self._tx = tx
+
+        def write(self, path: str, data: bytes) -> None:
+            self._tx.write(path, data + b"\n")
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._tx, name)
+
+    @contextlib.contextmanager
+    def tampering(*args: Any, **kwargs: Any) -> Any:
+        with real_transaction(*args, **kwargs) as tx:
+            yield Tampered(tx)
+
+    monkeypatch.setattr(guard, "transaction", tampering)
+    result = run(*MERGE, "--expect", _pin(shown), "--yes")
+    assert result.exit_code == 3, _out(result)
+    assert "rolled back" in result.stderr and shown["merged_sha256"] in result.stderr
+    assert target.read_bytes() == before
+    (record,) = guard.history()
+    assert record.state == "rolled_back"
 
 
 def test_sv_merge_expect_is_compared_inside_the_transaction(
@@ -224,7 +361,8 @@ def test_sv_merge_expect_is_compared_inside_the_transaction(
     under the gate's locks, refuses with exit 3 and the write is rolled
     back."""
     target = flavor / DBM
-    shown = hashlib.sha256(target.read_bytes()).hexdigest()
+    pin = _pin(_shown(*MERGE))
+    shown = pin.partition(":")[0]
     real_transaction = guard.transaction
     changed: list[bytes] = []
 
@@ -233,7 +371,7 @@ def test_sv_merge_expect_is_compared_inside_the_transaction(
         return real_transaction(*args, **kwargs)
 
     monkeypatch.setattr(guard, "transaction", racing)
-    result = run(*MERGE, "--expect", shown, "--yes")
+    result = run(*MERGE, "--expect", pin, "--yes")
     assert result.exit_code == 3, _out(result)
     assert "rolled back" in result.stderr and shown in result.stderr
     assert target.read_bytes() == changed[0]

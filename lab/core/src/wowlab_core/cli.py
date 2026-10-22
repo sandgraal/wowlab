@@ -752,15 +752,16 @@ command exits 1. `wowlab ui` reads a plan run of a command with no
 no `--yes` and stdin closed, so `_confirm` gets no answer, and the text plan
 is what stderr holds before this line (docs/LAB_PLAN.md §16.1, M14-03)."""
 
-EXPECT_FIELDS: dict[tuple[str, ...], str] = {
-    ("undo",): "undone",
-    ("sv", "merge"): "target_sha256",
+EXPECT_FIELDS: dict[tuple[str, ...], tuple[str, ...]] = {
+    ("undo",): ("undone",),
+    ("sv", "merge"): ("target_sha256", "merged_sha256"),
 }
 """For each command that confirms through `_confirm` and declares `--expect`:
-the field of its `--json` report whose value, passed back as `--expect`,
-makes a later run refuse (exit 3) unless it would apply the same plan. The
-journal record `undo` would undo; the SHA-256 `sv merge` read its target
-with (§16.1, "applies the plan that was shown")."""
+the fields of its `--json` report whose values, joined by `:` and passed
+back as `--expect`, make a later run refuse (exit 3) unless it would apply
+the same plan. The journal record `undo` would undo; for `sv merge`, the
+SHA-256 it read its target with and the SHA-256 of the bytes it would write
+(§16.1, "applies the plan that was shown"; M13-74)."""
 
 
 def _confirm(question: str, yes: bool) -> None:
@@ -3585,6 +3586,10 @@ class SvMergeReport(_Out):
     # The target's SHA-256 as this run read it, before the merge: `--expect`
     # compares a later run's with it (M14-03).
     target_sha256: str
+    # The SHA-256 of the bytes the merge writes (or would write): what
+    # `--expect`'s second half compares, so a source that changed after the
+    # plan is refused (M13-74). None when unresolved conflicts stop the merge.
+    merged_sha256: str | None
 
 
 _MERGE_PROVEN = (
@@ -3605,6 +3610,24 @@ _LOADER_BUG = (
     "https://github.com/nobewayo/ForeverSVFix). Log in and out once with the lab-addon "
     "enabled and check again, or pass --force-loader-check to merge anyway"
 )
+
+
+_SHA256 = re.compile(r"\A[0-9a-f]{64}\Z")
+
+
+def _merge_expect(expect: str | None) -> tuple[str | None, str | None]:
+    """`sv merge --expect TARGET:MERGED`, split into its two SHA-256s (M13-74).
+    Both are required: the target alone does not pin what is written."""
+    if expect is None:
+        return None, None
+    target, sep, merged = expect.partition(":")
+    if not sep or not _SHA256.fullmatch(target) or not _SHA256.fullmatch(merged):
+        raise CliError(
+            f"--expect {expect!r} is not TARGET:MERGED, the two lowercase SHA-256s "
+            "target_sha256 and merged_sha256 of an earlier run's --json",
+            EXIT_USAGE,
+        )
+    return target, merged
 
 
 def _into_character(account: layout.Account, spec: str, option: str) -> layout.Character:
@@ -4142,8 +4165,9 @@ def sv_merge(
         str | None,
         typer.Option(
             "--expect",
-            metavar="SHA256",
-            help="Write only if the target still has this SHA-256 (target_sha256 in an "
+            metavar="TARGET:MERGED",
+            help="Write only if the target still has the SHA-256 TARGET and the merge would "
+            "write bytes with the SHA-256 MERGED (target_sha256 and merged_sha256 in an "
             "earlier run's --json): else refused, exit 3, nothing written. For a plan "
             "shown by one run and confirmed by another.",
         ),
@@ -4168,6 +4192,7 @@ def sv_merge(
     keys an addon keeps inside it. Before writing, the --into character's WowLab.lua
     is checked for a SavedVariables loader failure (exit 3). JSON: SvMergeReport."""
     keys = list(key or [])
+    expect_target, expect_merged = _merge_expect(expect)
     try:
         same_path = svmerge.check_keys(keys)
     except svmerge.MergeError as exc:
@@ -4225,12 +4250,12 @@ def sv_merge(
     target_path = lay.flavor_path / target.path
     ours_bytes = _read_sv(target_path)
     expected = hashlib.sha256(ours_bytes).hexdigest()
-    if expect is not None and expect != expected:
+    if expect_target is not None and expect_target != expected:
         # Final already: this run would merge into other bytes than the plan
         # it is to confirm. The same compare is made again under the write
         # gate's lock, below, for a change made after this read.
         raise CliError(
-            f"{target.path} has SHA-256 {expected}, not the expected {expect}: it changed "
+            f"{target.path} has SHA-256 {expected}, not the expected {expect_target}: it changed "
             "after the plan was made, so nothing was written; run the command again to see "
             "the new plan",
             EXIT_REFUSED,
@@ -4281,6 +4306,25 @@ def sv_merge(
     if result.absent:
         notes.append(_ABSENT_NOTE)
     show = _say if not json_out else _say_err
+    data = (
+        None
+        if result.unresolved
+        else luadata.serialize(
+            result.document, target=target_path, lab_written=_lab_written(store, chosen.path)
+        )
+    )
+    merged = hashlib.sha256(data).hexdigest() if data is not None else None
+    if expect_merged is not None and expect_merged != merged:
+        # The target is as the plan read it, but what this run would write is
+        # not what the plan showed: its source (a live character file, or a
+        # snapshot id prefix that now resolves elsewhere) changed (M13-74).
+        now = "has unresolved conflicts" if merged is None else f"would write SHA-256 {merged}"
+        raise CliError(
+            f"the merge into {target.path} {now}, not the expected {expect_merged}: what it "
+            "merges from changed after the plan was made, so nothing was written; run the "
+            "command again to see the new plan",
+            EXIT_REFUSED,
+        )
 
     def report(*, written: bool, transaction: str | None = None) -> SvMergeReport:
         return SvMergeReport(
@@ -4299,6 +4343,7 @@ def sv_merge(
             transaction=transaction,
             notes=[*notes, _MERGE_PROVEN] if written else notes,
             target_sha256=expected,
+            merged_sha256=merged,
         )
 
     def finish(done: SvMergeReport, line: str) -> None:
@@ -4310,16 +4355,13 @@ def sv_merge(
             _say_err(n)
         _say(line)
 
-    if result.unresolved:
+    if data is None:
         finish(
             report(written=False),
             f"{len(result.conflicts)} conflict(s) left unresolved: nothing was written. "
             "Resolve them with --take ours|theirs, or limit the merge with --key.",
         )
         raise typer.Exit(EXIT_ERROR)
-    data = luadata.serialize(
-        result.document, target=target_path, lab_written=_lab_written(store, chosen.path)
-    )
     if data == ours_bytes:
         finish(report(written=False), f"Nothing to change: {target.path} already holds the merge.")
         return
@@ -4347,12 +4389,21 @@ def sv_merge(
                     "nothing was written"
                 ) from exc
         tx.write(target.path, data)
-        if expect is not None and tx.plan[0].before != expect:
+        if expect_target is not None and tx.plan[0].before != expect_target:
             # Under the write gate's locks: raising here rolls the write back.
             raise CliError(
                 f"{target.path} changed after the plan was made (its SHA-256 is "
-                f"{tx.plan[0].before}, not the expected {expect}), so the merge was rolled "
-                "back; run the command again to see the new plan",
+                f"{tx.plan[0].before}, not the expected {expect_target}), so the merge was "
+                "rolled back; run the command again to see the new plan",
+                EXIT_REFUSED,
+            )
+        if expect_merged is not None and tx.plan[0].after != expect_merged:
+            # The SHA-256 the gate took of the bytes `tx.write` received,
+            # checked under the same locks (M13-74).
+            raise CliError(
+                f"the merge into {target.path} would write SHA-256 {tx.plan[0].after}, not "
+                f"the expected {expect_merged}, so it was rolled back; run the command again "
+                "to see the new plan",
                 EXIT_REFUSED,
             )
         if [item.before for item in tx.plan] != [expected]:
