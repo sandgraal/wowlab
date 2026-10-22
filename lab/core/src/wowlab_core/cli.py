@@ -7448,8 +7448,10 @@ class CharListReport(_Out):
     in the flavor (or in `--account`), as `labaddon.survey` gives them, each
     with its record and summary or the reason it could not be read, and
     every place where character folders can be that wowlab could not look
-    inside. The command exits 1 when any character has an `error` or
-    `not_looked_at` is not empty."""
+    inside. With `--brief` every `record` is None and the rest is the same:
+    a record runs to tens of KB, and the UI's picker needs none. The command
+    exits 1 when any character has an `error` or `not_looked_at` is not
+    empty."""
 
     flavor_folder: str
     # --account as the layout spells the account folder, or as the place wowlab
@@ -7518,6 +7520,14 @@ def char_list(
     root: RootOpt = None,
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
+    brief: Annotated[
+        bool,
+        typer.Option(
+            "--brief",
+            help="With --json, leave out each character's saved record: the folders, "
+            "time, summary and any error stay. Text output is the same either way.",
+        ),
+    ] = False,
 ) -> None:
     """Every character folder with a WowLab.lua, in every account unless
     --account names one: when the file was last written, and its schema, the
@@ -7548,7 +7558,7 @@ def char_list(
         found = labaddon.survey(
             lay,
             account=acct_folder,
-            keep_records=json_out,
+            keep_records=json_out and not brief,
             root=None if root is None else str(root),
         )
         entries, unseen = found.characters, found.not_looked_at

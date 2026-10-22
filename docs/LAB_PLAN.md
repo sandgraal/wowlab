@@ -1350,7 +1350,7 @@ wowlab profile save|apply|list|show|delete …         # §13.3 (M11-08)
 wowlab addon install|remove lab [--dry-run] [--yes]  # §13.1 (M11-02)
 wowlab looks races|options|save|show|compare|page …  # §13.2 (M11-06, M11-07)
 wowlab char show [--character C] [--json]           # §13.1 (M11-04)
-wowlab char list [--account A] [--json]             # §14.4 (M12-09)
+wowlab char list [--account A] [--json] [--brief]   # §14.4 (M12-09)
 ```
 
 *Amended 2026-09-28:* the Wave 2 commands above are listed for

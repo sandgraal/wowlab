@@ -1035,7 +1035,8 @@
   }
 
   // ─── the character tab (M14-08, §16.3) ───
-  // A picker from `char list --json`, latest-written first, and for the
+  // A picker from `char list --json --brief` (no records: the picker needs
+  // none), latest-written first, and for the
   // character picked, a header and its gear from `char gear --json`. Every
   // name and colour comes from the report: a slot's name is its `slot_name`,
   // an item's is its `name`, and its colour is a class built from its
@@ -1123,7 +1124,7 @@
     if (!character.asked) {
       character.asked = (async () => {
         charSay("Reading the lab-addon's files…", false);
-        const reply = await runJson(["char", "list"], {}, true);
+        const reply = await runJson(["char", "list"], { brief: true }, true);
         const report = reply.data;
         if (!report || !Array.isArray(report.characters)) {
           character.asked = null;
