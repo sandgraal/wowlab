@@ -44,20 +44,34 @@ The seam these graders hold `guard` to
 - Account folders: the source side is the set of account folders the
   snapshot holds entries under (`WTF/Account/<name>/...`); the target side
   is the set of folders under the target's `WTF/Account/`. When each side
-  has exactly one, they are mapped without being asked. When either side
-  has more than one and `accounts` is not given, the restore is a
-  `GuardError` whose message mentions accounts, with nothing written. A
-  mapping value that is not one plain folder name is refused with nothing
-  written.
+  has exactly one, they are mapped without being asked; a sole target
+  account folder that is a link is refused like any link. Otherwise
+  (either side has more than one, or the target has none) a restore
+  without `accounts` is a `GuardError` whose message mentions accounts,
+  with nothing written. With `accounts` (conductor ruling R2, 2026-10-22):
+  a mapping that leaves out a source account folder the snapshot holds,
+  or sends two source folders to one target folder, is refused, with
+  "account" in the message and nothing written; a mapping that names a
+  target folder that does not exist yet is allowed, and the folder is
+  created through the gate. A mapping value that is not one plain folder
+  name is refused with nothing written. Such refusals may come when
+  `Target` is built (a `ValueError`, which Pydantic's `ValidationError`
+  is) or at the restore (a `GuardError`); the graders accept either.
+- `paths=` names paths as the snapshot spells them (conductor ruling R1,
+  2026-10-22): the source account folder, as `snap show` lists it. A path
+  in the target-side spelling of a mapped account is a `GuardError` with
+  nothing written, and is never planned as a delete.
+- `Manifest.flavor_folder` is untrusted: under `into`, a manifest whose
+  folder is missing or is not one plain folder name is a `GuardError`
+  with nothing written.
 - Without `into`, a snapshot of another flavor folder or another install
   root is refused as before (a `GuardError`, not a client refusal), and the
   message names the option: the word `into`.
+- The target root and the store must not overlap in either direction
+  (conductor ruling R3, 2026-10-22).
 
 Account folder names here have the `<digits>#<n>` shape, so they are
-account folders by any rule `layout` applies (M13-50). Paths given to
-`paths=` are spelled the same on both sides (`WTF/Config.wtf`), so these
-graders take no position on which side's spelling `paths=` uses for an
-account path.
+account folders by any rule `layout` applies (M13-50).
 """
 
 from __future__ import annotations
@@ -370,12 +384,25 @@ def test_constructed_single_account_folders_are_mapped_without_being_asked(
     assert not any(SRC_ACCOUNT in p for p in paths)
 
 
-AMBIGUOUS: tuple[tuple[str, tuple[str, ...], tuple[str, ...], dict[str, str] | None], ...] = (
+NEW_ACCOUNT = "33333333#1"  # a target account folder that does not exist yet
+
+AMBIGUOUS: tuple[tuple[str, tuple[str, ...], tuple[str, ...], dict[str, str]], ...] = (
     (
         "constructed-two-source-one-target",
         (SRC_ACCOUNT, SRC_ACCOUNT_2),
         (DST_ACCOUNT,),
-        None,
+        # One target folder cannot take both one-to-one, so the full mapping
+        # sends the second source folder to a new folder (R2 allows that).
+        {SRC_ACCOUNT: DST_ACCOUNT, SRC_ACCOUNT_2: NEW_ACCOUNT},
+    ),
+    (
+        # A target with no account folder yet (a launch folder before the
+        # first login): "otherwise the player gives the mapping" (§18.1).
+        # The positive control is R2's: the named folder is created.
+        "constructed-one-source-no-target-folder",
+        (SRC_ACCOUNT,),
+        (),
+        {SRC_ACCOUNT: NEW_ACCOUNT},
     ),
     (
         "constructed-one-source-two-target",
@@ -398,14 +425,14 @@ AMBIGUOUS: tuple[tuple[str, tuple[str, ...], tuple[str, ...], dict[str, str] | N
     ("src_accounts", "dst_accounts", "mapping"),
     [pytest.param(s, d, m, id=name) for name, s, d, m in AMBIGUOUS],
 )
-def test_constructed_account_folders_are_refused_without_a_mapping_when_either_side_has_more(
+def test_constructed_account_folders_are_refused_without_a_mapping_unless_one_on_each_side(
     guard: Any,
     tmp_path: Path,
     store: SnapshotStore,
     idle: None,
     src_accounts: tuple[str, ...],
     dst_accounts: tuple[str, ...],
-    mapping: dict[str, str] | None,
+    mapping: dict[str, str],
 ) -> None:
     world = tmp_path / "world"
     source = make_install(world / "Source WoW", SOURCE_FOLDER, source_files(*src_accounts))
@@ -423,14 +450,83 @@ def test_constructed_account_folders_are_refused_without_a_mapping_when_either_s
     assert "account" in str(refused.value).casefold(), str(refused.value)
     assert strict_state(world) == before, "a refused mapping writes nothing"
 
-    if mapping is None:
-        return
-    # Positive control: the same restore with the mapping given.
+    # Positive control: the same restore with a full mapping given. A target
+    # folder that does not exist yet is created through the gate (R2).
     with guard.transaction(target, label="mapped", store=store.path) as tx:
         tx.restore(snapshot_id, into=into(guard, target, mapping))
     assert_restored(target, source_files(*src_accounts), mapping)
     for account in src_accounts:
         assert not (target.path / "WTF" / "Account" / account).exists()
+    journaled = changes(record_for(guard, store, "mapped").paths)
+    assert set(journaled) <= {mapped(rel, mapping) for rel in source_files(*src_accounts)}
+    if NEW_ACCOUNT in mapping.values():
+        created = f"WTF/Account/{NEW_ACCOUNT}/bindings-cache.wtf"
+        assert journaled[created][0] is None, "a created file is journaled as absent before"
+
+
+BAD_MAPPINGS: tuple[tuple[str, tuple[str, ...], tuple[str, ...], dict[str, str]], ...] = (
+    (
+        "constructed-many-to-one",
+        (SRC_ACCOUNT, SRC_ACCOUNT_2),
+        (DST_ACCOUNT, DST_ACCOUNT_2),
+        {SRC_ACCOUNT: DST_ACCOUNT, SRC_ACCOUNT_2: DST_ACCOUNT},
+    ),
+    (
+        "constructed-many-to-one-new-folder",
+        (SRC_ACCOUNT, SRC_ACCOUNT_2),
+        (DST_ACCOUNT,),
+        {SRC_ACCOUNT: NEW_ACCOUNT, SRC_ACCOUNT_2: NEW_ACCOUNT},
+    ),
+    (
+        "constructed-partial",
+        (SRC_ACCOUNT, SRC_ACCOUNT_2),
+        (DST_ACCOUNT, DST_ACCOUNT_2),
+        {SRC_ACCOUNT: DST_ACCOUNT},
+    ),
+    (
+        # The mapping names only a folder the snapshot does not hold.
+        "constructed-partial-single-sides",
+        (SRC_ACCOUNT,),
+        (DST_ACCOUNT,),
+        {SRC_ACCOUNT_2: DST_ACCOUNT},
+    ),
+)
+
+
+@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
+@pytest.mark.parametrize(
+    ("src_accounts", "dst_accounts", "mapping"),
+    [pytest.param(s, d, m, id=name) for name, s, d, m in BAD_MAPPINGS],
+)
+def test_constructed_many_to_one_and_partial_account_mappings_are_refused(
+    guard: Any,
+    tmp_path: Path,
+    store: SnapshotStore,
+    idle: None,
+    src_accounts: tuple[str, ...],
+    dst_accounts: tuple[str, ...],
+    mapping: dict[str, str],
+) -> None:
+    """R2 (conductor ruling, 2026-10-22): two source folders into one target
+    folder, and a mapping that leaves out a source folder the snapshot holds,
+    are refused. A many-to-one mapping may be caught when `Target` is built
+    (a `ValueError`, which Pydantic's `ValidationError` is) or at the
+    restore (a `GuardError`)."""
+    world = tmp_path / "world"
+    source = make_install(world / "Source WoW", SOURCE_FOLDER, source_files(*src_accounts))
+    snapshot_id = snapshot_of(store, source)
+    target = make_install(world / "Target WoW", TARGET_FOLDER, target_files(*dst_accounts))
+    guard_error = guard.GuardError
+    before = strict_state(world)
+
+    with pytest.raises((guard_error, ValueError)) as refused:
+        bad = into(guard, target, mapping)
+        with guard.transaction(target, label="bad mapping", store=store.path) as tx:
+            tx.restore(snapshot_id, into=bad)
+    if isinstance(refused.value, guard_error):
+        assert_not_a_client_refusal(guard, refused.value)
+    assert "account" in str(refused.value).casefold(), str(refused.value)
+    assert strict_state(world) == before, "a refused mapping writes nothing"
 
 
 HOSTILE_ACCOUNT_VALUES: tuple[tuple[str, str], ...] = (
@@ -441,6 +537,11 @@ HOSTILE_ACCOUNT_VALUES: tuple[tuple[str, str], ...] = (
     ("constructed-traversal-to-the-flavor-root", "../.."),
     ("constructed-two-components", "nested/deeper"),
     ("constructed-absolute", "/constructed-absolute"),
+    ("constructed-backslash-traversal", "a\\..\\.."),
+    ("constructed-drive-relative", "C:x"),
+    ("constructed-reserved-device-name", "CON"),
+    ("constructed-trailing-dot", "x."),
+    ("constructed-alternate-data-stream", "Config.wtf:ads"),
 )
 
 
@@ -453,22 +554,133 @@ def test_constructed_account_mapping_that_is_not_one_folder_name_is_refused(
     idle: None,
     value: str,
 ) -> None:
+    """Refused when `Target` is built (a `ValueError`, which Pydantic's
+    `ValidationError` is) or at the restore (a `GuardError`); either way
+    nothing is written."""
     world, _source, target, snapshot_id = two_roots
-    hostile = into(guard, target, {SRC_ACCOUNT: value})
+    guard_error = guard.GuardError
     before = strict_state(world)
 
-    with (
-        guard.transaction(target, label="hostile mapping", store=store.path) as tx,
-        pytest.raises(guard.GuardError) as refused,
-    ):
-        tx.restore(snapshot_id, into=hostile)
-    assert_not_a_client_refusal(guard, refused.value)
+    with pytest.raises((guard_error, ValueError)) as refused:
+        hostile = into(guard, target, {SRC_ACCOUNT: value})
+        with guard.transaction(target, label="hostile mapping", store=store.path) as tx:
+            tx.restore(snapshot_id, into=hostile)
+    if isinstance(refused.value, guard_error):
+        assert_not_a_client_refusal(guard, refused.value)
     assert strict_state(world) == before
 
     # Positive control: a plain folder name is accepted.
     with guard.transaction(target, label="plain mapping", store=store.path) as tx:
         tx.restore(snapshot_id, into=into(guard, target, {SRC_ACCOUNT: DST_ACCOUNT}))
     assert_restored(target, source_files(SRC_ACCOUNT), {SRC_ACCOUNT: DST_ACCOUNT})
+
+
+# ─── `paths=` under a mapping (R1) ───────────────────────────────────────────
+
+SRC_BINDINGS = f"WTF/Account/{SRC_ACCOUNT}/bindings-cache.wtf"
+DST_BINDINGS = f"WTF/Account/{DST_ACCOUNT}/bindings-cache.wtf"
+
+
+@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
+@pytest.mark.parametrize("given", ["automatic", "given"], ids=lambda g: f"constructed-{g}-mapping")
+def test_constructed_paths_use_the_snapshots_spelling_and_the_other_is_never_deleted(
+    guard: Any,
+    two_roots: tuple[Path, Flavor, Flavor, str],
+    store: SnapshotStore,
+    idle: None,
+    given: str,
+) -> None:
+    """R1 (conductor ruling, 2026-10-22): `paths=` names a path as the
+    snapshot spells it (the source account folder, as `snap show` lists it).
+    The target-side spelling of a mapped account is refused with nothing
+    written, and is never planned as a delete."""
+    world, _source, target, snapshot_id = two_roots
+    accounts = {SRC_ACCOUNT: DST_ACCOUNT}
+    target_into = into(guard, target, None if given == "automatic" else accounts)
+    before = strict_state(world)
+    target_bindings = (target.path / DST_BINDINGS).read_bytes()
+
+    for dry_run in (True, False):
+        with guard.transaction(
+            target, label=f"target spelling {dry_run}", store=store.path, dry_run=dry_run
+        ) as tx:
+            with pytest.raises(guard.GuardError) as refused:
+                tx.restore(snapshot_id, paths=[DST_BINDINGS], into=target_into)
+            assert_not_a_client_refusal(guard, refused.value)
+            assert tx.plan == (), "nothing is planned, a delete least of all"
+        assert strict_state(world) == before
+        assert (target.path / DST_BINDINGS).read_bytes() == target_bindings
+
+    # Positive: the snapshot's spelling restores the mapped file, and only it.
+    with guard.transaction(target, label="source spelling", store=store.path) as tx:
+        tx.restore(snapshot_id, paths=[SRC_BINDINGS], into=target_into)
+    assert (target.path / DST_BINDINGS).read_bytes() == source_files(SRC_ACCOUNT)[SRC_BINDINGS]
+    assert not (target.path / "WTF" / "Account" / SRC_ACCOUNT).exists()
+    assert set(changes(record_for(guard, store, "source spelling").paths)) == {DST_BINDINGS}
+
+
+# ─── an untrusted flavor folder in the manifest ──────────────────────────────
+
+FORGED_FLAVOR_FOLDERS: tuple[tuple[str, str | None], ...] = (
+    ("constructed-none", None),
+    ("constructed-empty", ""),
+    ("constructed-dot", "."),
+    ("constructed-dot-dot", ".."),
+    ("constructed-a-subtree-of-the-folder", f"{SOURCE_FOLDER}/WTF"),
+    ("constructed-traversal-through-the-root", f"../Source WoW/{SOURCE_FOLDER}"),
+)
+
+
+def forge_flavor_folder(store: SnapshotStore, snapshot_id: str, folder: str | None) -> str:
+    """Publish a copy of the manifest whose `flavor_folder` is `folder`, under
+    a new id with the same entries. Written without validation: whether the
+    store accepts it is not the question; guard must refuse it either way."""
+    base = store.show(snapshot_id)
+    fingerprint = base.id.split("-", 1)[1]
+    forged = base.model_copy(
+        update={
+            "id": f"20260922T130000.000000Z-{fingerprint}",
+            "created_at": "2026-09-22T13:00:00.000000Z",
+            "label": "constructed: forged flavor folder",
+            "flavor_folder": folder,
+        }
+    )
+    assert forged.id != base.id
+    (store.manifests_dir / f"{forged.id}.json").write_bytes(G.manifest_bytes(forged))
+    return forged.id
+
+
+@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
+@pytest.mark.parametrize("folder", [pytest.param(f, id=name) for name, f in FORGED_FLAVOR_FOLDERS])
+def test_constructed_untrusted_manifest_flavor_folder_under_into_is_refused(
+    guard: Any,
+    two_roots: tuple[Path, Flavor, Flavor, str],
+    store: SnapshotStore,
+    idle: None,
+    folder: str | None,
+) -> None:
+    """`Manifest.flavor_folder` decides which entries are mapped, and the store
+    is untrusted input at restore time (§6.10). A value that is missing or is
+    not one plain folder name is refused, rather than mapping nothing (a
+    silent empty restore) or the wrong subtree."""
+    world, _source, target, snapshot_id = two_roots
+    forged_id = forge_flavor_folder(store, snapshot_id, folder)
+    target_into = into(guard, target)
+    before = strict_state(world)
+
+    for paths in (None, [CONFIG]):
+        with (
+            guard.transaction(target, label="forged folder", store=store.path) as tx,
+            pytest.raises(guard.GuardError) as refused,
+        ):
+            tx.restore(forged_id, paths=paths, into=target_into)
+        assert_not_a_client_refusal(guard, refused.value)
+        assert strict_state(world) == before
+
+    # Positive control: the unforged snapshot restores.
+    with guard.transaction(target, label="legit", store=store.path) as tx:
+        tx.restore(snapshot_id, into=target_into)
+    assert (target.path / CONFIG).read_bytes() == source_files()[CONFIG]
 
 
 # ─── without `into` ──────────────────────────────────────────────────────────
@@ -618,6 +830,8 @@ def test_constructed_dry_run_into_a_target_plans_target_paths_and_writes_nothing
 
 FORGED: tuple[tuple[str, str, bool], ...] = (
     *((f"constructed-{name}", rel, False) for name, rel in G.HOSTILE_ENTRIES),
+    *((f"constructed-{name}", rel, False) for name, rel in G.FORGEABLE_FORBIDDEN),
+    *((f"constructed-windows-{name}", rel, False) for name, rel in G.WINDOWS_HOSTILE_ENTRIES),
     *((f"constructed-{name}", rel, True) for name, rel in G.RAW_TARGETS),
 )
 
@@ -657,7 +871,14 @@ def test_constructed_entries_the_gate_refuses_are_refused_at_the_target(
     assert (target.path / CONFIG).read_bytes() == source_files()[CONFIG]
 
 
-LINK_CASES = ("addon-folder-link", "config-file-link", "account-folder-link")
+LINK_CASES = (
+    "addon-folder-link",
+    "config-file-link",
+    "account-folder-link-mapped",
+    # The target's sole account folder is a link: automatic mapping must not
+    # carry the writes through it.
+    "account-folder-link-auto",
+)
 
 
 @pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
@@ -683,7 +904,8 @@ def test_constructed_links_at_the_target_are_refused(
         account = target.path / "WTF/Account" / DST_ACCOUNT
         shutil.rmtree(account)
         symlink_or_skip(account, outside, is_dir=True)
-        accounts = {SRC_ACCOUNT: DST_ACCOUNT}
+        if case == "account-folder-link-mapped":
+            accounts = {SRC_ACCOUNT: DST_ACCOUNT}
     named = into(guard, target, accounts)
     before = content(world)
 
@@ -693,7 +915,7 @@ def test_constructed_links_at_the_target_are_refused(
     ):
         tx.restore(snapshot_id, into=named)
     assert_not_a_client_refusal(guard, refused.value)
-    if case != "account-folder-link":
+    if not case.startswith("account-folder-link"):
         assert isinstance(refused.value, guard.PathNotAllowedError), repr(refused.value)
     assert content(world) == before
     assert (outside / "target.txt").read_bytes() == OUTSIDE_TARGET

@@ -69,6 +69,53 @@ def test_snap_restore_after_a_rename_names_into_flavor_constructed(
     assert guard.history() == ()
 
 
+MALFORMED: tuple[tuple[str, list[str]], ...] = (
+    ("into-flavor-two-components", ["--into-flavor", f"{LAUNCH_FOLDER}/WTF"]),
+    ("into-flavor-traversal", ["--into-flavor", f"../{LAUNCH_FOLDER}"]),
+    ("into-flavor-empty", ["--into-flavor", ""]),
+    ("map-account-no-equals", ["--into-flavor", LAUNCH_FOLDER, "--map-account", "90000001#6"]),
+    ("map-account-empty-source", ["--into-flavor", LAUNCH_FOLDER, "--map-account", "=B"]),
+    ("map-account-empty-target", ["--into-flavor", LAUNCH_FOLDER, "--map-account", "A="]),
+    ("map-account-two-equals", ["--into-flavor", LAUNCH_FOLDER, "--map-account", "A=B=C"]),
+    (
+        "map-account-traversal",
+        ["--into-flavor", LAUNCH_FOLDER, "--map-account", "90000001#6=../../x"],
+    ),
+)
+
+
+@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
+@pytest.mark.parametrize(
+    "options", [pytest.param(o, id=f"constructed-{name}") for name, o in MALFORMED]
+)
+def test_snap_restore_refuses_malformed_into_and_map_account_constructed(
+    root: Path, flavor: Path, options: list[str]
+) -> None:
+    """The new options take one folder name (`--into-flavor`) and one
+    `SOURCE=TARGET` pair of folder names (`--map-account`); anything else is
+    refused with nothing written, by the command and not as an unknown
+    option."""
+    a = _snapshot()
+    launch = root / LAUNCH_FOLDER
+    flavor.rename(launch)
+    config = launch / "WTF" / "Config.wtf"
+    saved = config.read_bytes()
+    config.write_bytes(saved + b'SET constructed "later session"\n')
+    before = _state(root)
+
+    for extra in (["--dry-run"], ["--yes"]):
+        result = run("snap", "restore", a.id, *options, *extra)
+        said = _plain(result.stdout + result.stderr)
+        assert result.exit_code != 0, said
+        assert "No such option" not in said, said
+        assert _state(root) == before
+    assert guard.history() == ()
+
+    # Positive control: the well-formed option restores into the renamed folder.
+    ok("snap", "restore", a.id, "--into-flavor", LAUNCH_FOLDER, "--yes")
+    assert config.read_bytes() == saved
+
+
 @pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 def test_profile_apply_after_a_rename_names_into_flavor_constructed(
     root: Path, flavor: Path
