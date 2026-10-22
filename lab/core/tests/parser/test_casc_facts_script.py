@@ -20,11 +20,13 @@ from _casc_build import (
     FLAVOR,
     PRODUCT,
     blte,
+    ckey_of,
     e_block,
     idx_bytes,
     idx_name,
     key_in,
     make_install,
+    make_source_install,
     n_block,
     record,
     tree_state,
@@ -193,3 +195,89 @@ def test_refuses_an_output_reached_through_a_link_into_the_install_constructed(
     assert tree_state(root) == before
     assert not (root / "Data" / "facts.json").exists()
     assert not (tmp_path / "dangling.json").exists()
+
+
+def _files_install(tmp_path: Path) -> tuple[Path, dict[str, int]]:
+    """A constructed install for `--files`: two plain files (one also in a
+    block with bit 0x1, of other content, not local), an encrypted one, one
+    the index does not list, one in a French block only."""
+    rng = random.Random(1506)
+    plain, other, secret = b"plain " * 50, b"second " * 40, b"locked"
+    ek = {n: key_in(b, rng) + rng.randbytes(7) for n, b in (("p", 1), ("o", 2), ("s", 3), ("u", 1))}
+    stored = [
+        (ek["p"], blte([z_block(plain)])),
+        (ek["o"], blte([n_block(other)])),
+        (ek["s"], blte([e_block(decoded=len(secret))])),
+    ]
+    unfetched = ckey_of(b"never fetched")
+    rows = [
+        (ckey_of(plain), len(plain), [ek["p"]]),
+        (ckey_of(other), len(other), [ek["o"]]),
+        (ckey_of(secret), len(secret), [ek["s"]]),
+        (unfetched, 13, [ek["u"]]),
+    ]
+    ids = {"plain": 10, "other": 20, "secret": 30, "unfetched": 40, "french": 50}
+    blocks = [
+        ([ids["other"]], [unfetched], 0x1, 0xFFFFFFFF),
+        ([ids["plain"], ids["other"]], [ckey_of(plain), ckey_of(other)], 0, 0x2),
+        ([ids["secret"]], [ckey_of(secret)], casc.ROOT_ENCRYPTED, 0x2),
+        ([ids["unfetched"]], [unfetched], 0x1, 0x2),
+        ([ids["french"]], [ckey_of(plain)], 0, 0x10),
+    ]
+    root = make_source_install(
+        tmp_path / "install", stored=stored, encoding_rows=rows, root_blocks=blocks, rng=rng
+    )
+    return root, ids
+
+
+def test_writes_the_files_record_constructed(tmp_path: Path) -> None:
+    root, ids = _files_install(tmp_path)
+    table = tmp_path / "ModelFileData.csv"
+    table.write_text("ID,FileDataID,Flags\n1,10,0\n2,50,0\n3,99,0\n4,40,0\n", encoding="utf-8")
+    before = tree_state(root)
+    out = tmp_path / "out" / "casc-files.json"
+    out.parent.mkdir()
+    assert _run(root, out, "--files", "--model-table", str(table)) == 0
+    assert tree_state(root) == before
+    facts = json.loads(out.read_text(encoding="utf-8"))
+    assert facts["kind"] == "casc-files-derived" and facts["build"] == 65432
+    assert (facts["locale"], facts["locale_from"], facts["platform"]) == (
+        "enUS",
+        "install",
+        "macos",
+    )
+    assert facts["platform_mask"] == "0x108"
+    assert facts["encoding"]["encoding_hashes_per_content"] == {"1": 5}
+    root_facts = facts["root"]
+    assert (root_facts["blocks"], root_facts["blocks_taken"]) == (5, 4)
+    assert root_facts["unique_ids_taken"] == 4 and root_facts["ids_in_more_than_one_block"] == 1
+    census = facts["local_census"]
+    assert (census["with_a_local_copy"], census["with_no_local_copy"]) == (3, 1)
+    assert census["ids_in_more_than_one_block"] == {"absent (0x1) + local, different content": 1}
+    states = {r["why"]: (r["fdid"], r["state"]) for r in facts["rows"]}
+    assert states["the first id taken with no copy in the local index"] == (
+        ids["unfetched"],
+        "not_local",
+    )
+    assert states["the first id the root lists only in skipped blocks"] == (
+        ids["french"],
+        "not_in_build",
+    )
+    unknown = next(r for r in facts["rows"] if r["state"] == "unknown_id")
+    assert unknown["fdid"] == 1 and "in_table=False" in unknown["why"]
+    assert unknown["note"].endswith("the caller says no game table names it")
+    local = [r for r in facts["rows"] if r["state"] == "local"]
+    assert local and all(r["decoded_md5_is_content_hash"] for r in local)
+    other = next(r for r in local if r["fdid"] == ids["other"])
+    assert other["content_hash"] == hashlib.md5(b"second " * 40).hexdigest()
+    assert facts["model_file_data"]["states"] == {"local": 1, "not_in_build": 2, "not_local": 1}
+    assert facts["model_file_data"]["source"] == "a CSV given with --model-table"
+    assert facts["model_file_data"]["version"] is None
+    assert facts["speech_locale"] == "enUS"  # the constructed Tags cell: "enUS speech?:"
+    assert facts["root"]["empty_blocks"] == 0
+    assert census["locale_flags_of_two_local_rows_without_0x1"] == {}
+    reads = facts["timings"]["reads"]
+    assert reads["files"] == 4 and reads["refused"] == {"encrypted": 1, "not_local": 1}
+    text = out.read_text(encoding="utf-8")
+    assert str(tmp_path) not in text and "speech?" not in text
+    assert '_key"' not in text  # field names say hash: gitleaks reads no credential
