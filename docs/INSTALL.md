@@ -228,12 +228,16 @@ wowlab ui
 
 It picks a free port, listens only on this machine, and opens your
 browser on a link that carries a random token; if no browser opens, the
-link is printed once, so paste it. Stop it with Ctrl-C. It reads the
-install exactly as the other commands do and writes nothing there itself.
-The commands that read, and the ones that save only to wowlab's own
-data, run directly; a command that asks before changing anything
-(`--yes`) runs first as a plan, and runs for real, through the same
-write gate, only when you press Confirm under that plan.
+link is printed once, so paste it. Stop it with Ctrl-C.
+
+Reading never changes anything. Six commands can change game files; each
+shows a plan and runs only when you confirm, after a snapshot.
+
+The page reads the install exactly as the other commands do and writes
+nothing there itself. The commands that read, and the ones that save only
+to wowlab's own data, run directly; a command that asks before changing
+anything (`--yes`) runs first as a plan, and runs for real, through the
+same write gate, only when you press Confirm under that plan.
 `wowlab ui` takes no `--root`: when your install is not in a default
 location, set `WOWLAB_WOW_ROOT` first (above), or the page says no install
 was found and lists where it looked.
@@ -256,10 +260,19 @@ What to look for:
   run), `addons list`, `install show`, or `log tail` for the newest combat
   log. Other files have no Preview button.
 - **The commands tab.** Runs this wowlab's commands with `--json` and shows
-  the result. Only the commands that read, or that save to wowlab's own
-  data folder (snapshots, profiles, saved looks, the game-table cache,
-  pages), are offered. Nothing that changes a game file is, in this
-  version.
+  the result. Every command is offered except `ui` itself,
+  `log tail --follow` and `looks page --out`. The six that change game
+  files are `snap restore`, `undo`, `profile apply`, `sv merge`,
+  `addon install` and `addon remove`: each shows its plan first, takes a
+  snapshot before it writes, and `wowlab undo` reverses it.
+- **Character.** One character as the lab-addon last saved it, at logout
+  or `/reload`: gear, key bindings and macros, the same answers
+  `wowlab char gear`, `wowlab char binds` and `wowlab char macros` give.
+  It only reads.
+- **Looks.** The page `wowlab looks page` writes into wowlab's own data
+  folder: the races, body types, classes and customization options of the
+  build's tables, and your saved looks checked against that build. It
+  never touches your game folder.
 
 If something looks wrong, the useful report is the path you clicked, what
 the page said, and what `wowlab explain <that path>` says in a terminal.

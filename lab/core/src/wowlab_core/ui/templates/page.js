@@ -569,7 +569,10 @@
     );
     if (!usable.length) return;
     box.appendChild(make("h3", "Commands to copy"));
-    const note = make("p", "Run them yourself in a terminal; this page never runs them.");
+    const note = make(
+      "p",
+      "Run them yourself in a terminal. Reading never changes anything. Six commands can change game files; each shows a plan and runs only when you confirm, after a snapshot.",
+    );
     note.className = "hint-note";
     box.appendChild(note);
     // The line on screen writes the home folder as "~"; Copy gives Python's.
