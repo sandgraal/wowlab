@@ -1072,6 +1072,8 @@ Found 2026-10-19 in the code review of #290 (M14-08), on `main` before it. (1) `
 
 **Acceptance:** the decision for (1) stated in the report and recorded here by the conductor; the test for (2) catches `#a335ee` and a quality word added to `page.css`; byte-identity as stated; `make ci` green; reviewed by `code-reviewer`.
 
+**Decision for (1), recorded 2026-10-22:** a new flag. `char list --json --brief` gives `record: null` on every entry and never holds records in memory. The Character tab runs `char list --json --brief`. Plain `--json` and text output are unchanged. On the capture, `--json` prints 100,632 bytes and `--json --brief` prints 1,475.
+
 ---
 ## [ ] M13-73 — `char binds` with case-variant `WowLab.lua` files and no `--character`
 **Size:** XS · **Depends on:** nothing
@@ -1994,6 +1996,8 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 - No macro hash is stored in this ticket. If M16-05's macro-place answer needs one, M16-48 adds it.
 
 **Before dispatch:** `domain-reviewer` checks ADR-0026's `CLICK` premise. Some addons (GSE, for example) name secure buttons after text the player typed, so a `CLICK <name>:<button>` can carry it. If so, the ticket stores the command only when the frame belongs to an installed addon's declared frames, or the owner rules again.
+
+**Ruled 2026-10-22.** The check found the premise false (GSE) and the fallback unbuildable, and the owner ruled again in session. A `CLICK` command is stored only under the rule in ADR-0026's 2026-10-22 amendment: a bounded identifier pair, a frame whose `type` attribute is `"action"`, and a numeric `action` attribute. Every other `CLICK` is counted in `commands_left_out` and in a new `clicks_left_out`. Whether `GetBinding` lists `CLICK` commands at all is [verify]. If the capture shows it does not, the implementer reports it and does not build a key-by-key walk. The schema-5 capture includes one action-bar addon (Bartender4, ElvUI or Dominos) with at least one `CLICK` keybind, the positive case. Where possible it also includes a GSE sequence keybind or a `SetBindingClick` to a non-action button, the negative case: it is counted, and its name is absent from `WowLab.lua` by grep. Any player-typed name in a provenance row is a pseudonym.
 
 **Acceptance:** the static Lua tests and selene pass. One owner capture at schema 5 is added, with provenance rows. `make ci` is green. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer`. User-facing: in-game chat, and `/wowlab debug`.
 
