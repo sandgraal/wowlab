@@ -9,7 +9,9 @@ says; the pre-write copy the gate takes before `snap restore --yes` is a
 and here once end to end). The manifest gains `kind` and no other key.
 
 The pins at the end carry no marker: they hold today's other manifest
-fields and pass before and after M16-09.
+fields and the store's layout (nothing beside today's entries, so the kind
+is not kept outside the manifest; security-reviewer finding, PR #333) and
+pass before and after M16-09.
 
 Each grader carries one marker line that M16-09 deletes; nothing else in
 this file is the implementer's to change. The install is the captured tree
@@ -37,6 +39,7 @@ from test_cli import (
     root,  # noqa: F401
     user_data,  # noqa: F401
 )
+from test_guard_snapshot_kind import assert_store_holds_only_todays_layout
 
 from wowlab_core import cli, guard
 from wowlab_core.snapshot import SnapshotStore
@@ -150,3 +153,39 @@ def test_snap_create_manifest_keeps_every_other_field(
     assert raw["client_running"] is False
     # `--json` prints the manifest the store holds.
     assert raw == out
+
+
+# What the store holds at its root after `snap create` alone, and after a
+# `snap restore --yes` (which journals), today.
+SNAP_CREATE_STORE_ROOT = frozenset({"lock", "manifests", "objects", "tmp"})
+SNAP_RESTORE_STORE_ROOT = frozenset({"journal", "lock", "manifests", "objects", "tmp"})
+
+
+@pytest.mark.parametrize(("args", "label"), LABELS)
+def test_snap_create_store_holds_nothing_beside_todays_layout(
+    root: Path, user_data: Path, args: tuple[str, ...], label: str
+) -> None:
+    out = _create(*args)
+    assert_store_holds_only_todays_layout(
+        _store(user_data).path, SNAP_CREATE_STORE_ROOT, {out["id"]}, set()
+    )
+
+
+def test_snap_restore_store_holds_nothing_beside_todays_layout(
+    root: Path, flavor: Path, user_data: Path
+) -> None:
+    taken = _create("-m", "constructed")["id"]
+    config = flavor / "WTF" / "Config.wtf"
+    config.write_bytes(config.read_bytes() + b'SET constructed "1"\n')
+    done = _json(cli.RestoreReport, "snap", "restore", taken, "--yes")
+    assert done.applied and done.transaction is not None
+
+    store = _store(user_data)
+    records = {r.id: r.snapshot_id for r in guard.history(store=store.path)}
+    assert set(records) == {done.transaction}
+    assert_store_holds_only_todays_layout(
+        store.path,
+        SNAP_RESTORE_STORE_ROOT,
+        {taken, records[done.transaction]},
+        set(records),
+    )

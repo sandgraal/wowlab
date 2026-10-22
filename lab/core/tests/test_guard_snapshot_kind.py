@@ -19,8 +19,11 @@ What is graded
   and after M16-09: the other manifest keys and their values, the canonical
   encoding, the tree fingerprint in the id (a pre-write snapshot of the same
   tree as a user snapshot has the same fingerprint, so `kind` is not in it,
-  like `label` and `purpose`), the journal record's keys and format, and a
-  dry run creating no manifest at all.
+  like `label` and `purpose`), the journal record's keys and format, a
+  dry run creating no manifest at all, and the store's layout: its root
+  holds exactly today's entries and its directories only what the manifests
+  and records name, so the kind is not kept in an index or a second copy
+  beside the manifests (security-reviewer finding, PR #333).
 
 `snap create` recording `kind="user"` is graded through the CLI in
 `test_cli_snap_kind.py`.
@@ -37,6 +40,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 import types
 from collections.abc import Callable
@@ -357,6 +361,50 @@ def test_constructed_journal_record_is_unchanged(
     assert raw["snapshot_id"] == snapshot_id
     assert raw["label"] == record.label
     assert "kind" not in json.dumps(raw["paths"]), "the journal's paths carry no snapshot kind"
+
+
+def assert_store_holds_only_todays_layout(
+    root: Path, expected_root: frozenset[str], manifest_ids: set[str], record_ids: set[str]
+) -> None:
+    """The store holds what it holds today and nothing beside it: `kind` is
+    recorded in the manifest, not in an index, a second copy or an object of
+    its own. `manifests/` holds one `<id>.json` per snapshot, `journal/` one
+    `<id>.json` per record, `tmp/` nothing, and `objects/` exactly the objects
+    the manifests' entries name, under `<2 hex>/<62 hex>`."""
+    assert {p.name for p in root.iterdir()} == expected_root
+    assert {p.name for p in (root / "manifests").iterdir()} == {f"{i}.json" for i in manifest_ids}
+    if "journal" in expected_root:
+        assert {p.name for p in (root / "journal").iterdir()} == {f"{i}.json" for i in record_ids}
+    if "tmp" in expected_root:
+        assert list((root / "tmp").iterdir()) == []
+    if (root / "lock").exists():
+        assert (root / "lock").is_file() and not (root / "lock").is_symlink()
+    store = SnapshotStore(root)
+    named = {e.sha256 for i in manifest_ids for e in store.show(i).entries if e.sha256}
+    held: set[str] = set()
+    for shard in (root / "objects").iterdir():
+        assert shard.is_dir() and re.fullmatch(r"[0-9a-f]{2}", shard.name), shard.name
+        for obj in shard.iterdir():
+            assert obj.is_file() and re.fullmatch(r"[0-9a-f]{62}", obj.name), obj
+            held.add(shard.name + obj.name)
+    assert held == named, sorted(held ^ named)
+
+
+# What a store used only by guard holds at its root today.
+GUARD_STORE_ROOT = frozenset({"journal", "lock", "manifests", "objects", "tmp"})
+
+
+@pytest.mark.parametrize("scenario", SCENARIO_PARAMS)
+def test_constructed_store_holds_nothing_beside_todays_layout(
+    guard: Any, flavor: Flavor, store: SnapshotStore, idle: None, scenario: str
+) -> None:
+    _pre_write_of(guard, flavor, store, scenario)
+    assert_store_holds_only_todays_layout(
+        store.path,
+        GUARD_STORE_ROOT,
+        _ids(store),
+        {r.id for r in guard.history(store=store.path)},
+    )
 
 
 def test_constructed_dry_run_creates_no_manifest(
