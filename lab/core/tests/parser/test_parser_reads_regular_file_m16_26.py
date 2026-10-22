@@ -42,9 +42,12 @@ install.
 
 from __future__ import annotations
 
+import builtins
 import contextlib
 import errno
+import io
 import os
+import pathlib
 import shutil
 import stat
 import sys
@@ -197,14 +200,85 @@ def assert_one_guarded_open_closed(spy: OpenSpy, path: Path) -> None:
     assert_closed([fd])
 
 
-def _no_unguarded_read(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The plain `longpath` openers are not used for these reads any more."""
+def _no_unguarded_read(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
+    """`path` is not opened by any plain opener: not `longpath`'s, not the
+    built-in `open` / `io.open` (which `os.fdopen` and `Path.read_bytes` go
+    through), not `Path.open`. Any other path, and an integer descriptor (the
+    guarded helper's, wrapped by `os.fdopen`), passes through."""
+    target = os.fspath(path)
 
     def refuse(*_: Any, **__: Any) -> Any:
         raise AssertionError("read through the plain longpath opener, not the guarded helper")
 
+    def is_target(arg: Any) -> bool:
+        return isinstance(arg, (str, os.PathLike)) and os.fspath(arg) == target
+
+    real_open = io.open
+    real_path_open = pathlib.Path.open
+
+    def plain_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+        if is_target(file):
+            raise AssertionError(f"{path.name} reopened by a plain open, not the guarded helper")
+        return real_open(file, *args, **kwargs)
+
+    def plain_path_open(self: pathlib.Path, *args: Any, **kwargs: Any) -> Any:
+        if is_target(self):
+            raise AssertionError(f"{path.name} reopened by Path.open, not the guarded helper")
+        return real_path_open(self, *args, **kwargs)
+
     monkeypatch.setattr(longpath, "open_read", refuse)
     monkeypatch.setattr(longpath, "read_bytes", refuse)
+    monkeypatch.setattr(builtins, "open", plain_open)
+    monkeypatch.setattr(io, "open", plain_open)
+    monkeypatch.setattr(pathlib.Path, "open", plain_path_open)
+
+
+class ReadMeter:
+    """Counts every byte read during a call, by any of the ways a reader
+    could read: `os.read`, and the handles `io.open` / `open` return (which
+    `os.fdopen`, `Path.open` and `Path.read_bytes` go through)."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.total = 0
+        meter = self
+        real_read = os.read
+        real_open = io.open
+
+        def counted_read(fd: int, n: int) -> bytes:
+            out = real_read(fd, n)
+            meter.total += len(out)
+            return out
+
+        class Handle:
+            def __init__(self, inner: Any) -> None:
+                self._inner = inner
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(self._inner, name)
+
+            def __enter__(self) -> Handle:
+                self._inner.__enter__()
+                return self
+
+            def __exit__(self, *exc: Any) -> Any:
+                return self._inner.__exit__(*exc)
+
+            def read(self, *args: Any) -> Any:
+                out = self._inner.read(*args)
+                meter.total += len(out)
+                return out
+
+            def readinto(self, buffer: Any) -> Any:
+                n = self._inner.readinto(buffer)
+                meter.total += n or 0
+                return n
+
+        def counted_open(*args: Any, **kwargs: Any) -> Any:
+            return Handle(real_open(*args, **kwargs))
+
+        monkeypatch.setattr(os, "read", counted_read)
+        monkeypatch.setattr(io, "open", counted_open)
+        monkeypatch.setattr(builtins, "open", counted_open)
 
 
 def _release(fifo: Path) -> None:
@@ -276,7 +350,7 @@ def test_a_regular_file_is_read_through_one_guarded_open_and_closed(
     """No second, unguarded open after the helper's check, and no descriptor
     left open on the success path."""
     path, data = _copy_in(install, reader)
-    _no_unguarded_read(monkeypatch)
+    _no_unguarded_read(monkeypatch, path)
     spy = OpenSpy(monkeypatch)
 
     document = reader.read(path)
@@ -290,7 +364,7 @@ def test_real_luadata_read_by_str_path_is_one_guarded_open_and_closed(
     install: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path, data = _copy_in(install, SV)
-    _no_unguarded_read(monkeypatch)
+    _no_unguarded_read(monkeypatch, path)
     spy = OpenSpy(monkeypatch)
     assert luadata.serialize(luadata.read(str(path))) == data
     assert_one_guarded_open_closed(spy, path)
@@ -306,7 +380,7 @@ def test_constructed_oversized_luadata_read_is_refused_and_closed(
     open, and its descriptor is closed on that path too."""
     path, data = _copy_in(install, SV)
     monkeypatch.setattr(luadata, "MAX_FILE_BYTES", len(data) - 1)
-    _no_unguarded_read(monkeypatch)
+    _no_unguarded_read(monkeypatch, path)
     spy = OpenSpy(monkeypatch)
 
     with pytest.raises(luadata.LuaLimitError) as caught:
@@ -315,6 +389,25 @@ def test_constructed_oversized_luadata_read_is_refused_and_closed(
     assert (caught.value.line, caught.value.column) == (1, 1)
     assert f"{len(data)} bytes" in str(caught.value)
     assert_one_guarded_open_closed(spy, path)
+
+
+def test_constructed_oversized_luadata_read_reads_at_most_the_bound_plus_one(
+    install: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pin (passes today and after M16-26): a file over a lowered
+    `MAX_FILE_BYTES` (constructed boundary, far below the file's size) is
+    refused without reading more than `MAX_FILE_BYTES + 1` bytes, so a reader
+    that reads the whole file before checking its size fails."""
+    path, data = _copy_in(install, SV)
+    bound = 100
+    assert len(data) > 4 * bound, "the fixture is well over the lowered bound"
+    monkeypatch.setattr(luadata, "MAX_FILE_BYTES", bound)
+    meter = ReadMeter(monkeypatch)
+
+    with pytest.raises(luadata.LuaLimitError):
+        luadata.read(path)
+
+    assert meter.total <= bound + 1, f"read {meter.total} bytes; the bound is {bound}"
 
 
 # ─── a FIFO is refused without blocking (constructed) ───────────────────────
