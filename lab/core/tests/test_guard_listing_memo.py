@@ -77,10 +77,15 @@ shape. The container and CI runners are shared, so each size is measured
 several times and the minimum is kept: load can only add time, so the
 minimum is the best estimate of the work. The 2,000-file tree is measured
 first; the 8,000-file tree passes as soon as one of its runs is within the
-ratio, so a loaded machine costs extra runs, never a false failure, unless
-every run is slow. Today one run is enough to fail it; the run count is
-capped so that today's quadratic walk stays cheap enough to run on the PR
-path. The grader is listed in `conftest.py` SERIAL_TESTS.
+ratio, so a loaded machine costs extra runs, and fails only when every
+run is slow. Each 8,000-file run is stopped by a CPU-time alarm
+(`ITIMER_PROF`) once it has used 5 times the 2,000-file minimum: a run past
+that point has already failed, and today's quadratic walk would otherwise
+take minutes per run. The grader is listed in `conftest.py` SERIAL_TESTS.
+Measured 2026-10-22 in a container with a load average of 45 on 4 cores:
+today the 2,000-file check takes about 2.5 s CPU and the 8,000-file one
+about 24 s (9.5 times); with a stand-in memo (listings cached by
+(dev, ino, mtime_ns)) 0.45 s and 1.7 s (3.8 times).
 
 Everything here is constructed (L8 allows it: guard's inputs are our own
 layout, not a client format): the install is the M10-11T synthetic tree
@@ -407,11 +412,7 @@ def _grow(flavor: Flavor, files: int) -> None:
     """A constructed tree shaped like a player's: one file in eight is a
     SavedVariables file in one account folder, the rest are addon files in
     folders of 40 inside one `Interface/AddOns`. Both big directories grow
-    with the tree. On this shape today's walk takes about 9.5 times as long
-    at 8,000 files as at 2,000 (measured 2026-10-22 in a loaded container:
-    2.5 s and 23.8 s CPU), and a walk with a listing memo about 3.8 times
-    (simulated by caching each listing by (dev, ino, mtime_ns): 0.45 s and
-    1.72 s, best of three)."""
+    with the tree. The timings on this shape are in the module docstring."""
     for i in range(files):
         if i % 8 == 0:
             rel = f"{SV}/Constructed{i:05d}.lua"
