@@ -1,6 +1,6 @@
 # Wellspring — the design of `wowlab ui`
 
-Owner request, 2026-10-26: redesign `wowlab ui` as a fantasy-themed app. This is the spec for that redesign; tickets M16-50 to M16-52 build it, and ADR-0035 (Proposed) decides how its fonts ship. Until M16-52 merges, `main` still draws the old look described by `lab/core/src/wowlab_core/ui/templates/page.css`.
+Owner request, 2026-10-26: redesign `wowlab ui` as a fantasy-themed app. This is the spec for that redesign; tickets M16-50 to M16-52 build it, and ADR-0035 (accepted 2026-10-26) decides how its fonts ship. Until M16-52 merges, `main` still draws the old look described by `lab/core/src/wowlab_core/ui/templates/page.css`.
 
 | File | What it is |
 |---|---|
@@ -123,4 +123,4 @@ The theme follows the system: Warband by default, Bastion under `prefers-color-s
 
 ## Fonts in wowlab
 
-The page loads nothing from the network, and every request to its server carries a session token, so the fonts cannot be fetched by URL. ADR-0035 (Proposed) puts the twelve WOFF2 files inside the package and writes them into the page's own style as `data:` URLs. Until it is accepted and M16-51 lands, the `font-*` stacks fall back to Palatino and Georgia, and every other rule in this book still holds.
+The page loads nothing from the network, and every request to its server carries a session token, so the fonts cannot be fetched by URL. ADR-0035 (accepted 2026-10-26) puts the twelve WOFF2 files inside the package and writes them into the page's own style as `data:` URLs. Until M16-51 lands, the `font-*` stacks fall back to Palatino and Georgia, and every other rule in this book still holds.

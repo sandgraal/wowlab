@@ -330,6 +330,8 @@ The decision itself is unchanged. This amendment only stages it, so that the fir
 
 **Amended by (2026-10-19; Accepted with ADR-0034 the same day):** ADR-0034 admits one vendored third-party JavaScript library (three.js, pinned) under its own rules; ADR-0033 keeps the CASC reader in Python, so no binding is admitted.
 
+**Amended by (2026-10-26; Accepted with ADR-0035 the same day):** ADR-0035 admits third-party font files (twelve pinned OFL WOFF2 files) as package data under its own rules. They are data, not a language.
+
 ---
 
 ## ADR-0031 — wowlab may be installed by other players; the trust model is the product
@@ -440,7 +442,7 @@ The owner asked whether `Data/` could also be edited. The conductor recommended 
 
 ## ADR-0035 — The Wellspring fonts ship inside the package and reach the page as `data:` URLs in its own style
 
-**Status:** Proposed (2026-10-26)
+**Status:** Accepted (2026-10-26; proposed 2026-10-26) — owner decision in session ("accept", on PR #341); the status edit was made by the conductor on the owner's explicit instruction
 
 **Context:** The owner asked on 2026-10-26 for `wowlab ui` to be redesigned as a fantasy-themed app. The design is the Wellspring system (`docs/design/WELLSPRING.md`), and it sets its type in three faces: Alegreya SC (display), Alegreya (text) and IBM Plex Mono (paths and commands). Today the page uses system fonts only (`page.css`), and nothing in the repository says how a font may arrive. Three rules constrain it. ADR-0027 and ADR-0019 forbid any external request, a CDN font included. ADR-0029 requires every request to the UI server to carry the session token, and keeps the token out of every response body, so a stylesheet cannot name a font URL that carries it, and an `@font-face` URL without it would be refused (or would need a token-free route, which weakens the one rule every request now obeys). ADR-0030 admits HTML, CSS and plain JavaScript as template text, and ADR-0034 is the only precedent for third-party bytes in the package. Font files are not a language, but they are third-party binary data, and the CSP (`default-src 'none'`) blocks every font source today.
 

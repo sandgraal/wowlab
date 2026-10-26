@@ -2071,16 +2071,18 @@ The readers' callers already know the install. Each reader takes the install roo
 
 # Owner request, 2026-10-26: the Wellspring redesign of `wowlab ui`
 
-The owner asked for `wowlab ui` to be redesigned from the ground up as a fantasy-themed app. The spec is `docs/design/WELLSPRING.md`, with its tokens in `docs/design/wellspring-tokens.json`; the fonts are ADR-0035 (Proposed). These tickets are filed under M16 for their numbers only. They are not part of v0.2: M16-47 does not wait on them, and the owner decides whether they ship in v0.2 or later. L1 to L8 apply. They touch the same templates as M16-29, M16-30 and M16-42 and run after them, one at a time.
+The owner asked for `wowlab ui` to be redesigned from the ground up as a fantasy-themed app. The spec is `docs/design/WELLSPRING.md`, with its tokens in `docs/design/wellspring-tokens.json`; the fonts are ADR-0035 (accepted 2026-10-26). These tickets are filed under M16 for their numbers only. They are not part of v0.2: M16-47 does not wait on them, and the owner decides whether they ship in v0.2 or later. L1 to L8 apply. They touch the same templates as M16-29, M16-30 and M16-42 and run after them, one at a time.
 
 The redesign changes how the page looks and nothing it says or does: no player-facing sentence, no class or id `page.js` reads, no route, no command and no `--json` shape changes. The lore names in the spec (Order, Ruin, Void, Warband, Bastion) are for tokens and this documentation; a player never reads them.
 
-## [ ] M16-50 — ADR-0035 accepted: the Wellspring fonts
+## [x] M16-50 — ADR-0035 accepted: the Wellspring fonts
 **Size:** S · **Depends on:** — · **owner** (accepts or amends ADR-0035)
 
 The owner reads ADR-0035 and accepts it, amends it (for example: fewer faces, no `latin-ext`, or system fonts only), or rejects it. If it is rejected, M16-51 is closed unbuilt, and M16-52 keeps the `font-*` fallback stacks, which the spec already allows.
 
 **Acceptance:** ADR-0035's status line records the owner's decision.
+
+*Closed 2026-10-26:* the owner accepted ADR-0035 as written, in session, on PR #341.
 
 ---
 
