@@ -300,7 +300,7 @@ The decision itself is unchanged. This amendment only stages it, so that the fir
 
 **Amendment (2026-10-18; Accepted 2026-10-18 — owner decision; the status edit was made by the conductor on the owner's explicit instruction):** the 2026-10-15 amendment names "the embedded looks, talents and character pages" for Wave 5. The character is built instead as a native tab of the UI, drawn from CLI `--json` models (`wowlab char gear`, `char binds`, `char macros`) as the explorer is (`docs/LAB_PLAN.md` §16.3, decision F-A), because the editing stage planned after it needs the server and a static page would duplicate the explorer's JSON rendering. The looks page stays embedded (M14-04, by the route §16.3 gives, with no response header loosened). The talents page waits for char-planner (§14.8). "Richer views … are embedded or linked rather than rebuilt" is read as "a view that exists as a page is embedded; a view that does not yet exist may be a tab". The decision itself is unchanged.
 
-**Amended by (2026-10-26; Proposed, from the review of PR #341, written after the owner accepted ADR-0035; awaits the owner's confirmation):** the page's CSP also allows `font-src data:`, for the twelve pinned font files ADR-0035 writes into the page's own hashed style. "Allows the server itself and nothing else" now reads "allows the server itself, and `data:` fonts named by the page's own hashed code, and nothing else". Every other rule here is unchanged.
+**Amended by (2026-10-26; Accepted 2026-10-26, from the review of PR #341 — owner decision in session; the status edit was made by the conductor on the owner's explicit instruction):** the page's CSP also allows `font-src data:`, for the twelve pinned font files ADR-0035 writes into the page's own hashed style. "Allows the server itself and nothing else" now reads "allows the server itself, and `data:` fonts named by the page's own hashed code, and nothing else". Every other rule here is unchanged.
 
 ---
 
@@ -477,7 +477,7 @@ The owner asked whether `Data/` could also be edited. The conductor recommended 
 - ADR-0030's list gains the line "third-party font files, only under ADR-0035".
 - Removing the fonts later loses nothing but the faces: every rule in `page.css` names a fallback stack.
 
-**Amendment (2026-10-26; Proposed, from the review of PR #341, written after the owner accepted the decision above; awaits the owner's confirmation; the decision is unchanged):**
+**Amendment (2026-10-26; Accepted 2026-10-26, from the review of PR #341 — owner decision in session; the status edit was made by the conductor on the owner's explicit instruction; the decision is unchanged):**
 - *File names.* In the package, the twelve files of the table above are named `<face>-<subset>.woff2`: `alegreya-latin`, `alegreya-latin-ext`, `alegreya-italic-latin`, `alegreya-italic-latin-ext`, `alegreya-sc-500-latin`, `alegreya-sc-500-latin-ext`, `alegreya-sc-700-latin`, `alegreya-sc-700-latin-ext`, `ibm-plex-mono-400-latin`, `ibm-plex-mono-400-latin-ext`, `ibm-plex-mono-500-latin`, `ibm-plex-mono-500-latin-ext`, in the table's order of family, style, weight and subset.
 - *Licence texts.* Two files, pinned like the fonts. Alegreya and Alegreya SC share one text.
 
