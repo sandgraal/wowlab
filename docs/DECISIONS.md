@@ -435,3 +435,40 @@ The owner asked whether `Data/` could also be edited. The conductor recommended 
 - The package grows by the library's size (about 1 MB); the wheel stays well under PyPI's limits. The README names the licence.
 - The CSP gains the import map's hash and the vendored files' hashes (or the scoped `'self'`, if the owner rules so after the browser check) and nothing else; `frame-ancestors 'none'` and the token rules of ADR-0029 are unchanged.
 - A later wave that needs animation or a different library writes an amendment here.
+
+---
+
+## ADR-0035 — The Wellspring fonts ship inside the package and reach the page as `data:` URLs in its own style
+
+**Status:** Proposed (2026-10-26)
+
+**Context:** The owner asked on 2026-10-26 for `wowlab ui` to be redesigned as a fantasy-themed app. The design is the Wellspring system (`docs/design/WELLSPRING.md`), and it sets its type in three faces: Alegreya SC (display), Alegreya (text) and IBM Plex Mono (paths and commands). Today the page uses system fonts only (`page.css`), and nothing in the repository says how a font may arrive. Three rules constrain it. ADR-0027 and ADR-0019 forbid any external request, a CDN font included. ADR-0029 requires every request to the UI server to carry the session token, and keeps the token out of every response body, so a stylesheet cannot name a font URL that carries it, and an `@font-face` URL without it would be refused (or would need a token-free route, which weakens the one rule every request now obeys). ADR-0030 admits HTML, CSS and plain JavaScript as template text, and ADR-0034 is the only precedent for third-party bytes in the package. Font files are not a language, but they are third-party binary data, and the CSP (`default-src 'none'`) blocks every font source today.
+
+**Decision:**
+1. **What is admitted.** Twelve WOFF2 files, the `latin` and `latin-ext` subsets of six faces, as Google Fonts serves them at versioned URLs, copied unchanged into `lab/core/src/wowlab_core/ui/templates/fonts/` with each family's SIL Open Font License 1.1 text beside them (`OFL-Alegreya.txt`, `OFL-IBMPlexMono.txt`). Total: 345,620 bytes.
+
+   | Family | Style | Weight | Subset | Bytes | Source | SHA-256 |
+   |---|---|---|---|---|---|---|
+   | Alegreya | normal | 400 900 | latin | 43476 | `https://fonts.gstatic.com/s/alegreya/v41/4UaBrEBBsBhlBjvfkSLhx6g.woff2` | `2431eca3ed8ed66e713cf7093d170d77a083a793a5f19a615506d63770abd973` |
+   | Alegreya | normal | 400 900 | latin-ext | 37856 | `https://fonts.gstatic.com/s/alegreya/v41/4UaBrEBBsBhlBjvfkSLvx6jx4w.woff2` | `16b24f84da5ac12dc79ea1060e3fd4e299f19146f607021f81bcf0b8123fe5bd` |
+   | Alegreya | italic | 400 900 | latin | 44456 | `https://fonts.gstatic.com/s/alegreya/v41/4UaHrEBBsBhlBjvfkSLk96rp5w.woff2` | `1846c307495f922d3fc00ce3c32aaaba8eefc7c348425a8244a7ffc63ddc0993` |
+   | Alegreya | italic | 400 900 | latin-ext | 38316 | `https://fonts.gstatic.com/s/alegreya/v41/4UaHrEBBsBhlBjvfkSLk96Tp56N1.woff2` | `3b6ec2f8e48aff730aaebeb52423ba2f7967c5b80b1727907e4b1154786fd54c` |
+   | Alegreya SC | normal | 500 | latin | 30880 | `https://fonts.gstatic.com/s/alegreyasc/v28/taiTGmRtCJ62-O0HhNEa-ZZc-oU2SKo.woff2` | `98b4a138b6117d621a122a7c8590aa945720e4953d926b921a61e0d3f96a02c9` |
+   | Alegreya SC | normal | 500 | latin-ext | 31944 | `https://fonts.gstatic.com/s/alegreyasc/v28/taiTGmRtCJ62-O0HhNEa-ZZc-oU4SKqGFQ.woff2` | `fae2927855146328875e379a3f0dcd5ab26629413347838b32190ea441b1a4b7` |
+   | Alegreya SC | normal | 700 | latin | 30660 | `https://fonts.gstatic.com/s/alegreyasc/v28/taiTGmRtCJ62-O0HhNEa-ZYU_IU2SKo.woff2` | `988821cdcc03a1c0f7587143e4d921582595c5bcd803061863f7c3be7dd0d4b8` |
+   | Alegreya SC | normal | 700 | latin-ext | 31656 | `https://fonts.gstatic.com/s/alegreyasc/v28/taiTGmRtCJ62-O0HhNEa-ZYU_IU4SKqGFQ.woff2` | `42e3b3a35260c3626cb1e5fb71a134da3e856a8820d4ab757261fc383aa762f5` |
+   | IBM Plex Mono | normal | 400 | latin | 14708 | `https://fonts.gstatic.com/s/ibmplexmono/v20/-F63fjptAgt5VM-kVkqdyU8n1i8q1w.woff2` | `08949f728dc52d528e69b1667d15c89a5686a4ee9a296ff90983985f99c380f7` |
+   | IBM Plex Mono | normal | 400 | latin-ext | 13348 | `https://fonts.gstatic.com/s/ibmplexmono/v20/-F63fjptAgt5VM-kVkqdyU8n1iEq129k.woff2` | `6bc0f226a5b7884a8170e3f62c63d7675609d4631bdc5931b5cdab81821f00eb` |
+   | IBM Plex Mono | normal | 500 | latin | 14888 | `https://fonts.gstatic.com/s/ibmplexmono/v20/-F6qfjptAgt5VM-kVkqdyU8n3twJwlBFgg.woff2` | `01d285447409c8a588692162439a038b8cbd7871309ee20267b0d2d91c6e8e22` |
+   | IBM Plex Mono | normal | 500 | latin-ext | 13432 | `https://fonts.gstatic.com/s/ibmplexmono/v20/-F6qfjptAgt5VM-kVkqdyU8n3twJwl5FgtIU.woff2` | `6bb06407c97584b0867a959e05e8874693bfeb8c317de190811c51598f2d99ea` |
+
+2. **How they reach the page.** When the server assembles the shell, Python reads each file and writes one `@font-face` rule per file into the page's inline style, with `src: url(data:font/woff2;base64,…) format("woff2")` and the subset's `unicode-range` as Google's stylesheet gives it. The style's CSP hash is computed over that text as it is today. The CSP gains exactly `font-src data:` and nothing else. No route is added, no request is made without the token, and `default-src 'none'`, `frame-ancestors 'none'` and every rule of ADR-0029 stay as they are.
+3. **How it is verified.** A test holds the SHA-256 of each file, as in the table above; changing a file is a PR that changes the hashes and says why. A test asserts the CSP's `font-src` is exactly `data:` and that the style carries one `@font-face` per file. `scripts/check_fonts.py`, run by hand and never in CI (ADR-0012), downloads the table's URLs and compares the bytes.
+4. **What may not change.** The files are never edited, subset again or converted in the repository. No other page gains them: the static pages of ADR-0027 (`looks page` and its kin) keep system fonts unless an amendment here says otherwise. A glyph outside the two subsets falls back per character to the stack in `docs/design/WELLSPRING.md` (Palatino, Georgia, then the system's serif), so Cyrillic, Greek and CJK player names still render, in the fallback face.
+
+**Consequences:**
+- The wheel grows by about 350 KB. Each load of the shell grows by about 460 KB of base64 text, served locally; the browser cannot cache the fonts apart from the page.
+- `font-src data:` admits any `data:` font, but only a stylesheet can name one, and the only stylesheet the CSP admits is the page's own, by hash. The surface does not grow beyond that.
+- The README and the release notes name both licences. The OFL allows bundling and redistribution with the licence text; it forbids selling the fonts alone, which the Lab does not do.
+- ADR-0030's list gains the line "third-party font files, only under ADR-0035".
+- Removing the fonts later loses nothing but the faces: every rule in `page.css` names a fallback stack.
