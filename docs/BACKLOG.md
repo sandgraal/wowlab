@@ -2093,6 +2093,7 @@ Per ADR-0035 and its amendment of 2026-10-26:
 - The twelve WOFF2 files go into `lab/core/src/wowlab_core/ui/templates/fonts/` under the amendment's names, byte for byte from the ADR's URLs. The two licence texts go beside them, byte for byte from the amendment's pinned URLs. The wheel and sdist carry all fourteen.
 - The shell's assembly writes one `@font-face` per font file into the inline style: the family, style and weight from the ADR's table, `src: url(data:font/woff2;base64,…) format("woff2")`, and the subset's `unicode-range` (the `latin` and `latin-ext` ranges of Google's stylesheet, written as constants beside the table).
 - The CSP gains `font-src data:` and nothing else.
+- The `@font-face` rules go after the template text and the server's colour rules, so the served style still starts with `page.css` (`test_the_colour_rules_are_made_from_the_shipped_table`, `test_ui_character.py:642`, stays unchanged).
 - `scripts/check_fonts.py` downloads the ADR's fourteen URLs and compares the bytes. It runs by hand and never in CI.
 - The README's "License and affiliation" section names both OFL families.
 - The texts that repeat ADR-0029's CSP sentence change with it: the `ui/__init__.py` module docstring and `docs/LAB_PLAN.md` §16.3 (the M14-04 paragraph). The `ui` bullet in `.claude/rules/lab-load-bearing.md` is harness, so the report names the new wording and the conductor makes that edit on merge.
@@ -2135,11 +2136,13 @@ Restyle the page to `docs/design/WELLSPRING.md`. `page.css` is rewritten on cust
 - `test_ui_explorer.py`, `test_text_meets_wcag_aa_in_both_schemes` and its parchment check (around line 1699): replaced by the contrast test below.
 - `test_badges_read_like_item_quality` (line 1729): becomes "each badge class uses its force's `-bg` and `-border` tokens; Astral is dotted, Blight is dashed". The grey `unclassified` rule goes.
 - `test_a_serif_system_font_and_no_art_from_outside` (line 1758): becomes "every `font-family` is one of the three `var(--font-*)` stacks, and each stack ends in a generic family (`serif` or `monospace`)". The no-art half is unchanged.
+- `test_ui_character.py`, `test_the_templates_hold_no_slot_name_and_no_colour_code` (line 614): the assertion that `page.css` holds `--field: #ffffff;`, and the `_FIELD_WHITE` exemption in `_table_leaks`, are removed. No white remains to exempt, so `_table_leaks` gets stricter, never looser.
+- `test_ui_character.py`, `test_the_colour_rules_read_on_the_gear_backing` (lines 660 to 678): it reads the gear table's backing through `var(--gear-ground)`, resolved from `:root`, and accepts the item name's size in `px` as well as `rem` (19px is at least 18.66px, the large-text floor). It still checks every shipped quality colour at 3:1 on that backing.
 
 **Acceptance:**
 - The contrast test from M16-30 is extended to the new `page.css`. It checks every text pair the token usage notes name, every badge border against its own badge ground, `rule-strong`, and the focus ring, in both themes. It allows no failure: the quality colours are not in `page.css`.
 - A test asserts that `page.css` declares every token in `docs/design/wellspring-tokens.json` except `quality-*`, with that file's value per theme. It also asserts that no colour literal appears outside those custom-property declarations.
-- `_table_leaks` (M13-72) passes unchanged.
+- `_table_leaks` (M13-72) passes, with its white exemption removed as above.
 - A test asserts that the set of classes and ids in `page.html` and `page.js` is unchanged from `main` before this ticket, apart from the crest's replacement by the sigil.
 - The M16-15 player-output lint is still green, and no sentence a player reads has changed (a test diffs the text nodes of `page.html`).
 - Screenshots of Explorer, Commands (with a plan and Confirm showing), Character and Gaps in both themes are attached to the PR. The owner looks at them before it merges.
