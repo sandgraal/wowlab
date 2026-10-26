@@ -172,7 +172,7 @@ jobs:
       # no job in any workflow restores one now (test_workflows_use_no_cache).
       # A fresh `uv sync` costs about a second.
       # The Claude action's own setup-bun is pinned with `no-cache: true`.
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false
@@ -376,7 +376,7 @@ jobs:
       - name: Improve the wiki (Claude)
         id: claude
         if: steps.secret.outputs.present == 'true'
-        uses: anthropics/claude-code-action@f27be6b65a4652f08a2ba3cff79114829b588967 # v1.0.252
+        uses: anthropics/claude-code-action@16f9f71ab9c490faf367f94dd294897edc25be33 # v1.0.261
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Agent mode takes a token instead of minting one through OIDC, so
@@ -570,7 +570,7 @@ jobs:
           ref: ${{ github.sha }}
           path: repo
           persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false
@@ -803,7 +803,7 @@ jobs:
           persist-credentials: false
       # No cache, as in gates: an entry is runner state that a model past its
       # permissions in improve could have written, and this job can push.
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false
