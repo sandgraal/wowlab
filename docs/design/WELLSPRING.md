@@ -41,7 +41,7 @@ The fantasy lives in colour, type, ornament and structure. It never lives in the
 
 ## Visual foundations
 
-**Themes.** Warband (`data-theme="warband"`) is the default: char and hide, bone-coloured text, an oxblood `heraldry` band. Bastion (`data-theme="bastion"`) is the light theme: limestone, slate text, a lapis `heraldry` band. Every token exists in both, so a component never names a theme. The gear area stays dark in both (`gear-*`) so the client's item-quality colours read as they do in the game.
+**Themes.** The theme follows the system. Warband, declared under `:root`, is the default: char and hide, bone-coloured text, an oxblood `heraldry` band. Bastion, declared under `@media (prefers-color-scheme: light)`, is the light theme: limestone, slate text, a lapis `heraldry` band. Every token exists in both, so a component never names a theme. The gear area stays dark in both (`gear-*`) so the client's item-quality colours read as they do in the game.
 
 **Grounds.** Pages sit on `ground`, with a faint `wellspring-glow` ellipse rising from below the bottom edge (the core beneath the world) and a vignette toward `ground-deep`. Content sits in `surface` panels; cards inside a panel use `surface-raised`; anything typed or raw (fields, code, JSON) sits in `surface-sunken`.
 
@@ -87,13 +87,15 @@ The word always carries the meaning. Glyph and border style repeat it so verdict
 
 ## Iconography
 
-The mark is the Wellspring sigil (`assets/Logos/`): a ring broken in three places (the shattered world), eight titan survey ticks, and a diamond core with a dotted fissure running down from it. In the interface it is inline SVG with classes (`.ring` `brass`, `.tick` `brass-deep`, `.core` and `.fissure` `wellspring`) so it follows the theme. The two SVG files are fixed-colour copies for places that cannot inherit colour: `wellspring-sigil-warband.svg` on dark grounds, `wellspring-sigil-bastion.svg` on light ones.
+The mark is the Wellspring sigil (`docs/design/wellspring-sigil-*.svg`): a ring broken in three places (the shattered world), eight titan survey ticks, and a diamond core with a dotted fissure running down from it. In the interface it is inline SVG, written without `xmlns` (the page's tests refuse it), with classes (`.ring` `brass`, `.tick` `brass-deep`, `.core` and `.fissure` `wellspring`) so it follows the theme. The two SVG files are fixed-colour copies for places that cannot inherit colour: `wellspring-sigil-warband.svg` on dark grounds, `wellspring-sigil-bastion.svg` on light ones.
 
 There is no icon set. Disclosure uses text triangles (▸ ▾); verdict glyphs are typographic. Status is never shown by an icon alone.
 
 ## Contrast
 
-Every text token meets 4.5:1 on the grounds its usage note names, in both themes, checked pair by pair; `rule-strong` and the `wellspring` focus ring meet 3:1. Two exceptions are the client's own colours, kept exact: `quality-rare` (3.99:1) and `quality-epic` (3.94:1) on `gear-ground`. They pass only as large text, which `item-name` is.
+Every text token meets 4.5:1 on the grounds its usage note names, in both themes, checked pair by pair. `rule-strong`, the `wellspring` focus ring and every badge border against its own badge ground meet 3:1. Two exceptions are the client's own colours, kept exact: `quality-rare` (4.03:1) and `quality-epic` (3.98:1) on `gear-ground`. They pass only as large text, which `item-name` is.
+
+The `quality-*` tokens are a reference. The page never declares them: the server draws item names from the shipped `gear_slots.toml`, and a test on `main` (M13-72) fails on any quality colour or quality word in `page.css`. For the same reason no other token takes a quality colour's value, which is why Bastion's whites are `#fffdf8`.
 
 ## Mapping onto the existing page
 

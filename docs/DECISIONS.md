@@ -300,6 +300,8 @@ The decision itself is unchanged. This amendment only stages it, so that the fir
 
 **Amendment (2026-10-18; Accepted 2026-10-18 — owner decision; the status edit was made by the conductor on the owner's explicit instruction):** the 2026-10-15 amendment names "the embedded looks, talents and character pages" for Wave 5. The character is built instead as a native tab of the UI, drawn from CLI `--json` models (`wowlab char gear`, `char binds`, `char macros`) as the explorer is (`docs/LAB_PLAN.md` §16.3, decision F-A), because the editing stage planned after it needs the server and a static page would duplicate the explorer's JSON rendering. The looks page stays embedded (M14-04, by the route §16.3 gives, with no response header loosened). The talents page waits for char-planner (§14.8). "Richer views … are embedded or linked rather than rebuilt" is read as "a view that exists as a page is embedded; a view that does not yet exist may be a tab". The decision itself is unchanged.
 
+**Amended by (2026-10-26; Accepted with ADR-0035 the same day):** the page's CSP also allows `font-src data:`, for the twelve pinned font files ADR-0035 writes into the page's own hashed style. "Allows the server itself and nothing else" now reads "allows the server itself, and `data:` fonts named by the page's own hashed code, and nothing else". Every other rule here is unchanged.
+
 ---
 
 ## ADR-0030 — Languages: one per purpose, each admitted by an ADR
@@ -474,3 +476,15 @@ The owner asked whether `Data/` could also be edited. The conductor recommended 
 - The README and the release notes name both licences. The OFL allows bundling and redistribution with the licence text; it forbids selling the fonts alone, which the Lab does not do.
 - ADR-0030's list gains the line "third-party font files, only under ADR-0035".
 - Removing the fonts later loses nothing but the faces: every rule in `page.css` names a fallback stack.
+
+**Amendment (2026-10-26, from the review of PR #341; the decision is unchanged):**
+- *File names.* In the package, the twelve files of the table above are named `<face>-<subset>.woff2`: `alegreya-latin`, `alegreya-latin-ext`, `alegreya-italic-latin`, `alegreya-italic-latin-ext`, `alegreya-sc-500-latin`, `alegreya-sc-500-latin-ext`, `alegreya-sc-700-latin`, `alegreya-sc-700-latin-ext`, `ibm-plex-mono-400-latin`, `ibm-plex-mono-400-latin-ext`, `ibm-plex-mono-500-latin`, `ibm-plex-mono-500-latin-ext`, in the table's order of family, style, weight and subset.
+- *Licence texts.* Two files, pinned like the fonts. Alegreya and Alegreya SC share one text.
+
+  | File | Source | Bytes | SHA-256 |
+  |---|---|---|---|
+  | `OFL-Alegreya.txt` | `https://raw.githubusercontent.com/google/fonts/e7db6ca603fd4862010383ff17ffd6cc4ffac1c0/ofl/alegreya/OFL.txt` | 4395 | `f6f60d5d4cf4f4b1fc4e41353c897a2f5a16e6396c0cd8fa8bdfd2f4586a9a68` |
+  | `OFL-IBMPlexMono.txt` | `https://raw.githubusercontent.com/google/fonts/e7db6ca603fd4862010383ff17ffd6cc4ffac1c0/ofl/ibmplexmono/OFL.txt` | 4456 | `7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da` |
+
+- *What `font-src data:` admits, said precisely.* The Consequences say only a stylesheet can name a `data:` font, and only the page's own. That is too narrow. `style-src` also admits the looks page's style by hash. A script admitted by hash could load a `data:` font through the `FontFace` API. The conclusion holds: only code written in this package and admitted by hash can name a font. No player or request text reaches a font source.
+- *ADR-0029.* Decision 2 says every rule of ADR-0029 stays as it is. Its CSP sentence ("allows the server itself and nothing else") does change, so ADR-0029 carries an "Amended by" line for this ADR. When M16-51 lands, three texts that repeat that sentence change with it: the module docstring of `wowlab_core/ui/__init__.py`, `docs/LAB_PLAN.md` §16.3 (the M14-04 paragraph), and the `ui` bullet in `.claude/rules/lab-load-bearing.md`.

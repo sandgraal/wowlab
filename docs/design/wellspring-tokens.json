@@ -41,7 +41,7 @@
         "name": "surface-raised",
         "value": {
           "warband": "#24211d",
-          "bastion": "#ffffff"
+          "bastion": "#fffdf8"
         },
         "usage": "Cards inside a panel: the codex pane, a macro, a hint."
       },
@@ -123,13 +123,13 @@
           "warband": "#55d8b7",
           "bastion": "#0a7361"
         },
-        "usage": "The life-force at the core: primary actions, focus ring, links, the selection mark, success. On grounds and surfaces."
+        "usage": "The life-force at the core: primary actions, focus ring, links, the selection mark, success. As text, on `ground` and the surfaces (not on `ground-deep`)."
       },
       {
         "name": "on-wellspring",
         "value": {
           "warband": "#06241e",
-          "bastion": "#ffffff"
+          "bastion": "#fffdf8"
         },
         "usage": "Text and icons on a `wellspring` fill (the primary button)."
       },
@@ -153,7 +153,7 @@
         "name": "on-heraldry",
         "value": {
           "warband": "#fbeee8",
-          "bastion": "#ffffff"
+          "bastion": "#fffdf8"
         },
         "usage": "Text on a `heraldry` fill."
       },
@@ -248,8 +248,8 @@
       {
         "name": "stone-border",
         "value": {
-          "warband": "#5f574b",
-          "bastion": "#a39b8d"
+          "warband": "#726b61",
+          "bastion": "#898276"
         },
         "usage": "Border of the Stone badge, solid."
       },
@@ -273,7 +273,7 @@
         "name": "astral-border",
         "value": {
           "warband": "#5083b8",
-          "bastion": "#6d97c6"
+          "bastion": "#6389b4"
         },
         "usage": "Border of the Astral badge, dotted."
       },
@@ -297,7 +297,7 @@
         "name": "blight-border",
         "value": {
           "warband": "#8c943f",
-          "bastion": "#93a03c"
+          "bastion": "#849036"
         },
         "usage": "Border of the Blight badge, dashed."
       },
@@ -354,42 +354,42 @@
       {
         "name": "quality-poor",
         "value": "#9d9d9d",
-        "usage": "Poor item names on `gear-ground`."
+        "usage": "Reference only: drawn by the server from gear_slots.toml, never declared in page.css. Poor item names on `gear-ground`."
       },
       {
         "name": "quality-common",
         "value": "#ffffff",
-        "usage": "Common item names on `gear-ground`."
+        "usage": "Reference only: drawn by the server from gear_slots.toml, never declared in page.css. Common item names on `gear-ground`."
       },
       {
         "name": "quality-uncommon",
         "value": "#1eff00",
-        "usage": "Uncommon item names on `gear-ground`."
+        "usage": "Reference only: drawn by the server from gear_slots.toml, never declared in page.css. Uncommon item names on `gear-ground`."
       },
       {
         "name": "quality-rare",
         "value": "#0070dd",
-        "usage": "Rare item names on `gear-ground`. The client's colour, kept exact: 4.0:1, large text only, so names are set in `item-name`."
+        "usage": "Reference only: drawn by the server from gear_slots.toml, never declared in page.css. Rare item names on `gear-ground`. The client's colour, kept exact: 4.03:1, large text only, so names are set in `item-name`."
       },
       {
         "name": "quality-epic",
         "value": "#a335ee",
-        "usage": "Epic item names on `gear-ground`. The client's colour, kept exact: 3.9:1, large text only."
+        "usage": "Reference only: drawn by the server from gear_slots.toml, never declared in page.css. Epic item names on `gear-ground`. The client's colour, kept exact: 3.98:1, large text only."
       },
       {
         "name": "quality-legendary",
         "value": "#ff8000",
-        "usage": "Legendary item names on `gear-ground`."
+        "usage": "Reference only: drawn by the server from gear_slots.toml, never declared in page.css. Legendary item names on `gear-ground`."
       },
       {
         "name": "quality-artifact",
         "value": "#e6cc80",
-        "usage": "Artifact item names on `gear-ground`."
+        "usage": "Reference only: drawn by the server from gear_slots.toml, never declared in page.css. Artifact item names on `gear-ground`."
       },
       {
         "name": "quality-heirloom",
         "value": "#00ccff",
-        "usage": "Heirloom item names on `gear-ground`."
+        "usage": "Reference only: drawn by the server from gear_slots.toml, never declared in page.css. Heirloom item names on `gear-ground`."
       }
     ]
   },
@@ -397,37 +397,73 @@
     "fonts": [
       {
         "family": "Alegreya",
-        "file": "fonts/Alegreya-Variable.woff2",
+        "file": "fonts/alegreya-latin.woff2",
         "weight": "400 900",
         "style": "normal"
       },
       {
         "family": "Alegreya",
-        "file": "fonts/Alegreya-Italic-Variable.woff2",
+        "file": "fonts/alegreya-latin-ext.woff2",
+        "weight": "400 900",
+        "style": "normal"
+      },
+      {
+        "family": "Alegreya",
+        "file": "fonts/alegreya-italic-latin.woff2",
+        "weight": "400 900",
+        "style": "italic"
+      },
+      {
+        "family": "Alegreya",
+        "file": "fonts/alegreya-italic-latin-ext.woff2",
         "weight": "400 900",
         "style": "italic"
       },
       {
         "family": "Alegreya SC",
-        "file": "fonts/AlegreyaSC-500.woff2",
+        "file": "fonts/alegreya-sc-500-latin.woff2",
         "weight": "500",
         "style": "normal"
       },
       {
         "family": "Alegreya SC",
-        "file": "fonts/AlegreyaSC-700.woff2",
+        "file": "fonts/alegreya-sc-500-latin-ext.woff2",
+        "weight": "500",
+        "style": "normal"
+      },
+      {
+        "family": "Alegreya SC",
+        "file": "fonts/alegreya-sc-700-latin.woff2",
+        "weight": "700",
+        "style": "normal"
+      },
+      {
+        "family": "Alegreya SC",
+        "file": "fonts/alegreya-sc-700-latin-ext.woff2",
         "weight": "700",
         "style": "normal"
       },
       {
         "family": "IBM Plex Mono",
-        "file": "fonts/IBMPlexMono-400.woff2",
+        "file": "fonts/ibm-plex-mono-400-latin.woff2",
         "weight": "400",
         "style": "normal"
       },
       {
         "family": "IBM Plex Mono",
-        "file": "fonts/IBMPlexMono-500.woff2",
+        "file": "fonts/ibm-plex-mono-400-latin-ext.woff2",
+        "weight": "400",
+        "style": "normal"
+      },
+      {
+        "family": "IBM Plex Mono",
+        "file": "fonts/ibm-plex-mono-500-latin.woff2",
+        "weight": "500",
+        "style": "normal"
+      },
+      {
+        "family": "IBM Plex Mono",
+        "file": "fonts/ibm-plex-mono-500-latin-ext.woff2",
         "weight": "500",
         "style": "normal"
       }
@@ -558,7 +594,8 @@
           }
         ]
       }
-    ]
+    ],
+    "note": "Twelve files, the latin and latin-ext subsets of six faces, named and pinned in ADR-0035. Each @font-face carries its subset's unicode-range."
   },
   "spacing": {
     "tokens": [
