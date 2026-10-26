@@ -2082,7 +2082,7 @@ The owner reads ADR-0035 and accepts it, amends it (for example: fewer faces, no
 
 **Acceptance:** ADR-0035's status line records the owner's decision.
 
-*Closed 2026-10-26:* the owner accepted ADR-0035 as written, in session, on PR #341.
+*Closed 2026-10-26:* the owner accepted ADR-0035 as written, in session, on PR #341. The same day the owner also confirmed ADR-0035's amendment of 2026-10-26 (file names, licence pins) and ADR-0029's "Amended by" line, so M16-51 builds on accepted text only.
 
 ---
 
