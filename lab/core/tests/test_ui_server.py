@@ -52,7 +52,7 @@ The seam (the docs leave these names open; M13-24 builds to them)
   *Amended by M16-42:* ``url`` is ``http://127.0.0.1:<port>/?boot=<boot>``,
   ``boot`` a one-time key the page exchanges once, at ``POST /api/session``,
   for ``token``, which is in that one response body and nowhere else
-  (``test_ui_boot.py``).
+  (``test_ui_local_exposure.py``).
 - A run is stopped with its whole process tree (grandchildren included) when
   it passes ``timeout_s``, when its output passes ``output_cap_bytes`` (read
   as a stream: the cap bounds memory, and the process is killed there), and
@@ -554,7 +554,7 @@ def test_token_is_random_urlsafe_and_only_in_the_url(recorder: Recorder) -> None
         for server in (one, two):
             assert re.fullmatch(r"[A-Za-z0-9_-]{43,}", server.token), "token_urlsafe(32)"
             # M16-42: the opened URL carries the one-time boot key, never
-            # the session key (test_ui_boot.py grades the exchange).
+            # the session key (test_ui_local_exposure.py grades the exchange).
             assert re.fullmatch(r"[A-Za-z0-9_-]{43,}", server.boot), "token_urlsafe(32)"
             assert server.url == f"http://127.0.0.1:{_port(server)}/?boot={server.boot}"
             assert server.token not in server.url
@@ -578,7 +578,11 @@ def test_a_request_without_the_token_is_refused(
     body = json.dumps({"command": ["echo"], "params": {"path": "x"}}).encode()
     reply = _send(planted, method, path, body=body if method == "POST" else None)
     assert reply.status == 403
-    if method != "HEAD":
+    if path == "/":
+        # M16-42: the page a reload asks for answers the player a sentence,
+        # as plain text (test_ui_local_exposure.py); every other path JSON.
+        assert reply.all("Content-Type") == ["text/plain; charset=utf-8"]
+    elif method != "HEAD":
         assert reply.error() == "token"
     assert recorder.calls() == []
 

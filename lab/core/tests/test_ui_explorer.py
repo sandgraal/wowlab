@@ -540,7 +540,9 @@ def test_a_request_without_the_token_is_refused(server: Any) -> None:
         connection.request("GET", "/", headers={"Host": f"127.0.0.1:{port}"})
         response = connection.getresponse()
         assert response.status == 403
-        assert json.loads(response.read()) == {"error": "token"}
+        # M16-42: `/` with no query (a reload) answers the player a sentence.
+        assert response.getheader("Content-Type") == "text/plain; charset=utf-8"
+        assert b"already used" in response.read()
     finally:
         connection.close()
 
@@ -756,7 +758,18 @@ function canon(v) {
   if (v && typeof v === "object") return "{" + Object.keys(v).sort().map((k) => JSON.stringify(k) + ":" + canon(v[k])).join(",") + "}";
   return JSON.stringify(v);
 }
+// What the page did first (M16-42): history.replaceState and every fetch, in
+// order. The boot exchange answers the scenario's session key, or the spent
+// refusal; it is kept out of `requests`.
+const events = [];
 const fetchStub = async (url, opts) => {
+  events.push("fetch " + String(url));
+  if (String(url).startsWith("/api/session?")) {
+    if (scenario.session === "spent") {
+      return { ok: false, status: 403, json: async () => ({ error: "boot_spent" }) };
+    }
+    return answer({ token: scenario.session_key || "t" });
+  }
   const body = opts && opts.body ? JSON.parse(opts.body) : null;
   requests.push({ url: String(url), body: body });
   if (String(url).startsWith("/api/commands?")) return answer(scenario.commands);
@@ -806,8 +819,8 @@ function addTimer(fn, ms, every) {
 }
 function clearTimer(id) { const at = timers.findIndex((t) => t.id === id); if (at >= 0) timers.splice(at, 1); }
 const location = Object.freeze({
-  get search() { return "?token=t"; },
-  get href() { return "http://127.0.0.1:1/?token=t"; },
+  get search() { return "?boot=k"; },
+  get href() { return "http://127.0.0.1:1/?boot=k"; },
   set href(v) { trap("location.href = " + v); },
   get hash() { return ""; },
   set hash(v) { trap("location.hash = " + v); },
@@ -815,7 +828,8 @@ const location = Object.freeze({
   replace(u) { trap("location.replace " + u); },
   reload() { trap("location.reload"); },
 });
-const win = { navigator: navigator, isSecureContext: true, open: (u) => trap("window.open " + u),
+const history = { replaceState(state, title, url) { events.push("replaceState " + url); } };
+const win = { navigator: navigator, isSecureContext: true, open: (u) => trap("window.open " + u), history: history,
   addEventListener(ev, fn) { (winListeners[ev] = winListeners[ev] || []).push(fn); },
   removeEventListener(ev, fn) { winListeners[ev] = (winListeners[ev] || []).filter((f) => f !== fn); } };
 Object.defineProperty(win, "location", { get: () => location, set: (v) => trap("window.location = " + v) });
@@ -1020,6 +1034,8 @@ async function openAll() {
     out.error = String((error && error.stack) || error);
   }
   out.requests = requests;
+  out.events = events;
+  out.pageStatus = ids.status ? ids.status.textContent : null;
   out.clipboard = clipboard;
   out.traps = traps;
   process.stdout.write(JSON.stringify(out));
@@ -1783,3 +1799,37 @@ def test_the_level_choices_are_not_written_into_the_page(server: Any) -> None:
     assert select is not None
     assert re.findall(r"<option\b", select.group(1)) == ["<option"]
     assert 'value=""' in select.group(1)
+
+
+# ─── the boot exchange under Node (M16-42) ───────────────────────────────────
+
+
+def test_the_page_drops_its_query_then_trades_the_boot_key(
+    server: Any, install: Path, tmp_path: Path
+) -> None:
+    """The page opened on `?boot=k` calls `history.replaceState` before any
+    request, exchanges the key once at `/api/session`, and every later
+    request carries the session key the exchange answered."""
+    scenario, _ = _scenario(server, [], [])
+    key = "from-the-exchange"  # constructed
+    scenario["session_key"] = key
+    out = _drive(tmp_path / "node", scenario)
+    events = out["events"]
+    assert events[0] == "replaceState /", events
+    assert events[1] == "fetch /api/session?boot=k", events
+    assert sum(e.startswith("fetch /api/session") for e in events) == 1
+    assert out["requests"], "the page went on after the exchange"
+    for request in out["requests"]:
+        assert request["url"].endswith("?token=" + key), request["url"]
+
+
+def test_a_page_that_lost_the_exchange_says_the_link_was_used(
+    server: Any, install: Path, tmp_path: Path
+) -> None:
+    scenario, _ = _scenario(server, [], [])
+    scenario["session"] = "spent"
+    out = _drive(tmp_path / "node", scenario)
+    assert out["events"] == ["replaceState /", "fetch /api/session?boot=k"]
+    assert out["requests"] == []
+    assert "already used" in out["pageStatus"]
+    assert "already used" in out["first"]["status"]

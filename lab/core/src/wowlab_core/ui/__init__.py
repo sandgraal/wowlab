@@ -11,18 +11,24 @@ it (a POST body included):
 - an `Origin`, when present, is exactly `http://` plus that `Host`;
 - the query parameter `token` is the server's session key
   (`secrets.token_urlsafe(32)`).
-The session key is never in a header, a cookie, a log, a URL, or a child's
-argv or environment, and it is in one response body only: the boot exchange
-(M16-42). The URL `wowlab ui` opens, which a browser's argv carries and other
+The session key is never in a header, a cookie, a log, the URL `wowlab ui`
+opens, the address bar or the history, or a child's argv or environment, and
+it is in one response body only: the boot exchange (M16-42). Requests the
+page makes carry it in their query, as before. The URL `wowlab ui` opens, which a browser's argv carries and other
 local accounts can read, holds a one-time boot key instead
 (`/?boot=<key>`, `secrets.token_urlsafe(32)`), the only thing besides the
 session key that passes the third check, and only for the shell (`GET` and
 `HEAD` of `/`) and for `POST /api/session`, the exchange, which answers
 `{"token": <session key>}` once and spends the boot key. From then on the
 boot key opens nothing (403 `boot_spent`), so a second exchange, whoever
-makes it, gets nothing, and the page that lost the race says so. `page.js`
-takes the query out of the address bar with `history.replaceState` before
-its first request, and keeps the session key in memory only.
+makes it, gets nothing. `page.js` takes the query out of the address bar
+with `history.replaceState` before its first request, keeps the session key
+in memory only, and never reads it from its own URL. The player is told in
+words, never in JSON: a page that lost the exchange says the link was used;
+`GET /` with the spent boot key, or with no query at all (a reload), answers
+403 with the fixed sentence `_LINK_USED` as plain text; and the first time
+the spent boot key is presented again, `notice` (set by `wowlab ui` to print
+to its terminal) is called once with `_REUSED_NOTICE`, which holds no key.
 A refusal answers 403 `{"error": "host" | "origin" | "token"}`. Every
 response, refusals and errors included, carries the same
 Content-Security-Policy, which allows the server itself and the page's own
@@ -45,7 +51,8 @@ three shapes below (none on 2026-10-19), `ui` itself, `log tail` with
 `follow` (a run must end) and `looks page` with `out` (it can create a file
 anywhere outside an install). `sv dump` always runs with `--install-only`
 (`_FORCED_FLAGS`), which refuses a file whose real path is not in the
-install before reading it, so a refusal quotes no byte of it (M16-42).
+install wowlab finds by itself, and a `root` naming another install, before
+reading it, so a refusal quotes no byte of it (M16-42).
 
 The looks page (M14-04, ADR-0029 "embedded", §16.3). `GET /api/looks-page`
 answers `{"page": <text>}`: the file `looks page` writes by default,
@@ -146,7 +153,7 @@ import sys
 import threading
 import time
 import urllib.parse
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any, override
@@ -1150,6 +1157,10 @@ class UiServer(http.server.ThreadingHTTPServer):
         self.boot = secrets.token_urlsafe(32)
         self._boot_lock = threading.Lock()
         self._boot_spent = False
+        self._boot_reused = False
+        # Called once, with `_REUSED_NOTICE`, when the spent boot key is
+        # presented again; `wowlab ui` prints it to its terminal.
+        self.notice: Callable[[str], None] | None = None
         self._runs_lock = threading.Lock()
         self._runs: set[int] = set()
         self._closing = threading.Event()
@@ -1201,7 +1212,19 @@ class UiServer(http.server.ThreadingHTTPServer):
         ):
             return "token"
         with self._boot_lock:
-            return _BOOT_SPENT if self._boot_spent else None
+            if not self._boot_spent:
+                return None
+        self._reused()
+        return _BOOT_SPENT
+
+    def _reused(self) -> None:
+        """The spent boot key came back: tell the player once."""
+        with self._boot_lock:
+            first = not self._boot_reused
+            self._boot_reused = True
+        if first and self.notice is not None:
+            with contextlib.suppress(Exception):
+                self.notice(_REUSED_NOTICE)
 
     def spend_boot(self, given: str) -> str | None:
         """Spend the boot key: the session key, the first time `given` is the
@@ -1212,9 +1235,11 @@ class UiServer(http.server.ThreadingHTTPServer):
         ):
             return None
         with self._boot_lock:
-            if self._boot_spent:
-                return None
+            spent = self._boot_spent
             self._boot_spent = True
+        if spent:
+            self._reused()
+            return None
         return self.token
 
     def run(self, argv: list[str]) -> _Run:
@@ -1384,6 +1409,18 @@ _SESSION = "/api/session"
 # The refusal for the boot key once it was spent: the page says the link was
 # used, which is how a player sees that something else used it first.
 _BOOT_SPENT = "boot_spent"
+# What `GET /` answers, as plain text, for the spent boot key or no query at
+# all (a reload): the player reads a sentence, not JSON. It holds no key.
+_LINK_USED = (
+    "This wowlab ui link was already used: it works once, and a reload cannot use it "
+    "again. If you did not open it before, something else on this computer may have. "
+    "Stop wowlab ui with Ctrl-C and start it again.\n"
+)
+# What `notice` is called with, once, when the spent boot key comes back.
+_REUSED_NOTICE = (
+    "wowlab ui: the link was used a second time. If that was not you, stop wowlab ui "
+    "with Ctrl-C and start it again."
+)
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
@@ -1492,7 +1529,16 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         )
         refusal = self._check(boot)
         if refusal is not None:
-            self._error(403, refusal)
+            query = self.path.partition("?")[2].partition("#")[0]
+            if (
+                self.command in ("GET", "HEAD")
+                and route == "/"
+                and (refusal == _BOOT_SPENT or (refusal == "token" and not query))
+            ):
+                # The page the player opens or reloads: a sentence, not JSON.
+                self._reply(403, _LINK_USED.encode("utf-8"), "text/plain; charset=utf-8")
+            else:
+                self._error(403, refusal)
             return None
         return self._route()
 

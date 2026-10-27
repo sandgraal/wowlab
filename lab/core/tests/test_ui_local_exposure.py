@@ -177,6 +177,20 @@ def test_the_opened_url_carries_the_boot_key_and_not_the_session_key(planted: An
     assert planted.token not in planted.url
 
 
+def _assert_link_used(server: Any, reply: _Reply) -> None:
+    """The player's sentence, as plain text, under the same headers as every
+    response, and with neither key in it."""
+    assert reply.status == 403
+    assert reply.headers.get("Content-Type") == "text/plain; charset=utf-8"
+    assert reply.headers.get("Cache-Control") == "no-store"
+    assert reply.headers.get("Content-Security-Policy") == ui._shell()[1]
+    text = reply.body.decode("utf-8")
+    assert "already used" in text and "Ctrl-C" in text, text
+    assert server.boot not in text and server.token not in text
+    # Player copy: no JSON, no code, no ticket.
+    assert "{" not in text and "M16" not in text and "boot_spent" not in text
+
+
 def test_the_boot_key_opens_the_shell_until_it_is_spent(planted: Any) -> None:
     shell = ui.static_files()["/"]
     for method in ("GET", "GET", "HEAD"):
@@ -186,7 +200,7 @@ def test_the_boot_key_opens_the_shell_until_it_is_spent(planted: Any) -> None:
             assert reply.body == shell
     assert _exchange(planted).status == 200
     reply = _send(planted, "GET", f"/?boot={planted.boot}")
-    assert (reply.status, reply.error()) == (403, "boot_spent")
+    _assert_link_used(planted, reply)
     # The session key still opens the shell.
     assert _send(planted, "GET", f"/?token={planted.token}").status == 200
 
@@ -324,6 +338,48 @@ def test_neither_key_is_in_any_other_response(planted: Any) -> None:
 # ─── F4: page.js ─────────────────────────────────────────────────────────────
 
 
+def test_a_reload_gets_the_sentence_and_api_refusals_stay_json(planted: Any) -> None:
+    """Review round 1: the page with no query (a reload, once the page took
+    the query out) answers the player in words; `/api/*` stays JSON."""
+    for method in ("GET", "HEAD"):
+        reply = _send(planted, method, "/")
+        assert reply.status == 403
+        assert reply.headers.get("Content-Type") == "text/plain; charset=utf-8"
+    _assert_link_used(planted, _send(planted, "GET", "/"))
+    for target in ("/api/commands", "/?token=wrong", "/?tok=x"):
+        reply = _send(planted, "GET", target)
+        assert (reply.status, reply.error()) == (403, "token"), target
+    reply = _send(planted, "GET", "/", headers={"Host": "evil.example"})
+    assert (reply.status, reply.error()) == (403, "host")
+
+
+def test_the_spent_link_presented_again_is_told_once(planted: Any) -> None:
+    """Security round 1: `notice` gets one line, with no key, the first time
+    the spent boot key comes back, at the shell or the exchange."""
+    lines: list[str] = []
+    planted.notice = lines.append
+    _send(planted, "GET", f"/?boot={planted.boot}")
+    assert _exchange(planted).status == 200
+    _exchange(planted, "wrong")
+    assert lines == [], "neither the player's own use nor a wrong key is a reuse"
+    _assert_link_used(planted, _send(planted, "GET", f"/?boot={planted.boot}"))
+    assert _exchange(planted).status == 403
+    assert len(lines) == 1
+    assert "second time" in lines[0]
+    assert planted.boot not in lines[0] and planted.token not in lines[0]
+
+
+def test_the_cli_prints_the_notice_on_stderr(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`wowlab ui` hands the server its own stderr line printer."""
+    from test_ui_server import _invoke_ui
+
+    run = _invoke_ui(monkeypatch, tmp_path, "opens")
+    ((_, _, server),) = run.made
+    assert server.notice is cli._say_err
+
+
 def _script() -> str:
     return (TEMPLATES / "page.js").read_text(encoding="utf-8")
 
@@ -336,6 +392,8 @@ def test_the_page_drops_the_query_before_its_first_request() -> None:
     # The session key lives in the closure: no storage, no cookie, no URL.
     for sink in ("sessionStorage", "localStorage", "document.cookie", "pushState"):
         assert sink not in script, sink
+    # Review round 1: the session key is never read from the page's own URL.
+    assert 'get("token")' not in script and "get('token')" not in script
 
 
 _BOOT_JS = r"""
@@ -402,7 +460,7 @@ def test_in_a_browser_the_link_works_once_and_leaves_the_address_bar(
     assert out["href"] == f"http://127.0.0.1:{planted.port}/"
     assert out["requests"][:3] == ["GET /", "POST /api/session", "GET /api/commands"]
     assert out["second"] == 403
-    assert json.loads(out["secondBody"]) == {"error": "boot_spent"}
+    assert "already used" in out["secondBody"]
 
 
 # ─── F3: sv dump from the UI ─────────────────────────────────────────────────
@@ -474,6 +532,81 @@ def test_sv_dump_refuses_a_traversal_out_of_the_install(
     assert SECRET not in result["stdout"] + result["stderr"]
 
 
+def test_the_refusal_names_no_flag_the_player_never_gave(
+    server: Any, install: Path, outside: dict[str, Path]
+) -> None:
+    result = _dump(server, str(outside["secret"]))
+    assert "--install-only" not in result["stderr"], result["stderr"]
+    assert "refused:" in result["stderr"]
+
+
+def test_sv_dump_refuses_a_linked_folder_out_of_the_install(
+    server: Any, install: Path, outside: dict[str, Path]
+) -> None:
+    """A folder of the install that is a link out of it (constructed): the
+    file below it is outside."""
+    folder = install / FLAVOR / "WTF" / "Account" / "90000001#6" / "Leaked"
+    try:
+        folder.symlink_to(outside["secret"].parent, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("cannot make a symlink here")
+    result = _dump(server, str(folder / outside["secret"].name))
+    assert result["exit_code"] == cli.EXIT_REFUSED, result
+    assert SECRET not in result["stdout"] + result["stderr"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows resolves another case to the stored one")
+def test_sv_dump_refuses_the_install_named_in_another_case(server: Any, install: Path) -> None:
+    """On POSIX, `realpath` keeps a spelling's case, so the install's own file
+    named through another case of its folder is refused, never read: the
+    check errs towards refusing (constructed spelling)."""
+    variant = install.parent / install.name.swapcase()
+    result = _dump(server, str(variant / FLAVOR / SV_REL))
+    assert result["exit_code"] == cli.EXIT_REFUSED, result
+    assert result["stdout"] == ""
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a junction is a Windows link")
+def test_sv_dump_refuses_a_junction_out_of_the_install(
+    server: Any, install: Path, outside: dict[str, Path]
+) -> None:
+    import _winapi  # type: ignore[import-not-found,unused-ignore]
+
+    junction = install / FLAVOR / "WTF" / "Account" / "90000001#6" / "Junction"
+    _winapi.CreateJunction(str(outside["secret"].parent), str(junction))
+    result = _dump(server, str(junction / outside["secret"].name))
+    assert result["exit_code"] == cli.EXIT_REFUSED, result
+    assert SECRET not in result["stdout"] + result["stderr"]
+
+
+def test_the_page_cannot_name_the_install_sv_dump_is_measured_against(
+    server: Any, install: Path, outside: dict[str, Path]
+) -> None:
+    """security round 1: with `--root` the page could name an install planted
+    around the file (constructed: a copy of the capture beside the secret).
+    `--install-only` measures against the install wowlab finds by itself and
+    refuses a `--root` naming another; the page's own Preview, which passes
+    the found install's root, still reads."""
+    fake = outside["secret"].parent / "planted"
+    fake.mkdir()
+    shutil.copy2(CAPTURE / ".build.info", fake / ".build.info")
+    shutil.copytree(CAPTURE / "forever", fake / FLAVOR)
+    planted_file = fake / FLAVOR / "Secret.lua"
+    shutil.copy2(outside["secret"], planted_file)
+    reply = _run(server, ["sv", "dump"], {"file": str(planted_file), "root": str(fake)})
+    assert reply.status == 200, reply.body[:300]
+    result = reply.json()
+    assert result["exit_code"] == cli.EXIT_REFUSED, result
+    assert SECRET not in result["stdout"] + result["stderr"]
+    # Without --root, the planted file is outside the install wowlab finds.
+    result = _dump(server, str(planted_file))
+    assert result["exit_code"] == cli.EXIT_REFUSED, result
+    # Positive control: the found install's own root, as Preview passes it.
+    params = {"file": str(install / FLAVOR / SV_REL), "root": str(install)}
+    result = _run(server, ["sv", "dump"], params).json()
+    assert result["exit_code"] == 0, result["stderr"]
+
+
 # ─── F3: the CLI flag ────────────────────────────────────────────────────────
 
 
@@ -500,8 +633,33 @@ def test_install_only_refuses_when_no_install_is_found(
     only = CliRunner().invoke(
         cli.app, ["sv", "dump", "--install-only", str(outside["secret"])], prog_name="wowlab"
     )
-    assert only.exit_code != 0, only.output
+    assert only.exit_code == cli.EXIT_REFUSED, only.output
+    assert "refused:" in only.output
     assert SECRET not in only.output
+
+
+def test_install_only_reads_the_path_it_checked(
+    install: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """security round 1: the file read is the real path the check measured,
+    not the spelling given again."""
+    from wowlab_core import luadata
+
+    read: list[Path] = []
+    real_read = luadata.read
+
+    def spy(path: Path) -> Any:
+        read.append(Path(path))
+        return real_read(path)
+
+    monkeypatch.setattr(luadata, "read", spy)
+    given = install / FLAVOR / "WTF" / ".." / "WTF" / SV_REL.removeprefix("WTF/")
+    done = CliRunner().invoke(
+        cli.app, ["sv", "dump", "--install-only", "--json", str(given)], prog_name="wowlab"
+    )
+    assert done.exit_code == 0, done.output
+    assert read == [Path(os.path.realpath(given))]
+    assert ".." not in read[0].parts
 
 
 def test_a_sv_dump_that_lost_its_flag_is_excluded_not_run_without_it(home: Path) -> None:

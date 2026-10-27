@@ -3519,23 +3519,38 @@ def _sv_file(path: str, root: Path | None, flavor: str | None) -> Path:
     return lay.flavor_path / given
 
 
-def _sv_inside_install(target: Path, root: Path | None, flavor: str | None) -> None:
-    """`sv dump --install-only`: refuse (exit 3) a file whose real path, every
-    link on the way resolved, is not under the install's real path, before a
-    byte of it is read, so the refusal can quote nothing of it. No install
-    found is refused the same way, by `_open`. A spelling that differs only in
-    case is refused too: the check errs towards refusing."""
-    inst, _, _ = _open(root, flavor)
+def _sv_inside_install(file: str, root: Path | None, flavor: str | None) -> tuple[Path, Path]:
+    """`sv dump --install-only`: FILE as `_sv_file` finds it, and its real path
+    (every link on the way resolved), refused (exit 3) unless that is under
+    the real path of the install wowlab finds by itself, without `--root`
+    (`WOWLAB_WOW_ROOT` or the default places, as `wowlab ui` finds it). A
+    `--root` that names another install is refused too, so whoever chose the
+    arguments cannot plant an install around the file. Nothing of the file is
+    read first, so a refusal quotes none of it; the caller reads the real path
+    that was checked, not the spelling given (returns both: the spelling for
+    the report). No install found is refused (exit 3) as well. Where
+    `realpath` keeps the case a name was given in (macOS, Linux), a file of
+    the install named in another case is refused: the check errs towards
+    refusing; where it gives the stored case (Windows), it is allowed."""
+    try:
+        found, _ = _discover(None)
+        home = longpath.realpath(found.root)
+        if root is not None and longpath.realpath(_discover(root)[0].root) != home:
+            raise CliError(
+                f"refused: --root {root} is not the install wowlab finds, {found.root}",
+                EXIT_REFUSED,
+            )
+        target = _sv_file(file, root, flavor)
+    except install.InstallError as exc:
+        raise CliError(f"refused: {exc}", EXIT_REFUSED) from exc
     try:
         real = Path(longpath.realpath(target))
-        inside = real.is_relative_to(longpath.realpath(inst.root))
+        inside = real.is_relative_to(home)
     except (OSError, ValueError):
         inside = False
     if not inside:
-        raise CliError(
-            f"refused: {target} is not in the install at {inst.root} (--install-only)",
-            EXIT_REFUSED,
-        )
+        raise CliError(f"refused: {target} is not in the install at {found.root}", EXIT_REFUSED)
+    return target, real
 
 
 @sv_app.command("dump")
@@ -3560,8 +3575,9 @@ def sv_dump(
         bool,
         typer.Option(
             "--install-only",
-            help="Refuse a FILE that is not in the install, links followed, before "
-            "reading it. The browser view always passes this.",
+            help="Refuse a FILE that is not in the install wowlab finds by itself, "
+            "links followed, and a --root that names another, before reading anything. "
+            "The browser view always passes this.",
         ),
     ] = False,
     root: RootOpt = None,
@@ -3570,10 +3586,14 @@ def sv_dump(
 ) -> None:
     """A SavedVariables file as data: one `path = value` line per value, in file
     order. Parsed by `luadata`, never run as code. JSON: SvDumpReport."""
-    target = _sv_file(file, root, flavor)
     if install_only:
-        _sv_inside_install(target, root, flavor)
-    doc = luadata.read(target)
+        # Read the path that was checked; opening it without following a
+        # link on the way is EV-24's.
+        target, real = _sv_inside_install(file, root, flavor)
+        doc = luadata.read(real)
+    else:
+        target = _sv_file(file, root, flavor)
+        doc = luadata.read(target)
     if path is not None:
         value = _resolve_path(doc, path)
         if json_out:
@@ -10009,7 +10029,8 @@ def ui_command() -> None:
     The server listens on 127.0.0.1 only, at a port the system picks, and
     answers only requests that carry a random key. The link it opens works
     once: the page trades it for that key and takes it out of the address
-    bar, and a page that finds the link already used says so.
+    bar, so a reload needs a new wowlab ui. A link already used says so in
+    the browser, and here if it is used a second time.
     The page has five tabs. Explorer shows the whole install's files, each
     with whether wowlab may edit it, and what a picked file is and who
     writes it. Gaps lists the paths the file map does not describe.
@@ -10037,6 +10058,8 @@ def ui_command() -> None:
     from wowlab_core import ui
 
     server = ui.make_server()
+    # The spent link presented again: one line here, with no key in it.
+    server.notice = _say_err
 
     def announce(opened: bool) -> None:
         if opened:

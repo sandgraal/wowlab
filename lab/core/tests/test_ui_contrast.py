@@ -43,6 +43,7 @@ import json
 import re
 import shutil
 import subprocess
+import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -686,7 +687,8 @@ def test_the_quality_word_is_drawn_beside_the_name() -> None:
 _REFLOW_JS = r"""
 "use strict";
 
-const url = process.argv[2];
+// One link per scheme: the link `wowlab ui` opens works once (M16-42).
+const urls = { dark: process.argv[2], light: process.argv[3] };
 let playwright;
 try {
   playwright = require("playwright");
@@ -723,7 +725,7 @@ async function main() {
     for (const scheme of ["dark", "light"]) {
       const context = await browser.newContext({ viewport: { width: 320, height: 800 }, colorScheme: scheme });
       const page = await context.newPage();
-      await page.goto(url);
+      await page.goto(urls[scheme]);
       await page.waitForSelector("#tree li", { timeout: 60000 });
       await page.locator("#tree .name").first().click();
       await page.waitForFunction(() => document.querySelector("#explain-facts").children.length > 0, null, { timeout: 60000 });
@@ -770,16 +772,23 @@ def test_nothing_is_wider_than_a_320px_window(tmp_path: Path, install: Path, ser
         pytest.skip("node is not on PATH")
     script = tmp_path / "m16-30-reflow.js"
     script.write_text(_REFLOW_JS, encoding="utf-8")
-    done = subprocess.run(
-        # The session key, not the one-time boot link (M16-42): the script
-        # opens the page once per colour scheme.
-        [node, str(script), f"http://127.0.0.1:{server.port}/?token={server.token}"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        timeout=300,
-        check=False,
-    )
+    # A second server for the second scheme: each opened link works once (M16-42).
+    light = ui.make_server()
+    thread = threading.Thread(target=light.serve_forever, args=(0.05,), daemon=True)
+    thread.start()
+    try:
+        done = subprocess.run(
+            [node, str(script), server.url, light.url],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=300,
+            check=False,
+        )
+    finally:
+        light.shutdown()
+        light.server_close()
+        thread.join(10)
     assert done.returncode == 0, done.stderr
     out: dict[str, Any] = json.loads(done.stdout.strip().splitlines()[-1])
     if "skip" in out:

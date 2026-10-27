@@ -25,10 +25,10 @@
   // The opened URL carries a one-time boot key, which `start` exchanges once
   // for the session key every request carries (M16-42). The query leaves the
   // address bar, and so the history, before the first request; the session
-  // key is kept in this closure only, never in storage or the URL.
-  const query = new URLSearchParams(window.location.search);
-  const boot = query.get("boot") || "";
-  let token = query.get("token") || "";
+  // key is kept in this closure only, never in storage or the page's URL,
+  // and is never read from that URL either.
+  const boot = new URLSearchParams(window.location.search).get("boot") || "";
+  let token = "";
   if (window.location.search && window.history && typeof window.history.replaceState === "function") {
     window.history.replaceState(null, "", "/");
   }

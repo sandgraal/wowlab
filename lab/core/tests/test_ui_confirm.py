@@ -645,6 +645,7 @@ const fetchStub = async (url, opts) => {
   const body = opts && opts.body ? JSON.parse(opts.body) : null;
   requests.push({ url: String(url), body: body });
   const answer = (obj, status) => ({ ok: status === 200, status: status, json: async () => obj });
+  if (String(url).startsWith("/api/session?boot=k")) return answer({ token: "t" }, 200);
   if (String(url).startsWith("/api/commands?")) return answer(scenario.commands, 200);
   const key = body.command.join(" ") + (body.confirm ? " confirm" : "");
   const reply = scenario.replies[key];
@@ -659,7 +660,7 @@ const doc = {
   querySelectorAll: () => [],
   addEventListener() {},
 };
-const win = { location: { search: "?token=t" }, addEventListener() {} };
+const win = { location: { search: "?boot=k" }, addEventListener() {} };
 const ctx = { window: win, document: doc, navigator: {}, URLSearchParams, fetch: fetchStub, console,
   Set, Map, Promise, JSON, Error, setTimeout: (fn) => setImmediate(fn), clearTimeout() {},
   requestAnimationFrame: (fn) => setImmediate(fn), queueMicrotask };
