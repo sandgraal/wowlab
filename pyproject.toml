@@ -18,7 +18,7 @@ wowlab-core = { workspace = true }
 
 [dependency-groups]
 dev = [
-  "ruff==0.17.1",
+  "ruff==0.17.2",
   "mypy>=1.19",
   "pytest>=8.4",
   "pytest-xdist>=3.8",  # dev only: `make test` and CI run the suite in parallel (M13-18)
