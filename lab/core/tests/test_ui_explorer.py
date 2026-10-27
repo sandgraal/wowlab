@@ -95,6 +95,7 @@ from typing import Any
 
 import pytest
 import typer
+from test_ui_fonts import without_font_faces
 
 from wowlab_core import filemap, lookspage, ui
 
@@ -271,9 +272,11 @@ def test_the_explorer_page_is_served_with_a_csp_that_hashes_it(server: Any) -> N
     assert directives["frame-ancestors"] == ["'none'"]
     assert directives["form-action"] == ["'none'"]  # round 1 on #226
     assert directives["base-uri"] == ["'none'"]
-    assert "font-src" not in directives
+    # M16-51 (ADR-0035): the fonts are `data:` URLs in the page's own style.
+    assert directives["font-src"] == ["data:"]
     flat = " ".join(" ".join(v) for v in directives.values())
-    assert "unsafe" not in flat and "data:" not in flat and "http" not in flat
+    # `data:` appears only as the whole value of `font-src`.
+    assert "unsafe" not in flat and flat.count("data:") == 1 and "http" not in flat
     # The page is the explorer first: its view is not hidden, the commands are.
     assert re.search(r'<section id="explorer-view"[^>]*\bhidden\b', body) is None
     assert re.search(r'<section id="commands-view"[^>]*\bhidden\b', body) is not None
@@ -327,6 +330,11 @@ BOOT_FETCH = 'fetch("/api/session?boot=" + encodeURIComponent(boot), {'
 
 def test_no_external_url_appears_in_the_page(server: Any) -> None:
     body = _page(server).body.decode("utf-8")
+    # M16-51 (ADR-0035): `url(`, `@font-face` and `data:font` appear only in
+    # exactly twelve `@font-face` rules, each with one `src`, a
+    # `data:font/woff2;base64,` URL that decodes to one of the pinned files;
+    # every entry of `_EXTERNAL` is checked on the rest of the page.
+    body = without_font_faces(body)
     assert body.count(LOOKS_FRAME) == 1
     assert body.count(DRESSING_ORIGIN) == 1 and body.count(DRESSING_PARSE) == 1
     body = body.replace(LOOKS_FRAME, "").replace(DRESSING_ORIGIN, "")

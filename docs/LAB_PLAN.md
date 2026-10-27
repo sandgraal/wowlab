@@ -3910,8 +3910,10 @@ bodies and item names are player text and are never interpreted as markup.
   ADR-0029 names. Three facts of the server constrain the route: every
   response carries `frame-ancestors 'none'` (owner ruling 2026-10-15), the
   token is required on every request and lives only in the opened URL, and
-  the UI's CSP allows its own inline script and style by hash and nothing
-  else. So the page is not served as a framable document. The default
+  the UI's CSP allows its own inline script and style by hash, and `data:`
+  fonts named by its own hashed code (`font-src data:`, ADR-0035; amended
+  2026-10-27, M16-51), and nothing else. So the page is not served as a
+  framable document. The default
   route: the page reads the file through the token-checked API (the server
   builds the path under the data directory's `pages/` itself, never from a
   request parameter) and puts the text into an `iframe` with

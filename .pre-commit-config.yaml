@@ -18,10 +18,11 @@ repos:
     rev: v6.0.0
     hooks:
       # Real captures are stored byte for byte; only their index is normalised.
+      # So are the pinned font files and licence texts (ADR-0035).
       - id: trailing-whitespace
-        exclude: '^lab/core/tests/fixtures/|\.md$'
+        exclude: '^lab/core/tests/fixtures/|^lab/core/src/wowlab_core/ui/templates/fonts/|\.md$'
       - id: end-of-file-fixer
-        exclude: '^lab/core/tests/fixtures/(?!README\.md$)'
+        exclude: '^lab/core/tests/fixtures/(?!README\.md$)|^lab/core/src/wowlab_core/ui/templates/fonts/'
       - id: check-yaml
       - id: check-json
       - id: check-toml

@@ -914,6 +914,8 @@ def _csp_problems(value: str) -> list[str]:
         if directives.get(name) not in (["'self'"], ["'none'"]):
             problems.append(f"{name} is {directives.get(name)}")
     for name, sources in directives.items():
+        if name == "font-src" and sources == ["data:"]:
+            continue  # M16-51 (ADR-0035): `data:` only as the whole of font-src
         for source in sources:
             if source not in ("'self'", "'none'") and not _HASH_SOURCE.fullmatch(source):
                 problems.append(f"{name} allows {source}")
