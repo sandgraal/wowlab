@@ -1376,10 +1376,13 @@
     const colour = colourClass(slot.colour);
     if (colour) name.classList.add(colour);
     name.setAttribute("aria-expanded", "false");
-    // The quality in words too, for a screen reader and a pointer.
+    // The quality in words too, shown beside the name so it does not rest
+    // on colour alone; the word is the record's, from the slot table.
     if (typeof slot.quality === "string" && slot.quality) {
       name.title = visible(slot.quality);
-      name.appendChild(unseen(" (" + visible(slot.quality) + ")"));
+      const quality = make("span", " (" + visible(slot.quality) + ")");
+      quality.className = "gear-quality";
+      name.appendChild(quality);
     }
     itemCell.appendChild(name);
     const level = make("td", numberWords(slot.item_level));
