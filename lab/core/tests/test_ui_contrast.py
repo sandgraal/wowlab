@@ -743,6 +743,9 @@ async function main() {
       await page.click("#tab-character");
       await page.waitForSelector("#char-gear .gear-name", { timeout: 60000 });
       await page.locator("#char-gear .gear-name").first().click();
+      // The keys table and the macros are drawn by runs of their own, after
+      // the gear (M16-53): measure once both panels have drawn.
+      await page.waitForFunction(() => document.querySelector("#char-keys").children.length > 0 && document.querySelector("#char-macros").children.length > 0, null, { timeout: 60000 });
       out.push(await measure(page, scheme + " character"));
 
       await page.click("#tab-looks");

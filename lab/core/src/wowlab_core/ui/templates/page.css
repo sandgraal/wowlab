@@ -287,6 +287,10 @@ pre:empty { display: none; }
 .char-none { color: var(--muted); font-style: italic; }
 .char-read-only { margin: 0.75rem 0 0; padding-top: 0.5rem; border-top: 1px dotted var(--gold-deep); color: var(--muted); font-size: 0.9rem; }
 .char-panel h4 { margin: 0.75rem 0 0.3rem; color: var(--gold); font-size: 1rem; }
+/* The keys table may be wider than a narrow window (M16-53): it scrolls in
+   its own labelled, focusable box, and the page does not move sideways
+   (WCAG 1.4.10 lets a data table scroll in two dimensions). */
+#char-keys { max-width: 100%; overflow-x: auto; }
 .char-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
 .char-table th { text-align: left; padding: 0.3rem 0.5rem; color: var(--gold); border-bottom: 1px solid var(--gold-deep); }
 .char-table td { padding: 0.2rem 0.5rem; border-top: 1px solid var(--panel-edge); vertical-align: baseline; overflow-wrap: anywhere; unicode-bidi: isolate; }
