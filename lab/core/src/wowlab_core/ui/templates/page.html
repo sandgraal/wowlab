@@ -39,17 +39,17 @@
 <div class="panes">
 <div class="panel tree-panel">
 <p id="tree-root" class="tree-root"></p>
-<ul id="tree" class="tree" role="tree" aria-label="Files in the install"></ul>
+<ul id="tree" class="tree" aria-label="Files in the install"></ul>
 </div>
-<aside id="explain" class="parchment" aria-live="polite">
-<h2 id="explain-title">Pick a file or folder</h2>
+<aside id="explain" class="parchment">
+<h2 id="explain-title" tabindex="-1">Pick a file or folder</h2>
 <p id="explain-path" class="path"></p>
 <div id="explain-verdict" class="verdict"></div>
 <dl id="explain-facts"></dl>
 <p id="explain-snapshot" class="snapshot"></p>
 <div id="explain-hints" class="hints"></div>
 <div id="explain-preview" class="preview-box"></div>
-<p id="explain-status"></p>
+<p id="explain-status" role="status"></p>
 </aside>
 </div>
 </section>
@@ -62,14 +62,14 @@
 <p class="intro">Runs the commands of the <code>wowlab</code> you started, on this machine only. Reading never changes anything. Six commands can change game files; each shows a plan and runs only when you confirm, after a snapshot. They are <code>snap restore</code>, <code>undo</code>, <code>profile apply</code>, <code>sv merge</code>, <code>addon install</code> and <code>addon remove</code>, and <code>wowlab undo</code> reverses each of them. Two of them refuse to run when something changed after the plan: <code>undo</code>, when a newer change has been journaled, and <code>sv merge</code>, when its target file changed. The others apply what is there when you confirm, after the snapshot that <code>wowlab undo</code> restores from. The plan changes nothing; press Confirm under it to run the command for real. <code>snap gc</code> and <code>doctor</code> also ask first (<code>--yes</code>) and change only wowlab's own store. The commands that only read, or save only to wowlab's own data (snapshots, profiles, saved looks, the db2 cache, pages), run directly.</p>
 <div class="commands-body">
 <nav id="commands" class="panel" aria-label="Commands"></nav>
-<section id="detail" class="panel" aria-live="polite">
+<section id="detail" class="panel">
 <h2 id="title">Pick a command</h2>
 <p id="help"></p>
 <div id="fields"></div>
 <button id="run" type="button" disabled>Run</button>
-<p id="status"></p>
+<p id="status" role="status"></p>
 <div id="confirm-box" class="confirm-box" hidden>
-<p id="confirm-note"></p>
+<p id="confirm-note" role="status"></p>
 <button id="confirm" type="button" hidden>Confirm</button>
 </div>
 <div id="result-tree" class="jt" hidden></div>
@@ -123,6 +123,7 @@
 <iframe id="looks-frame" class="looks-frame" sandbox="allow-scripts" title="The looks page" hidden></iframe>
 </section>
 </main>
+<p id="copy-status" class="unseen" role="status"></p>
 <script><!--wowlab:script--></script>
 </body>
 </html>
