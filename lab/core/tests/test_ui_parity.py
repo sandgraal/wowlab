@@ -812,6 +812,8 @@ def test_a_dummy_command_appears_in_the_ui_with_no_ui_code(dummied: _Served) -> 
     # No UI code names either dummy: the page draws what the list holds.
     templates = resources.files(ui) / "templates"
     for template in templates.iterdir():
+        if template.name == "fonts":
+            continue  # the pinned font files and licences (M16-51), not UI code
         assert "parity-dummy" not in template.read_text(encoding="utf-8"), template.name
 
 

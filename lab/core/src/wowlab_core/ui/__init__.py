@@ -31,14 +31,17 @@ the spent boot key is presented again, `notice` (set by `wowlab ui` to print
 to its terminal) is called once with `_REUSED_NOTICE`, which holds no key.
 A refusal answers 403 `{"error": "host" | "origin" | "token"}`. Every
 response, refusals and errors included, carries the same
-Content-Security-Policy, which allows the server itself and the page's own
-inline script and style by hash, and nothing else, and no CORS header. The
-page shell is template text in this package (`templates/`), assembled into
-one document: a `<script src>` would be a request without the token. Its
-style has one part that is not template text: the rules that draw an item
-name in its quality colour, made from the shipped `gear_slots.toml` (the
-Character tab, M14-08), so neither the script nor the stylesheet holds a
-colour table.
+Content-Security-Policy, which allows the server itself, the page's own
+inline script and style by hash, and `data:` fonts named by the page's own
+hashed code (`font-src data:`, ADR-0035), and nothing else, and no CORS
+header. The page shell is template text in this package (`templates/`),
+assembled into one document: a `<script src>` would be a request without the
+token. Its style has two parts that are not template text, both after
+`page.css`: the rules that draw an item name in its quality colour, made
+from the shipped `gear_slots.toml` (the Character tab, M14-08), so neither
+the script nor the stylesheet holds a colour table; and one `@font-face` per
+pinned font file in `templates/fonts/` (M16-51), its bytes as a base64
+`data:` URL, since a font URL would be a request without the token.
 
 `GET /api/commands` lists the leaves of the Click tree read at start, with
 the home folder and path separator so the page can show home as `~`. `POST
@@ -277,6 +280,55 @@ def _colour_rules() -> str:
     return "\n".join(rules) + "\n"
 
 
+# The Wellspring fonts (ADR-0035 and its amendment of 2026-10-26): twelve
+# WOFF2 files in `templates/fonts/`, copied unchanged from Google Fonts, each
+# written into the page's own style as one `@font-face` with a `data:` URL.
+# The two `unicode-range` values are those of Google's stylesheet for the
+# `latin` and `latin-ext` subsets; a glyph outside both falls back, per
+# character, to the next face in the page's font stack.
+_LATIN_RANGE = (
+    "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, "
+    "U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD"
+)
+_LATIN_EXT_RANGE = (
+    "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, "
+    "U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, "
+    "U+2C60-2C7F, U+A720-A7FF"
+)
+# File name, family, style, weight, unicode-range: ADR-0035's table, in its order.
+_FONTS: tuple[tuple[str, str, str, str, str], ...] = (
+    ("alegreya-latin.woff2", "Alegreya", "normal", "400 900", _LATIN_RANGE),
+    ("alegreya-latin-ext.woff2", "Alegreya", "normal", "400 900", _LATIN_EXT_RANGE),
+    ("alegreya-italic-latin.woff2", "Alegreya", "italic", "400 900", _LATIN_RANGE),
+    ("alegreya-italic-latin-ext.woff2", "Alegreya", "italic", "400 900", _LATIN_EXT_RANGE),
+    ("alegreya-sc-500-latin.woff2", "Alegreya SC", "normal", "500", _LATIN_RANGE),
+    ("alegreya-sc-500-latin-ext.woff2", "Alegreya SC", "normal", "500", _LATIN_EXT_RANGE),
+    ("alegreya-sc-700-latin.woff2", "Alegreya SC", "normal", "700", _LATIN_RANGE),
+    ("alegreya-sc-700-latin-ext.woff2", "Alegreya SC", "normal", "700", _LATIN_EXT_RANGE),
+    ("ibm-plex-mono-400-latin.woff2", "IBM Plex Mono", "normal", "400", _LATIN_RANGE),
+    ("ibm-plex-mono-400-latin-ext.woff2", "IBM Plex Mono", "normal", "400", _LATIN_EXT_RANGE),
+    ("ibm-plex-mono-500-latin.woff2", "IBM Plex Mono", "normal", "500", _LATIN_RANGE),
+    ("ibm-plex-mono-500-latin-ext.woff2", "IBM Plex Mono", "normal", "500", _LATIN_EXT_RANGE),
+)
+
+
+def _font_rules() -> str:
+    """One `@font-face` per file of `_FONTS`, its bytes as a base64 `data:`
+    URL (ADR-0035). Only the package's own files are read; the family, style,
+    weight and range are the constants above, so a rule holds nothing else."""
+    folder = importlib.resources.files(__name__) / "templates" / "fonts"
+    rules = ["/* the Wellspring fonts, from this package's fonts/ folder (SIL OFL 1.1) */"]
+    for name, family, style, weight, ranges in _FONTS:
+        data = base64.b64encode((folder / name).read_bytes()).decode("ascii")
+        rules.append(
+            "@font-face {"
+            f' font-family: "{family}"; font-style: {style}; font-weight: {weight};'
+            f' src: url(data:font/woff2;base64,{data}) format("woff2");'
+            f" unicode-range: {ranges}; }}"
+        )
+    return "\n".join(rules) + "\n"
+
+
 def _looks_sources() -> tuple[str, str]:
     """The hash sources of the looks page's own script and style
     (`lookspage._SCRIPT`, `lookspage._STYLE`), hashed as `lookspage` hashes
@@ -293,8 +345,9 @@ def _looks_sources() -> tuple[str, str]:
 @functools.cache
 def _shell() -> tuple[bytes, str]:
     """The page (its script and style inline) and the CSP that allows them,
-    and the looks page's script and style for the Looks view's frame."""
-    style = _template("page.css") + _colour_rules()
+    and the looks page's script and style for the Looks view's frame. The
+    style is `page.css`, then the colour rules, then the font rules."""
+    style = _template("page.css") + _colour_rules() + _font_rules()
     script = _template("page.js")
     page = (
         _template("page.html")
@@ -307,6 +360,7 @@ def _shell() -> tuple[bytes, str]:
             "default-src 'none'",
             f"script-src {_hash_source(script)} {looks_script}",
             f"style-src {_hash_source(style)} {looks_style}",
+            "font-src data:",
             "connect-src 'self'",
             "img-src 'self'",
             "frame-ancestors 'none'",
@@ -320,7 +374,9 @@ def _shell() -> tuple[bytes, str]:
 def static_files() -> Mapping[str, bytes]:
     """Every URL path served as a static file, with its exact bytes. All of
     it is template text from this package's `templates/` folder, but for the
-    colour rules made from the shipped slot table (`_colour_rules`)."""
+    colour rules made from the shipped slot table (`_colour_rules`) and the
+    font rules made from the pinned files in `templates/fonts/`
+    (`_font_rules`)."""
     return {"/": _shell()[0]}
 
 

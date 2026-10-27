@@ -125,4 +125,4 @@ The theme follows the system: Warband by default, Bastion under `prefers-color-s
 
 ## Fonts in wowlab
 
-The page loads nothing from the network, and every request to its server carries a session token, so the fonts cannot be fetched by URL. ADR-0035 (accepted 2026-10-26) puts the twelve WOFF2 files inside the package and writes them into the page's own style as `data:` URLs. Until M16-51 lands, the `font-*` stacks fall back to Palatino and Georgia, and every other rule in this book still holds.
+The page loads nothing from the network, and every request to its server carries a session token, so the fonts cannot be fetched by URL. ADR-0035 (accepted 2026-10-26) puts the twelve WOFF2 files inside the package and writes them into the page's own style as `data:` URLs. Until M16-52 names the families in `page.css`, the `font-*` stacks fall back to Palatino and Georgia; the `@font-face` rules are in the page's style since M16-51.

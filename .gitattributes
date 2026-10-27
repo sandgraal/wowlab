@@ -1,4 +1,7 @@
 * text=auto eol=lf
 # Real captures are stored byte for byte, line endings included (L4, L8).
 lab/core/tests/fixtures/** -text
+# The pinned font files and their licence texts are stored byte for byte, as
+# downloaded (ADR-0035): OFL-IBMPlexMono.txt has CRLF line endings.
+lab/core/src/wowlab_core/ui/templates/fonts/** -text
 uv.lock linguist-generated=true

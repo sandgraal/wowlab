@@ -23,6 +23,8 @@ The first public release. It reads an install and tells you what every file is, 
 
 **`--json`.** Every read command has a `--json` form backed by a Pydantic model named in its `--help` (`DoctorReport`, `ExplainReport`, `TreeReport`, `SnapListReport`, `RestoreReport`, `UndoReport`, `CVarListReport`, `CVarGetReport`, `BindsReport`, `BindsCoachReport`, `MacrosReport`, `MacrosCheckReport`, `AddonsReport`, `AddonInstallReport`, `AddonRemoveReport`, `SvListReport`, `SvDumpReport`, `SvMergeReport`, `DiffReport`, `ProfileReport`, `ProfileListReport`, `ProfileApplyReport`, `ProfileDeleteReport`, `LookReport`, `LooksOptionsReport`, `LooksRacesReport`, `LooksCompareReport`, `LooksImportReport`, `LooksPageReport`, `CharListReport`, `CharShowReport`, `CharGearReport` (v0.2), `CharBindsReport` (v0.2), `CharMacrosReport` (v0.2), `BuildsReport`, `FetchReport`, `HeadReport`, `LogTailReport` (`LogTailLine` per line with `--follow`), `InstallTreeReport`, `LooksListReport`, and the `GapReport`, `Install`, `Manifest` (`snap create` and `snap show`), `VerifyReport` and `GcReport` models, which their help names as `gaps.GapReport`, `install.Install`, `snapshot.Manifest`, `snapshot.VerifyReport` and `snapshot.GcReport`). The generated command reference on the wiki lists each one.
 
+**Fonts.** `wowlab ui` ships Alegreya and Alegreya SC (`OFL-Alegreya.txt`) and IBM Plex Mono (`OFL-IBMPlexMono.txt`) unchanged, under the SIL Open Font License 1.1.
+
 ## Install
 
 With [uv](https://docs.astral.sh/uv/) installed:
