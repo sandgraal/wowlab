@@ -419,7 +419,6 @@ def test_the_script_writes_text_only(server: Any) -> None:
         "aria-pressed",
         "aria-selected",
         "aria-expanded",
-        "aria-level",
         "aria-label",
         "role",
     }
@@ -621,7 +620,7 @@ const has = (e, c) => typeof e.className === "string" && e.className.split(" ").
 const traps = [];
 function trap(what) { traps.push(String(what)); throw new Error("harness trap: " + what); }
 const ALLOWED_ATTRS = scenario.allowed_attrs || ["aria-pressed", "aria-selected", "aria-expanded",
-  "aria-level", "aria-label", "role"];
+  "aria-label", "role"];
 const FORBIDDEN_TAGS = ["a", "area", "form", "iframe", "frame", "img", "image", "script", "link", "base",
   "meta", "object", "embed", "video", "audio", "source", "track", "svg", "use", "style"];
 class El {
@@ -683,7 +682,10 @@ class El {
   fire(ev) { dispatch(this, { type: ev }); }
   dispatchEvent(e) { dispatch(this, e); return true; }
   click() { this.fire("click"); }
-  focus() {}
+  // Focus is recorded on `document.activeElement` (M16-29). A browser moves
+  // focus off an element that leaves the page; the graders check that the
+  // focused element is still in the tree rather than model that.
+  focus() { documentStub.activeElement = this; }
   blur() {}
   scrollIntoView() {}
   contains(o) { return o === this || this.all().includes(o); }
@@ -772,6 +774,7 @@ const fetchStub = async (url, opts) => {
 };
 const navigator = { clipboard: { writeText: async (t) => { clipboard.push(String(t)); } } };
 const documentStub = {
+  activeElement: null,
   getElementById: (id) => (id in ids ? ids[id] : null),
   createElement: (t) => { const tag = String(t).toLowerCase(); if (FORBIDDEN_TAGS.includes(tag)) trap("createElement " + tag); return new El(tag); },
   createElementNS: (_, t) => trap("createElementNS " + t),
@@ -832,14 +835,19 @@ const tick = async () => {
 };
 const rowOf = (li) => li.children.find((c) => has(c, "row"));
 const treeEl = () => ids.tree;
+// A tree item is an <li> of #tree holding a `.row` (plain nested lists since
+// M16-29: no tree role); a folder's open state is its twisty's aria-expanded.
+const items = () => treeEl().all().filter((e) => e.tagName === "li" && rowOf(e));
+const twistyOf = (li) => rowOf(li).children.find((c) => c.tagName === "button" && has(c, "twisty"));
+const expandedOf = (li) => { const t = twistyOf(li); return t ? t.getAttribute("aria-expanded") : null; };
 function rows() {
-  return treeEl().all().filter((e) => e.attrs.role === "treeitem").map((li) => {
-    const row = rowOf(li) || li;
+  return items().map((li) => {
+    const row = rowOf(li);
     const name = row.children.find((c) => has(c, "name"));
     const marks = row.children.filter((c) => has(c, "badge"))
       .map((b) => ({ text: b.textContent, title: b.title, cls: b.className }));
     return { path: row.dataset.path, name: name ? name.textContent : null,
-      nameTitle: name ? name.title : null, expanded: li.getAttribute("aria-expanded"),
+      nameTitle: name ? name.title : null, expanded: expandedOf(li),
       text: row.textContent, badge: marks.length ? marks[0] : null, badges: marks,
       aria: [row, ...row.all()].map((e) => e.attrs["aria-label"] || "").join("\n") };
   });
@@ -847,7 +855,7 @@ function rows() {
 // A row by its data-path; for a page that draws the whole install, a path
 // relative to the first flavor folder finds the same row under it.
 function liOf(path) {
-  const find = (p) => treeEl().all().find((e) => e.attrs.role === "treeitem" && rowOf(e) && rowOf(e).dataset.path === p);
+  const find = (p) => items().find((e) => rowOf(e).dataset.path === p);
   return find(path) || find(path === "" ? scenario.first_flavor : scenario.first_flavor + "/" + path);
 }
 function snap() {
@@ -911,11 +919,9 @@ function gapsView() {
 }
 async function openAll() {
   for (let n = 0; n < 500; n++) {
-    const closed = treeEl().all().find((e) => e.attrs.role === "treeitem" && e.getAttribute("aria-expanded") === "false");
+    const closed = items().find((e) => expandedOf(e) === "false");
     if (!closed) break;
-    const row = rowOf(closed);
-    const twisty = row.children.find((c) => c.tagName === "button" && !has(c, "name"));
-    twisty.fire("click");
+    twistyOf(closed).fire("click");
     await tick();
   }
 }
