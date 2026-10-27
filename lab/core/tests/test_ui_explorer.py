@@ -419,7 +419,6 @@ def test_the_script_writes_text_only(server: Any) -> None:
         "aria-pressed",
         "aria-selected",
         "aria-expanded",
-        "aria-level",
         "aria-label",
         "role",
     }
@@ -621,7 +620,7 @@ const has = (e, c) => typeof e.className === "string" && e.className.split(" ").
 const traps = [];
 function trap(what) { traps.push(String(what)); throw new Error("harness trap: " + what); }
 const ALLOWED_ATTRS = scenario.allowed_attrs || ["aria-pressed", "aria-selected", "aria-expanded",
-  "aria-level", "aria-label", "role"];
+  "aria-label", "role"];
 const FORBIDDEN_TAGS = ["a", "area", "form", "iframe", "frame", "img", "image", "script", "link", "base",
   "meta", "object", "embed", "video", "audio", "source", "track", "svg", "use", "style"];
 class El {

@@ -55,7 +55,20 @@ function focusView() {
     status: line("status"), copy: line("copy-status") };
 }
 // Replies the scenario holds that are not a clean exit: a refusal (403),
-// matched on the command and, when it names one, the end of its `path`.
+// matched on the command and, when it names them, the end of its `path` and
+// whether the run is a confirmed one.
+// Every non-empty write to `#confirm-note`, with whether `#confirm-box` was
+// hidden at that moment: a status line written while hidden is not read.
+const noteWrites = [];
+{
+  const own = Object.getOwnPropertyDescriptor(El.prototype, "textContent");
+  Object.defineProperty(ids["confirm-note"], "textContent", { configurable: true,
+    get() { return own.get.call(this); },
+    set(v) {
+      if (String(v) !== "") noteWrites.push({ text: String(v), boxHidden: ids["confirm-box"].hidden });
+      own.set.call(this, v);
+    } });
+}
 const plainFetch = ctx.fetch;
 ctx.fetch = async (url, opts) => {
   const body = opts && opts.body ? JSON.parse(opts.body) : null;
@@ -63,7 +76,8 @@ ctx.fetch = async (url, opts) => {
     for (const held of scenario.held || []) {
       const path = String((body.params || {}).path || "").split(scenario.sep).join("/");
       if (canon(held.command) === canon(body.command)
-        && (held.path_end === undefined || path.endsWith(held.path_end))) {
+        && (held.path_end === undefined || path.endsWith(held.path_end))
+        && (held.confirmed === undefined || held.confirmed === Boolean(body.confirm))) {
         requests.push({ url: String(url), body: body });
         return answer(held.reply, held.refused ? false : true);
       }
@@ -108,6 +122,10 @@ _STEPS = r"""
         button.fire("click"); await tick();
         ids.run.fire("click"); await tick();
         out.steps.push(focusView());
+      } else if (step.confirm_click !== undefined) {
+        ids.confirm.fire("click"); await tick();
+        out.steps.push(Object.assign(focusView(), { noteWrites: noteWrites.slice(),
+          note: ids["confirm-note"].textContent, boxHidden: ids["confirm-box"].hidden }));
 """
 
 _STEP_ANCHOR = "      } else if (step.preview !== undefined) {\n"
@@ -326,3 +344,51 @@ def test_a_refused_run_is_an_alert_and_a_clean_run_a_status_constructed(
     no, yes = out["steps"]
     assert no["status"] == {"text": "Refused: not offered", "role": "alert"}, no
     assert yes["status"] == {"text": "Exit code 0", "role": "status"}, yes
+
+
+def test_the_confirm_note_is_written_only_while_its_box_shows_constructed(
+    server: Any, install: Path, home: Path, tmp_path: Path
+) -> None:
+    """F2 for the confirm step: `#confirm-note` is a status line inside
+    `#confirm-box`, and a status line that is hidden when its words change
+    is not read aloud. So the plan's note and the confirmed run's note are
+    written only once the box shows. The plan and confirmed replies are held
+    (constructed)."""
+    listed = _send(server, "GET", "/api/commands").json()
+    confirms = [
+        " ".join(c["path"])
+        for c in listed["commands"]
+        if c.get("confirm") and not c.get("excluded")
+    ]
+    assert confirms, "the server offers a command of the confirm step"
+    name = confirms[0]
+    plan_note = "Plan ready: press Confirm to run it."
+    done_note = "Journaled as 00000001."
+    steps: list[dict[str, Any]] = [{"run_command": name}, {"confirm_click": True}]
+    scenario, _ = _scenario(server, [], steps)
+
+    def reply(stage: str, note: str) -> dict[str, Any]:
+        confirm: dict[str, Any] = {"stage": stage, "note": note}
+        if stage == "plan":
+            confirm["token"] = "t1"
+        return {
+            "exit_code": 0,
+            "timed_out": False,
+            "truncated": False,
+            "stdout": "{}",
+            "stderr": "",
+            "confirm": confirm,
+        }
+
+    scenario["held"] = [
+        {"command": name.split(" "), "confirmed": False, "reply": reply("plan", plan_note)},
+        {"command": name.split(" "), "confirmed": True, "reply": reply("confirmed", done_note)},
+    ]
+    out = _drive(tmp_path / "node", scenario)
+    done = out["steps"][1]
+    assert "missing" not in done, done
+    assert done["noteWrites"] == [
+        {"text": plan_note, "boxHidden": False},
+        {"text": done_note, "boxHidden": False},
+    ], done["noteWrites"]
+    assert done["note"] == done_note and done["boxHidden"] is False, done

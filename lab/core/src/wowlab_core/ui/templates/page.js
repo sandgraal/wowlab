@@ -2026,8 +2026,24 @@
 
   // ─── the confirm step (M14-02) ───
 
+  // The note under a plan or a confirmed run. `#confirm-note` is a status
+  // line inside `#confirm-box`: the box is shown first and the words set on
+  // a later tick, because a status line that is hidden when its words change
+  // is not read aloud. A note cleared in between is not written (EV-27).
+  let confirmNoteSeq = 0;
+  function confirmSay(text) {
+    const seq = ++confirmNoteSeq;
+    const note = byId("confirm-note");
+    note.textContent = "";
+    byId("confirm-box").hidden = false;
+    setTimeout(() => {
+      if (seq === confirmNoteSeq) note.textContent = text;
+    }, 50);
+  }
+
   function clearConfirm() {
     pending = null;
+    confirmNoteSeq += 1;
     byId("confirm-box").hidden = true;
     byId("confirm-note").textContent = "";
     const button = byId("confirm");
@@ -2044,8 +2060,7 @@
     const note = typeof offer.note === "string" ? offer.note : "";
     const token = typeof offer.token === "string" && offer.token ? offer.token : null;
     if (!note && !token) return;
-    byId("confirm-note").textContent = shown(note);
-    byId("confirm-box").hidden = false;
+    confirmSay(shown(note));
     if (token) {
       pending = { command: command, params: params, token: token };
       const button = byId("confirm");
@@ -2153,13 +2168,11 @@
       if (stage === "plan" && JSON.stringify(collect()) === JSON.stringify(body.params)) {
         showOffer(result.confirm, command, body.params);
       } else if (stage === "plan") {
-        byId("confirm-note").textContent = "A field changed while the plan ran: show the plan again to be offered Confirm.";
-        byId("confirm-box").hidden = false;
+        confirmSay("A field changed while the plan ran: show the plan again to be offered Confirm.");
       } else if (stage === "confirmed" && typeof result.confirm.note === "string" && result.confirm.note) {
         // The journal record and the `wowlab undo` hint, or what to do after
         // a run stopped at its limit (M14-03); never a Confirm.
-        byId("confirm-note").textContent = shown(result.confirm.note);
-        byId("confirm-box").hidden = false;
+        confirmSay(shown(result.confirm.note));
       }
     } catch (error) {
       if (seq === runSeq) say("The request failed: " + error, true);
