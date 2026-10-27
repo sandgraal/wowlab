@@ -90,6 +90,12 @@ REFUSED_PARAMS: Mapping[tuple[str, ...], Mapping[str, str]] = {
 }
 """Parameters the UI refuses on a leaf that otherwise runs."""
 
+FORCED_FLAGS: Mapping[tuple[str, ...], Mapping[str, str]] = {
+    # M16-42: from the UI, `sv dump` reads only a file in the install.
+    ("sv", "dump"): {"install_only": "--install-only"},
+}
+"""Flags the server gives every run of a leaf, so not ones the form offers."""
+
 # The stand-in `wowlab`: prints the argv it was given, as JSON (constructed).
 _ECHO = "import json, sys; print(json.dumps(sys.argv[1:]))"
 
@@ -430,6 +436,8 @@ def _parity_problems(
         declared = _declared_params(cmd)
         for added in _server_added(cmd, confirm_step.get(path)):
             declared.pop(added)
+        for forced in FORCED_FLAGS.get(path, {}):
+            declared.pop(forced)
         offered = {p["name"]: p for p in item["params"]}
         for missing in sorted(set(declared) - set(offered)):
             problems.append(f"{name}: declares {missing!r} but the form cannot offer it")
@@ -765,6 +773,8 @@ def test_a_run_reaches_every_offered_parameter_when_click_parses_it_back(
     # for the dry-run shape, and never `--yes`.
     if CONFIRM_STEP.get(path) == "dry_run":
         want.update({str(p.name): True for p in cmd.params if "--dry-run" in _opts(p)})
+    # A flag the server always gives (M16-42) is on in every run.
+    want.update(dict.fromkeys(FORCED_FLAGS.get(path, {}), True))
     assert {k: v for k, v in got.items() if k not in json_names} == want, argv
     assert [got.get(n) for n in json_names] == [True] * len(json_names), argv
 

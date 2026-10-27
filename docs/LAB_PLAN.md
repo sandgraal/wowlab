@@ -3660,6 +3660,25 @@ file-map logic or game rules (D3, §14.5).
 their own machine and nowhere else. Nothing is uploaded (ADR-0019). The
 server is bound to `127.0.0.1` and checks a token on every request.
 
+*Amended 2026-10-27 (M16-42, security:F3 and F4; the ADR-0029 amendment is the
+conductor's to write):* the URL `wowlab ui` opens carries a one-time boot key
+(`/?boot=<key>`), not the session key. The boot key opens only the shell and
+`POST /api/session`, which answers the session key once, in that response
+body, and spends the boot key (a second exchange is refused `boot_spent`, and
+the page that lost says so). Every other request carries the session key as
+`token`, as before. `page.js` calls `history.replaceState` before its first
+request, keeps the session key in memory only and never reads it from its
+own URL, so a reload needs a new `wowlab ui`. The player is told in words:
+`GET /` with the spent boot key or with no query (a reload) answers 403 with
+one plain-text sentence, a page that lost the exchange says the link was
+used, and `wowlab ui` prints one line on its terminal the first time the
+spent key comes back. From `/api/run`, `sv dump` always runs with
+`--install-only` (added by the server, never by the page), which refuses,
+with exit 3 and before reading it, a file whose real path is not in the
+install wowlab finds by itself, and a `--root` naming another install, so a
+refusal quotes none of its bytes and the page cannot plant an install around
+a file. The file read is the real path that was checked.
+
 **What stays in Wave 5 (M14).** The confirm flow for every command that declares
 `--yes` (`snap restore`, `undo`, `profile apply`, `addon install`, `addon
 remove`, `sv merge`, `snap gc` and `doctor` on 2026-10-15), and the embedded
