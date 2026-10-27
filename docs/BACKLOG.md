@@ -2127,7 +2127,7 @@ User-facing: none yet (the faces appear with M16-52); the README's licence list.
 
 ---
 
-## [ ] M16-52 — `wowlab ui` in the Wellspring design
+## [x] M16-52 — `wowlab ui` in the Wellspring design
 **Size:** M · **Depends on:** M16-29, M16-30, M16-53, M16-51 (or M16-50 rejecting ADR-0035)
 
 Restyle the page to `docs/design/WELLSPRING.md`. `page.css` is rewritten on custom properties named as in `docs/design/wellspring-tokens.json`, with the Warband values under `:root` and the Bastion values under `@media (prefers-color-scheme: light)`. The reference drawing of each component is `docs/design/wellspring-components.css`, and the spec's "Mapping onto the existing page" table says which existing class each one becomes.
