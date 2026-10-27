@@ -2066,3 +2066,88 @@ The readers' callers already know the install. Each reader takes the install roo
 `docs/handoffs/M16-review.md` per §11, including §11 item 5's folding of the amendments. It also covers whether v0.2 is tagged, when the gate's clock started, and whether M15 resumes.
 
 **Acceptance:** the review is merged, and the owner picks the next wave.
+
+---
+
+# Owner request, 2026-10-26: the Wellspring redesign of `wowlab ui`
+
+The owner asked for `wowlab ui` to be redesigned from the ground up as a fantasy-themed app. The spec is `docs/design/WELLSPRING.md`, with its tokens in `docs/design/wellspring-tokens.json`; the fonts are ADR-0035 (accepted 2026-10-26). These tickets are filed under M16 for their numbers only. They are not part of v0.2: M16-47 does not wait on them, and the owner decides whether they ship in v0.2 or later. L1 to L8 apply. They touch the same templates as M16-29, M16-30 and M16-42 and run after them, one at a time.
+
+The redesign changes how the page looks and nothing it says or does: no player-facing sentence, no class or id `page.js` reads, no route, no command and no `--json` shape changes. The lore names in the spec (Order, Ruin, Void, Warband, Bastion) are for tokens and this documentation; a player never reads them.
+
+## [x] M16-50 — ADR-0035 accepted: the Wellspring fonts
+**Size:** S · **Depends on:** — · **owner** (accepts or amends ADR-0035)
+
+The owner reads ADR-0035 and accepts it, amends it (for example: fewer faces, no `latin-ext`, or system fonts only), or rejects it. If it is rejected, M16-51 is closed unbuilt, and M16-52 keeps the `font-*` fallback stacks, which the spec already allows.
+
+**Acceptance:** ADR-0035's status line records the owner's decision.
+
+*Closed 2026-10-26:* the owner accepted ADR-0035 as written, in session, on PR #341. The same day the owner also confirmed ADR-0035's amendment of 2026-10-26 (file names, licence pins) and ADR-0029's "Amended by" line, so M16-51 builds on accepted text only.
+
+---
+
+## [ ] M16-51 — The Wellspring fonts in the page's own style
+**Size:** S · **Depends on:** M16-50, M16-42 (same file: `ui/__init__.py`)
+
+Per ADR-0035 and its amendment of 2026-10-26:
+- The twelve WOFF2 files go into `lab/core/src/wowlab_core/ui/templates/fonts/` under the amendment's names, byte for byte from the ADR's URLs. The two licence texts go beside them, byte for byte from the amendment's pinned URLs. The wheel and sdist carry all fourteen.
+- The shell's assembly writes one `@font-face` per font file into the inline style: the family, style and weight from the ADR's table, `src: url(data:font/woff2;base64,…) format("woff2")`, and the subset's `unicode-range` (the `latin` and `latin-ext` ranges of Google's stylesheet, written as constants beside the table).
+- The CSP gains `font-src data:` and nothing else.
+- The `@font-face` rules go after the template text and the server's colour rules, so the served style still starts with `page.css` (`test_the_colour_rules_are_made_from_the_shipped_table`, `test_ui_character.py:642`, stays unchanged).
+- `scripts/check_fonts.py` downloads the ADR's fourteen URLs and compares the bytes. It runs by hand and never in CI.
+- The README's "License and affiliation" section names both OFL families.
+- The texts that repeat ADR-0029's CSP sentence change with it: the `ui/__init__.py` module docstring and `docs/LAB_PLAN.md` §16.3 (the M14-04 paragraph). The `ui` bullet in `.claude/rules/lab-load-bearing.md` is harness, so the report names the new wording and the conductor makes that edit on merge.
+
+**Tests on `main` this changes, and their narrowed form.** These are security graders. Nothing beyond the narrowing below is loosened.
+- `test_ui_explorer.py`, the CSP assertions around line 274: `"font-src" not in directives` becomes `directives["font-src"] == ["data:"]`. `"data:" not in flat` becomes "`data:` appears only as the whole value of `font-src`".
+- `test_ui_explorer.py`, `_EXTERNAL` (line 280): `url(`, `@font-face` and `data:font` stay forbidden everywhere except in exactly twelve `@font-face` rules. Each of those has one `src`, a `data:font/woff2;base64,` URL that decodes to one of the pinned files. Every other entry of `_EXTERNAL` is unchanged.
+- `test_ui_server.py`, `_csp_problems` (line 882): `data:` is accepted only as the whole of `font-src`. Every other source rule is unchanged.
+
+**Acceptance:**
+- A test holds each font's SHA-256 and size from the ADR's table and each licence text's from the amendment. It fails if `fonts/` holds anything but those fourteen files.
+- A test reads the served shell and finds one `@font-face` per font file, each `data:` URL decoding to that file's bytes, and a CSP whose `font-src` is exactly `data:`, with every other directive unchanged.
+- The three graders above are changed to exactly their narrowed form. The PR body quotes each before and after.
+- A test builds the wheel and finds the fourteen files in it.
+- `make ci` is green.
+- Reviewed by `code-reviewer` and `security-reviewer`.
+
+User-facing: none yet (the faces appear with M16-52); the README's licence list.
+
+---
+
+## [ ] M16-52 — `wowlab ui` in the Wellspring design
+**Size:** M · **Depends on:** M16-29, M16-30, M16-51 (or M16-50 rejecting ADR-0035)
+
+Restyle the page to `docs/design/WELLSPRING.md`. `page.css` is rewritten on custom properties named as in `docs/design/wellspring-tokens.json`, with the Warband values under `:root` and the Bastion values under `@media (prefers-color-scheme: light)`. The reference drawing of each component is `docs/design/wellspring-components.css`, and the spec's "Mapping onto the existing page" table says which existing class each one becomes.
+
+*Owner decision, 2026-10-26:* this redesign replaces the look rules of 2026-10-16 (the M13-26 section above, "Look and first view"). Those rules asked for a parchment-toned detail pane, grey for `unclassified`, and a serif system font stack with no external fonts. Under Wellspring the detail pane is the Codex, `unclassified` is Void (violet), and the fonts are ADR-0035's. The other rules stand: readability first, a light scheme by `prefers-color-scheme`, no external request, and no Blizzard art.
+
+- **Keep:** every class and id `page.js` reads or writes, every player-facing sentence in `page.html` and `page.js`, the server-generated quality rules and their class names, and the Looks frame (its page keeps its own style).
+- **Quality colours stay out of `page.css`.** The `quality-*` tokens are a reference: the page declares none of them, and the M13-72 test (`_table_leaks` in `test_ui_character.py`) stays as it is.
+- **Banner:** the 4px `heraldry` band, the inline sigil in place of the crest, and the name in `display`. The sigil is drawn with the spec's Banner classes, so it follows the theme, and written without `xmlns` (`_EXTERNAL` forbids it).
+- **Panels and the parchment:** panels get the corner brackets. `.parchment` becomes the Codex (`surface-raised`, a `heraldry` top edge, `title` heading).
+- **Badges:** the badge classes map to the six forces per the table. Each gets its glyph from CSS `content` with empty alternative text (`content: "◆" / ""`), so the badge's words are read once and its existing `title` and `.unseen` sentence are unchanged. Astral gets a dotted border and Blight a dashed one.
+- **Buttons:** `#run` and `#looks-write` become primary, `.copy` becomes secondary, and `#confirm` becomes the seal (one standing glow per view).
+- **Focus:** a 2px `wellspring` outline everywhere, including inside the Codex. It meets 3:1 on `surface-raised` in both themes.
+- **Fonts:** the `font-display`, `font-serif` and `font-mono` stacks from the spec. If ADR-0035 is rejected, they are the stacks without their first family.
+- **Not in scope:** a theme switch, any new view, any change to the Looks page, to `lookspage`, or to what a command prints.
+
+**Tests on `main` this replaces, under the owner decision above:**
+- `test_ui_explorer.py`, `test_text_meets_wcag_aa_in_both_schemes` and its parchment check (around line 1699): replaced by the contrast test below.
+- `test_badges_read_like_item_quality` (line 1729): becomes "each badge class uses its force's `-bg` and `-border` tokens; Astral is dotted, Blight is dashed". The grey `unclassified` rule goes.
+- `test_a_serif_system_font_and_no_art_from_outside` (line 1758): becomes "every `font-family` is one of the three `var(--font-*)` stacks, and each stack ends in a generic family (`serif` or `monospace`)". The no-art half is unchanged.
+- `test_ui_character.py`, `test_the_templates_hold_no_slot_name_and_no_colour_code` (line 614): the assertion that `page.css` holds `--field: #ffffff;`, and the `_FIELD_WHITE` exemption in `_table_leaks`, are removed. No white remains to exempt, so `_table_leaks` gets stricter, never looser.
+- `test_ui_character.py`, `test_the_colour_rules_read_on_the_gear_backing` (lines 660 to 678): it reads the gear table's backing through `var(--gear-ground)`, resolved from `:root`, and accepts the item name's size in `px` as well as `rem` (19px is at least 18.66px, the large-text floor). It still checks every shipped quality colour at 3:1 on that backing.
+
+**Acceptance:**
+- The contrast test from M16-30 is extended to the new `page.css`. It checks every text pair the token usage notes name, every badge border against its own badge ground, `rule-strong`, and the focus ring, in both themes. It allows no failure: the quality colours are not in `page.css`.
+- A test asserts that `page.css` declares every token in `docs/design/wellspring-tokens.json` except `quality-*`, with that file's value per theme. It also asserts that no colour literal appears outside those custom-property declarations.
+- `_table_leaks` (M13-72) passes, with its white exemption removed as above.
+- A test asserts that the set of classes and ids in `page.html` and `page.js` is unchanged from `main` before this ticket, apart from the crest's replacement by the sigil.
+- The M16-15 player-output lint is still green, and no sentence a player reads has changed (a test diffs the text nodes of `page.html`).
+- Screenshots of Explorer, Commands (with a plan and Confirm showing), Character and Gaps in both themes are attached to the PR. The owner looks at them before it merges.
+- `scrollWidth == clientWidth` at 320 px still holds.
+- `make ci` is green.
+- Reviewed by `code-reviewer` and `security-reviewer` (every `ui` diff).
+
+User-facing: the whole look of `wowlab ui`. The wiki's screenshots of the UI need replacing.
