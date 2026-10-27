@@ -559,15 +559,10 @@ def _templates() -> dict[str, str]:
     }
 
 
-# The one stylesheet value that is also a quality colour (Common's white):
-# the page's field background. Only this declaration is exempt (M13-72).
-_FIELD_WHITE = "--field: #ffffff;"
-
-
 def _table_leaks(templates: dict[str, str]) -> list[tuple[str, str]]:
     """What of `gear_slots.toml` the templates hold, as (file, what) pairs:
-    a slot name, a quality code, a quality colour (in the stylesheet too,
-    `_FIELD_WHITE` excepted once), a quality word in the script (as written)
+    a slot name, a quality code, a quality colour (in the stylesheet too:
+    since M16-52 no white is exempt), a quality word in the script (as written)
     or the stylesheet (any case, its words joined by a space, `-` or `_`),
     or a `.colour-` rule."""
     shipped = _shipped()
@@ -583,9 +578,8 @@ def _table_leaks(templates: dict[str, str]) -> list[tuple[str, str]]:
         for code in codes:
             if code.lower() in text.lower():
                 found.append((file, code))
-        bare = text.replace(_FIELD_WHITE, "", 1) if file == "page.css" else text
         for rgb in rgbs:
-            if rgb.lower() in bare.lower():
+            if rgb.lower() in text.lower():
                 found.append((file, rgb))
     script = templates["page.js"]
     style = templates["page.css"]
@@ -611,7 +605,6 @@ def test_the_templates_hold_no_slot_name_and_no_colour_code() -> None:
     names = sorted(set(shipped["slots"].values()))
     assert len(names) == 19 and "Main Hand" in names and len(shipped["quality"]) >= 9
     templates = _templates()
-    assert _FIELD_WHITE in templates["page.css"]
     assert _table_leaks(templates) == []
 
 
@@ -628,7 +621,7 @@ def test_the_templates_hold_no_slot_name_and_no_colour_code() -> None:
 )
 def test_constructed_stylesheet_quality_colour_or_word_is_caught(added: str, leak: str) -> None:
     """M13-72: a colour or a quality word added to `page.css` fails the
-    check above; only the one `--field` white is exempt."""
+    check above; since M16-52 no declaration is exempt."""
     templates = _templates()
     templates["page.css"] += "\n" + added + "\n"
     assert ("page.css", leak) in _table_leaks(templates)
@@ -659,22 +652,30 @@ def test_the_colour_rules_are_made_from_the_shipped_table(server: Any) -> None:
 
 def test_the_colour_rules_read_on_the_gear_backing() -> None:
     """The names are bold and large (WCAG AA for large text, 3:1) on the
-    gear table's own dark backing, in both schemes."""
+    gear table's own dark backing, in both schemes. The backing is
+    `var(--gear-ground)` (M16-52), declared under `:root` and in no scheme
+    block, so it is the same in both."""
     css = first_stage._css()
     table = re.search(r"\.gear-table \{([^}]*)\}", css)
     assert table is not None
-    backing = re.search(r"background:\s*(#[0-9a-fA-F]{6})", table.group(1))
-    assert backing is not None
+    ground = re.search(r"background:\s*var\((--[\w-]+)\)\s*;", table.group(1))
+    assert ground is not None and ground.group(1) == "--gear-ground"
+    root = first_stage._root_vars(css)
+    backing = root.get("--gear-ground", "")
+    assert re.fullmatch(r"#[0-9a-fA-F]{6}", backing), backing
+    assert css.count("--gear-ground:") == 1, "the gear backing is one colour in every scheme"
     name = re.search(r"\.gear-name \{([^}]*)\}", css)
     assert name is not None
     assert "font-weight: 700" in name.group(1)
-    size = re.search(r"font-size:\s*([0-9.]+)rem", name.group(1))
-    assert size is not None and float(size.group(1)) * 16 >= 18.66
+    size = re.search(r"font-size:\s*([0-9.]+)(rem|px)", name.group(1))
+    assert size is not None
+    px = float(size.group(1)) * (16 if size.group(2) == "rem" else 1)
+    assert px >= 18.66
     shipped = gear.shipped_slot_table()
     for code in shipped.quality:
         rgb = gear.colour_rgb(code, shipped)
         if rgb is not None:
-            ratio = first_stage._contrast("#" + rgb, backing.group(1))
+            ratio = first_stage._contrast("#" + rgb, backing)
             assert ratio >= 3, (code, rgb, round(ratio, 2))
 
 

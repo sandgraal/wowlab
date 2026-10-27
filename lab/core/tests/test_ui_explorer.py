@@ -1672,7 +1672,7 @@ def test_the_whole_command_list_is_escaped_constructed() -> None:
     assert helps and helped in helps[0], helps
 
 
-# ─── the look the owner set (2026-10-16) ─────────────────────────────────────
+# ─── the look: Wellspring (M16-52, owner decision 2026-10-26) ────────────────
 
 
 def _css() -> str:
@@ -1695,18 +1695,11 @@ def _block(css: str, start: int) -> str:
     raise AssertionError("unbalanced CSS")
 
 
-_VAR = r"(--[\w-]+)\s*:\s*(#[0-9a-fA-F]{6})\b"
-_COLOUR = r"(?<![-\w])color:\s*(#[0-9a-fA-F]{6})\b"
-
-
-def _palettes() -> dict[str, dict[str, str]]:
-    css = _css()
-    dark = dict(re.findall(_VAR, _block(css, css.index(":root"))))
-    media = re.search(r"@media\s*\(\s*prefers-color-scheme\s*:\s*light\s*\)", css)
-    assert media is not None, "a light scheme follows prefers-color-scheme"
-    light = dict(re.findall(_VAR, _block(css, media.start())))
-    assert light, "the light scheme sets its own colours"
-    return {"dark": dark, "light": {**dark, **light}}
+def _root_vars(css: str) -> dict[str, str]:
+    """The custom properties of the top-level `:root` block (Warband)."""
+    found = re.search(r"(?:^|\})\s*:root\s*\{", css)
+    assert found is not None, "the sheet has a :root block"
+    return dict(re.findall(r"(--[\w-]+)\s*:\s*([^;]+);", _block(css, found.start())))
 
 
 def _luminance(colour: str) -> float:
@@ -1722,79 +1715,83 @@ def _contrast(a: str, b: str) -> float:
     return (high + 0.05) / (low + 0.05)
 
 
-# Text colours on the backgrounds they are drawn on, by the palette's own
-# names. If the palette is renamed, the test-writer updates this list.
-_TEXT_PAIRS = [
-    (fg, bg)
-    for fg in ("--text", "--muted", "--gold", "--error", "--field-text")
-    for bg in ("--page", "--panel", "--panel-edge", "--selected", "--hover", "--field")
-] + [(fg, bg) for fg in ("--ink", "--ink-muted") for bg in ("--parchment-hi", "--parchment-lo")]
+# The text-colour pairs of the 2026-10-16 palette were graded here by name;
+# under Wellspring (M16-52, owner decision 2026-10-26) every pair the design
+# names is graded in `test_ui_contrast.py`, from the sheet's own tokens.
 
 
-@pytest.mark.parametrize("scheme", ["dark", "light"])
-def test_text_meets_wcag_aa_in_both_schemes(scheme: str) -> None:
-    palette = _palettes()[scheme]
-    for fg, bg in _TEXT_PAIRS:
-        ratio = _contrast(palette[fg], palette[bg])
-        assert ratio >= 4.5, (scheme, fg, bg, round(ratio, 2))
-    # Literal text colours on the parchment.
-    rules = re.findall(r"(?:\.parchment|#explain-status)[^{}]*\{[^}]*\}", _css())
-    assert rules
-    for rule in rules:
-        for colour in re.findall(_COLOUR, rule):
-            for bg in ("--parchment-hi", "--parchment-lo"):
-                assert _contrast(colour, palette[bg]) >= 4.5, (colour, bg)
+def _declarations(css: str, selector: str) -> dict[str, str]:
+    """The declarations of every top-level rule whose selector list holds
+    `selector` exactly, later ones winning."""
+    out: dict[str, str] = {}
+    for head, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
+        if head.strip().startswith("@"):
+            continue
+        if selector in (s.strip() for s in head.split(",")):
+            for part in body.split(";"):
+                if ":" in part:
+                    name, value = part.split(":", 1)
+                    out[name.strip()] = value.strip()
+    return out
 
 
-def _hue_sat(colour: str) -> tuple[float, float]:
-    r, g, b = (int(colour[i : i + 2], 16) / 255 for i in (1, 3, 5))
-    high, low = max(r, g, b), min(r, g, b)
-    light = (high + low) / 2
-    if high == low:
-        return 0.0, 0.0
-    sat = (high - low) / (2 - high - low if light > 0.5 else high + low)
-    if high == r:
-        hue = ((g - b) / (high - low)) % 6
-    elif high == g:
-        hue = (b - r) / (high - low) + 2
-    else:
-        hue = (r - g) / (high - low) + 4
-    return hue * 60, sat
+# Each badge class, the force it is drawn in (WELLSPRING.md, "Mapping onto
+# the existing page") and the glyph its `::before` writes (WELLSPRING.md,
+# "Verdicts"), with empty alternative text so the words are read once.
+_BADGES = {
+    ".badge-gate": ("order", "\\25C6", "solid"),
+    ".badge-no": ("ruin", "\\2715", "solid"),
+    ".badge.badge-placeholder": ("ruin", "\\2715", "solid"),
+    ".badge-unclassified": ("void", "?", "solid"),
+    ".badge-folder": ("stone", "\\25AA", "solid"),
+    ".badge-not_applicable": ("stone", "\\25AA", "solid"),
+    ".badge.badge-link": ("astral", "\\2197", "dotted"),
+    ".badge-server": ("blight", "\\2248", "dashed"),
+}
 
 
-def test_badges_read_like_item_quality() -> None:
-    """Gold for `gate`, red for `no`, grey for `unclassified`, muted for
-    `folder` and `not_applicable`; each badge's text meets AA on every stop
-    of its own background."""
+def test_badges_are_drawn_in_their_forces() -> None:
+    """M16-52: each badge class uses its force's text, `-bg` and `-border`
+    tokens; Astral is dotted, Blight is dashed, the rest solid; each glyph
+    comes from CSS `content` with empty alternative text."""
     css = _css()
-    text: dict[str, str] = {}
-    for level in ("gate", "no", "unclassified", "folder", "not_applicable"):
-        match = re.search(rf"[^{{}}]*\.badge-{level}(?![\w-])[^{{}}]*\{{([^}}]*)\}}", css)
-        assert match is not None, f"no badge colour for {level}"
-        rule = match.group(1)
-        colour = re.search(_COLOUR, rule)
-        assert colour is not None, level
-        text[level] = colour.group(1)
-        background = re.search(r"background[^:]*:([^;]*)", rule)
-        assert background is not None, level
-        stops = re.findall(r"#[0-9a-fA-F]{6}\b", background.group(1))
-        assert stops, level
-        for stop in stops:
-            assert _contrast(text[level], stop) >= 4.5, (level, stop)
-    hue, sat = _hue_sat(text["gate"])
-    assert 35 <= hue <= 60 and sat > 0.5, ("gate reads gold", hue, sat)
-    hue, sat = _hue_sat(text["no"])
-    assert (hue <= 15 or hue >= 345) and sat > 0.5, ("no reads red", hue, sat)
-    assert _hue_sat(text["unclassified"])[1] < 0.1, "unclassified reads grey"
-    for level in ("folder", "not_applicable"):
-        assert _hue_sat(text[level])[1] < 0.35, f"{level} reads muted"
-        assert text[level] not in (text["gate"], text["no"], text["unclassified"]), level
+    base = _declarations(css, ".badge")
+    assert base.get("border") == "1px solid", base
+    for selector, (force, glyph, style) in _BADGES.items():
+        rule = _declarations(css, selector)
+        assert rule.get("color") == f"var(--{force})", (selector, rule)
+        assert rule.get("background") == f"var(--{force}-bg)", (selector, rule)
+        assert rule.get("border-color") == f"var(--{force}-border)", (selector, rule)
+        assert rule.get("border-style", "solid") == style, (selector, rule)
+        assert _declarations(css, selector + "::before").get("content") == f'"{glyph}" / ""', (
+            selector
+        )
+    # the words of a badge stay in the page, read once: no glyph is text
+    for glyph in ("◆", "✕", "▪", "↗", "≈"):
+        assert glyph not in (_TEMPLATES / "page.html").read_text(encoding="utf-8")
 
 
-def test_a_serif_system_font_and_no_art_from_outside() -> None:
+_STACKS = {
+    "--font-display": '"Alegreya SC", "Palatino Linotype", Palatino, Georgia, serif',
+    "--font-serif": 'Alegreya, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif',
+    "--font-mono": '"IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace',
+}
+
+
+def test_three_font_stacks_and_no_art_from_outside() -> None:
+    """M16-52: every `font-family` is one of the three `var(--font-*)`
+    stacks, and each stack ends in a generic family; the faces are written
+    by the server (M16-51), never fetched, and the sheet loads no art."""
     css = _css()
-    stacks = re.findall(r"(?:font-family|--serif)\s*:\s*([^;]+);", css)
-    assert any(s.strip().endswith("serif") and "sans-serif" not in s for s in stacks), stacks
+    root = _root_vars(css)
+    for name, stack in _STACKS.items():
+        assert root.get(name) == stack, name
+        assert stack.rsplit(",", 1)[-1].strip() in ("serif", "monospace"), name
+    families = re.findall(r"(?<![-\w])font-family\s*:\s*([^;}]+)", css)
+    assert families
+    assert {f.strip() for f in families} <= {f"var({name})" for name in _STACKS}, families
+    for shorthand in re.findall(r"(?<![-\w])font\s*:\s*([^;}]+)", css):
+        assert shorthand.strip() == "inherit", shorthand
     for marker in ("@font-face", "url(", "@import", "image-set("):
         assert marker not in css, marker
 

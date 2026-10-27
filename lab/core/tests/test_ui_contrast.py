@@ -389,6 +389,9 @@ def _large(font: dict[str, str], selector: str) -> bool:
     size = font.get("font-size")
     if size and size.endswith("rem"):
         px = float(size[:-3]) * 16
+    elif size and re.fullmatch(r"[0-9.]+px", size):
+        # Wellspring (M16-52) sets its type scale in px: `item-name` is 19px.
+        px = float(size[:-2])
     elif heading:
         px = _HEADING_EM[heading] * 16
     else:
@@ -565,30 +568,108 @@ def test_every_text_colour_meets_aa_on_every_surface_in_both_schemes() -> None:
 def test_every_focus_ring_meets_three_to_one_in_both_schemes() -> None:
     pairs = _focus_pairs()
     assert {p.scheme for p in pairs} == {"dark", "light"}
-    assert {p.what for p in pairs} >= {"focus ring (parchment)", "focus ring (chrome)"}
+    assert {p.what for p in pairs} >= {
+        "focus ring (parchment)",
+        "focus ring (chrome)",
+        "focus ring (gear)",
+    }
     assert _failures(pairs) == []
 
 
-def test_the_parchment_ring_is_ink() -> None:
-    """a11y:F5: on the parchment the ring is the ink colour, not the gold."""
+def test_the_focus_ring_is_the_wellspring_everywhere() -> None:
+    """M16-52 (WELLSPRING.md, "Focus and states"): every focusable element
+    shows one 2px solid `wellspring` ring, offset 2px, the Codex and the gear
+    table included. M16-30's region rings (ink on the parchment, gold on the
+    gear) are gone, so the focus-ring test above grades this one ring on
+    every region's surfaces."""
     rules = _rules()
-    rings = [
-        rule.decls.get("outline-color", rule.decls.get("outline", ""))
+    focus = [
+        (selector, rule)
         for rule in rules
-        if not rule.media and ".parchment :focus-visible" in rule.selectors
+        if not rule.media
+        for selector in rule.selectors
+        if _FOCUS.search(selector) and ("outline" in rule.decls or "outline-color" in rule.decls)
     ]
-    assert rings and all("var(--ink)" in ring for ring in rings)
+    assert [s for s, _ in focus] == [":focus-visible"], focus
+    ring = focus[0][1].decls
+    assert ring["outline"] == "2px solid var(--wellspring)"
+    assert ring["outline-offset"] == "2px"
 
 
 def test_the_grader_sees_a_failing_pair_constructed() -> None:
-    """The grade fails when it should: the gold ring the evaluation measured
-    on the parchment (a11y:F5), put back, is caught."""
+    """The grade fails when it should: a ring drawn in the hairline token
+    (`rule`, decorative, never a state) on the Codex is caught on every one
+    of its surfaces, in both schemes."""
     rules = _rules()
-    scheme = _schemes(rules)["dark"]
-    gold = _colours("var(--gold)", scheme)[0][0]
-    parchment = _surfaces(rules, scheme)["parchment"]
-    bad = [Pair("dark", ":focus-visible", "ring", gold, back, 3.0) for back in parchment]
-    assert len(_failures(bad)) == len(set(parchment))
+    for name, scheme in _schemes(rules).items():
+        hairline = _colours("var(--rule)", scheme)[0][0]
+        codex = _surfaces(rules, scheme)["parchment"]
+        bad = [Pair(name, ":focus-visible", "ring", hairline, back, 3.0) for back in codex]
+        assert len(_failures(bad)) == len(set(codex)), name
+
+
+# ─── the token pairs WELLSPRING.md names (M16-52) ────────────────────────────
+
+# Each token's usage note in docs/design/wellspring-tokens.json names the
+# grounds it is drawn on. These are those pairs, by token name, resolved in
+# each scheme the sheet declares: the text pairs at 4.5:1, the control
+# borders, the badge borders and the focus ring at 3:1 (WELLSPRING.md,
+# "Contrast"). The quality colours are not here: the sheet declares none.
+_GROUNDS = (
+    "ground",
+    "ground-deep",
+    "surface",
+    "surface-raised",
+    "surface-sunken",
+    "hover",
+    "selected",
+)
+_FORCES = ("order", "ruin", "void", "stone", "astral", "blight")
+_TOKEN_PAIRS: list[tuple[str, tuple[str, ...], float]] = [
+    ("text", _GROUNDS, 4.5),
+    ("text-muted", _GROUNDS, 4.5),
+    ("brass", _GROUNDS, 4.5),
+    # as text, on the ground and the surfaces, not on `ground-deep`
+    ("wellspring", ("ground", "surface", "surface-raised", "surface-sunken", "selected"), 4.5),
+    ("on-wellspring", ("wellspring",), 4.5),
+    ("on-heraldry", ("heraldry",), 4.5),
+    ("ruin", (*_GROUNDS, "ruin-bg"), 4.5),
+    *[(force, (f"{force}-bg",), 4.5) for force in _FORCES],
+    *[(f"{force}-border", (f"{force}-bg",), 3.0) for force in _FORCES],
+    *[(f"jt-{kind}", ("surface-sunken",), 4.5) for kind in ("key", "string", "number", "literal")],
+    ("gear-text", ("gear-ground", "gear-detail"), 4.5),
+    ("gear-muted", ("gear-ground", "gear-detail"), 4.5),
+    ("gear-heading", ("gear-ground", "gear-detail"), 4.5),
+    ("rule-strong", ("surface", "surface-sunken"), 3.0),
+    # the focus ring, on every surface it can land on
+    ("wellspring", (*_GROUNDS, "gear-ground", "gear-detail"), 3.0),
+]
+
+
+def test_every_token_pair_the_design_names_meets_its_ratio_in_both_themes() -> None:
+    rules = _rules()
+    schemes = _schemes(rules)
+    assert set(schemes) == {"dark", "light"}
+    pairs: list[Pair] = []
+    for name, scheme in schemes.items():
+        for fore, backs, need in _TOKEN_PAIRS:
+            (front, alpha), *rest = _colours(f"var(--{fore})", scheme)
+            assert alpha == 1.0 and not rest, fore
+            for back in backs:
+                (ground, under), *more = _colours(f"var(--{back})", scheme)
+                assert under == 1.0 and not more, back
+                pairs.append(Pair(name, f"--{fore} on --{back}", "token", front, ground, need))
+    assert len(pairs) == 2 * sum(len(backs) for _fore, backs, _need in _TOKEN_PAIRS)
+    assert _failures(pairs) == []
+
+
+def test_constructed_the_token_grader_fails_a_bad_pair() -> None:
+    """The pair grade above fails when it should: `brass-deep`, which is
+    ornament and never text, does not read as text on the Bastion ground."""
+    scheme = _schemes(_rules())["light"]
+    deep = _colours("var(--brass-deep)", scheme)[0][0]
+    ground = _colours("var(--ground)", scheme)[0][0]
+    assert _failures([Pair("light", "--brass-deep on --ground", "token", deep, ground, 4.5)])
 
 
 # ─── reflow, forced colours, headings ────────────────────────────────────────
@@ -809,40 +890,54 @@ def test_nothing_is_wider_than_a_320px_window(tmp_path: Path, install: Path, ser
 
 
 def test_constructed_a_container_ground_does_not_hang_on_another_rule() -> None:
-    """`.jt-number` sits on the `.jt` box's ground. Giving `.toolbar select`
-    (another rule that paints the same token) a text colour of its own takes
-    that ground out of the chrome's shared surfaces, but `.jt-number` is
-    still graded on it, as a child of `.jt`."""
+    """`.jt-number` sits on the `.jt` box's ground (`surface-sunken`).
+    Giving `.toolbar select` (another rule that paints the same token) a text
+    colour of its own takes that ground out of the chrome's shared surfaces,
+    but `.jt-number` is still graded on it, as a child of `.jt`."""
     rules = _rules()
     scheme = _schemes(rules)["dark"]
-    field = _colours(next(r for r in rules if ".jt" in r.selectors).decls["background"], scheme)[0][
-        0
-    ]
+    jt = next(r for r in rules if ".jt" in r.selectors and "background" in r.decls)
+    assert jt.decls["background"] == "var(--surface-sunken)"
+    sunken = _colours(jt.decls["background"], scheme)[0][0]
     changed = [
-        Rule(r.media, r.selectors, {**r.decls, "color": "var(--field-text)"})
+        Rule(r.media, r.selectors, {**r.decls, "color": "var(--text)"})
         if ".toolbar select" in r.selectors
         else r
         for r in rules
     ]
-    assert field in _surfaces(rules, scheme)["chrome"]
-    assert field not in _surfaces(changed, scheme)["chrome"]
+    assert sunken in _surfaces(rules, scheme)["chrome"]
+    assert sunken not in _surfaces(changed, scheme)["chrome"]
     for version in (rules, changed):
         backs = {
             p.back
             for p in _text_pairs(version)
             if p.scheme == "dark" and p.selector == ".jt-number"
         }
-        assert field in backs
+        assert sunken in backs
 
 
 def test_constructed_a_colour_only_state_is_graded_on_its_own_ground() -> None:
-    """`#run:disabled` sets only a colour; it is graded on the ground `#run`
-    paints, in each scheme."""
+    """A state that sets only a text colour is graded on the ground its plain
+    rule paints, in each scheme. Under Wellspring `#run:disabled` paints its
+    own ground (`surface-sunken`, as WELLSPRING.md has every disabled control
+    do), so it is graded there; with that ground taken away, constructed, it
+    is graded on the `wellspring` fill `#run` paints."""
     rules = _rules()
+    run = next(r for r in rules if not r.media and "#run" in r.selectors)
+    disabled = next(r for r in rules if not r.media and "#run:disabled" in r.selectors)
+    assert disabled.decls["background"] == "var(--surface-sunken)"
+    colour_only = Rule("", ("#run:disabled",), {"color": disabled.decls["color"]})
+    constructed = [r for r in rules if r is not disabled] + [colour_only]
     for name, scheme in _schemes(rules).items():
-        run = next(r for r in rules if "#run" in r.selectors)
         ground = _colours(run.decls["background"], scheme)[0][0]
-        backs = {
+        sunken = _colours("var(--surface-sunken)", scheme)[0][0]
+        real = {
             p.back for p in _text_pairs(rules) if p.scheme == name and p.selector == "#run:disabled"
+        }
+        assert real == {sunken}, name
+        backs = {
+            p.back
+            for p in _text_pairs(constructed)
+            if p.scheme == name and p.selector == "#run:disabled"
         }
         assert ground in backs, name
