@@ -2098,7 +2098,7 @@ The owner reads ADR-0035 and accepts it, amends it (for example: fewer faces, no
 
 ---
 
-## [ ] M16-51 — The Wellspring fonts in the page's own style
+## [x] M16-51 — The Wellspring fonts in the page's own style
 **Size:** S · **Depends on:** M16-50, M16-42 (same file: `ui/__init__.py`)
 
 Per ADR-0035 and its amendment of 2026-10-26:
