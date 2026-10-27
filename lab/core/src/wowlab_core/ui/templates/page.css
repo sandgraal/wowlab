@@ -74,7 +74,7 @@ button, select, input, textarea { font: inherit; color: var(--field-text); }
 .banner-text { flex: 1; min-width: 16rem; }
 .banner h1 { margin: 0; font-size: 1.6rem; letter-spacing: 0.06em; color: var(--gold); font-variant: small-caps; }
 .banner p { margin: 0.15rem 0 0; color: var(--muted); font-size: 0.95rem; }
-.tabs { display: flex; gap: 0.4rem; }
+.tabs { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .tab {
   padding: 0.35rem 1rem; cursor: pointer; border-radius: 4px 4px 0 0;
   color: var(--muted); background: var(--field); border: 1px solid var(--gold-deep); border-bottom-color: var(--trim);
@@ -97,7 +97,7 @@ main { padding: 1rem 1.25rem 2rem; }
 .toolbar label.check input { width: auto; accent-color: var(--gold); }
 #explorer-status { margin: 0; color: var(--muted); flex-basis: 100%; }
 #explorer-status:empty { display: none; }
-#explorer-status.error, #explain-status.error { color: var(--error); }
+#explorer-status.error { color: var(--error); }
 
 .panes { display: flex; gap: 1rem; align-items: flex-start; flex-wrap: wrap; }
 .tree-panel { flex: 3 1 28rem; min-width: 0; padding: 0.6rem 0.4rem 0.8rem; max-height: 78vh; overflow: auto; }
@@ -143,6 +143,8 @@ main { padding: 1rem 1.25rem 2rem; }
   border: 2px solid var(--trim); border-radius: 6px;
   box-shadow: inset 0 0 22px rgba(120, 82, 24, 0.35), 0 0 0 1px var(--page), 0 0 0 3px var(--gold-deep), 0 4px 14px rgba(0, 0, 0, 0.35);
 }
+/* the gold ring is too pale on parchment: the ink draws it there (a11y:F5) */
+.parchment :focus-visible { outline-color: var(--ink); }
 .parchment h2 { margin: 0 0 0.25rem; font-size: 1.35rem; color: #4a2f08; overflow-wrap: anywhere; unicode-bidi: isolate; }
 .parchment .path { margin: 0 0 0.75rem; color: var(--ink-muted); overflow-wrap: anywhere; unicode-bidi: isolate; }
 .parchment .path:empty { display: none; }
@@ -252,6 +254,10 @@ pre:empty { display: none; }
   padding: 0; color: #ede4cf; background: none; border: none; overflow-wrap: anywhere; unicode-bidi: isolate;
 }
 .gear-name[aria-expanded="true"] { text-decoration: underline; }
+/* the quality in words beside the name, so it does not rest on colour alone */
+.gear-quality { margin-left: 0.5rem; color: #b8ab90; font-family: var(--serif); font-size: 0.9rem; font-weight: normal; white-space: nowrap; }
+/* the gear table stays dark in both schemes: its ring is the dark scheme's gold */
+.gear-table :focus-visible { outline-color: #e3bb55; }
 .gear-empty { color: #b8ab90; font-style: italic; }
 .gear-detail td { padding: 0.35rem 0.6rem 0.7rem 1.5rem; background: #1b1610; }
 .gear-detail dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 0.2rem 1rem; }
@@ -311,3 +317,16 @@ pre:empty { display: none; }
 .looks-where code { unicode-bidi: isolate; }
 .looks-where .copy { margin-left: 0.6rem; cursor: pointer; padding: 0.05rem 0.6rem; color: var(--gold); background: var(--selected); border: 1px solid var(--trim); border-radius: 4px; font-weight: 600; }
 .looks-frame { display: block; width: 100%; height: 80vh; border: 1px solid var(--gold-deep); border-radius: 4px; background: #fff; }
+/* Narrow windows and 400% zoom (a11y:F6, designer:F11): the Commands list
+   stacks above its form, and nothing is wider than the window. */
+@media (max-width: 40rem) {
+  .commands-body { flex-direction: column; align-items: stretch; }
+  #commands { min-width: 0; max-height: 40vh; }
+  .toolbar label { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+  .toolbar select { max-width: 100%; }
+}
+/* Forced colours (Windows High Contrast) drop backgrounds and box shadows,
+   so a selection draws a system-colour outline instead (a11y:F9). */
+@media (forced-colors: active) {
+  .row.selected, #commands button[aria-pressed="true"], .tab[aria-selected="true"] { outline: 2px solid Highlight; outline-offset: -2px; }
+}

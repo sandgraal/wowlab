@@ -54,6 +54,7 @@
 </div>
 </section>
 <section id="gaps-view" role="tabpanel" aria-labelledby="tab-gaps" hidden>
+<h2 class="unseen">Gaps</h2>
 <p class="intro">Paths in the install that no file-map row describes, grouped under the row of the folder they are in and ranked by how many files they hold, then paths only a catch-all row describes, folders labelled whole and not looked inside, and links, which are never followed. Read only.</p>
 <p id="gaps-status" role="status"></p>
 <div id="gaps-body"></div>
@@ -79,6 +80,7 @@
 </div>
 </section>
 <section id="character-view" role="tabpanel" aria-labelledby="tab-character" hidden>
+<h2 class="unseen">Character</h2>
 <p class="intro">One character as the lab-addon last saved it: the file it wrote at logout or <code>/reload</code>, never the session in progress, beside the key bindings and macros the client last wrote. Read only: this tab runs <code>wowlab char list</code>, <code>wowlab char gear</code>, <code>wowlab char binds</code> and <code>wowlab char macros</code> and nothing else. An item's name is its link's own text, and nothing is fetched. <strong>See it dressed</strong> opens an outside dressing room in your own browser, and only when you click it; this page makes no request to it.</p>
 <div class="toolbar panel">
 <label>Character <select id="char-picker" disabled></select></label>
@@ -114,6 +116,7 @@
 </div>
 </section>
 <section id="looks-view" role="tabpanel" aria-labelledby="tab-looks" hidden>
+<h2 class="unseen">Looks</h2>
 <p class="intro">The page <code>wowlab looks page</code> writes: the races, body types, classes and customization options of the build's tables, and your saved looks checked against that build. Write the page runs that command, which writes <code>pages/looks.html</code> in wowlab's own data folder and never touches your game folder, then shows that file here. It runs in a closed frame: only its own script, no network requests, and nothing it can reach on this page.</p>
 <div class="toolbar panel">
 <button id="looks-write" type="button">Write the page</button>
