@@ -23,10 +23,7 @@ import base64
 import hashlib
 import http.client
 import importlib.util
-import os
 import re
-import shutil
-import subprocess
 import tarfile
 import threading
 import zipfile
@@ -362,44 +359,53 @@ def test_the_check_on_font_faces_refuses_a_stranger_constructed() -> None:
 # ─── the wheel and the sdist ─────────────────────────────────────────────────
 
 
-def test_the_wheel_and_sdist_carry_the_fourteen_files(tmp_path: Path) -> None:
-    """Builds both as the release does (`.github/workflows/release.yml`): the
-    sdist from the checkout, then the wheel from the sdist, with the pinned
-    build backend (fetched by uv from the package index or its cache)."""
-    uv = os.environ.get("UV") or shutil.which("uv")
-    if uv is None:
-        pytest.skip("uv is not available (run the suite with `uv run pytest`)")
-    out = tmp_path / "dist"
-    done = subprocess.run(
-        [
-            uv,
-            "build",
-            "--package",
-            "wowlab-core",
-            "--no-sources",
-            "--no-create-gitignore",
-            "--build-constraints",
-            str(ROOT / "lab" / "core" / "build-constraints.txt"),
-            "--require-hashes",
-            "--out-dir",
-            str(out),
-        ],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        timeout=600,
-        check=False,
+def _pin(text: str, name: str) -> str:
+    found = re.findall(rf"^{re.escape(name)}==(\S+)", text, flags=re.MULTILINE)
+    assert len(found) == 1, (name, found)
+    return str(found[0])
+
+
+def test_the_dev_hatchling_is_the_release_builds_pin() -> None:
+    """The wheel test below builds with the `hatchling` of the dev group
+    (installed by `uv sync`, locked with hashes in uv.lock), so it is the one
+    the release builds with (`lab/core/build-constraints.txt`)."""
+    import tomllib
+    from importlib.metadata import version
+
+    release = _pin(
+        (ROOT / "lab" / "core" / "build-constraints.txt").read_text("utf-8"), "hatchling"
     )
-    assert done.returncode == 0, done.stderr[-4000:]
+    dev = tomllib.loads((ROOT / "pyproject.toml").read_text("utf-8"))["dependency-groups"]["dev"]
+    assert f"hatchling=={release}" in dev
+    assert version("hatchling") == release
+
+
+def test_the_wheel_and_sdist_carry_the_fourteen_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Builds both as the release does (`.github/workflows/release.yml`): the
+    sdist from the checkout, then the wheel from the sdist. The pinned build
+    backend runs in this process, as installed from the dev group, so the
+    build makes no request (ADR-0012)."""
+    from hatchling import build as backend
+
+    out = tmp_path / "dist"
+    out.mkdir()
+    monkeypatch.chdir(ROOT / "lab" / "core")
+    sdist = out / backend.build_sdist(str(out))
+    unpacked = tmp_path / "unpacked"
+    with tarfile.open(sdist) as tar:
+        tar.extractall(unpacked, filter="data")
+    (project,) = unpacked.iterdir()
+    monkeypatch.chdir(project)
+    wheel = out / backend.build_wheel(str(out))
     expected = {name: (FONTS / name).read_bytes() for name in [*FONT_PINS, *LICENCE_PINS]}
-    (wheel,) = out.glob("*.whl")
     with zipfile.ZipFile(wheel) as whl:
         prefix = "wowlab_core/ui/templates/fonts/"
         members = {n[len(prefix) :]: n for n in whl.namelist() if n.startswith(prefix)}
         assert sorted(members) == sorted(expected)
         for name, data in expected.items():
             assert whl.read(members[name]) == data, name
-    (sdist,) = out.glob("*.tar.gz")
     with tarfile.open(sdist) as tar:
         marker = "/src/wowlab_core/ui/templates/fonts/"
         files = {

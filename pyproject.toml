@@ -24,6 +24,9 @@ dev = [
   "pytest-xdist>=3.8",  # dev only: `make test` and CI run the suite in parallel (M13-18)
   "pre-commit>=4.3",
   "types-psutil>=7.0",  # psutil ships no py.typed; mypy --strict needs the stubs
+  # dev only: test_ui_fonts.py builds the sdist and wheel in-process, offline
+  # (M16-51, ADR-0012); the same pin as lab/core/build-constraints.txt, which a test checks
+  "hatchling==1.32.4",
 ]
 
 # ─── ruff ────────────────────────────────────────────────────────────────────
