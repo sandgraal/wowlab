@@ -1808,7 +1808,7 @@ Reviewed by `code-reviewer`. User-facing: the Gaps tab.
 
 ---
 
-## [ ] M16-29 — UI focus and announcements
+## [x] M16-29 — UI focus and announcements
 **Size:** S · **Depends on:** nothing · **Sources:** a11y:F1, F2, F3, F11 (EV-27)
 
 - Focus returns to the same `data-path` element after a tree redraw.
@@ -1821,7 +1821,7 @@ Reviewed by `code-reviewer`. User-facing: the Gaps tab.
 
 ---
 
-## [ ] M16-30 — UI visual accessibility
+## [x] M16-30 — UI visual accessibility
 **Size:** S · **Depends on:** nothing · **Sources:** a11y:F5, F6, F8, F9, F10, designer:F11 (EV-28)
 
 - `.parchment :focus-visible` uses ink.
@@ -2099,9 +2099,9 @@ Per ADR-0035 and its amendment of 2026-10-26:
 - The texts that repeat ADR-0029's CSP sentence change with it: the `ui/__init__.py` module docstring and `docs/LAB_PLAN.md` §16.3 (the M14-04 paragraph). The `ui` bullet in `.claude/rules/lab-load-bearing.md` is harness, so the report names the new wording and the conductor makes that edit on merge.
 
 **Tests on `main` this changes, and their narrowed form.** These are security graders. Nothing beyond the narrowing below is loosened.
-- `test_ui_explorer.py`, the CSP assertions around line 274: `"font-src" not in directives` becomes `directives["font-src"] == ["data:"]`. `"data:" not in flat` becomes "`data:` appears only as the whole value of `font-src`".
-- `test_ui_explorer.py`, `_EXTERNAL` (line 280): `url(`, `@font-face` and `data:font` stay forbidden everywhere except in exactly twelve `@font-face` rules. Each of those has one `src`, a `data:font/woff2;base64,` URL that decodes to one of the pinned files. Every other entry of `_EXTERNAL` is unchanged.
-- `test_ui_server.py`, `_csp_problems` (line 882): `data:` is accepted only as the whole of `font-src`. Every other source rule is unchanged.
+- `test_ui_explorer.py`, the CSP assertions of the shell test: `"font-src" not in directives` becomes `directives["font-src"] == ["data:"]`. `"data:" not in flat` becomes "`data:` appears only as the whole value of `font-src`".
+- `test_ui_explorer.py`, `_EXTERNAL`: `url(`, `@font-face` and `data:font` stay forbidden everywhere except in exactly twelve `@font-face` rules. Each of those has one `src`, a `data:font/woff2;base64,` URL that decodes to one of the pinned files. Every other entry of `_EXTERNAL` is unchanged.
+- `test_ui_server.py`, `_csp_problems`: `data:` is accepted only as the whole of `font-src`. Every other source rule is unchanged.
 
 **Acceptance:**
 - A test holds each font's SHA-256 and size from the ADR's table and each licence text's from the amendment. It fails if `fonts/` holds anything but those fourteen files.
@@ -2128,19 +2128,20 @@ Restyle the page to `docs/design/WELLSPRING.md`. `page.css` is rewritten on cust
 - **Panels and the parchment:** panels get the corner brackets. `.parchment` becomes the Codex (`surface-raised`, a `heraldry` top edge, `title` heading).
 - **Badges:** the badge classes map to the six forces per the table. Each gets its glyph from CSS `content` with empty alternative text (`content: "◆" / ""`), so the badge's words are read once and its existing `title` and `.unseen` sentence are unchanged. Astral gets a dotted border and Blight a dashed one.
 - **Buttons:** `#run` and `#looks-write` become primary, `.copy` becomes secondary, and `#confirm` becomes the seal (one standing glow per view).
-- **Focus:** a 2px `wellspring` outline everywhere, including inside the Codex. It meets 3:1 on `surface-raised` in both themes.
+- **Focus:** a 2px `wellspring` outline everywhere, including inside the Codex, which under Wellspring is `surface-raised` (dark in Warband, white in Bastion), not parchment. It meets 3:1 on every surface it lands on in both themes. M16-30's region rules (the ink ring on `.parchment`, the gold ring on `.gear-table`) are replaced, not kept beside it.
 - **Fonts:** the `font-display`, `font-serif` and `font-mono` stacks from the spec. If ADR-0035 is rejected, they are the stacks without their first family.
 - **Not in scope:** a theme switch, any new view, any change to the Looks page, to `lookspage`, or to what a command prints.
 
 **Tests on `main` this replaces, under the owner decision above:**
-- `test_ui_explorer.py`, `test_text_meets_wcag_aa_in_both_schemes` and its parchment check (around line 1699): replaced by the contrast test below.
+- `test_ui_explorer.py`, `test_text_meets_wcag_aa_in_both_schemes` and its parchment check: replaced by the contrast test below.
+- `test_ui_contrast.py` (M16-30), `test_the_parchment_ring_is_ink`: replaced by "the `wellspring` focus ring meets 3:1 on every surface", graded by the same file's focus-ring test. The file's `_REGIONS` and `_CHILDREN` tables gain rows for the Codex and any new container, as its docstring says; nothing else in its grading loosens.
 - `test_badges_read_like_item_quality` (line 1729): becomes "each badge class uses its force's `-bg` and `-border` tokens; Astral is dotted, Blight is dashed". The grey `unclassified` rule goes.
 - `test_a_serif_system_font_and_no_art_from_outside` (line 1758): becomes "every `font-family` is one of the three `var(--font-*)` stacks, and each stack ends in a generic family (`serif` or `monospace`)". The no-art half is unchanged.
 - `test_ui_character.py`, `test_the_templates_hold_no_slot_name_and_no_colour_code` (line 614): the assertion that `page.css` holds `--field: #ffffff;`, and the `_FIELD_WHITE` exemption in `_table_leaks`, are removed. No white remains to exempt, so `_table_leaks` gets stricter, never looser.
 - `test_ui_character.py`, `test_the_colour_rules_read_on_the_gear_backing` (lines 660 to 678): it reads the gear table's backing through `var(--gear-ground)`, resolved from `:root`, and accepts the item name's size in `px` as well as `rem` (19px is at least 18.66px, the large-text floor). It still checks every shipped quality colour at 3:1 on that backing.
 
 **Acceptance:**
-- The contrast test from M16-30 is extended to the new `page.css`. It checks every text pair the token usage notes name, every badge border against its own badge ground, `rule-strong`, and the focus ring, in both themes. It allows no failure: the quality colours are not in `page.css`.
+- The contrast test from M16-30 (`lab/core/tests/test_ui_contrast.py`) is extended to the new `page.css`. It checks every text pair the token usage notes name, every badge border against its own badge ground, `rule-strong`, and the focus ring, in both themes. It allows no failure: the quality colours are not in `page.css`. It already reads 8-digit hex (`wellspring-glow`); it blends a translucent ground only over its region's surfaces, never over a container's ground, so a tinted control placed inside `.jt` or `pre` needs that taught first.
 - A test asserts that `page.css` declares every token in `docs/design/wellspring-tokens.json` except `quality-*`, with that file's value per theme. It also asserts that no colour literal appears outside those custom-property declarations.
 - `_table_leaks` (M13-72) passes, with its white exemption removed as above.
 - A test asserts that the set of classes and ids in `page.html` and `page.js` is unchanged from `main` before this ticket, apart from the crest's replacement by the sigil.
@@ -2151,3 +2152,27 @@ Restyle the page to `docs/design/WELLSPRING.md`. `page.css` is rewritten on cust
 - Reviewed by `code-reviewer` and `security-reviewer` (every `ui` diff).
 
 User-facing: the whole look of `wowlab ui`. The wiki's screenshots of the UI need replacing.
+
+---
+
+## [ ] M16-53 — The Character keys table reflows at 320 px
+**Size:** S · **Depends on:** nothing · **Sources:** the M16-42 code review (2026-10-27); a11y:F10 (EV-28)
+
+Found while reviewing M16-42, and already on `main` at 3e53e5a. In one page at 320 px, open Character, then Looks, then Character again: the keys table (`#char-keys table.char-table`) is 441 px wide, and the page's `scrollWidth` is 478. M16-30's `test_nothing_is_wider_than_a_320px_window` measures right after opening a gear row, before the keys table is drawn, so it passes.
+
+- At 320 px the keys table fits without moving the page sideways. A data table may scroll inside its own box (WCAG 1.4.10 allows two-dimensional scrolling for data tables), with the box labelled and focusable.
+- The reflow test waits for `#char-keys` (and the macros panel) to be drawn before measuring, and visits Character a second time after another tab.
+
+**Acceptance:** the reflow test fails on `main` as it is and passes after the fix; the contrast test stays green; `make ci` is green. Reviewed by `code-reviewer` and `security-reviewer` (every `ui` diff). User-facing: the Character tab at narrow widths.
+
+---
+
+## [ ] M16-54 — The Gaps and Character tabs say they are loading
+**Size:** XS · **Depends on:** nothing · **Sources:** a11y:F11 (EV-27; the half M16-29 left out)
+
+M16-29 built the Copy half of a11y:F11. The other half remains: after a tab switch, `#gaps-status` and `#char-status` stay empty while their command runs, so a screen reader hears nothing until the result arrives.
+
+- While a tab's first command runs, its status line says so in one short sentence, through the same `announce()` helper M16-29 added, and the line is replaced by the result or the error.
+- No new attribute name; the security test's closed attribute set is unchanged.
+
+**Acceptance:** UI tests that the status line is set before the request resolves and replaced after; `make ci` is green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: Gaps and Character announcements.
