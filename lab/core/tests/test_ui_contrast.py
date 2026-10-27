@@ -22,8 +22,14 @@ table, which stays dark in both schemes, and the rest of the page, called
 the chrome here) has the backgrounds of its root rules and of every rule in
 it that paints a background and leaves the text colour to another rule. A
 rule that sets a text colour is graded on its own background when it paints
-one, and on every surface of its region otherwise. A new token, a new rule
-or a new scheme is graded without a change here.
+one. Otherwise it is graded on every surface of its region, and also on the
+ground of each container that holds it (a rule that paints a background and
+sets its own text colour: its descendant selectors, and the few children
+`_CHILDREN` names by class) and, for a state such as `:disabled`, on the
+ground its plain rule paints. A hover or pressed state that only paints a
+ground is graded with its plain rule's text colour. A new token or a new
+scheme is graded without a change here; a container whose children are not
+its descendant selectors needs a row in `_CHILDREN`.
 
 A browser check of the reflow at 320 CSS px is at the end; it runs only when
 Node can load Playwright and launch Chromium (CI has neither, and a browser
@@ -138,34 +144,86 @@ def _schemes(rules: list[Rule]) -> dict[str, dict[str, str]]:
 
 
 def _hex(text: str) -> Rgb:
+    return _hex_alpha(text)[0]
+
+
+def _hex_alpha(text: str) -> tuple[Rgb, float]:
+    """`#rgb`, `#rgba`, `#rrggbb` or `#rrggbbaa`."""
     digits = text.lstrip("#")
-    if len(digits) == 3:
+    if len(digits) in (3, 4):
         digits = "".join(c * 2 for c in digits)
-    assert len(digits) == 6, text
-    return (int(digits[0:2], 16), int(digits[2:4], 16), int(digits[4:6], 16))
+    assert len(digits) in (6, 8), f"not a hex colour: {text}"
+    rgb = (int(digits[0:2], 16), int(digits[2:4], 16), int(digits[4:6], 16))
+    return rgb, (int(digits[6:8], 16) / 255 if len(digits) == 8 else 1.0)
 
 
-_COLOUR = re.compile(r"var\((--[\w-]+)\)|#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b|rgba?\([^)]*\)")
+_COLOUR = re.compile(
+    r"var\((--[\w-]+)\)|#[0-9a-fA-F]+\b|rgba?\([^)]*\)|(-?[A-Za-z][\w-]*)(\()?|-?[\d.]+[a-z%]*|[\s,/()]+"
+)
+# What a colour-bearing value may hold besides colours: gradient functions
+# and their words, border and outline words, and the keywords that paint
+# nothing. Anything else (a named colour, `hsl()`, `oklch()`, `color-mix()`,
+# a system colour outside forced colours) fails the read, so a colour the
+# grade cannot read is never left ungraded.
+_GRADIENTS = {
+    "linear-gradient",
+    "radial-gradient",
+    "repeating-linear-gradient",
+    "repeating-radial-gradient",
+}
+_WORDS = {
+    "none", "transparent", "inherit", "initial", "unset", "currentcolor",
+    "solid", "dotted", "dashed", "double", "groove", "ridge", "inset", "outset", "auto",
+    "to", "at", "top", "bottom", "left", "right", "center", "ellipse", "circle",
+    "closest-side", "closest-corner", "farthest-side", "farthest-corner",
+    "fixed", "scroll", "local", "no-repeat", "repeat", "repeat-x", "repeat-y", "cover", "contain",
+    "border-box", "padding-box", "content-box", "thin", "medium", "thick",
+}  # fmt: skip
 
 
 def _colours(value: str, scheme: dict[str, str]) -> list[tuple[Rgb, float]]:
     """Every colour in a declaration's value, gradient stops included, as
-    (rgb, alpha). Keywords (`none`, `transparent`, `inherit`, system
-    colours) give nothing."""
+    (rgb, alpha), `var()` resolved in the scheme. The keywords that paint
+    nothing give nothing; any colour syntax this reader does not know
+    raises, so it cannot pass unread."""
     out: list[tuple[Rgb, float]] = []
-    for found in _COLOUR.finditer(value):
+    pos = 0
+    while pos < len(value):
+        found = _COLOUR.match(value, pos)
+        assert found, f"cannot read {value[pos:]!r} in {value!r}"
+        pos = found.end()
         token = found.group(0)
         if found.group(1):
             name = found.group(1)
             assert name in scheme, f"{name} is used but not declared"
             out += _colours(scheme[name], scheme)
         elif token.startswith("#"):
-            out.append((_hex(token), 1.0))
-        else:
+            out.append(_hex_alpha(token))
+        elif token.startswith("rgb"):
             parts = [p.strip() for p in token[token.index("(") + 1 : -1].split(",")]
+            assert len(parts) in (3, 4), f"cannot read {token!r}"
             rgb = (float(parts[0]), float(parts[1]), float(parts[2]))
             out.append((rgb, float(parts[3]) if len(parts) == 4 else 1.0))
+        elif found.group(2):
+            word = found.group(2).lower()
+            known = word in _GRADIENTS if found.group(3) else word in _WORDS
+            assert known, f"cannot read the colour {token!r} in {value!r}"
     return out
+
+
+def test_constructed_colour_syntax_the_reader_does_not_know_raises() -> None:
+    assert _colours("#0a73611f", {}) == [((10, 115, 97), 0x1F / 255)]
+    assert _colours("#fff8", {}) == [((255, 255, 255), 0x88 / 255)]
+    assert _colours("2px solid none", {}) == []
+    for value in (
+        "white",
+        "hsl(40 50% 50%)",
+        "oklch(0.7 0.1 80)",
+        "color-mix(in srgb, #fff, #000)",
+        "Highlight",
+    ):
+        with pytest.raises(AssertionError):
+            _colours(value, {})
 
 
 def _over(top: tuple[Rgb, float], under: Rgb) -> Rgb:
@@ -356,8 +414,47 @@ class Pair:
         return _ratio(self.fore, self.back)
 
 
-def _text_pairs() -> list[Pair]:
-    rules = _rules()
+# A container paints its own ground and sets its own text colour, and holds
+# other rules' text: its descendant selectors, and these children, which the
+# script puts inside it under a class of their own.
+_CHILDREN = {
+    ".jt": re.compile(r"\.jt-(?!raw\b)"),
+    ".macro-body": re.compile(r"\.macro-line\b"),
+    "pre": re.compile(r"#(stdout|stderr)$"),
+}
+
+
+def _containers(rules: list[Rule]) -> Iterator[tuple[Rule, str]]:
+    for rule in rules:
+        if rule.media or "color" not in rule.decls or not any(n in rule.decls for n in _BACKGROUND):
+            continue
+        for selector in rule.selectors:
+            if not any(word in selector for word in _NOT_TEXT_SURFACES):
+                yield rule, selector
+
+
+def _grounds(
+    rules: list[Rule], selector: str, scheme: dict[str, str], surfaces: dict[str, list[Rgb]]
+) -> list[Rgb]:
+    """The grounds a colour rule's text sits on besides its region's
+    surfaces: the ground of every container that holds it, and, for a state
+    (`#run:disabled`), the ground its plain rule (`#run`) paints."""
+    out: list[Rgb] = []
+    for rule, outer in _containers(rules):
+        children = _CHILDREN.get(outer)
+        inside = re.match(re.escape(outer) + r"\s*[\s>]\s*\S", selector) is not None
+        if inside or (children is not None and children.match(selector)):
+            out += _flatten(_background(rule, scheme), surfaces[_region(outer)])
+    plain = _STATE.sub("", selector)
+    if plain and plain != selector:
+        for rule in rules:
+            if not rule.media and plain in rule.selectors:
+                out += _flatten(_background(rule, scheme), surfaces[_region(plain)])
+    return out
+
+
+def _text_pairs(rules: list[Rule] | None = None) -> list[Pair]:
+    rules = _rules() if rules is None else rules
     pairs: list[Pair] = []
     for scheme_name, scheme in _schemes(rules).items():
         surfaces = _surfaces(rules, scheme)
@@ -375,7 +472,10 @@ def _text_pairs() -> list[Pair]:
                     continue
                 region = surfaces[_region(selector)]
                 own = _background(rule, scheme)
-                backs = _flatten(own, region) if own else region
+                if own:
+                    backs = _flatten(own, region)
+                else:
+                    backs = sorted(set(region + _grounds(rules, selector, scheme, surfaces)))
                 need = 3.0 if _large(_font(rules, rule, selector), selector) else 4.5
                 for fore, _alpha in fores:
                     for back in backs:
@@ -692,3 +792,43 @@ def test_nothing_is_wider_than_a_320px_window(tmp_path: Path, install: Path, ser
     # 40 px column beside it.
     commands = [s for s in states if s["state"].endswith(" commands")]
     assert len(commands) == 2 and all(s["detailWidth"] >= 250 for s in commands), commands
+
+
+def test_constructed_a_container_ground_does_not_hang_on_another_rule() -> None:
+    """`.jt-number` sits on the `.jt` box's ground. Giving `.toolbar select`
+    (another rule that paints the same token) a text colour of its own takes
+    that ground out of the chrome's shared surfaces, but `.jt-number` is
+    still graded on it, as a child of `.jt`."""
+    rules = _rules()
+    scheme = _schemes(rules)["dark"]
+    field = _colours(next(r for r in rules if ".jt" in r.selectors).decls["background"], scheme)[0][
+        0
+    ]
+    changed = [
+        Rule(r.media, r.selectors, {**r.decls, "color": "var(--field-text)"})
+        if ".toolbar select" in r.selectors
+        else r
+        for r in rules
+    ]
+    assert field in _surfaces(rules, scheme)["chrome"]
+    assert field not in _surfaces(changed, scheme)["chrome"]
+    for version in (rules, changed):
+        backs = {
+            p.back
+            for p in _text_pairs(version)
+            if p.scheme == "dark" and p.selector == ".jt-number"
+        }
+        assert field in backs
+
+
+def test_constructed_a_colour_only_state_is_graded_on_its_own_ground() -> None:
+    """`#run:disabled` sets only a colour; it is graded on the ground `#run`
+    paints, in each scheme."""
+    rules = _rules()
+    for name, scheme in _schemes(rules).items():
+        run = next(r for r in rules if "#run" in r.selectors)
+        ground = _colours(run.decls["background"], scheme)[0][0]
+        backs = {
+            p.back for p in _text_pairs(rules) if p.scheme == name and p.selector == "#run:disabled"
+        }
+        assert ground in backs, name
