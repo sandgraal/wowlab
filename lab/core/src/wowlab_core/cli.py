@@ -3519,6 +3519,25 @@ def _sv_file(path: str, root: Path | None, flavor: str | None) -> Path:
     return lay.flavor_path / given
 
 
+def _sv_inside_install(target: Path, root: Path | None, flavor: str | None) -> None:
+    """`sv dump --install-only`: refuse (exit 3) a file whose real path, every
+    link on the way resolved, is not under the install's real path, before a
+    byte of it is read, so the refusal can quote nothing of it. No install
+    found is refused the same way, by `_open`. A spelling that differs only in
+    case is refused too: the check errs towards refusing."""
+    inst, _, _ = _open(root, flavor)
+    try:
+        real = Path(longpath.realpath(target))
+        inside = real.is_relative_to(longpath.realpath(inst.root))
+    except (OSError, ValueError):
+        inside = False
+    if not inside:
+        raise CliError(
+            f"refused: {target} is not in the install at {inst.root} (--install-only)",
+            EXIT_REFUSED,
+        )
+
+
 @sv_app.command("dump")
 @_handled
 def sv_dump(
@@ -3537,6 +3556,14 @@ def sv_dump(
             'prints it; a quoted key takes Lua 5.1 escapes (\\n, \\\\, \\", \\ddd).',
         ),
     ] = None,
+    install_only: Annotated[
+        bool,
+        typer.Option(
+            "--install-only",
+            help="Refuse a FILE that is not in the install, links followed, before "
+            "reading it. The browser view always passes this.",
+        ),
+    ] = False,
     root: RootOpt = None,
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
@@ -3544,6 +3571,8 @@ def sv_dump(
     """A SavedVariables file as data: one `path = value` line per value, in file
     order. Parsed by `luadata`, never run as code. JSON: SvDumpReport."""
     target = _sv_file(file, root, flavor)
+    if install_only:
+        _sv_inside_install(target, root, flavor)
     doc = luadata.read(target)
     if path is not None:
         value = _resolve_path(doc, path)
@@ -9978,7 +10007,9 @@ def ui_command() -> None:
     each shows a plan and runs only when you confirm, after a snapshot.
 
     The server listens on 127.0.0.1 only, at a port the system picks, and
-    answers only requests that carry the random token in the URL it opens.
+    answers only requests that carry a random key. The link it opens works
+    once: the page trades it for that key and takes it out of the address
+    bar, and a page that finds the link already used says so.
     The page has five tabs. Explorer shows the whole install's files, each
     with whether wowlab may edit it, and what a picked file is and who
     writes it. Gaps lists the paths the file map does not describe.
@@ -10011,7 +10042,7 @@ def ui_command() -> None:
         if opened:
             _say_err(f"wowlab ui: serving on http://127.0.0.1:{server.port}/; Ctrl-C to stop")
         else:
-            _say_err("wowlab ui: no browser opened; open this URL (it carries the access token):")
+            _say_err("wowlab ui: no browser opened; open this link (it works only once):")
             typer.echo(server.url)
 
     lock = threading.Lock()

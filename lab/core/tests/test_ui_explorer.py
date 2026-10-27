@@ -322,6 +322,9 @@ DRESSING_ORIGIN = 'const DRESSING_ORIGIN = "https://www.wowhead.com";'
 DRESSING_PARSE = "parsed = new URL(value);"
 
 
+BOOT_FETCH = 'fetch("/api/session?boot=" + encodeURIComponent(boot), {'
+
+
 def test_no_external_url_appears_in_the_page(server: Any) -> None:
     body = _page(server).body.decode("utf-8")
     assert body.count(LOOKS_FRAME) == 1
@@ -332,7 +335,10 @@ def test_no_external_url_appears_in_the_page(server: Any) -> None:
         assert marker not in body, marker
     # Every request the script makes goes to the server's own API, by path.
     script = _script()
-    assert script.count("fetch(") == script.count('fetch(api("/api/')
+    # The one exception is the boot exchange (M16-42), which has no session
+    # key yet and sends the one-time boot key instead.
+    assert script.count(BOOT_FETCH) == 1
+    assert script.count("fetch(") == script.count('fetch(api("/api/') + 1
     assert set(re.findall(r'fetch\(api\("([^"]+)"\)', script)) == {
         "/api/commands",
         "/api/run",

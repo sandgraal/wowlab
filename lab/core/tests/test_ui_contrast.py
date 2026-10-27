@@ -771,7 +771,9 @@ def test_nothing_is_wider_than_a_320px_window(tmp_path: Path, install: Path, ser
     script = tmp_path / "m16-30-reflow.js"
     script.write_text(_REFLOW_JS, encoding="utf-8")
     done = subprocess.run(
-        [node, str(script), server.url],
+        # The session key, not the one-time boot link (M16-42): the script
+        # opens the page once per colour scheme.
+        [node, str(script), f"http://127.0.0.1:{server.port}/?token={server.token}"],
         capture_output=True,
         text=True,
         encoding="utf-8",

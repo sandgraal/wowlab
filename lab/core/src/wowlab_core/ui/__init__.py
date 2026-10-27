@@ -9,10 +9,20 @@ Every request is checked, in this order, before anything else is done with
 it (a POST body included):
 - `Host` is exactly `127.0.0.1:<port>` or `localhost:<port>`;
 - an `Origin`, when present, is exactly `http://` plus that `Host`;
-- the query parameter `token` is the server's token
-  (`secrets.token_urlsafe(32)`), which appears only in the URL `wowlab ui`
-  opens: never in a response, a header, a cookie, a log, or a child's argv
-  or environment.
+- the query parameter `token` is the server's session key
+  (`secrets.token_urlsafe(32)`).
+The session key is never in a header, a cookie, a log, a URL, or a child's
+argv or environment, and it is in one response body only: the boot exchange
+(M16-42). The URL `wowlab ui` opens, which a browser's argv carries and other
+local accounts can read, holds a one-time boot key instead
+(`/?boot=<key>`, `secrets.token_urlsafe(32)`), the only thing besides the
+session key that passes the third check, and only for the shell (`GET` and
+`HEAD` of `/`) and for `POST /api/session`, the exchange, which answers
+`{"token": <session key>}` once and spends the boot key. From then on the
+boot key opens nothing (403 `boot_spent`), so a second exchange, whoever
+makes it, gets nothing, and the page that lost the race says so. `page.js`
+takes the query out of the address bar with `history.replaceState` before
+its first request, and keeps the session key in memory only.
 A refusal answers 403 `{"error": "host" | "origin" | "token"}`. Every
 response, refusals and errors included, carries the same
 Content-Security-Policy, which allows the server itself and the page's own
@@ -33,7 +43,9 @@ arguments after `--`, flags given or not, never through a shell. Refused
 that declares `--yes` (read from the tree) whose plan run has none of the
 three shapes below (none on 2026-10-19), `ui` itself, `log tail` with
 `follow` (a run must end) and `looks page` with `out` (it can create a file
-anywhere outside an install).
+anywhere outside an install). `sv dump` always runs with `--install-only`
+(`_FORCED_FLAGS`), which refuses a file whose real path is not in the
+install before reading it, so a refusal quotes no byte of it (M16-42).
 
 The looks page (M14-04, ADR-0029 "embedded", §16.3). `GET /api/looks-page`
 answers `{"page": <text>}`: the file `looks page` writes by default,
@@ -53,9 +65,10 @@ Two residuals are known and accepted for review (M14-04): a file planted as
 also names, and run it in the frame's opaque origin, where it has no token
 and every request it makes carries `Origin: null` and is refused; and a
 `srcdoc` frame takes its base URL from the page that holds it, so inside the
-frame `document.baseURI` is the opened URL, token included, which neither
-script the frame may run (`lookspage._SCRIPT`, `page.js`) reads, as
-`test_ui_looks.py` checks.
+frame `document.baseURI` is the page's URL, which neither script the frame
+may run (`lookspage._SCRIPT`, `page.js`) reads, as `test_ui_looks.py`
+checks; since M16-42 that URL is `/`, the query taken out before the frame
+exists, and the URL `wowlab ui` opens never holds the session key.
 
 The confirm step (ADR-0029 "Writes", §16.1, M14-02, M14-03). A leaf that
 declares `--yes` is never run with `--yes` from a form: its `yes` (and
@@ -216,6 +229,15 @@ _REFUSED_PARAMS: Mapping[tuple[str, ...], Mapping[str, tuple[bool, str]]] = {
     ("log", "tail"): {"follow": (True, "a run must end")},
     ("looks", "page"): {"out": (False, "it can create a file anywhere outside an install")},
 }
+# Flags the server gives a leaf on every run, as it gives `--json`, and never
+# the page, by leaf path (M16-42). `sv dump` reads any file it is named, so
+# from the UI it reads only one in the install: `--install-only` refuses any
+# other before reading a byte of it. A leaf here that does not declare its
+# flag as a plain flag is excluded (`_EXCLUDED_FORCED`), never run without it.
+_FORCED_FLAGS: Mapping[tuple[str, ...], tuple[str, ...]] = {
+    ("sv", "dump"): ("--install-only",),
+}
+_EXCLUDED_FORCED = "a flag the UI always passes is missing"
 
 
 # ─── the page shell ──────────────────────────────────────────────────────────
@@ -402,6 +424,8 @@ class _Leaf:
     # joined by `:`, the confirmed run passes back as `--expect`
     # (`cli.EXPECT_FIELDS`).
     pin: tuple[str, ...] | None = None
+    # The flags the server adds to every run of this leaf (`_FORCED_FLAGS`).
+    forced: tuple[str, ...] = ()
 
 
 def _opts(param: Any) -> list[str]:
@@ -527,6 +551,13 @@ def _read_tree(root: Any) -> dict[tuple[str, ...], _Leaf]:
         excluded = None
         confirm = None
         pin = None
+        forced = _FORCED_FLAGS.get(path, ())
+        for flag in forced:
+            owners = [p for p in getattr(command, "params", ()) if flag in _opts(p)]
+            if len(owners) == 1 and _plain_flag(owners[0], flag):
+                params.pop(str(owners[0].name), None)
+            else:
+                excluded = _EXCLUDED_FORCED
         if yes:
             if len(yes) == 1 and len(dry_run) <= 1 and len(expect) <= 1:
                 confirm = _confirm_shape(
@@ -537,7 +568,7 @@ def _read_tree(root: Any) -> dict[tuple[str, ...], _Leaf]:
                     expect[0] if expect else None,
                 )
             if confirm is None:
-                excluded = _EXCLUDED_YES
+                excluded = excluded or _EXCLUDED_YES
             else:
                 # The server adds these itself, as it adds `--json`: the
                 # plan run never carries `--yes`, and only a token adds it,
@@ -550,10 +581,11 @@ def _read_tree(root: Any) -> dict[tuple[str, ...], _Leaf]:
                     params.pop(str(param.name), None)
         if path == ("ui",):
             excluded = _EXCLUDED_UI
+        if excluded is not None:
             confirm = None
             pin = None
         help_text = str(getattr(command, "help", None) or "").strip()
-        leaves[path] = _Leaf(path, help_text, params, json_opt, excluded, confirm, pin)
+        leaves[path] = _Leaf(path, help_text, params, json_opt, excluded, confirm, pin, forced)
     return leaves
 
 
@@ -699,7 +731,7 @@ def _build(leaf: _Leaf, params: Mapping[str, object]) -> _Argv:
         else:
             options.extend(f"{param.opt}={v}" for v in values)
     tail = ("--", *arguments) if arguments else ()
-    return _Argv((*leaf.path, *options), leaf.json_opt, tail, leaf.confirm)
+    return _Argv((*leaf.path, *leaf.forced, *options), leaf.json_opt, tail, leaf.confirm)
 
 
 # ─── running one command ─────────────────────────────────────────────────────
@@ -1095,6 +1127,7 @@ class UiServer(http.server.ThreadingHTTPServer):
 
     daemon_threads = True
     token: str
+    boot: str
     url: str
     wowlab_argv: Sequence[str]
 
@@ -1109,7 +1142,14 @@ class UiServer(http.server.ThreadingHTTPServer):
         self.wowlab_argv = tuple(wowlab_argv)
         self.timeout_s = timeout_s
         self.output_cap_bytes = output_cap_bytes
+        # The session key every request but the boot ones carries, and the
+        # one-time boot key the opened URL carries instead (M16-42). The
+        # session key leaves this process once, in the body of the one boot
+        # exchange; the boot key is worthless once spent.
         self.token = secrets.token_urlsafe(32)
+        self.boot = secrets.token_urlsafe(32)
+        self._boot_lock = threading.Lock()
+        self._boot_spent = False
         self._runs_lock = threading.Lock()
         self._runs: set[int] = set()
         self._closing = threading.Event()
@@ -1123,7 +1163,7 @@ class UiServer(http.server.ThreadingHTTPServer):
         self._confirms_lock = threading.Lock()
         super().__init__((_LOOPBACK, 0), _Handler)
         self.port = int(self.server_address[1])
-        self.url = f"http://{_LOOPBACK}:{self.port}/?token={self.token}"
+        self.url = f"http://{_LOOPBACK}:{self.port}/?boot={self.boot}"
         self.hosts = frozenset({f"{_LOOPBACK}:{self.port}", f"localhost:{self.port}"})
         self.commands_body = _commands_body(leaves)
 
@@ -1152,6 +1192,30 @@ class UiServer(http.server.ThreadingHTTPServer):
         with self._idle:
             while self._runs and time.monotonic() < deadline:
                 self._idle.wait(_POLL_S)
+
+    def boot_state(self, given: str) -> str | None:
+        """Whether `given` is the boot key: None when it is and is not yet
+        spent, `_BOOT_SPENT` when it is and was spent, else `"token"`."""
+        if not secrets.compare_digest(
+            given.encode("utf-8", "surrogatepass"), self.boot.encode("ascii")
+        ):
+            return "token"
+        with self._boot_lock:
+            return _BOOT_SPENT if self._boot_spent else None
+
+    def spend_boot(self, given: str) -> str | None:
+        """Spend the boot key: the session key, the first time `given` is the
+        boot key and only then; else None. The check and the spend are one
+        step, so two exchanges racing get one key between them."""
+        if not secrets.compare_digest(
+            given.encode("utf-8", "surrogatepass"), self.boot.encode("ascii")
+        ):
+            return None
+        with self._boot_lock:
+            if self._boot_spent:
+                return None
+            self._boot_spent = True
+        return self.token
 
     def run(self, argv: list[str]) -> _Run:
         """One run of `wowlab` with `argv`, bounded in time and output."""
@@ -1314,6 +1378,12 @@ class UiServer(http.server.ThreadingHTTPServer):
 _DIGITS = re.compile(r"[0-9]+")
 # The one route that reads a file: the page `looks page` wrote (M14-04).
 _LOOKS_PAGE = "/api/looks-page"
+# The boot exchange (M16-42): `POST` with the boot key, answered once with the
+# session key.
+_SESSION = "/api/session"
+# The refusal for the boot key once it was spent: the page says the link was
+# used, which is how a player sees that something else used it first.
+_BOOT_SPENT = "boot_spent"
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
@@ -1370,14 +1440,21 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     # ── checks ──
 
-    def _check(self) -> str | None:
-        """Host, Origin and the token, in that order; the refusal code, or None."""
+    def _check(self, boot: bool = False) -> str | None:
+        """Host, Origin and the token, in that order; the refusal code, or
+        None. With `boot` (the shell and the boot exchange), a query that is
+        exactly one `boot` field is checked as the boot key, not yet spent,
+        instead of the token."""
         hosts = self.headers.get_all("Host") or []
         if len(hosts) != 1 or hosts[0] not in self.server.hosts:
             return "host"
         origins = self.headers.get_all("Origin")
         if origins is not None and (len(origins) != 1 or origins[0] != "http://" + hosts[0]):
             return "origin"
+        if boot:
+            key = self._boot_given()
+            if key is not None:
+                return self.server.boot_state(key)
         query = self.path.partition("?")[2].partition("#")[0]
         try:
             fields = urllib.parse.parse_qs(query, keep_blank_values=True, max_num_fields=32)
@@ -1391,12 +1468,29 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return "token"
         return None
 
+    def _boot_given(self) -> str | None:
+        """The boot key, when the query is exactly one `boot` field."""
+        query = self.path.partition("?")[2].partition("#")[0]
+        try:
+            pairs = urllib.parse.parse_qsl(query, keep_blank_values=True, max_num_fields=32)
+        except ValueError:
+            return None
+        if len(pairs) == 1 and pairs[0][0] == "boot":
+            return pairs[0][1]
+        return None
+
     def _route(self) -> str:
         return self.path.partition("?")[0].partition("#")[0]
 
     def _checked(self) -> str | None:
-        """The request's path once it passed the checks, else None (refused)."""
-        refusal = self._check()
+        """The request's path once it passed the checks, else None (refused).
+        The boot key opens only the shell (`GET` and `HEAD` of `/`) and the
+        boot exchange."""
+        route = self._route()
+        boot = (self.command in ("GET", "HEAD") and route == "/") or (
+            self.command == "POST" and route == _SESSION
+        )
+        refusal = self._check(boot)
         if refusal is not None:
             self._error(403, refusal)
             return None
@@ -1415,7 +1509,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._reply(200, self.server.commands_body, "application/json")
         elif path == _LOOKS_PAGE:
             self._looks_page()
-        elif path == "/api/run":
+        elif path in ("/api/run", _SESSION):
             self._error(405, "method_not_allowed")
         else:
             self._error(404, "not_found")
@@ -1445,6 +1539,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path = self._checked()
         if path is None:
+            return
+        if path == _SESSION:
+            self._session()
             return
         if path != "/api/run":
             if path in static_files() or path == _LOOKS_PAGE:
@@ -1477,6 +1574,22 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         for piece in pieces:
             self.wfile.write(piece)
+
+    def _session(self) -> None:
+        """`POST /api/session?boot=<key>`: the boot exchange. Answers the
+        session key once, `{"token": <key>}`, and spends the boot key, so a
+        second exchange, whoever makes it, is refused `boot_spent`. The body
+        is not read. Only the boot key is taken here: a request that carries
+        the session key instead already holds what this would answer."""
+        given = self._boot_given()
+        if given is None:
+            self._error(403, "token")
+            return
+        token = self.server.spend_boot(given)
+        if token is None:
+            self._error(403, _BOOT_SPENT)
+            return
+        self._json(200, {"token": token})
 
     def _body(self) -> bytes | None:
         """The POST body, read only once it is known to be small enough."""

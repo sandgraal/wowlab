@@ -22,7 +22,16 @@
 // script only lays it out. Nothing read from a run is ever parsed as HTML:
 // text goes in through textContent only. The home folder is shown as "~".
 (function () {
-  const token = new URLSearchParams(window.location.search).get("token") || "";
+  // The opened URL carries a one-time boot key, which `start` exchanges once
+  // for the session key every request carries (M16-42). The query leaves the
+  // address bar, and so the history, before the first request; the session
+  // key is kept in this closure only, never in storage or the URL.
+  const query = new URLSearchParams(window.location.search);
+  const boot = query.get("boot") || "";
+  let token = query.get("token") || "";
+  if (window.location.search && window.history && typeof window.history.replaceState === "function") {
+    window.history.replaceState(null, "", "/");
+  }
   const api = (path) => path + "?token=" + encodeURIComponent(token);
   const byId = (id) => document.getElementById(id);
   // The one outside origin the page may link to (M15-02; ADR-0019's and
@@ -2184,7 +2193,51 @@
     }
   }
 
+  // The boot exchange: the one-time key from the opened URL for the session
+  // key. True when the page holds a session key afterwards.
+  async function start() {
+    if (token) return true;
+    if (!boot) {
+      const none = "This page was opened without its key: stop wowlab ui with Ctrl-C and start it again.";
+      say(none, true);
+      explorerSay(none, true);
+      return false;
+    }
+    let reply;
+    try {
+      reply = await fetch("/api/session?boot=" + encodeURIComponent(boot), {
+        method: "POST",
+        cache: "no-store",
+        credentials: "omit",
+      });
+    } catch (error) {
+      say("The server could not be reached: " + error, true);
+      explorerSay("The server could not be reached: " + error, true);
+      return false;
+    }
+    let data = null;
+    try {
+      data = await reply.json();
+    } catch (error) {
+      data = null;
+    }
+    if (!reply.ok || !data || typeof data.token !== "string" || !data.token) {
+      const refused =
+        data && data.error === "boot_spent"
+          ? "This link was already used, so this page cannot start. If you did not open it " +
+            "twice, something else on this computer may have: stop wowlab ui with Ctrl-C and " +
+            "start it again."
+          : "The server refused to start this page (" + reply.status + ").";
+      say(refused, true);
+      explorerSay(refused, true);
+      return false;
+    }
+    token = data.token;
+    return true;
+  }
+
   async function load() {
+    if (!(await start())) return;
     let reply;
     try {
       reply = await fetch(api("/api/commands"), { cache: "no-store", credentials: "omit" });
