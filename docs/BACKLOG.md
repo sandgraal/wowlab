@@ -1961,7 +1961,7 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 
 ---
 
-## [ ] M16-42 — The UI's local exposure
+## [x] M16-42 — The UI's local exposure
 **Size:** S · **Depends on:** nothing · **Sources:** security:F3, F4 (EV-41)
 
 - From `/api/run`, `sv dump` of a path outside the resolved install is refused, and the refusal never echoes the bytes.
@@ -2060,7 +2060,7 @@ The readers' callers already know the install. Each reader takes the install roo
 
 ---
 
-## [ ] M16-53 — The Character keys table reflows at 320 px
+## [x] M16-53 — The Character keys table reflows at 320 px
 **Size:** S · **Depends on:** nothing · **Sources:** a11y:F6, designer:F11 (EV-28); found in the M16-42 review (2026-10-27)
 
 Already on `main` at 3e53e5a, against M16-30's own acceptance line (`scrollWidth == clientWidth` at 320 px). At 320 px, on the first visit to Character, once the keys panel has drawn, the keys table (`#char-keys table.char-table`) is 441 px wide and the page's `scrollWidth` is 478. M16-30's `test_nothing_is_wider_than_a_320px_window` measures right after opening a gear row, before the keys table is drawn, so it passes.
@@ -2142,6 +2142,7 @@ Restyle the page to `docs/design/WELLSPRING.md`. `page.css` is rewritten on cust
 - **Buttons:** `#run` and `#looks-write` become primary, `.copy` becomes secondary, and `#confirm` becomes the seal (one standing glow per view).
 - **Focus:** a 2px `wellspring` outline everywhere, including inside the Codex, which under Wellspring is `surface-raised` (dark in Warband, white in Bastion), not parchment. It meets 3:1 on every surface it lands on in both themes. M16-30's region rules (the ink ring on `.parchment`, the gold ring on `.gear-table`) are replaced, not kept beside it.
 - **Fonts:** the `font-display`, `font-serif` and `font-mono` stacks from the spec. If ADR-0035 is rejected, they are the stacks without their first family.
+- **Keep:** M16-53's `#char-keys { max-width: 100%; overflow-x: auto; }` rule (or an equivalent that keeps the keys table scrolling inside its own box). Only the Playwright reflow test guards it, and CI skips that test, so the PR pastes a local run of `test_nothing_is_wider_than_a_320px_window`, not skipped, in both themes.
 - **Not in scope:** a theme switch, any new view, any change to the Looks page, to `lookspage`, or to what a command prints.
 
 **Tests on `main` this replaces, under the owner decision above:**
