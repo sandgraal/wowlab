@@ -26,7 +26,7 @@ dev = [
   "types-psutil>=7.0",  # psutil ships no py.typed; mypy --strict needs the stubs
   # dev only: test_ui_fonts.py builds the sdist and wheel in-process, offline
   # (M16-51, ADR-0012); the same pin as lab/core/build-constraints.txt, which a test checks
-  "hatchling==1.32.4",
+  "hatchling==1.33.0",
 ]
 
 # ─── ruff ────────────────────────────────────────────────────────────────────
