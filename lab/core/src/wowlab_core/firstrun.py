@@ -835,9 +835,12 @@ def snapshot_flavor(
     label: str = "",
     screenshots: bool = False,
     client_running: bool | None = None,
+    kind: Literal["user", "first-run"] = "user",
 ) -> snapshot.Manifest:
     """Snapshot a flavor's WTF/, Interface/ and Fonts/ into `store`, as
-    `wowlab snap create` does: the install is only read (L1).
+    `wowlab snap create` does: the install is only read (L1). `kind` is what
+    the manifest records (M16-09): `user` for `snap create`, `first-run` for
+    doctor's first run.
 
     A store that is an ancestor of the install is outside every install, so
     the gate would create it and its `lock` before `create` refused the
@@ -855,6 +858,7 @@ def snapshot_flavor(
             flavor_folder=flavor.folder,
             flavor_version=flavor.version,
             client_running=client_running,
+            kind=kind,
         )
 
 
@@ -1030,7 +1034,13 @@ def run(
     lay = layout.Layout.for_flavor(flavor, inst.root)
     try:
         manifest = snapshot_flavor(
-            store, inst, flavor, lay, label=SNAPSHOT_LABEL, client_running=running
+            store,
+            inst,
+            flavor,
+            lay,
+            label=SNAPSHOT_LABEL,
+            client_running=running,
+            kind="first-run",
         )
     except guard.GuardError as exc:
         say(f"The snapshot was refused by the write gate: {exc}")

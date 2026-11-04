@@ -2639,10 +2639,12 @@ def _hints(
             and facts.confirmed is True
             and not facts.damaged_newer
         ):
-            does = (
-                f"put back the copy in snapshot {latest}; it shows the plan and asks "
-                "first, and `wowlab undo` reverses it"
+            what = (
+                f"put back the copy in snapshot {latest}, which was {_KIND_WORDS['pre-write']}"
+                if facts.kind == "pre-write"
+                else f"put back the copy in snapshot {latest}"
             )
+            does = f"{what}; it shows the plan and asks first, and `wowlab undo` reverses it"
             if verdict.server_may_replace:
                 does += (
                     "; the server may replace it at the next login (sync settings: wowlab doctor)"
@@ -2744,9 +2746,28 @@ def _snapshot_line(facts: pathfacts.SnapshotFacts, captured: str) -> str:
     if facts.confirmed is False:
         return (
             f"{head} ({_snap_name(latest)}): it holds {facts.path}, which could not be "
-            f"confirmed to be this file ({_UNCONFIRMED}); {on_disk}{damaged}"
+            f"confirmed to be this file ({_UNCONFIRMED}); {on_disk}{_pre_write_words(facts)}"
+            f"{damaged}"
         )
-    return f"{head} ({_snap_name(latest)}): {on_disk}{damaged}"
+    return f"{head} ({_snap_name(latest)}): {on_disk}{_pre_write_words(facts)}{damaged}"
+
+
+def _pre_write_words(facts: pathfacts.SnapshotFacts) -> str:
+    """What the line says of a pre-write copy (M16-09): of the snapshot it
+    names, when that is one, or of a newer one it passed over."""
+    if facts.kind == "pre-write":
+        return (
+            "; this snapshot was "
+            + _KIND_WORDS["pre-write"]
+            + ", and no other snapshot covers this file"
+        )
+    newer = facts.newer_pre_write
+    if newer is not None:
+        return (
+            f"; a newer snapshot ({_snap_name(newer)}) was {_KIND_WORDS['pre-write']}, "
+            "not as you saved them"
+        )
+    return ""
 
 
 def _path_kind(
@@ -3154,6 +3175,7 @@ def _detail(
             judged.flavor_folder,
             "/".join(parts),
             lay.snapshot_subtrees(),
+            _pre_write_ids(snapshot.SnapshotStore()),
         )
     views: list[ExplainView] = []
     note: str | None = None
@@ -5659,6 +5681,40 @@ class SnapListReport(_Out):
     damaged: list[snapshot.InvalidManifest]
 
 
+_REF_HELP = (
+    "A snapshot id, a unique start or end of one, latest, latest-user (the newest "
+    "one you took), or ~N (N before the newest)."
+)
+
+# What each kind of snapshot is, in words (M16-09): `snap show` prints it, and
+# `explain` uses the pre-write one when it points at such a copy.
+_KIND_WORDS: dict[snapshot.SnapshotKind, str] = {
+    "user": "taken with snap create",
+    "first-run": "taken by doctor on its first run",
+    "profile": "a saved profile",
+    "pre-write": (
+        "taken automatically just before a change; restoring it puts the files back "
+        "as they were just before that change"
+    ),
+}
+
+
+def _pre_write_ids(store: snapshot.SnapshotStore) -> frozenset[str]:
+    """The snapshots the store's journal names: the pre-write copies, for
+    manifests written before kinds existed (`snapshot.kind_of`). A journal
+    that cannot be read names none, so such a manifest reads as `user`."""
+    try:
+        return frozenset(r.snapshot_id for r in guard.history(store=store.path))
+    except guard.GuardError:
+        return frozenset()
+
+
+def _resolve_ref(store: snapshot.SnapshotStore, reference: str) -> str:
+    """The full id `reference` names (`snapshot.resolve_reference`)."""
+    ids = _pre_write_ids(store) if reference == "latest-user" else frozenset[str]()
+    return snapshot.resolve_reference(store, reference, ids)
+
+
 def _summary(m: snapshot.Manifest) -> SnapshotSummary:
     return SnapshotSummary(
         id=m.id,
@@ -5788,16 +5844,25 @@ def snap_list(json_out: JsonOpt = False) -> None:
 @snap_app.command("show")
 @_handled
 def snap_show(
-    snapshot_id: Annotated[str, typer.Argument(metavar="ID", help="Id or unique prefix.")],
+    snapshot_id: Annotated[str, typer.Argument(metavar="ID", help=_REF_HELP)],
     json_out: JsonOpt = False,
 ) -> None:
-    """One snapshot and every path in it. JSON: the manifest (snapshot.Manifest)."""
-    manifest = snapshot.SnapshotStore().show(snapshot_id)
+    """One snapshot and every path in it. JSON: the manifest (snapshot.Manifest),
+    with its kind."""
+    store = snapshot.SnapshotStore()
+    manifest = store.show(_resolve_ref(store, snapshot_id))
+    if manifest.kind is None:
+        # Written before kinds existed: say what it is, as the journal tells.
+        manifest = manifest.model_copy(
+            update={"kind": snapshot.kind_of(manifest, _pre_write_ids(store))}
+        )
     if json_out:
         _emit_manifest(manifest)
         return
     _say(f"Snapshot {manifest.id}")
     _say(f"  taken:    {manifest.created_at}")
+    if manifest.kind is not None:
+        _say(f"  kind:     {manifest.kind}, {_KIND_WORDS[manifest.kind]}")
     if manifest.label:
         _say(f"  label:    {manifest.label}")
     _say(f"  install:  {manifest.install_root}")
@@ -5891,14 +5956,14 @@ def _lua_diff(
 @snap_app.command("diff")
 @_handled
 def snap_diff(
-    a: Annotated[str, typer.Argument(metavar="A", help="Older snapshot id or prefix.")],
-    b: Annotated[str, typer.Argument(metavar="B", help="Newer snapshot id or prefix.")],
+    a: Annotated[str, typer.Argument(metavar="A", help="The older snapshot. " + _REF_HELP)],
+    b: Annotated[str, typer.Argument(metavar="B", help="The newer snapshot. " + _REF_HELP)],
     json_out: JsonOpt = False,
 ) -> None:
     """Files added, removed and changed from A to B; for SavedVariables that
     parse, which values changed. JSON: DiffReport."""
     store = snapshot.SnapshotStore()
-    diff = store.diff(a, b)
+    diff = store.diff(_resolve_ref(store, a), _resolve_ref(store, b))
     a_version = store.show(diff.a).flavor_version
     b_version = store.show(diff.b).flavor_version
     changed = []
@@ -6447,7 +6512,7 @@ def _executable_note(lay: layout.Layout, named: Sequence[str], exc: Exception) -
 @snap_app.command("restore")
 @_handled
 def snap_restore(
-    snapshot_id: Annotated[str, typer.Argument(metavar="ID", help="Id or unique prefix.")],
+    snapshot_id: Annotated[str, typer.Argument(metavar="ID", help=_REF_HELP)],
     paths: Annotated[
         list[str] | None,
         typer.Option(
@@ -6480,7 +6545,7 @@ def snap_restore(
     Screenshots/, not even with --paths): a whole restore leaves them in the
     snapshot, counts them, and restores the rest. JSON: RestoreReport."""
     store = snapshot.SnapshotStore()
-    manifest = store.show(snapshot_id)
+    manifest = store.show(_resolve_ref(store, snapshot_id))
     inst, _ = _discover(root)
     if manifest.flavor_folder is None:
         raise CliError(f"snapshot {manifest.id} names no flavor folder; it cannot be restored")
