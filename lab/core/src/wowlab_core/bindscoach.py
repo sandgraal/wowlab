@@ -51,8 +51,11 @@ The reports:
   not here.
 - `bound-never-cast`: a slot a key reaches whose spell the log never shows
   the player casting: no cast at the slot's own id, and none matched to it by
-  name. Cannot judge when the log has none of the player's casts, since then
-  every bound spell would be listed.
+  name. Withheld (cannot judge) below a minimum sample, `never_cast_min_casts`
+  of the player's casts in the log (200 in the shipped table, M16-36): a
+  short log leaves out the spells cast once a fight or less, and would list
+  them as never cast. With none of the player's casts every bound spell would
+  be listed, so that is said on its own.
 
 "High-cost" is an opinion: the cost table is `binds_coach_costs.toml`,
 shipped beside this module, which a player overrides key by key with a file
@@ -65,7 +68,10 @@ dropped may be the one that changes the answer. Many binding commands left
 out of the record (an action-bar addon binds through its own click
 commands) make `cast-without-bind` and `frequent-on-high-cost` "cannot
 judge" too, when they have anything to report: a key the coach cannot see
-may reach the spell, and may be cheaper.
+may reach the spell, and may be cheaper. Whenever the record counts any
+command or key it left out, `CoachResult.unseen` says so before any finding
+(M16-36), in words that name no addon: which program bound them is not
+something the record shows.
 """
 
 from __future__ import annotations
@@ -96,6 +102,7 @@ __all__ = [
     "GET_RECORD",
     "LEFT_OUT_LIMIT",
     "MODIFIERS",
+    "NEVER_CAST_LIMIT",
     "REPORTS",
     "UNFOLLOWED_SLOTS",
     "BoundNeverCast",
@@ -116,6 +123,7 @@ __all__ = [
     "load_costs",
     "parse_costs",
     "shipped_costs_path",
+    "unseen_words",
     "user_costs_path",
 ]
 
@@ -132,7 +140,9 @@ _SIDES = ("L", "R")
 # probably go through an action-bar addon's click commands, which the coach
 # cannot read, so "cast with no bind" cannot be judged.
 LEFT_OUT_LIMIT = 12
-_BAR_ADDONS = "an action-bar addon such as Bartender, Dominos or ElvUI binds through these"
+_BAR_ADDONS = "an action-bar addon may bind through commands like these"
+# The upper bound of `never_cast_min_casts` in a cost table.
+NEVER_CAST_LIMIT = 100_000
 _UNFOLLOWED_DETAIL = (
     "on a main-bar page shown by a form, stance, stealth, paging, or a possess, override or "
     "vehicle bar, which the coach does not follow"
@@ -159,6 +169,8 @@ class CostTable(_Model):
     high_cost: int = Field(ge=0, le=1000)
     frequent_share: float = Field(gt=0, le=1)
     frequent_min_casts: int = Field(ge=1, le=1000)
+    # "Bound, never cast" is withheld below this many of the player's casts.
+    never_cast_min_casts: int = Field(ge=1, le=NEVER_CAST_LIMIT)
     unlisted: int = Field(ge=0, le=1000)
     modifiers: dict[str, int]  # ALT, CTRL, SHIFT, META
     keys: dict[str, int]  # upper case, as the client writes key names
@@ -182,7 +194,7 @@ def user_costs_path() -> Path:
 
 
 _SECTIONS = {"coach", "modifiers", "keys"}
-_COACH = {"high_cost", "frequent_share", "frequent_min_casts", "unlisted"}
+_COACH = {"high_cost", "frequent_share", "frequent_min_casts", "never_cast_min_casts", "unlisted"}
 
 
 def _cost(where: str, value: object, least: int = 0) -> int:
@@ -201,10 +213,21 @@ def _share(where: str, value: object) -> float:
     return float(value)
 
 
+def _casts(where: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= NEVER_CAST_LIMIT:
+        raise CostTableError(
+            f"{where}: a number of casts is a whole number from 1 to {NEVER_CAST_LIMIT}, "
+            f"not {value!r}"
+        )
+    return value
+
+
 def _coach_value(name: str, value: object) -> int | float:
     where = f"[coach] {name}"
     if name == "frequent_share":
         return _share(where, value)
+    if name == "never_cast_min_casts":
+        return _casts(where, value)
     return _cost(where, value, 1 if name == "frequent_min_casts" else 0)
 
 
@@ -373,11 +396,17 @@ class CannotJudge(_Model):
 
 class CoachResult(_Model):
     matched_by: Literal["spell id or spellbook name", "spell id"]
+    # The record's counts of the binding commands and keys it left out, which
+    # the coach cannot see; None without a usable bindings record.
+    commands_unseen: int | None
+    keys_unseen: int | None
+    unseen: str | None  # said before any finding when either count is above 0
     spells: list[CastSpell]
     frequent_on_high_cost: list[FrequentOnHighCost]
     cast_without_bind: list[CastWithoutBind]
     on_unfollowed_page: list[OnUnfollowedPage]
     bound_never_cast: list[BoundNeverCast]
+    never_cast_withheld: bool  # under the minimum sample; its cannot_judge row says so
     cannot_judge: list[CannotJudge]
     caveats: list[str]  # what may make a report wrong without making it unjudgeable
 
@@ -417,6 +446,28 @@ def _sections(
     return bars, binds
 
 
+def unseen_words(commands: int, keys: int) -> str | None:
+    """The sentence said before any finding when the bindings record left
+    out commands or keys, or None when it left out none. Generic: the record
+    does not say which program, if any, bound them."""
+    if not commands and not keys:
+        return None
+    parts = []
+    if commands:
+        word = "command" if commands == 1 else "commands"
+        parts.append(
+            f"{commands} binding {word}, counted but not named (a key bound straight to a "
+            "spell, macro, item or button click may be one)"
+        )
+    if keys:
+        parts.append(f"{keys} {'key' if keys == 1 else 'keys'} it could not store as text")
+    return (
+        f"The coach cannot see every binding: the lab-addon's record leaves out "
+        f"{' and '.join(parts)}. Any of these may reach a spell, so a spell reported with no "
+        "key may have one, and a key reported as costly may not be the only one."
+    )
+
+
 def _cheapest(keys: list[KeyCost]) -> list[KeyCost]:
     return sorted(keys, key=lambda k: (k.cost, k.key))
 
@@ -435,6 +486,7 @@ def coach(
     total = counts.mine if counts is not None else 0
     cannot: list[CannotJudge] = []
     caveats: list[str] = []
+    withheld = False
     if no_book is not None:
         caveats.append(
             f"{no_book}: casts match slots by spell id only, so a spell cast at another rank's "
@@ -457,12 +509,27 @@ def coach(
                 reason="the log has none of your casts, so every bound spell would be listed",
             )
         )
+    elif total < costs.never_cast_min_casts:
+        withheld = True
+        cannot.append(
+            CannotJudge(
+                report="bound-never-cast",
+                reason=(
+                    f"withheld: the log has {total} of your casts, under the minimum sample of "
+                    f"{costs.never_cast_min_casts}, and a spell you cast once a fight or less "
+                    "may simply not be in a log this short"
+                ),
+            )
+        )
 
     spell_slots: dict[int, int] = {}  # slot -> spell id
     keys_of: dict[int, list[KeyCost]] = {}  # slot -> keys reaching it
     command_of: dict[int, str] = {}
     left_out = 0
     keys_left_out = 0
+    unseen: str | None = None
+    commands_unseen: int | None = None
+    keys_unseen: int | None = None
     if not isinstance(sections, str):
         bars, binds = sections
         spell_slots = {s.slot: s.id for s in bars.slots if s.type == "spell" and s.id is not None}
@@ -473,6 +540,8 @@ def coach(
             command_of.setdefault(slot, b.command)
             keys_of.setdefault(slot, []).extend(key_cost(k, costs) for k in b.keys)
         left_out, keys_left_out = binds.commands_left_out, binds.keys_left_out
+        commands_unseen, keys_unseen = left_out, keys_left_out
+        unseen = unseen_words(left_out, keys_left_out)
 
     spells: list[CastSpell] = []
     frequent: list[FrequentOnHighCost] = []
@@ -596,10 +665,8 @@ def coach(
             frequent = []
     elif unbound and (left_out or keys_left_out):
         caveats.append(
-            f"the bindings record left out {left_out} command(s) that are not plain names (a "
-            f"key bound straight to a spell, macro or click; {_BAR_ADDONS}) and "
-            f"{keys_left_out} key(s) that are not printable, so a spell listed as cast with no "
-            "bind may have one of those"
+            "a spell listed as cast with no bind may be reached by one of the bindings the "
+            "coach cannot see (said at the top)"
         )
 
     never: list[BoundNeverCast] = []
@@ -620,11 +687,15 @@ def coach(
     spells.sort(key=lambda c: (-c.casts, c.spell_name.casefold(), c.spell_id))
     return CoachResult(
         matched_by="spell id" if no_book is not None else "spell id or spellbook name",
+        commands_unseen=commands_unseen,
+        keys_unseen=keys_unseen,
+        unseen=unseen,
         spells=spells,
         frequent_on_high_cost=frequent,
         cast_without_bind=unbound,
         on_unfollowed_page=unfollowed,
         bound_never_cast=never,
+        never_cast_withheld=withheld,
         cannot_judge=cannot,
         caveats=caveats,
     )
