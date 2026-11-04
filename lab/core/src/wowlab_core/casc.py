@@ -2343,8 +2343,10 @@ class CascSource:
         self.reopens = 0
 
     def _reopen(self) -> None:
-        _reload_index(self.storage)
+        # Counted before the re-read, so a re-read that raises still uses
+        # the call's one: `read` and `stat` derive "already re-read" from it.
         self.reopens += 1
+        _reload_index(self.storage)
 
     def _hits(self, fdid: int) -> list[RootHit]:
         """The root rows of `fdid` in the order they are tried: rows of
@@ -2434,15 +2436,16 @@ class CascSource:
 
     def _probe_once(
         self, ekey: bytes, limit: int, reopened: bool
-    ) -> tuple[tuple[IndexEntry, str | None] | None, bool]:
-        """`_probe`, the index read again once on a disagreement."""
+    ) -> tuple[IndexEntry, str | None] | None:
+        """`_probe`, the index read again on a disagreement unless this call
+        has already read it (`reopened`)."""
         try:
-            return self._probe(ekey, limit), reopened
+            return self._probe(ekey, limit)
         except CascMalformedError:
             if reopened:
                 raise
             self._reopen()
-            return self._probe(ekey, limit), True
+            return self._probe(ekey, limit)
 
     def stat(
         self, fdid: int, *, in_table: bool | None = None, limit: int = DECODE_LIMIT
@@ -2470,7 +2473,7 @@ class CascSource:
         names: list[str] = []
         failed: CascError | None = None
         unlisted = 0
-        reopened = False
+        start = self.reopens  # one re-read per call, whatever a retry raises
         for ckey in ckeys:
             row = self.encoding.lookup(ckey)
             if row is None:
@@ -2479,9 +2482,9 @@ class CascSource:
             for ekey in row.ekeys:
                 ekeys.append(ekey)
                 try:
-                    probed, reopened = self._probe_once(ekey, limit, reopened)
+                    probed = self._probe_once(ekey, limit, self.reopens != start)
                 except CascMalformedError as exc:  # raised only after the re-read
-                    failed, reopened = failed or exc, True
+                    failed = failed or exc
                     continue
                 except CascUnsupportedError as exc:
                     failed = failed or exc
@@ -2558,22 +2561,22 @@ class CascSource:
         malformed: CascMalformedError | None = None
         unsupported: CascUnsupportedError | None = None
         encrypted: EncryptedContent | None = None
-        reopened = False
+        start = self.reopens  # one re-read per call, whatever a retry raises
         for ckey in dict.fromkeys(h.ckey for h in hits):
             row = self.encoding.lookup(ckey)
             if row is None:
                 continue
             for ekey in row.ekeys:
                 try:
-                    data, reopened = self._read_checked(ckey, ekey, limit, reopened, fdid)
+                    data = self._read_checked(ckey, ekey, limit, self.reopens != start, fdid)
                 except EncryptedContent as exc:
                     encrypted = encrypted or exc
                     continue
                 except ContentMismatch as exc:
-                    mismatch, reopened = mismatch or exc, True
+                    mismatch = mismatch or exc
                     continue
                 except CascMalformedError as exc:
-                    malformed, reopened = malformed or exc, True
+                    malformed = malformed or exc
                     continue
                 except CascUnsupportedError as exc:
                     unsupported = unsupported or exc
@@ -2591,10 +2594,12 @@ class CascSource:
 
     def _read_checked(
         self, ckey: bytes, ekey: bytes, limit: int, reopened: bool, fdid: int
-    ) -> tuple[bytearray | None, bool]:
+    ) -> bytearray | None:
         """`ekey`'s decoded bytes checked against `ckey` (None when the
         index does not list it), the index read again once, at most, on a
-        disagreement or a mismatch; and whether it has been."""
+        disagreement or a mismatch, and not at all when this call has
+        already read it (`reopened`). The caller derives `reopened` from
+        `reopens`, so a retry that raises anything still counts."""
         while True:
             try:
                 data = read_encoded(self.storage, ekey, limit=limit)
@@ -2605,10 +2610,10 @@ class CascSource:
                 reopened = True
                 continue
             if data is None:
-                return None, reopened
+                return None
             got = _md5_hex(data)
             if got == ckey.hex():
-                return data, reopened
+                return data
             del data
             if reopened:
                 raise ContentMismatch(
