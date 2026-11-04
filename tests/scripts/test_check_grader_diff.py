@@ -356,6 +356,31 @@ def test_load_bearing_module(path: str, expected: str | None) -> None:
         ("lab/core/tests/test_cli_x.py", "def broken(:\n", "does not parse"),
         ("lab/core/tests/helpers.py", "from wowlab_core import guard\n", None),
         ("lab/core/src/wowlab_core/test_guard.py", "", None),
+        (
+            "lab/core/tests/test_cli_x.py",
+            "import wowlab_core\n\ndef test_a():\n    wowlab_core.guard.plan()\n",
+            "imports guard",
+        ),
+        (
+            "lab/core/tests/test_cli_x.py",
+            "import wowlab_core as w\n\ndef test_a():\n    w.guard.plan()\n",
+            "imports guard",
+        ),
+        (
+            "lab/core/tests/test_cli_x.py",
+            "import wowlab_core.cli\n\ndef test_a():\n    wowlab_core.guard.plan()\n",
+            "imports guard",
+        ),
+        (
+            "lab/core/tests/test_cli_x.py",
+            "import wowlab_core\n\ndef test_a():\n    wowlab_core.cli.main()\n",
+            None,
+        ),
+        (
+            "lab/core/tests/test_cli_x.py",
+            "import other as wowlab_core\n\ndef test_a():\n    wowlab_core.guard.plan()\n",
+            None,
+        ),
     ],
 )
 def test_constructed_grader_rule(path: str, source: str, reason: str | None) -> None:
@@ -457,6 +482,82 @@ def test_constructed_repo_non_grader_and_new_files_may_change(repo: Path) -> Non
     assert "graders changed: 0" in log
 
 
+@pytest.mark.parametrize(
+    ("rel", "text", "reason"),
+    [
+        (
+            "lab/core/tests/conftest.py",
+            "def pytest_configure(config): ...\n",
+            "a conftest.py added",
+        ),
+        ("conftest.py", "", "a conftest.py added"),
+        ("lab/core/tests/_oracle.py", "def expected():\n    return 3\n", "a test support file"),
+        ("lab/core/tests/_oracle.py", None, "a test support file"),
+        ("lab/core/tests/parser/conftest.py", "X = 2\n", "a test support file"),
+        ("lab/core/tests/pytest.ini", "[pytest]\naddopts = -p no:x\n", "pytest configuration"),
+        (
+            "pyproject.toml",
+            '[project]\nname = "x"\n\n[tool.pytest.ini_options]\naddopts = "-k not guard"\n',
+            "pytest configuration",
+        ),
+        ("pyproject.toml", "[tool.pytest\n", "pytest configuration"),
+        (
+            "setup.cfg",
+            "[metadata]\nname = x\n[tool:pytest]\naddopts = -x\n",
+            "pytest configuration",
+        ),
+        ("tox.ini", "[tox]\nenvlist = a\n[pytest]\naddopts = -x\n", "pytest configuration"),
+    ],
+)
+def test_constructed_repo_support_and_config_changes_fail(
+    repo: Path, rel: str, text: str | None, reason: str
+) -> None:
+    base_files = {
+        "lab/core/tests/_oracle.py": "def expected():\n    return 2\n",
+        "lab/core/tests/parser/conftest.py": "X = 1\n",
+        "pyproject.toml": '[project]\nname = "x"\n',
+        "setup.cfg": "[metadata]\nname = x\n",
+        "tox.ini": "[tox]\nenvlist = a\n",
+    }
+    for name, body in base_files.items():
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_text(body)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "support files")
+    code, log = _commit_and_run(repo, {**GUARD_CHANGE, rel: text})
+    assert code == 1, log
+    assert f"FAIL {rel!r} ({reason}" in log, log
+
+
+@pytest.mark.parametrize(
+    ("rel", "base", "head"),
+    [
+        pytest.param(
+            "pyproject.toml",
+            '[project]\nname = "x"\n',
+            '[project]\nname = "y"\n',
+            id="pyproject-other-table",
+        ),
+        pytest.param(
+            "setup.cfg",
+            "[metadata]\nname = x\n",
+            "[metadata]\nname = y\n",
+            id="setup-cfg-other-section",
+        ),
+        pytest.param(
+            "tox.ini", "[tox]\nenvlist = a\n", "[tox]\nenvlist = b\n", id="tox-other-section"
+        ),
+        pytest.param("lab/core/tests/_new_helper.py", None, "X = 1\n", id="new-helper"),
+        pytest.param("lab/core/tests/fixtures/data.txt", "a\n", "b\n", id="non-python"),
+    ],
+)
+def test_constructed_support_changes_that_are_allowed(
+    rel: str, base: str | None, head: str
+) -> None:
+    got = gate.support_reason(rel, None if base is None else base.encode(), head.encode())
+    assert got is None
+
+
 def test_constructed_repo_cli_exit_codes(repo: Path) -> None:
     _commit_and_run(repo, {**GUARD_CHANGE, GRADER: _edit("== 1\n", "== 0\n")})
     proc = subprocess.run(
@@ -486,3 +587,56 @@ def test_ci_runs_the_gate_from_the_base_revision() -> None:
     assert "git show HEAD^1:scripts/check_grader_diff.py" in run
     assert 'python3 -I "$script" --repo . --base HEAD^1 --head HEAD' in run
     assert "${{" not in run
+    assert job["timeout-minutes"] == 10
+
+
+# ─── alias bindings, marks= scope, and the log's bounds ──────────────────────
+
+ALIAS_BASE = "import pytest\nCHECK = pytest.mark.xfail(strict=True)\n"
+ALIAS_TEST = "@CHECK\ndef test_a(x=1):\n    assert x\n"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        pytest.param("def helper(CHECK):\n    return CHECK\n", id="argument"),
+        pytest.param("for CHECK in []:\n    pass\n", id="for-target"),
+        pytest.param("from os import sep as CHECK\n", id="import-alias"),
+        pytest.param("def CHECK():\n    pass\n", id="def-name"),
+        pytest.param("class CHECK:\n    pass\n", id="class-name"),
+        pytest.param("try:\n    pass\nexcept Exception as CHECK:\n    pass\n", id="except-name"),
+        pytest.param("CHECK += 1\n", id="augmented"),
+        pytest.param("del CHECK\n", id="delete"),
+        pytest.param("y = [CHECK := 1]\n", id="walrus"),
+    ],
+)
+def test_constructed_alias_with_a_second_binding_is_not_a_marker(extra: str) -> None:
+    base = ALIAS_BASE + extra + ALIAS_TEST
+    assert not gate.check_file(base.encode(), base.replace("@CHECK\n", "").encode()).ok
+
+
+def test_constructed_marks_keyword_outside_param_is_not_a_marker() -> None:
+    base = (
+        "import pytest\n\n"
+        "def test_a():\n"
+        "    run(\n"
+        "        marks=pytest.mark.xfail(strict=True),\n"
+        "    )\n"
+    )
+    head = base.replace("        marks=pytest.mark.xfail(strict=True),\n", "")
+    assert not gate.check_file(base.encode(), head.encode()).ok
+
+
+def test_constructed_explain_summarises_a_huge_change() -> None:
+    base = [f"x = {i}\n" for i in range(gate.EXPLAIN_MAX_LINES)]
+    head = ["y\n", *base[1:]]
+    lines = gate.explain(base, head, set())
+    assert len(lines) == 1 and "too large to show" in lines[0]
+
+
+def test_constructed_explain_caps_its_output() -> None:
+    base = [f"x = {i}\n" for i in range(1000)]
+    head = [f"y = {i}\n" for i in range(1000)]
+    lines = gate.explain(base, head, set())
+    assert len(lines) == gate.EXPLAIN_MAX_OUTPUT + 1
+    assert "more log line(s) not shown" in lines[-1]

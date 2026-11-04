@@ -16,12 +16,29 @@ from its base and its head contents:
    `test_m13_21_parity_misses_guard_drift.py`);
 2. it imports a changed load-bearing module (`import wowlab_core.guard`,
    `from wowlab_core.guard import ...`, `from wowlab_core import guard`,
-   including the parenthesised multi-line form);
+   including the parenthesised multi-line form, or `import wowlab_core`
+   followed by an attribute access such as `wowlab_core.guard`);
 3. it carries a strict xfail marker anywhere (a pending grader on `main`,
    whatever file it grades: AGENTS.md has those activated the same way).
 
 A file that does not parse as Python is treated as a grader (fail closed).
-New files are not graders here: the rule is about tests already on `main`.
+New `test_*.py` files are not graders here: the rule is about tests
+already on `main`.
+
+What else fails on such a change, each with its own reason, because it can
+neutralise a grader without touching one:
+
+- a test support file changed or deleted: any other tracked `.py` file
+  under a `tests/` directory (helper modules, oracles, `conftest.py`);
+- a `conftest.py` added anywhere, or one outside `tests/` (the root one)
+  changed or deleted;
+- pytest configuration changed: the `tool.pytest` table (which holds
+  `[tool.pytest.ini_options]`) of any `pyproject.toml`, `[tool:pytest]` in
+  any `setup.cfg`, `[pytest]` in any `tox.ini`, and any `pytest.ini` or
+  `.pytest.ini`. A file that cannot be read for this fails closed.
+
+Not covered, left to review: the Makefile's pytest command lines and the
+workflows' own pytest invocations, which also choose what runs.
 
 What a marker block is, found in the base contents with `ast` (no code is
 run): whole lines holding exactly one of
@@ -29,10 +46,12 @@ run): whole lines holding exactly one of
 - a decorator `@<...>.mark.xfail(..., strict=True, ...)`, on one line or
   many;
 - a decorator `@NAME`, where `NAME = <...>.mark.xfail(..., strict=True, ...)`
-  is a module-level assignment;
+  is a module-level assignment and the only binding of NAME anywhere in the
+  module (every assignment or deletion target, function argument, def or
+  class name, import alias, except name and pattern capture counts);
 - that module-level assignment itself (also `pytestmark = ...`);
-- a keyword argument `marks=<strict xfail call or such a NAME>`, with an
-  optional trailing comma.
+- a keyword argument `marks=<strict xfail call or such a NAME>` of a
+  `<x>.param(...)` call, with an optional trailing comma.
 
 The head contents pass when they equal the base contents with some set of
 those blocks removed and nothing else changed, byte for byte.
@@ -42,15 +61,18 @@ Usage: check_grader_diff.py [--repo DIR] [--base REV] [--head REV]
 branch and the merged result). Exit 0 when the gate passes or no
 load-bearing file changed, 1 on a violation, 2 when git cannot answer.
 
-Standard library only, Python 3.9 or later: CI runs it on the runner's own
-`python3` with `-I`, from the base revision's copy, so a pull request cannot
-loosen the check it is graded by.
+Standard library only, Python 3.9 or later (`tomllib`, used for
+pyproject.toml, is 3.11 or later; without it a changed pyproject.toml fails
+closed). CI runs it on the runner's own `python3` with `-I`, from the base
+revision's copy when the base has one: an edit to this script alone cannot
+loosen the check, and an edit to the job shows in `ci.yml`.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import configparser
 import difflib
 import re
 import subprocess
@@ -67,6 +89,9 @@ PACKAGE = "wowlab_core"
 
 # Bound on the removal search; a real grader needs a few thousand states.
 MAX_STATES = 2_000_000
+# Bounds on the log's explanation of a failure (difflib is quadratic at worst).
+EXPLAIN_MAX_LINES = 6_000
+EXPLAIN_MAX_OUTPUT = 400
 
 _WS = rb"[ \t\f]*"
 _EOL = rb"(?:#[^\r\n]*)?(?:\r?\n)?"
@@ -135,11 +160,47 @@ class Markers:
     any_marker: bool = False
 
 
+def _binding_counts(tree: ast.AST) -> dict[str, int]:
+    """How many times each name is bound anywhere in `tree`, in any scope."""
+    counts: dict[str, int] = {}
+
+    def bind(name: str | None) -> None:
+        if name:
+            counts[name] = counts.get(name, 0) + 1
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            bind(node.id)  # assignment, augmented, annotated, for, with, walrus, del
+        elif isinstance(node, ast.arg):
+            bind(node.arg)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bind(node.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                bind(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.ExceptHandler):
+            bind(node.name)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            for name in node.names:
+                bind(name)
+        elif type(node).__name__ in ("MatchAs", "MatchStar", "MatchMapping"):
+            # Pattern captures (3.10+; looked up by name so 3.9 still runs).
+            for attr in ("name", "rest"):
+                value = getattr(node, attr, None)
+                bind(value if isinstance(value, str) else None)
+    return counts
+
+
+def _is_param_call(node: ast.Call) -> bool:
+    return isinstance(node.func, ast.Attribute) and node.func.attr == "param"
+
+
 def find_markers(text: str) -> Markers:
     """Every complete marker block in `text`. Raises SyntaxError and the like."""
     tree = ast.parse(text)
     lines = split_lines(text)
     found = Markers()
+    counts = _binding_counts(tree)
     aliases: set[str] = set()
     for stmt in tree.body:
         if (
@@ -148,7 +209,12 @@ def find_markers(text: str) -> Markers:
             and isinstance(stmt.targets[0], ast.Name)
             and is_strict_xfail(stmt.value)
         ):
-            aliases.add(stmt.targets[0].id)
+            name = stmt.targets[0].id
+            if counts.get(name) != 1:
+                # Only an alias with no other binding anywhere is a marker:
+                # a rebinding or a shadow could stand for any decorator.
+                continue
+            aliases.add(name)
             block = _whole_lines(lines, stmt, _PLAIN_PREFIX, _LINE_END)
             if block:
                 found.blocks.add(block)
@@ -165,7 +231,7 @@ def find_markers(text: str) -> Markers:
                     block = _whole_lines(lines, dec, _DECORATOR_PREFIX, _LINE_END)
                     if block:
                         found.blocks.add(block)
-        elif isinstance(node, ast.Call):
+        elif isinstance(node, ast.Call) and _is_param_call(node):
             for kw in node.keywords:
                 if kw.arg == "marks" and marks(kw.value):
                     block = _whole_lines(lines, kw, _PLAIN_PREFIX, _KEYWORD_END)
@@ -230,7 +296,23 @@ def _show(line: str) -> str:
 
 
 def explain(base: Sequence[str], head: Sequence[str], blocks: set[tuple[int, int]]) -> list[str]:
-    """The hunks that are not marker removal, for the log."""
+    """The hunks that are not marker removal, for the log.
+
+    Above EXPLAIN_MAX_LINES lines (base and head together) no diff is
+    computed, only a summary; at most EXPLAIN_MAX_OUTPUT log lines are printed."""
+    if len(base) + len(head) > EXPLAIN_MAX_LINES:
+        return [
+            f"  the file changed ({len(base)} base line(s), {len(head)} head line(s)); "
+            "too large to show the hunks here, run `git diff` on it"
+        ]
+    out = _hunks(base, head, blocks)
+    if len(out) > EXPLAIN_MAX_OUTPUT:
+        more = len(out) - EXPLAIN_MAX_OUTPUT
+        out = [*out[:EXPLAIN_MAX_OUTPUT], f"  ... {more} more log line(s) not shown"]
+    return out
+
+
+def _hunks(base: Sequence[str], head: Sequence[str], blocks: set[tuple[int, int]]) -> list[str]:
     out: list[str] = []
     matcher = difflib.SequenceMatcher(None, base, head, autojunk=False)
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
@@ -314,7 +396,28 @@ def is_test_file(path: str) -> bool:
 def imported_modules(text: str) -> set[str]:
     """Load-bearing modules `text` imports from `wowlab_core`."""
     found: set[str] = set()
-    for node in ast.walk(ast.parse(text)):
+    tree = ast.parse(text)
+    # Names bound to the package itself: `import wowlab_core [as w]`, and the
+    # `wowlab_core` that `import wowlab_core.cli` also binds.
+    package_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                parts = alias.name.split(".")
+                if parts[0] != PACKAGE:
+                    continue
+                if alias.asname is None:
+                    package_names.add(PACKAGE)
+                elif len(parts) == 1:
+                    package_names.add(alias.asname)
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in package_names
+            and node.attr in LOAD_BEARING
+        ):
+            found.add(node.attr)
         if isinstance(node, ast.Import):
             for alias in node.names:
                 parts = alias.name.split(".")
@@ -353,6 +456,68 @@ def grader_reason(path: str, contents: Sequence[bytes], modules: set[str]) -> st
     return None
 
 
+# ─── test support files and pytest configuration ─────────────────────────────
+
+SUPPORT = "a test support file changed on a load-bearing PR"
+NEW_CONFTEST = "a conftest.py added on a load-bearing PR"
+CONFIG = "pytest configuration changed on a load-bearing PR"
+
+
+def _ini_section(data: bytes | None, section: str) -> dict[str, str] | None:
+    """The `section` of an ini file as a mapping; None when absent."""
+    if data is None:
+        return None
+    parser = configparser.RawConfigParser(strict=False)
+    parser.read_string(data.decode("utf-8"))
+    if not parser.has_section(section):
+        return None
+    return dict(parser.items(section))
+
+
+def _pyproject_pytest(data: bytes | None) -> object:
+    """The `tool.pytest` table of a pyproject.toml (None when absent)."""
+    if data is None:
+        return None
+    import tomllib  # 3.11+; ImportError fails closed in the caller
+
+    tool = tomllib.loads(data.decode("utf-8")).get("tool")
+    return tool.get("pytest") if isinstance(tool, dict) else None
+
+
+def support_reason(path: str, base_data: bytes | None, head_data: bytes | None) -> str | None:
+    """Why changing `path` (base -> head; None: absent) fails on a load-bearing PR.
+
+    For anything that is not a `test_*.py` file: a test support file, a
+    conftest.py, or pytest configuration. None when the change is allowed."""
+    if base_data == head_data:
+        return None
+    parts = path.split("/")
+    name = parts[-1]
+    if name == "conftest.py":
+        return NEW_CONFTEST if base_data is None else f"{SUPPORT} (conftest.py)"
+    if "tests" in parts[:-1] and name.endswith(".py") and not is_test_file(path):
+        # A new helper cannot change an existing grader without an edit to it.
+        return None if base_data is None else SUPPORT
+    try:
+        if name in ("pytest.ini", ".pytest.ini"):
+            return f"{CONFIG} ({name})"
+        if name == "pyproject.toml":
+            changed = _pyproject_pytest(base_data) != _pyproject_pytest(head_data)
+            return f"{CONFIG} (the tool.pytest table)" if changed else None
+        if name == "setup.cfg":
+            changed = _ini_section(base_data, "tool:pytest") != _ini_section(
+                head_data, "tool:pytest"
+            )
+            return f"{CONFIG} ([tool:pytest])" if changed else None
+        if name == "tox.ini":
+            changed = _ini_section(base_data, "pytest") != _ini_section(head_data, "pytest")
+            return f"{CONFIG} ([pytest])" if changed else None
+    except (ImportError, ValueError, configparser.Error, RecursionError, MemoryError) as exc:
+        # tomllib's TOMLDecodeError and UnicodeDecodeError are ValueErrors.
+        return f"{CONFIG} ({name} could not be read: {type(exc).__name__}; failing closed)"
+    return None
+
+
 # ─── git ─────────────────────────────────────────────────────────────────────
 
 
@@ -383,6 +548,22 @@ def _blob(repo: Path, rev: str, path: str, tracked: set[str]) -> bytes | None:
     return _git(repo, "cat-file", "blob", f"{rev}:{path}")
 
 
+CONFIG_NAMES = (
+    "conftest.py",
+    "pytest.ini",
+    ".pytest.ini",
+    "pyproject.toml",
+    "setup.cfg",
+    "tox.ini",
+)
+
+
+def _relevant(path: str) -> bool:
+    """Whether `path` can be a grader, a test support file or pytest configuration."""
+    parts = path.split("/")
+    return parts[-1] in CONFIG_NAMES or ("tests" in parts[:-1] and parts[-1].endswith(".py"))
+
+
 def run(repo: Path, base: str, head: str) -> tuple[int, list[str]]:
     base_sha = _git(repo, "rev-parse", "--verify", f"{base}^{{commit}}").decode().strip()
     head_sha = _git(repo, "rev-parse", "--verify", f"{head}^{{commit}}").decode().strip()
@@ -401,11 +582,18 @@ def run(repo: Path, base: str, head: str) -> tuple[int, list[str]]:
     failures = 0
     checked = 0
     for path in sorted(changed):
-        if path not in base_tracked or not is_test_file(path):
+        if not _relevant(path):
             continue
         base_data = _blob(repo, base_sha, path, base_tracked)
         head_data = _blob(repo, head_sha, path, head_tracked)
-        assert base_data is not None
+        if not is_test_file(path):
+            support = support_reason(path, base_data, head_data)
+            if support:
+                out.append(f"FAIL {_show(path)} ({support})")
+                failures += 1
+            continue
+        if base_data is None:
+            continue
         contents = [base_data] if head_data is None else [base_data, head_data]
         reason = grader_reason(path, contents, modules)
         if reason is None:
@@ -418,9 +606,11 @@ def run(repo: Path, base: str, head: str) -> tuple[int, list[str]]:
     out.append(f"graders changed: {checked}; violations: {failures}")
     if failures:
         out.append(
-            "A grader of a load-bearing file may change only by deleting complete "
-            "xfail(strict=True) marker blocks (ADR-0013, AGENTS.md). A grader that is "
-            "wrong is reported, and fixed by a separate [TEST] change."
+            "On a change to a load-bearing file, a grader may change only by deleting "
+            "complete xfail(strict=True) marker blocks, and test support files, "
+            "conftest.py and pytest configuration may not change (ADR-0013, AGENTS.md). "
+            "A grader or support file that is wrong is reported, and fixed by a "
+            "separate [TEST] change."
         )
         return 1, out
     return 0, out

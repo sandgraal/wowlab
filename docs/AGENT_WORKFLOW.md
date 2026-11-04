@@ -27,8 +27,11 @@ Since M16-40, CI's `Graders activated by marker deletion only` job checks
 the `[IMPL]` side: on a PR that changes one of those files (or
 `proposal.py`), a test file already on `main` that is named for it, imports
 it, or carries a strict xfail marker may change only by deleting whole
-`xfail(strict=True)` marker blocks (`scripts/check_grader_diff.py` states
-the rule).
+`xfail(strict=True)` marker blocks. On the same PR, an existing test
+support file under `tests/` (helpers, oracles, any `conftest.py`) may not
+change, no `conftest.py` may be added, and pytest configuration may not
+change (`scripts/check_grader_diff.py` states the rule). The Makefile's
+pytest lines are not checked; review covers them.
 `svmerge.py`, `profiles.py` and the `ui` server were in the set from
 2026-09-29 and 2026-10-15 until 2026-10-17, when the owner narrowed it back
 to ADR-0013's two: the rule had doubled every `ui` ticket, needed owner

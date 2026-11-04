@@ -6,7 +6,8 @@ on:
   push:
     branches: [main]
 
-# Every job below except `lab (macos)` is a required status check on main,
+# Every job below except `lab (macos)` and `grader-diff` (M16-40; not yet
+# in the ruleset, see the job) is a required status check on main,
 # by exact name (see .github/rulesets/main.json). `lab (macos)` came with
 # M13-02 (ADR-0031, docs/LAB_PLAN.md §9 and §15.3 E3) and counts toward
 # macOS being supported without being required. `lab (windows)` lives in
@@ -302,18 +303,21 @@ jobs:
 
   # M16-40 (ADR-0013): on a change to a load-bearing file (luadata.py,
   # guard.py, proposal.py), a grader already on main may change only by
-  # deleting complete xfail(strict=True) marker blocks. The rule and what
-  # counts as a grader are in scripts/check_grader_diff.py. HEAD^1..HEAD is
-  # the pull request's merge commit against its base (on a push to main, the
-  # squash-merged commit), so a depth of 2 is all the history it reads. The
-  # script runs from the base revision when the base has it, so a pull
-  # request cannot loosen the check it is graded by; it is stdlib-only and
-  # runs on the runner's python3 with -I, so nothing is installed or fetched.
+  # deleting complete xfail(strict=True) marker blocks, and test support
+  # files, conftest.py and pytest configuration may not change. The rule and
+  # what counts as a grader are in scripts/check_grader_diff.py. HEAD^1..HEAD
+  # is the pull request's merge commit against its base (on a push to main,
+  # the squash-merged commit), so a depth of 2 is all the history it reads.
+  # The script runs from the base revision when the base has it: an edit to
+  # the script alone cannot loosen the check, and an edit to this job shows
+  # here in ci.yml. It is stdlib-only and runs on the runner's python3 with
+  # -I, so nothing is installed or fetched.
   # Not yet a required check: adding it means changing
   # .github/rulesets/main.json and re-applying it after this job is on main.
   grader-diff:
     name: Graders activated by marker deletion only
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
