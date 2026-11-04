@@ -207,9 +207,13 @@ def slot_page_note(slot: int) -> str:
     return f"page {page}, button {button}: no bar of the default UI shows this page"
 
 
-def dropped(probes: Sequence[labaddon.ApiProbe], needs: frozenset[str]) -> list[str]:
+def dropped(probes: Sequence[labaddon.ApiProbe] | None, needs: frozenset[str]) -> list[str]:
     """What a section's probes say was dropped: calls that raised, values
-    dropped as secret or untestable, and the needed functions missing."""
+    dropped as secret or untestable, and the needed functions missing.
+    Since schema 5 a record has probes only from a debug session (M16-45);
+    without them nothing can be said, and nothing is."""
+    if probes is None:
+        return []
     counted = [p for p in probes if p.api not in labaddon.LOOKED_UP]
     errors = sum(p.errors for p in counted)
     secret = sum(p.secret for p in counted)

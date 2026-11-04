@@ -2,13 +2,13 @@
 --
 -- Runs in the game client only; the Lab never loads or runs this file. It
 -- gathers each section during the session (on entering the world and on the
--- section's change events) and writes the versioned tables (schema 4) into
+-- section's change events) and writes the versioned tables (schema 5) into
 -- its SavedVariables at PLAYER_LOGOUT. `/wowlab save` refreshes the tables in
 -- memory; the client writes the file at the next /reload, logout or clean
--- exit, and a crash writes nothing. Only three things are carried from one
+-- exit, and a crash writes nothing. Only five things are carried from one
 -- session to the next: the probe count, the last barber-shop record
--- (Customization.lua) and the skip list, all read back from the file at
--- ADDON_LOADED.
+-- (Customization.lua), the skip list, and (schema 5, M16-45) the debug switch
+-- and the announced version, all read back from the file at ADDON_LOADED.
 --
 -- The owner can switch a section off (`/wowlab skip <section>`, M11-21): a
 -- client assertion inside a section crashes the client, `pcall` cannot catch
@@ -42,7 +42,12 @@ local ADDON_NAME, ns = ...
 -- variables. Schema 4 (M15-01): schema 3 plus one section, `identity`
 -- (Identity.lua: race id, UnitSex's raw value, class id and file); nothing
 -- else changed, and an older file moves to schema 4 the same way.
-ns.SCHEMA = 4
+-- Schema 5 (M16-45): schema 4, quieter. Two keys at the top of
+-- WowLabCharDB, `announced` and `debug` (below); `probes` and
+-- `events_received` only in a debug session; `clicks_left_out` and stored
+-- `CLICK` commands on `bindings` (Actions.lua). An older file moves to schema
+-- 5 the same way.
+ns.SCHEMA = 5
 
 -- Sections, in the order they register (the file order in WowLab.toc).
 ns.sections = {}
@@ -53,6 +58,26 @@ ns.probe = nil
 -- Section keys the owner switched off, as saved in the file (`skip`). A key
 -- switched back on stays off for the rest of the session (section.off).
 ns.skip = {}
+-- Debug (M16-45, `/wowlab debug`): off by default. When on, the research
+-- scaffolding runs this session: the probes on Actions.lua's records, and the
+-- count-only events (the control event and the barber-shop names counted
+-- without gathering, Customization.lua) with their `events_received` counts.
+-- Read from the file at ADDON_LOADED (`debug = true`, left out when off);
+-- `/wowlab debug on|off` changes it from the next /reload or login, never in
+-- the same session, because the events are registered at ADDON_LOADED.
+ns.debug = false
+-- What `/wowlab debug on|off` asked for, saved for the next load.
+local debugNext = false
+-- ns.announced (M16-45), saved as `announced`: the schema of the addon that
+-- last announced its first pass in chat and then finished a session with
+-- that pass done. The chat line
+-- prints only when this differs from ns.SCHEMA (a new addon version, or a
+-- first run) or the file looks unclean (below). It is written only at the
+-- addon's own logout write, and only when the first pass ran in that
+-- session, so a session that crashed (a crash writes nothing) or ended before
+-- its first pass leaves the earlier value, and the next load prints again
+-- when that value is not this version's.
+ns.announced = nil
 
 -- The absent reason of a switched-off section.
 local SWITCHED_OFF = "switched off by the owner"
@@ -239,6 +264,18 @@ local FIRST_PASS_DELAY = 15
 local firstPassStarted = false
 local firstPassDone = false
 
+-- After the first pass (M16-45): change events only mark their section
+-- dirty, and the dirty sections are gathered together at most once every
+-- GATHER_INTERVAL seconds, out of combat, and at PLAYER_LOGOUT. A pass whose
+-- timer ends in combat waits for PLAYER_REGEN_ENABLED, and no new timer
+-- starts while it waits. `/wowlab save` gathers at once. Combat is known from
+-- the client's own events (PLAYER_REGEN_DISABLED and PLAYER_REGEN_ENABLED);
+-- a section that must not read in combat (Actions.lua) still asks the client
+-- itself.
+local GATHER_INTERVAL = 30
+local inCombat = false
+local waitingForCombat = false
+
 local function gather(section, event)
     if section.off then
         return
@@ -281,16 +318,29 @@ local function gatherDirty()
     end
 end
 
+-- Marks the dirty sections for a pass: at most one timer runs at a time, and
+-- a pass whose timer ends in combat keeps `pending` set until
+-- PLAYER_REGEN_ENABLED runs it, so no second timer starts meanwhile. Until
+-- the first pass has run, a timer gathers nothing: the first pass takes what
+-- is dirty. Without C_Timer a pass runs at once, out of combat.
 local function schedule()
     if not timerAfter then
-        gatherDirty()
+        if inCombat then
+            waitingForCombat = true
+        else
+            gatherDirty()
+        end
         return
     end
     if pending then
         return
     end
     pending = true
-    timerAfter(2, function()
+    timerAfter(GATHER_INTERVAL, function()
+        if firstPassDone and inCombat then
+            waitingForCombat = true
+            return
+        end
         pending = false
         if firstPassDone then
             gatherDirty()
@@ -306,14 +356,24 @@ local function startFirstPass()
         return
     end
     firstPassStarted = true
-    say(
-        "recording in "
-            .. FIRST_PASS_DELAY
-            .. " s. To switch a section off first: /wowlab skip <section>  (/wowlab skip lists them)"
-    )
+    -- M16-45: once per addon version, or after a file that looks unclean
+    -- (the probe was lost, or the file never recorded a finished first pass
+    -- of this version).
+    if ns.announced ~= ns.SCHEMA or ns.probe.lost then
+        say(
+            "recording in "
+                .. FIRST_PASS_DELAY
+                .. " s. To switch a section off first: /wowlab skip <section>  (/wowlab skip lists them)"
+        )
+    end
     timerAfter(FIRST_PASS_DELAY, function()
         firstPassDone = true
-        gatherDirty()
+        -- Out of combat, like every later pass (M16-45).
+        if inCombat then
+            waitingForCombat = true
+        else
+            gatherDirty()
+        end
     end)
 end
 
@@ -339,8 +399,9 @@ local function listen(section)
     for _, event in ipairs(section.events or {}) do
         changes[event] = true
     end
+    -- Count-only events and their counts are debug only (M16-45).
     local counts = nil
-    if section.count_only then
+    if section.count_only and ns.debug then
         counts = {}
     end
     local retries = {}
@@ -397,9 +458,11 @@ local function listen(section)
             counts[event] = 0
         end
     end
-    for _, event in ipairs(section.count_only or {}) do
-        if ns.On(event, onEvent) and counts then
-            counts[event] = 0
+    if counts then
+        for _, event in ipairs(section.count_only or {}) do
+            if ns.On(event, onEvent) then
+                counts[event] = 0
+            end
         end
     end
 end
@@ -429,6 +492,8 @@ local function switchOff(section)
         for _, event in ipairs(section.events or {}) do
             off(event, section.listener)
         end
+        -- Outside a debug session the count-only events were never
+        -- registered (M16-45); `off` is then a no-op for them.
         for _, event in ipairs(section.count_only or {}) do
             off(event, section.listener)
         end
@@ -465,6 +530,29 @@ local function putSkip(db)
         db.skip = list
     else
         db.skip = nil
+    end
+end
+
+-- Writes the debug switch for the next load into `db`, or removes it when off.
+local function putDebug(db)
+    if debugNext then
+        db.debug = true
+    else
+        db.debug = nil
+    end
+end
+
+-- At ADDON_LOADED: the debug switch and the announced version the loaded
+-- file holds. Anything but `true` is off; anything but a number is no
+-- announced version.
+local function loadQuiet(saved)
+    if type(saved) ~= "table" then
+        return
+    end
+    ns.debug = saved.debug == true
+    debugNext = ns.debug
+    if type(saved.announced) == "number" then
+        ns.announced = ns.Number(saved.announced)
     end
 end
 
@@ -547,6 +635,13 @@ function ns.Write()
         end
     end
     putSkip(db)
+    putDebug(db)
+    -- Written only after a first pass this session (see ns.announced).
+    if firstPassDone then
+        db.announced = ns.SCHEMA
+    else
+        db.announced = ns.Number(ns.announced)
+    end
     WowLabCharDB = db
     -- Account-wide table: empty until M11-03 shows which data reads the same
     -- from every character (docs/LAB_PLAN.md §13.1).
@@ -578,6 +673,7 @@ ns.On("ADDON_LOADED", function(_, name)
         return
     end
     ns.probe = loadProbe(WowLabCharDB)
+    loadQuiet(WowLabCharDB)
     -- The skip list first: a switched-off section is not carried and
     -- registers no event.
     loadSkip(WowLabCharDB)
@@ -601,6 +697,25 @@ ns.On("ADDON_LOADED", function(_, name)
     end
     WowLabCharDB.probe = copyProbe()
     putSkip(WowLabCharDB)
+    -- Until this session's logout write puts it back (M16-45): a session
+    -- whose write never ran leaves no announced version, so the next load
+    -- prints the line again.
+    WowLabCharDB.announced = nil
+end)
+
+-- Combat, from the client's events (M16-45): a pass that waited for combat
+-- to end runs as soon as it does.
+ns.On("PLAYER_REGEN_DISABLED", function()
+    inCombat = true
+end)
+
+ns.On("PLAYER_REGEN_ENABLED", function()
+    inCombat = false
+    if waitingForCombat then
+        waitingForCombat = false
+        pending = false
+        gatherDirty()
+    end
 end)
 
 ns.On("PLAYER_ENTERING_WORLD", function()
@@ -687,6 +802,26 @@ local function skipCommand(command, key)
     end
 end
 
+-- `/wowlab debug [on|off]` (M16-45). The typed word is only compared.
+local function debugCommand(word)
+    if word == "on" or word == "off" then
+        debugNext = word == "on"
+        if type(WowLabCharDB) == "table" then
+            putDebug(WowLabCharDB)
+        end
+    elseif word ~= "" then
+        say("/wowlab debug on  or  /wowlab debug off")
+        return
+    end
+    say(
+        "debug is "
+            .. (ns.debug and "on" or "off")
+            .. " this session, and "
+            .. (debugNext and "on" or "off")
+            .. " from the next /reload or login; /reload or log out to save a change."
+    )
+end
+
 SLASH_WOWLAB1 = "/wowlab"
 SlashCmdList.WOWLAB = function(message)
     -- The typed text is compared, never stored.
@@ -699,6 +834,12 @@ SlashCmdList.WOWLAB = function(message)
             return
         end
         skipCommand(command, key)
+    elseif command == "debug" then
+        if not ns.probe then
+            say("not loaded yet.")
+            return
+        end
+        debugCommand(key)
     elseif command == "save" then
         if not ns.probe then
             say("not loaded yet.")
@@ -709,5 +850,6 @@ SlashCmdList.WOWLAB = function(message)
     else
         say("/wowlab save  refreshes the tables in memory (written at the next /reload or logout).")
         say("/wowlab skip <section>  switches a section off; /wowlab unskip <section>  back on; /wowlab skip  lists.")
+        say("/wowlab debug on|off  records the research probes from the next /reload or login (off by default).")
     end
 end

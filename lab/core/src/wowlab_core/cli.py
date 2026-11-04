@@ -7280,9 +7280,16 @@ class CharShowReport(_Out):
         | labaddon.AccountDBV2
         | labaddon.AccountDBV3
         | labaddon.AccountDBV4
+        | labaddon.AccountDBV5
         | None
     )
-    record: labaddon.CharDBV1 | labaddon.CharDBV2 | labaddon.CharDBV3 | labaddon.CharDBV4
+    record: (
+        labaddon.CharDBV1
+        | labaddon.CharDBV2
+        | labaddon.CharDBV3
+        | labaddon.CharDBV4
+        | labaddon.CharDBV5
+    )
     # The race, body type and class (M15-01): the record's `identity`
     # (schema 4), every value absent with a reason for schema 1 to 3.
     identity: labaddon.CharIdentity

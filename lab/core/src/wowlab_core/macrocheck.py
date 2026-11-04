@@ -322,9 +322,13 @@ def _schema_words(record: labaddon.CharDB) -> str:
     )
 
 
-def _dropped(probes: Sequence[labaddon.ApiProbe], needs: frozenset[str]) -> list[str]:
+def _dropped(probes: Sequence[labaddon.ApiProbe] | None, needs: frozenset[str]) -> list[str]:
     """What a section's own probes say it may be missing: calls that raised,
-    values dropped as secret or untestable, a needed function not there."""
+    values dropped as secret or untestable, a needed function not there.
+    Since schema 5 probes are written only in a debug session (M16-45);
+    without them nothing can be said."""
+    if probes is None:
+        return []
     counted = [p for p in probes if p.api not in labaddon.LOOKED_UP]
     errors = sum(p.errors for p in counted)
     secret = sum(p.secret for p in counted)

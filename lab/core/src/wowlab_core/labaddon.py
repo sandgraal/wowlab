@@ -62,6 +62,12 @@ What the models accept (M11-03 capture, `docs/LAB_FORMATS.md` amendment of
   the reports' `CharIdentity`, deriving `sex` (`Enum.UnitSex`) from
   `sex_raw` by `UNIT_SEX_TO_ENUM`; a schema 1 to 3 record reports every
   value absent. Schema 1 to 3 files are read exactly as before.
+- Schema 5 (M16-45) is schema 4, quieter: `debug` and `announced` at the
+  top; `probes` on the three schema-3 sections only in a debug session
+  (`None` otherwise); and on `bindings`, `clicks_left_out` and kept
+  `CLICK <frame>:<button>` commands, each with `action`, the action slot it
+  presses (ADR-0026, amendment of 2026-10-22). Schema 1 to 4 files are read
+  exactly as before.
 - A section the owner switched off (M11-21) is an absent record with the
   addon's reason; `WowLabCharDB.skip` is kept as a list of section keys, and
   a key this reader does not know is kept but ignored (`skip_known`).
@@ -149,17 +155,22 @@ __all__ = [
     "AccountDBV2",
     "AccountDBV3",
     "AccountDBV4",
+    "AccountDBV5",
     "ActionBars",
+    "ActionBarsV5",
     "ActionSlot",
     "AllCharacters",
     "ApiProbe",
     "Binding",
+    "BindingV5",
     "Bindings",
+    "BindingsV5",
     "CharDB",
     "CharDBV1",
     "CharDBV2",
     "CharDBV3",
     "CharDBV4",
+    "CharDBV5",
     "CharIdentity",
     "CharacterFile",
     "ClassTalents",
@@ -178,6 +189,7 @@ __all__ = [
     "Spellbook",
     "SpellbookItem",
     "SpellbookLine",
+    "SpellbookV5",
     "TalentsV3",
     "choose_lab_file",
     "clip_reason",
@@ -1021,6 +1033,9 @@ ProbedApi = Literal[
     "GetNumBindings",
     "GetBinding",
     "GetBindingKey",
+    # Schema 5 (M16-45): a CLICK binding's frame, `type` and `action`
+    # attributes. The addon writes it in schema 5 only; numbers only.
+    "GetAttribute",
     "issecretvalue",
     "C_Secrets",
     "canaccessvalue",
@@ -1412,23 +1427,134 @@ class CharDBV4(CharDBV3):
     ) = None
 
 
-# A character or account document of any schema this reader knows.
-CharDB = CharDBV1 | CharDBV2 | CharDBV3 | CharDBV4
-AccountDB = AccountDBV1 | AccountDBV2 | AccountDBV3 | AccountDBV4
+# ─── schema 5 (M16-45) ───────────────────────────────────────────────────────
 
-CHAR_SCHEMAS: Mapping[int, type[CharDBV1] | type[CharDBV2] | type[CharDBV3] | type[CharDBV4]] = {
+# A `CLICK <frame>:<button>` binding command the addon keeps (ADR-0026,
+# amendment of 2026-10-22, rule (a)): the Lua pattern
+# `^CLICK ([%a_][%w_]*):(%a%w*)$`, a frame part of at most 64 bytes and a
+# button part of at most 32, ASCII only.
+ClickCommand = Annotated[
+    str,
+    StringConstraints(pattern=r"^CLICK [A-Za-z_][A-Za-z0-9_]{0,63}:[A-Za-z][A-Za-z0-9]{0,31}$"),
+]
+CLICK_PREFIX = "CLICK "
+# The action slot a kept CLICK command presses: a whole number from 1 to the
+# largest 32-bit signed integer (the addon keeps no other).
+ActionSlotNumber = Annotated[int, Field(ge=1, le=2**31 - 1)]
+
+
+class SpellbookV5(Spellbook):
+    """`spellbook` in schema 5: as in schema 3, with `probes` written only
+    in a debug session (`/wowlab debug on`); `None` otherwise."""
+
+    probes: Lst[ApiProbe] | None = None  # type: ignore[assignment]
+
+
+class ActionBarsV5(ActionBars):
+    """`actionbars` in schema 5: as in schema 3, with `probes` written only
+    in a debug session; `None` otherwise."""
+
+    probes: Lst[ApiProbe] | None = None  # type: ignore[assignment]
+
+
+class BindingV5(Binding):
+    """One binding in schema 5: a plain command as in schema 3, or a
+    `CLICK <frame>:<button>` command whose frame was an action button, with
+    `action`, the action slot it presses (ADR-0026, amendment of
+    2026-10-22). A CLICK command has `action`; a plain one has none."""
+
+    command: BindingCommand | ClickCommand
+    action: ActionSlotNumber | None = None
+
+    @model_validator(mode="after")
+    def _action_only_on_a_click(self) -> Self:
+        click = self.command.startswith(CLICK_PREFIX)
+        if click and self.action is None:
+            raise ValueError("a CLICK command is kept only with the action slot it presses")
+        if not click and self.action is not None:
+            raise ValueError("an action slot is kept only on a CLICK command")
+        return self
+
+
+class BindingsV5(Bindings):
+    """`bindings` in schema 5: schema 3's record, plus kept `CLICK`
+    commands (`BindingV5`) and `clicks_left_out`, the CLICK commands left
+    out under ADR-0026's rule of 2026-10-22, each also counted in
+    `commands_left_out`. `probes` only in a debug session. Whether
+    `GetBinding` lists CLICK commands at all is **[verify]**."""
+
+    clicks_left_out: Count
+    list_: Lst[BindingV5] = Field(alias="list")  # type: ignore[assignment]
+    probes: Lst[ApiProbe] | None = None  # type: ignore[assignment]
+
+    @model_validator(mode="after")
+    def _clicks_are_left_out_commands(self) -> Self:
+        if self.clicks_left_out > self.commands_left_out:
+            raise ValueError("more CLICK commands left out than commands left out")
+        return self
+
+
+class AccountDBV5(_Record):
+    """`WowLabDB`, schema 5: as schema 1, only the number differs."""
+
+    schema_: Literal[5] = Field(alias="schema")
+
+
+class CharDBV5(CharDBV4):
+    """`WowLabCharDB`, schema 5 (M16-45): schema 4, quieter. `debug` is
+    `true` after `/wowlab debug on` (for the next load); `announced` is the
+    schema of the addon whose first pass last finished in a written
+    session (the chat line prints when it is not the addon's own). The
+    three schema-3 sections carry `probes` only in a debug session, and
+    `bindings` may keep `CLICK` commands (`BindingsV5`). Every other
+    section is read exactly as in schema 4, and a schema-5 record is a
+    `CharDBV4` to every reader of the earlier sections."""
+
+    schema_: Literal[5] = Field(alias="schema")  # type: ignore[assignment]
+    spellbook: (
+        Annotated[Annotated[SpellbookV5, Tag(_P)] | Annotated[AbsentProbedSection, Tag(_A)], _SPLIT]
+        | None
+    ) = None
+    actionbars: (
+        Annotated[
+            Annotated[ActionBarsV5, Tag(_P)] | Annotated[AbsentProbedSection, Tag(_A)], _SPLIT
+        ]
+        | None
+    ) = None
+    bindings: (
+        Annotated[Annotated[BindingsV5, Tag(_P)] | Annotated[AbsentProbedSection, Tag(_A)], _SPLIT]
+        | None
+    ) = None
+    debug: bool | None = None
+    announced: Annotated[int, Field(ge=1, le=9999)] | None = None
+
+
+# A character or account document of any schema this reader knows.
+CharDB = CharDBV1 | CharDBV2 | CharDBV3 | CharDBV4 | CharDBV5
+AccountDB = AccountDBV1 | AccountDBV2 | AccountDBV3 | AccountDBV4 | AccountDBV5
+
+CHAR_SCHEMAS: Mapping[
+    int, type[CharDBV1] | type[CharDBV2] | type[CharDBV3] | type[CharDBV4] | type[CharDBV5]
+] = {
     1: CharDBV1,
     2: CharDBV2,
     3: CharDBV3,
     4: CharDBV4,
+    5: CharDBV5,
 }
 ACCOUNT_SCHEMAS: Mapping[
-    int, type[AccountDBV1] | type[AccountDBV2] | type[AccountDBV3] | type[AccountDBV4]
+    int,
+    type[AccountDBV1]
+    | type[AccountDBV2]
+    | type[AccountDBV3]
+    | type[AccountDBV4]
+    | type[AccountDBV5],
 ] = {
     1: AccountDBV1,
     2: AccountDBV2,
     3: AccountDBV3,
     4: AccountDBV4,
+    5: AccountDBV5,
 }
 
 
@@ -1606,7 +1732,7 @@ class CharacterFile(BaseModel):
     place: Place = "file"
     mtime_ns: int | None
     summary: str | None = None
-    record: CharDBV1 | CharDBV2 | CharDBV3 | CharDBV4 | None = None
+    record: CharDBV1 | CharDBV2 | CharDBV3 | CharDBV4 | CharDBV5 | None = None
     error: str | None = None
     same_as: FsText | None = None
 
@@ -3054,6 +3180,12 @@ def _bindings(record: Bindings) -> list[str]:
         "  a key bound straight to a spell, macro, item or click may not be listed by GetBinding "
         "at all [verify]",
     ]
+    if isinstance(record, BindingsV5):
+        kept = sum(1 for b in record.list_ if b.action is not None)
+        lines.append(
+            f"  click bindings: {_count(kept, 'addon action button')} kept with the action slot "
+            f"each presses, {_count(record.clicks_left_out, 'other')} left out (counted above)"
+        )
     return lines + _probe_lines(record.probes) + _events(record)
 
 

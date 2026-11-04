@@ -26,6 +26,13 @@
 --               macro, item or click (a spell dragged onto a key, an
 --               action-bar addon's button) is among them at all is
 --               [verify], so `commands_left_out` counts only those it listed.
+--               Since schema 5 (M16-45; ADR-0026, amendment of 2026-10-22)
+--               one more shape is kept: `CLICK <frame>:<button>`, only when
+--               the frame is an action button (clickAction below), with the
+--               action slot it presses (`action`). Every other CLICK command
+--               is counted in `commands_left_out` and `clicks_left_out`, and
+--               nothing more is read from its frame. Whether GetBinding lists
+--               CLICK commands at all is [verify].
 --
 -- Out of combat only (ADR-0026, docs/GLOSSARY.md "secret value"): each
 -- gather asks InCombatLockdown first and reads nothing in combat, or when it
@@ -55,7 +62,9 @@
 -- record carries `probes`: per API, whether the function was there, how many
 -- calls were made, how many raised an error, how many answered, and how many
 -- values were dropped as secret (the way `spec.api` names the API that
--- answered). The README's "M13-05" notes say what each count means.
+-- answered). The README's "M13-05" notes say what each count means. Since
+-- schema 5 (M16-45) `probes` is written only in a debug session
+-- (`/wowlab debug on`); the calls and checks are the same either way.
 
 local _, ns = ...
 
@@ -239,8 +248,13 @@ ns.Section({
             text = probe("C_SpellBook.GetSpellBookItemName", itemName),
             test = probe("issecretvalue", isSecret),
         }
-        local list = { probes.lines, probes.line, probes.item, probes.text, probes.test }
-        lookedUp(list)
+        local asked = { probes.lines, probes.line, probes.item, probes.text, probes.test }
+        lookedUp(asked)
+        -- Written only in a debug session (M16-45).
+        local list = nil
+        if ns.debug then
+            list = asked
+        end
         local missing = (not numLines and "C_SpellBook.GetNumSpellBookSkillLines")
             or (not lineInfo and "C_SpellBook.GetSpellBookSkillLineInfo")
             or (not itemInfo and "C_SpellBook.GetSpellBookItemInfo")
@@ -331,8 +345,13 @@ ns.Section({
         local action = probe("GetActionInfo", getAction)
         local macro = probe("GetMacroInfo", getMacro)
         local secret = probe("issecretvalue", isSecret)
-        local list = { action, macro, secret }
-        lookedUp(list)
+        local asked = { action, macro, secret }
+        lookedUp(asked)
+        -- Written only in a debug session (M16-45).
+        local list = nil
+        if ns.debug then
+            list = asked
+        end
         if not getAction then
             return { absent = "GetActionInfo missing", probes = list }
         end
@@ -393,6 +412,74 @@ local function command(value)
     return nil
 end
 
+-- A `CLICK <frame>:<button>` binding command (M16-45; ADR-0026, amendment of
+-- 2026-10-22): its frame and button parts, when the command is exactly that
+-- shape, with a frame part of at most 64 bytes and a button part of at most
+-- 32; nil otherwise.
+local function clickParts(value)
+    if type(value) ~= "string" then
+        return nil
+    end
+    local _, _, frameName, button = string.find(value, "^CLICK ([%a_][%w_]*):(%a%w*)$")
+    if frameName and #frameName <= 64 and #button <= 32 then
+        return frameName
+    end
+    return nil
+end
+
+-- A binding command that starts with "CLICK " (M16-45): kept here only to be
+-- counted in clicks_left_out, or to pass clickParts and clickAction.
+local function clickCommand(value)
+    if type(value) == "string" and string.find(value, "^CLICK ") then
+        return value
+    end
+    return nil
+end
+
+-- The largest action slot number kept: the largest 32-bit signed integer.
+local MAX_ACTION_SLOT = 2147483647
+
+-- The action slot a CLICK command presses, or nil (M16-45; ADR-0026,
+-- amendment of 2026-10-22). The global the frame part names must be a table;
+-- its `type` attribute must be exactly "action" (a button that presses one
+-- of the client's numbered action slots: bar addons name these buttons
+-- themselves, while GSE, BindPad and `/run` targets are not of that type);
+-- and its `action` attribute must be a whole number from 1 to
+-- MAX_ACTION_SLOT. Each attribute is read through `pcall` and passed through
+-- `clean` (issecretvalue where the client has it). Nothing else is read from
+-- the frame, and the frame's name is never stored unless all of this holds.
+local function clickAction(isSecret, secret, attribute, frameName)
+    -- The one dynamic global lookup in the addon, by the owner's ruling of
+    -- 2026-10-22 (ADR-0026): `frameName` passed clickParts, and only the
+    -- type of what it names is read here.
+    -- selene: allow(global_usage)
+    local target = _G[frameName]
+    if type(target) ~= "table" then
+        return nil
+    end
+    local okType, kind = pcall(target.GetAttribute, target, "type")
+    if okType then
+        kind = clean(isSecret, secret, attribute, kind)
+    else
+        kind = nil
+    end
+    tally(attribute, okType, type(kind) == "string")
+    if not okType or kind ~= "action" then
+        return nil
+    end
+    local okSlot, slot = pcall(target.GetAttribute, target, "action")
+    if okSlot then
+        slot = clean(isSecret, secret, attribute, slot)
+    else
+        slot = nil
+    end
+    tally(attribute, okSlot, type(slot) == "number")
+    if okSlot and type(slot) == "number" and slot >= 1 and slot <= MAX_ACTION_SLOT and slot % 1 == 0 then
+        return ns.Number(slot)
+    end
+    return nil
+end
+
 -- A key as the client names it (1, SHIFT-F, CTRL-MOUSEWHEELUP): printable
 -- ASCII with no space, at most 64.
 local function keyName(value)
@@ -423,15 +510,30 @@ ns.Section({
         local binding = probe("GetBinding", getBinding)
         local key = probe("GetBindingKey", getKey)
         local secret = probe("issecretvalue", isSecret)
-        local list = { set, count, binding, key, secret }
-        lookedUp(list)
+        -- A frame's GetAttribute (CLICK commands, M16-45): looked up on each
+        -- frame, so it is counted as present.
+        local attribute = probe("GetAttribute", true)
+        local asked = { set, count, binding, key, secret, attribute }
+        lookedUp(asked)
+        -- Written only in a debug session (M16-45).
+        local list = nil
+        if ns.debug then
+            list = asked
+        end
         local missing = (not getCount and "GetNumBindings")
             or (not getBinding and "GetBinding")
             or (not getKey and "GetBindingKey")
         if missing then
             return { absent = ns.String(missing .. " missing"), probes = list }
         end
-        local record = { list = {}, commands = 0, commands_left_out = 0, keys_left_out = 0, probes = list }
+        local record = {
+            list = {},
+            commands = 0,
+            commands_left_out = 0,
+            clicks_left_out = 0,
+            keys_left_out = 0,
+            probes = list,
+        }
         -- The client's names for its two binding sets [verify], so a reader
         -- can name `binding_set` without assuming the numbers.
         record.account_bindings = ns.Number(ACCOUNT_BINDINGS)
@@ -459,7 +561,7 @@ ns.Section({
         if not okCount or type(total) ~= "number" then
             return { absent = "GetNumBindings gave no number", probes = list }
         end
-        local commands, leftOut, keysLeftOut = 0, 0, 0
+        local commands, leftOut, clicksLeftOut, keysLeftOut = 0, 0, 0, 0
         for index = 1, math.min(total, MAX_BINDINGS) do
             -- First return only: the command. The header, category and keys
             -- GetBinding also returns are not bound.
@@ -473,6 +575,25 @@ ns.Section({
             if okBinding and type(found) == "string" then
                 commands = commands + 1
                 local name = command(found)
+                local action = nil
+                local click = nil
+                if not name then
+                    click = clickCommand(found)
+                end
+                if click then
+                    -- A CLICK command is kept only under the rule of
+                    -- clickParts and clickAction (M16-45); every other one
+                    -- is counted in clicks_left_out too.
+                    local frameName = clickParts(click)
+                    if frameName then
+                        action = clickAction(isSecret, secret, attribute, frameName)
+                    end
+                    if action then
+                        name = ns.String(click)
+                    else
+                        clicksLeftOut = clicksLeftOut + 1
+                    end
+                end
                 if not name then
                     leftOut = leftOut + 1
                 else
@@ -492,13 +613,15 @@ ns.Section({
                     end
                     tally(key, keys[1], any)
                     if #kept > 0 then
-                        record.list[#record.list + 1] = { command = ns.String(name), keys = kept }
+                        record.list[#record.list + 1] =
+                            { command = ns.String(name), action = ns.Number(action), keys = kept }
                     end
                 end
             end
         end
         record.commands = commands
         record.commands_left_out = leftOut
+        record.clicks_left_out = clicksLeftOut
         record.keys_left_out = keysLeftOut
         return record
     end,
