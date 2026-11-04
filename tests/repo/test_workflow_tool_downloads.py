@@ -19,10 +19,15 @@ Static: every `run:` step under `.github/workflows/` that downloads with
 - write the check as a bare command on its own line, so bash -e stops on it
   (no `!`, no `if`/`while`/`until` condition, nothing such as `|| ...` or
   `; true` after it), and never pipe into a shell;
-- run under a shell that has `-e`: the effective `shell:` (the step's, else
-  the job's `defaults.run.shell`, else the workflow's) is unset, the `bash`
-  keyword, or a bash command line carrying `-e` such as `bash -eo pipefail
-  {0}`; anything else is `shell-without-e`;
+- run under a shell that stops on a failed command: the effective `shell:`
+  (the step's, else the job's `defaults.run.shell`, else the workflow's) is
+  one of the exact strings in `SHELLS_WITH_E` (`bash`, `bash -e {0}`, ...;
+  compared after collapsing whitespace, never parsed), or is unset on a job
+  whose `runs-on` is a literal naming no Windows runner. GitHub's unset
+  default is `bash -e {0}` on Linux and macOS but `pwsh` on Windows, so a
+  Windows runner, an expression such as `${{ matrix.os }}` or a missing
+  `runs-on` needs an explicit allowlisted `shell:`. Anything else is
+  `shell-without-e`;
 - not set `continue-on-error` to a truthy value, which would let the job go
   on past a failed check.
 
@@ -107,7 +112,8 @@ def _effective_shell(
     workflow: dict[str, Any], job: dict[str, Any], step: dict[str, Any]
 ) -> str | None:
     """The step's `shell:`, else the job's `defaults.run.shell`, else the
-    workflow's; None when none is set (GitHub then runs `bash -e {0}`)."""
+    workflow's; None when none is set. What GitHub runs for None depends on
+    the runner: `bash -e {0}` on Linux and macOS, `pwsh` on Windows."""
     for holder in (step, (job.get("defaults") or {}).get("run") or {}):
         if holder.get("shell") is not None:
             return str(holder["shell"])
@@ -115,16 +121,43 @@ def _effective_shell(
     return None if top.get("shell") is None else str(top["shell"])
 
 
-def _shell_has_e(shell: str | None) -> bool:
-    """True for no shell (GitHub's `bash -e {0}`), the `bash` keyword (GitHub
-    runs `bash --noprofile --norc -eo pipefail {0}`), or a bash command line
-    with a short-option cluster that holds `e` (`bash -eo pipefail {0}`)."""
-    if shell is None or shell.strip() == "bash":
-        return True
-    words = shell.split()
-    if not words or Path(words[0]).name != "bash":
+# The only shells accepted on a fetching step, compared after collapsing
+# whitespace. An allowlist, not a parse: `bash -e +e {0}` and
+# `bash -e -c 'set +e; . {0}'` both carry `-e` and both fail open.
+SHELLS_WITH_E = frozenset(
+    {
+        "bash",  # GitHub runs `bash --noprofile --norc -eo pipefail {0}`
+        "bash -e {0}",
+        "bash -eo pipefail {0}",
+        "bash --noprofile --norc -eo pipefail {0}",
+        "/usr/bin/bash --noprofile --norc -eo pipefail {0}",
+    }
+)
+
+
+def _literal_non_windows(runs_on: object) -> bool:
+    """True when `runs-on` is a literal string or list of strings and none of
+    them names Windows. An expression (`${{ matrix.os }}`), a group mapping
+    or a missing `runs-on` is not known to be Linux or macOS."""
+    labels = [runs_on] if isinstance(runs_on, str) else runs_on
+    if not isinstance(labels, list) or not labels:
         return False
-    return any(re.fullmatch(r"-[A-Za-z]*e[A-Za-z]*", w) for w in words[1:])
+    for label in labels:
+        if not isinstance(label, str) or "${{" in label:
+            return False
+        if "windows" in label.lower():
+            return False
+    return True
+
+
+def _shell_has_e(shell: str | None, runs_on: object) -> bool:
+    """True for an allowlisted shell, or for no shell on a job whose runner is
+    a literal that names no Windows (GitHub's default there is `bash -e
+    {0}`; on Windows it is `pwsh`, which does not stop on a failed native
+    command)."""
+    if shell is None:
+        return _literal_non_windows(runs_on)
+    return " ".join(shell.split()) in SHELLS_WITH_E
 
 
 def _fetching_steps(
@@ -142,6 +175,7 @@ def _fetching_steps(
             env = {**job_env, **(step.get("env") or {})}
             facts = {
                 "shell": _effective_shell(workflow, job, step),
+                "runs-on": job.get("runs-on"),
                 "continue-on-error": step.get("continue-on-error"),
             }
             yield f"{job_id}[{i}] {step.get('name', '')}", script, env, facts
@@ -187,7 +221,7 @@ def _findings(workflow: dict[str, Any]) -> list[tuple[str, str]]:
     """
     found: list[tuple[str, str]] = []
     for where, script, env, facts in _fetching_steps(workflow):
-        if not _shell_has_e(facts["shell"]):
+        if not _shell_has_e(facts["shell"], facts["runs-on"]):
             found.append((where, "shell-without-e"))
         if facts["continue-on-error"] not in (None, False, "false"):
             found.append((where, "continue-on-error"))
@@ -452,4 +486,72 @@ def test_continue_on_error_on_a_fetching_step_is_caught() -> None:
         assert "continue-on-error" in {k for _, k in _findings(workflow)}, value
     workflow = _ci()
     _actionlint_step(workflow)["continue-on-error"] = False
+    assert _findings(workflow) == []
+
+
+# Re-checks of #339 (M13-65): the shell is an exact allowlist, and an unset
+# shell is accepted only on a literal non-Windows runner. Constructed inputs.
+
+
+@pytest.mark.parametrize(
+    "shell",
+    [
+        "bash -e +e {0}",
+        "bash -e -c 'set +e; . {0}'",
+        "bash -ex {0}",
+        "/bin/bash -e {0}",
+        "sh -e {0}",
+        "pwsh",
+    ],
+)
+def test_a_shell_off_the_allowlist_is_caught(shell: str) -> None:
+    workflow = _ci()
+    _actionlint_step(workflow)["shell"] = shell
+    assert "shell-without-e" in {k for _, k in _findings(workflow)}, shell
+
+
+def test_an_allowlisted_shell_is_compared_after_collapsing_whitespace() -> None:
+    workflow = _ci()
+    _actionlint_step(workflow)["shell"] = "  bash   -eo\tpipefail {0} "
+    assert _findings(workflow) == []
+
+
+@pytest.mark.parametrize(
+    "runs_on",
+    [
+        "windows-latest",
+        "Windows-2025",
+        ["self-hosted", "windows"],
+        "${{ matrix.os }}",
+        ["ubuntu-latest", "${{ matrix.extra }}"],
+        {"group": "runners"},
+        None,
+    ],
+)
+def test_an_unset_shell_off_a_literal_linux_runner_is_caught(runs_on: object) -> None:
+    workflow = _ci()
+    job = workflow["jobs"]["harness"]
+    if runs_on is None:
+        del job["runs-on"]
+    else:
+        job["runs-on"] = runs_on
+    assert "shell" not in _actionlint_step(workflow)
+    assert "shell-without-e" in {k for _, k in _findings(workflow)}, runs_on
+
+
+@pytest.mark.parametrize("runs_on", ["ubuntu-latest", ["ubuntu-24.04"], "macos-latest"])
+def test_an_unset_shell_on_a_literal_linux_or_macos_runner_is_accepted(
+    runs_on: object,
+) -> None:
+    # Positive control.
+    workflow = _ci()
+    workflow["jobs"]["harness"]["runs-on"] = runs_on
+    assert "shell" not in _actionlint_step(workflow)
+    assert _findings(workflow) == []
+
+
+def test_a_windows_runner_with_shell_bash_is_accepted() -> None:
+    workflow = _ci()
+    workflow["jobs"]["harness"]["runs-on"] = "windows-latest"
+    _actionlint_step(workflow)["shell"] = "bash"
     assert _findings(workflow) == []
