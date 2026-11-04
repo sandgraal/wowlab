@@ -51,6 +51,16 @@ make ci       # lint, tests, parser suite, hook tests on 3.12 and 3.9
 uv run wowlab --version
 ```
 
+While you work, `make test-fast` runs the suite without the review probes
+(`lab/core/tests/review/`) and the `serial` pass, on at most 4 workers; it is
+for iteration, and `make test` or `make ci` (and the PR's CI) is the proof
+that a change is done. `make test-clean` removes pytest's temp dirs
+(`$TMPDIR/pytest-of-<user>`) and `.pytest_cache` and prunes the uv cache,
+printing the sizes before and after. Every test has a 300-second hang guard
+(`pytest-timeout`). `make ci` runs every stage even when one fails, prints
+each stage's result at the end, exits non-zero if any failed, and says so
+when selene is missing (`make selene` fetches it).
+
 `make setup` never runs `pre-commit install`; see "Worktree hygiene" in
 `docs/AGENT_WORKFLOW.md` for why.
 
