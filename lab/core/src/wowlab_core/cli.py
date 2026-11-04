@@ -2764,8 +2764,9 @@ def _pre_write_words(facts: pathfacts.SnapshotFacts) -> str:
     newer = facts.newer_pre_write
     if newer is not None:
         return (
-            f"; a newer snapshot ({_snap_name(newer)}) was {_KIND_WORDS['pre-write']}, "
-            "not as you saved them"
+            f"; a newer snapshot ({_snap_name(newer)}) was taken automatically just "
+            "before a change, and restoring that one puts the files back as they were "
+            "just before that change"
         )
     return ""
 
