@@ -373,15 +373,17 @@ def test_the_keys_panel_draws_the_rows_of_char_binds_cross_capture(
     assert len(shared) == 128
     assert view["rowNotes"] == [f"On 128 keys: {keymap.NOT_IN_A_FILE_NOTE}"]
     assert view["keysText"].count(keymap.WHY_NOT_IN_A_FILE) == 1
-    # The left-out counts in `char binds`'s own sentence, word for word.
+    # The left-out counts in the report's own sentence (M13-77), which
+    # `char binds` prints word for word.
     params = _gear_params(PICKED)
     args = ["char", "binds", "--character", params["character"], "--account", params["account"]]
     text = CliRunner().invoke(cli.app, [*args, "--flavor", params["flavor"]])
     assert text.exit_code == 0, text.stdout
     [left_out] = [ln for ln in text.stdout.splitlines() if ln.startswith("Left out of")]
     assert "(a key bound straight to a spell, macro, item or click may be one)" in left_out
+    assert left_out == report["left_out_note"]
     lines = [ln for ln in view["keysLines"] if ln.startswith("Left out of")]
-    assert lines == [left_out]
+    assert lines == [report["left_out_note"]]
 
 
 def test_the_text_filter_narrows_as_the_model_says_cross_capture(
@@ -1009,3 +1011,10 @@ def test_the_script_holds_no_binding_or_macro_rule() -> None:
         assert rule not in script, rule
     for words in ("casts ", "runs macro", "uses item", "ACTIONBUTTON", "MULTIACTIONBAR"):
         assert words not in whole, words
+    # M13-77: the left-out sentence is the report's `left_out_note`; the
+    # script keeps no copy of it and reads no count to build one.
+    for words in ("Left out of the bindings", "not printable ASCII", "plain upper case"):
+        assert words not in whole, words
+    for field in ("commands_left_out", "keys_left_out"):
+        assert field not in script, field
+    assert "report.left_out_note" in script

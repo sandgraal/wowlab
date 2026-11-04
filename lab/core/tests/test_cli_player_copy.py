@@ -555,3 +555,62 @@ def test_json_commands_end_their_help_with_the_one_footer() -> None:
             out = runner.invoke(cli.app, [*path, "--help"], terminal_width=200).stdout
             assert out.rstrip().endswith(cli.JSON_FOOTER), path
             assert "JSON:" not in out, path
+
+
+# ─── install values print as read (review round 2) ───────────────────────────
+
+# The reader refuses a skip-list entry or an unknown key that is not a plain
+# lower-case name, so neither can be written "note (L1)" or hold "[verify]".
+# A section's absent reason is text the addon wrote and the record keeps as
+# it is: it carries the marker-like text here, and the unknown key is the
+# bare `L1`.
+UNKNOWN_KEY = "L1"
+REASON = "note (L1) [verify] (M12-3) keep"
+RECORDED_REASON = b'"no barber-shop visit recorded with the addon enabled"'
+
+
+def test_char_show_prints_record_values_as_read_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Constructed (boundary input, L8): a real record given an unknown key
+    and an absent reason that look like the spec's markers. `char show`
+    renders its own caveats but prints both values exactly as the file holds
+    them; `--json` keeps them too."""
+    root = sandbox(tmp_path, monkeypatch, "")
+    record = (
+        root
+        / FLAVOR
+        / "WTF"
+        / "Account"
+        / ACCOUNT
+        / "1"
+        / "Labcharb-Labrealmf"
+        / "SavedVariables"
+        / "WowLab.lua"
+    )
+    data = record.read_bytes()
+    head = b"WowLabCharDB = {\r\n"  # the capture's own line ends
+    assert data.count(head) == 1 and data.count(RECORDED_REASON) == 1
+    data = data.replace(head, head + f'["{UNKNOWN_KEY}"] = 1,\r\n'.encode())
+    record.write_bytes(data.replace(RECORDED_REASON, f'"{REASON}"'.encode()))
+    args = ["char", "show", "--character", "1/Labcharb-Labrealmf"]
+    text = runner.invoke(cli.app, args)
+    assert text.exit_code == 0, text.stderr
+    assert f"(kept in --json): {UNKNOWN_KEY}" in text.stdout, text.stdout
+    assert REASON in text.stdout, text.stdout
+    as_json = runner.invoke(cli.app, [*args, "--json"]).stdout
+    assert REASON in as_json and f'"{UNKNOWN_KEY}"' in as_json
+
+
+def test_a_record_value_in_what_a_key_does_prints_as_read_constructed() -> None:
+    """Constructed: the record's value in a `does` line is kept as read; the
+    marker in wowlab's own words around it is rendered."""
+    holds = cli.keymap.Holds(
+        type="macro", id=7, sub_type="spell (L3) [verify]", name=None, subtext=None
+    )
+    cli._new_report()
+    does = cli.keymap._does(holds)
+    out = cli._player_copy(does, cli._held_words(holds))
+    assert "spell (L3) [verify]" in out
+    assert out.count(CONFIRM) == 1
+    cli._new_report()

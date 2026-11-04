@@ -6,9 +6,9 @@ M14-02's first shape unchanged. `undo` and `sv merge` declare none: their
 plan run is the leaf with `--json` alone and stdin closed, `_confirm` gets
 no answer, and the run ends with `cli.CONFIRM_DECLINED` on stderr and exit
 1 (the *declined* shape). Their confirmed run carries `--expect=<pin>`, the
-pin read by the server from the plan's own report (`undone`,
-`target_sha256`), so it applies the plan that was shown or is refused with
-exit 3.
+pin read by the server from the plan's own report (`undone`;
+`target_sha256:merged_sha256` since M13-74), so it applies the plan that
+was shown or is refused with exit 3.
 
 Two kinds of run, none touching a real install:
 - the recorder of `test_ui_confirm` (constructed) for what the server makes
@@ -74,6 +74,8 @@ KEY_COPY = f'{DBM_VAR}["Labchard Labrealmg"]={DBM_VAR}["Labcharb Labrealmf"]'
 
 RECORD = "20261019-0123abcd"  # a journal record id's shape (constructed)
 SHA = "c" * 64  # a SHA-256's shape (constructed)
+MERGED = "d" * 64  # another (constructed): the bytes the merge would write
+PINS = {"target_sha256": SHA, "merged_sha256": MERGED}
 PROMPT = "Undo it? [y/N]:\n"
 
 
@@ -207,7 +209,7 @@ def test_the_ui_sends_expect_on_sv_merge_before_its_arguments(
     server: ui.UiServer, recorder: Recorder
 ) -> None:
     stderr = f"  replace  x\nWrite the merge? [y/N]:\n{cli.CONFIRM_DECLINED}\n"
-    recorder.reply({"target_sha256": SHA, "written": False}, 1, stderr=stderr)
+    recorder.reply({**PINS, "written": False}, 1, stderr=stderr)
     params: dict[str, object] = {"file": "--expect=0", "into": CHAR_A, "key": [KEY_COPY]}
     token = _token(_plan(server, MERGE, params))
     assert token is not None
@@ -215,7 +217,14 @@ def test_the_ui_sends_expect_on_sv_merge_before_its_arguments(
     plan, confirmed = recorder.argvs()
     head = ["sv", "merge", f"--into={CHAR_A}", f"--key={KEY_COPY}"]
     assert plan == [*head, "--json", "--", "--expect=0"]
-    assert confirmed == [*head, "--json", "--yes", f"--expect={SHA}", "--", "--expect=0"]
+    assert confirmed == [
+        *head,
+        "--json",
+        "--yes",
+        f"--expect={SHA}:{MERGED}",
+        "--",
+        "--expect=0",
+    ]
 
 
 def test_a_confirm_request_cannot_bring_its_own_expect(
@@ -310,10 +319,17 @@ def test_sv_merge_reads_its_own_pin_field(server: ui.UiServer, recorder: Recorde
     params: dict[str, object] = {"file": "x.lua", "into": CHAR_A}
     recorder.reply({"undone": RECORD}, 1, stderr=stderr)
     assert _token(_plan(server, MERGE, params)) is None
+    # The target alone does not pin what the merge writes (M13-74).
     recorder.reply({"target_sha256": SHA}, 1, stderr=stderr)
+    assert _token(_plan(server, MERGE, params)) is None
+    recorder.reply({**PINS, "merged_sha256": None}, 1, stderr=stderr)
+    assert _token(_plan(server, MERGE, params)) is None
+    recorder.reply({**PINS, "merged_sha256": "-rf"}, 1, stderr=stderr)
+    assert _token(_plan(server, MERGE, params)) is None
+    recorder.reply(PINS, 1, stderr=stderr)
     assert _token(_plan(server, MERGE, params)) is not None
     # Unresolved conflicts: exit 1 with the report and no line from `_confirm`.
-    recorder.reply({"target_sha256": SHA, "written": False}, 1, stderr="")
+    recorder.reply({**PINS, "written": False}, 1, stderr="")
     assert _token(_plan(server, MERGE, params)) is None
 
 
@@ -386,15 +402,16 @@ def test_each_declined_note_says_exactly_what_its_pin_checks(
     server: ui.UiServer, recorder: Recorder
 ) -> None:
     """`undo` is refused over a newer record and `sv merge` over a changed
-    target, and neither note claims more (review S1: the source of `sv
-    merge` is not pinned; M13-74)."""
+    target or other bytes to write (M13-74: a changed source shows as
+    those), and neither note claims more."""
     report, stderr = _declined({"undone": RECORD})
     recorder.reply(report, 1, stderr=stderr)
     note = _plan(server, UNDO)["confirm"]["note"]
     assert f"--expect {RECORD}" in note and "another change has been journaled" in note
-    recorder.reply({"target_sha256": SHA}, 1, stderr=f"plan\n{_MARKER}")
+    recorder.reply(PINS, 1, stderr=f"plan\n{_MARKER}")
     note = _plan(server, MERGE, {"file": "x.lua", "into": CHAR_A})["confirm"]["note"]
-    assert f"--expect {SHA}" in note and "if the target file has changed" in note
+    assert f"--expect {SHA}:{MERGED}" in note and "if the target file has changed" in note
+    assert "what it merges from" in note
     for note in ui._PIN_CHECKS.values():
         assert "what the plan read" not in note
 
@@ -610,7 +627,7 @@ def test_sv_merge_through_the_ui(real: Real) -> None:
     assert token is not None
     done = real.confirm(MERGE, token, params)
     assert done["exit_code"] == 0, done["stderr"]
-    assert f"--expect={shown['target_sha256']}" in real.argvs()[-1]
+    assert f"--expect={shown['target_sha256']}:{shown['merged_sha256']}" in real.argvs()[-1]
     report = json.loads(done["stdout"])
     assert report["written"] is True
     assert target.read_bytes() != before
@@ -678,7 +695,8 @@ def test_sv_merge_is_refused_when_the_target_changed_after_the_plan(real: Real) 
     plan = real.plan(MERGE, params)
     token = _token(plan)
     assert token is not None
-    shown = json.loads(plan["stdout"])["target_sha256"]
+    report = json.loads(plan["stdout"])
+    shown = f"{report['target_sha256']}:{report['merged_sha256']}"
     # The target's bytes change between plan and confirm (constructed edit).
     original = target.read_bytes()
     at = original.index(b'["Enabled"] = true,', original.index(b'\r\n["Unknown"] = {'))

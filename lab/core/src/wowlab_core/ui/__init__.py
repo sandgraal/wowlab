@@ -9,20 +9,39 @@ Every request is checked, in this order, before anything else is done with
 it (a POST body included):
 - `Host` is exactly `127.0.0.1:<port>` or `localhost:<port>`;
 - an `Origin`, when present, is exactly `http://` plus that `Host`;
-- the query parameter `token` is the server's token
-  (`secrets.token_urlsafe(32)`), which appears only in the URL `wowlab ui`
-  opens: never in a response, a header, a cookie, a log, or a child's argv
-  or environment.
+- the query parameter `token` is the server's session key
+  (`secrets.token_urlsafe(32)`).
+The session key is never in a header, a cookie, a log, the URL `wowlab ui`
+opens, the address bar or the history, or a child's argv or environment, and
+it is in one response body only: the boot exchange (M16-42). Requests the
+page makes carry it in their query, as before. The URL `wowlab ui` opens, which a browser's argv carries and other
+local accounts can read, holds a one-time boot key instead
+(`/?boot=<key>`, `secrets.token_urlsafe(32)`), the only thing besides the
+session key that passes the third check, and only for the shell (`GET` and
+`HEAD` of `/`) and for `POST /api/session`, the exchange, which answers
+`{"token": <session key>}` once and spends the boot key. From then on the
+boot key opens nothing (403 `boot_spent`), so a second exchange, whoever
+makes it, gets nothing. `page.js` takes the query out of the address bar
+with `history.replaceState` before its first request, keeps the session key
+in memory only, and never reads it from its own URL. The player is told in
+words, never in JSON: a page that lost the exchange says the link was used;
+`GET /` with the spent boot key, or with no query at all (a reload), answers
+403 with the fixed sentence `_LINK_USED` as plain text; and the first time
+the spent boot key is presented again, `notice` (set by `wowlab ui` to print
+to its terminal) is called once with `_REUSED_NOTICE`, which holds no key.
 A refusal answers 403 `{"error": "host" | "origin" | "token"}`. Every
 response, refusals and errors included, carries the same
-Content-Security-Policy, which allows the server itself and the page's own
-inline script and style by hash, and nothing else, and no CORS header. The
-page shell is template text in this package (`templates/`), assembled into
-one document: a `<script src>` would be a request without the token. Its
-style has one part that is not template text: the rules that draw an item
-name in its quality colour, made from the shipped `gear_slots.toml` (the
-Character tab, M14-08), so neither the script nor the stylesheet holds a
-colour table.
+Content-Security-Policy, which allows the server itself, the page's own
+inline script and style by hash, and `data:` fonts named by the page's own
+hashed code (`font-src data:`, ADR-0035), and nothing else, and no CORS
+header. The page shell is template text in this package (`templates/`),
+assembled into one document: a `<script src>` would be a request without the
+token. Its style has two parts that are not template text, both after
+`page.css`: the rules that draw an item name in its quality colour, made
+from the shipped `gear_slots.toml` (the Character tab, M14-08), so neither
+the script nor the stylesheet holds a colour table; and one `@font-face` per
+pinned font file in `templates/fonts/` (M16-51), its bytes as a base64
+`data:` URL, since a font URL would be a request without the token.
 
 `GET /api/commands` lists the leaves of the Click tree read at start, with
 the home folder and path separator so the page can show home as `~`. `POST
@@ -33,7 +52,10 @@ arguments after `--`, flags given or not, never through a shell. Refused
 that declares `--yes` (read from the tree) whose plan run has none of the
 three shapes below (none on 2026-10-19), `ui` itself, `log tail` with
 `follow` (a run must end) and `looks page` with `out` (it can create a file
-anywhere outside an install).
+anywhere outside an install). `sv dump` always runs with `--install-only`
+(`_FORCED_FLAGS`), which refuses a file whose real path is not in the
+install wowlab finds by itself, and a `root` naming another install, before
+reading it, so a refusal quotes no byte of it (M16-42).
 
 The looks page (M14-04, ADR-0029 "embedded", §16.3). `GET /api/looks-page`
 answers `{"page": <text>}`: the file `looks page` writes by default,
@@ -53,9 +75,10 @@ Two residuals are known and accepted for review (M14-04): a file planted as
 also names, and run it in the frame's opaque origin, where it has no token
 and every request it makes carries `Origin: null` and is refused; and a
 `srcdoc` frame takes its base URL from the page that holds it, so inside the
-frame `document.baseURI` is the opened URL, token included, which neither
-script the frame may run (`lookspage._SCRIPT`, `page.js`) reads, as
-`test_ui_looks.py` checks.
+frame `document.baseURI` is the page's URL, which neither script the frame
+may run (`lookspage._SCRIPT`, `page.js`) reads, as `test_ui_looks.py`
+checks; since M16-42 that URL is `/`, the query taken out before the frame
+exists, and the URL `wowlab ui` opens never holds the session key.
 
 The confirm step (ADR-0029 "Writes", §16.1, M14-02, M14-03). A leaf that
 declares `--yes` is never run with `--yes` from a form: its `yes` (and
@@ -67,11 +90,11 @@ leaf that declares `--dry-run` (`snap gc`, `snap restore`, `profile apply`,
 marker is a JSON report with `dry_run: true`, exit 0; `doctor` runs with
 `--json`, and its marker is `first_run.outcome == "not_asked"` with
 `first_run.chosen` set, exit 0; a leaf with no `--dry-run` that declares
-`--expect` and whose pin field the CLI exports in `cli.EXPECT_FIELDS`
+`--expect` and whose pin fields the CLI exports in `cli.EXPECT_FIELDS`
 (`undo`, `sv merge`: the *declined* shape) runs with `--json` alone, and its
 marker is exit 1 with stderr's last line exactly `cli.CONFIRM_DECLINED`
 (`_confirm` got no answer on the closed stdin) and stdout one JSON report
-whose pin field holds a well-formed value. Only a whole run with its shape's
+whose pin fields each hold a well-formed value. Only a whole run with its shape's
 marker gets a one-time token (`secrets`), bound here to the exact argv it
 confirms, spent on first use and kept only in memory. A request carrying
 `confirm: <token>` spends it, rebuilds the plan argv from its own `command`
@@ -79,9 +102,10 @@ and `params`, and runs the bound confirmed argv only when the two plan argvs
 are equal: the plan argv with `--dry-run` taken out and `--yes` added as its
 own element after `--json` (and before any `--`, so it is never read as an
 argument), and for the declined shape `--expect=<pin>` after it, with the
-pin read here from the plan's own report: `undo` is refused (exit 3) if
-another record was journaled after the plan, `sv merge` if its target file
-changed (its source is not pinned; M13-74). The dry-run shape carries no
+pin read here from the plan's own report (its pin fields joined by `:`):
+`undo` is refused (exit 3) if another record was journaled after the plan,
+`sv merge` if its target file changed or the bytes it would write are not
+the ones the plan would have written (M13-74). The dry-run shape carries no
 pin: its confirmed run applies what is there at confirm time, after the
 pre-write snapshot. An unknown, spent or mismatched token answers 403
 `confirm` and runs nothing. A confirmed run's result names the journal
@@ -132,7 +156,7 @@ import sys
 import threading
 import time
 import urllib.parse
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any, override
@@ -189,9 +213,18 @@ _DOCTOR = ("doctor",)
 _SHAPE_DRY_RUN = "dry_run"
 _SHAPE_DOCTOR = "doctor"
 _SHAPE_DECLINED = "declined"
-# What a pin (the `--expect` value read from a declined plan's report) may
-# be: a journal record id or a SHA-256 fit it, and it never starts with `-`.
+# What one part of a pin (the `--expect` value read from a declined plan's
+# report, one part per pin field, joined by `:`) may be: a journal record id
+# or a SHA-256 fit it, and it never starts with `-`.
 _PIN = re.compile(r"\A[0-9A-Za-z][0-9A-Za-z._-]{0,127}\Z")
+_PIN_JOIN = ":"
+
+
+def _pin_ok(pin: str | None) -> bool:
+    """Whether `pin` is one or more well-formed parts joined by `:`."""
+    return pin is not None and all(_PIN.fullmatch(p) for p in pin.split(_PIN_JOIN))
+
+
 # Refusal code for an unknown, spent or mismatched confirm token.
 _CONFIRM_REFUSED = "confirm"
 # The longest confirm token read; `secrets.token_urlsafe(32)` is 43 characters.
@@ -206,6 +239,15 @@ _REFUSED_PARAMS: Mapping[tuple[str, ...], Mapping[str, tuple[bool, str]]] = {
     ("log", "tail"): {"follow": (True, "a run must end")},
     ("looks", "page"): {"out": (False, "it can create a file anywhere outside an install")},
 }
+# Flags the server gives a leaf on every run, as it gives `--json`, and never
+# the page, by leaf path (M16-42). `sv dump` reads any file it is named, so
+# from the UI it reads only one in the install: `--install-only` refuses any
+# other before reading a byte of it. A leaf here that does not declare its
+# flag as a plain flag is excluded (`_EXCLUDED_FORCED`), never run without it.
+_FORCED_FLAGS: Mapping[tuple[str, ...], tuple[str, ...]] = {
+    ("sv", "dump"): ("--install-only",),
+}
+_EXCLUDED_FORCED = "a flag the UI always passes is missing"
 
 
 # ─── the page shell ──────────────────────────────────────────────────────────
@@ -238,6 +280,55 @@ def _colour_rules() -> str:
     return "\n".join(rules) + "\n"
 
 
+# The Wellspring fonts (ADR-0035 and its amendment of 2026-10-26): twelve
+# WOFF2 files in `templates/fonts/`, copied unchanged from Google Fonts, each
+# written into the page's own style as one `@font-face` with a `data:` URL.
+# The two `unicode-range` values are those of Google's stylesheet for the
+# `latin` and `latin-ext` subsets; a glyph outside both falls back, per
+# character, to the next face in the page's font stack.
+_LATIN_RANGE = (
+    "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, "
+    "U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD"
+)
+_LATIN_EXT_RANGE = (
+    "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, "
+    "U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, "
+    "U+2C60-2C7F, U+A720-A7FF"
+)
+# File name, family, style, weight, unicode-range: ADR-0035's table, in its order.
+_FONTS: tuple[tuple[str, str, str, str, str], ...] = (
+    ("alegreya-latin.woff2", "Alegreya", "normal", "400 900", _LATIN_RANGE),
+    ("alegreya-latin-ext.woff2", "Alegreya", "normal", "400 900", _LATIN_EXT_RANGE),
+    ("alegreya-italic-latin.woff2", "Alegreya", "italic", "400 900", _LATIN_RANGE),
+    ("alegreya-italic-latin-ext.woff2", "Alegreya", "italic", "400 900", _LATIN_EXT_RANGE),
+    ("alegreya-sc-500-latin.woff2", "Alegreya SC", "normal", "500", _LATIN_RANGE),
+    ("alegreya-sc-500-latin-ext.woff2", "Alegreya SC", "normal", "500", _LATIN_EXT_RANGE),
+    ("alegreya-sc-700-latin.woff2", "Alegreya SC", "normal", "700", _LATIN_RANGE),
+    ("alegreya-sc-700-latin-ext.woff2", "Alegreya SC", "normal", "700", _LATIN_EXT_RANGE),
+    ("ibm-plex-mono-400-latin.woff2", "IBM Plex Mono", "normal", "400", _LATIN_RANGE),
+    ("ibm-plex-mono-400-latin-ext.woff2", "IBM Plex Mono", "normal", "400", _LATIN_EXT_RANGE),
+    ("ibm-plex-mono-500-latin.woff2", "IBM Plex Mono", "normal", "500", _LATIN_RANGE),
+    ("ibm-plex-mono-500-latin-ext.woff2", "IBM Plex Mono", "normal", "500", _LATIN_EXT_RANGE),
+)
+
+
+def _font_rules() -> str:
+    """One `@font-face` per file of `_FONTS`, its bytes as a base64 `data:`
+    URL (ADR-0035). Only the package's own files are read; the family, style,
+    weight and range are the constants above, so a rule holds nothing else."""
+    folder = importlib.resources.files(__name__) / "templates" / "fonts"
+    rules = ["/* the Wellspring fonts, from this package's fonts/ folder (SIL OFL 1.1) */"]
+    for name, family, style, weight, ranges in _FONTS:
+        data = base64.b64encode((folder / name).read_bytes()).decode("ascii")
+        rules.append(
+            "@font-face {"
+            f' font-family: "{family}"; font-style: {style}; font-weight: {weight};'
+            f' src: url(data:font/woff2;base64,{data}) format("woff2");'
+            f" unicode-range: {ranges}; }}"
+        )
+    return "\n".join(rules) + "\n"
+
+
 def _looks_sources() -> tuple[str, str]:
     """The hash sources of the looks page's own script and style
     (`lookspage._SCRIPT`, `lookspage._STYLE`), hashed as `lookspage` hashes
@@ -254,8 +345,9 @@ def _looks_sources() -> tuple[str, str]:
 @functools.cache
 def _shell() -> tuple[bytes, str]:
     """The page (its script and style inline) and the CSP that allows them,
-    and the looks page's script and style for the Looks view's frame."""
-    style = _template("page.css") + _colour_rules()
+    and the looks page's script and style for the Looks view's frame. The
+    style is `page.css`, then the colour rules, then the font rules."""
+    style = _template("page.css") + _colour_rules() + _font_rules()
     script = _template("page.js")
     page = (
         _template("page.html")
@@ -268,6 +360,7 @@ def _shell() -> tuple[bytes, str]:
             "default-src 'none'",
             f"script-src {_hash_source(script)} {looks_script}",
             f"style-src {_hash_source(style)} {looks_style}",
+            "font-src data:",
             "connect-src 'self'",
             "img-src 'self'",
             "frame-ancestors 'none'",
@@ -281,7 +374,9 @@ def _shell() -> tuple[bytes, str]:
 def static_files() -> Mapping[str, bytes]:
     """Every URL path served as a static file, with its exact bytes. All of
     it is template text from this package's `templates/` folder, but for the
-    colour rules made from the shipped slot table (`_colour_rules`)."""
+    colour rules made from the shipped slot table (`_colour_rules`) and the
+    font rules made from the pinned files in `templates/fonts/`
+    (`_font_rules`)."""
     return {"/": _shell()[0]}
 
 
@@ -388,9 +483,12 @@ class _Leaf:
     # (`_SHAPE_DRY_RUN`, `_SHAPE_DOCTOR` or `_SHAPE_DECLINED`); None for
     # every other leaf.
     confirm: str | None = None
-    # For `_SHAPE_DECLINED`: the field of the plan's report whose value the
-    # confirmed run passes back as `--expect` (`cli.EXPECT_FIELDS`).
-    pin: str | None = None
+    # For `_SHAPE_DECLINED`: the fields of the plan's report whose values,
+    # joined by `:`, the confirmed run passes back as `--expect`
+    # (`cli.EXPECT_FIELDS`).
+    pin: tuple[str, ...] | None = None
+    # The flags the server adds to every run of this leaf (`_FORCED_FLAGS`).
+    forced: tuple[str, ...] = ()
 
 
 def _opts(param: Any) -> list[str]:
@@ -398,9 +496,9 @@ def _opts(param: Any) -> list[str]:
 
 
 @functools.cache
-def _cli_contract() -> tuple[str, Mapping[tuple[str, ...], str]]:
+def _cli_contract() -> tuple[str, Mapping[tuple[str, ...], tuple[str, ...]]]:
     """What the CLI exports for the declined shape (§16.1): the line
-    `_confirm` ends a declined run with, and the report field each command
+    `_confirm` ends a declined run with, and the report fields each command
     that declares `--expect` names its pin in."""
     from wowlab_core import cli
 
@@ -516,6 +614,13 @@ def _read_tree(root: Any) -> dict[tuple[str, ...], _Leaf]:
         excluded = None
         confirm = None
         pin = None
+        forced = _FORCED_FLAGS.get(path, ())
+        for flag in forced:
+            owners = [p for p in getattr(command, "params", ()) if flag in _opts(p)]
+            if len(owners) == 1 and _plain_flag(owners[0], flag):
+                params.pop(str(owners[0].name), None)
+            else:
+                excluded = _EXCLUDED_FORCED
         if yes:
             if len(yes) == 1 and len(dry_run) <= 1 and len(expect) <= 1:
                 confirm = _confirm_shape(
@@ -526,7 +631,7 @@ def _read_tree(root: Any) -> dict[tuple[str, ...], _Leaf]:
                     expect[0] if expect else None,
                 )
             if confirm is None:
-                excluded = _EXCLUDED_YES
+                excluded = excluded or _EXCLUDED_YES
             else:
                 # The server adds these itself, as it adds `--json`: the
                 # plan run never carries `--yes`, and only a token adds it,
@@ -539,12 +644,13 @@ def _read_tree(root: Any) -> dict[tuple[str, ...], _Leaf]:
                     params.pop(str(param.name), None)
         if path == ("ui",):
             excluded = _EXCLUDED_UI
+        if excluded is not None:
             confirm = None
             pin = None
         # What `--help` prints: Click cuts the help at a form feed, after
         # which the command names its --json model for the command reference.
         help_text = str(getattr(command, "help", None) or "").split("\f", 1)[0].strip()
-        leaves[path] = _Leaf(path, help_text, params, json_opt, excluded, confirm, pin)
+        leaves[path] = _Leaf(path, help_text, params, json_opt, excluded, confirm, pin, forced)
     return leaves
 
 
@@ -636,7 +742,7 @@ class _Argv:
             raise ValueError("only a leaf of the confirm step has a confirmed run")
         if self.shape != _SHAPE_DECLINED:
             return [*self.head, *self._json(), _YES, *self.tail]
-        if pin is None or not _PIN.fullmatch(pin):
+        if not _pin_ok(pin):
             raise ValueError("a confirmed run of the declined shape needs its plan's pin")
         return [*self.head, *self._json(), _YES, f"{_EXPECT}={pin}", *self.tail]
 
@@ -690,7 +796,7 @@ def _build(leaf: _Leaf, params: Mapping[str, object]) -> _Argv:
         else:
             options.extend(f"{param.opt}={v}" for v in values)
     tail = ("--", *arguments) if arguments else ()
-    return _Argv((*leaf.path, *options), leaf.json_opt, tail, leaf.confirm)
+    return _Argv((*leaf.path, *leaf.forced, *options), leaf.json_opt, tail, leaf.confirm)
 
 
 # ─── running one command ─────────────────────────────────────────────────────
@@ -900,9 +1006,10 @@ def _declined_offer(leaf: _Leaf, report: Mapping[str, Any] | None) -> _Offer:
     one of these without `--expect` (§16.1)."""
     if report is None or leaf.pin is None:
         return _Offer(False)
-    pin = report.get(leaf.pin)
-    if not isinstance(pin, str) or not _PIN.fullmatch(pin):
+    parts = [report.get(field) for field in leaf.pin]
+    if not all(isinstance(p, str) and _PIN.fullmatch(p) for p in parts):
         return _Offer(False)
+    pin = _PIN_JOIN.join(str(p) for p in parts)
     check = _PIN_CHECKS.get(
         leaf.pin, "if that no longer matches by then, it is refused (exit 3) and nothing is changed"
     )
@@ -914,16 +1021,18 @@ def _declined_offer(leaf: _Leaf, report: Mapping[str, Any] | None) -> _Offer:
     )
 
 
-# What `--expect` checks, by the report field its pin is read from, in the
+# What `--expect` checks, by the report fields its pin is read from, in the
 # words the offer uses: exactly what the CLI compares, nothing more. `sv
-# merge` pins its target only, not its source (M13-74 follows that up).
-_PIN_CHECKS: Mapping[str, str] = {
-    "undone": (
+# merge` pins its target and the bytes it would write, so a source that
+# changed after the plan is refused too (M13-74).
+_PIN_CHECKS: Mapping[tuple[str, ...], str] = {
+    ("undone",): (
         "if another change has been journaled since this plan, it is refused (exit 3) and "
         "nothing is undone"
     ),
-    "target_sha256": (
-        "if the target file has changed by then, it is refused (exit 3) and nothing is written"
+    ("target_sha256", "merged_sha256"): (
+        "if the target file has changed by then, or what it merges from has and it would "
+        "write other bytes than this plan, it is refused (exit 3) and nothing is written"
     ),
 }
 
@@ -1083,6 +1192,7 @@ class UiServer(http.server.ThreadingHTTPServer):
 
     daemon_threads = True
     token: str
+    boot: str
     url: str
     wowlab_argv: Sequence[str]
 
@@ -1097,7 +1207,18 @@ class UiServer(http.server.ThreadingHTTPServer):
         self.wowlab_argv = tuple(wowlab_argv)
         self.timeout_s = timeout_s
         self.output_cap_bytes = output_cap_bytes
+        # The session key every request but the boot ones carries, and the
+        # one-time boot key the opened URL carries instead (M16-42). The
+        # session key leaves this process once, in the body of the one boot
+        # exchange; the boot key is worthless once spent.
         self.token = secrets.token_urlsafe(32)
+        self.boot = secrets.token_urlsafe(32)
+        self._boot_lock = threading.Lock()
+        self._boot_spent = False
+        self._boot_reused = False
+        # Called once, with `_REUSED_NOTICE`, when the spent boot key is
+        # presented again; `wowlab ui` prints it to its terminal.
+        self.notice: Callable[[str], None] | None = None
         self._runs_lock = threading.Lock()
         self._runs: set[int] = set()
         self._closing = threading.Event()
@@ -1111,7 +1232,7 @@ class UiServer(http.server.ThreadingHTTPServer):
         self._confirms_lock = threading.Lock()
         super().__init__((_LOOPBACK, 0), _Handler)
         self.port = int(self.server_address[1])
-        self.url = f"http://{_LOOPBACK}:{self.port}/?token={self.token}"
+        self.url = f"http://{_LOOPBACK}:{self.port}/?boot={self.boot}"
         self.hosts = frozenset({f"{_LOOPBACK}:{self.port}", f"localhost:{self.port}"})
         self.commands_body = _commands_body(leaves)
 
@@ -1140,6 +1261,44 @@ class UiServer(http.server.ThreadingHTTPServer):
         with self._idle:
             while self._runs and time.monotonic() < deadline:
                 self._idle.wait(_POLL_S)
+
+    def boot_state(self, given: str) -> str | None:
+        """Whether `given` is the boot key: None when it is and is not yet
+        spent, `_BOOT_SPENT` when it is and was spent, else `"token"`."""
+        if not secrets.compare_digest(
+            given.encode("utf-8", "surrogatepass"), self.boot.encode("ascii")
+        ):
+            return "token"
+        with self._boot_lock:
+            if not self._boot_spent:
+                return None
+        self._reused()
+        return _BOOT_SPENT
+
+    def _reused(self) -> None:
+        """The spent boot key came back: tell the player once."""
+        with self._boot_lock:
+            first = not self._boot_reused
+            self._boot_reused = True
+        if first and self.notice is not None:
+            with contextlib.suppress(Exception):
+                self.notice(_REUSED_NOTICE)
+
+    def spend_boot(self, given: str) -> str | None:
+        """Spend the boot key: the session key, the first time `given` is the
+        boot key and only then; else None. The check and the spend are one
+        step, so two exchanges racing get one key between them."""
+        if not secrets.compare_digest(
+            given.encode("utf-8", "surrogatepass"), self.boot.encode("ascii")
+        ):
+            return None
+        with self._boot_lock:
+            spent = self._boot_spent
+            self._boot_spent = True
+        if spent:
+            self._reused()
+            return None
+        return self.token
 
     def run(self, argv: list[str]) -> _Run:
         """One run of `wowlab` with `argv`, bounded in time and output."""
@@ -1302,6 +1461,24 @@ class UiServer(http.server.ThreadingHTTPServer):
 _DIGITS = re.compile(r"[0-9]+")
 # The one route that reads a file: the page `looks page` wrote (M14-04).
 _LOOKS_PAGE = "/api/looks-page"
+# The boot exchange (M16-42): `POST` with the boot key, answered once with the
+# session key.
+_SESSION = "/api/session"
+# The refusal for the boot key once it was spent: the page says the link was
+# used, which is how a player sees that something else used it first.
+_BOOT_SPENT = "boot_spent"
+# What `GET /` answers, as plain text, for the spent boot key or no query at
+# all (a reload): the player reads a sentence, not JSON. It holds no key.
+_LINK_USED = (
+    "This wowlab ui link was already used: it works once, and a reload cannot use it "
+    "again. If you did not open it before, something else on this computer may have. "
+    "Stop wowlab ui with Ctrl-C and start it again.\n"
+)
+# What `notice` is called with, once, when the spent boot key comes back.
+_REUSED_NOTICE = (
+    "wowlab ui: the link was used a second time. If that was not you, stop wowlab ui "
+    "with Ctrl-C and start it again."
+)
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
@@ -1358,14 +1535,21 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     # ── checks ──
 
-    def _check(self) -> str | None:
-        """Host, Origin and the token, in that order; the refusal code, or None."""
+    def _check(self, boot: bool = False) -> str | None:
+        """Host, Origin and the token, in that order; the refusal code, or
+        None. With `boot` (the shell and the boot exchange), a query that is
+        exactly one `boot` field is checked as the boot key, not yet spent,
+        instead of the token."""
         hosts = self.headers.get_all("Host") or []
         if len(hosts) != 1 or hosts[0] not in self.server.hosts:
             return "host"
         origins = self.headers.get_all("Origin")
         if origins is not None and (len(origins) != 1 or origins[0] != "http://" + hosts[0]):
             return "origin"
+        if boot:
+            key = self._boot_given()
+            if key is not None:
+                return self.server.boot_state(key)
         query = self.path.partition("?")[2].partition("#")[0]
         try:
             fields = urllib.parse.parse_qs(query, keep_blank_values=True, max_num_fields=32)
@@ -1379,14 +1563,40 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return "token"
         return None
 
+    def _boot_given(self) -> str | None:
+        """The boot key, when the query is exactly one `boot` field."""
+        query = self.path.partition("?")[2].partition("#")[0]
+        try:
+            pairs = urllib.parse.parse_qsl(query, keep_blank_values=True, max_num_fields=32)
+        except ValueError:
+            return None
+        if len(pairs) == 1 and pairs[0][0] == "boot":
+            return pairs[0][1]
+        return None
+
     def _route(self) -> str:
         return self.path.partition("?")[0].partition("#")[0]
 
     def _checked(self) -> str | None:
-        """The request's path once it passed the checks, else None (refused)."""
-        refusal = self._check()
+        """The request's path once it passed the checks, else None (refused).
+        The boot key opens only the shell (`GET` and `HEAD` of `/`) and the
+        boot exchange."""
+        route = self._route()
+        boot = (self.command in ("GET", "HEAD") and route == "/") or (
+            self.command == "POST" and route == _SESSION
+        )
+        refusal = self._check(boot)
         if refusal is not None:
-            self._error(403, refusal)
+            query = self.path.partition("?")[2].partition("#")[0]
+            if (
+                self.command in ("GET", "HEAD")
+                and route == "/"
+                and (refusal == _BOOT_SPENT or (refusal == "token" and not query))
+            ):
+                # The page the player opens or reloads: a sentence, not JSON.
+                self._reply(403, _LINK_USED.encode("utf-8"), "text/plain; charset=utf-8")
+            else:
+                self._error(403, refusal)
             return None
         return self._route()
 
@@ -1403,7 +1613,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._reply(200, self.server.commands_body, "application/json")
         elif path == _LOOKS_PAGE:
             self._looks_page()
-        elif path == "/api/run":
+        elif path in ("/api/run", _SESSION):
             self._error(405, "method_not_allowed")
         else:
             self._error(404, "not_found")
@@ -1433,6 +1643,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path = self._checked()
         if path is None:
+            return
+        if path == _SESSION:
+            self._session()
             return
         if path != "/api/run":
             if path in static_files() or path == _LOOKS_PAGE:
@@ -1465,6 +1678,22 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         for piece in pieces:
             self.wfile.write(piece)
+
+    def _session(self) -> None:
+        """`POST /api/session?boot=<key>`: the boot exchange. Answers the
+        session key once, `{"token": <key>}`, and spends the boot key, so a
+        second exchange, whoever makes it, is refused `boot_spent`. The body
+        is not read. Only the boot key is taken here: a request that carries
+        the session key instead already holds what this would answer."""
+        given = self._boot_given()
+        if given is None:
+            self._error(403, "token")
+            return
+        token = self.server.spend_boot(given)
+        if token is None:
+            self._error(403, _BOOT_SPENT)
+            return
+        self._json(200, {"token": token})
 
     def _body(self) -> bytes | None:
         """The POST body, read only once it is known to be small enough."""
