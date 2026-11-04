@@ -299,3 +299,34 @@ jobs:
       - name: Doc-only PR — skipped
         if: needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true'
         run: echo "doc-only PR — trivy skipped"
+
+  # M16-40 (ADR-0013): on a change to a load-bearing file (luadata.py,
+  # guard.py, proposal.py), a grader already on main may change only by
+  # deleting complete xfail(strict=True) marker blocks. The rule and what
+  # counts as a grader are in scripts/check_grader_diff.py. HEAD^1..HEAD is
+  # the pull request's merge commit against its base (on a push to main, the
+  # squash-merged commit), so a depth of 2 is all the history it reads. The
+  # script runs from the base revision when the base has it, so a pull
+  # request cannot loosen the check it is graded by; it is stdlib-only and
+  # runs on the runner's python3 with -I, so nothing is installed or fetched.
+  # Not yet a required check: adding it means changing
+  # .github/rulesets/main.json and re-applying it after this job is on main.
+  grader-diff:
+    name: Graders activated by marker deletion only
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Check grader diffs
+        run: |
+          script="$RUNNER_TEMP/check_grader_diff.py"
+          if git cat-file -e HEAD^1:scripts/check_grader_diff.py 2>/dev/null; then
+            git show HEAD^1:scripts/check_grader_diff.py > "$script"
+          else
+            cp scripts/check_grader_diff.py "$script"
+          fi
+          python3 -I "$script" --repo . --base HEAD^1 --head HEAD
