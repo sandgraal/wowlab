@@ -605,18 +605,7 @@ def _symlinked(ws: Path) -> None:
         pytest.param(_symlinked, "root", True, id="symlinked"),
         # Without root the read-only case fails, loudly; and if nothing was
         # removed, the closing check fails the step.
-        # As root (uid 0, as in many containers) a read-only directory is
-        # still removable, so the failure this case expects cannot happen.
-        pytest.param(
-            _read_only,
-            "user",
-            False,
-            id="read-only-as-user-fails",
-            marks=pytest.mark.skipif(
-                getattr(os, "geteuid", lambda: -1)() == 0,
-                reason="runs as root: uid 0 ignores read-only permissions (M13-81)",
-            ),
-        ),
+        pytest.param(_read_only, "user", False, id="read-only-as-user-fails"),
         pytest.param(None, "noop", False, id="nothing-removed-fails"),
     ],
 )
