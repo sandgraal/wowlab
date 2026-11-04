@@ -171,7 +171,7 @@ def refuse_install(path: Path, what: str = "saved looks") -> None:
             if (candidate / marker).exists():
                 raise LookLocationError(
                     f"{path} is inside a game install ({candidate} holds {marker}); "
-                    f"{what} never live in an install (L1)"
+                    f"{what} never live in an install"
                 )
 
 
