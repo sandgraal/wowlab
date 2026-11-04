@@ -2243,6 +2243,58 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   `_absent` reason), and `char show` prints one `Identity:` line after the
   spec for a schema-4 record; nothing else in either command's output
   changes.
+
+  Amended 2026-11-04 (M16-45; §18.1 item 9; ADR-0026, amendment of
+  2026-10-22): schema 5. `WowLabCharDB` and `WowLabDB` are written with
+  `schema = 5`, and schema 5 is schema 4, quieter, with one more kind of
+  binding (`lab/addon/README.md`, "Schema 5"):
+  - The first-pass chat line prints only when the file's `announced` is not
+    this addon's schema, or `probe.lost` is set. `announced` is written by
+    the addon's own logout write, and only when the first pass ran in that
+    session; at `ADDON_LOADED` it is removed from the table in memory until
+    that write puts it back. So the line prints once per addon version and
+    after a session whose write never ran. A crash writes nothing, so after
+    a crash the file is as the last written session left it: one that
+    already wrote `announced` gives a quiet next login. The 15 s window
+    itself is unchanged.
+  - `/wowlab debug on|off` (per character, `debug = true` when on, from the
+    next `/reload` or login) gates the research scaffolding: `probes` on
+    `spellbook`, `actionbars` and `bindings`, and the six count-only
+    barber-shop events with `events_received`. Off by default. The calls and
+    secret checks are the same either way.
+  - After the first pass a change event only marks its section dirty. One
+    pass gathers every dirty section at most once every 30 s, never in
+    combat (known from `PLAYER_REGEN_DISABLED` and `PLAYER_REGEN_ENABLED`;
+    a pass whose timer ends in combat waits for the end of combat), and at
+    `PLAYER_LOGOUT`. `customization` still records at its barber-shop
+    events, and `/wowlab save` gathers at once.
+  - `talents.legacy` walks `Constants` once per session; a later gather asks
+    `C_Traits.GetConfigIDBySystemID` again only for the system ids that
+    answered a config id then.
+  - `bindings` stores a command `c` that `GetBinding` lists and that passes
+    the secret check only when it is a plain upper-case name (as before) or
+    when all three of ADR-0026's 2026-10-22 rules hold: `c` matches
+    `^CLICK ([%a_][%w_]*):(%a%w*)$` with a frame part of at most 64 bytes
+    and a button part of at most 32; `f = _G[frame]` is a table and
+    `pcall(f.GetAttribute, f, "type")` returns exactly `"action"`; and
+    `pcall(f.GetAttribute, f, "action")` returns a number for which
+    `issecretvalue` returns false (where the client has it), which the addon
+    also keeps only when it is a whole number from 1 to 2147483647. The
+    record then keeps the command, `action` (the slot) and the keys. Every
+    other command starting `CLICK ` is counted in `clicks_left_out` and in
+    `commands_left_out`, and nothing else is read from its frame. Whether
+    `GetBinding` lists `CLICK` commands at all is **[verify]**: the owner's
+    schema-5 capture (`docs/handoffs/M16-45.md`) settles it. No macro hash
+    is stored (M16-48 adds one only if M16-05 needs it).
+
+  The reader (`CharDBV5`) reads schema 1 to 4 files exactly as before and
+  refuses a schema it does not know. In schema 5 `probes` is optional on
+  the three sections; `debug` is a boolean, `announced` a schema number;
+  a kept `CLICK` command must have the shape above and an `action`, a plain
+  one must not. `char show` adds one line under the key bindings: how many
+  addon action buttons were kept and how many other `CLICK` commands were
+  left out. The keybind views name `CLICK` binds in M16-46. The next change
+  is schema 6.
 - **Install** `wowlab addon install lab` / `wowlab addon remove lab`: copies
   the addon into `Interface/AddOns/WowLab/` through a `guard` transaction
   (client closed, snapshot first, undoable), filling the TOC's
