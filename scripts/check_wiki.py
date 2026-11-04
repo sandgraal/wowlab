@@ -224,15 +224,64 @@ def normalise(text: str) -> str:
     return "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
 
 
+# How many rounds of percent-decoding `personal_kinds` applies. Each level of
+# encoding adds two characters (`%23` → `%2523`), so a deeper one is cheap to
+# write and costs a round each; the cap keeps a crafted line linear.
+MAX_PERCENT_DECODES = 32
+
+
+# The kind reported when text is still changing after the last round: it is
+# not decoded further, so it is withheld rather than passed (M13-63 review).
+TOO_DEEP = "percent-encoding nested past the decoding cap"
+
+
+def _decoded_forms(norm: str) -> tuple[list[str], bool]:
+    """`norm`, then each percent-decoded form until one stops changing (capped).
+
+    `[x](123456789%231)` and its double encoding `%25231` hold an account
+    folder that a reader of the rendered link sees; the raw text does not
+    match (M13-63). Each form is normalised again: a decoded byte sequence can
+    be an entity or a compatibility character. The flag is true when the cap
+    was reached and one more round would still change the text.
+    """
+    forms = [norm]
+    current = norm
+    for _ in range(MAX_PERCENT_DECODES):
+        if "%" not in current:
+            return forms, False
+        decoded = normalise(unquote(current))
+        if decoded == current:
+            return forms, False
+        forms.append(decoded)
+        current = decoded
+    return forms, "%" in current and unquote(current) != current
+
+
 def personal_kinds(text: str) -> list[str]:
     """One entry per personal-data match in `text`, by kind; empty when clean.
 
-    Matched on the normalised text and again with Markdown escapes removed;
-    a kind counts as often as the variant that matches it most.
+    Matched on the normalised text, on each percent-decoded form of it, and on
+    each of those with Markdown escapes removed; a kind counts as often as the
+    variant that matches it most. That count is a maximum over the forms, not
+    a sum, so in text mixing encoding depths a match seen only in one form
+    and another seen only in a different form count once, and
+    `check_privacy` prints fewer lines than there are matches; the exit is
+    unchanged.
+    Decoding normalises each form again, so entities are unrolled a second
+    time only in text holding a `%`; that can over-match, never under-match.
+    Text still encoded after `MAX_PERCENT_DECODES` rounds counts as `TOO_DEEP`.
     """
     norm = normalise(text)
     counts: Counter[str] = Counter()
-    for variant in {norm, _MD_ESCAPE.sub(r"\1", norm)}:
+    variants: set[str] = set()
+    # Escapes first too: `\%23` is a `%23` once the Markdown is read.
+    for start in {norm, _MD_ESCAPE.sub(r"\1", norm)}:
+        forms, too_deep = _decoded_forms(start)
+        if too_deep:
+            counts[TOO_DEEP] = 1
+        for form in forms:
+            variants |= {form, _MD_ESCAPE.sub(r"\1", form)}
+    for variant in variants:
         found = Counter(_kinds(variant))
         for kind, n in found.items():
             counts[kind] = max(counts[kind], n)
@@ -590,8 +639,9 @@ class Checker:
             return
         # A target holding personal data anywhere is never quoted, whichever
         # part of it is missing: `123456789#1` splits into a clean-looking
-        # page part and an anchor (M13-53).
-        withhold = bool(personal_kinds(dest) or personal_kinds(unquote(dest)))
+        # page part and an anchor (M13-53). `personal_kinds` percent-decodes,
+        # repeatedly, so an encoded target is withheld too (M13-63).
+        withhold = bool(personal_kinds(dest))
         page_part, _, anchor = dest.partition("#")
         page_part = unquote(page_part.split("?", 1)[0]).strip()
         if page_part.startswith("./"):
