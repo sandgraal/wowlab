@@ -563,6 +563,45 @@ def test_text_keeps_summaries_only_and_json_keeps_records(
     assert all(e.record is not None and e.summary for e in as_json.characters)
 
 
+def test_brief_json_drops_only_the_records_and_text_is_unchanged(
+    flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M13-72: `--brief` leaves each record out of `--json` (the UI's picker
+    needs none) and asks `survey` not to keep them; everything else in the
+    report, and the text output, is what it is without the flag."""
+    real = labaddon.survey
+    asked: list[bool] = []
+
+    def spy(*args: Any, **kwargs: Any) -> labaddon.AllCharacters:
+        asked.append(kwargs["keep_records"])
+        return real(*args, **kwargs)
+
+    full_out = ok("char", "list", "--json").stdout
+    full = cli.CharListReport.model_validate_json(full_out)
+    monkeypatch.setattr(labaddon, "survey", spy)
+    brief_out = ok("char", "list", "--json", "--brief").stdout
+    brief = cli.CharListReport.model_validate_json(brief_out)
+    assert asked == [False]
+    assert len(brief.characters) == 2
+    assert all(e.record is None and e.summary and e.error is None for e in brief.characters)
+    assert brief.characters == [e.model_copy(update={"record": None}) for e in full.characters]
+    assert brief.model_copy(update={"characters": []}) == full.model_copy(update={"characters": []})
+    # The capture's two records are most of the full report.
+    assert len(brief_out) * 10 < len(full_out)
+    assert ok("char", "list", "--brief").stdout == ok("char", "list").stdout
+
+
+def test_constructed_brief_json_keeps_the_error_of_a_damaged_file_exit_1(flavor: Path) -> None:
+    _damage(flavor)
+    result = run("char", "list", "--json", "--brief")
+    assert result.exit_code == 1
+    report = cli.CharListReport.model_validate_json(result.stdout)
+    errors = {e.character: e.error for e in report.characters}
+    assert errors[SECOND] is None and errors[FIRST]
+    assert all(e.record is None for e in report.characters)
+    assert result.stderr == run("char", "list", "--json").stderr
+
+
 @POSIX_PERMISSIONS
 def test_constructed_permission_denied_reads_once(flavor: Path) -> None:
     target = _lab_file(flavor, FIRST)

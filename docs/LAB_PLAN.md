@@ -1326,6 +1326,22 @@ the resolved path is held to it): `undo()` and restore accept only a
 local absolute root (item 1), and a change `undo()` could not reverse is
 never written.
 
+*Amended 2026-10-22 (M16-03T review; text from the outside evaluation, 4(a) item 2, with the conductor's rulings on the review's open questions):*
+
+Restore into another target. `tx.restore(snapshot_id, paths=None, *, into=Target)` maps every path the snapshot holds by its path relative to the flavor folder, and does so only when the caller names the target. The plan names both folders. The target gets its own pre-write snapshot, and the allowlist, link and client checks apply to it as to any write. Without `into`, a foreign snapshot is refused as before, and the refusal names the option (`--into-flavor` or `--into-root`). Folder names come from the manifest and from discovery, never from a constant (L6). The manifest's `flavor_folder` is untrusted input. Before it is used to map paths it must be exactly one path component: not empty, `.` or `..`, with no separator, drive or NUL. Otherwise the restore is refused with nothing written.
+
+The account rules below apply only when the snapshot holds at least one account folder. A snapshot with none, such as a CVar-only profile or a flavor captured before its first login, restores without a mapping and creates no account folder. A mapping given for such a snapshot is refused. Account folders are mapped automatically only when each side has exactly one. Otherwise the player gives the mapping, and these mappings are refused with the accounts named and nothing written:
+- no mapping, when either side has more than one account folder;
+- no mapping, when the target has no account folder;
+- two source folders mapped to one target folder;
+- a mapping that leaves out a source account folder the snapshot holds. This applies to a `paths=` restore too: the mapping covers every account folder the snapshot holds, not only those the named paths touch.
+
+A mapping may name a target account folder that does not exist yet; the gate creates it like any allowlisted folder. A mapping value must be one plain folder name. A sole target account folder that is a link is refused.
+
+`paths=` names files in the snapshot's own spelling, the one `snap show` lists. A path in the target-side spelling of a mapped account folder is refused, and is never planned as a delete.
+
+The target root must not overlap the snapshot store in either direction (L1). A client running from the target refuses the write, whatever the source install's state.
+
 ### 6.11 CLI — `wowlab` (M10-14)
 
 ```
@@ -1350,7 +1366,7 @@ wowlab profile save|apply|list|show|delete …         # §13.3 (M11-08)
 wowlab addon install|remove lab [--dry-run] [--yes]  # §13.1 (M11-02)
 wowlab looks races|options|save|show|compare|page …  # §13.2 (M11-06, M11-07)
 wowlab char show [--character C] [--json]           # §13.1 (M11-04)
-wowlab char list [--account A] [--json]             # §14.4 (M12-09)
+wowlab char list [--account A] [--json] [--brief]   # §14.4 (M12-09)
 ```
 
 *Amended 2026-09-28:* the Wave 2 commands above are listed for
@@ -3259,6 +3275,15 @@ A static local page over every character's `WowLab.lua`.
   where character folders can be (named on stderr); any character folder
   inside it (them) is not listed", and with nothing listed it says so
   instead of giving install advice.
+  *Amended 2026-10-22 (M13-72):* `char list --json --brief` gives every
+  entry's `record` as null and keeps the rest of `CharListReport` (label,
+  folders, file, time, summary, error, `same_as`, `not_looked_at`, notes) as
+  plain `--json` gives it; `survey` is called with `keep_records=False`, so no
+  record is held in memory. Plain `--json` is unchanged and still carries
+  every record (about 50 KB for a low-level character on the capture), and
+  text output is the same with or without the flag. The UI's Character tab
+  (§16.3) asks for `--brief`, since its picker needs no record and a large
+  roster's records could approach the UI's output cap.
 - **Page** `wowlab char page [--out PATH] [--anonymize] [--offline]`: one
   static file (ADR-0027), a card per character: when the client last saved the
   file (a time from the file, not from the addon, which records none), the
@@ -3635,6 +3660,25 @@ file-map logic or game rules (D3, §14.5).
 their own machine and nowhere else. Nothing is uploaded (ADR-0019). The
 server is bound to `127.0.0.1` and checks a token on every request.
 
+*Amended 2026-10-27 (M16-42, security:F3 and F4; the ADR-0029 amendment is the
+conductor's to write):* the URL `wowlab ui` opens carries a one-time boot key
+(`/?boot=<key>`), not the session key. The boot key opens only the shell and
+`POST /api/session`, which answers the session key once, in that response
+body, and spends the boot key (a second exchange is refused `boot_spent`, and
+the page that lost says so). Every other request carries the session key as
+`token`, as before. `page.js` calls `history.replaceState` before its first
+request, keeps the session key in memory only and never reads it from its
+own URL, so a reload needs a new `wowlab ui`. The player is told in words:
+`GET /` with the spent boot key or with no query (a reload) answers 403 with
+one plain-text sentence, a page that lost the exchange says the link was
+used, and `wowlab ui` prints one line on its terminal the first time the
+spent key comes back. From `/api/run`, `sv dump` always runs with
+`--install-only` (added by the server, never by the page), which refuses,
+with exit 3 and before reading it, a file whose real path is not in the
+install wowlab finds by itself, and a `--root` naming another install, so a
+refusal quotes none of its bytes and the page cannot plant an install around
+a file. The file read is the real path that was checked.
+
 **What stays in Wave 5 (M14).** The confirm flow for every command that declares
 `--yes` (`snap restore`, `undo`, `profile apply`, `addon install`, `addon
 remove`, `sv merge`, `snap gc` and `doctor` on 2026-10-15), and the embedded
@@ -3745,6 +3789,8 @@ than the one it showed.
 
 *Amended 2026-10-19 (M14-03, as built):* the server lists no confirm set; it reads each `--yes` leaf's shape from what the leaf declares (`--dry-run` → the first shape; `doctor` → the second; no `--dry-run` with a one-value `--expect` and a report field named in `cli.EXPECT_FIELDS` → the third, `cli.CONFIRM_DECLINED` as the exact last stderr line of an exit-1 run with one JSON object on stdout), so a future `--yes --dry-run --json` leaf joins the step with no UI change. The confirmed argv of the third shape is the plan argv plus `--yes` and `--expect=<pin>`, the pin read from the plan's own report when the token is minted (`undo`: the journal record id `undone`; `sv merge`: `target_sha256`), never from the confirm request; the pin is checked once before `guard`'s lock and again under it. Only those two commands refuse when something changed after the plan: `undo` on a newer journal record, `sv merge` on its target's bytes. The dry-run shape carries no pin: `snap restore` is held to its snapshot id and `--paths` and re-checks its plan inside the transaction, `addon install` and `addon remove` to the addon name, and `profile apply` to a profile name only, so its drift is captured by the pre-write snapshot, not pinned; each applies what is there at confirm time, after that snapshot. `sv merge`'s source is not pinned either (M13-74). A confirmed run killed at the UI's limit (120 s, or the output cap): the lock goes with the process, the snapshot taken before the first change holds every file, and the page says to show `undo`'s plan and confirm it only if the record it names is this command's, in state `open`; `snap gc` and `doctor` get a store-only sentence instead.
 
+*Amended 2026-10-22 (M13-74, as built):* `sv merge` pins what it writes, not only its target. Its report names `merged_sha256` beside `target_sha256`: the SHA-256 of the bytes `tx.write` receives (null when unresolved conflicts stop the merge). `cli.EXPECT_FIELDS` maps each command to a tuple of report fields, joined by `:` into the pin (`undo`: `undone`; `sv merge`: `target_sha256:merged_sha256`), and `sv merge --expect` takes only that two-part form (anything else exits 2). The confirmed run refuses with exit 3 unless both halves match: the target half before the lock and again against `tx.plan[0].before`, the merged half before the lock and again against `tx.plan[0].after`, the hash the gate took of the bytes it was handed. A source character that logged out between plan and confirm, or a `--from`/`--base` snapshot prefix that now names another snapshot, therefore changes the merged half and is refused. The sentence above that `sv merge`'s source is not pinned no longer holds.
+
 ### 16.2 The character: what the CLI adds
 
 The data flow is §15.6's: core to a CLI `--json` model to the UI, which
@@ -3831,6 +3877,8 @@ new command and the wiki"). `char show` is unchanged.
 
 *Amended 2026-10-19 (M14-06, the final `CharBindsReport`):* `flavor_folder`, `account`, `character`, `chosen_by`, `files[{scope, path, mtime_ns, bind_lines, unknown_lines, note}]`, `record_file`, `record_mtime_ns`, `record_schema`, `record_error`, `keys[{key, command, slot, page_note, holds{type, id, sub_type, name, subtext} | null, does, sources, agreement ("both" | "file only" | "record only" | "not in a file" | "cleared" | null), disagrees, note}]`, `unreached_slots[{slot, page_note, unfollowed_page, holds, does}]`, `commands_left_out`, `keys_left_out`, `cannot_place`, `cannot_compare`, `notes`. One row per (key, command); a key only the record names and no file line mentions is "not in a file", not a disagreement; a file and the record putting one key on different commands mark both rows as disagreeing and name each other. M14-09's keys panel reads `does`, `agreement`, `disagrees`, `unreached_slots[].unfollowed_page` and `cannot_place`.
 
+*As built, 2026-10-22 (M13-77):* `CharBindsReport` gains `left_out_note` after `keys_left_out`: the sentence `char binds` prints for the two counts, "Left out of the bindings record, counted with no list: N command(s) not named in plain upper case (a key bound straight to a spell, macro, item or click may be one), and N key(s) not printable ASCII.", null when the record has no bindings section. The text form prints the field, and the Keys panel shows it as given instead of rebuilding the sentence from the counts (§14.5 D3). The two counts stay.
+
 *Amended 2026-10-19 (M14-07, the final `CharMacrosReport`):* `flavor_folder`, `account` (the Battle.net account folder name; local output only, ADR-0019), `character`, `chosen_by`, `files[{scope, path, mtime_ns, macros, unknown_lines}]`, `bindings_files` (`CharBindsFile`), `record_file`, `record_mtime_ns`, `record_schema`, `record_error`, `macros[{scope, file, position (1-based, file order), line (the VER header), id (the hex macro id, not the index), name, icon, body_lines, complete, bytes, characters, placement{status ("unconfirmed" | "none" | "confirmed"; no rule in M14 emits "confirmed"), candidate_index (the index the candidate numbering gives the record, not the client's), slots[{slot, page_note, unfollowed_page}], keys (keymap.KeyRow), reason}, findings (macrocheck.Finding), cannot_judge (macrocheck.CannotJudge)}]`, `cannot_judge` (not tied to one macro), `keys_incomplete` (why a bound key may be missing from `keys`; null when the bindings record is complete), `notes`. The candidate numbering is `macroplace.CANDIDATE_RULE`: the 120 offset is Retail's, from memory **[verify]**; counting records in file order is this tool's assumption **[verify]**; a `macros-cache.txt` older than the record moves every candidate. `docs/handoffs/M14-macro-place.md` is the owner's capture step that settles it.
 
 ### 16.3 The character in the UI
@@ -3842,7 +3890,7 @@ offers no edit control in M14. All rendering uses `textContent`; macro
 bodies and item names are player text and are never interpreted as markup.
 
 - **M14-08, the character and its gear.** A character picker from `char
-  list --json` (folder labels, the file's time; the latest-written first),
+  list --json --brief` (no records, since M13-72; folder labels, the file's time; the latest-written first),
   a header (the character label, spec id, the equipped and overall average
   item level, and the two notes `char show` prints about what the file is),
   and the gear laid out in the client's slot order: slot name, item name in
@@ -3862,8 +3910,10 @@ bodies and item names are player text and are never interpreted as markup.
   ADR-0029 names. Three facts of the server constrain the route: every
   response carries `frame-ancestors 'none'` (owner ruling 2026-10-15), the
   token is required on every request and lives only in the opened URL, and
-  the UI's CSP allows its own inline script and style by hash and nothing
-  else. So the page is not served as a framable document. The default
+  the UI's CSP allows its own inline script and style by hash, and `data:`
+  fonts named by its own hashed code (`font-src data:`, ADR-0035; amended
+  2026-10-27, M16-51), and nothing else. So the page is not served as a
+  framable document. The default
   route: the page reads the file through the token-checked API (the server
   builds the path under the data directory's `pages/` itself, never from a
   request parameter) and puts the text into an `iframe` with
@@ -4215,6 +4265,16 @@ is that the player's own gear, which the client has drawn, is expected
 local, that the Lab never fetches from Blizzard's CDN (ADR-0033: no
 network source is added), and that an outfit designer over arbitrary items
 is out of both waves.
+*Note, 2026-10-19 (M15-05, `lab/core/tests/fixtures/macos-70450/derived/casc-files.json`):* the reader's
+census settles the question for this install at 70450. The middle state
+holds 20 of the 1,243,524 ids the root gives for enUS on macOS (16 listed
+only in rows with content bit `0x1`, whose content this client had not
+fetched; 4 in one block flagged `Install`, meaning **[verify]**), and none of
+300 sampled `ModelFileData` ids (157 local, 143 with no row taken for
+enUS on macOS). The
+spike's "3 in the root but not local" were probably `0x1` rows of ids
+whose other row is local, which the reader now tries next. Whether a
+partly downloaded install shows more is **[verify]**.
 
 **What it writes:** nothing inside the install (L1). Decoded files go under
 the data directory, `casc/<product>-<build>/`, keyed by product and build
@@ -4380,7 +4440,9 @@ it the same way.
 ### 17.7 What is known, and what is [verify]
 
 Measured on the owner's install at 70450: the layout of `Data/`; root
-version 2; 1,244,477 file data ids after locale and platform filtering;
+version 2; 1,244,477 file data ids after locale and platform filtering
+(*note, 2026-10-19, M15-05, `casc-files.json`:* that count keeps
+`LowViolence`; the reader skips it and takes 1,243,524);
 encrypted (`E`, Salsa20) blocks met in 9 of 4,079 sampled records of
 the install's archives and no LZ4 or `F` block (`docs/LAB_FORMATS.md` §10,
 amendment of 2026-10-19); the open and read timings; the streaming
@@ -4397,7 +4459,15 @@ axis signs for Y-up; why the client's `ecache/` folder exists; the DXT
 choice enum; the HD body models of every race keeping their bones inside
 (no `SKID`); the per-slot geoset-group table and the default geoset rule;
 how a browser's CSP admits the vendored modules (Wave 7, ADR-0034);
-whether the install streams at all (the middle of §17.1's four states);
+whether root content flags carry architecture bits (x86_64 `0x40`, arm64
+`0x8000`, from memory) and whether an Apple-silicon client skips any root
+block beyond the `0x108` mask (*note, 2026-10-22, M15-05 review:*
+unchecked);
+whether the install streams at all (the middle of §17.1's four states;
+*note, 2026-10-19, M15-05:* at 70450 it holds 20 of 1,243,524 ids and 0
+of 300 sampled `ModelFileData` ids, so this install does not stream in
+any way that matters here; a partly downloaded install is still
+**[verify]**);
 whether and when the client fetches a file it lacks; the Windows handle
 question; the DXT rule conflict; the
 `TextureFileData` usage type; whether the tables describe how Forever's
@@ -4553,7 +4623,7 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
    - Probes sit behind `/wowlab debug`.
    - Gathering is marked dirty, and done out of combat at most once every
      30 to 60 s and at logout.
-   - `CLICK` binding commands are stored.
+   - `CLICK` binding commands are stored. *Narrowed 2026-10-22 (ADR-0026 amendment of that date, Proposed):* only those whose frame is an action-slot button.
    - A salted macro hash is added afterwards by M16-48, only if the launch
      session's macro-place answer needs it. `addon install` copies the salt
      from the user data directory into the installed addon; it is never in

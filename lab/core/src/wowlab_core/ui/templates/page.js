@@ -22,7 +22,16 @@
 // script only lays it out. Nothing read from a run is ever parsed as HTML:
 // text goes in through textContent only. The home folder is shown as "~".
 (function () {
-  const token = new URLSearchParams(window.location.search).get("token") || "";
+  // The opened URL carries a one-time boot key, which `start` exchanges once
+  // for the session key every request carries (M16-42). The query leaves the
+  // address bar, and so the history, before the first request; the session
+  // key is kept in this closure only, never in storage or the page's URL,
+  // and is never read from that URL either.
+  const boot = new URLSearchParams(window.location.search).get("boot") || "";
+  let token = "";
+  if (window.location.search && window.history && typeof window.history.replaceState === "function") {
+    window.history.replaceState(null, "", "/");
+  }
   const api = (path) => path + "?token=" + encodeURIComponent(token);
   const byId = (id) => document.getElementById(id);
   // The one outside origin the page may link to (M15-02; ADR-0019's and
@@ -47,8 +56,15 @@
     return node;
   }
 
-  function say(text) {
-    byId("status").textContent = text;
+  // A status line holds one short sentence, never a result. A refusal or an
+  // error is an alert; anything else is a status (EV-27).
+  function announce(node, text, isAlert) {
+    node.setAttribute("role", isAlert ? "alert" : "status");
+    node.textContent = text;
+  }
+
+  function say(text, isAlert) {
+    announce(byId("status"), text, Boolean(isAlert));
   }
 
   // ─── display helpers: layout only ───
@@ -190,7 +206,7 @@
 
   function explorerSay(text, isError) {
     const node = byId("explorer-status");
-    node.textContent = text;
+    announce(node, text, Boolean(isError));
     node.classList.toggle("error", Boolean(isError));
   }
 
@@ -320,11 +336,10 @@
     return active ? !explorer.closedWhileFiltering.has(node.path) : explorer.open.has(node.path);
   }
 
-  function drawNode(node, view, depth) {
+  function drawNode(node, view) {
+    // Plain nested lists of buttons (EV-27): no tree role, whose arrow keys
+    // the page does not offer. A folder's twisty carries aria-expanded.
     const li = make("li");
-    li.setAttribute("role", "treeitem");
-    li.setAttribute("aria-level", String(depth));
-    li.setAttribute("aria-selected", explorer.selected === node.path ? "true" : "false");
     const row = make("div");
     row.className = "row";
     row.dataset.path = node.path;
@@ -332,10 +347,10 @@
     const children = node.children.filter((child) => view.keep.has(child));
     const open = isOpen(node, view.active);
     if (children.length) {
-      li.setAttribute("aria-expanded", open ? "true" : "false");
       const twisty = make("button", open ? "▾" : "▸");
       twisty.type = "button";
       twisty.className = "twisty";
+      twisty.setAttribute("aria-expanded", open ? "true" : "false");
       twisty.setAttribute("aria-label", (open ? "Close " : "Open ") + visible(node.name));
       twisty.addEventListener("click", () => toggle(node, view.active));
       row.appendChild(twisty);
@@ -362,15 +377,35 @@
     li.appendChild(row);
     if (children.length && open) {
       const list = make("ul");
-      list.setAttribute("role", "group");
-      for (const child of children) list.appendChild(drawNode(child, view, depth + 1));
+      for (const child of children) list.appendChild(drawNode(child, view));
       li.appendChild(list);
     }
     return li;
   }
 
+  // Redraws the tree. A button of the tree that had focus is replaced by
+  // the redraw, so focus goes back to the same button (twisty or name) of
+  // the row with the same data-path, or to that row's name when its twisty
+  // is gone (EV-27).
   function drawTree() {
     const tree = byId("tree");
+    const had = document.activeElement;
+    let keep = null;
+    if (had && had !== tree && tree.contains(had)) {
+      const row = had.closest(".row");
+      if (row) keep = { path: row.dataset.path, twisty: had.classList.contains("twisty") };
+    }
+    drawRows(tree);
+    if (keep === null) return;
+    for (const row of tree.querySelectorAll(".row")) {
+      if (row.dataset.path !== keep.path) continue;
+      const again = (keep.twisty && row.querySelector(".twisty")) || row.querySelector(".name");
+      if (again) again.focus();
+      return;
+    }
+  }
+
+  function drawRows(tree) {
     tree.replaceChildren();
     if (!explorer.root) return;
     const filter = filters();
@@ -384,7 +419,7 @@
       explorerSay("Nothing matches.", false);
       return;
     }
-    tree.appendChild(drawNode(explorer.root, view, 1));
+    tree.appendChild(drawNode(explorer.root, view));
     const total = listedOf(explorer.report).length;
     explorerSay(view.active ? view.matched + " of " + total + " paths match." : total + " paths.", false);
   }
@@ -457,7 +492,7 @@
 
   function explainSay(text, isError) {
     const node = byId("explain-status");
-    node.textContent = text;
+    announce(node, text, Boolean(isError));
     node.classList.toggle("error", Boolean(isError));
   }
 
@@ -501,7 +536,6 @@
     for (const row of byId("tree").querySelectorAll(".row")) {
       const on = row.dataset.path === explorer.selected;
       row.classList.toggle("selected", on);
-      row.parentElement.setAttribute("aria-selected", on ? "true" : "false");
     }
   }
 
@@ -553,10 +587,21 @@
       } catch (_) {
         done = false;
       }
-      copy.textContent = done ? "Copied" : "Copy did not work in this browser; use Copy in another browser";
+      const words = done ? "Copied" : "Copy did not work in this browser; use Copy in another browser";
+      copy.textContent = words;
+      // Every Copy reports to one shared status line, which keeps the words
+      // until the next Copy (EV-27). It is emptied first, so the same words
+      // twice are announced twice. Only "Copied" on the button goes back.
+      const status = byId("copy-status");
+      status.textContent = "";
       setTimeout(() => {
-        copy.textContent = "Copy";
-      }, 2000);
+        status.textContent = words;
+      }, 50);
+      if (done) {
+        setTimeout(() => {
+          if (copy.textContent === words) copy.textContent = "Copy";
+        }, 2000);
+      }
     });
     return copy;
   }
@@ -569,7 +614,10 @@
     );
     if (!usable.length) return;
     box.appendChild(make("h3", "Commands to copy"));
-    const note = make("p", "Run them yourself in a terminal; this page never runs them.");
+    const note = make(
+      "p",
+      "Run them yourself in a terminal. Reading never changes anything. Six commands can change game files; each shows a plan and runs only when you confirm, after a snapshot.",
+    );
     note.className = "hint-note";
     box.appendChild(note);
     // The line on screen writes the home folder as "~"; Copy gives Python's.
@@ -657,6 +705,9 @@
     markSelected();
     const seq = ++explorer.explainSeq;
     byId("explain-title").textContent = visible(node.name) + (isFolder(node) ? "/" : "");
+    // Focus moves to what was picked, so the details are the next Tab stops
+    // rather than the rest of the tree (EV-27).
+    byId("explain-title").focus();
     byId("explain-path").textContent = visible(node.path);
     byId("explain-verdict").replaceChildren();
     byId("explain-facts").replaceChildren();
@@ -829,7 +880,7 @@
 
   function gapsSay(text, isError) {
     const node = byId("gaps-status");
-    node.textContent = text;
+    announce(node, text, Boolean(isError));
     node.classList.toggle("error", Boolean(isError));
   }
 
@@ -1035,7 +1086,8 @@
   }
 
   // ─── the character tab (M14-08, §16.3) ───
-  // A picker from `char list --json`, latest-written first, and for the
+  // A picker from `char list --json --brief` (no records: the picker needs
+  // none), latest-written first, and for the
   // character picked, a header and its gear from `char gear --json`. Every
   // name and colour comes from the report: a slot's name is its `slot_name`,
   // an item's is its `name`, and its colour is a class built from its
@@ -1063,7 +1115,7 @@
 
   function charSay(text, isError) {
     const node = byId("char-status");
-    node.textContent = text;
+    announce(node, text, Boolean(isError));
     node.classList.toggle("error", Boolean(isError));
   }
 
@@ -1123,7 +1175,7 @@
     if (!character.asked) {
       character.asked = (async () => {
         charSay("Reading the lab-addon's files…", false);
-        const reply = await runJson(["char", "list"], {}, true);
+        const reply = await runJson(["char", "list"], { brief: true }, true);
         const report = reply.data;
         if (!report || !Array.isArray(report.characters)) {
           character.asked = null;
@@ -1333,10 +1385,13 @@
     const colour = colourClass(slot.colour);
     if (colour) name.classList.add(colour);
     name.setAttribute("aria-expanded", "false");
-    // The quality in words too, for a screen reader and a pointer.
+    // The quality in words too, shown beside the name so it does not rest
+    // on colour alone; the word is the record's, from the slot table.
     if (typeof slot.quality === "string" && slot.quality) {
       name.title = visible(slot.quality);
-      name.appendChild(unseen(" (" + visible(slot.quality) + ")"));
+      const quality = make("span", " (" + visible(slot.quality) + ")");
+      quality.className = "gear-quality";
+      name.appendChild(quality);
     }
     itemCell.appendChild(name);
     const level = make("td", numberWords(slot.item_level));
@@ -1580,18 +1635,9 @@
     const rows = make("tbody");
     table.append(head, rows);
     box.append(counted, table, sharedNotes(report), drawUnreached(report));
-    if (typeof report.commands_left_out === "number" && typeof report.keys_left_out === "number") {
-      // `char binds`'s own sentence, word for word (`_say_char_binds` in
-      // cli.py): the report carries the two counts and not the words.
-      box.appendChild(
-        charLine(
-          "Left out of the bindings record, counted with no list: " +
-            plural(report.commands_left_out, "command", "commands") +
-            " not named in plain upper case (a key bound straight to a spell, macro, item or click may be one), and " +
-            plural(report.keys_left_out, "key", "keys") + " not printable ASCII.",
-          "char-line",
-        ),
-      );
+    if (typeof report.left_out_note === "string") {
+      // The record's two left-out counts in the report's own sentence.
+      box.appendChild(charLine(report.left_out_note, "char-line"));
     }
     box.appendChild(charNotes(report.notes));
     character.binds.rows = rows;
@@ -1858,7 +1904,7 @@
 
   function looksSay(text, isError) {
     const node = byId("looks-status");
-    node.textContent = text;
+    announce(node, text, Boolean(isError));
     node.classList.toggle("error", Boolean(isError));
   }
 
@@ -1992,8 +2038,24 @@
 
   // ─── the confirm step (M14-02) ───
 
+  // The note under a plan or a confirmed run. `#confirm-note` is a status
+  // line inside `#confirm-box`: the box is shown first and the words set on
+  // a later tick, because a status line that is hidden when its words change
+  // is not read aloud. A note cleared in between is not written (EV-27).
+  let confirmNoteSeq = 0;
+  function confirmSay(text) {
+    const seq = ++confirmNoteSeq;
+    const note = byId("confirm-note");
+    note.textContent = "";
+    byId("confirm-box").hidden = false;
+    setTimeout(() => {
+      if (seq === confirmNoteSeq) note.textContent = text;
+    }, 50);
+  }
+
   function clearConfirm() {
     pending = null;
+    confirmNoteSeq += 1;
     byId("confirm-box").hidden = true;
     byId("confirm-note").textContent = "";
     const button = byId("confirm");
@@ -2010,8 +2072,7 @@
     const note = typeof offer.note === "string" ? offer.note : "";
     const token = typeof offer.token === "string" && offer.token ? offer.token : null;
     if (!note && !token) return;
-    byId("confirm-note").textContent = shown(note);
-    byId("confirm-box").hidden = false;
+    confirmSay(shown(note));
     if (token) {
       pending = { command: command, params: params, token: token };
       const button = byId("confirm");
@@ -2103,7 +2164,7 @@
       const result = await reply.json();
       if (seq !== runSeq) return;
       if (!reply.ok) {
-        say("Refused: " + (result.error || reply.status));
+        say("Refused: " + (result.error || reply.status), true);
         return;
       }
       showResult(result.stdout);
@@ -2113,38 +2174,80 @@
       if (result.truncated) notes.push("output cut at its size limit");
       const stage = result.confirm && result.confirm.stage;
       const head = stage === "plan" ? "Plan, nothing was changed: exit code " : stage === "confirmed" ? "Confirmed: exit code " : "Exit code ";
-      say(head + result.exit_code + (notes.length ? " (" + notes.join(", ") + ")" : ""));
+      say(head + result.exit_code + (notes.length ? " (" + notes.join(", ") + ")" : ""), result.exit_code !== 0);
       // A field changed while the plan ran: the form no longer says what was
       // planned, so nothing is offered until the plan is shown again.
       if (stage === "plan" && JSON.stringify(collect()) === JSON.stringify(body.params)) {
         showOffer(result.confirm, command, body.params);
       } else if (stage === "plan") {
-        byId("confirm-note").textContent = "A field changed while the plan ran: show the plan again to be offered Confirm.";
-        byId("confirm-box").hidden = false;
+        confirmSay("A field changed while the plan ran: show the plan again to be offered Confirm.");
       } else if (stage === "confirmed" && typeof result.confirm.note === "string" && result.confirm.note) {
         // The journal record and the `wowlab undo` hint, or what to do after
         // a run stopped at its limit (M14-03); never a Confirm.
-        byId("confirm-note").textContent = shown(result.confirm.note);
-        byId("confirm-box").hidden = false;
+        confirmSay(shown(result.confirm.note));
       }
     } catch (error) {
-      if (seq === runSeq) say("The request failed: " + error);
+      if (seq === runSeq) say("The request failed: " + error, true);
     } finally {
       if (seq === runSeq) button.disabled = false;
     }
   }
 
+  // The boot exchange: the one-time key from the opened URL for the session
+  // key. True when the page holds a session key afterwards.
+  async function start() {
+    if (token) return true;
+    if (!boot) {
+      const none = "This page was opened without its key: stop wowlab ui with Ctrl-C and start it again.";
+      say(none, true);
+      explorerSay(none, true);
+      return false;
+    }
+    let reply;
+    try {
+      reply = await fetch("/api/session?boot=" + encodeURIComponent(boot), {
+        method: "POST",
+        cache: "no-store",
+        credentials: "omit",
+      });
+    } catch (error) {
+      say("The server could not be reached: " + error, true);
+      explorerSay("The server could not be reached: " + error, true);
+      return false;
+    }
+    let data = null;
+    try {
+      data = await reply.json();
+    } catch (error) {
+      data = null;
+    }
+    if (!reply.ok || !data || typeof data.token !== "string" || !data.token) {
+      const refused =
+        data && data.error === "boot_spent"
+          ? "This link was already used, so this page cannot start. If you did not open it " +
+            "twice, something else on this computer may have: stop wowlab ui with Ctrl-C and " +
+            "start it again."
+          : "The server refused to start this page (" + reply.status + ").";
+      say(refused, true);
+      explorerSay(refused, true);
+      return false;
+    }
+    token = data.token;
+    return true;
+  }
+
   async function load() {
+    if (!(await start())) return;
     let reply;
     try {
       reply = await fetch(api("/api/commands"), { cache: "no-store", credentials: "omit" });
     } catch (error) {
-      say("The server could not be reached: " + error);
+      say("The server could not be reached: " + error, true);
       explorerSay("The server could not be reached: " + error, true);
       return;
     }
     if (!reply.ok) {
-      say("The server refused the request (" + reply.status + ").");
+      say("The server refused the request (" + reply.status + ").", true);
       explorerSay("The server refused the request (" + reply.status + ").", true);
       return;
     }
