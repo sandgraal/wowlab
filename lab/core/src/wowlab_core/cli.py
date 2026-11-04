@@ -114,7 +114,7 @@ from types import TracebackType
 from typing import Annotated, Any, Literal, NamedTuple, NoReturn, override
 
 import typer
-from pydantic import BaseModel, ConfigDict, Field, RootModel
+from pydantic import BaseModel, ConfigDict, Field, RootModel, ValidationError
 
 # Typer vendors click as `typer._click` from 0.26 (lab/core/pyproject.toml
 # bounds typer to the 0.27 minor this was tested on) and gives its exceptions
@@ -6098,6 +6098,21 @@ class NotRestoredPath(_Out):
     disk: Literal["same", "differs", "missing", "behind_link"]
 
 
+class AccountMapped(_Out):
+    """One account folder a restore into another target maps."""
+
+    snapshot: str  # the folder under WTF/Account/ as the snapshot names it
+    target: str  # the folder it is written to in the target
+
+
+class IntoReport(_Out):
+    """A restore into a target the player named (--into-flavor, --into-root)."""
+
+    from_flavor_folder: str  # the flavor folder the snapshot was taken of
+    from_install_root: str  # the install root it was taken in
+    accounts: list[AccountMapped]
+
+
 class RestoreReport(_Out):
     """`wowlab snap restore --json`: the plan, and with `--yes` what was done."""
 
@@ -6117,6 +6132,9 @@ class RestoreReport(_Out):
     applied: bool
     transaction: str | None  # the journal record of the applied restore
     notes: list[str]
+    # With --into-flavor or --into-root: where the snapshot was taken, and the
+    # account folders mapped. Left out of the JSON otherwise.
+    into: IntoReport | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class UndoReport(_Out):
@@ -6444,6 +6462,86 @@ def _executable_note(lay: layout.Layout, named: Sequence[str], exc: Exception) -
         return
 
 
+IntoFlavorOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--into-flavor",
+        metavar="FOLDER",
+        help="Restore into this flavor folder of the install instead of the one the snapshot "
+        "was taken of: after the client renames a folder (beta to launch), name the new one.",
+    ),
+]
+MapAccountOpt = Annotated[
+    list[str] | None,
+    typer.Option(
+        "--map-account",
+        metavar="SOURCE=TARGET",
+        help="With --into-flavor or --into-root: put the snapshot's account folder SOURCE "
+        "into the target's account folder TARGET (folder names under WTF/Account/); repeat "
+        "for each. Needed unless each side has exactly one account folder.",
+    ),
+]
+
+
+def _one_folder_name(value: str, option: str) -> str:
+    """`value` as one plain folder name, or a refusal naming `option`."""
+    if (
+        value in ("", ".", "..")
+        or value != value.strip()
+        or any(c in value for c in "/\\:\x00")
+        or any(ord(c) < 32 for c in value)
+    ):
+        raise CliError(f"{option} takes one folder name, not {value!r}")
+    return value
+
+
+def _account_pairs(pairs: Sequence[str] | None) -> dict[str, str] | None:
+    """`--map-account SOURCE=TARGET` values as a mapping; None when none was given."""
+    if not pairs:
+        return None
+    mapping: dict[str, str] = {}
+    for pair in pairs:
+        source, sep, target = pair.partition("=")
+        if not sep or "=" in target or not source or not target:
+            raise CliError(
+                f"--map-account takes SOURCE=TARGET, two account folder names, not {pair!r}"
+            )
+        _one_folder_name(source, "--map-account")
+        _one_folder_name(target, "--map-account")
+        if source in mapping:
+            raise CliError(f"--map-account names account folder {source!r} twice")
+        mapping[source] = target
+    return mapping
+
+
+def _into_target(chosen: install.Flavor, accounts: dict[str, str] | None) -> guard.Target:
+    try:
+        return guard.Target(flavor=chosen, accounts=accounts)
+    except ValidationError as exc:
+        why = "; ".join(str(e.get("msg", "")) for e in exc.errors())
+        raise CliError(f"--map-account is refused: {why}") from exc
+
+
+def _into_report(manifest: snapshot.Manifest, accounts: Sequence[tuple[str, str]]) -> IntoReport:
+    return IntoReport(
+        from_flavor_folder=manifest.flavor_folder or "",
+        from_install_root=manifest.install_root,
+        accounts=[AccountMapped(snapshot=a, target=b) for a, b in accounts],
+    )
+
+
+def _into_lines(into: IntoReport, chosen: install.Flavor) -> list[str]:
+    """The plan's lines that name both folders and every mapped account folder."""
+    lines = [
+        f"  From {into.from_flavor_folder} in {into.from_install_root} into {chosen.folder} "
+        f"in {chosen.path.parent}."
+    ]
+    lines += [
+        f"  Account folder {a.snapshot} goes into account folder {a.target}." for a in into.accounts
+    ]
+    return lines
+
+
 @snap_app.command("restore")
 @_handled
 def snap_restore(
@@ -6464,6 +6562,18 @@ def snap_restore(
     ] = False,
     yes: YesOpt = False,
     root: RootOpt = None,
+    into_flavor: IntoFlavorOpt = None,
+    into_root: Annotated[
+        Path | None,
+        typer.Option(
+            "--into-root",
+            metavar="PATH",
+            help="Restore into the install at PATH (the folder that holds .build.info) "
+            "instead of the one the snapshot was taken in: another machine's or a "
+            "reinstalled copy. Into the folder of the same name unless --into-flavor names one.",
+        ),
+    ] = None,
+    map_account: MapAccountOpt = None,
     json_out: JsonOpt = False,
 ) -> None:
     """Put back files from a snapshot, through the write gate: the client must be
@@ -6478,21 +6588,41 @@ def snap_restore(
     writes one, so reinstall the addon to get it back. Screenshots in a snapshot taken with
     `snap create --screenshots` are never restored (wowlab never writes
     Screenshots/, not even with --paths): a whole restore leaves them in the
-    snapshot, counts them, and restores the rest. JSON: RestoreReport."""
+    snapshot, counts them, and restores the rest.
+
+    After the client renames a flavor folder (beta to launch), restore into
+    the new one with --into-flavor; into another install with --into-root.
+    --paths are then spelled as `snap show` lists them. JSON: RestoreReport."""
+    into = into_flavor is not None or into_root is not None
+    if map_account and not into:
+        raise CliError("--map-account is used with --into-flavor or --into-root")
+    if into_root is not None and root is not None:
+        raise CliError("--into-root names the install to restore into; leave out --root")
+    if into_flavor is not None:
+        _one_folder_name(into_flavor, "--into-flavor")
+    accounts_given = _account_pairs(map_account)
     store = snapshot.SnapshotStore()
     manifest = store.show(snapshot_id)
-    inst, _ = _discover(root)
-    if manifest.flavor_folder is None:
+    inst, _ = _discover(into_root if into_root is not None else root)
+    wanted_folder = into_flavor if into_flavor is not None else manifest.flavor_folder
+    if wanted_folder is None:
         raise CliError(f"snapshot {manifest.id} names no flavor folder; it cannot be restored")
-    match = [f for f in inst.flavors if f.folder == manifest.flavor_folder]
+    match = [f for f in inst.flavors if f.folder == wanted_folder]
+    if not match and into:
+        raise CliError(
+            f"{inst.root} has no flavor folder {wanted_folder!r} (flavors: {_flavor_list(inst)})"
+        )
     if not match:
         raise CliError(
             f"snapshot {manifest.id} is of flavor folder {manifest.flavor_folder!r}, which "
             f"{inst.root} does not have (flavors: {_flavor_list(inst)}). Flavor folders are "
-            "renamed between beta and launch; wowlab restores only into the folder a snapshot "
-            "was taken from."
+            "renamed between beta and launch; to restore into the new one, name it with "
+            "--into-flavor FOLDER."
         )
     chosen = match[0]
+    target = _into_target(chosen, accounts_given) if into else None
+    into_report: IntoReport | None = None
+    back: dict[str, str] = {}
     say = _say_err if json_out else _say
     # With --json the plan goes to stdout as JSON at the end; when a prompt
     # will ask first, the text plan goes to stderr so the question is not blind.
@@ -6509,9 +6639,22 @@ def snap_restore(
     names: list[str] | None = None
     executables: list[SkippedPath] = []
     with guard.transaction(chosen, label=label, dry_run=True) as tx:
+        if target is not None:
+            # The gate maps the account folders, or refuses, before anything
+            # here reads the target. The plan reads the snapshot as the
+            # target spells it; the gate is always given the snapshot's names.
+            accounts = tx.restore(manifest.id, [], into=target)
+            into_report = _into_report(manifest, accounts)
+            back = {b: a for a, b in accounts}
+            manifest = profiles.mapped_view(manifest, folder, inst.root, dict(accounts))
+            rest = list(manifest.entries)
+
+        def by_name(names: list[str]) -> list[str]:
+            return [profiles.map_account(n, back) for n in names]
+
         if named is not None:
             try:
-                tx.restore(manifest.id, named)
+                tx.restore(manifest.id, named, into=target)
             except guard.PathNotAllowedError as exc:
                 _screenshot_note(lay, manifest, folder, named, exc)
                 _executable_note(lay, named, exc)
@@ -6519,7 +6662,7 @@ def snap_restore(
         else:
             # The gate's snapshot checks (another install, another flavor)
             # come before anything here reads the disk.
-            tx.restore(manifest.id, [])
+            tx.restore(manifest.id, [], into=target)
             # Screenshots, which the gate never writes, are set aside; the
             # gate would otherwise refuse the whole restore.
             rest, aside = _set_aside(lay, manifest, inst.root, folder)
@@ -6529,12 +6672,13 @@ def snap_restore(
             rest, executables = _changed_executables(lay, rest, inst.root, folder)
             try:
                 if not aside and not executables:
-                    tx.restore(manifest.id)
+                    tx.restore(manifest.id, into=target)
                 else:
                     if any(not e.path.startswith(folder + "/") for e in rest):
-                        tx.restore(manifest.id)  # refused: a path outside this flavor
+                        # refused: a path outside this flavor
+                        tx.restore(manifest.id, into=target)
                     names, left = _names_for_whole(rest, inst.root, folder)
-                    tx.restore(manifest.id, names)
+                    tx.restore(manifest.id, by_name(names), into=target)
             except guard.PathNotAllowedError as exc:
                 # An executable the gate still refuses (its bytes are the
                 # snapshot's but its mode is not, or a link or a folder
@@ -6578,11 +6722,15 @@ def snap_restore(
             applied=applied,
             transaction=transaction,
             notes=notes,
+            into=into_report,
         )
 
     shots_differ = any(a.disk != "same" for a in aside)
     if (not json_out or (prompting and plan)) and (plan or skipped or aside):
         show(f"Restore from snapshot {manifest.id} into {chosen.path}: {len(plan)} change(s)")
+        if into_report is not None:
+            for line in _into_lines(into_report, chosen):
+                show(line)
         if manifest.flavor_version != chosen.version:
             show(
                 f"  Taken on version {_version(manifest.flavor_version)}; {folder} is "
@@ -6623,7 +6771,10 @@ def snap_restore(
             _emit(report(applied=False))
         raise
     with guard.transaction(chosen, label=label) as tx:
-        tx.restore(manifest.id, wanted)
+        if wanted is None or named is not None:
+            tx.restore(manifest.id, wanted, into=target)
+        else:
+            tx.restore(manifest.id, by_name(wanted), into=target)
         moved = any(not _unchanged(inst.root, folder, e) for e in left_out)
         if tx.plan != tuple(plan) or moved:
             # Raising inside the transaction makes the gate roll it back.
@@ -6796,6 +6947,9 @@ class ProfileApplyReport(_Out):
     applied: bool
     transaction: str | None  # the journal record of the applied profile
     notes: list[str]
+    # With --into-flavor: where the profile was saved, and the account
+    # folders mapped. Left out of the JSON otherwise.
+    into: IntoReport | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 def _profile_summary(p: profiles.Profile) -> ProfileSummary:
@@ -7020,6 +7174,16 @@ def profile_apply(
     ] = False,
     yes: YesOpt = False,
     root: RootOpt = None,
+    into_flavor: Annotated[
+        str | None,
+        typer.Option(
+            "--into-flavor",
+            metavar="FOLDER",
+            help="Apply to this flavor folder of the install instead of the one the profile "
+            "was saved from: after the client renames a folder (beta to launch), name the new one.",
+        ),
+    ] = None,
+    map_account: MapAccountOpt = None,
     json_out: JsonOpt = False,
 ) -> None:
     """Return the profile's files to their saved bytes, through the write gate: the
@@ -7041,21 +7205,36 @@ def profile_apply(
     alone, and so is anything the write gate will not write or delete (an
     executable); both are listed. Action-bar contents and talents are not in
     these files (the server keeps them; not yet verified on this client), so no
-    profile saves or restores them. JSON: ProfileApplyReport."""
+    profile saves or restores them.
+
+    After the client renames a flavor folder (beta to launch), apply the
+    profile to the new one with --into-flavor. JSON: ProfileApplyReport."""
+    if map_account and into_flavor is None:
+        raise CliError("--map-account is used with --into-flavor")
+    if into_flavor is not None:
+        _one_folder_name(into_flavor, "--into-flavor")
+    accounts_given = _account_pairs(map_account)
     store = snapshot.SnapshotStore()
     profile = profiles.find(store, name)
     manifest = profile.manifest
     inst, _ = _discover(root)
-    match = [f for f in inst.flavors if f.folder == manifest.flavor_folder]
+    wanted_folder = into_flavor if into_flavor is not None else manifest.flavor_folder
+    match = [f for f in inst.flavors if f.folder == wanted_folder]
+    if into_flavor is not None and not match:
+        raise CliError(
+            f"{inst.root} has no flavor folder {into_flavor!r} (flavors: {_flavor_list(inst)})"
+        )
     if manifest.flavor_folder is None or not match:
         raise CliError(
             f"profile {name} is of flavor folder {manifest.flavor_folder!r}, which "
             f"{inst.root} does not have (flavors: {_flavor_list(inst)}). Flavor folders are "
-            "renamed between beta and launch; wowlab applies a profile only to the folder it "
-            "was saved from."
+            "renamed between beta and launch; to apply the profile to the new one, name it "
+            "with --into-flavor FOLDER."
         )
     chosen = match[0]
-    plan = profiles.plan_apply(profile, chosen, Path(inst.root), store=store)
+    target = None if into_flavor is None else _into_target(chosen, accounts_given)
+    plan = profiles.plan_apply(profile, chosen, Path(inst.root), store=store, into=target)
+    into_report = None if target is None else _into_report(manifest, plan.accounts)
     prompting = json_out and not yes and not dry_run
     show = _say if not json_out else _say_err
 
@@ -7078,6 +7257,7 @@ def profile_apply(
             applied=applied,
             transaction=transaction,
             notes=notes,
+            into=into_report,
         )
 
     if (not json_out or (prompting and plan.plan)) and (plan.plan or plan.skipped or plan.left):
@@ -7085,6 +7265,9 @@ def profile_apply(
             f"Apply profile {name} (snapshot {manifest.id}) to {chosen.path}: "
             f"{len(plan.plan)} change(s)"
         )
+        if into_report is not None:
+            for line in _into_lines(into_report, chosen):
+                show(line)
         show(f"  {plan.notes[0]}")
         if manifest.flavor_version != chosen.version:
             show(

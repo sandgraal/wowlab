@@ -1,0 +1,107 @@
+"""Account folders in a restore into another target: what is no account (M16-03).
+
+The client keeps its own `WTF/Account/SavedVariables/` beside the account
+folders (`docs/LAB_FILE_MAP.md`, M13-50). It is no account, so it is not
+counted for the automatic mapping and is restored under its own name; no
+account folder may be mapped onto it. `tx.restore(..., into=...)` returns
+the mapping it used.
+
+Constructed inputs on the synthetic installs of the M16-03T graders, loaded
+by name, labelled in the test names (L8). Flavor folder names are test data.
+"""
+
+# ruff: noqa: F811  (fixtures imported from the graders are requested by name)
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pytest
+from test_guard_restore_into_target import (
+    DST_ACCOUNT,
+    SOURCE_FOLDER,
+    SRC_ACCOUNT,
+    TARGET_FOLDER,
+    _real_process_table_is_never_listed,  # noqa: F401
+    _user_data_redirected,  # noqa: F401
+    guard,  # noqa: F401
+    idle,  # noqa: F401
+    into,
+    make_install,
+    snapshot_of,
+    source_files,
+    store,  # noqa: F401
+    strict_state,
+    target_files,
+)
+
+from wowlab_core.snapshot import SnapshotStore
+
+CLIENT_SV = "WTF/Account/SavedVariables/Blizzard_Constructed.lua"
+
+
+def _installs(tmp_path: Path, store: SnapshotStore) -> tuple[Any, str, Path]:
+    world = tmp_path / "world"
+    files = {**source_files(SRC_ACCOUNT), CLIENT_SV: b"constructed = 'source'\n"}
+    source = make_install(world / "Source WoW", SOURCE_FOLDER, files)
+    snapshot_id = snapshot_of(store, source)
+    target_tree = {**target_files(DST_ACCOUNT), CLIENT_SV: b"constructed = 'target'\n"}
+    target = make_install(world / "Target WoW", TARGET_FOLDER, target_tree)
+    return target, snapshot_id, world
+
+
+def test_constructed_client_saved_variables_folder_is_no_account(
+    guard: Any, tmp_path: Path, store: SnapshotStore, idle: None
+) -> None:
+    target, snapshot_id, _world = _installs(tmp_path, store)
+    with guard.transaction(target, label="with the client's folder", store=store.path) as tx:
+        mapped = tx.restore(snapshot_id, into=into(guard, target))
+    assert mapped == ((SRC_ACCOUNT, DST_ACCOUNT),)
+    assert (target.path / CLIENT_SV).read_bytes() == b"constructed = 'source'\n"
+    bindings = f"WTF/Account/{DST_ACCOUNT}/bindings-cache.wtf"
+    assert (target.path / bindings).read_bytes() == source_files(SRC_ACCOUNT)[
+        f"WTF/Account/{SRC_ACCOUNT}/bindings-cache.wtf"
+    ]
+
+
+@pytest.mark.parametrize(
+    "name", ["SavedVariables", "savedvariables"], ids=lambda n: f"constructed-{n}"
+)
+def test_constructed_account_mapped_onto_the_client_folder_is_refused(
+    guard: Any, tmp_path: Path, store: SnapshotStore, idle: None, name: str
+) -> None:
+    target, snapshot_id, world = _installs(tmp_path, store)
+    before = strict_state(world)
+    with pytest.raises((guard.GuardError, ValueError)) as refused:
+        named = into(guard, target, {SRC_ACCOUNT: name})
+        with guard.transaction(target, label="onto the client folder", store=store.path) as tx:
+            tx.restore(snapshot_id, into=named)
+    assert "account" in str(refused.value).casefold()
+    assert strict_state(world) == before
+
+
+def test_constructed_restore_without_into_returns_no_mapping(
+    guard: Any, tmp_path: Path, store: SnapshotStore, idle: None
+) -> None:
+    world = tmp_path / "world"
+    source = make_install(world / "WoW", SOURCE_FOLDER, source_files(SRC_ACCOUNT))
+    snapshot_id = snapshot_of(store, source)
+    with guard.transaction(source, label="own flavor", store=store.path, dry_run=True) as tx:
+        assert tx.restore(snapshot_id) == ()
+
+
+def test_constructed_mapping_changed_after_validation_is_checked_again(
+    guard: Any, tmp_path: Path, store: SnapshotStore, idle: None
+) -> None:
+    """`Target` is frozen, but its dict is the caller's: the restore checks the
+    mapping again rather than trusting the check made when it was built."""
+    target, snapshot_id, world = _installs(tmp_path, store)
+    named = into(guard, target, {SRC_ACCOUNT: DST_ACCOUNT})
+    named.accounts[SRC_ACCOUNT] = "../.."
+    before = strict_state(world)
+    with (
+        guard.transaction(target, label="changed mapping", store=store.path) as tx,
+        pytest.raises(guard.GuardError),
+    ):
+        tx.restore(snapshot_id, into=named)
+    assert strict_state(world) == before

@@ -612,6 +612,12 @@ class ApplyPlan(_Frozen):
     cache_files: tuple[CacheFile, ...]
     notes: tuple[str, ...]
     """The scope of the profile, and the macros caveat when macros change."""
+    source_flavor_path: str | None = None
+    """With a target named (`into`): the flavor folder the profile was saved
+    from, as its manifest names it. None for an apply to that same folder."""
+    accounts: tuple[tuple[str, str], ...] = ()
+    """With a target named: the account folders mapped, the profile's to the
+    target's."""
 
 
 def _plain(markdown: str) -> str:
@@ -871,42 +877,136 @@ def disk_state(install_root: Path, flavor_folder: str, entry: Entry) -> DiskStat
     return "differs"
 
 
+def map_account(rel: str, accounts: Mapping[str, str]) -> str:
+    """`rel` (flavor-relative) with the account folder under `WTF/Account/`
+    it lies below renamed as `accounts` maps it, the way the gate maps a
+    restore into another target (`guard.Target`). Pass the inverted mapping
+    to go back from the target's spelling to the snapshot's."""
+    parts = rel.split("/")
+    if (
+        len(parts) >= 4
+        and parts[0] == "WTF"
+        and parts[1].casefold() == "account"
+        and parts[2] in accounts
+    ):
+        return "/".join((*parts[:2], accounts[parts[2]], *parts[3:]))
+    return rel
+
+
+def mapped_view(
+    manifest: Manifest, folder: str, install_root: Path, accounts: Mapping[str, str]
+) -> Manifest:
+    """`manifest` as it would read had it been taken of `folder` in
+    `install_root`, its account folders renamed as `accounts` maps them: what
+    a restore into that target writes, for planning and display only. The
+    gate always reads the real manifest by its id. Entries outside the
+    snapshot's own flavor folder are kept as they are (the gate refuses
+    them). Built without validation from a validated manifest."""
+    source = manifest.flavor_folder
+    if source is None:
+        return manifest
+    prefix = source + "/"
+
+    def move(path: str, *, tree: bool = False) -> str:
+        if path == source:
+            return folder
+        if not path.startswith(prefix):
+            return path
+        rel = path.removeprefix(prefix)
+        if tree:
+            # A subtree may be an account folder itself: map it as the
+            # files below it are mapped.
+            rel = map_account(rel + "/-", accounts).removesuffix("/-")
+        else:
+            rel = map_account(rel, accounts)
+        return f"{folder}/{rel}"
+
+    return manifest.model_copy(
+        update={
+            "install_root": str(install_root),
+            "flavor_folder": folder,
+            "subtrees": tuple(move(s, tree=True) for s in manifest.subtrees),
+            "excluded": tuple(move(s, tree=True) for s in manifest.excluded),
+            "entries": tuple(e.model_copy(update={"path": move(e.path)}) for e in manifest.entries),
+        }
+    )
+
+
 class _Restorer(Protocol):
-    def restore(self, snapshot_id: str, paths: Iterable[str] | None = None) -> None: ...
+    def restore(
+        self,
+        snapshot_id: str,
+        paths: Iterable[str] | None = None,
+        *,
+        into: guard.Target | None = None,
+    ) -> tuple[tuple[str, str], ...]: ...
 
 
-def _restore_split(tx: _Restorer, snapshot_id: str, paths: list[str], left: list[LeftPath]) -> None:
+def _restore_split(
+    tx: _Restorer,
+    snapshot_id: str,
+    paths: list[str],
+    left: list[LeftPath],
+    *,
+    into: guard.Target | None = None,
+    back: Mapping[str, str] | None = None,
+) -> None:
     """Restore `paths` in a dry run, setting aside each one the gate refuses.
 
     A refused restore changes nothing (the gate checks every entry before it
-    plans any), so the batch is halved until each refusal names one path."""
+    plans any), so the batch is halved until each refusal names one path.
+    With `into`, `paths` are the target's spelling and `back` maps their
+    account folders back to the snapshot's for the gate."""
     if not paths:
         return
     try:
-        tx.restore(snapshot_id, paths)
+        if into is None:
+            tx.restore(snapshot_id, paths)
+        else:
+            tx.restore(snapshot_id, [map_account(p, back or {}) for p in paths], into=into)
     except guard.PathNotAllowedError as exc:
         if len(paths) == 1:
             left.append(LeftPath(path=paths[0], reason=str(exc)))
             return
         mid = len(paths) // 2
-        _restore_split(tx, snapshot_id, paths[:mid], left)
-        _restore_split(tx, snapshot_id, paths[mid:], left)
+        _restore_split(tx, snapshot_id, paths[:mid], left, into=into, back=back)
+        _restore_split(tx, snapshot_id, paths[mid:], left, into=into, back=back)
 
 
 def plan_apply(
-    profile: Profile, flavor: _FlavorLike, install_root: Path, *, store: SnapshotStore
+    profile: Profile,
+    flavor: _FlavorLike,
+    install_root: Path,
+    *,
+    store: SnapshotStore,
+    into: guard.Target | None = None,
 ) -> ApplyPlan:
     """What `apply` would change, from a dry run of the gate (same checks,
     same locks, nothing written in the install).
+
+    With `into` (a `guard.Target` naming `flavor`) a profile saved from
+    another flavor folder or install root is applied to `flavor`, its
+    account folders mapped as the gate maps them; the plan's paths are
+    the target's.
 
     Raises `guard.GuardError` when the gate refuses the apply as a whole
     (the client running or unknown, a snapshot of another install), and
     `ProfileError` when more than `MAX_DELETES` files would be deleted. A
     single path the gate will not write or delete (an executable) does not
     stop the apply: it is left alone and listed in `left`."""
-    manifest = profile.manifest
+    real = profile.manifest
     prefix = flavor.folder + "/"
     root = Path(install_root)
+    accounts: tuple[tuple[str, str], ...] = ()
+    if into is not None:
+        # The gate resolves the account folders (and refuses what it would
+        # refuse) before anything here reads the target.
+        with guard.transaction(
+            flavor, label=f"profile apply {profile.name}", store=store.path, dry_run=True
+        ) as tx:
+            accounts = tx.restore(real.id, [], into=into)
+    back = {target: source for source, target in accounts}
+    manifest = real if into is None else mapped_view(real, flavor.folder, root, dict(accounts))
     lay = layout.Layout(flavor.path, install_root=root)
     saved = {e.path for e in manifest.entries}
     left: list[LeftPath] = []
@@ -941,7 +1041,7 @@ def plan_apply(
         flavor, label=f"profile apply {profile.name}", store=store.path, dry_run=True
     ) as tx:
         try:
-            tx.restore(manifest.id)
+            tx.restore(manifest.id, into=into)
         except guard.PathNotAllowedError:
             # One entry the gate will not write (a changed executable or link):
             # restore the rest by name and set that one aside. An entry behind
@@ -957,7 +1057,7 @@ def plan_apply(
                     )
                 elif disk == "differs":
                     changed.append(e.path.removeprefix(prefix))
-            _restore_split(tx, manifest.id, changed, left)
+            _restore_split(tx, manifest.id, changed, left, into=into, back=back)
         for frel in to_delete:
             try:
                 tx.delete(frel)
@@ -1000,6 +1100,10 @@ def plan_apply(
             if fnmatch.fnmatchcase(_base_name(i.path), _CACHE_GLOB)
         ),
         notes=tuple(notes),
+        source_flavor_path=(
+            None if into is None else str(Path(real.install_root) / (real.flavor_folder or ""))
+        ),
+        accounts=accounts,
     )
 
 
@@ -1012,9 +1116,16 @@ def apply(plan: ApplyPlan, flavor: _FlavorLike, *, store: SnapshotStore) -> str:
     so the gate rolls it back."""
     writes = [i.path for i in plan.plan if i.after is not None]
     deletes = [i.path for i in plan.plan if i.after is None]
+    into = None
+    if plan.source_flavor_path is not None:
+        # The mapping the plan was made with, given in full; the gate checks
+        # it again against the snapshot and the target.
+        into = guard.Target(flavor=flavor, accounts=dict(plan.accounts) or None)
+        back = {target: source for source, target in plan.accounts}
+        writes = [map_account(w, back) for w in writes]
     with guard.transaction(flavor, label=f"profile apply {plan.profile}", store=store.path) as tx:
         if writes:
-            tx.restore(plan.snapshot_id, writes)
+            tx.restore(plan.snapshot_id, writes, into=into)
         for rel in deletes:
             tx.delete(rel)
         if tx.plan != plan.plan:

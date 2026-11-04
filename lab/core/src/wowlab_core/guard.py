@@ -214,6 +214,7 @@ __all__ = [
     "PathChange",
     "PathNotAllowedError",
     "PlanItem",
+    "Target",
     "history",
     "store_lock",
     "transaction",
@@ -228,6 +229,16 @@ _log = logging.getLogger(__name__)
 # (ADR-0023). Spelled as the client spells them; a respelling is refused.
 _ROOTS = ("WTF", "Interface", "Fonts")
 _ADDONS = "AddOns"
+
+# Account folders under `WTF/Account/`, for a restore into another target
+# (§6.10 as amended 2026-10-22). The rule is `layout`'s (M13-50): a folder
+# is an account folder when its name has the `<digits>#<n>` shape, or when
+# it holds a character folder (a realm folder other than `SavedVariables/`
+# with a folder inside other than `SavedVariables/`). `SavedVariables/`
+# directly under `WTF/Account/` is the client's own and no account.
+_ACCOUNT_PARTS = ("WTF", "Account")
+_ACCOUNT_SAVED_VARIABLES = "SavedVariables"
+_ACCOUNT_NAME = re.compile(r"[0-9]+#[0-9]+")
 
 # A path with any component ending in one of these, compared
 # case-insensitively, is an executable and is never written (L7).
@@ -381,6 +392,76 @@ class PlanItem(_Frozen):
     after: str | None
     size: int | None
     """Bytes written; `None` for a delete."""
+
+
+def _plain_folder_name(name: object, what: str) -> str:
+    """`name` as one plain folder name the gate would write under `WTF/`
+    (`_check_rel`'s rules for one part: no separator, `.`, `..`, drive, data
+    stream, reserved device name, trailing dot or space, executable suffix,
+    NUL or other control character). Raises `PathNotAllowedError`."""
+    if not isinstance(name, str):
+        raise PathNotAllowedError(f"{what} is a str, not {type(name).__name__}")
+    if "/" in name or name in ("", ".", ".."):
+        raise PathNotAllowedError(f"{what} {name!r} is not one plain folder name")
+    try:
+        _check_rel(f"WTF/{name}")
+    except PathNotAllowedError as exc:
+        raise PathNotAllowedError(f"{what} {name!r} is not one plain folder name: {exc}") from exc
+    return name
+
+
+class Target(_Frozen):
+    """Where `tx.restore(..., into=Target(...))` puts a snapshot of another
+    flavor folder or another install root (§6.10 as amended 2026-10-22,
+    §18.1 item 1). `flavor` is the transaction's own flavor (anything with
+    a `path`); `accounts` maps account folders under `WTF/Account/`, the
+    snapshot's name to the target's. Each name is one plain folder name and
+    no two source folders go to one target folder; the restore checks the
+    rest (and these again) against the snapshot and the target."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
+
+    flavor: object
+    accounts: dict[str, str] | None = None
+
+    @field_validator("flavor")
+    @classmethod
+    def _has_path(cls, value: object) -> object:
+        if not isinstance(getattr(value, "path", None), str | os.PathLike):
+            raise ValueError("a target flavor needs a path (the flavor folder)")
+        return value
+
+    @field_validator("accounts")
+    @classmethod
+    def _plain_accounts(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is None:
+            return None
+        try:
+            _check_account_mapping(value)
+        except PathNotAllowedError as exc:
+            raise ValueError(str(exc)) from exc
+        return dict(value)
+
+
+def _check_account_mapping(mapping: dict[str, str]) -> None:
+    """Every name plain, and no two source account folders sent to one target
+    folder (compared as the file system may: case and Unicode form folded)."""
+    seen: dict[str, str] = {}
+    for source, target in mapping.items():
+        _plain_folder_name(source, "the source account folder")
+        _plain_folder_name(target, f"the account folder {source!r} maps to,")
+        if _fold(target) == _fold(_ACCOUNT_SAVED_VARIABLES):
+            raise PathNotAllowedError(
+                f"account folder {source!r} cannot map to {target!r}: that is the client's "
+                "own folder of SavedVariables that belong to no account"
+            )
+        other = seen.get(_fold(target))
+        if other is not None:
+            raise PathNotAllowedError(
+                f"account folders {other!r} and {source!r} both map to {target!r}; "
+                "each source account folder needs a target folder of its own"
+            )
+        seen[_fold(target)] = source
 
 
 # ─── the journal on disk ─────────────────────────────────────────────────────
@@ -1578,7 +1659,13 @@ class _Transaction:
         parts = _check_rel(rel_path)
         self._apply(rel_path, parts, None, ("keep", 0))
 
-    def restore(self, snapshot_id: str, paths: Iterable[str] | None = None) -> None:
+    def restore(
+        self,
+        snapshot_id: str,
+        paths: Iterable[str] | None = None,
+        *,
+        into: Target | None = None,
+    ) -> tuple[tuple[str, str], ...]:
         """Put back the files of a snapshot of this flavor: every file it holds,
         or only `paths` (a named path the snapshot's subtrees cover but that it
         does not hold is deleted). Every entry is checked against the gate
@@ -1586,7 +1673,17 @@ class _Transaction:
         nothing behind. With `paths=None` any entry the gate refuses stops the
         whole restore, even an unchanged one; an unchanged link is the one
         exception, since leaving it needs no write. A failure after a path has
-        changed makes the transaction roll back on exit."""
+        changed makes the transaction roll back on exit.
+
+        A snapshot of another flavor folder or another install root restores
+        only with `into`, a `Target` naming this transaction's own flavor
+        (§6.10 as amended 2026-10-22): every path it holds is mapped by its
+        path relative to its flavor folder, and account folders under
+        `WTF/Account/` as `Target.accounts` maps them (with no mapping, only
+        when the snapshot and this flavor hold exactly one each). `paths`
+        are spelled as the snapshot spells them. Returns the account folders
+        mapped, as (the snapshot's, this flavor's) pairs; empty without
+        `into` or when the snapshot holds no account folder."""
         self._alive()
         if not isinstance(snapshot_id, str):
             raise GuardError(f"a snapshot id is a str, not {type(snapshot_id).__name__}")
@@ -1596,8 +1693,14 @@ class _Transaction:
         except SnapshotError as exc:
             raise GuardError(f"cannot read snapshot {snapshot_id!r}: {exc}") from exc
         assert self._place is not None
-        _refuse_foreign_snapshot(manifest, self._place)
-        prefix = self._place.folder + "/"
+        place = self._place
+        mapping: dict[str, str] = {}
+        if into is None:
+            _refuse_foreign_snapshot(manifest, place, hint=_INTO_HINT)
+            prefix = place.folder + "/"
+        else:
+            prefix = _into_prefix(manifest, into, place)
+            mapping = _account_mapping(manifest, prefix, into, place)
         wanted: list[tuple[str, Entry | None]] = []
         if paths is None:
             for entry in manifest.entries:
@@ -1605,18 +1708,21 @@ class _Transaction:
                     raise PathNotAllowedError(
                         f"snapshot {manifest.id} holds {entry.path!r}, which is not in this flavor"
                     )
-                wanted.append((entry.path.removeprefix(prefix), entry))
+                wanted.append((_mapped(entry.path.removeprefix(prefix), mapping), entry))
         else:
             if isinstance(paths, str | bytes):
                 raise GuardError("paths is an iterable of paths, not a single string")
             for rel in paths:
                 _check_rel(rel)
+                if into is not None:
+                    _refuse_target_spelling(rel, manifest, prefix, mapping, place)
                 named = manifest.entry(prefix + rel)
                 if named is None and not _covers(manifest, prefix + rel):
                     raise GuardError(f"{rel!r} is not in snapshot {manifest.id}")
-                wanted.append((rel, named))
+                wanted.append((_mapped(rel, mapping), named))
         ops = self._restore_ops(store, manifest, wanted, named=paths is not None)
         self._run_all(store, ops)
+        return tuple(sorted(mapping.items()))
 
     # -- context manager ---------------------------------------------------
 
@@ -2158,10 +2264,10 @@ def _record_is_of(record: _JournalRecord, place: _Place) -> bool:
     )
 
 
-def _refuse_foreign_snapshot(manifest: Manifest, place: _Place) -> None:
-    """A snapshot restores only into the flavor of the install it was taken
-    from; restoring across installs or flavors is not a thing the gate does.
-    An install root that is not a local absolute path is never looked up."""
+def _refuse_foreign_snapshot(manifest: Manifest, place: _Place, *, hint: str = "") -> None:
+    """Without a named target a snapshot restores only into the flavor of the
+    install it was taken from (and `undo()` always). An install root that is
+    not a local absolute path is never looked up."""
     if (
         manifest.flavor_folder != place.folder
         or not _local_absolute(manifest.install_root)
@@ -2169,7 +2275,222 @@ def _refuse_foreign_snapshot(manifest: Manifest, place: _Place) -> None:
     ):
         raise GuardError(
             f"snapshot {manifest.id} was taken of {manifest.flavor_folder!r} in "
-            f"{manifest.install_root}, not of {place.folder!r} in {place.install_root}"
+            f"{manifest.install_root}, not of {place.folder!r} in {place.install_root}{hint}"
+        )
+
+
+# What the refusal of a foreign snapshot adds (§18.1 item 1: it names the option).
+_INTO_HINT = (
+    "; to restore it here, name this flavor as the target to restore into "
+    "(--into-flavor FOLDER for another flavor folder, --into-root PATH for another install)"
+)
+
+
+def _into_prefix(manifest: Manifest, into: object, place: _Place) -> str:
+    """Hold `into` to this transaction's own flavor and the manifest's flavor
+    folder to one path component; return the snapshot's entry prefix."""
+    if not isinstance(into, Target):
+        raise GuardError(f"into is a guard.Target, not {type(into).__name__}")
+    named = _place(getattr(into.flavor, "path", None), None)
+    if not (
+        _same_dir(named.flavor_dir, place.flavor_dir)
+        and _same_dir(named.install_root, place.install_root)
+    ):
+        raise GuardError(
+            f"the target {named.flavor_dir} is not this transaction's flavor "
+            f"({place.flavor_dir}); a restore writes only where the gate was opened"
+        )
+    folder = manifest.flavor_folder
+    # Untrusted input (§6.10 as amended 2026-10-22): exactly one plain
+    # component, or nothing is mapped at all.
+    if (
+        not isinstance(folder, str)
+        or folder in ("", ".", "..")
+        or any(c == "/" or c in _FORBIDDEN_CHARACTERS for c in folder)
+    ):
+        raise GuardError(
+            f"snapshot {manifest.id} names its flavor folder as {folder!r}, which is not one "
+            "folder name; it cannot be restored into another target"
+        )
+    return folder + "/"
+
+
+def _account_of(parts: Sequence[str]) -> str | None:
+    """The folder under `WTF/Account/` that `parts` (flavor-relative, a file)
+    lies below, or None."""
+    if (
+        len(parts) >= 4
+        and parts[0] == _ACCOUNT_PARTS[0]
+        and _fold(parts[1]) == _fold(_ACCOUNT_PARTS[1])
+    ):
+        return parts[2]
+    return None
+
+
+def _not_saved_variables(name: str) -> bool:
+    return _fold(name) != _fold(_ACCOUNT_SAVED_VARIABLES)
+
+
+def _source_accounts(manifest: Manifest, prefix: str) -> tuple[set[str], set[str]]:
+    """The account folders the snapshot holds entries below, and the other
+    folders under `WTF/Account/` it holds entries below."""
+    folders: set[str] = set()
+    accounts: set[str] = set()
+    for entry in manifest.entries:
+        if not entry.path.startswith(prefix):
+            continue
+        parts = entry.path.removeprefix(prefix).split("/")
+        name = _account_of(parts)
+        if name is None:
+            continue
+        folders.add(name)
+        if _ACCOUNT_NAME.fullmatch(name) or (
+            len(parts) >= 6 and _not_saved_variables(parts[3]) and _not_saved_variables(parts[4])
+        ):
+            accounts.add(name)
+    return accounts, folders - accounts
+
+
+def _real_subdirs(path: Path) -> list[str]:
+    """Names of the real folders (no links) directly inside `path`; none when
+    it cannot be listed."""
+    out: list[str] = []
+    try:
+        for child in longpath.iterdir(path):
+            st = longpath.lstat(child)
+            if stat.S_ISDIR(st.st_mode) and not _is_link(st):
+                out.append(child.name)
+    except OSError:
+        return []
+    return out
+
+
+def _target_accounts(place: _Place) -> dict[str, bool]:
+    """The account folders under the target's `WTF/Account/`, each with
+    whether it is a link. Read without following a link; a link there is
+    counted as an account folder, and what it reaches is never looked at."""
+    found = _look(place, _ACCOUNT_PARTS, want_dir=True)
+    if found.st is None:
+        return {}
+    out: dict[str, bool] = {}
+    try:
+        children = sorted(longpath.iterdir(found.path))
+    except OSError as exc:
+        raise GuardError(f"cannot list {found.path}: {exc}") from exc
+    for child in children:
+        try:
+            st = longpath.lstat(child)
+        except OSError as exc:
+            raise GuardError(f"cannot inspect {child}: {exc}") from exc
+        if _is_link(st):
+            out[child.name] = True
+        elif stat.S_ISDIR(st.st_mode) and (
+            _ACCOUNT_NAME.fullmatch(child.name)
+            or any(
+                _not_saved_variables(realm)
+                and any(_not_saved_variables(c) for c in _real_subdirs(child / realm))
+                for realm in _real_subdirs(child)
+            )
+        ):
+            out[child.name] = False
+    return out
+
+
+def _names(names: Iterable[str]) -> str:
+    listed = sorted(names)
+    return ", ".join(listed) if listed else "none"
+
+
+def _account_mapping(
+    manifest: Manifest, prefix: str, into: Target, place: _Place
+) -> dict[str, str]:
+    """The account folders a restore into `place` maps (§6.10 as amended
+    2026-10-22). Refusals name the accounts; nothing has been written."""
+    accounts, others = _source_accounts(manifest, prefix)
+    given = None if into.accounts is None else dict(into.accounts)
+    if not accounts:
+        if given:
+            raise GuardError(
+                f"snapshot {manifest.id} holds no account folder, but the account mapping "
+                f"names {_names(given)}; restore it without a mapping"
+            )
+        return {}
+    target = _target_accounts(place)
+    if given is None:
+        if len(accounts) != 1 or len(target) != 1:
+            raise GuardError(
+                f"snapshot {manifest.id} holds account folder(s) {_names(accounts)} and "
+                f"{place.flavor_dir} holds {_names(target)}; account folders are mapped "
+                "without being asked only when each side has exactly one, so give the "
+                "mapping (--map-account SOURCE=TARGET for each account folder the snapshot holds)"
+            )
+        mapping = {next(iter(accounts)): next(iter(target))}
+    else:
+        # Checked again here: the mapping is the caller's dict.
+        try:
+            _check_account_mapping(given)
+        except PathNotAllowedError as exc:
+            raise GuardError(f"the account mapping is refused: {exc}") from exc
+        extra = set(given) - accounts
+        if extra:
+            raise GuardError(
+                f"the account mapping names {_names(extra)}, which snapshot {manifest.id} "
+                f"holds no account folder of (it holds {_names(accounts)})"
+            )
+        missing = accounts - set(given)
+        if missing:
+            raise GuardError(
+                f"the account mapping leaves out {_names(missing)}; it must map every "
+                f"account folder snapshot {manifest.id} holds ({_names(accounts)})"
+            )
+        clash = {_fold(o) for o in others} & {_fold(v) for v in given.values()}
+        if clash:
+            raise GuardError(
+                f"the account mapping sends an account folder to {_names(clash)}, which the "
+                "snapshot holds as a folder that is no account"
+            )
+        mapping = given
+    linked = {_fold(name) for name, is_link in target.items() if is_link}
+    for source, dest in mapping.items():
+        if _fold(dest) in linked:
+            raise PathNotAllowedError(
+                f"account folder {source!r} maps to {dest!r}, which is a link in "
+                f"{place.flavor_dir}; guard never follows one"
+            )
+    return mapping
+
+
+def _mapped(rel: str, mapping: dict[str, str]) -> str:
+    """`rel`, spelled as the snapshot spells it, as the target spells it."""
+    parts = rel.split("/")
+    name = _account_of(parts)
+    if name is None or name not in mapping:
+        return rel
+    return "/".join((*parts[:2], mapping[name], *parts[3:]))
+
+
+def _refuse_target_spelling(
+    rel: str, manifest: Manifest, prefix: str, mapping: dict[str, str], place: _Place
+) -> None:
+    """`paths=` under `into` names files as the snapshot spells them. A path
+    below a folder the snapshot holds no account folder of, when the mapping
+    sends one there or it is an account folder (on the target, or by its
+    name), is refused, so it is never planned as a delete of the target's
+    file (§6.10 as amended 2026-10-22)."""
+    name = _account_of(rel.split("/"))
+    if name is None or name in mapping:
+        return
+    accounts, _others = _source_accounts(manifest, prefix)
+    if name in accounts:
+        return
+    if (
+        _fold(name) in {_fold(v) for v in mapping.values()}
+        or _ACCOUNT_NAME.fullmatch(name)
+        or _fold(name) in {_fold(t) for t in _target_accounts(place)}
+    ):
+        raise GuardError(
+            f"{rel!r} is not spelled as snapshot {manifest.id} spells it: name files in its "
+            f"account folders ({_names(accounts)}); the mapping puts them into the target's"
         )
 
 

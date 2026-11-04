@@ -309,5 +309,17 @@ stored files that no snapshot needs, after asking.
   with `--paths`. They stay in the snapshot, and the plan counts them and
   names the first ten that differ from the disk, are missing, or could not
   be read (`Screenshots/` now a link).
+- **After the launch rename.** A snapshot goes back only into the folder it
+  was taken of, unless you name another. When a beta's folder is renamed at
+  launch, `wowlab snap restore <id> --into-flavor <new folder>` puts it into
+  the new folder, and `wowlab profile apply <name> --into-flavor <new folder>`
+  does the same for a profile. `--into-root <path>` restores into another
+  install (another machine's, or a reinstall). The plan names both folders
+  and which account folder under `WTF/Account/` goes where. When the
+  snapshot and the target each have one account folder they are paired
+  for you; otherwise say which goes where with
+  `--map-account <snapshot's folder>=<target's folder>`, once for each
+  account folder the snapshot holds (the target's may be a new one).
+  `--paths` names files as `wowlab snap show <id>` lists them.
 - Both go through the same write gate: the game must be closed, a snapshot
   is taken first, and you are asked before anything is written.
