@@ -1,0 +1,688 @@
+{
+  "name": "wowlab Wellspring",
+  "version": 1,
+  "color": {
+    "themes": [
+      {
+        "id": "warband",
+        "name": "Warband (dark)"
+      },
+      {
+        "id": "bastion",
+        "name": "Bastion (light)"
+      }
+    ],
+    "tokens": [
+      {
+        "name": "ground",
+        "value": {
+          "warband": "#121110",
+          "bastion": "#eeeae1"
+        },
+        "usage": "Page ground. Warband: char. Bastion: limestone."
+      },
+      {
+        "name": "ground-deep",
+        "value": {
+          "warband": "#0a0a09",
+          "bastion": "#e2dccf"
+        },
+        "usage": "Vignette edge of the page and the well behind the banner."
+      },
+      {
+        "name": "surface",
+        "value": {
+          "warband": "#1a1816",
+          "bastion": "#f9f7f2"
+        },
+        "usage": "Panels: the default container for every block of content."
+      },
+      {
+        "name": "surface-raised",
+        "value": {
+          "warband": "#24211d",
+          "bastion": "#fffdf8"
+        },
+        "usage": "Cards inside a panel: the codex pane, a macro, a hint."
+      },
+      {
+        "name": "surface-sunken",
+        "value": {
+          "warband": "#0e0d0c",
+          "bastion": "#f1ede4"
+        },
+        "usage": "Fields, code blocks, the JSON tree: anything the player types into or reads raw."
+      },
+      {
+        "name": "hover",
+        "value": {
+          "warband": "#2a2621",
+          "bastion": "#ebe5d7"
+        },
+        "usage": "Row or menu item under the pointer."
+      },
+      {
+        "name": "selected",
+        "value": {
+          "warband": "#163731",
+          "bastion": "#d3ebe3"
+        },
+        "usage": "Selected row, pressed command, the active tab's ground. Text stays `text`."
+      },
+      {
+        "name": "rule",
+        "value": {
+          "warband": "#38322a",
+          "bastion": "#d8cfbd"
+        },
+        "usage": "Hairlines between rows and sections. Decorative: carries no meaning."
+      },
+      {
+        "name": "rule-strong",
+        "value": {
+          "warband": "#857257",
+          "bastion": "#8f8169"
+        },
+        "usage": "Control borders (inputs, secondary buttons, tabs). At least 3:1 on `surface` and `surface-sunken`."
+      },
+      {
+        "name": "text",
+        "value": {
+          "warband": "#ece4d4",
+          "bastion": "#1b2026"
+        },
+        "usage": "Body copy on every ground, surface and `selected`."
+      },
+      {
+        "name": "text-muted",
+        "value": {
+          "warband": "#ab9f8a",
+          "bastion": "#525a63"
+        },
+        "usage": "Secondary copy: intros, notes, status lines, disabled labels. On grounds and surfaces."
+      },
+      {
+        "name": "brass",
+        "value": {
+          "warband": "#d6b06a",
+          "bastion": "#6e5016"
+        },
+        "usage": "Titan brass: headings, labels and the selected tab's text, on grounds and surfaces."
+      },
+      {
+        "name": "brass-deep",
+        "value": {
+          "warband": "#8a6f40",
+          "bastion": "#a48a58"
+        },
+        "usage": "Ornament: panel corner brackets, tree and JSON guides, the banner rule. Never text."
+      },
+      {
+        "name": "wellspring",
+        "value": {
+          "warband": "#55d8b7",
+          "bastion": "#0a7361"
+        },
+        "usage": "The life-force at the core: primary actions, focus ring, links, the selection mark, success. As text, on `ground` and the surfaces (not on `ground-deep`)."
+      },
+      {
+        "name": "on-wellspring",
+        "value": {
+          "warband": "#06241e",
+          "bastion": "#fffdf8"
+        },
+        "usage": "Text and icons on a `wellspring` fill (the primary button)."
+      },
+      {
+        "name": "wellspring-glow",
+        "value": {
+          "warband": "#55d8b726",
+          "bastion": "#0a73611f"
+        },
+        "usage": "The faint core-light rising from the bottom of the page and the halo of a focused primary button. Never behind text it must be read against alone."
+      },
+      {
+        "name": "heraldry",
+        "value": {
+          "warband": "#b4472f",
+          "bastion": "#2c4d8d"
+        },
+        "usage": "The faction colour of the theme (Warband oxblood, Bastion lapis): the banner's top band and the sigil field. Large shapes only."
+      },
+      {
+        "name": "on-heraldry",
+        "value": {
+          "warband": "#fbeee8",
+          "bastion": "#fffdf8"
+        },
+        "usage": "Text on a `heraldry` fill."
+      },
+      {
+        "name": "order",
+        "value": {
+          "warband": "#e9c67b",
+          "bastion": "#6a4c10"
+        },
+        "usage": "Order (the titans' ward): the \"wowlab can edit\" verdict text. Through the gate only."
+      },
+      {
+        "name": "order-bg",
+        "value": {
+          "warband": "#2b2414",
+          "bastion": "#f6edd5"
+        },
+        "usage": "Ground of the Order badge."
+      },
+      {
+        "name": "order-border",
+        "value": {
+          "warband": "#b38d3e",
+          "bastion": "#a07c2e"
+        },
+        "usage": "Border of the Order badge, solid."
+      },
+      {
+        "name": "ruin",
+        "value": {
+          "warband": "#ff8c73",
+          "bastion": "#a3290f"
+        },
+        "usage": "Ruin (destruction): \"wowlab won't touch\", errors, findings. On grounds, surfaces and `ruin-bg`."
+      },
+      {
+        "name": "ruin-bg",
+        "value": {
+          "warband": "#2f1612",
+          "bastion": "#fae5df"
+        },
+        "usage": "Ground of the Ruin badge and of an error notice."
+      },
+      {
+        "name": "ruin-border",
+        "value": {
+          "warband": "#c4533c",
+          "bastion": "#c25643"
+        },
+        "usage": "Border of the Ruin badge and error notice, solid and 2px."
+      },
+      {
+        "name": "void",
+        "value": {
+          "warband": "#c1a9ff",
+          "bastion": "#5b3ea1"
+        },
+        "usage": "The Void (eldritch unknown): the \"unknown\" verdict, for files no map row describes."
+      },
+      {
+        "name": "void-bg",
+        "value": {
+          "warband": "#221b34",
+          "bastion": "#efe9fb"
+        },
+        "usage": "Ground of the Void badge."
+      },
+      {
+        "name": "void-border",
+        "value": {
+          "warband": "#7f66cc",
+          "bastion": "#8b75c9"
+        },
+        "usage": "Border of the Void badge, solid."
+      },
+      {
+        "name": "stone",
+        "value": {
+          "warband": "#b9af9d",
+          "bastion": "#57534d"
+        },
+        "usage": "Stone (inert): \"folder\" and \"not used\"."
+      },
+      {
+        "name": "stone-bg",
+        "value": {
+          "warband": "#221f1c",
+          "bastion": "#ebe7de"
+        },
+        "usage": "Ground of the Stone badge."
+      },
+      {
+        "name": "stone-border",
+        "value": {
+          "warband": "#726b61",
+          "bastion": "#898276"
+        },
+        "usage": "Border of the Stone badge, solid."
+      },
+      {
+        "name": "astral",
+        "value": {
+          "warband": "#97caff",
+          "bastion": "#1d5996"
+        },
+        "usage": "Astral (a path that points elsewhere): the link verdict. Also JSON keys."
+      },
+      {
+        "name": "astral-bg",
+        "value": {
+          "warband": "#152231",
+          "bastion": "#e3eefa"
+        },
+        "usage": "Ground of the Astral badge."
+      },
+      {
+        "name": "astral-border",
+        "value": {
+          "warband": "#5083b8",
+          "bastion": "#6389b4"
+        },
+        "usage": "Border of the Astral badge, dotted."
+      },
+      {
+        "name": "blight",
+        "value": {
+          "warband": "#c9d27e",
+          "bastion": "#56600c"
+        },
+        "usage": "Blight (decay from outside): \"server may overwrite\", the second badge on a file the server may replace."
+      },
+      {
+        "name": "blight-bg",
+        "value": {
+          "warband": "#23260f",
+          "bastion": "#f0f3dc"
+        },
+        "usage": "Ground of the Blight badge."
+      },
+      {
+        "name": "blight-border",
+        "value": {
+          "warband": "#8c943f",
+          "bastion": "#849036"
+        },
+        "usage": "Border of the Blight badge, dashed."
+      },
+      {
+        "name": "jt-key",
+        "value": "{astral}",
+        "usage": "JSON keys, on `surface-sunken`."
+      },
+      {
+        "name": "jt-string",
+        "value": "{wellspring}",
+        "usage": "JSON strings, on `surface-sunken`."
+      },
+      {
+        "name": "jt-number",
+        "value": "{order}",
+        "usage": "JSON numbers, on `surface-sunken`."
+      },
+      {
+        "name": "jt-literal",
+        "value": "{void}",
+        "usage": "true, false and null, on `surface-sunken`."
+      },
+      {
+        "name": "gear-ground",
+        "value": "#0e0d0c",
+        "usage": "The gear table's ground, dark in both themes so item colours read as in the game."
+      },
+      {
+        "name": "gear-text",
+        "value": "#ece4d4",
+        "usage": "Gear table text and Common items on `gear-ground`."
+      },
+      {
+        "name": "gear-muted",
+        "value": "#ab9f8a",
+        "usage": "Slot names and empty slots on `gear-ground`."
+      },
+      {
+        "name": "gear-heading",
+        "value": "#d6b06a",
+        "usage": "Gear table column heads on `gear-ground`."
+      },
+      {
+        "name": "gear-row-rule",
+        "value": "#38322a",
+        "usage": "Rule between gear rows."
+      },
+      {
+        "name": "gear-detail",
+        "value": "#1a1816",
+        "usage": "Ground of an expanded item's detail row; `gear-text` reads on it."
+      },
+      {
+        "name": "quality-poor",
+        "value": "#9d9d9d",
+        "usage": "Reference only: drawn by the server from gear_slots.toml, never declared in page.css. Poor item names on `gear-ground`."
+      },
+      {
+        "name": "quality-common",
+        "value": "#ffffff",
+        "usage": "Reference only: drawn by the server from gear_slots.toml, never declared in page.css. Common item names on `gear-ground`."
+      },
+      {
+        "name": "quality-uncommon",
+        "value": "#1eff00",
+        "usage": "Reference only: drawn by the server from gear_slots.toml, never declared in page.css. Uncommon item names on `gear-ground`."
+      },
+      {
+        "name": "quality-rare",
+        "value": "#0070dd",
+        "usage": "Reference only: drawn by the server from gear_slots.toml, never declared in page.css. Rare item names on `gear-ground`. The client's colour, kept exact: 4.03:1, large text only, so names are set in `item-name`."
+      },
+      {
+        "name": "quality-epic",
+        "value": "#a335ee",
+        "usage": "Reference only: drawn by the server from gear_slots.toml, never declared in page.css. Epic item names on `gear-ground`. The client's colour, kept exact: 3.98:1, large text only."
+      },
+      {
+        "name": "quality-legendary",
+        "value": "#ff8000",
+        "usage": "Reference only: drawn by the server from gear_slots.toml, never declared in page.css. Legendary item names on `gear-ground`."
+      },
+      {
+        "name": "quality-artifact",
+        "value": "#e6cc80",
+        "usage": "Reference only: drawn by the server from gear_slots.toml, never declared in page.css. Artifact item names on `gear-ground`."
+      },
+      {
+        "name": "quality-heirloom",
+        "value": "#00ccff",
+        "usage": "Reference only: drawn by the server from gear_slots.toml, never declared in page.css. Heirloom item names on `gear-ground`."
+      }
+    ]
+  },
+  "type": {
+    "fonts": [
+      {
+        "family": "Alegreya",
+        "file": "fonts/alegreya-latin.woff2",
+        "weight": "400 900",
+        "style": "normal"
+      },
+      {
+        "family": "Alegreya",
+        "file": "fonts/alegreya-latin-ext.woff2",
+        "weight": "400 900",
+        "style": "normal"
+      },
+      {
+        "family": "Alegreya",
+        "file": "fonts/alegreya-italic-latin.woff2",
+        "weight": "400 900",
+        "style": "italic"
+      },
+      {
+        "family": "Alegreya",
+        "file": "fonts/alegreya-italic-latin-ext.woff2",
+        "weight": "400 900",
+        "style": "italic"
+      },
+      {
+        "family": "Alegreya SC",
+        "file": "fonts/alegreya-sc-500-latin.woff2",
+        "weight": "500",
+        "style": "normal"
+      },
+      {
+        "family": "Alegreya SC",
+        "file": "fonts/alegreya-sc-500-latin-ext.woff2",
+        "weight": "500",
+        "style": "normal"
+      },
+      {
+        "family": "Alegreya SC",
+        "file": "fonts/alegreya-sc-700-latin.woff2",
+        "weight": "700",
+        "style": "normal"
+      },
+      {
+        "family": "Alegreya SC",
+        "file": "fonts/alegreya-sc-700-latin-ext.woff2",
+        "weight": "700",
+        "style": "normal"
+      },
+      {
+        "family": "IBM Plex Mono",
+        "file": "fonts/ibm-plex-mono-400-latin.woff2",
+        "weight": "400",
+        "style": "normal"
+      },
+      {
+        "family": "IBM Plex Mono",
+        "file": "fonts/ibm-plex-mono-400-latin-ext.woff2",
+        "weight": "400",
+        "style": "normal"
+      },
+      {
+        "family": "IBM Plex Mono",
+        "file": "fonts/ibm-plex-mono-500-latin.woff2",
+        "weight": "500",
+        "style": "normal"
+      },
+      {
+        "family": "IBM Plex Mono",
+        "file": "fonts/ibm-plex-mono-500-latin-ext.woff2",
+        "weight": "500",
+        "style": "normal"
+      }
+    ],
+    "families": {
+      "display": "\"Alegreya SC\", \"Palatino Linotype\", Palatino, Georgia, serif",
+      "serif": "Alegreya, \"Iowan Old Style\", \"Palatino Linotype\", Palatino, Georgia, serif",
+      "mono": "\"IBM Plex Mono\", ui-monospace, Menlo, Consolas, monospace"
+    },
+    "groups": [
+      {
+        "name": "Display",
+        "family": "display",
+        "styles": [
+          {
+            "name": "display",
+            "fontSize": "40px",
+            "lineHeight": "44px",
+            "fontWeight": 700,
+            "letterSpacing": "0.04em",
+            "sample": "wowlab",
+            "usage": "The app's name in the banner, in `brass`. Once per page."
+          },
+          {
+            "name": "title",
+            "fontSize": "28px",
+            "lineHeight": "34px",
+            "fontWeight": 700,
+            "letterSpacing": "0.02em",
+            "sample": "Config.wtf",
+            "usage": "The codex pane's title and a view's one heading."
+          },
+          {
+            "name": "heading",
+            "fontSize": "20px",
+            "lineHeight": "26px",
+            "fontWeight": 500,
+            "letterSpacing": "0.03em",
+            "sample": "Keys and macros",
+            "usage": "Panel headings, in `brass`."
+          },
+          {
+            "name": "label",
+            "fontSize": "15px",
+            "lineHeight": "20px",
+            "fontWeight": 500,
+            "letterSpacing": "0.05em",
+            "sample": "Verdict",
+            "usage": "Toolbar labels, tabs and buttons."
+          },
+          {
+            "name": "plaque",
+            "fontSize": "13px",
+            "lineHeight": "20px",
+            "fontWeight": 500,
+            "letterSpacing": "0.06em",
+            "sample": "wowlab can edit",
+            "usage": "Verdict badges: engraved small capitals."
+          }
+        ]
+      },
+      {
+        "name": "Text",
+        "family": "serif",
+        "styles": [
+          {
+            "name": "subheading",
+            "fontSize": "17px",
+            "lineHeight": "24px",
+            "fontWeight": 700,
+            "sample": "Written by",
+            "usage": "Fact labels (`dt`) and h4."
+          },
+          {
+            "name": "body",
+            "fontSize": "17px",
+            "lineHeight": "26px",
+            "fontWeight": 400,
+            "sample": "Reading never changes anything.",
+            "usage": "All running copy."
+          },
+          {
+            "name": "item-name",
+            "fontSize": "19px",
+            "lineHeight": "26px",
+            "fontWeight": 700,
+            "sample": "Crown of Ash",
+            "usage": "Item names in their quality colour: large text, so the client's colours pass 3:1."
+          },
+          {
+            "name": "body-small",
+            "fontSize": "15px",
+            "lineHeight": "22px",
+            "fontWeight": 400,
+            "sample": "Prints the saved value.",
+            "usage": "Field help, hint notes, read-only footers."
+          },
+          {
+            "name": "caption",
+            "fontSize": "14px",
+            "lineHeight": "20px",
+            "fontWeight": 400,
+            "fontStyle": "italic",
+            "sample": "written by the client at logout",
+            "usage": "Row notes, in `text-muted`."
+          }
+        ]
+      },
+      {
+        "name": "Mono",
+        "family": "mono",
+        "styles": [
+          {
+            "name": "code",
+            "fontSize": "14px",
+            "lineHeight": "20px",
+            "fontWeight": 400,
+            "sample": "WTF/Account/ACCOUNT/SavedVariables",
+            "usage": "Paths, commands, macro bodies, `pre` output."
+          },
+          {
+            "name": "code-small",
+            "fontSize": "13px",
+            "lineHeight": "18px",
+            "fontWeight": 400,
+            "sample": "\"level\": \"gate\"",
+            "usage": "The JSON tree, item levels, snapshot ids."
+          }
+        ]
+      }
+    ],
+    "note": "Twelve files, the latin and latin-ext subsets of six faces, named and pinned in ADR-0035. Each @font-face carries its subset's unicode-range."
+  },
+  "spacing": {
+    "tokens": [
+      {
+        "name": "space-1",
+        "value": "4px",
+        "usage": "Inside a row: badge to badge, icon to label."
+      },
+      {
+        "name": "space-2",
+        "value": "8px",
+        "usage": "Control padding, tab gap, list item gap."
+      },
+      {
+        "name": "space-3",
+        "value": "12px",
+        "usage": "Toolbar gap, table cell padding, hint padding."
+      },
+      {
+        "name": "space-4",
+        "value": "16px",
+        "usage": "Panel padding, gap between fields."
+      },
+      {
+        "name": "space-5",
+        "value": "24px",
+        "usage": "Gap between panels; codex pane padding; page gutter on narrow screens."
+      },
+      {
+        "name": "space-6",
+        "value": "32px",
+        "usage": "Page gutter on wide screens; space above a view heading."
+      },
+      {
+        "name": "space-7",
+        "value": "48px",
+        "usage": "Banner height padding and the gap before a new view section."
+      }
+    ]
+  },
+  "radius": {
+    "tokens": [
+      {
+        "name": "radius-sm",
+        "value": "2px",
+        "usage": "Controls, badges, rows: cut stone, barely softened."
+      },
+      {
+        "name": "radius-md",
+        "value": "4px",
+        "usage": "Panels, the codex pane, buttons."
+      }
+    ]
+  },
+  "ornament": {
+    "note": "The titan-carved corner bracket drawn on panels and the codex pane.",
+    "tokens": [
+      {
+        "name": "ornament-arm",
+        "value": "14px",
+        "usage": "Length of each arm of a corner bracket."
+      },
+      {
+        "name": "ornament-weight",
+        "value": "2px",
+        "usage": "Stroke of a corner bracket and of the banner rule."
+      }
+    ]
+  },
+  "shadow": {
+    "tokens": [
+      {
+        "name": "shadow-panel",
+        "value": {
+          "warband": "inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 8px 24px rgba(0, 0, 0, 0.45)",
+          "bastion": "0 1px 2px rgba(40, 30, 10, 0.08), 0 8px 24px rgba(40, 30, 10, 0.08)"
+        },
+        "usage": "Every panel and the codex pane."
+      },
+      {
+        "name": "shadow-glow",
+        "value": {
+          "warband": "0 0 0 1px #55d8b7, 0 0 18px rgba(85, 216, 183, 0.35)",
+          "bastion": "0 0 0 1px #0a7361, 0 0 14px rgba(10, 115, 97, 0.25)"
+        },
+        "usage": "The life-force halo: a hovered or focused primary button and the Confirm seal. Once per view."
+      }
+    ]
+  }
+}

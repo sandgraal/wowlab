@@ -1065,15 +1065,17 @@ Found 2026-10-19 in the code review of #289, on `main` before it. (1) `_check_gh
 
 ---
 
-## [ ] M13-72 — `char list --json` carries every full record; the Character tab's colour grep exempts `page.css`
+## [x] M13-72 — `char list --json` carries every full record; the Character tab's colour grep exempts `page.css`
 **Size:** XS · **Depends on:** nothing
 
 Found 2026-10-19 in the code review of #290 (M14-08), on `main` before it. (1) `char list --json` is called with `keep_records=json_out` and so prints every character's full record (about 50 KB per low-level character on the capture; 100,632 bytes for two), while the Character tab's picker needs only the label, the folders, the time and the error. A large roster of high-level characters could approach the UI's 16 MiB output cap and leave the tab saying the page cannot hold the output; not verified on real high-level records. Decide between a lighter `char list --json` (a `--brief` flag, or records dropped by default under the UI) and a documented bound; `char list` text output byte-identical to `main`, and `--json` unchanged unless a flag asks. (2) `test_the_templates_hold_no_slot_name_and_no_colour_code` in `test_ui_character.py` skips six-digit colours in `page.css` because of `--field: #ffffff`; exempt that one value instead and check the quality words in the stylesheet too, so a stylesheet colour table keyed by quality word cannot pass the test.
 
 **Acceptance:** the decision for (1) stated in the report and recorded here by the conductor; the test for (2) catches `#a335ee` and a quality word added to `page.css`; byte-identity as stated; `make ci` green; reviewed by `code-reviewer`.
 
+**Decision for (1), recorded 2026-10-22:** a new flag. `char list --json --brief` gives `record: null` on every entry and never holds records in memory. The Character tab runs `char list --json --brief`. Plain `--json` and text output are unchanged. On the capture, `--json` prints 100,632 bytes and `--json --brief` prints 1,475. `--brief` without `--json` is accepted and changes nothing.
+
 ---
-## [ ] M13-73 — `char binds` with case-variant `WowLab.lua` files and no `--character`
+## [x] M13-73 — `char binds` with case-variant `WowLab.lua` files and no `--character`
 **Size:** XS · **Depends on:** nothing
 
 Found 2026-10-19 in the M14-07 reviews (both reviewers, off that branch), on `main` before it. When the latest character folder holds two `WowLab.lua` files that differ only in case, `_coach_record` returns no target with a `record_error`, and `char binds` without `--character` reports `character: null` and says "none in account … has a WowLab.lua", which is false: the folder has one, and it could not be told apart. `char macros` (M14-07) now keeps the latest folder as the character with `chosen_by` "latest" and gives `macros check`'s own reason ("no spellbook record: the WowLab.lua was not read"); make `char binds` do the same, with the same fallback rule (`cli.char_macros`'s `folder`/`how` fallback, the latest rule of `_lab_char_file`). Labelled constructed test that skips where the volume folds case, as `test_case_variant_records_read_nothing_as_macros_check_says_constructed` does; `char binds` output on the fixtures byte-identical to `main`.
@@ -1081,7 +1083,7 @@ Found 2026-10-19 in the M14-07 reviews (both reviewers, off that branch), on `ma
 **Acceptance:** the test passes on a case-sensitive runner (CI Linux); byte-identity on the fixtures; `make ci` green; reviewed by `code-reviewer`.
 
 ---
-## [ ] M13-74 — `sv merge --expect` pins the merged bytes, not only the target
+## [x] M13-74 — `sv merge --expect` pins the merged bytes, not only the target
 **Size:** S · **Depends on:** M14-03
 
 Found 2026-10-19 in the security review of M14-03 (ruled a follow-up by the conductor: the ticket named the target's sha256 as the pin and allowed one new JSON field). `sv merge --from CHARACTER` reads its source from a live file, and the client rewrites the played character's per-character files at logout, not the target's. So between the plan the page showed and the confirmed run the source can change while the target does not; `--expect <target sha256>` passes and the confirmed run writes values the page never showed (§16.1 "applies the plan that was shown"). A `--from` or `--base` snapshot given as an id prefix can likewise resolve to a different snapshot if the store changes in between. Pin what the merge will write: the merge report gains `merged_sha256` (the sha256 of the bytes `tx.write` will receive) beside `target_sha256`; `--expect` takes `<target>:<merged>` (or a second option, decided in the report) and the confirmed run refuses with exit 3 unless both match, the second check made inside the transaction against `tx.plan[0].before` and the bytes passed to `tx.write`; the UI passes both back. The security-reviewer's probe `lab/core/tests/review/test_m14_03_sv_merge_confirms_a_source_the_page_never_showed.py` (xfail on `main` after M14-03) is activated by marker deletion only. Text output byte-identical to `main` without `--expect`; `--json` gains that one field, listed in the release notes.
@@ -1097,7 +1099,7 @@ Found 2026-10-19 in the security review of M14-03 (ruled a follow-up by the cond
 **Acceptance:** the five tests pass on the PR's `lab (windows)` job and on macOS and Linux; no change under `lab/core/src/`; `make ci` green; reviewed by `code-reviewer`.
 
 ---
-## [ ] M13-76 — `wowlab ui --help` still describes the v0.1 UI
+## [x] M13-76 — `wowlab ui --help` still describes the v0.1 UI
 **Size:** XS · **Depends on:** M14-04, M16-02 (absorbed by M16-02, 2026-10-21; closes with it)
 
 Found 2026-10-19 in the code review of M14-04, on `main` before it. The `ui_command` docstring in `cli.py` says only `snap gc` and `doctor` run behind a Confirm and that commands that change game files "are not offered in this version"; since M14-03 every `--yes` command runs through the confirm step, and the docstring names neither the Character tab (M14-08) nor the Looks tab (M14-04). Rewrite it to match `main` after M14-04 (the five tabs; plan then Confirm for every `--yes` command; `undo` and `sv merge` refuse on drift, the others apply what is there after the snapshot; `--out` and `--follow` refused), in the CLI's own voice; the generated command reference and the wiki's `wowlab ui` page follow it. Text output of every other command byte-identical to `main`.
@@ -1105,7 +1107,7 @@ Found 2026-10-19 in the code review of M14-04, on `main` before it. The `ui_comm
 **Acceptance:** `wowlab ui --help` says what the UI does on `main`; `tests/scripts/test_readme.py`-style pin if one exists for the reference; `make ci` green; reviewed by `code-reviewer`. User-facing: `wowlab ui --help`, the command reference, the wiki's `wowlab ui` page.
 
 ---
-## [ ] M13-77 — `CharBindsReport` carries the left-out sentence it prints
+## [x] M13-77 — `CharBindsReport` carries the left-out sentence it prints
 **Size:** XS · **Depends on:** M14-09
 
 Found 2026-10-19 in the code review of M14-09. The Keys panel prints `char binds`'s "Left out of the bindings record …" sentence, caveat included ("a key bound straight to a spell, macro, item or click may be one"), but no report field carries it: `CharBindsReport` has only `commands_left_out` and `keys_left_out`, so the page copies the CLI's prose word for word and a test holds the two equal (§14.5 D3, §15.6 data flow). Add the sentence to the report (one field, `left_out_note`, or the two counts each with their words), make the CLI's text form and the page read it from there, and drop the copied prose from `page.js`. `--json` gains exactly that field, listed in the release notes (M13-47's guard); text output byte-identical to `main`.
@@ -1312,7 +1314,7 @@ The Character tab renders the field under the gear table as one button, **See it
 
 ---
 
-## [ ] M15-05 — `casc`: encoding, root, and `CascSource.read`
+## [x] M15-05 — `casc`: encoding, root, and `CascSource.read`
 **Size:** M · **Depends on:** M15-04
 
 §17.1 steps 4 and 5 and the targets. The encoding file (page index, `bisect`, one-page scan; no full dictionary; one content key may map to several encoding keys, each tried against the index), the root file in versions 1 and 2 (the flag words; locale and platform filtering with the locale from `.build.info`'s `Tags` column and the platform from the install's layout, never a constant: L6; the `0x108`/`0x110` masks and `LowViolence`; a file in an `Encrypted` block tried through its other keys before it is called encrypted), and `CascSource.read(fdid) -> bytes` with the content-key MD5 check and the one re-open on mismatch, on every read. `CascSource.stat(fdid)` reports §17.1's four states: *local*, *not in your client's local files*, *not part of this game version's files*, *encrypted*, plus *unknown id* for an id in no table. **Performance target (§6.4):** open in ≤ 5 s, 300 reads in ≤ 10 s, resident memory measured; a miss is a stop-and-ask (§17.1), not a dependency.
@@ -1389,6 +1391,14 @@ The conductor writes `docs/handoffs/M15-review.md` per `docs/LAB_PLAN.md` §11: 
 
 **Acceptance:** the fixture character's gear against recorded wago CSV slices, row by row (appearance per item, geosets, attachments, file ids and states); a labelled constructed character with a helmet (hair hidden), a cloak, a robe (the trouser priority), a shirt under chest (the sleeve priority), an item whose bonus ids select a second appearance, and an item with no appearance row (listed, not fatal); `make ci` green. Reviewed by `domain-reviewer` (the item tables on Forever's data; the geoset rules) and `code-reviewer`. User-facing: none until M15-11.
 
+
+## [ ] M15-14 — `CascSource`: one index re-read per call, whatever the retry raises
+**Size:** XS · **Depends on:** M15-05 · **Sources:** the automated review of #320 (2026-10-22)
+
+Found in review after M15-05 merged. In `casc.py`, `_read_checked` and `_probe_once` (around lines 2598–2608 at 9112f0f) lose the per-call `reopened` flag when the retry after a re-read raises `EncryptedContent` or `CascUnsupportedError`. A later candidate can then call `_reopen()` a second time, giving `reopens == 2` within one `read` or `stat`, while §17.1 allows one re-open per call. Fix: keep the flag for the whole call, on the instance or passed through. Add a labelled constructed test that makes the first candidate fail its MD5, has the retry raise each of the two errors, and asserts `reopens == 1` after the call.
+
+**Acceptance:** the test fails on `main` and passes on the branch; `make test-parser` and `make ci` green; reviewed by `code-reviewer`. User-facing: none.
+
 ---
 
 ---
@@ -1410,7 +1420,7 @@ These are the `Proposed` amendments of 2026-10-21 to ADR-0013 (the proposal vali
 
 ---
 
-## [ ] M16-02 — One sentence about what can change your files
+## [x] M16-02 — One sentence about what can change your files
 **Size:** S · **Depends on:** nothing · **Sources:** raider:F15, designer:F15, a11y:F14, newcomer:F2, writer:F1, qa:F18, security:F5 (EV: M13-76 widened)
 
 §18.1 item 2. The same sentence goes into the `ui` docstring (`cli.py` around 9899), `page.html:20`, the Commands intro (`page.html:62`), the `page.js:572` hint, INSTALL.md's UI section (with Character and Looks added to "What to look for"), and the wiki's `CLI-Reference.md` through the wiki job's notes. The sentence: "Reading never changes anything. Six commands can change game files; each shows a plan and runs only when you confirm, after a snapshot."
@@ -1419,7 +1429,7 @@ These are the `Proposed` amendments of 2026-10-21 to ADR-0013 (the proposal vali
 
 ---
 
-## [ ] M16-03T — [TEST] `guard`: restore into a named flavor folder or install root
+## [x] M16-03T — [TEST] `guard`: restore into a named flavor folder or install root
 **Size:** S · **Depends on:** nothing · **Sources:** raider:F1, qa:F1 (EV-01T)
 
 §18.1 item 1. Strict-xfail graders cover:
@@ -1430,8 +1440,17 @@ These are the `Proposed` amendments of 2026-10-21 to ADR-0013 (the proposal vali
 - a pre-write snapshot of the target;
 - the allowlist and link refusals applied to the target;
 - the client check applied to the target: a client running from the target root refuses the write, whatever the source install's state (L2);
-- the target install's lock is taken, and a target root whose store overlaps the source's is refused;
+- the target install's lock is taken, and a target root that overlaps the snapshot store, in either direction, is refused (§6.10, L1; wording clarified 2026-10-22 after review);
 - `undo` of a restore into another target.
+
+*Added 2026-10-22 from the reviews of PR #330.* The graders also cover the rules in the §6.10 amendment of the same date:
+- `paths=` names files in the snapshot's own spelling; the target-side spelling of a mapped account folder is refused and never planned as a delete.
+- A mapping of two source folders to one target folder is refused, and so is a mapping that leaves out a source account folder the snapshot holds.
+- A snapshot with no account folder restores without a mapping and creates none; a mapping given for it is refused.
+- A mapping value must be one plain folder name.
+- A sole target account folder that is a link is refused, whether it was mapped explicitly or automatically.
+- A forged manifest `flavor_folder` is refused with nothing written.
+- Malformed `--into-flavor` and `--map-account` values are refused.
 
 Inputs are constructed and labelled. No flavor name appears in library-facing assertions beyond the test data (L6).
 
@@ -1529,7 +1548,7 @@ Reviewed by `code-reviewer` and `security-reviewer`. User-facing: `doctor`'s def
 
 ---
 
-## [ ] M16-09T — [TEST] `guard`: the pre-write snapshot records `kind=pre-write`
+## [x] M16-09T — [TEST] `guard`: the pre-write snapshot records `kind=pre-write`
 **Size:** XS · **Depends on:** nothing · **Sources:** raider:F2
 
 Guard creates the pre-write snapshot (`store.create(... label="guard pre-write: …")`), so recording its kind changes what `guard` does (ADR-0013). Strict-xfail graders: every write's pre-write manifest carries `kind="pre-write"`; a `snap create` manifest carries `kind="user"`; nothing else in the manifest or journal changes.
@@ -1561,10 +1580,10 @@ Guard creates the pre-write snapshot (`store.create(... label="guard pre-write: 
 
 ---
 
-## [ ] M16-11T — [TEST] `guard`: a whole restore's plan lists what it leaves alone
+## [x] M16-11T — [TEST] `guard`: a whole restore's plan lists what it leaves alone
 **Size:** XS · **Depends on:** nothing · **Sources:** qa:F2
 
-The restore plan is built in `guard` (`tx.restore`, `PlanItem`), so this changes what `guard` returns (ADR-0013). Strict-xfail graders: files added under the snapshot's subtrees since the snapshot appear in the plan as left-alone items; they are never written or deleted; a `--paths` restore lists none.
+The restore plan is built in `guard` (`tx.restore`, `PlanItem`), so this changes what `guard` returns (ADR-0013). Strict-xfail graders: files added under the snapshot's subtrees since the snapshot appear in the plan as left-alone items; they are never written or deleted; a `--paths` restore lists none. *Seam amended 2026-10-22 (M16-11's "Seam" paragraph):* the left-alone files are a read-only `tx.left_alone` tuple, not items in `tx.plan`. The graders also cover links, a FIFO, excluded paths, and added executables and Edit-no files.
 
 **Acceptance:** the graders fail as expected on `main`; `make ci` green. Written by `test-writer`, reviewed by `code-reviewer` and `security-reviewer`.
 
@@ -1574,6 +1593,8 @@ The restore plan is built in `guard` (`tx.restore`, `PlanItem`), so this changes
 **Size:** S · **Depends on:** M16-11T · **Sources:** qa:F2 (EV-10)
 
 The plan lists, under a "left alone" heading, the files under the snapshot's subtrees that were added since the snapshot. README, `snap restore --help` and the wiki say that a whole restore never deletes them.
+
+**Seam, ruled 2026-10-22 in the M16-11T reviews.** In `guard`, the left-alone files are a read-only `tx.left_alone: tuple[str, ...]`, filled by a whole restore. They are not items in `tx.plan`, so `PlanItem`, `tx.plan` and every `--json` plan are unchanged. Putting them in `tx.plan` broke `profile apply`'s plan check in both reviewers' stand-ins. The walk lists regular files only, outside `Manifest.excluded`, and follows no link (use `SnapshotStore.list_tree`). The CLI prints the "left alone" heading from `tx.left_alone`. When the CLI turns a whole restore into a restore by name (skipped executables, set-aside screenshots), it computes the same list itself. Its dry-run plan must equal its commit plan, without weakening the comparison in `cli.py` (`if tx.plan != tuple(plan) or moved:`).
 
 **Acceptance:** M16-11T's graders are activated by marker deletion only, and the full suite is green (`guard.py`). The CLI prints the heading. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: the `snap restore` plan.
 
@@ -1714,7 +1735,7 @@ Every fenced `wowlab` command in README and INSTALL runs against the fixture san
 
 ---
 
-## [ ] M16-23T — [TEST] `guard`: a listing memo that keeps every re-check
+## [x] M16-23T — [TEST] `guard`: a listing memo that keeps every re-check
 **Size:** S · **Depends on:** nothing · **Sources:** architect:F1, raider:F14 (EV-05T)
 
 §18.1 item 6. Strict-xfail graders cover:
@@ -1754,7 +1775,7 @@ Inputs are constructed and labelled.
 
 ---
 
-## [ ] M16-26T — [TEST] `luadata.read` and the `wtfconfig` readers through `open_regular_file`
+## [x] M16-26T — [TEST] `luadata.read` and the `wtfconfig` readers through `open_regular_file`
 **Size:** S · **Depends on:** nothing · **Sources:** qa:F6, security:F3 (EV-24T)
 
 **Acceptance:** strict-xfail graders show:
@@ -1795,7 +1816,7 @@ Reviewed by `code-reviewer`. User-facing: the Gaps tab.
 
 ---
 
-## [ ] M16-29 — UI focus and announcements
+## [x] M16-29 — UI focus and announcements
 **Size:** S · **Depends on:** nothing · **Sources:** a11y:F1, F2, F3, F11 (EV-27)
 
 - Focus returns to the same `data-path` element after a tree redraw.
@@ -1808,7 +1829,7 @@ Reviewed by `code-reviewer`. User-facing: the Gaps tab.
 
 ---
 
-## [ ] M16-30 — UI visual accessibility
+## [x] M16-30 — UI visual accessibility
 **Size:** S · **Depends on:** nothing · **Sources:** a11y:F5, F6, F8, F9, F10, designer:F11 (EV-28)
 
 - `.parchment :focus-visible` uses ink.
@@ -1948,7 +1969,7 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 
 ---
 
-## [ ] M16-42 — The UI's local exposure
+## [x] M16-42 — The UI's local exposure
 **Size:** S · **Depends on:** nothing · **Sources:** security:F3, F4 (EV-41)
 
 - From `/api/run`, `sv dump` of a path outside the resolved install is refused, and the refusal never echoes the bytes.
@@ -1990,10 +2011,12 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 - Probes and the control event sit behind `/wowlab debug`, off by default.
 - The `Constants` sweep runs once per session.
 - Change events mark sections dirty. Gathering runs out of combat, at most once every 30 to 60 s, and at logout.
-- `CLICK <frame>:<button>` binding commands are stored, and nothing else non-plain is.
+- `CLICK <frame>:<button>` binding commands are stored only under the rule in "Ruled 2026-10-22" below (an action-slot button); nothing else non-plain is.
 - No macro hash is stored in this ticket. If M16-05's macro-place answer needs one, M16-48 adds it.
 
 **Before dispatch:** `domain-reviewer` checks ADR-0026's `CLICK` premise. Some addons (GSE, for example) name secure buttons after text the player typed, so a `CLICK <name>:<button>` can carry it. If so, the ticket stores the command only when the frame belongs to an installed addon's declared frames, or the owner rules again.
+
+**Ruled 2026-10-22.** The check found the premise false (GSE) and the fallback unbuildable, and the owner ruled again in session. A `CLICK` command is stored only under the rule in ADR-0026's 2026-10-22 amendment: a bounded identifier pair, a frame whose `type` attribute is `"action"`, and a numeric `action` attribute. Every other `CLICK` is counted in `commands_left_out` and in a new `clicks_left_out`. Whether `GetBinding` lists `CLICK` commands at all is [verify]. If the capture shows it does not, the implementer reports it and does not build a key-by-key walk. The schema-5 capture includes one action-bar addon (Bartender4, ElvUI or Dominos) with at least one `CLICK` keybind, the positive case. Where possible it also includes a GSE sequence keybind or a `SetBindingClick` to a non-action button, the negative case: it is counted, and its name is absent from `WowLab.lua` by grep. Any player-typed name in a provenance row is a pseudonym.
 
 **Acceptance:** the static Lua tests and selene pass. One owner capture at schema 5 is added, with provenance rows. `make ci` is green. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer`. User-facing: in-game chat, and `/wowlab debug`.
 
@@ -2022,9 +2045,133 @@ Built only if M16-05's macro-place answer cannot place macros without a join key
 
 ---
 
+## [ ] M16-49T — [TEST] `luadata.read` and the `wtfconfig` readers refuse a parent-directory link out of the install
+**Size:** S · **Depends on:** M16-26 · **Sources:** the M16-26T security review (2026-10-22)
+
+Found in review on 2026-10-22, and not in M16-26's scope. `O_NOFOLLOW` checks only the last part of a path, and the readers take no install root. So `WTF -> ../Elsewhere` reads `Elsewhere/Config.wtf` while `tree` reports the `WTF` entry as "link, not followed". Strict-xfail graders, constructed and labelled, for `luadata.read` and each `wtfconfig` `read_*`, with the install root given:
+- a link in a parent directory that points out of the install is refused;
+- a link in a parent directory that stays inside the install is refused as well, as `tree` reports it ("link, not followed");
+- a regular path still reads byte for byte.
+
+They are skipped on Windows, or graded there through the junction monkeypatch of `test_snapshot_junctions.py`.
+
+**Acceptance:** the graders fail as expected on `main`, and `make test-parser` and `make ci` are green. Written by `test-writer`, and reviewed by `code-reviewer` and `security-reviewer`.
+
+---
+
+## [ ] M16-49 — [IMPL] The readers open from the install root, one component at a time
+**Size:** M · **Depends on:** M16-49T · **Sources:** the M16-26T security review (2026-10-22)
+
+The readers' callers already know the install. Each reader takes the install root and opens component by component with `dir_fd` and `O_NOFOLLOW`; the M11-11 helper already accepts `dir_fd`. Callers without an install root (`sv dump` of a path outside any install) keep today's final-component check, and say so in their output.
+
+**Acceptance:** M16-49T's graders are activated by marker deletion only; the full suite is green (`luadata.py`); `make test-parser` is green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: a file reached through a linked folder is refused, with the folder named, and the wiki's safety page says so. Commands given a path outside any install (`sv dump <path>`) say they checked the last part of the path only.
+
+---
+
+## [x] M16-53 — The Character keys table reflows at 320 px
+**Size:** S · **Depends on:** nothing · **Sources:** a11y:F6, designer:F11 (EV-28); found in the M16-42 review (2026-10-27)
+
+Already on `main` at 3e53e5a, against M16-30's own acceptance line (`scrollWidth == clientWidth` at 320 px). At 320 px, on the first visit to Character, once the keys panel has drawn, the keys table (`#char-keys table.char-table`) is 441 px wide and the page's `scrollWidth` is 478. M16-30's `test_nothing_is_wider_than_a_320px_window` measures right after opening a gear row, before the keys table is drawn, so it passes.
+
+- At 320 px the keys table fits without moving the page sideways. A data table may scroll inside its own box (WCAG 1.4.10 allows two-dimensional scrolling for data tables). The box is labelled and focusable through attributes written in `page.html` on the existing `#char-keys` element, or set as properties, so the script's closed `setAttribute` set in `test_ui_explorer.py` is unchanged.
+- The reflow test waits for `#char-keys` and the macros panel to be drawn before measuring.
+
+**Acceptance:** the reflow test is run locally with Playwright (it skips in CI) and the PR pastes both runs, not skipped: failing on `main` as it is, passing after the fix. The contrast test stays green; `make ci` is green. Reviewed by `code-reviewer` and `security-reviewer` (every `ui` diff). User-facing: the Character tab at narrow widths.
+
+---
+
 ## [ ] M16-47 — M16 review
-**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48
+**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-53
 
 `docs/handoffs/M16-review.md` per §11, including §11 item 5's folding of the amendments. It also covers whether v0.2 is tagged, when the gate's clock started, and whether M15 resumes.
 
 **Acceptance:** the review is merged, and the owner picks the next wave.
+
+---
+
+# Owner request, 2026-10-26: the Wellspring redesign of `wowlab ui`
+
+The owner asked for `wowlab ui` to be redesigned from the ground up as a fantasy-themed app. The spec is `docs/design/WELLSPRING.md`, with its tokens in `docs/design/wellspring-tokens.json`; the fonts are ADR-0035 (accepted 2026-10-26). These tickets are filed under M16 for their numbers only. They are not part of v0.2: M16-47 does not wait on them, and the owner decides whether they ship in v0.2 or later. L1 to L8 apply. They touch the same templates as M16-29, M16-30 and M16-42 and run after them, one at a time.
+
+The redesign changes how the page looks and nothing it says or does: no player-facing sentence, no class or id `page.js` reads, no route, no command and no `--json` shape changes. The lore names in the spec (Order, Ruin, Void, Warband, Bastion) are for tokens and this documentation; a player never reads them.
+
+## [x] M16-50 — ADR-0035 accepted: the Wellspring fonts
+**Size:** S · **Depends on:** — · **owner** (accepts or amends ADR-0035)
+
+The owner reads ADR-0035 and accepts it, amends it (for example: fewer faces, no `latin-ext`, or system fonts only), or rejects it. If it is rejected, M16-51 is closed unbuilt, and M16-52 keeps the `font-*` fallback stacks, which the spec already allows.
+
+**Acceptance:** ADR-0035's status line records the owner's decision.
+
+*Closed 2026-10-26:* the owner accepted ADR-0035 as written, in session, on PR #341. The same day the owner also confirmed ADR-0035's amendment of 2026-10-26 (file names, licence pins) and ADR-0029's "Amended by" line, so M16-51 builds on accepted text only.
+
+---
+
+## [x] M16-51 — The Wellspring fonts in the page's own style
+**Size:** S · **Depends on:** M16-50, M16-42 (same file: `ui/__init__.py`)
+
+Per ADR-0035 and its amendment of 2026-10-26:
+- The twelve WOFF2 files go into `lab/core/src/wowlab_core/ui/templates/fonts/` under the amendment's names, byte for byte from the ADR's URLs. The two licence texts go beside them, byte for byte from the amendment's pinned URLs. The wheel and sdist carry all fourteen.
+- The shell's assembly writes one `@font-face` per font file into the inline style: the family, style and weight from the ADR's table, `src: url(data:font/woff2;base64,…) format("woff2")`, and the subset's `unicode-range` (the `latin` and `latin-ext` ranges of Google's stylesheet, written as constants beside the table).
+- The CSP gains `font-src data:` and nothing else.
+- The `@font-face` rules go after the template text and the server's colour rules, so the served style still starts with `page.css` (`test_the_colour_rules_are_made_from_the_shipped_table`, `test_ui_character.py:642`, stays unchanged).
+- `scripts/check_fonts.py` downloads the ADR's fourteen URLs and compares the bytes. It runs by hand and never in CI.
+- The README's "License and affiliation" section names both OFL families.
+- The texts that repeat ADR-0029's CSP sentence change with it: the `ui/__init__.py` module docstring and `docs/LAB_PLAN.md` §16.3 (the M14-04 paragraph). The `ui` bullet in `.claude/rules/lab-load-bearing.md` is harness, so the report names the new wording and the conductor makes that edit on merge.
+
+**Tests on `main` this changes, and their narrowed form.** These are security graders. Nothing beyond the narrowing below is loosened.
+- `test_ui_explorer.py::test_the_explorer_page_is_served_with_a_csp_that_hashes_it`: `"font-src" not in directives` becomes `directives["font-src"] == ["data:"]`. `"data:" not in flat` becomes "`data:` appears only as the whole value of `font-src`".
+- `test_ui_explorer.py`, `_EXTERNAL`: `url(`, `@font-face` and `data:font` stay forbidden everywhere except in exactly twelve `@font-face` rules. Each of those has one `src`, a `data:font/woff2;base64,` URL that decodes to one of the pinned files. Every other entry of `_EXTERNAL` is unchanged.
+- `test_ui_server.py`, `_csp_problems`: `data:` is accepted only as the whole of `font-src`. Every other source rule is unchanged.
+
+**Acceptance:**
+- A test holds each font's SHA-256 and size from the ADR's table and each licence text's from the amendment. It fails if `fonts/` holds anything but those fourteen files.
+- A test reads the served shell and finds one `@font-face` per font file, each `data:` URL decoding to that file's bytes, and a CSP whose `font-src` is exactly `data:`, with every other directive unchanged.
+- The three graders above are changed to exactly their narrowed form. The PR body quotes each before and after.
+- A test builds the wheel and finds the fourteen files in it.
+- `make ci` is green.
+- Reviewed by `code-reviewer` and `security-reviewer`.
+
+User-facing: none yet (the faces appear with M16-52); the README's licence list.
+
+---
+
+## [x] M16-52 — `wowlab ui` in the Wellspring design
+**Size:** M · **Depends on:** M16-29, M16-30, M16-53, M16-51 (or M16-50 rejecting ADR-0035)
+
+Restyle the page to `docs/design/WELLSPRING.md`. `page.css` is rewritten on custom properties named as in `docs/design/wellspring-tokens.json`, with the Warband values under `:root` and the Bastion values under `@media (prefers-color-scheme: light)`. The reference drawing of each component is `docs/design/wellspring-components.css`, and the spec's "Mapping onto the existing page" table says which existing class each one becomes.
+
+*Owner decision, 2026-10-26:* this redesign replaces the look rules of 2026-10-16 (the M13-26 section above, "Look and first view"). Those rules asked for a parchment-toned detail pane, grey for `unclassified`, and a serif system font stack with no external fonts. Under Wellspring the detail pane is the Codex, `unclassified` is Void (violet), and the fonts are ADR-0035's. The other rules stand: readability first, a light scheme by `prefers-color-scheme`, no external request, and no Blizzard art.
+
+- **Keep:** every class and id `page.js` reads or writes, every player-facing sentence in `page.html` and `page.js`, the server-generated quality rules and their class names, and the Looks frame (its page keeps its own style).
+- **Quality colours stay out of `page.css`.** The `quality-*` tokens are a reference: the page declares none of them, and the M13-72 test (`_table_leaks` in `test_ui_character.py`) stays as it is.
+- **Banner:** the 4px `heraldry` band, the inline sigil in place of the crest, and the name in `display`. The sigil is drawn with the spec's Banner classes, so it follows the theme, and written without `xmlns` (`_EXTERNAL` forbids it).
+- **Panels and the parchment:** panels get the corner brackets. `.parchment` becomes the Codex (`surface-raised`, a `heraldry` top edge, `title` heading).
+- **Badges:** the badge classes map to the six forces per the table. Each gets its glyph from CSS `content` with empty alternative text (`content: "◆" / ""`), so the badge's words are read once and its existing `title` and `.unseen` sentence are unchanged. Astral gets a dotted border and Blight a dashed one.
+- **Buttons:** `#run` and `#looks-write` become primary, `.copy` becomes secondary, and `#confirm` becomes the seal (one standing glow per view).
+- **Focus:** a 2px `wellspring` outline everywhere, including inside the Codex, which under Wellspring is `surface-raised` (dark in Warband, white in Bastion), not parchment. It meets 3:1 on every surface it lands on in both themes. M16-30's region rules (the ink ring on `.parchment`, the gold ring on `.gear-table`) are replaced, not kept beside it.
+- **Fonts:** the `font-display`, `font-serif` and `font-mono` stacks from the spec. If ADR-0035 is rejected, they are the stacks without their first family.
+- **Keep:** M16-53's `#char-keys { max-width: 100%; overflow-x: auto; }` rule (or an equivalent that keeps the keys table scrolling inside its own box). Only the Playwright reflow test guards it, and CI skips that test, so the PR pastes a local run of `test_nothing_is_wider_than_a_320px_window`, not skipped, in both themes.
+- **Not in scope:** a theme switch, any new view, any change to the Looks page, to `lookspage`, or to what a command prints.
+
+**Tests on `main` this replaces, under the owner decision above:**
+- `test_ui_explorer.py`, `test_text_meets_wcag_aa_in_both_schemes` and its parchment check: replaced by the contrast test below.
+- `test_ui_contrast.py` (M16-30), `test_the_parchment_ring_is_ink`: replaced by "the `wellspring` focus ring meets 3:1 on every surface", graded by the same file's focus-ring test. The Codex keeps the `.parchment` class, which already has a `_REGIONS` row; `_REGIONS` and `_CHILDREN` gain rows only for a new container, as the file's docstring says. Nothing else in its grading loosens.
+- `test_ui_contrast.py`, `test_the_grader_sees_a_failing_pair_constructed` (it reads `var(--gold)`) and `test_constructed_a_container_ground_does_not_hang_on_another_rule` (it uses `var(--field-text)`): neither name survives the token rename, and `_colours` fails on an undeclared `var()`. Each is rewritten on Wellspring tokens with the same intent: a failing ring on the Codex, and the text token on `surface-sunken`.
+- `test_ui_contrast.py`, `test_constructed_a_colour_only_state_is_graded_on_its_own_ground`: if disabled controls take `surface-sunken` as their own ground, as WELLSPRING.md says, `#run:disabled` is no longer a colour-only state. The test then picks another colour-only state rule, or is rewritten on a constructed one; the mechanism it grades stays covered.
+- `test_badges_read_like_item_quality`: becomes "each badge class uses its force's `-bg` and `-border` tokens; Astral is dotted, Blight is dashed". The grey `unclassified` rule goes.
+- `test_a_serif_system_font_and_no_art_from_outside`: becomes "every `font-family` is one of the three `var(--font-*)` stacks, and each stack ends in a generic family (`serif` or `monospace`)". The no-art half is unchanged.
+- `test_ui_character.py`, `test_the_templates_hold_no_slot_name_and_no_colour_code`: the assertion that `page.css` holds `--field: #ffffff;`, and the `_FIELD_WHITE` exemption in `_table_leaks`, are removed. No white remains to exempt, so `_table_leaks` gets stricter, never looser.
+- `test_ui_character.py`, `test_the_colour_rules_read_on_the_gear_backing`: it reads the gear table's backing through `var(--gear-ground)`, resolved from `:root`, and accepts the item name's size in `px` as well as `rem` (19px is at least 18.66px, the large-text floor). It still checks every shipped quality colour at 3:1 on that backing.
+
+**Acceptance:**
+- The contrast test from M16-30 (`lab/core/tests/test_ui_contrast.py`) is extended to the new `page.css`. It checks every text pair the token usage notes name, every badge border against its own badge ground, `rule-strong`, and the focus ring, in both themes. It allows no failure: the quality colours are not in `page.css`. It already reads 8-digit hex (`wellspring-glow`); it blends a translucent ground only over its region's surfaces, never over a container's ground, so a tinted control placed inside `.jt` or `pre` needs that taught first.
+- A test asserts that `page.css` declares every token in `docs/design/wellspring-tokens.json` except `quality-*`, with that file's value per theme. It also asserts that no colour literal appears outside those custom-property declarations.
+- `_table_leaks` (M13-72) passes, with its white exemption removed as above.
+- A test asserts that the set of classes and ids in `page.html` and `page.js` is unchanged from `main` before this ticket, apart from the crest's replacement by the sigil.
+- The M16-15 player-output lint is still green, and no sentence a player reads has changed (a test diffs the text nodes of `page.html`).
+- Screenshots of Explorer, Commands (with a plan and Confirm showing), Character and Gaps in both themes are attached to the PR. The owner looks at them before it merges.
+- `scrollWidth == clientWidth` at 320 px still holds.
+- `make ci` is green.
+- Reviewed by `code-reviewer` and `security-reviewer` (every `ui` diff).
+
+User-facing: the whole look of `wowlab ui`. The wiki's screenshots of the UI need replacing.

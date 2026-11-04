@@ -129,6 +129,13 @@ def test_char_binds_json_131_keys_3_agree_128_not_in_a_file_0_disagree_11_unreac
     assert sum(1 for k in rep.keys if k.disagrees) == 0
     assert [u.slot for u in rep.unreached_slots] == [49, 50, *range(64, 73)]
     assert (rep.commands_left_out, rep.keys_left_out) == (1, 0)
+    # M13-77: the counts in the words the text form prints, carried by the report.
+    assert rep.left_out_note == (
+        "Left out of the bindings record, counted with no list: 1 command not named in plain "
+        "upper case (a key bound straight to a spell, macro, item or click may be one), and "
+        "0 keys not printable ASCII."
+    )
+    assert rep.left_out_note in ok("char", "binds", "--character", CHARACTER).stdout.splitlines()
     assert (rep.cannot_place, rep.cannot_compare) == (None, None)
     assert cli.CharBindsReport.model_validate_json(rep.model_dump_json()) == rep
 
@@ -199,6 +206,7 @@ def test_a_schema_1_record_gives_the_file_rows_cannot_place(root: Path) -> None:
         ("E", 63, "cannot place: no action-bar record", ["account file"]),
     ]
     assert (rep.unreached_slots, rep.commands_left_out, rep.keys_left_out) == ([], None, None)
+    assert rep.left_out_note is None
     text = ok("char", "binds", "--character", SCHEMA_1_CHARACTER).stdout
     assert (
         "Cannot place keys on action slots or compare the files with the record: schema 1 has "
