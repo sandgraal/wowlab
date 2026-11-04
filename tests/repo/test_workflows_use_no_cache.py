@@ -52,6 +52,7 @@ SETUP_UV = "astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884"
 ACTIONLINT = "raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7"
 TRIVY = "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25"
 CLAUDE = "anthropics/claude-code-action@f27be6b65a4652f08a2ba3cff79114829b588967"
+ATTEST = "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8"
 
 # What each action does with the Actions cache at the pinned commit, as read
 # from its action.yml on 2026-10-18 (M13-42):
@@ -70,6 +71,9 @@ CLAUDE = "anthropics/claude-code-action@f27be6b65a4652f08a2ba3cff79114829b588967
 # nests before changing the commit here.
 # upload-artifact, download-artifact and claude-code-action were re-read at
 # their current pins on 2026-10-19 (#309): the same as above.
+# attest-build-provenance (v4.2.2, M16-43, read 2026-11-04): a composite
+# action with one step, actions/attest@508db95 (v4.2.1), a node24 action
+# whose action.yml has no cache input and no nested action: nothing.
 CACHE_OFF: Mapping[str, str] = {
     SETUP_UV: "enable-cache",
     ACTIONLINT: "cache",
@@ -80,9 +84,10 @@ CACHE_OFF: Mapping[str, str] = {
 # does an entry the workflow no longer uses.
 ALLOWED: Mapping[str, frozenset[str]] = {
     "ci.yml": frozenset({CHECKOUT, PATHS_FILTER, SETUP_UV, ACTIONLINT, TRIVY}),
+    "latest-release.yml": frozenset({CHECKOUT, SETUP_UV}),
     "claude-review.yml": frozenset({CHECKOUT, CLAUDE}),
     "claude.yml": frozenset({CHECKOUT, CLAUDE}),
-    "release.yml": frozenset({CHECKOUT, SETUP_UV, UPLOAD, DOWNLOAD}),
+    "release.yml": frozenset({CHECKOUT, SETUP_UV, UPLOAD, DOWNLOAD, ATTEST}),
     "wiki-daily.yml": frozenset({CHECKOUT, SETUP_UV, UPLOAD, DOWNLOAD, CLAUDE}),
     "windows.yml": frozenset({CHECKOUT, SETUP_UV}),
 }
@@ -230,7 +235,7 @@ def test_a_cache_step_is_caught(uses: str) -> None:
 
 @pytest.mark.parametrize("value", ["<omitted>", True, "true", "auto", "${{ true }}"])
 def test_setup_uv_without_enable_cache_false_is_caught(value: object) -> None:
-    for name in ("windows.yml", "ci.yml", "release.yml", "wiki-daily.yml"):
+    for name in ("windows.yml", "ci.yml", "release.yml", "wiki-daily.yml", "latest-release.yml"):
         workflow = _mutated(name)
         step = _first_step(workflow, SETUP_UV)
         if value == "<omitted>":

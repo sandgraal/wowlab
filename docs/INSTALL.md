@@ -56,6 +56,33 @@ compare the hash with its line in `SHA256SUMS`. The release workflow builds
 every file from the tagged commit, and the repository's tag rules let only
 the owner create a `v*` tag (`docs/handoffs/M13-03.md`).
 
+The install line ends in `#sha256=` and the wheel's SHA-256. Nobody types
+that hash: when a release is built, the release workflow hashes the wheel it
+has just built (the same file that goes into `SHA256SUMS` and onto the
+release page) and writes the install line, hash included, into the release
+notes; the README's line is copied from there once the release is out.
+`uv tool install` does not check the hash itself (uv 0.12 and 0.13 install
+the wheel even when it is wrong), so the line tells you which file it means
+but does not prove you got that file: check the download as above, or as
+below.
+
+**Check where a release was built.** From the first release after v0.1.0,
+the wheel and the sdist each carry a signed build-provenance attestation:
+a record, signed through Sigstore and kept on GitHub, that names the
+repository, the workflow, the tag and the commit that built the file. With
+the [GitHub CLI](https://cli.github.com/) installed and signed in, run, for
+each downloaded file:
+
+```bash
+gh attestation verify wowlab_core-0.2.0-py3-none-any.whl --repo sandgraal/wowlab
+```
+
+(with the file name you downloaded). It prints `Verification succeeded!`
+and the workflow that built the file, here `.github/workflows/release.yml`
+on a `refs/tags/v…` ref, or fails if the file was changed or was built
+anywhere else. v0.1.0 was published before attestations were added, so it
+has none: for it, `SHA256SUMS` is the check.
+
 **From source**, if you want the development version:
 
 ```bash

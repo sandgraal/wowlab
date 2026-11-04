@@ -37,7 +37,9 @@ Then run `wowlab --version` and `wowlab doctor --offline`.
 
 ## Check the download
 
-The wheel, the sdist and `SHA256SUMS` are attached below. Download them into one folder and run `sha256sum -c SHA256SUMS` (on macOS, `shasum -a 256 -c SHA256SUMS`); each file has to print `OK`. On Windows, run `Get-FileHash -Algorithm SHA256 <file>` in PowerShell for each file and compare the hash with its line in `SHA256SUMS` (the case of the letters does not matter).
+The wheel, the sdist and `SHA256SUMS` are attached below. Download them into one folder and run `sha256sum -c SHA256SUMS` (on macOS, `shasum -a 256 -c SHA256SUMS`); each file has to print `OK`. On Windows, run `Get-FileHash -Algorithm SHA256 <file>` in PowerShell for each file and compare the hash with its line in `SHA256SUMS` (the case of the letters does not matter). The `#sha256=` at the end of the install line is the wheel's hash from `SHA256SUMS`; `uv tool install` does not check it, so check the download as above.
+
+The wheel and the sdist each carry a signed build-provenance attestation that names the workflow, the tag and the commit that built them. With the [GitHub CLI](https://cli.github.com/) run `gh attestation verify <file> --repo sandgraal/wowlab` for each; it has to print `Verification succeeded!`.
 
 ## Changes to `--json` output
 
