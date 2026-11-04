@@ -95,6 +95,7 @@ from typing import Any
 
 import pytest
 import typer
+from test_ui_fonts import without_font_faces
 
 from wowlab_core import filemap, lookspage, ui
 
@@ -271,9 +272,11 @@ def test_the_explorer_page_is_served_with_a_csp_that_hashes_it(server: Any) -> N
     assert directives["frame-ancestors"] == ["'none'"]
     assert directives["form-action"] == ["'none'"]  # round 1 on #226
     assert directives["base-uri"] == ["'none'"]
-    assert "font-src" not in directives
+    # M16-51 (ADR-0035): the fonts are `data:` URLs in the page's own style.
+    assert directives["font-src"] == ["data:"]
     flat = " ".join(" ".join(v) for v in directives.values())
-    assert "unsafe" not in flat and "data:" not in flat and "http" not in flat
+    # `data:` appears only as the whole value of `font-src`.
+    assert "unsafe" not in flat and flat.count("data:") == 1 and "http" not in flat
     # The page is the explorer first: its view is not hidden, the commands are.
     assert re.search(r'<section id="explorer-view"[^>]*\bhidden\b', body) is None
     assert re.search(r'<section id="commands-view"[^>]*\bhidden\b', body) is not None
@@ -322,8 +325,16 @@ DRESSING_ORIGIN = 'const DRESSING_ORIGIN = "https://www.wowhead.com";'
 DRESSING_PARSE = "parsed = new URL(value);"
 
 
+BOOT_FETCH = 'fetch("/api/session?boot=" + encodeURIComponent(boot), {'
+
+
 def test_no_external_url_appears_in_the_page(server: Any) -> None:
     body = _page(server).body.decode("utf-8")
+    # M16-51 (ADR-0035): `url(`, `@font-face` and `data:font` appear only in
+    # exactly twelve `@font-face` rules, each with one `src`, a
+    # `data:font/woff2;base64,` URL that decodes to one of the pinned files;
+    # every entry of `_EXTERNAL` is checked on the rest of the page.
+    body = without_font_faces(body)
     assert body.count(LOOKS_FRAME) == 1
     assert body.count(DRESSING_ORIGIN) == 1 and body.count(DRESSING_PARSE) == 1
     body = body.replace(LOOKS_FRAME, "").replace(DRESSING_ORIGIN, "")
@@ -332,7 +343,10 @@ def test_no_external_url_appears_in_the_page(server: Any) -> None:
         assert marker not in body, marker
     # Every request the script makes goes to the server's own API, by path.
     script = _script()
-    assert script.count("fetch(") == script.count('fetch(api("/api/')
+    # The one exception is the boot exchange (M16-42), which has no session
+    # key yet and sends the one-time boot key instead.
+    assert script.count(BOOT_FETCH) == 1
+    assert script.count("fetch(") == script.count('fetch(api("/api/') + 1
     assert set(re.findall(r'fetch\(api\("([^"]+)"\)', script)) == {
         "/api/commands",
         "/api/run",
@@ -419,7 +433,6 @@ def test_the_script_writes_text_only(server: Any) -> None:
         "aria-pressed",
         "aria-selected",
         "aria-expanded",
-        "aria-level",
         "aria-label",
         "role",
     }
@@ -535,7 +548,9 @@ def test_a_request_without_the_token_is_refused(server: Any) -> None:
         connection.request("GET", "/", headers={"Host": f"127.0.0.1:{port}"})
         response = connection.getresponse()
         assert response.status == 403
-        assert json.loads(response.read()) == {"error": "token"}
+        # M16-42: `/` with no query (a reload) answers the player a sentence.
+        assert response.getheader("Content-Type") == "text/plain; charset=utf-8"
+        assert b"already used" in response.read()
     finally:
         connection.close()
 
@@ -621,7 +636,7 @@ const has = (e, c) => typeof e.className === "string" && e.className.split(" ").
 const traps = [];
 function trap(what) { traps.push(String(what)); throw new Error("harness trap: " + what); }
 const ALLOWED_ATTRS = scenario.allowed_attrs || ["aria-pressed", "aria-selected", "aria-expanded",
-  "aria-level", "aria-label", "role"];
+  "aria-label", "role"];
 const FORBIDDEN_TAGS = ["a", "area", "form", "iframe", "frame", "img", "image", "script", "link", "base",
   "meta", "object", "embed", "video", "audio", "source", "track", "svg", "use", "style"];
 class El {
@@ -683,7 +698,10 @@ class El {
   fire(ev) { dispatch(this, { type: ev }); }
   dispatchEvent(e) { dispatch(this, e); return true; }
   click() { this.fire("click"); }
-  focus() {}
+  // Focus is recorded on `document.activeElement` (M16-29). A browser moves
+  // focus off an element that leaves the page; the graders check that the
+  // focused element is still in the tree rather than model that.
+  focus() { documentStub.activeElement = this; }
   blur() {}
   scrollIntoView() {}
   contains(o) { return o === this || this.all().includes(o); }
@@ -748,7 +766,18 @@ function canon(v) {
   if (v && typeof v === "object") return "{" + Object.keys(v).sort().map((k) => JSON.stringify(k) + ":" + canon(v[k])).join(",") + "}";
   return JSON.stringify(v);
 }
+// What the page did first (M16-42): history.replaceState and every fetch, in
+// order. The boot exchange answers the scenario's session key, or the spent
+// refusal; it is kept out of `requests`.
+const events = [];
 const fetchStub = async (url, opts) => {
+  events.push("fetch " + String(url));
+  if (String(url).startsWith("/api/session?")) {
+    if (scenario.session === "spent") {
+      return { ok: false, status: 403, json: async () => ({ error: "boot_spent" }) };
+    }
+    return answer({ token: scenario.session_key || "t" });
+  }
   const body = opts && opts.body ? JSON.parse(opts.body) : null;
   requests.push({ url: String(url), body: body });
   if (String(url).startsWith("/api/commands?")) return answer(scenario.commands);
@@ -772,6 +801,7 @@ const fetchStub = async (url, opts) => {
 };
 const navigator = { clipboard: { writeText: async (t) => { clipboard.push(String(t)); } } };
 const documentStub = {
+  activeElement: null,
   getElementById: (id) => (id in ids ? ids[id] : null),
   createElement: (t) => { const tag = String(t).toLowerCase(); if (FORBIDDEN_TAGS.includes(tag)) trap("createElement " + tag); return new El(tag); },
   createElementNS: (_, t) => trap("createElementNS " + t),
@@ -797,8 +827,8 @@ function addTimer(fn, ms, every) {
 }
 function clearTimer(id) { const at = timers.findIndex((t) => t.id === id); if (at >= 0) timers.splice(at, 1); }
 const location = Object.freeze({
-  get search() { return "?token=t"; },
-  get href() { return "http://127.0.0.1:1/?token=t"; },
+  get search() { return "?boot=k"; },
+  get href() { return "http://127.0.0.1:1/?boot=k"; },
   set href(v) { trap("location.href = " + v); },
   get hash() { return ""; },
   set hash(v) { trap("location.hash = " + v); },
@@ -806,7 +836,8 @@ const location = Object.freeze({
   replace(u) { trap("location.replace " + u); },
   reload() { trap("location.reload"); },
 });
-const win = { navigator: navigator, isSecureContext: true, open: (u) => trap("window.open " + u),
+const history = { replaceState(state, title, url) { events.push("replaceState " + url); } };
+const win = { navigator: navigator, isSecureContext: true, open: (u) => trap("window.open " + u), history: history,
   addEventListener(ev, fn) { (winListeners[ev] = winListeners[ev] || []).push(fn); },
   removeEventListener(ev, fn) { winListeners[ev] = (winListeners[ev] || []).filter((f) => f !== fn); } };
 Object.defineProperty(win, "location", { get: () => location, set: (v) => trap("window.location = " + v) });
@@ -832,14 +863,19 @@ const tick = async () => {
 };
 const rowOf = (li) => li.children.find((c) => has(c, "row"));
 const treeEl = () => ids.tree;
+// A tree item is an <li> of #tree holding a `.row` (plain nested lists since
+// M16-29: no tree role); a folder's open state is its twisty's aria-expanded.
+const items = () => treeEl().all().filter((e) => e.tagName === "li" && rowOf(e));
+const twistyOf = (li) => rowOf(li).children.find((c) => c.tagName === "button" && has(c, "twisty"));
+const expandedOf = (li) => { const t = twistyOf(li); return t ? t.getAttribute("aria-expanded") : null; };
 function rows() {
-  return treeEl().all().filter((e) => e.attrs.role === "treeitem").map((li) => {
-    const row = rowOf(li) || li;
+  return items().map((li) => {
+    const row = rowOf(li);
     const name = row.children.find((c) => has(c, "name"));
     const marks = row.children.filter((c) => has(c, "badge"))
       .map((b) => ({ text: b.textContent, title: b.title, cls: b.className }));
     return { path: row.dataset.path, name: name ? name.textContent : null,
-      nameTitle: name ? name.title : null, expanded: li.getAttribute("aria-expanded"),
+      nameTitle: name ? name.title : null, expanded: expandedOf(li),
       text: row.textContent, badge: marks.length ? marks[0] : null, badges: marks,
       aria: [row, ...row.all()].map((e) => e.attrs["aria-label"] || "").join("\n") };
   });
@@ -847,7 +883,7 @@ function rows() {
 // A row by its data-path; for a page that draws the whole install, a path
 // relative to the first flavor folder finds the same row under it.
 function liOf(path) {
-  const find = (p) => treeEl().all().find((e) => e.attrs.role === "treeitem" && rowOf(e) && rowOf(e).dataset.path === p);
+  const find = (p) => items().find((e) => rowOf(e).dataset.path === p);
   return find(path) || find(path === "" ? scenario.first_flavor : scenario.first_flavor + "/" + path);
 }
 function snap() {
@@ -911,11 +947,9 @@ function gapsView() {
 }
 async function openAll() {
   for (let n = 0; n < 500; n++) {
-    const closed = treeEl().all().find((e) => e.attrs.role === "treeitem" && e.getAttribute("aria-expanded") === "false");
+    const closed = items().find((e) => expandedOf(e) === "false");
     if (!closed) break;
-    const row = rowOf(closed);
-    const twisty = row.children.find((c) => c.tagName === "button" && !has(c, "name"));
-    twisty.fire("click");
+    twistyOf(closed).fire("click");
     await tick();
   }
 }
@@ -1008,6 +1042,8 @@ async function openAll() {
     out.error = String((error && error.stack) || error);
   }
   out.requests = requests;
+  out.events = events;
+  out.pageStatus = ids.status ? ids.status.textContent : null;
   out.clipboard = clipboard;
   out.traps = traps;
   process.stdout.write(JSON.stringify(out));
@@ -1636,7 +1672,7 @@ def test_the_whole_command_list_is_escaped_constructed() -> None:
     assert helps and helped in helps[0], helps
 
 
-# ─── the look the owner set (2026-10-16) ─────────────────────────────────────
+# ─── the look: Wellspring (M16-52, owner decision 2026-10-26) ────────────────
 
 
 def _css() -> str:
@@ -1659,18 +1695,11 @@ def _block(css: str, start: int) -> str:
     raise AssertionError("unbalanced CSS")
 
 
-_VAR = r"(--[\w-]+)\s*:\s*(#[0-9a-fA-F]{6})\b"
-_COLOUR = r"(?<![-\w])color:\s*(#[0-9a-fA-F]{6})\b"
-
-
-def _palettes() -> dict[str, dict[str, str]]:
-    css = _css()
-    dark = dict(re.findall(_VAR, _block(css, css.index(":root"))))
-    media = re.search(r"@media\s*\(\s*prefers-color-scheme\s*:\s*light\s*\)", css)
-    assert media is not None, "a light scheme follows prefers-color-scheme"
-    light = dict(re.findall(_VAR, _block(css, media.start())))
-    assert light, "the light scheme sets its own colours"
-    return {"dark": dark, "light": {**dark, **light}}
+def _root_vars(css: str) -> dict[str, str]:
+    """The custom properties of the top-level `:root` block (Warband)."""
+    found = re.search(r"(?:^|\})\s*:root\s*\{", css)
+    assert found is not None, "the sheet has a :root block"
+    return dict(re.findall(r"(--[\w-]+)\s*:\s*([^;]+);", _block(css, found.start())))
 
 
 def _luminance(colour: str) -> float:
@@ -1686,79 +1715,83 @@ def _contrast(a: str, b: str) -> float:
     return (high + 0.05) / (low + 0.05)
 
 
-# Text colours on the backgrounds they are drawn on, by the palette's own
-# names. If the palette is renamed, the test-writer updates this list.
-_TEXT_PAIRS = [
-    (fg, bg)
-    for fg in ("--text", "--muted", "--gold", "--error", "--field-text")
-    for bg in ("--page", "--panel", "--panel-edge", "--selected", "--hover", "--field")
-] + [(fg, bg) for fg in ("--ink", "--ink-muted") for bg in ("--parchment-hi", "--parchment-lo")]
+# The text-colour pairs of the 2026-10-16 palette were graded here by name;
+# under Wellspring (M16-52, owner decision 2026-10-26) every pair the design
+# names is graded in `test_ui_contrast.py`, from the sheet's own tokens.
 
 
-@pytest.mark.parametrize("scheme", ["dark", "light"])
-def test_text_meets_wcag_aa_in_both_schemes(scheme: str) -> None:
-    palette = _palettes()[scheme]
-    for fg, bg in _TEXT_PAIRS:
-        ratio = _contrast(palette[fg], palette[bg])
-        assert ratio >= 4.5, (scheme, fg, bg, round(ratio, 2))
-    # Literal text colours on the parchment.
-    rules = re.findall(r"(?:\.parchment|#explain-status)[^{}]*\{[^}]*\}", _css())
-    assert rules
-    for rule in rules:
-        for colour in re.findall(_COLOUR, rule):
-            for bg in ("--parchment-hi", "--parchment-lo"):
-                assert _contrast(colour, palette[bg]) >= 4.5, (colour, bg)
+def _declarations(css: str, selector: str) -> dict[str, str]:
+    """The declarations of every top-level rule whose selector list holds
+    `selector` exactly, later ones winning."""
+    out: dict[str, str] = {}
+    for head, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
+        if head.strip().startswith("@"):
+            continue
+        if selector in (s.strip() for s in head.split(",")):
+            for part in body.split(";"):
+                if ":" in part:
+                    name, value = part.split(":", 1)
+                    out[name.strip()] = value.strip()
+    return out
 
 
-def _hue_sat(colour: str) -> tuple[float, float]:
-    r, g, b = (int(colour[i : i + 2], 16) / 255 for i in (1, 3, 5))
-    high, low = max(r, g, b), min(r, g, b)
-    light = (high + low) / 2
-    if high == low:
-        return 0.0, 0.0
-    sat = (high - low) / (2 - high - low if light > 0.5 else high + low)
-    if high == r:
-        hue = ((g - b) / (high - low)) % 6
-    elif high == g:
-        hue = (b - r) / (high - low) + 2
-    else:
-        hue = (r - g) / (high - low) + 4
-    return hue * 60, sat
+# Each badge class, the force it is drawn in (WELLSPRING.md, "Mapping onto
+# the existing page") and the glyph its `::before` writes (WELLSPRING.md,
+# "Verdicts"), with empty alternative text so the words are read once.
+_BADGES = {
+    ".badge-gate": ("order", "\\25C6", "solid"),
+    ".badge-no": ("ruin", "\\2715", "solid"),
+    ".badge.badge-placeholder": ("ruin", "\\2715", "solid"),
+    ".badge-unclassified": ("void", "?", "solid"),
+    ".badge-folder": ("stone", "\\25AA", "solid"),
+    ".badge-not_applicable": ("stone", "\\25AA", "solid"),
+    ".badge.badge-link": ("astral", "\\2197", "dotted"),
+    ".badge-server": ("blight", "\\2248", "dashed"),
+}
 
 
-def test_badges_read_like_item_quality() -> None:
-    """Gold for `gate`, red for `no`, grey for `unclassified`, muted for
-    `folder` and `not_applicable`; each badge's text meets AA on every stop
-    of its own background."""
+def test_badges_are_drawn_in_their_forces() -> None:
+    """M16-52: each badge class uses its force's text, `-bg` and `-border`
+    tokens; Astral is dotted, Blight is dashed, the rest solid; each glyph
+    comes from CSS `content` with empty alternative text."""
     css = _css()
-    text: dict[str, str] = {}
-    for level in ("gate", "no", "unclassified", "folder", "not_applicable"):
-        match = re.search(rf"[^{{}}]*\.badge-{level}(?![\w-])[^{{}}]*\{{([^}}]*)\}}", css)
-        assert match is not None, f"no badge colour for {level}"
-        rule = match.group(1)
-        colour = re.search(_COLOUR, rule)
-        assert colour is not None, level
-        text[level] = colour.group(1)
-        background = re.search(r"background[^:]*:([^;]*)", rule)
-        assert background is not None, level
-        stops = re.findall(r"#[0-9a-fA-F]{6}\b", background.group(1))
-        assert stops, level
-        for stop in stops:
-            assert _contrast(text[level], stop) >= 4.5, (level, stop)
-    hue, sat = _hue_sat(text["gate"])
-    assert 35 <= hue <= 60 and sat > 0.5, ("gate reads gold", hue, sat)
-    hue, sat = _hue_sat(text["no"])
-    assert (hue <= 15 or hue >= 345) and sat > 0.5, ("no reads red", hue, sat)
-    assert _hue_sat(text["unclassified"])[1] < 0.1, "unclassified reads grey"
-    for level in ("folder", "not_applicable"):
-        assert _hue_sat(text[level])[1] < 0.35, f"{level} reads muted"
-        assert text[level] not in (text["gate"], text["no"], text["unclassified"]), level
+    base = _declarations(css, ".badge")
+    assert base.get("border") == "1px solid", base
+    for selector, (force, glyph, style) in _BADGES.items():
+        rule = _declarations(css, selector)
+        assert rule.get("color") == f"var(--{force})", (selector, rule)
+        assert rule.get("background") == f"var(--{force}-bg)", (selector, rule)
+        assert rule.get("border-color") == f"var(--{force}-border)", (selector, rule)
+        assert rule.get("border-style", "solid") == style, (selector, rule)
+        assert _declarations(css, selector + "::before").get("content") == f'"{glyph}" / ""', (
+            selector
+        )
+    # the words of a badge stay in the page, read once: no glyph is text
+    for glyph in ("◆", "✕", "▪", "↗", "≈"):
+        assert glyph not in (_TEMPLATES / "page.html").read_text(encoding="utf-8")
 
 
-def test_a_serif_system_font_and_no_art_from_outside() -> None:
+_STACKS = {
+    "--font-display": '"Alegreya SC", "Palatino Linotype", Palatino, Georgia, serif',
+    "--font-serif": 'Alegreya, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif',
+    "--font-mono": '"IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace',
+}
+
+
+def test_three_font_stacks_and_no_art_from_outside() -> None:
+    """M16-52: every `font-family` is one of the three `var(--font-*)`
+    stacks, and each stack ends in a generic family; the faces are written
+    by the server (M16-51), never fetched, and the sheet loads no art."""
     css = _css()
-    stacks = re.findall(r"(?:font-family|--serif)\s*:\s*([^;]+);", css)
-    assert any(s.strip().endswith("serif") and "sans-serif" not in s for s in stacks), stacks
+    root = _root_vars(css)
+    for name, stack in _STACKS.items():
+        assert root.get(name) == stack, name
+        assert stack.rsplit(",", 1)[-1].strip() in ("serif", "monospace"), name
+    families = re.findall(r"(?<![-\w])font-family\s*:\s*([^;}]+)", css)
+    assert families
+    assert {f.strip() for f in families} <= {f"var({name})" for name in _STACKS}, families
+    for shorthand in re.findall(r"(?<![-\w])font\s*:\s*([^;}]+)", css):
+        assert shorthand.strip() == "inherit", shorthand
     for marker in ("@font-face", "url(", "@import", "image-set("):
         assert marker not in css, marker
 
@@ -1771,3 +1804,37 @@ def test_the_level_choices_are_not_written_into_the_page(server: Any) -> None:
     assert select is not None
     assert re.findall(r"<option\b", select.group(1)) == ["<option"]
     assert 'value=""' in select.group(1)
+
+
+# ─── the boot exchange under Node (M16-42) ───────────────────────────────────
+
+
+def test_the_page_drops_its_query_then_trades_the_boot_key(
+    server: Any, install: Path, tmp_path: Path
+) -> None:
+    """The page opened on `?boot=k` calls `history.replaceState` before any
+    request, exchanges the key once at `/api/session`, and every later
+    request carries the session key the exchange answered."""
+    scenario, _ = _scenario(server, [], [])
+    key = "from-the-exchange"  # constructed
+    scenario["session_key"] = key
+    out = _drive(tmp_path / "node", scenario)
+    events = out["events"]
+    assert events[0] == "replaceState /", events
+    assert events[1] == "fetch /api/session?boot=k", events
+    assert sum(e.startswith("fetch /api/session") for e in events) == 1
+    assert out["requests"], "the page went on after the exchange"
+    for request in out["requests"]:
+        assert request["url"].endswith("?token=" + key), request["url"]
+
+
+def test_a_page_that_lost_the_exchange_says_the_link_was_used(
+    server: Any, install: Path, tmp_path: Path
+) -> None:
+    scenario, _ = _scenario(server, [], [])
+    scenario["session"] = "spent"
+    out = _drive(tmp_path / "node", scenario)
+    assert out["events"] == ["replaceState /", "fetch /api/session?boot=k"]
+    assert out["requests"] == []
+    assert "already used" in out["pageStatus"]
+    assert "already used" in out["first"]["status"]

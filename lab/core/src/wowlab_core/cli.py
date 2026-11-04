@@ -752,15 +752,16 @@ command exits 1. `wowlab ui` reads a plan run of a command with no
 no `--yes` and stdin closed, so `_confirm` gets no answer, and the text plan
 is what stderr holds before this line (docs/LAB_PLAN.md §16.1, M14-03)."""
 
-EXPECT_FIELDS: dict[tuple[str, ...], str] = {
-    ("undo",): "undone",
-    ("sv", "merge"): "target_sha256",
+EXPECT_FIELDS: dict[tuple[str, ...], tuple[str, ...]] = {
+    ("undo",): ("undone",),
+    ("sv", "merge"): ("target_sha256", "merged_sha256"),
 }
 """For each command that confirms through `_confirm` and declares `--expect`:
-the field of its `--json` report whose value, passed back as `--expect`,
-makes a later run refuse (exit 3) unless it would apply the same plan. The
-journal record `undo` would undo; the SHA-256 `sv merge` read its target
-with (§16.1, "applies the plan that was shown")."""
+the fields of its `--json` report whose values, joined by `:` and passed
+back as `--expect`, make a later run refuse (exit 3) unless it would apply
+the same plan. The journal record `undo` would undo; for `sv merge`, the
+SHA-256 it read its target with and the SHA-256 of the bytes it would write
+(§16.1, "applies the plan that was shown"; M13-74)."""
 
 
 def _confirm(question: str, yes: bool) -> None:
@@ -3518,6 +3519,40 @@ def _sv_file(path: str, root: Path | None, flavor: str | None) -> Path:
     return lay.flavor_path / given
 
 
+def _sv_inside_install(file: str, root: Path | None, flavor: str | None) -> tuple[Path, Path]:
+    """`sv dump --install-only`: FILE as `_sv_file` finds it, and its real path
+    (every link on the way resolved), refused (exit 3) unless that is under
+    the real path of the install wowlab finds by itself, without `--root`
+    (`WOWLAB_WOW_ROOT` or the default places, as `wowlab ui` finds it). A
+    `--root` that names another install is refused too, so whoever chose the
+    arguments cannot plant an install around the file. Nothing of the file is
+    read first, so a refusal quotes none of it; the caller reads the real path
+    that was checked, not the spelling given (returns both: the spelling for
+    the report). No install found is refused (exit 3) as well. Where
+    `realpath` keeps the case a name was given in (macOS, Linux), a file of
+    the install named in another case is refused: the check errs towards
+    refusing; where it gives the stored case (Windows), it is allowed."""
+    try:
+        found, _ = _discover(None)
+        home = longpath.realpath(found.root)
+        if root is not None and longpath.realpath(_discover(root)[0].root) != home:
+            raise CliError(
+                f"refused: --root {root} is not the install wowlab finds, {found.root}",
+                EXIT_REFUSED,
+            )
+        target = _sv_file(file, root, flavor)
+    except install.InstallError as exc:
+        raise CliError(f"refused: {exc}", EXIT_REFUSED) from exc
+    try:
+        real = Path(longpath.realpath(target))
+        inside = real.is_relative_to(home)
+    except (OSError, ValueError):
+        inside = False
+    if not inside:
+        raise CliError(f"refused: {target} is not in the install at {found.root}", EXIT_REFUSED)
+    return target, real
+
+
 @sv_app.command("dump")
 @_handled
 def sv_dump(
@@ -3536,14 +3571,29 @@ def sv_dump(
             'prints it; a quoted key takes Lua 5.1 escapes (\\n, \\\\, \\", \\ddd).',
         ),
     ] = None,
+    install_only: Annotated[
+        bool,
+        typer.Option(
+            "--install-only",
+            help="Refuse a FILE that is not in the install wowlab finds by itself, "
+            "links followed, and a --root that names another, before reading anything. "
+            "The browser view always passes this.",
+        ),
+    ] = False,
     root: RootOpt = None,
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
 ) -> None:
     """A SavedVariables file as data: one `path = value` line per value, in file
     order. Parsed by `luadata`, never run as code. JSON: SvDumpReport."""
-    target = _sv_file(file, root, flavor)
-    doc = luadata.read(target)
+    if install_only:
+        # Read the path that was checked; opening it without following a
+        # link on the way is EV-24's.
+        target, real = _sv_inside_install(file, root, flavor)
+        doc = luadata.read(real)
+    else:
+        target = _sv_file(file, root, flavor)
+        doc = luadata.read(target)
     if path is not None:
         value = _resolve_path(doc, path)
         if json_out:
@@ -3585,6 +3635,10 @@ class SvMergeReport(_Out):
     # The target's SHA-256 as this run read it, before the merge: `--expect`
     # compares a later run's with it (M14-03).
     target_sha256: str
+    # The SHA-256 of the bytes the merge writes (or would write): what
+    # `--expect`'s second half compares, so a source that changed after the
+    # plan is refused (M13-74). None when unresolved conflicts stop the merge.
+    merged_sha256: str | None
 
 
 _MERGE_PROVEN = (
@@ -3605,6 +3659,24 @@ _LOADER_BUG = (
     "https://github.com/nobewayo/ForeverSVFix). Log in and out once with the lab-addon "
     "enabled and check again, or pass --force-loader-check to merge anyway"
 )
+
+
+_SHA256 = re.compile(r"\A[0-9a-f]{64}\Z")
+
+
+def _merge_expect(expect: str | None) -> tuple[str | None, str | None]:
+    """`sv merge --expect TARGET:MERGED`, split into its two SHA-256s (M13-74).
+    Both are required: the target alone does not pin what is written."""
+    if expect is None:
+        return None, None
+    target, sep, merged = expect.partition(":")
+    if not sep or not _SHA256.fullmatch(target) or not _SHA256.fullmatch(merged):
+        raise CliError(
+            f"--expect {expect!r} is not TARGET:MERGED, the two lowercase SHA-256s "
+            "target_sha256 and merged_sha256 of an earlier run's --json",
+            EXIT_USAGE,
+        )
+    return target, merged
 
 
 def _into_character(account: layout.Account, spec: str, option: str) -> layout.Character:
@@ -4142,8 +4214,9 @@ def sv_merge(
         str | None,
         typer.Option(
             "--expect",
-            metavar="SHA256",
-            help="Write only if the target still has this SHA-256 (target_sha256 in an "
+            metavar="TARGET:MERGED",
+            help="Write only if the target still has the SHA-256 TARGET and the merge would "
+            "write bytes with the SHA-256 MERGED (target_sha256 and merged_sha256 in an "
             "earlier run's --json): else refused, exit 3, nothing written. For a plan "
             "shown by one run and confirmed by another.",
         ),
@@ -4168,6 +4241,7 @@ def sv_merge(
     keys an addon keeps inside it. Before writing, the --into character's WowLab.lua
     is checked for a SavedVariables loader failure (exit 3). JSON: SvMergeReport."""
     keys = list(key or [])
+    expect_target, expect_merged = _merge_expect(expect)
     try:
         same_path = svmerge.check_keys(keys)
     except svmerge.MergeError as exc:
@@ -4225,12 +4299,12 @@ def sv_merge(
     target_path = lay.flavor_path / target.path
     ours_bytes = _read_sv(target_path)
     expected = hashlib.sha256(ours_bytes).hexdigest()
-    if expect is not None and expect != expected:
+    if expect_target is not None and expect_target != expected:
         # Final already: this run would merge into other bytes than the plan
         # it is to confirm. The same compare is made again under the write
         # gate's lock, below, for a change made after this read.
         raise CliError(
-            f"{target.path} has SHA-256 {expected}, not the expected {expect}: it changed "
+            f"{target.path} has SHA-256 {expected}, not the expected {expect_target}: it changed "
             "after the plan was made, so nothing was written; run the command again to see "
             "the new plan",
             EXIT_REFUSED,
@@ -4281,6 +4355,14 @@ def sv_merge(
     if result.absent:
         notes.append(_ABSENT_NOTE)
     show = _say if not json_out else _say_err
+    data = (
+        None
+        if result.unresolved
+        else luadata.serialize(
+            result.document, target=target_path, lab_written=_lab_written(store, chosen.path)
+        )
+    )
+    merged = hashlib.sha256(data).hexdigest() if data is not None else None
 
     def report(*, written: bool, transaction: str | None = None) -> SvMergeReport:
         return SvMergeReport(
@@ -4299,6 +4381,7 @@ def sv_merge(
             transaction=transaction,
             notes=[*notes, _MERGE_PROVEN] if written else notes,
             target_sha256=expected,
+            merged_sha256=merged,
         )
 
     def finish(done: SvMergeReport, line: str) -> None:
@@ -4310,16 +4393,28 @@ def sv_merge(
             _say_err(n)
         _say(line)
 
-    if result.unresolved:
+    if expect_merged is not None and expect_merged != merged:
+        # The target is as the plan read it, but what this run would write is
+        # not what the plan showed: its source (a live character file, or a
+        # snapshot id prefix that now resolves elsewhere) changed (M13-74).
+        # With --json the report of this run's plan is printed, so a caller
+        # sees what changed; nothing is written either way.
+        if json_out:
+            _emit(report(written=False))
+        now = "has unresolved conflicts" if merged is None else f"would write SHA-256 {merged}"
+        raise CliError(
+            f"the merge into {target.path} {now}, not the expected {expect_merged}: what it "
+            "merges from changed after the plan was made, so nothing was written; run the "
+            "command again to see the new plan",
+            EXIT_REFUSED,
+        )
+    if data is None:
         finish(
             report(written=False),
             f"{len(result.conflicts)} conflict(s) left unresolved: nothing was written. "
             "Resolve them with --take ours|theirs, or limit the merge with --key.",
         )
         raise typer.Exit(EXIT_ERROR)
-    data = luadata.serialize(
-        result.document, target=target_path, lab_written=_lab_written(store, chosen.path)
-    )
     if data == ours_bytes:
         finish(report(written=False), f"Nothing to change: {target.path} already holds the merge.")
         return
@@ -4347,12 +4442,21 @@ def sv_merge(
                     "nothing was written"
                 ) from exc
         tx.write(target.path, data)
-        if expect is not None and tx.plan[0].before != expect:
+        if expect_target is not None and tx.plan[0].before != expect_target:
             # Under the write gate's locks: raising here rolls the write back.
             raise CliError(
                 f"{target.path} changed after the plan was made (its SHA-256 is "
-                f"{tx.plan[0].before}, not the expected {expect}), so the merge was rolled "
-                "back; run the command again to see the new plan",
+                f"{tx.plan[0].before}, not the expected {expect_target}), so the merge was "
+                "rolled back; run the command again to see the new plan",
+                EXIT_REFUSED,
+            )
+        if expect_merged is not None and tx.plan[0].after != expect_merged:
+            # The SHA-256 the gate took of the bytes `tx.write` received,
+            # checked under the same locks (M13-74).
+            raise CliError(
+                f"the merge into {target.path} would write SHA-256 {tx.plan[0].after}, not "
+                f"the expected {expect_merged}, so it was rolled back; run the command again "
+                "to see the new plan",
                 EXIT_REFUSED,
             )
         if [item.before for item in tx.plan] != [expected]:
@@ -7455,8 +7559,10 @@ class CharListReport(_Out):
     in the flavor (or in `--account`), as `labaddon.survey` gives them, each
     with its record and summary or the reason it could not be read, and
     every place where character folders can be that wowlab could not look
-    inside. The command exits 1 when any character has an `error` or
-    `not_looked_at` is not empty."""
+    inside. With `--brief` every `record` is None and the rest is the same:
+    a record runs to tens of KB, and the UI's picker needs none. The command
+    exits 1 when any character has an `error` or `not_looked_at` is not
+    empty."""
 
     flavor_folder: str
     # --account as the layout spells the account folder, or as the place wowlab
@@ -7525,6 +7631,14 @@ def char_list(
     root: RootOpt = None,
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
+    brief: Annotated[
+        bool,
+        typer.Option(
+            "--brief",
+            help="With --json, leave out each character's saved record: the folders, "
+            "time, summary and any error stay. Text output is the same either way.",
+        ),
+    ] = False,
 ) -> None:
     """Every character folder with a WowLab.lua, in every account unless
     --account names one: when the file was last written, and its schema, the
@@ -7555,7 +7669,7 @@ def char_list(
         found = labaddon.survey(
             lay,
             account=acct_folder,
-            keep_records=json_out,
+            keep_records=json_out and not brief,
             root=None if root is None else str(root),
         )
         entries, unseen = found.characters, found.not_looked_at
@@ -7843,7 +7957,8 @@ class CharBindsReport(_Out):
     `bindings-cache.wtf` and of the lab-addon's bindings record, with the
     action slot each presses and what the record says the slot holds
     (`keymap.KeyRow`), the filled slots no key reaches, and the record's two
-    left-out counts. Without a usable action-bar record `cannot_place` says
+    left-out counts with the sentence the text form prints for them
+    (`left_out_note`). Without a usable action-bar record `cannot_place` says
     why, and the slot rows say "cannot place: no action-bar record"."""
 
     flavor_folder: str
@@ -7859,6 +7974,7 @@ class CharBindsReport(_Out):
     unreached_slots: list[keymap.UnreachedSlot]
     commands_left_out: int | None  # counts in the record's bindings section; None without one
     keys_left_out: int | None
+    left_out_note: str | None  # the two counts in the words the text form prints; None without them
     cannot_place: str | None
     cannot_compare: str | None
     notes: list[str]
@@ -7926,6 +8042,17 @@ def char_binds(
     elif character is not None:
         char = _select_character(acct, character)
         folder = (char.realm_folder, char.folder)
+    if folder is None:
+        # The latest folder's files could not be told apart (case variants):
+        # it is still the character `char show` would take, as in `char macros`.
+        lab_files = [
+            f
+            for f in lay.saved_variables()
+            if f.account == acct.folder and f.scope == "character" and _is_lab_file(f)
+        ]
+        top = max(lab_files, key=lambda f: (f.mtime_ns, f.path), default=None)
+        if top is not None and top.realm_folder and top.character_folder:
+            folder, how = (top.realm_folder, top.character_folder), "latest"
     account_file, account_doc = _char_binds_file(lay, acct, None)
     files = [account_file]
     character_doc = None
@@ -7954,6 +8081,7 @@ def char_binds(
         unreached_slots=found.unreached_slots,
         commands_left_out=found.commands_left_out,
         keys_left_out=found.keys_left_out,
+        left_out_note=_binds_left_out_note(found.commands_left_out, found.keys_left_out),
         cannot_place=found.cannot_place,
         cannot_compare=found.cannot_compare,
         notes=[*found.notes, _CHAR_NOTES[0]],
@@ -7962,6 +8090,19 @@ def char_binds(
         _emit(report)
         return
     _say_char_binds(report)
+
+
+def _binds_left_out_note(commands: int | None, keys: int | None) -> str | None:
+    """The record's two left-out counts as one sentence, which `char binds`
+    prints and `wowlab ui`'s Keys panel shows; None without both counts."""
+    if commands is None or keys is None:
+        return None
+    return (
+        "Left out of the bindings record, counted with no list: "
+        f"{_plural(commands, 'command')} not named in plain upper case "
+        "(a key bound straight to a spell, macro, item or click may be one), and "
+        f"{_plural(keys, 'key')} not printable ASCII."
+    )
 
 
 def _source_words(row: keymap.KeyRow) -> str:
@@ -8058,13 +8199,8 @@ def _say_char_binds(report: CharBindsReport) -> None:
             _say(f"Filled slots on main-bar pages that are not followed: {len(paged)}")
             for u in paged:
                 _say(f"  slot {u.slot:>3}  {u.does}  ({u.page_note})")
-    if report.commands_left_out is not None and report.keys_left_out is not None:
-        _say(
-            "Left out of the bindings record, counted with no list: "
-            f"{_plural(report.commands_left_out, 'command')} not named in plain upper case "
-            "(a key bound straight to a spell, macro, item or click may be one), and "
-            f"{_plural(report.keys_left_out, 'key')} not printable ASCII."
-        )
+    if report.left_out_note is not None:
+        _say(report.left_out_note)
     for note in report.notes:
         _say(note)
 
@@ -9892,21 +10028,32 @@ _BROWSER_WAIT_S = 1.0
 
 @app.command("ui")
 def ui_command() -> None:
-    """Open the local UI in your browser and serve it until Ctrl-C (ADR-0029).
+    """Open the local UI in your browser and serve it until Ctrl-C.
+
+    Reading never changes anything. Six commands can change game files;
+    each shows a plan and runs only when you confirm, after a snapshot.
 
     The server listens on 127.0.0.1 only, at a port the system picks, and
-    answers only requests that carry the random token in the URL it opens.
-    It opens on the explorer: the whole install's files, each with whether
-    wowlab may edit it, and what a picked file is and who writes it. A
-    second tab runs this wowlab's commands with --json. Commands that save only to
-    wowlab's own data (snapshots, profiles, saved looks, the db2 cache,
-    pages) are offered; some of them overwrite what they saved before (for
-    example looks import-char --replace), and none of them touches the game
-    folder. snap gc and doctor, which ask before changing wowlab's own store
-    (--yes), run first as a plan that changes nothing, and run for real only
-    when you press Confirm under it. Commands that change your game files,
-    and the other commands that take --yes, are not offered in this
-    version. If no browser opens, the URL is printed once on stdout."""
+    answers only requests that carry a random key. The link it opens works
+    once: the page trades it for that key and takes it out of the address
+    bar, so a reload needs a new wowlab ui. A link already used says so in
+    the browser, and here if it is used a second time.
+    The page has five tabs. Explorer shows the whole install's files, each
+    with whether wowlab may edit it, and what a picked file is and who
+    writes it. Gaps lists the paths the file map does not describe.
+    Commands runs this wowlab's commands with --json. Character shows one
+    character as the lab-addon last saved it. Looks shows the page that
+    `wowlab looks page` writes.
+
+    On the Commands tab, a command that asks first (--yes) runs as a plan
+    that changes nothing, and runs for real only when you press Confirm
+    under it. snap gc and doctor change only wowlab's own store. The six
+    that change game files are snap restore, undo, profile apply, sv merge,
+    addon install and addon remove, and `wowlab undo` reverses any of the
+    six. undo and sv merge refuse when something changed after the plan;
+    the others apply what is there when you confirm. ui itself, log tail
+    --follow and looks page --out are not offered. If no browser opens,
+    the URL is printed once on stdout."""
     # The browser is opened on a thread: `webbrowser` waits for a browser it
     # runs in the foreground (a text browser, or a `BROWSER` program), and
     # that browser's request must find the server already serving. What it
@@ -9918,12 +10065,14 @@ def ui_command() -> None:
     from wowlab_core import ui
 
     server = ui.make_server()
+    # The spent link presented again: one line here, with no key in it.
+    server.notice = _say_err
 
     def announce(opened: bool) -> None:
         if opened:
             _say_err(f"wowlab ui: serving on http://127.0.0.1:{server.port}/; Ctrl-C to stop")
         else:
-            _say_err("wowlab ui: no browser opened; open this URL (it carries the access token):")
+            _say_err("wowlab ui: no browser opened; open this link (it works only once):")
             typer.echo(server.url)
 
     lock = threading.Lock()

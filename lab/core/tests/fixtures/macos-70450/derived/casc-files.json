@@ -1,0 +1,511 @@
+{
+  "schema": 1,
+  "kind": "casc-files-derived",
+  "made_by": "scripts/casc_facts.py --files",
+  "captured": "2026-10-19",
+  "flavor": "_classic_beta_",
+  "product": "wow_classic_beta",
+  "version": "1.60.1.70450",
+  "build": 70450,
+  "locale": "enUS",
+  "locale_from": "install",
+  "speech_locale": "enUS",
+  "locale_flag": 2,
+  "platform": "macos",
+  "platform_from": "install",
+  "platform_mask": "0x108",
+  "encoding": {
+    "version": 1,
+    "ckey_size": 16,
+    "ekey_size": 16,
+    "ckey_page_size": 4096,
+    "espec_page_size": 4096,
+    "ckey_page_count": 20647,
+    "espec_page_count": 13554,
+    "flags": 0,
+    "espec_size": 393134,
+    "read_by": "9a0263e06fdace8ab940a4a45a8e28fb",
+    "encoding_hashes_per_content": {
+      "1": 2209147,
+      "2": 1
+    }
+  },
+  "root": {
+    "version": 2,
+    "header_size": 24,
+    "total_files": 2433102,
+    "named_files": 231036,
+    "blocks": 916,
+    "records": 2433102,
+    "blocks_taken": 454,
+    "records_taken": 1341067,
+    "encrypted_blocks": 26,
+    "encrypted_blocks_taken": 13,
+    "skipped_blocks": [
+      [
+        "locale",
+        446
+      ],
+      [
+        "low_violence",
+        10
+      ],
+      [
+        "platform",
+        6
+      ]
+    ],
+    "empty_blocks": 0,
+    "locale": "enUS",
+    "locale_flag": 2,
+    "platform": "macos",
+    "read_by_hash": "1330591ebe7f1259debd53c2f6e5a721",
+    "unique_ids_taken": 1243524,
+    "unique_ids_with_low_violence": 1244477,
+    "ids_in_more_than_one_block": 97543,
+    "ids_whose_rows_differ_in_content": 96919,
+    "flags_of_ids_in_more_than_one_block": {
+      "0x12080001 + 0x12080000": 96042,
+      "0x94160000 + 0x94160000": 930,
+      "0x2080001 + 0x2080000": 353,
+      "0x2080000 + 0x2080000": 209,
+      "0x10080001 + 0x10080000": 7,
+      "0x80001 + 0x80000": 2
+    },
+    "ids_only_in_skipped_blocks": 7432
+  },
+  "local_census": {
+    "what": "every root row taken; local means an encoding key of its content is in the local index (no record read)",
+    "unique_ids": 1243524,
+    "with_a_local_copy": 1243504,
+    "with_no_local_copy": 20,
+    "flags_of_ids_with_no_local_copy": {
+      "0x12080001": 16,
+      "0x10660014": 4
+    },
+    "ids_in_more_than_one_block": {
+      "absent (0x1) + local, different content": 96382,
+      "local + local, same content": 624,
+      "local + local, different content": 515,
+      "local (0x1) + local, different content": 22
+    },
+    "locale_flags_of_two_local_rows_without_0x1": {
+      "0x202 + 0x173f6": 474,
+      "0x242 + 0x173f6": 31,
+      "0x246 + 0x173f6": 9,
+      "0x232 + 0x173f6": 1
+    }
+  },
+  "rows": [
+    {
+      "why": "the lowest file data id taken",
+      "fdid": 21,
+      "state": "local",
+      "words": "local",
+      "content_hash": "c95a3144de253ef2444954c6f00b19d4",
+      "content_hashes": [
+        "c95a3144de253ef2444954c6f00b19d4"
+      ],
+      "encoding_hashes": [
+        "326e08753a57765ac72d1406c98c1c0b"
+      ],
+      "encryption_names": [],
+      "root_content_flags": [
+        "0x4020000"
+      ],
+      "note": null,
+      "local_encoding_hash": "326e08753a57765ac72d1406c98c1c0b",
+      "index": {
+        "archive": 54,
+        "offset": 705317727,
+        "size": 4744598
+      },
+      "size": 4752896,
+      "decoded_size": 4752896,
+      "decoded_md5_is_content_hash": true
+    },
+    {
+      "why": "the highest file data id taken",
+      "fdid": 8552588,
+      "state": "local",
+      "words": "local",
+      "content_hash": "389b9b3f4495091288419ec46e6f9f2d",
+      "content_hashes": [
+        "389b9b3f4495091288419ec46e6f9f2d"
+      ],
+      "encoding_hashes": [
+        "9071cb053cd52d03490dd437dbc11ffd"
+      ],
+      "encryption_names": [],
+      "root_content_flags": [
+        "0x2380000"
+      ],
+      "note": null,
+      "local_encoding_hash": "9071cb053cd52d03490dd437dbc11ffd",
+      "index": {
+        "archive": 4,
+        "offset": 920878973,
+        "size": 483
+      },
+      "size": 991,
+      "decoded_size": 991,
+      "decoded_md5_is_content_hash": true
+    },
+    {
+      "why": "evenly spaced over the ids taken",
+      "fdid": 483395,
+      "state": "local",
+      "words": "local",
+      "content_hash": "0807cb27c2073b8237e26e57ddb263ee",
+      "content_hashes": [
+        "0807cb27c2073b8237e26e57ddb263ee"
+      ],
+      "encoding_hashes": [
+        "f4f3d6328bbf3b34843011b75821e0e2"
+      ],
+      "encryption_names": [],
+      "root_content_flags": [
+        "0x12120000"
+      ],
+      "note": null,
+      "local_encoding_hash": "f4f3d6328bbf3b34843011b75821e0e2",
+      "index": {
+        "archive": 2,
+        "offset": 226674235,
+        "size": 966
+      },
+      "size": 2160,
+      "decoded_size": 2160,
+      "decoded_md5_is_content_hash": true
+    },
+    {
+      "why": "evenly spaced over the ids taken",
+      "fdid": 924018,
+      "state": "local",
+      "words": "local",
+      "content_hash": "9d1648c25cd99eb0234026f2fa48f4ea",
+      "content_hashes": [
+        "9d1648c25cd99eb0234026f2fa48f4ea",
+        "818944c4d666388e8f6899fd67a56277"
+      ],
+      "encoding_hashes": [
+        "d9f86a9a024b8b84584827d4812d92cf"
+      ],
+      "encryption_names": [],
+      "root_content_flags": [
+        "0x12080001",
+        "0x12080000"
+      ],
+      "note": null,
+      "local_encoding_hash": "d9f86a9a024b8b84584827d4812d92cf",
+      "index": {
+        "archive": 26,
+        "offset": 455603232,
+        "size": 35269
+      },
+      "size": 44876,
+      "decoded_size": 44876,
+      "decoded_md5_is_content_hash": true
+    },
+    {
+      "why": "evenly spaced over the ids taken",
+      "fdid": 1405252,
+      "state": "local",
+      "words": "local",
+      "content_hash": "48e046e5865f39ebaf6e733f69a63054",
+      "content_hashes": [
+        "48e046e5865f39ebaf6e733f69a63054"
+      ],
+      "encoding_hashes": [
+        "62be251f6f5c7ed3fa7d19f243ef5572"
+      ],
+      "encryption_names": [],
+      "root_content_flags": [
+        "0x94160000"
+      ],
+      "note": null,
+      "local_encoding_hash": "62be251f6f5c7ed3fa7d19f243ef5572",
+      "index": {
+        "archive": 58,
+        "offset": 182039242,
+        "size": 52438
+      },
+      "size": 52371,
+      "decoded_size": 52371,
+      "decoded_md5_is_content_hash": true
+    },
+    {
+      "why": "evenly spaced over the ids taken",
+      "fdid": 2151745,
+      "state": "local",
+      "words": "local",
+      "content_hash": "858d5942043c4f59be9780f4f44358e7",
+      "content_hashes": [
+        "858d5942043c4f59be9780f4f44358e7"
+      ],
+      "encoding_hashes": [
+        "27bca9a1d73c22c2c12687590608d5ee"
+      ],
+      "encryption_names": [],
+      "root_content_flags": [
+        "0x12080000"
+      ],
+      "note": null,
+      "local_encoding_hash": "27bca9a1d73c22c2c12687590608d5ee",
+      "index": {
+        "archive": 3,
+        "offset": 807942754,
+        "size": 529
+      },
+      "size": 1684,
+      "decoded_size": 1684,
+      "decoded_md5_is_content_hash": true
+    },
+    {
+      "why": "evenly spaced over the ids taken",
+      "fdid": 3719523,
+      "state": "local",
+      "words": "local",
+      "content_hash": "84e181eaf2e2a45df0a6319ffe56cd76",
+      "content_hashes": [
+        "84e181eaf2e2a45df0a6319ffe56cd76"
+      ],
+      "encoding_hashes": [
+        "f41c8d00f8fd3e71a1e319b6bda81ed1"
+      ],
+      "encryption_names": [],
+      "root_content_flags": [
+        "0x2080000"
+      ],
+      "note": null,
+      "local_encoding_hash": "f41c8d00f8fd3e71a1e319b6bda81ed1",
+      "index": {
+        "archive": 3,
+        "offset": 317537434,
+        "size": 222
+      },
+      "size": 44876,
+      "decoded_size": 44876,
+      "decoded_md5_is_content_hash": true
+    },
+    {
+      "why": "evenly spaced over the ids taken",
+      "fdid": 4614204,
+      "state": "local",
+      "words": "local",
+      "content_hash": "61181fb87460b3c29076fb30c51aa64e",
+      "content_hashes": [
+        "61181fb87460b3c29076fb30c51aa64e"
+      ],
+      "encoding_hashes": [
+        "c55f4941f2b30ce6def35a46ca4df485"
+      ],
+      "encryption_names": [],
+      "root_content_flags": [
+        "0x12120000"
+      ],
+      "note": null,
+      "local_encoding_hash": "c55f4941f2b30ce6def35a46ca4df485",
+      "index": {
+        "archive": 21,
+        "offset": 714078864,
+        "size": 3915
+      },
+      "size": 8160,
+      "decoded_size": 8160,
+      "decoded_md5_is_content_hash": true
+    },
+    {
+      "why": "evenly spaced over the ids taken",
+      "fdid": 5694728,
+      "state": "local",
+      "words": "local",
+      "content_hash": "7c7070d9adbb7eb6b67746ea512629d4",
+      "content_hashes": [
+        "7c7070d9adbb7eb6b67746ea512629d4"
+      ],
+      "encoding_hashes": [
+        "ef70790466af97ff9581882ace0dfda8"
+      ],
+      "encryption_names": [],
+      "root_content_flags": [
+        "0x12120000"
+      ],
+      "note": null,
+      "local_encoding_hash": "ef70790466af97ff9581882ace0dfda8",
+      "index": {
+        "archive": 6,
+        "offset": 246565026,
+        "size": 17417
+      },
+      "size": 37760,
+      "decoded_size": 37760,
+      "decoded_md5_is_content_hash": true
+    },
+    {
+      "why": "the first id with two root rows of different content",
+      "fdid": 123933,
+      "state": "local",
+      "words": "local",
+      "content_hash": "c633b115795f95c4b68481387e24d977",
+      "content_hashes": [
+        "c633b115795f95c4b68481387e24d977",
+        "f8e211dfd5770234947f231685dabc9d"
+      ],
+      "encoding_hashes": [
+        "70a531b8f0b09f3383bc558e8a306aac"
+      ],
+      "encryption_names": [],
+      "root_content_flags": [
+        "0x10080001",
+        "0x10080000"
+      ],
+      "note": null,
+      "local_encoding_hash": "70a531b8f0b09f3383bc558e8a306aac",
+      "index": {
+        "archive": 0,
+        "offset": 341209941,
+        "size": 226
+      },
+      "size": 1284,
+      "decoded_size": 1284,
+      "decoded_md5_is_content_hash": true
+    },
+    {
+      "why": "the first sampled id in an Encrypted block",
+      "fdid": 874570,
+      "state": "encrypted",
+      "words": "encrypted",
+      "content_hash": "4479f15955747fb2ee4cab21f9d77a3a",
+      "content_hashes": [
+        "4479f15955747fb2ee4cab21f9d77a3a"
+      ],
+      "encoding_hashes": [
+        "2f8e996673f66eba6cd748639c8c9005"
+      ],
+      "encryption_names": [
+        "4A65D29877A83715"
+      ],
+      "root_content_flags": [
+        "0x1a0c0000"
+      ],
+      "note": null
+    },
+    {
+      "why": "the first id the root lists only in skipped blocks",
+      "fdid": 252370,
+      "state": "not_in_build",
+      "words": "not part of this game version's files",
+      "content_hash": null,
+      "content_hashes": [],
+      "encoding_hashes": [],
+      "encryption_names": [],
+      "root_content_flags": [],
+      "note": "the root lists it only for another language or platform, or for a low-violence client, so this client does not load it (content flags 0x2080000, locale flags 0x14000)"
+    },
+    {
+      "why": "the first id taken with no copy in the local index",
+      "fdid": 137237,
+      "state": "not_local",
+      "words": "not in your client's local files",
+      "content_hash": "029d0c94bd0791690c3a866e939aa4e9",
+      "content_hashes": [
+        "029d0c94bd0791690c3a866e939aa4e9"
+      ],
+      "encoding_hashes": [
+        "53d5dd0e90086441e4c85bbcd152c054"
+      ],
+      "encryption_names": [],
+      "root_content_flags": [
+        "0x12080001"
+      ],
+      "note": "listed only in root rows with content bit 0x1 (meaning [verify]); at 70450 the client fetched none of those rows' content"
+    },
+    {
+      "why": "the first id the root does not list, asked with in_table=False (the script's choice: no game table was looked up)",
+      "fdid": 1,
+      "state": "unknown_id",
+      "words": "unknown id",
+      "content_hash": null,
+      "content_hashes": [],
+      "encoding_hashes": [],
+      "encryption_names": [],
+      "root_content_flags": [],
+      "note": "the root does not list it, and the caller says no game table names it"
+    },
+    {
+      "why": "the first sampled ModelFileData id in state local",
+      "fdid": 116902,
+      "state": "local",
+      "words": "local",
+      "content_hash": "94557e95668b1e127edbb56b651186a3",
+      "content_hashes": [
+        "94557e95668b1e127edbb56b651186a3"
+      ],
+      "encoding_hashes": [
+        "3f01d1805ebe2331727c12a847f43b90"
+      ],
+      "encryption_names": [],
+      "root_content_flags": [
+        "0x120c0000"
+      ],
+      "note": null,
+      "local_encoding_hash": "3f01d1805ebe2331727c12a847f43b90",
+      "index": {
+        "archive": 2,
+        "offset": 676932155,
+        "size": 1049
+      },
+      "size": 1828,
+      "decoded_size": 1828,
+      "decoded_md5_is_content_hash": true
+    },
+    {
+      "why": "the first sampled ModelFileData id in state not_in_build",
+      "fdid": 142956,
+      "state": "not_in_build",
+      "words": "not part of this game version's files",
+      "content_hash": null,
+      "content_hashes": [],
+      "encoding_hashes": [],
+      "encryption_names": [],
+      "root_content_flags": [],
+      "note": "the root does not list it"
+    }
+  ],
+  "model_file_data": {
+    "source": "gamedata (wago.tools, cached under the data directory)",
+    "version": "1.60.1.70450",
+    "ids_in_table": 121131,
+    "sampled": 300,
+    "states": {
+      "local": 157,
+      "not_in_build": 143
+    }
+  },
+  "timings": {
+    "index_seconds": 0.465,
+    "encoding_seconds": 0.528,
+    "root_seconds": 0.356,
+    "open_seconds": 1.352,
+    "reads": {
+      "files": 300,
+      "what": "every (rows taken // 300)-th row taken, in file order, each id once",
+      "bytes": 22610797,
+      "refused": {},
+      "seconds": 0.216
+    },
+    "model_reads": {
+      "files": 157,
+      "what": "every local file of the ModelFileData sample",
+      "bytes": 23461816,
+      "refused": {},
+      "seconds": 0.114
+    }
+  },
+  "memory": {
+    "peak_rss_mb_after_open": 563.5,
+    "peak_rss_mb_after_reads": 563.5,
+    "reopens": 0
+  }
+}

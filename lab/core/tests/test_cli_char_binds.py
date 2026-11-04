@@ -129,6 +129,13 @@ def test_char_binds_json_131_keys_3_agree_128_not_in_a_file_0_disagree_11_unreac
     assert sum(1 for k in rep.keys if k.disagrees) == 0
     assert [u.slot for u in rep.unreached_slots] == [49, 50, *range(64, 73)]
     assert (rep.commands_left_out, rep.keys_left_out) == (1, 0)
+    # M13-77: the counts in the words the text form prints, carried by the report.
+    assert rep.left_out_note == (
+        "Left out of the bindings record, counted with no list: 1 command not named in plain "
+        "upper case (a key bound straight to a spell, macro, item or click may be one), and "
+        "0 keys not printable ASCII."
+    )
+    assert rep.left_out_note in ok("char", "binds", "--character", CHARACTER).stdout.splitlines()
     assert (rep.cannot_place, rep.cannot_compare) == (None, None)
     assert cli.CharBindsReport.model_validate_json(rep.model_dump_json()) == rep
 
@@ -199,6 +206,7 @@ def test_a_schema_1_record_gives_the_file_rows_cannot_place(root: Path) -> None:
         ("E", 63, "cannot place: no action-bar record", ["account file"]),
     ]
     assert (rep.unreached_slots, rep.commands_left_out, rep.keys_left_out) == ([], None, None)
+    assert rep.left_out_note is None
     text = ok("char", "binds", "--character", SCHEMA_1_CHARACTER).stdout
     assert (
         "Cannot place keys on action slots or compare the files with the record: schema 1 has "
@@ -219,6 +227,52 @@ def test_a_character_without_a_record_gives_the_file_rows_exit_0(root: Path) -> 
     text = ok("char", "binds", "--character", CHARACTER).stdout
     assert text.splitlines()[1].startswith(f"Record: none (no WowLab.lua in 1/{CHARACTER}.")
     assert "Cannot place keys" not in text  # the Record line already says why
+
+
+def _folds_case(where: Path) -> bool:
+    probe = where / "case-probe"
+    probe.mkdir()
+    try:
+        return (where / "CASE-PROBE").exists()
+    finally:
+        probe.rmdir()
+
+
+def test_case_variant_records_keep_the_latest_folder_as_char_macros_does_constructed(
+    flavor: Path, tmp_path: Path
+) -> None:
+    """Constructed (M13-73): CHARACTER's folder, written last, holds two case
+    variants of WowLab.lua and none spelled exactly, so no record is read.
+    Without --character that folder is still the character, chosen as the
+    latest, as `char macros` keeps it."""
+    if _folds_case(tmp_path):
+        pytest.skip("the temporary directory's volume folds case")
+    folder = flavor / CHAR_DIR / "SavedVariables"
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in ("wowlab.lua", "WOWLAB.lua"):
+        (folder / name).write_bytes(SCHEMA_3.read_bytes())
+    for other in flavor.rglob("WowLab.lua"):
+        if "SavedVariables" in other.parts and other.parent.parent.name != ACCOUNT:
+            os.utime(other, ns=(10**18, 10**18))
+    for name in ("wowlab.lua", "WOWLAB.lua"):
+        os.utime(folder / name, ns=(2 * 10**18, 2 * 10**18))
+    pinned = report("--character", CHARACTER)
+    latest = report()
+    assert latest.character == pinned.character == f"1/{CHARACTER}"
+    assert (pinned.chosen_by, latest.chosen_by) == ("--character", "latest")
+    for rep in (pinned, latest):
+        assert rep.record_file is None and rep.record_error is not None
+        assert "none was read" in rep.record_error
+        assert [f.scope for f in rep.files] == ["account", "character"]
+    assert latest.record_error == pinned.record_error
+    assert latest.keys == pinned.keys
+    lines = ok("char", "binds").stdout.splitlines()
+    assert "has a WowLab.lua" not in lines[0]
+    assert lines[0] == (
+        f"Character: 1/{CHARACTER} in account {ACCOUNT} "
+        "(written last; choose another with --character)"
+    )
+    assert lines[1] == f"Record: none ({latest.record_error})"
 
 
 def test_a_character_folder_that_does_not_exist_is_a_usage_error(root: Path) -> None:
