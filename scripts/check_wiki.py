@@ -619,7 +619,7 @@ class Checker:
         for name, render in sorted(GENERATED.items()):
             page = self.pages.get(name)
             if page is None:
-                self.fail(name, "missing; the job writes it with scripts/gen_command_reference.py")
+                self.fail(name, "missing; generate it with scripts/gen_command_reference.py")
                 continue
             if (self.root_dir / name).read_bytes() != render(root).encode("utf-8"):
                 self.fail(

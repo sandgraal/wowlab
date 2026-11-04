@@ -270,7 +270,7 @@ def test_constructed_missing_generated_page_fails(tmp_path: Path) -> None:
     (root / "_Sidebar.md").write_text("- [Home](Home)\n", encoding="utf-8")
     (root / "Command-Reference.md").write_text("# Command Reference\n", encoding="utf-8")
     assert _failures(root) == [
-        "CLI-Reference.md: missing; the job writes it with scripts/gen_command_reference.py"
+        "CLI-Reference.md: missing; generate it with scripts/gen_command_reference.py"
     ]
 
 
@@ -497,9 +497,7 @@ def _real_copy(tmp_path: Path) -> Path:
     return root
 
 
-MISSING_GENERATED = (
-    "CLI-Reference.md: missing; the job writes it with scripts/gen_command_reference.py"
-)
+MISSING_GENERATED = "CLI-Reference.md: missing; generate it with scripts/gen_command_reference.py"
 
 
 def _not_covered(command: str) -> str:
