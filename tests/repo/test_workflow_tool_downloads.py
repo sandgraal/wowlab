@@ -1,4 +1,4 @@
-"""Every tool a workflow downloads is pinned and checksummed (M13-65).
+"""Every `curl` or `wget` download in a workflow is pinned and checksummed (M13-65).
 
 From the reviews of #278 (M13-42): `raven-actions/actionlint` ran with its
 default `version: latest`, so the actionlint binary was fetched unpinned and
@@ -6,8 +6,8 @@ unchecked on every run. The CI job now downloads it the way the gitleaks
 jobs do: an exact release, checked against the sha256 in the release's
 checksums file before it is unpacked.
 
-Static: every `run:` step under `.github/workflows/` that fetches with `curl`
-or `wget` must
+Static: every `run:` step under `.github/workflows/` that downloads with
+`curl` or `wget` must
 - fetch no `latest` URL;
 - reference at least one `*_VERSION` variable in each fetch URL, and set
   every one it names (step, job or workflow `env`) to an exact `x.y.z`;
@@ -18,15 +18,32 @@ or `wget` must
   file (tar, install, chmod, unzip, running it);
 - write the check as a bare command on its own line, so bash -e stops on it
   (no `!`, no `if`/`while`/`until` condition, nothing such as `|| ...` or
-  `; true` after it), and never pipe into a shell.
+  `; true` after it), and never pipe into a shell;
+- run under a shell that has `-e`: the effective `shell:` (the step's, else
+  the job's `defaults.run.shell`, else the workflow's) is unset, the `bash`
+  keyword, or a bash command line carrying `-e` such as `bash -eo pipefail
+  {0}`; anything else is `shell-without-e`;
+- not set `continue-on-error` to a truthy value, which would let the job go
+  on past a failed check.
+
+The fetch, the check and every use of the file belong in one step. The rule
+reads each step on its own: a later step that unpacks, installs or runs a
+file an earlier step fetched is not followed, and review covers it.
+
+Other downloaders (`gh release download`, `python -c` with urllib, an
+action that fetches a binary, ...) are not read here; review covers them.
+`FETCH` matches `curl` and `wget` only, on purpose.
 
 The check is line-level: it reads each line of the script on its own and
-does not model the shell around it. It does not see two shell-level forms
-that also stop bash -e from exiting on a failed check: `set +e` on an
-earlier line, and a `{`, `(` or function body spanning several lines, with
-the check bare on its own line inside, whose closing line or call adds
-`|| true`. (The one-line forms of the latter are caught as
-`check-not-bare`.) No workflow uses them today; review covers them (the probe
+does not model the shell around it. It does not see three forms that stop a
+failed check from failing the step:
+- `set +e` on an earlier line;
+- a `{`, `(` or function body spanning several lines, with the check bare on
+  its own line inside, whose closing line or call adds `|| true` (the
+  one-line forms are caught as `check-not-bare`);
+- a check line that never runs: inside a dead `if`/`case` branch, or in the
+  body of a heredoc.
+No workflow uses them today; review covers them (the probe
 lab/core/tests/review/test_m13_65_shell_level_swallow_is_a_documented_limit.py
 records the limit).
 
@@ -86,10 +103,35 @@ def _workflows() -> dict[str, dict[str, Any]]:
     return {p.name: _load(p) for p in sorted(WORKFLOWS.glob("*.y*ml"))}
 
 
+def _effective_shell(
+    workflow: dict[str, Any], job: dict[str, Any], step: dict[str, Any]
+) -> str | None:
+    """The step's `shell:`, else the job's `defaults.run.shell`, else the
+    workflow's; None when none is set (GitHub then runs `bash -e {0}`)."""
+    for holder in (step, (job.get("defaults") or {}).get("run") or {}):
+        if holder.get("shell") is not None:
+            return str(holder["shell"])
+    top = (workflow.get("defaults") or {}).get("run") or {}
+    return None if top.get("shell") is None else str(top["shell"])
+
+
+def _shell_has_e(shell: str | None) -> bool:
+    """True for no shell (GitHub's `bash -e {0}`), the `bash` keyword (GitHub
+    runs `bash --noprofile --norc -eo pipefail {0}`), or a bash command line
+    with a short-option cluster that holds `e` (`bash -eo pipefail {0}`)."""
+    if shell is None or shell.strip() == "bash":
+        return True
+    words = shell.split()
+    if not words or Path(words[0]).name != "bash":
+        return False
+    return any(re.fullmatch(r"-[A-Za-z]*e[A-Za-z]*", w) for w in words[1:])
+
+
 def _fetching_steps(
     workflow: dict[str, Any],
-) -> Iterator[tuple[str, str, Mapping[str, Any]]]:
-    """(where, script, env in scope) for each run step that downloads."""
+) -> Iterator[tuple[str, str, Mapping[str, Any], dict[str, Any]]]:
+    """(where, script, env in scope, step facts) for each run step that
+    downloads; the facts are its effective shell and continue-on-error."""
     top = workflow.get("env") or {}
     for job_id, job in (workflow.get("jobs") or {}).items():
         job_env = {**top, **(job.get("env") or {})}
@@ -98,7 +140,11 @@ def _fetching_steps(
             if not isinstance(script, str) or not FETCH.search(script):
                 continue
             env = {**job_env, **(step.get("env") or {})}
-            yield f"{job_id}[{i}] {step.get('name', '')}", script, env
+            facts = {
+                "shell": _effective_shell(workflow, job, step),
+                "continue-on-error": step.get("continue-on-error"),
+            }
+            yield f"{job_id}[{i}] {step.get('name', '')}", script, env, facts
 
 
 def _commands(script: str) -> list[str]:
@@ -134,11 +180,17 @@ def _findings(workflow: dict[str, Any]) -> list[tuple[str, str]]:
     Line-level: each line and command is read on its own, so a check turned
     off by the shell around it (`set +e` earlier, or a `{`, `(` or function
     body spanning several lines, with the check bare on its own line inside,
-    whose closing line or call adds `|| true`) is not reported; review
-    covers those.
+    whose closing line or call adds `|| true`, or a check line that never
+    runs, in a dead `if`/`case` branch or a heredoc body) is not reported;
+    review covers those. Each step is read on its own: a later step that
+    uses a fetched file is not followed.
     """
     found: list[tuple[str, str]] = []
-    for where, script, env in _fetching_steps(workflow):
+    for where, script, env, facts in _fetching_steps(workflow):
+        if not _shell_has_e(facts["shell"]):
+            found.append((where, "shell-without-e"))
+        if facts["continue-on-error"] not in (None, False, "false"):
+            found.append((where, "continue-on-error"))
         if "latest" in script:
             found.append((where, "latest"))
         if PIPE_TO_SHELL.search(script):
@@ -202,7 +254,7 @@ def test_every_download_is_pinned_and_checksummed(name: str) -> None:
 
 
 def test_ci_downloads_actionlint_and_gitleaks() -> None:
-    wheres = [where for where, _, _ in _fetching_steps(_workflows()["ci.yml"])]
+    wheres = [where for where, _, _, _ in _fetching_steps(_workflows()["ci.yml"])]
     assert any("Install actionlint" in w for w in wheres), wheres
     assert any("Install gitleaks" in w for w in wheres), wheres
 
@@ -350,3 +402,54 @@ def test_a_check_before_the_fetch_is_caught() -> None:
     lines.remove(check)
     step["run"] = "\n".join([check, *lines])
     assert "unchecked" in {k for _, k in _findings(workflow)}
+
+
+# Security review of #339 (M13-65): the step's shell and continue-on-error.
+# Constructed inputs.
+
+
+def test_a_step_shell_without_e_is_caught() -> None:
+    workflow = _ci()
+    _actionlint_step(workflow)["shell"] = "bash {0}"
+    assert "shell-without-e" in {k for _, k in _findings(workflow)}
+
+
+def test_a_workflow_default_shell_without_e_is_caught() -> None:
+    workflow = _ci()
+    workflow["defaults"] = {"run": {"shell": "sh {0}"}}
+    assert "shell-without-e" in {k for _, k in _findings(workflow)}
+
+
+def test_a_job_default_shell_without_e_is_caught() -> None:
+    workflow = _ci()
+    for job in workflow["jobs"].values():
+        job["defaults"] = {"run": {"shell": "pwsh"}}
+    assert "shell-without-e" in {k for _, k in _findings(workflow)}
+
+
+@pytest.mark.parametrize(
+    "shell",
+    [
+        "bash -eo pipefail {0}",
+        "bash -e {0}",
+        "bash",
+        "/usr/bin/bash --noprofile --norc -eo pipefail {0}",
+    ],
+)
+def test_a_bash_shell_with_e_is_accepted(shell: str) -> None:
+    # Positive control.
+    workflow = _ci()
+    _actionlint_step(workflow)["shell"] = shell
+    # The step's shell wins over its job's default.
+    workflow["jobs"]["harness"]["defaults"] = {"run": {"shell": "sh {0}"}}
+    assert _findings(workflow) == []
+
+
+def test_continue_on_error_on_a_fetching_step_is_caught() -> None:
+    for value in (True, "true", "${{ github.event_name == 'push' }}"):
+        workflow = _ci()
+        _actionlint_step(workflow)["continue-on-error"] = value
+        assert "continue-on-error" in {k for _, k in _findings(workflow)}, value
+    workflow = _ci()
+    _actionlint_step(workflow)["continue-on-error"] = False
+    assert _findings(workflow) == []
