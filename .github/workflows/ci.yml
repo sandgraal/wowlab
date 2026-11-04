@@ -15,9 +15,10 @@ on:
 # changing the ruleset and re-applying it with scripts/bootstrap-github.sh.
 #
 # No job restores or saves an Actions cache (M13-42). The cache is shared
-# by every workflow running in main's scope, including the two that run a
-# model with a token whose cache mode is write (claude.yml, wiki-daily.yml),
-# so an entry these jobs restored could have been written by that model.
+# by every workflow running in main's scope, so an entry these jobs restored
+# could have been written by any of them. (Until 2026-11-04 two of them ran
+# a model with a token whose cache mode is write; no workflow runs Claude
+# since the owner decision of that date.)
 # setup-uv runs with `enable-cache: false` (omitted means `auto`, which
 # caches), actionlint and trivy with `cache: false` (both default to true),
 # and tests/repo/test_workflows_use_no_cache.py holds every workflow to it.
