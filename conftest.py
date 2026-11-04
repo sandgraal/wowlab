@@ -37,6 +37,8 @@ This file is also loaded by the hook tests under Python 3.9
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
 # Every test in these files measures (node id prefix: the file).
@@ -102,7 +104,7 @@ SERIAL_TESTS: frozenset[str] = frozenset(
 # Tests that may legitimately run longer than the hang guard's 300 s
 # (`timeout` in pyproject.toml, M13-81), by node id without the parameter
 # suffix, with the seconds they get. None is known: the slowest measured test
-# takes about 40 s. An entry goes here, never into the test file, for the same
+# took 86 s on a heavily loaded 4-core machine (M13-81's measurement). An entry goes here, never into the test file, for the same
 # reason as the serial list. `tests/repo/test_make_test_fast.py` checks that
 # every entry names a test that exists.
 TIMEOUT_OVERRIDES: dict[str, int] = {}
@@ -124,3 +126,27 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         seconds = TIMEOUT_OVERRIDES.get(item.nodeid.split("[", 1)[0])
         if seconds is not None:
             item.add_marker(pytest.mark.timeout(seconds))
+
+
+@pytest.fixture(autouse=True)
+def _undo_monkeypatch_before_tmp_path_cleanup(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Undo a test's monkeypatching before pytest deletes its `tmp_path` (M13-81).
+
+    With `tmp_path_retention_policy = "failed"` (pyproject.toml), pytest removes
+    a passing test's `tmp_path` when that fixture is torn down. A test that
+    asks for `monkeypatch` before `tmp_path` still has its patches in place
+    then, so a patched `os` function (an `os.scandir` that takes no
+    descriptor, in the M10-18T graders) breaks `shutil.rmtree` and the test
+    errors at teardown. This fixture depends on both, so it is torn down
+    first and undoes the patches; `monkeypatch`'s own teardown then has
+    nothing left to undo. Fixtures the test sets up later are torn down
+    before this one, with their patches still in place, as before. It edits
+    no test file, for the same reason as the serial list.
+    """
+    if "tmp_path" in request.fixturenames and "monkeypatch" in request.fixturenames:
+        request.getfixturevalue("tmp_path")
+        patches = request.getfixturevalue("monkeypatch")
+        yield
+        patches.undo()
+    else:
+        yield
