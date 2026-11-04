@@ -58,7 +58,7 @@ BARE = [
     (f"1/{NO_ADDON}", "21 CVars, 1 macro, 0 SavedVariables files"),
     (
         f"{TWIN_REALM}/Labchard",
-        "a <Realm>/<First> folder: on Forever it holds only AddOns.txt [verify], and the "
+        "a <Realm>/<First> folder: on Forever it holds only AddOns.txt (not yet confirmed), and the "
         f"lab-addon writes nothing here; same first name as {FIRST}",
     ),
 ]
@@ -182,8 +182,10 @@ def test_char_list_lists_each_captured_character_once(flavor: Path) -> None:
         "The addon records no time; the time shown is the file's modification time: the "
         "client's last save, unless something wrote the file since (a wowlab snap restore, "
         "undo or sv merge, or a copy).",
-        "One row per character folder: a renamed or transferred character (and a deleted one "
-        "[verify]) keeps its old folder and last save here.",
+        # The twin row above already showed the run's first marker, so this
+        # one is left out.
+        "One row per character folder: a renamed or transferred character (and a deleted one) "
+        "keeps its old folder and last save here.",
         # Added because a "no lab record" row is shown (M16-35 review).
         "Counts are what each file held at the client's last exit; with settings sync on, the "
         "server may replace these files at login.",

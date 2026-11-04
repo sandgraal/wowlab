@@ -95,7 +95,7 @@ from __future__ import annotations
 
 import re
 import shlex
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, NamedTuple, Self, TypeVar
 
@@ -2549,7 +2549,7 @@ NOT_IN_FILE = (
 )
 MAX_QUANTITY_NOTE = (
     "  max_quantity is the client's figure; for class talents it has matched the points "
-    "earned at the character's level (M11-03), not the tree's final cap."
+    "earned at the character's level, not the tree's final cap."
 )
 ALL_EVENTS_REGISTERED = "all its change events registered"
 EVENTS_RECEIVED = (
@@ -2974,7 +2974,9 @@ def _loads_ago_words(ago: int | None) -> str:
     return f"{ago} logins or reloads ago"
 
 
-def _customization(record: Customization, char: CharDB) -> list[str]:
+def _customization(
+    record: Customization, char: CharDB, render: Callable[[str], str] = str
+) -> list[str]:
     when = _loads_ago_words(customization_loads_ago(char))
     facts = []
     if record.recorded_at is not None:
@@ -3001,7 +3003,7 @@ def _customization(record: Customization, char: CharDB) -> list[str]:
         index = "" if choice.choice_index is None else f" (index {choice.choice_index})"
         lines.append(f"  option {choice.option}: choice {_num(choice.choice)}{index}")
     if record.recorded_at == "open":
-        lines.append(f"  {OPEN_RECORD_NOTE}")
+        lines.append(f"  {render(OPEN_RECORD_NOTE)}")
     lines.append(f"  {PAID_CHANGE_NOTE}")
     lines += _events(record)
     if v2 is not None and v2.events_received is not None:
@@ -3185,7 +3187,7 @@ def _spellbook(book: Spellbook) -> list[str]:
     return lines + _probe_lines(book.probes) + _events(book)
 
 
-def _action_bars(bars: ActionBars) -> list[str]:
+def _action_bars(bars: ActionBars, render: Callable[[str], str] = str) -> list[str]:
     kinds: dict[str, int] = {}
     for slot in bars.slots:
         kind = slot.type if slot.type is not None else "type not kept"
@@ -3199,41 +3201,43 @@ def _action_bars(bars: ActionBars) -> list[str]:
     if macros:
         index = sum(1 for slot in macros if slot.sub_type is None)
         lines.append(
-            f"  macro slots: {index} with no subtype recorded (the id is the macro index "
-            "[verify]), "
-            f"{len(macros) - index} with one (the id is the spell or item id the macro shows "
-            "now [verify]); a macro's name and body are never recorded"
+            render(
+                f"  macro slots: {index} with no subtype recorded (the id is the macro index "
+                "[verify]), "
+                f"{len(macros) - index} with one (the id is the spell or item id the macro "
+                "shows now [verify]); a macro's name and body are never recorded"
+            )
         )
     return lines + _probe_lines(bars.probes) + _events(bars)
 
 
 def _binding_set_words(record: Bindings) -> str:
-    """`binding_set`, named by the client's own ACCOUNT_BINDINGS and
-    CHARACTER_BINDINGS as the record holds them."""
+    """`binding_set`, named by the client's own account and character
+    binding-set numbers as the record holds them, in player words."""
     which = record.binding_set
     if which is None:
         return "not returned"
     if which == record.character_bindings:
-        return f"{which} (the character's: CHARACTER_BINDINGS is {which})"
+        return f"{which} (the character's own bindings)"
     if which == record.account_bindings:
-        return f"{which} (the account's: ACCOUNT_BINDINGS is {which})"
+        return f"{which} (the account's bindings)"
     known = ", ".join(
         f"{name} is {value}"
         for name, value in (
-            ("ACCOUNT_BINDINGS", record.account_bindings),
-            ("CHARACTER_BINDINGS", record.character_bindings),
+            ("the account's", record.account_bindings),
+            ("the character's", record.character_bindings),
         )
         if value is not None
     )
     if not known:
         return (
-            f"{which} (the client's raw value; ACCOUNT_BINDINGS and CHARACTER_BINDINGS "
-            "not recorded)"
+            f"{which} (the client's raw value; which number is the account's and which "
+            "the character's was not recorded)"
         )
-    return f"{which} (the client's raw value, neither set by name: {known})"
+    return f"{which} (the client's raw value, neither set: {known})"
 
 
-def _bindings(record: Bindings) -> list[str]:
+def _bindings(record: Bindings, render: Callable[[str], str] = str) -> list[str]:
     lines = [
         f"Key bindings: {_count(len(record.list_), 'command')} with a key, of "
         f"{record.commands} listed (commands and keys in --json); binding set "
@@ -3241,8 +3245,10 @@ def _bindings(record: Bindings) -> list[str]:
         f"  left out: {_count(record.commands_left_out, 'command')} of those listed not a plain "
         "upper-case name (text after the name, as in MACRO x, or other characters; never asked "
         f"about), {_count(record.keys_left_out, 'key')} not printable ASCII",
-        "  a key bound straight to a spell, macro, item or click may not be listed by GetBinding "
-        "at all [verify]",
+        render(
+            "  a key bound straight to a spell, macro, item or click may not be listed by "
+            "GetBinding at all [verify]"
+        ),
     ]
     return lines + _probe_lines(record.probes) + _events(record)
 
@@ -3279,7 +3285,7 @@ def _section(label: str, record: object, present: Any) -> list[str]:
     return lines
 
 
-def _identity_line(char: CharDB) -> str:
+def _identity_line(char: CharDB, render: Callable[[str], str] = str) -> str:
     """`identity` (schema 4) in one line: the class and race the client gave,
     and the body type; an absent value with its reason."""
     got = identity_of(char)
@@ -3297,7 +3303,7 @@ def _identity_line(char: CharDB) -> str:
         else f"race id absent ({got.race_id_absent})"
     )
     if got.sex is not None:  # derived, so sex_raw is there
-        body = (
+        body = render(
             f"body type {got.sex} (Enum.UnitSex, from UnitSex {got.sex_raw}; the game's own "
             "screens may number body types differently [verify])"
         )
@@ -3318,8 +3324,13 @@ def _identity_line(char: CharDB) -> str:
     return f"Identity: {klass}, {race}, {body}{events}"
 
 
-def describe(char: CharDB) -> list[str]:
-    """The text lines `wowlab char show` prints for a character record."""
+def describe(char: CharDB, render: Callable[[str], str] = str) -> list[str]:
+    """The text lines `wowlab char show` prints for a character record.
+
+    `render` renders wowlab's own fixed words (a caveat with its `[verify]`
+    marker) before any value read from the record is put beside them; the
+    default keeps them as written. The CLI passes its player-copy rendering,
+    so the record's values print exactly as read."""
     lines: list[str] = []
     client = char.client
     if isinstance(client, Client):
@@ -3354,7 +3365,7 @@ def describe(char: CharDB) -> list[str]:
     lines += _section("Gear", char.gear, _gear)
     lines += _section("Spec", char.spec, _spec)
     if isinstance(char, CharDBV4):
-        lines += _section("Identity", char.identity, lambda _: [_identity_line(char)])
+        lines += _section("Identity", char.identity, lambda _: [_identity_line(char, render)])
     talents = char.talents
     lines += _section("Class talents", talents.class_ if talents else None, _class_talents)
     class_config = _class_config(talents) if talents else None
@@ -3366,7 +3377,7 @@ def describe(char: CharDB) -> list[str]:
     lines += _section(
         "Customization",
         char.customization,
-        lambda record: _customization(record, char),
+        lambda record: _customization(record, char, render),
     )
     collections = char.collections
     lines += _section("Mounts", collections.mounts if collections else None, _mounts)
@@ -3377,8 +3388,8 @@ def describe(char: CharDB) -> list[str]:
     lines += _section("Professions", char.professions, _professions)
     if isinstance(char, CharDBV3):
         lines += _section("Spellbook", char.spellbook, _spellbook)
-        lines += _section("Action bars", char.actionbars, _action_bars)
-        lines += _section("Key bindings", char.bindings, _bindings)
+        lines += _section("Action bars", char.actionbars, lambda bars: _action_bars(bars, render))
+        lines += _section("Key bindings", char.bindings, lambda rec: _bindings(rec, render))
     unknown = unknown_keys(char)
     if unknown:
         lines.append("")
