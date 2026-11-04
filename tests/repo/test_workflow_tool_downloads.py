@@ -20,6 +20,15 @@ or `wget` must
   (no `!`, no `if`/`while`/`until` condition, nothing such as `|| ...` or
   `; true` after it), and never pipe into a shell.
 
+The check is line-level: it reads each line of the script on its own and
+does not model the shell around it. It does not see four shell-level forms
+that also stop bash -e from exiting on a failed check: `set +e` on an
+earlier line, a `{ ...; } || true` group, a `( ... ) || true` subshell, and
+a function that holds the check called as `fn || true`. No workflow uses
+them today; review covers them (the probe
+lab/core/tests/review/test_m13_65_check_swallowed_by_enclosing_shell.py
+records the limit).
+
 The mutation tests apply each failure to the real workflows in memory, and
 the security review of #339 added five hostile scripts that the first version
 let through; no workflow file is edited.
@@ -46,11 +55,15 @@ EXACT_VERSION = re.compile(r"\d+\.\d+\.\d+")
 # `echo "<digest>  <path>" | sha256sum -c -`: group 1 the digest, group 2 the
 # path the check reads.
 CHECK = re.compile(r"""echo\s+["']?(\S+)\s+([^"'\s]+)["']?\s*\|\s*sha256sum\s+-c\s+-""")
-# A check whose failure is swallowed: `|| ...` or `; true` after it.
+# A check whose failure is swallowed on its own line: `|| ...` or `; true`
+# after it. Line-level only: `set +e` earlier, `{ ...; } || true`,
+# `( ... ) || true` and `fn || true` are not seen (module docstring).
 IGNORED = re.compile(r"sha256sum\s+-c\s+-\s*(?:\|\||;\s*true\b)")
 # A check must be a bare command on its own line: bash -e exits on neither a
 # negated pipeline (`! echo ... | sha256sum -c -`) nor the condition of an
 # `if`, `while` or `until`, and anything after it on the line can swallow it.
+# A bare line still fails open inside a shell that has turned -e off around
+# it; that is the documented limit in the module docstring.
 BARE_CHECK = re.compile(r"echo\s+([\"'])[0-9A-Za-z_${}]+\s+[^\"'\s]+\1\s*\|\s*sha256sum\s+-c\s+-")
 PIPE_TO_SHELL = re.compile(r"\|\s*(?:sudo\s+)?(?:sh|bash|zsh|dash)\b")
 URL = re.compile(r"https?://[^\s\"']+")
@@ -114,6 +127,12 @@ def _targets(command: str) -> list[str] | None:
 
 
 def _findings(workflow: dict[str, Any]) -> list[tuple[str, str]]:
+    """(where, kind) for each rule a fetching step breaks.
+
+    Line-level: each line and command is read on its own, so a check turned
+    off by the shell around it (`set +e` earlier, `{ ...; } || true`,
+    `( ... ) || true`, `fn || true`) is not reported; review covers those.
+    """
     found: list[tuple[str, str]] = []
     for where, script, env in _fetching_steps(workflow):
         if "latest" in script:
