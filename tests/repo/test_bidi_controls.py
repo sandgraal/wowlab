@@ -31,6 +31,11 @@ fails outright: pytest would collect the first and the last (a `test*.txt`
 is a doctest file to it), and the other is prose written here. pytest is
 also kept out of the fixtures (`norecursedirs` in pyproject.toml, round 4);
 the fixture suites live beside it and read it as data.
+
+Outside the fixtures, only the twelve pinned font files of ADR-0035 are left
+out, by exact path (`PINNED_FONTS`, M16-51): they are binary fonts, held to
+their SHA-256 by lab/core/tests/test_ui_fonts.py. Any other file beside them,
+another `.woff2` included, is scanned.
 """
 
 from __future__ import annotations
@@ -55,6 +60,28 @@ FIXTURE_INDEX = FIXTURES + "README.md"
 # The capture types under the fixtures (lab/core/tests/fixtures/README.md).
 CAPTURE_SUFFIXES = frozenset(
     {".lua", ".wtf", ".txt", ".csv", ".json", ".gz", ".info", ".html", ".toc", ".bak"}
+)
+# The twelve WOFF2 files of ADR-0035 (M16-51) are compressed binary fonts,
+# never text, copied unchanged from pinned URLs; their bytes are held to
+# their SHA-256 by lab/core/tests/test_ui_fonts.py, which also fails on any
+# other file in their folder, so a changed byte fails there. Only these exact
+# paths are left out; their licence texts beside them are scanned.
+PINNED_FONTS = frozenset(
+    "lab/core/src/wowlab_core/ui/templates/fonts/" + name + ".woff2"
+    for name in (
+        "alegreya-latin",
+        "alegreya-latin-ext",
+        "alegreya-italic-latin",
+        "alegreya-italic-latin-ext",
+        "alegreya-sc-500-latin",
+        "alegreya-sc-500-latin-ext",
+        "alegreya-sc-700-latin",
+        "alegreya-sc-700-latin-ext",
+        "ibm-plex-mono-400-latin",
+        "ibm-plex-mono-400-latin-ext",
+        "ibm-plex-mono-500-latin",
+        "ibm-plex-mono-500-latin-ext",
+    )
 )
 PYTHON_SUFFIXES = frozenset({".py", ".pyi", ".pyw"})
 PYTHON_ENCODINGS = frozenset({"utf-8", "utf-8-sig"})
@@ -122,7 +149,10 @@ def _tracked() -> list[bytes]:
 
 
 def _scanned(name: str) -> bool:
-    """Is the file scanned (everything but a capture under the fixtures)?"""
+    """Is the file scanned (everything but a capture under the fixtures and
+    the twelve pinned font files)?"""
+    if name in PINNED_FONTS:
+        return False
     return not name.startswith(FIXTURES) or Path(name).suffix.lower() not in CAPTURE_SUFFIXES
 
 
@@ -179,6 +209,12 @@ def test_bidi_check_constructed_controls(tmp_path: Path) -> None:
         assert not _scanned(FIXTURES + capture), capture
     assert _scanned(FIXTURES + "notes.md")
     assert _scanned(FIXTURES + "conftest.py")
+    fonts = "lab/core/src/wowlab_core/ui/templates/fonts/"
+    assert len(PINNED_FONTS) == 12
+    assert not _scanned(fonts + "alegreya-latin.woff2")
+    assert _scanned(fonts + "OFL-Alegreya.txt")
+    assert _scanned(fonts + "planted.woff2")
+    assert _scanned(fonts.upper() + "ALEGREYA-LATIN.WOFF2")
     assert _misplaced(FIXTURES + "notes.md")
     assert _misplaced(FIXTURES + "wago/test_x.py")
     assert not _misplaced(FIXTURE_INDEX)
