@@ -7,15 +7,20 @@ this file covers the other commands that read a WTF file through
 `char binds` and `doctor` (which reports the file it could
 not read as a problem and carries on).
 
-These commands find their file through `layout`, which lists only regular
-files, so a FIFO or a link already there is not offered to the reader (the
-first test pins that). What reaches the reader is a file swapped between the
+These commands find their file through `layout.Layout.wtf_files`, which
+lists only regular files under `WTF/` (a FIFO and a link are left out, the
+link not followed). So a FIFO or a link already at the path is never offered
+to the reader: the command reports the file as absent (`file` / `path` null
+in its `--json` report) and prints nothing read through it. The first test
+pins that; it grades `layout`'s listing, not the readers, so it passes with
+the old readers too. What reaches a reader is a file swapped between the
 listing and the read: the second test makes that swap from inside the call,
-just before the real `wtfconfig` reader runs.
+just before the real `wtfconfig` reader runs, and fails on the old readers
+(a FIFO blocks, a link is followed and its `MARKER` printed).
 
 The install is the captured tree (`fixtures/macos/`) copied into `tmp_path`;
-one of its WTF files is replaced by a FIFO or by a link to a copy of itself
-outside the install (both `constructed`, hostile inputs, L8). Each command
+one of its WTF files is replaced by a FIFO or by a link to a constructed
+file outside the install (both `constructed`, hostile inputs, L8). Each command
 runs in a daemon thread; a FIFO a reader is still blocked on after `BOUND`
 seconds is opened for writing so the reader gets end-of-file, and the test
 fails. Nothing here touches a real install.
@@ -24,6 +29,7 @@ fails. Nothing here touches a real install.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import shutil
 import sys
@@ -57,6 +63,20 @@ CASES = [
     ("char-binds", BINDINGS, "read_bindings", ["char", "binds", "--character", CHARACTER]),
 ]
 IDS = [c[0] for c in CASES]
+
+MARKER = "M1626OUTSIDEMARKER"
+"""In every file a link points at outside the install, and nowhere in the
+captured tree: if it reaches the output, the link was read."""
+OUTSIDE = {
+    "Config.wtf": f'SET gxApi "{MARKER}"\n'.encode(),
+    "bindings-cache.wtf": f"BINDINGMODE 0\nbind F9 {MARKER}\n".encode(),
+    "macros-cache.txt": (
+        f'MACRO 16777217 "{MARKER}" INV_Misc_QuestionMark\n/say {MARKER}\nEND\n'.encode()
+    ),
+}
+"""What a link points at (constructed, hostile input): a valid file of the
+same kind, in the same grammar as the captured file it stands in for, whose
+every value is `MARKER`."""
 
 needs_fifo = pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs os.mkfifo (POSIX)")
 needs_symlink = pytest.mark.skipif(
@@ -104,7 +124,8 @@ def _make(kind: str, flavor: Path, rel: str, tmp_path: Path) -> Path:
     else:
         outside = tmp_path / "Elsewhere" / path.name
         outside.parent.mkdir(exist_ok=True)
-        shutil.move(path, outside)
+        outside.write_bytes(OUTSIDE[path.name])
+        path.unlink()
         path.symlink_to(outside)
     return path
 
@@ -155,16 +176,24 @@ def _swap_before_read(
 def test_a_fifo_or_a_link_already_there_is_not_read(
     name: str, rel: str, reader: str, args: list[str], kind: str, flavor: Path, tmp_path: Path
 ) -> None:
+    """`layout` leaves the entry out, so the command reports no such file and
+    nothing behind the FIFO or the link reaches the output."""
     path = _make(kind, flavor, rel, tmp_path)
 
-    outcome = _invoke(args, path)
+    outcome = _invoke([*args, "--json"], path)
 
     assert outcome.exception is None or isinstance(outcome.exception, SystemExit), (
         f"{name}: an uncaught {outcome.exception!r}"
     )
     assert "Traceback" not in outcome.stdout + outcome.stderr
-    if outcome.exit_code != 0:
-        assert outcome.stderr.startswith("wowlab: "), outcome.stderr
+    assert MARKER not in outcome.stdout + outcome.stderr, "the link's target was read"
+    assert outcome.exit_code == 0, (outcome.exit_code, outcome.stderr)
+    report = json.loads(outcome.stdout)
+    if name == "char-binds":
+        files = {f["scope"]: f["path"] for f in report["files"]}
+        assert files["account"] is None, f"the entry was listed: {files}"
+    else:
+        assert report["file"] is None, f"the entry was listed: {report['file']}"
 
 
 @needs_fifo
@@ -192,6 +221,7 @@ def test_a_file_swapped_before_the_read_is_refused_with_a_message(
     assert "Traceback" not in outcome.stdout + outcome.stderr
     assert outcome.exit_code not in (0, None), (outcome.exit_code, outcome.stdout)
     assert outcome.stdout == "", "nothing was printed as if the file had been read"
+    assert MARKER not in outcome.stderr, "the link's target was read"
     first = outcome.stderr.strip().splitlines()[0]
     assert first.startswith("wowlab: "), first
     assert path.name in first, first
