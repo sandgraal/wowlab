@@ -79,6 +79,16 @@ CLI, `wowlab sv merge FILE [--from CHARACTER|SNAPSHOT] --into CHARACTER
 
 The rulings above are recorded in docs/LAB_PLAN.md §13.4 ("M11-09T
 conductor rulings", 2026-09-29).
+
+*Amended by M16-12 (2026-11-04), on the owner's decision of 2026-10-21 on
+Q8 (docs/handoffs/outside-evaluation-2026-10.md, "Owner decisions"; §13.4's
+2026-11-04 amendment):* a table's array part is one value, so the M11-03
+pair's lists that differ are one conflict each (12 in all, not 235) and the
+class tree's `nodes[53]` and `[54]` are no longer absent; `--take theirs`
+takes each list whole. Two-way `--key` merges inside the subtree, and the
+graders that copy a subtree whole now pass `--replace` (`replace=True`).
+Those are the only expectations changed; `test_svmerge_rulings.py` grades
+the new rulings themselves.
 - Exit codes (§6.11): 0 merged or nothing to change; 1 conflicts left
   unresolved (the report lists them, nothing is written); 2 usage, including
   a character-to-character merge of an account-wide file; 3 refused, by the
@@ -130,10 +140,12 @@ REAL_A = (FIXTURE_FLAVOR / LAB_A).read_bytes()
 REAL_B = (FIXTURE_FLAVOR / LAB_B).read_bytes()
 REAL_DBM = (FIXTURE_FLAVOR / DBM).read_bytes()
 
-# The two keys the M11-03 pair has on one side only: the second character's
-# class tree has 54 nodes, the first's 52 (positional entries 53 and 54).
+# The second character's class tree has 54 nodes, the first's 52. Under
+# §13.4 as amended by M16-12 (owner decision of 2026-10-21, Q8) a list is one
+# value, so `nodes` is one conflict and no key is on one side only; the
+# M11-09T graders listed positional entries 53 and 54 as absent.
 _NODES = 'WowLabCharDB["talents"]["class"]["config"]["trees"][1]["nodes"]'
-ONLY_IN_B = {f"{_NODES}[53]", f"{_NODES}[54]"}
+ONLY_IN_B: set[str] = set()
 
 
 # `sv merge` of a character's `WowLab.lua` keeps the target's probe, which is
@@ -170,16 +182,30 @@ def _children(value: object) -> dict[object, object] | None:
     return None
 
 
+def _border(table: dict[object, object]) -> int:
+    n = 0
+    while n + 1 in table:
+        n += 1
+    return n
+
+
 def _two_way_oracle(ours: bytes, theirs: bytes) -> tuple[set[str], set[str], set[str]]:
     """§13.4's two-way rule applied to the plain data: (conflicts, keys only in
     ours, keys only in theirs). A conflict is a key whose values differ and
-    are not both tables."""
+    are not both tables. Amended for M16-12 (owner decision of 2026-10-21,
+    Q8): a table's array part, the keys 1..n for the longer border, is one
+    value, and a conflict at the table's path when it differs."""
     conflicts: set[str] = set()
     only_ours: set[str] = set()
     only_theirs: set[str] = set()
 
     def walk(o: dict[object, object], t: dict[object, object], at: str, *steps: object) -> None:
+        span = range(1, max(_border(o), _border(t)) + 1)
+        if [o.get(k) for k in span] != [t.get(k) for k in span]:
+            conflicts.add(_path(at, *steps))
         for key, value in o.items():
+            if key in span:
+                continue
             here = _path(at, *steps, key)
             if key not in t:
                 only_ours.add(here)
@@ -189,7 +215,7 @@ def _two_way_oracle(ours: bytes, theirs: bytes) -> tuple[set[str], set[str], set
                 walk(oc, tc, at, *steps, key)
             elif value != t[key]:
                 conflicts.add(here)
-        only_theirs.update(_path(at, *steps, key) for key in t if key not in o)
+        only_theirs.update(_path(at, *steps, key) for key in t if key not in o and key not in span)
 
     o_top = luadata.parse(ours).to_python()
     t_top = luadata.parse(theirs).to_python()
@@ -257,7 +283,7 @@ def _once(data: bytes, old: bytes, new: bytes) -> bytes:
     return data.replace(old, new)
 
 
-def _is_subsequence(small: list[bytes], big: list[bytes]) -> bool:
+def _is_subsequence(small: list[Any], big: list[Any]) -> bool:
     it = iter(big)
     return all(any(line == other for other in it) for line in small)
 
@@ -305,14 +331,16 @@ def _take_theirs_expected(out: bytes, *, probe_from: bytes = REAL_B) -> None:
     (the second character) into ours (the first). `probe_from=REAL_A`: the
     `sv merge` of `WowLab.lua` keeps the target's probe (§13.4, owner ruling
     for M11-24); the library `merge` knows no file names and takes it."""
+    # M16-12 (owner decision of 2026-10-21, Q8): a list is taken whole, so the
+    # class tree holds theirs' 54 nodes; the M11-09T grader kept ours' 52.
     expected = luadata.parse(REAL_B).to_python()
-    nodes = expected["WowLabCharDB"]["talents"]["class"]["config"]["trees"][0]["nodes"]
-    del nodes[52:]  # keys only theirs has are listed, not added (two-way)
     expected["WowLabCharDB"]["probe"] = luadata.parse(probe_from).to_python()["WowLabCharDB"][
         "probe"
     ]
     assert luadata.parse(out).to_python() == expected
-    assert _key_order(out) == _key_order(REAL_A), "ours' key order, not one invented"
+    # Ours' keys keep ours' order; the entries a taken list adds follow its
+    # last entry (M16-12 amendment: the M11-09T grader compared equal orders).
+    assert _is_subsequence(_key_order(REAL_A), _key_order(out)), "ours' key order"
     assert b'["equipped"] = 2.375,\r\n' in out, "theirs' number text"
     assert out.startswith(b"\r\nWowLabCharDB = {\r\n") and out.endswith(b"}\r\n")
     assert b"\t" not in out and out.count(b"\n") == out.count(b"\r\n"), "ours' layout"
@@ -420,7 +448,7 @@ def test_merge_keeps_the_target_key_order_and_the_taken_number_text_constructed(
 
 def test_two_way_real_pair_every_differing_key_is_a_conflict() -> None:
     conflicts, only_a, only_b = _two_way_oracle(REAL_A, REAL_B)
-    assert (len(conflicts), only_a, only_b) == (235, set(), ONLY_IN_B), "the fixtures as indexed"
+    assert (len(conflicts), only_a, only_b) == (12, set(), ONLY_IN_B), "the fixtures as indexed"
     assert _path("WowLabCharDB", "probe", "loads") in conflicts
     assert _path("WowLabCharDB", "schema") not in conflicts
     result = _svmerge().merge(luadata.parse(REAL_A), luadata.parse(REAL_B))
@@ -444,7 +472,7 @@ def test_two_way_real_pair_take_theirs_follows_the_target_layout() -> None:
 
 def test_key_copies_a_subtree_whole_between_the_real_pair() -> None:
     result = _svmerge().merge(
-        luadata.parse(REAL_A), luadata.parse(REAL_B), keys=["WowLabCharDB.gear"]
+        luadata.parse(REAL_A), luadata.parse(REAL_B), keys=["WowLabCharDB.gear"], replace=True
     )
     assert list(result.conflicts) == [] and list(result.absent) == []
     assert _paths(result.taken) == {_path("WowLabCharDB", "gear")}
@@ -492,7 +520,7 @@ def test_a_copied_subtree_takes_the_target_documents_style_constructed() -> None
         "},",
         "}",
     )
-    result = _svmerge().merge(_doc(ours), _doc(theirs), keys=["AddonDB.profile"])
+    result = _svmerge().merge(_doc(ours), _doc(theirs), keys=["AddonDB.profile"], replace=True)
     assert luadata.serialize(result.document) == (
         b'\nAddonDB = {\n\t["keep"] = 1,\n\t["profile"] = {\n\t\t["scale"] = 1.25,\n'
         b'\t\t["bars"] = {\n\t\t\t["main"] = true,\n\t\t},\n\t},\n}\n'
@@ -561,7 +589,7 @@ def test_cli_take_ours_keeps_the_target_and_lists_the_conflicts(flavor: Path) ->
 def test_cli_key_copies_a_subtree_between_the_real_pair(flavor: Path) -> None:
     result = run(
         "sv", "merge", LAB, "--from", CHAR_B, "--into", CHAR_A,
-        "--key", "WowLabCharDB.gear", "--yes", "--json",
+        "--key", "WowLabCharDB.gear", "--replace", "--yes", "--json",
     )  # fmt: skip
     assert result.exit_code == 0, _out(result)
     report = _report(result)
@@ -636,7 +664,7 @@ def test_cli_account_wide_file_from_a_snapshot_constructed(flavor: Path) -> None
     target.write_bytes(edited)
     result = run(
         "sv", "merge", DBM_NAME, "--from", snap_id, "--into", CHAR_A,
-        "--key", f'{DBM_VAR}["Unknown"]', "--yes",
+        "--key", f'{DBM_VAR}["Unknown"]', "--replace", "--yes",
     )  # fmt: skip
     assert result.exit_code == 0, _out(result)
     assert target.read_bytes() == REAL_DBM

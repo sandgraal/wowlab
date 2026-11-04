@@ -149,9 +149,10 @@ def test_take_theirs_keeps_the_targets_probe_and_does_not_report_it_taken(flavor
 
 
 def test_key_copy_of_the_whole_variable_keeps_the_targets_probe(flavor: Path) -> None:
-    # Two-way `--key` copies a subtree whole (§13.4); the probe inside it is
+    # `--key X --replace` copies a subtree whole (§13.4, as amended by M16-12 on
+    # the owner decision of 2026-10-21, Q8; it was `--key X`); the probe inside it is
     # the one part that stays ours.
-    result = _merge_lab("--from", CHAR_B, "--key", "WowLabCharDB")
+    result = _merge_lab("--from", CHAR_B, "--key", "WowLabCharDB", "--replace")
     assert result.exit_code == 0, _out(result)
     report = _report(result)
     assert report["written"] is True and report["conflicts"] == []
@@ -389,6 +390,7 @@ def _merge_gear_into_wowlab_lua() -> None:
         CHAR_A,
         "--key",
         "WowLabCharDB.gear",
+        "--replace",  # the wholesale copy since M16-12 (owner decision 2026-10-21, Q8)
         "--yes",
     )
 

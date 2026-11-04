@@ -2858,6 +2858,47 @@ them as follows, and M11-09 builds to them.
   and returns the merged document with its `conflicts`, `taken` and
   `absent` lists.
 
+*Amended 2026-11-04 (M16-12; owner decision of 2026-10-21 on Q8,
+`docs/handoffs/outside-evaluation-2026-10.md`, "Owner decisions"; §18.1
+item 3):* two of the M11-09T rulings above change, and two disclosures are
+added. The M11-09T graders that encoded the old rulings are amended in the
+same change.
+
+- **An array part is one value.** The keys 1..n of a table, where n is the
+  largest border on any side (ours, theirs, base: the keys 1..n all
+  present, whether written positionally or as `[k] =`), are compared as
+  one list, by the rules a scalar has. Two-way, a list that differs is one
+  conflict at the table's path; three-way, a list changed on one side only
+  is that side's, and changed differently on both is one conflict.
+  `--take theirs` takes the whole list: ours' keys 1..n become theirs',
+  entries past the end of theirs are removed, and nothing is merged index
+  by index. This supersedes "positional entries are keyed by their index"
+  for conflicts; paths still spell positional entries `[n]`. The other keys
+  of a table are merged key by key as before. On the M11-03 pair the
+  conflicts are now the lists that differ and the leaves outside them, and
+  the class tree's `nodes` (52 against 54 entries) is one conflict, so
+  `nodes[53]` and `[54]` are no longer listed as absent.
+- **`--key X` merges inside `X`.** Two-way, `--key X` (and `--key
+  SRC=DST`) runs the normal two-way merge inside the subtree: differing
+  leaves and lists are conflicts, a key on one side only is absent and
+  kept. A destination the target does not hold at all is copied whole,
+  since that removes and overrides nothing (conductor's reading, so a
+  per-character key copied into an account file still works). Three-way
+  is unchanged.
+- **`--key X --replace`** is the old wholesale copy: theirs' subtree is
+  placed whole. `--replace` needs a `--key` and takes no `--base` (exit 2
+  for either). The library takes it as `merge(…, replace=True)`.
+- **Every removal is listed.** `MergeResult.removed` and the report's
+  `removed` (with `path` and the target's `value`) list every key the
+  merge removes from the target: entries past the end of a list taken from
+  theirs, keys under a table that theirs' value replaces, and keys a
+  `--replace` copy lacks. Each is listed at the highest key that goes; the
+  keys under it go with it. The plan prints them before the prompt. The
+  report also gains `replace`. Both fields are additive to `--json`.
+- **The notes print before the prompt.** The loader check's notes, and the
+  others the run collected, print with the plan before `Write the merge?
+  [y/N]`, and are not printed again after it.
+
 ### 13.5 Order
 
 ```
