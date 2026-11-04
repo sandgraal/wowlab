@@ -71,12 +71,15 @@ OUTSIDE = {
     "Config.wtf": f'SET gxApi "{MARKER}"\n'.encode(),
     "bindings-cache.wtf": f"BINDINGMODE 0\nbind F9 {MARKER}\n".encode(),
     "macros-cache.txt": (
-        f'MACRO 16777217 "{MARKER}" INV_Misc_QuestionMark\n/say {MARKER}\nEND\n'.encode()
+        f'VER 3 0000000000000001 "{MARKER}" "INV_Misc_QuestionMark"\n/say {MARKER}\nEND\n'.encode()
     ),
 }
 """What a link points at (constructed, hostile input): a valid file of the
-same kind, in the same grammar as the captured file it stands in for, whose
-every value is `MARKER`."""
+same kind, written in `wtfconfig`'s grammar for that kind (Config.wtf `SET`
+lines, bindings-cache.wtf `bind` lines, macros-cache.txt `VER` records; the
+captured account macros-cache.txt is empty, so this one is not modelled on
+it), and carrying `MARKER` as a value the command prints. The positive
+control test shows each one does reach the output when read."""
 
 needs_fifo = pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs os.mkfifo (POSIX)")
 needs_symlink = pytest.mark.skipif(
@@ -167,6 +170,22 @@ def _swap_before_read(
         return real(target)
 
     monkeypatch.setattr(wtfconfig, reader, swapped)
+
+
+@pytest.mark.parametrize(("name", "rel", "reader", "args"), CASES, ids=IDS)
+def test_constructed_outside_content_as_a_regular_file_prints_the_marker(
+    name: str, rel: str, reader: str, args: list[str], flavor: Path
+) -> None:
+    """The positive control: each `OUTSIDE` file, put in place as a regular
+    file, is read and its `MARKER` printed, so every check below that
+    `MARKER` is absent can fail."""
+    path = flavor / rel
+    path.write_bytes(OUTSIDE[path.name])
+
+    outcome = _invoke([*args, "--json"], path)
+
+    assert outcome.exit_code == 0, (outcome.exit_code, outcome.stderr)
+    assert MARKER in outcome.stdout, f"{name}: the marker is not printed: {outcome.stdout}"
 
 
 @needs_fifo
