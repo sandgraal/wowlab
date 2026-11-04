@@ -1,4 +1,5 @@
-"""Which tests run alone, after the parallel pass (M13-18).
+"""Which tests run alone, after the parallel pass (M13-18), and which get a
+longer hang guard (M13-81).
 
 `make test` and CI run the suite in two passes. The first runs every test
 not marked `serial` across all cores with pytest-xdist (`-n auto`). The
@@ -95,6 +96,14 @@ SERIAL_TESTS: frozenset[str] = frozenset(
     }
 )
 
+# Tests that may legitimately run longer than the hang guard's 300 s
+# (`timeout` in pyproject.toml, M13-81), by node id without the parameter
+# suffix, with the seconds they get. None is known: the slowest measured test
+# takes about 40 s. An entry goes here, never into the test file, for the same
+# reason as the serial list. `tests/repo/test_make_test_fast.py` checks that
+# every entry names a test that exists.
+TIMEOUT_OVERRIDES: dict[str, int] = {}
+
 SERIAL = pytest.mark.serial
 
 
@@ -109,3 +118,6 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     for item in items:
         if is_serial(item.nodeid):
             item.add_marker(SERIAL)
+        seconds = TIMEOUT_OVERRIDES.get(item.nodeid.split("[", 1)[0])
+        if seconds is not None:
+            item.add_marker(pytest.mark.timeout(seconds))

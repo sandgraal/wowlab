@@ -22,6 +22,7 @@ dev = [
   "mypy>=1.19",
   "pytest>=8.4",
   "pytest-xdist>=3.8",  # dev only: `make test` and CI run the suite in parallel (M13-18)
+  "pytest-timeout>=2.3",  # dev only: a hung test fails after `timeout` seconds (M13-81)
   "pre-commit>=4.3",
   "types-psutil>=7.0",  # psutil ships no py.typed; mypy --strict needs the stubs
 ]
@@ -67,6 +68,8 @@ ignore = [
 "tests/harness/*.py" = "py39"
 # The root conftest.py is loaded by the hook tests under 3.9 too (M13-18).
 "conftest.py" = "py39"
+# make test-clean runs on the system python3, not under `uv run` (M13-81).
+"scripts/clean_test_artifacts.py" = "py39"
 
 [tool.ruff.lint.isort]
 known-first-party = ["wowlab_core"]
@@ -85,7 +88,8 @@ python_version = "3.12"
 # the daily wiki job's gate and state tool (M12-14; nothing reaches the wiki past them),
 # and its diagnosis of the Claude step (M12-14; it prints model text to a public log),
 # and the release checks (M13-03; nothing is published past them), and the derived-fixture
-# tool for the install's archives (M15-03; it reads the install and writes a fixture).
+# tool for the install's archives (M15-03; it reads the install and writes a fixture),
+# and the test-artifact cleaner (M13-81; it deletes directories).
 files = [
   "lab/core/src",
   "scripts/lab_capture.py",
@@ -96,6 +100,7 @@ files = [
   "scripts/wiki_diagnose.py",
   "scripts/release_check.py",
   "scripts/casc_facts.py",
+  "scripts/clean_test_artifacts.py",
 ]
 exclude = ["\\.claude/worktrees", "\\.venv"]
 warn_unreachable = true
@@ -111,3 +116,17 @@ markers = [
   "live: hits a live external service; never runs in CI (ADR-0012)",
   "serial: measures RSS or a CPU-time budget; runs alone after the parallel pass (conftest.py, M13-18)",
 ]
+# Hang guard (M13-81): a test still running after 300 s fails with every
+# thread's stack, locally and in CI. The slowest known test takes about 40 s;
+# a test that needs longer gets an override by node id in conftest.py
+# (TIMEOUT_OVERRIDES). The thread method works on Windows, and it leaves
+# SIGALRM to the tests that use it (test_install_folder_race.py); on a
+# timeout it ends the process, so xdist reports the worker crash and the
+# test's stacks. The hook tests under Python 3.9 (`make hooks-test`) run
+# without the plugin and warn that these two options are unknown.
+timeout = 300
+timeout_method = "thread"
+# Keep a temp dir only for a failed test, and only from the last session
+# (`make test-clean` removes the rest).
+tmp_path_retention_policy = "failed"
+tmp_path_retention_count = 1

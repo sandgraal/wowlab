@@ -10,7 +10,7 @@ UV ?= uv
 # version and checksums). Override with SELENE=<path> to use another binary.
 SELENE ?= $(shell $(UV) run --frozen python scripts/fetch_selene.py --print)
 
-.PHONY: help setup lint lint-lua selene format typecheck test test-parser hooks-test ci
+.PHONY: help setup lint lint-lua selene format typecheck test test-fast test-clean test-parser hooks-test ci
 
 help: ## Show targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -56,6 +56,23 @@ test: ## Full pytest suite (excludes @live): parallel pass, then the serial pass
 	$(UV) run --frozen pytest $(PYTEST_PARALLEL)
 	$(UV) run --frozen pytest $(PYTEST_SERIAL)
 
+# Local iteration (M13-81), never the proof of done: everything `make test`
+# runs except the review probes under lab/core/tests/review/ and the `serial`
+# pass, on at most 4 workers so the machine stays usable. `make test`,
+# `make ci` and CI keep running everything; tests/repo/test_make_test_fast.py
+# pins that this recipe leaves out nothing else.
+TEST_FAST_WORKERS = $(shell $(UV) run --frozen python -c "import os; print(min(4, os.cpu_count() or 1))")
+
+test-fast: ## Quick local run: no review probes, no serial pass, at most 4 workers (not the proof of done)
+	$(UV) run --frozen pytest -n $(TEST_FAST_WORKERS) --dist worksteal -p no:cacheprovider -m "not live and not serial" --ignore=lab/core/tests/review
+
+# The system python3 (3.9+), not `uv run`: `uv cache prune` waits for every
+# uv process holding the cache, and `uv run` holds it while its child runs.
+PYTHON3 ?= python3
+
+test-clean: ## Remove pytest's temp dirs and .pytest_cache, prune the uv cache; print sizes before and after
+	UV="$(UV)" $(PYTHON3) scripts/clean_test_artifacts.py
+
 test-parser: ## Parser fixtures and round-trip suites — gate for luadata.py and every format parser
 	$(UV) run --frozen pytest -m parser lab/core/tests/parser
 
@@ -63,4 +80,24 @@ hooks-test: ## Claude Code hook scripts under 3.12 and 3.9 (hooks run on the sys
 	$(UV) run --frozen pytest tests/harness
 	$(UV) run --python 3.9 --isolated --no-project --with pytest -- pytest tests/harness
 
-ci: lint lint-lua test test-parser hooks-test ## Everything CI runs
+# Every stage runs even when an earlier one fails, then a summary; the exit
+# status is non-zero if any stage failed (M13-81).
+CI_STAGES := lint lint-lua test test-parser hooks-test
+
+ci: ## Everything CI runs: every stage, then a summary of each stage's result
+	@failed=0; summary=(); \
+	for stage in $(CI_STAGES); do \
+	  echo "==> make $$stage"; \
+	  if $(MAKE) --no-print-directory $$stage; then \
+	    result="ok"; \
+	  else \
+	    failed=1; result="FAILED"; \
+	    if [ "$$stage" = lint-lua ] && [ ! -x "$(SELENE)" ]; then \
+	      result="FAILED: selene is missing (expected at $(SELENE)); run 'make selene'"; \
+	    fi; \
+	  fi; \
+	  summary+=("$$(printf '  %-12s %s' "$$stage" "$$result")"); \
+	done; \
+	echo; echo "make ci summary:"; printf '%s\n' "$${summary[@]}"; \
+	if [ $$failed -ne 0 ]; then echo "make ci: FAILED"; else echo "make ci: all stages passed"; fi; \
+	exit $$failed
