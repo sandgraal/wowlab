@@ -146,7 +146,7 @@ def test_char_list_lists_each_captured_character_once(flavor: Path) -> None:
         "client's last save, unless something wrote the file since (a wowlab snap restore, "
         "undo or sv merge, or a copy).",
         "One row per character folder: a renamed or transferred character (and a deleted one "
-        "[verify]) keeps its old folder and last save here.",
+        "(not yet confirmed)) keeps its old folder and last save here.",  # the run's first marker
     ]
     assert result.stderr == ""
 

@@ -321,7 +321,7 @@ def test_trait_currency_reads_max_quantity_with_the_note_once(name: str) -> None
     assert CLASS_TREE[name] in lines
     note = (
         "  max_quantity is the client's figure; for class talents it has matched the points "
-        "earned at the character's level (M11-03), not the tree's final cap."
+        "earned at the character's level, not the tree's final cap."
     )
     assert lines.count(note) == 1
     assert lines.index(note) == lines.index(CLASS_TREE[name]) + 1
