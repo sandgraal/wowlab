@@ -21,11 +21,12 @@ or `wget` must
   `; true` after it), and never pipe into a shell.
 
 The check is line-level: it reads each line of the script on its own and
-does not model the shell around it. It does not see four shell-level forms
+does not model the shell around it. It does not see two shell-level forms
 that also stop bash -e from exiting on a failed check: `set +e` on an
-earlier line, a `{ ...; } || true` group, a `( ... ) || true` subshell, and
-a function that holds the check called as `fn || true`. No workflow uses
-them today; review covers them (the probe
+earlier line, and a `{`, `(` or function body spanning several lines, with
+the check bare on its own line inside, whose closing line or call adds
+`|| true`. (The one-line forms of the latter are caught as
+`check-not-bare`.) No workflow uses them today; review covers them (the probe
 lab/core/tests/review/test_m13_65_shell_level_swallow_is_a_documented_limit.py
 records the limit).
 
@@ -56,8 +57,9 @@ EXACT_VERSION = re.compile(r"\d+\.\d+\.\d+")
 # path the check reads.
 CHECK = re.compile(r"""echo\s+["']?(\S+)\s+([^"'\s]+)["']?\s*\|\s*sha256sum\s+-c\s+-""")
 # A check whose failure is swallowed on its own line: `|| ...` or `; true`
-# after it. Line-level only: `set +e` earlier, `{ ...; } || true`,
-# `( ... ) || true` and `fn || true` are not seen (module docstring).
+# after it. Line-level only: `set +e` earlier, and a `{`, `(` or function
+# body spanning several lines, with the check bare on its own line inside,
+# whose closing line or call adds `|| true`, are not seen (module docstring).
 IGNORED = re.compile(r"sha256sum\s+-c\s+-\s*(?:\|\||;\s*true\b)")
 # A check must be a bare command on its own line: bash -e exits on neither a
 # negated pipeline (`! echo ... | sha256sum -c -`) nor the condition of an
@@ -130,8 +132,10 @@ def _findings(workflow: dict[str, Any]) -> list[tuple[str, str]]:
     """(where, kind) for each rule a fetching step breaks.
 
     Line-level: each line and command is read on its own, so a check turned
-    off by the shell around it (`set +e` earlier, `{ ...; } || true`,
-    `( ... ) || true`, `fn || true`) is not reported; review covers those.
+    off by the shell around it (`set +e` earlier, or a `{`, `(` or function
+    body spanning several lines, with the check bare on its own line inside,
+    whose closing line or call adds `|| true`) is not reported; review
+    covers those.
     """
     found: list[tuple[str, str]] = []
     for where, script, env in _fetching_steps(workflow):
