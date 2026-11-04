@@ -509,7 +509,8 @@ def test_cli_two_characters_conflicts_are_listed_and_nothing_is_written(root: Pa
     listed = sorted(p for p in _two_way_oracle(REAL_A, REAL_B)[0] if not _under_probe(p))
     assert all(p in _out(text) for p in listed[:5]), "the conflicts are listed"
     assert _path("WowLabCharDB", "probe", "loads") not in _out(text), "the probe is no conflict"
-    assert PROBE_NOTE in _out(text)
+    # Text output drops the spec section (M16-15); --json keeps the note whole.
+    assert PROBE_NOTE.removesuffix(" (§13.4)") in _out(text)
     result = run("sv", "merge", LAB, "--from", CHAR_B, "--into", CHAR_A, "--yes", "--json")
     assert result.exit_code == 1, _out(result)
     cli.SvMergeReport.model_validate_json(result.stdout)

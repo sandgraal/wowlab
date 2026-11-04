@@ -203,7 +203,7 @@ def test_races_lists_what_the_tables_flag_playable() -> None:
     assert "not a claim about what a server lets anyone create" in text
     assert (
         "Body types are numbered as the tables number them (ChrRaceXChrModel.Sex 0 and 1); "
-        "the game's own screens may number them differently [verify]."
+        "the game's own screens may number them differently (not yet confirmed)."
     ) in text
 
 
