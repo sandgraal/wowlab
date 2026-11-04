@@ -16,7 +16,9 @@ or `wget` must
   64-hex digest (written in the script or taken from an `env` variable);
 - run that check after the fetch and before any other command that names the
   file (tar, install, chmod, unzip, running it);
-- never swallow the check (`|| ...`, `; true`) and never pipe into a shell.
+- write the check as a bare command on its own line, so bash -e stops on it
+  (no `!`, no `if`/`while`/`until` condition, nothing such as `|| ...` or
+  `; true` after it), and never pipe into a shell.
 
 The mutation tests apply each failure to the real workflows in memory, and
 the security review of #339 added five hostile scripts that the first version
@@ -46,6 +48,10 @@ EXACT_VERSION = re.compile(r"\d+\.\d+\.\d+")
 CHECK = re.compile(r"""echo\s+["']?(\S+)\s+([^"'\s]+)["']?\s*\|\s*sha256sum\s+-c\s+-""")
 # A check whose failure is swallowed: `|| ...` or `; true` after it.
 IGNORED = re.compile(r"sha256sum\s+-c\s+-\s*(?:\|\||;\s*true\b)")
+# A check must be a bare command on its own line: bash -e exits on neither a
+# negated pipeline (`! echo ... | sha256sum -c -`) nor the condition of an
+# `if`, `while` or `until`, and anything after it on the line can swallow it.
+BARE_CHECK = re.compile(r"echo\s+([\"'])[0-9A-Za-z_${}]+\s+[^\"'\s]+\1\s*\|\s*sha256sum\s+-c\s+-")
 PIPE_TO_SHELL = re.compile(r"\|\s*(?:sudo\s+)?(?:sh|bash|zsh|dash)\b")
 URL = re.compile(r"https?://[^\s\"']+")
 SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -118,6 +124,8 @@ def _findings(workflow: dict[str, Any]) -> list[tuple[str, str]]:
         for line in joined.splitlines():
             if IGNORED.search(line):
                 found.append((where, "check-ignored"))
+            if "sha256sum" in line and not BARE_CHECK.fullmatch(line.strip()):
+                found.append((where, "check-not-bare"))
         for name in VERSION_REF.findall(script):
             if not EXACT_VERSION.fullmatch(str(env.get(name, ""))):
                 found.append((where, "version"))
@@ -215,10 +223,16 @@ def test_a_bad_digest_is_caught(digest: str) -> None:
 
 
 def test_a_digest_from_env_is_resolved() -> None:
-    # wiki-daily.yml takes its gitleaks digest from GITLEAKS_SHA256.
-    workflow = copy.deepcopy(_workflows()["wiki-daily.yml"])
+    # The actionlint step, in memory, with its digest moved into `env` the
+    # way some workflows carry theirs (no other workflow file is read).
+    workflow = _ci()
+    step = _actionlint_step(workflow)
+    step["run"] = SHA256.sub("${ACTIONLINT_SHA256}", step["run"], count=1)
+    step["env"]["ACTIONLINT_SHA256"] = _SUM
     assert _findings(workflow) == []
-    workflow["env"]["GITLEAKS_SHA256"] = "not-a-digest"
+    step["env"]["ACTIONLINT_SHA256"] = "not-a-digest"
+    assert "digest" in {kind for _, kind in _findings(workflow)}
+    del step["env"]["ACTIONLINT_SHA256"]
     assert "digest" in {kind for _, kind in _findings(workflow)}
 
 
@@ -282,6 +296,27 @@ def test_every_swallowed_check_is_caught(suffix: str) -> None:
     step = _actionlint_step(workflow)
     step["run"] = step["run"].replace("sha256sum -c -", "sha256sum -c -" + suffix)
     assert "check-ignored" in {k for _, k in _findings(workflow)}, suffix
+
+
+@pytest.mark.parametrize(
+    ("prefix", "suffix"),
+    [
+        # From the code review of #339 (M13-65): bash -e exits on neither.
+        ("! ", ""),
+        ("if ! ", "; then echo skipped; fi"),
+        ("if ", "; then :; fi"),
+        ("while ! ", "; do break; done"),
+        ("until ", "; do break; done"),
+    ],
+)
+def test_a_negated_or_conditional_check_is_caught(prefix: str, suffix: str) -> None:
+    workflow = _ci()
+    step = _actionlint_step(workflow)
+    lines = step["run"].splitlines()
+    i = next(n for n, line in enumerate(lines) if "sha256sum" in line)
+    lines[i] = prefix + lines[i].strip() + suffix
+    step["run"] = "\n".join(lines)
+    assert "check-not-bare" in {k for _, k in _findings(workflow)}, prefix
 
 
 def test_a_check_before_the_fetch_is_caught() -> None:
