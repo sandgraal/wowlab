@@ -101,12 +101,25 @@ def test_constructed_decoding_repeats_up_to_the_cap(times: int) -> None:
     assert cw.personal_kinds(_encode(f"{NUMBER}#1", times)) == ["a numeric account folder"]
 
 
-def test_constructed_decoding_stops_at_the_cap() -> None:
-    """One level past the cap is not decoded: the cap is real, and bounds the work."""
-    assert cw.personal_kinds(_encode(f"{NUMBER}#1", cw.MAX_PERCENT_DECODES + 1)) == []
-    # A long, deeply nested line returns (linear in the cap, not the depth).
+def test_constructed_an_account_encoded_past_the_cap_fails_closed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """constructed: one level past the cap is not decoded, so it is withheld (exit 3)."""
+    line = _encode(f"{NUMBER}#1", cw.MAX_PERCENT_DECODES + 1)
+    assert cw.personal_kinds(line) == [cw.TOO_DEEP]
+    root = _build(tmp_path / "wiki", Extra=f"# Extra\n\n{line}\n")
+    code, out = _main(root, capsys)
+    assert code == cw.EXIT_PERSONAL
+    assert out == [f"Extra.md:3: {cw.TOO_DEEP} {cw.PERSONAL_SUFFIX}"]
+    _no_digits(out)
+    redacted = wd.Redactor().line(f"the model wrote {line} into a page")
+    assert NUMBER not in redacted and f"[withheld: {cw.TOO_DEEP}]" in redacted
+
+
+def test_constructed_a_long_deeply_nested_line_returns() -> None:
+    """constructed: the work is linear in the cap, not the depth."""
     deep = "%" + "25" * 50_000 + "23"
-    assert cw.personal_kinds(deep) == []
+    assert cw.personal_kinds(deep) == [cw.TOO_DEEP]
 
 
 def test_constructed_a_match_counts_once_across_the_decoded_forms() -> None:

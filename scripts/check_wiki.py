@@ -226,25 +226,31 @@ def normalise(text: str) -> str:
 MAX_PERCENT_DECODES = 32
 
 
-def _decoded_forms(norm: str) -> list[str]:
+# The kind reported when text is still changing after the last round: it is
+# not decoded further, so it is withheld rather than passed (M13-63 review).
+TOO_DEEP = "percent-encoding nested past the decoding cap"
+
+
+def _decoded_forms(norm: str) -> tuple[list[str], bool]:
     """`norm`, then each percent-decoded form until one stops changing (capped).
 
     `[x](123456789%231)` and its double encoding `%25231` hold an account
     folder that a reader of the rendered link sees; the raw text does not
     match (M13-63). Each form is normalised again: a decoded byte sequence can
-    be an entity or a compatibility character.
+    be an entity or a compatibility character. The flag is true when the cap
+    was reached and one more round would still change the text.
     """
     forms = [norm]
     current = norm
     for _ in range(MAX_PERCENT_DECODES):
         if "%" not in current:
-            break
+            return forms, False
         decoded = normalise(unquote(current))
         if decoded == current:
-            break
+            return forms, False
         forms.append(decoded)
         current = decoded
-    return forms
+    return forms, "%" in current and unquote(current) != current
 
 
 def personal_kinds(text: str) -> list[str]:
@@ -252,14 +258,24 @@ def personal_kinds(text: str) -> list[str]:
 
     Matched on the normalised text, on each percent-decoded form of it, and on
     each of those with Markdown escapes removed; a kind counts as often as the
-    variant that matches it most.
+    variant that matches it most. That count is a maximum over the forms, not
+    a sum, so in text mixing encoding depths a match seen only in one form
+    and another seen only in a different form count once, and
+    `check_privacy` prints fewer lines than there are matches; the exit is
+    unchanged.
+    Decoding normalises each form again, so entities are unrolled a second
+    time only in text holding a `%`; that can over-match, never under-match.
+    Text still encoded after `MAX_PERCENT_DECODES` rounds counts as `TOO_DEEP`.
     """
     norm = normalise(text)
     counts: Counter[str] = Counter()
     variants: set[str] = set()
     # Escapes first too: `\%23` is a `%23` once the Markdown is read.
     for start in {norm, _MD_ESCAPE.sub(r"\1", norm)}:
-        for form in _decoded_forms(start):
+        forms, too_deep = _decoded_forms(start)
+        if too_deep:
+            counts[TOO_DEEP] = 1
+        for form in forms:
             variants |= {form, _MD_ESCAPE.sub(r"\1", form)}
     for variant in variants:
         found = Counter(_kinds(variant))
