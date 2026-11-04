@@ -7587,7 +7587,19 @@ def _plural(n: int, noun: str) -> str:
     return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
 
 
+def _bare_words(facts: labaddon.FolderFacts) -> str:
+    """What a folder without a `WowLab.lua` holds, for its `char list` row."""
+    cvars = facts.cvars_absent if facts.cvars is None else _plural(facts.cvars, "CVar")
+    macros = facts.macros_absent if facts.macros is None else _plural(facts.macros, "macro")
+    words = f"{cvars}, {macros}, {_plural(facts.saved_variables, 'SavedVariables file')}"
+    if facts.twins:
+        words += "; same first name as " + ", ".join(facts.twins)
+    return words
+
+
 def _row_words(e: labaddon.CharacterFile) -> str:
+    if e.no_lab_record is not None:
+        return _bare_words(e.no_lab_record)
     if e.summary is not None:
         return e.summary
     if e.place in _BLOCKED_PLACE:
@@ -7633,9 +7645,11 @@ def char_list(
         ),
     ] = False,
 ) -> None:
-    """Every character folder with a WowLab.lua, in every account unless
-    --account names one: when the file was last written, and its schema, the
-    client that saved it and the spec, or why it could not be read. A file or
+    """Every character folder, in every account unless --account names one.
+    For a folder with a WowLab.lua: when the file was last written, and its
+    schema, the client that saved it and the spec, or why it could not be
+    read. For one without: "no lab record", and how many CVars, macros and
+    SavedVariables files its other files hold. A file or
     place wowlab could not read or look inside is named on stderr and the
     command then exits 1; the others are still listed. JSON: CharListReport."""
     _, chosen, lay = _open(root, flavor)
@@ -7664,6 +7678,7 @@ def char_list(
             account=acct_folder,
             keep_records=json_out and not brief,
             root=None if root is None else str(root),
+            every_folder=True,
         )
         entries, unseen = found.characters, found.not_looked_at
     report = CharListReport(
@@ -7694,18 +7709,27 @@ def char_list(
         for folder in dict.fromkeys(e.account for e in entries):
             mine = [e for e in entries if e.account == folder]
             blocked = sum(1 for e in mine if e.place in _BLOCKED_PLACE)
+            bare = sum(1 for e in mine if e.no_lab_record is not None)
             heading = (
-                f"Account {folder}: {_plural(len(mine) - blocked, 'character folder')} with a "
-                f"{labaddon.LAB_FILE_NAME}"
+                f"Account {folder}: {_plural(len(mine) - blocked, 'character folder')}, "
+                f"{len(mine) - blocked - bare} with a {labaddon.LAB_FILE_NAME}"
             )
             if blocked:
                 heading += f", {blocked} that wowlab could not look inside"
             _say(heading)
             for e in mine:
-                when = (
-                    "time unknown" if e.mtime_ns is None else f"written {_local_time(e.mtime_ns)}"
-                )
+                if e.no_lab_record is not None:
+                    when = "no lab record"
+                elif e.mtime_ns is None:
+                    when = "time unknown"
+                else:
+                    when = f"written {_local_time(e.mtime_ns)}"
                 _say(f"  {names[e.character]:<{width}}  {when}  {_row_words(e)}")
+        if all(e.no_lab_record is not None for e in entries):
+            _say(
+                f"None of them has a {labaddon.LAB_FILE_NAME} (install the lab-addon with "
+                "`wowlab addon install lab`, log in on the character, then log out or /reload)."
+            )
         if unseen:
             _say(f"{_unseen_words(len(unseen))}.")
         for note in _CHAR_LIST_NOTES:

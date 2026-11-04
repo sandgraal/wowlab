@@ -4,8 +4,8 @@ The install is a committed capture copied into `tmp_path` with its flavor
 folder named as its provenance row says (`_classic_beta_`), as
 `test_cli_char.py` does: `fixtures/macos/` (M11-03: two characters with a
 `WowLab.lua`, one character folder without one, and the `<Realm>/<First>/`
-twin that holds only `AddOns.txt`) or `fixtures/macos-70058/` (M11-23: one
-character). `WOWLAB_WOW_ROOT` points at the copy and the user data directory
+twin that holds only `AddOns.txt`; since M16-35 the last two are listed with
+"no lab record") or `fixtures/macos-70058/` (M11-23: one character). `WOWLAB_WOW_ROOT` points at the copy and the user data directory
 is redirected into `tmp_path`; nothing reads or writes a real install.
 
 Inputs labelled `constructed` (L8) are boundary and hostile cases: a
@@ -33,7 +33,7 @@ import platformdirs
 import pytest
 from typer.testing import CliRunner
 
-from wowlab_core import cli, install, labaddon, snapshot
+from wowlab_core import cli, install, labaddon, snapshot, wtfconfig
 from wowlab_core.layout import Layout
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -46,7 +46,19 @@ FIRST = "1/Labchard-Labrealmg"
 SECOND = "1/Labcharb-Labrealmf"
 TWIN_REALM = "Labrealmb Partb Partc Partd"  # holds the <Realm>/<First>/ twin, only AddOns.txt
 NO_ADDON = "Labcharb-Labrealmd"
-HEADING = f"Account {ACCOUNT}: 2 character folders with a WowLab.lua"
+HEADING = f"Account {ACCOUNT}: 4 character folders, 2 with a WowLab.lua"
+# The capture's two folders without a WowLab.lua, as `char list` describes
+# them (M16-35): the counts are the capture's own (21 SET lines with distinct
+# names in config-cache.wtf, one VER record in macros-cache.txt).
+BARE = [
+    (f"1/{NO_ADDON}", "21 CVars, 1 macro, 0 SavedVariables files"),
+    (
+        f"{TWIN_REALM}/Labchard",
+        "no config-cache.wtf, no macros-cache.txt, 0 SavedVariables files; same first name as "
+        f"{FIRST}",
+    ),
+]
+BARE_ROW = re.compile(r"^  (?P<character>.+?) +no lab record  (?P<what>.+)$")
 ROW = re.compile(
     r"^  (?P<character>.+?) +(?:written \d{4}-\d\d-\d\d \d\d:\d\d:\d\d [+-]\d{4}|time unknown)"
     r"  (?P<what>.+)$"
@@ -114,6 +126,21 @@ def _rows(stdout: str) -> list[tuple[str, str]]:
     return out
 
 
+def _bare_rows(stdout: str) -> list[tuple[str, str]]:
+    """The rows of the folders without a WowLab.lua (M16-35)."""
+    out = []
+    for line in stdout.split("\n"):
+        match = BARE_ROW.match(line)
+        if match:
+            out.append((match.group("character"), match.group("what")))
+    return out
+
+
+def _lab_entries(report: Any) -> list[labaddon.CharacterFile]:
+    """The report's rows of folders with a WowLab.lua."""
+    return [e for e in report.characters if e.no_lab_record is None]
+
+
 def _state(root: Path) -> dict[str, tuple[bytes | None, int]]:
     out: dict[str, tuple[bytes | None, int]] = {}
     for p in sorted(root.rglob("*")):
@@ -136,11 +163,17 @@ def test_char_list_lists_each_captured_character_once(flavor: Path) -> None:
         (SECOND, "schema 1, saved by client 1.60.1.70009, spec id 1482"),
         (FIRST, "schema 1, saved by client 1.60.1.70009, spec id 1490"),
     ]
-    assert result.stdout.count(SECOND) == 1 and result.stdout.count(FIRST) == 1
-    # The twin and the folder without the addon's file are not listed.
-    assert TWIN_REALM not in result.stdout and NO_ADDON not in result.stdout
-    assert not any(line.lstrip().startswith("Labchard ") for line in lines)
-    assert lines[3:6] == [
+    assert result.stdout.count(SECOND) == 1
+    # The twin and the folder without the addon's file are listed (M16-35),
+    # in the folders' order, each once, with what their other files hold.
+    assert _bare_rows(result.stdout) == BARE
+    width = len(f"{TWIN_REALM}/Labchard")
+    assert lines[1] == f"  {BARE[0][0]:<{width}}  no lab record  {BARE[0][1]}"
+    assert lines[4] == f"  {BARE[1][0]:<{width}}  no lab record  {BARE[1][1]}"
+    assert lines[2].startswith(f"  {SECOND:<{width}}  written ")
+    assert lines[3].startswith(f"  {FIRST:<{width}}  written ")
+    assert result.stdout.count(NO_ADDON) == 1
+    assert lines[5:8] == [
         cli._CHAR_NOTES[0],
         "The addon records no time; the time shown is the file's modification time: the "
         "client's last save, unless something wrote the file since (a wowlab snap restore, "
@@ -155,8 +188,10 @@ def test_char_list_on_the_70058_capture(tmp_path: Path, monkeypatch: pytest.Monk
     _install(CAPTURE_70058, tmp_path, monkeypatch)
     result = ok("char", "list")
     assert (
-        result.stdout.split("\n")[0] == f"Account {ACCOUNT}: 1 character folder with a WowLab.lua"
+        result.stdout.split("\n")[0]
+        == f"Account {ACCOUNT}: 1 character folder, 1 with a WowLab.lua"
     )
+    assert _bare_rows(result.stdout) == []
     assert _rows(result.stdout) == [
         (FIRST, "schema 1, saved by client 1.60.1.70058, spec id 1490"),
     ]
@@ -165,7 +200,7 @@ def test_char_list_on_the_70058_capture(tmp_path: Path, monkeypatch: pytest.Monk
 def test_char_list_shows_the_files_modification_time(flavor: Path) -> None:
     stamp = 1_700_000_000_000_000_000
     os.utime(_lab_file(flavor, FIRST), ns=(stamp, stamp))
-    (row,) = [ln for ln in ok("char", "list").stdout.split("\n") if FIRST in ln]
+    (row,) = [ln for ln in ok("char", "list").stdout.split("\n") if ln.startswith(f"  {FIRST} ")]
     assert f"written {cli._local_time(stamp)}  schema 1" in row
 
 
@@ -176,11 +211,11 @@ def test_char_list_json_validates(flavor: Path) -> None:
     assert report.account is None
     assert report.notes == cli._CHAR_LIST_NOTES
     assert report.not_looked_at == []
-    assert [e.character for e in report.characters] == [SECOND, FIRST]
-    assert report.characters == labaddon.read_all(Layout(flavor))
-    assert {e.shape for e in report.characters} == {"numeric_folder"}
+    assert [e.character for e in report.characters] == [BARE[0][0], SECOND, FIRST, BARE[1][0]]
+    assert _lab_entries(report) == labaddon.read_all(Layout(flavor))
+    assert {e.shape for e in _lab_entries(report)} == {"numeric_folder"}
     assert '"shape": "numeric_folder"' in result.stdout
-    for entry in report.characters:
+    for entry in _lab_entries(report):
         assert entry.error is None
         assert entry.record == labaddon.read_char(flavor / entry.file)
         assert entry.mtime_ns == (flavor / entry.file).lstat().st_mtime_ns
@@ -195,6 +230,95 @@ def test_char_list_reads_without_writing(flavor: Path) -> None:
     ok("char", "list", "--json")
     ok("char", "list", "--account", ACCOUNT)
     assert _state(root) == before
+
+
+# ─── folders without a WowLab.lua (M16-35) ───────────────────────────────────
+
+
+def test_a_folder_without_a_lab_file_is_listed_with_its_counts(flavor: Path) -> None:
+    """The capture's `Labcharb-Labrealmd` holds a config-cache.wtf and a
+    macros-cache.txt and no SavedVariables/: a row, never an error."""
+    result = ok("char", "list", "--json")
+    assert result.stderr == ""
+    report = cli.CharListReport.model_validate_json(result.stdout)
+    by = {e.character: e for e in report.characters}
+    entry = by[f"1/{NO_ADDON}"]
+    assert entry.place == "no_lab_file" and entry.file == f"{ACCOUNT_DIR}/1/{NO_ADDON}"
+    assert (entry.summary, entry.record, entry.error, entry.mtime_ns) == (None, None, None, None)
+    assert entry.no_lab_record == labaddon.FolderFacts(cvars=21, macros=1, saved_variables=0)
+    folder = flavor / ACCOUNT_DIR / "1" / NO_ADDON
+
+    config = wtfconfig.read_config(folder / "config-cache.wtf")
+    assert len(config.effective()) == 21
+    assert len(wtfconfig.read_macros(folder / "macros-cache.txt").macros) == 1
+    twin = by[f"{TWIN_REALM}/Labchard"]
+    assert twin.shape == "realm_name" and twin.no_lab_record == labaddon.FolderFacts(
+        cvars_absent="no config-cache.wtf",
+        macros_absent="no macros-cache.txt",
+        saved_variables=0,
+        twins=[FIRST],
+    )
+    # The rows of folders with the file are as they were: no facts.
+    assert all(by[c].no_lab_record is None for c in (FIRST, SECOND))
+    assert '"no_lab_record": null' in result.stdout
+
+
+def test_constructed_saved_variables_files_are_counted_without_backups(flavor: Path) -> None:
+    saved = flavor / ACCOUNT_DIR / "1" / NO_ADDON / "SavedVariables"
+    saved.mkdir()
+    account_saved = flavor / ACCOUNT_DIR / "SavedVariables"
+    for name in ("Syndicator.lua", "RareScanner.lua", "RareScanner.lua.bak"):
+        shutil.copy2(account_saved / name, saved / name)
+    rows = dict(_bare_rows(ok("char", "list").stdout))
+    assert rows[f"1/{NO_ADDON}"] == "21 CVars, 1 macro, 2 SavedVariables files"
+
+
+def test_constructed_an_oversized_config_file_is_named_not_read(flavor: Path) -> None:
+    config = flavor / ACCOUNT_DIR / "1" / NO_ADDON / "config-cache.wtf"
+    config.write_bytes(b'SET a "1"\n' * (labaddon.MAX_COUNTED_FILE_BYTES // 10 + 1))
+    size = config.stat().st_size
+    result = ok("char", "list")
+    rows = dict(_bare_rows(result.stdout))
+    assert rows[f"1/{NO_ADDON}"] == (
+        f"config-cache.wtf not read: the file holds {size:,} bytes, more than 4 MiB, "
+        "1 macro, 0 SavedVariables files"
+    )
+    assert result.stderr == ""
+
+
+@POSIX_PERMISSIONS
+def test_constructed_an_unreadable_macros_file_is_named_not_an_error(flavor: Path) -> None:
+    macros = flavor / ACCOUNT_DIR / "1" / NO_ADDON / "macros-cache.txt"
+    macros.chmod(0)
+    try:
+        result = ok("char", "list")
+    finally:
+        macros.chmod(0o644)
+    rows = dict(_bare_rows(result.stdout))
+    assert rows[f"1/{NO_ADDON}"] == (
+        "21 CVars, macros-cache.txt not read: Permission denied, 0 SavedVariables files"
+    )
+
+
+def test_survey_lists_bare_folders_only_when_asked(flavor: Path) -> None:
+    """`read_all`, `char show` and the rest keep their rows: the default
+    survey has no folder without a WowLab.lua and opens none of its files."""
+    lay = Layout(flavor)
+    plain = labaddon.survey(lay)
+    every = labaddon.survey(lay, every_folder=True)
+    assert [e.character for e in plain.characters] == [SECOND, FIRST]
+    assert [e for e in every.characters if e.no_lab_record is None] == plain.characters
+    assert [e.character for e in every.characters if e.no_lab_record] == [c for c, _ in BARE]
+
+
+def test_constructed_a_bare_row_without_facts_does_not_validate() -> None:
+    with pytest.raises(ValueError, match="no_lab_file exactly when"):
+        labaddon.CharacterFile(
+            label="X", account="A", realm_folder="1", shape="numeric_folder",
+            file="WTF/Account/A/1/X", place="no_lab_file", mtime_ns=None,
+        )  # fmt: skip
+    with pytest.raises(ValueError, match="exactly one of cvars and cvars_absent"):
+        labaddon.FolderFacts(macros=1, saved_variables=0)
 
 
 # ─── an unreadable file ──────────────────────────────────────────────────────
@@ -228,7 +352,7 @@ def test_constructed_damaged_file_json_still_validates_exit_1(flavor: Path) -> N
     result = run("char", "list", "--json")
     assert result.exit_code == 1
     report = cli.CharListReport.model_validate_json(result.stdout)
-    second, first = report.characters
+    second, first = _lab_entries(report)
     assert second.character == SECOND and second.record is not None and second.error is None
     assert first.character == FIRST and first.record is None and first.file == file
     assert first.error is not None
@@ -271,7 +395,18 @@ def test_constructed_order_is_stable(flavor: Path) -> None:
     expected = ["1/Alpha-B", "1/beta-C", SECOND, FIRST, "1/zeta-A", "Realm Name/Gamma"]
     first = ok("char", "list").stdout
     assert [c for c, _ in _rows(first)] == expected
-    assert first.split("\n")[0] == f"Account {ACCOUNT}: 6 character folders with a WowLab.lua"
+    assert first.split("\n")[0] == f"Account {ACCOUNT}: 8 character folders, 6 with a WowLab.lua"
+    listed = [ln.split("  ")[1].strip() for ln in first.split("\n")[1:9]]
+    assert listed == [
+        "1/Alpha-B",
+        "1/beta-C",
+        BARE[0][0],
+        SECOND,
+        FIRST,
+        "1/zeta-A",
+        BARE[1][0],
+        "Realm Name/Gamma",
+    ]
     for step, character in enumerate(reversed(expected)):
         stamp = 1_000_000_000_000_000_000 + step * 1_000_000_000
         os.utime(_lab_file(flavor, character), ns=(stamp, stamp))
@@ -279,7 +414,7 @@ def test_constructed_order_is_stable(flavor: Path) -> None:
     assert [c for c, _ in _rows(again)] == expected
     assert ok("char", "list").stdout == again
     report = cli.CharListReport.model_validate_json(ok("char", "list", "--json").stdout)
-    assert [e.character for e in report.characters] == expected
+    assert [e.character for e in _lab_entries(report)] == expected
 
 
 def test_constructed_every_account_unless_one_is_named(flavor: Path) -> None:
@@ -287,10 +422,11 @@ def test_constructed_every_account_unless_one_is_named(flavor: Path) -> None:
     everyone = ok("char", "list").stdout
     lines = everyone.split("\n")
     assert lines[0] == HEADING
-    assert "Account 90000002#1: 1 character folder with a WowLab.lua" in lines
+    assert "Account 90000002#1: 1 character folder, 1 with a WowLab.lua" in lines
     assert [c for c, _ in _rows(everyone)] == [SECOND, FIRST, "2/Other-Char"]
     only = ok("char", "list", "--account", "90000002#1").stdout
-    assert only.split("\n")[0] == "Account 90000002#1: 1 character folder with a WowLab.lua"
+    assert only.split("\n")[0] == "Account 90000002#1: 1 character folder, 1 with a WowLab.lua"
+    assert _bare_rows(only) == []
     assert [c for c, _ in _rows(only)] == ["2/Other-Char"]
     report = cli.CharListReport.model_validate_json(
         ok("char", "list", "--account", "90000002#1", "--json").stdout
@@ -316,7 +452,8 @@ def test_constructed_account_is_matched_with_case_folded_as_char_show_does(
     (flavor / "WTF/Account" / ACCOUNT).rename(flavor / "WTF/Account/MixedCase")
     result = ok("char", "list", "--account", "mixedcase")
     assert (
-        result.stdout.split("\n")[0] == "Account MixedCase: 2 character folders with a WowLab.lua"
+        result.stdout.split("\n")[0]
+        == "Account MixedCase: 4 character folders, 2 with a WowLab.lua"
     )
     report = cli.CharListReport.model_validate_json(
         ok("char", "list", "--account", "mixedcase", "--json").stdout
@@ -327,6 +464,24 @@ def test_constructed_account_is_matched_with_case_folded_as_char_show_does(
 def test_constructed_nothing_to_list(flavor: Path) -> None:
     _lab_file(flavor, FIRST).unlink()
     _lab_file(flavor, SECOND).unlink()
+    # Every folder is still listed (M16-35), and the advice follows the rows.
+    result = ok("char", "list")
+    lines = result.stdout.split("\n")
+    assert lines[0] == f"Account {ACCOUNT}: 4 character folders, 0 with a WowLab.lua"
+    assert [c for c, _ in _bare_rows(result.stdout)] == [BARE[0][0], SECOND, FIRST, BARE[1][0]]
+    assert _rows(result.stdout) == []
+    assert lines[5] == (
+        "None of them has a WowLab.lua (install the lab-addon with "
+        "`wowlab addon install lab`, log in on the character, then log out or /reload)."
+    )
+    report = cli.CharListReport.model_validate_json(ok("char", "list", "--json").stdout)
+    assert all(e.no_lab_record is not None for e in report.characters)
+    assert report.not_looked_at == []
+    # With no character folder at all there is nothing to list.
+    for character, _ in BARE:
+        shutil.rmtree(flavor / ACCOUNT_DIR / character)
+    for character in (FIRST, SECOND):
+        shutil.rmtree(flavor / ACCOUNT_DIR / character)
     result = ok("char", "list")
     assert result.stdout == (
         "No character folder in any account has a WowLab.lua (install the lab-addon with "
@@ -356,20 +511,21 @@ def test_constructed_linked_character_folder_is_named_exit_1(flavor: Path, tmp_p
     assert result.exit_code == 1
     lines = result.stdout.split("\n")
     assert lines[0] == (
-        f"Account {ACCOUNT}: 1 character folder with a WowLab.lua, 1 that wowlab could not "
+        f"Account {ACCOUNT}: 3 character folders, 1 with a WowLab.lua, 1 that wowlab could not "
         "look inside"
     )
     assert _rows(result.stdout) == [
         (SECOND, f"not read: could not look inside the character folder ({NOT_FOLLOWED})"),
         (FIRST, "schema 1, saved by client 1.60.1.70009, spec id 1490"),
     ]
-    assert f"  {SECOND}  time unknown  not read: " in result.stdout
+    assert _bare_rows(result.stdout) == BARE
+    assert re.search(rf"^  {re.escape(SECOND)} +time unknown  not read: ", result.stdout, re.M)
     assert result.stderr == (
         f"wowlab: could not look inside {ACCOUNT_DIR}/{SECOND} (the character folder): "
         f"{NOT_FOLLOWED}\n"
     )
     report = cli.CharListReport.model_validate_json(run("char", "list", "--json").stdout)
-    entry = report.characters[0]
+    entry = _lab_entries(report)[0]
     assert entry.character == SECOND and entry.record is None and entry.mtime_ns is None
     assert entry.place == "character_folder" and entry.error == NOT_FOLLOWED
 
@@ -560,7 +716,7 @@ def test_text_keeps_summaries_only_and_json_keeps_records(
     as_json = cli.CharListReport.model_validate_json(ok("char", "list", "--json").stdout)
     assert asked == [False, True]
     assert "saved by client 1.60.1.70009" in text
-    assert all(e.record is not None and e.summary for e in as_json.characters)
+    assert all(e.record is not None and e.summary for e in _lab_entries(as_json))
 
 
 def test_brief_json_drops_only_the_records_and_text_is_unchanged(
@@ -582,8 +738,12 @@ def test_brief_json_drops_only_the_records_and_text_is_unchanged(
     brief_out = ok("char", "list", "--json", "--brief").stdout
     brief = cli.CharListReport.model_validate_json(brief_out)
     assert asked == [False]
-    assert len(brief.characters) == 2
-    assert all(e.record is None and e.summary and e.error is None for e in brief.characters)
+    assert len(_lab_entries(brief)) == 2 and len(brief.characters) == 4
+    assert all(e.record is None and e.summary and e.error is None for e in _lab_entries(brief))
+    # A folder without a WowLab.lua is the same row with and without --brief.
+    assert [e for e in brief.characters if e.no_lab_record is not None] == [
+        e for e in full.characters if e.no_lab_record is not None
+    ]
     assert brief.characters == [e.model_copy(update={"record": None}) for e in full.characters]
     assert brief.model_copy(update={"characters": []}) == full.model_copy(update={"characters": []})
     # The capture's two records are most of the full report.
@@ -653,9 +813,16 @@ def test_constructed_hostile_folder_names_are_escaped(flavor: Path) -> None:
     labels = {e.label for e in report.characters}
     assert set(names) <= labels and f"Bad{RLO}Name" in labels
     # The columns line up after escaping: every row's time starts at one offset.
+    # A folder without a WowLab.lua (M16-35) is escaped and lined up the same.
     rows = [ln for ln in result.stdout.split("\n") if ln.startswith("  ")]
-    assert len(rows) == 5
-    assert len({ln.index("  written ", 2) for ln in rows}) == 1
+    assert len(rows) == 7
+    at = re.compile(r"  (?:written |time unknown|no lab record)")
+    offsets = set()
+    for ln in rows:
+        found = at.search(ln, 2)
+        assert found is not None, ln
+        offsets.add(found.start())
+    assert len(offsets) == 1
 
 
 # ─── char show chooses the same file (one rule, M12-09) ─────────────────────

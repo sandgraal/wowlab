@@ -1136,10 +1136,16 @@
     );
   }
 
+  // A character folder with no WowLab.lua (`no_lab_record`, M16-35): listed,
+  // never picked, so it gets no record panels.
+  function bare(entry) {
+    return Boolean(entry) && entry.no_lab_record !== null && entry.no_lab_record !== undefined;
+  }
+
   // A row `char gear` can be asked about: read, with its folders named.
   function readable(entry) {
     return (
-      Boolean(entry) && (entry.error === null || entry.error === undefined) &&
+      Boolean(entry) && !bare(entry) && (entry.error === null || entry.error === undefined) &&
       typeof entry.label === "string" && typeof entry.realm_folder === "string" && typeof entry.account === "string"
     );
   }
@@ -1167,6 +1173,7 @@
     if (counts.get(entry.label) > 1) {
       text += " (" + visible(String(entry.realm_folder)) + ", account " + visible(String(entry.account)) + ")";
     }
+    if (bare(entry)) return text + ": no lab record";
     if (!readable(entry)) return text + ": not read";
     return text + ", written " + localTime(entry.mtime_ns);
   }
@@ -1212,8 +1219,9 @@
       return;
     }
     if (first < 0) {
+      const saved = character.entries.filter((e) => !bare(e));
       charSay(
-        character.entries.length
+        saved.length
           ? "No character's file here could be read."
           : "wowlab char list found no character folder with a lab-addon save. Run it in a terminal for what to do.",
         false,

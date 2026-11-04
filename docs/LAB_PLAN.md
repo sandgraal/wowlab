@@ -3284,6 +3284,36 @@ A static local page over every character's `WowLab.lua`.
   text output is the same with or without the flag. The UI's Character tab
   (§16.3) asks for `--brief`, since its picker needs no record and a large
   roster's records could approach the UI's output cap.
+  *Amended 2026-11-04 (M16-35):* `char list` lists every character folder,
+  not only those with a `WowLab.lua`; the sentences above that a folder
+  without the file "is not listed" no longer hold for `char list`. It calls
+  `survey(..., every_folder=True)`; the default (`every_folder=False`) is
+  unchanged, so `read_all`, `char show` and every other caller still get
+  rows for the file only. A folder whose `SavedVariables/` holds no
+  `WowLab.lua` (Forever's `<Realm>/<First>/` twin among them) gets a row in
+  the same order, `place` `no_lab_file`, `file` the character folder,
+  `mtime_ns`, `summary`, `record` and `error` all null, and `no_lab_record`
+  (`labaddon.FolderFacts`): `cvars` (the CVar names, case folded, set in its
+  `config-cache.wtf`), `macros` (the records in its `macros-cache.txt`),
+  each with a `<count>_absent` reason in its place (`no config-cache.wtf`,
+  or `<file> not read: <reason>`), `saved_variables` (its addon files, no
+  `.lua.bak`) and `twins` (`layout.Character.twins` as `<realm or digits
+  folder>/<character folder>`: a first-name match, not proof). Every other
+  row has `no_lab_record` null; `--json` is otherwise unchanged (additive,
+  as M13-72's decision), and `--brief` still nulls every `record`. The two
+  files are read only for these rows, each on its own bound
+  (`labaddon.MAX_COUNTED_FILE_BYTES`, 4 MiB, refused unread above it),
+  never charged to `MAX_SURVEY_BYTES`. A count that could not be made is
+  shown on the row and is not an error: the command's exit code still
+  depends only on the `WowLab.lua` files and the places it could not look
+  inside. Text: the heading is `Account <A>: N character folder(s), M with
+  a WowLab.lua` (then `, K that wowlab could not look inside`), the row's
+  time column reads `no lab record`, then `21 CVars, 1 macro, 0
+  SavedVariables files` (and `; same first name as <twins>`); when no
+  listed folder has the file, one line after the rows gives the install
+  advice. The Character tab lists such a row after the saved ones (it has
+  no time), as `<label>: no lab record`, disabled; it is never picked, so no
+  read is run for it and it gets no record panels.
 - **Page** `wowlab char page [--out PATH] [--anonymize] [--offline]`: one
   static file (ADR-0027), a card per character: when the client last saved the
   file (a time from the file, not from the addon, which records none), the
