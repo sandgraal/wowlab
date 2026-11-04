@@ -81,12 +81,28 @@ Claude does not run in CI (owner decision, 2026-11-04): no workflow uses the
 Claude Code action, a Claude token or an Anthropic API key, and
 `tests/repo/test_no_claude_in_workflows.py` holds every workflow to it. The
 `@claude` responder, the automated PR review and the daily wiki pass were
-deleted that day. Delete the secret they read, which nothing uses any more:
-`gh secret delete CLAUDE_CODE_OAUTH_TOKEN --repo sandgraal/wowlab` (and
-`ANTHROPIC_API_KEY` too, if it is still set). Deleting a secret does not
-revoke the token it held; a `claude setup-token` token stays valid until it
-expires, so if it ever leaked, ask Anthropic support (support.claude.com) to
-revoke it.
+deleted that day. What they left behind on GitHub, for the owner to remove.
+Deleting a secret only makes GitHub forget its copy; it does not revoke the
+token it held, so each credential is also revoked at its source.
+
+1. `gh secret delete CLAUDE_CODE_OAUTH_TOKEN --repo sandgraal/wowlab`. A
+   `claude setup-token` token stays valid until it expires (a year after it
+   was minted) and has no self-service revocation; if it ever leaked, ask
+   Anthropic support (support.claude.com) to revoke it.
+2. `ANTHROPIC_API_KEY`, if it is still set: revoke the key in the Claude
+   Console (API keys), then `gh secret delete ANTHROPIC_API_KEY --repo
+   sandgraal/wowlab`.
+3. `WIKI_PUSH_TOKEN`, if it was ever created: revoke the fine-grained token
+   at GitHub, Settings, Developer settings, Personal access tokens, then
+   `gh secret delete WIKI_PUSH_TOKEN --repo sandgraal/wowlab`.
+4. The `WIKI_DAILY_PUBLISH` variable:
+   `gh variable delete WIKI_DAILY_PUBLISH -R sandgraal/wowlab`.
+5. The `wiki-daily` label and any open report issue: close the issue
+   (`gh issue list -R sandgraal/wowlab --label wiki-daily`, then
+   `gh issue close <n> -R sandgraal/wowlab`) and
+   `gh label delete wiki-daily -R sandgraal/wowlab --yes`.
+6. The Claude GitHub App: uninstall it, or remove this repository from it,
+   at GitHub, Settings, Applications, Installed GitHub Apps.
 
 ## Claude Code
 

@@ -83,7 +83,8 @@ bug report. Follow `SECURITY.md`.
 Every PR gets an independent review that derives expectations from the spec
 before reading the diff and runs things rather than reading them. No
 automated review runs in CI (since 2026-11-04, owner decision: Claude does
-not run in CI); human review is welcome and routed by `.github/CODEOWNERS`. Reply on every thread before resolving it.
+not run in CI); human review is welcome and routed by `.github/CODEOWNERS`.
+Reply on every thread before resolving it.
 
 ## Conduct
 
